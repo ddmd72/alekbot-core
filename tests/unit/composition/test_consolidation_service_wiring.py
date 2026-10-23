@@ -1,4 +1,8 @@
-"""Facts S2 · T7: one ConsolidationService, built in main.py, serves `$consolidate` on Slack and Telegram."""
+"""Facts S2 · T7: one ConsolidationService, built in the composition root, serves `$consolidate` on Slack and Telegram.
+
+The composition root is `src/composition/application_graph.py` (`build_application_graph`) since P9
+(`decisions/application_graph_builder.md`); `main.py` calls it and constructs no services itself.
+"""
 import ast
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -14,6 +18,7 @@ from src.services.consolidation_service import ConsolidationService
 
 _ROOT = Path(__file__).resolve().parents[3]
 _SRC = _ROOT / "src"
+_GRAPH = _SRC / "composition" / "application_graph.py"
 
 
 class _Captured(Exception):
@@ -91,16 +96,16 @@ async def test_without_a_service_the_consolidate_command_still_only_enqueues():
     assert "background" in channel.send_message.await_args.args[0]
 
 
-def test_no_consolidation_service_is_constructed_outside_main():
+def test_the_one_consolidation_service_is_constructed_only_in_the_application_graph():
     constructed = []
-    sources = [*_SRC.rglob("*.py"), *(p for p in _ROOT.glob("*_main.py"))]
+    sources = [*_SRC.rglob("*.py"), _ROOT / "main.py", *(p for p in _ROOT.glob("*_main.py"))]
     for path in sources:
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Call):
                 name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
                 if name == "ConsolidationService":
-                    constructed.append(f"{path.relative_to(_ROOT)}:{node.lineno}")
-    assert constructed == []
+                    constructed.append(str(path.relative_to(_ROOT)))
+    assert constructed == ["src/composition/application_graph.py"]
 
 
 def _calls(tree, name):
@@ -108,8 +113,8 @@ def _calls(tree, name):
             and (getattr(n.func, "id", None) == name or getattr(n.func, "attr", None) == name)]
 
 
-def test_main_builds_the_one_service_with_the_lease_the_queue_and_the_run_timeout():
-    tree = ast.parse((_ROOT / "main.py").read_text(encoding="utf-8"))
+def test_the_graph_builds_the_one_service_with_the_lease_the_queue_and_the_run_timeout():
+    tree = ast.parse(_GRAPH.read_text(encoding="utf-8"))
 
     (built,) = _calls(tree, "ConsolidationService")
     keywords = {k.arg: ast.unparse(k.value) for k in built.keywords}
@@ -120,8 +125,8 @@ def test_main_builds_the_one_service_with_the_lease_the_queue_and_the_run_timeou
 
 
 @pytest.mark.parametrize("factory", ["SlackAdapterFactory", "TelegramAdapterFactory"])
-def test_main_passes_the_service_to_both_adapter_factories(factory):
-    tree = ast.parse((_ROOT / "main.py").read_text(encoding="utf-8"))
+def test_the_graph_passes_the_service_to_both_adapter_factories(factory):
+    tree = ast.parse(_GRAPH.read_text(encoding="utf-8"))
 
     (call,) = [c for c in _calls(tree, "create_adapter") if getattr(c.func.value, "id", None) == factory]
 

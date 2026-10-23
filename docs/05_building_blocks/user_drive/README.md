@@ -1152,7 +1152,7 @@ notice. A purge (opt-out, rebuild) deletes the records and their flags, so files
 announced once more.
 
 **Delivery (RFC Δ76, Δ77).** The list goes through the media port of the default chat's platform
-(`UserNotificationService.register_platform_media`; `main.py` registers Slack's and Telegram's). Slack gets a "📎"
+(`UserNotificationService.register_platform_media`; `build_application_graph` registers Slack's and Telegram's). Slack gets a "📎"
 placeholder first (it turns a stored user id into the DM channel the upload needs); Telegram uploads to the chat id as
 is; a platform with no port returns "not sent" before posting anything. A notice whose list was not sent (no channel,
 no port, a failed upload) is not read again until the next UTC day unless the tick counts more files to tell about

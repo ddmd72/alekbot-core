@@ -361,7 +361,7 @@ logged and the run goes on without it, `consolidation_agent.py:246-254`) and dis
 agent also accepts `consolidate` (Stage 1–2b only), `consolidate_cluster` and `consolidate_email` (`can_handle`, `:205-209`); the
 queue and `$consolidate` always send `consolidate_full`.
 
-- **Model:** agent type `consolidation`, default provider Claude (fallback Gemini, `src/services/agent_context_builder.py:56-61`)
+- **Model:** agent type `consolidation`, default provider Claude, no cross-provider fallback (`"fallback": None` in `src/services/agent_context_builder.py`; owner ruling 2026-10-23, P9 D8: a memory write never moves to another model on an outage; the declared Gemini fallback was dead before that, the agent never stored its execution context)
   at tier PERFORMANCE (`src/domain/user.py:82`), which on Claude is `claude-opus-5-5` unless the live env var
   `CLAUDE_PERFORMANCE_MODEL` pins another model (`src/adapters/claude_adapter.py:166-167,249-252`; `make claude-model`
   shows the live value). A user's `agent_providers` / `agent_tiers` can override. Thinking `medium`, 64 000 output
@@ -612,7 +612,7 @@ cache read raises, and the call is not opened on an empty context (`lelik_person
 
 `get_user_context(query, alternate_phrasing, keywords)` (`src/composition/mcp_setup.py:255-332`) calls
 `enrich_context` directly (no model, no Router) with phrase 2 = alternate phrasing or the query, dedup at 0.98, total
-30 (`main.py:1294-1301`), as the token's account. The answer groups facts by domain, one line each (`mcp_setup.py:128-144`).
+30 (`main.py`, the MCP `SearchEnrichmentService`), as the token's account. The answer groups facts by domain, one line each (`mcp_setup.py:128-144`).
 
 ### 4.8 The Cabinet fact page
 
@@ -750,7 +750,7 @@ service the command only enqueues.
 | lease acquire, open-batch check or deferral enqueue fails | the error propagates, the worker answers 5xx | none | untouched | yes, Cloud Tasks retries |
 | lease release fails | WARNING `releasing the memory-write lease failed`; the lease expires on its own | stored | succeeds | — |
 | user has no account id | the oldest pending batch is marked `failed` ("user has no account"), `CONSOLIDATION_FAILED` is logged (`consolidation_service.py:335-339`) | none | `failed` | no 5xx loop; the sweep's bounded revivals fail it again at no model cost |
-| provider failover | `_call_llm` fails over to Gemini only before the first tool call; after it the transcript is locked to one provider (`src/agents/CLAUDE.md` → Transcript integrity) | — | — | same-provider retries |
+| provider failover | none for consolidation: a Claude outage fails the pass and the batch is retried later (owner ruling 2026-10-23; the transcript is locked to one provider after the first tool call anyway, `src/agents/CLAUDE.md` → Transcript integrity) | — | — | same-provider retries |
 
 ---
 
@@ -1056,7 +1056,7 @@ a successor while the live consolidation prompts still tell the model to retire 
 | `src/ports/memory_write_lease.py`, `src/adapters/firestore_memory_write_lease.py` | the per-account lease (acquire, release by owner token) |
 | `src/agents/consolidation_agent.py` | all stages, tools, loop, backstop, cluster and directive messages |
 | `src/infrastructure/agent_config.py` | `ConsolidationAgentConfig`, `MemorySearchAgentConfig`, Router and Smart windows |
-| `main.py` (`:683-692`), `src/composition/{slack,telegram}_adapter_factory.py` | the one `ConsolidationService` is built here, with the lease, the task queue and the 900 s run timeout; the chat adapters get its `consolidate_now` |
+| `src/composition/application_graph.py` (`:641-650`, `build_application_graph`), `src/composition/{slack,telegram}_adapter_factory.py` | the one `ConsolidationService` is built here, with the lease, the task queue and the 900 s run timeout; the chat adapters get its `consolidate_now` |
 | `src/composition/user_agent_factory.py` | builds the consolidator, the per-user `SearchEnrichmentService`, MemorySearch |
 | `src/services/agent_context_builder.py`, `src/domain/user.py` | provider and tier per agent |
 | `src/ports/fact_management_port.py`, `src/adapters/fact_management_adapter.py` | consolidator tools |

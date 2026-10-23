@@ -6,7 +6,7 @@ RFC: docs/10_rfcs/MULTILINGUAL_SUPPORT_RFC.md §11
 Writes to UserProfile (for UI language resolution) and to the prompt override
 document (so the correct LANG_* token is picked up during assembly).
 """
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, Tuple
 
 from ..domain.language import LanguageCode
 from ..domain.notification_kind import NotificationKind
@@ -103,7 +103,11 @@ class LanguagePreferenceService(LanguageServicePort):
         self._prompt_builder = prompt_builder
         self._system_default = system_default_language
         self._notification_service = notification_service
-        self._ensure_agents = None  # Set after factory is created (main.py)
+        self._ensure_agents = None  # Set by attach_agent_refresher once the agent factory exists
+
+    def attach_agent_refresher(self, ensure_agents: Callable[[str], Awaitable[Any]]) -> None:
+        """Give the service the agent factory's per-user refresh, which it cannot take at construction (cycle)."""
+        self._ensure_agents = ensure_agents
 
     async def set_preference(
         self,

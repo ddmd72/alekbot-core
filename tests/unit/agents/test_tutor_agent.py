@@ -6,8 +6,10 @@ from src.agents.tutor_agent import TutorAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.companion_context import CompanionContext
 from src.domain.companion import CompanionRecord
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
+from src.domain.user import PerformanceTier
 from src.infrastructure.agent_config import TUTOR
-from src.ports.llm_port import LLMPort
+from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.ports.prompt_builder_port import PromptBuilderPort
 
 
@@ -50,7 +52,11 @@ def mock_assembler():
 def agent(mock_llm, mock_prompt_builder, mock_assembler):
     config = AgentConfig(agent_id="tutor_agent_test", agent_type="tutor",
                          timeout_ms=60000, capabilities=["tutor_chat"])
-    ctx = MagicMock(provider=mock_llm, model_name="claude-sonnet-5")
+    # A real context (closed breaker, no fallback): TutorAgent hands it to _call_llm since P9 D8.
+    ctx = AgentExecutionContext(
+        agent_type="tutor", provider=mock_llm, model_name="claude-sonnet-5", tier=PerformanceTier.BALANCED,
+        capabilities=ProviderCapabilities(), provider_name="claude", resilience_port=InMemoryProviderResilience(),
+    )
     return TutorAgent(
         config=config, execution_context=ctx, prompt_builder=mock_prompt_builder,
         assembler=mock_assembler, user_id=None,
