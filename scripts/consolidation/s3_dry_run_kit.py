@@ -14,13 +14,17 @@ from Firestore, where the S3 tokens are not uploaded yet. The kit lets the REAL 
   runs in `scripts/memory/`) would pass `--budget-usd`.
 - `DryRunKit`: installs all of it on a built `ConsolidationAgent` and writes the report.
 
-Residual (not hidden by the kit): the agent's own `_call_llm` still writes `prompt_content` and billing usage, as it does
-in every bench. Vector searches and the paginated / lineage / domain reads see the live store only.
+Residual (not hidden by the kit): the agent's own `_call_llm` still writes a `prompt_content` row per call. The benches
+call `execute()`, never `process()`, so no account usage is recorded; the run's spend exists only in the kit's ledger.
+Vector searches, the biographical cache and the paginated / lineage / domain reads see the live store only.
 
-Files written by the kit (spend ledger, report) go to `scripts/memory/` (gitignored). Nothing here builds a client at
-import time.
+Files written by the kit (spend ledger, its lock file, report) go to `scripts/memory/` (gitignored); any other path is
+refused. One kit run at a time holds the ledger lock. Nothing here builds a client at import time.
 """
 
+import asyncio
+import fcntl
+import hashlib
 import itertools
 import json
 import os
@@ -50,6 +54,7 @@ from src.domain.fact_lifecycle import (
 from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot
 from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_write_context import FactWriteContext
+from src.domain.prompt_v3.slot import OwnerType
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
 from src.domain.stored_fact import StoredFact
 from src.ports.alert_sink import AlertSinkPort
@@ -58,6 +63,7 @@ from src.ports.fact_management_port import FactManagementPort
 from src.ports.indexed_email_repository import IndexedEmailRepository
 from src.ports.prompt_v3.token_repository import TokenRepository
 from src.ports.repository import FactRepository
+from src.services.fact_write_service import FactWriteService
 from src.utils.logger import logger
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -89,6 +95,32 @@ class UnpricedModel(BudgetExceeded):
     """The model has no price in `domain.billing`, so the meter could not keep the cap."""
 
 
+class LedgerBusy(RuntimeError):
+    """Another dry-run process holds the spend ledger: one kit run at a time."""
+
+
+class PathOutsideMemory(ValueError):
+    """The kit writes only under `scripts/memory/`."""
+
+
+class SnapshotTokenError(RuntimeError):
+    """The S3 prompt tokens cannot be served as the snapshot has them, so the run would test another prompt."""
+
+
+class KitNotPrepared(RuntimeError):
+    """A model call was made before `DryRunKit.prepare` checked the snapshot tokens."""
+
+
+def inside_memory_dir(path: Path) -> Path:
+    """`path` resolved, or PathOutsideMemory when it is not under `scripts/memory/`."""
+    resolved = Path(path).resolve()
+    try:
+        resolved.relative_to(MEMORY_DIR.resolve())
+    except ValueError:
+        raise PathOutsideMemory(f"{path} is outside {MEMORY_DIR}: the kit writes only there") from None
+    return resolved
+
+
 # ------------------------------------------------------------------------------------------------ the fact store
 
 class NoWriteFactRepository(FactRepository):
@@ -105,6 +137,7 @@ class NoWriteFactRepository(FactRepository):
         self._docs: Dict[str, FactEntity] = {}
         self._tokens: Dict[str, Tuple[str, int]] = {}
         self._clock = itertools.count(1)
+        self._lock = asyncio.Lock()     # a write is check-then-put with a live read between: one at a time, as a transaction is
         self.writes: List[Dict[str, Any]] = []
 
     def _record(self, kind: str, **info: Any) -> None:
@@ -131,8 +164,9 @@ class NoWriteFactRepository(FactRepository):
         return self._docs.get(stored.fact.id) or stored.fact
 
     async def add_fact(self, fact: FactEntity) -> str:
-        self._put(fact)
-        self._record("add_fact", fact_id=fact.id)
+        async with self._lock:
+            self._put(fact)
+            self._record("add_fact", fact_id=fact.id)
         return fact.id
 
     async def get_fact_by_id(self, fact_id: str) -> Optional[FactEntity]:
@@ -167,6 +201,10 @@ class NoWriteFactRepository(FactRepository):
         missing = [name for name in _VECTORS if getattr(new_fact, name) is None]
         if missing:
             raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a version without vectors leaves vector search")
+        async with self._lock:
+            await self._supersede(new_fact, replaced, now, actor)
+
+    async def _supersede(self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime, actor: str) -> None:
         for stored in replaced:
             await self._check_token(stored.fact.id, stored.fact.account_id, stored.update_time)
         if new_fact.id in self._docs or await self._real.get_fact_by_id(new_fact.id) is not None:
@@ -187,8 +225,9 @@ class NoWriteFactRepository(FactRepository):
         refused = set(fields) - IN_PLACE_FIELDS
         if refused:
             raise InPlaceFieldRefused(refused)
-        await self._apply_fields(stored, fields)
-        self._record("update_fact_fields", fact_id=stored.fact.id, fields=sorted(fields))
+        async with self._lock:
+            await self._apply_fields(stored, fields)
+            self._record("update_fact_fields", fact_id=stored.fact.id, fields=sorted(fields))
 
     async def _apply_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
         await self._check_token(stored.fact.id, stored.fact.account_id, stored.update_time)
@@ -196,6 +235,10 @@ class NoWriteFactRepository(FactRepository):
         self._put(FactEntity.model_validate({**base.model_dump(), **fields}))
 
     async def invalidate_fact(self, fact_id: str, account_id: str) -> None:
+        async with self._lock:
+            await self._invalidate(fact_id, account_id)
+
+    async def _invalidate(self, fact_id: str, account_id: str) -> None:
         shown = await self.get_fact_by_id(fact_id)
         if shown is None:
             raise ValueError(f"Fact not found: {fact_id}")
@@ -226,19 +269,21 @@ class NoWriteFactRepository(FactRepository):
             return
 
     async def stale_due_fact(self, due: DueFact, now: datetime) -> None:
-        await self._check_token(due.fact_id, due.account_id, due.update_time)
-        base = self._docs.get(due.fact_id) or await self._real.get_fact_by_id(due.fact_id)
-        if base is None:
-            raise FactWriteConflict(due.fact_id)
-        fields = stale_fields(replace(due, lifecycle_events=list(base.lifecycle_events)), now)
-        self._put(FactEntity.model_validate({**base.model_dump(), **fields}))
-        self._record("stale_due_fact", fact_id=due.fact_id)
+        async with self._lock:
+            await self._check_token(due.fact_id, due.account_id, due.update_time)
+            base = self._docs.get(due.fact_id) or await self._real.get_fact_by_id(due.fact_id)
+            if base is None:
+                raise FactWriteConflict(due.fact_id)
+            fields = stale_fields(replace(due, lifecycle_events=list(base.lifecycle_events)), now)
+            self._put(FactEntity.model_validate({**base.model_dump(), **fields}))
+            self._record("stale_due_fact", fact_id=due.fact_id)
 
     async def add_fact_if_unique(
         self, fact: FactEntity, similarity_threshold: float = 0.85
     ) -> tuple[bool, Optional[str]]:
-        self._put(fact)
-        self._record("add_fact_if_unique", fact_id=fact.id, duplicate_check="not run")
+        async with self._lock:
+            self._put(fact)
+            self._record("add_fact_if_unique", fact_id=fact.id, duplicate_check="not run")
         return True, fact.id
 
     async def refresh_biographical_context_cache(
@@ -328,10 +373,14 @@ class NoWriteIndexedEmails(IndexedEmailRepository):
 
     def __init__(self, real: IndexedEmailRepository) -> None:
         self._real = real
+        self._marked: set = set()
         self.writes: List[Dict[str, Any]] = []
 
     async def get_unconsolidated_batch(self, user_id: str, limit: int = 200) -> List[IndexedEmail]:
-        return await self._real.get_unconsolidated_batch(user_id, limit)
+        """The live batch without the emails this run marked consolidated (the live store never learns of the mark)."""
+        hidden = sum(1 for marked_user, _ in self._marked if marked_user == user_id)
+        batch = await self._real.get_unconsolidated_batch(user_id, limit + hidden)
+        return [e for e in batch if (user_id, e.email_id) not in self._marked][:limit]
 
     async def find_nearest(
         self, user_id: str, vectors: Dict[str, List[float]], limit: int = 10, state: str = "current",
@@ -349,6 +398,7 @@ class NoWriteIndexedEmails(IndexedEmailRepository):
         return await self._real.get_pending_embeddings(limit)
 
     async def mark_consolidated(self, user_id: str, email_ids: List[str], consolidated_at: datetime) -> None:
+        self._marked.update((user_id, email_id) for email_id in email_ids)
         self.writes.append({"kind": "mark_consolidated", "user_id": user_id, "email_ids": list(email_ids)})
 
     async def save_batch(self, emails: List[IndexedEmail]) -> int:
@@ -513,11 +563,33 @@ class CostMeter:
     """
 
     def __init__(self, ledger_path: Path = SPEND_LEDGER, budget_usd: float = DEFAULT_BUDGET_USD) -> None:
-        self.ledger_path = Path(ledger_path)
+        self.ledger_path = inside_memory_dir(ledger_path)
         self.budget_usd = float(budget_usd)
         self.aborted = False
+        self._lock_fd: Optional[int] = None
+        self._acquire_lock()
         self._ledger = self._load()
         self._run: Optional[Dict[str, Any]] = None
+
+    def _acquire_lock(self) -> None:
+        """Hold an exclusive lock on the ledger for the whole run, so two runs cannot lose each other's spend."""
+        lock_path = self.ledger_path.with_name(self.ledger_path.name + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            raise LedgerBusy(
+                f"another dry-run process holds {lock_path.name}: run one bench at a time (the spend cap is shared)"
+            ) from None
+        self._lock_fd = fd
+
+    def close(self) -> None:
+        """End the run: release the ledger lock (the process ending does it too)."""
+        if self._lock_fd is not None:
+            os.close(self._lock_fd)
+            self._lock_fd = None
 
     def _load(self) -> Dict[str, Any]:
         ledger: Dict[str, Any] = {"total_usd": 0.0, "calls": 0, "unmetered_calls": 0, "max_call_usd": 0.0, "by_model": {}, "runs": []}
@@ -710,6 +782,13 @@ class DryRunKit:
         self.meter = CostMeter(self.ledger_path, self.budget_usd)
         self._pass_calls = 0
         self._installed = False
+        self._prepared = False
+        self._service: Any = None
+        self.served_tokens: List[Dict[str, str]] = []
+        self.overrides_blocked: List[Dict[str, str]] = []
+
+    def close(self) -> None:
+        self.meter.close()
 
     async def resolve_timezone(self, account_repo: Any, user_repo: Any, account_id: str, override: Optional[str] = None) -> str:
         self.timezone = await owner_timezone(account_repo, user_repo, account_id, override)
@@ -732,9 +811,19 @@ class DryRunKit:
         live = getattr(agent, "_fact_management", None)
         if live is None:
             raise ValueError("the agent has no fact-management port to run the kit on")
+        if getattr(agent, "prompt_version", None) != "v3":
+            raise ValueError(
+                f"the kit runs the v3 passes only (agent prompt_version is {getattr(agent, 'prompt_version', None)!r}); "
+                "the v2 path writes through the live write service"
+            )
+        service = getattr(getattr(agent, "prompt_builder", None), "assembly_service", None)
+        if service is None:
+            raise ValueError("the agent has no prompt assembly service: the snapshot tokens could not be served")
         self.repo = NoWriteFactRepository(agent._repo)
         agent._repo = self.repo
-        adapter = FactManagementAdapter(self.repo, live._embedding, live._fact_write_service, live._search_enrichment)
+        write_service = FactWriteService(self.repo, live._embedding)
+        agent._fact_write_service = write_service
+        adapter = FactManagementAdapter(self.repo, live._embedding, write_service, live._search_enrichment)
         agent._fact_management = WriteRecorder(adapter, self)
         agent._lifecycle_counters = self.counters
         agent._alert_sink = self.sink
@@ -742,10 +831,9 @@ class DryRunKit:
         if getattr(agent, "_indexed_email_repo", None) is not None:
             self.emails = NoWriteIndexedEmails(agent._indexed_email_repo)
             agent._indexed_email_repo = self.emails
-        service = getattr(getattr(agent, "prompt_builder", None), "assembly_service", None)
-        if service is not None:
-            service.token_repo = SnapshotTokenOverlay(service.token_repo, service.security_port, self.snapshot_dir)
-            service.invalidate_cache()
+        service.token_repo = SnapshotTokenOverlay(service.token_repo, service.security_port, self.snapshot_dir)
+        service.invalidate_cache()
+        self._service = service
         self._wrap_calls(agent)
         self._wrap_passes(agent)
         self._installed = True
@@ -755,11 +843,58 @@ class DryRunKit:
         metered = agent._call_llm
 
         async def counted(request: Any, *args: Any, **kwargs: Any) -> Any:
+            if not self._prepared:
+                raise KitNotPrepared("await kit.prepare(user_id, account_id) before the first model call")
             response = await metered(request, *args, **kwargs)
             self._pass_calls += 1
             return response
 
         agent._call_llm = counted
+
+    async def prepare(self, user_id: str, account_id: str) -> None:
+        """Check, before any model call, that the prompt will carry the snapshot text of the five S3 tokens.
+
+        All five load through the overlay (a missing file, an id mismatch or a security refusal raises here instead of the
+        assembly service dropping the token), the agent's profile must list each, and no account or user override may
+        replace one (the profile's `non_overridable` flag blocks an override in production; those are recorded). The tokens
+        served (id and sha256 of the body) go into the report."""
+        overlay = self._service.token_repo
+        served: Dict[str, Token] = {}
+        for token_id in S3_TOKEN_IDS:
+            try:
+                served[token_id] = await overlay.get(TokenId(token_id))
+            except Exception as exc:
+                raise SnapshotTokenError(f"snapshot token {token_id} cannot be served: {type(exc).__name__}: {exc}") from exc
+        profile = await self._service.profile_repo.get_agent_profile("consolidation")
+        absent = [token_id for token_id in S3_TOKEN_IDS if token_id not in profile.tokens]
+        if absent:
+            raise SnapshotTokenError(f"the consolidation profile does not list {', '.join(absent)}: the prompt would lack them")
+        blocked: List[Dict[str, str]] = []
+        for level, owner_id in ((OwnerType.ACCOUNT, account_id), (OwnerType.USER, user_id)):
+            if not owner_id:
+                continue
+            for override_id in await self._service.profile_repo.get_override_tokens(level, owner_id):
+                try:
+                    other = await overlay.get(TokenId(override_id))
+                except KeyError:
+                    continue
+                for token_id, token in served.items():
+                    if override_id == token_id or (token.class_, token.category) != (other.class_, other.category):
+                        continue
+                    entry = {"level": level.value, "override": str(override_id), "replaces": token_id}
+                    if profile.tokens[token_id].non_overridable:
+                        blocked.append(entry)
+                    else:
+                        raise SnapshotTokenError(
+                            f"a {level.value} override ({override_id}) would replace snapshot token {token_id}: "
+                            "the dry run would not test the snapshot text"
+                        )
+        self.overrides_blocked = blocked
+        self.served_tokens = [
+            {"id": token_id, "sha256": hashlib.sha256(token.content.encode("utf-8")).hexdigest()}
+            for token_id, token in served.items()
+        ]
+        self._prepared = True
 
     def _wrap_passes(self, agent: Any) -> None:
         loop, close = agent._run_consolidation_loop, agent._report_pass
@@ -848,6 +983,8 @@ class DryRunKit:
                 "unmetered_calls": self.meter.unmetered_calls,
                 "aborted": self.meter.aborted,
             },
+            "served_tokens": self.served_tokens,
+            "overrides_blocked": self.overrides_blocked,
             "passes": self.passes,
             "reported_date_forms": {"per_pass": {k: dict(v) for k, v in forms.items()}, "total": dict(total)},
             "writes": self.rows,
@@ -858,7 +995,7 @@ class DryRunKit:
         }
 
     def write_report(self, path: Path = DEFAULT_REPORT) -> Path:
-        path = Path(path)
+        path = inside_memory_dir(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self.report(), indent=2, ensure_ascii=False, default=str), encoding="utf-8")
         return path
