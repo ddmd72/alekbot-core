@@ -69,7 +69,6 @@ async def test_the_router_quick_and_smart_agents_reach_the_coordinator_before_th
         assert in_window.agents[f"{prefix}_{OTHER_USER}"].coordinator is coordinator, prefix
 
 
-@pytest.mark.xfail(strict=True, reason="P9-D10, fixed in the next commit")
 async def test_every_routable_eager_agent_already_has_its_coordinator_prompt_store_and_quota_service(in_window):
     app = in_window.graph.app
     factory = app.agent_factory
