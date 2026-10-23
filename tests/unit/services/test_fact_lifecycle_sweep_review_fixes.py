@@ -260,7 +260,7 @@ async def test_a_conflict_is_not_a_failed_run():
 async def test_a_hung_sink_cannot_hold_the_original_error(monkeypatch, caplog):
     import asyncio
     world = JanitorWorld()
-    world.service.FAILURE_ALERT_TIMEOUT_S = 0.05
+    world.service.OPS_POST_TIMEOUT_S = 0.05
 
     async def hang():
         await asyncio.sleep(30)

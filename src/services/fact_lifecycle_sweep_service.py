@@ -30,7 +30,7 @@ def _utcnow() -> datetime:
 
 
 class FactLifecycleSweepService:
-    FAILURE_ALERT_TIMEOUT_S = 10.0     # cap of every ops post: a hung sink holds neither a run, nor its error, nor a cancellation
+    OPS_POST_TIMEOUT_S = 10.0     # cap of every ops post: a hung sink holds neither a run, nor its error, nor a cancellation
 
     def __init__(
         self,
@@ -211,9 +211,9 @@ class FactLifecycleSweepService:
         if self._alert_sink is None:
             return
         try:
-            await asyncio.wait_for(self._alert_sink.post(text), timeout=self.FAILURE_ALERT_TIMEOUT_S)
+            await asyncio.wait_for(self._alert_sink.post(text), timeout=self.OPS_POST_TIMEOUT_S)
         except asyncio.TimeoutError:
-            logger.warning(f"[FactLifecycle] an ops message was cut after {self.FAILURE_ALERT_TIMEOUT_S:g}s")
+            logger.warning(f"[FactLifecycle] an ops message was cut after {self.OPS_POST_TIMEOUT_S:g}s")
         except Exception as error:
             logger.warning(f"[FactLifecycle] an ops message was not delivered ({type(error).__name__})")
 
