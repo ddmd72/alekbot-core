@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import os
 import time
@@ -50,7 +51,8 @@ def _strip_nullable(schema: Any) -> Any:
     2020-12, which does not define it. This changes nothing else — no
     ``additionalProperties``/``required`` injection — so mutually-exclusive variant keys
     (e.g. ``rich_content.data``'s table/widget/file fields) stay optional and are not
-    forced present. Used to shape the ``respond`` tool's input_schema.
+    forced present. Historically shaped the ``respond`` tool's input_schema (removed 2026-07-02);
+    kept for its tests and history.
 
     Semantic note: Gemini with ``nullable=True`` lets the model return null for a field
     (e.g. ``"rich_content": null``); Claude without it returns an object (``{}``). Both
@@ -67,8 +69,9 @@ def _nullable_to_union(schema: Any) -> Any:
     """Recursively translate the OpenAPI/Gemini ``"nullable": True`` marker into a
     JSON-Schema 2020-12 nullable ``type`` union (e.g. ``"object"`` -> ``["object", "null"]``).
 
-    Used to shape the ``respond`` tool's ``input_schema`` for Claude. Anthropic tool
-    input_schema is JSON Schema 2020-12, which has no ``nullable`` keyword — so the marker
+    Shapes the ``output_config.format`` schema for Claude (it once shaped the removed ``respond``
+    tool's ``input_schema``; the history below is why the translation is not a plain drop). Anthropic
+    JSON Schema is 2020-12, which has no ``nullable`` keyword — so the marker
     must be *translated*, not merely dropped. Dropping it (the older ``_strip_nullable``
     behaviour) left ``rich_content`` declared as a **required, non-null object** while the
     OUTPUT_FORMAT prompt token instructs "null by default" — a contradiction that pushed the
@@ -150,6 +153,33 @@ def _drop_document_citations(claude_messages: List[Dict[str, Any]]) -> None:
                     doc.pop("citations", None)
 
 
+# The synthesized terminal tool for a Claude request with a response_schema AND client tools
+# (docs/04_solution_strategy/decisions/claude_deliver_response_string_tool.md). Anthropic wire shape
+# (post-_convert_tools). The answer schema is NOT in the parameters: one string, so there is no field
+# structure to leak into. No `strict`, no `cache_control`. Wording from the 2026-10-23 probes; changing a
+# word changes the cached tools prefix, so treat it as frozen.
+_DELIVER_RESPONSE_TOOL: Dict[str, Any] = {
+    "name": "deliver_response",
+    "description": (
+        "Deliver your reply to the owner. This is how you finish: call it when no further "
+        "specialist work is needed. Call it alone, without other tools."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "response": {
+                "type": "string",
+                "description": (
+                    "Your whole reply: the JSON object described in the response format, "
+                    "serialized as a string."
+                ),
+            },
+        },
+        "required": ["response"],
+    },
+}
+
+
 class ClaudeAdapter(LLMPort):
     """
     Adapter for Anthropic Claude API.
@@ -183,6 +213,11 @@ class ClaudeAdapter(LLMPort):
     # excludes `claude-haiku-4-5-…`. Haiku 5.5 400s on `thinking.type=enabled` and `between_tools`.
     # Upgraded 2026-05-30: ULTRA → opus-4-8 (same price as 4-7, better benchmarks).
     # See decisions/claude_ultra_tier_to_opus_4_8_plus_dr_gate_unification.md.
+    # Name of the synthesized terminal tool. Must match the `terminal_tool` value the agents pass to
+    # DelegationEngine — adapters cannot import agents, so the string is duplicated deliberately
+    # (same as GrokAdapter.TERMINAL_TOOL_NAME).
+    DELIVER_RESPONSE_TOOL_NAME = "deliver_response"
+
     _THINKING_MODELS = ("claude-sonnet", "claude-opus", "claude-haiku-5")
 
     # Models that support dynamic filtering web search (web_search_20260209 / web_fetch_20260209).
@@ -337,13 +372,35 @@ class ClaudeAdapter(LLMPort):
                     {"type": "web_fetch_20250910",  "name": "web_fetch"},
                 ] + claude_tools
 
-        # Structured output on Claude is NATIVE: response_schema is forwarded via
-        # output_config.format below (mirrors Gemini's response_json_schema) — NOT a synthesized
-        # `respond` tool. The tool path was removed 2026-07-02: on Sonnet 5 the model leaked its
-        # internal <parameter> tool-call serialization into the output (tool_choice auto/any and
-        # strict all leaked or corrupted the fields). output_config.format constrains the model to
-        # emit schema-valid JSON as TEXT — no tool-call format exists, so nothing can leak. Full
-        # story: docs/04_solution_strategy/decisions/claude_schema_respond_tool.md.
+        # Structured output on Claude has two paths:
+        #  - schema WITHOUT client tools: NATIVE. response_schema is forwarded via
+        #    output_config.format below (mirrors Gemini's response_json_schema). The July `respond`
+        #    tool that carried the schema as parameters was removed 2026-07-02: on Sonnet 5 the model
+        #    leaked its <parameter> tool-call serialization into the fields. Story:
+        #    decisions/claude_schema_respond_tool.md.
+        #  - schema WITH client tools (and no grounding): no output_config.format. A synthesized
+        #    `deliver_response(response: string)` is appended last and the answer comes back as that
+        #    string, unparsed (the shared parser handles it downstream). Grammar + thinking + tools
+        #    made Sonnet 5.5 loop on filler tool calls; the string tool removes the trigger. Story:
+        #    decisions/claude_deliver_response_string_tool.md.
+        # `tool_choice` stays `auto` on both: Sonnet/Opus 5.5 and Fable reject forced tool use.
+        deliver_path = (
+            isinstance(response_schema, dict) and bool(claude_tools) and not use_grounding
+        )
+        if deliver_path:
+            n_client_tools = len(claude_tools)
+            if any(t.get("name") == self.DELIVER_RESPONSE_TOOL_NAME for t in claude_tools):
+                logger.warning(
+                    "[ClaudeAdapter] event=claude_deliver_path a client tool is already named "
+                    "'%s' — not appending the synthesized one (model=%s)",
+                    self.DELIVER_RESPONSE_TOOL_NAME, model_name,
+                )
+            else:
+                claude_tools = claude_tools + [copy.deepcopy(_DELIVER_RESPONSE_TOOL)]
+            logger.info(
+                "[ClaudeAdapter] event=claude_deliver_path model=%s client_tools=%s",
+                model_name, n_client_tools,
+            )
 
         # Regular request
         # Claude API rejects tool_choice=null — must be omitted entirely when not forcing a tool
@@ -367,13 +424,15 @@ class ClaudeAdapter(LLMPort):
             force_tool_use=bool(force_tool_use and claude_tools),
         ))
 
-        # Native structured output on Claude — mirrors Gemini's response_json_schema. Forward
-        # response_schema via output_config.format so the model emits schema-valid JSON as TEXT.
-        # No `respond` tool → no tool-call format → the <parameter> leak cannot occur. The schema
-        # goes through the same grammar compiler as strict tool use, so shape it via _make_strict
-        # (additionalProperties:false, drop unsupported keywords); the anyOf rich_content keeps the
-        # grammar small enough to compile ("Schema is too complex" was the flat-bag shape).
-        if response_schema and isinstance(response_schema, dict):
+        # Native structured output on Claude (schema WITHOUT client tools) — mirrors Gemini's
+        # response_json_schema. Forward response_schema via output_config.format so the model emits
+        # schema-valid JSON as TEXT. No schema-bearing tool → no tool-call format → the <parameter>
+        # leak cannot occur. The schema goes through the same grammar compiler as strict tool use, so
+        # shape it via _make_strict (additionalProperties:false, drop unsupported keywords); the anyOf
+        # rich_content keeps the grammar small enough to compile ("Schema is too complex" was the
+        # flat-bag shape). Skipped on the deliver path: there the answer is the string argument of
+        # `deliver_response` and no grammar is sent (so PDF citations are kept too).
+        if response_schema and isinstance(response_schema, dict) and not deliver_path:
             _oc = create_kwargs.get("output_config") or {}
             _oc["format"] = {
                 "type": "json_schema",
@@ -391,8 +450,8 @@ class ClaudeAdapter(LLMPort):
         # Container ID is captured from message_delta events and passed on each continuation
         # so the API can reuse the same execution sandbox (fetch optimisation).
         if os.getenv("ANTHROPIC_LOG"):
-            # Debug capture (raw wire): the exact tools — including the synthesized `respond`
-            # input_schema — and tool_choice as they enter the Anthropic request. Gated by
+            # Debug capture (raw wire): the exact tools — including the synthesized
+            # `deliver_response` on the deliver path — and tool_choice as they enter the Anthropic request. Gated by
             # ANTHROPIC_LOG so it is inert unless the debug env is set. Must never raise.
             try:
                 logger.info(
@@ -480,16 +539,16 @@ class ClaudeAdapter(LLMPort):
                 )
                 create_kwargs["model"] = fallback_model
                 # Thinking, sampling and tool_choice are model-dependent — recompute them for
-                # the fallback (Sonnet 5 rejects 5.5's `between_tools`). output_config.format
-                # stays as built.
+                # the fallback (Sonnet 5 rejects 5.5's `between_tools`). output_config keeps
+                # whatever the primary built: format on the native path, none on the deliver path.
                 for key in ("thinking", "tool_choice"):
                     create_kwargs.pop(key, None)
                 fallback_params = self._model_dependent_params(
                     fallback_model, thinking_effort or None,
                     force_tool_use=bool(force_tool_use and claude_tools),
                 )
-                # Merge, not replace: keep the primary's output_config.format, take the
-                # fallback's (possibly clamped) effort.
+                # Merge, not replace: keep the primary's output_config (format on the native
+                # path, none on the deliver path), take the fallback's (possibly clamped) effort.
                 output_config = {k: v for k, v in (create_kwargs.get("output_config") or {}).items()
                                  if k != "effort"}
                 output_config.update(fallback_params.pop("output_config", {}))
@@ -499,7 +558,7 @@ class ClaudeAdapter(LLMPort):
                     create_kwargs.pop("output_config", None)
                 create_kwargs.update(fallback_params)
                 response = await _attempt(create_kwargs)
-            llm_response = self._parse_response(response)
+            llm_response = self._parse_response(response, deliver_path=deliver_path)
 
         return llm_response
 
@@ -1186,10 +1245,26 @@ class ClaudeAdapter(LLMPort):
             return None
         return cls._STOP_REASONS.get(raw, FinishReason.OTHER)
 
-    def _parse_response(self, response: types.Message) -> LLMResponse:
+    def _parse_deliver_call(self, content: Any, response: types.Message) -> Optional[ToolCall]:
+        """One ``deliver_response`` tool_use block -> ToolCall, args ``{"response": <as the model gave it>}``.
+
+        No parsing, no stripping: ``extract_structured_response`` parses the string downstream so the
+        text and deliver paths share one parser. Returns None for a truncated, unusable call."""
+        raw_input = content.input
+        has_response = isinstance(raw_input, dict) and "response" in raw_input
+        raw = raw_input["response"] if has_response else None
+        truncated = self._map_finish_reason(response) == FinishReason.MAX_TOKENS
+        usable = isinstance(raw, (str, dict)) and raw not in ("", {})
+        if truncated and not usable:
+            return None
+        args = {"response": raw} if has_response else (dict(raw_input) if isinstance(raw_input, dict) else {})
+        return ToolCall(name=content.name, args=args, thought_signature=content.id)
+
+    def _parse_response(self, response: types.Message, deliver_path: bool = False) -> LLMResponse:
         self._raise_on_refusal(response)
         text = ""
         tool_calls = []
+        truncated_deliver = False
 
         for content in response.content:
             if content.type == "thinking":
@@ -1199,11 +1274,31 @@ class ClaudeAdapter(LLMPort):
             elif content.type == "text":
                 text += content.text
             elif content.type == "tool_use":
+                if deliver_path and content.name == self.DELIVER_RESPONSE_TOOL_NAME:
+                    call = self._parse_deliver_call(content, response)
+                    if call is None:
+                        truncated_deliver = True
+                    else:
+                        tool_calls.append(call)
+                    continue
                 tool_calls.append(ToolCall(
                     name=content.name,
                     args=content.input,
                     thought_signature=content.id # Use ID as signature for Claude
                 ))
+
+        if truncated_deliver:
+            # A cut `deliver_response` (max_tokens, no usable `response`) means the answer never
+            # arrived. Drop EVERY tool call of this response, not only the deliver one: a kept
+            # sibling makes the engine record the turn with raw_content that still holds the dropped
+            # tool_use and no tool_result for it -> the next Claude request is a 400. Text is kept.
+            dropped = [b.name for b in response.content if getattr(b, "type", None) == "tool_use"]
+            logger.error(
+                "❌ [ClaudeAdapter] event=llm_response_parse source=deliver outcome=truncated "
+                "model=%s output_tokens=%s dropped_tool_calls=%s",
+                getattr(response, "model", None), response.usage.output_tokens, dropped,
+            )
+            tool_calls = []
 
         # TEMP tool-id tracing (2026-06-29): dump the raw SDK tool_use block ids so we
         # can see whether the id is present AT PARSE TIME (the SDK boundary) or lost later.
@@ -1215,8 +1310,8 @@ class ClaudeAdapter(LLMPort):
 
         if os.getenv("ANTHROPIC_LOG"):
             # Debug capture (raw wire): every response content block verbatim — block type,
-            # text/thinking body, and tool_use.input (the crammed single-key dict when a
-            # respond call leaks its <parameter> serialization). Gated + never raises.
+            # text/thinking body, and tool_use.input (incl. the `response` string of a
+            # `deliver_response` call). Gated + never raises.
             try:
                 _raw = [{
                     "type": getattr(b, "type", None),
