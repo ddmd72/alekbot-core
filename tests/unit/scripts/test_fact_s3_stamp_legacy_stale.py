@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pytest
 
 from scripts.migration import fact_s3_stamp_legacy_stale as stamp_script
-from tests.support.firestore_eval import EvalDb
+from tests.support.firestore_eval import EvalDb, EvalDocRef
 
 COL = "eval_domain_facts"
 NOW = datetime(2026, 10, 25, 9, 30, tzinfo=timezone.utc)
@@ -155,3 +155,61 @@ async def test_the_stamp_keeps_only_the_newest_twenty_events(tmp_path):
 
     stored = fake.collection(COL).docs["busy"]["lifecycle_events"]
     assert len(stored) == 20 and stored[0]["reason"] == "r1" and stored[-1]["actor"] == "migration"
+
+
+async def test_a_general_write_error_counts_as_failed_and_writes_nothing(db, tmp_path, monkeypatch, capsys):
+    real_update = EvalDocRef.update
+
+    async def update(self, data, option=None):
+        if self.id == "stale-legacy-1":
+            raise RuntimeError(SECRET_TEXT)
+        return await real_update(self, data, option)
+
+    monkeypatch.setattr(EvalDocRef, "update", update)
+    docs_before, versions_before = _snapshot(db)
+
+    counts = await stamp_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+
+    docs, versions = _snapshot(db)
+    assert counts["failed"] == 1 and counts["stamped"] == 1 and counts["skipped_changed"] == 0
+    assert docs["stale-legacy-1"] == docs_before["stale-legacy-1"]
+    assert versions["stale-legacy-1"] == versions_before["stale-legacy-1"]
+    assert docs["stale-legacy-2"]["stale_since"] == NOW
+    report = json.loads((tmp_path / "fact_s3_legacy_stale_2026-10-25_applied.json").read_text(encoding="utf-8"))
+    assert report["outcomes"] == {"stale-legacy-1": "failed", "stale-legacy-2": "stamped"}
+    out = capsys.readouterr().out
+    assert "failed: 1" in out and "RuntimeError" in out and SECRET_TEXT not in out
+
+
+def _main_with_fake_client(monkeypatch, tmp_path, argv):
+    """`main()` over the fake: the real facts collection name, the report folder in tmp_path, no live client."""
+    import scripts._firestore as client_helper
+    from src.config.environment import EnvironmentConfig
+
+    collection = EnvironmentConfig().domain_facts_collection
+    fake = EvalDb()
+    for name in (collection, "some_other_collection"):
+        col = fake.collection(name)
+        col.docs["stale-1"] = _fact()
+        col.versions["stale-1"] = 1
+    monkeypatch.setattr(client_helper, "async_client", lambda: fake)
+    monkeypatch.setattr(stamp_script, "MEMORY_DIR", tmp_path)
+    assert stamp_script.main(argv) == 0
+    return fake, collection
+
+
+def test_main_is_a_dry_run_by_default_on_the_facts_collection(monkeypatch, tmp_path):
+    fake, collection = _main_with_fake_client(monkeypatch, tmp_path, [])
+
+    assert "stale_since" not in fake.collection(collection).docs["stale-1"]
+    report = next(tmp_path.glob("fact_s3_legacy_stale_*.json"))
+    assert [f["id"] for f in json.loads(report.read_text(encoding="utf-8"))["facts"]] == ["stale-1"]
+    assert not list(tmp_path.glob("*_applied.json"))
+
+
+def test_main_apply_stamps_the_facts_collection_only(monkeypatch, tmp_path):
+    fake, collection = _main_with_fake_client(monkeypatch, tmp_path, ["--apply"])
+
+    assert "stale_since" in fake.collection(collection).docs["stale-1"]
+    assert "stale_since" not in fake.collection("some_other_collection").docs["stale-1"]
+    assert list(tmp_path.glob("*_applied.json"))
