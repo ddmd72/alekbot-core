@@ -200,7 +200,7 @@ What the build settled beyond the requirements above.
 - `claude_deliver_path` volume (how many Claude requests take the new path).
 - Counts of `[LlmResponseParse] source=deliver outcome=first_object` and `outcome=unparseable`.
 - `empty_answer` ERRORs and the Slack fallback alert.
-- `background_empty_answer` ERROR lines and their ops alert (`task_type=execute_reminder|daily_email_review|deep_research_notice|drive_reconnect_notice`); there is no retry any more, so a repeating one means a job that always ends empty.
+- `background_empty_answer` ERROR lines and their ops alert (`path=execute_reminder|daily_email_review|deep_research_notice|drive_reconnect_notice`); there is no retry any more, so a repeating one means a job that always ends empty.
 - `terminal_sync_sibling` and `terminal_text_used`.
 - Output-token delta (the answer is JSON escaped inside a JSON string).
 - Answers now sit in BigQuery `prompt_content.tool_calls`, not `response_text`.

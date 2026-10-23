@@ -549,15 +549,15 @@ class WorkerHandler:
         )
 
     async def _empty_answer_final(
-        self, task_type: str, user_id: str, note_id: Optional[str] = None,
+        self, path: str, user_id: str, note_id: Optional[str] = None,
     ) -> None:
         """A background turn ended with no answer: final, never retried (one ERROR line + one ops alert).
 
         No content in either; the caller then takes its success path and answers 200."""
         logger.error(
-            "[Worker] background_empty_answer task_type=%s note=%s user=%s",
-            task_type, note_id, user_id[:8],
-            extra={"event": "background_empty_answer", "task_type": task_type, "note_id": note_id,
+            "[Worker] background_empty_answer path=%s note=%s user=%s",
+            path, note_id, user_id[:8],
+            extra={"event": "background_empty_answer", "path": path, "note_id": note_id,
                    "user_id": user_id[:8]},
         )
         if self._billing_webhook is None:
@@ -565,7 +565,7 @@ class WorkerHandler:
         try:
             await self._billing_webhook.post(
                 f"⚠️ Background turn ended with an empty answer (final, not retried). "
-                f"task_type={task_type} user={user_id[:8]}" + (f" note={note_id}" if note_id else "")
+                f"path={path} user={user_id[:8]}" + (f" note={note_id}" if note_id else "")
             )
         except Exception as exc:
             logger.warning("[Worker] background_empty_answer alert failed: %s", exc)
