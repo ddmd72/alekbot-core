@@ -7,6 +7,7 @@ happened (a recorded write conflict, embedder call counts, the interfering write
 """
 import asyncio
 import copy
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -15,6 +16,7 @@ from src.adapters.firestore_repo import FirestoreFactRepository
 from src.domain.entities import FactEntity
 from src.domain.exceptions import FactWriteConflict
 from src.domain.fact_embedding import fact_embedding_texts
+from src.domain.fact_update_plan import FactUpdatePlan
 from src.domain.stored_fact import StoredFact
 from tests.support.fact_kit import ACC, OTHER, USER
 from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, embed, make_env_config
@@ -81,10 +83,27 @@ class FailingEmbedder:
         raise RuntimeError("embedding service down")
 
 
-class WriteOutcomes:
-    """Records how each call of a repository write method ended ("ok" or "conflict")."""
+class GatedEmbedder:
+    """Delegates to the hash embedder; on each call sets `signal` (if any), then waits for `gate` (if any; 5 s guard).
 
-    def __init__(self, repo, name):
+    Orders a gathered race by events instead of sleep margins (reviewer, F1 follow-up)."""
+
+    def __init__(self, inner, gate=None, signal=None):
+        self._inner, self._gate, self._signal, self.calls = inner, gate, signal, 0
+
+    async def get_embeddings_batch(self, texts, task_type="RETRIEVAL_DOCUMENT"):
+        self.calls += 1
+        if self._signal is not None:
+            self._signal.set()
+        if self._gate is not None:
+            await asyncio.wait_for(self._gate.wait(), timeout=5)
+        return await self._inner.get_embeddings_batch(texts, task_type)
+
+
+class WriteOutcomes:
+    """Records how each call of a repository write method ended ("ok" or "conflict"); sets `on_ok` after a commit."""
+
+    def __init__(self, repo, name, on_ok=None):
         original = getattr(repo, name)
         self.outcomes = []
 
@@ -95,6 +114,8 @@ class WriteOutcomes:
                 self.outcomes.append("conflict")
                 raise
             self.outcomes.append("ok")
+            if on_ok is not None:
+                on_ok.set()
             return result
 
         setattr(repo, name, recording)
@@ -205,6 +226,27 @@ async def test_second_update_on_a_superseded_id_lands_on_the_current_version(sto
     in_place = await store.adapter.update_fact(fid, {"state": "STALE"}, ACC)
     assert in_place["fact_id"] == v3["fact_id"] and in_place["version"] == 3
     assert store.docs[v3["fact_id"]]["state"] == "stale" and len(store.docs) == 3
+
+
+@pytest.mark.parametrize("updates", [{"content": "mother is Valentyna Ivanivna"}, {"state": "STALE"}])
+async def test_an_update_forwarded_to_the_current_version_says_so(store, updates):
+    fid = await create(store)
+    v2 = (await store.adapter.update_fact(fid, {"content": "mother is Mariia"}, ACC))["fact_id"]
+
+    res = await store.adapter.update_fact(fid, updates, ACC)
+
+    assert set(res) == {"fact_id", "status", "version", "message", "resolved_from"}
+    assert res["status"] == "updated" and res["resolved_from"] == fid and res["fact_id"] != fid
+    assert v2 in res["message"] and "current version" in res["message"]
+    json.dumps(res)
+
+
+async def test_an_update_on_the_current_id_carries_no_resolved_from(store):
+    fid = await create(store)
+
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia"}, ACC)
+
+    assert set(res) == {"fact_id", "status", "version", "message"} and res["message"] == "Fact updated successfully"
 
 
 async def test_update_on_a_merged_source_is_a_failed_result_naming_the_merged_id(store):
@@ -364,10 +406,14 @@ async def test_in_place_write_conflict_reresolves_once_too(store):
 
 
 async def test_gathered_content_and_archive_on_one_fact_archive_wins_content_fails_one_is_current_per_lineage(store):
+    # Reviewer edit (F1 follow-up): the race was a 20 ms sleep in the content call's embedder against the archive's path.
+    # Interleaving source now: the content call's embedder waits on an event set by the archive's in-place commit.
     fid = await create(store)
-    embedder = SlowEmbedder(store.embedder, 0.02)       # interleaving source: slow embedder on the adapter
+    archived = asyncio.Event()
+    embedder = GatedEmbedder(store.embedder, gate=archived)
     store.adapter._embedding = embedder
     writes = WriteOutcomes(store.repo, "write_superseding")
+    in_place = WriteOutcomes(store.repo, "update_fact_fields", on_ok=archived)
 
     content, archive = await asyncio.gather(
         store.adapter.update_fact(fid, {"content": "mother is Mariia"}, ACC),
@@ -377,15 +423,16 @@ async def test_gathered_content_and_archive_on_one_fact_archive_wins_content_fai
     assert archive["status"] == "updated" and archive["fact_id"] == fid
     assert content["status"] == "failed" and "is archived" in content["message"]
     assert embedder.calls == 1 and writes.outcomes == ["conflict"]    # the content call embedded, then lost the race
+    assert in_place.outcomes == ["ok"]                                  # the archive committed first, once
     assert list(store.docs) == [fid] and store.docs[fid]["state"] == "archived"
     assert store.docs[fid]["text"] == "mother is Maria"
     lineage = store.docs[fid]["lineage_id"]
     assert [d for d in store.docs.values() if d["lineage_id"] == lineage and d["is_current"]] == [store.docs[fid]]
 
 
-async def test_gathered_content_updates_both_apply_in_commit_order_and_one_is_current(store):
+async def test_gathered_content_updates_the_later_one_is_refused_when_a_version_landed_between_attempts(store):
     fid = await create(store)
-    embedder = SlowEmbedder(store.embedder, 0.02)
+    embedder = SlowEmbedder(store.embedder, 0.02)       # interleaving source: slow embedder on the adapter
     store.adapter._embedding = embedder
     writes = WriteOutcomes(store.repo, "write_superseding")
 
@@ -395,10 +442,41 @@ async def test_gathered_content_updates_both_apply_in_commit_order_and_one_is_cu
     )
 
     assert (first["status"], first["version"]) == ("updated", 2)
-    assert (second["status"], second["version"]) == ("updated", 3)
-    assert sorted(writes.outcomes) == ["conflict", "ok", "ok"] and embedder.calls == 2
-    assert store.docs[second["fact_id"]]["replaces_fact_id"] == first["fact_id"]
-    assert [d["id"] for d in currents(store, store.docs[fid]["lineage_id"])] == [second["fact_id"]]
+    assert second == {"fact_id": fid, "status": "failed", "message": f"fact {fid} changed concurrently; search again"}
+    assert writes.outcomes == ["ok", "conflict"] and embedder.calls == 2    # both embedded, the second lost the race
+    assert sorted(store.docs) == sorted([fid, first["fact_id"]])
+    assert store.docs[first["fact_id"]]["text"] == "mother is Mariya"
+    assert [d["id"] for d in currents(store, store.docs[fid]["lineage_id"])] == [first["fact_id"]]
+
+
+async def test_gathered_tags_updates_the_later_one_is_refused_too(store):
+    fid = await create(store)
+    store.adapter._embedding = SlowEmbedder(store.embedder, 0.02)
+    writes = WriteOutcomes(store.repo, "write_superseding")    # reviewer edit (F1 follow-up): the S-2 branch, not a 2nd conflict
+
+    first, second = await asyncio.gather(
+        store.adapter.update_fact(fid, {"tags": ["relatives"]}, ACC),
+        store.adapter.update_fact(fid, {"tags": ["kin"]}, ACC),
+    )
+
+    assert first["status"] == "updated" and second["status"] == "failed" and "changed concurrently" in second["message"]
+    assert store.docs[first["fact_id"]]["tags"] == ["relatives", "consolidated"] and len(store.docs) == 2
+    assert writes.outcomes == ["ok", "conflict"]
+
+
+async def test_a_metadata_update_still_reresolves_onto_a_version_that_landed_between_attempts(store):
+    fid = await create(store)
+    store.adapter._embedding = SlowEmbedder(store.embedder, 0.02)
+
+    content, metadata = await asyncio.gather(
+        store.adapter.update_fact(fid, {"content": "mother is Mariia"}, ACC),
+        store.adapter.update_fact(fid, {"metadata": {"city": "Springfield"}}, ACC),
+    )
+
+    assert content["status"] == "updated" and metadata["status"] == "updated" and metadata["version"] == 3
+    head = store.docs[metadata["fact_id"]]
+    assert head["text"] == "mother is Mariya" and head["metadata"] == {"name": "Maria", "city": "Springfield"}
+    assert head["replaces_fact_id"] == content["fact_id"]
 
 
 class _EveryTokenEqual:
@@ -621,13 +699,18 @@ async def test_merge_second_conflict_is_a_failed_result_and_writes_nothing(store
 
 
 async def test_merge_fails_when_a_source_moved_forward_between_attempts(store):
+    # Reviewer edit (F1 follow-up): the race was two sleep margins (10 ms vs 100 ms). Interleaving source now: gated
+    # embedders on both sides. The update waits until the merge has resolved its sources (the merge's embedder signals);
+    # the merge's embedder waits until the update's version has committed. So: merge reads a, update commits a2, merge
+    # writes against a's old token and conflicts, re-resolves to [a2, b] and refuses.
     a = await create(store, "likes tea")
     b = await create(store, "likes green tea")
-    update_embedder = SlowEmbedder(store.embedder, 0.01)     # interleaving source: slow embedders on both sides,
-    merge_embedder = SlowEmbedder(store.embedder, 0.1)       # the update is faster and commits first
+    merge_resolved, update_committed = asyncio.Event(), asyncio.Event()
+    update_embedder = GatedEmbedder(store.embedder, gate=merge_resolved)
+    merge_embedder = GatedEmbedder(store.embedder, gate=update_committed, signal=merge_resolved)
     store.adapter._embedding = update_embedder
     store.write._embedding = merge_embedder
-    writes = WriteOutcomes(store.repo, "write_superseding")
+    writes = WriteOutcomes(store.repo, "write_superseding", on_ok=update_committed)
 
     update, merge = await asyncio.gather(
         store.adapter.update_fact(a, {"content": "likes black tea"}, ACC),
@@ -662,3 +745,10 @@ async def test_merged_fact_entity_is_built_from_the_given_attributes(store):
                         if k in FactEntity.model_fields and k not in VECTORS})
     assert (new.text, new.tags, new.metadata, new.version) == ("likes tea daily", ["drinks", "consolidated"], {"k": "v"}, 1)
     assert new.lineage_id != store.docs[a]["lineage_id"] and new.created_by_user_id == USER
+
+
+async def test_completing_a_plan_without_a_version_document_raises(store):
+    plan = FactUpdatePlan("in_place", {"last_updated": STALE_DATE}, None, False, None)
+
+    with pytest.raises(RuntimeError, match="in_place plan carries no version document"):
+        await store.adapter._complete_version(plan, None)

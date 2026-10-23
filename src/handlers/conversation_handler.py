@@ -1479,8 +1479,12 @@ class ConversationHandler(ConversationHandlerPort):
             return f"{queued}; queued behind another memory run in progress, it continues in the background."
         if run.processed:
             outcome = f"{queued}; {run.processed} batch(es) consolidated now."
-        else:
+        elif not run.failed:
             outcome = f"{queued}; no batch was consolidated in this request."
+        else:
+            outcome = f"{queued}."
+        if run.failed:
+            outcome += " A batch failed and stays queued; it will be retried later."
         if run.has_more:
             outcome += (" More batches are waiting and no background queue is running here, so send $consolidate "
                         "again to continue." if run.unattended else " The rest continues in the background.")

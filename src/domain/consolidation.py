@@ -4,6 +4,9 @@ from pydantic import BaseModel, Field
 import time
 import uuid
 
+# Paid attempts per round: a batch whose runs fail (or are lost as zombies) this many times is FAILED.
+MAX_BATCH_ATTEMPTS = 3
+
 # A FAILED batch is revived by the hourly sweep at most this many times in its whole life
 # (3 attempts per round, so 4 x 3 = 12 paid attempts at most). Never reset.
 MAX_FAILED_REVIVALS = 3

@@ -67,7 +67,8 @@ class ConsolidationQueue(ABC):
             in its life (`revivals`, never reset); past that it stays FAILED with its messages.
             The per-task path must not revive FAILED: it re-enqueues itself back to back.
 
-        Resets `attempts` to 0 and clears `last_error`; `revivals` is kept (+1 for a FAILED revival).
+        A zombie reset counts the lost run (`attempts` + 1) and fails the batch at MAX_BATCH_ATTEMPTS; a FAILED revival resets
+        `attempts` to 0. Clears `last_error`; `revivals` is kept (+1 for a FAILED revival).
         Returns count of batches reset."""
         pass
 

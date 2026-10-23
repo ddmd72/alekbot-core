@@ -255,6 +255,7 @@ class FactManagementAdapter(FactManagementPort):
         logger.debug(f"🔄 [FactManagement] Updating fact {fact_id[:8]}...")
         parsed: Optional[ParsedFactUpdate] = None
         embedded: Optional[Tuple[List[str], List[List[float]]]] = None
+        first_resolved_id: Optional[str] = None
         attempt = 0
         while True:
             attempt += 1
@@ -264,6 +265,16 @@ class FactManagementAdapter(FactManagementPort):
                 return {"fact_id": fact_id, "status": "not_found", "message": "Fact not found"}
             if parsed is None:
                 parsed = parse_fact_update(updates)
+            if first_resolved_id is None:
+                first_resolved_id = stored.fact.id
+            elif stored.fact.id != first_resolved_id and (parsed.content is not None or parsed.tags is not None):
+                # content and tags replace whole: written over a version the model never saw, they would drop its change
+                logger.warning(f"⚠️  [FactManagement] Fact {fact_id[:8]} moved forward between attempts; update refused")
+                return {
+                    "fact_id": fact_id,
+                    "status": "failed",
+                    "message": f"fact {fact_id} changed concurrently; search again",
+                }
             update = await self._with_resolved_successor(parsed, stored, account_id)
             now = datetime.now(timezone.utc)
             plan = plan_fact_update(stored.fact, update, now)
@@ -283,12 +294,19 @@ class FactManagementAdapter(FactManagementPort):
                     raise
                 continue
             logger.info(f"✅ [FactManagement] Updated fact {written.id[:8]} to version {written.version}")
-            return {
+            result = {
                 "fact_id": written.id,
                 "status": "updated",
                 "version": written.version,
                 "message": "Fact updated successfully",
             }
+            if stored.fact.id != fact_id:
+                result["resolved_from"] = fact_id
+                result["message"] = (
+                    f"Fact updated successfully; fact {fact_id} was replaced earlier, "
+                    f"so the update was applied to its current version {stored.fact.id}"
+                )
+            return result
 
     async def _with_resolved_successor(
         self, update: ParsedFactUpdate, stored: StoredFact, account_id: str
@@ -310,7 +328,8 @@ class FactManagementAdapter(FactManagementPort):
         self, plan: FactUpdatePlan, embedded: Optional[Tuple[List[str], List[List[float]]]]
     ) -> Tuple[FactEntity, Optional[Tuple[List[str], List[List[float]]]]]:
         """Fill the version's vectors; an embedding already made for the same texts is reused."""
-        assert plan.version_fact is not None
+        if plan.version_fact is None:
+            raise RuntimeError(f"a {plan.kind} plan carries no version document")
         if not plan.vectors_stale:
             return plan.version_fact, embedded
         texts = plan.embedding_texts or []

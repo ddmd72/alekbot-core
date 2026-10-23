@@ -216,25 +216,63 @@ async def test_concurrent_content_and_state_updates_of_one_fact_archive_wins_and
 
 
 async def test_merge_concurrent_with_update_of_a_source_leaves_a_consistent_superseded_doc(store):
-    # Reviewer edit (facts S2, plan N2): the lock assertion is gone (D9). Interleaving source: the slow embedder on the
-    # adapter only. The merge embeds through the write service and commits first; the update conflicts, re-resolves into
-    # the merged fact's lineage and fails naming it.
+    # Reviewer edit (facts S2, plan N2): the lock assertion is gone (D9). The merge commits first; the update conflicts,
+    # re-resolves into the merged fact's lineage and fails naming it.
+    # Reviewer edit 2 (F1 follow-up): the interleaving was a timing race (a 20 ms sleep in the update's embedder against
+    # the merge's whole path, which yields inside the fake) and flipped under coverage. Interleaving source now: the
+    # update's embedder waits on an event that only the merge's commit sets; the commit order is recorded and asserted.
     import asyncio
     a = await _create(store, "likes tea")
     b = await _create(store, "likes green tea")
-    emb = _slow(store)
+    merge_committed = asyncio.Event()
+    emb = _GatedEmbedder(store.embedder, merge_committed)
+    store.adapter._embedding = emb
+    commits = _record_commits(store.repo, on_ok=lambda replaced: len(replaced) == 2 and merge_committed.set())
     upd, merged = await asyncio.gather(
         store.adapter.update_fact(a, {"content": "likes black tea"}, ACC),
         store.adapter.merge_facts([a, b], "likes tea daily", _meta()),
     )
+    assert commits == [("ok", [a, b]), ("conflict", [a])]  # the merge committed, then the update's write lost
     assert merged["status"] == "merged" and merged["old_fact_ids"] == [a, b]
     assert upd["status"] == "failed" and upd["message"] == f"fact {a} was merged into {merged['new_fact_id']}; search again"
-    assert emb.calls == 1  # the update embedded before it lost the race
+    assert emb.calls == 1  # the update embedded once, before it lost the race
     for fid in (a, b):
         d = store.docs[fid]
         assert d["state"] == "superseded" and d["is_current"] is False and d["valid_to"] is not None
         assert d["superseded_by"] == merged["new_fact_id"]
     assert len(store.docs) == 3 and store.docs[a]["text"] == "likes tea"
+
+
+class _GatedEmbedder:
+    """Delegates to the hash embedder once `gate` is set (5 s guard against a hang); counts calls."""
+
+    def __init__(self, inner, gate) -> None:
+        self._inner, self._gate, self.calls = inner, gate, 0
+
+    async def get_embeddings_batch(self, texts, task_type="RETRIEVAL_DOCUMENT"):
+        import asyncio
+        self.calls += 1
+        await asyncio.wait_for(self._gate.wait(), timeout=5)
+        return await self._inner.get_embeddings_batch(texts, task_type)
+
+
+def _record_commits(repo, on_ok):
+    """Wraps `write_superseding`: records ("ok" | "conflict", replaced ids) per call, calls `on_ok(replaced)` after a commit."""
+    from src.domain.exceptions import FactWriteConflict
+    original, commits = repo.write_superseding, []
+
+    async def recording(new_fact, replaced, now):
+        ids = [stored.fact.id for stored in replaced]
+        try:
+            await original(new_fact, replaced, now)
+        except FactWriteConflict:
+            commits.append(("conflict", ids))
+            raise
+        commits.append(("ok", ids))
+        on_ok(replaced)
+
+    repo.write_superseding = recording
+    return commits
 
 
 async def test_reapplying_archived_is_refused_and_keeps_the_original_valid_to(store):

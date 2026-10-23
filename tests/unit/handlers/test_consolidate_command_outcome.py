@@ -122,3 +122,17 @@ async def test_a_has_more_run_without_a_queue_does_not_promise_the_background():
     alert = notifications.notify.await_args.kwargs["system_alert"]
     assert "1 batch(es) consolidated now" in alert and "send $consolidate again to continue" in alert
     assert "continues in the background" not in alert
+
+
+async def test_a_failed_batch_is_worded_as_a_failure_not_as_nothing_to_do():
+    alert = await _alert(ConsolidationRun(failed=1))
+
+    assert "A batch failed and stays queued; it will be retried later" in alert
+    assert "no batch was consolidated" not in alert and "consolidated now" not in alert
+
+
+async def test_a_run_that_consolidated_one_batch_and_then_failed_says_both():
+    alert = await _alert(ConsolidationRun(processed=1, failed=1))
+
+    assert "1 batch(es) consolidated now" in alert
+    assert "A batch failed and stays queued; it will be retried later" in alert
