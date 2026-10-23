@@ -662,12 +662,16 @@ async def test_no_cache_config_single_block_no_cache_control():
 # leaked Claude's internal <parameter> tool-call serialization into the output. The schema is
 # shaped for the grammar compiler (_nullable_to_union → _make_strict) before forwarding.
 # See docs/04_solution_strategy/decisions/claude_schema_respond_tool.md.
+# Since 2026-10-23 the native path applies to a schema WITHOUT client tools only; a schema WITH
+# client tools takes the string `deliver_response` tool instead (no format) — covered in
+# test_claude_adapter_deliver_response_wire.py. See
+# docs/04_solution_strategy/decisions/claude_deliver_response_string_tool.md.
 
 @pytest.mark.asyncio
 async def test_response_schema_sets_output_config_format():
-    """When response_schema is present, the adapter forwards it via output_config.format
-    (native structured output) and injects NO `respond` tool. The model's JSON text is
-    returned as-is."""
+    """When response_schema is present WITHOUT client tools, the adapter forwards it via
+    output_config.format (native structured output) and injects NO synthesized tool (no
+    `respond`, no `deliver_response`). The model's JSON text is returned as-is."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
     cm = _make_claude_cm(_make_sdk_response('{"answer": "42"}'))
@@ -683,7 +687,6 @@ async def test_response_schema_sets_output_config_format():
             model_name="claude-sonnet-4-6",
             system_instruction="test",
             messages=_MESSAGES,
-            tools=_TOOLS,
             response_schema={"type": "object", "properties": {"answer": {"type": "string"}}},
         )
     )
@@ -698,8 +701,8 @@ async def test_response_schema_sets_output_config_format():
             "additionalProperties": False,
         },
     }
-    # NO respond tool injected
-    assert all(t.get("name") != "respond" for t in captured.get("tools", []))
+    # NO synthesized tool injected (neither `respond` nor `deliver_response`)
+    assert captured["tools"] == []
     # model's JSON text returned unchanged
     assert result.text == '{"answer": "42"}'
     assert result.tool_calls == []
@@ -707,9 +710,10 @@ async def test_response_schema_sets_output_config_format():
 
 @pytest.mark.asyncio
 async def test_output_config_format_schema_is_strict_shaped():
-    """The schema forwarded via output_config.format is grammar-compiler-legal: every object
-    gets additionalProperties:false, and optional properties stay optional (no `required`
-    injection — variant keys like rich_content.data must remain optional)."""
+    """The schema forwarded via output_config.format (schema WITHOUT client tools) is
+    grammar-compiler-legal: every object gets additionalProperties:false, and optional
+    properties stay optional (no `required` injection — variant keys like rich_content.data
+    must remain optional)."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
     cm = _make_claude_cm(_make_sdk_response("{}"))
@@ -725,7 +729,6 @@ async def test_output_config_format_schema_is_strict_shaped():
             model_name="claude-sonnet-4-6",
             system_instruction="test",
             messages=_MESSAGES,
-            tools=_TOOLS,
             response_schema={
                 "type": "object",
                 "properties": {
@@ -748,7 +751,8 @@ async def test_output_config_format_schema_is_strict_shaped():
 @pytest.mark.asyncio
 async def test_output_config_format_schema_converts_nullable_to_union():
     """'nullable: True' is translated to a JSON-Schema ["<type>", "null"] union at every level
-    before it reaches output_config.format (Anthropic's grammar has no 'nullable' keyword)."""
+    before it reaches output_config.format (schema WITHOUT client tools; Anthropic's grammar
+    has no 'nullable' keyword)."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
     cm = _make_claude_cm(_make_sdk_response("{}"))
@@ -764,7 +768,6 @@ async def test_output_config_format_schema_converts_nullable_to_union():
             model_name="claude-sonnet-4-6",
             system_instruction="test",
             messages=_MESSAGES,
-            tools=_TOOLS,
             response_schema={
                 "type": "object",
                 "properties": {
@@ -785,8 +788,9 @@ async def test_output_config_format_schema_converts_nullable_to_union():
 
 @pytest.mark.asyncio
 async def test_response_schema_with_thinking_keeps_effort_and_format():
-    """With both thinking and response_schema active, output_config carries BOTH effort and
-    format, and thinking is set."""
+    """With both thinking and response_schema active (schema WITHOUT client tools),
+    output_config carries BOTH effort and format, thinking is set, and no synthesized tool
+    is injected."""
     adapter = ClaudeAdapter(api_key="test-key")
     captured = {}
     cm = _make_claude_cm(_make_sdk_response("{}"))
@@ -802,7 +806,6 @@ async def test_response_schema_with_thinking_keeps_effort_and_format():
             model_name="claude-sonnet-4-6",
             system_instruction="test",
             messages=_MESSAGES,
-            tools=_TOOLS,
             thinking="medium",
             response_schema={"type": "object", "properties": {}},
         )
@@ -812,7 +815,7 @@ async def test_response_schema_with_thinking_keeps_effort_and_format():
     assert output_config.get("effort") == "medium"
     assert output_config.get("format", {}).get("type") == "json_schema"
     assert captured.get("thinking") == {"type": "adaptive"}
-    assert all(t.get("name") != "respond" for t in captured.get("tools", []))
+    assert captured["tools"] == []
 
 
 @pytest.mark.asyncio
