@@ -1,6 +1,7 @@
 """tests/support/semantic_mutants, the `wiring` operator set: wire-drop and call-skip, their selection and the root module `main`."""
 
 import ast
+import json
 import os
 import subprocess
 import sys
@@ -111,6 +112,86 @@ class TestWireDrop:
             "def f(a):\n    return Outer(inner=Inner(x=None))",
         ]
 
+    def test_a_leading_underscore_does_not_hide_a_wiring_call(self):
+        source = "def f(a, b):\n    x = _UserContext(profile=a)\n    y = _build_x(a)\n    z = _plain(b)\n    return x, y, z\n"
+        assert all_mutated(source, "wire-drop") == [
+            "def f(a, b):\n    x = _UserContext(profile=None)\n    y = _build_x(a)\n    z = _plain(b)\n    return (x, y, z)",
+            "def f(a, b):\n    x = _UserContext(profile=a)\n    y = _build_x(None)\n    z = _plain(b)\n    return (x, y, z)",
+        ]
+
+    def test_a_collection_of_constants_is_a_constant_and_an_empty_one_too(self):
+        source = (
+            "def f():\n"
+            "    return Foo(caps=['a', 'b'], t=('x', 1), s={'a'}, d={'k': 1, 'n': ['z']}, e=[], f={}, g=(), n=[['a'], ()])\n"
+        )
+        assert wiring(source, "wire-drop") == []
+        assert wiring("X = {'a': [], 'b': {}, 'c': (1, 2)}\n", "wire-drop") == []
+
+    def test_a_collection_with_one_non_constant_element_is_still_mutated(self):
+        source = "def f(a):\n    return Foo(caps=['x', a], d={'k': a}, e={**a})\n"
+        assert all_mutated(source, "wire-drop") == [
+            "def f(a):\n    return Foo(caps=None, d={'k': a}, e={**a})",
+            "def f(a):\n    return Foo(caps=['x', a], d=None, e={**a})",
+            "def f(a):\n    return Foo(caps=['x', a], d={'k': a}, e=None)",
+            "def f(a):\n    return Foo(caps=['x', a], d={'k': None}, e={**a})",
+        ]
+
+    def test_an_attribute_assignment_on_another_object_becomes_none(self):
+        source = (
+            "def f(agent, adapter, coordinator, fn):\n"
+            "    agent.coordinator = coordinator\n"
+            "    agent._quota_service = coordinator.quota\n"
+            "    adapter.start = fn\n"
+            "    adapter.a.b = fn\n"
+        )
+        assert all_mutated(source, "wire-drop") == [
+            "def f(agent, adapter, coordinator, fn):\n    agent.coordinator = None\n    agent._quota_service = coordinator.quota\n    adapter.start = fn\n    adapter.a.b = fn",
+            "def f(agent, adapter, coordinator, fn):\n    agent.coordinator = coordinator\n    agent._quota_service = None\n    adapter.start = fn\n    adapter.a.b = fn",
+            "def f(agent, adapter, coordinator, fn):\n    agent.coordinator = coordinator\n    agent._quota_service = coordinator.quota\n    adapter.start = None\n    adapter.a.b = fn",
+            "def f(agent, adapter, coordinator, fn):\n    agent.coordinator = coordinator\n    agent._quota_service = coordinator.quota\n    adapter.start = fn\n    adapter.a.b = None",
+        ]
+
+    def test_other_assignments_are_left_alone(self):
+        source = (
+            "class C:\n"
+            "    def f(self, cls, agent, d, x):\n"
+            "        self.x = x\n"
+            "        self.a.b = x\n"
+            "        cls.y = x\n"
+            "        agent.n = 1\n"
+            "        agent.caps = ['a']\n"
+            "        d['k'] = x\n"
+            "        agent.p = agent.q = x\n"
+            "        local = x\n"
+            "        agent.z: int = x\n"
+        )
+        assert wiring(source, "wire-drop") == []
+
+    def test_a_task_spawn_and_an_exception_message_are_not_wiring(self):
+        source = (
+            "async def f(coro, uid):\n"
+            "    asyncio.create_task(coro())\n"
+            "    create_task(coro)\n"
+            "    raise ValueError(f'User {uid} not found')\n"
+            "    raise _CustomException(uid)\n"
+            "    raise PermissionError(uid)\n"
+        )
+        assert wiring(source, "wire-drop") == []
+        assert len(wiring("def f(a):\n    return create_thing(a), ErrorHandler(a), ExceptionLog(a)\n", "wire-drop")) == 3
+
+    def test_a_conditional_expression_argument_is_replaced_as_a_whole_and_its_calls_on_their_own(self):
+        source = "def f(q, c):\n    return Bar(svc=Baz(q) if c else None)\n"
+        assert all_mutated(source, "wire-drop") == [
+            "def f(q, c):\n    return Bar(svc=None)",
+            "def f(q, c):\n    return Bar(svc=Baz(None) if c else None)",
+        ]
+
+    def test_a_call_in_a_lambda_body_is_mutated(self):
+        source = "def f(reg):\n    reg.register_factory('slack', lambda cid: SlackChannel(client=cid))\n"
+        assert all_mutated(source, "wire-drop") == [
+            "def f(reg):\n    reg.register_factory('slack', lambda cid: SlackChannel(client=None))",
+        ]
+
 
 class TestCallSkip:
     @pytest.mark.parametrize(
@@ -162,6 +243,28 @@ class TestCallSkip:
             "    svc.attach_worker(1)\n"
         )
         assert [m.lineno for m in wiring(source, "call-skip")] == [7]
+
+
+    def test_a_leading_underscore_does_not_hide_a_registration(self):
+        source = "def f(self, agents):\n    self._register_agents(agents)\n    self._plain(agents)\n"
+        assert all_mutated(source, "call-skip") == ["def f(self, agents):\n    pass\n    self._plain(agents)"]
+
+    def test_only_a_receiver_that_is_a_logger_is_exempt(self):
+        source = (
+            "def f(logger_agent, catalog, dialog, login, get, logger):\n"
+            "    logger_agent.attach_x(1)\n"
+            "    catalog.register(1)\n"
+            "    dialog.set_x(1)\n"
+            "    login.set_x(1)\n"
+            "    get(logger).register(1)\n"
+            "    logger.set_x(1)\n"
+        )
+        assert [m.lineno for m in wiring(source, "call-skip")] == [2, 3, 4, 5, 6]
+
+    @pytest.mark.parametrize("receiver", ["logger", "log", "logging", "_logger", "self.logger", "self._logger", "app_logger",
+                                          "logging.getLogger('x')", "getLogger()"])
+    def test_every_logger_receiver_form_is_exempt(self, receiver):
+        assert wiring(f"def f(self):\n    {receiver}.set_x(1)\n", "call-skip") == []
 
 
 class TestSelection:
@@ -305,16 +408,33 @@ class TestDriverFlag:
 
 ROOT_MODULE_CHECK = textwrap.dedent(
     """
-    import json, os, sys
+    import json, os, sys, types
 
     sys.path.insert(0, os.getcwd())
     from tests.support.semantic_mutants import activate
 
     import main  # the root module, found by the path finder on the repository root
 
+
+    def codes(code):
+        found = {(code.co_name, code.co_firstlineno, code.co_code)}
+        for const in code.co_consts:
+            if isinstance(const, types.CodeType):
+                found |= codes(const)
+        return found
+
+
     original = compile(open(main.__file__).read(), main.__file__, "exec")
-    wanted = next(c for c in original.co_consts if getattr(c, "co_name", "") == "main")
-    print(json.dumps({"loaded": activate._FINDER.loaded, "file": main.__file__, "changed": main.main.__code__.co_code != wanted.co_code}))
+    expected = set()
+    for const in original.co_consts:  # every function of the file, nested ones included
+        if isinstance(const, types.CodeType):
+            expected |= codes(const)
+    loaded = set()
+    for value in vars(main).values():
+        if isinstance(value, types.FunctionType) and value.__module__ == "main":
+            loaded |= codes(value.__code__)
+    print(json.dumps({"loaded": activate._FINDER.loaded, "file": main.__file__, "changed": len(expected - loaded),
+                      "total": len(expected)}))
     """
 )
 
@@ -328,8 +448,9 @@ class TestRootModule:
                "SEMANTIC_MUTANT_NUMBER": str(skip.number), "SEMANTIC_MUTANT_OPERATORS": "wiring"}
         done = subprocess.run([sys.executable, "-c", ROOT_MODULE_CHECK], cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=300)
         assert done.returncode == 0, done.stdout + done.stderr
-        report = ast.literal_eval(done.stdout.strip().splitlines()[-1].replace("true", "True").replace("false", "False"))
-        assert report["loaded"] is True and report["changed"] is True
+        report = json.loads(done.stdout.strip().splitlines()[-1])
+        assert report["loaded"] is True and report["total"] > 1
+        assert report["changed"] >= 1  # some code object of the module differs from the unmutated compile
         assert Path(report["file"]) == REPO_ROOT / "main.py"
 
     def test_the_driver_finds_main_and_counts_its_mutants(self):
