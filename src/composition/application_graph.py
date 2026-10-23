@@ -648,6 +648,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         task_queue=agent_task_queue,
         indexed_email_repo=indexed_email_repo,
         user_repo=user_repo,
+        account_repo=account_repo,
     ) if consolidation_queue else None
     _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
     _reminders_service = RemindersService(
