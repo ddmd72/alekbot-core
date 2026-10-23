@@ -195,8 +195,9 @@ class FactRepository(ABC):
         Stored through the same writer as add_fact (Vector wrapping, priority rank).
         Atomicity: each replaced document must still carry the `update_time` it was read with; otherwise
             FactWriteConflict naming it, nothing written. A read-time abort, or a client that gave up after
-            repeated aborts, is also FactWriteConflict. An existing `new_fact.id` fails the commit.
-        Errors: ValueError, before any I/O, when `new_fact` lacks one of its three vectors.
+            repeated aborts, is also FactWriteConflict (a read-time abort does not say which document was contended,
+            so its conflict names the first replaced id). An existing `new_fact.id` fails the commit.
+        Errors: ValueError, before any I/O, when `replaced` is empty or `new_fact` lacks one of its three vectors.
         """
         pass
 

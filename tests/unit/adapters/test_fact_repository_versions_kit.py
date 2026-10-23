@@ -85,6 +85,7 @@ async def test_write_superseding_checks_each_source_token_against_its_own_snapsh
 
     assert caught.value.fact_id == "f-b"
     assert store.docs["f-b"]["text"] == "changed elsewhere"     # the interference happened
+    assert store.docs["f-b"]["state"] == "current"
     assert "f-merged" not in store.docs
     assert store.docs["f-a"] == before["f-a"] and store.docs["f-c"] == before["f-c"]
 
@@ -120,6 +121,20 @@ async def test_write_superseding_with_an_existing_new_id_writes_nothing(store):
 
     with pytest.raises(AlreadyExists):
         await store.repo.write_superseding(version_of(old, "f-taken", "new"), [old], NOW)
+
+    assert store.docs == before
+
+
+async def test_write_superseding_with_nothing_to_replace_is_refused_before_any_io(store, monkeypatch):
+    await seed(store, "other")
+    before = copy.deepcopy(store.docs)
+
+    def no_transaction():
+        raise AssertionError("a transaction was opened")
+
+    monkeypatch.setattr(store.db, "transaction", no_transaction)
+    with pytest.raises(ValueError, match="replaces no document"):
+        await store.repo.write_superseding(make_fact("new"), [], NOW)
 
     assert store.docs == before
 
@@ -234,6 +249,37 @@ async def test_exhausted_commit_retries_become_conflict(store):
         await store.repo.update_fact_fields(stored, {"last_updated": NOW})
 
 
+async def test_an_error_that_replaced_an_aborted_is_a_conflict_through_cause_and_context(store):
+    await seed(store, "x")
+    stored = await resolve(store, "f-x")
+    for chain in ("context", "cause", "nested"):
+        replacing = RuntimeError("rollback failed")      # e.g. the client's rollback RPC failing after an aborted commit
+        if chain == "context":
+            replacing.__context__ = Aborted("commit aborted")
+        elif chain == "cause":
+            replacing.__cause__ = Aborted("commit aborted")
+        else:
+            middle = ValueError("wrapped")
+            middle.__context__ = Aborted("commit aborted")
+            replacing.__cause__ = middle
+        store.db.raise_on_txn_read(FACTS, "f-x", replacing)
+
+        with pytest.raises(FactWriteConflict) as caught:
+            await store.repo.update_fact_fields(stored, {"last_updated": NOW})
+        assert caught.value.fact_id == "f-x", chain
+
+
+async def test_a_chained_error_without_an_aborted_stays_itself(store):
+    await seed(store, "x")
+    stored = await resolve(store, "f-x")
+    replacing = RuntimeError("rollback failed")
+    replacing.__context__ = ValueError("unrelated")
+    store.db.raise_on_txn_read(FACTS, "f-x", replacing)
+
+    with pytest.raises(RuntimeError, match="rollback failed"):
+        await store.repo.update_fact_fields(stored, {"last_updated": NOW})
+
+
 async def test_a_value_error_not_caused_by_aborted_is_not_a_conflict(store):
     await seed(store, "x")
     stored = await resolve(store, "f-x")
@@ -335,6 +381,20 @@ async def test_invalidate_one_conflict_resolves_again_and_succeeds(store):
 
     assert store.docs["f-x"]["text"] == "edited elsewhere"          # the interference happened
     assert store.docs["f-x"]["state"] == "invalidated"
+
+
+async def test_invalidate_conflict_from_a_concurrent_version_lands_on_the_new_version(store):
+    await seed(store, "v1", lineage_id="L")
+    await seed(store, "v2", lineage_id="L", version=2)
+    closure = {"state": "superseded", "is_current": False, "superseded_by": "f-v2", "valid_to": NOW}
+    store.interfere("f-v1", closure)    # a version write closes f-v1 between invalidate's resolve and its write
+
+    await store.repo.invalidate_fact("f-v1", ACC)
+
+    assert store.docs["f-v1"]["state"] == "superseded" and store.docs["f-v1"]["is_current"] is False
+    assert store.docs["f-v1"]["superseded_by"] == "f-v2" and store.docs["f-v1"]["valid_to"] == NOW
+    assert store.docs["f-v2"]["state"] == "invalidated" and store.docs["f-v2"]["is_current"] is True
+    assert check_lineages(store.docs.items()) == {}
 
 
 async def test_invalidate_second_conflict_raises_and_writes_nothing(store):

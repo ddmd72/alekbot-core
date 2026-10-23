@@ -50,6 +50,18 @@ _PRIORITY_RANK: Dict[str, int] = {
 _FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(30)
 
 
+def _has_aborted_in_chain(exc: BaseException) -> bool:
+    """`exc` is, or was raised while handling or because of, an Aborted."""
+    seen: set[int] = set()
+    pending: Optional[BaseException] = exc
+    while pending is not None and id(pending) not in seen:
+        if isinstance(pending, Aborted):
+            return True
+        seen.add(id(pending))
+        pending = pending.__cause__ or pending.__context__
+    return False
+
+
 def _encode_fields(fields: Mapping[str, Any]) -> Dict[str, Any]:
     """Enums are stored as their values."""
     return {key: value.value if isinstance(value, Enum) else value for key, value in fields.items()}
@@ -548,6 +560,8 @@ class FirestoreFactRepository(FactRepository):
             fact = self._fact_from_snapshot(snap)
 
     async def write_superseding(self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime.datetime) -> None:
+        if not replaced:
+            raise ValueError(f"write_superseding of {new_fact.id} replaces no document; use add_fact")
         missing = [name for name in _VECTOR_FIELDS if getattr(new_fact, name) is None]
         if missing:
             raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a version without vectors leaves vector search")
@@ -589,18 +603,19 @@ class FirestoreFactRepository(FactRepository):
         await self._in_transaction(body, fact_id)
 
     async def _in_transaction(self, body: Callable[[Any], Awaitable[None]], fact_id: str) -> None:
-        """Run `body` in a fresh transaction. A read-time Aborted, and the client's ValueError after 5 aborted commits,
-        both mean someone else wrote the document."""
+        """Run `body` in a fresh transaction. A read-time Aborted, the client's ValueError after 5 aborted commits and
+        any error that replaced one of them (a failed rollback keeps the original only in __context__) all mean
+        someone else wrote the document."""
         @firestore.async_transactional
         async def run(transaction: Any) -> None:
             await body(transaction)
 
         try:
             await run(self.db.transaction())
-        except Aborted as exc:
-            raise FactWriteConflict(fact_id) from exc
-        except ValueError as exc:
-            if isinstance(exc.__cause__, Aborted):
+        except FactWriteConflict:
+            raise
+        except Exception as exc:
+            if _has_aborted_in_chain(exc):
                 raise FactWriteConflict(fact_id) from exc
             raise
 
