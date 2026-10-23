@@ -250,13 +250,13 @@ class LanguagePreferenceService(LanguageServicePort):
 - `_ensure_agents: Callable` — `agent_factory.ensure_agents_for_user` (attached by `build_application_graph`)
 - `system_default_language: LanguageCode` — resolved from `SYSTEM_DEFAULT_LANGUAGE` env var
 
-**Wiring note (main.py):** `notification_service` and `_ensure_agents` are set via
-post-init attribute assignment after those objects are created (they are constructed after
-`_language_service`):
+**Wiring note (`build_application_graph`):** `notification_service` is a constructor argument. The agent refresher cannot be, because
+the agent factory is built after the service and needs it (a cycle), so it is attached once the factory exists, through the public setter:
 
 ```python
-_language_service._notification_service = notification_service
-_language_service._ensure_agents = agent_factory.ensure_agents_for_user
+_language_service = LanguagePreferenceService(..., notification_service=notification_service)
+...
+_language_service.attach_agent_refresher(agent_factory.ensure_agents_for_user)
 ```
 
 ---

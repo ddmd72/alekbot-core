@@ -273,7 +273,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   - **Two independent provider axes, one resolved name.** Text-LLM step: standard
     `AgentProviderStrategy`/`ProviderRegistry[LLMPort]` path (`agent_type="image_generation"`).
     Pixel-rendering step: a separate `ProviderRegistry[ImageGenerationPort]` (`image_registry`, wired
-    in `main.py`), resolved via `AgentContextBuilder.resolve_image_generation_context()`. Both axes
+    in `build_application_graph`), resolved via `AgentContextBuilder.resolve_image_generation_context()`. Both axes
     read the same resolved provider name, so a future per-user override switches text-crafting and
     pixel-rendering together. `allowed_providers: ["grok"]`, no fallback (RFC §6 decision #8) —
     `GrokImageAdapter` is the only registered implementation today.
@@ -468,7 +468,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `decisions/delegate_tool_contract_and_strict.md`. `eager: bool` (default True): eager → created in `ensure_agents_for_user()`;
   lazy (`eager=False`) → created on first delegation via `AgentFactoryPort.create_agent_on_demand()`
   (DocGenerator/DocPlanner/Pdf/Html/DeepResearch/ClaudeDeepResearchRunner/FileManagement). Specialists
-  registered via `ALL_DESCRIPTORS` in `main.py`; orchestrators set a class-level `_descriptor`
+  registered via `ALL_DESCRIPTORS` in `build_application_graph`; orchestrators set a class-level `_descriptor`
   (coordinator never routes TO them via registry).
   **Registry rule (2026-09-23):** `internal=True` means "not offered by default" — excluded from
   `get_available_intents()` and from `get_available_intents_for(d)` when `d.allowed_intents is None`.
