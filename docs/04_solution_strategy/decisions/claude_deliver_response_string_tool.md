@@ -155,9 +155,17 @@ What the build settled beyond the requirements above.
   Tutor, on every provider. In chat the Quick fallback runs only before the 90 s mark; after it the user gets the
   localized "turn failed" late answer, and if Quick fails too, a synthetic apology. The chat path raises the
   ops alert "Smart primary FAILED ... -> Quick fallback ... detail: empty_answer". In background `notify()`
-  there is no ops alert: the ERROR log line, a worker WARNING, and a Cloud Tasks retry that re-runs the turn
-  (`delivered=False`). Tutor checks only the text (no rich-content or delivery-item check) and shows the
-  error reaction instead of "No response from model.".
+  an `empty_answer` is final (owner decision 2026-10-23, see the next bullet). Tutor checks only the text (no
+  rich-content or delivery-item check); an empty Tutor answer goes through the existing Quick fallback inside the
+  Tutor channel, like its other failures, with the same "Smart primary FAILED" ops alert (not an error reaction).
+- **Background empty answer is final.** `notify()` returns `delivered=False, error="empty_answer"`; the old
+  retry re-ran the whole turn, repeating SYNC actions it had taken (task, reminder, drive save, workspace write),
+  and a conditional reminder ("tell me only if X") may end empty every time. Now, for `execute_reminder`,
+  `daily_email_review` and the deep-research notice (`WorkerHandler._empty_answer_final`) and the drive
+  reconnect notice (`DriveSyncSchedulerService`): one ERROR line (`event=background_empty_answer`, task type,
+  note id, user id first 8 chars, no content), one ops alert through the existing alert sink, then the success
+  path (fire marked delivered, a one-time note deleted, the daily-review per-date mark stays, the reconnect flag
+  stays up) and 200 `empty_answer_final`. Any other `delivered=False` keeps its 5xx retry. Chat is unchanged.
 - **Refinement: dispatched work is not empty.** A turn that dispatched work the user will receive later
   (`DelegationResult.async_dispatches`: ASYNC intents, and SYNC intents that acknowledge and deliver in the
   background, such as deep research and video generation) is not an `empty_answer`: the user receives the
@@ -192,7 +200,7 @@ What the build settled beyond the requirements above.
 - `claude_deliver_path` volume (how many Claude requests take the new path).
 - Counts of `[LlmResponseParse] source=deliver outcome=first_object` and `outcome=unparseable`.
 - `empty_answer` ERRORs and the Slack fallback alert.
-- 500 retries of `daily_email_review` / `execute_reminder` that carry `empty_answer`.
+- `background_empty_answer` ERROR lines and their ops alert (`task_type=execute_reminder|daily_email_review|deep_research_notice|drive_reconnect_notice`); there is no retry any more, so a repeating one means a job that always ends empty.
 - `terminal_sync_sibling` and `terminal_text_used`.
 - Output-token delta (the answer is JSON escaped inside a JSON string).
 - Answers now sit in BigQuery `prompt_content.tool_calls`, not `response_text`.

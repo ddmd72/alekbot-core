@@ -52,6 +52,7 @@ from ..domain.drive_search import INACCESSIBLE_UNNOTIFIED_COUNTER, MAX_CHAIN_DEP
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_key, tick_payload
 from ..domain.language import LanguageCode
 from ..domain.notification_kind import NotificationKind
+from ..domain.notify_result import is_empty_answer
 from ..domain.ui_messages import UIMessage
 from ..domain.user_drive import DriveConnection
 from ..ports.alert_sink import AlertSinkPort
@@ -272,6 +273,19 @@ class DriveSyncSchedulerService:
                          f"next fan-out")
             await self._repo.update_sync_flags(user_id, reconnect_notified=False)
             raise
+        if is_empty_answer(result):
+            # Final (owner decision 2026-10-23): the flag stays up, so the next fan-out does not re-ask the formatter
+            # for the same empty answer every 10 minutes.
+            logger.error(f"[DriveSync] background_empty_answer: reconnect notice for {user_id[:8]}; not retried",
+                         extra={"event": "background_empty_answer", "task_type": "drive_reconnect_notice",
+                                "user_id": user_id[:8]})
+            if self._alert_sink is not None:
+                try:
+                    await self._alert_sink.post("⚠️ Background turn ended with an empty answer (final, not retried). "
+                                                f"task_type=drive_reconnect_notice user={user_id[:8]}")
+                except Exception as exc:
+                    logger.warning(f"[DriveSync] background_empty_answer alert failed: {exc}")
+            return 0
         if not result.delivered and not result.sent:
             await self._repo.update_sync_flags(user_id, reconnect_notified=False)
             logger.warning(f"[DriveSync] reconnect notice for {user_id[:8]} not sent ({result.agent_status.value}, "

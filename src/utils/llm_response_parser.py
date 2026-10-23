@@ -104,7 +104,10 @@ def _log_parse(source: str, outcome: str, via: Optional[str], length: int, tail:
     msg = f"[LlmResponseParse] source={source} outcome={outcome} via={via} len={length}"
     if tail is not None:
         msg += f" tail={tail!r}"
-    level = logging.ERROR if (source == "deliver" and outcome == "unparseable") else logging.INFO
+    level = logging.INFO
+    if source == "deliver" and outcome == "unparseable":
+        # A non-empty unparseable string still reaches the user as prose; only an empty one is an error.
+        level = logging.WARNING if length > 0 else logging.ERROR
     logger.log(
         level,
         msg,
