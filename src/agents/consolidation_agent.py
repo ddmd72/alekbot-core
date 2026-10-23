@@ -538,7 +538,7 @@ class ConsolidationAgent(BaseAgent):
             if cluster is None:
                 limit = message.payload.get("limit", 10)
                 facts = await self._repo.get_longest_facts(account_id, limit=limit)
-                cluster = [self._cluster_entry(f, owner_timezone) for f in facts]
+                cluster = [self._cluster_entry(f, owner_timezone) for f in await self._with_expiry_fields(facts)]
                 logger.info(
                     f"👨‍🏫 [ConsolidationAgent] consolidate_cluster auto-fetch: "
                     f"{len(cluster)} facts (limit={limit})"
@@ -1384,6 +1384,15 @@ class ConsolidationAgent(BaseAgent):
             return (stamp if isinstance(stamp, datetime) else datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))).date().isoformat()
         except ValueError:
             return None
+
+    async def _with_expiry_fields(self, facts: List[Any]) -> List[Any]:
+        """The list projection omits the expiry fields: read each fact whole. A failed read leaves the listed fact (shown without a decision)."""
+        try:
+            whole = await asyncio.gather(*[self._repo.get_fact_by_id(f.id) for f in facts])
+        except Exception as e:
+            logger.warning(f"⚠️ [ConsolidationAgent] could not read the facts whole for the cluster pass ({type(e).__name__}); expiry not shown")
+            return facts
+        return [full or listed for listed, full in zip(facts, whole)]
 
     @staticmethod
     def _cluster_entry(fact: Any, timezone: str) -> Dict[str, Any]:
