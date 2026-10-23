@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.adapters.fact_management_adapter import FactManagementAdapter
+from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
 from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQueue
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
@@ -21,6 +22,7 @@ from src.agents.consolidation_agent import ConsolidationAgent
 from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentConfig, AgentResponse
 from src.domain.billing import BillingAccount
+from src.domain.email import IndexedEmail
 from src.domain.consolidation import BatchStatus, ConsolidationBatch
 from src.domain.llm import LLMResponse, ToolCall
 from src.domain.user import PerformanceTier, UserBotConfig, UserProfile
@@ -273,8 +275,9 @@ def test_the_account_repository_is_required(queue, db, coordinator):
 # ------------------------------------------------------------------------------------------------ through the real agent
 
 
-def _real_agent(store: FactStore):
-    """A real ConsolidationAgent over the evaluating fact store; its LLM creates one dated fact in Stage 1, then reports."""
+def _real_agent(store: FactStore, email_repo=None):
+    """A real ConsolidationAgent over the evaluating fact store; its LLM creates one dated fact in Stage 1 and one in the
+    email pass (when there is an email repository), then reports."""
     port = FactManagementAdapter(
         store.repo, store.embedder, store.write, SearchEnrichmentService(store.repo, store.embedder, 7, 10, 10, 20)
     )
@@ -288,7 +291,7 @@ def _real_agent(store: FactStore):
     agent = ConsolidationAgent(
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=execution,
         repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
-        fact_management_port=port, prompt_builder=pb, indexed_email_repo=None,
+        fact_management_port=port, prompt_builder=pb, indexed_email_repo=email_repo,
     )
     agent.INLINE_CLUSTER_REVIEW = False
     store.repo.refresh_biographical_context_cache = AsyncMock()
@@ -302,6 +305,12 @@ def _real_agent(store: FactStore):
                           "tags": ["t"], "metadata": {}, "type": "event", "expiry": on("2027-01-15")}
             return LLMResponse(text=None, tool_calls=[
                 ToolCall(name="create_fact", args={"content": "trip to Rome", "fact_attributes": attributes})])
+        if "system_alert" in first and "email" not in spent:
+            spent.add("email")
+            attributes = {"domain": "biographical", "temporal_class": "stable", "context_priority": "medium",
+                          "tags": ["t"], "metadata": {}, "type": "event", "expiry": on("2027-01-15")}
+            return LLMResponse(text=None, tool_calls=[
+                ToolCall(name="create_fact", args={"content": "flight booked", "fact_attributes": attributes})])
         return LLMResponse(text='{"operations": []}')
 
     agent._call_llm = call
@@ -313,8 +322,10 @@ class AgentCoordinator:
 
     def __init__(self, agent: ConsolidationAgent) -> None:
         self.agent = agent
+        self.routed: List[Any] = []
 
     async def route_message(self, message):
+        self.routed.append(message)
         return await self.agent.execute(message)
 
 
@@ -337,3 +348,36 @@ async def test_the_production_path_writes_the_expiry_in_the_owners_zone_not_in_u
 
     (fact,) = [d for d in store.docs.values() if d["text"] == "trip to Rome"]
     assert fact["expires_at"].astimezone(timezone.utc) == expected_expiry
+
+
+@pytest.mark.parametrize("owner_zone,expected_expiry", [
+    (PARIS, datetime(2027, 1, 15, 23, tzinfo=timezone.utc)),
+    (TOKYO, datetime(2027, 1, 15, 15, tzinfo=timezone.utc)),
+])
+async def test_consolidate_full_carries_the_owners_zone_into_the_email_pass_too(queue, db, owner_zone, expected_expiry):
+    from tests.support.fact_kit import ACC as FACT_ACC, USER as FACT_USER
+
+    store = FactStore()
+    env = SimpleNamespace(domain_email_facts_collection="eval_email_facts", email_indexing_state_collection="eval_email_state")
+    emails = FirestoreIndexedEmailRepository(store.db, env)
+    await emails.save_batch([IndexedEmail(
+        email_id="e1", user_id=FACT_USER, account_id=FACT_ACC, source="gmail", text="mail e1", tags=["mail"],
+        category="travel", metadata={"subject": "e1"}, subject="e1", from_address="a@example.com",
+        email_date=datetime(2026, 10, 10, 9, 0), indexed_at=datetime(2026, 10, 13, 1),
+    )])
+    users = Users(profile(FACT_USER, "UTC", account_id=FACT_ACC), profile(OWNER, owner_zone, account_id=FACT_ACC))
+    accounts = Accounts(BillingAccount(account_id=FACT_ACC, iam_policy={OWNER: "owner", FACT_USER: "member"}))
+    coordinator = AgentCoordinator(_real_agent(store, email_repo=emails))
+    service = build(queue, db, coordinator, users, accounts)
+    await put(queue, "b1", FACT_USER, messages=[
+        {"role": "user", "text": "I am going to Rome", "created_at": datetime(2026, 10, 20, 11, tzinfo=timezone.utc).timestamp()},
+    ])
+
+    await service.process_user_batches(FACT_USER)
+
+    assert coordinator.routed[0].payload["task"] == "consolidate_full"
+    assert coordinator.routed[0].context["owner_timezone"] == owner_zone
+    flight = [d for d in store.docs.values() if d["text"] == "flight booked"]
+    assert len(flight) == 1, "the email pass ran and wrote its fact"
+    assert flight[0]["expires_at"].astimezone(timezone.utc) == expected_expiry
+    assert await emails.get_unconsolidated_batch(FACT_USER) == []
