@@ -353,6 +353,21 @@ async def test_the_cluster_passs_auto_fetched_facts_show_the_same_expiry_as_the_
     assert fetched["an old note without a decision"]["expiry"] is None
 
 
+async def test_the_cluster_pass_still_runs_when_the_whole_fact_read_fails(store):
+    agent = make_agent(store, lambda first: REPORT)
+    await seed_and_search(store, agent)
+
+    async def broken(fact_id):
+        raise RuntimeError("firestore hiccup")
+
+    store.repo.get_fact_by_id = broken
+    with RequestContext(user_id=USER, account_id=ACC):
+        response = await agent._handle_consolidate_cluster(message("consolidate_cluster", {"limit": 10}), USER, ACC, [], 0.0)
+    assert response.status.value == "success", response
+    fetched = entries(pass_text(agent, CLUSTER))
+    assert fetched and all(e["expiry"] is None for e in fetched)           # listed without a decision, not failed
+
+
 # ----------------------------------------------------------------------------------------------- the texts
 
 
