@@ -20,6 +20,7 @@ from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilit
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from tests.support.fact_kit import ACC, OTHER, USER
 from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_write import EXPIRY_NONE, ctx
 
 REPORT = LLMResponse(text='{"operations": []}')
 
@@ -31,22 +32,22 @@ class ScriptedPort(FactManagementPort):
         self.calls: List[tuple] = []
         self._n = 0
 
-    async def search_existing_facts(self, keywords, primary_query, alternative_query="", limit=20):
+    async def search_existing_facts(self, keywords, primary_query, alternative_query="", limit=20, *, timezone):
         self.calls.append(("search", primary_query))
         return []
 
-    async def create_fact(self, content, metadata):
+    async def create_fact(self, content, metadata, *, context):
         self._n += 1
         self.calls.append(("create", content))
         return {"fact_id": f"new-{content}", "status": "created", "message": "ok"}
 
-    async def update_fact(self, fact_id, updates, account_id):
+    async def update_fact(self, fact_id, updates, account_id, *, context):
         self.calls.append(("update", fact_id))
         if updates.get("content"):
             return {"fact_id": f"v2-{fact_id}", "status": "updated", "version": 2, "message": "ok"}
         return {"fact_id": fact_id, "status": "updated", "message": "ok"}
 
-    async def merge_facts(self, fact_ids, merged_content, metadata):
+    async def merge_facts(self, fact_ids, merged_content, metadata, *, context):
         self.calls.append(("merge", merged_content))
         return {"new_fact_id": f"m-{merged_content}", "old_fact_ids": fact_ids, "status": "merged", "message": "ok"}
 
@@ -124,7 +125,7 @@ async def test_stage1_runs_with_its_tracker_and_never_reassigns_the_agent_port()
         seen.append((kw["pass_label"], kw["fact_management"]))
         during.append(agent._fact_management)
         if kw["pass_label"] == "stage1":
-            await kw["fact_management"].create_fact("first", {})
+            await kw["fact_management"].create_fact("first", {}, context=kw["write_context"])
         return []
 
     agent._run_consolidation_loop = spy_loop
@@ -156,12 +157,12 @@ async def test_the_backstop_and_the_tools_use_the_given_port_and_default_to_the_
     agent.DIRECTIVE_HARD_CAP = 1
     repo.get_active_facts_ordered = AsyncMock(return_value=[MagicMock(id="a"), MagicMock(id="b")])
 
-    await agent._enforce_directive_cap(ACC, fact_management=given)
+    await agent._enforce_directive_cap(ACC, agent._write_context("backstop"), fact_management=given)
     assert given.calls == [("update", "b")] and own.calls == []
-    await agent._enforce_directive_cap(ACC)
+    await agent._enforce_directive_cap(ACC, agent._write_context("backstop"))
     assert own.calls == [("update", "b")]
 
-    await agent._execute_fact_management_tools([tool("create_fact", **create_args("t"))], USER, ACC, fact_management=given)
+    await agent._execute_fact_management_tools([tool("create_fact", **create_args("t"))], USER, ACC, agent._write_context("stage1"), fact_management=given)
     assert ("create", "t") in given.calls and ("create", "t") not in own.calls
 
 
@@ -171,7 +172,7 @@ async def test_two_concurrent_passes_on_one_agent_record_only_their_own_writes()
     events: List[tuple] = []
     seeds: Dict[str, List[tuple]] = {}
 
-    async def spy_cluster(changed, account_id):
+    async def spy_cluster(changed, account_id, *, timezone):
         seeds[account_id] = list(changed)
         return []
 
@@ -202,53 +203,53 @@ def store():
 
 def meta(**over):
     base = {"account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
-            "context_priority": "medium", "tags": ["family"], "metadata": {}}
+            "context_priority": "medium", "tags": ["family"], "metadata": {}, "expiry": EXPIRY_NONE}
     base.update(over)
     return base
 
 
 async def test_tracker_records_the_result_id_of_a_version(store):
     tracker = _TrackingFactManagement(store.adapter)
-    created = await tracker.create_fact("mother is Valentina", meta())
+    created = await tracker.create_fact("mother is Valentina", meta(), context=ctx())
     old = created["fact_id"]
     assert tracker.changed == [(old, "mother is Valentina")]
 
-    result = await tracker.update_fact(old, {"content": "mother is Valentina Ivanova"}, ACC)
+    result = await tracker.update_fact(old, {"content": "mother is Valentina Ivanova", "expiry": EXPIRY_NONE}, ACC, context=ctx())
 
     assert result["status"] == "updated" and result["fact_id"] != old
     assert tracker.changed[-1] == (result["fact_id"], "mother is Valentina Ivanova")
-    again = await tracker.update_fact(old, {"content": "mother is Valentina I."}, ACC)       # the stale id, followed forward
+    again = await tracker.update_fact(old, {"content": "mother is Valentina I.", "expiry": EXPIRY_NONE}, ACC, context=ctx())       # the stale id, followed forward
     assert again["fact_id"] not in (old, result["fact_id"])
     assert tracker.changed[-1] == (again["fact_id"], "mother is Valentina I.") and len(tracker.changed) == 3
 
 
 async def test_tracker_records_a_merge_by_its_new_id_and_a_state_only_update_as_a_write_without_a_seed(store):
     tracker = _TrackingFactManagement(store.adapter)
-    a = (await tracker.create_fact("a", meta()))["fact_id"]
-    b = (await tracker.create_fact("b", meta()))["fact_id"]
-    merged = await tracker.merge_facts([a, b], "a and b", meta())
+    a = (await tracker.create_fact("a", meta(), context=ctx()))["fact_id"]
+    b = (await tracker.create_fact("b", meta(), context=ctx()))["fact_id"]
+    merged = await tracker.merge_facts([a, b], "a and b", meta(), context=ctx())
     assert merged["status"] == "merged" and tracker.changed[-1] == (merged["new_fact_id"], "a and b")
 
     quiet = _TrackingFactManagement(store.adapter)
-    c = (await store.adapter.create_fact("c", meta()))["fact_id"]
-    result = await quiet.update_fact(c, {"state": "archived"}, ACC)
+    c = (await store.adapter.create_fact("c", meta(), context=ctx()))["fact_id"]
+    result = await quiet.update_fact(c, {"state": "archived"}, ACC, context=ctx())
     assert result["status"] == "updated"
     assert quiet.changed == [] and quiet.wrote is True
 
 
 async def test_tracker_records_nothing_for_not_found_failed_or_refused(store):
-    fid = (await store.adapter.create_fact("mother is Valentina", meta()))["fact_id"]
-    foreign = (await store.adapter.create_fact("foreign", meta(account_id=OTHER)))["fact_id"]
+    fid = (await store.adapter.create_fact("mother is Valentina", meta(), context=ctx()))["fact_id"]
+    foreign = (await store.adapter.create_fact("foreign", meta(account_id=OTHER), context=ctx()))["fact_id"]
     tracker = _TrackingFactManagement(store.adapter)
 
     results = [
-        await tracker.update_fact("no-such-id", {"content": "x"}, ACC),                     # not_found
-        await tracker.update_fact(foreign, {"content": "x"}, ACC),                          # another account: not_found
-        await tracker.update_fact(fid, {"content": "x", "state": "bogus"}, ACC),            # failed: bad enum
-        await tracker.update_fact(fid, {"state": "superseded"}, ACC),                       # refused: no successor
-        await tracker.update_fact(fid, {"content": "   "}, ACC),                            # refused: empty content
-        await tracker.create_fact("x", meta(domain="nonsense")),                            # failed
-        await tracker.merge_facts(["no-such-id"], "m", meta()),                             # failed: no source
+        await tracker.update_fact("no-such-id", {"content": "x", "expiry": EXPIRY_NONE}, ACC, context=ctx()),                     # not_found
+        await tracker.update_fact(foreign, {"content": "x", "expiry": EXPIRY_NONE}, ACC, context=ctx()),                          # another account: not_found
+        await tracker.update_fact(fid, {"content": "x", "state": "bogus"}, ACC, context=ctx()),            # failed: bad enum
+        await tracker.update_fact(fid, {"state": "superseded"}, ACC, context=ctx()),                       # refused: no successor
+        await tracker.update_fact(fid, {"content": "   ", "expiry": EXPIRY_NONE}, ACC, context=ctx()),                            # refused: empty content
+        await tracker.create_fact("x", meta(domain="nonsense"), context=ctx()),                            # failed
+        await tracker.merge_facts(["no-such-id"], "m", meta(), context=ctx()),                             # failed: no source
     ]
 
     assert [r["status"] for r in results] == ["not_found", "not_found", "failed", "failed", "failed", "failed", "failed"]
@@ -262,7 +263,7 @@ def writes_then(exc, label="stage1", write=True):
     async def loop(**kw):
         if kw["pass_label"] == label:
             if write:
-                await kw["fact_management"].create_fact("kept", {})
+                await kw["fact_management"].create_fact("kept", {}, context=kw["write_context"])
             raise exc
         return []
     return loop
@@ -276,7 +277,7 @@ async def test_failed_run_that_wrote_refreshes_the_cache_and_a_clean_failure_doe
 
     async def loop(**kw):
         if kw["pass_label"] == "stage1":
-            await kw["fact_management"].create_fact("kept", {})
+            await kw["fact_management"].create_fact("kept", {}, context=kw["write_context"])
         if kw["pass_label"] == label:
             raise RuntimeError("provider down")
         return []
@@ -297,10 +298,10 @@ async def test_failed_run_that_wrote_refreshes_the_cache_and_a_clean_failure_doe
 
 async def test_a_backstop_invalidation_counts_as_a_write_of_the_run_and_a_failure_mid_backstop_refreshes_the_cache():
     class FailsOnSecondUpdate(ScriptedPort):
-        async def update_fact(self, fact_id, updates, account_id):
+        async def update_fact(self, fact_id, updates, account_id, *, context):
             if sum(1 for kind, _ in self.calls if kind == "update") >= 1:
                 raise RuntimeError("store down")
-            return await super().update_fact(fact_id, updates, account_id)
+            return await super().update_fact(fact_id, updates, account_id, context=context)
 
     port = FailsOnSecondUpdate()
     agent, repo, pb = make_agent(port)
@@ -318,7 +319,7 @@ async def test_a_backstop_invalidation_counts_as_a_write_of_the_run_and_a_failur
 
 async def test_a_failed_write_does_not_count_as_a_write():
     class Refusing(ScriptedPort):
-        async def create_fact(self, content, metadata):
+        async def create_fact(self, content, metadata, *, context):
             return {"fact_id": None, "status": "failed", "message": "invalid domain"}
 
     agent, repo, _ = make_agent(Refusing())
@@ -332,7 +333,7 @@ async def test_a_run_that_finished_does_not_refresh_inside_the_process():
     agent, repo, _ = make_agent(ScriptedPort())
 
     async def loop(**kw):
-        await kw["fact_management"].create_fact("kept", {})
+        await kw["fact_management"].create_fact("kept", {}, context=kw["write_context"])
         return []
 
     agent._run_consolidation_loop = loop
@@ -401,7 +402,7 @@ async def test_email_pass_failure_after_a_write_refreshes_the_cache():
     async def loop(**kw):
         calls.append(kw["fact_management"])
         if len(calls) == 1:
-            await kw["fact_management"].create_fact("from email 1", {})
+            await kw["fact_management"].create_fact("from email 1", {}, context=kw["write_context"])
             return []
         raise RuntimeError("provider down")
 
@@ -425,7 +426,7 @@ async def test_email_pass_clean_failure_does_not_refresh_and_success_refreshes_o
     ok, repo_ok, _ = email_agent([[Email(1)], [Email(2)], []])
 
     async def loop(**kw):
-        await kw["fact_management"].create_fact("from email", {})
+        await kw["fact_management"].create_fact("from email", {}, context=kw["write_context"])
         return [{"action": "CREATE"}]
 
     ok._run_consolidation_loop = loop
