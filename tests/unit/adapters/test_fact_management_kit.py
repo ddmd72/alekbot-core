@@ -32,13 +32,14 @@ def meta(**over):
     base = {
         "account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
         "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Maria"}, "type": "event",
+        "expiry": EXPIRY_NONE,
     }
     base.update(over)
     return base
 
 
 async def create(store, text="mother is Maria", **over):
-    res = await store.adapter.create_fact(text, meta(**over))
+    res = await store.adapter.create_fact(text, meta(**over), context=ctx())
     assert res["status"] == "created", res
     return res["fact_id"]
 
@@ -113,7 +114,7 @@ async def test_create_fact_is_current_with_no_valid_to_whatever_the_state(store,
 
 async def test_create_fact_refuses_state_superseded_and_writes_nothing(store):
     # Reviewer edit (facts S2, D-2): was the [superseded] case above; a fact cannot be born superseded without a successor.
-    res = await store.adapter.create_fact("mother is Maria", meta(state="superseded"))
+    res = await store.adapter.create_fact("mother is Maria", meta(state="superseded"), context=ctx())
     assert res["status"] == "failed" and res["fact_id"] is None and "SUPERSEDED" in res["message"]
     assert store.docs == {}
 
@@ -131,7 +132,7 @@ async def test_create_fact_without_a_required_key_fails_and_writes_nothing(store
     before = snapshot(store)
     bad = meta()
     del bad[key]
-    res = await store.adapter.create_fact("mother is Maria", bad)
+    res = await store.adapter.create_fact("mother is Maria", bad, context=ctx())
     assert res["status"] == "failed" and res["fact_id"] is None and key in res["message"]
     assert store.docs == before
 
@@ -139,19 +140,19 @@ async def test_create_fact_without_a_required_key_fails_and_writes_nothing(store
 @pytest.mark.parametrize("bad", [{"domain": "astrology"}, {"temporal_class": "sometimes"}, {"state": "zombie"},
                                  {"context_priority": "urgent"}])
 async def test_create_fact_with_an_invalid_enum_value_fails_and_writes_nothing(store, bad):
-    res = await store.adapter.create_fact("mother is Maria", meta(**bad))
+    res = await store.adapter.create_fact("mother is Maria", meta(**bad), context=ctx())
     assert res["status"] == "failed" and res["fact_id"] is None
     assert store.docs == {}
 
 
 async def test_create_fact_with_a_required_key_set_to_none_passes_the_check(store):
-    res = await store.adapter.create_fact("mother is Maria", meta(domain=None))
+    res = await store.adapter.create_fact("mother is Maria", meta(domain=None), context=ctx())
     assert res["status"] == "created" and store.docs[res["fact_id"]]["domain"] is None
 
 
 async def test_create_fact_never_raises_on_an_embedding_failure(store):
     store.write._embedding = FailingEmbedder()
-    res = await store.adapter.create_fact("mother is Maria", meta())
+    res = await store.adapter.create_fact("mother is Maria", meta(), context=ctx())
     assert res["status"] == "failed" and res["fact_id"] is None and store.docs == {}
 
 
@@ -167,7 +168,7 @@ def _plain(doc):
 
 async def test_update_returns_the_result_dict_and_json(store):
     fid = await create(store)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia"}, ACC)
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     # Reviewer edit (facts S2, D8): `fact_id` is the document written, the new version, which replaces the argument.
     assert set(res) == {"fact_id", "status", "version", "message"} and res["fact_id"] != fid
     assert store.docs[res["fact_id"]]["replaces_fact_id"] == fid and res["version"] == 2
@@ -176,7 +177,7 @@ async def test_update_returns_the_result_dict_and_json(store):
 
 async def test_update_tags_replaces_them_whole_and_recomputes_all_three_vectors(store):
     fid = await create(store)
-    res = await store.adapter.update_fact(fid, {"tags": ["relatives"]}, ACC)
+    res = await store.adapter.update_fact(fid, {"tags": ["relatives"], "expiry": EXPIRY_NONE}, ACC, context=ctx())
     # Reviewer edit (facts S2, D8): a new version document, and the system tag the update omits is kept at the end.
     doc = store.docs[res["fact_id"]]
     assert res["fact_id"] != fid and store.docs[fid]["tags"] == ["family", "mother", "consolidated"]
@@ -188,7 +189,7 @@ async def test_update_tags_replaces_them_whole_and_recomputes_all_three_vectors(
 
 async def test_update_metadata_overwrites_a_shared_key_and_keeps_the_others(store):
     fid = await create(store, metadata={"name": "Maria", "city": "Springfield"})
-    res = await store.adapter.update_fact(fid, {"metadata": {"name": "Masha"}}, ACC)
+    res = await store.adapter.update_fact(fid, {"metadata": {"name": "Masha"}, "expiry": EXPIRY_NONE}, ACC, context=ctx())
     # Reviewer edit (facts S2, D8): read through the returned id; the old version keeps its metadata.
     assert store.docs[res["fact_id"]]["metadata"] == {"name": "Masha", "city": "Springfield"}
     assert res["fact_id"] != fid and store.docs[fid]["metadata"] == {"name": "Maria", "city": "Springfield"}
@@ -197,7 +198,7 @@ async def test_update_metadata_overwrites_a_shared_key_and_keeps_the_others(stor
 async def test_update_temporal_class_is_case_insensitive_bumps_version_and_keeps_vectors(store):
     fid = await create(store)
     before = _plain(store.docs[fid])
-    res = await store.adapter.update_fact(fid, {"temporal_class": "DYNAMIC"}, ACC)
+    res = await store.adapter.update_fact(fid, {"temporal_class": "DYNAMIC", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     # Reviewer edit (facts S2, D8): a temporal_class change is a new version document, read through the returned id.
     assert res["fact_id"] != fid
     doc = _plain(store.docs[res["fact_id"]])
@@ -213,7 +214,7 @@ async def test_update_with_the_stored_values_changes_no_version_or_reported_date
     before = _plain(store.docs[fid])
     res = await store.adapter.update_fact(
         fid, {"content": "mother is Maria", "tags": ["family", "mother", "consolidated"],
-              "metadata": {"name": "Maria"}, "temporal_class": "STABLE"}, ACC)
+              "metadata": {"name": "Maria"}, "temporal_class": "STABLE"}, ACC, context=ctx())
     assert res["status"] == "updated" and res["version"] == 1
     assert _without(_plain(store.docs[fid]), "last_updated") == _without(before, "last_updated")
 
@@ -221,7 +222,8 @@ async def test_update_with_the_stored_values_changes_no_version_or_reported_date
 async def test_update_ignores_other_keys_and_keeps_absent_ones(store):
     fid = await create(store)
     before = _plain(store.docs[fid])
-    res = await store.adapter.update_fact(fid, {"domain": "work", "foo": "bar", "context_priority": "low"}, ACC)
+    res = await store.adapter.update_fact(
+        fid, {"domain": "work", "foo": "bar", "context_priority": "low"}, ACC, context=ctx())
     assert res["status"] == "updated"
     after = _plain(store.docs[fid])
     assert {k for k in after if after[k] != before[k]} == {"last_updated"}
@@ -230,7 +232,7 @@ async def test_update_ignores_other_keys_and_keeps_absent_ones(store):
 async def test_update_sets_last_updated_on_every_update(store):
     fid = await create(store)
     before = store.docs[fid]["last_updated"]
-    res = await store.adapter.update_fact(fid, {}, ACC)
+    res = await store.adapter.update_fact(fid, {}, ACC, context=ctx())
     assert res["status"] == "updated" and store.docs[fid]["last_updated"] > before
 
 
@@ -263,7 +265,7 @@ async def test_update_state_applies_the_lifecycle_fields(store, state, is_curren
     before = _plain(store.docs[fid])
     store.adapter._embedding = FailingEmbedder()
     updates = {"state": state, "superseded_by": successor} if state == "SUPERSEDED" else {"state": state}
-    res = await store.adapter.update_fact(fid, updates, ACC)
+    res = await store.adapter.update_fact(fid, updates, ACC, context=ctx())
     assert (res["status"], res["fact_id"], res["version"]) == ("updated", fid, 1) and len(store.docs) == 2
     doc = _plain(store.docs[fid])
     assert doc["state"] == state.lower() and doc["is_current"] is is_current and (doc["valid_to"] is not None) is closed
@@ -277,7 +279,7 @@ async def test_update_state_stale_is_refused_and_writes_nothing(store, state):
     fid = await create(store)
     before = snapshot(store)
     store.adapter._embedding = FailingEmbedder()
-    res = await store.adapter.update_fact(fid, {"state": state}, ACC)
+    res = await store.adapter.update_fact(fid, {"state": state}, ACC, context=ctx())
     assert res["status"] == "failed" and "only the system marks a fact stale" in res["message"]
     assert store.docs == before
 
@@ -286,11 +288,13 @@ async def test_repeating_an_update_changes_only_last_updated(store):
     # Reviewer edit (facts S2, D8): the first call writes version 2; the repeat names the old id, lands on version 2 and
     # changes only its last_updated, in place.
     fid = await create(store)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentyna", "tags": ["family"]}, ACC)
+    res = await store.adapter.update_fact(
+        fid, {"content": "mother is Mariya", "tags": ["family"], "expiry": EXPIRY_NONE}, ACC, context=ctx())
     v2 = res["fact_id"]
     first = _plain(store.docs[v2])
     old = _plain(store.docs[fid])
-    again = await store.adapter.update_fact(fid, {"content": "mother is Valentyna", "tags": ["family"]}, ACC)
+    again = await store.adapter.update_fact(
+        fid, {"content": "mother is Mariya", "tags": ["family"], "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert (again["fact_id"], again["version"]) == (v2, 2) and len(store.docs) == 2
     second = _plain(store.docs[v2])
     assert {k for k in second if second[k] != first[k]} == {"last_updated"}
@@ -302,7 +306,8 @@ async def test_update_of_a_missing_fact_or_another_accounts_fact_is_not_found_an
     await create(store, "foreign fact", account_id=OTHER)
     before = snapshot(store)
     for target, account in (("missing", ACC), (fid, OTHER)):
-        res = await store.adapter.update_fact(target, {"content": "hijack", "state": "ARCHIVED"}, account)
+        res = await store.adapter.update_fact(
+            target, {"content": "hijack", "state": "ARCHIVED"}, account, context=ctx())
         assert res == {"fact_id": target, "status": "not_found", "message": "Fact not found"}
     assert store.docs == before
 
@@ -310,9 +315,9 @@ async def test_update_of_a_missing_fact_or_another_accounts_fact_is_not_found_an
 async def test_update_of_a_legacy_owner_id_document_belongs_to_the_owner(store):
     put_raw(store, "old", "legacy text", **as_legacy())
     before = snapshot(store)
-    assert (await store.adapter.update_fact("old", {"content": "edited"}, OTHER))["status"] == "not_found"
+    assert (await store.adapter.update_fact("old", {"content": "edited", "expiry": EXPIRY_NONE}, OTHER, context=ctx()))["status"] == "not_found"
     assert store.docs == before
-    res = await store.adapter.update_fact("old", {"content": "edited"}, ACC)
+    res = await store.adapter.update_fact("old", {"content": "edited", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert res["status"] == "updated"
     # Reviewer edit (facts S2, D8): the content goes to a new version document, written with the migrated ownership
     # fields; the legacy document is closed field-masked, so it keeps owner_id (observed; 0 live owner_id documents).
@@ -325,7 +330,7 @@ async def test_update_with_an_embedding_failure_fails_and_writes_nothing(store):
     fid = await create(store)
     before = snapshot(store)
     store.adapter._embedding = FailingEmbedder()
-    res = await store.adapter.update_fact(fid, {"content": "changed", "state": "ARCHIVED"}, ACC)
+    res = await store.adapter.update_fact(fid, {"content": "changed", "state": "ARCHIVED"}, ACC, context=ctx())
     assert res["status"] == "failed" and res["fact_id"] == fid and "message" in res
     assert store.docs == before
 
@@ -336,7 +341,8 @@ async def test_merge_returns_the_result_dict_and_creates_one_fact_with_a_new_lin
     a = await create(store, "likes tea")
     b = await create(store, "likes green tea")
     lineages = {store.docs[a]["lineage_id"], store.docs[b]["lineage_id"]}
-    res = await store.adapter.merge_facts([b, a], "likes green tea daily", meta(tags=["drinks"], metadata={"k": "v"}))
+    res = await store.adapter.merge_facts(
+        [b, a], "likes green tea daily", meta(tags=["drinks"], metadata={"k": "v"}), context=ctx())
     assert set(res) == {"new_fact_id", "old_fact_ids", "old_facts_state", "status", "message"}
     assert (res["status"], res["old_fact_ids"], res["old_facts_state"]) == ("merged", [b, a], "SUPERSEDED")
     json.dumps(res)
@@ -354,7 +360,7 @@ async def test_merge_skips_missing_and_foreign_sources_without_reporting_them(st
     own = await create(store, "likes tea")
     foreign = await create(store, "foreign fact", account_id=OTHER)
     foreign_before = copy.deepcopy(store.docs[foreign])
-    res = await store.adapter.merge_facts(["missing", foreign, own], "likes tea daily", meta())
+    res = await store.adapter.merge_facts(["missing", foreign, own], "likes tea daily", meta(), context=ctx())
     assert res["status"] == "merged" and res["old_fact_ids"] == [own]
     assert store.docs[foreign] == foreign_before
 
@@ -363,7 +369,7 @@ async def test_merge_without_an_eligible_source_fails_and_writes_nothing(store):
     foreign = await create(store, "foreign fact", account_id=OTHER)
     before = snapshot(store)
     for sources in ([], ["missing"], [foreign]):
-        res = await store.adapter.merge_facts(sources, "merged", meta())
+        res = await store.adapter.merge_facts(sources, "merged", meta(), context=ctx())
         assert res == {"new_fact_id": None, "old_fact_ids": [], "old_facts_state": "FAILED", "status": "failed",
                        "message": "Failed to supersede any facts"}
     assert store.docs == before
@@ -374,14 +380,14 @@ async def test_merge_without_an_account_in_the_metadata_fails_and_writes_nothing
     before = snapshot(store)
     bad = meta()
     del bad["account_id"]
-    res = await store.adapter.merge_facts([own], "merged", bad)
+    res = await store.adapter.merge_facts([own], "merged", bad, context=ctx())
     assert res["status"] == "failed" and store.docs == before
 
 
 async def test_merge_never_raises_and_a_failed_creation_is_a_failed_result(store):
     a = await create(store, "likes tea")
     store.write._embedding = FailingEmbedder()
-    res = await store.adapter.merge_facts([a], "likes tea daily", meta())
+    res = await store.adapter.merge_facts([a], "likes tea daily", meta(), context=ctx())
     assert res["status"] == "failed" and res["new_fact_id"] is None and isinstance(res["message"], str)
     json.dumps(res)
 
@@ -393,7 +399,7 @@ async def test_a_backend_failure_on_one_source_fails_the_whole_merge_and_writes_
     b = await create(store, "likes green tea")
     before = snapshot(store)
     store.db.raise_on_txn_read(FACTS, b, RuntimeError("backend down"))
-    res = await store.adapter.merge_facts([a, b], "likes tea daily", meta())
+    res = await store.adapter.merge_facts([a, b], "likes tea daily", meta(), context=ctx())
     assert res["status"] == "failed" and res["old_fact_ids"] == [] and res["new_fact_id"] is None
     assert "backend down" in res["message"]
     assert store.docs == before
@@ -405,7 +411,7 @@ async def test_a_failed_merge_leaves_every_source_unchanged(store):
     b = await create(store, "likes green tea")
     before = snapshot(store)
     store.write._embedding = FailingEmbedder()
-    res = await store.adapter.merge_facts([a, b], "likes green tea daily", meta())
+    res = await store.adapter.merge_facts([a, b], "likes green tea daily", meta(), context=ctx())
     assert res["status"] == "failed"
     assert store.docs == before
 
@@ -425,9 +431,9 @@ async def test_merge_twice_fails_the_second_time_naming_the_first_merged_fact(st
     # Reviewer edit (facts S2, D8 + delta D-5): was test_merge_twice_supersedes_again_and_creates_another_merged_fact.
     # The source resolves forward into the first merged fact's lineage, so the second merge fails and writes nothing.
     a = await create(store, "likes tea")
-    first = await store.adapter.merge_facts([a], "likes tea daily", meta())
+    first = await store.adapter.merge_facts([a], "likes tea daily", meta(), context=ctx())
     before = snapshot(store)
-    second = await store.adapter.merge_facts([a], "likes tea daily", meta())
+    second = await store.adapter.merge_facts([a], "likes tea daily", meta(), context=ctx())
     assert second["status"] == "failed" and second["old_fact_ids"] == [] and second["new_fact_id"] is None
     assert second["message"] == f"fact {a} was merged into {first['new_fact_id']}; search again"
     assert store.docs == before and len(store.docs) == 2
@@ -446,7 +452,7 @@ async def test_search_returns_the_current_facts_of_the_context_account_in_any_do
     await create(store, "mother was Maria", state="archived")
     await create(store, "foreign mother", account_id=OTHER)
     with RequestContext(user_id=USER, account_id=ACC):
-        got = await _searching(store).search_existing_facts(["family"], "mother")
+        got = await _searching(store).search_existing_facts(["family"], "mother", timezone="UTC")
     assert sorted(r["fact_id"] for r in got) == sorted(own)
 
 
@@ -455,15 +461,15 @@ async def test_search_account_is_the_context_account_else_the_user_id(store):
     theirs = await create(store, "theirs", account_id=OTHER)
     adapter = _searching(store)
     with RequestContext(user_id=OTHER, account_id=ACC):
-        assert [r["fact_id"] for r in await adapter.search_existing_facts(["x"], "mine")] == [mine]
+        assert [r["fact_id"] for r in await adapter.search_existing_facts(["x"], "mine", timezone="UTC")] == [mine]
     with RequestContext(user_id=OTHER):
-        assert [r["fact_id"] for r in await adapter.search_existing_facts(["x"], "theirs")] == [theirs]
+        assert [r["fact_id"] for r in await adapter.search_existing_facts(["x"], "theirs", timezone="UTC")] == [theirs]
 
 
 async def test_search_result_dicts_carry_the_listed_fields_and_serialise(store):
     fid = await create(store, "mother is Maria", reported_date="2026-03-04T10:00:00+00:00")
     with RequestContext(user_id=USER, account_id=ACC):
-        (got,) = await _searching(store).search_existing_facts(["family"], "mother is Maria")
+        (got,) = await _searching(store).search_existing_facts(["family"], "mother is Maria", timezone="UTC")
     assert set(got) == {"fact_id", "content", "similarity", "source", "type", "domain", "temporal_class", "state",
                         "context_priority", "tags", "metadata", "reported_date", "version"}
     assert (got["fact_id"], got["content"], got["type"], got["domain"], got["temporal_class"]) == (
@@ -480,7 +486,7 @@ async def test_search_ranks_the_best_match_first(store):
     best = await create(store, "owns a Skoda Fabia 2015", tags=["car"], metadata={"make": "Skoda"})
     await create(store, "likes green tea", tags=["drinks"], metadata={})
     with RequestContext(user_id=USER, account_id=ACC):
-        got = await _searching(store).search_existing_facts(["car"], "owns a Skoda Fabia")
+        got = await _searching(store).search_existing_facts(["car"], "owns a Skoda Fabia 2015", timezone="UTC")
     assert got[0]["fact_id"] == best
 
 
@@ -489,8 +495,8 @@ async def test_search_returns_at_most_limit_results_each_fact_once(store):
         await create(store, f"fact number {i}")
     adapter = _searching(store)
     with RequestContext(user_id=USER, account_id=ACC):
-        three = await adapter.search_existing_facts(["fact"], "fact number 1", limit=3)
-        everything = await adapter.search_existing_facts(["fact"], "fact number 1")
+        three = await adapter.search_existing_facts(["fact"], "fact number 1", limit=3, timezone="UTC")
+        everything = await adapter.search_existing_facts(["fact"], "fact number 1", timezone="UTC")
     assert len(three) == 3 and len({r["fact_id"] for r in three}) == 3
     assert len(everything) == 5 and len({r["fact_id"] for r in everything}) == 5
 
@@ -499,7 +505,7 @@ async def test_search_keeps_facts_with_the_same_content_but_different_ids(store)
     first = await create(store, "likes green tea")
     second = await create(store, "likes green tea")
     with RequestContext(user_id=USER, account_id=ACC):
-        got = await _searching(store).search_existing_facts(["tea"], "likes green tea")
+        got = await _searching(store).search_existing_facts(["tea"], "likes green tea", timezone="UTC")
     assert sorted(r["fact_id"] for r in got) == sorted([first, second])
 
 
@@ -509,10 +515,10 @@ async def test_search_alternative_query_defaults_to_the_primary(store):
         await create(store, f"{name} fact", tags=[name], metadata={})
     adapter = _searching(store)
     with RequestContext(user_id=USER, account_id=ACC):
-        plain_ = await adapter.search_existing_facts(["x"], "alpha fact", limit=2)
-        explicit = await adapter.search_existing_facts(["x"], "alpha fact", alternative_query="alpha fact", limit=2)
+        plain_ = await adapter.search_existing_facts(["x"], "alpha fact", limit=2, timezone="UTC")
+        explicit = await adapter.search_existing_facts(["x"], "alpha fact", alternative_query="alpha fact", limit=2, timezone="UTC")
         assert plain_ == explicit
-        others = [await adapter.search_existing_facts(["x"], "alpha fact", alternative_query=f"{n} fact", limit=2)
+        others = [await adapter.search_existing_facts(["x"], "alpha fact", alternative_query=f"{n} fact", limit=2, timezone="UTC")
                   for n in names[1:]]
     assert any(other != plain_ for other in others)
 
@@ -520,7 +526,7 @@ async def test_search_alternative_query_defaults_to_the_primary(store):
 async def test_search_failure_or_no_account_returns_an_empty_list(store):
     await create(store, "likes green tea")
     adapter = _searching(store)
-    assert await adapter.search_existing_facts(["tea"], "likes green tea") == []
+    assert await adapter.search_existing_facts(["tea"], "likes green tea", timezone="UTC") == []
     store.db.collection(FACTS).fail = RuntimeError("backend down")
     with RequestContext(user_id=USER, account_id=ACC):
-        assert await adapter.search_existing_facts(["tea"], "likes green tea") == []
+        assert await adapter.search_existing_facts(["tea"], "likes green tea", timezone="UTC") == []
