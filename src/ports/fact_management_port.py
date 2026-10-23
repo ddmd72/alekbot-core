@@ -85,7 +85,8 @@ class FactManagementPort(ABC):
         Tenancy: a fact of another account, or a missing id, is "not_found"; nothing is written.
         Returns: {"fact_id", "status": "updated" | "not_found" | "failed", "message"}, plus "version" when updated.
             `fact_id` is the id of the document written: the new version's id after a content change, else the
-            current document's id, which differs from the argument when it was followed forward.
+            current document's id, which differs from the argument when it was followed forward. When the argument
+            was followed forward, the result also has "resolved_from" (the argument) and says so in its message.
         Versions: a change of text, tags, metadata or temporal_class writes a new document (new id, same lineage,
             version + 1, `replaces_fact_id`, `created_at` copied, `valid_from` now) and closes the old one
             (superseded, `superseded_by` = the new id) in one transaction. reported_date is the given value, else
@@ -101,7 +102,9 @@ class FactManagementPort(ABC):
             lineage, whose successor is unknown, or whose end is archived, invalidated or stale is "failed" with
             a message that names the current id when there is one.
         Conflict: a document changed between the read and the write is read again once, re-embedding only when the
-            embedding texts changed; a second conflict is "failed" ("changed concurrently; search again").
+            embedding texts changed; a second conflict is "failed" ("changed concurrently; search again"). An update
+            with content or tags (full replacements) is also "failed" the same way when the read-again lands on a
+            different document: a version the caller never saw arrived meanwhile and would lose its change.
         Atomicity: an invalid enum, date, tags or content, or an embedding failure is "failed" with nothing written.
         Idempotency: repeating an update that changes nothing writes only last_updated, in place.
         """
