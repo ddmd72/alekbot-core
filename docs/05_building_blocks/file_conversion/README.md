@@ -219,16 +219,16 @@ Text output — the lowest common denominator, works everywhere.
 
 ---
 
-## AudioTranscriptionPort (port ready, adapter not connected)
+## AudioTranscriptionPort (connected: `OpenAITranscriptionAdapter`)
 
 Audio files (`audio/mpeg`, `audio/wav`, `audio/mp4`, `audio/x-m4a`, `audio/ogg`) are detected in `convert_file_to_text()` in a dedicated branch. Transcription is delegated behind a port — `AudioTranscriptionPort` (`src/ports/audio_transcription_port.py`).
 
-**Current state:** `audio_service=None` everywhere → user receives an alert "transcription unavailable, please send text".
+**Current state:** `build_application_graph` builds one `OpenAITranscriptionAdapter` when `OPENAI_API_KEY` is set and passes the same instance to both platform `ConversationHandler`s and, through `ServiceContainer(audio_service=…)`, to `FileConversionService`, so `open_file` on an uploaded audio file transcribes it (P9 D3, 2026-10-23). Without the key `audio_service` is `None` everywhere and the user receives an alert "transcription unavailable, please send text".
 
 **What was tried and why disabled:**
 - `SpeechRecognitionAdapter` (markitdown → Google Web Speech API, free): English-only, `UnknownValueError` on Russian/Ukrainian, ~50 requests/day
 
-**To enable:** write a `WhisperAdapter` or `GoogleCloudSpeechAdapter` implementing the port, and pass it into `main.py`. The DI chain (`audio_service` parameter in factory → adapters → ConversationHandler) is ready, nothing needs to be rewritten. See the port's docstring for details.
+**History:** the Google Web Speech adapter above was replaced by `OpenAITranscriptionAdapter` (`gpt-transcribe`, used for voice messages too). See the port's docstring for details.
 
 ---
 
