@@ -18,7 +18,6 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Optional
-from zoneinfo import ZoneInfo
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
 from ..domain.consolidation import MAX_BATCH_ATTEMPTS, MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch
@@ -30,6 +29,7 @@ from ..domain.memory_write_lease import (
     defer_bucket,
     lease_until,
 )
+from ..domain.owner_timezone import resolve_owner_timezone
 from ..domain.request_context import RequestContext
 from ..ports.account_repository import AccountRepository
 from ..ports.consolidation_queue import ConsolidationQueue
@@ -203,25 +203,14 @@ class ConsolidationService:
         """The account owner's IANA zone, once per run; the account comes from the profile only and the zone never
         decides it. Any missing step, an invalid zone or a failing repository gives UTC and one WARNING: a store hiccup
         never fails a batch."""
-        try:
-            account = await self._account_repo.get_account(account_id)
-            if account is None:
-                return self._zone_unresolved(account_id, "account not found")
-            owners = account.owner_user_ids()
-            if not owners:
-                return self._zone_unresolved(account_id, "account has no owner")
-            if len(owners) > 1:
-                logger.warning(
-                    "[Librarian] account %s has %d owners; the timezone of the first is used", account_id[:8], len(owners),
-                )
-            owner = await self._user_repo.get_user(owners[0])
-            if owner is None:
-                return self._zone_unresolved(account_id, "owner has no profile")
-            zone = owner.config.timezone
-            ZoneInfo(zone)
-            return zone
-        except Exception as exc:
-            return self._zone_unresolved(account_id, f"{type(exc).__name__}: {exc}")
+        resolved = await resolve_owner_timezone(account_id, self._account_repo.get_account, self._user_repo.get_user)
+        if resolved.owner_count > 1:
+            logger.warning(
+                "[Librarian] account %s has %d owners; the timezone of the first is used", account_id[:8], resolved.owner_count,
+            )
+        if resolved.unresolved is not None:
+            return self._zone_unresolved(account_id, resolved.unresolved)
+        return resolved.zone
 
     @staticmethod
     def _zone_unresolved(account_id: str, why: str) -> str:

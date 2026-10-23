@@ -1,20 +1,13 @@
 import asyncio
-from typing import Any, List, Dict, Optional, Union
+from typing import List, Dict, Optional, Union
 
 from ..domain.entities import FactEntity
-from ..domain.local_time import local_moment
 from ..domain.search import EnrichedContext, EnrichedFact, SearchLimits
 from ..domain.vector_math import cosine_similarity
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.search_enrichment_port import SearchEnrichmentPort
 from ..utils.logger import logger
-
-
-def _expiry_fields(fact: FactEntity) -> Dict[str, Any]:
-    """The stored expiry decision as EnrichedFact carries it: `expires_at` an aware-UTC ISO string."""
-    expires_at = local_moment(fact.expires_at, "UTC").isoformat() if fact.expires_at is not None else None
-    return {"expiry_kind": fact.expiry_kind, "ttl_days": fact.ttl_days, "expires_at": expires_at}
 
 
 class SearchEnrichmentService(SearchEnrichmentPort):
@@ -395,24 +388,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
             )
             
             return [
-                EnrichedFact(
-                    fact_id=fact.id,
-                    content=fact.text,
-                    vector=fact.vector,
-                    source=source_label,
-                    relevance_score=1.0,
-                    fact_type=fact.type.value if fact.type else None,
-                    domain=fact.domain.value if fact.domain else None,
-                    temporal_class=fact.temporal_class.value if fact.temporal_class else None,
-                    state=fact.state.value if fact.state else None,
-                    context_priority=fact.context_priority.value if fact.context_priority else None,
-                    tags=fact.tags,
-                    metadata=fact.metadata,
-                    reported_date=fact.reported_date.isoformat() if fact.reported_date else None,
-                    context=fact.context,
-                    version=fact.version,
-                    **_expiry_fields(fact),
-                )
+                EnrichedFact.from_fact(fact, source_label, 1.0)
                 for fact in facts
             ]
         except Exception as exc:
@@ -452,24 +428,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
             )
             
             return [
-                EnrichedFact(
-                    fact_id=fact.id,
-                    content=fact.text,
-                    vector=fact.vector,
-                    source=source_label,
-                    relevance_score=getattr(fact, "similarity", None),
-                    fact_type=fact.type.value if fact.type else None,
-                    domain=fact.domain.value if fact.domain else None,
-                    temporal_class=fact.temporal_class.value if fact.temporal_class else None,
-                    state=fact.state.value if fact.state else None,
-                    context_priority=fact.context_priority.value if fact.context_priority else None,
-                    tags=fact.tags,
-                    metadata=fact.metadata,
-                    reported_date=fact.reported_date.isoformat() if fact.reported_date else None,
-                    context=fact.context,
-                    version=fact.version,
-                    **_expiry_fields(fact),
-                )
+                EnrichedFact.from_fact(fact, source_label, getattr(fact, "similarity", None))
                 for fact in facts
             ]
         except Exception as exc:

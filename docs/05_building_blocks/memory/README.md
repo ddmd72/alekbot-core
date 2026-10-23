@@ -272,7 +272,7 @@ stable, directive, principle → `none`); the `temporal_class` line is only a de
 **What code writes** (`compute_expiry`, `domain/fact_lifecycle.py:89-104`): `date` → `expires_at` = the start of the next
 local day in the **owner's timezone**, as UTC (so it is due at the end of that day; DST-safe); `horizon` → `reported_date` +
 N days and `ttl_days` = N; `none` → no `expires_at`. The owner's zone is resolved once per consolidation run from the
-account's owner profile (`ConsolidationService._owner_timezone`; an unresolvable one is UTC with one WARNING) and travels in
+account's owner profile (`ConsolidationService._owner_timezone` over `domain/owner_timezone.resolve_owner_timezone`, which the dry-run kit calls too; an unresolvable one is UTC with one WARNING) and travels in
 `message.context["owner_timezone"]`; a dry-run script without it gets UTC.
 
 **Born due is refused** (`born_due`, `fact_lifecycle.py:107-137`): a decision that resolves at or before now + 1 day would be
@@ -410,7 +410,7 @@ Each batch runs under the account's **memory-write lease** (`_consolidate_one`, 
   is no 5xx or retry loop (`_account_to_lease`, `:182-200`). The missing-profile case is real: the user's agents stay
   cached for about an hour, so `ensure_agents_for_user` can succeed after the profile is gone. The user repository is a
   required argument of `ConsolidationService`, so no wiring can leave it out;
-- resolves **the owner's timezone** once per run, after the account (`_owner_timezone`, `:202-224`): the account's owner
+- resolves **the owner's timezone** once per run, after the account (`_owner_timezone`, over `resolve_owner_timezone` in `domain/owner_timezone.py`): the account's owner
   (`BillingAccount.owner_user_ids()`; the first when there are several, with a WARNING) → that profile's `timezone`,
   checked as an IANA zone. Any missing step, an invalid zone or a failing repository gives `UTC` and one WARNING
   (`[Librarian] owner timezone unresolved for account <8>: …; using UTC`), never a failed batch. It rides in the agent

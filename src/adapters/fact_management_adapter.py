@@ -16,16 +16,14 @@ from ..domain.fact_lifecycle import (
 from ..domain.fact_update import ParsedFactUpdate, parse_fact_update
 from ..domain.fact_update_lifecycle import finish_fact_update
 from ..domain.fact_update_plan import FactUpdatePlan, plan_fact_update
-from ..domain.local_time import local_moment
 from ..domain.fact_write_context import (
     FactWriteContext,
-    as_utc,
     kept_reported_date_note,
     reported_date_for_merge,
     reported_date_for_new,
 )
 from ..domain.new_fact_attributes import NewFactAttributes, parse_new_fact
-from ..domain.search import SearchLimits
+from ..domain.search import SearchLimits, consolidation_hit
 from ..domain.stored_fact import StoredFact
 from ..ports.fact_management_port import FactManagementPort
 from ..ports.repository import FactRepository
@@ -33,16 +31,6 @@ from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_write_port import FactWritePort
 from ..ports.search_enrichment_port import SearchEnrichmentPort
 from ..utils.logger import logger
-
-
-def _in_owner_zone(stamp: Optional[str], zone: str) -> Optional[str]:
-    """An ISO timestamp as an ISO timestamp with the owner's offset; text that is not ISO is returned as stored."""
-    if not stamp:
-        return stamp
-    try:
-        return local_moment(as_utc(stamp), zone).isoformat(timespec="seconds")
-    except ValueError:
-        return stamp
 
 
 class FactManagementAdapter(FactManagementPort):
@@ -128,26 +116,7 @@ class FactManagementAdapter(FactManagementPort):
             )
 
             # Convert EnrichedFact → Dict — taxonomy fields already carried by EnrichedFact
-            results: List[Dict[str, Any]] = []
-            for ef in enriched.facts:
-                expiry, due = ef.expiry_decision(timezone)
-                results.append({
-                    "fact_id": ef.fact_id,
-                    "content": ef.content,
-                    "similarity": ef.relevance_score,
-                    "source": ef.source,
-                    "type": ef.fact_type,
-                    "domain": ef.domain,
-                    "temporal_class": ef.temporal_class,
-                    "state": ef.state,
-                    "context_priority": ef.context_priority,
-                    "tags": ef.tags or [],
-                    "metadata": ef.metadata or {},
-                    "reported_date": _in_owner_zone(ef.reported_date, timezone),
-                    "expiry": expiry,
-                    "due": due,
-                    "version": ef.version,
-                })
+            results: List[Dict[str, Any]] = [consolidation_hit(ef, timezone) for ef in enriched.facts]
 
             # Log top 3 results (with safe similarity formatting)
             for i, result in enumerate(results[:3]):

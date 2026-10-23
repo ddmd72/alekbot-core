@@ -51,13 +51,13 @@ from src.domain.fact_lifecycle import (
     lifecycle_fields,
     with_event,
 )
-from src.domain.fact_expiry import expiry_view
 from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot
 from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_write_context import FactWriteContext
-from src.domain.local_time import local_moment
+from src.domain.owner_timezone import resolve_owner_timezone
 from src.domain.prompt_v3.slot import OwnerType
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
+from src.domain.search import EnrichedFact, consolidation_hit
 from src.domain.stored_fact import StoredFact
 from src.ports.alert_sink import AlertSinkPort
 from src.ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
@@ -73,7 +73,7 @@ MEMORY_DIR = PROJECT_ROOT / "scripts" / "memory"
 SPEND_LEDGER = MEMORY_DIR / "s3_dry_run_spend.json"
 DEFAULT_REPORT = MEMORY_DIR / "s3_dry_run_report.json"
 SNAPSHOT_DIR = PROJECT_ROOT / "prompts_snapshot"
-DEFAULT_BUDGET_USD = 30.0
+DEFAULT_BUDGET_USD = 30.0       # the owner's cap (Q8); raising it is his call, see `check_budget_flag`
 MAX_OVERLAY_HOPS = 10
 
 # The tokens S3 edits (the sixth, CONSOLIDATION_OUTPUT_SPEC, is unchanged and still comes from Firestore).
@@ -688,29 +688,18 @@ class CostMeter:
 # ------------------------------------------------------------------------------------------------ owner zone
 
 async def owner_timezone(account_repo: Any, user_repo: Any, account_id: str, override: Optional[str] = None) -> str:
-    """The account owner's IANA zone, resolved as `ConsolidationService._owner_timezone` does (first owner's profile;
-    any missing step or failure gives UTC with one warning). `override` (`--timezone`) wins and must be a zone."""
+    """The account owner's IANA zone, resolved by the rule `ConsolidationService` uses (`resolve_owner_timezone`; any
+    missing step or failure gives UTC with one warning). `override` (`--timezone`) wins and must be a zone."""
     if override:
         try:
             ZoneInfo(override)
         except (KeyError, ValueError, OSError) as exc:
             raise ValueError(f"--timezone {override!r} is not an IANA zone") from exc
         return override
-    try:
-        account = await account_repo.get_account(account_id)
-        if account is None:
-            return _unresolved(account_id, "account not found")
-        owners = account.owner_user_ids()
-        if not owners:
-            return _unresolved(account_id, "account has no owner")
-        owner = await user_repo.get_user(owners[0])
-        if owner is None:
-            return _unresolved(account_id, "owner has no profile")
-        zone = owner.config.timezone
-        ZoneInfo(zone)
-        return zone
-    except Exception as exc:
-        return _unresolved(account_id, type(exc).__name__)
+    resolved = await resolve_owner_timezone(account_id, account_repo.get_account, user_repo.get_user)
+    if resolved.unresolved is not None:
+        return _unresolved(account_id, resolved.unresolved)
+    return resolved.zone
 
 
 def _unresolved(account_id: str, why: str) -> str:
@@ -732,24 +721,20 @@ def reported_date_form(value: Any) -> Optional[str]:
     return "other"
 
 
+def derived_from_count(value: Any) -> int:
+    """How many fact ids a create call named in `derived_from` (an id or a list of ids; anything else names none)."""
+    if isinstance(value, str):
+        return 1 if value.strip() else 0
+    if isinstance(value, (list, tuple)):
+        return sum(1 for item in value if item)
+    return 0
+
+
 def hit_from_document(doc: FactEntity, hit: Dict[str, Any], timezone: str) -> Dict[str, Any]:
-    """A search hit re-rendered from the overlay document (id, text, decision, stamps, taxonomy); relevance and source stay."""
-    expiry, due = expiry_view(doc.expiry_kind, doc.ttl_days, doc.expires_at, timezone)
-    taxonomy = {
-        "domain": doc.domain, "temporal_class": doc.temporal_class, "state": doc.state, "context_priority": doc.context_priority,
-    }
-    return {
-        **hit,
-        "fact_id": doc.id,
-        "content": doc.text,
-        **{name: getattr(value, "value", value) for name, value in taxonomy.items()},
-        "tags": doc.tags or [],
-        "metadata": doc.metadata or {},
-        "reported_date": local_moment(doc.reported_date, timezone).isoformat(timespec="seconds") if doc.reported_date else None,
-        "expiry": expiry,
-        "due": due,
-        "version": doc.version,
-    }
+    """A search hit re-rendered from the overlay document by production's own shaping (`EnrichedFact.from_fact`,
+    `consolidation_hit`); an extra key of `hit` stays."""
+    shaped = consolidation_hit(EnrichedFact.from_fact(doc, hit.get("source", ""), hit.get("similarity")), timezone)
+    return {**hit, **shaped}
 
 
 # ------------------------------------------------------------------------------------------------ the write recorder
@@ -787,7 +772,7 @@ class WriteRecorder(FactManagementPort):
     async def create_fact(self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext) -> Dict[str, Any]:
         return await self._kit.logged(
             "create", context, metadata.get("expiry"), metadata.get("reported_date"), "fact_id",
-            self._inner.create_fact(content, metadata, context=context),
+            self._inner.create_fact(content, metadata, context=context), derived_from=metadata.get("derived_from"),
         )
 
     async def update_fact(
@@ -809,10 +794,27 @@ class WriteRecorder(FactManagementPort):
 
 # ------------------------------------------------------------------------------------------------ the kit
 
+class BudgetAboveOwnerCap(ValueError):
+    """`--budget-usd` is above the owner's cap and `--allow-over-owner-cap` was not given."""
+
+
+def check_budget_flag(budget_usd: float, allow_over_owner_cap: bool = False) -> float:
+    """`budget_usd`, or BudgetAboveOwnerCap when it is above the owner's $30 cap and the owner's flag is not set."""
+    if budget_usd > DEFAULT_BUDGET_USD and not allow_over_owner_cap:
+        raise BudgetAboveOwnerCap(
+            f"--budget-usd {budget_usd:g} is above the owner's ${DEFAULT_BUDGET_USD:g} cap; raising it is the owner's call: "
+            "add --allow-over-owner-cap only on his word"
+        )
+    return budget_usd
+
+
 def add_kit_arguments(parser: Any) -> None:
     """The kit's command-line flags, for the benches that use it."""
     parser.add_argument("--budget-usd", type=float, default=DEFAULT_BUDGET_USD,
-                        help="cumulative model spend cap across all kit runs (default: 30)")
+                        help="cumulative model spend cap across all kit runs (default and ceiling: 30; "
+                             "a higher value needs --allow-over-owner-cap)")
+    parser.add_argument("--allow-over-owner-cap", action="store_true",
+                        help="allow --budget-usd above the owner's $30 cap (the owner's call, never on your own)")
     parser.add_argument("--timezone", default=None,
                         help="IANA zone for the passes (default: the account owner's, as the consolidation service reads it)")
 
@@ -1040,7 +1042,8 @@ class DryRunKit:
         agent._report_pass = report_pass
 
     async def logged(
-        self, action: str, context: FactWriteContext, expiry_sent: Any, reported_sent: Any, id_key: str, call: Any
+        self, action: str, context: FactWriteContext, expiry_sent: Any, reported_sent: Any, id_key: str, call: Any,
+        derived_from: Any = None,
     ) -> Dict[str, Any]:
         """Run one write call and add its report row. The row's place is taken before the call, so rows keep the order
         the model emitted them in even when a turn's calls run concurrently."""
@@ -1052,6 +1055,8 @@ class DryRunKit:
             "expiry_sent": expiry_sent,
             "reported_date_sent": reported_sent,
             "reported_date_form": reported_date_form(reported_sent),
+            "cleanup": not context.model_dates,
+            "derived_from_named": derived_from_count(derived_from),
         }
         self.rows.append(row)
         result = await call
@@ -1082,6 +1087,10 @@ class DryRunKit:
         total: Counter = Counter()
         for counted in forms.values():
             total.update(counted)
+        undated: Counter = Counter(
+            row["pass"] for row in self.rows
+            if row["action"] == "create" and row["status"] == "created" and row["cleanup"] and not row["derived_from_named"]
+        )
         return {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "timezone": self.timezone,
@@ -1097,6 +1106,7 @@ class DryRunKit:
             "overrides_blocked": self.overrides_blocked,
             "passes": self.passes,
             "reported_date_forms": {"per_pass": {k: dict(v) for k, v in forms.items()}, "total": dict(total)},
+            "cleanup_creates_without_derived_from": {"per_pass": dict(undated), "total": sum(undated.values())},
             "writes": self.rows,
             "store_writes": dict(Counter(w["kind"] for w in (self.repo.writes if self.repo else []))),
             "email_writes": dict(Counter(w["kind"] for w in (self.emails.writes if self.emails else []))),
