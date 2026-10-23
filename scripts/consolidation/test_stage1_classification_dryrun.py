@@ -28,7 +28,8 @@ Usage:
     python scripts/consolidation/test_stage1_classification_dryrun.py --rule both --messages 50
     python scripts/consolidation/test_stage1_classification_dryrun.py --s3-kit --rule baseline --messages 50
 
-`--s3-kit` (Facts S3, plan T12b) runs the real Stage 1 (`consolidate`, then the run's Stage 2a / 2b) on the dry-run kit
+`--s3-kit` (Facts S3, plan T12b) runs the real Stage 1 (`consolidate`, then the run's Stage 2a / 2b) on the dry-run kit,
+baseline rule only (`--rule new|both` is refused: it patches a candidate rule into the prompt, which S3 does not ship),
 instead of the intercepted-writes adapter: the S3 tokens from `prompts_snapshot/`, a no-write store the passes read their own
 writes back from, the cost meter, a report in `scripts/memory/`. Without the flag the bench behaves as it always did.
 
@@ -46,7 +47,7 @@ import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -232,35 +233,20 @@ def build_stage1_message(
     )
 
 
-async def run_stage1_on_kit(
-    agent, kit, messages: List[Dict], bio_facts: List[Dict], user_id: str, account_id: str, use_new_rule: bool,
-) -> bool:
-    """One Stage 1 run on the kit, with the candidate classification patched into the prompt when asked.
-    Returns whether the patch matched."""
-    patched_ok = {"hit": False}
-    original_build = agent.prompt_builder.build_for_agent
-
-    async def building(*args, **kwargs):
-        prompt = await original_build(*args, **kwargs)
-        if not use_new_rule:
-            return prompt
-        patched, hit = patch_prompt(prompt)
-        patched_ok["hit"] = patched_ok["hit"] or hit
-        return patched
-
-    agent.prompt_builder.build_for_agent = building
-    try:
-        await execute(agent, build_stage1_message(kit, messages, bio_facts, user_id, account_id),
-                      user_id, account_id, "Stage 1 consolidate")
-    finally:
-        agent.prompt_builder.build_for_agent = original_build
-    return patched_ok["hit"]
+def resolve_rule(rule: Optional[str], s3_kit: bool) -> str:
+    """The `--rule` to run. The kit gates the S3 snapshot prompt as it stands, so it takes the baseline rule only: the
+    candidate classification (`new`, `both`) is an older experiment that patches the assembled prompt."""
+    if s3_kit:
+        if rule not in (None, "baseline"):
+            raise ValueError("--s3-kit runs the S3 prompt as it is: --rule new|both patches in a candidate rule and is refused")
+        return "baseline"
+    return rule or "both"
 
 
-async def main_s3_kit(rule: str, n_messages: int, args) -> None:
+async def run_s3_kit(handles, n_messages: int, args) -> None:
+    """Stage 1 `consolidate` on the newest `n_messages` turns of the latest session, on the kit (then the run's 2a / 2b)."""
     print(f"\n{'='*98}\nSTAGE 1 ON THE S3 KIT (no fact, counter or cache write reaches the live store)\n{'='*98}")
     user_id, account_id = args.user_id, args.account_id
-    handles = await build_agent(user_id)
     agent = handles.agent
     messages, session_id = await load_window(handles.db, user_id, n_messages, keep_times=True)
     if not messages:
@@ -269,20 +255,17 @@ async def main_s3_kit(rule: str, n_messages: int, args) -> None:
     print(f"  model: {agent.model_name}\n  window: {len(messages)} turns from session {session_id}")
     bio_facts = await biographical_facts(handles, account_id)
 
-    variants = [("baseline", False)] if rule == "baseline" else [("new", True)] if rule == "new" else \
-               [("baseline", False), ("new", True)]
     async with kit_session(handles, args, user_id, account_id, "stage1_classification") as (kit, extra):
-        extra.update({"model": agent.model_name, "window_turns": len(messages), "variants": []})
-        for label, use_new in variants:
-            first_pass, first_row = len(kit.passes), len(kit.rows)
-            hit = await run_stage1_on_kit(agent, kit, messages, bio_facts, user_id, account_id, use_new)
-            if use_new and not hit:
-                print("\n  classification block NOT matched: the rule text changed upstream. "
-                      "The result below is the BASELINE rule, not the candidate.")
-            extra["variants"].append({"rule": label, "patched": hit, "passes": [first_pass, len(kit.passes)],
-                                      "rows": [first_row, len(kit.rows)]})
-            print(f"\n{'='*98}\nRULE: {label}\n{'='*98}")
-            print_rows(kit.rows[first_row:])
+        extra.update({"model": agent.model_name, "window_turns": len(messages), "rule": "baseline"})
+        first_row = len(kit.rows)
+        await execute(agent, build_stage1_message(kit, messages, bio_facts, user_id, account_id),
+                      user_id, account_id, "Stage 1 consolidate")
+        extra["rows"] = [first_row, len(kit.rows)]
+        print_rows(kit.rows[first_row:])
+
+
+async def main_s3_kit(n_messages: int, args) -> None:
+    await run_s3_kit(await build_agent(args.user_id), n_messages, args)
 
 
 def report(label: str, ops: List[Dict], elapsed: float, tokens: int) -> None:
@@ -380,7 +363,8 @@ async def main(rule: str, n_messages: int, user_id: str, account_id: str) -> Non
 if __name__ == "__main__":
     load_env()
     ap = argparse.ArgumentParser(description="Stage 1 directive/preference classification bench")
-    ap.add_argument("--rule", choices=["baseline", "new", "both"], default="both")
+    ap.add_argument("--rule", choices=["baseline", "new", "both"], default=None,
+                    help="classification rule (default: both; with --s3-kit only baseline is allowed)")
     ap.add_argument("--messages", type=int, default=50, help="conversation turns to consolidate")
     ap.add_argument("--user-id", default=os.getenv("DEV_USER_ID"))
     ap.add_argument("--account-id", default=os.getenv("DEV_ACCOUNT_ID"))
@@ -389,7 +373,11 @@ if __name__ == "__main__":
     if not a.user_id or not a.account_id:
         print("ERROR: set DEV_USER_ID / DEV_ACCOUNT_ID in .env")
         sys.exit(1)
+    try:
+        a.rule = resolve_rule(a.rule, a.s3_kit)
+    except ValueError as exc:
+        ap.error(str(exc))
     if a.s3_kit:
-        asyncio.run(main_s3_kit(a.rule, a.messages, a))
+        asyncio.run(main_s3_kit(a.messages, a))
     else:
         asyncio.run(main(a.rule, a.messages, a.user_id, a.account_id))

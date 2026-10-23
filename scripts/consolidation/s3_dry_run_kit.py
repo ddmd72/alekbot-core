@@ -51,9 +51,11 @@ from src.domain.fact_lifecycle import (
     lifecycle_fields,
     with_event,
 )
+from src.domain.fact_expiry import expiry_view
 from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot
 from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_write_context import FactWriteContext
+from src.domain.local_time import local_moment
 from src.domain.prompt_v3.slot import OwnerType
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
 from src.domain.stored_fact import StoredFact
@@ -72,6 +74,8 @@ SPEND_LEDGER = MEMORY_DIR / "s3_dry_run_spend.json"
 DEFAULT_REPORT = MEMORY_DIR / "s3_dry_run_report.json"
 SNAPSHOT_DIR = PROJECT_ROOT / "prompts_snapshot"
 DEFAULT_BUDGET_USD = 30.0
+MAX_OVERLAY_HOPS = 10
+REVIEW_CLUSTER_LIMIT = 30      # Stage 2a's own cap (`_build_review_cluster`)
 
 # The tokens S3 edits (the sixth, CONSOLIDATION_OUTPUT_SPEC, is unchanged and still comes from Firestore).
 S3_TOKEN_IDS: Tuple[str, ...] = (
@@ -142,6 +146,11 @@ class NoWriteFactRepository(FactRepository):
 
     def _record(self, kind: str, **info: Any) -> None:
         self.writes.append({"kind": kind, **info})
+
+    def overlay_document(self, fact_id: str) -> Optional[FactEntity]:
+        """The pass's own copy of a document (written or changed in this run), else None."""
+        doc = self._docs.get(fact_id)
+        return doc.model_copy(deep=True) if doc is not None else None
 
     def forget_overlay(self) -> None:
         """Drop the pass's own documents so the next run starts from the live store; `writes` keeps the record."""
@@ -720,6 +729,26 @@ def reported_date_form(value: Any) -> Optional[str]:
     return "other"
 
 
+def hit_from_document(doc: FactEntity, hit: Dict[str, Any], timezone: str) -> Dict[str, Any]:
+    """A search hit re-rendered from the overlay document (id, text, decision, stamps, taxonomy); relevance and source stay."""
+    expiry, due = expiry_view(doc.expiry_kind, doc.ttl_days, doc.expires_at, timezone)
+    taxonomy = {
+        "domain": doc.domain, "temporal_class": doc.temporal_class, "state": doc.state, "context_priority": doc.context_priority,
+    }
+    return {
+        **hit,
+        "fact_id": doc.id,
+        "content": doc.text,
+        **{name: getattr(value, "value", value) for name, value in taxonomy.items()},
+        "tags": doc.tags or [],
+        "metadata": doc.metadata or {},
+        "reported_date": local_moment(doc.reported_date, timezone).isoformat(timespec="seconds") if doc.reported_date else None,
+        "expiry": expiry,
+        "due": due,
+        "version": doc.version,
+    }
+
+
 # ------------------------------------------------------------------------------------------------ the write recorder
 
 class WriteRecorder(FactManagementPort):
@@ -732,7 +761,8 @@ class WriteRecorder(FactManagementPort):
     async def search_existing_facts(
         self, keywords: List[str], primary_query: str, alternative_query: str = "", limit: int = 20, *, timezone: str
     ) -> List[Dict[str, Any]]:
-        return await self._inner.search_existing_facts(keywords, primary_query, alternative_query, limit, timezone=timezone)
+        hits = await self._inner.search_existing_facts(keywords, primary_query, alternative_query, limit, timezone=timezone)
+        return self._kit.correct_hits(hits, timezone)
 
     async def create_fact(self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext) -> Dict[str, Any]:
         return await self._kit.logged(
@@ -846,7 +876,58 @@ class DryRunKit:
         self._service = service
         self._wrap_calls(agent)
         self._wrap_passes(agent)
+        self._wrap_review_cluster(agent)
         self._installed = True
+
+    def current_in_overlay(self, doc: Optional[FactEntity]) -> Optional[FactEntity]:
+        """`doc` followed through the overlay to the document that is current now; None when the run closed it for good
+        (invalidated, stale, archived) or its successor is not in the overlay."""
+        for _ in range(MAX_OVERLAY_HOPS):
+            if doc is None or doc.state is FactState.CURRENT:
+                return doc
+            if doc.state is not FactState.SUPERSEDED or not doc.superseded_by or self.repo is None:
+                return None
+            doc = self.repo.overlay_document(doc.superseded_by)
+        return None
+
+    def correct_hits(self, hits: List[Dict[str, Any]], timezone: str) -> List[Dict[str, Any]]:
+        """Search hits as production's search would show them after this run's writes: a hit the run closed is replaced by
+        its current overlay successor (dropped when it has none), a hit the run changed shows the overlay document."""
+        if self.repo is None:
+            return hits
+        out: List[Dict[str, Any]] = []
+        seen: set = set()
+        for hit in hits:
+            doc = self.repo.overlay_document(hit["fact_id"])
+            if doc is not None:
+                doc = self.current_in_overlay(doc)
+                if doc is None:
+                    continue
+                hit = hit_from_document(doc, hit, timezone)
+            if hit["fact_id"] not in seen:
+                seen.add(hit["fact_id"])
+                out.append(hit)
+        return out
+
+    def _wrap_review_cluster(self, agent: Any) -> None:
+        """Stage 2a's cluster is built from searches, which cannot see this run's writes; production finds the facts the
+        run wrote (each finds itself). Put them, read back from the overlay, in front of what the searches found."""
+        build = agent._build_review_cluster
+
+        async def review_cluster(changed: Any, account_id: str, *, timezone: str) -> List[Dict[str, Any]]:
+            from src.agents.consolidation_agent import ConsolidationAgent
+
+            found = await build(changed, account_id, timezone=timezone)
+            own: List[Dict[str, Any]] = []
+            for fact_id, _ in changed:
+                doc = self.current_in_overlay(self.repo.overlay_document(fact_id)) if self.repo else None
+                if doc is not None and all(entry["fact_id"] != doc.id for entry in own):
+                    own.append({**ConsolidationAgent._cluster_entry(doc, timezone), "similarity": 1.0})
+            own_ids = {entry["fact_id"] for entry in own}
+            rest = [entry for entry in found if entry.get("fact_id") not in own_ids]
+            return (own + rest)[:max(REVIEW_CLUSTER_LIMIT, len(own))]
+
+        agent._build_review_cluster = review_cluster
 
     def _wrap_calls(self, agent: Any) -> None:
         self.meter.wrap(agent)

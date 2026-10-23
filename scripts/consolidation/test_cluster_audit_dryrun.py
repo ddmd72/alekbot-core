@@ -50,6 +50,7 @@ from google.cloud import firestore
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.agents.consolidation_agent import ConsolidationAgent
+from src.domain.entities import FactState
 from src.composition.service_container import ServiceContainer
 from src.config.settings import load_settings
 from src.domain.agent import AgentIntent, AgentMessage
@@ -290,19 +291,28 @@ def build_cluster_audit_message(
 async def build_batch_cluster(
     agent, batch: List[Any], timezone: str, user_id: str, account_id: str
 ) -> List[Dict[str, Any]]:
-    """The batch's own entries, then what the knowledge-base search finds for each of the batch's facts."""
-    seeds = [ConsolidationAgent._cluster_entry(fact, timezone) for fact in batch]
+    """The batch's own entries, then what the knowledge-base search finds for each of the batch's facts.
+
+    Each fact is read again through the kit's store first: an earlier batch's pass may have merged, superseded or
+    rewritten it, and then the first read (before the kit) is stale. A fact that is no longer current is left out."""
+    current: List[Any] = []
+    for fact in batch:
+        fresh = await agent._repo.get_fact_by_id(fact.id)
+        if fresh is not None and fresh.state is FactState.CURRENT:
+            current.append(fresh)
+    if not current:
+        return []
+    seeds = [ConsolidationAgent._cluster_entry(fact, timezone) for fact in current]
     return await cluster_from_search(
-        agent._fact_management.search_existing_facts, [f.text for f in batch], seeds, timezone,
+        agent._fact_management.search_existing_facts, [f.text for f in current], seeds, timezone,
         user_id=user_id, account_id=account_id,
     )
 
 
-async def main_s3_kit(limit: int, batch_size: int, min_words: int, args) -> None:
+async def run_s3_kit(handles, limit: int, batch_size: int, min_words: int, args) -> None:
     print(f"\n{'='*65}\nCLUSTER QUALITY AUDIT ON THE S3 KIT (consolidate_cluster passes)\n{'='*65}")
     print(f"  Min words: {min_words}  |  Limit: {limit}  |  Batch size: {batch_size}")
     user_id, account_id = args.user_id, args.account_id
-    handles = await build_agent(user_id)
     facts = await fetch_long_facts_entities(handles.container.repository, account_id, min_words, limit)
     if not facts:
         print(f"No facts found with >{min_words} words. Nothing to process.")
@@ -314,6 +324,10 @@ async def main_s3_kit(limit: int, batch_size: int, min_words: int, args) -> None
         for batch_idx, batch in enumerate(batches_of(facts, batch_size)):
             first_pass, first_row = len(kit.passes), len(kit.rows)
             cluster = await build_batch_cluster(handles.agent, list(batch), kit.timezone, user_id, account_id)
+            if not cluster:
+                print(f"\nBatch {batch_idx + 1}: none of its {len(batch)} facts is current any more; skipped.")
+                extra["batches"].append({"batch_index": batch_idx, "skipped": True})
+                continue
             print(f"\nBatch {batch_idx + 1}: {len(batch)} facts, cluster of {len(cluster)}")
             message = build_cluster_audit_message(kit, cluster, bio_facts, user_id, account_id, batch_idx)
             await execute(handles.agent, message, user_id, account_id, f"consolidate_cluster batch {batch_idx + 1}")
@@ -322,6 +336,10 @@ async def main_s3_kit(limit: int, batch_size: int, min_words: int, args) -> None
                 "passes": [first_pass, len(kit.passes)], "rows": [first_row, len(kit.rows)],
             })
             print_rows(kit.rows[first_row:])
+
+
+async def main_s3_kit(limit: int, batch_size: int, min_words: int, args) -> None:
+    await run_s3_kit(await build_agent(args.user_id), limit, batch_size, min_words, args)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

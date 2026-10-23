@@ -1079,69 +1079,77 @@ deploy from `main` after the merge must follow this procedure, whoever runs it.
    `(lineage_id, created_at DESC)` index becomes unused and stays; deleting it is optional. The collection
    `{prefix}memory_write_leases` (the lease, one document per account) is created by the first run: no index and **no TTL
    policy**, because its expiry field is `lease_until`, never `expires_at`; a TTL must not be added.
-M. **The model dry run of the S3 prompts (mandatory, owner Q8; from your Mac, before the pause).** It runs the five S3
-   consolidation prompt tokens and the code-built messages against your real facts and a real model, and reports what the
-   new rules did, before anything is uploaded or deployed. Nothing it does is written to your data.
+**Step M: the model dry run of the S3 prompts (mandatory, owner Q8; from your Mac, before the pause).** It runs the five S3
+consolidation prompt tokens and the code-built messages against your real facts and a real model, and reports what the
+new rules did, before anything is uploaded or deployed. Nothing it does is written to your data.
 
-   **Before you start.** The S3 branch is checked out (the five tokens are read from `prompts_snapshot/` in the working
-   tree; nothing is uploaded). The dotenv file has the model keys and the dev user and account ids. The consolidation agent
-   must be on the v3 prompt version (the kit refuses any other and says why). Run **one bench at a time**: the spend
-   ledger is locked while a bench runs, and a second bench started meanwhile stops with "another dry-run process holds …".
+**Before you start.** The S3 branch is checked out (the five tokens are read from `prompts_snapshot/` in the working
+tree; nothing is uploaded). The dotenv file has the model keys and the dev user and account ids. The consolidation agent
+must be on the v3 prompt version (the kit refuses any other and says why): the dotenv file must not set
+`CONSOLIDATION__PROMPT_VERSION` to anything else. Run **one bench at a time**: the spend
+ledger is locked while a bench runs, and a second bench started meanwhile stops with "another dry-run process holds …".
 
-   **What is and is not written.** The kit puts a no-write fact store under the real agent and the real
-   `FactManagementAdapter`, a no-write email repository and a recording counters store. No fact, no biographical-cache
-   document, no email "consolidated" mark and no lifecycle counter is written. A pass reads its own earlier writes back (a
-   part created in a pass can be named by the compound retired later in it). Each bench's output ends with the report path
-   and the gate lines.
+**What is and is not written.** The kit puts a no-write fact store under the real agent and the real
+`FactManagementAdapter`, a no-write email repository and a recording counters store. No fact, no biographical-cache
+document, no email "consolidated" mark and no lifecycle counter is written. A pass reads its own earlier writes back (a
+part created in a pass can be named by the compound retired later in it). Each bench's output ends with the report path
+and the gate lines.
 
-   **What does leave the Mac (state this to yourself before you run):**
-   - model calls to the consolidation provider (Sonnet 5.5 today; whatever the live config gives consolidation);
-   - embedding calls (Gemini) for every create, version and search; the cost meter does not count them (cents);
-   - when prompt capture is on in your environment, one `prompt_content` row in the observability dataset per model call
-     (`account_id` empty, 30-day TTL), holding the prompt and the answer, i.e. your facts' text; and Logfire spans when a
-     Logfire token is set in your environment. Switch both off in the environment before the run if you do not want them;
-   - **no account usage counter is written**, so the spend does not appear in the billing summary or the daily budget
-     alert: it exists only in the kit's ledger.
+**What does leave the Mac (state this to yourself before you run):**
+- model calls to the consolidation provider (Sonnet 5.5 today; whatever the live config gives consolidation);
+- embedding calls (Gemini) for every create, version and search; the cost meter does not count them (cents);
+- when prompt capture is on in your environment (`DEBUG_PROMPTS=true` with a prompt dataset set), one `prompt_content`
+  row in the observability dataset per model call (`account_id` empty, 30-day TTL), holding the prompt and the answer, i.e.
+  your facts' text. Set `DEBUG_PROMPTS=false` for the run if you do not want those rows;
+- no Logfire or trace span leaves the Mac: the benches do not initialise telemetry, whatever the Logfire token says;
+- **no account usage counter is written**, so the spend does not appear in the billing summary or the daily budget
+  alert: it exists only in the kit's ledger.
 
-   **What stays live (reads).** The biographical cache, the vector searches, `find_due_facts` and the paginated, lineage
-   and domain reads see the live store only. So a fact a pass created is invisible to a later search and to the cache of the
-   same run, and a fact born due in the run is not "due" to the janitor (the dry run does not run the janitor). Reads by
-   id and the current-fact lists do see the pass's own writes.
+**What stays live (reads).** The biographical cache, the vector searches, `find_due_facts` and the paginated, lineage
+and domain reads see the live store only. So a fact a pass created is not found by a later search (Stage 2a's cluster is the one place seeded with the run's
+facts) and is not in the cache of the same run, and a fact born due in the run is not "due" to the janitor (the dry run does not run the janitor). Reads by
+id and the current-fact lists do see the pass's own writes. Search results are corrected for the run's own writes (a fact
+the run closed is dropped or replaced by its successor), and Stage 2a's cluster starts with the facts the run wrote, then
+the live neighbours the searches find, which is what production's cluster holds.
 
-   **Cost and the cap.** The kit's meter prices every call by the model the request names, keeps one ledger across all
-   runs in `scripts/memory/s3_dry_run_spend.json` and refuses the next call when the cumulative spend would pass **$30**
-   (`--budget-usd` lowers or raises that cumulative cap; a model with no price is refused before the call). The meter sees
-   the requested model only: a provider failover, a retry or a timed-out attempt that the provider still bills is not seen,
-   so the real bill can be somewhat higher; the estimates below leave room. A run stopped by the cap still writes its report.
-   Expected total about $6-12 on Sonnet 5.5 (about $12-24 on Opus 5.5).
+**Cost and the cap.** The kit's meter prices every call by the model the request names, keeps one ledger across all
+runs in `scripts/memory/s3_dry_run_spend.json` and refuses the next call when the cumulative spend would pass **$30**
+(`--budget-usd` lowers or raises that cumulative cap; a model with no price is refused before the call). The meter sees
+the requested model only: a provider failover, a retry or a timed-out attempt that the provider still bills is not seen,
+so the real bill can be somewhat higher; the estimates below leave room. A run stopped by the cap still writes its report.
+Expected total about $6-12 on Sonnet 5.5 (about $12-24 on Opus 5.5).
 
-   **Flags.** `--s3-kit` turns the kit on; without it each bench behaves as it always did. `--timezone <IANA zone>`
-   overrides the owner's zone, which is otherwise resolved as the consolidation service resolves it (UTC with a warning when
-   it cannot be). `--budget-usd` as above. A failed response from the agent (including a refused snapshot token) stops the
-   bench with the failure printed; the report is still written.
+**Flags.** `--s3-kit` turns the kit on; without it each bench behaves as it always did. `--timezone <IANA zone>`
+overrides the owner's zone, which is otherwise resolved as the consolidation service resolves it (UTC with a warning when
+it cannot be). `--budget-usd` as above. A failed response from the agent (including a refused snapshot token) stops the
+bench with the failure printed; the report is still written.
 
-   **Run in this order** (the estimate is per run, Sonnet 5.5 / Opus 5.5):
+**Run in this order** (the estimate is per run, Sonnet 5.5 / Opus 5.5):
 
-   | # | Command | What it checks | Est. |
-   |---|---|---|---|
-   | 1 | `python scripts/consolidation/test_stage1_classification_dryrun.py --s3-kit --rule baseline --messages 50` (run twice, for spread) | A real Stage 1 `consolidate` on the newest 50 turns of your latest session, with their stored times: expiry on every create and content update, `reported_date` from the stamps, the extension rule on re-mentions, past plans to history or discard; then the run's own Stage 2a and Stage 2b | $1-2 / $2-4 |
-   | 2 | `python scripts/consolidation/test_cluster_audit_dryrun.py --s3-kit --limit 20 --batch-size 5` | Each batch of your longest facts as a real `consolidate_cluster` pass (label and actor `cluster`) over an explicit cluster of the batch plus its search results: turns per pass, floored horizons and their note, `derived_from` on split parts, no ad-hoc classifying of facts that show `expiry: null` | $1.2-2.4 / $2.4-4.8 |
-   | 3 | `python scripts/consolidation/test_decomposition_dryrun.py --s3-kit --limit 10` | The Stage 1 size review (the size gate lives there), then a `consolidate_cluster` pass over the facts Stage 1 wrote and their search results: every part created before the compound is retired, `superseded_by` named, no abandoned refusal. The Stage 1 `consolidate` also runs its own Stage 2a and 2b, so the report shows `stage1`, `stage2a`, `stage2b`, `cluster` | $1-2 / $2-4 |
-   | 4 | `python scripts/consolidation/test_directive_review_dryrun.py --s3-kit --runs 2` | The production Stage 2b (`stage2b`) on your rulebook, twice from the same live rulebook (the kit forgets its own writes between runs): merges and rewrites need no expiry answer (pinned `none`), demotions carry an expiry and `derived_from`. `--prompt new\|both` and `--stage1 new` are refused with the kit | $0.6-1.2 / $1.2-2.4 |
-   | 5 | `python scripts/email/test_consolidation_dryrun.py --s3-kit --limit 30` | A real `consolidate_email` pass (label and actor `email`) of one batch of up to 30 of your unconsolidated indexed emails, read live through a wrapper that marks nothing: `reported_date` = the email's date, past plans in old mail to history or discard. With no unconsolidated email it says so and stops (nothing run, nothing spent). `--facts-file` and `--category` do not apply | $0.4-1 / $0.8-2 |
+| # | Command | What it checks | Est. |
+|---|---|---|---|
+| 1 | `python scripts/consolidation/test_stage1_classification_dryrun.py --s3-kit --rule baseline --messages 50` (run twice, for spread) | A real Stage 1 `consolidate` on the newest 50 turns of your latest session, with their stored times: expiry on every create and content update, `reported_date` from the stamps, the extension rule on re-mentions, past plans to history or discard; then the run's own Stage 2a and Stage 2b. `--rule new\|both` is refused with the kit (the rule defaults to `baseline`) | $1-2 / $2-4 |
+| 2 | `python scripts/consolidation/test_cluster_audit_dryrun.py --s3-kit --limit 20 --batch-size 5` | Each batch of your longest facts as a real `consolidate_cluster` pass (label and actor `cluster`) over an explicit cluster of the batch plus its search results: turns per pass, floored horizons and their note, `derived_from` on split parts, no ad-hoc classifying of facts that show `expiry: null` | $1.2-2.4 / $2.4-4.8 |
+| 3 | `python scripts/consolidation/test_decomposition_dryrun.py --s3-kit --limit 10` | The Stage 1 size review (the size gate lives there), then a `consolidate_cluster` pass over the facts Stage 1 wrote and their search results: every part created before the compound is retired, `superseded_by` named, no abandoned refusal. The Stage 1 `consolidate` also runs its own Stage 2a and 2b, so the report shows `stage1`, `stage2a`, `stage2b`, `cluster` | $1-2 / $2-4 |
+| 4 | `python scripts/consolidation/test_directive_review_dryrun.py --s3-kit --runs 2` | The production Stage 2b (`stage2b`) on your rulebook, twice from the same live rulebook (the kit forgets its own writes between runs): merges and rewrites need no expiry answer (pinned `none`), demotions carry an expiry and `derived_from`. `--prompt new\|both` and `--stage1 new` are refused with the kit | $0.6-1.2 / $1.2-2.4 |
+| 5 | `python scripts/email/test_consolidation_dryrun.py --s3-kit --limit 30` | A real `consolidate_email` pass (label and actor `email`) of one batch of up to 30 of your unconsolidated indexed emails, read live through a wrapper that marks nothing: `reported_date` = the email's date, past plans in old mail to history or discard. With no unconsolidated email it says so and stops (nothing run, nothing spent). `--facts-file` and `--category` do not apply | $0.4-1 / $0.8-2 |
 
-   **Where the report lands, and the gates.** Each bench writes `scripts/memory/s3_dry_run_<bench>_<time>.json` (gitignored;
-   it holds fact ids, the 📊/🚨 alert lines and your zone, so keep it local) and prints three gate lines read from it:
-   - **G1:** every pass labelled `stage2a` or `cluster` used at most 13 model turns (`llm_calls` of the pass);
-   - **G2:** zero abandoned expiry refusals in every run (`abandoned_refusals`);
-   - **G3:** you read the write rows (`expiry_sent`, `decision_stored`, `reported_date_chosen`, `notes`) and find no row that
-     would hide a still-true fact within weeks or keep a dead plan current for ever. A debatable horizon length is not a
-     failure.
-   Also reported, not gated: expiry refusals per pass, floored horizons, `derived_from` use, the share of naive
-   `reported_date`s. The report also lists the five served tokens with the hash of their snapshot body.
+**Where the report lands, and the gates.** Each bench writes `scripts/memory/s3_dry_run_<bench>_<time>.json` (gitignored;
+it holds fact ids, the 📊/🚨 alert lines and your zone, so keep it local) and prints three gate lines read from it:
+- **G1:** every pass labelled `stage2a` or `cluster` used at most 13 model turns (`llm_calls` of the pass);
+- **G2:** zero abandoned expiry refusals in every run (`abandoned_refusals`);
+- **G3:** you read the write rows (`expiry_sent`, `decision_stored`, `reported_date_chosen`, `notes`) and find no row that
+  would hide a still-true fact within weeks or keep a dead plan current for ever. A debatable horizon length is not a
+  failure.
+Also reported, not gated: expiry refusals per pass, floored horizons, `derived_from` use, the share of naive
+`reported_date`s. The report also lists the five served tokens with the hash of their snapshot body.
 
-   **If a gate fails: no deploy.** Fix the tokens or the code-built messages, then re-run only the failing bench within
-   what is left of the $30. The fix is on the branch before the pause.
+**What step M does not cover.** Bench 1 reads the newest turns of your latest session, so its batches are fresh. A late
+batch (plan risk 1: a horizon said in a batch days or weeks old is refused unless it ends after today) is not exercised;
+that risk stays open after step M, and G2 on `stage1` is measured on the easy case.
+
+**If a gate fails: no deploy.** Fix the tokens or the code-built messages, then re-run only the failing bench within
+what is left of the $30. The fix is on the branch before the pause.
 
 2. **Pause the queue** `agent-tasks-dev`:
    `gcloud tasks queues pause agent-tasks-dev --location=us-central1 --project=<PROJECT_ID>`.

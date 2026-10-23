@@ -334,16 +334,17 @@ async def test_a_failed_response_stops_the_bench_instead_of_going_on(store, tmp_
     assert kit.rows == []
 
 
-def bench_agent(store, *responses):
-    agent = make_agent(store, scripted(*responses))
+def bench_agent(store, *responses, email_repo=None):
+    agent = make_agent(store, scripted(*responses), email_repo=email_repo)
     agent.model_name = SONNET
     agent.prompt_builder.assembly_service = assembly()
     agent._lifecycle_counters = FirestoreFactLifecycleCounters(EvalDb(), EnvironmentConfig())
     return agent
 
 
-def handles_for(agent):
-    return support.BenchHandles(db=None, config={}, container=None, account_repo=None, user_repo=None, agent=agent)
+def handles_for(agent, store=None, db=None):
+    container = SimpleNamespace(repository=store.repo) if store is not None else None
+    return support.BenchHandles(db=db, config={}, container=container, account_repo=None, user_repo=None, agent=agent)
 
 
 async def test_the_kit_session_installs_the_kit_reports_and_releases_the_ledger_even_when_the_body_fails(store, tmp_path, monkeypatch):
@@ -411,3 +412,177 @@ def test_the_gate_lines_flag_a_long_stage2a_or_cluster_pass_and_any_abandoned_re
     assert long_pass[0].startswith("G1 FAIL")
     assert abandoned[0].startswith("G1: no stage2a or cluster pass") and abandoned[1].startswith("G2 FAIL: 2 ")
     assert any("RUN STOPPED" in line for line in stopped)
+
+
+# ----------------------------------------------------------------------------------------------- run_s3_kit of each bench (T1)
+
+
+@pytest.fixture
+def kit_files(tmp_path, monkeypatch):
+    """The kit's ledger and reports go to the test's directory; `reports(name)` reads what a bench wrote."""
+    monkeypatch.setattr(kit_module, "SPEND_LEDGER", tmp_path / "spend.json")
+
+    def reports(name):
+        return [json.loads(p.read_text(encoding="utf-8")) for p in sorted(tmp_path.glob(f"s3_dry_run_{name}_*.json"))]
+
+    return reports
+
+
+def bench_args(**over):
+    return SimpleNamespace(user_id=USER, account_id=ACC, budget_usd=30.0, timezone=MADRID, **over)
+
+
+class Sessions:
+    """The sessions collection: one recent session with a user turn and a model turn."""
+
+    def collection(self, name):
+        return self
+
+    async def stream(self):
+        now = datetime.now(timezone.utc).timestamp()
+        yield SimpleNamespace(id=f"{USER}:c1", to_dict=lambda: {
+            "owner_id": USER, "last_activity": now,
+            "messages": [{"role": "user", "created_at": now - 60, "parts": [{"text": "booked a flight"}]},
+                         {"role": "model", "created_at": now - 30, "parts": [{"text": "noted"}]}],
+        })
+
+
+async def test_bench_1_run_s3_kit_runs_one_stage_1_on_the_window_and_reports(store, tmp_path, kit_files):
+    agent = bench_agent(store, metered(calls(create("flight booked", expiry=horizon(30)))), answered())
+
+    await bench1.run_s3_kit(handles_for(agent, store, db=Sessions()), 50, bench_args())
+
+    (report,) = kit_files("stage1_classification")
+    assert [p["pass"] for p in report["passes"]] == ["stage1"] and report["timezone"] == MADRID
+    assert report["bench"]["rule"] == "baseline" and report["bench"]["window_turns"] == 2
+    assert [(r["action"], r["status"]) for r in report["writes"]] == [("create", "created")]
+    assert (await store.repo.get_active_facts(ACC)) == []                               # nothing written live
+
+
+@pytest.mark.parametrize("rule,kit,expected", [(None, True, "baseline"), ("baseline", True, "baseline"), (None, False, "both"),
+                                              ("new", False, "new"), ("both", False, "both")])
+def test_bench_1_rule_resolves_to_baseline_with_the_kit_and_to_its_old_default_without(rule, kit, expected):
+    assert bench1.resolve_rule(rule, kit) == expected
+
+
+@pytest.mark.parametrize("rule", ["new", "both"])
+def test_bench_1_refuses_a_candidate_rule_with_the_kit(rule):
+    with pytest.raises(ValueError, match="--rule new\\|both"):
+        bench1.resolve_rule(rule, True)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("script,argv", [
+    ("scripts/consolidation/test_stage1_classification_dryrun.py", ["--s3-kit", "--rule", "new"]),
+    ("scripts/consolidation/test_stage1_classification_dryrun.py", ["--s3-kit", "--rule", "both"]),
+    ("scripts/consolidation/test_directive_review_dryrun.py", ["--s3-kit", "--prompt", "new"]),
+    ("scripts/consolidation/test_directive_review_dryrun.py", ["--s3-kit", "--stage1", "new"]),
+    ("scripts/email/test_consolidation_dryrun.py", ["--s3-kit", "--category", "travel"]),
+])
+def test_a_bench_main_refuses_the_flags_the_kit_does_not_run(script, argv):
+    code = (
+        "import dotenv, runpy, sys\n"
+        "dotenv.load_dotenv = lambda *a, **k: None\n"
+        f"sys.argv = [{script!r}, '--user-id', 'u', '--account-id', 'a'] + {argv!r}\n"
+        f"runpy.run_path({script!r}, run_name='__main__')\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code], cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=300,
+                          env={"PYTHONPATH": str(PROJECT_ROOT), "PATH": "/usr/bin:/bin"})
+    assert done.returncode == 2 and "error:" in done.stderr, done.stderr[-800:]
+
+
+async def test_bench_2_run_s3_kit_runs_one_cluster_pass_per_batch_with_the_batchs_own_facts(store, tmp_path, kit_files):
+    texts = ["walks daily and reads at night and cooks on sundays", "plays chess on fridays with an old friend",
+             "keeps bees on the farm"]
+    ids = [await seed(store, text) for text in texts]
+    agent = bench_agent(store, answered())
+
+    await bench2.run_s3_kit(handles_for(agent, store), limit=10, batch_size=2, min_words=3, args=bench_args())
+
+    (report,) = kit_files("cluster_audit")
+    assert [p["pass"] for p in report["passes"]] == ["cluster", "cluster"]
+    assert [b["input_fact_ids"] for b in report["bench"]["batches"]] == [ids[:2], ids[2:]]
+    assert all(b["cluster_size"] >= len(b["input_fact_ids"]) for b in report["bench"]["batches"])
+
+
+async def test_bench_2_leaves_out_a_seed_an_earlier_batch_retired(store, tmp_path):
+    first = await seed(store, "walks daily and reads at night and cooks on sundays")
+    second = await seed(store, "plays chess on fridays with an old friend")
+    agent, kit = await kit_agent(store, tmp_path, answered())
+    entities = [await store.repo.get_fact_by_id(i) for i in (first, second)]
+    await agent._fact_management.update_fact(first, {"state": "invalidated"}, ACC, context=kit.write_context("cluster"))
+
+    cluster = await bench2.build_batch_cluster(agent, entities, kit.timezone, USER, ACC)
+
+    assert first not in {e["fact_id"] for e in cluster} and cluster[0]["fact_id"] == second
+    assert await bench2.build_batch_cluster(agent, entities[:1], kit.timezone, USER, ACC) == []
+
+
+async def test_bench_3_run_s3_kit_runs_stage_1_then_a_cluster_pass_over_what_stage_1_wrote(store, tmp_path, kit_files):
+    await seed(store, "walks daily and reads at night and cooks on sundays")
+    agent = bench_agent(store, metered(calls(create("walks daily", expiry=EXPIRY_NONE))), answered(), answered())
+
+    await bench3.run_s3_kit(handles_for(agent, store), limit=5, min_words=3, args=bench_args())
+
+    (report,) = kit_files("decomposition")
+    assert [p["pass"] for p in report["passes"]] == ["stage1", "cluster"]
+    assert report["bench"]["stage2"]["cluster_size"] >= 1 and report["bench"]["facts_analyzed"] == 1
+    assert [(r["pass"], r["action"]) for r in report["writes"]] == [("stage1", "create")]
+
+
+async def test_bench_3_has_no_stage_2_step_when_stage_1_wrote_nothing(store, tmp_path, kit_files):
+    await seed(store, "walks daily and reads at night and cooks on sundays")
+    agent = bench_agent(store, answered())
+
+    await bench3.run_s3_kit(handles_for(agent, store), limit=5, min_words=3, args=bench_args())
+
+    (report,) = kit_files("decomposition")
+    assert [p["pass"] for p in report["passes"]] == ["stage1"] and report["bench"]["stage2"] is None
+
+
+async def test_bench_4_run_s3_kit_starts_every_run_from_the_live_rulebook(store, tmp_path, kit_files):
+    first = await seed(store, "always answer in English", domain="agent_directive")
+    second = await seed(store, "never use tables", domain="agent_directive", context_priority="high")
+    agent = bench_agent(store, metered(calls(invalidate(first))), answered(), metered(calls(invalidate(first))), answered())
+
+    await bench4.run_s3_kit(handles_for(agent, store), runs=2, provider=None, tier="performance", args=bench_args())
+
+    (report,) = kit_files("directive_review")
+    assert [p["pass"] for p in report["passes"]] == ["stage2b", "stage2b"]
+    runs = report["bench"]["runs"]
+    assert [r["verdicts"][first] for r in runs] == ["INVALIDATED", "INVALIDATED"]          # run 2 saw the rule run 1 closed
+    assert [r["verdicts"][second] for r in runs] == ["UNTOUCHED", "UNTOUCHED"]
+    assert [(r["pass"], r["actor"], r["status"]) for r in report["writes"]] == [("stage2b", "stage2b", "updated")] * 2
+    assert (await store.repo.get_fact_by_id(first)).state is FactState.CURRENT
+
+
+async def test_bench_4_says_so_and_runs_nothing_when_the_rulebook_is_empty(store, tmp_path, kit_files):
+    agent = bench_agent(store, answered())
+
+    await bench4.run_s3_kit(handles_for(agent, store), runs=2, provider=None, tier="performance", args=bench_args())
+
+    (report,) = kit_files("directive_review")
+    assert report["passes"] == [] and report["spend"]["calls"] == 0
+
+
+async def test_bench_5_run_s3_kit_runs_one_email_batch_and_marks_nothing(tmp_path, kit_files):
+    store, live_emails = email_store()
+    await live_emails.save_batch([email("e1", datetime(2026, 10, 10, 9, 0), datetime(2026, 10, 13, 1)),
+                                  email("e2", datetime(2026, 10, 12, 9, 0), datetime(2026, 10, 13, 2))])
+    agent = bench_agent(store, metered(calls(create("flight booked", expiry=horizon(30)))), answered(), email_repo=live_emails)
+
+    await bench5.run_s3_kit(handles_for(agent, store), 1, bench_args())            # a batch of one, two emails waiting
+
+    (report,) = kit_files("email")
+    assert [p["pass"] for p in report["passes"]] == ["email"]
+    assert report["bench"]["result"]["batches_processed"] == 1 and report["email_writes"] == {"mark_consolidated": 1}
+    assert [e.email_id for e in await live_emails.get_unconsolidated_batch(USER)] == ["e1", "e2"]
+
+
+async def test_bench_5_stops_before_the_kit_when_there_is_no_unconsolidated_email(tmp_path, kit_files):
+    store, live_emails = email_store()
+    agent = bench_agent(store, answered(), email_repo=live_emails)
+
+    await bench5.run_s3_kit(handles_for(agent, store), 30, bench_args())
+
+    assert kit_files("email") == [] and not (tmp_path / "spend.json").exists()      # nothing run, nothing spent
