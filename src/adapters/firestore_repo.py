@@ -1,12 +1,16 @@
 import asyncio
 import datetime
-from typing import List, Optional, Dict, Any, Tuple
+from enum import Enum
+from typing import AbstractSet, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from google.api_core.exceptions import Aborted
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.vector import Vector
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from ..domain.entities import FactEntity, FactState
-from ..domain.fact_lifecycle import lifecycle_fields
+from ..domain.exceptions import FactResolutionError, FactWriteConflict, InPlaceFieldRefused
+from ..domain.fact_lifecycle import CABINET_ACCEPTS, IN_PLACE_FIELDS, closure_fields, forward_step, lifecycle_fields
+from ..domain.stored_fact import StoredFact
 from ..domain.vector_math import cosine_similarity
 from ..domain.deduplication_service import SmartDeduplication
 from ..ports.repository import FactRepository
@@ -27,6 +31,8 @@ _gcp_retry_logger = _logging.getLogger("google.api_core.retry_async")
 _gcp_retry_logger.addHandler(_GcpRetryForwarder())
 _gcp_retry_logger.setLevel(_logging.DEBUG)
 
+_VECTOR_FIELDS = ("vector", "tags_vector", "metadata_vector")
+
 # Numeric rank for context_priority — stored in Firestore only (not in FactEntity).
 # Allows efficient ORDER BY queries without changing the domain model.
 _PRIORITY_RANK: Dict[str, int] = {
@@ -42,6 +48,23 @@ _PRIORITY_RANK: Dict[str, int] = {
 # Each search spawns up to 6 find_nearest queries; this semaphore prevents
 # quota saturation under high concurrency.
 _FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(30)
+
+
+def _has_aborted_in_chain(exc: BaseException) -> bool:
+    """`exc` is, or was raised while handling or because of, an Aborted."""
+    seen: set[int] = set()
+    pending: Optional[BaseException] = exc
+    while pending is not None and id(pending) not in seen:
+        if isinstance(pending, Aborted):
+            return True
+        seen.add(id(pending))
+        pending = pending.__cause__ or pending.__context__
+    return False
+
+
+def _encode_fields(fields: Mapping[str, Any]) -> Dict[str, Any]:
+    """Enums are stored as their values."""
+    return {key: value.value if isinstance(value, Enum) else value for key, value in fields.items()}
 
 
 class FirestoreFactRepository(FactRepository):
@@ -149,26 +172,28 @@ class FirestoreFactRepository(FactRepository):
 
         return data
 
-    async def add_fact(self, fact: FactEntity) -> str:
-        doc_ref = self.facts_col.document(fact.id)
+    @staticmethod
+    def _to_document(fact: FactEntity) -> Dict[str, Any]:
+        """The stored form of a fact. The Vector() wrapper is required: unwrapped, Firestore saves a map {0: v, 1: v, ...}
+        that vector search cannot see. `context_priority_rank` is adapter-only, for ORDER BY."""
         data = fact.model_dump()
-        
-        # SESSION 2026-02-09: FIX - Vector() wrapper REQUIRED for correct serialization
-        # Without Vector() wrapper, Firestore saves as map {0: val, 1: val, ...} instead of array
-        # Vector() wrapper ensures proper vector field recognition by Firestore Vector Search
-        
-        if 'vector' in data and data['vector'] is not None:
-            data['vector'] = Vector(data['vector'])
-        if 'tags_vector' in data and data['tags_vector'] is not None:
-            data['tags_vector'] = Vector(data['tags_vector'])
-        if 'metadata_vector' in data and data['metadata_vector'] is not None:
-            data['metadata_vector'] = Vector(data['metadata_vector'])
+        for name in _VECTOR_FIELDS:
+            if data.get(name) is not None:
+                data[name] = Vector(data[name])
+        data['context_priority_rank'] = _PRIORITY_RANK.get(data.get('context_priority') or 'medium', 3)
+        return data
 
-        data['context_priority_rank'] = _PRIORITY_RANK.get(
-            data.get('context_priority') or 'medium', 3
-        )
+    def _fact_from_snapshot(self, snap: Any) -> FactEntity:
+        """The whole document as a FactEntity; the id is the document id."""
+        data = snap.to_dict()
+        for name in _VECTOR_FIELDS:
+            if isinstance(data.get(name), Vector):
+                data[name] = list(data[name])
+        data['id'] = snap.id
+        return FactEntity(**self._migrate_ownership_fields(data))
 
-        await doc_ref.set(data)
+    async def add_fact(self, fact: FactEntity) -> str:
+        await self.facts_col.document(fact.id).set(self._to_document(fact))
         return fact.id
 
     async def get_fact_by_id(self, fact_id: str) -> Optional[FactEntity]:
@@ -289,18 +314,26 @@ class FirestoreFactRepository(FactRepository):
         return results, next_cursor
 
     async def invalidate_fact(self, fact_id: str, account_id: str) -> None:
-        """Directly mark a fact as invalidated. Security: account_id verified."""
-        doc_ref = self.facts_col.document(fact_id)
-        doc = await doc_ref.get()
+        """Mark a fact invalidated, following a superseded id to its current version. Security: account_id verified."""
+        doc = await self.facts_col.document(fact_id).get()
         if not doc.exists:
             raise ValueError(f"Fact not found: {fact_id}")
         if doc.to_dict().get("account_id") != account_id:
             raise PermissionError("Not authorized to modify this fact")
-        now = datetime.datetime.now(datetime.timezone.utc)
-        fields = lifecycle_fields(FactState.INVALIDATED, now)
-        fields["state"] = fields["state"].value  # Firestore stores the enum value
-        fields["last_updated"] = now
-        await doc_ref.update(fields)
+        for attempt in (1, 2):
+            stored = await self.resolve_current(fact_id, account_id, CABINET_ACCEPTS)
+            if stored is None:
+                raise ValueError(f"Fact not found: {fact_id}")
+            now = datetime.datetime.now(datetime.timezone.utc)
+            fields = {**lifecycle_fields(FactState.INVALIDATED, now), "last_updated": now}
+            try:
+                await self.update_fact_fields(stored, fields)
+                return
+            except FactWriteConflict:
+                logger.warning(f"[FactRepo] invalidate of {fact_id} conflicted (attempt {attempt})")
+                if attempt == 2:
+                    raise
+
 
     @log_execution_time
     async def search_facts(
@@ -415,27 +448,6 @@ class FirestoreFactRepository(FactRepository):
         logger.debug(f"🔍 [search_facts] Found {len(results)} results")
         return results
 
-    async def update_fact(self, fact: FactEntity) -> None:
-        doc_ref = self.facts_col.document(fact.id)
-        data = fact.model_dump()
-        
-        # SESSION 2026-02-09: FIX - Vector() wrapper REQUIRED for correct serialization
-        # Without Vector() wrapper, Firestore saves as map {0: val, 1: val, ...} instead of array
-        # Vector() wrapper ensures proper vector field recognition by Firestore Vector Search
-        
-        if 'vector' in data and data['vector'] is not None:
-            data['vector'] = Vector(data['vector'])
-        if 'tags_vector' in data and data['tags_vector'] is not None:
-            data['tags_vector'] = Vector(data['tags_vector'])
-        if 'metadata_vector' in data and data['metadata_vector'] is not None:
-            data['metadata_vector'] = Vector(data['metadata_vector'])
-
-        data['context_priority_rank'] = _PRIORITY_RANK.get(
-            data.get('context_priority') or 'medium', 3
-        )
-
-        await doc_ref.set(data)
-
     @log_execution_time
     async def get_active_facts_ordered(
         self,
@@ -500,52 +512,112 @@ class FirestoreFactRepository(FactRepository):
         sorted_facts = sorted(facts, key=lambda f: len(f.text.split()), reverse=True)
         return sorted_facts[:limit]
 
-    async def get_lineage(self, lineage_id: str) -> List[FactEntity]:
-        docs = self.facts_col.where(filter=FieldFilter("lineage_id", "==", lineage_id)).order_by("created_at", direction=firestore.Query.DESCENDING).stream()
+    async def get_lineage(self, account_id: str, lineage_id: str) -> List[FactEntity]:
+        query = (
+            self.facts_col
+            .where(filter=FieldFilter("account_id", "==", account_id))
+            .where(filter=FieldFilter("lineage_id", "==", lineage_id))
+            .order_by("version", direction=firestore.Query.ASCENDING)
+            .select([name for name in FactEntity.model_fields if name not in _VECTOR_FIELDS and name != "id"])
+        )
         results = []
-        async for doc in docs:
-            data = doc.to_dict()
-            if 'vector' in data and isinstance(data['vector'], Vector):
-                data['vector'] = list(data['vector'])
-            # SESSION 2026-02-07: Multi-vector support
-            if 'tags_vector' in data and isinstance(data['tags_vector'], Vector):
-                data['tags_vector'] = list(data['tags_vector'])
-            if 'metadata_vector' in data and isinstance(data['metadata_vector'], Vector):
-                data['metadata_vector'] = list(data['metadata_vector'])
-            results.append(FactEntity(**data))
+        async for snap in query.stream():
+            data = snap.to_dict()
+            data['id'] = snap.id
+            results.append(FactEntity(**self._migrate_ownership_fields(data)))
         return results
 
     async def get_latest_fact_by_lineage(self, owner_id: str, lineage_id: str) -> Optional[FactEntity]:
-        """Get latest fact by lineage for an account (owner_id = account_id)."""
-        # Try new field first
-        docs = self.facts_col.where(filter=FieldFilter("account_id", "==", owner_id)).where(filter=FieldFilter("lineage_id", "==", lineage_id)).where(filter=FieldFilter("is_current", "==", True)).limit(1).stream()
-        async for doc in docs:
-            data = doc.to_dict()
-            if 'vector' in data and isinstance(data['vector'], Vector):
-                data['vector'] = list(data['vector'])
-            # SESSION 2026-02-07: Multi-vector support
-            if 'tags_vector' in data and isinstance(data['tags_vector'], Vector):
-                data['tags_vector'] = list(data['tags_vector'])
-            if 'metadata_vector' in data and isinstance(data['metadata_vector'], Vector):
-                data['metadata_vector'] = list(data['metadata_vector'])
-            data = self._migrate_ownership_fields(data)
-            return FactEntity(**data)
+        """Highest version of the lineage that is not superseded (owner_id = account_id)."""
+        query = (
+            self.facts_col
+            .where(filter=FieldFilter("account_id", "==", owner_id))
+            .where(filter=FieldFilter("lineage_id", "==", lineage_id))
+        )
+        facts = [self._fact_from_snapshot(snap) async for snap in query.stream()]
+        live = [f for f in facts if f.state is not FactState.SUPERSEDED]
+        return max(live, key=lambda f: f.version) if live else None
 
-        # Fallback to legacy field
-        docs = self.facts_col.where(filter=FieldFilter("owner_id", "==", owner_id)).where(filter=FieldFilter("lineage_id", "==", lineage_id)).where(filter=FieldFilter("is_current", "==", True)).limit(1).stream()
-        async for doc in docs:
-            data = doc.to_dict()
-            if 'vector' in data and isinstance(data['vector'], Vector):
-                data['vector'] = list(data['vector'])
-            # SESSION 2026-02-07: Multi-vector support
-            if 'tags_vector' in data and isinstance(data['tags_vector'], Vector):
-                data['tags_vector'] = list(data['tags_vector'])
-            if 'metadata_vector' in data and isinstance(data['metadata_vector'], Vector):
-                data['metadata_vector'] = list(data['metadata_vector'])
-            data = self._migrate_ownership_fields(data)
-            return FactEntity(**data)
+    async def resolve_current(
+        self, fact_id: str, account_id: str, accepted: AbstractSet[FactState]
+    ) -> Optional[StoredFact]:
+        snap = await self.facts_col.document(fact_id).get()
+        if not snap.exists:
+            return None
+        fact = self._fact_from_snapshot(snap)
+        if fact.account_id != account_id:
+            return None  # decided before forward_step, which raises on a foreign account
+        origin_lineage_id = fact.lineage_id
+        hops = 0
+        while True:
+            next_id = forward_step(fact, accepted, origin_lineage_id, fact_id, account_id, hops)
+            if next_id is None:
+                return StoredFact(fact, snap.update_time)
+            hops += 1
+            snap = await self.facts_col.document(next_id).get()
+            if not snap.exists:
+                raise FactResolutionError(f"fact {fact_id} was superseded and its successor is unknown; search again")
+            fact = self._fact_from_snapshot(snap)
 
-        return None
+    async def write_superseding(self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime.datetime) -> None:
+        if not replaced:
+            raise ValueError(f"write_superseding of {new_fact.id} replaces no document; use add_fact")
+        missing = [name for name in _VECTOR_FIELDS if getattr(new_fact, name) is None]
+        if missing:
+            raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a version without vectors leaves vector search")
+        new_ref = self.facts_col.document(new_fact.id)
+        document = self._to_document(new_fact)
+        closure = _encode_fields(closure_fields(new_fact.id, now))
+        tokens = {stored.fact.id: stored.update_time for stored in replaced}
+        refs = [self.facts_col.document(fact_id) for fact_id in tokens]
+
+        async def body(transaction: Any) -> None:
+            snaps = {}
+            for ref in refs:
+                snap = await ref.get(transaction=transaction)
+                snaps[snap.id] = snap
+            for fact_id, token in tokens.items():
+                snap = snaps.get(fact_id)
+                if snap is None or not snap.exists or snap.update_time != token:
+                    raise FactWriteConflict(fact_id)
+            transaction.create(new_ref, document)
+            for ref in refs:
+                transaction.update(ref, closure)
+
+        await self._in_transaction(body, next(iter(tokens), new_fact.id))
+
+    async def update_fact_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
+        refused = set(fields) - IN_PLACE_FIELDS
+        if refused:
+            raise InPlaceFieldRefused(refused)
+        fact_id = stored.fact.id
+        ref = self.facts_col.document(fact_id)
+        encoded = _encode_fields(fields)
+
+        async def body(transaction: Any) -> None:
+            snap = await ref.get(transaction=transaction)
+            if not snap.exists or snap.update_time != stored.update_time:
+                raise FactWriteConflict(fact_id)
+            transaction.update(ref, encoded)
+
+        await self._in_transaction(body, fact_id)
+
+    async def _in_transaction(self, body: Callable[[Any], Awaitable[None]], fact_id: str) -> None:
+        """Run `body` in a fresh transaction. A read-time Aborted, the client's ValueError after 5 aborted commits and
+        any error that replaced one of them (a failed rollback keeps the original only in __context__) all mean
+        someone else wrote the document."""
+        @firestore.async_transactional
+        async def run(transaction: Any) -> None:
+            await body(transaction)
+
+        try:
+            await run(self.db.transaction())
+        except FactWriteConflict:
+            raise
+        except Exception as exc:
+            if _has_aborted_in_chain(exc):
+                raise FactWriteConflict(fact_id) from exc
+            raise
 
     async def add_fact_if_unique(
         self, 

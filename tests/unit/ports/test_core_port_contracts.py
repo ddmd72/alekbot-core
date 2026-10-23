@@ -479,8 +479,18 @@ class TestFactRepositoryContract:
     def test_has_search_facts(self):
         assert getattr(FactRepository.search_facts, "__isabstractmethod__", False)
 
-    def test_has_update_fact(self):
-        assert getattr(FactRepository.update_fact, "__isabstractmethod__", False)
+    def test_has_no_update_fact(self):
+        # FACT_LIFECYCLE_RFC S2, RFC delta D-4: the unguarded whole-document write is gone from the port.
+        assert not hasattr(FactRepository, "update_fact")
+
+    def test_has_resolve_current(self):
+        assert getattr(FactRepository.resolve_current, "__isabstractmethod__", False)
+
+    def test_has_write_superseding(self):
+        assert getattr(FactRepository.write_superseding, "__isabstractmethod__", False)
+
+    def test_has_update_fact_fields(self):
+        assert getattr(FactRepository.update_fact_fields, "__isabstractmethod__", False)
 
     def test_has_get_lineage(self):
         assert getattr(FactRepository.get_lineage, "__isabstractmethod__", False)
@@ -508,19 +518,21 @@ class TestFactRepositoryContract:
         assert getattr(FactRepository.search_facts_by_domain, "__isabstractmethod__", False)
 
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 16 abstract methods.
+        """Port should have exactly 18 abstract methods.
 
         F7.2 (2026-05-18): added search_facts_by_domain to close the
         port/adapter contract gap — search_facts_by_domain was called via
         the port type in SearchEnrichmentService but missing from the ABC.
         2026-10-22: get_facts_by_ids, add_observation, get_observations,
         archive_observations and get_biographical_context deleted (no caller).
+        2026-10-23 (FACT_LIFECYCLE_RFC S2): update_fact deleted (D-4); resolve_current,
+        write_superseding and update_fact_fields added.
         """
         abstract_methods = {
             name for name, method in inspect.getmembers(FactRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 16, f"Expected 16 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 18, f"Expected 18 abstract methods, got {abstract_methods}"
 
     def test_add_fact_signature(self):
         sig = inspect.signature(FactRepository.add_fact)
