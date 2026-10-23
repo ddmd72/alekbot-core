@@ -9,6 +9,7 @@ import pytest
 
 from src.adapters.firestore_consolidation_queue import _ZOMBIE_THRESHOLD_SECONDS, FirestoreConsolidationQueue
 from src.domain.consolidation import BatchStatus, ConsolidationBatch
+from tests.support.fact_store import INDEXES_FILE
 from tests.support.firestore_eval import EvalDb
 
 USER = "user-abcdef123"
@@ -33,6 +34,18 @@ async def _status(queue, batch_id):
 
 
 class TestHasOpenBatches:
+    async def test_the_query_is_served_with_the_declared_indexes_only(self):
+        db = EvalDb(indexes=INDEXES_FILE, groups={"development_consolidation_queue": "development_consolidation_queue"})
+        env = MagicMock()
+        env.consolidation_queue_collection = "development_consolidation_queue"
+        queue = FirestoreConsolidationQueue(db, env)
+        await _put(queue, "b1", BatchStatus.PROCESSING, processing_started_at=time.time())
+        await _put(queue, "b2", BatchStatus.FAILED, user_id=OTHER)
+
+        assert await queue.has_open_batches(USER) is True
+        assert await queue.has_open_batches(OTHER) is False
+        assert [b.batch_id for b in await queue.get_pending_batches(USER, limit=1)] == []   # still index-served here
+
     @pytest.mark.parametrize("status,open_", [
         (BatchStatus.PENDING, True),
         (BatchStatus.RETRY_PENDING, True),

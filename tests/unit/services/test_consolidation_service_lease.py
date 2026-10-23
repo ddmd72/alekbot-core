@@ -595,7 +595,7 @@ async def test_a_setup_error_is_swallowed_as_before_and_nothing_is_leased(make_s
     assert (await _doc(queue, "b1"))["status"] == BatchStatus.PENDING.value
 
 
-async def test_a_failing_has_more_read_after_the_batch_is_swallowed_as_before(make_service, db, queue, coordinator):
+async def test_a_failing_has_more_read_after_the_batch_reports_a_continuation_and_loses_none(make_service, db, queue, coordinator):
     class SecondReadDown(FirestoreConsolidationQueue):
         reads = 0
 
@@ -609,9 +609,39 @@ async def test_a_failing_has_more_read_after_the_batch_is_swallowed_as_before(ma
     await _put(flaky, "b1", 1.0)
     await _put(flaky, "b2", 2.0)
 
-    assert await make_service(queue=flaky).process_user_batches(USER, max_batches=1) is False
+    assert await make_service(queue=flaky).process_user_batches(USER, max_batches=1) is True
 
     assert coordinator.routed == ["b1"] and await _doc(flaky, "b1") is None
+    assert (await _doc(flaky, "b2"))["status"] == BatchStatus.PENDING.value
+
+
+async def test_consolidate_now_queues_the_continuation_when_the_has_more_read_fails(make_service, db, queue, tasks):
+    class SecondReadDown(FirestoreConsolidationQueue):
+        reads = 0
+
+        async def get_pending_batches(self, user_id, limit=10):
+            SecondReadDown.reads += 1
+            if SecondReadDown.reads == 2:
+                raise ConnectionError("queue read down")
+            return await super().get_pending_batches(user_id, limit)
+
+    flaky = SecondReadDown(db, SimpleNamespace(consolidation_queue_collection="development_consolidation_queue"))
+    await _put(flaky, "b1")
+
+    run = await make_service(queue=flaky).consolidate_now(USER)
+
+    assert run == ConsolidationRun(processed=1, has_more=True)
+    assert tasks.continuations == [USER]
+
+
+@pytest.mark.parametrize("run_timeout_s", [60.0, 59.0, 0, -1])
+def test_the_constructor_refuses_a_run_timeout_that_leaves_no_time_after_the_margin(make_service, run_timeout_s):
+    with pytest.raises(ValueError):
+        make_service(run_timeout_s=run_timeout_s)
+
+
+def test_the_constructor_accepts_a_run_timeout_just_over_the_margin(make_service):
+    assert make_service(run_timeout_s=60.1) is not None
 
 
 # ------------------------------------------------------------------------------------------------ one writer per account
