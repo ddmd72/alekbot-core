@@ -324,11 +324,13 @@ Each batch runs under the account's **memory-write lease** (`_consolidate_one`, 
 - one batch per task: if more remain, the worker enqueues the next task at once (`worker_handler.py:457-459`; why:
   `decisions/consolidation_one_batch_per_task.md` — Cloud Run throttles CPU after a response, so each batch gets its
   own request). A deferral returns "no more", so a deferred task does not start a second chain;
-- a user whose profile has an empty account id cannot be leased: the oldest pending batch is marked `failed` ("user has
-  no account"), logged as `CONSOLIDATION_FAILED`, and there is no 5xx or retry loop (`_account_to_lease`, `:174-188`). A
-  user with **no profile at all** (or a service without a user repository) falls back to `account_id = user_id`, as it
-  always did, so that user is leased and written under the user id, and "one writer per account" becomes one per user for
-  that case (a pre-S2 behaviour, recorded for the owner's agenda).
+- the account comes from the user's profile only, never from the user id (owner decision 2026-10-23: facts are personal
+  data, and a fallback would write them under the wrong key once an account holds several users). A user with **no
+  profile** or with an empty account id cannot be leased: the oldest pending batch is marked `failed` ("user has no
+  profile" / "user has no account"), logged as `CONSOLIDATION_FAILED`, no lease is taken, nothing is routed, and there
+  is no 5xx or retry loop (`_account_to_lease`, `:176-195`). The missing-profile case is real: the user's agents stay
+  cached for about an hour, so `ensure_agents_for_user` can succeed after the profile is gone. The user repository is a
+  required argument of `ConsolidationService`, so no wiring can leave it out.
 
 There is **no per-write fence**: nothing checks the lease before each fact write. The run is bounded by its timeout
 instead (the agent stops at `lease_until` − 60 s); a commit already on the wire at the moment of cancellation may land
@@ -647,13 +649,15 @@ let procedures and file notes become facts and directives (`decisions/memory_fac
 
 ### 5.2 Cabinet invalidate
 
-`POST /api/user/facts/<id>/invalidate` (`user_cabinet_app.py:850-871`) → `invalidate_fact` (`firestore_repo.py:316-336`):
+`POST /api/user/facts/<id>/invalidate` (`user_cabinet_app.py:850-871`) → `invalidate_fact` (`firestore_repo.py:316-343`):
 the id must exist (else 404) and its stored account must be the caller's (else 403). Then the repository
 **follows the id forward** to the fact that is live now (`CABINET_ACCEPTS`: every state except `superseded`, so the owner
 can still delete a fact the consolidator archived meanwhile) and sets `state=invalidated`, `valid_to` and `last_updated`
 on that document, in place, under the `update_time` precondition. A page loaded before the consolidator versioned the
-fact therefore deletes the **current version**, not a closed document; before, it would have re-opened the old
-document and left two `is_current` documents in one lineage. On a conflict it resolves once more.
+fact therefore deletes the **current version**, not a closed document (before S2 it would have re-opened the old
+document and left two `is_current` documents in one lineage), **but only when that version still has the text the
+page showed**: a closed version keeps its own text, so the repository compares it with the text of the id the page
+sent. On a conflict it resolves once more, and the text check runs again.
 Search stops returning the fact at once. **The route then rebuilds the baseline** with
 `refresh_biographical_context_cache(owner_id=account_id)` (§3 step 9), so the fact leaves the next prompt too. That
 method never raises: it logs `❌ [FirestoreRepo] Failed to refresh biographical cache for <account>: …` (ERROR) and
@@ -662,15 +666,17 @@ once had its own `Fact <id> invalidated but the biographical cache refresh faile
 gone, so grep the repository's line.) The route's own log line (`🗑️ Fact <id> invalidated by user …`) names the id the
 page sent, not the version that was invalidated.
 
-**Today's behaviour when the fact was rewritten meanwhile (open owner decision).** If the consolidator rewrote the fact
-after the page loaded (a content change, so the id moved on), the delete lands on the **new version** the owner never
-saw, and the page says "Fact deleted" and removes the row it showed. That includes the case where the row was the
-subject of the owner's own correction (the Cabinet's "Edit" button, modal "Correct Fact", which drafts a correction request for the chat) that has just been applied: the correction is gone from memory and nothing
-says so. A proposal is waiting for the owner (refuse with the 409 below when the text changed, so the owner sees the new
-text first); until it is decided, the behaviour above stands (RFC "S2 as built").
+**When the fact was rewritten meanwhile (owner decision 2026-10-23).** If the consolidator rewrote the fact after the
+page loaded (a content change, so the id moved on) and the new version's text differs from the row the owner saw, the
+delete is **refused** with a 409 (`FactResolutionError` "fact X was rewritten after the page loaded; reload",
+`firestore_repo.py:327-333`) and nothing is written; the page reloads and the owner sees the new text before deciding
+again. This covers the row that was the subject of the owner's own correction (the Cabinet's "Edit" button, modal
+"Correct Fact", which drafts a correction request for the chat) that has just been applied: the correction is not
+deleted unseen. A newer version with the **same** text (tags, metadata or temporal class changed) is deleted at once.
+Until this decision (S2 as built) the delete landed on the new version.
 
 Failures: a fact that was **merged** into another lineage, a closed document with no successor (any document closed
-before S2), a chain longer than 50 hops, or a second conflict is **409** (`FactResolutionError` / `FactWriteConflict`,
+before S2), a chain longer than 50 hops, a rewritten text (above), or a second conflict is **409** (`FactResolutionError` / `FactWriteConflict`,
 caught before the `ValueError` → 404 branch, `user_cabinet_app.py:863-866`). The JSON carries the technical message
 (for example "fact X was merged into Y; search again") and the route logs it as a WARNING
 (`Fact <id> not invalidated: …`); the repository logs each retry as `[FactRepo] invalidate of <id> conflicted (attempt
@@ -749,7 +755,7 @@ service the command only enqueues.
 | less than 60 s of the run budget left when the batch would start | the batch stays `pending`, the lease is released, a deferral is enqueued (`consolidation_service.py:261-262`) | none | untouched | yes |
 | lease acquire, open-batch check or deferral enqueue fails | the error propagates, the worker answers 5xx | none | untouched | yes, Cloud Tasks retries |
 | lease release fails | WARNING `releasing the memory-write lease failed`; the lease expires on its own | stored | succeeds | — |
-| user has no account id | the oldest pending batch is marked `failed` ("user has no account"), `CONSOLIDATION_FAILED` is logged (`consolidation_service.py:335-339`) | none | `failed` | no 5xx loop; the sweep's bounded revivals fail it again at no model cost |
+| user has no profile, or no account id | the oldest pending batch is marked `failed` ("user has no profile" / "user has no account"), `CONSOLIDATION_FAILED` is logged, no lease, nothing routed or written (`consolidation_service.py:176-195`, `:341-345`) | none | `failed` | no 5xx loop; the sweep's bounded revivals fail it again at no model cost |
 | provider failover | none for consolidation: a Claude outage fails the pass and the batch is retried later (owner ruling 2026-10-23; the transcript is locked to one provider after the first tool call anyway, `src/agents/CLAUDE.md` → Transcript integrity) | — | — | same-provider retries |
 
 ---
@@ -781,7 +787,7 @@ service the command only enqueues.
   correction (`Core_Identity_Caution`).
 - After the run: search returns the new text at once; the baseline shows it from the next message.
 
-**A Cabinet invalidate.** (On a page loaded before the fact was versioned, it deletes the current version, §5.2.) Search stops returning the fact immediately, and the route rebuilds the baseline cache in the
+**A Cabinet invalidate.** (On a page loaded before the fact was versioned, it deletes the current version when its text is unchanged, and answers 409 with a reload when it changed, §5.2.) Search stops returning the fact immediately, and the route rebuilds the baseline cache in the
 same request, so the next message no longer has it (if the rebuild fails, the baseline keeps it until the next
 consolidation run).
 

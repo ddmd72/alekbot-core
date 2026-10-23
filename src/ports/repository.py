@@ -290,10 +290,12 @@ class FactRepository(ABC):
 
         Tenancy: the stored account_id of `fact_id` must equal `account_id`.
         Resolution: resolve_current with CABINET_ACCEPTS (every state but superseded). The document the walk ends
-            on is invalidated, so a stale id from an open page still reaches the fact.
+            on is invalidated, so a stale id from an open page still reaches the fact, but only when its text equals
+            the text of `fact_id` (what the page showed); a newer text raises FactResolutionError (the page reloads).
         Effect: state invalidated, is_current True, valid_to and last_updated now; version unchanged.
         Errors: a missing id raises ValueError; a fact of another account, or a legacy one, raises PermissionError;
-            FactResolutionError when the chain ends in a merge or has no successor; FactWriteConflict after one
+            FactResolutionError when the chain ends in a merge, has no successor or ends on a different text
+            (`current_id` names that version); FactWriteConflict after one
             re-resolve that also conflicted. Nothing is written in any of these cases.
         Atomicity: a transaction under the document's update_time precondition.
         Idempotency: a repeated call succeeds and moves valid_to and last_updated (observed).

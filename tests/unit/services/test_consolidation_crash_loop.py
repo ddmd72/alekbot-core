@@ -45,6 +45,11 @@ class _Factory:
         return None
 
 
+class _Profiles:
+    async def get_user(self, user_id):
+        return SimpleNamespace(account_id="acc-1")
+
+
 @pytest.fixture
 def world(monkeypatch):
     db = EvalDb()
@@ -54,7 +59,8 @@ def world(monkeypatch):
     coordinator = _Coordinator()
     service = ConsolidationService(
         queue=queue, coordinator=coordinator, agent_factory=_Factory(),
-        lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=RUN_S, clock=lambda: state.now,
+        lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=RUN_S, user_repo=_Profiles(),
+        clock=lambda: state.now,
     )
     return SimpleNamespace(queue=queue, coordinator=coordinator, service=service, state=state, db=db)
 

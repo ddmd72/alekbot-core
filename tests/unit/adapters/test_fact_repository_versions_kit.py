@@ -348,9 +348,10 @@ async def test_resolve_current_names_the_merged_document_of_another_lineage(stor
 
 # ------------------------------------------------------------------------------------------ invalidate_fact
 
-async def test_invalidate_on_a_superseded_id_invalidates_the_current_version_and_leaves_one_is_current_per_lineage(store):
-    await seed_closed(store, "v1", "f-v2", lineage_id="L")
-    await seed(store, "v2", lineage_id="L", version=2)
+async def test_invalidate_on_a_superseded_id_of_the_same_text_invalidates_the_current_version_and_leaves_one_is_current_per_lineage(store):
+    # same text in both versions (e.g. a tags-only version): a newer text is refused, test_fact_invalidate_shown_text.py
+    await seed_closed(store, "likes tea", "f-v2", id="f-v1", lineage_id="L")
+    await seed(store, "likes tea", id="f-v2", lineage_id="L", version=2)
     old_before = copy.deepcopy(store.docs["f-v1"])
 
     await store.repo.invalidate_fact("f-v1", ACC)
@@ -383,9 +384,10 @@ async def test_invalidate_one_conflict_resolves_again_and_succeeds(store):
     assert store.docs["f-x"]["state"] == "invalidated"
 
 
-async def test_invalidate_conflict_from_a_concurrent_version_lands_on_the_new_version(store):
-    await seed(store, "v1", lineage_id="L")
-    await seed(store, "v2", lineage_id="L", version=2)
+async def test_invalidate_conflict_from_a_concurrent_version_of_the_same_text_lands_on_the_new_version(store):
+    # same text in both versions: a concurrent version with another text is refused, test_fact_invalidate_shown_text.py
+    await seed(store, "likes tea", id="f-v1", lineage_id="L")
+    await seed(store, "likes tea", id="f-v2", lineage_id="L", version=2)
     closure = {"state": "superseded", "is_current": False, "superseded_by": "f-v2", "valid_to": NOW}
     store.interfere("f-v1", closure)    # a version write closes f-v1 between invalidate's resolve and its write
 
