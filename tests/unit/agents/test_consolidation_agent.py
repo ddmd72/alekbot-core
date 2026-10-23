@@ -126,13 +126,15 @@ class TestTrackingFactManagement:
         assert tracker.changed == []
 
     async def test_update_fact_with_content(self):
+        # Reviewer edit (facts S2 T5, RFC D8 "Tracker"): a content update writes a new version, so the tracker
+        # records the id the result reports (the document written), not the id the model sent.
         tracker, real = self._make_tracking()
-        real.update_fact = AsyncMock(return_value={"status": "updated"})
+        real.update_fact = AsyncMock(return_value={"fact_id": "fid-2", "status": "updated", "version": 2})
         await tracker.update_fact(fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1")
         real.update_fact.assert_awaited_once_with(
             fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1"
         )
-        assert tracker.changed == [("fid-1", "updated text")]
+        assert tracker.changed == [("fid-2", "updated text")] and tracker.wrote is True
 
     async def test_update_fact_without_content(self):
         tracker, real = self._make_tracking()
@@ -141,12 +143,19 @@ class TestTrackingFactManagement:
         assert tracker.changed == []
 
     async def test_merge_facts_with_new_fact_id(self):
+        # Reviewer edit (facts S2 T5, RFC D8 "Tracker": only on success): the merge counts when the result says
+        # "merged"; a result that carries an id but no success status records nothing.
         tracker, real = self._make_tracking()
-        real.merge_facts = AsyncMock(return_value={"new_fact_id": "merged-id"})
+        real.merge_facts = AsyncMock(return_value={"new_fact_id": "merged-id", "status": "merged"})
         await tracker.merge_facts(
             fact_ids=["a", "b"], merged_content="merged", metadata={}
         )
-        assert tracker.changed == [("merged-id", "merged")]
+        assert tracker.changed == [("merged-id", "merged")] and tracker.wrote is True
+
+        unconfirmed, real2 = self._make_tracking()
+        real2.merge_facts = AsyncMock(return_value={"new_fact_id": "merged-id"})
+        await unconfirmed.merge_facts(fact_ids=["a", "b"], merged_content="merged", metadata={})
+        assert unconfirmed.changed == [] and unconfirmed.wrote is False
 
     async def test_merge_facts_without_new_fact_id(self):
         tracker, real = self._make_tracking()
