@@ -310,7 +310,8 @@ class FactManagementAdapter(FactManagementPort):
         self, plan: FactUpdatePlan, embedded: Optional[Tuple[List[str], List[List[float]]]]
     ) -> Tuple[FactEntity, Optional[Tuple[List[str], List[List[float]]]]]:
         """Fill the version's vectors; an embedding already made for the same texts is reused."""
-        assert plan.version_fact is not None
+        if plan.version_fact is None:
+            raise RuntimeError(f"a {plan.kind} plan carries no version document")
         if not plan.vectors_stale:
             return plan.version_fact, embedded
         texts = plan.embedding_texts or []

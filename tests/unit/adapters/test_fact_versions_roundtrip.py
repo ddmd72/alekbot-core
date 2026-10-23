@@ -15,6 +15,7 @@ from src.adapters.firestore_repo import FirestoreFactRepository
 from src.domain.entities import FactEntity
 from src.domain.exceptions import FactWriteConflict
 from src.domain.fact_embedding import fact_embedding_texts
+from src.domain.fact_update_plan import FactUpdatePlan
 from src.domain.stored_fact import StoredFact
 from tests.support.fact_kit import ACC, OTHER, USER
 from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, embed, make_env_config
@@ -662,3 +663,10 @@ async def test_merged_fact_entity_is_built_from_the_given_attributes(store):
                         if k in FactEntity.model_fields and k not in VECTORS})
     assert (new.text, new.tags, new.metadata, new.version) == ("likes tea daily", ["drinks", "consolidated"], {"k": "v"}, 1)
     assert new.lineage_id != store.docs[a]["lineage_id"] and new.created_by_user_id == USER
+
+
+async def test_completing_a_plan_without_a_version_document_raises(store):
+    plan = FactUpdatePlan("in_place", {"last_updated": STALE_DATE}, None, False, None)
+
+    with pytest.raises(RuntimeError, match="in_place plan carries no version document"):
+        await store.adapter._complete_version(plan, None)
