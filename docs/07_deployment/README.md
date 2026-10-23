@@ -1218,6 +1218,7 @@ what is left of the $30. The fix is on the branch before the pause.
    run is going (`docs/07_deployment/SCHEDULERS.md`).
 6. **Resume the queue:**
    `gcloud tasks queues resume agent-tasks-dev --location=us-central1 --project=<PROJECT_ID>`.
+
    6a. **Stamp the legacy stale facts (owner decision Q6, after the switch and the resume).** Stale facts that predate the
    janitor have no `stale_since`, which S4's review queue and the janitor's backlog age need. From your Mac:
    `python -m scripts.migration.fact_s3_stamp_legacy_stale` is a **dry run**: it reads only and prints **counts only**
