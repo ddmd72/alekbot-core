@@ -295,6 +295,27 @@ async def test_failed_run_that_wrote_refreshes_the_cache_and_a_clean_failure_doe
     pb2.invalidate_biographical_cache.assert_not_called()
 
 
+async def test_a_backstop_invalidation_counts_as_a_write_of_the_run_and_a_failure_mid_backstop_refreshes_the_cache():
+    class FailsOnSecondUpdate(ScriptedPort):
+        async def update_fact(self, fact_id, updates, account_id):
+            if sum(1 for kind, _ in self.calls if kind == "update") >= 1:
+                raise RuntimeError("store down")
+            return await super().update_fact(fact_id, updates, account_id)
+
+    port = FailsOnSecondUpdate()
+    agent, repo, pb = make_agent(port)
+    over_cap = [MagicMock(id=f"d{i}", text=f"rule {i}") for i in range(agent.DIRECTIVE_HARD_CAP + 2)]
+    repo.get_active_facts_ordered = AsyncMock(return_value=over_cap)
+    agent._run_consolidation_loop = AsyncMock(return_value=[])               # Stages 1 and 2b write nothing
+
+    with pytest.raises(RuntimeError):
+        await run_v3(agent, ACC)
+
+    assert [kind for kind, _ in port.calls] == ["update"]                     # one invalidation landed, the second raised
+    repo.refresh_biographical_context_cache.assert_awaited_once()
+    pb.invalidate_biographical_cache.assert_called_once_with(ACC)
+
+
 async def test_a_failed_write_does_not_count_as_a_write():
     class Refusing(ScriptedPort):
         async def create_fact(self, content, metadata):
