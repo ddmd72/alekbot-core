@@ -246,6 +246,10 @@ async def test_merge_concurrent_with_update_of_a_source_leaves_a_consistent_supe
         d = store.docs[fid]
         assert d["state"] == "superseded" and d["is_current"] is False and d["valid_to"] is not None
         assert d["superseded_by"] == merged["new_fact_id"]
+        # Reviewer edit (facts S3, T3; plan §3.8): one closure entry each, from the merge that won; the lost update
+        # wrote none.
+        assert [(e["from"], e["to"], e["reason"]) for e in d["lifecycle_events"]] == [
+            ("current", "superseded", f"merged into {merged['new_fact_id']}")]
     assert len(store.docs) == 3 and store.docs[a]["text"] == "likes tea"
 
 
@@ -267,10 +271,11 @@ def _record_commits(repo, on_ok):
     from src.domain.exceptions import FactWriteConflict
     original, commits = repo.write_superseding, []
 
-    async def recording(new_fact, replaced, now):
+    # Reviewer edit (facts S3, T3): the stand-in takes and forwards the new required `actor` keyword.
+    async def recording(new_fact, replaced, now, *, actor):
         ids = [stored.fact.id for stored in replaced]
         try:
-            await original(new_fact, replaced, now)
+            await original(new_fact, replaced, now, actor=actor)
         except FactWriteConflict:
             commits.append(("conflict", ids))
             raise

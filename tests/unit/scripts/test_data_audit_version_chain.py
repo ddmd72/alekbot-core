@@ -412,19 +412,23 @@ async def test_documents_written_by_s2_versions_and_merges_are_clean(tmp_path):
         "legacy", state=FactState.SUPERSEDED, is_current=False, valid_to=T0, last_updated=T0))
 
     # a chain of three versions, each written by write_superseding
-    await store.repo.write_superseding(version_of(await current(store, "f-x"), "f-x2", "x two"), [await current(store, "f-x")], NOW)
-    await store.repo.write_superseding(version_of(await current(store, "f-x2"), "f-x3", "x three"), [await current(store, "f-x2")], NOW)
+    await store.repo.write_superseding(version_of(await current(store, "f-x"), "f-x2", "x two"), [await current(store, "f-x")], NOW, actor="stage1")
+    await store.repo.write_superseding(version_of(await current(store, "f-x2"), "f-x3", "x three"), [await current(store, "f-x2")], NOW, actor="stage1")
     # a merge of two sources into a new lineage, then a version of the merged fact
     sources = [await current(store, "f-src-a"), await current(store, "f-src-b")]
-    await store.repo.write_superseding(make_fact("merged", lineage_id="lin-merged"), sources, NOW)
+    await store.repo.write_superseding(make_fact("merged", lineage_id="lin-merged"), sources, NOW, actor="stage2a")
     await store.repo.write_superseding(
-        version_of(await current(store, "f-merged"), "f-merged2", "merged two"), [await current(store, "f-merged")], NOW)
+        version_of(await current(store, "f-merged"), "f-merged2", "merged two"), [await current(store, "f-merged")], NOW, actor="stage1")
 
     assert set(store.docs) == {
         "f-plain", "f-x", "f-x2", "f-x3", "f-src-a", "f-src-b", "f-src-c", "f-merged", "f-merged2", "f-legacy"}
     assert store.docs["f-x3"]["version"] == 3 and store.docs["f-x3"]["replaces_fact_id"] == "f-x2"
     assert store.docs["f-x"]["superseded_by"] == "f-x2" == store.docs["f-x3"]["replaces_fact_id"]
     assert store.docs["f-src-a"]["superseded_by"] == "f-merged" and store.docs["f-merged2"]["version"] == 2
+    # Reviewer edit (facts S3, T3; plan §3.8): write_superseding now takes the actor and writes each closed document's
+    # trail entry; the audit must still find documents carrying a trail clean.
+    assert [e["reason"] for e in store.docs["f-x"]["lifecycle_events"]] == ["replaced by f-x2"]
+    assert [e["reason"] for e in store.docs["f-src-a"]["lifecycle_events"]] == ["merged into f-merged"]
     for doc_id, doc in store.docs.items():
         assert check_fact(doc_id, doc) == [], doc_id
     kept = [(i, {k: doc.get(k) for k in runner.CHECKERS["facts"]["keep"]}) for i, doc in store.docs.items()]
@@ -439,11 +443,11 @@ async def test_the_audit_sees_a_pointer_broken_in_a_store_the_writers_built(tmp_
     store = FactStore()
     await seed_current(store, "x")
     old = await current(store, "f-x")
-    await store.repo.write_superseding(version_of(old, "f-x2", "x two"), [old], NOW)
+    await store.repo.write_superseding(version_of(old, "f-x2", "x two"), [old], NOW, actor="stage1")
     await store.repo.facts_col.document("f-x2").delete()          # the successor of f-x is gone
     await seed_current(store, "y")
     old = await current(store, "f-y")
-    await store.repo.write_superseding(version_of(old, "f-y2", "y two"), [old], NOW)
+    await store.repo.write_superseding(version_of(old, "f-y2", "y two"), [old], NOW, actor="stage1")
     await store.repo.facts_col.document("f-y").update({"superseded_by": None})   # f-y2 no longer pointed back to
 
     report = json.loads((await runner.run(store.db, "facts", FACTS, tmp_path, now=NOW, s2_cutoff=CUTOFF)).read_text())

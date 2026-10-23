@@ -18,7 +18,7 @@ from pydantic import ValidationError
 
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.domain.entities import (
-    ContextPriority, FactDomain, FactState, FactVisibility, TemporalClass,
+    ContextPriority, ExpiryKind, FactDomain, FactState, FactVisibility, TemporalClass,
 )
 from src.domain.request_context import RequestContext
 from src.services.biographical_context_service import BiographicalContextService
@@ -390,20 +390,26 @@ async def test_search_without_any_user_id_raises(store):
 
 
 async def test_search_projection_returns_vector_and_context_and_defaults_the_rest(store):
+    # Reviewer edit (facts S3, T3; plan §1.1 / D1 "search results carry the current decision"): the select now carries
+    # the stored expiry decision (expiry_kind, ttl_days, expires_at), so those three are returned, no longer defaulted.
+    # The trail and stale_since stay out of the projection and must come back at their defaults.
     fact = make_fact("full", tags=["a"], metadata={"k": "v"}, context="said at lunch", ttl_days=30,
                      replaces_fact_id="old-1", expires_at=T0 + timedelta(days=30), temporal_class=TemporalClass.STABLE,
                      is_current=False, version=3, last_updated=T0, context_priority=ContextPriority.HIGH,
                      visibility=FactVisibility.USER_PRIVATE, reported_date=T0 - timedelta(days=1),
-                     valid_to=T0 + timedelta(days=2), age_days=3)
+                     valid_to=T0 + timedelta(days=2), age_days=3, expiry_kind=ExpiryKind.HORIZON,
+                     stale_since=T0, lifecycle_events=[{"at": T0, "from": None, "to": "current", "actor": "stage1",
+                                                        "reason": "version 3 of old-1"}])
     await store.repo.add_fact(fact)
     (got,) = await store.repo.search_facts(fact.vector, "vector", user_id=USER, account_id=ACC)
     assert got.vector == fact.vector and got.context == "said at lunch"
+    assert (got.expiry_kind, got.ttl_days, got.expires_at) == (ExpiryKind.HORIZON, 30, T0 + timedelta(days=30))
     assert (got.tags_vector, got.metadata_vector) == (None, None)
-    assert (got.ttl_days, got.expires_at, got.replaces_fact_id) == (None, None, None)
+    assert (got.replaces_fact_id, got.stale_since, got.lifecycle_events) == (None, None, [])
     assert got.is_current is True
     assert datetime.now(timezone.utc) - got.last_updated < timedelta(minutes=1)
-    defaulted = {"tags_vector", "metadata_vector", "ttl_days", "expires_at", "replaces_fact_id", "is_current",
-                 "last_updated"}
+    defaulted = {"tags_vector", "metadata_vector", "replaces_fact_id", "is_current", "last_updated", "stale_since",
+                 "lifecycle_events"}
     assert got.model_dump(exclude=defaulted) == fact.model_dump(exclude=defaulted)
 
 
@@ -559,7 +565,11 @@ async def test_invalidate_changes_state_valid_to_and_last_updated_only(store):
     started = datetime.now(timezone.utc)
     await store.repo.invalidate_fact("f-x", ACC)
     after = plain(store.docs["f-x"])
-    assert {k for k in after if after[k] != before[k]} == {"state", "valid_to", "last_updated"}
+    # Reviewer edit (facts S3, T3; plan §3.8): the Cabinet invalidate writes its trail entry in the same write, so the
+    # changed set gains lifecycle_events, and the entry itself is pinned.
+    assert {k for k in after if after[k] != before[k]} == {"state", "valid_to", "last_updated", "lifecycle_events"}
+    assert after["lifecycle_events"] == [{"at": after["valid_to"], "from": "current", "to": "invalidated",
+                                          "actor": "cabinet", "reason": "deleted in the Cabinet"}]
     assert after["state"] == "invalidated" and type(after["state"]) is str
     assert started <= after["valid_to"] <= datetime.now(timezone.utc) and after["last_updated"] == after["valid_to"]
     assert after["is_current"] is True and after["version"] == before["version"]
