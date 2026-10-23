@@ -3,7 +3,7 @@
 All Cloud Scheduler jobs for Alek-Core. Managed via `cloudbuild-dev.yaml` using the `describe && update || create` pattern (idempotent on every deploy).
 
 Region: `us-central1`. Attempt deadline: `60s` for most `/worker` jobs; `start_daily_email_review` and
-`start_drive_sync` use `180s` and `repair_email_embeddings` uses `300s` (`cloudbuild-dev.yaml`).
+`start_drive_sync` use `180s`, `fact_lifecycle_sweep` uses `180s` and `repair_email_embeddings` uses `300s` (`cloudbuild-dev.yaml`).
 
 ## Two deadlines, do not confuse them
 
@@ -246,6 +246,32 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 
 ---
 
+### Fact Lifecycle Sweep (the fact janitor)
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `alek-bot-dev-fact-lifecycle-sweep` |
+| **Schedule** | `30 9 * * *` (daily at 09:30 Europe/Madrid, DST-aware; after the 09:00 billing summary) |
+| **HTTP** | `POST /worker` |
+| **Payload** | `{"task_type": "fact_lifecycle_sweep"}` |
+| **Attempt deadline** | `180s`; **no retry on purpose** (the job sets no `--max-retry-attempts`) |
+| **Purpose** | The fact janitor (`docs/10_rfcs/FACT_LIFECYCLE_RFC.md` D4, owner's map `docs/05_building_blocks/memory/README.md` §5.5): moves every current fact whose `expires_at` has passed to `stale`, unless the account's breaker is tripped, at most `50 − backlog` per account per run (oldest expiry first, the rest `deferred`). Zero LLM calls. Rebuilds the baseline cache of every account it changed. Stores one snapshot per account per day and posts one 🧹 ops line a day. |
+| **Handler** | `WorkerHandler._handle_fact_lifecycle_sweep()` → `FactLifecycleSweepService.sweep()`; the totals are the 200 body (`accounts`, `due`, `staled`, `would_stale`, `deferred`, `conflicts`, `no_decision`, `breaker_tripped`, `dry_run`) |
+| **Log-only** | The deploy creates the job in log-only mode: unless the main service has `FACT_LIFECYCLE_SWEEP_DRY_RUN` set to an explicit off value (`0`, `false`, `no`, `off`) the run writes nothing to facts or the cache and counts `would_stale` instead. Nothing in the deploy sets it; S5 does, only on the owner's word. |
+| **Index** | needs the composite `(state ASC, expires_at ASC)` on the facts collection (`config/firestore.indexes.json`), `READY` before the code ships; without it the due query fails and the run answers 500. |
+| **Env** | active on the single live service |
+
+Failure handling: a failure other than a write conflict stops the run, is logged with its type and the stage reached, posts one
+"🚨 Fact lifecycle run failed" to the ops sink (every ops post is capped at 10 s) and answers 500. Scheduler does not retry it:
+a retry after the 180 s deadline could overlap a run still going, and each run computes its headroom from the backlog before
+it, so two overlapping runs can stale up to twice the cap. For the same reason **do not trigger the job by hand while the 09:30
+run is going** (the manual triggers in the root `CLAUDE.md` are for other times of day); a hand run at another time is safe: the
+last run of the day replaces the day's snapshot, and the 🧹 line is posted once per day. The next day's run catches up after a
+failure. The job takes no lease and is not a Cloud Task, so there is no task-claim record. The collections it writes
+(`{prefix}fact_lifecycle_daily`, `{prefix}fact_lifecycle_lines`) carry no field named `expires_at` and **no TTL policy**.
+
+---
+
 ### Email Embedding Repair
 
 | Field | Value |
@@ -310,4 +336,4 @@ an hour. It can also be triggered manually (`POST /worker {"task_type": "sweep_c
 
 ---
 
-**Last Updated:** 2026-10-11
+**Last Updated:** 2026-10-23
