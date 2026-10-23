@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import socket
+import types
 import typing
 from collections import Counter
 from dataclasses import dataclass, field
@@ -94,7 +95,8 @@ MATRIX: Dict[str, Expect] = {
         log="No route found for recipient: no_such_agent_u1"),
     # No Gmail credentials are seeded.
     "daily_email_review": Expect(200, {"error": "credentials unavailable"}, log="[EmailReview] no credentials for u1"),
-    # The xAI poll cannot connect offline, so the retry path runs (cause also checked against the socket guard).
+    # The xAI poll cannot connect offline: a DNS failure where there is no resolver, the socket guard where there is one.
+    # Both reach the handler as the SDK's 'Connection error.', so the retry path runs; no connect may have succeeded.
     "video_generation_polling": Expect(
         200, {"attempt": 1, "status": "retry"}, log="[VideoGeneration] get_status failed, attempt=0: Connection error."),
     # No indexing job is seeded.
@@ -128,7 +130,9 @@ class Boot:
     unknown: Optional[Tuple[int, Any]] = None
     anonymous: Optional[Tuple[int, Any]] = None
     worker_closure: Dict[str, Any] = field(default_factory=dict)
-    adapters: Dict[str, Any] = field(default_factory=dict)
+    served_is_quart: Optional[bool] = None
+    mcp_discovery: Optional[Tuple[int, Any]] = None
+    health_through_served: Optional[int] = None
     seeded: Optional[Tuple[Any, Any]] = None
     connects: List[Tuple[Any, Optional[str]]] = field(default_factory=list)
     recorded_names: List[str] = field(default_factory=list)
@@ -186,7 +190,20 @@ async def _post(client: Any, body: dict, token: Optional[str] = prod_env.VALID_T
     return response.status_code, payload
 
 
-async def _probe(app: quart.Quart, boot: Boot, caplog: pytest.LogCaptureFixture) -> None:
+async def _through_asgi(asgi_app: Any, path: str) -> Tuple[int, Any]:
+    import httpx
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=asgi_app), base_url="http://testserver") as client:
+        response = await client.get(path)
+    try:
+        return response.status_code, response.json()
+    except ValueError:
+        return response.status_code, None
+
+
+async def _probe(app: quart.Quart, served: Any, boot: Boot, caplog: pytest.LogCaptureFixture) -> None:
+    boot.served_is_quart = isinstance(served, quart.Quart)
+    boot.mcp_discovery = await _through_asgi(served, "/.well-known/oauth-authorization-server")
+    boot.health_through_served = (await _through_asgi(served, "/health"))[0]
     boot.startup = list(caplog.records)
     boot.rules = sorted(
         f"{','.join(sorted(rule.methods - {'HEAD', 'OPTIONS'}))} {rule.rule}" for rule in app.url_map.iter_rules())
@@ -244,7 +261,7 @@ async def _boot(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixtur
 
     async def serve(asgi_app: Any, config: Any) -> None:
         try:
-            await _probe(apps[-1], boot, caplog)
+            await _probe(apps[-1], asgi_app, boot, caplog)
         except BaseException as exc:  # main() swallows what the served task raises
             boot.probe_error = exc
 
@@ -274,6 +291,18 @@ def _check_startup(boot: Boot) -> List[str]:
     return problems
 
 
+def _check_served_app(boot: Boot) -> List[str]:
+    problems = []
+    if boot.served_is_quart:
+        problems.append("serve() got the Quart app: the MCP dispatcher is not in front of it")
+    status, body = boot.mcp_discovery or (None, None)
+    if status != 200 or not isinstance(body, dict) or "authorization_endpoint" not in body:
+        problems.append(f"an MCP path did not reach the SDK app: {status} {body}")
+    if boot.health_through_served != 200:
+        problems.append(f"a non-MCP path did not reach the Quart app through the dispatcher: {boot.health_through_served}")
+    return problems
+
+
 def _check_agent_task_queue(boot: Boot) -> List[str]:
     path = "projects/p9-test-project/locations/us-central1/queues/agent-tasks-dev"
     asked = [calls for calls, _ in boot.queue_calls if path in calls]
@@ -298,7 +327,7 @@ def _check_url_map(boot: Boot) -> List[str]:
 
 
 def _optional(annotation: Any) -> bool:
-    return typing.get_origin(annotation) is typing.Union and type(None) in typing.get_args(annotation)
+    return typing.get_origin(annotation) in (typing.Union, types.UnionType) and type(None) in typing.get_args(annotation)
 
 
 def _check_blueprint_calls(boot: Boot) -> List[str]:
@@ -336,6 +365,8 @@ def _factory_of(boot: Boot) -> Any:
 def _check_cabinet_repository(boot: Boot) -> List[str]:
     [cabinet] = [kw for name, _, _, kw in boot.calls if name == "create_user_cabinet_blueprint"]
     factory = _factory_of(boot)
+    if cabinet["fact_repo"] is None or factory.repository is None:
+        return ["the Cabinet's fact_repo or the agent factory's repository is None (#148)"]
     if cabinet["fact_repo"] is not factory.repository:
         return ["the Cabinet's fact_repo is not the agent factory's repository (#148)"]
     return []
@@ -394,6 +425,8 @@ def _check_platform_workers(boot: Boot) -> List[str]:
     slack, telegram = worker._slack_worker, worker._telegram_worker
     if getattr(slack, "__func__", None) is not HTTPModeAdapter.handle_queued_event:
         problems.append("the attached Slack worker is not HTTPModeAdapter.handle_queued_event")
+    elif getattr(slack.__self__.start, "__name__", "") != "start_shared_app":
+        problems.append("the attached Slack adapter does not serve the shared app (its start is not start_shared_app)")
     if getattr(telegram, "__func__", None) is not TelegramWebhookAdapter.handle_queued_update:
         problems.append("the attached Telegram worker is not TelegramWebhookAdapter.handle_queued_update")
     elif PlatformAdapterFactory._adapters.get("telegram") is not telegram.__self__:
@@ -402,7 +435,7 @@ def _check_platform_workers(boot: Boot) -> List[str]:
 
 
 CHECKS = [
-    _check_startup, _check_agent_task_queue, _check_url_map, _check_blueprint_calls, _check_cabinet_repository,
+    _check_startup, _check_served_app, _check_agent_task_queue, _check_url_map, _check_blueprint_calls, _check_cabinet_repository,
     _check_seed, _check_matrix, _check_platform_workers,
 ]
 
@@ -526,3 +559,58 @@ def test_the_matrix_pins_exactly_the_triggers_the_deploy_sends():
 def test_a_video_poll_that_connected_is_a_problem():
     boot = _matrix_boot(video_generation_polling=Row(200, {"attempt": 1, "status": "retry"}, [], [(("h", 443), None)]))
     assert "the video poll made a real connection" in _check_matrix(boot)
+
+
+def test_serve_must_get_the_dispatcher_with_the_mcp_app_behind_it():
+    ok = Boot(served_is_quart=False, mcp_discovery=(200, {"authorization_endpoint": "x"}), health_through_served=200)
+    assert _check_served_app(ok) == []
+    assert any("got the Quart app" in p for p in _check_served_app(Boot(
+        served_is_quart=True, mcp_discovery=(404, None), health_through_served=200)))
+    assert any("MCP path did not reach" in p for p in _check_served_app(Boot(
+        served_is_quart=False, mcp_discovery=(404, {"error": "x"}), health_through_served=200)))
+    assert any("non-MCP path" in p for p in _check_served_app(Boot(
+        served_is_quart=False, mcp_discovery=(200, {"authorization_endpoint": "x"}), health_through_served=404)))
+
+
+def test_a_none_on_both_sides_of_the_cabinet_identity_is_a_problem():
+    class Factory:
+        repository = None
+
+        async def get_lelik(self, user_id):
+            return None
+
+    factory = Factory()
+    cabinet = ("create_user_cabinet_blueprint", None, (), {"fact_repo": None})
+    voice = ("create_voice_webhook_blueprint", None, (), {"lelik_agent_provider": factory.get_lelik})
+    assert _check_cabinet_repository(Boot(calls=[cabinet, voice])) == [
+        "the Cabinet's fact_repo or the agent factory's repository is None (#148)"]
+
+
+def _pep604(a: int | None, b: int = 0):
+    return None
+
+
+def test_a_pep604_optional_parameter_is_recognised():
+    boot = Boot(calls=[("create_x_blueprint", _pep604, (None,), {})], recorded_names=["create_x_blueprint"])
+    assert "create_x_blueprint: Optional parameter a is None in the deployed wiring" in _check_blueprint_calls(boot)
+
+
+def test_the_slack_worker_must_belong_to_an_adapter_that_serves_the_shared_app(monkeypatch):
+    from types import MethodType, SimpleNamespace
+    from src.adapters.platform.factory import PlatformAdapterFactory
+    from src.adapters.slack.http_adapter import HTTPModeAdapter
+    from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
+
+    def start_shared_app():
+        return None
+
+    def worker(start):
+        telegram = MethodType(TelegramWebhookAdapter.handle_queued_update, SimpleNamespace())
+        monkeypatch.setattr(PlatformAdapterFactory, "_adapters", {"telegram": telegram.__self__})
+        handler = SimpleNamespace(
+            _slack_worker=MethodType(HTTPModeAdapter.handle_queued_event, SimpleNamespace(start=start)),
+            _telegram_worker=telegram)
+        return Boot(worker_closure={"worker_handler": handler})
+
+    assert _check_platform_workers(worker(start_shared_app)) == []
+    assert any("start_shared_app" in p for p in _check_platform_workers(worker(lambda: None)))

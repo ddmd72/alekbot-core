@@ -65,16 +65,18 @@ def test_the_real_load_settings_asks_secret_manager_for_nothing(monkeypatch):
 
 
 def test_a_key_the_deploy_does_not_provide_shows_up_as_a_fallback(monkeypatch):
-    monkeypatch.setattr(prod_env, "secret_names", lambda: [n for n in prod_env.SECRET_VALUES if n != "TWILIO_AUTH_TOKEN"])
+    real_names = prod_env.secret_names()
+    assert "TWILIO_AUTH_TOKEN" in real_names
+    monkeypatch.setattr(prod_env, "secret_names", lambda: [n for n in real_names if n != "TWILIO_AUTH_TOKEN"])
     _, fallbacks = prod_env.prod_settings(monkeypatch)
-    assert "TWILIO_AUTH_TOKEN" in fallbacks
+    assert fallbacks == ["TWILIO_AUTH_TOKEN"]
 
 
 # ----------------------------------------------------------------------------- the Cloud Tasks client
 
 @pytest.fixture
 def tasks(monkeypatch):
-    FakeCloudTasksClient.reset()
+    monkeypatch.setattr(FakeCloudTasksClient, "instances", [])
     monkeypatch.setattr("google.cloud.tasks_v2.CloudTasksClient", FakeCloudTasksClient)
     queue = GcpTaskQueue("p", "us-central1", "q", "https://svc.test.example", "invoker@p.iam.gserviceaccount.com")
     return queue, FakeCloudTasksClient.instances[-1]

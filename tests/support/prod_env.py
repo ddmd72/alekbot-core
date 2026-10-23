@@ -5,6 +5,12 @@ process. `apply_deploy_env()` then sets what the `alek-bot-dev` step of `cloudbu
 literals, its `--set-secrets` names with shaped fakes, the Cloud Run variables and the build substitutions.
 `prod_settings()` runs the real `load_settings()` with `load_dotenv` a no-op and `get_secret` recording, so a key that is
 absent in production shows up as a recorded Secret Manager fallback. The `.env` file is never read.
+
+Residual: the seal runs per test, but `import main` runs at collection, so four reads made at import time see the
+ambient process (the VM, CI, or a Mac where `make` exports `.env`) instead of the deploy's value:
+`ENABLE_GROUNDING_ATTRIBUTION` (`agent_config.py`), `DEEP_RESEARCH_SECOND_PASS` (`agent_config.py`),
+`DOCS_OWNER_USER_ID` (`user_cabinet_app.py`) and the logger's `K_SERVICE` (`logger.py`, which picks the handler).
+No assertion of the boot test depends on them today; the RFC residual list (T6) carries them.
 """
 import os
 import re
@@ -222,7 +228,7 @@ def install_offline_services(monkeypatch) -> OfflineServices:
     fallbacks = install_settings_patches(monkeypatch)
     db = EvalDb()
     monkeypatch.setattr("google.cloud.firestore.AsyncClient", lambda *a, **k: db)
-    FakeCloudTasksClient.reset()
+    monkeypatch.setattr(FakeCloudTasksClient, "instances", [])
     monkeypatch.setattr("google.cloud.tasks_v2.CloudTasksClient", FakeCloudTasksClient)
 
     async def embedding(self, text, task_type="RETRIEVAL_DOCUMENT"):
