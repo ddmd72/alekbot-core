@@ -10,7 +10,8 @@
   `--limit` reads the first N documents; the lineage and version-chain classes are unreliable on a partial read.
 - `--s2-cutoff` is the time the version-chain code went live (a naive time reads as UTC). A superseded document with no
   `superseded_by` last written before it is counted under `counted`, not reported as a violation; with no cutoff
-  every such document is counted.
+  every such document is counted, and when version pointers exist the report and stdout carry a warning that the
+  post-S2 class was not judged.
 - Entities: only `facts` today. Another entity joins by adding a `CHECKERS` entry when its checker exists.
 """
 import argparse
@@ -22,19 +23,20 @@ from typing import Any, Optional
 
 from google.cloud.firestore_v1.base_query import FieldFilter
 
-from scripts.data_audit.facts import COUNTED_CLASSES, check_across, check_fact
+from scripts.data_audit.facts import COUNTED_CLASSES, check_across, check_fact, s2_data_present
 
 MEMORY_DIR = Path(__file__).resolve().parents[1] / "memory"
 
 # entity -> EnvironmentConfig property naming its collection; per-document check; cross-document check over the
 # `keep` fields only (a full document would hold its vectors in memory for the whole run), called with the S2 cutoff;
-# the classes it reports that are counted, not violations.
+# the classes it reports that are counted, not violations; whether the kept fields show data a cutoff is needed for.
 CHECKERS: dict[str, dict[str, Any]] = {
     "facts": {
         "collection": "domain_facts_collection",
         "per_doc": check_fact,
         "across": check_across,
         "counted": COUNTED_CLASSES,
+        "needs_cutoff": s2_data_present,
         "keep": ("lineage_id", "is_current", "account_id", "state", "superseded_by", "replaces_fact_id", "version",
                  "last_updated"),
     },
@@ -62,6 +64,9 @@ async def audit(db: Any, entity: str, collection: str, account_id: Optional[str]
     for cls, ids in spec["across"](kept, s2_cutoff).items():
         classes.setdefault(cls, []).extend(ids)
     counted = {cls: ids for cls, ids in classes.items() if cls in spec["counted"]}
+    warnings = []
+    if s2_cutoff is None and spec["needs_cutoff"](kept):
+        warnings.append("superseded_without_successor not judged: version pointers exist, pass --s2-cutoff")
     return {
         "entity": entity,
         "collection": collection,
@@ -71,6 +76,7 @@ async def audit(db: Any, entity: str, collection: str, account_id: Optional[str]
         "documents": count,
         "classes": {cls: _found(ids) for cls, ids in sorted(classes.items()) if cls not in counted},
         "counted": {cls: _found(ids) for cls, ids in sorted(counted.items())},
+        "warnings": warnings,
     }
 
 
@@ -92,6 +98,8 @@ async def run(db: Any, entity: str, collection: str, out_dir: Path, account_id: 
         print(f"  {cls}: {found['count']}")
     for cls, found in report["counted"].items():
         print(f"  {cls}: {found['count']} (counted, not a violation)")
+    for warning in report["warnings"]:
+        print(f"warning: {warning}")
     print(f"report: {path}")
     return path
 
