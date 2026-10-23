@@ -1,8 +1,8 @@
 # RFC: Fact lifecycle — expiry decided by content, a daily janitor, a periodic review pass, owner questions, real versions
 
-**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. Nothing of S2–S5 built.
+**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2 is built** (2026-10-23, on the S2–S5 branch, not deployed; see "S2 as built" in §9); S3–S5 are not built.
 Rev 1 had owner decisions Q1–Q4; two adversarial reviews (code paths; rollout and steady state) and a binding
-arbitration produced this revision. Slice S1 (§9) is merged and deployed; everything else is not built.
+arbitration produced this revision. Slice S1 (§9) is merged and deployed; S2 is built and deploys with S3–S5; the rest is not built.
 **Supersedes, once accepted:** `DELIBERATE_FACT_MANAGEMENT_RFC.md` §2.2 axis 2 "Lifecycle Transitions", §4.4 (default
 TTL by class), §4.5 (state transition rules), §5.3 "Update Modes", §7.1 `FactLifecycleService`. The rest of that RFC
 (taxonomy, tools, cognitive process) stays in force.
@@ -467,7 +467,7 @@ due); `reported_date` is unchanged and the event's actor is `timeout`.
   needs the series). Versions are for recovery and a later archive view, not for Smart.
 - **Tracker.** `_TrackingFactManagement` records the result id (`result["fact_id"]`, the new version), and only on
   success.
-- Growth: one document per content update, about 35 updates a month on the live account. Negligible.
+- Growth: one document per content update. Measured 2026-09-23 → 10-22: 72 content updates a month on the live account (rev 2 said about 35), at about 20 KB a document (three 768-dimension vectors), so about **1.4 MB a month** and about 100 new superseded documents a month. Every index on the collection starts with `(account_id, state)`, so closed documents cost nothing at query time. Negligible.
 
 ### D9. One writer per account
 
@@ -479,7 +479,7 @@ due); `reported_date` is unchanged and the event's actor is `timeout`.
 - **Memory-write lease per account** in Firestore (the drive indexer's pattern: `lease_until`, transactional take and
   release, writes stop before `lease_until − margin`), taken by consolidation (`ConsolidationService`) and by the
   review task. The loser re-enqueues itself with a delay (`enqueue_worker_task` has `delay_seconds`,
-  `gcp_task_queue.py:377`; `enqueue_consolidation_task`, `:446`, gains one). Today consolidation tasks run on a queue
+  `gcp_task_queue.py:377`; `enqueue_consolidation_task`, `:446`, gains one — not needed as built: the deferral uses `enqueue_worker_task` with a bucketed key, see D-14 in "S2 as built"). Today consolidation tasks run on a queue
   with up to 5 concurrent dispatches (`gcp_task_queue.py:129`) and the overflow and hourly sweep paths can overlap.
   The janitor and Cabinet do not take the lease; they write single documents under a precondition.
 - **The tracker is a parameter.** `_execute_deliberate_process_v3` swaps `self._fact_management` on the per-user
@@ -686,11 +686,12 @@ level, overridable per account and per user).** The context is kept for the reco
 
 1. **S1 — defects.** Done: merged and deployed 2026-10-21, backfill applied, audit clean (§1.1,
    `decisions/fact_s1_defects.md`).
-2. **S2 — versions and one writer** (D3, D8, D9): validation before any write; merge and version transactions with a
+2. **S2 — versions and one writer** (D3, D8, D9): **built 2026-10-23** (on the S2–S5 branch, deploys with S3–S5). Validation before any write; merge and version transactions with a
    pre-generated id; forward resolution helper; `superseded_by`; `created_at` as lineage birth; `get_lineage` by
    version, tenant-filtered, projected; `get_latest_fact_by_lineage` on `state`; Cabinet invalidate resolves forward;
    memory-write lease; tracker as a parameter, result id, success only; tags null refused and system tags kept. These
-   fold in every S1 residual of `fact_s1_defects.md`.
+   fold in every S1 residual of `fact_s1_defects.md`. Record: `decisions/fact_versions_one_writer.md`; the code is
+   described in the owner's map, `docs/05_building_blocks/memory/README.md`.
 3. **S3 — expiry, prompts, janitor log-only** (D1, D2, D4, D5, D11, D10 counters): new fields in the model and
    projections; `reported_date` ownership; born-due rule; directive and principle pin; STALE refused; janitor with
    breaker and cache refresh; tokens and code-built messages (§6) except the review token; `HISTORICAL` → `ARCHIVAL`;
@@ -698,6 +699,53 @@ level, overridable per account and per user).** The context is kept for the reco
 4. **S4 — review pass and owner questions** (D6, D7, D10): `consolidation_review` profile and token; selection, prefetch,
    outcomes, timeouts in code; question delivery and claim; echo-trap exception; P1, P2, P3 if confirmed; alerts.
 5. **S5 — one-time classify (§7.3), review dry run (§7.3b), janitor on.**
+
+**S2 as built (2026-10-23).** Where this text and the code differ, the code wins and is described here. The owner
+confirmed deltas D-1 to D-15 on 2026-10-23.
+
+Deltas from the RFC text:
+- **D-1** In-place lifecycle writes are transactions with the `update_time` precondition and are field-masked, already in S2 (consolidator state-only and `reported_date`-only updates, Cabinet invalidate). The RFC names only version write and merge as transactions and puts field masking in S3.
+- **D-2** `create_fact`, `merge_facts` and `add_facts_batch` refuse `state=superseded`: a document must not be born closed with no successor.
+- **D-3** `update_fact` refuses `tags: []` and an empty `content`, as well as `tags: null`.
+- **D-4** `FactRepository.update_fact` (a whole-document `set()`) is deleted: it had no caller left and bypassed every precondition.
+- **D-5** A merge source that resolves into another lineage or to a non-current fact fails the whole merge; so does a source that moved forward between the two attempts. Missing and foreign sources are still skipped silently.
+- **D-6** The Cabinet accepts every end state except `superseded` (the consolidator accepts `current` only).
+- **D-7** `get_latest_fact_by_lineage` returns the highest version that is not `superseded` (filtered in code) and drops the `owner_id` fallback.
+- **D-8** The `$consolidate` shim (`handlers/consolidation_handler.py`) and the dead `_execute_consolidation_background` are deleted; `$consolidate` uses the one composed `ConsolidationService`, through `consolidate_now`.
+- **D-9** The service bounds a run explicitly: the message `timeout_ms` is computed from the lease and `suppress_transient_retry` is set.
+- **D-10** The lease is taken per batch, not per task. `$consolidate` processes one batch in its request and continues in the background.
+- **D-11** Stale RFC claims are corrected (table below).
+- **D-12** A lease loser defers only when the user has an open batch: `pending`, `retry_pending` or `processing`.
+- **D-13** The validation of the legacy v2 path (parse before embed, `superseded` refused) moves from S3 to S2, because it lives in `add_facts_batch`, which S2 changes for every caller.
+- **D-14** The deferral uses the existing `enqueue_worker_task` (delay plus a bucketed dedup key). `enqueue_consolidation_task` is unchanged.
+- **D-15** Stricter argument checks than S1: a `reported_date` that is neither a string nor a datetime is refused (S1 ignored it), and the create path refuses empty content, non-list tags and malformed `ttl_days` or `context` before any embedding, so a legacy v2 batch with one malformed fact now fails whole. A naive date is read as UTC.
+
+Where the built code differs from the S2 plan:
+- The lease is held 16 minutes (900 s run timeout + 60 s margin). Under the lease a `processing` batch is a zombie after **60 s** (the margin), not 960 s; the sweep, which has no lease, keeps 1800 s.
+- Tags are compared as a multiset: resending the stored tags in another order, or with a repeated tag, is not a content change.
+- `forward_step` takes the account (`origin_account_id`) and the hop count; the cap of 50 hops is raised inside it, and an account mismatch is checked first and names no foreign id.
+- `ConsolidationRun` has a fourth field, `unattended`: a deferral or continuation had no task queue to go to (local runs), and `$consolidate` then tells the owner to send the command again.
+- The Cabinet UI shows a fixed line on a 409 ("This fact changed in the meantime; the list was reloaded.") and reloads the list. The technical message goes into the JSON body and a WARNING log, not to the screen.
+- A failing "more batches?" read after a batch answers "yes" (a spare task finds nothing and stops; a lost one would wait for the sweep). The service refuses a run timeout at or below the margin.
+- `write_superseding` refuses an empty `replaced` list and a document without its three vectors. The repository maps `Aborted`, the client's `ValueError` after five aborted commits, and any error that replaced one of them to `FactWriteConflict`.
+- `release` of the lease logs a WARNING when the document belongs to another owner; a missing document stays silent.
+- The data audit has more classes than the plan listed: `superseded_by_cycle`, `superseded_by_on_open_doc`, `lineage_open_below_highest_version` (both shapes of a lineage with a not-closed document below its head), `last_updated_not_timestamp`; and the pre-S2 count has its own class.
+- The plan's "three gathered updates of one fact: a later one may fail" is not reproducible on the test fake (all three apply there); in production a second conflict fails the call.
+- `consolidate_cluster` (no live caller) was not given the tracker or the lease.
+
+Cites in this RFC that had moved or were wrong:
+
+| RFC says | Live (2026-10-23) |
+|---|---|
+| lock `fact_management_adapter.py:219-231` | the lock is deleted; preconditions in `firestore_repo.py:562-603` |
+| merge supersede `:376-395`, create `:425-430` | one transaction, `fact_management_adapter.py:367-408` |
+| `get_lineage` `firestore_repo.py:519-532`; latest `:534-564` | `:515-528`; `:530-539` |
+| Cabinet invalidate `firestore_repo.py:307-319` | `:316-337` |
+| tracker swap `consolidation_agent.py:748-759` | gone: the tracker is a parameter, `:789` |
+| anchors looked up at `consolidation_agent.py:1529,1541` | one reader, `_get_existing_anchors_list`, `consolidation_agent.py:1591`, on the v2 path only |
+| D5: the fact id is "in the consolidator's own prompt" | false: `BiographicalFactsFormatter` renders no id; cache ids are read only by enrichment's baseline dedup (`search_enrichment_service.py:214-231`) and by the cache build |
+| `update_fact` tool schema `:1331-1353` | `:1393-1419` (it now has `superseded_by`) |
+| D8 growth "about 35 updates a month" | 72 content updates a month measured |
 
 **Documentation (owner, 2026-10-21).** Before S2, an owner's map of memory, `docs/05_building_blocks/memory/README.md`,
 on the pattern of the drive building block: a §0 question index, a plain-English walk-through of a fact's life from
@@ -751,7 +799,9 @@ so conflict paths are testable.
    → not staled again the next day; the cache is refreshed after the pass; the lease excludes a concurrent
    consolidation, and the loser re-enqueues; `_enforce_directive_cap` alerts on a refused update.
 6. **S1 tests the spec changes** (a reviewer edits them under the reviewer rule; the plan completes the list by running
-   the suite against the S2/S3 change): `tests/unit/adapters/test_fact_management_adapter.py::test_content_change_bumps_version_and_resets_reported_date`
+   the suite against the S2/S3 change; S2 built: `test_fact_management_adapter.py` was retired and its behaviour lives in
+   `tests/unit/adapters/test_fact_versions_roundtrip.py` and `test_fact_update_embedding_and_dates.py`, for example
+   `test_a_content_change_resets_reported_date_to_now_on_the_new_version`): the former `tests/unit/adapters/test_fact_management_adapter.py::test_content_change_bumps_version_and_resets_reported_date`
    (D2 `reported_date`); `tests/unit/adapters/test_fact_store_roundtrip.py::test_update_content_reembeds_and_bumps_version`
    (a content change is a new document, D8); `::test_superseded_update_closes_the_version` (SUPERSEDED without
    `superseded_by` is refused, D8); the merge tests in both files (`superseded_by`, transaction order, D3).
@@ -760,15 +810,17 @@ so conflict paths are testable.
 
 ## Appendix A. Where each fact field is read (verified against main, 2026-10-21, after S1)
 
+**S2 update (2026-10-23):** the rows `id`, `account_id`, `version`, `created_at`, `is_current`, `lineage_id`, `replaces_fact_id`, `superseded_by` and `valid_from` were re-checked against the S2 code; the other rows keep their 2026-10-21 text and line numbers.
+
 Production code under `src/` only; `scripts/` and tests are not processes. "Write only" means no code path reads the
 field to decide or render anything. Re-check the row before changing a field (§1 rule).
 
 | Field | Read by | Effect today |
 |---|---|---|
-| `id` | the biographical cache dicts (`biographical_context_service.py:176-183`); enrichment drops facts whose id is in the baseline (`search_enrichment_service.py:214-231`); consolidator search results (`fact_management_adapter.py:105`) | bio dedup; the id the consolidator writes back to. A version write changes it, so the cache must be refreshed (D5) |
+| `id` | the biographical cache dicts (`biographical_context_service.py:176-183`); enrichment drops facts whose id is in the baseline (`search_enrichment_service.py:214-231`); consolidator search results (`fact_management_adapter.py:102`); forward resolution follows `superseded_by` ids (`firestore_repo.py:541-560`) | bio dedup; the id the consolidator writes back to. A version write changes it, so a stale id is followed forward (`update_fact`, `merge_facts`, Cabinet invalidate), and the cache is refreshed after a run that wrote, failed or not (D5) |
 | `text` | everything that renders a fact, including the cache document | what Smart, Lelik, MCP, Cabinet and the consolidator see |
 | `vector`, `tags_vector`, `metadata_vector` | 6 vector channels next to the domain channel (`search_enrichment_service.py:137-164`) and its semantic dedup; `add_fact_if_unique` nearest neighbour (`firestore_repo.py:677-687`) | retrieval. Since S1 recomputed on every text/tags/metadata change (`fact_management_adapter.py:318-322`) |
-| `account_id` | every query; tenant check on update/merge by id (S1) and Cabinet invalidate (`firestore_repo.py:313`) | tenancy. `get_lineage` lacks it (D8) |
+| `account_id` | every query; tenant check on update/merge by id (S1), on `resolve_current` (a foreign start document is "not found") and on Cabinet invalidate (`firestore_repo.py:316-324`); `get_lineage` filters it since S2 | tenancy |
 | `state` | every read path filters `== "current"` (`firestore_repo.py:223,277,383,475,962`); dedup (`:680`); consolidator search results | the only visibility switch |
 | `domain` | router `relevant_domains` → `search_facts_by_domain`; baseline build (biographical first, then fill; `agent_directive` → `standing_directives`); Stage 2b (`consolidation_agent.py:811-815`); Lelik `voice_fact_domains` (`companion_context_assembler_service.py:91`); MCP grouping; Cabinet filter and display; `PromptBuilder` channel split; cache document | selection and grouping |
 | `context_priority` (+ `context_priority_rank`, stored only) | baseline filter `rank < 5` and order (`firestore_repo.py:483-485`); cache document; shown to the consolidator | what enters every prompt |
@@ -778,15 +830,17 @@ field to decide or render anything. Re-check the row before changing a field (§
 | `reported_date` | `search_memory` render "reported: YYYY-MM-DD" (`memory_search_agent.py:362-364`); consolidator search results (`fact_management_adapter.py:117`) | the only date Smart can see, and only through `search_memory` |
 | `type` (`FactType`) | `search_memory` drops `PRINCIPLE` (`memory_search_agent.py:321`); write path adds the `anchor` tag (`fact_write_service.py:146-148`); Cabinet display; shown to the consolidator | principles excluded from explicit search |
 | `temporal_class` | consolidator search results | **no code decision**; model input only |
-| `version` | consolidator search results; `content_changed` bump (`fact_management_adapter.py:335-336`) | counts in-place content changes until S2 |
-| `created_at` | baseline order (`created_at DESC` after rank, `firestore_repo.py:485`); domain channel newest-first (`:962`); Cabinet sort (`user_cabinet_app.py:781`) and paginated order (`firestore_repo.py:278`); `get_lineage` order (`:520`); cache document | ordering. D8 makes it lineage birth |
-| `is_current` | `get_latest_fact_by_lineage` (`firestore_repo.py:537`; `:551` is a legacy `owner_id` branch); written by `lifecycle_fields` on every transition (`domain/fact_lifecycle.py`) | "latest of its lineage" since S1; no dedup reader any more |
-| `lineage_id` | `get_lineage` (no production caller); `get_latest_fact_by_lineage`, whose only caller `UserPromptBuilder._get_component` (`prompt_builder.py:418`) has no caller itself and delegates to a method the base class does not define (`:425`); `PromptBuilder.preload_components` cache key for `SYSTEM` facts (`prompt_builder.py:62-67`) | none for user facts |
+| `version` | consolidator search results (`fact_management_adapter.py:114`); `plan_fact_update` (`fact_update_plan.py:137`); `get_lineage` order; the data audit (unique per lineage, `replaces_fact_id` target at version − 1) | counts the versions of a lineage since S2: 1 at birth, + 1 on each version document, unchanged by an in-place write |
+| `created_at` | baseline order (`created_at DESC` after rank, `firestore_repo.py:481`); domain channel newest-first (`:900`); Cabinet sort (`user_cabinet_app.py:782`) and paginated order (`firestore_repo.py:287`); cache document | ordering. Since S2 it is lineage birth: a version copies it, so it orders nothing inside a lineage (`get_lineage` orders by `version`). A copied value makes ties at a page boundary of the Cabinet browser possible |
+| `is_current` | no `src/` reader since `get_latest_fact_by_lineage` filters on `state`; written by `lifecycle_fields` on every transition (`domain/fact_lifecycle.py:20-26`), by the version close and the merge close (`closure_fields`); the data audit checks it | "latest of its lineage"; false only on a superseded document |
+| `lineage_id` | forward resolution (a hop that leaves the lineage is a merge end, `fact_lifecycle.py:56`); `get_lineage` and `get_latest_fact_by_lineage` (no production caller; the former caller in `prompt_builder.py` is gone); `PromptBuilder.preload_components` cache key for `SYSTEM` facts (`prompt_builder.py:62-67`); the data audit | the lineage rule of D8 |
 | `last_updated` | projected by `get_active_facts` and `get_active_facts_ordered` (`firestore_repo.py:239,490`; since S1, they named `updated_at` before); read by no code | write only; projected so a read does not default it to now |
 | `visibility` | defaulted on read; never filtered | not enforced on reads, by design: every fact of an account is visible to all its members (owner, 2026-10-21); out of scope |
 | `created_by_user_id` | ownership migration on read (`firestore_repo.py:121-157`) | attribution only |
-| `valid_from`, `valid_to` | none (`valid_to` written by `lifecycle_fields` since S1) | **write only** |
-| `ttl_days`, `expires_at`, `replaces_fact_id` | none; `expires_at` is never written for facts | **write only** |
+| `valid_from`, `valid_to` | none (`valid_to` written by `lifecycle_fields` since S1; `valid_from` set at birth and by the version write) | **write only** |
+| `ttl_days`, `expires_at` | none; `expires_at` is never written for facts | **write only** |
+| `replaces_fact_id` | written by the version write (`fact_update_plan.py:138`); read by the data audit only (target in the same lineage, at version − 1, pointing back with `superseded_by`) | audit only |
+| `superseded_by` (S2) | written by the version close, the merge close and a model `SUPERSEDED` in place (`closure_fields`, `fact_lifecycle.py:73-75`); read by forward resolution (`resolve_current`) and the data audit | the successor of a closed document; a merge successor is in another lineage |
 
 **Projections** (what each read carries, for D2):
 
