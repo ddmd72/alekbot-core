@@ -31,9 +31,9 @@ class PromptCacheStrategy(PromptCacheStrategyPort):
       call the deliver_response terminal tool, and any non-trivial query
       first delegates to a specialist (search_memory etc.). Cache write
       reliably read at least once.
-    - Quick: most calls are single-turn (no terminal_tool, plain text
-      response when no delegation needed). Cache write would not be
-      amortized → pay the +25% surcharge for nothing. Skipped.
+    - Quick: most calls are single-turn. It ends on `deliver_response` on
+      Claude, but that is still one LLM call when nothing is delegated.
+      Cache write would not be amortized → pay the +25% surcharge for nothing. Skipped.
     - WebSearch: single LLM call with native grounding, no follow-up.
     """
 
