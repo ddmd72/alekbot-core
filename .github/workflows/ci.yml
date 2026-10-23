@@ -51,7 +51,7 @@ jobs:
         run: echo "$HOME/.cache/ffmpeg/bin" >> "$GITHUB_PATH"
 
       - name: make ci
-        # make ci = ruff check src/ + mypy (domain/ports) + the unit suite once (slow tests, coverage gate)
+        # make ci = ruff check src/ and the root entry points + mypy (domain/ports) + the unit suite once (slow tests, coverage gate)
         # + the offline G2 end to end.
         # No secrets: the unit suite mocks all I/O at the port/SDK boundary.
         # A hung test otherwise holds the job for GitHub's 6 h default.
