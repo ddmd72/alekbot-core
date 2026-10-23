@@ -75,8 +75,10 @@ class DelegationResult:
     structured_data: Any = None
     messages: List[Message] = field(default_factory=list)
     failed: bool = False
-    # Intents (after remap) of ASYNC delegations that were dispatched successfully this run.
-    # An empty final text after one of them is not an empty answer: the work arrives separately.
+    # Intents (after remap) of work dispatched successfully this run that the user will receive
+    # later: ASYNC delegations, and SYNC ones that return a {"status": "started"} background
+    # acknowledgement (deep_research, generate/edit_video). An empty final text after one of
+    # them is not an empty answer: the result arrives separately.
     async_dispatches: List[str] = field(default_factory=list)
 
 
@@ -174,6 +176,7 @@ class DelegationEngine:
 
     def __init__(self, coordinator: AgentCoordinator) -> None:
         self._coordinator = coordinator
+        self._mode_cache: Dict[str, Any] = {}
 
     async def execute(
         self,
@@ -510,9 +513,13 @@ class DelegationEngine:
 
     def _execution_mode(self, intent: str):
         """Registry mode of an intent, looked up once per engine (static data)."""
-        cache = self.__dict__.setdefault("_mode_cache", {})
+        cache = self._mode_cache
         if intent not in cache:
-            cache[intent] = self._coordinator.get_execution_mode(intent)
+            try:
+                cache[intent] = self._coordinator.get_execution_mode(intent)
+            except Exception as exc:  # a lookup must never turn a successful call into an error
+                logger.warning("⚠️ [DelegationEngine] execution-mode lookup failed for %s: %s", intent, exc)
+                cache[intent] = None
         return cache[intent]
 
     def _warn_sync_siblings(self, siblings, remap, terminal_tool, turn, calling_agent_id) -> None:
@@ -784,9 +791,13 @@ class DelegationEngine:
                 )
                 file_data = response.metadata.get("file_data") if response.metadata else None
                 mode = self._execution_mode(intent)
+                # ASYNC intents, and SYNC ones that only acknowledge a background job
+                # ({"status": "started"}: deep_research, generate/edit_video), deliver later.
+                started = isinstance(response.result, dict) and response.result.get("status") == "started"
+                deferred = (isinstance(mode, ExecutionMode) and mode == ExecutionMode.ASYNC) or started
                 return ToolResult(
                     name=tool_call.name,
-                    async_intent=intent if isinstance(mode, ExecutionMode) and mode == ExecutionMode.ASYNC else None,
+                    async_intent=intent if deferred else None,
                     result_str=result_str,
                     structured_data=response.metadata.get("structured_data") if response.metadata else None,
                     history_context=response.history_context,

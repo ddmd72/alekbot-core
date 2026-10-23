@@ -215,6 +215,8 @@ class TutorAgent(BaseAgent):
             full_response, response_summary, _rich, _links = extract_structured_response(
                 terminal_tool_args, raw_text
             )
+            if not (full_response or "").strip() and async_dispatches:
+                logger.info("empty_text_after_async agent=%s intents=%s", self.agent_id, async_dispatches)
             if not (full_response or "").strip() and not async_dispatches:
                 logger.error(
                     "empty_answer agent=%s model=%s terminal=%s",
