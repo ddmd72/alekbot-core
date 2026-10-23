@@ -4,7 +4,6 @@
 batches (`run.processed`) and a deferral or a continuation, never "N messages were processed"."""
 from unittest.mock import AsyncMock, MagicMock
 
-
 from src.domain.consolidation_run import ConsolidationRun
 from src.domain.messaging import MessageContext
 from src.handlers.conversation_handler import ConversationHandler

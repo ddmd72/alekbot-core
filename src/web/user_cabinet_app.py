@@ -14,6 +14,7 @@ from ..services.drive_search_service import DriveSearchService
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
+from ..domain.exceptions import FactResolutionError, FactWriteConflict
 from ..ports.user_repository import UserRepository
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
@@ -865,6 +866,10 @@ def create_user_cabinet_blueprint(
             return jsonify({"status": "invalidated"}), 200
         except PermissionError:
             return jsonify({"error": "Not authorized"}), 403
+        except (FactResolutionError, FactWriteConflict) as e:
+            # before ValueError -> 404: neither is a ValueError, but the order is what keeps a 409 from turning into one
+            logger.warning(f"Fact {fact_id} not invalidated: {type(e).__name__}")
+            return jsonify({"error": str(e)}), 409
         except ValueError as e:
             return jsonify({"error": str(e)}), 404
         except Exception as e:
