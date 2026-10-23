@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -8,5 +8,5 @@ class ConsolidationRun:
     processed: int = 0
     has_more: bool = False
     deferred: bool = False
-    # a deferral or continuation had no queue to go to (local runs); a flag about the wiring, not part of the outcome
-    unattended: bool = field(default=False, compare=False)
+    # a deferral or continuation had no queue to go to (local runs): nothing will pick the rest up on its own
+    unattended: bool = False
