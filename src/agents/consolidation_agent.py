@@ -12,6 +12,7 @@ Session 2026-02-16: Phase 3 - Multi-turn tool use integration
 """
 
 import re
+import copy
 import json
 import time
 import asyncio
@@ -44,6 +45,74 @@ class ToolResponse:
     """Internal container for fact management tool results."""
     name: str
     result_str: str
+
+
+_EXPIRY_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "When this fact stops being current, decided from its content (see the kinds table): "
+        "{kind: date, date: YYYY-MM-DD} the last day it holds; {kind: horizon, days: N} review if the owner "
+        "has not said it again within N days; {kind: none} history, stable or permanent. "
+        "Directives, principles and mindset facts: none."
+    ),
+    "properties": {
+        "kind": {"type": "string", "enum": ["date", "horizon", "none"], "description": "date, horizon or none"},
+        "date": {"type": "string", "description": "with kind date: YYYY-MM-DD, the last day the fact holds"},
+        "days": {"type": "integer", "description": "with kind horizon: days counted from when the owner said it"},
+    },
+    "required": ["kind"],
+}
+
+_STATE_NOTE = "stale is set by the system; superseded only through update_fact"
+
+_REPORTED_DATE_DESCRIPTION = (
+    "the timestamp of the owner's message, as shown in the conversation, in ISO form with its offset, "
+    "e.g. 2026-10-22T12:00+02:00"
+)
+
+_FACT_ATTRIBUTE_PROPERTIES: Dict[str, Any] = {
+    "domain": {"type": "string", "description": "BIOGRAPHICAL/POSSESSION/HEALTH/MEDICAL_RECORDS/LOCATION/WORK/NETWORK/PREFERENCE/AGENT_DIRECTIVE/SKILL/PROJECT/FINANCE/EDUCATION/LEGAL/ENTERTAINMENT/COMMUNICATION"},
+    "temporal_class": {"type": "string", "description": "PERMANENT/STABLE/DYNAMIC/EPHEMERAL"},
+    "state": {"type": "string", "description": "CURRENT/ARCHIVED/INVALIDATED"},
+    "context_priority": {"type": "string", "description": "CRITICAL/HIGH/MEDIUM/LOW/ARCHIVAL"},
+    "tags": {"type": "array", "items": {"type": "string"}, "description": "General classifications (domain keywords, dates)"},
+    "metadata": {"type": "object", "description": "Structured data (numeric values, specific dates, details)"},
+    "context": {"type": "string", "description": "Temporal context (e.g., 'Q1 2026 project')"},
+    "reported_date": {"type": "string", "description": _REPORTED_DATE_DESCRIPTION},
+    "expiry": _EXPIRY_SCHEMA,
+}
+
+_FACT_ATTRIBUTES_REQUIRED = ["domain", "temporal_class", "context_priority", "tags", "expiry"]
+
+_DERIVED_FROM_SCHEMA: Dict[str, Any] = {
+    "type": "array",
+    "items": {"type": "string"},
+    "description": (
+        "only in a cluster or rulebook review: the ids of the fact(s) this one is split or demoted from; "
+        "their date is kept"
+    ),
+}
+
+
+def _expiry_property(extra: str = "") -> Dict[str, Any]:
+    """A copy of `_EXPIRY_SCHEMA` (an adapter may rewrite a schema in place), its description extended by `extra`."""
+    schema = copy.deepcopy(_EXPIRY_SCHEMA)
+    if extra:
+        schema["description"] = f"{schema['description']} {extra}"
+    return schema
+
+
+def _fact_attributes_schema(description: str, with_derived_from: bool) -> Dict[str, Any]:
+    """The `fact_attributes` object of create_fact and merge_facts: one property set, `derived_from` on create only."""
+    properties = copy.deepcopy(_FACT_ATTRIBUTE_PROPERTIES)
+    if with_derived_from:
+        properties["derived_from"] = copy.deepcopy(_DERIVED_FROM_SCHEMA)
+    return {
+        "type": "object",
+        "description": f"{description} state: {_STATE_NOTE}. expiry is not used when state closes the fact.",
+        "properties": properties,
+        "required": list(_FACT_ATTRIBUTES_REQUIRED),
+    }
 
 
 def _with_top_level_expiry(args: Dict[str, Any], container: str) -> Any:
@@ -1457,22 +1526,11 @@ class ConsolidationAgent(BaseAgent):
                             "type": "string",
                             "description": "Fact text (self-contained sentence)"
                         },
-                        "fact_attributes": {
-                            "type": "object",
-                            "description": "Fact attributes (MUST include: domain, temporal_class, state, context_priority, tags). Separate: tags (general keywords) vs metadata (structured data)",
-                            "properties": {
-                                "domain": {"type": "string", "description": "BIOGRAPHICAL/POSSESSION/HEALTH/MEDICAL_RECORDS/LOCATION/WORK/NETWORK/PREFERENCE/AGENT_DIRECTIVE/SKILL/PROJECT/FINANCE/EDUCATION/LEGAL/ENTERTAINMENT/COMMUNICATION"},
-                                "temporal_class": {"type": "string", "description": "PERMANENT/STABLE/DYNAMIC/EPHEMERAL"},
-                                "state": {"type": "string", "description": "CURRENT/STALE/ARCHIVED/SUPERSEDED/INVALIDATED"},
-                                "context_priority": {"type": "string", "description": "CRITICAL/HIGH/MEDIUM/LOW/ARCHIVAL"},
-                                "ttl_days": {"type": "integer", "description": "Lifecycle TTL (auto-calculated from temporal_class)"},
-                                "tags": {"type": "array", "items": {"type": "string"}, "description": "General classifications (domain keywords, dates)"},
-                                "metadata": {"type": "object", "description": "Structured data (numeric values, specific dates, details)"},
-                                "context": {"type": "string", "description": "Temporal context (e.g., 'Q1 2026 project')"},
-                                "reported_date": {"type": "string", "description": "ISO timestamp when recorded"}
-                            },
-                            "required": ["domain", "temporal_class", "context_priority", "tags"]
-                        }
+                        "fact_attributes": _fact_attributes_schema(
+                            "Fact attributes (MUST include: domain, temporal_class, state, context_priority, tags, expiry). "
+                            "Separate: tags (general keywords) vs metadata (structured data).",
+                            with_derived_from=True,
+                        )
                     },
                     "required": ["content", "fact_attributes"]
                 }
@@ -1489,15 +1547,22 @@ class ConsolidationAgent(BaseAgent):
                         },
                         "updates": {
                             "type": "object",
-                            "description": "Fields to update (content, tags, metadata, temporal_class, state, reported_date, superseded_by)",
+                            "description": (
+                                "Fields to update (content, tags, metadata, temporal_class, state, reported_date, superseded_by, expiry). "
+                                f"state: {_STATE_NOTE}. A state change carries no expiry."
+                            ),
                             "properties": {
                                 "content": {"type": "string"},
                                 "tags": {"type": "array", "items": {"type": "string"}, "description": "full list; system tags are kept"},
                                 "metadata": {"type": "object", "description": "Structured data to add or update; merged key by key into the fact's metadata"},
                                 "temporal_class": {"type": "string"},
-                                "state": {"type": "string"},
-                                "reported_date": {"type": "string"},
-                                "superseded_by": {"type": "string", "description": "with state SUPERSEDED: id of the fact that replaces this one; required then"}
+                                "state": {"type": "string", "description": "ARCHIVED/INVALIDATED/SUPERSEDED"},
+                                "reported_date": {"type": "string", "description": _REPORTED_DATE_DESCRIPTION},
+                                "superseded_by": {"type": "string", "description": "with state SUPERSEDED: id of the fact that replaces this one; required then"},
+                                "expiry": _expiry_property(
+                                    "Required when the update changes the text, tags, metadata or temporal class "
+                                    "(decide again from the new text); alone it only changes the decision."
+                                ),
                             }
                         }
                     },
@@ -1533,10 +1598,10 @@ class ConsolidationAgent(BaseAgent):
                             "type": "string",
                             "description": "New combined text"
                         },
-                        "fact_attributes": {
-                            "type": "object",
-                            "description": "Attributes for new merged fact (MUST include: domain, temporal_class, state, context_priority, tags)"
-                        }
+                        "fact_attributes": _fact_attributes_schema(
+                            "Attributes for new merged fact (MUST include: domain, temporal_class, state, context_priority, tags, expiry).",
+                            with_derived_from=False,
+                        )
                     },
                     "required": ["fact_ids", "merged_content", "fact_attributes"]
                 }

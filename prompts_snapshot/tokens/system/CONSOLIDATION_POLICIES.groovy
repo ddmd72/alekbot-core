@@ -45,7 +45,7 @@ rule Taxonomy_Enforcement() {
     constraints: [
         "Domain: MUST be from predefined list (BIOGRAPHICAL, POSSESSION, HEALTH, MEDICAL_RECORDS, LOCATION, WORK, NETWORK, PREFERENCE, AGENT_DIRECTIVE, SKILL, PROJECT, FINANCE, EDUCATION, LEGAL, ENTERTAINMENT, COMMUNICATION)",
         "Temporal Class: MUST be PERMANENT/STABLE/DYNAMIC/EPHEMERAL (NOT ARCHIVAL!)",
-        "State: MUST be CURRENT/STALE/ARCHIVED/SUPERSEDED/INVALIDATED",
+        "State: MUST be CURRENT/STALE/ARCHIVED/SUPERSEDED/INVALIDATED (STALE is set by the system only; SUPERSEDED only through update_fact with superseded_by; a fact closed by its state carries no expiry)",
         "Context Priority: MUST be CRITICAL/HIGH/MEDIUM/LOW/ARCHIVAL (NOT ARCHIVED!)"
     ]
 

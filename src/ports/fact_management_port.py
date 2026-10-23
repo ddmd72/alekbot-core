@@ -42,13 +42,15 @@ class FactManagementPort(ABC):
             keywords: domain keywords, matched against the tags and metadata vectors.
             primary_query: main search phrase.
             alternative_query: second phrasing; empty means primary_query again.
-            timezone: the account owner's IANA zone, for the dates in the result (read from the model-facing contract on).
+            timezone: the account owner's IANA zone: the result's dates are shown in his calendar.
 
         Tenancy: only `state == "current"` facts of the RequestContext's effective account.
         Order: RRF score, best first.
         Limit: at most `limit` results, each fact_id once.
         Returns: dicts with fact_id, content, similarity, source, type, domain, temporal_class,
-            state, context_priority, tags, metadata, reported_date (ISO string), version.
+            state, context_priority, tags, metadata, reported_date (ISO string with the owner's offset), version,
+            expiry (the stored decision as `{kind, date|days}` the model can send back, None when none is recorded)
+            and due (the local date a horizon falls due, else None). No `ttl_days` / `expires_at`.
             `similarity` may be None (observed: None for every vector hit).
         Errors: a failed search returns [], indistinguishable from no match (observed).
         """
