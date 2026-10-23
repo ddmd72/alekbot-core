@@ -19,7 +19,7 @@ import pytest
 from src.adapters.claude_adapter import ClaudeAdapter
 from src.domain.agent import AgentResponse
 from src.domain.llm import FinishReason
-from src.domain.turn_clock import CURRENT_TURN_CLOCK, TurnClock
+from src.domain.turn_clock import CURRENT_TURN_CLOCK, WRAP_UP_NOTE, TurnClock
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.delegation_engine import DelegationEngine
 from src.ports.llm_port import LLMRequest, Message, MessagePart
@@ -307,6 +307,16 @@ async def test_deliver_call_without_response_key_keeps_its_input():
     assert result.tool_calls[0].args == {"text": "x"}
 
 
+async def test_non_object_deliver_input_becomes_empty_args_with_a_warning(caplog):
+    adapter = ClaudeAdapter(api_key="k")
+    _install(adapter, _response(_tool_block("deliver_response", "just a string"), stop_reason="tool_use"))
+    with caplog.at_level(logging.WARNING):
+        result = await adapter.generate_content(_req())
+    assert [(c.name, c.args) for c in result.tool_calls] == [("deliver_response", {})]
+    assert any(r.levelno == logging.WARNING and "outcome=non_dict_input" in r.getMessage()
+               and "input_type=str" in r.getMessage() for r in caplog.records)
+
+
 async def test_other_tool_calls_are_untouched():
     adapter = ClaudeAdapter(api_key="k")
     _install(adapter, _response(_tool_block("search_memory", {"q": "x"}, tc_id="tu_9")))
@@ -471,4 +481,6 @@ async def test_tools_and_system_are_unchanged_on_the_wrap_up_turn():
     assert calls[0]["output_config"] == calls[1]["output_config"]
     last = calls[1]["messages"][-1]
     assert last["role"] == "user"
+    assert WRAP_UP_NOTE in str(last["content"])
+    assert WRAP_UP_NOTE not in str(calls[0]["messages"])
     assert result.terminal_tool_args == {"response": _ANSWER}

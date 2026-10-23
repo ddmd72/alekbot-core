@@ -384,6 +384,8 @@ class ClaudeAdapter(LLMPort):
         #    made Sonnet 5.5 loop on filler tool calls; the string tool removes the trigger. Story:
         #    decisions/claude_deliver_response_string_tool.md.
         # `tool_choice` stays `auto` on both: Sonnet/Opus 5.5 and Fable reject forced tool use.
+        # Computed after the grounding block, but it requires grounding off, so claude_tools here holds
+        # only the client tools (same list the spec's "right after _convert_tools" trigger sees).
         deliver_path = (
             isinstance(response_schema, dict) and bool(claude_tools) and not use_grounding
         )
@@ -1257,6 +1259,12 @@ class ClaudeAdapter(LLMPort):
         usable = isinstance(raw, (str, dict)) and raw not in ("", {})
         if truncated and not usable:
             return None
+        if not has_response and not isinstance(raw_input, dict) and raw_input is not None:
+            logger.warning(
+                "[ClaudeAdapter] event=claude_deliver_path outcome=non_dict_input model=%s input_type=%s "
+                "— deliver_response input is not an object; passing empty args",
+                getattr(response, "model", None), type(raw_input).__name__,
+            )
         args = {"response": raw} if has_response else (dict(raw_input) if isinstance(raw_input, dict) else {})
         return ToolCall(name=content.name, args=args, thought_signature=content.id)
 
