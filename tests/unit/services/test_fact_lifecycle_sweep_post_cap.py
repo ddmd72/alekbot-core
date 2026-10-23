@@ -1,6 +1,6 @@
 """Facts S3 · T10 review L3: every ops post of the janitor is capped, so a hung sink holds no successful run.
 
-The cap is `FAILURE_ALERT_TIMEOUT_S` (one constant for the daily line, the breaker alert and the run-failed alert).
+The cap is `OPS_POST_TIMEOUT_S` (one constant for the daily line, the breaker alert and the run-failed alert).
 Without it the hung post would sleep far past the cap and the sink would still receive its text afterwards.
 """
 import asyncio
@@ -15,7 +15,7 @@ CAP = 0.05
 
 def hung_world(dry_run: bool) -> JanitorWorld:
     world = JanitorWorld(dry_run=dry_run)
-    world.service.FAILURE_ALERT_TIMEOUT_S = CAP
+    world.service.OPS_POST_TIMEOUT_S = CAP
 
     async def hang():
         await asyncio.sleep(30)
