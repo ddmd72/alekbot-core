@@ -1136,8 +1136,10 @@ expected classes, and the memory map §9.6 says which and how to repair them:
 - `replaces_version_mismatch` (an old in-place edit of an S2 version document bumped its `version`: a text was lost);
 - `lineage_multiple_current` with `superseded_by_on_open_doc` and `lineage_open_below_highest_version` (an old-revision
   Cabinet delete from a stale page hit the closed document; the owner's delete did not apply and the current version is
-  still shown: reload and delete it again from the list. That does not clear `lineage_multiple_current`; set the closed
-  document's `is_current` to false by hand).
+  still shown: reload and delete it again from the list. That does not clear `lineage_multiple_current`; restore the closed
+  document's closure by hand by setting `state=superseded` and `is_current=false` together; `is_current=false` alone
+  would give `is_current_mismatch`). A skipped drain is repaired the same way (memory map §9.6: carry any newer wording
+  over first, then close the re-opened older document by hand; a Cabinet delete does not clear it).
 
 Re-run the audit with the **end of the roll-forward drain** as `--s2-cutoff`. **The cutoff moves only
 `superseded_without_successor`.** The other classes stay listed: match their ids against documents last written inside
