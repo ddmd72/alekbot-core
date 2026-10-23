@@ -77,13 +77,18 @@ def _doc_ref(exists=True, account="acc"):
 
 
 @pytest.mark.asyncio
-async def test_invalidate_fact_writes_lifecycle_fields(repo, col):
-    ref = _doc_ref()
-    col.document.return_value = ref
+async def test_invalidate_fact_writes_lifecycle_fields():
+    # S2 (RFC D8/D9): invalidate resolves forward and writes in a preconditioned transaction, which a MagicMock
+    # database cannot run, so the same written fields are checked on the evaluating fake (stored document).
+    from tests.support.fact_kit import ACC, make_fact
+    from tests.support.fact_store import FactStore
 
-    await repo.invalidate_fact("f1", "acc")
+    store = FactStore()
+    await store.repo.add_fact(make_fact("f1"))
 
-    written = ref.update.call_args.args[0]
+    await store.repo.invalidate_fact("f-f1", ACC)
+
+    written = store.docs["f-f1"]
     assert written["state"] == "invalidated"
     assert type(written["state"]) is str
     assert written["is_current"] is True
