@@ -46,6 +46,7 @@ from src.config.settings import load_settings
 from src.domain.agent import AgentIntent, AgentMessage
 from src.domain.request_context import RequestContext
 from src.infrastructure.agent_coordinator import AgentCoordinator
+from src.domain.fact_write_context import FactWriteContext
 from src.ports.fact_management_port import FactManagementPort
 from src.composition.user_agent_factory import UserAgentFactory
 
@@ -82,15 +83,17 @@ class DryRunFactManagementAdapter(FactManagementPort):
         primary_query: str,
         alternative_query: str = "",
         limit: int = 20,
+        *,
+        timezone: str,
     ) -> List[Dict[str, Any]]:
         results = await self._real.search_existing_facts(
-            keywords, primary_query, alternative_query, limit
+            keywords, primary_query, alternative_query, limit, timezone=timezone
         )
         print(f"    🔍 search({primary_query!r}) → {len(results)} existing facts")
         return results
 
     async def create_fact(
-        self, content: str, metadata: Dict[str, Any]
+        self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext
     ) -> Dict[str, Any]:
         fake_id = f"dryrun_{uuid.uuid4().hex[:8]}"
         self.operations.append(
@@ -102,7 +105,7 @@ class DryRunFactManagementAdapter(FactManagementPort):
         return {"fact_id": fake_id, "status": "created", "message": "[DRY-RUN] not written"}
 
     async def update_fact(
-        self, fact_id: str, updates: Dict[str, Any], account_id: str
+        self, fact_id: str, updates: Dict[str, Any], account_id: str, *, context: FactWriteContext
     ) -> Dict[str, Any]:
         self.operations.append(
             {"action": "UPDATE", "fact_id": fact_id, "updates": updates}
@@ -117,6 +120,8 @@ class DryRunFactManagementAdapter(FactManagementPort):
         fact_ids: List[str],
         merged_content: str,
         metadata: Dict[str, Any],
+        *,
+        context: FactWriteContext,
     ) -> Dict[str, Any]:
         fake_id = f"dryrun_{uuid.uuid4().hex[:8]}"
         self.operations.append(

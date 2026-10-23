@@ -79,6 +79,7 @@ from src.domain.entities import FactDomain
 from src.domain.request_context import RequestContext
 from src.domain.user import PerformanceTier
 from src.infrastructure.agent_coordinator import AgentCoordinator
+from src.domain.fact_write_context import FactWriteContext
 from src.ports.fact_management_port import FactManagementPort
 
 # The Stage-1 classification rule under test. Directive_Maintenance lives in the SHARED
@@ -240,12 +241,18 @@ class DryRunFactManagementAdapter(FactManagementPort):
         primary_query: str,
         alternative_query: str = "",
         limit: int = 20,
+        *,
+        timezone: str,
     ) -> List[Dict[str, Any]]:
-        results = await self._real.search_existing_facts(keywords, primary_query, alternative_query, limit)
+        results = await self._real.search_existing_facts(
+            keywords, primary_query, alternative_query, limit, timezone=timezone
+        )
         print(f"      🔍 search({primary_query!r:.40}) → {len(results)}")
         return results
 
-    async def create_fact(self, content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_fact(
+        self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext
+    ) -> Dict[str, Any]:
         fake_id = f"dryrun_{uuid.uuid4().hex[:8]}"
         # `domain` is normalised for the classifier below; `metadata` is kept verbatim so
         # the raw value the model actually passed (case included) stays inspectable.
@@ -257,7 +264,9 @@ class DryRunFactManagementAdapter(FactManagementPort):
         print(f"      ✅ CREATE [{domain}] {content[:80]}")
         return {"fact_id": fake_id, "status": "created", "message": "[DRY-RUN] not written"}
 
-    async def update_fact(self, fact_id: str, updates: Dict[str, Any], account_id: str) -> Dict[str, Any]:
+    async def update_fact(
+        self, fact_id: str, updates: Dict[str, Any], account_id: str, *, context: FactWriteContext
+    ) -> Dict[str, Any]:
         state = str(updates.get("state", "")).lower()
         action = "INVALIDATE" if state == "invalidated" else "UPDATE"
         self.operations.append({
@@ -270,7 +279,9 @@ class DryRunFactManagementAdapter(FactManagementPort):
         print(f"      {marker} {action} {fact_id[:8]} {str(updates.get('content', ''))[:70]}")
         return {"fact_id": fact_id, "status": "updated", "version": 99, "message": "[DRY-RUN] not written"}
 
-    async def merge_facts(self, fact_ids: List[str], merged_content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    async def merge_facts(
+        self, fact_ids: List[str], merged_content: str, metadata: Dict[str, Any], *, context: FactWriteContext
+    ) -> Dict[str, Any]:
         fake_id = f"dryrun_{uuid.uuid4().hex[:8]}"
         self.operations.append({
             "action": "MERGE", "fact_id": fake_id, "old_ids": fact_ids, "content": merged_content,
@@ -478,7 +489,7 @@ async def run_once(
     t0 = time.time()
     async with RequestContext(user_id=user_id, account_id=account_id):
         # The real production entry point for Stage 2b.
-        await agent._review_directives(user_id, account_id, bio_facts)
+        await agent._review_directives(user_id, account_id, bio_facts, agent._write_context("stage2b"))
     elapsed = time.time() - t0
 
     agent._call_llm = original_call_llm

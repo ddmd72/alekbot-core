@@ -46,6 +46,7 @@ from src.config.settings import load_settings
 from src.domain.agent import AgentIntent, AgentMessage
 from src.domain.request_context import RequestContext
 from src.infrastructure.agent_coordinator import AgentCoordinator
+from src.domain.fact_write_context import FactWriteContext
 from src.ports.fact_management_port import FactManagementPort
 from src.composition.user_agent_factory import UserAgentFactory
 
@@ -72,12 +73,16 @@ class ClusterDryRunAdapter(FactManagementPort):
         primary_query: str,
         alternative_query: str = "",
         limit: int = 20,
+        *,
+        timezone: str,
     ) -> List[Dict[str, Any]]:
         results = self._cluster[:limit]
         print(f"    🔍 [CLUSTER] search({primary_query!r:.50}) → {len(results)} pre-fetched facts")
         return results
 
-    async def create_fact(self, content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    async def create_fact(
+        self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext
+    ) -> Dict[str, Any]:
         fake_id = f"dryrun_{uuid.uuid4().hex[:8]}"
         self.operations.append({"action": "CREATE", "fact_id": fake_id, "content": content, "metadata": metadata})
         domain = metadata.get("domain", "?")
@@ -85,13 +90,17 @@ class ClusterDryRunAdapter(FactManagementPort):
         print(f"    ✅ [DRY-RUN] CREATE [{domain}|{temporal}]: {content[:90]}")
         return {"fact_id": fake_id, "status": "created", "message": "[DRY-RUN] not written"}
 
-    async def update_fact(self, fact_id: str, updates: Dict[str, Any], account_id: str) -> Dict[str, Any]:
+    async def update_fact(
+        self, fact_id: str, updates: Dict[str, Any], account_id: str, *, context: FactWriteContext
+    ) -> Dict[str, Any]:
         self.operations.append({"action": "UPDATE", "fact_id": fact_id, "updates": updates})
         preview = {k: v for k, v in updates.items() if "vector" not in k}
         print(f"    ✏️  [DRY-RUN] UPDATE {fact_id}: {preview}")
         return {"fact_id": fact_id, "status": "updated", "version": 99, "message": "[DRY-RUN] not written"}
 
-    async def merge_facts(self, fact_ids: List[str], merged_content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    async def merge_facts(
+        self, fact_ids: List[str], merged_content: str, metadata: Dict[str, Any], *, context: FactWriteContext
+    ) -> Dict[str, Any]:
         fake_id = f"dryrun_{uuid.uuid4().hex[:8]}"
         self.operations.append({"action": "MERGE", "fact_id": fake_id, "old_ids": fact_ids, "content": merged_content})
         print(f"    🔀 [DRY-RUN] MERGE {fact_ids} → {merged_content[:80]}")
@@ -120,15 +129,17 @@ class DryRunFactManagementAdapter(FactManagementPort):
         primary_query: str,
         alternative_query: str = "",
         limit: int = 20,
+        *,
+        timezone: str,
     ) -> List[Dict[str, Any]]:
         results = await self._real.search_existing_facts(
-            keywords, primary_query, alternative_query, limit
+            keywords, primary_query, alternative_query, limit, timezone=timezone
         )
         print(f"    🔍 search({primary_query!r}) → {len(results)} existing facts")
         return results
 
     async def create_fact(
-        self, content: str, metadata: Dict[str, Any]
+        self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext
     ) -> Dict[str, Any]:
         fake_id = f"dryrun_{uuid.uuid4().hex[:8]}"
         self.operations.append(
@@ -140,7 +151,7 @@ class DryRunFactManagementAdapter(FactManagementPort):
         return {"fact_id": fake_id, "status": "created", "message": "[DRY-RUN] not written"}
 
     async def update_fact(
-        self, fact_id: str, updates: Dict[str, Any], account_id: str
+        self, fact_id: str, updates: Dict[str, Any], account_id: str, *, context: FactWriteContext
     ) -> Dict[str, Any]:
         self.operations.append(
             {"action": "UPDATE", "fact_id": fact_id, "updates": updates}
@@ -154,6 +165,8 @@ class DryRunFactManagementAdapter(FactManagementPort):
         fact_ids: List[str],
         merged_content: str,
         metadata: Dict[str, Any],
+        *,
+        context: FactWriteContext,
     ) -> Dict[str, Any]:
         fake_id = f"dryrun_{uuid.uuid4().hex[:8]}"
         self.operations.append(
@@ -255,6 +268,7 @@ async def prefetch_cluster_from_operations(
             primary_query=content,
             alternative_query="",
             limit=20,
+            timezone="UTC",
         )
 
     contents = []
