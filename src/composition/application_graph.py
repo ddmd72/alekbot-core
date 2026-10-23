@@ -60,6 +60,7 @@ from src.composition.user_agent_factory import UserAgentFactory
 from src.config.auth import AuthConfig
 from src.config.environment import validate_telegram_config
 from src.domain.agent import AgentConfig
+from src.domain.fact_lifecycle_sweep import sweep_dry_run
 from src.domain.language import LanguageCode
 from src.domain.notification_kind import NotificationKind as _NotificationKind
 from src.domain.settings import SearchConfig
@@ -81,6 +82,7 @@ from src.services.consolidation_service import ConsolidationService
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
 from src.services.document_delivery_service import DocumentDeliveryService
 from src.services.email_embedding_repair_service import EmailEmbeddingRepairService
+from src.services.fact_lifecycle_sweep_service import FactLifecycleSweepService
 from src.services.file_access_token_service import FileAccessTokenService
 from src.services.file_link_service import FileLinkService
 from src.services.file_upload_service import FileUploadService
@@ -692,6 +694,17 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             language=_language_service,
         )
 
+    # The fact janitor (FACT_LIFECYCLE_RFC D4). Log-only unless FACT_LIFECYCLE_SWEEP_DRY_RUN is an explicit off value:
+    # an optional rollout knob, read here with os.getenv (not load_settings).
+    _fact_sweep_dry_run = sweep_dry_run(os.getenv("FACT_LIFECYCLE_SWEEP_DRY_RUN"))
+    logger.info("fact lifecycle sweep: log-only" if _fact_sweep_dry_run else "fact lifecycle sweep: writes")
+    _fact_lifecycle_sweep = FactLifecycleSweepService(
+        repo=container.repository,
+        counters=container.fact_lifecycle_counters,
+        alert_sink=_alert_webhook,
+        dry_run=_fact_sweep_dry_run,
+    )
+
     # Worker handler — dispatches Cloud Tasks to appropriate handlers
     # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
     # from running twice; a claim whose attempt died is taken over by the retry.
@@ -735,6 +748,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         drive_sync_scheduler=_drive_sync_scheduler,
         deep_research_fetch=_openai_dr_fetch,
         prompt_content_store=container.prompt_content_store,
+        fact_lifecycle_sweep=_fact_lifecycle_sweep,
     )
 
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
