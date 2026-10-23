@@ -37,6 +37,7 @@ async def _run(agent, user_id=_USER_ID, label="stage1"):
     return await agent._run_consolidation_loop(
         user_message_text="begin", system_prompt="SYS",
         user_id=user_id, account_id=_ACCOUNT_ID, pass_label=label,
+        write_context=agent._write_context(label),
     )
 
 
