@@ -244,7 +244,8 @@ class DriveSyncSchedulerService:
                                 connection: DriveConnection) -> int:
         """One notice per lost grant (§7.7, RFC Δ6). Retried on the next fan-out when no send was attempted
         (no channel, a formatter failure, `notify` raising); once a send was attempted the flag stays up,
-        delivered or not, because a partial delivery would otherwise repeat every 10 minutes. A good
+        delivered or not, because a partial delivery would otherwise repeat every 10 minutes. Except
+        `empty_answer`, which is final: the flag stays up (one ERROR line + one ops alert). A good
         grant again clears the flag."""
         if connection.connected and not connection.needs_reconnect:
             if state.reconnect_notified:
