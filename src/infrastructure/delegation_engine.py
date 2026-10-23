@@ -26,7 +26,7 @@ from ..domain.turn_clock import CURRENT_TURN_CLOCK, WRAP_UP_NOTE, render_chat_si
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 
-from .agent_registry import FanoutSpec
+from .agent_registry import ExecutionMode, FanoutSpec
 
 if TYPE_CHECKING:
     from .agent_coordinator import AgentCoordinator
@@ -49,6 +49,9 @@ class ToolResult:
     # primary section errored). Additive: existing callers don't read it, so their behaviour
     # is unchanged; LelikAgent reads it to skip posting a chat copy of a link found in an error string.
     failed: bool = False
+    # Set when this call successfully dispatched an ASYNC intent (the coordinator returned only
+    # an acknowledgement; the deliverable arrives later). Fed into DelegationResult.async_dispatches.
+    async_intent: Optional[str] = None
 
 
 DELEGATE_TOOL_NAME = "delegate_to_specialist"
@@ -59,7 +62,11 @@ LocalToolHandler = Callable[[ToolCall], Awaitable[ToolResult]]
 
 @dataclass
 class DelegationResult:
-    """Complete result from the delegation loop."""
+    """Complete result from the delegation loop.
+
+    `text` is the model's final text. On a terminal return it is any text the model wrote
+    beside the terminal call; the agent uses it only when the terminal answer is empty.
+    """
     text: str
     total_tokens: int
     terminal_tool_args: Optional[Dict[str, Any]] = None
@@ -68,6 +75,9 @@ class DelegationResult:
     structured_data: Any = None
     messages: List[Message] = field(default_factory=list)
     failed: bool = False
+    # Intents (after remap) of ASYNC delegations that were dispatched successfully this run.
+    # An empty final text after one of them is not an empty answer: the work arrives separately.
+    async_dispatches: List[str] = field(default_factory=list)
 
 
 # ------------------------------------------------------------------ #
@@ -258,6 +268,7 @@ class DelegationEngine:
         total_tokens = 0
         accumulated_contexts: Dict[str, List[Any]] = {}
         all_delivery_items: List[DeliveryItem] = []
+        all_async: List[str] = []
         accumulated_structured: Any = None
         remap = intent_remap or {}
         fanout = intent_fanout or {}
@@ -305,7 +316,8 @@ class DelegationEngine:
             if wrap_up:
                 return self._wrap_up_result(response, terminal_tool, total_tokens,
                                             all_delivery_items, accumulated_contexts,
-                                            accumulated_structured, history)
+                                            accumulated_structured, history,
+                                            async_dispatches=all_async)
 
             # --- Terminal tool check ---
             if terminal_tool and response.tool_calls:
@@ -340,6 +352,9 @@ class DelegationEngine:
                         tc for tc in response.tool_calls if tc.name != terminal_tool
                     ]
                     if siblings:
+                        self._warn_sync_siblings(
+                            siblings, remap, terminal_tool, turn + 1, calling_agent_id,
+                        )
                         logger.info(
                             "🔄 [DelegationEngine] Turn %s — dispatching %s co-emitted "
                             "call(s) before returning: %s",
@@ -362,6 +377,7 @@ class DelegationEngine:
                             replace(r, history_context=None) if r.name in local else r
                             for r in sibling_results
                         ]
+                        all_async.extend(r.async_intent for r in sibling_results if r.async_intent)
                         accumulated_structured = self._accumulate_tool_metadata(
                             sibling_results,
                             accumulated_contexts,
@@ -369,13 +385,14 @@ class DelegationEngine:
                             accumulated_structured,
                         )
                     return DelegationResult(
-                        text="",
+                        text=response.text or "",
                         total_tokens=total_tokens,
                         terminal_tool_args=terminal_call.args or {},
                         delivery_items=all_delivery_items,
                         history_contexts=accumulated_contexts or None,
                         structured_data=accumulated_structured,
                         messages=history,
+                        async_dispatches=list(all_async),
                     )
 
             # --- No tool calls → final text response ---
@@ -391,6 +408,7 @@ class DelegationEngine:
                     history_contexts=accumulated_contexts or None,
                     structured_data=accumulated_structured,
                     messages=history,
+                    async_dispatches=list(all_async),
                 )
 
             # --- Execute tool calls (memory-first parallel) ---
@@ -430,6 +448,7 @@ class DelegationEngine:
                     budget_out = True
 
             # --- Accumulate metadata ---
+            all_async.extend(r.async_intent for r in tool_results if r.async_intent)
             accumulated_structured = self._accumulate_tool_metadata(
                 tool_results,
                 accumulated_contexts,
@@ -469,6 +488,7 @@ class DelegationEngine:
             structured_data=accumulated_structured,
             messages=history,
             failed=True,
+            async_dispatches=list(all_async),
         )
 
     @staticmethod
@@ -488,9 +508,50 @@ class DelegationEngine:
         clock.seen_until = max(m.created_at for m in fresh)
         _append_user_note(history, render_chat_since(fresh))
 
+    def _execution_mode(self, intent: str):
+        """Registry mode of an intent, looked up once per engine (static data)."""
+        cache = self.__dict__.setdefault("_mode_cache", {})
+        if intent not in cache:
+            cache[intent] = self._coordinator.get_execution_mode(intent)
+        return cache[intent]
+
+    def _warn_sync_siblings(self, siblings, remap, terminal_tool, turn, calling_agent_id) -> None:
+        """Log (never act) when a SYNC delegation is co-emitted with the terminal tool.
+
+        The terminal answer is already written, so a SYNC sibling's result is never read.
+        Dispatch is unchanged (terminal_tool_co_emitted_calls.md); this is a log only.
+        """
+        try:
+            sync_intents = []
+            for tc in siblings:
+                if tc.name != DELEGATE_TOOL_NAME:
+                    continue
+                intent = (tc.args or {}).get("intent")
+                if not intent:
+                    continue
+                mode = self._execution_mode(remap.get(intent, intent))
+                if isinstance(mode, ExecutionMode) and mode == ExecutionMode.SYNC:
+                    sync_intents.append(remap.get(intent, intent))
+        except Exception as exc:  # a log-only lookup must never break the turn
+            logger.warning(
+                "⚠️ [DelegationEngine] terminal_sync_sibling lookup failed: %s", exc,
+            )
+            return
+        if sync_intents:
+            logger.warning(
+                "terminal_sync_sibling turn=%s terminal=%s intents=%s caller=%s",
+                turn, terminal_tool, sync_intents, calling_agent_id,
+                extra={
+                    "event": "terminal_sync_sibling",
+                    "intents": sync_intents,
+                    "calling_agent_id": calling_agent_id,
+                },
+            )
+
     @staticmethod
     def _wrap_up_result(response, terminal_tool, total_tokens, delivery_items,
-                        contexts, structured, history) -> DelegationResult:
+                        contexts, structured, history,
+                        async_dispatches=None) -> DelegationResult:
         """The budget's last call: take the answer it gave, dispatch nothing (plan delta D3).
 
         A terminal call wins; otherwise any text is the answer, even when the model also
@@ -507,11 +568,12 @@ class DelegationEngine:
                     "⚠️ [DelegationEngine] wrap-up: %s co-emitted with %s not dispatched",
                     dropped, terminal_tool,
                 )
-            return DelegationResult(text="", total_tokens=total_tokens,
+            return DelegationResult(text=response.text or "", total_tokens=total_tokens,
                                     terminal_tool_args=terminal_call.args or {},
                                     delivery_items=delivery_items,
                                     history_contexts=contexts or None,
-                                    structured_data=structured, messages=history)
+                                    structured_data=structured, messages=history,
+                                    async_dispatches=list(async_dispatches or []))
         if response.text and response.text.strip():
             if calls:
                 logger.warning(
@@ -521,7 +583,8 @@ class DelegationEngine:
             return DelegationResult(text=response.text, total_tokens=total_tokens,
                                     delivery_items=delivery_items,
                                     history_contexts=contexts or None,
-                                    structured_data=structured, messages=history)
+                                    structured_data=structured, messages=history,
+                                    async_dispatches=list(async_dispatches or []))
         logger.warning(
             "⚠️ [DelegationEngine] wrap-up call gave no answer (no text, no %s); "
             "tool calls not dispatched: %s", terminal_tool, [tc.name for tc in calls],
@@ -529,7 +592,8 @@ class DelegationEngine:
         return DelegationResult(text="", total_tokens=total_tokens,
                                 delivery_items=delivery_items,
                                 history_contexts=contexts or None,
-                                structured_data=structured, messages=history, failed=True)
+                                structured_data=structured, messages=history, failed=True,
+                                async_dispatches=list(async_dispatches or []))
 
     # ------------------------------------------------------------------ #
     # Metadata accumulation                                               #
@@ -719,8 +783,10 @@ class DelegationEngine:
                     intent, len(result_str),
                 )
                 file_data = response.metadata.get("file_data") if response.metadata else None
+                mode = self._execution_mode(intent)
                 return ToolResult(
                     name=tool_call.name,
+                    async_intent=intent if isinstance(mode, ExecutionMode) and mode == ExecutionMode.ASYNC else None,
                     result_str=result_str,
                     structured_data=response.metadata.get("structured_data") if response.metadata else None,
                     history_context=response.history_context,
