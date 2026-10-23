@@ -1582,7 +1582,15 @@ class ConversationHandler(ConversationHandlerPort):
                 await session_store.save_session(session.session_id, session)
                 
                 # Process — await keeps HTTP request alive → full CPU on Cloud Run
-                run = await self._overflow_callback(user_id=context.user_id) if self._overflow_callback else None
+                try:
+                    run = await self._overflow_callback(user_id=context.user_id) if self._overflow_callback else None
+                except Exception as exc:
+                    logger.error(f"[Librarian] $consolidate failed for user {context.user_id[:8]}: {exc}", exc_info=True)
+                    await response_channel.send_message(
+                        "❌ Memory consolidation did not run. The command's messages are queued and a later run will pick them up.",
+                        thread_id=context.thread_id,
+                    )
+                    return
                 outcome = self._consolidate_outcome(run)
 
                 if self._notification_service:
