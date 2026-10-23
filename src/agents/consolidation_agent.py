@@ -665,12 +665,12 @@ class ConsolidationAgent(BaseAgent):
                     f"{len(emails)} candidates"
                 )
 
-                candidates_text = self._format_email_candidates(emails)
+                candidates_text = self._format_email_candidates(emails, owner_timezone)
                 system_alert = (
                     "[system_alert] The system has scanned the user's email inbox on their behalf "
                     "and selected candidates for inclusion in the fact database. "
                     "The selection contains noise. Evaluate the incoming data and process it "
-                    "according to your algorithm. Set reported_date to the candidate's `date`. "
+                    "according to your algorithm. Copy the candidate's `date`, as given, into reported_date. "
                     "Information whose date or horizon has already passed is history or noise.\n\n"
                     f"Candidates:\n{candidates_text}"
                 )
@@ -817,8 +817,12 @@ class ConsolidationAgent(BaseAgent):
         return timeout_ms / 1000 - (time.time() - start_time) - _STAGE3_MARGIN_S
 
     @staticmethod
-    def _format_email_candidates(emails) -> str:
-        """Format indexed email facts as numbered JSON candidates for the LLM."""
+    def _format_email_candidates(emails, timezone: str) -> str:
+        """Format indexed email facts as numbered JSON candidates for the LLM.
+
+        A candidate's `date` is the email's moment in the owner's zone with its offset (a naive stored date is UTC):
+        the model copies it into `reported_date`, and it is on the same calendar as the Today line.
+        """
         import json as _json
         lines = []
         for i, email in enumerate(emails, 1):
@@ -827,7 +831,7 @@ class ConsolidationAgent(BaseAgent):
                 "fact": email.text,
                 "category": email.category,
                 "tags": email.tags,
-                "date": email.email_date.strftime("%Y-%m-%d"),
+                "date": local_moment(as_utc(email.email_date), timezone).isoformat(timespec="seconds"),
                 "from": email.from_address,
                 "subject": email.subject,
             }

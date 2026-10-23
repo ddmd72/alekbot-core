@@ -138,8 +138,8 @@ def email(email_id: str, when: datetime) -> IndexedEmail:
 
 
 class OneBatchOfEmails:
-    def __init__(self) -> None:
-        self.batch = [email("e1", datetime(2026, 10, 10, 9))]
+    def __init__(self, *dates: datetime) -> None:
+        self.batch = [email(f"e{i}", when) for i, when in enumerate(dates or (datetime(2026, 10, 10, 9),), 1)]
 
     async def get_unconsolidated_batch(self, user_id: str, limit: int = 10) -> List[IndexedEmail]:
         return self.batch
@@ -395,7 +395,7 @@ async def test_the_email_alert_dates_by_the_candidate_and_calls_a_passed_date_hi
     with RequestContext(user_id=USER, account_id=ACC):
         await agent._handle_consolidate_email(message("consolidate_email", {"number_of_batches": 1}), USER, ACC, [], 0.0)
     text = pass_text(agent, "[system_alert]")
-    assert "Set reported_date to the candidate's `date`." in text
+    assert "Copy the candidate's `date`, as given, into reported_date." in text
     assert "Information whose date or horizon has already passed is history or noise." in text
     assert "Candidates:\n1. {" in text
 
@@ -422,3 +422,69 @@ async def test_the_stamp_is_refused_where_the_zone_is_not_known(store):
     with pytest.raises(ValueError, match="reported_date"):
         parse_reported_date("2026-10-20 Tue 13:00 CEST")
     assert parse_reported_date("2026-10-20 Tue 13:00 CEST", PARIS) == utc(20, 11)
+
+
+# ----------------------------------------------------------------------------------------------- email dates, update and merge
+
+
+async def test_an_email_candidates_date_is_the_owners_moment_and_copying_it_dates_the_fact_exactly(store):
+    sent = [datetime(2026, 10, 22, 10, 0), datetime(2026, 10, 22, 23, 30)]         # naive = UTC; the second is 23 Oct 01:30 in Paris
+
+    def script(first: str) -> LLMResponse:
+        if "[system_alert]" not in first or "Copy the candidate" not in first or script.done:
+            return REPORT
+        script.done = True
+        candidates = [json.loads(line.split(". ", 1)[1]) for line in first.split("Candidates:\n", 1)[1].splitlines()
+                      if re.match(r"^\d+\. \{", line)]
+        return calls(*[create(f"fact from {c['email_id']}", reported_date=c["date"]) for c in candidates])
+
+    script.done = False
+    agent = make_agent(store, script, email_repo=OneBatchOfEmails(*sent))
+    with RequestContext(user_id=USER, account_id=ACC):
+        await agent._handle_consolidate_email(message("consolidate_email", {"number_of_batches": 1}), USER, ACC, [], 0.0)
+
+    shown = [json.loads(line.split(". ", 1)[1])["date"] for line in agent.firsts[0].split("Candidates:\n", 1)[1].splitlines()
+             if re.match(r"^\d+\. \{", line)]
+    assert shown == ["2026-10-22T12:00:00+02:00", "2026-10-23T01:30:00+02:00"]      # the owner's calendar day, not the UTC day
+    assert as_utc(by_text(store, "fact from e1")["reported_date"]) == utc(22, 10)
+    assert as_utc(by_text(store, "fact from e2")["reported_date"]) == utc(22, 23, 30)    # the exact moment, not midnight clamped
+
+
+def test_the_candidate_date_is_utc_without_an_owner_zone_and_a_naive_date_is_utc():
+    emails = [email("e1", datetime(2026, 10, 22, 23, 30))]
+    (line,) = ConsolidationAgent._format_email_candidates(emails, "UTC").splitlines()
+    assert json.loads(line.split(". ", 1)[1])["date"] == "2026-10-22T23:30:00+00:00"
+
+
+STAMP = "2026-10-20 Tue 13:00 CEST"                     # 11:00 UTC
+STAGE1_BATCH = [{"role": "user", "text": "x", "created_at": utc(20, 8).timestamp()},
+                {"role": "user", "text": "y", "created_at": utc(20, 11, 30).timestamp()}]
+
+
+async def seed_two(agent: ConsolidationAgent) -> List[str]:
+    with RequestContext(user_id=USER, account_id=ACC):
+        responses = await agent._execute_fact_management_tools(
+            [create("walks daily", reported_date="2026-10-10T00:00:00+00:00"),
+             create("walks far", reported_date="2026-10-10T00:00:00+00:00")], USER, ACC, write_context=ctx())
+    return [json.loads(r.result_str)["fact_id"] for r in responses]
+
+
+async def test_a_stage1_update_may_send_the_stamp_the_conversation_showed(store):
+    agent = make_agent(store, lambda first: REPORT)
+    walks, _ = await seed_two(agent)
+    agent._call_llm = make_agent(store, once({STAGE1: calls(
+        ToolCall(name="update_fact", args={"fact_id": walks, "updates": {"reported_date": STAMP}}))}))._call_llm
+    with RequestContext(user_id=USER, account_id=ACC):
+        await agent._execute_deliberate_process_v3(STAGE1_BATCH, USER, ACC, [], owner_timezone=PARIS)
+    assert as_utc(store.docs[walks]["reported_date"]) == utc(20, 11)
+
+
+async def test_a_stage1_merge_may_send_the_stamp_the_conversation_showed(store):
+    agent = make_agent(store, lambda first: REPORT)
+    walks, far = await seed_two(agent)
+    agent._call_llm = make_agent(store, once({STAGE1: calls(ToolCall(name="merge_facts", args={
+        "fact_ids": [walks, far], "merged_content": "walks a lot",
+        "fact_attributes": {**ATTRS, "reported_date": STAMP}}))}))._call_llm
+    with RequestContext(user_id=USER, account_id=ACC):
+        await agent._execute_deliberate_process_v3(STAGE1_BATCH, USER, ACC, [], owner_timezone=PARIS)
+    assert as_utc(by_text(store, "walks a lot")["reported_date"]) == utc(20, 11)
