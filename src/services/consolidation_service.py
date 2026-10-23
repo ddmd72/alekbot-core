@@ -76,6 +76,8 @@ class ConsolidationService:
         user_repo: Optional[object] = None,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
+        if run_timeout_s <= _MARGIN_S:
+            raise ValueError(f"run_timeout_s must exceed the lease margin ({_MARGIN_S:.0f} s), got {run_timeout_s}")
         self._queue = queue
         self._coordinator = coordinator
         self._agent_factory = agent_factory
@@ -177,11 +179,12 @@ class ConsolidationService:
             return None
 
     async def _has_pending(self, user_id: str) -> bool:
+        """A failing read answers True: a spare continuation finds nothing and stops, a lost one waits for the sweep."""
         try:
             return len(await self._queue.get_pending_batches(user_id=user_id, limit=1)) > 0
         except Exception as exc:
             self._log_unhandled(user_id, exc)
-            return False
+            return True
 
     @staticmethod
     def _log_unhandled(user_id: str, exc: Exception) -> None:
