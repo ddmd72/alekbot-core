@@ -16,7 +16,7 @@ class AuthProviderRegistry:
     """
     OAuth provider registry.
 
-    Receives pre-built AuthPort instances from the composition root (main.py).
+    Receives pre-built AuthPort instances from the composition root (build_application_graph).
     Adapters are created outside this class, keeping services → ports direction clean.
 
     Usage:

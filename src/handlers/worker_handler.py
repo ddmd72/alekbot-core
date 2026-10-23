@@ -95,7 +95,7 @@ class WorkerHandler:
 
     Owns no business logic — delegates to existing handlers/services. The only dispatcher of
     /worker: it claims every Cloud Tasks delivery by task name (decisions/worker_task_dedup.md)
-    and routes telegram updates and queued Slack events to the adapters attached by main.py.
+    and routes telegram updates and queued Slack events to the adapters attached by build_application_graph.
     """
 
     def __init__(
