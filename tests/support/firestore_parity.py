@@ -3,7 +3,9 @@
 Each scenario is `async def scenario(db, col) -> result`: it writes into the collection `col`, reads back through `db`
 (a `firestore.AsyncClient` or the H1 fake `EvalDb`) and returns ONE observable value (ids in order, field values, an
 error class name). `SCENARIOS` pairs every function with its expected value: Firestore's documented behaviour, never
-what a backend happens to answer. Every expected value was confirmed on the test database on 2026-10-22; where the
+what a backend happens to answer. Every expected value was confirmed on the test database on 2026-10-22 (except the two
+Facts S3 scenarios, range_timestamp_excludes_null_and_missing and projected_query_update_time_matches_transactional_read:
+documented behaviour, not yet run on the test database, owner `make test-cloud` before deploy); where the
 documentation is silent (`!=` and null or another type, equality plus array-contains, the error class of a precondition on
 a deleted document, the order of several implicit inequality fields) that run is the source.
 
@@ -129,6 +131,16 @@ async def missing_field_filters_orderings(db: Any, col: str) -> Any:
     await _seed(c, {"a": {"x": 1}, "b": {"x": None}, "c": {"y": 1}, "d": {"x": 2}})
     return {"order_by": await _ids(c.order_by("x")), "range": await _ids(_where(c, "x", ">", 0)),
             "is_null": await _ids(_where(c, "x", "==", None)), "in": await _ids(_where(c, "x", "in", [1, 2]))}
+
+
+async def range_timestamp_excludes_null_and_missing(db: Any, col: str) -> Any:
+    c = db.collection(col)
+    early, late = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 6, 1, tzinfo=UTC)
+    await _seed(c, {"early": {"e": early}, "late": {"e": late}, "null": {"e": None}, "missing": {"y": 1},
+                    "text": {"e": "2026-01-01"}, "number": {"e": 5}})
+    cut = datetime(2026, 3, 1, tzinfo=UTC)
+    return {"le": await _ids(_where(c, "e", "<=", cut)), "gt": await _ids(_where(c, "e", ">", cut)),
+            "le_far_future": await _ids(_where(c, "e", "<=", datetime(2100, 1, 1, tzinfo=UTC)))}
 
 
 async def not_equal_missing_field(db: Any, col: str) -> Any:
@@ -488,6 +500,25 @@ async def transaction_read_update_time(db: Any, col: str) -> Any:
             "separate_writes_differ": plain.update_time != (await other.get()).update_time}
 
 
+async def projected_query_update_time_matches_transactional_read(db: Any, col: str) -> Any:
+    c = db.collection(col)
+    d = c.document("a")
+    await d.set({"v": 1, "w": 2})
+    await _seed(c, {"b": {"v": 1, "w": 2}})
+
+    @firestore.async_transactional
+    async def read_in_transaction(tx: Any) -> Any:
+        return (await d.get(transaction=tx)).update_time
+
+    projected = {s.id: s async for s in c.select(["v"]).stream()}
+    inside = await read_in_transaction(db.transaction())
+    full = await d.get()
+    return {"projected_fields": sorted(projected["a"].to_dict()),
+            "projected_equals_transactional": projected["a"].update_time == inside,
+            "projected_equals_plain_read": projected["a"].update_time == full.update_time,
+            "documents_differ": projected["a"].update_time != projected["b"].update_time}
+
+
 async def get_all_order_not_assumed(db: Any, col: str) -> Any:
     c = db.collection(col)
     await _seed(c, {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}})
@@ -523,6 +554,8 @@ SCENARIOS: List[Scenario] = [
     Scenario("two_range_fields_added_in_reverse", two_range_fields_added_in_reverse, ["c", "b", "a", "d"], group="composite"),
     Scenario("missing_field_filters_orderings", missing_field_filters_orderings,
              {"order_by": ["b", "a", "d"], "range": ["a", "d"], "is_null": ["b"], "in": ["a", "d"]}),
+    Scenario("range_timestamp_excludes_null_and_missing", range_timestamp_excludes_null_and_missing,
+             {"le": ["early"], "gt": ["late"], "le_far_future": ["early", "late"]}),
     Scenario("not_equal_missing_field", not_equal_missing_field, ["d"]),
     Scenario("not_equal_null_field", not_equal_null_field, ["d"]),
     Scenario("not_equal_other_type", not_equal_other_type, ["d", "s"]),
@@ -585,6 +618,10 @@ SCENARIOS: List[Scenario] = [
     Scenario("transaction_read_update_time", transaction_read_update_time,
              {"equal_to_plain_read": True, "differs_after_write": True, "transaction_sees_new": True,
               "separate_writes_differ": True}),
+    Scenario("projected_query_update_time_matches_transactional_read",
+             projected_query_update_time_matches_transactional_read,
+             {"projected_fields": ["v"], "projected_equals_transactional": True, "projected_equals_plain_read": True,
+              "documents_differ": True}),
     Scenario("get_all_order_not_assumed", get_all_order_not_assumed, {
         "get_all": {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}, "nobody": None},
         "in_transaction": {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}, "nobody": None}}),
