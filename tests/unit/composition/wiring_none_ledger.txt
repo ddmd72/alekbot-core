@@ -75,7 +75,5 @@ ConversationHandler.security_port  # defect:D6 no caller passes security_port= t
 
 # ---- D8: a declared provider fallback that cannot run
 # web_search, tasks, domain_researcher, tutor and lelik_summarizer were fixed in P9 (they call _set_execution_context now, see
-# decisions/html_page_fallback_context_wiring.md addendum). consolidation and tutor_extractor are parked for the owner: they
-# write memory, so turning the fallback on changes which model writes it (question Q6). tests/unit/agents/
-# test_agents_set_execution_context.py lists both on its allowlist.
-ConsolidationAgent._agent_execution_context  # defect:D8-owner STRATEGIES["consolidation"] declares fallback gemini (agent_context_builder.py:56-61) but the agent writes facts: with the fallback on, a Claude outage writes memory with another model instead of failing and retrying later; owner question Q6 (constructor consolidation_agent.py:164-166)
+# decisions/html_page_fallback_context_wiring.md addendum). consolidation and tutor_extractor have no fallback by owner ruling.
+ConsolidationAgent._agent_execution_context  # by-design no cross-provider fallback by owner ruling 2026-10-23 (P9 D8), STRATEGIES["consolidation"] fallback None (agent_context_builder.py)

@@ -8,7 +8,6 @@ A ledger line is `<key>  # <reason> <evidence>`. The reason is one word of a fix
 - `runtime`: state that only a served request fills;
 - `by-design`: the code says so (the evidence names file and line, or the document);
 - `defect:<id>`: a dependency production should have and does not; the id is the one in the P9 defect table.
-  `defect:<id>-owner` is a defect whose fix is a product choice the owner has not made yet.
 
 The evidence is a few words naming where the reason is read. A line with no evidence fails.
 
@@ -22,7 +21,7 @@ from collections import Counter
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 VOCABULARY = ("off-in-prod", "optional-knob", "lazy", "runtime", "by-design")
-_REASON = re.compile(r"^(?P<reason>" + "|".join(VOCABULARY) + r"|defect:D\d+(?:-owner)?)\s+(?P<evidence>\S.*)$")
+_REASON = re.compile(r"^(?P<reason>" + "|".join(VOCABULARY) + r"|defect:D\d+)\s+(?P<evidence>\S.*)$")
 # A loop that `start()` creates: it must be running, so it never has a ledger line (R3-B1).
 STARTED_LOOPS = ("_flush_task", "_sweep_task")
 # `Class.attr*` (any instance may be None) is for declarations; on these layers a half-wired instance must not hide.
