@@ -1,68 +1,21 @@
 """Tutor: deliver shapes parse; an empty answer is a failure (CDR T4)."""
 
 import json
-import logging
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.domain.agent import AgentStatus, DeliveryItem
-from src.infrastructure.delegation_engine import DelegationResult
-
-ENVELOPE = {
-    "full_response": "Here is the answer.",
-    "response_summary": "Short summary.",
-    "rich_content": {
-        "type": "table",
-        "data": {"rows": [{"cells": ["a", "b"]}]},
-        "fallback": "a | b",
-    },
-    "link_list": [{"anchor": "1", "title": "Docs", "url": "https://example.com/docs"}],
-}
-
-
-class FakeEngine:
-    """Stands in for DelegationEngine: records execute() kwargs, returns a canned result."""
-
-    last_kwargs: dict = {}
-
-    def __init__(self, result):
-        self._result = result
-
-    def __call__(self, coordinator):
-        return self
-
-    async def execute(self, **kwargs):
-        FakeEngine.last_kwargs = kwargs
-        return self._result
-
-
-class ErrorLog:
-    """Captures logger.error calls (message + extra) of the agent module under test."""
-
-    def __init__(self):
-        self.records = []
-
-    def __call__(self, msg, *args, **kwargs):
-        self.records.append((msg % args if args else msg, kwargs.get("extra") or {}))
-
-    @property
-    def empty_answers(self):
-        return [r for r in self.records if r[1].get("event") == "empty_answer"]
-
-
-def result(text="", args=None, **kw):
-    return DelegationResult(text=text, total_tokens=7, terminal_tool_args=args, **kw)
-
-from unittest.mock import MagicMock
-
+from src.domain.agent import AgentStatus
+from tests.support.agent_answer_fakes import (
+    ENVELOPE, FakeEngine, empty_answer_records, result,
+)
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.agents import tutor_agent as MODULE
 from src.agents.tutor_agent import TutorAgent
 from src.domain.agent import AgentConfig
 from src.domain.user import PerformanceTier
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
-from tests.unit.agents.test_tutor_agent import (  # noqa: F401  fixtures + helper
+from tests.unit.agents.test_tutor_agent import (  # noqa: F401  (fixtures)
     mock_prompt_builder, mock_assembler, _bound_message,
 )
 
@@ -100,15 +53,41 @@ def MESSAGE():
     return _bound_message()
 
 
+def _make_tutor(mock_prompt_builder, mock_assembler, llm_text="", with_tools=True):
+    llm = AsyncMock(spec=LLMPort)
+    llm.generate_content.return_value = MagicMock(
+        text=llm_text, usage_metadata=MagicMock(total_tokens=3), tool_calls=[],
+    )
+    config = AgentConfig(agent_id="tutor_agent_test", agent_type="tutor",
+                         timeout_ms=60000, capabilities=["tutor_chat"])
+    ctx = AgentExecutionContext(
+        agent_type="tutor", provider=llm, model_name="claude-sonnet-5", tier=PerformanceTier.BALANCED,
+        capabilities=ProviderCapabilities(), provider_name="claude",
+        resilience_port=InMemoryProviderResilience(),
+    )
+    tutor = TutorAgent(config=config, execution_context=ctx, prompt_builder=mock_prompt_builder,
+                       assembler=mock_assembler, user_id=None)
+    if with_tools:
+        tutor.coordinator = MagicMock()
+        tutor.coordinator.get_available_intents_for.return_value = [
+            {"name": "search_web", "description": "Search.", "context_schema": {}},
+        ]
+    return tutor
+
+
 @pytest.fixture
-def errors(monkeypatch):
-    log = ErrorLog()
-    monkeypatch.setattr(MODULE.logger, "error", log)
-    return log
+def agent(mock_prompt_builder, mock_assembler):
+    return _make_tutor(mock_prompt_builder, mock_assembler)
+
+
+def MESSAGE():
+    return _bound_message()
 
 
 async def _run(agent, monkeypatch, delegation):
-    monkeypatch.setattr(MODULE, "DelegationEngine", FakeEngine(delegation))
+    engine = FakeEngine(delegation)
+    monkeypatch.setattr(MODULE, "DelegationEngine", engine)
+    agent.last_engine = engine
     return await agent.execute(MESSAGE())
 
 
@@ -123,15 +102,15 @@ def _assert_envelope(response):
 
 async def test_passes_deliver_response_as_terminal_tool(agent, monkeypatch):
     await _run(agent, monkeypatch, result(args={"response": json.dumps(ENVELOPE)}))
-    assert FakeEngine.last_kwargs["terminal_tool"] == "deliver_response"
+    assert agent.last_engine.last_kwargs["terminal_tool"] == "deliver_response"
 
 
-async def test_no_tools_path_empty_text_is_a_failure(mock_prompt_builder, mock_assembler, errors):
+async def test_no_tools_path_empty_text_is_a_failure(mock_prompt_builder, mock_assembler, caplog):
     tutor = _make_tutor(mock_prompt_builder, mock_assembler, llm_text="", with_tools=False)
     r = await tutor.execute(MESSAGE())
     assert r.status == AgentStatus.FAILED
     assert r.error == "empty_answer"
-    assert errors.empty_answers[0][1]["via_terminal_tool"] is False
+    assert empty_answer_records(caplog)[0].via_terminal_tool is False
 
 
 async def test_no_tools_path_plain_text_is_success(mock_prompt_builder, mock_assembler):
@@ -168,23 +147,23 @@ async def test_text_beside_terminal_call_used_when_answer_empty(agent, monkeypat
     assert r.result.text == "Said beside the call."
 
 
-async def test_empty_text_path_is_a_failure(agent, monkeypatch, errors):
+async def test_empty_text_path_is_a_failure(agent, monkeypatch, caplog):
     r = await _run(agent, monkeypatch, result(text=""))
     assert r.status == AgentStatus.FAILED
     assert r.error == "empty_answer"
-    assert len(errors.empty_answers) == 1
-    assert errors.empty_answers[0][1]["via_terminal_tool"] is False
+    assert len(empty_answer_records(caplog)) == 1
+    assert empty_answer_records(caplog)[0].via_terminal_tool is False
 
 
-async def test_empty_terminal_path_is_a_failure(agent, monkeypatch, errors):
+async def test_empty_terminal_path_is_a_failure(agent, monkeypatch, caplog):
     r = await _run(agent, monkeypatch, result(args={"response": ""}))
     assert r.status == AgentStatus.FAILED
     assert r.error == "empty_answer"
-    assert len(errors.empty_answers) == 1
-    assert errors.empty_answers[0][1]["via_terminal_tool"] is True
+    assert len(empty_answer_records(caplog)) == 1
+    assert empty_answer_records(caplog)[0].via_terminal_tool is True
 
 
-async def test_whitespace_only_answer_is_a_failure(agent, monkeypatch, errors):
+async def test_whitespace_only_answer_is_a_failure(agent, monkeypatch, caplog):
     r = await _run(agent, monkeypatch, result(args={"response": "   \n "}))
     assert r.status == AgentStatus.FAILED
     assert r.error == "empty_answer"
@@ -196,8 +175,22 @@ async def test_empty_args_with_text_beside_uses_the_text(agent, monkeypatch):
     assert r.result.text == "X"
 
 
-async def test_empty_args_without_text_is_empty_answer_failure(agent, monkeypatch, errors):
+async def test_empty_args_without_text_is_empty_answer_failure(agent, monkeypatch, caplog):
     r = await _run(agent, monkeypatch, result(text="", args={}))
     assert r.status == AgentStatus.FAILED
     assert r.error == "empty_answer"
-    assert len(errors.empty_answers) == 1
+    assert len(empty_answer_records(caplog)) == 1
+    assert empty_answer_records(caplog)[0].via_terminal_tool is True
+
+
+async def test_empty_text_after_successful_async_dispatch_is_success(agent, monkeypatch, caplog):
+    r = await _run(agent, monkeypatch, result(args={"response": ""}, async_dispatches=["create_html_page"]))
+    assert r.status == AgentStatus.SUCCESS
+    assert not empty_answer_records(caplog)
+
+
+async def test_empty_text_without_any_dispatch_is_empty_answer(agent, monkeypatch, caplog):
+    r = await _run(agent, monkeypatch, result(args={"response": ""}, async_dispatches=[]))
+    assert r.status == AgentStatus.FAILED
+    assert r.error == "empty_answer"
+    assert len(empty_answer_records(caplog)) == 1

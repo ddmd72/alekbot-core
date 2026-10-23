@@ -1,61 +1,14 @@
 """Smart: an empty answer is a failure; deliver shapes parse (CDR T4)."""
 
 import json
-import logging
-from unittest.mock import AsyncMock
-
 import pytest
 
 from src.domain.agent import AgentStatus, DeliveryItem
-from src.infrastructure.delegation_engine import DelegationResult
-
-ENVELOPE = {
-    "full_response": "Here is the answer.",
-    "response_summary": "Short summary.",
-    "rich_content": {
-        "type": "table",
-        "data": {"rows": [{"cells": ["a", "b"]}]},
-        "fallback": "a | b",
-    },
-    "link_list": [{"anchor": "1", "title": "Docs", "url": "https://example.com/docs"}],
-}
-
-
-class FakeEngine:
-    """Stands in for DelegationEngine: records execute() kwargs, returns a canned result."""
-
-    last_kwargs: dict = {}
-
-    def __init__(self, result):
-        self._result = result
-
-    def __call__(self, coordinator):
-        return self
-
-    async def execute(self, **kwargs):
-        FakeEngine.last_kwargs = kwargs
-        return self._result
-
-
-class ErrorLog:
-    """Captures logger.error calls (message + extra) of the agent module under test."""
-
-    def __init__(self):
-        self.records = []
-
-    def __call__(self, msg, *args, **kwargs):
-        self.records.append((msg % args if args else msg, kwargs.get("extra") or {}))
-
-    @property
-    def empty_answers(self):
-        return [r for r in self.records if r[1].get("event") == "empty_answer"]
-
-
-def result(text="", args=None, **kw):
-    return DelegationResult(text=text, total_tokens=7, terminal_tool_args=args, **kw)
-
+from tests.support.agent_answer_fakes import (
+    ENVELOPE, FakeEngine, empty_answer_records, result,
+)
 from src.agents.core import smart_response_agent as MODULE
-from tests.unit.agents.core.test_smart_response_agent import (  # noqa: F401  fixtures + helper
+from tests.unit.agents.core.test_smart_response_agent import (  # noqa: F401  (fixtures)
     smart_agent_config, mock_llm_port, mock_session_store, mock_prompt_builder, mock_coordinator,
     smart_agent, create_query_message,
 )
@@ -73,14 +26,18 @@ def MESSAGE():
 
 
 @pytest.fixture
-def errors(monkeypatch):
-    log = ErrorLog()
-    monkeypatch.setattr(MODULE.logger, "error", log)
-    return log
+def agent(smart_agent):
+    return smart_agent
+
+
+def MESSAGE():
+    return create_query_message("complex")
 
 
 async def _run(agent, monkeypatch, delegation):
-    monkeypatch.setattr(MODULE, "DelegationEngine", FakeEngine(delegation))
+    engine = FakeEngine(delegation)
+    monkeypatch.setattr(MODULE, "DelegationEngine", engine)
+    agent.last_engine = engine
     return await agent.execute(MESSAGE())
 
 
@@ -121,43 +78,43 @@ async def test_text_beside_terminal_call_used_when_answer_empty(agent, monkeypat
     assert r.result.text == "Said beside the call."
 
 
-async def test_empty_text_path_is_a_failure(agent, monkeypatch, errors):
+async def test_empty_text_path_is_a_failure(agent, monkeypatch, caplog):
     r = await _run(agent, monkeypatch, result(text=""))
     assert r.status == AgentStatus.FAILED
     assert r.error == "empty_answer"
-    assert len(errors.empty_answers) == 1
-    assert errors.empty_answers[0][1]["via_terminal_tool"] is False
+    assert len(empty_answer_records(caplog)) == 1
+    assert empty_answer_records(caplog)[0].via_terminal_tool is False
 
 
-async def test_empty_terminal_path_is_a_failure(agent, monkeypatch, errors):
+async def test_empty_terminal_path_is_a_failure(agent, monkeypatch, caplog):
     r = await _run(agent, monkeypatch, result(args={"response": ""}))
     assert r.status == AgentStatus.FAILED
     assert r.error == "empty_answer"
-    assert len(errors.empty_answers) == 1
-    assert errors.empty_answers[0][1]["via_terminal_tool"] is True
+    assert len(empty_answer_records(caplog)) == 1
+    assert empty_answer_records(caplog)[0].via_terminal_tool is True
 
 
-async def test_whitespace_only_answer_is_a_failure(agent, monkeypatch, errors):
+async def test_whitespace_only_answer_is_a_failure(agent, monkeypatch, caplog):
     r = await _run(agent, monkeypatch, result(args={"response": "   \n "}))
     assert r.status == AgentStatus.FAILED
     assert r.error == "empty_answer"
 
 
-async def test_rich_only_answer_is_success(agent, monkeypatch, errors):
+async def test_rich_only_answer_is_success(agent, monkeypatch, caplog):
     env = {"full_response": "", "response_summary": "s",
            "rich_content": ENVELOPE["rich_content"], "link_list": []}
     r = await _run(agent, monkeypatch, result(args={"response": json.dumps(env)}))
     assert r.status == AgentStatus.SUCCESS
     assert r.result.structured_data.content_type == "table"
-    assert not errors.empty_answers
+    assert not empty_answer_records(caplog)
 
 
-async def test_delivery_items_only_answer_is_success(agent, monkeypatch, errors):
+async def test_delivery_items_only_answer_is_success(agent, monkeypatch, caplog):
     item = DeliveryItem(type="message", data={"text": "extra"})
     r = await _run(agent, monkeypatch, result(args={"response": ""}, delivery_items=[item]))
     assert r.status == AgentStatus.SUCCESS
     assert r.delivery_items == [item]
-    assert not errors.empty_answers
+    assert not empty_answer_records(caplog)
 
 
 async def test_empty_args_with_text_beside_uses_the_text(agent, monkeypatch):
@@ -166,8 +123,22 @@ async def test_empty_args_with_text_beside_uses_the_text(agent, monkeypatch):
     assert r.result.text == "X"
 
 
-async def test_empty_args_without_text_is_empty_answer_failure(agent, monkeypatch, errors):
+async def test_empty_args_without_text_is_empty_answer_failure(agent, monkeypatch, caplog):
     r = await _run(agent, monkeypatch, result(text="", args={}))
     assert r.status == AgentStatus.FAILED
     assert r.error == "empty_answer"
-    assert len(errors.empty_answers) == 1
+    assert len(empty_answer_records(caplog)) == 1
+    assert empty_answer_records(caplog)[0].via_terminal_tool is True
+
+
+async def test_empty_text_after_successful_async_dispatch_is_success(agent, monkeypatch, caplog):
+    r = await _run(agent, monkeypatch, result(args={"response": ""}, async_dispatches=["create_html_page"]))
+    assert r.status == AgentStatus.SUCCESS
+    assert not empty_answer_records(caplog)
+
+
+async def test_empty_text_without_any_dispatch_is_empty_answer(agent, monkeypatch, caplog):
+    r = await _run(agent, monkeypatch, result(args={"response": ""}, async_dispatches=[]))
+    assert r.status == AgentStatus.FAILED
+    assert r.error == "empty_answer"
+    assert len(empty_answer_records(caplog)) == 1

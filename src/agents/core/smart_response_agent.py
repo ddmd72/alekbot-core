@@ -589,12 +589,13 @@ class SmartResponseAgent(BaseAgent):
 
             smart_response, history_summary = self._build_smart_response(delegation_result)
             if (not smart_response.text.strip() and smart_response.structured_data is None
-                    and not delegation_result.delivery_items):
+                    and not delegation_result.delivery_items
+                    and not delegation_result.async_dispatches):
                 logger.error(
                     "empty_answer agent=%s model=%s terminal=%s",
-                    self.agent_id, eff.ctx.model_name, bool(delegation_result.terminal_tool_args),
+                    self.agent_id, eff.ctx.model_name, delegation_result.terminal_tool_args is not None,
                     extra={"event": "empty_answer", "agent_id": self.agent_id,
-                           "via_terminal_tool": bool(delegation_result.terminal_tool_args)},
+                           "via_terminal_tool": delegation_result.terminal_tool_args is not None},
                 )
                 return AgentResponse.failure(
                     task_id=message.task_id, agent_id=self.agent_id, error="empty_answer",
