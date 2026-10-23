@@ -59,6 +59,9 @@ def clamp_to_span(value: datetime, span: Optional[Tuple[datetime, datetime]], no
     return min(moment, as_utc(now))
 
 
+NO_READABLE_SOURCE_NOTE = "derived_from named no readable fact of this account; the end of the batch is used"
+
+
 def kept_reported_date_note(reported: datetime, timezone: str) -> str:
     """The one line a cleanup pass gets when its call carried a `reported_date`."""
     return (
@@ -93,7 +96,7 @@ def reported_date_for_new(
     else:
         chosen = end
         if derived_named:
-            notes.append("derived_from named no readable fact of this account; the end of the batch is used")
+            notes.append(NO_READABLE_SOURCE_NOTE)
     if model_value is not None:
         notes.append(kept_reported_date_note(chosen, ctx.timezone))
     return chosen, _joined(notes)

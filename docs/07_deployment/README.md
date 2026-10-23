@@ -1136,7 +1136,7 @@ Expected total about $6-12 on Sonnet 5.5 (about $12-24 on Opus 5.5).
 
 **Flags.** `--s3-kit` turns the kit on; without it each bench behaves as it always did. `--timezone <IANA zone>`
 overrides the owner's zone, which is otherwise resolved as the consolidation service resolves it (UTC with a warning when
-it cannot be; the rule is `resolve_owner_timezone` in `domain/owner_timezone.py`, the one function the service and the kit both call). `--budget-usd` and `--allow-over-owner-cap` as above. A failed response from the agent (including a refused snapshot token) stops the
+it cannot be; the decisions are the pure functions of `domain/owner_timezone.py`, which the service and the kit both call over the same two reads). `--budget-usd` and `--allow-over-owner-cap` as above. A failed response from the agent (including a refused snapshot token) stops the
 bench with the failure printed; the report is still written.
 
 **Run in this order** (the estimate is per run, Sonnet 5.5 / Opus 5.5):
@@ -1159,7 +1159,7 @@ it holds fact ids, the 📊/🚨 alert lines and your zone, so keep it local) an
 Also reported, not gated: expiry refusals per pass, floored horizons, `derived_from` use, the share of naive
 `reported_date`s. A fourth line is printed next to G3: **cleanup creates without `derived_from`: N** (per pass and in
 total; `cleanup_creates_without_derived_from` in the report). A create on a cleanup pass (`stage2a`, `stage2b`, `cluster`)
-that names no source is dated to the end of its batch, or to now on a `cluster` pass, so its expiry horizon restarts from
+that names no source, or only ids that are no readable fact of the account, is dated to the end of its batch, or to now on a `cluster` pass, so its expiry horizon restarts from
 there although the content is old. The owner accepted that fallback (Q5); the count is how you see how often step M hit
 it, and you decide whether a high number is a prompt problem. It is not gated. The report also lists the five served tokens with the hash of their snapshot body.
 

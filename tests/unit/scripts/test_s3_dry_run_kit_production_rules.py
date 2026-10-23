@@ -122,9 +122,9 @@ async def test_the_kit_hit_of_a_changed_document_equals_production_after_the_sam
 
 # ----------------------------------------------------------------------------------------------- L1: undated creates
 
-def row(pass_label: str, action: str, status: str, cleanup: bool, named: int) -> Dict[str, Any]:
+def row(pass_label: str, action: str, status: str, cleanup: bool, named: int, unreadable: bool = False) -> Dict[str, Any]:
     return {"pass": pass_label, "action": action, "status": status, "cleanup": cleanup, "derived_from_named": named,
-            "reported_date_form": None}
+            "derived_from_unreadable": unreadable, "reported_date_form": None}
 
 
 async def test_the_report_counts_cleanup_creates_without_derived_from_per_pass_and_in_total(memory_dir):
@@ -133,6 +133,7 @@ async def test_the_report_counts_cleanup_creates_without_derived_from_per_pass_a
         kit.rows.extend([
             row("stage2a", "create", "created", True, 0),
             row("stage2a", "create", "created", True, 2),         # names its sources: dated from them
+            row("stage2a", "create", "created", True, 1, unreadable=True),    # names ids no readable fact answers to
             row("stage2a", "create", "failed", True, 0),          # refused: nothing was dated
             row("stage2a", "update", "updated", True, 0),
             row("cluster", "create", "created", True, 0),
@@ -144,7 +145,7 @@ async def test_the_report_counts_cleanup_creates_without_derived_from_per_pass_a
     finally:
         kit.close()
 
-    assert report["cleanup_creates_without_derived_from"] == {"per_pass": {"stage2a": 1, "cluster": 2}, "total": 3}
+    assert report["cleanup_creates_without_derived_from"] == {"per_pass": {"stage2a": 2, "cluster": 2}, "total": 4}
 
 
 async def test_a_create_through_the_recorder_is_a_cleanup_row_with_its_derived_from_count(store, memory_dir):
@@ -162,6 +163,29 @@ async def test_a_create_through_the_recorder_is_a_cleanup_row_with_its_derived_f
 
         assert [(r["cleanup"], r["derived_from_named"], r["status"]) for r in kit.rows] == [
             (True, 0, "created"), (True, 1, "created"), (False, 0, "created")]
+        assert kit.report()["cleanup_creates_without_derived_from"] == {"per_pass": {"stage2a": 1}, "total": 1}
+    finally:
+        kit.close()
+
+
+async def test_a_create_naming_only_unreadable_sources_counts_as_undated(store, memory_dir):
+    kit = DryRunKit(ledger_path=memory_dir / "spend.json")
+    try:
+        readable = await seed(store, "walks daily and reads at night")
+        kit.repo = kit_module.NoWriteFactRepository(store.repo)
+        adapter = FactManagementAdapter(kit.repo, store.embedder, store.write, production_adapter(store)._search_enrichment)
+        recorder = kit_module.WriteRecorder(adapter, kit)
+        cleanup = ctx(actor="stage2a", timezone="UTC", model_dates=False)
+
+        await recorder.create_fact("walks daily", meta(derived_from=["no-such-fact"]), context=cleanup)
+        await recorder.create_fact("reads at night", meta(derived_from=["no-such-fact", readable]), context=cleanup)
+        await recorder.create_fact("walks daily again", meta(derived_from=readable), context=cleanup)
+
+        unreadable, partly, dated = kit.rows
+        assert (unreadable["derived_from_named"], unreadable["derived_from_unreadable"]) == (1, True)
+        assert "no readable fact" in unreadable["notes"]
+        assert (partly["derived_from_named"], partly["derived_from_unreadable"]) == (2, False)      # one source was readable
+        assert (dated["derived_from_named"], dated["derived_from_unreadable"]) == (1, False)
         assert kit.report()["cleanup_creates_without_derived_from"] == {"per_pass": {"stage2a": 1}, "total": 1}
     finally:
         kit.close()
