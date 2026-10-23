@@ -580,10 +580,12 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     parsed / first_object / repaired / unparseable / truncated, `via`). An orchestrator turn that ends
     with empty user text, no rich content and no delivery items fails as `empty_answer` (Smart, Quick,
     Tutor, all providers), unless the turn dispatched an ASYNC intent or a SYNC intent acknowledged as
-    started (deep research, video; `async_dispatches`). Tutor checks only the text. In chat the Quick
+    started (deep research, video; `async_dispatches`). Tutor checks only the text; its empty answer goes through
+    the Quick fallback inside the Tutor channel, like its other failures. In chat the Quick
     fallback runs only before the 90 s mark (then the localized "turn failed" late answer; synthetic apology
-    if Quick fails too); in background `notify()` there is no ops alert, just the ERROR log, a worker WARNING
-    and a Cloud Tasks retry. Cloud Logging drops the `extra=` fields: grep `[LlmResponseParse]`,
+    if Quick fails too) and raises the "Smart primary FAILED" ops alert; in background `notify()` an
+    `empty_answer` is final: one ERROR `background_empty_answer`, one ops alert, the work item marked done, 200,
+    no retry (`decisions/claude_deliver_response_string_tool.md`). Cloud Logging drops the `extra=` fields: grep `[LlmResponseParse]`,
     `empty_answer agent=`, `empty_text_after_async`, `terminal_sync_sibling`.
 
   **A terminal tool can arrive alongside real work in the same batch.** The model may dispatch an

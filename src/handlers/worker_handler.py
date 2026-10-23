@@ -68,6 +68,7 @@ from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain import deep_research_notices as dr_notices
 from ..domain.exceptions import OAuthGrantRevokedError
 from ..domain.notification_kind import NotificationKind
+from ..domain.notify_result import is_empty_answer
 from ..domain.workspace import fire_key as workspace_fire_key
 from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
@@ -547,6 +548,28 @@ class WorkerHandler:
             context=f"reason={payload.get('reason')}",
         )
 
+    async def _empty_answer_final(
+        self, task_type: str, user_id: str, note_id: Optional[str] = None,
+    ) -> None:
+        """A background turn ended with no answer: final, never retried (one ERROR line + one ops alert).
+
+        No content in either; the caller then takes its success path and answers 200."""
+        logger.error(
+            "[Worker] background_empty_answer task_type=%s note=%s user=%s",
+            task_type, note_id, user_id[:8],
+            extra={"event": "background_empty_answer", "task_type": task_type, "note_id": note_id,
+                   "user_id": user_id[:8]},
+        )
+        if self._billing_webhook is None:
+            return
+        try:
+            await self._billing_webhook.post(
+                f"⚠️ Background turn ended with an empty answer (final, not retried). "
+                f"task_type={task_type} user={user_id[:8]}" + (f" note={note_id}" if note_id else "")
+            )
+        except Exception as exc:
+            logger.warning("[Worker] background_empty_answer alert failed: %s", exc)
+
     async def _send_deep_research_notice(
         self, user_id: str, account_id: str, alert: str,
         origin_channel_id: Optional[str], origin_platform: Optional[str], context: str,
@@ -562,6 +585,9 @@ class WorkerHandler:
             # This handler's 5xx makes Cloud Tasks retry; the agent must not retry inside as well.
             suppress_transient_retry=True,
         )
+        if is_empty_answer(result):
+            await self._empty_answer_final("deep_research_notice", user_id)
+            return {"status": "empty_answer_final"}, 200
         if not result.delivered and not result.sent:
             logger.warning(
                 "[DeepResearch] notice not sent: user=%s %s error=%s", user_id[:8], context, result.error,
@@ -974,7 +1000,11 @@ class WorkerHandler:
             fire_key=fire,
         )
 
-        if not result.delivered:
+        if is_empty_answer(result):
+            # Final (owner decision 2026-10-23): a retry would repeat the SYNC actions the turn took, and a
+            # conditional reminder may end empty every time. Take the success path below.
+            await self._empty_answer_final("execute_reminder", user_id, note_id)
+        elif not result.delivered:
             logger.warning(
                 "[Worker] execute_reminder: delivery_failed note=%s user=%s "
                 "(agent_status=%s, error=%s)",
@@ -995,10 +1025,10 @@ class WorkerHandler:
             # content survived for this delivery; remove it now that it fired.
             await self._notes_port.delete_note(note_id=note_id, user_id=user_id)
         logger.info(
-            "[Worker] execute_reminder: ok note=%s user=%s due=%s",
-            note_id, user_id[:8], due_at.isoformat(),
+            "[Worker] execute_reminder: %s note=%s user=%s due=%s",
+            "empty_answer_final" if is_empty_answer(result) else "ok", note_id, user_id[:8], due_at.isoformat(),
         )
-        return {"status": "ok"}, 200
+        return {"status": "empty_answer_final" if is_empty_answer(result) else "ok"}, 200
 
     # ------------------------------------------------------------------
     # Daily email review
@@ -1159,6 +1189,11 @@ class WorkerHandler:
             suppress_transient_retry=True,
             origin_detail="daily_email_review",
         )
+
+        if is_empty_answer(result):
+            # Final: the per-date mark (set at fan-out) stays, so the review does not re-run today.
+            await self._empty_answer_final("daily_email_review", user_id)
+            return {"status": "empty_answer_final", "emails": len(emails)}, 200
 
         if not result.delivered:
             # Returning 5xx allows Cloud Tasks queue-level retry to handle

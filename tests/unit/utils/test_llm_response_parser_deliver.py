@@ -113,8 +113,13 @@ class TestParseLog:
         rec = _one(caplog)
         assert rec.levelno == logging.INFO and rec.source == "text"
 
-    def test_deliver_unparseable_is_error(self, caplog):
+    def test_deliver_unparseable_nonempty_is_warning(self, caplog):
         parse_llm_response("just words", source="deliver")
+        rec = _one(caplog)
+        assert rec.levelno == logging.WARNING and rec.source == "deliver"
+
+    def test_deliver_unparseable_empty_is_error(self, caplog):
+        parse_llm_response("", source="deliver")
         rec = _one(caplog)
         assert rec.levelno == logging.ERROR and rec.source == "deliver"
 
