@@ -1,5 +1,4 @@
 """Text the model writes beside the terminal call travels in DelegationResult.text (R5)."""
-import logging
 from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.llm import LLMRequest, LLMResponse, Message, MessagePart, ToolCall
@@ -70,4 +69,4 @@ async def test_wrap_up_terminal_carries_text():
         CURRENT_TURN_CLOCK.reset(token)
     assert result.text == "wrapping"
     assert result.terminal_tool_args == ARGS
-    assert [m.role for m in result.messages[:1]] == ["user"]
+    assert [m.role for m in result.messages] == ["user"]
