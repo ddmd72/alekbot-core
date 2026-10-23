@@ -693,9 +693,10 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - P9-D1: sync `document` delivery was dropped, `doc_delivery_service` was never given to the two `ConversationHandler`s;
   - P9-D8: cross-provider failover was dead for `web_search`, `tasks`, `domain_researcher`, `tutor` and `lelik_summarizer` (the execution context was
     never stored), now wired (real only when the user picks claude, for `tasks`); `consolidation` and `tutor_extractor` get `fallback: None` (owner
-    ruling 2026-10-23: a memory write never moves to another model on an outage; no live change today, they never stored a context). Two
-    consequences: the five agents now record failures on the process-wide per-provider breaker that Smart shares (and a success clears them), and
-    `lelik_summarizer`, whose note becomes a history pair that consolidation later reads, fails over although it falls outside that ruling.
+    ruling 2026-10-23: a memory write never moves to another model on an outage; no live change today, they never stored a context), and so does
+    `lelik_summarizer`, through a new strategy entry with quick's providers (owner ruling 2026-10-23, a conscious trade-off: a lost call note,
+    alerted, over a second summarizer). So failover is live for four agents (`tasks` only on claude). Consequence: the five agents now record
+    failures on the process-wide per-provider breaker that Smart shares (and a success clears them).
 - **Defects found and not fixed:**
   - P9-D2: the email classifier's usage is neither billed nor captured. A roadmap item (the owner's quality roadmap, 14b), an owner decision;
   - P9-D6: `ConversationHandler.security_port` is never passed, and P9-D5: the `PlatformAdapterFactory` "telegram" registration has no reader

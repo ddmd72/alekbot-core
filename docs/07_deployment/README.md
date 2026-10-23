@@ -1106,4 +1106,6 @@ with an explicit `update-traffic`.
 8. **Voice.** One short Cabinet call; when it ends, the `📞` summary appears in chat. No test runs the moved voice closures.
 9. **Watch for 48 h.** `make fetch-logs K=3000`, then grep `llm_fallback|llm_no_fallback|llm_both_open|llm_fallback_failed` and count
     breaker alerts against the previous week. Failover lines carry no agent type, and `prompt_content`/Logfire record the primary
-    provider for a call that a fallback served, so attribute a line through its Logfire trace.
+    provider for a call that a fallback served, so attribute a line through its Logfire trace. Also grep
+    `summary consumer failed`: the end-of-call summarizer has no fallback by decision, so a provider failure loses that
+    call's note (an ops alert is posted each time).

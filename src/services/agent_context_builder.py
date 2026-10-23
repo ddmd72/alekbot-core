@@ -69,6 +69,16 @@ class AgentProviderStrategy:
             "required_capabilities": [],
             "fallback": None
         },
+        # The end-of-call note (VOICE_COMPANION_RFC §4.9). Same providers as "quick", the strategy it used to inherit,
+        # but no cross-provider fallback by owner ruling 2026-10-23 (P9 D8): a lost call note is an accepted trade-off
+        # (rarely critical; the failure posts an ops alert in voice_control_plane_app), cheaper than a second
+        # summarizer with its own prompt and quality.
+        "lelik_summarizer": {
+            "default_provider": "claude",
+            "allowed_providers": ["grok", "gemini", "claude", "openai"],
+            "required_capabilities": ["native_tools"],
+            "fallback": None
+        },
         "postprocessing": {
             "default_provider": "gemini",
             "allowed_providers": ["gemini"],   # locked: response_schema is Gemini-only
