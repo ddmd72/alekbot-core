@@ -4,8 +4,8 @@ Source of truth: the `FactRepository` docstring (src/ports/repository.py) and `_
 A class name is a stable string; vector and text values are never returned, only field names and document ids.
 """
 from collections import defaultdict
-from datetime import datetime
-from typing import Any, Iterable
+from datetime import datetime, timezone
+from typing import Any, Iterable, Optional
 
 from google.cloud.firestore_v1.vector import Vector
 from pydantic import ValidationError
@@ -16,6 +16,8 @@ from src.domain.fact_lifecycle import _LIFECYCLE
 VECTOR_FIELDS = ("vector", "tags_vector", "metadata_vector")
 # The fields whose own class already reports their error, so invalid_entity skips them.
 _OWN_CLASS = {"account_id", "state"}
+# Classes reported beside the violations but not violations: documents closed before S2, when no `superseded_by` existed.
+COUNTED_CLASSES = frozenset({"superseded_without_successor_pre_s2"})
 
 
 def check_fact(doc_id: str, doc: dict[str, Any]) -> list[str]:
@@ -56,8 +58,8 @@ def check_fact(doc_id: str, doc: dict[str, Any]) -> list[str]:
 
 def check_lineages(docs: Iterable[tuple[str, dict[str, Any]]]) -> dict[str, list[str]]:
     """Lineages with more than one `is_current=True` document: class -> ids of every document of those lineages."""
-    # No "no current document" class: merge_facts gives the merged fact a NEW lineage (until FACT_LIFECYCLE S2) and
-    # supersedes its sources in their own, so a lineage of only superseded documents is legitimate.
+    # No "no current document" class: merge_facts writes the merged fact under a NEW lineage and closes its sources in
+    # their own, so a lineage of only superseded documents is legitimate.
     lineages: dict[Any, list[tuple[str, bool]]] = defaultdict(list)
     for doc_id, doc in docs:
         lineage_id = doc.get("lineage_id")
@@ -68,6 +70,79 @@ def check_lineages(docs: Iterable[tuple[str, dict[str, Any]]]) -> dict[str, list
         if sum(1 for _, flag in members if flag) > 1:
             found.setdefault("lineage_multiple_current", []).extend(doc_id for doc_id, _ in members)
     return found
+
+
+def check_version_chain(
+    docs: Iterable[tuple[str, dict[str, Any]]], s2_cutoff: Optional[datetime] = None
+) -> dict[str, list[str]]:
+    """Class -> ids of the documents whose version pointers are wrong (`superseded_by`, `replaces_fact_id`, `version`).
+
+    A target is looked up among the given documents, so a partial read (`--limit`) reports false dangling pointers.
+    A document closed without `superseded_by` is a violation only when it was last written at or after `s2_cutoff`;
+    earlier ones (and all of them without a cutoff) go to a counted class in `COUNTED_CLASSES`.
+    """
+    members = list(docs)
+    by_id = dict(members)
+    found: dict[str, list[str]] = {}
+
+    def flag(name: str, doc_id: str) -> None:
+        found.setdefault(name, []).append(doc_id)
+
+    for doc_id, doc in members:
+        successor_id = doc.get("superseded_by")
+        if successor_id:
+            successor = by_id.get(successor_id)
+            if successor is None or successor.get("account_id") != doc.get("account_id"):
+                flag("superseded_by_dangling", doc_id)
+        predecessor_id = doc.get("replaces_fact_id")
+        if predecessor_id:
+            predecessor = by_id.get(predecessor_id)
+            if predecessor is None:
+                flag("replaces_target_missing", doc_id)
+            else:
+                if predecessor.get("lineage_id") != doc.get("lineage_id"):
+                    flag("replaces_lineage_mismatch", doc_id)
+                if not _is_next_version(predecessor.get("version"), doc.get("version")):
+                    flag("replaces_version_mismatch", doc_id)
+                if predecessor.get("superseded_by") != doc_id:
+                    flag("replaces_not_pointing_back", doc_id)
+        if _state(doc) is FactState.SUPERSEDED and not successor_id:
+            late = s2_cutoff is not None and _written_at_or_after(doc.get("last_updated"), s2_cutoff)
+            flag("superseded_without_successor" if late else "superseded_without_successor_pre_s2", doc_id)
+    return {**found, **_duplicate_versions(members)}
+
+
+def check_across(
+    docs: Iterable[tuple[str, dict[str, Any]]], s2_cutoff: Optional[datetime] = None
+) -> dict[str, list[str]]:
+    """Every cross-document class: `check_lineages` and `check_version_chain`."""
+    members = list(docs)
+    return {**check_lineages(members), **check_version_chain(members, s2_cutoff)}
+
+
+def _is_next_version(older: Any, newer: Any) -> bool:
+    return isinstance(older, int) and isinstance(newer, int) and newer == older + 1
+
+
+def _written_at_or_after(moment: Any, cutoff: datetime) -> bool:
+    """False for an absent or non-timestamp value (`invalid_entity` reports that); a naive timestamp reads as UTC."""
+    if not isinstance(moment, datetime):
+        return False
+    return _aware(moment) >= _aware(cutoff)
+
+
+def _aware(moment: datetime) -> datetime:
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def _duplicate_versions(members: list[tuple[str, dict[str, Any]]]) -> dict[str, list[str]]:
+    """`version_not_unique`: every document that shares a (lineage, version) pair with another one."""
+    seen: dict[tuple[Any, Any], list[str]] = defaultdict(list)
+    for doc_id, doc in members:
+        if doc.get("lineage_id") is not None and isinstance(doc.get("version"), int):
+            seen[(doc["lineage_id"], doc["version"])].append(doc_id)
+    ids = [doc_id for shared in seen.values() if len(shared) > 1 for doc_id in shared]
+    return {"version_not_unique": ids} if ids else {}
 
 
 def _state(doc: dict[str, Any]) -> FactState | None:
