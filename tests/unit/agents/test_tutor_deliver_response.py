@@ -53,37 +53,6 @@ def MESSAGE():
     return _bound_message()
 
 
-def _make_tutor(mock_prompt_builder, mock_assembler, llm_text="", with_tools=True):
-    llm = AsyncMock(spec=LLMPort)
-    llm.generate_content.return_value = MagicMock(
-        text=llm_text, usage_metadata=MagicMock(total_tokens=3), tool_calls=[],
-    )
-    config = AgentConfig(agent_id="tutor_agent_test", agent_type="tutor",
-                         timeout_ms=60000, capabilities=["tutor_chat"])
-    ctx = AgentExecutionContext(
-        agent_type="tutor", provider=llm, model_name="claude-sonnet-5", tier=PerformanceTier.BALANCED,
-        capabilities=ProviderCapabilities(), provider_name="claude",
-        resilience_port=InMemoryProviderResilience(),
-    )
-    tutor = TutorAgent(config=config, execution_context=ctx, prompt_builder=mock_prompt_builder,
-                       assembler=mock_assembler, user_id=None)
-    if with_tools:
-        tutor.coordinator = MagicMock()
-        tutor.coordinator.get_available_intents_for.return_value = [
-            {"name": "search_web", "description": "Search.", "context_schema": {}},
-        ]
-    return tutor
-
-
-@pytest.fixture
-def agent(mock_prompt_builder, mock_assembler):
-    return _make_tutor(mock_prompt_builder, mock_assembler)
-
-
-def MESSAGE():
-    return _bound_message()
-
-
 async def _run(agent, monkeypatch, delegation):
     engine = FakeEngine(delegation)
     monkeypatch.setattr(MODULE, "DelegationEngine", engine)
