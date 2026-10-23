@@ -270,12 +270,13 @@ class QuickResponseAgent(BaseAgent):
 
             # An answer the user would see as nothing is a failure, not a silent success.
             if (not smart_response.text.strip() and final_rich is None
-                    and not delegation_result.delivery_items):
+                    and not delegation_result.delivery_items
+                    and not delegation_result.async_dispatches):
                 logger.error(
                     "empty_answer agent=%s model=%s terminal=%s",
-                    self.agent_id, self.model_name, bool(delegation_result.terminal_tool_args),
+                    self.agent_id, self.model_name, delegation_result.terminal_tool_args is not None,
                     extra={"event": "empty_answer", "agent_id": self.agent_id,
-                           "via_terminal_tool": bool(delegation_result.terminal_tool_args)},
+                           "via_terminal_tool": delegation_result.terminal_tool_args is not None},
                 )
                 return AgentResponse.failure(
                     task_id=message.task_id, agent_id=self.agent_id, error="empty_answer",
@@ -288,7 +289,7 @@ class QuickResponseAgent(BaseAgent):
                     self.history_summary_service.summarize_model_response(smart_response.text)
                 )
 
-            self._on_agent_success(len(smart_response.text), total_tokens, output_text=delegation_result.text or smart_response.text)
+            self._on_agent_success(len(smart_response.text), total_tokens, output_text=smart_response.text)
 
             metadata = {
                 "model": self.model_name,
