@@ -20,6 +20,7 @@ from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, OTHER, USER, as_legacy, make_fact, put_raw
 from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, embed
 from tests.support.firestore_eval import stored_vector
+from tests.support.fact_write import EXPIRY_NONE, ctx
 
 
 @pytest.fixture
@@ -58,10 +59,14 @@ async def test_create_fact_stores_one_document_with_the_given_attributes(store):
     other_before = copy.deepcopy(store.docs[other])
     # Reviewer edit (facts S3, T2): the non-default state is ARCHIVED (the model may not create STALE, S3-D3), and the
     # sent `ttl_days` is not stored (D1: code computes it from `expiry`).
-    res = await store.adapter.create_fact("mother is Valentina", meta(
+    # Reviewer edit (facts S3, T4a): a fact born archived needs no `expiry` and carries no decision (owner Q9, plan §3.4),
+    # so none is sent: a sent one would add a `note` to the exact key set below.
+    attributes = meta(
         tags=["family"], metadata={"name": "Valentina"}, context="said at lunch", ttl_days=30, type="STATE",
         domain="BIOGRAPHICAL", temporal_class="STABLE", context_priority="HIGH", state="ARCHIVED",
-        reported_date="2026-03-04T10:00:00Z"))
+        reported_date="2026-03-04T10:00:00Z")
+    attributes.pop("expiry", None)
+    res = await store.adapter.create_fact("mother is Valentina", attributes, context=ctx())
     assert set(res) == {"fact_id", "status", "message"} and res["status"] == "created"
     json.dumps(res)
     doc = store.docs[res["fact_id"]]
@@ -71,6 +76,7 @@ async def test_create_fact_stores_one_document_with_the_given_attributes(store):
     assert (doc["domain"], doc["temporal_class"], doc["context_priority"], doc["state"], doc["type"]) == (
         "biographical", "stable", "high", "archived", "state")
     assert (doc["context"], doc["ttl_days"], doc["version"]) == ("said at lunch", None, 1)
+    assert (doc["expiry_kind"], doc["expires_at"]) == (None, None)
     assert doc["reported_date"] == datetime(2026, 3, 4, 10, 0, tzinfo=timezone.utc)
     assert doc["lineage_id"] and doc["id"] == res["fact_id"]
     texts = fact_embedding_texts("mother is Valentina", ["family"], {"name": "Valentina"})
@@ -82,7 +88,10 @@ async def test_create_fact_defaults_type_event_state_current_and_reported_date_n
     started = datetime.now(timezone.utc)
     required = {k: v for k, v in meta().items() if k in ("account_id", "user_id", "domain", "temporal_class",
                                                           "context_priority")}
-    res = await store.adapter.create_fact("mother is Valentina", required)
+    # Reviewer edit (facts S3, T4a): a current fact needs `expiry` (D1, plan §3.4), so it joins the minimum set. The
+    # context has no span, so the date default is still now (plan §3.5).
+    required["expiry"] = EXPIRY_NONE
+    res = await store.adapter.create_fact("mother is Valentina", required, context=ctx())
     assert res["status"] == "created"
     doc = store.docs[res["fact_id"]]
     assert doc["type"] == "event" and doc["state"] == "current"
@@ -226,13 +235,17 @@ async def test_update_sets_last_updated_on_every_update(store):
 
 
 async def test_update_reported_date_is_taken_from_an_iso_string_or_a_datetime(store):
-    fid = await create(store)
+    # Reviewer edit (facts S3, T4a): an update never moves reported_date back (D2, S3-D2; plan §3.5), so the fact is
+    # created before both sent dates; each one is later than the stored date and must be taken, from either form.
+    fid = await create(store, reported_date="2019-06-01T00:00:00Z")
     # Reviewer edit (facts S2, D8): each content change is a new version document, read through the returned id; the
     # second call names the first id and lands on the current version.
-    first = await store.adapter.update_fact(fid, {"content": "edited", "reported_date": "2020-01-02T03:04:05Z"}, ACC)
+    first = await store.adapter.update_fact(
+        fid, {"content": "edited", "reported_date": "2020-01-02T03:04:05Z", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert store.docs[first["fact_id"]]["reported_date"] == datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
     given = datetime(2021, 5, 6, 7, 8, 9, tzinfo=timezone.utc)
-    second = await store.adapter.update_fact(fid, {"content": "edited again", "reported_date": given}, ACC)
+    second = await store.adapter.update_fact(
+        fid, {"content": "edited again", "reported_date": given, "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert store.docs[second["fact_id"]]["reported_date"] == given and store.docs[second["fact_id"]]["version"] == 3
 
 
@@ -399,7 +412,10 @@ async def test_a_failed_merge_leaves_every_source_unchanged(store):
 
 async def test_merge_needs_only_account_and_user_in_the_metadata(store):
     a = await create(store, "likes tea")
-    res = await store.adapter.merge_facts([a], "likes tea daily", {"account_id": ACC, "user_id": USER})
+    # Reviewer edit (facts S3, T4a): the merged fact is current, so it needs `expiry` like a create (D1, plan §3.4); the
+    # taxonomy keys are still not checked.
+    res = await store.adapter.merge_facts([a], "likes tea daily", {"account_id": ACC, "user_id": USER,
+                                                                    "expiry": EXPIRY_NONE}, context=ctx())
     assert res["status"] == "merged"
     new = store.docs[res["new_fact_id"]]
     assert new["domain"] is None and new["temporal_class"] is None and new["context_priority"] == "medium"
