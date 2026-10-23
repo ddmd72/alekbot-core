@@ -14,6 +14,7 @@ One batch at a time per account: each batch runs under the account's memory-writ
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Optional
@@ -125,6 +126,8 @@ class ConsolidationService:
         1800 s deadline as a worker task), then the continuation goes to the queue.
         """
         run = await self._run(user_id, max_batches=1)
+        if self._task_queue is None and (run.deferred or run.has_more):
+            run = replace(run, unattended=True)
         if run.has_more:
             if self._task_queue is None:
                 logger.warning(

@@ -104,5 +104,21 @@ async def test_an_error_from_consolidate_now_gets_an_honest_failure_message_and_
 
     queue.enqueue_batch.assert_awaited_once()
     failure = channel.send_message.await_args.args[0]
-    assert "did not run" in failure and "queued" in failure
+    assert "stopped with an error" in failure and "queued" in failure and "did not run" not in failure
     notifications.notify.assert_not_awaited()
+
+
+async def test_a_deferred_run_without_a_queue_does_not_promise_the_background():
+    overflow, notifications, _ = await _consolidate(ConsolidationRun(deferred=True, unattended=True))
+
+    alert = notifications.notify.await_args.kwargs["system_alert"]
+    assert "send $consolidate again later" in alert
+    assert "continues in the background" not in alert
+
+
+async def test_a_has_more_run_without_a_queue_does_not_promise_the_background():
+    overflow, notifications, _ = await _consolidate(ConsolidationRun(processed=1, has_more=True, unattended=True))
+
+    alert = notifications.notify.await_args.kwargs["system_alert"]
+    assert "1 batch(es) consolidated now" in alert and "send $consolidate again to continue" in alert
+    assert "continues in the background" not in alert
