@@ -255,6 +255,7 @@ class FactManagementAdapter(FactManagementPort):
         logger.debug(f"🔄 [FactManagement] Updating fact {fact_id[:8]}...")
         parsed: Optional[ParsedFactUpdate] = None
         embedded: Optional[Tuple[List[str], List[List[float]]]] = None
+        first_resolved_id: Optional[str] = None
         attempt = 0
         while True:
             attempt += 1
@@ -264,6 +265,16 @@ class FactManagementAdapter(FactManagementPort):
                 return {"fact_id": fact_id, "status": "not_found", "message": "Fact not found"}
             if parsed is None:
                 parsed = parse_fact_update(updates)
+            if first_resolved_id is None:
+                first_resolved_id = stored.fact.id
+            elif stored.fact.id != first_resolved_id and (parsed.content is not None or parsed.tags is not None):
+                # content and tags replace whole: written over a version the model never saw, they would drop its change
+                logger.warning(f"⚠️  [FactManagement] Fact {fact_id[:8]} moved forward between attempts; update refused")
+                return {
+                    "fact_id": fact_id,
+                    "status": "failed",
+                    "message": f"fact {fact_id} changed concurrently; search again",
+                }
             update = await self._with_resolved_successor(parsed, stored, account_id)
             now = datetime.now(timezone.utc)
             plan = plan_fact_update(stored.fact, update, now)

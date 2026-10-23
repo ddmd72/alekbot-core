@@ -384,9 +384,9 @@ async def test_gathered_content_and_archive_on_one_fact_archive_wins_content_fai
     assert [d for d in store.docs.values() if d["lineage_id"] == lineage and d["is_current"]] == [store.docs[fid]]
 
 
-async def test_gathered_content_updates_both_apply_in_commit_order_and_one_is_current(store):
+async def test_gathered_content_updates_the_later_one_is_refused_when_a_version_landed_between_attempts(store):
     fid = await create(store)
-    embedder = SlowEmbedder(store.embedder, 0.02)
+    embedder = SlowEmbedder(store.embedder, 0.02)       # interleaving source: slow embedder on the adapter
     store.adapter._embedding = embedder
     writes = WriteOutcomes(store.repo, "write_superseding")
 
@@ -396,10 +396,39 @@ async def test_gathered_content_updates_both_apply_in_commit_order_and_one_is_cu
     )
 
     assert (first["status"], first["version"]) == ("updated", 2)
-    assert (second["status"], second["version"]) == ("updated", 3)
-    assert sorted(writes.outcomes) == ["conflict", "ok", "ok"] and embedder.calls == 2
-    assert store.docs[second["fact_id"]]["replaces_fact_id"] == first["fact_id"]
-    assert [d["id"] for d in currents(store, store.docs[fid]["lineage_id"])] == [second["fact_id"]]
+    assert second == {"fact_id": fid, "status": "failed", "message": f"fact {fid} changed concurrently; search again"}
+    assert writes.outcomes == ["ok", "conflict"] and embedder.calls == 2    # both embedded, the second lost the race
+    assert sorted(store.docs) == sorted([fid, first["fact_id"]])
+    assert store.docs[first["fact_id"]]["text"] == "mother is Mariya"
+    assert [d["id"] for d in currents(store, store.docs[fid]["lineage_id"])] == [first["fact_id"]]
+
+
+async def test_gathered_tags_updates_the_later_one_is_refused_too(store):
+    fid = await create(store)
+    store.adapter._embedding = SlowEmbedder(store.embedder, 0.02)
+
+    first, second = await asyncio.gather(
+        store.adapter.update_fact(fid, {"tags": ["relatives"]}, ACC),
+        store.adapter.update_fact(fid, {"tags": ["kin"]}, ACC),
+    )
+
+    assert first["status"] == "updated" and second["status"] == "failed" and "changed concurrently" in second["message"]
+    assert store.docs[first["fact_id"]]["tags"] == ["relatives", "consolidated"] and len(store.docs) == 2
+
+
+async def test_a_metadata_update_still_reresolves_onto_a_version_that_landed_between_attempts(store):
+    fid = await create(store)
+    store.adapter._embedding = SlowEmbedder(store.embedder, 0.02)
+
+    content, metadata = await asyncio.gather(
+        store.adapter.update_fact(fid, {"content": "mother is Mariia"}, ACC),
+        store.adapter.update_fact(fid, {"metadata": {"city": "Springfield"}}, ACC),
+    )
+
+    assert content["status"] == "updated" and metadata["status"] == "updated" and metadata["version"] == 3
+    head = store.docs[metadata["fact_id"]]
+    assert head["text"] == "mother is Mariya" and head["metadata"] == {"name": "Maria", "city": "Springfield"}
+    assert head["replaces_fact_id"] == content["fact_id"]
 
 
 class _EveryTokenEqual:
