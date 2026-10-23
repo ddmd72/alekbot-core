@@ -216,6 +216,11 @@ _ERROR_TYPE_LOG_LABEL: Dict[Type[LLMError], str] = {
 }
 
 
+class FactExpiryError(ValueError):
+    """An `expiry` a fact tool received is missing, malformed, pinned wrongly or born due. The message is the fix the
+    model reads; a ValueError, so every tool-error path already maps it to a failed call."""
+
+
 class SkillValidationError(ValueError):
     """A skill's text does not satisfy the format rules."""
 
