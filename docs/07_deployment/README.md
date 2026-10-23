@@ -1079,8 +1079,7 @@ first deploy gets a short owner check. About 15 minutes; the costs are one HTML 
 --format='value(status.traffic[0].revisionName)'`). That name is the rollback target.
 
 **Rollback.** `gcloud run services update-traffic alek-bot-dev --region=us-central1 --project=<PROJECT_ID> --to-revisions=<prev>=100`.
-It is state-safe: P9 adds no persisted field, collection or index, and a queued async payload may carry a transcript in `file_content`,
-a field the old revision already reads.
+It is state-safe: P9 adds no persisted field, collection or index.
 
 **The `:latest` trap, after a failed deploy and after a traffic rollback.** `:latest` points at the new image either way. Every
 `gcloud run services update` creates a new revision from that image, and so does every Makefile target that wraps it (warm/cold,
