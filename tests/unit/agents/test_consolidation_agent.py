@@ -630,6 +630,10 @@ class TestBuildConversationText:
 # ==============================================================================
 
 class TestPrepareStructuredConversation:
+    # Reviewer edit (facts S3, T6; plan §3.9, §6 I; owner's widened S3-D6): `_prepare_structured_conversation` takes the
+    # owner's zone, and a line's time is Smart's own stamp (`local_stamp`) in that zone instead of "Mar 15, 12:00 UTC".
+    # Every call gains the zone; the two time tests pin the new rendering exactly; the role, parts and unreadable-time
+    # assertions are unchanged.
 
     def _agent(self):
         agent, _, _, _ = _make_agent()
@@ -641,7 +645,7 @@ class TestPrepareStructuredConversation:
             {"role": "user", "text": "hello"},
             {"role": "assistant", "text": "world"},
         ]
-        result = agent._prepare_structured_conversation(msgs)
+        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
         assert result[0]["role"] == "user"
         assert result[1]["role"] == "assistant"
         assert result[0]["content"] == "hello"
@@ -649,25 +653,26 @@ class TestPrepareStructuredConversation:
     def test_parts_text_extraction(self):
         agent = self._agent()
         msgs = [{"role": "user", "parts": [{"text": "a"}, {"text": "b"}]}]
-        result = agent._prepare_structured_conversation(msgs)
+        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
         assert result[0]["content"] == "a b"
 
     def test_numeric_timestamp(self):
         agent = self._agent()
         msgs = [{"role": "user", "text": "hi", "timestamp": 1700000000.0}]
-        result = agent._prepare_structured_conversation(msgs)
+        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
         assert result[0]["timestamp"] != ""
+        assert result[0]["timestamp"] == "2023-11-14 Tue 23:13 CET"     # 22:13:20 UTC, in the owner's zone
 
     def test_iso_timestamp(self):
         agent = self._agent()
         msgs = [{"role": "user", "text": "hi", "created_at": "2026-03-15T12:00:00Z"}]
-        result = agent._prepare_structured_conversation(msgs)
-        assert "Mar 15" in result[0]["timestamp"]
+        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
+        assert result[0]["timestamp"] == "2026-03-15 Sun 13:00 CET"     # was: "Mar 15" in "Mar 15, 12:00 UTC"
 
     def test_bad_timestamp_gives_empty_string(self):
         agent = self._agent()
         msgs = [{"role": "user", "text": "hi", "timestamp": "INVALID"}]
-        result = agent._prepare_structured_conversation(msgs)
+        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
         assert result[0]["timestamp"] == ""
 
 
