@@ -4,6 +4,11 @@
 **Status:** Accepted. The per-pass stats alert (`CONSOLIDATION_STATS_ALERTS`) is temporary; the
 turn-limit alert is permanent.
 
+> **2026-10-23 — partly superseded** by `claude_deliver_response_string_tool.md`: the "no workaround in
+> our adapter" stance no longer holds for structured tool loops (schema + client tools), which end through
+> a synthesized string `deliver_response` tool. The consolidation monitoring below is unchanged; whether
+> Sonnet returns to Smart is the owner's call after deploy.
+
 ## Decision
 
 An Anthropic-side behaviour is not worked around in our adapter. With adaptive thinking in a tool
