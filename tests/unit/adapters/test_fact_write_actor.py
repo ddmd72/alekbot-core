@@ -71,7 +71,8 @@ async def test_an_in_place_state_change_carries_the_passes_actor(store, actor):
     res = await store.adapter.update_fact(fid, {"state": "invalidated"}, ACC, context=context(actor))
     assert res["status"] == "updated", res
     entry = trail(store, fid)[-1]
-    assert (entry["from"], entry["to"], entry["actor"], entry["reason"]) == ("current", "invalidated", actor, "model")
+    reason = "directive cap" if actor == "backstop" else "model"     # plan §3.8: the backstop's code-built reason (T4a review F1)
+    assert (entry["from"], entry["to"], entry["actor"], entry["reason"]) == ("current", "invalidated", actor, reason)
 
 
 async def test_no_closure_is_written_under_the_old_placeholder_actor(store):
