@@ -156,3 +156,28 @@ def test_the_abandoned_alert_lists_at_most_five_but_counts_all():
     text = s.format_abandoned_alert()
 
     assert "abandoned 7" in text and text.count("create (text") == 5
+
+
+def test_a_closing_update_after_a_refused_content_update_leaves_it_abandoned():
+    s = stats()
+    turn(s, [update("f1", content="new text")], [OUTCOME_EXPIRY])
+    turn(s, [update("f1", state="invalidated")], [OUTCOME_OK])         # retires the fact without its new text
+
+    assert s.abandoned == 1
+
+
+def test_every_closing_state_in_any_case_leaves_it_abandoned():
+    for state in ("invalidated", "ARCHIVED", " Superseded "):
+        s = stats()
+        turn(s, [update("f1", content="new text")], [OUTCOME_EXPIRY])
+        turn(s, [update("f1", state=state)], [OUTCOME_OK])
+        assert s.abandoned == 1, state
+
+
+def test_a_non_closing_update_after_a_refused_content_update_answers_it():
+    for later in (update("f1", content="new text", expiry="none"), update("f1", state="current", content="t"),
+                  update("f1", tags=["a"])):
+        s = stats()
+        turn(s, [update("f1", content="new text")], [OUTCOME_EXPIRY])
+        turn(s, [later], [OUTCOME_OK])
+        assert s.abandoned == 0, later

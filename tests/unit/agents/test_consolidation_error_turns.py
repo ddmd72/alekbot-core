@@ -258,3 +258,56 @@ async def test_a_pass_without_expiry_errors_writes_no_counter_row(store):
     await run(agent)
 
     assert agent.db.collection(EnvironmentConfig().fact_lifecycle_daily_collection).docs == {}
+
+
+# ----------------------------------------------------------------------------------------------- a pass that raises
+
+
+async def test_a_pass_that_ends_in_an_exception_still_alerts_and_counts_and_the_exception_propagates(store):
+    def script(first: str, turns: str) -> LLMResponse:
+        if turns == "1":
+            return missing_expiry()
+        raise RuntimeError("provider down")
+
+    agent = make_agent(store, script)
+    agent._alert_sink = Sink()
+    agent._stats_alerts = False
+    agent._lifecycle_counters = FirestoreFactLifecycleCounters(EvalDb(), EnvironmentConfig())
+
+    with pytest.raises(RuntimeError, match="provider down"):
+        await run(agent)
+
+    (post,) = agent._alert_sink.posts
+    assert post.startswith("🚨") and "abandoned 1" in post
+    assert await today_errors(agent) == 1
+
+
+async def test_a_closing_update_after_a_refused_content_update_is_an_abandoned_refusal(store):
+    agent = build(store, REPORT)
+    seeded = await agent._execute_fact_management_tools([create("seed", expiry=EXPIRY_NONE)], USER, ACC, write_context=ctx())
+    seed_id = json.loads(seeded[0].result_str)["fact_id"]
+    refused = ToolCall(name="update_fact", args={"fact_id": seed_id, "updates": {"content": "seed v2"}})
+    close = ToolCall(name="update_fact", args={"fact_id": seed_id, "updates": {"state": "invalidated"}})
+    agent = build(store, calls(refused), calls(close), REPORT)
+
+    with RequestContext(user_id=USER, account_id=ACC):
+        await run(agent)
+
+    (post,) = agent._alert_sink.posts
+    assert post.startswith("🚨") and f"update fact {seed_id[:8]}" in post
+    assert by_text(store, "seed")["state"] == "invalidated"
+
+
+async def test_a_valid_content_update_after_a_refused_one_is_answered(store):
+    agent = build(store, REPORT)
+    seeded = await agent._execute_fact_management_tools([create("seed", expiry=EXPIRY_NONE)], USER, ACC, write_context=ctx())
+    seed_id = json.loads(seeded[0].result_str)["fact_id"]
+    refused = ToolCall(name="update_fact", args={"fact_id": seed_id, "updates": {"content": "seed v2"}})
+    resent = ToolCall(name="update_fact", args={"fact_id": seed_id, "updates": {"content": "seed v2", "expiry": horizon(30)}})
+    agent = build(store, calls(refused), calls(resent), REPORT)
+
+    with RequestContext(user_id=USER, account_id=ACC):
+        await run(agent)
+
+    assert agent._alert_sink.posts == []
+    assert by_text(store, "seed v2")["expiry_kind"] == "horizon"

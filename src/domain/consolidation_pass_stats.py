@@ -15,7 +15,10 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Dict, List, Sequence, Tuple
 
+from .fact_lifecycle import CLOSING_STATES
+
 _WRITE_TOOLS = frozenset({"create_fact", "update_fact", "merge_facts"})
+_CLOSING_VALUES = frozenset(state.value for state in CLOSING_STATES)
 _NEW_TEXT_TOOLS = {"create_fact": "content", "merge_facts": "merged_content"}
 
 # What one tool call came to. `expiry` is a refusal of a missing or malformed `expiry`; `born_due` one of a well-formed
@@ -59,6 +62,14 @@ class _Outcome:
     key: str
     outcome: str
     size: int
+    closing: bool = False
+
+
+def _closes(name: str, args: Dict[str, Any]) -> bool:
+    """An update that moves its fact to invalidated, archived or superseded."""
+    updates = args.get("updates") if name == "update_fact" else None
+    state = updates.get("state") if isinstance(updates, dict) else None
+    return isinstance(state, str) and state.strip().lower() in _CLOSING_VALUES
 
 
 def _outcome_key(name: str, args: Dict[str, Any]) -> Tuple[str, int]:
@@ -106,7 +117,7 @@ class ConsolidationPassStats:
         failed = False
         for (name, args), outcome in zip(calls, outcomes):
             key, size = _outcome_key(name, args)
-            self._outcomes.append(_Outcome(name, key, outcome, size))
+            self._outcomes.append(_Outcome(name, key, outcome, size, _closes(name, args)))
             failed = failed or outcome != OUTCOME_OK
         if failed:
             self.error_turns += 1
@@ -122,7 +133,8 @@ class ConsolidationPassStats:
 
     def _abandoned(self) -> List[_Outcome]:
         """Refusals over a missing or malformed `expiry` that no later successful call answers: a create or merge
-        with the same text, an update of the same fact. Approximate on purpose: a retry that rewrites the text counts
+        with the same text, a non-closing update of the same fact (retiring the fact is the loss, not an answer).
+        Approximate on purpose: a retry that rewrites the text counts
         as abandoned, which errs towards an alert."""
         found = []
         for i, refused in enumerate(self._outcomes):
@@ -131,6 +143,7 @@ class ConsolidationPassStats:
             same_kind = (refused.name,) if refused.name == "update_fact" else tuple(_NEW_TEXT_TOOLS)
             resolved = any(
                 later.outcome == OUTCOME_OK and later.name in same_kind and later.key == refused.key
+                and not later.closing
                 for later in self._outcomes[i + 1:]
             )
             if not resolved:
