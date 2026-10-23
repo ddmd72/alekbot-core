@@ -157,7 +157,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     `AgentProviderStrategy.STRATEGIES`; any FAILOVER-triggering error (a Grok timeout at 420s)
     raised `BothProvidersUnavailableError` straight away. Fixed by calling
     `_set_execution_context()` in all four constructors, mirroring the pattern NotesAgent already
-    used. See `decisions/html_page_fallback_context_wiring.md`.
+    used. See `decisions/html_page_fallback_context_wiring.md` (addendum 2026-10-23: five more agents wired,
+    `ConsolidationAgent` and `TutorExtractorAgent` parked for the owner; `test_agents_set_execution_context.py` guards the class).
   - **Recitation handling is Gemini-specific.** `_call_llm_recitation_aware` retries an empty-200
     block; only `GeminiAdapter` maps `finish_reason`, so on Grok the retry never fires. Probed
     2026-08-15: xAI refuses verbatim-reproduction with `status='completed'` and refusal **text**,
