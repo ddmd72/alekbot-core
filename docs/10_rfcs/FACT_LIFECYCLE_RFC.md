@@ -55,7 +55,7 @@ Post-backfill audit: 0 violations of the flag and vector invariants. Backup: `sc
 - **The old RFC contradicts itself.** §2.2/§4.4 tie expiry to the class; §4.5 stales every fact after 30 days without
   an update, including PERMANENT ones.
 
-### 1.3 Still open: versioning does not exist
+### 1.3 Still open: versioning does not exist (closed by S2, see §9 "S2 as built")
 
 - `update_fact` overwrites the document in place (`fact_management_adapter.py:258-354`, TD-4). `version` reached 23 on
   one fact, and none of the 22 earlier texts survives. Old texts cannot be recovered; history starts at S2.
@@ -477,7 +477,7 @@ due); `reported_date` is unchanged and the event's actor is `timeout`.
   already says "S2 replaces this with a Firestore precondition write"). Without it two writers that both read the
   document while it is current fork the lineage: two current documents, one pointed to by nobody.
 - **Memory-write lease per account** in Firestore (the drive indexer's pattern: `lease_until`, transactional take and
-  release, writes stop before `lease_until − margin`), taken by consolidation (`ConsolidationService`) and by the
+  release, writes stop before `lease_until − margin` — as built, writes are bounded by the run timeout, not fenced per write; see "S2 as built" and `decisions/fact_versions_one_writer.md`), taken by consolidation (`ConsolidationService`) and by the
   review task. The loser re-enqueues itself with a delay (`enqueue_worker_task` has `delay_seconds`,
   `gcp_task_queue.py:377`; `enqueue_consolidation_task`, `:446`, gains one — not needed as built: the deferral uses `enqueue_worker_task` with a bucketed key, see D-14 in "S2 as built"). Today consolidation tasks run on a queue
   with up to 5 concurrent dispatches (`gcp_task_queue.py:129`) and the overflow and hourly sweep paths can overlap.
@@ -721,24 +721,29 @@ Deltas from the RFC text:
 - **D-15** Stricter argument checks than S1: a `reported_date` that is neither a string nor a datetime is refused (S1 ignored it), and the create path refuses empty content, non-list tags and malformed `ttl_days` or `context` before any embedding, so a legacy v2 batch with one malformed fact now fails whole. A naive date is read as UTC.
 
 Where the built code differs from the S2 plan:
-- The lease is held 16 minutes (900 s run timeout + 60 s margin). Under the lease a `processing` batch is a zombie after **60 s** (the margin), not 960 s; the sweep, which has no lease, keeps 1800 s.
+- The lease is held 16 minutes (900 s run timeout + 60 s margin). Under the lease a `processing` batch is a zombie after **60 s** (the margin), not 960 s; the sweep, which has no lease, keeps 1800 s. On both paths a zombie reset **counts the lost run** (`attempts` + 1, `failed` at 3 per round, then the sweep's bounded revivals: 12 runs in a batch's life), so a batch that kills its worker cannot loop for ever.
 - Tags are compared as a multiset: resending the stored tags in another order, or with a repeated tag, is not a content change.
 - `forward_step` takes the account (`origin_account_id`) and the hop count; the cap of 50 hops is raised inside it, and an account mismatch is checked first and names no foreign id.
-- `ConsolidationRun` has a fourth field, `unattended`: a deferral or continuation had no task queue to go to (local runs), and `$consolidate` then tells the owner to send the command again.
+- `ConsolidationRun` has more fields than the plan's three: `unattended`: a deferral or continuation had no task queue to go to (local runs), and `$consolidate` then tells the owner to send the command again.
 - The Cabinet UI shows a fixed line on a 409 ("This fact changed in the meantime; the list was reloaded.") and reloads the list. The technical message goes into the JSON body and a WARNING log, not to the screen.
 - A failing "more batches?" read after a batch answers "yes" (a spare task finds nothing and stops; a lost one would wait for the sweep). The service refuses a run timeout at or below the margin.
 - `write_superseding` refuses an empty `replaced` list and a document without its three vectors. The repository maps `Aborted`, the client's `ValueError` after five aborted commits, and any error that replaced one of them to `FactWriteConflict`.
 - `release` of the lease logs a WARNING when the document belongs to another owner; a missing document stays silent.
 - The data audit has more classes than the plan listed: `superseded_by_cycle`, `superseded_by_on_open_doc`, `lineage_open_below_highest_version` (both shapes of a lineage with a not-closed document below its head), `last_updated_not_timestamp`; and the pre-S2 count has its own class.
-- The plan's "three gathered updates of one fact: a later one may fail" is not reproducible on the test fake (all three apply there); in production a second conflict fails the call.
+- The plan's "three gathered updates of one fact: a later one may fail" is not reproducible on the test fake, and the plan's R2-M4 outcome "two content changes both apply" is **superseded**: an update with `content` or `tags` (full replacements) is refused ("changed concurrently; search again") when its second read lands on a different version than the first, so the later of two gathered content changes fails and the model must search again. Metadata, `temporal_class`, `state` and `reported_date` updates still re-resolve and apply to the newer version.
+- A forwarded update result carries `resolved_from` (the id the caller sent) and a message saying the update was applied to the current version.
 - `consolidate_cluster` (no live caller) was not given the tracker or the lease.
+- Writes are bounded by the run timeout (lease end − margin), not fenced per write; a commit in flight at cancellation may land shortly after, which the margin covers (`decisions/fact_versions_one_writer.md`).
+- After an internal error in a batch the chain of next tasks continues only when the broken batch is no longer `pending` and another batch waits; otherwise the hourly sweep retries it. `ConsolidationRun` also has `failed`, and `$consolidate` words a failed batch as "A batch failed and stays queued; it will be retried later" instead of "nothing done".
+- The Cabinet invalidate route no longer wraps the cache refresh in its own `except`: the port contract says the refresh never raises (the repository logs and swallows its failures).
+- **Open owner decision (F1 S-1).** A Cabinet delete from a page loaded before the fact was rewritten invalidates the **current version**, whose text the owner never saw (RFC D8 as written; the UI says "Fact deleted"). A proposal to answer 409 and reload when the text changed is waiting for the owner; until it is decided, the behaviour stands as written in D8.
 
 Cites in this RFC that had moved or were wrong:
 
 | RFC says | Live (2026-10-23) |
 |---|---|
 | lock `fact_management_adapter.py:219-231` | the lock is deleted; preconditions in `firestore_repo.py:562-603` |
-| merge supersede `:376-395`, create `:425-430` | one transaction, `fact_management_adapter.py:367-408` |
+| merge supersede `:376-395`, create `:425-430` | one transaction, `fact_management_adapter.py:386-427` |
 | `get_lineage` `firestore_repo.py:519-532`; latest `:534-564` | `:515-528`; `:530-539` |
 | Cabinet invalidate `firestore_repo.py:307-319` | `:316-337` |
 | tracker swap `consolidation_agent.py:748-759` | gone: the tracker is a parameter, `:789` |

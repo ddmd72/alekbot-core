@@ -281,7 +281,7 @@ more `consolidation` task with a 120 s delay and a 1800 s deadline through `enqu
 `consolidation-defer:<user>:<120 s bucket>` (Cloud Tasks name `consolidation-<sha256(key)[:32]>`), and answers 200
 without enqueueing the next batch itself. Tasks that lose in the same bucket collapse into one task. The name is never
 fixed, because Cloud Tasks keeps a name for about an hour. The sweep takes no lease: it revives `failed` batches and
-zombies older than 1800 s (under the lease the zombie threshold is 60 s). See memory map §3 step 3.
+zombies older than 1800 s (under the lease the zombie threshold is 60 s). A zombie reset counts the lost run on both paths (`attempts` + 1, `failed` at 3, then the sweep's bounded revivals), so a batch that kills its worker ends `failed` instead of looping. See memory map §3 step 3.
 
 ---
 
