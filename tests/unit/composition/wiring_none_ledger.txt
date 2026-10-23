@@ -67,7 +67,6 @@ WebSearchLightAgent._agent_execution_context  # by-design STRATEGIES["web_search
 
 # ---- known defects, owner questions open (P9 design §6)
 app.telegram_adapter.conversation_handler._channel_binding  # defect:D9 ChannelBindingService is platform-neutral (slack_adapter_factory.py:66,129) and no document says Slack-only; only telegram_adapter_factory.py lacks the parameter, so $agent on Telegram answers "not configured" (conversation_handler.py:1634); owner question Q3, becomes by-design if he rules bindings Slack-only
-FileConversionService._audio_service  # defect:D3 ServiceContainer builds FileConversionService without the audio service (service_container.py:369-375), open_file on audio is not transcribed
 EmailClassificationAgent._prompt_content_store  # defect:D2 usage content of the classifier is not captured (service_container.py:303-312, base_agent.py:211-218)
 EmailClassificationAgent._quota_service  # defect:D2 usage of the classifier is not billed (service_container.py:303-312, base_agent.py:211-218)
 EmailClassificationAgent.coordinator  # defect:D2 no coordinator injected into the classifier (service_container.py:303-312)

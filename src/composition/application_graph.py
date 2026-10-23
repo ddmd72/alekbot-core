@@ -297,6 +297,17 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     )
     overflow_callback = overflow_routing_service.route_overflow
 
+    # Audio transcription (optional — voice messages stay an honest alert without it). Built before the container: one
+    # instance serves the platform adapters and the container's FileConversionService (open_file on an audio file).
+    audio_service = None
+    if config.get("OPENAI_API_KEY"):
+        audio_service = OpenAITranscriptionAdapter(
+            api_key=config["OPENAI_API_KEY"],
+            model=os.getenv("OPENAI_TRANSCRIPTION_MODEL"),
+        )
+    else:
+        logger.info("ℹ️ Audio transcription disabled (OPENAI_API_KEY not set)")
+
     # 1. Shared service container (LLM adapters, repositories, prompt infra, session store)
     logger.info("🏭 Initializing Service Container...")
     container = ServiceContainer(
@@ -307,6 +318,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         overflow_callback=overflow_callback,
         threshold_resolver=companion_window_resolver.resolve,
         alert_webhook=_alert_webhook,
+        audio_service=audio_service,
     )
     file_service = FileUploadService(container.llm_port)
     session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
@@ -744,16 +756,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         logger.info("✅ HTML renderer (Playwright) enabled")
     else:
         logger.info("ℹ️ HTML renderer disabled (ENABLE_HTML_RENDERER not set)")
-
-    # Audio transcription (optional — voice messages stay an honest alert without it)
-    audio_service = None
-    if config.get("OPENAI_API_KEY"):
-        audio_service = OpenAITranscriptionAdapter(
-            api_key=config["OPENAI_API_KEY"],
-            model=os.getenv("OPENAI_TRANSCRIPTION_MODEL"),
-        )
-    else:
-        logger.info("ℹ️ Audio transcription disabled (OPENAI_API_KEY not set)")
 
     logger.info("🔌 Initializing Slack Adapter...")
 
