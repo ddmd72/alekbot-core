@@ -5,7 +5,7 @@ from typing import AbstractSet, Any, Dict, Final, List, Mapping, Optional, Seque
 
 from .entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType
 from .exceptions import FactExpiryError, FactResolutionError
-from .fact_expiry import EXPIRY_NONE, NOTHING_WRITTEN, Expiry
+from .fact_expiry import EXPIRY_NONE, NOTHING_WRITTEN, Expiry, as_expiry_kind
 from .local_time import local_date, local_moment, zone_or_utc
 
 LIFECYCLE_EVENTS_CAP: Final[int] = 20
@@ -111,9 +111,10 @@ def born_due(
     cleanup pass (stage 2a/2b, backstop, cluster), which cannot move `reported_date`: it is floored to now + 2 days, so
     the fact reaches review soon.
     """
-    kind, expires_at = fields.get("expiry_kind"), fields.get("expires_at")
+    kind, expires_at = as_expiry_kind(fields.get("expiry_kind")), fields.get("expires_at")
     if kind not in (ExpiryKind.DATE, ExpiryKind.HORIZON) or expires_at is None:
         return dict(fields), None
+    now = local_moment(now, "UTC")
     expires = local_moment(expires_at, "UTC")
     if expires > now + _DAY:
         return dict(fields), None
@@ -143,8 +144,10 @@ def _date_refusal(expires: datetime, reported_date: datetime, now: datetime, tim
             "candidate if it no longer matters, or rewrite the fact as what happened (past tense, the outcome if "
             f"known) with {{kind: none}}. {NOTHING_WRITTEN}"
         )
+    # A date after today can land here only on a 23-hour DST day, in its last hour.
+    plan = "a plan for today is not over yet" if last_day == today else f"a plan ending {last_day.isoformat()} is too close"
     return FactExpiryError(
-        "a plan for today is not over yet: give a short horizon of at least "
+        f"{plan}: give a short horizon of at least "
         f"{_min_horizon_days(reported_date, now)} days so it is reviewed after it happened. {NOTHING_WRITTEN}"
     )
 
@@ -156,7 +159,7 @@ def _min_horizon_days(reported_date: datetime, now: datetime) -> int:
 
 def expiry_pinned(domain: Optional[FactDomain], type: FactType, tags: Sequence[str]) -> bool:
     """Directives, principles and mindset facts take `none` only: their lifecycle stays with Stage 2b."""
-    return domain is FactDomain.AGENT_DIRECTIVE or type is FactType.PRINCIPLE or "mindset" in {t.lower() for t in tags}
+    return domain == FactDomain.AGENT_DIRECTIVE or type == FactType.PRINCIPLE or "mindset" in {t.lower() for t in tags}
 
 
 def check_pin(expiry: Optional[Expiry], pinned: bool) -> Expiry:
