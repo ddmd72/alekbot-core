@@ -23,7 +23,6 @@ src.ports.long_turn_registry  # ABC; its Firestore implementation is the thing t
 src.services.google_oauth_service  # incremental Google OAuth; used by the oauth and cabinet apps
 src.utils.logging_context  # trace/session ContextVars; used by logger and handlers
 src.utils.timer  # log_execution_time decorator
-src.agents.domain_researcher_agent  # agent in the manifest; no test imports it by name
 src.handlers.deep_research_delivery  # 7-line backward-compatible re-export of services.deep_research_delivery
 #
 # Dead code candidates: no importer in src/ either (verified by grep on 2026-10-22). Delete the module or test it.

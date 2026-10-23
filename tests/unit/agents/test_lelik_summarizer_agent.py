@@ -4,8 +4,10 @@ import pytest
 
 from src.agents.lelik_summarizer_agent import LelikSummarizerAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
+from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.domain.companion_extraction import EXTRACTION_TASK
-from src.ports.llm_port import LLMPort
+from src.domain.user import PerformanceTier
+from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.ports.prompt_builder_port import PromptBuilderPort
 
 _SUMMARY_TEXT = "Discussed the Q3 budget with Ivan."
@@ -32,7 +34,11 @@ def mock_prompt_builder():
 def agent(mock_llm, mock_prompt_builder):
     config = AgentConfig(agent_id="lelik_summarizer_test", agent_type="lelik_summarizer",
                          timeout_ms=60000, capabilities=["lelik_summarizer"])
-    ctx = MagicMock(provider=mock_llm, model_name="claude-sonnet-5")
+    # A real context (closed breaker, no fallback): LelikSummarizerAgent hands it to _call_llm since P9 D8.
+    ctx = AgentExecutionContext(
+        agent_type="lelik_summarizer", provider=mock_llm, model_name="claude-sonnet-5", tier=PerformanceTier.BALANCED,
+        capabilities=ProviderCapabilities(), provider_name="claude", resilience_port=InMemoryProviderResilience(),
+    )
     return LelikSummarizerAgent(config=config, execution_context=ctx, prompt_builder=mock_prompt_builder)
 
 
