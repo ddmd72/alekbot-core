@@ -430,3 +430,31 @@ class TestResolveFileRefs:
         await coord._resolve_file_refs(params, "user1")
 
         resolver.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_execution_mode()
+# ---------------------------------------------------------------------------
+
+class TestGetExecutionMode:
+
+    @staticmethod
+    def _real_registry():
+        registry = AgentRegistry()
+        registry.register(AgentDescriptor(
+            agent_id="memory_agent",
+            capabilities={"search_memory": ExecutionMode.SYNC, "fire": ExecutionMode.ASYNC},
+        ))
+        return registry
+
+    def test_returns_the_registrys_mode(self):
+        coord = AgentCoordinator(registry=self._real_registry())
+        assert coord.get_execution_mode("search_memory") == ExecutionMode.SYNC
+        assert coord.get_execution_mode("fire") == ExecutionMode.ASYNC
+
+    def test_unknown_intent_is_none(self):
+        coord = AgentCoordinator(registry=self._real_registry())
+        assert coord.get_execution_mode("nope") is None
+
+    def test_no_registry_is_none(self):
+        assert AgentCoordinator(registry=None).get_execution_mode("search_memory") is None
