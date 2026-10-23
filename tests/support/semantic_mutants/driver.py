@@ -2,10 +2,12 @@
 
     python -m tests.support.semantic_mutants --module src.adapters.firestore_repo \\
         --tests tests/unit/adapters/test_fact_store_roundtrip.py [more test paths or node ids]
-        [--equivalent FILE]  [--cwd DIR]
+        [--equivalent FILE]  [--cwd DIR]  [--operators default|wiring]
 
 --equivalent FILE  mutants a reviewer ruled equivalent, one `key  # reason` per line (the 8-hex key the report prints;
                    keys survive unrelated edits, numbers do not). The tool never rules a mutant equivalent itself.
+--operators SET    `default` (the data-access operators) or `wiring` (wire-drop, call-skip: for a composition root,
+                   any module incl. the root module `main`); the sets never mix.
 --cwd DIR          directory of the child runs (default: the repository root); the self-tests use it for a toy module.
 
 Per mutant: killed (the selected tests failed or the run hung), survived (they passed: the tests do not notice the
@@ -26,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .operators import Mutant, enumerate_mutants
+from .operators import DEFAULT_OPERATORS, OPERATOR_SETS, Mutant, enumerate_mutants
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PLUGIN = "tests.support.semantic_mutants.activate"
@@ -67,7 +69,7 @@ def _child_env(cwd: Path, extra: Dict[str, str]) -> Dict[str, str]:
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), str(cwd), env.get("PYTHONPATH", "")]))
     # a mutant run is not coverage data: the outer run's subprocess-coverage switches must not reach it
     for name in ("SEMANTIC_MUTANT_MODULE", "SEMANTIC_MUTANT_NUMBER", "SEMANTIC_MUTANT_REPORT",
-                 "COVERAGE_PROCESS_CONFIG", "COVERAGE_PROCESS_START"):
+                 "SEMANTIC_MUTANT_OPERATORS", "COVERAGE_PROCESS_CONFIG", "COVERAGE_PROCESS_START"):
         env.pop(name, None)
     env.setdefault("RUN_SLOW_TESTS", "1")  # a slow-marked test in --tests must run in the child, else false survivors
     env.update(extra)
@@ -81,12 +83,13 @@ def run_pytest(tests: List[str], cwd: Path, env_extra: Dict[str, str], timeout: 
     )
 
 
-def run_mutant(mutant: Mutant, module: str, tests: List[str], cwd: Path) -> Outcome:
+def run_mutant(mutant: Mutant, module: str, tests: List[str], cwd: Path, operators: str = DEFAULT_OPERATORS) -> Outcome:
     with tempfile.TemporaryDirectory() as tmp:
         report = Path(tmp) / "report.json"
         extra = {
             "SEMANTIC_MUTANT_MODULE": module,
             "SEMANTIC_MUTANT_NUMBER": str(mutant.number),
+            "SEMANTIC_MUTANT_OPERATORS": operators,
             "SEMANTIC_MUTANT_REPORT": str(report),
         }
         try:
@@ -115,12 +118,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--module", required=True, help="dotted module to mutate, e.g. src.adapters.firestore_repo")
     ap.add_argument("--tests", nargs="+", required=True, help="pytest paths / node ids that must kill every mutant")
     ap.add_argument("--equivalent", help="file of `key  # reason` lines: mutants a reviewer ruled equivalent")
+    ap.add_argument("--operators", choices=OPERATOR_SETS, default=DEFAULT_OPERATORS, help="operator set (default: the data-access operators)")
     ap.add_argument("--cwd", default=str(REPO_ROOT))
     args = ap.parse_args(argv)
 
     cwd = Path(args.cwd).resolve()
     source_file = module_path(args.module, cwd)
-    mutants = enumerate_mutants(source_file.read_text(encoding="utf-8"))
+    mutants = enumerate_mutants(source_file.read_text(encoding="utf-8"), args.operators)
     equivalent = read_equivalent(args.equivalent)
     print(f"semantic mutants of {args.module}: {len(mutants)}")
 
@@ -132,7 +136,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     outcomes: List[Outcome] = []
     for m in mutants:
-        o = Outcome(m, "equivalent", equivalent[m.key]) if m.key in equivalent else run_mutant(m, args.module, args.tests, cwd)
+        o = Outcome(m, "equivalent", equivalent[m.key]) if m.key in equivalent else run_mutant(m, args.module, args.tests, cwd, args.operators)
         outcomes.append(o)
         print(format_outcome(o) + (f"  ({o.detail})" if o.status == "equivalent" else ""), flush=True)
 
