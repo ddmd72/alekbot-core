@@ -26,7 +26,7 @@ from ..domain.turn_clock import CURRENT_TURN_CLOCK, WRAP_UP_NOTE, render_chat_si
 from ..utils.logger import logger
 from ..utils.telemetry import start_span
 
-from .agent_registry import FanoutSpec
+from .agent_registry import ExecutionMode, FanoutSpec
 
 if TYPE_CHECKING:
     from .agent_coordinator import AgentCoordinator
@@ -59,7 +59,11 @@ LocalToolHandler = Callable[[ToolCall], Awaitable[ToolResult]]
 
 @dataclass
 class DelegationResult:
-    """Complete result from the delegation loop."""
+    """Complete result from the delegation loop.
+
+    `text` is the model's final text. On a terminal return it is any text the model wrote
+    beside the terminal call; the agent uses it only when the terminal answer is empty.
+    """
     text: str
     total_tokens: int
     terminal_tool_args: Optional[Dict[str, Any]] = None
@@ -340,6 +344,9 @@ class DelegationEngine:
                         tc for tc in response.tool_calls if tc.name != terminal_tool
                     ]
                     if siblings:
+                        self._warn_sync_siblings(
+                            siblings, remap, terminal_tool, turn + 1, calling_agent_id,
+                        )
                         logger.info(
                             "🔄 [DelegationEngine] Turn %s — dispatching %s co-emitted "
                             "call(s) before returning: %s",
@@ -369,7 +376,7 @@ class DelegationEngine:
                             accumulated_structured,
                         )
                     return DelegationResult(
-                        text="",
+                        text=response.text or "",
                         total_tokens=total_tokens,
                         terminal_tool_args=terminal_call.args or {},
                         delivery_items=all_delivery_items,
@@ -488,6 +495,39 @@ class DelegationEngine:
         clock.seen_until = max(m.created_at for m in fresh)
         _append_user_note(history, render_chat_since(fresh))
 
+    def _warn_sync_siblings(self, siblings, remap, terminal_tool, turn, calling_agent_id) -> None:
+        """Log (never act) when a SYNC delegation is co-emitted with the terminal tool.
+
+        The terminal answer is already written, so a SYNC sibling's result is never read.
+        Dispatch is unchanged (terminal_tool_co_emitted_calls.md); this is a log only.
+        """
+        try:
+            sync_intents = []
+            for tc in siblings:
+                if tc.name != DELEGATE_TOOL_NAME:
+                    continue
+                intent = (tc.args or {}).get("intent")
+                if not intent:
+                    continue
+                mode = self._coordinator.get_execution_mode(remap.get(intent, intent))
+                if isinstance(mode, ExecutionMode) and mode == ExecutionMode.SYNC:
+                    sync_intents.append(remap.get(intent, intent))
+        except Exception as exc:  # a log-only lookup must never break the turn
+            logger.warning(
+                "⚠️ [DelegationEngine] terminal_sync_sibling lookup failed: %s", exc,
+            )
+            return
+        if sync_intents:
+            logger.warning(
+                "terminal_sync_sibling turn=%s terminal=%s intents=%s caller=%s",
+                turn, terminal_tool, sync_intents, calling_agent_id,
+                extra={
+                    "event": "terminal_sync_sibling",
+                    "intents": sync_intents,
+                    "calling_agent_id": calling_agent_id,
+                },
+            )
+
     @staticmethod
     def _wrap_up_result(response, terminal_tool, total_tokens, delivery_items,
                         contexts, structured, history) -> DelegationResult:
@@ -507,7 +547,7 @@ class DelegationEngine:
                     "⚠️ [DelegationEngine] wrap-up: %s co-emitted with %s not dispatched",
                     dropped, terminal_tool,
                 )
-            return DelegationResult(text="", total_tokens=total_tokens,
+            return DelegationResult(text=response.text or "", total_tokens=total_tokens,
                                     terminal_tool_args=terminal_call.args or {},
                                     delivery_items=delivery_items,
                                     history_contexts=contexts or None,
