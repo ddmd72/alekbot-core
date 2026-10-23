@@ -1086,26 +1086,38 @@ deploy from `main` after the merge must follow this procedure, whoever runs it.
    and the new revision must never consolidate at the same time. **The pause holds every task on that queue**, not only
    consolidation: Telegram chat (`telegram_update`, so a Telegram `$consolidate` is held too), reminders, async agent runs
    and errands (`tell_alek`), deep-research delivery and daily reviews all wait; nothing is lost, and they run after the
-   resume. Keep the window short (one run is about 16 minutes plus the switch). Slack chat runs on its own queue
+   resume. Keep the window short (one run is up to about 16 minutes, plus the build and the switch of step 5). Slack chat runs on its own queue
    (`alek-bot-tasks-dev`) and keeps going, so **a Slack `$consolidate` is the one thing that can still start a run
    outside the pause: send none from here until step 6**.
-3. **Drain. This is mandatory, not advice.** "Nothing processing" means: in `{prefix}consolidation_queue` there is no
-   document with `status == processing` whose `processing_started_at` (epoch seconds) lies within the last 16 minutes.
+3. **Drain. This is mandatory, not advice.** A batch is finished when its own `✅ [Librarian] Batch <id> … DELETED` or
+   `⚠️ … failed` line appears, or when its `processing_started_at` (epoch seconds, in `{prefix}consolidation_queue`) is
+   older than the bound below. "Nothing processing" means no document with `status == processing` that is still inside
+   the bound. The bound depends on which revision is draining:
+   - **Switching to S2 (draining the old revision): 16 minutes after the stamp.** The old agent class has the default
+     retry policy (up to 3 whole-run retries after a provider 429/503, each with its own 900 s timeout, while the stamp is
+     written once: main `base_agent.py:184`, `retry_policy.py:34-65`, `base_agent.py:599-601`). It cannot fire for
+     consolidation, because `ConsolidationAgent.execute` catches every exception and returns a failure response
+     (main `consolidation_agent.py:266-271`), so a provider error never reaches the retry loop and a run ends within its 900 s
+     timeout. **If the old revision's log nevertheless shows `transient error, retrying` for the consolidation agent, treat
+     that batch as in flight for 60 minutes (4 × 15) or until its own DELETED / failed line appears.**
+   - **Rolling back (draining the new revision): 16 minutes**, the lease length; the new code does not retry a run.
    An older `processing` batch is a dead run, not work in flight (the new revision resets it as a zombie after 60 s, the
    hourly sweep after 30 minutes): do not wait for it. Check twice, at least a minute apart, because a request dispatched
    just before the pause can sit in its pre-mark phase for seconds; make the second check right before the switch.
-   Use the Firestore console (the filter above); `python -m scripts.validation.inspect_consolidation` lists the last
-   ten batches with their status but not their start time. **The audit cutoff** is the time the last old-revision
-   consolidation request ended: the last `✅ [Librarian] Batch … DELETED` or `⚠️ … failed` line of the old revision in
-   `make fetch-logs`, or the time of the second check when none appears. Under the lease a `processing` batch older
-   than 60 s is a zombie, so a batch still running on the old revision would be reset and run a second time by the
-   new one: that is why the drain is not optional.
+   Use the Firestore console; `python -m scripts.validation.inspect_consolidation` lists the last ten batches with their
+   status but not their start time. **The audit cutoff** is the time the last old-revision consolidation request ended:
+   the last `DELETED` or `failed` line of the old revision. Read it with `make fetch-logs K=<enough>` run **before** the
+   switch, with a K that reaches back past the whole drain (the default 300 lines may not, and both revisions' lines
+   are mixed after the switch); with no such line, use the time of the second check. Under the lease a `processing` batch
+   older than 60 s is a zombie, so a batch still running on the old revision would be reset and run a second time by
+   the new one: that is why the drain is not optional.
 4. **Upload the S3 prompt tokens** (when S3 exists; RFC §7.1, `firestore_utils/snapshot_upload.py`), between the drain
    and the switch. The static template is cached for 24 hours per instance, and the live tokens still tell the model to
    retire a split fact with `SUPERSEDED` alone, which S2 refuses. Tokens uploaded first are harmless to the old
    revision (it ignores an unknown `superseded_by`); tokens uploaded after the new revision's first run leave S2 running
    on the old prompts for up to a day.
-5. **Switch traffic** to the new revision (the normal deploy).
+5. **Switch traffic** to the new revision (the normal deploy). The deploy builds the image inside the paused window, so
+   Telegram, reminders and async runs wait for the build as well; build during a quiet hour, or accept the longer pause.
 6. **Resume the queue:**
    `gcloud tasks queues resume agent-tasks-dev --location=us-central1 --project=<PROJECT_ID>`.
 7. **Audit after the first day:** `python -m scripts.data_audit.run facts --s2-cutoff <time from step 3>`; require
@@ -1113,21 +1125,25 @@ deploy from `main` after the merge must follow this procedure, whoever runs it.
    `superseded_without_successor_pre_s2` stays at 442). A later cutoff hides real post-S2 violations, an earlier one
    reports the old revision's closes as violations.
 
-**Rollback.** The same procedure: pause, drain, roll back, resume. It is data-safe for S2's own fields; the old code
-ignores `superseded_by` and the lease documents, and the lease documents and any queued deferral tasks (a plain
-`consolidation` task) stay and are harmless to it. **Reading the audit afterwards (and after the roll-forward):** the
-old revision writes as it was designed, so documents dated inside the rollback window show three expected classes, and
-the memory map §9.6 says which and how to repair them:
+**Rollback.** The same procedure: pause, drain, roll back, resume. "Roll back" is: route 100 % of the Cloud Run traffic to
+the previous revision (in the console or with the traffic-update command you already use); the old image is not rebuilt.
+The drain in this direction drains the **new** revision, with the 16-minute rule of step 3. It is data-safe for S2's own
+fields; the old code ignores `superseded_by` and the lease documents, and the lease documents and any queued deferral
+tasks (a plain `consolidation` task) stay and are harmless to it. **Reading the audit afterwards (and after the
+roll-forward):** the old revision writes as it was designed, so documents dated inside the rollback window show three
+expected classes, and the memory map §9.6 says which and how to repair them:
 - `superseded_without_successor` (old merges and old `SUPERSEDED`-only updates close without `superseded_by`);
 - `replaces_version_mismatch` (an old in-place edit of an S2 version document bumped its `version`: a text was lost);
 - `lineage_multiple_current` with `superseded_by_on_open_doc` and `lineage_open_below_highest_version` (an old-revision
-  Cabinet delete from a stale page hit the closed document; the owner's delete did not apply, the current version is
-  still shown, delete it again in the Cabinet).
+  Cabinet delete from a stale page hit the closed document; the owner's delete did not apply and the current version is
+  still shown: reload and delete it again from the list. That does not clear `lineage_multiple_current`; set the closed
+  document's `is_current` to false by hand).
 
-Re-run the audit with the **end of the roll-forward drain** as `--s2-cutoff`; whatever else shows is real. With S3 in the
-bundle, every document the old revision updates also loses the S3 fields (`expiry_kind`, `stale_since`,
-`lifecycle_events`), because the old code writes a full `set()` of the old model; those documents need the re-classify
-step after the roll-forward.
+Re-run the audit with the **end of the roll-forward drain** as `--s2-cutoff`. **The cutoff moves only
+`superseded_without_successor`.** The other classes stay listed: match their ids against documents last written inside
+the rollback window; those are the expected ones, any other is real. With S3 in the bundle, every document the old
+revision updates also loses the S3 fields (`expiry_kind`, `stale_since`, `lifecycle_events`), because the old code writes
+a full `set()` of the old model; those documents need the re-classify step after the roll-forward.
 
 **Live data (read 2026-10-23).** 1112 fact documents: current 563, superseded 442, archived 53, invalidated 52, stale 2.
 All 442 superseded documents lack `superseded_by` (a stale Cabinet id that reaches one gets "successor unknown"), every
