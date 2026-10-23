@@ -44,12 +44,30 @@ class FactLifecycleSweepService:
         self._clock = clock
 
     async def sweep(self) -> Dict[str, Any]:
-        """Run the janitor once. Returns the totals; any store error other than a write conflict fails the run."""
+        """Run the janitor once. Returns the totals.
+
+        Any failure other than a write conflict (a query, a counters read or write, a stale write) stops the run: it is
+        logged with its type and the stage reached, one 🚨 goes to the sink (best effort), and the error is re-raised.
+        `breaker_tripped` counts `would trip` accounts in log-only mode too; `dry_run` is in the same dict.
+        """
+        progress: Dict[str, str] = {"stage": "start", "account": ""}
+        try:
+            return await self._run(progress)
+        except Exception as error:
+            where = progress["stage"] + (f" of account {progress['account'][:8]}" if progress["account"] else "")
+            logger.error(f"[FactLifecycle] the run failed ({type(error).__name__}) at {where}", exc_info=True)
+            await self._post(f"🚨 Fact lifecycle run failed ({type(error).__name__}) at {where}. Nothing after it ran.")
+            raise
+
+    async def _run(self, progress: Dict[str, str]) -> Dict[str, Any]:
         now = as_utc(self._clock())
         day = now.date()
+        progress["stage"] = "the due query"
         due_by_account = _group(await self._repo.find_due_facts(now))
+        progress["stage"] = "the stale backlog query"
         backlog = await self._repo.stale_backlog()
         accounts = sorted(set(due_by_account) | set(backlog))
+        progress["stage"] = "the counters read"
         yesterday = {row.account_id: row for row in await self._counters.for_day(day - timedelta(days=1))}
         today = {row.account_id: row for row in await self._counters.for_day(day)}
         previous_runs = _previous_run_times(today, yesterday)
@@ -58,6 +76,7 @@ class FactLifecycleSweepService:
                   "breaker_tripped": 0}
         rows: List[FactLifecycleDay] = []
         for account_id in accounts:
+            progress["stage"], progress["account"] = "the account sweep", account_id
             snapshot = await self._sweep_account(
                 account_id, day, now, due_by_account.get(account_id, []), backlog.get(account_id, (0, None)),
                 previous_runs.get(account_id),
@@ -71,6 +90,7 @@ class FactLifecycleSweepService:
             totals["conflicts"] += snapshot["stale_conflicts"]
             totals["no_decision"] += snapshot["no_decision"]
             totals["breaker_tripped"] += int(snapshot["breaker"] != _BREAKER_OK)
+        progress["stage"], progress["account"] = "the ops line", ""
         seen = set(accounts)
         rows.extend(
             FactLifecycleDay(account_id=row.account_id, day=day, expiry_tool_errors=row.expiry_tool_errors)
@@ -99,7 +119,7 @@ class FactLifecycleSweepService:
         elif reason is None:
             staled, conflicts = await self._stale(account_id, now, decided)
         else:
-            await self._alert_breaker(account_id, reason, len(decided))
+            await self._hold_back(account_id, reason, len(decided))
 
         breaker = _BREAKER_OK if reason is None else (_BREAKER_WOULD_TRIP if self._dry_run else _BREAKER_TRIPPED)
         snapshot: Dict[str, Any] = {
@@ -145,12 +165,14 @@ class FactLifecycleSweepService:
                 await self._repo.refresh_biographical_context_cache(account_id)     # a staled fact leaves every prompt (D5)
         return staled, conflicts
 
-    async def _alert_breaker(self, account_id: str, reason: str, due: int) -> None:
-        logger.warning(f"[FactLifecycle] breaker tripped for account {account_id[:8]}: {reason}; {due} due facts not staled")
-        await self._post(
-            f"🚨 Fact lifecycle breaker tripped for account {account_id[:8]}: {reason}. "
-            f"{due} due facts were not staled."
-        )
+    async def _hold_back(self, account_id: str, reason: str, held: int) -> None:
+        """The breaker is tripped in write mode: log it; alert only when a due fact with a decision was actually held back
+        (the snapshot and the ops line report a tripped breaker either way)."""
+        logger.warning(f"[FactLifecycle] breaker tripped for account {account_id[:8]}: {reason}; {held} due facts not staled")
+        if held:
+            await self._post(
+                f"🚨 Fact lifecycle breaker tripped for account {account_id[:8]}: {reason}. {held} due facts were not staled."
+            )
 
     async def _post_line(self, now: datetime, day: date, rows: List[FactLifecycleDay]) -> None:
         """Post the day's line after the run, once a day. The day is claimed before the post: a failed post loses the
