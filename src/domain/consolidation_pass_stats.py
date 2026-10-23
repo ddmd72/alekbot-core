@@ -13,7 +13,7 @@ import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 _WRITE_TOOLS = frozenset({"create_fact", "update_fact", "merge_facts"})
 _NEW_TEXT_TOOLS = {"create_fact": "content", "merge_facts": "merged_content"}
