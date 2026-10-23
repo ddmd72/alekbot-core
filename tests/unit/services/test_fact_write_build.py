@@ -11,16 +11,18 @@ from tests.support.firestore_eval import stored_vector
 
 
 class CountingEmbedder(EmbeddingService):
-    def __init__(self, none_for=None):
+    def __init__(self, none_for=None, count=None):
         self.calls = []
         self.none_for = none_for
+        self.count = count
 
     async def get_embedding(self, text, task_type="RETRIEVAL_DOCUMENT"):
         return embed(text)
 
     async def get_embeddings_batch(self, texts, task_type="RETRIEVAL_DOCUMENT"):
         self.calls.append(list(texts))
-        return [None if self.none_for == t else embed(t) for t in texts]
+        vectors = [None if self.none_for == t else embed(t) for t in texts]
+        return vectors if self.count is None else (vectors + [embed('extra')] * self.count)[:self.count]
 
 
 @pytest.fixture
@@ -68,6 +70,15 @@ async def test_build_facts_refuses_an_entity_without_a_vector(store):
     with pytest.raises(RuntimeError):
         await store.write.build_facts(ACC, USER, [parse_new_fact({"text": "no vector for me"})])
     assert store.docs == {}
+
+
+@pytest.mark.parametrize("count", [0, 2, 4])
+async def test_build_facts_refuses_a_vector_count_other_than_three_and_writes_nothing(store, count):
+    embedder = CountingEmbedder(count=count)
+    store.write._embedding = embedder
+    with pytest.raises(RuntimeError):
+        await store.write.add_facts_batch(ACC, USER, [{"text": "a fact"}], skip_deduplication=True)
+    assert len(embedder.calls) == 1 and store.docs == {}
 
 
 @pytest.mark.parametrize("bad", [
