@@ -5,6 +5,7 @@ Mock boundary: LLMPort, FactRepository, FactWritePort, FactManagementPort, Promp
 """
 
 import json
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1093,6 +1094,10 @@ class TestHandleConsolidateFullDirect:
 
 class TestFormatEmailCandidates:
     """_format_email_candidates static method."""
+    # Reviewer edit (facts S3, T6 re-review; plan §3.9 one calendar, review F1 as arbitrated): the candidate's `date` is
+    # the email's moment in the owner's zone with its offset, so the formatter takes the zone and reads a real datetime
+    # (a naive stored date is UTC). The stubbed `strftime` dates become real naive-UTC datetimes; the date form is
+    # pinned exactly in test_basic_formatting; every other assertion is unchanged.
 
     def test_basic_formatting(self):
         email = MagicMock()
@@ -1100,18 +1105,18 @@ class TestFormatEmailCandidates:
         email.text = "user bought a laptop"
         email.category = "PURCHASE"
         email.tags = ["purchase", "tech"]
-        email.email_date = MagicMock()
-        email.email_date.strftime = MagicMock(return_value="2026-03-01")
+        email.email_date = datetime(2026, 3, 1, 9, 0)                  # naive = UTC
         email.from_address = "shop@store.com"
         email.subject = "Your order #123"
         email.attachments = []
         email.metadata = {}
 
-        result = ConsolidationAgent._format_email_candidates([email])
+        result = ConsolidationAgent._format_email_candidates([email], "Europe/Paris")
 
         assert "em-abc" in result
         assert "user bought a laptop" in result
         assert "2026-03-01" in result
+        assert '"date": "2026-03-01T10:00:00+01:00"' in result          # 09:00 UTC in the owner's zone, with its offset
         assert "shop@store.com" in result
         assert "Your order #123" in result
         assert result.startswith("1. ")
@@ -1122,14 +1127,13 @@ class TestFormatEmailCandidates:
         email.text = "invoice attached"
         email.category = "INVOICE"
         email.tags = []
-        email.email_date = MagicMock()
-        email.email_date.strftime = MagicMock(return_value="2026-01-15")
+        email.email_date = datetime(2026, 1, 15, 9, 0)
         email.from_address = "billing@acme.com"
         email.subject = "Invoice Q1"
         email.attachments = ["invoice.pdf"]
         email.metadata = {}
 
-        result = ConsolidationAgent._format_email_candidates([email])
+        result = ConsolidationAgent._format_email_candidates([email], "Europe/Paris")
         assert "invoice.pdf" in result
 
     def test_multiple_emails_numbered(self):
@@ -1140,15 +1144,14 @@ class TestFormatEmailCandidates:
             e.text = f"fact {i}"
             e.category = "INFO"
             e.tags = []
-            e.email_date = MagicMock()
-            e.email_date.strftime = MagicMock(return_value="2026-01-01")
+            e.email_date = datetime(2026, 1, 1, 9, 0)
             e.from_address = "x@y.com"
             e.subject = f"Subject {i}"
             e.attachments = []
             e.metadata = {}
             emails.append(e)
 
-        result = ConsolidationAgent._format_email_candidates(emails)
+        result = ConsolidationAgent._format_email_candidates(emails, "Europe/Paris")
         assert "1. " in result
         assert "2. " in result
         assert "3. " in result
@@ -1512,6 +1515,8 @@ class TestGetAlternativeAgents:
 
 class TestFormatEmailCandidatesMetadata:
     """_format_email_candidates includes metadata when truthy."""
+    # Reviewer edit (facts S3, T6 re-review, review F1): the formatter takes the owner's zone and a real datetime; the
+    # metadata assertions are unchanged.
 
     def test_metadata_included_when_present(self):
         email = MagicMock()
@@ -1519,14 +1524,13 @@ class TestFormatEmailCandidatesMetadata:
         email.text = "subscription renewed"
         email.category = "SUBSCRIPTION"
         email.tags = ["subscription"]
-        email.email_date = MagicMock()
-        email.email_date.strftime = MagicMock(return_value="2026-03-15")
+        email.email_date = datetime(2026, 3, 15, 9, 0)
         email.from_address = "billing@service.com"
         email.subject = "Renewal notice"
         email.attachments = []
         email.metadata = {"amount": 9.99, "currency": "USD"}
 
-        result = ConsolidationAgent._format_email_candidates([email])
+        result = ConsolidationAgent._format_email_candidates([email], "Europe/Paris")
 
         assert "amount" in result
         assert "9.99" in result
