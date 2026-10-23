@@ -20,6 +20,11 @@ Usage:
     python scripts/consolidation/test_cluster_audit_dryrun.py
     python scripts/consolidation/test_cluster_audit_dryrun.py --limit 30 --batch-size 5 --min-words 40
     python scripts/consolidation/test_cluster_audit_dryrun.py --user-id <uid> --account-id <aid>
+    python scripts/consolidation/test_cluster_audit_dryrun.py --s3-kit --limit 20 --batch-size 5
+
+`--s3-kit` (Facts S3, plan T12b) runs each batch as a real `consolidate_cluster` pass (pass label and actor `cluster`) on
+the dry-run kit: the cluster is built from the batch and its search results and sent explicitly, the writes go to the kit's
+no-write store, and a report lands in `scripts/memory/`. Without the flag the bench behaves as it always did.
 
 Pre-conditions:
     .env must have: DEV_USER_ID, DEV_ACCOUNT_ID, FIRESTORE_DATABASE, GEMINI_API_KEY
@@ -40,14 +45,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 from google.cloud import firestore
 
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
+from src.agents.consolidation_agent import ConsolidationAgent
 from src.composition.service_container import ServiceContainer
 from src.config.settings import load_settings
 from src.domain.agent import AgentIntent, AgentMessage
@@ -56,6 +58,19 @@ from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.domain.fact_write_context import FactWriteContext
 from src.ports.fact_management_port import FactManagementPort
 from src.composition.user_agent_factory import UserAgentFactory
+
+from scripts.consolidation.s3_bench_support import (
+    add_s3_arguments,
+    biographical_facts,
+    build_agent,
+    chunks as batches_of,
+    cluster_from_search,
+    execute,
+    kit_message,
+    kit_session,
+    load_env,
+    print_rows,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -246,6 +261,67 @@ def print_batch_summary(batch_idx: int, reasoning: List[Dict], ops: List[Dict], 
     print("  ".join(f"{a}:{counts.get(a, 0)}" for a in ["CREATE", "UPDATE", "MERGE", "DISCARD"]))
     for r in reasoning:
         print(f"    [{r['action']}] {r['reason'][:120]}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# S3 kit mode: each batch is a real `consolidate_cluster` pass
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def fetch_long_facts_entities(repository, account_id: str, min_words: int, limit: int) -> List[Any]:
+    """The stored facts longer than `min_words`, longest first (entities, so a cluster entry shows their decision)."""
+    facts = await repository.get_active_facts(account_id)
+    long_facts = sorted(
+        (f for f in facts if len(f.text.split()) > min_words), key=lambda f: len(f.text.split()), reverse=True
+    )
+    print(f"Fetched {len(facts)} current facts; {len(long_facts)} with >{min_words} words → processing top {min(limit, len(long_facts))}")
+    return long_facts[:limit]
+
+
+def build_cluster_audit_message(
+    kit, cluster: List[Dict[str, Any]], bio_facts: List[Dict], user_id: str, account_id: str, batch_idx: int = 0
+):
+    """The S3 bench's message: a `consolidate_cluster` pass over an explicit cluster (pass label and actor `cluster`)."""
+    return kit_message(
+        kit, sender="cluster_audit_script", user_id=user_id, account_id=account_id, task="consolidate_cluster",
+        payload={"cluster": cluster, "biographical_context": bio_facts}, session_id=f"cluster_audit_batch{batch_idx}",
+    )
+
+
+async def build_batch_cluster(
+    agent, batch: List[Any], timezone: str, user_id: str, account_id: str
+) -> List[Dict[str, Any]]:
+    """The batch's own entries, then what the knowledge-base search finds for each of the batch's facts."""
+    seeds = [ConsolidationAgent._cluster_entry(fact, timezone) for fact in batch]
+    return await cluster_from_search(
+        agent._fact_management.search_existing_facts, [f.text for f in batch], seeds, timezone,
+        user_id=user_id, account_id=account_id,
+    )
+
+
+async def main_s3_kit(limit: int, batch_size: int, min_words: int, args) -> None:
+    print(f"\n{'='*65}\nCLUSTER QUALITY AUDIT ON THE S3 KIT (consolidate_cluster passes)\n{'='*65}")
+    print(f"  Min words: {min_words}  |  Limit: {limit}  |  Batch size: {batch_size}")
+    user_id, account_id = args.user_id, args.account_id
+    handles = await build_agent(user_id)
+    facts = await fetch_long_facts_entities(handles.container.repository, account_id, min_words, limit)
+    if not facts:
+        print(f"No facts found with >{min_words} words. Nothing to process.")
+        return
+    bio_facts = await biographical_facts(handles, account_id)
+
+    async with kit_session(handles, args, user_id, account_id, "cluster_audit") as (kit, extra):
+        extra.update({"model": handles.agent.model_name, "facts_analyzed": len(facts), "batches": []})
+        for batch_idx, batch in enumerate(batches_of(facts, batch_size)):
+            first_pass, first_row = len(kit.passes), len(kit.rows)
+            cluster = await build_batch_cluster(handles.agent, list(batch), kit.timezone, user_id, account_id)
+            print(f"\nBatch {batch_idx + 1}: {len(batch)} facts, cluster of {len(cluster)}")
+            message = build_cluster_audit_message(kit, cluster, bio_facts, user_id, account_id, batch_idx)
+            await execute(handles.agent, message, user_id, account_id, f"consolidate_cluster batch {batch_idx + 1}")
+            extra["batches"].append({
+                "batch_index": batch_idx, "input_fact_ids": [f.id for f in batch], "cluster_size": len(cluster),
+                "passes": [first_pass, len(kit.passes)], "rows": [first_row, len(kit.rows)],
+            })
+            print_rows(kit.rows[first_row:])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -453,6 +529,7 @@ async def main(limit: int, batch_size: int, min_words: int, user_id: str, accoun
 
 
 if __name__ == "__main__":
+    load_env()
     parser = argparse.ArgumentParser(description="ConsolidationAgent dry-run: cluster quality audit")
     parser.add_argument("--limit", type=int, default=30, help="Total facts to process (default: 30)")
     parser.add_argument("--batch-size", type=int, default=5, help="Facts per batch (default: 5)")
@@ -467,6 +544,7 @@ if __name__ == "__main__":
         default=os.getenv("DEV_ACCOUNT_ID") or os.getenv("TEST_ACCOUNT_ID"),
         help="Account ID (defaults to DEV_ACCOUNT_ID from .env)",
     )
+    add_s3_arguments(parser)
     args = parser.parse_args()
 
     if not args.user_id:
@@ -476,10 +554,13 @@ if __name__ == "__main__":
         print("ERROR: account_id required. Set DEV_ACCOUNT_ID in .env or pass --account-id")
         sys.exit(1)
 
-    asyncio.run(main(
-        limit=args.limit,
-        batch_size=args.batch_size,
-        min_words=args.min_words,
-        user_id=args.user_id,
-        account_id=args.account_id,
-    ))
+    if args.s3_kit:
+        asyncio.run(main_s3_kit(args.limit, args.batch_size, args.min_words, args))
+    else:
+        asyncio.run(main(
+            limit=args.limit,
+            batch_size=args.batch_size,
+            min_words=args.min_words,
+            user_id=args.user_id,
+            account_id=args.account_id,
+        ))

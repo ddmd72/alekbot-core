@@ -13,6 +13,13 @@ Usage:
     python scripts/email/test_consolidation_dryrun.py --limit 50 --category healthcare
     python scripts/email/test_consolidation_dryrun.py --facts-file scripts/memory/email_facts_OTHER.json
     python scripts/email/test_consolidation_dryrun.py --user-id <user_id>
+    python scripts/email/test_consolidation_dryrun.py --s3-kit --limit 30
+
+`--s3-kit` (Facts S3, plan T12b) does not use the POC facts file: it runs a real `consolidate_email` pass (pass label and
+actor `email`) over the user's unconsolidated indexed emails, read from the live repository through a no-write wrapper (no
+email is marked consolidated), on the dry-run kit; a report lands in `scripts/memory/`. With no unconsolidated email it says
+so and stops. `--limit` is the batch size; `--facts-file` and `--category` do not apply. Without the flag the bench behaves
+as it always did.
 
 Pre-conditions:
     .env must have: DEV_USER_ID, DEV_ACCOUNT_ID, FIRESTORE_DATABASE, GEMINI_API_KEY
@@ -33,10 +40,6 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 from google.cloud import firestore
 
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
@@ -49,6 +52,17 @@ from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.domain.fact_write_context import FactWriteContext
 from src.ports.fact_management_port import FactManagementPort
 from src.composition.user_agent_factory import UserAgentFactory
+
+from scripts.consolidation.s3_bench_support import (
+    add_s3_arguments,
+    biographical_facts,
+    build_agent,
+    execute,
+    kit_message,
+    kit_session,
+    load_env,
+    print_rows,
+)
 
 # Default facts file — most recent POC output
 DEFAULT_FACTS_FILE = Path("scripts/memory/email_facts_20260228_002314.json")
@@ -239,6 +253,49 @@ def save_results(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# S3 kit mode: a real `consolidate_email` pass over the unconsolidated indexed emails
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_email_message(kit, bio_facts: List[Dict], user_id: str, account_id: str, limit: int):
+    """The S3 bench's message: a `consolidate_email` pass of one batch (pass label and actor `email`)."""
+    return kit_message(
+        kit, sender="email_dryrun_script", user_id=user_id, account_id=account_id, task="consolidate_email",
+        payload={"number_of_batches": 1, "batch_size": limit, "biographical_context": bio_facts},
+        session_id="email_dryrun",
+    )
+
+
+async def has_unconsolidated_emails(email_repo, user_id: str) -> bool:
+    return bool(await email_repo.get_unconsolidated_batch(user_id, limit=1))
+
+
+async def main_s3_kit(limit: int, args) -> None:
+    print(f"\n{'='*65}\nEMAIL CONSOLIDATION ON THE S3 KIT (consolidate_email pass, no email marked)\n{'='*65}")
+    user_id, account_id = args.user_id, args.account_id
+    handles = await build_agent(user_id)
+    if handles.agent._indexed_email_repo is None:
+        print("ERROR: the agent has no indexed-email repository: nothing to run.")
+        return
+    if not await has_unconsolidated_emails(handles.agent._indexed_email_repo, user_id):
+        print("No unconsolidated emails: bench 5 is skipped (nothing was run, nothing was spent).")
+        return
+    bio_facts = await biographical_facts(handles, account_id)
+
+    async with kit_session(handles, args, user_id, account_id, "email") as (kit, extra):
+        extra.update({"model": handles.agent.model_name, "batch_size": limit})
+        first_row = len(kit.rows)
+        response = await execute(
+            handles.agent, build_email_message(kit, bio_facts, user_id, account_id, limit),
+            user_id, account_id, "consolidate_email",
+        )
+        extra["result"] = response.result
+        print(f"\n  result: {response.result}")
+        print_rows(kit.rows[first_row:])
+        print(f"  emails the kit would have marked consolidated: "
+              f"{sum(len(w['email_ids']) for w in (kit.emails.writes if kit.emails else []))} (none marked live)")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -380,6 +437,7 @@ async def main(
 
 
 if __name__ == "__main__":
+    load_env()
     parser = argparse.ArgumentParser(
         description="ConsolidationAgent dry-run on classified email facts"
     )
@@ -408,6 +466,7 @@ if __name__ == "__main__":
         default=os.getenv("DEV_ACCOUNT_ID") or os.getenv("TEST_ACCOUNT_ID"),
         help="Account ID (defaults to DEV_ACCOUNT_ID from .env)",
     )
+    add_s3_arguments(parser)
     args = parser.parse_args()
 
     if not args.user_id:
@@ -417,12 +476,17 @@ if __name__ == "__main__":
         print("ERROR: account_id required. Set DEV_ACCOUNT_ID in .env or pass --account-id")
         sys.exit(1)
 
-    asyncio.run(
-        main(
-            facts_file=Path(args.facts_file),
-            limit=args.limit,
-            category=args.category,
-            user_id=args.user_id,
-            account_id=args.account_id,
+    if args.s3_kit:
+        if args.category:
+            parser.error("--category does not apply with --s3-kit (the pass reads the indexed emails, not the facts file)")
+        asyncio.run(main_s3_kit(args.limit, args))
+    else:
+        asyncio.run(
+            main(
+                facts_file=Path(args.facts_file),
+                limit=args.limit,
+                category=args.category,
+                user_id=args.user_id,
+                account_id=args.account_id,
+            )
         )
-    )
