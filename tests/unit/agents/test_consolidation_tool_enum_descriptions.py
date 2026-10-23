@@ -16,9 +16,15 @@ def _named_members(description: str) -> set:
     return {part.strip() for part in description.split("/")}
 
 
-def test_state_description_names_every_fact_state():
+# Reviewer edit (facts S3, T5; plan T5, §6 E, R3-15 and the arbiter on rev 2): create_fact no longer offers STALE (only
+# the system marks a fact stale) or SUPERSEDED (only update_fact supersedes, with superseded_by); the code refuses both
+# on create. The description still names every other member, so a FactState added later fails here until it is placed.
+_NOT_OFFERED_ON_CREATE = {FactState.STALE.name, FactState.SUPERSEDED.name}
+
+
+def test_state_description_names_every_fact_state_a_new_fact_may_take():
     described = _named_members(_attribute_descriptions()["state"])
-    assert described == {m.name for m in FactState}
+    assert described == {m.name for m in FactState} - _NOT_OFFERED_ON_CREATE
 
 
 def test_temporal_class_description_names_every_member():
