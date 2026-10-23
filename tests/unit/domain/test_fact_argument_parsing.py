@@ -39,3 +39,17 @@ def test_date_forms():
 def test_bad_date(raw):
     with pytest.raises(ValueError, match="reported_date"):
         parse_reported_date(raw)
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("2020-01-02", datetime(2020, 1, 2, tzinfo=timezone.utc)),
+    ("2020-01-02T03:04:05", datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)),
+    (datetime(2020, 1, 2, 3, 4, 5), datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc))])
+def test_a_naive_date_is_utc(raw, expected):
+    parsed = parse_reported_date(raw)
+    assert parsed == expected and parsed.tzinfo is not None
+
+
+def test_an_offset_date_keeps_its_offset():
+    parsed = parse_reported_date("2020-01-02T03:04:05+02:00")
+    assert parsed.utcoffset().total_seconds() == 7200

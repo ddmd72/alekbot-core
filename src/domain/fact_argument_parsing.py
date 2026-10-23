@@ -1,6 +1,6 @@
 """Parsing of the enum and date arguments the fact tools receive from the model."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional, TypeVar
 
@@ -19,14 +19,18 @@ def parse_enum(enum_cls: type[E], name: str, raw: Any) -> E:
 
 
 def parse_reported_date(raw: Any) -> Optional[datetime]:
-    """An ISO-8601 string (a trailing Z allowed) or a datetime; None and "" mean no date."""
+    """An ISO-8601 string (a trailing Z allowed) or a datetime, always aware (a naive value is UTC); None and "" mean no date."""
     if raw is None or raw == "":
         return None
     if isinstance(raw, datetime):
-        return raw
+        return _aware(raw)
     if not isinstance(raw, str):
         raise ValueError("reported_date must be an ISO-8601 date string")
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return _aware(datetime.fromisoformat(raw.replace("Z", "+00:00")))
     except ValueError:
         raise ValueError(f"Invalid reported_date {raw!r}; use an ISO-8601 date such as 2026-03-04T10:00:00Z") from None
+
+
+def _aware(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
