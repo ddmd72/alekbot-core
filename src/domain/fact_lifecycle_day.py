@@ -4,14 +4,16 @@ from typing import Any, Mapping, Optional
 
 # Written by the janitor as one snapshot of its run (the last run of the day wins).
 SNAPSHOT_FIELDS = frozenset({
-    "run_at", "due", "newly_due", "no_decision", "staled", "would_stale", "stale_conflicts", "breaker",
-    "backlog", "oldest_stale_days",
+    "run_at", "due", "newly_due", "no_decision", "staled", "would_stale", "deferred", "stale_conflicts",
+    "breaker", "backlog", "oldest_stale_days",
 })
 # Added to by whoever meets the event (`Increment`), never overwritten by a snapshot.
 COUNTER_FIELDS = frozenset({"expiry_tool_errors"})
 
 
-_SNAPSHOT_COUNTS = frozenset({"due", "newly_due", "no_decision", "staled", "would_stale", "stale_conflicts", "backlog"})
+_SNAPSHOT_COUNTS = frozenset({
+    "due", "newly_due", "no_decision", "staled", "would_stale", "deferred", "stale_conflicts", "backlog",
+})
 
 
 def check_snapshot(values: Mapping[str, Any]) -> None:
@@ -56,6 +58,7 @@ class FactLifecycleDay:
     no_decision: int = 0
     staled: int = 0
     would_stale: int = 0
+    deferred: int = 0
     stale_conflicts: int = 0
     breaker: str = ""
     backlog: int = 0
@@ -74,6 +77,7 @@ class FactLifecycleDay:
             no_decision=_count(data.get("no_decision")),
             staled=_count(data.get("staled")),
             would_stale=_count(data.get("would_stale")),
+            deferred=_count(data.get("deferred")),
             stale_conflicts=_count(data.get("stale_conflicts")),
             breaker=str(data.get("breaker") or ""),
             backlog=_count(data.get("backlog")),

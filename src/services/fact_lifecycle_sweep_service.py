@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from ..domain.due_fact import DueFact
 from ..domain.exceptions import FactWriteConflict
 from ..domain.fact_lifecycle_day import FactLifecycleDay
-from ..domain.fact_lifecycle_sweep import breaker_reason, daily_line
+from ..domain.fact_lifecycle_sweep import breaker_reason, daily_line, stale_headroom
 from ..domain.fact_write_context import as_utc
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
@@ -77,8 +77,8 @@ class FactLifecycleSweepService:
         today = {row.account_id: row for row in await self._counters.for_day(day)}
         previous_runs = _previous_run_times(today, yesterday)
 
-        totals = {"accounts": 0, "due": 0, "staled": 0, "would_stale": 0, "conflicts": 0, "no_decision": 0,
-                  "breaker_tripped": 0}
+        totals = {"accounts": 0, "due": 0, "staled": 0, "would_stale": 0, "deferred": 0, "conflicts": 0,
+                  "no_decision": 0, "breaker_tripped": 0}
         rows: List[FactLifecycleDay] = []
         for account_id in accounts:
             progress["stage"], progress["account"] = "the account sweep", account_id
@@ -92,6 +92,7 @@ class FactLifecycleSweepService:
             totals["due"] += snapshot["due"]
             totals["staled"] += snapshot["staled"]
             totals["would_stale"] += snapshot["would_stale"]
+            totals["deferred"] += snapshot["deferred"]
             totals["conflicts"] += snapshot["stale_conflicts"]
             totals["no_decision"] += snapshot["no_decision"]
             totals["breaker_tripped"] += int(snapshot["breaker"] != _BREAKER_OK)
@@ -115,14 +116,17 @@ class FactLifecycleSweepService:
     ) -> Dict[str, Any]:
         stale_count, oldest = backlog
         reason = breaker_reason(stale_count, None, now)      # S4 wires the last successful review
-        decided = [due for due in dues if due.expiry_kind is not None]
+        # Oldest expiry first, so the cap defers the newest; the id makes the order total.
+        decided = sorted((due for due in dues if due.expiry_kind is not None), key=lambda due: (as_utc(due.expires_at), due.fact_id))
         newly_due = sum(1 for due in dues if previous_run is None or as_utc(due.expires_at) > previous_run)
-        staled = conflicts = would_stale = 0
+        headroom = stale_headroom(stale_count)
+        staled = conflicts = would_stale = deferred = 0
 
         if self._dry_run:
             would_stale = len(decided)
+            deferred = max(0, len(decided) - headroom) if reason is None else 0
         elif reason is None:
-            staled, conflicts = await self._stale(account_id, now, decided)
+            staled, conflicts, deferred = await self._stale(account_id, now, decided, headroom)
         else:
             await self._hold_back(account_id, reason, len(decided))
 
@@ -134,6 +138,7 @@ class FactLifecycleSweepService:
             "no_decision": len(dues) - len(decided),
             "staled": staled,
             "would_stale": would_stale,
+            "deferred": deferred,
             "stale_conflicts": conflicts,
             "breaker": breaker,
             "backlog": stale_count,
@@ -143,15 +148,22 @@ class FactLifecycleSweepService:
         await self._counters.record_sweep(account_id, day, snapshot)
         logger.info(
             f"[FactLifecycle] account={account_id[:8]} due={snapshot['due']} newly_due={newly_due} "
-            f"no_decision={snapshot['no_decision']} staled={staled} would_stale={would_stale} conflicts={conflicts} "
+            f"no_decision={snapshot['no_decision']} staled={staled} would_stale={would_stale} deferred={deferred} conflicts={conflicts} "
             f"backlog={stale_count} breaker={reason or _BREAKER_OK} review_enqueued=0 dry_run={self._dry_run}"
         )
         return snapshot
 
-    async def _stale(self, account_id: str, now: datetime, decided: List[DueFact]) -> Tuple[int, int]:
-        staled = conflicts = 0
+    async def _stale(
+        self, account_id: str, now: datetime, decided: List[DueFact], headroom: int
+    ) -> Tuple[int, int, int]:
+        """Stale `decided` (oldest first) until `headroom` writes succeeded. Returns (staled, conflicts, deferred): a
+        conflict does not use headroom; the facts never tried are deferred to the next run."""
+        staled = conflicts = attempted = 0
         try:
             for due in decided:
+                if staled >= headroom:
+                    break
+                attempted += 1
                 try:
                     await self._repo.stale_due_fact(due, now)
                 except FactWriteConflict:
@@ -168,7 +180,7 @@ class FactLifecycleSweepService:
         finally:
             if staled:
                 await self._repo.refresh_biographical_context_cache(account_id)     # a staled fact leaves every prompt (D5)
-        return staled, conflicts
+        return staled, conflicts, len(decided) - attempted
 
     async def _hold_back(self, account_id: str, reason: str, held: int) -> None:
         """The breaker is tripped in write mode: log it; alert only when a due fact with a decision was actually held back
@@ -233,7 +245,7 @@ def _row(account_id: str, day: date, snapshot: Mapping[str, Any], tool_errors: i
     return FactLifecycleDay(
         account_id=account_id, day=day, run_at=snapshot["run_at"], due=snapshot["due"],
         newly_due=snapshot["newly_due"], no_decision=snapshot["no_decision"], staled=snapshot["staled"],
-        would_stale=snapshot["would_stale"], stale_conflicts=snapshot["stale_conflicts"],
+        would_stale=snapshot["would_stale"], deferred=snapshot["deferred"], stale_conflicts=snapshot["stale_conflicts"],
         breaker=snapshot["breaker"], backlog=snapshot["backlog"], oldest_stale_days=snapshot["oldest_stale_days"],
         expiry_tool_errors=tool_errors,
     )
