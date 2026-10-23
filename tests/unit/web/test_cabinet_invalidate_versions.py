@@ -81,3 +81,12 @@ async def test_both_errors_are_a_409_carrying_their_message(error):
 
     assert (status, body) == (409, {"error": str(error)})
     fact_repo.refresh_biographical_context_cache.assert_not_awaited()
+
+
+async def test_the_technical_message_is_logged_for_the_operator(caplog):
+    fact_repo = MagicMock(invalidate_fact=AsyncMock(side_effect=FactResolutionError("fact x was merged into y")))
+
+    with caplog.at_level("WARNING"):
+        await _invalidate(fact_repo, "x")
+
+    assert any("FactResolutionError: fact x was merged into y" in r.getMessage() for r in caplog.records)

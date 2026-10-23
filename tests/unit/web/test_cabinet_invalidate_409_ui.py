@@ -1,4 +1,4 @@
-"""Facts S2 · T7: on a 409 the Cabinet shows the server's message and reloads the list, so a stale row (a merged or
+"""Facts S2 · T7: on a 409 the Cabinet shows a short owner-facing message and reloads the list, so a stale row (a merged or
 superseded id) does not stay and answer 409 on every retry (a static check of the page source)."""
 import re
 from pathlib import Path
@@ -17,8 +17,8 @@ def test_a_409_shows_the_server_message_closes_the_modal_and_reloads_the_list():
     body = _invalidate_fact_direct()
     branch = body[body.index("res.status === 409"):body.index("if (!res.ok) throw")]
 
-    assert "await res.json()" in branch and "data.error" in branch
-    assert "showToast(data.error" in branch
+    assert 'showToast("This fact changed in the meantime; the list was reloaded.", "error")' in branch
+    assert "data.error" not in branch  # the server's message is written for the model and stays in the log
     assert "closeModal()" in branch
     assert "await browseInit()" in branch
     assert "return;" in branch

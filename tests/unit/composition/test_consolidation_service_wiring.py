@@ -91,14 +91,15 @@ async def test_without_a_service_the_consolidate_command_still_only_enqueues():
     assert "background" in channel.send_message.await_args.args[0]
 
 
-def test_no_consolidation_service_is_constructed_in_src():
+def test_no_consolidation_service_is_constructed_outside_main():
     constructed = []
-    for path in _SRC.rglob("*.py"):
+    sources = [*_SRC.rglob("*.py"), *(p for p in _ROOT.glob("*_main.py"))]
+    for path in sources:
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             if isinstance(node, ast.Call):
                 name = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
                 if name == "ConsolidationService":
-                    constructed.append(f"{path.relative_to(_SRC)}:{node.lineno}")
+                    constructed.append(f"{path.relative_to(_ROOT)}:{node.lineno}")
     assert constructed == []
 
 
