@@ -26,6 +26,12 @@ def breaker_reason(stale_count: int, last_review_at: Optional[datetime], now: da
     return None
 
 
+def stale_headroom(stale_count: int) -> int:
+    """How many more facts one run may stale for an account that already has `stale_count` stale facts: the backlog cap
+    (BREAKER_BACKLOG) minus the backlog before the run, never below 0."""
+    return max(0, BREAKER_BACKLOG - stale_count)
+
+
 def stale_fields(due: DueFact, now: datetime) -> Dict[str, Any]:
     """The fields that move a due fact to stale, and nothing else: state, `stale_since`, `last_updated` and the trail."""
     event = lifecycle_event(now, FactState.CURRENT, FactState.STALE, "janitor", f"expired {due.expires_at.isoformat()}")
@@ -56,8 +62,8 @@ def daily_line(run_at: datetime, rows: Sequence[FactLifecycleDay], dry_run: bool
 
 
 def _worth_a_line(row: FactLifecycleDay) -> bool:
-    numbers = (row.due, row.newly_due, row.no_decision, row.staled, row.would_stale, row.stale_conflicts, row.backlog,
-               row.expiry_tool_errors)
+    numbers = (row.due, row.newly_due, row.no_decision, row.staled, row.would_stale, row.deferred,
+               row.stale_conflicts, row.backlog, row.expiry_tool_errors)
     return any(numbers) or row.breaker not in ("", "ok")
 
 
@@ -65,7 +71,7 @@ def _account_line(row: FactLifecycleDay) -> str:
     oldest = f" (oldest {row.oldest_stale_days}d)" if row.oldest_stale_days is not None else ""
     return (
         f"{row.account_id[:8]}: due {row.due} (new {row.newly_due}, no decision {row.no_decision})"
-        f" | staled {row.staled} / would stale {row.would_stale}"
+        f" | staled {row.staled} / would stale {row.would_stale} / deferred {row.deferred}"
         f" | conflicts {row.stale_conflicts}"
         f" | breaker {row.breaker or 'ok'}"
         f" | backlog {row.backlog}{oldest}"
