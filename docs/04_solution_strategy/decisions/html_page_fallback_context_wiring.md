@@ -105,7 +105,8 @@ breaker accounting.
 
 - **Fixed (`self._set_execution_context(execution_context)` right after `super().__init__`, as above):** `WebSearchAgent`
   (openai to gemini; its own docstring already assumed the failover), `DomainResearcherAgent` and `TutorAgent` (openai to
-  gemini), `TasksAgent` and `LelikSummarizerAgent` (no strategy entry of its own, so `quick`'s claude to gemini applies).
+  gemini), `TasksAgent` and `LelikSummarizerAgent` (it had no strategy entry of its own, so `quick`'s claude to gemini
+  applied; by the owner ruling below it now has its own entry with no fallback, so it keeps only breaker accounting).
   **`TasksAgent` is a partial case:** its default provider is gemini, and `AgentContextBuilder.build` resolves no fallback
   when the fallback equals the provider (`agent_context_builder.py:419`), so a default-config user gains only breaker
   accounting and the fail-fast check while Gemini's breaker is open; the failover is real only when the user picks claude.
@@ -116,6 +117,14 @@ breaker accounting.
   another model: memory quality over availability. `STRATEGIES["consolidation"]` and `STRATEGIES["tutor_extractor"]` now
   have `"fallback": None` (`test_consolidation_strategies_have_no_fallback.py`), so they are `by-design` in the None ledger and on
   the allowlist of `test_agents_set_execution_context.py`, like the other agents with no real failover.
+- **Owner ruling 2026-10-23 (question Q3): no cross-provider fallback for `LelikSummarizerAgent` either, a conscious
+  trade-off.** Losing an end-of-call note is accepted over the alternative: the note almost never carries critical
+  information, and a real fallback would mean a second summarizer (its own prompt, its own quality bar), not just a
+  second model behind the same prompt. The failure is loud, not silent: `/voice/submit-transcript` logs it and posts
+  an ops alert, so the rate can be watched (roadmap 19c); there is no retry. `STRATEGIES["lelik_summarizer"]` is new,
+  with quick's providers (claude default, so the primary model does not change) and `"fallback": None`
+  (`test_lelik_summarizer_has_no_fallback.py`). The agent keeps `_set_execution_context`, so it still counts toward
+  its provider's breaker and fails fast (`llm_no_fallback`) while that breaker is open.
 - **Not part of D8:** agents whose strategy has no real failover (`fallback: None`, or the fallback equals the only
   allowed provider: compute, facts_memory, image and video generation, maps_search, web_search_light, email_search,
   email_classifier) would gain only breaker accounting, which also makes them fail fast while a provider's breaker is

@@ -196,7 +196,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | Lelik | n/a — session is OpenAI Realtime in the relay | internal; allowlist `search_memory`, `search_web_light`, `ask_alek`, `tell_alek` | voice companion: callback, session config, delegation via `/voice/delegate` |
 | Alek gateway | zero-LLM | `ask_alek` (SYNC), `tell_alek` (ASYNC errand) — internal | Lelik's route to Router → Smart; question: links copy to chat; errand: full outcome to chat |
 | WebSearchLight | ECO (Gemini flash-lite) | `search_web_light` (internal, Lelik only) | one grounded lookup, ~2 s, spoken answer |
-| lelik_summarizer | ECO | none (not manifest-registered) | end-of-call transcript → plain-text summary; run by `CompanionExtractorRunner`, same slot `tutor_extractor` fills |
+| lelik_summarizer | ECO | none (not manifest-registered) | end-of-call transcript → plain-text summary; run by `CompanionExtractorRunner`, same slot `tutor_extractor` fills; no provider fallback by decision (a lost note is alerted, `src/agents/CLAUDE.md`) |
 | DriveDocumentReader | ECO (OpenAI `gpt-6-luna`, or Claude by `agent_providers`; fallback Gemini `gemini-3.8-flash`) | none (indexer only) | PDF window or image → verbatim text + brief; `ContentExtractorPort` via `DriveReaderRunner` |
 | DriveImageTriage | ECO (same switch and fallback) | none (indexer only) | 800 px thumbnail batch of 8 → text or photo + description, objects, scene, visible text (triage v2); `ImageTriagePort` via `DriveTriageRunner` |
 | DriveProfiler | ECO (same switch and fallback) | none (indexer only) | one text file's stored text → profile (type, life areas, dates, entities, values, topics, en/es/uk/ru word lists), verified against the text; `DocumentProfilerPort` via `DriveProfilerRunner` |
