@@ -323,3 +323,10 @@ def test_the_same_duplicates_in_another_order_are_not_a_change():
     fact = current_fact(tags=["family", "mother", "family", "consolidated"])
     result = plan({"tags": ["mother", "family", "family"]}, fact)
     assert result.kind == "in_place"
+
+
+@pytest.mark.parametrize("updates", [{"content": "mother is Valentyna"}, {"state": "ARCHIVED"}, {}])
+def test_a_superseded_current_document_is_never_planned(updates):
+    fact = current_fact(state=FactState.SUPERSEDED, is_current=False, valid_to=NOW, superseded_by="n")
+    with pytest.raises(ValueError, match="superseded fact cannot be updated"):
+        plan(updates, fact)

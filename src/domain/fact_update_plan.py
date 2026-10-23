@@ -28,7 +28,9 @@ class FactUpdatePlan:
 
 
 def plan_fact_update(current: FactEntity, update: ParsedFactUpdate, now: datetime) -> FactUpdatePlan:
-    """Decide the write for `update` on `current`. Pure; raises ValueError for a SUPERSEDED update that is not closable."""
+    """Decide the write for `update` on `current`. Pure; raises ValueError for a superseded `current` or a SUPERSEDED update that is not closable."""
+    if current.state is FactState.SUPERSEDED:
+        raise ValueError("A superseded fact cannot be updated; resolve to its successor first")
     if update.state is FactState.SUPERSEDED:
         if update.superseded_by is None:
             raise ValueError("state SUPERSEDED needs superseded_by")
