@@ -18,6 +18,6 @@ class MemoryWriteLeasePort(ABC):
 
     @abstractmethod
     async def release(self, account_id: str, owner: str) -> None:
-        """Delete the lease only while `owner` still holds it; an absent lease, or one taken over by another owner after
-        expiry, is left alone (logged as a WARNING). A falsy `account_id` is a no-op: nothing can be held under it.
-        Store errors raise."""
+        """Delete the lease only while `owner` still holds it. An absent lease is left alone silently; a lease held by
+        another owner (taken over after expiry) is left alone and logged as a WARNING. A falsy `account_id` is a no-op:
+        nothing can be held under it. Store errors raise."""
