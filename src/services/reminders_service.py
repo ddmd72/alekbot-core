@@ -64,7 +64,7 @@ class RemindersService:
         """``dispatch_deadline_s`` is the Cloud Tasks deadline for the per-fire
         ``execute_reminder`` task. It is INJECTED rather than computed here: the value
         derives from ``NOTIFICATION_SLA`` in the infrastructure layer, which services
-        may not import (REQ-ARCH-22) — the composition root in ``main.py`` passes
+        may not import (REQ-ARCH-22) — the composition root (``build_application_graph``) passes
         ``dispatch_deadline_s(NotificationKind.REMINDER)``.
 
         ``None`` falls back to the Cloud Tasks default of 600s, which is SHORTER than

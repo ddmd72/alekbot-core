@@ -66,7 +66,7 @@ VideoGenerationAgent._agent_execution_context  # by-design STRATEGIES["video_gen
 WebSearchLightAgent._agent_execution_context  # by-design STRATEGIES["web_search_light"] fallback None (agent_context_builder.py:98-103)
 
 # ---- known defects, owner questions open (P9 design §6)
-app.telegram_adapter.conversation_handler._channel_binding  # defect:D9 ChannelBindingService is platform-neutral (slack_adapter_factory.py:66,129) and no document says Slack-only; only telegram_adapter_factory.py lacks the parameter, so $agent on Telegram answers "not configured" (conversation_handler.py:1634); owner question Q3, becomes by-design if he rules bindings Slack-only
+app.telegram_adapter.conversation_handler._channel_binding  # by-design owner ruling 2026-10-23: channel binding is Slack-only; only slack_adapter_factory.py passes the service (slack_adapter_factory.py:66,129), so $agent on Telegram answers "not configured" (conversation_handler.py:1634)
 EmailClassificationAgent._prompt_content_store  # defect:D2 usage content of the classifier is not captured (service_container.py:303-312, base_agent.py:211-218)
 EmailClassificationAgent._quota_service  # defect:D2 usage of the classifier is not billed (service_container.py:303-312, base_agent.py:211-218)
 EmailClassificationAgent.coordinator  # defect:D2 no coordinator injected into the classifier (service_container.py:303-312)

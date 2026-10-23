@@ -528,8 +528,8 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P11 | **Every other stateful store, by inventory** (H2 meta-test), ordered by risk: voice tickets / ephemeral store, dedup, notes delivery stamp, quota, long turns first; then indexed email, session store, consolidation and companion queues, user, account, task search index, channel binding, skills, memory-fact drafts, companion memory, email job and exclusions, GCS stores, `gcp_task_queue` | check | 5–7 | ordering, projections, missing fields, tenancy, atomicity in stores that look covered | 2 |
 | P12 | **Cloud gate, full** (§4): lease, render step, explicit-database scripts, missing index definitions, GCS bucket, paused queue, WIF for the post-merge job; every H2 kit against the real adapters; precondition tests | cloud | 2–3 | fake ≠ Firestore across all kits | 2 |
 | P13 | **Service seams**: handler-level tests that run the **real** `UserNotificationService`, `TaskDispatchService`, `AgentCoordinator`, `SearchEnrichmentService` and `PromptBuilder` over H1 and port fakes for each entry path (worker task types, `ConversationHandler`, `AgentWorkerHandler`), asserting the observable outcome (which channel, which history entry); mutation operator: drop one forwarded kwarg | check | 2 | parameter coupling between services (§1.4 item 6) | 2 |
-| P14 | **Scripted-LLM end to end** for every agent that writes state through tools (Consolidation, Notes, Tasks, Smart's local tools `propose_memory_facts` / `draft_skill` / `workspace`, FileManagement drive mutations): a scripted tool call that uses every declared field, asserted on the final store state; a generic check that every declared tool field changes stored state or is refused — nothing accepted and dropped **P9 hand-over:** the five reasoned non-200 rows of `tests/unit/test_main_boots_offline.py` `MATRIX` (`deep_research_failed`, `deep_research_webhook_event`, `setup_microsoft_todo`, `reindex_task_list` at 500; `email_indexing` at 404 "job not found") must become 200 here, with the prompt blueprint, the To Do credentials and an indexing job seeded. | check | 1.5 | tools that report success after dropping input (§1.3.5) | 2 |
-| P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers) **P9 hand-over:** the five reasoned non-200 rows of `tests/unit/test_main_boots_offline.py` `MATRIX` (`deep_research_failed`, `deep_research_webhook_event`, `setup_microsoft_todo`, `reindex_task_list` at 500; `email_indexing` at 404 "job not found") must become 200 here, with the prompt blueprint, the To Do credentials and an indexing job seeded. | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 |
+| P14 | **Scripted-LLM end to end** for every agent that writes state through tools (Consolidation, Notes, Tasks, Smart's local tools `propose_memory_facts` / `draft_skill` / `workspace`, FileManagement drive mutations): a scripted tool call that uses every declared field, asserted on the final store state; a generic check that every declared tool field changes stored state or is refused — nothing accepted and dropped. **P9 hand-over:** the two deep-research rows of the boot test's `MATRIX` (`deep_research_failed`, `deep_research_webhook_event`, 500 until the formatter's prompt blueprint is seeded) must become 200 here; the other three belong to P15 (list in the "Built (P9)" note). | check | 1.5 | tools that report success after dropping input (§1.3.5) | 2 |
+| P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 |
 | P16 | **Clock suite**: a pinned clock and a table of instants (both 2026 DST transitions in Europe/Madrid, Europe/Kyiv, America/New_York; month end; UTC midnight) through every function that matches an hour or a day boundary (daily review, billing rotation, drive monthly budgets, reminder `due`, Cabinet 24h cap, scratch 7-day TTL) | check | 0.5 | §1.4 item 7 and its class | 2 |
 | P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 |
 | P18 | **Reality checks** (§4a): spec-drift workflow, `provider-contract-review` skill + monthly routine, `make contract-probe` for the sandboxed providers | sched | 2–3 + owner sandbox setup | contracts that disagree with reality | 3 |
@@ -678,7 +678,9 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   `test_main_construction_allowlist.py` limits what `main.py` constructs itself, and a structural test requires every `BaseAgent` subclass that takes
   an execution context to store it (reasoned allowlist).
 - **Mutation.** Two operators, `wire-drop` and `call-skip` (`--operators wiring`), make the mutation check reach wiring. Result: <MUTANTS: filled by the arbiter>.
-- **The tests are `slow`,** so they run in `make ci`, not in `make check`.
+- **The tests that build the graph or boot `main()` are `slow`,** so they run in `make ci` (or with `RUN_SLOW_TESTS=1`), not in `make check`;
+  the source-reading guards and the checker self-tests are not (`tests/CLAUDE.md` -> "The production graph").
+- **The owner's check after the first deploy,** the rollback command and the `:latest` rule: `docs/07_deployment/README.md` -> "After deploying P9".
 - **Declared behaviour deltas of the move** (all harmless; the T2 snapshot diff shows nothing else): a malformed Telegram secret now exits 1 with a
   traceback (was exit 0, nothing listening either way); construction order (the coordinator after the container, Telegram before voice, queue
   creation and the loops after the whole build) changes the order of the startup lines; `exc_info` on infrastructure errors; the blueprint factories
@@ -686,17 +688,25 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   Cloudflare modules happen at `import main`; Telegram is all or nothing (an exception after `create_adapter` leaves `telegram_adapter = None`
   and nothing registered). Three more: a failure while building the Slack adapter, HTML renderer or audio adapter, or in `register_handlers()`,
   logs "Infrastructure Initialization Error" with a traceback instead of "Runtime Error" (exit code 1 in both); when `get_blueprint()` fails,
-  `PlatformAdapterFactory.register("telegram", …)` has already run (that registry has no reader, D5); Telegram is built in the dead Socket-mode branch too.
+  `PlatformAdapterFactory.register("telegram", …)` has already run (that registry has no reader, P9-D5); Telegram is built in the dead Socket-mode branch too.
 - **Defects found and fixed in this package:**
-  - D1: sync `document` delivery was dropped, `doc_delivery_service` was never given to the two `ConversationHandler`s;
-  - D3: `open_file` on an audio file had no transcription, `FileConversionService` now gets the transcriber production builds (owner OK);
-  - D8: cross-provider failover was dead for `web_search`, `tasks`, `domain_researcher`, `tutor` and `lelik_summarizer` (the execution context was
+  - P9-D1: sync `document` delivery was dropped, `doc_delivery_service` was never given to the two `ConversationHandler`s;
+  - P9-D3: `open_file` on an audio file had no transcription, `FileConversionService` now gets the transcriber production builds (owner OK);
+  - P9-D8: cross-provider failover was dead for `web_search`, `tasks`, `domain_researcher`, `tutor` and `lelik_summarizer` (the execution context was
     never stored), now wired (real only when the user picks claude, for `tasks`); `consolidation` and `tutor_extractor` get `fallback: None` (owner
-    ruling 2026-10-23: a memory write never moves to another model on an outage).
-- **Defects found and not fixed:** D2, the email classifier's usage is neither billed nor captured (roadmap item, owner decision); D9, Telegram has
-  no channel binding (Slack-only by design); D6, `ConversationHandler.security_port` is never passed, and D5, the `PlatformAdapterFactory`
-  "telegram" registration has no reader (both on the owner discussion agenda); D4, `AgentWorkerHandler.task_queue` is annotated
-  `TaskDispatchService` and gets the raw queue (listed); D7, a duplicate `/health` rule, the Cabinet's shadows `main()`'s (harmless, listed).
+    ruling 2026-10-23: a memory write never moves to another model on an outage; no live change today, they never stored a context). Two
+    consequences: the five agents now record failures on the process-wide per-provider breaker that Smart shares (and a success clears them), and
+    `lelik_summarizer`, whose note becomes a history pair that consolidation later reads, fails over although it falls outside that ruling.
+- **Defects found and not fixed:**
+  - P9-D2: the email classifier's usage is neither billed nor captured. A roadmap item (the owner's quality roadmap, 14b), an owner decision;
+  - P9-D6: `ConversationHandler.security_port` is never passed, and P9-D5: the `PlatformAdapterFactory` "telegram" registration has no reader
+    (both on the owner discussion agenda);
+  - P9-D4: `AgentWorkerHandler.task_queue` is annotated `TaskDispatchService` (`agent_worker_handler.py:65`) and gets the raw queue
+    (`application_graph.py`); harmless, move as is;
+  - P9-D7: a duplicate `/health` rule, the Cabinet's shadows `main()`'s (harmless; pinned in the `url_map`).
+- **Defects settled by the owner:** P9-D9, Telegram has no channel binding: Slack-only by design (ruling 2026-10-23; the ledger line is `by-design`).
+- **Observability residual of P9-D8:** `llm_fallback` log lines carry no agent type, and `prompt_content` and Logfire record the primary provider
+  and request for a call that a fallback served. Billing is right (the model that ran is priced).
 - **Residuals, not closed by P9:**
   - a wrong but non-None object of the right type;
   - producer and consumer payload fields that do not match (P15);
@@ -707,7 +717,8 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
     `DEEP_RESEARCH_SECOND_PASS` (`agent_config.py`), `DOCS_OWNER_USER_ID` (`user_cabinet_app.py`) and the logger's `K_SERVICE`; no assertion depends on them today;
   - a secret that is empty in Secret Manager (the sealed environment fills every secret name with a shaped fake);
   - the reasoned non-200 trigger rows: `deep_research_failed` and `deep_research_webhook_event` (500, the notice formatter's prompt blueprint is missing
-    from the empty database) and `setup_microsoft_todo` and `reindex_task_list` (500, no To Do credentials seeded), and `email_indexing` (404 "job not found", no indexing job seeded). P14 and P15 must turn them into 200.
+    from the empty database) and `setup_microsoft_todo` and `reindex_task_list` (500, no To Do credentials seeded), and `email_indexing` (404 "job not found", no indexing job seeded). They must become 200 in later packages: **P14 owns the two deep-research
+    rows** (the LLM formatter), **P15 owns the other three** (the redelivery payloads: seed the To Do credentials and an indexing job).
 - **Left for "tidy main.py":** the voice closures; `/worker`, `/health` and `/favicon` as a blueprint (then `test_main_worker_route_gate.py` retires);
   the MCP dispatcher; the `slack_adapter.start` patch; the dead Socket-mode branch; the duplicate `/health`; the main.py allowlist entries.
 
