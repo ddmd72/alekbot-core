@@ -696,7 +696,8 @@ def _check_claude_deliver_tool(kw: dict) -> None:
     props = schema.get("properties") or {}
     _eq(sorted(props), ["response"], "Claude: deliver_response must have exactly one property")
     _eq(props["response"].get("type"), "string", "Claude: deliver_response.response must be a string")
-    leaked = _schema_keys(kw["expected_schema"]) & _schema_keys(schema)
+    # `response` is the tool's own property; a schema key of the same name is not a leak.
+    leaked = (_schema_keys(kw["expected_schema"]) - {"response"}) & (_schema_keys(schema) - {"response"})
     _true(not leaked, f"Claude: the answer schema's keys leaked into deliver_response.input_schema: {sorted(leaked)}")
 
 
