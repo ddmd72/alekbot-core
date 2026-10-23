@@ -78,7 +78,7 @@ def test_replaces_fact_id_naming_a_document_of_another_lineage():
     assert chain(*docs) == {"replaces_lineage_mismatch": ["v2"]}
 
 
-@pytest.mark.parametrize("older, newer", [(1, 3), (3, 2), (1, None), (None, 2), ("1", 2)])
+@pytest.mark.parametrize("older, newer", [(1, 3), (1, None), (None, 2), ("1", 2)])
 def test_replaces_fact_id_naming_a_document_that_is_not_version_minus_one(older, newer):
     docs = [closed("v1", "v2", version=older), d("v2", version=newer, replaces_fact_id="v1")]
     assert chain(*docs) == {"replaces_version_mismatch": ["v2"]}
@@ -99,7 +99,7 @@ def test_replaces_fact_id_whose_target_does_not_point_back(back):
 
 
 def test_two_documents_of_one_lineage_with_the_same_version():
-    docs = [d("a", version=2), d("b", version=2), d("c", version=3)]
+    docs = [d("a", version=2), d("b", version=2), d("c", lineage="L2", version=3)]
     assert chain(*docs) == {"version_not_unique": ["a", "b"]}
 
 
@@ -115,6 +115,44 @@ def test_documents_without_a_version_or_lineage_are_not_compared():
 def test_superseded_without_successor_written_after_the_cutoff():
     docs = [d("a", state="superseded", is_current=False, last_updated=AFTER)]
     assert chain(*docs) == {"superseded_without_successor": ["a"]}
+
+
+# ------------------------------------------------------------------------------------------- the lineage head
+
+def test_a_lineage_whose_highest_version_is_closed_while_a_lower_one_is_open():
+    docs = [d("v1", version=1), closed("v2", "gone", version=2)]
+    assert chain(*docs) == {"superseded_by_dangling": ["v2"], "lineage_head_not_highest_version": ["v1", "v2"]}
+
+
+def test_a_closed_highest_version_with_an_open_lower_one_names_the_whole_lineage():
+    docs = [d("v1", version=1), closed("v2", "v1", version=2), d("other", lineage="L2")]
+    assert chain(*docs)["lineage_head_not_highest_version"] == ["v1", "v2"]
+
+
+def test_a_lower_version_that_was_never_closed_below_an_open_head():
+    docs = [d("v1", version=1, is_current=False, state="archived"), d("v2", version=2, replaces_fact_id="v1")]
+    found = chain(*docs)
+    assert found["lineage_head_not_highest_version"] == ["v1", "v2"]
+
+
+def test_a_closed_version_above_an_open_lower_one_is_a_head_violation_not_a_replaces_one():
+    docs = [closed("v1", "v2", version=3), d("v2", version=2)]
+    assert chain(*docs) == {"lineage_head_not_highest_version": ["v1", "v2"]}
+
+
+def test_a_fully_superseded_lineage_is_clean():
+    docs = [closed("v1", "v2", version=1), closed("v2", "m", version=2), d("m", lineage="LM")]
+    assert chain(*docs) == {}
+
+
+def test_an_open_head_above_closed_versions_is_clean():
+    docs = [closed("v1", "v2", version=1), closed("v2", "v3", version=2), d("v3", version=3, replaces_fact_id="v2")]
+    assert chain(*docs) == {}
+
+
+def test_documents_without_a_version_do_not_take_part_in_the_head_rule():
+    docs = [d("v1", version=None), closed("v2", "v1", version=2)]
+    assert "lineage_head_not_highest_version" not in chain(*docs)
 
 
 # ------------------------------------------------------------------------------------- the cutoff counting rule
@@ -174,6 +212,7 @@ def test_check_across_reports_the_lineage_class_beside_the_chain_classes():
     docs = [d("a", is_current=True), d("b", version=2, is_current=True), closed("c", "gone", lineage="L9")]
     assert check_across(docs, CUTOFF) == {
         "lineage_multiple_current": ["a", "b"], "superseded_by_dangling": ["c"],
+        "lineage_head_not_highest_version": ["a", "b"],
     }
 
 
@@ -278,7 +317,7 @@ async def test_documents_written_by_s2_versions_and_merges_are_clean(tmp_path):
     for doc_id, doc in store.docs.items():
         assert check_fact(doc_id, doc) == [], doc_id
     kept = [(i, {k: doc.get(k) for k in runner.CHECKERS["facts"]["keep"]}) for i, doc in store.docs.items()]
-    assert check_across(kept, CUTOFF) == {"superseded_without_successor_pre_s2": ["f-legacy"]}
+    assert check_across(kept, CUTOFF) == {"superseded_without_successor_pre_s2": ["f-legacy"]}   # no head violation
 
     report = json.loads((await runner.run(store.db, "facts", FACTS, tmp_path, now=NOW, s2_cutoff=CUTOFF)).read_text())
     assert report["documents"] == 10 and report["classes"] == {}

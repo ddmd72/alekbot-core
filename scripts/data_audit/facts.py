@@ -109,7 +109,7 @@ def check_version_chain(
         if _state(doc) is FactState.SUPERSEDED and not successor_id:
             late = s2_cutoff is not None and _written_at_or_after(doc.get("last_updated"), s2_cutoff)
             flag("superseded_without_successor" if late else "superseded_without_successor_pre_s2", doc_id)
-    return {**found, **_duplicate_versions(members)}
+    return {**found, **_duplicate_versions(members), **_stale_heads(members)}
 
 
 def check_across(
@@ -143,6 +143,22 @@ def _duplicate_versions(members: list[tuple[str, dict[str, Any]]]) -> dict[str, 
             seen[(doc["lineage_id"], doc["version"])].append(doc_id)
     ids = [doc_id for shared in seen.values() if len(shared) > 1 for doc_id in shared]
     return {"version_not_unique": ids} if ids else {}
+
+
+def _stale_heads(members: list[tuple[str, dict[str, Any]]]) -> dict[str, list[str]]:
+    """`lineage_head_not_highest_version`: every document of a lineage that has a not-superseded document below its
+    highest version (so the highest one is closed, or a lower version was never closed). A lineage whose documents are
+    all superseded (merged away) is clean."""
+    lineages: dict[Any, list[tuple[str, int, bool]]] = defaultdict(list)
+    for doc_id, doc in members:
+        if doc.get("lineage_id") is not None and isinstance(doc.get("version"), int):
+            lineages[doc["lineage_id"]].append((doc_id, doc["version"], _state(doc) is FactState.SUPERSEDED))
+    ids = []
+    for versions in lineages.values():
+        top = max(version for _, version, _ in versions)
+        if any(version < top and not closed for _, version, closed in versions):
+            ids.extend(doc_id for doc_id, _, _ in versions)
+    return {"lineage_head_not_highest_version": ids} if ids else {}
 
 
 def _state(doc: dict[str, Any]) -> FactState | None:
