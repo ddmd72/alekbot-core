@@ -32,7 +32,7 @@ def counters(db, env):
 
 def snapshot(**over):
     values = {"run_at": RUN_AT, "due": 4, "newly_due": 3, "no_decision": 1, "staled": 0, "would_stale": 3,
-              "stale_conflicts": 0, "breaker": "would trip", "backlog": 2, "oldest_stale_days": 11}
+              "deferred": 0, "stale_conflicts": 0, "breaker": "would trip", "backlog": 2, "oldest_stale_days": 11}
     values.update(over)
     return values
 

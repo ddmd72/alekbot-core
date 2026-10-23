@@ -102,7 +102,7 @@ def test_the_line_names_the_run_the_mode_and_every_figure():
     text = daily_line(NOW, [row()], dry_run=False)
     assert text == (
         "🧹 Fact lifecycle — run 2026-10-23 07:30 UTC\n"
-        "acc-1234: due 4 (new 3, no decision 1) | staled 2 / would stale 0 | conflicts 1 | breaker ok"
+        "acc-1234: due 4 (new 3, no decision 1) | staled 2 / would stale 0 / deferred 0 | conflicts 1 | breaker ok"
         " | backlog 5 (oldest 9d) | expiry tool errors yesterday 2"
     )
 

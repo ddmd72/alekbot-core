@@ -12,7 +12,7 @@ from tests.support.firestore_eval import EvalDb
 DAY = date(2026, 10, 23)
 RUN_AT = datetime(2026, 10, 23, 7, 0, tzinfo=timezone.utc)
 WHOLE = {"run_at": RUN_AT, "due": 4, "newly_due": 3, "no_decision": 1, "staled": 0, "would_stale": 3,
-         "stale_conflicts": 0, "breaker": "would trip", "backlog": 2, "oldest_stale_days": 11}
+         "deferred": 0, "stale_conflicts": 0, "breaker": "would trip", "backlog": 2, "oldest_stale_days": 11}
 
 
 @pytest.fixture

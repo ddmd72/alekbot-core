@@ -130,7 +130,7 @@ async def test_the_per_account_log_line_has_the_plan_format_in_write_mode(caplog
     await world.service.sweep()
 
     assert lifecycle_lines(caplog) == [
-        "[FactLifecycle] account=acc-1 due=3 newly_due=3 no_decision=1 staled=2 would_stale=0 conflicts=0 backlog=0 "
+        "[FactLifecycle] account=acc-1 due=3 newly_due=3 no_decision=1 staled=2 would_stale=0 deferred=0 conflicts=0 backlog=0 "
         "breaker=ok review_enqueued=0 dry_run=False"
     ]
 
@@ -144,7 +144,7 @@ async def test_the_per_account_log_line_in_log_only_mode_with_a_tripped_breaker(
     await world.service.sweep()
 
     assert lifecycle_lines(caplog) == [
-        "[FactLifecycle] account=acc-1 due=1 newly_due=1 no_decision=0 staled=0 would_stale=1 conflicts=0 backlog=1 "
+        "[FactLifecycle] account=acc-1 due=1 newly_due=1 no_decision=0 staled=0 would_stale=1 deferred=0 conflicts=0 backlog=1 "
         f"breaker={breaker_reason(1, None, NOW)} review_enqueued=0 dry_run=True"
     ]
 
