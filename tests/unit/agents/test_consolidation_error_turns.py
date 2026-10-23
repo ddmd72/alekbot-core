@@ -3,7 +3,9 @@
 A scripted LLM drives the real loop, tool executor, adapter, write service and repository on the evaluating Firestore
 fake; the sink records posts and the counters are the real adapter on the evaluating Firestore fake.
 """
+import asyncio
 import json
+import time
 from datetime import datetime, timezone
 from typing import Any, List
 from unittest.mock import AsyncMock
@@ -311,3 +313,50 @@ async def test_a_valid_content_update_after_a_refused_one_is_answered(store):
 
     assert agent._alert_sink.posts == []
     assert by_text(store, "seed v2")["expiry_kind"] == "horizon"
+
+
+# ----------------------------------------------------------------------------------------------- cancellation and a hung close-out
+
+
+async def test_a_cancelled_pass_still_closes_out_and_the_cancellation_propagates(store):
+    reached_turn_two = asyncio.Event()
+
+    agent = build(store, REPORT)
+    calls_made = {"n": 0}
+
+    async def llm(request, turn=1):
+        calls_made["n"] += 1
+        if calls_made["n"] == 1:
+            return missing_expiry()
+        reached_turn_two.set()
+        await asyncio.Event().wait()          # the provider call hangs until the pass is cancelled
+
+    agent._call_llm = llm
+    task = asyncio.create_task(run(agent))
+    await asyncio.wait_for(reached_turn_two.wait(), timeout=5)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    (post,) = agent._alert_sink.posts
+    assert post.startswith("🚨") and "abandoned 1" in post
+    assert await today_errors(agent) == 1
+
+
+async def test_a_close_out_that_hangs_is_cut_at_the_cap_and_the_pass_still_returns(store, monkeypatch, caplog):
+    monkeypatch.setattr(ConsolidationAgent, "CLOSE_OUT_TIMEOUT_S", 0.2)
+    agent = build(store, missing_expiry(), REPORT)
+
+    class Hanging(AlertSinkPort):
+        async def post(self, text: str) -> None:
+            await asyncio.sleep(30)
+
+    agent._alert_sink = Hanging()
+
+    started = time.monotonic()
+    with caplog.at_level("WARNING"):
+        ops = await run(agent)
+
+    assert ops == [] and time.monotonic() - started < 3
+    assert "close-out cut after" in caplog.text

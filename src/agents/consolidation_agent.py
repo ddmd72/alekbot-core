@@ -244,6 +244,7 @@ class ConsolidationAgent(BaseAgent):
     # the LLM ever leaves more than CAP. A higher fetch bound lets the review see any overflow.
     DIRECTIVE_HARD_CAP = 15
     DIRECTIVE_REVIEW_FETCH_LIMIT = 40
+    CLOSE_OUT_TIMEOUT_S = 10.0  # the end-of-pass alert and counter write may not hold a pass (or its cancellation) longer
 
     def __init__(
         self,
@@ -1228,11 +1229,13 @@ class ConsolidationAgent(BaseAgent):
 
     async def _close_pass(self, stats: ConsolidationPassStats, account_id: str) -> None:
         """End of every pass, also one that raises: an expiry refusal that was never answered is always a 🚨 (also
-        with the stats line off), and the pass's expiry errors are added to the account's day. Best effort: it never
-        raises and never changes the pass."""
+        with the stats line off), and the pass's expiry errors are added to the account's day. Best effort, capped
+        at CLOSE_OUT_TIMEOUT_S: it never raises (a cancellation excepted) and never changes the pass."""
         try:
-            await self._report_pass(stats, account_id)
-        except Exception as e:
+            await asyncio.wait_for(self._report_pass(stats, account_id), timeout=self.CLOSE_OUT_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            logger.warning(f"⚠️ [ConsolidationAgent] Pass close-out cut after {self.CLOSE_OUT_TIMEOUT_S:.0f}s")
+        except Exception as e:  # a cancellation is not an Exception: it propagates
             logger.warning(f"⚠️ [ConsolidationAgent] Pass close-out failed: {type(e).__name__}")
 
     async def _report_pass(self, stats: ConsolidationPassStats, account_id: str) -> None:
