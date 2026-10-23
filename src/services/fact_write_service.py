@@ -22,16 +22,10 @@ Responsibilities:
 import asyncio
 import uuid
 from datetime import datetime, timezone
-from typing import List, Dict, Tuple
+from typing import Dict, List, Sequence, Tuple
 from ..domain.fact_embedding import fact_embedding_texts
-from ..domain.entities import (
-    FactEntity,
-    FactType,
-    FactDomain,
-    TemporalClass,
-    FactState,
-    ContextPriority,
-)
+from ..domain.entities import FactEntity, FactType
+from ..domain.new_fact_attributes import NewFactAttributes, parse_new_fact
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_write_port import FactWritePort
@@ -76,136 +70,57 @@ class FactWriteService(FactWritePort):
         user_id: str,
         facts_data: List[Dict],
         skip_deduplication: bool = False
-    ) -> Tuple[int, int]:
+    ) -> Tuple[int, int, List[str]]:
         """
         Add batch of facts with automatic multi-vector generation and deduplication.
-        
+
         Process:
-        1. Generate 3 embeddings per fact (text, tags, metadata) in parallel
-        2. Create FactEntity with all vectors
-        3. Save with semantic deduplication (Repository handles similarity check)
-        
+        1. Parse every fact (a bad value raises ValueError before any embedding or write)
+        2. build_facts: 3 embeddings per fact, FactEntity with all vectors
+        3. Save one by one (skip_deduplication) or with semantic deduplication
+
         Args:
             account_id: Account ID (billing entity)
             user_id: User ID (attribution)
-            facts_data: List of fact dicts from LLM with keys:
-                - text/content: Fact text
-                - tags: List of tags
-                - type: Fact type (event, state, principle, etc.)
-                - metadata: Optional metadata dict
+            facts_data: fact dicts with text/content, tags, type, metadata and the optional taxonomy fields
             skip_deduplication: If True, skip semantic deduplication (Deliberate Fact Management)
-        
+
         Returns:
-            Tuple (saved_count, skipped_count)
-        
-        Example:
-            facts_data = [
-                {"text": "User owns 2012 Toyota Corolla", "tags": ["vehicle", "car"], "type": "event"},
-                {"text": "User dislikes Brussels sprouts", "tags": ["food", "preference"], "type": "state"}
-            ]
-            saved, skipped = await service.add_facts_batch(account_id, user_id, facts_data)
+            Tuple (saved_count, skipped_count, saved_ids)
         """
         if not facts_data:
             return 0, 0, []
-        
-        logger.info(f"📝 [FactWriteService] Adding {len(facts_data)} facts for account {account_id[:8]}...")
-        
-        # Generate multi-vectors for all facts in parallel
-        multi_vectors_tasks = [
-            self._generate_multi_vectors(fact_data) for fact_data in facts_data
-        ]
-        all_vectors = await asyncio.gather(*multi_vectors_tasks)
-        
-        # Save facts one by one (semantic deduplication requires sequential processing)
+
+        parsed = [parse_new_fact(fact_data) for fact_data in facts_data]
+
+        logger.info(f"📝 [FactWriteService] Adding {len(parsed)} facts for account {account_id[:8]}...")
+
+        entities = await self.build_facts(account_id, user_id, parsed)
+
+        # Semantic deduplication requires sequential processing
         saved_count = 0
         skipped_count = 0
         saved_ids: List[str] = []
 
-        for fact_data, vectors in zip(facts_data, all_vectors):
-            # Extract data
-            text = fact_data.get("content") or fact_data.get("text")
-            tags = fact_data.get("tags", [])
-            
-            # Map LLM type to FactType enum
-            llm_type = fact_data.get("type", "event").lower()
-            if llm_type == "state":
-                fact_type = FactType.STATE
-            elif llm_type == "principle":
-                fact_type = FactType.PRINCIPLE
-            elif llm_type == "system":
-                fact_type = FactType.SYSTEM
-            elif llm_type == "alert":
-                fact_type = FactType.ALERT
-            else:
-                fact_type = FactType.EVENT  # Default
-            
-            # Add "consolidated" tag
-            if "consolidated" not in tags:
-                tags.append("consolidated")
-            
-            # Add "anchor" tag for principles
-            if fact_type == FactType.PRINCIPLE and "anchor" not in tags:
-                tags.append("anchor")
-
-            # Resolve Deliberate Fact Management taxonomy fields (optional)
-            domain_value = fact_data.get("domain")
-            temporal_value = fact_data.get("temporal_class")
-            state_value = fact_data.get("state")
-            context_priority_value = fact_data.get("context_priority")
-
-            domain = FactDomain(domain_value) if domain_value else None
-            temporal_class = TemporalClass(temporal_value) if temporal_value else None
-            state = FactState(state_value) if state_value else FactState.CURRENT
-            context_priority = (
-                ContextPriority(context_priority_value)
-                if context_priority_value
-                else ContextPriority.MEDIUM
-            )
-            
-            # Create FactEntity with multi-vectors
-            fact_entity = FactEntity(
-                account_id=account_id,
-                created_by_user_id=user_id,
-                lineage_id=str(uuid.uuid4()),  # Generate unique lineage ID
-                text=text,
-                tags=tags,
-                type=fact_type,
-                metadata=fact_data.get("metadata", {}),
-                is_current=True,
-                domain=domain,
-                temporal_class=temporal_class,
-                state=state,
-                context_priority=context_priority,
-                ttl_days=fact_data.get("ttl_days"),
-                context=fact_data.get("context"),
-                reported_date=fact_data.get("reported_date") or datetime.now(timezone.utc),
-                # Multi-vector embeddings
-                vector=vectors["vector"],
-                tags_vector=vectors["tags_vector"],
-                metadata_vector=vectors["metadata_vector"]
-            )
-            
+        for fact_entity in entities:
             if skip_deduplication:
                 fact_id = await self._repo.add_fact(fact_entity)
                 saved_ids.append(fact_id)
                 was_added = True
                 duplicate_id = None
             else:
-                # Save with semantic deduplication
-                # SESSION 2026-02-08: Raised threshold from 0.85 to 0.96
+                # Raised from 0.85 to 0.96 on 2026-02-08
                 was_added, duplicate_id = await self._repo.add_fact_if_unique(
                     fact_entity,
                     similarity_threshold=0.96
                 )
-            
+
             if was_added:
                 saved_count += 1
             else:
                 skipped_count += 1
-                logger.debug(
-                    f"⏭️  Skipped semantic duplicate (existing: {duplicate_id[:8]}...): '{text[:50]}...'"
-                )
-        
+                logger.debug(f"⏭️  Skipped semantic duplicate (existing: {(duplicate_id or '')[:8]}...)")
+
         if skip_deduplication:
             logger.info(
                 f"✅ [FactWriteService] Completed: {saved_count} saved (deduplication skipped)"
@@ -217,56 +132,56 @@ class FactWriteService(FactWritePort):
 
         return saved_count, skipped_count, saved_ids
 
-    async def _generate_multi_vectors(self, fact_data: Dict) -> Dict[str, List[float]]:
-        """
-        Generate 3 vectors for multi-vector search (Session 2026-02-07).
-        
-        Generates:
-        1. vector: Semantic embedding of fact text (RETRIEVAL_DOCUMENT task)
-        2. tags_vector: Domain keywords embedding (SEMANTIC_SIMILARITY task)
-        3. metadata_vector: Structured data embedding (SEMANTIC_SIMILARITY task)
-        
-        Args:
-            fact_data: Fact dict from LLM with 'content'/'text', 'tags', 'metadata'
-            
-        Returns:
-            Dict with keys: vector, tags_vector, metadata_vector (each 768 dims)
-            
-        Example:
-            fact_data = {
-                "content": "User's mother is Valentina",
-                "tags": ["family", "mother"],
-                "metadata": {"relationship": "mother", "name": "Valentina"}
-            }
-            
-            vectors = await self._generate_multi_vectors(fact_data)
-            # → {"vector": [0.1, ...], "tags_vector": [0.2, ...], "metadata_vector": [0.3, ...]}
-        """
-        text = fact_data.get("content") or fact_data.get("text", "")
-        tags = fact_data.get("tags", [])
-        metadata = fact_data.get("metadata", {})
-        
-        # Prepare embedding texts
-        texts = fact_embedding_texts(text, tags, metadata)
-        
-        # Single batch call: 3 texts → 3 vectors in one HTTP request (~5s vs ~15s).
-        # genai.Client serializes concurrent to_thread calls at the HTTP layer,
-        # so asyncio.gather with 3 get_embedding() calls was effectively sequential.
-        # All three use "RETRIEVAL_DOCUMENT" — consistent with the "RETRIEVAL_QUERY"
-        # vectors used at search time (SearchEnrichmentService). Previously
-        # tags/metadata used "SEMANTIC_SIMILARITY" which was already mismatched
-        # with the "RETRIEVAL_QUERY" search vectors.
-        vector, tags_vector, metadata_vector = await self._embedding.get_embeddings_batch(
-            texts, "RETRIEVAL_DOCUMENT"
-        )
-        
-        logger.debug(
-            f"   ✓ Generated multi-vectors for: '{text[:30]}...' "
-            f"(tags={len(tags)}, metadata_keys={len(metadata)})"
-        )
-        
-        return {
-            "vector": vector,
-            "tags_vector": tags_vector,
-            "metadata_vector": metadata_vector
-        }
+    async def build_facts(
+        self,
+        account_id: str,
+        user_id: str,
+        facts: Sequence[NewFactAttributes],
+    ) -> List[FactEntity]:
+        """Embed and build entities from parsed attributes; nothing is stored. Tags are appended in place."""
+        if not facts:
+            return []
+
+        all_vectors = await asyncio.gather(*(self._generate_multi_vectors(attrs) for attrs in facts))
+
+        entities: List[FactEntity] = []
+        for attrs, vectors in zip(facts, all_vectors):
+            if len(vectors) != 3 or any(vector is None for vector in vectors):
+                logger.error(f"❌ [FactWriteService] Embedding service returned no vector (type={attrs.type.value})")
+                raise RuntimeError("The embedding service returned no vector for a fact")
+
+            tags = attrs.tags
+            if "consolidated" not in tags:
+                tags.append("consolidated")
+            if attrs.type == FactType.PRINCIPLE and "anchor" not in tags:
+                tags.append("anchor")
+
+            entities.append(FactEntity(
+                account_id=account_id,
+                created_by_user_id=user_id,
+                lineage_id=str(uuid.uuid4()),
+                text=attrs.content,
+                tags=tags,
+                type=attrs.type,
+                metadata=attrs.metadata,
+                is_current=True,
+                domain=attrs.domain,
+                temporal_class=attrs.temporal_class,
+                state=attrs.state,
+                context_priority=attrs.context_priority,
+                ttl_days=attrs.ttl_days,
+                context=attrs.context,
+                reported_date=attrs.reported_date or datetime.now(timezone.utc),
+                vector=vectors[0],
+                tags_vector=vectors[1],
+                metadata_vector=vectors[2],
+            ))
+        return entities
+
+    async def _generate_multi_vectors(self, attrs: NewFactAttributes) -> List[List[float]]:
+        """The three vectors of a fact (text, tags, metadata), one batch call, task RETRIEVAL_DOCUMENT as at search time."""
+        texts = fact_embedding_texts(attrs.content, attrs.tags, attrs.metadata)
+        # One batch call: genai.Client serializes concurrent to_thread calls, so three single calls were sequential.
+        vectors = await self._embedding.get_embeddings_batch(texts, "RETRIEVAL_DOCUMENT")
+        logger.debug(f"   ✓ Generated multi-vectors (tags={len(attrs.tags)}, metadata_keys={len(attrs.metadata)})")
+        return list(vectors)
