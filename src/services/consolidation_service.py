@@ -149,18 +149,21 @@ class ConsolidationService:
             return ConsolidationRun()
 
         processed = 0
+        touched: list[str] = []
+        step = _Step.NOTHING_PENDING
         while max_batches is None or processed < max_batches:
-            step = await self._consolidate_one(user_id, account_id)
+            step = await self._consolidate_one(user_id, account_id, touched)
             if step is _Step.CONSOLIDATED:
                 processed += 1
             elif step is _Step.DEFERRED:
                 return ConsolidationRun(processed=processed, deferred=True)
-            elif step is _Step.ERROR:
-                return ConsolidationRun(processed=processed)
             else:
                 break
 
-        has_more = await self._has_pending(user_id)
+        if step is _Step.ERROR:
+            has_more = await self._has_other_pending(user_id, touched)
+        else:
+            has_more = await self._has_pending(user_id)
         if has_more:
             logger.info("📬 [Librarian] More pending batches remain for user %s", user_id[:8])
         return ConsolidationRun(processed=processed, has_more=has_more)
@@ -181,6 +184,19 @@ class ConsolidationService:
             self._log_unhandled(user_id, exc)
             return None
 
+    async def _has_other_pending(self, user_id: str, touched: list[str]) -> bool:
+        """After an internal error: whether batches other than the one that broke are waiting, so the chain goes on
+        without retrying that batch. An error before any batch was read names none, and then nothing continues (a
+        failing store would loop hot)."""
+        if not touched:
+            return False
+        try:
+            pending = await self._queue.get_pending_batches(user_id=user_id, limit=len(touched) + 1)
+        except Exception as exc:
+            self._log_unhandled(user_id, exc)
+            return False
+        return any(batch.batch_id not in touched for batch in pending)
+
     async def _has_pending(self, user_id: str) -> bool:
         """A failing read answers True: a spare continuation finds nothing and stops, a lost one waits for the sweep."""
         try:
@@ -196,7 +212,7 @@ class ConsolidationService:
             user_id, exc, exc_info=True,
         )
 
-    async def _consolidate_one(self, user_id: str, account_id: str) -> _Step:
+    async def _consolidate_one(self, user_id: str, account_id: str, touched: list[str]) -> _Step:
         """One batch under a fresh lease. Lease and deferral-queue errors propagate; a release error does not."""
         owner = uuid.uuid4().hex
         now = self._clock()
@@ -207,7 +223,7 @@ class ConsolidationService:
             await self._defer(user_id, now, "lease busy")
             return _Step.DEFERRED
         try:
-            step = await self._consolidate_leased(user_id, account_id, until)
+            step = await self._consolidate_leased(user_id, account_id, until, touched)
             if step is _Step.NO_TIME:
                 await self._defer(user_id, now, "less than the lease margin left")
                 return _Step.DEFERRED
@@ -215,19 +231,19 @@ class ConsolidationService:
         finally:
             await self._release(account_id, owner)
 
-    async def _consolidate_leased(self, user_id: str, account_id: str, until: datetime) -> _Step:
+    async def _consolidate_leased(self, user_id: str, account_id: str, until: datetime, touched: list[str]) -> _Step:
         try:
             async with RequestContext(user_id=user_id, account_id=account_id):
                 logger.debug(
                     "✅ RequestContext set: user_id=%s, account_id=%s",
                     user_id[:8], account_id[:12],
                 )
-                return await self._process_one_batch(user_id, until)
+                return await self._process_one_batch(user_id, until, touched)
         except Exception as exc:
             self._log_unhandled(user_id, exc)
             return _Step.ERROR
 
-    async def _process_one_batch(self, user_id: str, until: datetime) -> _Step:
+    async def _process_one_batch(self, user_id: str, until: datetime, touched: list[str]) -> _Step:
         await self._queue.reset_recoverable_batches(user_id, zombie_after_s=_MARGIN_S)
 
         batches = await self._queue.get_pending_batches(user_id=user_id, limit=1)
@@ -236,6 +252,7 @@ class ConsolidationService:
             return _Step.NOTHING_PENDING
 
         batch = batches[0]
+        touched.append(batch.batch_id)
         if agent_timeout_s(until, self._clock()) < _MARGIN_S:
             return _Step.NO_TIME
 
