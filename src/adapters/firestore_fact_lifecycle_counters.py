@@ -3,7 +3,7 @@ FirestoreFactLifecycleCounters — FactLifecycleCountersPort on Firestore (FACT_
 
 `{prefix}fact_lifecycle_daily`, doc id `<account_id>:<YYYY-MM-DD>` (UTC day): `account_id`, `day` (ISO string), the
 janitor's snapshot fields and the added counters. `{prefix}fact_lifecycle_lines`, doc id `<YYYY-MM-DD>`: the mark
-that the day's ops line was claimed. Neither collection has a TTL policy and no field is named `expires_at`.
+that the day's ops line was claimed (`day` as an ISO string, `claimed_at` aware UTC). Neither collection has a TTL policy and no field is named `expires_at`.
 """
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Mapping
