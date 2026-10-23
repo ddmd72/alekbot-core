@@ -21,6 +21,13 @@ pending the hourly sweep did the same, 3 paid attempts every hour forever.
   last allowed round fails: grep `[Librarian] CONSOLIDATION_GAVE_UP` (batch_id, user_id[:8], revivals).
 - `get_pending_batches` selects `pending`/`retry_pending` only, so a FAILED batch never blocks a newer one.
 
+- **Lost runs count (2026-10-23).** A run that kills its worker never records a failure, so its batch used to loop
+  (reset to attempts 0 as a zombie, run, die). `reset_recoverable_batches` now sets a zombie's `attempts` to +1 and, at
+  `MAX_BATCH_ATTEMPTS` (3), marks it FAILED (ERROR `CONSOLIDATION_FAILED`, `CONSOLIDATION_GAVE_UP` past the revival cap).
+  Both callers count: the lease holder's 60 s threshold, where S2 would otherwise repeat the loop every ~16-18 min, and
+  the sweep's 1800 s one, where the same loop ran hourly. A CPU-throttled zombie that was no poison batch spends an attempt
+  too; the sweep revives it, and the total stays at 12 lost runs in the batch's life.
+
 ## Rejected
 
 - A separate new port method for the sweep path: `test_port_contracts` pins the abstract set, and one flag is enough.
@@ -32,5 +39,5 @@ pending the hourly sweep did the same, 3 paid attempts every hour forever.
 ## Revisit when
 
 A transient outage longer than ~3 hours (3 sweeps) is common enough that batches are given up while the cause is fixed:
-raise the cap or add a manual "revive" lever. Zombie revivals are still uncounted (a batch that kills its worker loops).
+raise the cap or add a manual "revive" lever.
 The companion queue has the same pre-fix revive-on-every-task code and is not changed here.
