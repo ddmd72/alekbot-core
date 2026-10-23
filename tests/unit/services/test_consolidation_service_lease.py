@@ -23,7 +23,9 @@ from src.domain.consolidation import BatchStatus, ConsolidationBatch
 from src.domain.consolidation_run import ConsolidationRun
 from src.domain.request_context import get_current_account_id, get_current_user_id
 from src.domain.memory_write_lease import LEASE_BUSY_RETRY_DELAY_S, LEASE_MARGIN, defer_bucket, lease_until
+from src.domain.user import UserBotConfig
 from src.services.consolidation_service import ConsolidationService
+from tests.support.account_owners import OwnedAccounts
 from tests.support.firestore_eval import EvalDb, EvalDocRef
 
 USER = "user-abcdef123"
@@ -112,11 +114,15 @@ class AgentFactory:
 
 
 class UserRepo:
-    def __init__(self, accounts: Dict[str, Optional[str]]) -> None:
+    def __init__(self, accounts: Dict[str, Optional[str]], zones: Optional[Dict[str, str]] = None) -> None:
         self._accounts = accounts
+        self._zones = zones or {}
 
     async def get_user(self, user_id):
-        return SimpleNamespace(account_id=self._accounts[user_id]) if user_id in self._accounts else None
+        if user_id not in self._accounts:
+            return None
+        config = UserBotConfig(timezone=self._zones.get(user_id, "UTC"))
+        return SimpleNamespace(account_id=self._accounts[user_id], config=config)
 
 
 @pytest.fixture
@@ -165,7 +171,8 @@ def make_service(queue, lease, tasks, coordinator, clock):
     def build(**over):
         kwargs = dict(
             queue=queue, coordinator=coordinator, agent_factory=AgentFactory(), lease=lease, run_timeout_s=RUN_S,
-            task_queue=tasks, user_repo=UserRepo({USER: ACC, USER2: ACC}), clock=clock,
+            task_queue=tasks, user_repo=UserRepo({USER: ACC, USER2: ACC}), account_repo=OwnedAccounts({ACC: USER}),
+            clock=clock,
         )
         kwargs.update(over)
         return ConsolidationService(**kwargs)
@@ -225,7 +232,8 @@ async def test_a_run_holds_the_account_lease_with_a_fresh_owner_per_batch_and_re
     assert _lease_doc(db, env) is None, "released"
 
 
-async def test_the_message_carries_the_batch_the_user_and_no_transient_retry(service, queue, coordinator):
+async def test_the_message_carries_the_batch_the_user_and_no_transient_retry(make_service, queue, coordinator):
+    service = make_service(user_repo=UserRepo({USER: ACC, USER2: ACC}, zones={USER: "Europe/Paris"}))
     await _put(queue, "b1")
 
     await service.process_user_batches(USER, max_batches=1)
@@ -233,7 +241,7 @@ async def test_the_message_carries_the_batch_the_user_and_no_transient_retry(ser
     assert coordinator.contexts_seen == [(USER, ACC)], "routed inside the user's request context"
 
     message = coordinator.messages[0]
-    assert message.context == {"user_id": USER, "suppress_transient_retry": True}
+    assert message.context == {"user_id": USER, "suppress_transient_retry": True, "owner_timezone": "Europe/Paris"}
     assert message.payload["task"] == "consolidate_full" and message.payload["messages"] == [{"role": "user"}]
 
 
