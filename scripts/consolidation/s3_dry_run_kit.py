@@ -766,7 +766,7 @@ class OwnFactsSearch:
         self, keywords: List[str], primary_query: str, alternative_query: str = "", limit: int = 20, *, timezone: str
     ) -> List[Dict[str, Any]]:
         hits = await self._inner.search_existing_facts(keywords, primary_query, alternative_query, limit, timezone=timezone)
-        return [*self._own.get(primary_query, []), *hits]
+        return [*self._own.get(primary_query, []), *hits][:limit]
 
 
 class WriteRecorder(FactManagementPort):
