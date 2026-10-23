@@ -97,6 +97,32 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
   test, not an allowlist line. The list only shrinks: the test fails when a listed module is now imported. The check is `slow`,
   so it fails only in `make ci`.
 
+## The production graph: wiring and reachability (P9)
+
+The main service's non-web objects are built by `build_application_graph(config, db_client)` (`src/composition/application_graph.py`);
+`main()` calls the same function, so a test that builds it tests production's wiring, not a copy.
+
+- **The sealed environment** (`tests/support/prod_env.py`): `seal()` empties `os.environ` to a keep-list, then
+  `apply_deploy_env()` sets what the `alek-bot-dev` step of `cloudbuild-dev.yaml` sets (its `--set-env-vars`, its `--set-secrets`
+  names with shaped fakes, `K_SERVICE`, the build substitutions) and the real `load_settings()` runs. The `.env` file is never read.
+  A test that needs the deploy's values uses this, never a hand-made `config` dict.
+- **The fixture** (`prod_graph`, imported from `tests/support/prod_graph.py`): the built and started graph over the H1 fake and a recording Cloud Tasks
+  client, with one user's eager and lazy agents built. Use it for any "is X wired in production" question.
+- **The boot test** (`tests/unit/test_main_boots_offline.py`; its tests over 0.5 s are `slow`): runs the real `main()` offline, pins the full `url_map`
+  (`main_boots_offline_url_map.txt`) and the keywords of every blueprint factory call, and sends every trigger through `/worker`
+  against a pinned per-type table. `tests/unit/test_worker_triggers.py` ties the scheduler script and the enqueue sites to
+  `WorkerHandler`'s branches; `tests/unit/test_main_construction_allowlist.py` limits what `main.py` may construct itself.
+- **The ledgers** (`tests/unit/composition/wiring_none_ledger.txt`, `wiring_instance_ledger.txt`; checks in `tests/support/wiring_ledger.py`):
+  every `None` the walk finds and every instance count is listed with a reason; both fail **both ways** (an unlisted `None` or count,
+  and a listed line whose `None` or count is gone). A line is `<key>  # <reason> <evidence>`, the reason one of `off-in-prod`,
+  `optional-knob`, `lazy`, `runtime`, `by-design`, `defect:<id>`. Adding a line is a decision for the reviewer, not a way to make a
+  test pass; a `defect:` line is a wiring fault someone owns.
+- **Mutation:** `python -m tests.support.semantic_mutants --module src.composition.application_graph --operators wiring --tests ...`
+  (`wire-drop`, `call-skip`) is the done-check for the builder and `main.py`.
+- **Not covered, by decision:** a wrong but non-None object of the right type; producer and consumer payload fields that disagree;
+  an enqueue literal in dead code; the rollback env switches; the wiring of `indexer_main`, `job_main`, `relay_main`; a secret that is
+  empty in Secret Manager; the four env reads made at import time, before the seal. They are listed in the RFC's "Built (P9)" note.
+
 ## Mutation check: the done-criterion for a package
 
 Every package ends with this check: it is done when every mutant of its modules is killed by its tests or

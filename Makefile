@@ -143,7 +143,7 @@ help: ## Show this help message
 	@echo "  make test-coverage   Unit tests + per-file coverage gate"
 	@echo "  make test-integration Run integration tests"
 	@echo "  make test-cloud      Cloud gate: the parity scenarios on the Firestore test database (serial, by hand)"
-	@echo "  make lint            Lint src/ with ruff"
+	@echo "  make lint            Lint src/ and the root entry points with ruff"
 	@echo "  make format          Format src/ with ruff"
 	@echo ""
 	@echo "🚀 DEPLOY (single live environment — deploy is manual by choice):"
@@ -287,9 +287,9 @@ test-cloud: ## Cloud gate: the parity scenarios on the Firestore test database (
 	@echo "☁️  Running the cloud gate on the test database..."
 	RUN_CLOUD_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/cloud -q -p no:randomly --asyncio-mode=auto
 
-lint: ## Lint src/ with ruff (pyflakes + pycodestyle errors)
-	@echo "🔍 Running ruff linter on src/..."
-	$(PYTHON) -m ruff check src/
+lint: ## Lint src/ and the root entry points with ruff (pyflakes + pycodestyle errors)
+	@echo "🔍 Running ruff linter on src/ and the root entry points..."
+	$(PYTHON) -m ruff check src/ main.py indexer_main.py job_main.py relay_main.py sandbox_main.py
 
 format: ## Format src/ with ruff (black-compatible)
 	@echo "✨ Formatting src/ with ruff..."

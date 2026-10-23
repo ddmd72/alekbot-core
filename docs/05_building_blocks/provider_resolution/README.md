@@ -34,7 +34,7 @@ Abstract levels of reasoning capability:
 
 A central service locator that maintains active instances of LLM adapters (Gemini, Claude, etc.).
 
-- **Registration:** Adapters are registered at startup in `main.py`.
+- **Registration:** Adapters are registered at startup in `ServiceContainer` (built by `build_application_graph`).
 - **Lookup:** Services fetch concrete `LLMPort` implementations by name.
 
 ### 2.4 Per-model capability gates inside adapters

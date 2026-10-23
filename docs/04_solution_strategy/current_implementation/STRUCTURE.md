@@ -6,7 +6,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 ├── .dockerignore
 ├── .gitignore
 ├── Dockerfile
-├── main.py             # Main application entry point
+├── main.py             # Main service entry point: telemetry, settings, Firestore client, then the web layer (blueprints, voice, MCP, `/worker`); builds the graph via `composition/application_graph.py`
 ├── relay_main.py       # Voice-relay entry point — SECOND Cloud Run service (Voice Companion)
 ├── sandbox_main.py     # Untrusted-content sandbox entry point (supervisor + `--serve`), own image Dockerfile.sandbox
 ├── Dockerfile.sandbox  # Render service image (target `render`): explicit COPY allowlist, no secrets
@@ -92,6 +92,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │       └── webhook_adapter.py  # TelegramWebhookAdapter — HMAC, IAM, routing
 ├── composition/        # Composition Root (Dependency Injection)
 │   ├── __init__.py
+│   ├── application_graph.py # `build_application_graph` — every non-web object of the main service, shared by `main()` and the tests (P9)
 │   ├── service_container.py # ServiceContainer — owns all shared (singleton-per-worker) services
 │   ├── user_agent_factory.py # 🆕 Per-user agent instance factory (moved from services/ to composition/)
 │   ├── sandbox_setup.py # 🆕 Sandbox service start-up: validate_startup (StartupPlan), build_engine_registry
@@ -196,7 +197,7 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   │                        #    Intent — typed constants for all intent strings (no raw literals).
 │   │                        #    AgentDescriptor instances for ALL agents (specialists + orchestrators):
 │   │                        #      Specialists: MEMORY_SEARCH, WEB_SEARCH, WEB_SEARCH_LIGHT, EMAIL_SEARCH, MAPS_SEARCH, DEEP_RESEARCH_AGENT, PDF_PLANNER, PDF_GENERATOR
-│   │                        #        → registered via ALL_DESCRIPTORS in main.py
+│   │                        #        → registered via ALL_DESCRIPTORS in composition/application_graph.py
 │   │                        #      Orchestrators: QUICK_RESPONSE, SMART_RESPONSE
 │   │                        #        → set as class-level _descriptor in agent classes
 │   ├── agent_registry.py    # 🆕 AgentDescriptor dataclass + AgentRegistry mechanics (ACP v2).
@@ -347,6 +348,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 
 ### `composition/` - Composition Root (Dependency Injection)
 
+-   **`application_graph.py`**: `ApplicationGraph` + `build_application_graph(config, db_client)` — builds every non-web object the main service runs (`ServiceContainer`, repositories, services, coordinator and registry, handlers, `UserAgentFactory`, Slack and Telegram adapters) and returns them as typed fields; `start()` / `shutdown()` run the background loops. `main()` and the P9 tests call the same function (`decisions/application_graph_builder.md`). One long function, a declared deviation from section helpers.
 -   **`service_container.py`**: `ServiceContainer` — created once per worker process. Owns all shared services: LLM adapters (Gemini, Claude, Grok), repositories (FirestoreFactRepository, FirestorePromptComponentRepository), services (ProviderRegistry, AgentContextBuilder, PromptComponentService, BiographicalContextService, ConfigurationService, **FactWriteService**) and `FirestoreSessionStore` with overflow-callback. Also owns all email infrastructure: `FirestoreIndexedEmailRepository`, `FirestoreOAuthCredentialsAdapter`, `GmailProviderAdapter`, `EmailSearchService`, `EmailIndexingService`, `EmailClassificationAgent` (shared singleton). Provides `agent_services()` dict for injection into `UserAgentFactory`. Also provides `create_fact_management_adapter(search_enrichment_service)` — factory method for per-user `FactManagementAdapter`.
 -   **`user_agent_factory.py`**: 🆕 `UserAgentFactory(AgentFactoryPort)` — per-user agent instance factory. Moved from `services/` to `composition/` (legal to import all layers). Caches agent sets per user (1h TTL). Resolves 3-level config (USER > ACCOUNT > SYSTEM) during instantiation. Two-tier lifecycle: **eager agents** (Router, Quick, Smart, Memory, WebSearch, etc.) created on first request; **lazy agents** (DocGenerator, PdfGenerator, DeepResearch, FileManagement, etc.) created on first delegation via `AgentFactoryPort.create_agent_on_demand()`. Lazy agents tracked in `_lazy_agent_ids` for eviction.
 -   **`slack_adapter_factory.py`**: `SlackAdapterFactory` — creates the appropriate Slack adapter (Socket or HTTP) based on `EnvironmentConfig`. Lives in `composition/` because it imports from `handlers/` (to create `ConversationHandler`) and `infrastructure/` — layers that `adapters/` cannot legally access. Creates `SlackMediaAdapter` → `RichContentService` → `ConversationHandler`, passes as `ConversationHandlerPort` to the platform adapter.
