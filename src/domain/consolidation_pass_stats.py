@@ -9,11 +9,21 @@ Privacy: the texts carry only the first 8 characters of the user id and tool NAM
 never tool arguments or fact content.
 """
 
+import hashlib
 import json
 from collections import Counter
-from typing import Any, Dict, List, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 _WRITE_TOOLS = frozenset({"create_fact", "update_fact", "merge_facts"})
+_NEW_TEXT_TOOLS = {"create_fact": "content", "merge_facts": "merged_content"}
+
+# What one tool call came to. `expiry` is a refusal of a missing or malformed `expiry`; `born_due` one of a well-formed
+# `expiry` that resolves already due (the model is told to discard or rewrite, so it is never an abandoned refusal).
+OUTCOME_OK = "ok"
+OUTCOME_ERROR = "error"
+OUTCOME_EXPIRY = "expiry"
+OUTCOME_BORN_DUE = "born_due"
 _SHORT_NAMES = {
     "search_existing_facts": "search",
     "create_fact": "create",
@@ -40,6 +50,26 @@ def _signature(calls: Sequence[Tuple[str, Dict[str, Any]]]) -> Tuple[str, ...]:
     ))
 
 
+@dataclass(frozen=True)
+class _Outcome:
+    """One call's result, in the order the pass made them. `key` is a hash of the text (create, merge) or the fact id
+    (update), kept in memory only; `size` is the text length (create, merge) or 0."""
+
+    name: str
+    key: str
+    outcome: str
+    size: int
+
+
+def _outcome_key(name: str, args: Dict[str, Any]) -> Tuple[str, int]:
+    if name in _NEW_TEXT_TOOLS:
+        text = args.get(_NEW_TEXT_TOOLS[name])
+        text = text if isinstance(text, str) else ""
+        return hashlib.sha256(text.encode("utf-8")).hexdigest(), len(text)
+    fact_id = args.get("fact_id")
+    return (fact_id if isinstance(fact_id, str) else ""), 0
+
+
 class ConsolidationPassStats:
     """Collects what one `_run_consolidation_loop` pass did, turn by turn."""
 
@@ -59,6 +89,8 @@ class ConsolidationPassStats:
         self._turns: List[List[str]] = []
         self._signatures: List[Tuple[str, ...]] = []
         self.repeats = 0
+        self._outcomes: List[_Outcome] = []
+        self.error_turns = 0
 
     def record_turn(self, calls: Sequence[Tuple[str, Dict[str, Any]]]) -> None:
         """Record one turn's tool calls as (name, args) pairs."""
@@ -67,6 +99,47 @@ class ConsolidationPassStats:
             self.repeats += 1
         self._signatures.append(sig)
         self._turns.append([name for name, _ in calls])
+
+    def record_outcomes(self, calls: Sequence[Tuple[str, Dict[str, Any]]], outcomes: Sequence[str]) -> None:
+        """Record what one turn's calls came to (`outcomes[i]` is the outcome of `calls[i]`; fewer outcomes than calls
+        are paired from the front). A turn with any outcome other than `ok` is a tool-error turn."""
+        failed = False
+        for (name, args), outcome in zip(calls, outcomes):
+            key, size = _outcome_key(name, args)
+            self._outcomes.append(_Outcome(name, key, outcome, size))
+            failed = failed or outcome != OUTCOME_OK
+        if failed:
+            self.error_turns += 1
+
+    @property
+    def expiry_errors(self) -> int:
+        """Refused calls over `expiry`, born-due ones included."""
+        return sum(1 for o in self._outcomes if o.outcome in (OUTCOME_EXPIRY, OUTCOME_BORN_DUE))
+
+    @property
+    def born_due(self) -> int:
+        return sum(1 for o in self._outcomes if o.outcome == OUTCOME_BORN_DUE)
+
+    def _abandoned(self) -> List[_Outcome]:
+        """Refusals over a missing or malformed `expiry` that no later successful call answers: a create or merge
+        with the same text, an update of the same fact. Approximate on purpose: a retry that rewrites the text counts
+        as abandoned, which errs towards an alert."""
+        found = []
+        for i, refused in enumerate(self._outcomes):
+            if refused.outcome != OUTCOME_EXPIRY or refused.name not in _WRITE_TOOLS:
+                continue
+            same_kind = (refused.name,) if refused.name == "update_fact" else tuple(_NEW_TEXT_TOOLS)
+            resolved = any(
+                later.outcome == OUTCOME_OK and later.name in same_kind and later.key == refused.key
+                for later in self._outcomes[i + 1:]
+            )
+            if not resolved:
+                found.append(refused)
+        return found
+
+    @property
+    def abandoned(self) -> int:
+        return len(self._abandoned())
 
     @property
     def turns_used(self) -> int:
@@ -95,13 +168,29 @@ class ConsolidationPassStats:
     def _counts_text(self) -> str:
         return " ".join(f"{_short(n)}×{k}" for n, k in self.counts.items()) or "none"
 
+    def _errors_text(self) -> str:
+        born = f", born due {self.born_due}" if self.born_due else ""
+        return f"tool-error turns {self.error_turns} (expiry {self.expiry_errors}{born}, abandoned {self.abandoned})"
+
+    def format_abandoned_alert(self) -> str:
+        """The permanent alert for refusals of a missing or malformed `expiry` that were never answered: the pass label,
+        tool names and text lengths (or the fact id's first 8 characters), never the text."""
+        parts = []
+        for o in self._abandoned()[:5]:
+            parts.append(f"update fact {o.key[:8]}" if o.name == "update_fact" else f"{_short(o.name)} (text {o.size} chars)")
+        return (
+            f"🚨 Consolidation left expiry refusals unanswered | pass `{self.pass_label}` | model {self.model} | "
+            f"abandoned {self.abandoned}: {', '.join(parts)} | user {self.user_prefix}\n"
+            "A refused write that is never resent saves nothing; check what the pass retired next to it."
+        )
+
     def format_summary(self, report_ops: int, seconds: float) -> str:
         """The temporary per-pass stats line (pass ended with a final report). Turns count every
         LLM call, the final report included, because that is what MAX turns caps."""
         return (
             f"📊 Consolidation pass `{self.pass_label}` | model {self.model} | effort {self.effort} | "
             f"turns {self.turns_used + 1}/{self.max_turns} | tools: {self._counts_text()} | "
-            f"repeats {self.repeats} | writes {self.writes} | report ops {report_ops} | "
+            f"repeats {self.repeats} | writes {self.writes} | {self._errors_text()} | report ops {report_ops} | "
             f"{seconds:.0f}s | user {self.user_prefix}\n{self.sequence()}"
         )
 
@@ -110,6 +199,6 @@ class ConsolidationPassStats:
         return (
             f"🚨 Consolidation hit the turn limit without a final report | pass `{self.pass_label}` | "
             f"model {self.model} | effort {self.effort} | turns {self.turns_used}/{self.max_turns} | "
-            f"writes so far {self.writes} | repeats {self.repeats} | {seconds:.0f}s | "
+            f"writes so far {self.writes} | repeats {self.repeats} | {self._errors_text()} | {seconds:.0f}s | "
             f"user {self.user_prefix}\n{self.sequence()}"
         )

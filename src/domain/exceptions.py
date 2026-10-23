@@ -221,6 +221,11 @@ class FactExpiryError(ValueError):
     model reads; a ValueError, so every tool-error path already maps it to a failed call."""
 
 
+class FactBornDueError(FactExpiryError):
+    """A well-formed `expiry` that resolves already due at write time. The model is told to retire the candidate
+    (DISCARD) or rewrite the fact as history, so a refusal of this kind that is never resent is not a loss."""
+
+
 class SkillValidationError(ValueError):
     """A skill's text does not satisfy the format rules."""
 

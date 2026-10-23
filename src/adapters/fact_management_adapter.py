@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, Sequence, Tuple
 
 from ..domain.entities import FactEntity, normalize_fact_taxonomy
-from ..domain.exceptions import FactExpiryError, FactResolutionError, FactWriteConflict
+from ..domain.exceptions import FactBornDueError, FactExpiryError, FactResolutionError, FactWriteConflict
 from ..domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE, EXPIRY_SHAPES, NOTHING_WRITTEN, Expiry
 from ..domain.fact_lifecycle import (
     CLOSING_STATES,
@@ -233,7 +233,7 @@ class FactManagementAdapter(FactManagementPort):
 
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] create_fact refused (expiry): {e}")
-            return {"fact_id": None, "status": "failed", "refused": "expiry", "message": str(e)}
+            return {"fact_id": None, "status": "failed", **_expiry_refusal(e), "message": str(e)}
         except Exception as e:
             logger.error(f"❌ [FactManagement] Create fact error: {e}", exc_info=True)
             return {
@@ -292,7 +292,7 @@ class FactManagementAdapter(FactManagementPort):
             return await self._update_with_one_retry(fact_id, updates, account_id, context)
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] update_fact {fact_id[:8]} refused (expiry): {e}")
-            return {"fact_id": fact_id, "status": "failed", "refused": "expiry", "message": str(e)}
+            return {"fact_id": fact_id, "status": "failed", **_expiry_refusal(e), "message": str(e)}
         except FactResolutionError as e:
             logger.warning(f"⚠️  [FactManagement] Cannot resolve fact {fact_id[:8]}: {e}")
             return {"fact_id": fact_id, "status": "failed", "message": str(e)}
@@ -432,7 +432,7 @@ class FactManagementAdapter(FactManagementPort):
             return await self._merge_with_one_retry(fact_ids, merged_content, metadata, context)
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] merge_facts refused (expiry): {e}")
-            return {**self._merge_failed(str(e)), "refused": "expiry"}
+            return {**self._merge_failed(str(e)), **_expiry_refusal(e)}
         except FactResolutionError as e:
             logger.warning(f"⚠️  [FactManagement] Merge refused: {e}")
             return self._merge_failed(str(e))
@@ -519,6 +519,11 @@ class FactManagementAdapter(FactManagementPort):
                 continue
             sources.setdefault(stored.fact.id, stored)
         return list(sources.values())
+
+
+def _expiry_refusal(error: FactExpiryError) -> Dict[str, Any]:
+    """The tags of an expiry refusal: `refused`, and `born_due` when the expiry was well formed but already due."""
+    return {"refused": "expiry", "born_due": True} if isinstance(error, FactBornDueError) else {"refused": "expiry"}
 
 
 def _required_decision(attrs: NewFactAttributes, tool: str) -> Optional[Expiry]:

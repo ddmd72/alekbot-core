@@ -513,6 +513,22 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}memory_write_leases"
 
     @property
+    def fact_lifecycle_daily_collection(self) -> str:
+        """
+        Per-account, per-UTC-day fact lifecycle numbers, doc id `<account_id>:<YYYY-MM-DD>` (FACT_LIFECYCLE_RFC D10).
+        No TTL policy: no field is named `expires_at`. Dev: development_fact_lifecycle_daily
+        """
+        return f"{self.firestore_collection_prefix}fact_lifecycle_daily"
+
+    @property
+    def fact_lifecycle_lines_collection(self) -> str:
+        """
+        One mark per UTC day, doc id `<YYYY-MM-DD>`: the daily ops line was claimed. Kept apart from the daily
+        collection so a mark is never read as an account row. No TTL policy. Dev: development_fact_lifecycle_lines
+        """
+        return f"{self.firestore_collection_prefix}fact_lifecycle_lines"
+
+    @property
     def long_turns_collection(self) -> str:
         """
         Long chat turns (LONG_RUNNING_TURNS_RFC §5.4). Dev: development_long_turns

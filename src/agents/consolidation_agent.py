@@ -38,15 +38,31 @@ from ..utils.logger import logger
 from ..ports.llm_port import AgentExecutionContext
 from ..ports.fact_write_port import FactWritePort
 from ..ports.alert_sink import AlertSinkPort
-from ..domain.consolidation_pass_stats import ConsolidationPassStats
+from ..domain.consolidation_pass_stats import (
+    OUTCOME_BORN_DUE, OUTCOME_ERROR, OUTCOME_EXPIRY, OUTCOME_OK, ConsolidationPassStats,
+)
+from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..infrastructure.agent_config import CONSOLIDATION
 
 
 @dataclass
 class ToolResponse:
-    """Internal container for fact management tool results."""
+    """Internal container for fact management tool results. `outcome` is one of the `OUTCOME_*` values of
+    `domain.consolidation_pass_stats`, read from the result: a `refused: "expiry"` tag, a failed or missing
+    fact, or an `error` key."""
     name: str
     result_str: str
+    outcome: str = OUTCOME_OK
+
+
+def _outcome_of(result: Any) -> str:
+    if not isinstance(result, dict):
+        return OUTCOME_OK
+    if result.get("refused") == "expiry":
+        return OUTCOME_BORN_DUE if result.get("born_due") else OUTCOME_EXPIRY
+    if result.get("status") in ("failed", "not_found") or "error" in result:
+        return OUTCOME_ERROR
+    return OUTCOME_OK
 
 
 _EXPIRY_SCHEMA: Dict[str, Any] = {
@@ -244,6 +260,7 @@ class ConsolidationAgent(BaseAgent):
         indexed_email_repo: Optional[IndexedEmailRepository] = None,
         alert_sink: Optional[AlertSinkPort] = None,
         stats_alerts: bool = False,
+        lifecycle_counters: Optional[FactLifecycleCountersPort] = None,
     ):
         """
         Initialize Consolidation Agent v3.
@@ -262,6 +279,7 @@ class ConsolidationAgent(BaseAgent):
             prompt_builder: Prompt builder for cache invalidation
             facts_limit: Biographical cache limit
             principles_limit: Principles cache limit
+            lifecycle_counters: Per-day lifecycle numbers; the expiry tool errors of each pass are added to it
         """
         super().__init__(config)
         self.execution_context = execution_context
@@ -281,6 +299,7 @@ class ConsolidationAgent(BaseAgent):
         # TEMPORARY per-pass 📊 stats (Sonnet 5.5 stall monitoring, 2026-10-20); the factory reads
         # CONSOLIDATION_STATS_ALERTS (REQ-ARCH-01 forbids env access in agents/).
         self._stats_alerts = stats_alerts
+        self._lifecycle_counters = lifecycle_counters
 
         logger.info(
             f"👨‍🏫 ConsolidationAgent initialized "
@@ -1019,11 +1038,25 @@ class ConsolidationAgent(BaseAgent):
             f"{self.DIRECTIVE_HARD_CAP}, invalidating {len(overflow)} lowest-priority"
         )
         ops: List[Dict[str, Any]] = []
+        not_applied = 0
         for fact in overflow:
-            await port.update_fact(
+            result = await port.update_fact(
                 fact.id, {"state": "invalidated"}, account_id=account_id, context=write_context
             )
+            status = result.get("status") if isinstance(result, dict) else None
+            if status != "updated":
+                not_applied += 1
+                logger.error(
+                    f"❌ [ConsolidationAgent] Directive cap backstop: invalidating {fact.id[:8]} was not applied "
+                    f"(status={status})"
+                )
+                continue
             ops.append({"action": "INVALIDATE", "fact_id": fact.id, "reason": "directive cap backstop"})
+        if not_applied:
+            await self._post_alert(
+                f"🚨 Directive cap backstop could not invalidate {not_applied} of {len(overflow)} directives over the "
+                f"cap of {self.DIRECTIVE_HARD_CAP} | account {account_id[:8]}"
+            )
         return ops
 
     @staticmethod
@@ -1139,6 +1172,7 @@ class ConsolidationAgent(BaseAgent):
                     await self._post_alert(
                         stats.format_summary(len(ops), time.monotonic() - started)
                     )
+                await self._close_pass(stats, account_id)
                 return ops
 
             logger.info(
@@ -1170,6 +1204,10 @@ class ConsolidationAgent(BaseAgent):
                 fact_management=fact_management,
             )
 
+            stats.record_outcomes(
+                [(tc.name, tc.args or {}) for tc in response.tool_calls], [tr.outcome for tr in tool_responses]
+            )
+
             history.append(Message(
                 role="user",
                 parts=[
@@ -1184,7 +1222,22 @@ class ConsolidationAgent(BaseAgent):
         alert_text = stats.format_limit_alert(time.monotonic() - started)
         logger.error(f"⚠️ [ConsolidationAgent] Max turns reached without final report: {alert_text}")
         await self._post_alert(alert_text)
+        await self._close_pass(stats, account_id)
         return []
+
+    async def _close_pass(self, stats: ConsolidationPassStats, account_id: str) -> None:
+        """After a pass: an expiry refusal that was never answered is always a 🚨 (also with the stats line off), and
+        the pass's expiry errors are added to the account's day. Best effort, never changes the pass."""
+        if stats.abandoned:
+            await self._post_alert(stats.format_abandoned_alert())
+        if not stats.expiry_errors or self._lifecycle_counters is None:
+            return
+        try:
+            await self._lifecycle_counters.add(
+                account_id, datetime.now(timezone.utc).date(), {"expiry_tool_errors": stats.expiry_errors}
+            )
+        except Exception as e:
+            logger.warning(f"⚠️ [ConsolidationAgent] Lifecycle counters not updated: {type(e).__name__}")
 
     async def _post_alert(self, text: str) -> None:
         """Best-effort ops alert: a missing sink or a failing post never affects the pass."""
@@ -1444,7 +1497,8 @@ class ConsolidationAgent(BaseAgent):
                     )
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps(result, ensure_ascii=False)
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=_outcome_of(result),
                     )
 
                 elif tool_call.name == "create_fact":
@@ -1459,7 +1513,8 @@ class ConsolidationAgent(BaseAgent):
                     )
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps(result, ensure_ascii=False)
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=_outcome_of(result),
                     )
 
                 elif tool_call.name == "update_fact":
@@ -1471,7 +1526,8 @@ class ConsolidationAgent(BaseAgent):
                     )
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps(result, ensure_ascii=False)
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=_outcome_of(result),
                     )
 
                 elif tool_call.name == "merge_facts":
@@ -1487,7 +1543,8 @@ class ConsolidationAgent(BaseAgent):
                     )
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps(result, ensure_ascii=False)
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=_outcome_of(result),
                     )
 
                 elif tool_call.name == "count_words":
@@ -1501,21 +1558,24 @@ class ConsolidationAgent(BaseAgent):
                     }
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps(result, ensure_ascii=False)
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=_outcome_of(result),
                     )
 
                 else:
                     logger.warning(f"⚠️ Unknown tool: {tool_call.name}")
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps({"error": f"Unknown tool: {tool_call.name}"})
+                        result_str=json.dumps({"error": f"Unknown tool: {tool_call.name}"}),
+                        outcome=OUTCOME_ERROR,
                     )
 
             except Exception as e:
                 logger.error(f"❌ Tool {tool_call.name} failed: {e}", exc_info=True)
                 return ToolResponse(
                     name=tool_call.name,
-                    result_str=json.dumps({"error": str(e)}, ensure_ascii=False)
+                    result_str=json.dumps({"error": str(e)}, ensure_ascii=False),
+                    outcome=OUTCOME_ERROR,
                 )
 
         if len(tool_calls) > 1:
