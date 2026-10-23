@@ -19,12 +19,13 @@ from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilit
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, USER
 from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_write import EXPIRY_NONE, ctx
 
 REPORT = LLMResponse(text='{"operations": []}')
 
 
 def update(fact_id, content):
-    return LLMResponse(text=None, tool_calls=[ToolCall(name="update_fact", args={"fact_id": fact_id, "updates": {"content": content}})])
+    return LLMResponse(text=None, tool_calls=[ToolCall(name="update_fact", args={"fact_id": fact_id, "updates": {"content": content, "expiry": EXPIRY_NONE}})])
 
 
 @pytest.fixture
@@ -55,7 +56,8 @@ async def test_stage1_updates_one_fact_twice_the_second_lands_on_the_current_ver
     agent, port = build_agent(store)
     first = (await port.create_fact("mother is Valentina", {
         "account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
-        "context_priority": "medium", "tags": ["family"], "metadata": {}}))["fact_id"]
+        "context_priority": "medium", "tags": ["family"], "metadata": {}, "expiry": EXPIRY_NONE},
+        context=ctx()))["fact_id"]
     llm_script: List[LLMResponse] = [update(first, "mother is Valentina Ivanova"), update(first, "mother is Valentina Petrova")]
     requests: List[str] = []
 
@@ -70,9 +72,9 @@ async def test_stage1_updates_one_fact_twice_the_second_lands_on_the_current_ver
     seeds: List[list] = []
     real_cluster = agent._build_review_cluster
 
-    async def spy_cluster(changed, account_id):
+    async def spy_cluster(changed, account_id, *, timezone):
         seeds.append(list(changed))
-        return await real_cluster(changed, account_id)
+        return await real_cluster(changed, account_id, timezone=timezone)
 
     agent._build_review_cluster = spy_cluster
 
