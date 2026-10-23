@@ -677,7 +677,11 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   Cloud Scheduler jobs and the enqueue sites to `WorkerHandler`'s branches; no handler is manual-only. An unknown `task_type` answers 400.
   `test_main_construction_allowlist.py` limits what `main.py` constructs itself, and a structural test requires every `BaseAgent` subclass that takes
   an execution context to store it (reasoned allowlist).
-- **Mutation.** Two operators, `wire-drop` and `call-skip` (`--operators wiring`), make the mutation check reach wiring. Result: <MUTANTS: filled by the arbiter>.
+- **Mutation.** Two operators, `wire-drop` and `call-skip` (`--operators wiring`), make the mutation check reach wiring. Result (final runs on the PR head,
+  2026-10-23, P9 tests plus every unit test that names the module): `application_graph` 350 (346 killed, 4 equivalent), `main` 112 (112 killed),
+  `service_container` 168 (167 killed, 1 equivalent), `user_agent_factory` 278 (273 killed, 5 equivalent), `slack_adapter_factory` 42 (42 killed),
+  `telegram_adapter_factory` 33 (33 killed): 983 mutants, 973 killed, 10 ruled equivalent by the reviewer
+  (`tests/unit/composition/wiring_equivalent_mutants.txt`, each with its reason), 0 survived, 0 error. About 5 h of runs on 4 vCPU.
 - **The tests that build the graph or boot `main()` are `slow`,** so they run in `make ci` (or with `RUN_SLOW_TESTS=1`), not in `make check`;
   the source-reading guards and the checker self-tests are not (`tests/CLAUDE.md` -> "The production graph").
 - **The owner's check after the first deploy,** the rollback command and the `:latest` rule: `docs/07_deployment/README.md` -> "After deploying P9".
