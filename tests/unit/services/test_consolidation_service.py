@@ -164,7 +164,10 @@ class TestSingleBatchSuccess:
 
     async def test_batch_deleted_on_success(self, service, queue, coordinator):
         batch = _make_batch()
-        queue.get_pending_batches.side_effect = [[batch], []]
+        # Reads: the batch, the loop's next fetch (empty), then the final has-more read (empty). That last read
+        # used to exhaust the mock and was swallowed into False; a failing has-more read now answers True
+        # (a spare continuation beats a lost one), so the empty queue is stated explicitly.
+        queue.get_pending_batches.side_effect = [[batch], [], []]
         coordinator.route_message.return_value = _success_response()
 
         has_more = await service.process_user_batches(user_id=_USER_ID)
