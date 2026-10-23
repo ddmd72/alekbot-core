@@ -97,13 +97,26 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
         await doc_ref.delete()
         logger.debug(f"🗑️ Deleted batch {batch_id}")
     
-    async def reset_recoverable_batches(self, user_id: str, revive_failed: bool = False) -> int:
+    async def has_open_batches(self, user_id: str) -> bool:
+        query = (
+            self.collection
+            .where(filter=FieldFilter("status", "in", [
+                BatchStatus.PENDING.value, BatchStatus.RETRY_PENDING.value, BatchStatus.PROCESSING.value,
+            ]))
+            .where(filter=FieldFilter("user_id", "==", user_id))
+            .limit(1)
+        )
+        return len(await query.get()) > 0
+
+    async def reset_recoverable_batches(
+        self, user_id: str, revive_failed: bool = False, zombie_after_s: Optional[float] = None
+    ) -> int:
         """Reset stale PROCESSING (zombies) → RETRY_PENDING; with `revive_failed` also FAILED.
 
         PROCESSING batches are reset only when their `processing_started_at` is older than
-        _ZOMBIE_THRESHOLD_SECONDS — a recent PROCESSING batch is a LIVE run (its Cloud Task is
-        still executing) and must be left untouched, otherwise the hourly sweep would reset a
-        running consolidation and double-process the batch.
+        `zombie_after_s` (default _ZOMBIE_THRESHOLD_SECONDS) — a recent PROCESSING batch is a LIVE run
+        (its Cloud Task is still executing) and must be left untouched, otherwise the hourly sweep would
+        reset a running consolidation and double-process the batch.
 
         FAILED batches are revived only when `revive_failed` is set (the hourly sweep) and the
         batch has `revivals < MAX_FAILED_REVIVALS`; each revival adds 1 to `revivals`, which no
@@ -112,6 +125,7 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
         Resets `attempts` to 0 and clears `last_error` + `processing_started_at`.
         Returns the number of batches actually reset.
         """
+        threshold = _ZOMBIE_THRESHOLD_SECONDS if zombie_after_s is None else zombie_after_s
         statuses = [BatchStatus.PROCESSING.value]
         if revive_failed:
             statuses.append(BatchStatus.FAILED.value)
@@ -139,7 +153,7 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
                 started = data.get("processing_started_at")
                 # Missing timestamp (legacy batch) is treated as a zombie — safe, since
                 # any pre-existing PROCESSING batch predates this stamping logic.
-                if started is not None and (now - started) < _ZOMBIE_THRESHOLD_SECONDS:
+                if started is not None and (now - started) < threshold:
                     live += 1
                     continue
             else:
@@ -165,7 +179,7 @@ class FirestoreConsolidationQueue(ConsolidationQueue):
             )
         if live:
             logger.debug(
-                f"⏳ Skipped {live} live PROCESSING batches (< {_ZOMBIE_THRESHOLD_SECONDS}s) "
+                f"⏳ Skipped {live} live PROCESSING batches (< {threshold}s) "
                 f"for user {user_id[:8]}"
             )
         if exhausted:

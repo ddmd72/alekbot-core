@@ -44,9 +44,15 @@ class ConsolidationQueue(ABC):
         pass
 
     @abstractmethod
-    async def reset_recoverable_batches(self, user_id: str, revive_failed: bool = False) -> int:
+    async def reset_recoverable_batches(
+        self, user_id: str, revive_failed: bool = False, zombie_after_s: Optional[float] = None
+    ) -> int:
         """Reset stale PROCESSING (zombies) → RETRY_PENDING for this user; with
         `revive_failed=True` also FAILED batches that still have revivals left.
+
+        `zombie_after_s` is the age past which a PROCESSING batch counts as a zombie; `None` takes the
+        adapter's default (the consolidation Cloud Task deadline). A caller holding the account's
+        memory-write lease passes the lease margin: every earlier run has then ended or expired.
 
         Called at the start of each consolidation run (zombies only) and by the hourly
         sweep (`revive_failed=True`).
@@ -63,6 +69,12 @@ class ConsolidationQueue(ABC):
 
         Resets `attempts` to 0 and clears `last_error`; `revivals` is kept (+1 for a FAILED revival).
         Returns count of batches reset."""
+        pass
+
+    @abstractmethod
+    async def has_open_batches(self, user_id: str) -> bool:
+        """True when the user has a batch that is pending, retry_pending or processing: work that is queued
+        or in flight and so still needs a consolidation run. FAILED batches do not count."""
         pass
 
     @abstractmethod
