@@ -59,6 +59,7 @@ class TelegramAdapterFactory:
         memory_fact_service=None,
         task_queue=None,
         long_turn_service=None,
+        doc_delivery_service=None,
     ) -> TelegramWebhookAdapter:
         """
         Create TelegramWebhookAdapter with RichContentService wired in.
@@ -113,6 +114,7 @@ class TelegramAdapterFactory:
             skill_service=skill_service,
             memory_fact_service=memory_fact_service,
             long_turn_service=long_turn_service,
+            doc_delivery_service=doc_delivery_service,
         )
 
         logger.info("TelegramAdapterFactory: wiring complete (html_renderer=%s)", html_renderer is not None)

@@ -791,6 +791,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         skill_service=container.skill_service,
         memory_fact_service=container.memory_fact_service,
         long_turn_service=long_turn_service,
+        doc_delivery_service=doc_delivery_service,
     )
     worker_handler.attach_slack_worker(slack_adapter.handle_queued_event)
     notification_channel_factory.register_factory(
@@ -853,6 +854,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                 memory_fact_service=container.memory_fact_service,
                 task_queue=agent_task_queue,
                 long_turn_service=long_turn_service,
+                doc_delivery_service=doc_delivery_service,
             )
             # File delivery to a Telegram chat (notify_file_bytes picks the port by platform)
             telegram_media_adapter = TelegramMediaAdapter(bot=built_telegram_adapter.bot)
