@@ -11,6 +11,7 @@ import pytest
 
 from tests.support.fact_kit import ACC, OTHER, USER
 from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_write import EXPIRY_NONE, ctx
 
 VECTORS = ("vector", "tags_vector", "metadata_vector")
 
@@ -31,9 +32,10 @@ class CountingEmbedder:
 
 async def create(store, **over):
     meta = {"account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
-            "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Valentina"}}
+            "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Valentina"},
+            "expiry": EXPIRY_NONE}
     meta.update(over)
-    res = await store.adapter.create_fact("mother is Valentina", meta)
+    res = await store.adapter.create_fact("mother is Valentina", meta, context=ctx())
     assert res["status"] == "created", res
     return res["fact_id"]
 
@@ -48,7 +50,7 @@ async def test_the_same_text_again_does_not_embed_and_stays_in_place(store):
     # was test_fact_management_adapter.py::test_same_text_again_does_not_reembed
     fid = await create(store)
     embedder = counting(store)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentina"}, ACC)
+    res = await store.adapter.update_fact(fid, {"content": "mother is Valentina", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert (res["status"], res["fact_id"], res["version"]) == ("updated", fid, 1) and list(store.docs) == [fid]
     assert embedder.calls == 0
 
@@ -57,7 +59,7 @@ async def test_a_non_dict_metadata_is_ignored_and_does_not_embed(store):
     # was test_fact_management_adapter.py::test_non_dict_metadata_is_ignored
     fid = await create(store)
     embedder = counting(store)
-    res = await store.adapter.update_fact(fid, {"metadata": "oops"}, ACC)
+    res = await store.adapter.update_fact(fid, {"metadata": "oops", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert (res["status"], res["fact_id"], res["version"]) == ("updated", fid, 1) and list(store.docs) == [fid]
     assert store.docs[fid]["metadata"] == {"name": "Valentina"} and embedder.calls == 0
 
@@ -67,7 +69,7 @@ async def test_a_foreign_accounts_update_does_not_embed(store):
     # untouched" half is test_fact_management_kit.py::test_update_of_a_missing_fact_or_another_accounts_fact_...)
     fid = await create(store)
     embedder = counting(store)
-    res = await store.adapter.update_fact(fid, {"content": "hijack"}, OTHER)
+    res = await store.adapter.update_fact(fid, {"content": "hijack", "expiry": EXPIRY_NONE}, OTHER, context=ctx())
     assert res["status"] == "not_found" and embedder.calls == 0
 
 
@@ -75,7 +77,7 @@ async def test_a_temporal_class_change_is_a_version_without_an_embedding(store):
     # was test_fact_management_adapter.py::test_temporal_class_change_bumps_version_without_reembedding
     fid = await create(store)
     embedder = counting(store)
-    res = await store.adapter.update_fact(fid, {"temporal_class": "PERMANENT"}, ACC)
+    res = await store.adapter.update_fact(fid, {"temporal_class": "PERMANENT", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert res["status"] == "updated" and res["version"] == 2 and res["fact_id"] != fid
     assert embedder.calls == 0
     new, old = store.docs[res["fact_id"]], store.docs[fid]
@@ -89,7 +91,7 @@ async def test_a_state_change_with_an_explicit_reported_date_applies_both_in_pla
     # created before the sent date, which is then applied with the state in the same in-place write.
     fid = await create(store, reported_date="2019-06-01T00:00:00Z")
     embedder = counting(store)
-    res = await store.adapter.update_fact(fid, {"state": "ARCHIVED", "reported_date": "2020-01-02T03:04:05Z"}, ACC)
+    res = await store.adapter.update_fact(fid, {"state": "ARCHIVED", "reported_date": "2020-01-02T03:04:05Z"}, ACC, context=ctx())
     assert (res["status"], res["fact_id"], res["version"]) == ("updated", fid, 1) and list(store.docs) == [fid]
     doc = store.docs[fid]
     assert doc["state"] == "archived" and doc["reported_date"] == datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -103,7 +105,7 @@ async def test_a_content_change_without_a_date_keeps_reported_date_on_the_new_ve
     # with a span moves it to max(stored, span end), test_fact_write_context.py).
     fid = await create(store, reported_date=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat())
     old_reported = store.docs[fid]["reported_date"]
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentina P."}, ACC)
+    res = await store.adapter.update_fact(fid, {"content": "mother is Valentina P.", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     new = store.docs[res["fact_id"]]
     assert res["version"] == 2 and new["version"] == 2
     assert new["reported_date"] == old_reported
