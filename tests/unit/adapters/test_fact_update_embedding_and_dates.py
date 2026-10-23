@@ -94,13 +94,15 @@ async def test_a_state_change_with_an_explicit_reported_date_applies_both_in_pla
     assert doc["version"] == 1 and embedder.calls == 0
 
 
-async def test_a_content_change_resets_reported_date_to_now_on_the_new_version(store):
+async def test_a_content_change_without_a_date_keeps_reported_date_on_the_new_version(store):
     # was test_fact_management_adapter.py::test_content_change_bumps_version_and_resets_reported_date (the S1 rule,
-    # kept by S2; RFC D2 replaces it in S3)
+    # kept by S2). Reviewer edit (facts S3, T2): RFC D2 replaces it; reported_date means "when the owner last stated it",
+    # so a content change that sends no date keeps the stored one on the new version (no span here; a conversation pass
+    # with a span moves it to max(stored, span end), test_fact_write_context.py).
     fid = await create(store, reported_date=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat())
     old_reported = store.docs[fid]["reported_date"]
     res = await store.adapter.update_fact(fid, {"content": "mother is Valentina P."}, ACC)
     new = store.docs[res["fact_id"]]
     assert res["version"] == 2 and new["version"] == 2
-    assert datetime.now(timezone.utc) - new["reported_date"] < timedelta(minutes=1)
+    assert new["reported_date"] == old_reported
     assert store.docs[fid]["reported_date"] == old_reported

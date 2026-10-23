@@ -49,9 +49,10 @@ def test_each_content_kind_is_a_version(updates):
     assert result.kind == "version" and result.fields == {} and result.version_fact is not None
 
 
+# Reviewer edit (facts S3, T2): the model may no longer send STALE (D1); INVALIDATED is the other state-only case.
 @pytest.mark.parametrize("updates", [
     {"state": "ARCHIVED"},
-    {"state": "STALE"},
+    {"state": "INVALIDATED"},
     {"reported_date": "2020-01-02T03:04:05Z"},
     {},
     {"domain": "work", "foo": "bar"},
@@ -133,7 +134,9 @@ def test_the_version_entity_follows_the_design():
     assert version.state is FactState.CURRENT
     assert (version.text, version.tags) == ("mother is Valentyna", ["relatives", "consolidated"])
     assert version.metadata == {"name": "Valentina"}
-    assert version.reported_date == NOW
+    # Reviewer edit (facts S3, T2): RFC D2 drops the S1 "content change -> now" rule; with no date in the update the
+    # version keeps the stored one (the pass's own rules are finish_fact_update's, test_fact_update_lifecycle.py).
+    assert version.reported_date == old.reported_date == CREATED
 
 
 def test_the_version_copies_the_identity_and_classification_of_the_old_document():
@@ -203,7 +206,8 @@ def test_a_temporal_class_only_update_is_a_version_that_keeps_the_vectors():
     version = result.version_fact
     assert version.temporal_class is TemporalClass.DYNAMIC
     assert (version.vector, version.tags_vector, version.metadata_vector) == tuple(VECTORS.values())
-    assert version.reported_date == NOW
+    # Reviewer edit (facts S3, T2): RFC D2, the version keeps the stored reported_date (was: now).
+    assert version.reported_date == CREATED
 
 
 def test_a_state_in_the_same_call_as_content_is_applied_to_the_version():
@@ -215,20 +219,27 @@ def test_a_state_in_the_same_call_as_content_is_applied_to_the_version():
 
 
 def test_the_stored_state_sent_with_content_leaves_the_version_open():
-    fact = current_fact(state=FactState.STALE)
-    version = plan({"content": "mother is Valentyna", "state": "STALE"}, fact).version_fact
-    assert (version.state, version.is_current, version.valid_to) == (FactState.STALE, True, None)
+    # Reviewer edit (facts S3, T2): the model may no longer send STALE (D1); CURRENT is the open state it can re-send.
+    fact = current_fact(state=FactState.CURRENT)
+    version = plan({"content": "mother is Valentyna", "state": "CURRENT"}, fact).version_fact
+    assert (version.state, version.is_current, version.valid_to) == (FactState.CURRENT, True, None)
 
 
 # ------------------------------------------------------------------------------------------------ in place
 
-@pytest.mark.parametrize("state", ["CURRENT", "STALE", "ARCHIVED", "INVALIDATED"])
+# Reviewer edit (facts S3, T2): STALE left the model's states (D1, S3-D3); its case is now the refusal below.
+@pytest.mark.parametrize("state", ["CURRENT", "ARCHIVED", "INVALIDATED"])
 def test_a_state_change_writes_the_lifecycle_fields_and_never_superseded_by(state):
     target = FactState(state.lower())
     fact = current_fact(state=FactState.ARCHIVED if state == "CURRENT" else FactState.CURRENT)
     fields = plan({"state": state}, fact).fields
     assert fields == {**lifecycle_fields(target, NOW), "last_updated": NOW}
     assert "superseded_by" not in fields
+
+
+def test_a_state_change_to_stale_is_refused_before_any_plan():
+    with pytest.raises(ValueError, match="only the system marks a fact stale"):
+        plan({"state": "STALE"})
 
 
 def test_superseded_writes_the_closure_fields_with_the_given_successor():
@@ -255,7 +266,8 @@ def test_a_state_with_a_reported_date_writes_both():
 
 
 @pytest.mark.parametrize("updates", [
-    {}, {"state": "ARCHIVED"}, {"state": "CURRENT"}, {"state": "STALE", "reported_date": "2020-01-02"},
+    # Reviewer edit (facts S3, T2): the state-plus-date case uses INVALIDATED, STALE is refused at parse (D1).
+    {}, {"state": "ARCHIVED"}, {"state": "CURRENT"}, {"state": "INVALIDATED", "reported_date": "2020-01-02"},
     {"state": "INVALIDATED"}, {"state": "SUPERSEDED", "superseded_by": "n"}, {"reported_date": "2020-01-02"},
     {"tags": ["mother", "family"]}])
 def test_in_place_fields_are_within_the_in_place_set_and_last_updated_is_always_set(updates):
@@ -263,7 +275,9 @@ def test_in_place_fields_are_within_the_in_place_set_and_last_updated_is_always_
     assert set(fields) <= IN_PLACE_FIELDS and fields["last_updated"] == NOW
 
 
-@pytest.mark.parametrize("updates", [{}, {"state": "ARCHIVED"}, {"state": "INVALIDATED"}, {"state": "STALE"},
+# Reviewer edit (facts S3, T2): STALE is refused at parse (D1); a state with a date takes its place.
+@pytest.mark.parametrize("updates", [{}, {"state": "ARCHIVED"}, {"state": "INVALIDATED"},
+                                     {"state": "ARCHIVED", "reported_date": "2020-01-02"},
                                      {"reported_date": "2020-01-02"}])
 def test_superseded_by_appears_only_on_a_superseded_transition(updates):
     assert "superseded_by" not in plan(updates).fields

@@ -223,12 +223,14 @@ async def test_second_update_on_a_superseded_id_lands_on_the_current_version(sto
     assert store.docs[v3["fact_id"]]["replaces_fact_id"] == v2 and store.docs[v2]["superseded_by"] == v3["fact_id"]
     assert store.docs[fid]["superseded_by"] == v2
 
-    in_place = await store.adapter.update_fact(fid, {"state": "STALE"}, ACC)
+    # Reviewer edit (facts S3, T2): the in-place state is ARCHIVED; the model may no longer send STALE (D1).
+    in_place = await store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC)
     assert in_place["fact_id"] == v3["fact_id"] and in_place["version"] == 3
-    assert store.docs[v3["fact_id"]]["state"] == "stale" and len(store.docs) == 3
+    assert store.docs[v3["fact_id"]]["state"] == "archived" and len(store.docs) == 3
 
 
-@pytest.mark.parametrize("updates", [{"content": "mother is Valentyna Ivanivna"}, {"state": "STALE"}])
+# Reviewer edit (facts S3, T2): the in-place case is ARCHIVED; the model may no longer send STALE (D1).
+@pytest.mark.parametrize("updates", [{"content": "mother is Valentyna Ivanivna"}, {"state": "ARCHIVED"}])
 async def test_an_update_forwarded_to_the_current_version_says_so(store, updates):
     fid = await create(store)
     v2 = (await store.adapter.update_fact(fid, {"content": "mother is Valentyna"}, ACC))["fact_id"]

@@ -71,7 +71,8 @@ def test_empty_or_non_string_content_is_refused(content):
 
 @pytest.mark.parametrize("metadata", ["name=Valya", ["a"], 3, None])
 def test_a_non_dict_metadata_is_ignored(metadata):
-    assert parse_fact_update({"metadata": metadata, "state": "STALE"}) == ParsedFactUpdate(state=FactState.STALE)
+    # Reviewer edit (facts S3, T2): the model may no longer send STALE (D1); ARCHIVED carries the same point.
+    assert parse_fact_update({"metadata": metadata, "state": "ARCHIVED"}) == ParsedFactUpdate(state=FactState.ARCHIVED)
 
 
 # -------------------------------------------------------------------------------------------------- enums and dates
@@ -108,9 +109,13 @@ def test_superseded_by_alone_is_refused():
     refused({"superseded_by": "new-1"}, "only together with state SUPERSEDED")
 
 
-@pytest.mark.parametrize("state", ["CURRENT", "STALE", "ARCHIVED", "INVALIDATED"])
-def test_superseded_by_with_another_state_is_refused(state):
-    refused({"state": state, "superseded_by": "new-1"}, "only together with state SUPERSEDED")
+# Reviewer edit (facts S3, T2): STALE is refused before the superseded_by rule speaks (D1, S3-D3), so its case expects
+# that refusal; every other state still gets the superseded_by one.
+@pytest.mark.parametrize("state,fragment", [
+    ("CURRENT", "only together with state SUPERSEDED"), ("STALE", "only the system marks a fact stale"),
+    ("ARCHIVED", "only together with state SUPERSEDED"), ("INVALIDATED", "only together with state SUPERSEDED")])
+def test_superseded_by_with_another_state_is_refused(state, fragment):
+    refused({"state": state, "superseded_by": "new-1"}, fragment)
 
 
 @pytest.mark.parametrize("extra", [

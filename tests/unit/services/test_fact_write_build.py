@@ -83,7 +83,8 @@ async def test_build_facts_refuses_a_vector_count_other_than_three_and_writes_no
 
 @pytest.mark.parametrize("bad", [
     {"domain": "astrology"}, {"temporal_class": "sometimes"}, {"state": "zombie"}, {"context_priority": "urgent"},
-    {"text": "  "}, {"tags": "family"}, {"ttl_days": "soon"}, {"reported_date": 5},
+    # Reviewer edit (facts S3, T2): `ttl_days` is no longer validated (D1); a malformed `expiry` is the new bad value.
+    {"text": "  "}, {"tags": "family"}, {"expiry": {"kind": "soon"}}, {"reported_date": 5},
 ], ids=lambda b: next(iter(b)))
 async def test_a_bad_value_anywhere_in_the_batch_fails_before_any_embedding_and_stores_nothing(store, bad):
     embedder = CountingEmbedder()
@@ -106,7 +107,7 @@ async def test_superseded_state_is_refused(store, skip):
 
 async def test_build_facts_entity_matches_add_facts_batch_fields(store):
     fact = {"text": "owns a Toyota", "tags": ["car"], "type": "STATE", "metadata": {"year": 2012}, "domain": "health",
-            "temporal_class": "dynamic", "state": "stale", "context_priority": "high", "ttl_days": 30,
+            "temporal_class": "dynamic", "state": "archived", "context_priority": "high", "ttl_days": 30,
             "context": "said at lunch", "reported_date": "2026-03-04T10:00:00Z"}
     (built,) = await store.write.build_facts(ACC, USER, [parse_new_fact(dict(fact, tags=list(fact["tags"])))])
     _, _, (stored_id,) = await store.write.add_facts_batch(
@@ -120,4 +121,6 @@ async def test_build_facts_entity_matches_add_facts_batch_fields(store):
         assert doc[name] == getattr(built, name).value, name
     for name in ("vector", "tags_vector", "metadata_vector"):
         assert stored_vector(doc[name]) == pytest.approx(getattr(built, name))
-    assert built.type is FactType.STATE and built.state is FactState.STALE
+    # Reviewer edit (facts S3, T2): ARCHIVED replaces STALE (S3-D3); the sent `ttl_days` is stored on neither path (D1).
+    assert built.type is FactType.STATE and built.state is FactState.ARCHIVED
+    assert built.ttl_days is None and doc["ttl_days"] is None

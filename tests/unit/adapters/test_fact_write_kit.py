@@ -106,14 +106,15 @@ async def test_defaults_are_type_event_state_current_priority_medium_and_reporte
 
 async def test_given_attributes_are_stored(store):
     _, _, ids = await add(store, [
-        {"text": "a fact", "domain": "health", "temporal_class": "dynamic", "state": "stale", "context_priority": "high",
+        # Reviewer edit (facts S3, T2): ARCHIVED replaces STALE (S3-D3); the sent ttl_days is not stored (D1, S3-D4).
+        {"text": "a fact", "domain": "health", "temporal_class": "dynamic", "state": "archived", "context_priority": "high",
          "ttl_days": 30, "context": "said at lunch", "reported_date": "2026-03-04T10:00:00+00:00"},
         {"text": "another", "reported_date": datetime(2025, 1, 2, tzinfo=timezone.utc)},
     ])
     doc = store.docs[ids[0]]
     assert (doc["domain"], doc["temporal_class"], doc["state"], doc["context_priority"]) == (
-        "health", "dynamic", "stale", "high")
-    assert (doc["ttl_days"], doc["context"], doc["context_priority_rank"]) == (30, "said at lunch", 2)
+        "health", "dynamic", "archived", "high")
+    assert (doc["ttl_days"], doc["context"], doc["context_priority_rank"]) == (None, "said at lunch", 2)
     assert doc["reported_date"] == datetime(2026, 3, 4, 10, 0, tzinfo=timezone.utc)
     assert store.docs[ids[1]]["reported_date"] == datetime(2025, 1, 2, tzinfo=timezone.utc)
 
