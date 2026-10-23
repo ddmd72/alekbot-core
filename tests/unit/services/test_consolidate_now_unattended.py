@@ -1,5 +1,5 @@
 """Facts S2 · T7 review m2: `consolidate_now` marks a run `unattended` when a deferral or continuation had no task queue to
-go to (local runs), so `$consolidate` does not promise "in the background". The flag is not part of the run's equality."""
+go to (local runs), so `$consolidate` does not promise "in the background"."""
 from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.agent import AgentResponse
@@ -30,7 +30,7 @@ async def test_a_busy_lease_without_a_task_queue_is_a_deferred_run_marked_unatte
     run = await _service(task_queue=None, lease_free=False).consolidate_now(USER)
 
     assert run.deferred and run.unattended
-    assert run == ConsolidationRun(deferred=True)
+    assert run == ConsolidationRun(deferred=True, unattended=True)
 
 
 async def test_more_pending_without_a_task_queue_is_a_has_more_run_marked_unattended():
