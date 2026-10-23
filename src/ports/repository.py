@@ -29,7 +29,7 @@ class FactRepository(ABC):
       (observed).
     - Vectors are returned as lists of floats. A read with a projection leaves the omitted fields at
       the model default (named per method).
-    - Atomicity: add_fact and update_fact are unconditional whole-document writes, last writer wins. The
+    - Atomicity: add_fact is an unconditional whole-document write, last writer wins. The
       version and in-place writes (write_superseding, update_fact_fields, invalidate_fact) are transactions
       under an `update_time` precondition: a document changed since it was read raises FactWriteConflict and
       nothing is written. A StoredFact carries the token it was read with; compare it for equality only.
@@ -49,8 +49,8 @@ class FactRepository(ABC):
     async def get_fact_by_id(self, fact_id: str) -> Optional[FactEntity]:
         """Return the fact stored under `fact_id` in any state.
 
-        Returns every FactEntity field as stored, vectors as lists, so get_fact_by_id → update_fact
-        preserves every FactEntity field.
+        Returns every FactEntity field as stored, vectors as lists, so a read-modify-write
+        loses no FactEntity field.
         Tenancy: none; the caller compares account_id.
         Errors: a missing id returns None.
         """
@@ -164,17 +164,6 @@ class FactRepository(ABC):
         Legacy: a document without created_at is absent (observed).
         Errors: no account raises ValueError; empty `domains` returns []; more than 30 domains
             raises (Firestore `in` limit, observed).
-        """
-        pass
-
-    @abstractmethod
-    async def update_fact(self, fact: FactEntity) -> None:
-        """Replace document `fact.id` with `fact`, every field including the three vectors.
-
-        Tenancy: none; the caller compares account_id before writing.
-        Atomicity: unconditional write, last writer wins; stored fields FactEntity lacks are dropped (observed).
-        Idempotency: writing the same entity twice leaves one identical document.
-        Errors: a missing id is created, not refused (observed).
         """
         pass
 
