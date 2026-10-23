@@ -24,6 +24,7 @@ from src.ports.llm_port import (
     ToolCall,
 )
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
+from tests.support.fact_write import ctx
 
 _USER_ID = "user-test-01"
 _ACCOUNT_ID = "account-test-01"
@@ -104,25 +105,25 @@ class TestTrackingFactManagement:
         tracker, real = self._make_tracking()
         real.search_existing_facts = AsyncMock(return_value=[{"fact_id": "f1"}])
         result = await tracker.search_existing_facts(
-            keywords=["kw"], primary_query="q", alternative_query="alt", limit=5
+            keywords=["kw"], primary_query="q", alternative_query="alt", limit=5, timezone="UTC"
         )
         assert result == [{"fact_id": "f1"}]
         real.search_existing_facts.assert_awaited_once_with(
-            keywords=["kw"], primary_query="q", alternative_query="alt", limit=5
+            keywords=["kw"], primary_query="q", alternative_query="alt", limit=5, timezone="UTC"
         )
         assert tracker.changed == []
 
     async def test_create_fact_with_fact_id(self):
         tracker, real = self._make_tracking()
         real.create_fact = AsyncMock(return_value={"fact_id": "new-id", "status": "created"})
-        result = await tracker.create_fact(content="some content", metadata={})
+        result = await tracker.create_fact(content="some content", metadata={}, context=ctx())
         assert result["fact_id"] == "new-id"
         assert tracker.changed == [("new-id", "some content")]
 
     async def test_create_fact_without_fact_id(self):
         tracker, real = self._make_tracking()
         real.create_fact = AsyncMock(return_value={"status": "error"})
-        await tracker.create_fact(content="content", metadata={})
+        await tracker.create_fact(content="content", metadata={}, context=ctx())
         assert tracker.changed == []
 
     async def test_update_fact_with_content(self):
@@ -130,16 +131,19 @@ class TestTrackingFactManagement:
         # records the id the result reports (the document written), not the id the model sent.
         tracker, real = self._make_tracking()
         real.update_fact = AsyncMock(return_value={"fact_id": "fid-2", "status": "updated", "version": 2})
-        await tracker.update_fact(fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1")
+        context = ctx()
+        await tracker.update_fact(
+            fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1", context=context)
         real.update_fact.assert_awaited_once_with(
-            fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1"
+            fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1", context=context
         )
         assert tracker.changed == [("fid-2", "updated text")] and tracker.wrote is True
 
     async def test_update_fact_without_content(self):
         tracker, real = self._make_tracking()
         real.update_fact = AsyncMock(return_value={"status": "updated"})
-        await tracker.update_fact(fact_id="fid-1", updates={"state": "SUPERSEDED"}, account_id="acc-1")
+        await tracker.update_fact(
+            fact_id="fid-1", updates={"state": "SUPERSEDED"}, account_id="acc-1", context=ctx())
         assert tracker.changed == []
 
     async def test_merge_facts_with_new_fact_id(self):
@@ -148,19 +152,20 @@ class TestTrackingFactManagement:
         tracker, real = self._make_tracking()
         real.merge_facts = AsyncMock(return_value={"new_fact_id": "merged-id", "status": "merged"})
         await tracker.merge_facts(
-            fact_ids=["a", "b"], merged_content="merged", metadata={}
+            fact_ids=["a", "b"], merged_content="merged", metadata={}, context=ctx()
         )
         assert tracker.changed == [("merged-id", "merged")] and tracker.wrote is True
 
         unconfirmed, real2 = self._make_tracking()
         real2.merge_facts = AsyncMock(return_value={"new_fact_id": "merged-id"})
-        await unconfirmed.merge_facts(fact_ids=["a", "b"], merged_content="merged", metadata={})
+        await unconfirmed.merge_facts(
+            fact_ids=["a", "b"], merged_content="merged", metadata={}, context=ctx())
         assert unconfirmed.changed == [] and unconfirmed.wrote is False
 
     async def test_merge_facts_without_new_fact_id(self):
         tracker, real = self._make_tracking()
         real.merge_facts = AsyncMock(return_value={"status": "error"})
-        await tracker.merge_facts(fact_ids=["a"], merged_content="m", metadata={})
+        await tracker.merge_facts(fact_ids=["a"], merged_content="m", metadata={}, context=ctx())
         assert tracker.changed == []
 
 
@@ -401,6 +406,7 @@ class TestRunConsolidationLoop:
             system_prompt="SYS",
             user_id=_USER_ID,
             account_id=_ACCOUNT_ID,
+            write_context=agent._write_context("stage1"),
         )
         assert result == ops
 
@@ -424,6 +430,7 @@ class TestRunConsolidationLoop:
             system_prompt="SYS",
             user_id=_USER_ID,
             account_id=_ACCOUNT_ID,
+            write_context=agent._write_context("stage1"),
         )
         assert result == [{"action": "CREATE"}]
         assert call_count == 2
@@ -444,6 +451,7 @@ class TestRunConsolidationLoop:
                 system_prompt="SYS",
                 user_id=_USER_ID,
                 account_id=_ACCOUNT_ID,
+                write_context=agent._write_context("stage1"),
             )
         finally:
             agent.__class__.MAX_CONSOLIDATION_TURNS = original_max
@@ -469,7 +477,8 @@ class TestExecuteFactManagementTools:
         tc = ToolCall(name="search_existing_facts", args={
             "keywords": ["kw"], "primary_query": "pq", "alternative_query": "aq", "limit": 5
         })
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         assert len(results) == 1
         assert results[0].name == "search_existing_facts"
@@ -483,7 +492,8 @@ class TestExecuteFactManagementTools:
             "content": "new fact text",
             "fact_attributes": {"domain": "professional"}
         })
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         assert results[0].name == "create_fact"
         data = json.loads(results[0].result_str)
@@ -501,11 +511,12 @@ class TestExecuteFactManagementTools:
             "fact_id": "existing-f",
             "updates": {"content": "revised"}
         })
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        context = agent._write_context("stage1")
+        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID, context)
 
         assert results[0].name == "update_fact"
         fm.update_fact.assert_awaited_once_with(
-            fact_id="existing-f", updates={"content": "revised"}, account_id=_ACCOUNT_ID
+            fact_id="existing-f", updates={"content": "revised"}, account_id=_ACCOUNT_ID, context=context
         )
 
     async def test_merge_facts(self):
@@ -517,7 +528,8 @@ class TestExecuteFactManagementTools:
             "merged_content": "merged text",
             "fact_attributes": {"domain": "personal"}
         })
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         assert results[0].name == "merge_facts"
         called_metadata = fm.merge_facts.call_args.kwargs["metadata"]
@@ -527,7 +539,8 @@ class TestExecuteFactManagementTools:
         agent, _ = self._make_agent_with_fm()
 
         tc = ToolCall(name="count_words", args={"text": "one two three"})
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         data = json.loads(results[0].result_str)
         assert data["word_count"] == 3
@@ -538,7 +551,8 @@ class TestExecuteFactManagementTools:
         agent, _ = self._make_agent_with_fm()
 
         tc = ToolCall(name="nonexistent_tool", args={})
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         data = json.loads(results[0].result_str)
         assert "error" in data
@@ -549,7 +563,8 @@ class TestExecuteFactManagementTools:
         fm.create_fact = AsyncMock(side_effect=RuntimeError("db down"))
 
         tc = ToolCall(name="create_fact", args={"content": "x", "fact_attributes": {}})
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         data = json.loads(results[0].result_str)
         assert "error" in data
@@ -1281,6 +1296,7 @@ class TestRunConsolidationLoopRawContent:
                 system_prompt="SYSTEM",
                 user_id=_USER_ID,
                 account_id=_ACCOUNT_ID,
+                write_context=agent._write_context("stage1"),
             )
 
         assert ops == []
@@ -1307,7 +1323,7 @@ class TestBuildReviewCluster:
         fm = AsyncMock(spec=FactManagementPort)
         agent, repo, fact_write, pb = _make_agent(fact_management=fm)
 
-        result = await agent._build_review_cluster([], _ACCOUNT_ID)
+        result = await agent._build_review_cluster([], _ACCOUNT_ID, timezone="UTC")
         assert result == []
 
     async def test_changed_with_empty_content_returns_empty_list(self):
@@ -1316,7 +1332,7 @@ class TestBuildReviewCluster:
 
         # All contents are empty strings / None
         changed = [("f1", ""), ("f2", None)]
-        result = await agent._build_review_cluster(changed, _ACCOUNT_ID)
+        result = await agent._build_review_cluster(changed, _ACCOUNT_ID, timezone="UTC")
         assert result == []
 
     async def test_basic_search_and_dedup(self):
@@ -1330,7 +1346,7 @@ class TestBuildReviewCluster:
         fm.search_existing_facts = AsyncMock(return_value=facts_result)
 
         changed = [("new-1", "user moved to Springfield from Barcelona")]
-        result = await agent._build_review_cluster(changed, _ACCOUNT_ID)
+        result = await agent._build_review_cluster(changed, _ACCOUNT_ID, timezone="UTC")
 
         assert len(result) == 2
         fm.search_existing_facts.assert_called_once()
@@ -1345,7 +1361,7 @@ class TestBuildReviewCluster:
         fm.search_existing_facts = AsyncMock(side_effect=[search1, search2])
 
         changed = [("new-1", "first change content here"), ("new-2", "second change content here")]
-        result = await agent._build_review_cluster(changed, _ACCOUNT_ID)
+        result = await agent._build_review_cluster(changed, _ACCOUNT_ID, timezone="UTC")
 
         # f1 should appear once, with the higher similarity
         assert len(result) == 1
@@ -1372,6 +1388,7 @@ class TestExecuteFactManagementToolsParallel:
                 tool_calls=[tc1, tc2],
                 user_id=_USER_ID,
                 account_id=_ACCOUNT_ID,
+                write_context=agent._write_context("stage1"),
             )
 
         assert len(responses) == 2
@@ -1528,7 +1545,7 @@ class TestBuildReviewClusterNoFactId:
         ])
 
         changed = [("new-1", "some long enough content here")]
-        result = await agent._build_review_cluster(changed, _ACCOUNT_ID)
+        result = await agent._build_review_cluster(changed, _ACCOUNT_ID, timezone="UTC")
 
         assert len(result) == 1
         assert result[0]["fact_id"] == "f1"
@@ -1549,7 +1566,7 @@ class TestReviewDirectives:
         repo.get_active_facts_ordered = AsyncMock(return_value=[])
         agent._run_consolidation_loop = AsyncMock(return_value=[{"action": "CREATE"}])
 
-        ops = await agent._review_directives(_USER_ID, _ACCOUNT_ID, [])
+        ops = await agent._review_directives(_USER_ID, _ACCOUNT_ID, [], agent._write_context("stage2b"))
 
         assert ops == []
         agent._run_consolidation_loop.assert_not_awaited()
@@ -1563,7 +1580,7 @@ class TestReviewDirectives:
         ])
         agent._run_consolidation_loop = AsyncMock(return_value=[{"action": "MERGE"}])
 
-        ops = await agent._review_directives(_USER_ID, _ACCOUNT_ID, [])
+        ops = await agent._review_directives(_USER_ID, _ACCOUNT_ID, [], agent._write_context("stage2b"))
 
         assert ops == [{"action": "MERGE"}]
         # fetched by directive domain
@@ -1580,7 +1597,7 @@ class TestReviewDirectives:
         repo.get_active_facts_ordered = AsyncMock(return_value=[self._directive("d1", "Rule.")])
         agent._run_consolidation_loop = AsyncMock(return_value=[])
 
-        await agent._review_directives(_USER_ID, _ACCOUNT_ID, [])
+        await agent._review_directives(_USER_ID, _ACCOUNT_ID, [], agent._write_context("stage2b"))
 
         assert pb.build_for_agent.call_args.kwargs["include_directives"] is False
 
@@ -1593,7 +1610,7 @@ class TestReviewDirectives:
             return_value=[self._directive(f"d{i}", f"rule {i}") for i in range(agent.DIRECTIVE_HARD_CAP)]
         )
 
-        ops = await agent._enforce_directive_cap(_ACCOUNT_ID)
+        ops = await agent._enforce_directive_cap(_ACCOUNT_ID, agent._write_context("backstop"))
 
         assert ops == []
         fm.update_fact.assert_not_awaited()
@@ -1607,7 +1624,7 @@ class TestReviewDirectives:
         ordered = [self._directive(f"d{i}", f"rule {i}") for i in range(cap + 2)]  # 2 over cap
         repo.get_active_facts_ordered = AsyncMock(return_value=ordered)
 
-        ops = await agent._enforce_directive_cap(_ACCOUNT_ID)
+        ops = await agent._enforce_directive_cap(_ACCOUNT_ID, agent._write_context("backstop"))
 
         assert [o["action"] for o in ops] == ["INVALIDATE", "INVALIDATE"]
         assert {o["fact_id"] for o in ops} == {f"d{cap}", f"d{cap + 1}"}  # the tail two
