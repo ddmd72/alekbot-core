@@ -6,7 +6,7 @@ adds recorders around the things `main()` builds itself, then asserts:
 
 - no argument of any `src.web` blueprint factory is `None`, and every argument `main.py` writes as an attribute chain of the
   graph (`app.session_service`, `app.container.repository`, ...) is that very object;
-- the Firestore client got the deploy's project and named database;
+- the Firestore client got the deploy's project and named database (and, with the emulator host set, the emulator project and the same database);
 - the one voice ticket store has the environment's collection and is the one object all three voice consumers hold;
 - the voice call setup, the Cloudflare adapter and the MCP search service got the graph's objects, the deploy's keys and limits;
 - with no invoker identity configured, the two gates `main()` builds are closed, because the deploy runs on Cloud Run.
@@ -51,7 +51,8 @@ def _recording(cls: type, sink: list) -> type:
     return Recording
 
 
-async def _instrumented_boot(monkeypatch, caplog, *, without_invoker_identity: bool = False) -> Captured:
+async def _instrumented_boot(monkeypatch, caplog, *, without_invoker_identity: bool = False,
+                             emulator_host: Optional[str] = None) -> Captured:
     from src.adapters.cloudflare_sfu_adapter import CloudflareSfuAdapter
     from src.services.search_enrichment_service import SearchEnrichmentService
     from src.services.voice_call_setup_service import VoiceCallSetupService
@@ -63,6 +64,8 @@ async def _instrumented_boot(monkeypatch, caplog, *, without_invoker_identity: b
     def install(monkeypatch_) -> Any:
         services = offline_real(monkeypatch_)
         seen["db"], seen["env"] = services.db, services.env
+        if emulator_host:
+            monkeypatch_.setenv("FIRESTORE_EMULATOR_HOST", emulator_host)
         fake_client = __import__("google.cloud.firestore", fromlist=["AsyncClient"]).AsyncClient
 
         def client(*args: Any, **kwargs: Any) -> Any:
@@ -119,6 +122,11 @@ async def _instrumented_boot(monkeypatch, caplog, *, without_invoker_identity: b
 @pytest.fixture
 async def booted(monkeypatch, caplog) -> Captured:
     return await _instrumented_boot(monkeypatch, caplog)
+
+
+@pytest.fixture
+async def booted_on_the_emulator(monkeypatch, caplog) -> Captured:
+    return await _instrumented_boot(monkeypatch, caplog, emulator_host="127.0.0.1:8085")
 
 
 @pytest.fixture
@@ -198,6 +206,11 @@ async def test_every_graph_object_main_hands_to_a_blueprint_is_that_object(boote
 async def test_the_firestore_client_gets_the_deploys_project_and_named_database(booted):
     assert booted.firestore_clients == [{"args": (), "project": booted.env["GOOGLE_CLOUD_PROJECT"],
                                          "database": booted.env["FIRESTORE_DATABASE"]}]
+
+
+async def test_with_the_emulator_host_set_the_firestore_client_gets_the_emulator_project_and_the_named_database(booted_on_the_emulator):
+    assert booted_on_the_emulator.firestore_clients == [
+        {"args": (), "project": "emulator-project", "database": booted_on_the_emulator.env["FIRESTORE_DATABASE"]}]
 
 
 async def test_one_voice_ticket_store_with_the_environments_collection_serves_all_three_voice_consumers(booted):
