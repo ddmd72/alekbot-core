@@ -257,7 +257,12 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
     "source": "slack_message",
     "confidence": 0.95
   },
-  "lineage_id": "lineage_abc...",       // Links versions of same fact
+  "lineage_id": "lineage_abc...",       // Links the versions of one fact; a merge starts a new lineage
+
+  // Versions (Facts S2): a content change is a new document, a lifecycle change is not
+  "version": 2,                         // 1 at birth; +1 on each version document
+  "replaces_fact_id": "fact_122",       // the document this version replaced (null at birth)
+  "superseded_by": null,                // set when closed: the next version, or the merged fact (another lineage)
 
   // SCD Type 2
   "created_at": "timestamp",
@@ -266,7 +271,7 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
   "is_current": true,                   // latest document of its lineage; false only when superseded
 
   // Biographical context ordering (adapter-internal — NOT in FactEntity domain model)
-  // Written by FirestoreFactRepository on every add_fact/update_fact.
+  // Written by FirestoreFactRepository on every add_fact and every version write (write_superseding).
   // Values: critical=1, important=2, standard=3, contextual=4, archival=5
   "context_priority_rank": 2
 }
@@ -285,7 +290,7 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
   ✨ **NEW:** Created 2026-02-09 for category/domain queries
 - **Vector Search (Metadata):** `account_id` + `state` + `metadata_vector` (768-dim, COSINE)  
   ✨ **NEW:** Created 2026-02-09 for structured data queries
-- **Lineage History:** `lineage_id` + `created_at` (DESC)
+- **Lineage History:** `account_id` + `lineage_id` + `version` (ASC), serves `get_lineage()` (Facts S2). The older `lineage_id` + `created_at` (DESC) index is unused since S2 and stays declared.
 - **Legacy Fallback:** `owner_id` + `is_current` + `vector` (COSINE) - Deprecated
 
 **Multi-Vector RRF Search:** See `docs/08_concepts/multi_vector_rrf_search.md`
@@ -499,6 +504,21 @@ Collections are separated into **Domain** (versioned) and **Infrastructure** (st
   "facts_extracted": 5,
   "created_at": 1234567890.0,
   "processed_at": 1234567900.0
+}
+```
+
+### 5.1a Memory-write lease (`{prefix}memory_write_leases`)
+
+**Purpose:** one memory-writing run per account at a time (Facts S2, `decisions/fact_versions_one_writer.md`).  
+**Document ID:** `account_id`  
+**Code Reference:** `src/adapters/firestore_memory_write_lease.py` → `FirestoreMemoryWriteLease`  
+**TTL Policy:** none. The expiry field is `lease_until`, never `expires_at` (nine collections carry a TTL policy on that name). An expired lease stays until the next acquire overwrites it.
+
+```json
+{
+  "lease_owner": "uuid4 hex, fresh per batch",
+  "lease_until": "timestamp",   // start + run timeout (900 s) + margin (60 s)
+  "acquired_at": "timestamp"
 }
 ```
 
@@ -731,7 +751,8 @@ Used by `SearchEnrichmentService`, `FirestoreFactRepository.search_facts()` and 
 
 | Fields | Used by | Purpose | Dev | Prod |
 | :----- | :------ | :------ | :-- | :--- |
-| `lineage_id` ASC, `created_at` DESC | `get_lineage()`, `get_latest_fact_by_lineage()` | Retrieve full SCD2 version history of a fact. ORDER BY created_at DESC = latest version first. | ✅ | ✅ |
+| `account_id` ASC, `lineage_id` ASC, `version` ASC | `get_lineage()` | The versions of one fact, oldest first, tenant-filtered (Facts S2). Must be `READY` before S2 deploys; no S2 production path queries it until S4. `get_latest_fact_by_lineage()` filters on `(account_id, lineage_id)` equality and picks the highest non-superseded version in code. | ⏳ owner creates it | n/a |
+| `lineage_id` ASC, `created_at` DESC | none since Facts S2 | Former `get_lineage()` order. `created_at` is now copied to every version of a fact, so it orders nothing inside a lineage. Kept declared; removing it is the owner's call. | ✅ | ✅ |
 
 ---
 

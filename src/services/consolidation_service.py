@@ -2,7 +2,7 @@
 ConsolidationService
 ====================
 
-Owns consolidation batch processing. Extracted from handlers/consolidation_handler.py
+Owns consolidation batch processing. Extracted from the retired consolidation handler
 so that ConsolidationQueue is accessed through a service rather than by handlers.
 
 WorkerHandler and ConversationHandler receive ConsolidationService via constructor

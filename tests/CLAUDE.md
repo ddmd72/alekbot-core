@@ -49,11 +49,12 @@ tests/
   Arrange-Act-Assert.
 
 ```python
-async def test_update_content_reembeds_and_bumps_version(store):   # store = FactStore(): real adapter, repo and service on a fake Firestore
+async def test_content_update_writes_a_new_version(store):        # store = FactStore(): real adapter, repo and service on a fake Firestore
     fid = await _create(store)
     res = await store.adapter.update_fact(fid, {"content": "mother is Valentyna Ivanivna"}, ACC)
-    doc = store.docs[fid]                                           # assert on the raw stored document, not on a mock call
-    assert doc["text"] == "mother is Valentyna Ivanivna" and doc["version"] == 2
+    new = store.docs[res["fact_id"]]                                # assert on the raw stored documents, not on a mock call
+    assert new["text"] == "mother is Valentyna Ivanivna" and new["version"] == 2
+    assert store.docs[fid]["superseded_by"] == res["fact_id"]       # the old document is closed in the same commit
 ```
 
 ## The network guard and the gRPC tripwire (H3)

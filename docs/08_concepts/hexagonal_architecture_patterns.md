@@ -561,6 +561,8 @@ Both `FactManagementAdapter` and `FirestoreFactManagementAdapter` call this inst
 
 ## Pattern 11: Callback Injection for Cross-Handler Decoupling
 
+> **Historical example.** `consolidation_handler.py` and `process_user_batches_on_overflow` were deleted in Facts S2. The pattern still holds: today the injected callback is `ConsolidationService.consolidate_now`, handed over by the adapter factories. The code below shows the original shape.
+
 ### Problem
 
 `ConversationHandler` directly imported `process_user_batches_on_overflow` from `consolidation_handler.py`. This creates horizontal coupling between handlers that should be independent.

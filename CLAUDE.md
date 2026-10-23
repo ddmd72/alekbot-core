@@ -522,7 +522,7 @@ ConsolidationAgent ("Life Chronicler") extracts facts/principles from raw messag
 Thresholds are global: threshold=70/batch=50 live (`domain/settings.py`; the `is_production` branch in `config/settings.py` sets 50/30);
 `UserBotConfig.consolidation_threshold` has no effect anywhere, `consolidation_batch_size` only sizes the `$consolidate`
 cut. Consolidation writes skip the number-aware 0.96 dedup (`skip_deduplication=True`): the model decides duplicates
-after searching; the 0.96 check runs only on the non-live v2 path. 3 vectors/fact + SCD2 (`update_fact` re-embeds on content change; `is_current` = latest of lineage, false only when superseded — `decisions/fact_s1_defects.md`); biographical cache updated for next conversation.
+after searching; the 0.96 check runs only on the non-live v2 path. 3 vectors/fact + versions: a content change of `update_fact` writes a new document (same `lineage_id`, `version`+1, the old one closed with `superseded_by`) in one preconditioned transaction, a lifecycle change stays in place; a stale id is followed forward (`decisions/fact_versions_one_writer.md`). One writer per account: every consolidation batch runs under a Firestore memory-write lease, a loser defers itself with a named task (`decisions/fact_versions_one_writer.md`, memory map §3); biographical cache updated for next conversation.
 **Serialization:** model parts use `p.text` (summary), NOT `p.full_text` (verbose + web_search_context);
 user parts `p.consolidation_text or p.text` (`consolidation_text` is legacy, see below).
 **Loop alerts:** a pass that hits the turn cap without a final report posts a 🚨 ops alert (`AlertSinkPort`);
@@ -854,8 +854,7 @@ src/
   agents/       — Multi-agent system (inherit BaseAgent). core/ — orchestrators; rest — specialists (roster + patterns in src/agents/CLAUDE.md).
   handlers/     — Entry points: ConversationHandler, WorkerHandler (dispatches /worker Cloud Tasks
                   by task_type), AgentWorkerHandler (task_type="agent_execution" — async agent runs
-                  + deep-research delivery). consolidation_handler.py is a shim over
-                  ConsolidationService (kept for composition-layer compatibility).
+                  + deep-research delivery).
   infrastructure/ — AgentCoordinator, queues, agent_config.py, agent_registry.py (AgentDescriptor + registry),
                   agent_manifest.py (Intent constants + all agent declarations — single source of truth),
                   delegation_engine.py (reusable multi-turn tool loop).
@@ -941,7 +940,7 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   BaseAgent lifecycle hooks, `build_tool_turn`, LLM-content capture,
   CircuitBreaker, transcript integrity, AgentConfig → moved to
   [`src/agents/CLAUDE.md`](src/agents/CLAUDE.md) → Orchestration Patterns (loads when working in `agents/`).
-- **SCD2 versioning** — FactEntity uses valid_from/valid_to/is_current.
+- **SCD2 versioning** — a content change is a new `FactEntity` document linked by `lineage_id`, `version`, `replaces_fact_id` and `superseded_by` (`domain/fact_lifecycle.py`: forward resolution, in-place fields); `is_current` = latest of its lineage, `state` is the only visibility switch.
 - **Multi-tenant** — always pass account_id. Collections with env prefix.
 
 ## Adding a New Specialist Agent
