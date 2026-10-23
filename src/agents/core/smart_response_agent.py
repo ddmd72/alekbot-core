@@ -588,6 +588,9 @@ class SmartResponseAgent(BaseAgent):
                 )
 
             smart_response, history_summary = self._build_smart_response(delegation_result)
+            if (not smart_response.text.strip() and delegation_result.async_dispatches):
+                logger.info("empty_text_after_async agent=%s intents=%s",
+                            self.agent_id, delegation_result.async_dispatches)
             if (not smart_response.text.strip() and smart_response.structured_data is None
                     and not delegation_result.delivery_items
                     and not delegation_result.async_dispatches):

@@ -1,6 +1,7 @@
 """Smart: an empty answer is a failure; deliver shapes parse (CDR T4)."""
 
 import json
+from unittest.mock import AsyncMock
 import pytest
 
 from src.domain.agent import AgentStatus, DeliveryItem
@@ -14,15 +15,6 @@ from tests.unit.agents.core.test_smart_response_agent import (  # noqa: F401  (f
 )
 
 RICH = True
-
-
-@pytest.fixture
-def agent(smart_agent):
-    return smart_agent
-
-
-def MESSAGE():
-    return create_query_message("complex")
 
 
 @pytest.fixture
@@ -142,3 +134,40 @@ async def test_empty_text_without_any_dispatch_is_empty_answer(agent, monkeypatc
     assert r.status == AgentStatus.FAILED
     assert r.error == "empty_answer"
     assert len(empty_answer_records(caplog)) == 1
+
+
+async def _smart_with_real_engine(smart_agent, mock_llm_port, ack):
+    from unittest.mock import MagicMock
+    from src.domain.agent import AgentResponse
+    from src.infrastructure.agent_registry import ExecutionMode
+    from src.ports.llm_port import LLMResponse, ToolCall, UsageMetadata
+
+    usage = UsageMetadata(prompt_tokens=1, completion_tokens=1, total_tokens=2)
+    turns = [
+        LLMResponse(text="", usage_metadata=usage, tool_calls=[ToolCall(
+            name="delegate_to_specialist", args={"intent": "deep_research", "query": "q"})]),
+        LLMResponse(text="", usage_metadata=usage, tool_calls=[ToolCall(
+            name="deliver_response", args={"response": ""})]),
+    ]
+    mock_llm_port.generate_content = AsyncMock(side_effect=turns)
+    coord = smart_agent.coordinator
+    coord.get_available_intents_for = MagicMock(return_value=[])
+    coord.get_execution_mode = MagicMock(return_value=ExecutionMode.SYNC)
+    coord.handle_delegation = AsyncMock(return_value=AgentResponse.success(
+        task_id="t", agent_id="deep_research", result=ack))
+    return await smart_agent.execute(MESSAGE())
+
+
+async def test_real_engine_deep_research_started_ack_then_empty_text_is_success(
+        smart_agent, mock_llm_port, caplog):
+    r = await _smart_with_real_engine(smart_agent, mock_llm_port, {"status": "started", "interaction_id": "j"})
+    assert r.status == AgentStatus.SUCCESS
+    assert not empty_answer_records(caplog)
+    assert any("empty_text_after_async" in m for m in caplog.messages)
+
+
+async def test_real_engine_sync_result_without_ack_then_empty_text_is_empty_answer(
+        smart_agent, mock_llm_port, caplog):
+    r = await _smart_with_real_engine(smart_agent, mock_llm_port, "some report text")
+    assert r.status == AgentStatus.FAILED
+    assert r.error == "empty_answer"
