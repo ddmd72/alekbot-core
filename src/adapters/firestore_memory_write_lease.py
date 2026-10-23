@@ -23,6 +23,12 @@ class FirestoreMemoryWriteLease(MemoryWriteLeasePort):
     async def acquire(self, account_id: str, owner: str, now: datetime, until: datetime) -> bool:
         if not account_id:
             raise ValueError("account_id is required to take the memory-write lease")
+        if not owner:
+            raise ValueError("owner is required to take the memory-write lease")
+        if now.tzinfo is None or until.tzinfo is None:
+            raise ValueError("now and until must be timezone-aware")
+        if until <= now:
+            raise ValueError("until must be later than now")
         ref = self._leases.document(account_id)
 
         @firestore.async_transactional
@@ -45,9 +51,15 @@ class FirestoreMemoryWriteLease(MemoryWriteLeasePort):
         ref = self._leases.document(account_id)
 
         @firestore.async_transactional
-        async def _release(transaction: Any) -> None:
+        async def _release(transaction: Any) -> bool:
             snap = await ref.get(transaction=transaction)
-            if snap.exists and (snap.to_dict() or {}).get("lease_owner") == owner:
-                transaction.delete(ref)
+            if not snap.exists:
+                return True
+            if (snap.to_dict() or {}).get("lease_owner") != owner:
+                return False
+            transaction.delete(ref)
+            return True
 
-        await _release(self._db.transaction())
+        if not await _release(self._db.transaction()):
+            logger.warning(f"[MemoryWriteLease] release found another owner for account {account_id[:8]}; "
+                           f"its own lease had expired and was taken over")

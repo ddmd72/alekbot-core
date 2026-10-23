@@ -1,5 +1,6 @@
 """FirestoreMemoryWriteLease on the evaluating fake: the real adapter, real transactions (FACT_LIFECYCLE_RFC D9)."""
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -82,6 +83,27 @@ class TestAcquire:
             await lease.acquire(account_id, "o1", T0, T0 + RUN)
         assert _docs(db, env) == {}
 
+    @pytest.mark.parametrize("owner", ["", None])
+    async def test_acquire_refuses_a_falsy_owner(self, lease, db, env, owner):
+        with pytest.raises(ValueError):
+            await lease.acquire(ACC, owner, T0, T0 + RUN)
+        assert _docs(db, env) == {}
+
+    @pytest.mark.parametrize("until", [T0, T0 - timedelta(seconds=1)])
+    async def test_acquire_refuses_a_lease_that_ends_at_or_before_now(self, lease, db, env, until):
+        with pytest.raises(ValueError):
+            await lease.acquire(ACC, "o1", T0, until)
+        assert _docs(db, env) == {}
+
+    @pytest.mark.parametrize("now,until", [
+        (T0.replace(tzinfo=None), T0 + RUN),
+        (T0, (T0 + RUN).replace(tzinfo=None)),
+    ])
+    async def test_acquire_refuses_a_naive_datetime_on_the_first_call(self, lease, db, env, now, until):
+        with pytest.raises(ValueError):
+            await lease.acquire(ACC, "o1", now, until)
+        assert _docs(db, env) == {}
+
     async def test_two_concurrent_acquires_one_wins(self, lease, db, env, monkeypatch):
         db.collection(env.memory_write_leases_collection).yield_on_get = True
         events = []
@@ -127,13 +149,17 @@ class TestRelease:
         assert ACC not in _docs(db, env)
         assert await lease.acquire(ACC, "o3", T0 + timedelta(seconds=1), T0 + RUN) is True
 
-    async def test_release_after_expiry_and_takeover_leaves_the_new_holder(self, lease, db, env):
+    async def test_release_after_expiry_and_takeover_leaves_the_new_holder(self, lease, db, env, caplog):
         await lease.acquire(ACC, "o1", T0, T0 + RUN)
         later = T0 + RUN + timedelta(seconds=1)
         assert await lease.acquire(ACC, "o2", later, later + RUN)
 
-        await lease.release(ACC, "o1")
+        with caplog.at_level(logging.WARNING):
+            await lease.release(ACC, "o1")
 
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "[MemoryWriteLease]" in r.getMessage()]
+        assert len(warnings) == 1
+        assert ACC in warnings[0].getMessage() and "o1" not in warnings[0].getMessage()
         assert _docs(db, env)[ACC]["lease_owner"] == "o2"
         assert await lease.acquire(ACC, "o3", later + timedelta(seconds=1), later + RUN) is False
 
@@ -155,6 +181,26 @@ class TestRelease:
         assert taken is True
         assert _docs(db, env)[ACC]["lease_owner"] == "o2"
         assert len(reads) >= 3, "the release must have re-read after its stale read was aborted"
+
+    async def test_release_by_the_holder_and_of_an_absent_lease_log_no_warning(self, lease, caplog):
+        await lease.acquire(ACC, "o1", T0, T0 + RUN)
+        with caplog.at_level(logging.WARNING):
+            await lease.release(ACC, "o1")
+            await lease.release(ACC, "o1")
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+    @pytest.mark.parametrize("account_id", ["", None])
+    async def test_release_with_a_falsy_account_is_a_no_op(self, lease, db, env, account_id, monkeypatch):
+        await lease.acquire(ACC, "o1", T0, T0 + RUN)
+        before = {k: dict(v) for k, v in _docs(db, env).items()}
+        started = []
+        real_transaction = db.transaction
+        monkeypatch.setattr(db, "transaction", lambda: started.append(1) or real_transaction())
+
+        await lease.release(account_id, "o1")
+
+        assert started == [], "a falsy account must not even open a transaction"
+        assert _docs(db, env) == before
 
     async def test_release_of_an_absent_lease_is_a_no_op(self, lease, db, env):
         await lease.release(ACC, "o1")

@@ -416,6 +416,28 @@ async def transactions_concurrent(db: Any, col: str) -> Any:
     return {"final": (await d.get()).to_dict()["n"], "body_ran_again": runs["n"] > 2}
 
 
+async def transactions_concurrent_create_on_missing(db: Any, col: str) -> Any:
+    d = db.collection(col).document("lease")
+    runs = {"n": 0}
+
+    @firestore.async_transactional
+    async def take(tx: Any) -> str:
+        runs["n"] += 1
+        snap = await d.get(transaction=tx)
+        await asyncio.sleep(0.2)     # both transactions hold their read of the missing document before the first writes
+        if snap.exists:
+            return "saw"
+        tx.set(d, {"owner": "x"})
+        return "created"
+
+    async def start_later(delay: float) -> str:
+        await asyncio.sleep(delay)
+        return await take(db.transaction())
+
+    results = await asyncio.gather(start_later(0), start_later(0.05))
+    return {"results": sorted(results), "body_ran_again": runs["n"] > 2, "stored": (await d.get()).to_dict()}
+
+
 async def transaction_read_missing_document(db: Any, col: str) -> Any:
     d = db.collection(col).document("nobody")
 
@@ -554,6 +576,8 @@ SCENARIOS: List[Scenario] = [
               "mixed_directions": "FailedPrecondition"},
              group="composite", refuses=True),
     Scenario("transactions_concurrent", transactions_concurrent, {"final": 2, "body_ran_again": True}),
+    Scenario("transactions_concurrent_create_on_missing", transactions_concurrent_create_on_missing,
+             {"results": ["created", "saw"], "body_ran_again": True, "stored": {"owner": "x"}}),
     Scenario("transaction_read_missing_document", transaction_read_missing_document,
              {"exists_in_transaction": False, "created": False}),
     Scenario("transaction_delete_after_read", transaction_delete_after_read,
