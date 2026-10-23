@@ -17,15 +17,15 @@ example_1_update_weight: {
     reasoning: '''
     <thinking>
     STEP 1 - EXTRACT:
-    - Candidate: "User's weight is 80.5 kg (Feb 16, 2026)"
+    - Candidate: "User's weight is 70 kg (Oct 21, 2026)"
 
     STEP 2 - CLASSIFY:
     - Domain: HEALTH
     - Temporal: DYNAMIC (weight changes regularly)
     - State: CURRENT
-    - TTL: 90 days
+    - Expiry: {kind: horizon, days: 90} (weight keeps changing; review if not said again)
     - Tags: ["weight", "health", "biometrics", "tracking"]
-    - Metadata: {"weight_kg": 70, "measurement_date": "2026-02-16"}
+    - Metadata: {"weight_kg": 70, "measurement_date": "2026-10-21"}
 
     STEP 3 - SEARCH:
     Query: "user weight kg biometrics"
@@ -33,7 +33,7 @@ example_1_update_weight: {
     Results: [
         {
             fact_id: "weight-123",
-            content: "User's current weight is 81 kg (Feb 7)",
+            content: "User's current weight is 72 kg (Oct 14)",
             similarity: 0.95
         }
     ]
@@ -53,14 +53,15 @@ example_1_update_weight: {
     update_fact(
         fact_id="weight-123",
         updates={
-            "content": "User's weight: 80.5 kg (Feb 16), was 81 kg (Feb 7), 82.1 kg (Feb 5)",
+            "content": "User's weight: 70 kg (Oct 21), was 72 kg (Oct 14), 74 kg (Oct 7)",
             "tags": ["weight", "health", "biometrics", "tracking", "loss"],
             "metadata": {
                 "weight_kg": 70,
-                "measurement_date": "2026-02-16",
+                "measurement_date": "2026-10-21",
                 "trend": "decreasing"
             },
-            "reported_date": "2026-02-16T10:00:00"
+            "expiry": {"kind": "horizon", "days": 90},
+            "reported_date": "2026-10-22T12:00+02:00"
         }
     )
 
@@ -95,7 +96,7 @@ example_2_create_new_habit: {
     - Domain: HEALTH
     - Temporal: DYNAMIC (new habit, may change)
     - State: CURRENT
-    - TTL: 90 days
+    - Expiry: {kind: horizon, days: 90} (a new habit may change; review if not said again)
     - Tags: ["yoga", "habit", "health", "morning", "routine"]
     - Metadata: {"duration_min": 45, "frequency": "daily", "time_of_day": "evening"}
     - Context: "Q1 2026 habit formation"
@@ -122,7 +123,7 @@ example_2_create_new_habit: {
             "temporal_class": "DYNAMIC",
             "state": "CURRENT",
             "context_priority": "MEDIUM",
-            "ttl_days": 90,
+            "expiry": {"kind": "horizon", "days": 90},
             "tags": ["yoga", "habit", "health", "morning", "routine"],
             "metadata": {
                 "duration_min": 45,
@@ -131,7 +132,7 @@ example_2_create_new_habit: {
                 "start_quarter": "Q1_2026"
             },
             "context": "Q1 2026 habit formation",
-            "reported_date": "2026-02-16T10:00:00"
+            "reported_date": "2026-10-22T12:00+02:00"
         }
     )
 
@@ -225,6 +226,7 @@ example_4_merge_car_details: {
     - Domain: POSSESSION
     - Temporal: STABLE (car features don't change often)
     - State: CURRENT
+    - Expiry: {kind: none} (stable ownership, changes only by an explicit update)
     - Tags: ["car", "features", "accessories"]
 
     STEP 3 - SEARCH:
@@ -278,13 +280,14 @@ example_4_merge_car_details: {
                 "location": "Springfield",
                 "features": ["tinted windows"]
             },
-            "reported_date": "2026-02-16T10:00:00"
+            "expiry": {"kind": "none"},
+            "reported_date": "2026-10-22T12:00+02:00"
         }
     )
 
     STEP 7 - VERIFY:
     ✓ Facts merged successfully
-    ✓ Old facts marked as SUPERSEDED
+    ✓ Old facts marked as SUPERSEDED (superseded_by = car-merged-789, set by the merge)
     ✓ New fact created (fact_id: car-merged-789)
 
     STEP 8 - REPORT:

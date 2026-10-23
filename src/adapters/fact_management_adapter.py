@@ -16,8 +16,10 @@ from ..domain.fact_lifecycle import (
 from ..domain.fact_update import ParsedFactUpdate, parse_fact_update
 from ..domain.fact_update_lifecycle import finish_fact_update
 from ..domain.fact_update_plan import FactUpdatePlan, plan_fact_update
+from ..domain.local_time import local_moment
 from ..domain.fact_write_context import (
     FactWriteContext,
+    as_utc,
     kept_reported_date_note,
     reported_date_for_merge,
     reported_date_for_new,
@@ -31,6 +33,16 @@ from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_write_port import FactWritePort
 from ..ports.search_enrichment_port import SearchEnrichmentPort
 from ..utils.logger import logger
+
+
+def _in_owner_zone(stamp: Optional[str], zone: str) -> Optional[str]:
+    """An ISO timestamp as an ISO timestamp with the owner's offset; text that is not ISO is returned as stored."""
+    if not stamp:
+        return stamp
+    try:
+        return local_moment(as_utc(stamp), zone).isoformat(timespec="seconds")
+    except ValueError:
+        return stamp
 
 
 class FactManagementAdapter(FactManagementPort):
@@ -88,11 +100,12 @@ class FactManagementAdapter(FactManagementPort):
             primary_query: Main semantic search phrase
             alternative_query: Alternative phrasing (optional)
             limit: Max results to return (default: 20)
-            timezone: The account owner's IANA zone (the result's dates are shown in his calendar from the
-                model-facing contract on; not read yet)
+            timezone: The account owner's IANA zone: `reported_date` and the dates of `expiry` / `due` are shown
+                in his calendar
 
         Returns:
-            List of fact dictionaries with fact_id, content, similarity, source
+            List of fact dictionaries with fact_id, content, similarity, source, the taxonomy fields,
+            reported_date, expiry (the stored decision in the shape the model sends, or None) and due
         """
         try:
             logger.info(
@@ -117,6 +130,7 @@ class FactManagementAdapter(FactManagementPort):
             # Convert EnrichedFact → Dict — taxonomy fields already carried by EnrichedFact
             results: List[Dict[str, Any]] = []
             for ef in enriched.facts:
+                expiry, due = ef.expiry_decision(timezone)
                 results.append({
                     "fact_id": ef.fact_id,
                     "content": ef.content,
@@ -129,7 +143,9 @@ class FactManagementAdapter(FactManagementPort):
                     "context_priority": ef.context_priority,
                     "tags": ef.tags or [],
                     "metadata": ef.metadata or {},
-                    "reported_date": ef.reported_date,
+                    "reported_date": _in_owner_zone(ef.reported_date, timezone),
+                    "expiry": expiry,
+                    "due": due,
                     "version": ef.version,
                 })
 
