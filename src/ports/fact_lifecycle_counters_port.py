@@ -16,8 +16,10 @@ class FactLifecycleCountersPort(ABC):
     @abstractmethod
     async def record_sweep(self, account_id: str, day: date, values: Mapping[str, Any]) -> None:
         """Write the janitor's snapshot for the account's day: each field replaces its previous value (the last run of
-        the day wins), the counters added by `add` stay. Raises ValueError for a falsy `account_id`, a `datetime` as
-        `day`, or a key outside `domain.fact_lifecycle_day.SNAPSHOT_FIELDS`; store errors raise."""
+        the day wins), the counters added by `add` stay. `values` is a whole snapshot: exactly
+        `domain.fact_lifecycle_day.SNAPSHOT_FIELDS`, each of its type (`oldest_stale_days` may be None).
+        Raises ValueError for a falsy `account_id`, a `datetime` as `day`, or a partial, extended or mistyped snapshot
+        (`check_snapshot`); store errors raise."""
 
     @abstractmethod
     async def add(self, account_id: str, day: date, counts: Mapping[str, int]) -> None:
