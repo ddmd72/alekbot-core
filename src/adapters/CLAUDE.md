@@ -163,7 +163,11 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
     grammar + adaptive thinking + tools triple (anthropic-sdk-python#1204) ended tool turns in filler calls
     instead of the answer; a legitimate tool to end the turn removed them (probes in the decision record).
     `_drop_document_citations` runs only when `output_config.format` is sent, so PDF citations are kept on
-    this path. A same-provider fallback request keeps no format.
+    this path. A same-provider fallback request keeps no format. Under `max_tokens` the SDK drops an
+    unfinished tool-input string, so a cut `response` arrives as `{}` and the adapter drops every tool call
+    (an orphan `tool_use` would 400 the next request); a complete string with broken JSON is not a
+    truncation (parser `unparseable source=deliver`). Cloud Logging drops `extra=` fields: grep the message
+    text `event=llm_response_parse source=deliver outcome=truncated` and `[LlmResponseParse] source=deliver`.
 
   The native path has no synthesized `respond` tool. Its schema is shaped
   for Anthropic's grammar compiler first: `_nullable_to_union` (`nullable:True` → `["<type>","null"]`
@@ -226,7 +230,7 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   (Gemini responseJsonSchema, Claude output_config.format without tools, OpenAI json_schema, Grok's
   `deliver_response` parameters). The OUTPUT_FORMAT_JSON token also carries the schema
   (`prompts_snapshot/tokens/system/OUTPUT_FORMAT_JSON.groovy`), and on Claude with tools it is the only
-  carrier.
+  carrier (Smart/Quick: OUTPUT_FORMAT_JSON; Tutor: OUTPUT_FORMAT_TUTOR).
 
 - **`rich_content.data.rows` format: `[{"cells": [...]}, ...]`.** Each table row is an object with
   a `cells` key (array of strings). Never use `[[...], [...]]` (Gemini hangs on

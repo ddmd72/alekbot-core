@@ -570,16 +570,21 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   - **Claude** (since 2026-10-23, `decisions/claude_deliver_response_string_tool.md`) — a request with
     a schema **and** client tools: `ClaudeAdapter` drops `output_config.format` and appends
     `deliver_response(response: string)`; the schema is not in the tool, it comes from the prompt
-    (`OUTPUT_FORMAT_JSON`). The args (`{"response": "<string>"}`) reach `extract_structured_response`,
+    (the agent's OUTPUT_FORMAT token: Smart/Quick `OUTPUT_FORMAT_JSON`, Tutor `OUTPUT_FORMAT_TUTOR`). The args (`{"response": "<string>"}`) reach `extract_structured_response`,
     which runs `parse_llm_response` on the string — one parser, all repairs, `first_object` recovery.
-    Under `max_tokens` a call with an empty or missing `response` is dropped by the adapter. A schema
+    Under `max_tokens` the SDK drops an unfinished string, so a cut `response` arrives as `{}` and the adapter drops every tool call of the response. A schema
     request without client tools keeps `output_config.format` (JSON as text, loop ends on no tool calls).
   - **Gemini / OpenAI** — native JSON via `response_schema`. The loop ends via *no-tool-calls → return
     text* and `_build_smart_response` parses `result.text`.
   - **Observability and failure.** Every parse logs one `llm_response_parse` event (`source`, `outcome`:
     parsed / first_object / repaired / unparseable / truncated, `via`). An orchestrator turn that ends
     with empty user text, no rich content and no delivery items fails as `empty_answer` (Smart, Quick,
-    Tutor, all providers), unless the turn dispatched an ASYNC intent (`async_dispatches`).
+    Tutor, all providers), unless the turn dispatched an ASYNC intent or a SYNC intent acknowledged as
+    started (deep research, video; `async_dispatches`). Tutor checks only the text. In chat the Quick
+    fallback runs only before the 90 s mark (then the localized "turn failed" late answer; synthetic apology
+    if Quick fails too); in background `notify()` there is no ops alert, just the ERROR log, a worker WARNING
+    and a Cloud Tasks retry. Cloud Logging drops the `extra=` fields: grep `[LlmResponseParse]`,
+    `empty_answer agent=`, `empty_text_after_async`, `terminal_sync_sibling`.
 
   **A terminal tool can arrive alongside real work in the same batch.** The model may dispatch an
   async hop and answer in one breath (`create_html_page` + `deliver_response` — exactly what the

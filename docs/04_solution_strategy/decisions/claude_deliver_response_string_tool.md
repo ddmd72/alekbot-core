@@ -15,16 +15,16 @@ not a grounded / server-tool request (`use_grounding`), `ClaudeAdapter`:
 2. appends a synthesized tool `deliver_response` with **one** required string parameter `response`
    ("your whole reply: the JSON object described in the response format, serialized as a string"). The
    answer schema is **not** in the tool parameters; it reaches the model through the agent's prompt
-   (Smart: the `OUTPUT_FORMAT_JSON` token);
+   (Smart and Quick: the `OUTPUT_FORMAT_JSON` token; Tutor: `OUTPUT_FORMAT_TUTOR`);
 3. when the model calls it, returns `ToolCall("deliver_response", args={"response": <the string as the
    model gave it>})`. The adapter does **not** parse the answer. `extract_structured_response` runs
    `parse_llm_response` on a string `response`, so the text path and the deliver path share one parser
    and all its repairs (quote repair, `\n` normalisation, list-shaped `rich_content`). A dict `response`
-   is taken as the answer object. Grok is unchanged: its args are the schema fields themselves.
+   is taken as the answer object only when it has an envelope key, otherwise it is unparseable. Grok is unchanged: its args are the schema fields themselves.
 
 **Smart, Quick and Tutor all take this path.** Quick moves in the same change: it defaults to Claude
 (`src/services/agent_context_builder.py`, `STRATEGIES["quick"]`) and formats every `notify()` alert, and
-today it calls `DelegationEngine.execute` without `terminal_tool`, so a `deliver_response` call would get
+it used to call `DelegationEngine.execute` without `terminal_tool`, so a `deliver_response` call would get
 "unknown tool" and loop. Quick passes `terminal_tool="deliver_response"` and reads its answer through
 `extract_structured_response`.
 
@@ -152,9 +152,12 @@ What the build settled beyond the requirements above.
 
 - **Owner decision, same day: an empty answer is a failure on all providers.** An orchestrator turn that ends
   with empty user text, no rich content and no delivery items fails as `empty_answer`, for Smart, Quick and
-  Tutor, on every provider. In chat that means the Quick fallback plus an ops alert; in `notify()` it returns
-  `delivered=False`, so Cloud Tasks retries. Tutor shows the error reaction instead of "No response from
-  model.".
+  Tutor, on every provider. In chat the Quick fallback runs only before the 90 s mark; after it the user gets the
+  localized "turn failed" late answer, and if Quick fails too, a synthetic apology. The chat path raises the
+  ops alert "Smart primary FAILED ... -> Quick fallback ... detail: empty_answer". In background `notify()`
+  there is no ops alert: the ERROR log line, a worker WARNING, and a Cloud Tasks retry that re-runs the turn
+  (`delivered=False`). Tutor checks only the text (no rich-content or delivery-item check) and shows the
+  error reaction instead of "No response from model.".
 - **Refinement: dispatched work is not empty.** A turn that dispatched work the user will receive later
   (`DelegationResult.async_dispatches`: ASYNC intents, and SYNC intents that acknowledge and deliver in the
   background, such as deep research and video generation) is not an `empty_answer`: the user receives the
@@ -163,10 +166,15 @@ What the build settled beyond the requirements above.
 - **Grok behaviour change.** A terminal call with empty args `{}` plus text beside it now shows that text
   (it used to be an empty reply). The engine carries text written beside a terminal call in
   `DelegationResult.text`.
-- **Two ERROR events on an empty deliver answer.** The parser logs `llm_response_parse outcome=unparseable
-  source=deliver`, and the agent logs `empty_answer`. Count alerts accordingly: one incident, two events.
-- **Truncation drops every tool call of the response**, not only `deliver_response`. An orphan `tool_use`
-  would get a 400 on the next request. The adapter logs `llm_response_parse outcome=truncated source=deliver`.
+- **Two ERROR events per incident.** An empty `response` string: the parser logs `unparseable source=deliver`,
+  then the agent logs `empty_answer`. A truncation: the adapter logs `outcome=truncated`, then the agent logs
+  `empty_answer`. Count alerts accordingly: one incident, two events.
+- **Truncation drops every tool call of the response**, not only `deliver_response`; an orphan `tool_use`
+  would get a 400 on the next request. The SDK builds a cut tool input in partial mode and drops an
+  unfinished string, so a cut inside `response` arrives as `{}`, and the adapter drops all tool calls (pinned
+  by the wire test that feeds a cut stream through the SDK accumulator). A `response` string that is complete
+  but holds broken JSON is not a truncation: the parser logs `unparseable source=deliver` and the raw text is
+  shown, as on the old text path.
 - **One parser.** The adapter returns the string unparsed; `extract_structured_response` parses it with
   `parse_llm_response`. Each parse logs one `llm_response_parse` event (`parsed` / `first_object` /
   `repaired` / `unparseable` / `truncated`).
@@ -174,3 +182,17 @@ What the build settled beyond the requirements above.
   behaviour of `terminal_tool_co_emitted_calls.md` is unchanged.
 - **Quick** passes `terminal_tool="deliver_response"` and reads its answer through
   `extract_structured_response`, like Smart and Tutor.
+- **Where to grep.** Cloud Logging does not carry the `extra=` event fields; grep the message text:
+  `[LlmResponseParse] source=deliver outcome=... via=... len=...`, the adapter's `event=llm_response_parse
+  source=deliver outcome=truncated`, `empty_answer agent=... model=... terminal=True`, `empty_text_after_async`,
+  `terminal_sync_sibling`, `terminal_text_used`, `claude_deliver_path`, and the chat ops alert text.
+
+## After deploy: what to watch
+
+- `claude_deliver_path` volume (how many Claude requests take the new path).
+- Counts of `[LlmResponseParse] source=deliver outcome=first_object` and `outcome=unparseable`.
+- `empty_answer` ERRORs and the Slack fallback alert.
+- 500 retries of `daily_email_review` / `execute_reminder` that carry `empty_answer`.
+- `terminal_sync_sibling` and `terminal_text_used`.
+- Output-token delta (the answer is JSON escaped inside a JSON string).
+- Answers now sit in BigQuery `prompt_content.tool_calls`, not `response_text`.
