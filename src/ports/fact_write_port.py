@@ -7,7 +7,10 @@ Justification for port promotion:
 - Enables test doubles without real Firestore + Gemini embedding calls.
 """
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
+
+from ..domain.entities import FactEntity
+from ..domain.new_fact_attributes import NewFactAttributes
 
 
 class FactWritePort(ABC):
@@ -41,11 +44,33 @@ class FactWritePort(ABC):
             stored, including earlier ones of the same batch.
         Returns: (saved_count, skipped_count, saved_ids); saved_ids holds the id of every stored fact
             in input order, so len(saved_ids) == saved_count. Known defect: the dedup path returns []
-            (fact_write_service.py:188-199).
+            (fact_write_service.py).
         Idempotency: with skip_deduplication none, a re-run stores new facts; without it a fact
             identical to a current one is skipped.
-        Atomicity: every embedding is computed before the first write, so an embedding failure
-            stores nothing; writes are per fact, so a later failure keeps the facts already stored.
-        Errors: raises (embedding, invalid enum value, backend). Empty facts_data returns (0, 0, [])
-            with no calls.
+        Atomicity: every fact is parsed before any embedding (parse_new_fact), so a bad value anywhere
+            in the batch stores nothing and costs no embedding call; state "superseded" is refused. Every
+            embedding is computed before the first write, so an embedding failure stores nothing; writes
+            are per fact, so a later backend failure keeps the facts already stored.
+        Errors: raises ValueError for an invalid fact (empty content, bad enum or date, tags not a list
+            of strings, state superseded), and whatever the embedding service or the backend raises.
+            Empty facts_data returns (0, 0, []) with no calls.
+        """
+
+    @abstractmethod
+    async def build_facts(
+        self,
+        account_id: str,
+        user_id: str,
+        facts: Sequence[NewFactAttributes],
+    ) -> List[FactEntity]:
+        """
+        Embed and build new facts from already-parsed attributes; store nothing and check no duplicates.
+
+        Each entity has a new id and a new lineage, is_current True, version 1 and its three vectors
+        (domain.fact_embedding recipe, computed before the system tags are added). Tags gain
+        "consolidated" (and "anchor" for a principle); they are appended to the attributes' own list,
+        which is not copied. reported_date None means now.
+        Returns: one entity per input, in input order; an empty input returns [] with no calls.
+        Errors: raises whatever the embedding service raises, and RuntimeError when it returns no vector
+            for a fact; no entity is returned with a None vector.
         """
