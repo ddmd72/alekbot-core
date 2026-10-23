@@ -674,6 +674,8 @@ async def main():
         )
 
         # Services for WorkerHandler — wrap ports so the handler never imports ports directly
+        from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
+        from src.infrastructure.agent_config import CONSOLIDATION as CONSOLIDATION_CFG
         from src.services.consolidation_service import ConsolidationService
         from src.services.email_embedding_repair_service import EmailEmbeddingRepairService
         from src.services.reminders_service import RemindersService
@@ -682,6 +684,9 @@ async def main():
             queue=consolidation_queue,
             coordinator=coordinator,
             agent_factory=agent_factory,
+            lease=FirestoreMemoryWriteLease(db_client, env_config),
+            run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
+            task_queue=agent_task_queue,
             indexed_email_repo=indexed_email_repo,
             user_repo=user_repo,
         ) if consolidation_queue else None
@@ -844,6 +849,7 @@ async def main():
             db_client=db_client,
             consolidation_queue=consolidation_queue,
             consolidation_config=config.get("CONSOLIDATION"),
+            consolidation_service=_consolidation_service,
             audio_service=audio_service,
             html_renderer=html_renderer,
             notification_service=notification_service,
@@ -1143,6 +1149,7 @@ async def main():
                             file_service=file_service,
                             consolidation_queue=consolidation_queue,
                             consolidation_config=config.get("CONSOLIDATION"),
+                            consolidation_service=_consolidation_service,
                             audio_service=audio_service,
                             html_renderer=html_renderer,
                             notification_service=notification_service,

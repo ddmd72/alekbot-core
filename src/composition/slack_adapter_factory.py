@@ -18,9 +18,9 @@ from ..adapters.gcp_task_queue import GcpTaskQueue
 from ..adapters.firestore_session_store import FirestoreSessionStore
 from ..config.environment import EnvironmentConfig
 from ..handlers.conversation_handler import ConversationHandler
-
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from .user_agent_factory import UserAgentFactory
+from ..services.consolidation_service import ConsolidationService
 from ..services.iam_service import IAMService
 from ..services.rich_content_service import RichContentService
 from ..services.user_notification_service import UserNotificationService
@@ -55,6 +55,7 @@ class SlackAdapterFactory:
         db_client=None,
         consolidation_queue=None,
         consolidation_config=None,
+        consolidation_service: Optional[ConsolidationService] = None,
         audio_service=None,
         html_renderer: Optional[HtmlRendererPort] = None,
         notification_service: Optional[UserNotificationService] = None,
@@ -85,6 +86,7 @@ class SlackAdapterFactory:
             db_client: Firestore AsyncClient (required for HTTP mode)
             consolidation_queue: Optional consolidation queue
             consolidation_config: Optional consolidation config
+            consolidation_service: Optional shared ConsolidationService; its consolidate_now serves `$consolidate`
             audio_service: Optional audio transcription service
 
         Returns:
