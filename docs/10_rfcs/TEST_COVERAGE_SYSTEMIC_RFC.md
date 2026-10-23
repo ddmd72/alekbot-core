@@ -682,6 +682,8 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   `service_container` 168 (167 killed, 1 equivalent), `user_agent_factory` 278 (273 killed, 5 equivalent), `slack_adapter_factory` 42 (42 killed),
   `telegram_adapter_factory` 33 (33 killed): 983 mutants, 973 killed, 10 ruled equivalent by the reviewer
   (`tests/unit/composition/wiring_equivalent_mutants.txt`, each with its reason), 0 survived, 0 error. About 5 h of runs on 4 vCPU.
+- **Coverage floors raised** to min(VM, CI runner) − 0.3: composition 90.4 → 94.1, root entry points 33.9 → 76.0 (the graph tests and the boot
+  test run `main()` and the builder), handlers 91.6 → 92.7, adapters 82.8 → 83.5, src (other) 70.1 → 74.4.
 - **The tests that build the graph or boot `main()` are `slow`,** so they run in `make ci` (or with `RUN_SLOW_TESTS=1`), not in `make check`;
   the source-reading guards and the checker self-tests are not (`tests/CLAUDE.md` -> "The production graph").
 - **The owner's check after the first deploy,** the rollback command and the `:latest` rule: `docs/07_deployment/README.md` -> "After deploying P9".
