@@ -8,7 +8,9 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.domain.entities import FactState
 from src.domain.fact_embedding import fact_embedding_texts
+from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS, lifecycle_fields
 from tests.support.fact_store import FactStore, embed
 from tests.support.firestore_eval import stored_vector
 
@@ -158,12 +160,16 @@ async def test_lifecycle_invariants_hold_for_every_stored_document(store):
         await store.adapter.update_fact(b, {"state": "SUPERSEDED", "superseded_by": d}, ACC),
     ]
     await store.repo.invalidate_fact(c, ACC)
-    results.append(await store.adapter.update_fact(d, {"state": "STALE"}, ACC))
+    # Reviewer edit (facts S3, T2): only the system marks a fact stale (D1, the model's STALE is refused), so d is
+    # staled the way the system writes in place, through the repository, and the stale invariant below keeps its document.
+    stored_d = await store.repo.resolve_current(d, ACC, CONSOLIDATION_ACCEPTS)
+    await store.repo.update_fact_fields(
+        stored_d, {**lifecycle_fields(FactState.STALE, datetime.now(timezone.utc)), "last_updated": datetime.now(timezone.utc)})
     edited = await store.adapter.update_fact(e, {"content": "fact e edited"}, ACC)
     merged = await store.adapter.merge_facts([e], "fact e merged", _meta())
     assert all(r["status"] == "updated" for r in [*results, edited])
     assert merged["status"] == "merged" and merged["old_fact_ids"] == [edited["fact_id"]]
-    assert len(store.docs) == 7
+    assert len(store.docs) == 7 and store.docs[d]["state"] == "stale"
     for fid, doc in store.docs.items():
         state = doc["state"]
         if state == "superseded":

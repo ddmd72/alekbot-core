@@ -16,10 +16,11 @@ def refused(data, *fragments):
 
 
 def test_defaults():
+    # Reviewer edit (facts S3, T2): `ttl_days` left the attributes (D1: code computes it); the S3 fields default empty.
     assert parse_new_fact({"text": "likes tea"}) == NewFactAttributes(
         content="likes tea", tags=[], type=FactType.EVENT, metadata={}, domain=None, temporal_class=None,
-        state=FactState.CURRENT, context_priority=ContextPriority.MEDIUM, ttl_days=None, context=None,
-        reported_date=None)
+        state=FactState.CURRENT, context_priority=ContextPriority.MEDIUM, context=None,
+        reported_date=None, expiry=None, derived_from=(), expiry_fields=None, notes=())
 
 
 def test_content_wins_over_text():
@@ -27,14 +28,17 @@ def test_content_wins_over_text():
 
 
 def test_given_attributes_are_parsed():
+    # Reviewer edit (facts S3, T2): the non-default state is ARCHIVED (the model may not send STALE, S3-D3), and a sent
+    # `ttl_days` is not read (D1).
     parsed = parse_new_fact({
         "content": "a fact", "tags": ["x"], "type": "state", "metadata": {"k": 1}, "domain": "health",
-        "temporal_class": "dynamic", "state": "stale", "context_priority": "high", "ttl_days": 30,
+        "temporal_class": "dynamic", "state": "archived", "context_priority": "high", "ttl_days": 30,
         "context": "said at lunch", "reported_date": "2026-03-04T10:00:00+00:00"})
     assert (parsed.domain, parsed.temporal_class, parsed.state, parsed.context_priority) == (
-        FactDomain.HEALTH, TemporalClass.DYNAMIC, FactState.STALE, ContextPriority.HIGH)
-    assert (parsed.type, parsed.tags, parsed.metadata, parsed.ttl_days, parsed.context) == (
-        FactType.STATE, ["x"], {"k": 1}, 30, "said at lunch")
+        FactDomain.HEALTH, TemporalClass.DYNAMIC, FactState.ARCHIVED, ContextPriority.HIGH)
+    assert (parsed.type, parsed.tags, parsed.metadata, parsed.context) == (
+        FactType.STATE, ["x"], {"k": 1}, "said at lunch")
+    assert not hasattr(parsed, "ttl_days") and parsed.expiry is None and parsed.expiry_fields is None
     assert parsed.reported_date == datetime(2026, 3, 4, 10, 0, tzinfo=timezone.utc)
 
 
@@ -61,9 +65,15 @@ def test_superseded_is_refused(state):
     refused({"text": "a fact", "state": state}, "cannot have state SUPERSEDED")
 
 
-@pytest.mark.parametrize("state", ["current", "stale", "archived", "invalidated"])
+# Reviewer edit (facts S3, T2): STALE left the states a new fact may have (S3-D3); its case is the refusal below.
+@pytest.mark.parametrize("state", ["current", "archived", "invalidated"])
 def test_the_other_states_are_kept(state):
     assert parse_new_fact({"text": "a fact", "state": state}).state is FactState(state)
+
+
+@pytest.mark.parametrize("state", ["stale", "STALE"])
+def test_stale_is_refused(state):
+    refused({"text": "a fact", "state": state}, "cannot have state STALE")
 
 
 @pytest.mark.parametrize("bad", [{"domain": "astrology"}, {"temporal_class": "sometimes"}, {"state": "zombie"},
@@ -95,7 +105,14 @@ def test_a_bad_date_is_refused():
     refused({"text": "a fact", "reported_date": "yesterday"}, "reported_date")
 
 
-@pytest.mark.parametrize("data,name", [({"ttl_days": "soon"}, "ttl_days"), ({"ttl_days": [1]}, "ttl_days"),
-                                       ({"context": 5}, "context")])
+# Reviewer edit (facts S3, T2): the model's `ttl_days` is no longer read (D1), so a malformed one is not refused (next
+# test); a malformed context still is.
+@pytest.mark.parametrize("data,name", [({"context": 5}, "context")])
 def test_a_malformed_ttl_or_context_is_refused(data, name):
     refused({"text": "a fact", **data}, f"Invalid {name}")
+
+
+@pytest.mark.parametrize("ttl", ["soon", [1]])
+def test_a_malformed_ttl_days_is_not_read_so_not_refused(ttl):
+    parsed = parse_new_fact({"text": "a fact", "ttl_days": ttl})
+    assert not hasattr(parsed, "ttl_days") and parsed.expiry is None

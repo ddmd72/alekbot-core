@@ -56,9 +56,11 @@ class FailingEmbedder:
 async def test_create_fact_stores_one_document_with_the_given_attributes(store):
     other = await create(store, "foreign fact", account_id=OTHER, user_id="usr-2")
     other_before = copy.deepcopy(store.docs[other])
+    # Reviewer edit (facts S3, T2): the non-default state is ARCHIVED (the model may not create STALE, S3-D3), and the
+    # sent `ttl_days` is not stored (D1: code computes it from `expiry`).
     res = await store.adapter.create_fact("mother is Maria", meta(
         tags=["family"], metadata={"name": "Maria"}, context="said at lunch", ttl_days=30, type="STATE",
-        domain="BIOGRAPHICAL", temporal_class="STABLE", context_priority="HIGH", state="STALE",
+        domain="BIOGRAPHICAL", temporal_class="STABLE", context_priority="HIGH", state="ARCHIVED",
         reported_date="2026-03-04T10:00:00Z"))
     assert set(res) == {"fact_id", "status", "message"} and res["status"] == "created"
     json.dumps(res)
@@ -67,8 +69,8 @@ async def test_create_fact_stores_one_document_with_the_given_attributes(store):
     assert (doc["account_id"], doc["created_by_user_id"], doc["text"]) == (ACC, USER, "mother is Maria")
     assert doc["tags"] == ["family", "consolidated"] and doc["metadata"] == {"name": "Maria"}
     assert (doc["domain"], doc["temporal_class"], doc["context_priority"], doc["state"], doc["type"]) == (
-        "biographical", "stable", "high", "stale", "state")
-    assert (doc["context"], doc["ttl_days"], doc["version"]) == ("said at lunch", 30, 1)
+        "biographical", "stable", "high", "archived", "state")
+    assert (doc["context"], doc["ttl_days"], doc["version"]) == ("said at lunch", None, 1)
     assert doc["reported_date"] == datetime(2026, 3, 4, 10, 0, tzinfo=timezone.utc)
     assert doc["lineage_id"] and doc["id"] == res["fact_id"]
     texts = fact_embedding_texts("mother is Maria", ["family"], {"name": "Maria"})
@@ -193,7 +195,8 @@ async def test_update_temporal_class_is_case_insensitive_bumps_version_and_keeps
     assert doc["temporal_class"] == "dynamic" and doc["version"] == 2
     for field in ("vector", "tags_vector", "metadata_vector"):
         assert doc[field] == before[field]
-    assert doc["reported_date"] > before["reported_date"]
+    # Reviewer edit (facts S3, T2): RFC D2 drops "content change -> now"; with no date sent the version keeps the stored one.
+    assert doc["reported_date"] == before["reported_date"]
 
 
 async def test_update_with_the_stored_values_changes_no_version_or_reported_date(store):
@@ -234,7 +237,8 @@ async def test_update_reported_date_is_taken_from_an_iso_string_or_a_datetime(st
 
 
 @pytest.mark.parametrize("state,is_current,closed", [
-    ("CURRENT", True, False), ("STALE", True, False), ("ARCHIVED", True, True), ("INVALIDATED", True, True),
+    # Reviewer edit (facts S3, T2): STALE left the model's states (D1); its row is the refusal test below.
+    ("CURRENT", True, False), ("ARCHIVED", True, True), ("INVALIDATED", True, True),
     ("SUPERSEDED", False, True)])
 async def test_update_state_applies_the_lifecycle_fields(store, state, is_current, closed):
     # Reviewer edit (facts S2, D8): the state is applied to a current fact. The old first step (archive, then move on)
@@ -253,6 +257,16 @@ async def test_update_state_applies_the_lifecycle_fields(store, state, is_curren
     assert doc["superseded_by"] == (successor if state == "SUPERSEDED" else None)
     for field in ("vector", "tags_vector", "metadata_vector", "text", "version", "reported_date"):
         assert doc[field] == before[field], field
+
+
+@pytest.mark.parametrize("state", ["STALE", "stale"])
+async def test_update_state_stale_is_refused_and_writes_nothing(store, state):
+    fid = await create(store)
+    before = snapshot(store)
+    store.adapter._embedding = FailingEmbedder()
+    res = await store.adapter.update_fact(fid, {"state": state}, ACC)
+    assert res["status"] == "failed" and "only the system marks a fact stale" in res["message"]
+    assert store.docs == before
 
 
 async def test_repeating_an_update_changes_only_last_updated(store):
