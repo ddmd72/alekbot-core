@@ -123,7 +123,11 @@ async def test_an_error_other_than_a_conflict_fails_the_run_loudly_after_the_ear
 
     assert world.docs[first]["state"] == "stale" and world.docs[broken]["state"] == "current"
     assert await cached_texts(world) == {"b-broken"}                       # what was staled left the prompts before the run failed
-    assert world.daily_docs() == {} and world.sink.texts == [] and world.line_docs() == {}
+    assert world.daily_docs() == {} and world.line_docs() == {}
+    # T9 review F5: a failed run posts exactly one run-failed 🚨 (type and stage only, never the error text), and no 🧹 line
+    (alert,) = world.sink.texts
+    assert alert.startswith("🚨") and "run failed" in alert and "RuntimeError" in alert
+    assert "store unavailable" not in alert and "a-first" not in alert and "b-broken" not in alert
 
 
 async def test_a_stale_conflict_is_not_confused_with_other_errors_staling_continues_past_it():
