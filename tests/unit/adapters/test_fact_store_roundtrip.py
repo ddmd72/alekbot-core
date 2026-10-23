@@ -12,6 +12,7 @@ from src.domain.entities import FactState
 from src.domain.fact_embedding import fact_embedding_texts
 from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS, lifecycle_fields
 from tests.support.fact_store import FactStore, embed
+from tests.support.fact_write import EXPIRY_NONE, ctx
 from tests.support.firestore_eval import stored_vector
 
 ACC = "acc-1"
@@ -22,7 +23,7 @@ def _meta(**over):
     base = {
         "account_id": ACC, "user_id": "usr-1", "domain": "biographical", "temporal_class": "stable",
         "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Maria"},
-        "type": "event",
+        "type": "event", "expiry": EXPIRY_NONE,
     }
     base.update(over)
     return base
@@ -34,7 +35,7 @@ def store():
 
 
 async def _create(store, text="mother is Maria", **over):
-    res = await store.adapter.create_fact(text, _meta(**over))
+    res = await store.adapter.create_fact(text, _meta(**over), context=ctx())
     assert res["status"] == "created", res
     return res["fact_id"]
 
@@ -56,7 +57,7 @@ async def test_create_fact_stores_vectors_for_the_embedding_texts_and_a_real_dat
 async def test_update_content_reembeds_and_bumps_version(store):
     # Reviewer edit (facts S2, D8): a content change is a new version document; it is read through the returned id.
     fid = await _create(store)
-    res = await store.adapter.update_fact(fid, {"content": "lives in Springfield, Ohio"}, ACC)
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya Doe", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert res["status"] == "updated" and res["version"] == 2
     new_id = res["fact_id"]
     assert new_id != fid
@@ -73,7 +74,7 @@ async def test_update_content_reembeds_and_bumps_version(store):
 async def test_update_metadata_merges_and_reembeds_metadata_vector(store):
     # Reviewer edit (facts S2, D8): a metadata change is a new version document, read through the returned id.
     fid = await _create(store)
-    res = await store.adapter.update_fact(fid, {"metadata": {"city": "Springfield"}}, ACC)
+    res = await store.adapter.update_fact(fid, {"metadata": {"city": "Springfield"}, "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert res["fact_id"] != fid and store.docs[fid]["metadata"] == {"name": "Maria"}
     doc = store.docs[res["fact_id"]]
     assert doc["metadata"] == {"name": "Maria", "city": "Springfield"}
@@ -84,7 +85,7 @@ async def test_update_metadata_merges_and_reembeds_metadata_vector(store):
 async def test_state_only_update_keeps_vectors_version_and_reported_date(store):
     fid = await _create(store)
     before = copy.deepcopy(store.docs[fid])
-    res = await store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC)
+    res = await store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC, context=ctx())
     assert res["status"] == "updated"
     doc = store.docs[fid]
     for key in ("vector", "tags_vector", "metadata_vector"):
@@ -99,9 +100,9 @@ async def test_superseded_update_closes_the_version(store):
     fid = await _create(store)
     successor = await _create(store, "mother is Mariya")
     before = copy.deepcopy(store.docs)
-    refused = await store.adapter.update_fact(fid, {"state": "SUPERSEDED"}, ACC)
+    refused = await store.adapter.update_fact(fid, {"state": "SUPERSEDED"}, ACC, context=ctx())
     assert refused["status"] == "failed" and store.docs == before
-    await store.adapter.update_fact(fid, {"state": "SUPERSEDED", "superseded_by": successor}, ACC)
+    await store.adapter.update_fact(fid, {"state": "SUPERSEDED", "superseded_by": successor}, ACC, context=ctx())
     doc = store.docs[fid]
     assert doc["state"] == "superseded" and doc["is_current"] is False and doc["valid_to"] is not None
     assert doc["superseded_by"] == successor
@@ -117,7 +118,7 @@ async def test_repo_invalidate_sets_state_and_valid_to(store):
 async def test_update_with_another_accounts_id_is_not_found_and_changes_nothing(store):
     fid = await _create(store)
     before = copy.deepcopy(store.docs[fid])
-    res = await store.adapter.update_fact(fid, {"content": "hijacked", "state": "ARCHIVED"}, OTHER)
+    res = await store.adapter.update_fact(fid, {"content": "hijacked", "state": "ARCHIVED"}, OTHER, context=ctx())
     assert res["status"] == "not_found"
     assert store.docs[fid] == before
 
@@ -135,7 +136,7 @@ async def test_merge_supersedes_own_sources_only_and_creates_current_fact(store)
     own2 = await _create(store, "likes green tea")
     foreign = await _create(store, "foreign fact", account_id=OTHER)
     foreign_before = copy.deepcopy(store.docs[foreign])
-    res = await store.adapter.merge_facts([own1, own2, foreign], "likes green tea daily", _meta())
+    res = await store.adapter.merge_facts([own1, own2, foreign], "likes green tea daily", _meta(), context=ctx())
     assert res["status"] == "merged"
     assert sorted(res["old_fact_ids"]) == sorted([own1, own2])
     for fid in (own1, own2):
@@ -156,8 +157,8 @@ async def test_lifecycle_invariants_hold_for_every_stored_document(store):
     # Reviewer edit (facts S2, D8): b is superseded in favour of d (SUPERSEDED alone is refused); e's edit is a version
     # document e2, and the merge of e resolves forward to e2. Seven documents; every write must succeed.
     results = [
-        await store.adapter.update_fact(a, {"state": "ARCHIVED"}, ACC),
-        await store.adapter.update_fact(b, {"state": "SUPERSEDED", "superseded_by": d}, ACC),
+        await store.adapter.update_fact(a, {"state": "ARCHIVED"}, ACC, context=ctx()),
+        await store.adapter.update_fact(b, {"state": "SUPERSEDED", "superseded_by": d}, ACC, context=ctx()),
     ]
     await store.repo.invalidate_fact(c, ACC)
     # Reviewer edit (facts S3, T2): only the system marks a fact stale (D1, the model's STALE is refused), so d is
@@ -165,8 +166,8 @@ async def test_lifecycle_invariants_hold_for_every_stored_document(store):
     stored_d = await store.repo.resolve_current(d, ACC, CONSOLIDATION_ACCEPTS)
     await store.repo.update_fact_fields(
         stored_d, {**lifecycle_fields(FactState.STALE, datetime.now(timezone.utc)), "last_updated": datetime.now(timezone.utc)})
-    edited = await store.adapter.update_fact(e, {"content": "fact e edited"}, ACC)
-    merged = await store.adapter.merge_facts([e], "fact e merged", _meta())
+    edited = await store.adapter.update_fact(e, {"content": "fact e edited", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    merged = await store.adapter.merge_facts([e], "fact e merged", _meta(), context=ctx())
     assert all(r["status"] == "updated" for r in [*results, edited])
     assert merged["status"] == "merged" and merged["old_fact_ids"] == [edited["fact_id"]]
     assert len(store.docs) == 7 and store.docs[d]["state"] == "stale"
@@ -209,8 +210,8 @@ async def test_concurrent_content_and_state_updates_of_one_fact_archive_wins_and
     fid = await _create(store)
     emb = _slow(store)
     r1, r2 = await asyncio.gather(
-        store.adapter.update_fact(fid, {"content": "mother is Mariia"}, ACC),
-        store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC),
+        store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
+        store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC, context=ctx()),
     )
     assert r2["status"] == "updated"
     assert r1["status"] == "failed" and r1["message"] == f"fact {fid} is archived"
@@ -235,8 +236,8 @@ async def test_merge_concurrent_with_update_of_a_source_leaves_a_consistent_supe
     store.adapter._embedding = emb
     commits = _record_commits(store.repo, on_ok=lambda replaced: len(replaced) == 2 and merge_committed.set())
     upd, merged = await asyncio.gather(
-        store.adapter.update_fact(a, {"content": "likes black tea"}, ACC),
-        store.adapter.merge_facts([a, b], "likes tea daily", _meta()),
+        store.adapter.update_fact(a, {"content": "likes black tea", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
+        store.adapter.merge_facts([a, b], "likes tea daily", _meta(), context=ctx()),
     )
     assert commits == [("ok", [a, b]), ("conflict", [a])]  # the merge committed, then the update's write lost
     assert merged["status"] == "merged" and merged["old_fact_ids"] == [a, b]
@@ -291,10 +292,10 @@ async def test_reapplying_archived_is_refused_and_keeps_the_original_valid_to(st
     # and was green for that reason; the refusal is now asserted. "Re-applying the stored state does not move valid_to"
     # is pinned on the plan: tests/unit/domain/test_fact_update_plan.py::test_reapplying_the_stored_state_does_not_move_valid_to.
     fid = await _create(store)
-    await store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC)
+    await store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC, context=ctx())
     first = store.docs[fid]["valid_to"]
     before = copy.deepcopy(store.docs)
-    res = await store.adapter.update_fact(fid, {"state": "archived"}, ACC)
+    res = await store.adapter.update_fact(fid, {"state": "archived"}, ACC, context=ctx())
     assert res["status"] == "failed" and res["message"] == f"fact {fid} is archived"
     assert store.docs[fid]["valid_to"] == first and first is not None and store.docs == before
 
@@ -303,9 +304,9 @@ async def test_archived_to_current_is_refused_for_the_consolidator(store):
     # Reviewer edit (facts S2, D8): the consolidator accepts only a current end; reviving an archived fact is the S4
     # review pass's job (its accepted set adds STALE). The archived document is left as it was.
     fid = await _create(store)
-    await store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC)
+    await store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC, context=ctx())
     before = copy.deepcopy(store.docs)
-    res = await store.adapter.update_fact(fid, {"state": "CURRENT"}, ACC)
+    res = await store.adapter.update_fact(fid, {"state": "CURRENT"}, ACC, context=ctx())
     assert res["status"] == "failed" and res["message"] == f"fact {fid} is archived"
     doc = store.docs[fid]
     assert doc["state"] == "archived" and doc["valid_to"] is not None and store.docs == before
@@ -320,7 +321,7 @@ async def test_bad_value_fails_before_embedding_and_stores_nothing(store, bad):
     fid = await _create(store)
     emb = _slow(store)
     before = copy.deepcopy(store.docs[fid])
-    res = await store.adapter.update_fact(fid, {"content": "changed text", **bad}, ACC)
+    res = await store.adapter.update_fact(fid, {"content": "changed text", **bad, "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert res["status"] == "failed"
     assert emb.calls == 0
     assert store.docs[fid] == before
