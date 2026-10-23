@@ -56,7 +56,10 @@ def test_days_accepts_a_whole_number_sent_as_a_float():
     assert parse_expiry({"kind": "horizon", "days": 14.0}).days == 14
 
 
-@pytest.mark.parametrize("days", [0, -3, True, False, 2.5, "14", None, [14]])
+# Reviewer edit (facts S3, T5 review F7; repo rule "accept liberally" for model-facing tool input): a digit string such
+# as "14" is now accepted like the whole-number float 14.0 (pinned in test_fact_expiry_digit_days.py), so it leaves the
+# refused list; "14 days" keeps a non-numeric string in it. A delta to plan §3.3 ("an int >= 1"), for "S3 as built".
+@pytest.mark.parametrize("days", [0, -3, True, False, 2.5, "14 days", None, [14]])
 def test_a_bad_days_is_refused(days):
     with pytest.raises(FactExpiryError, match="days"):
         parse_expiry({"kind": "horizon", "days": days})
