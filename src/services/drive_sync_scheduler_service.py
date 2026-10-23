@@ -278,12 +278,12 @@ class DriveSyncSchedulerService:
             # Final (owner decision 2026-10-23): the flag stays up, so the next fan-out does not re-ask the formatter
             # for the same empty answer every 10 minutes.
             logger.error(f"[DriveSync] background_empty_answer: reconnect notice for {user_id[:8]}; not retried",
-                         extra={"event": "background_empty_answer", "task_type": "drive_reconnect_notice",
+                         extra={"event": "background_empty_answer", "path": "drive_reconnect_notice",
                                 "user_id": user_id[:8]})
             if self._alert_sink is not None:
                 try:
                     await self._alert_sink.post("⚠️ Background turn ended with an empty answer (final, not retried). "
-                                                f"task_type=drive_reconnect_notice user={user_id[:8]}")
+                                                f"path=drive_reconnect_notice user={user_id[:8]}")
                 except Exception as exc:
                     logger.warning(f"[DriveSync] background_empty_answer alert failed: {exc}")
             return 0
