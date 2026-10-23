@@ -199,7 +199,7 @@ the live one (a lineage whose last document was merged away has none). Two kinds
   unchanged. On a conflict the adapter resolves again and tries once more; a second conflict is a failed result
   ("changed concurrently; search again"). **A content or tags update is also refused when the second read lands on a
   different document than the first**: `content` and `tags` replace the whole value, so written over a version the
-  model never saw they would silently drop that version's change (`fact_management_adapter.py:269-279`). Metadata,
+  model never saw they would silently drop that version's change (`fact_management_adapter.py:268-277`). Metadata,
   `temporal_class`, `state` and `reported_date` updates do not refuse; they re-resolve and apply to the newer version.
   Two calls of one turn on the same fact therefore settle in the store, across processes. A content change and an
   archive of one fact in one turn: the archive has no embedding to wait for, so it normally commits first and the
