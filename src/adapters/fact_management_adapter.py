@@ -295,7 +295,11 @@ class FactManagementAdapter(FactManagementPort):
     ) -> ParsedFactUpdate:
         if update.superseded_by is None:
             return update
-        successor = await self._repo.resolve_current(update.superseded_by, account_id, CONSOLIDATION_ACCEPTS)
+        try:
+            successor = await self._repo.resolve_current(update.superseded_by, account_id, CONSOLIDATION_ACCEPTS)
+        except FactResolutionError as e:
+            reason = str(e).removesuffix("; search again")
+            raise FactResolutionError(f"successor {reason}; search again", current_id=e.current_id) from e
         if successor is None:
             raise FactResolutionError("successor fact not found")
         if successor.fact.id == stored.fact.id:

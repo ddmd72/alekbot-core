@@ -268,7 +268,7 @@ async def test_superseded_with_superseded_by_closes_in_place_with_the_resolved_s
 
 
 @pytest.mark.parametrize("which", ["foreign", "missing"])
-async def test_superseded_by_a_foreign_or_missing_successor_is_not_found_and_names_nothing(store, which):
+async def test_superseded_by_a_foreign_or_missing_successor_is_refused_and_names_nothing(store, which):
     a = await create(store, "likes tea")
     foreign = await create(store, "foreign fact", account_id=OTHER, user_id="usr-2")
     successor = foreign if which == "foreign" else "missing-successor-id"
@@ -278,6 +278,25 @@ async def test_superseded_by_a_foreign_or_missing_successor_is_not_found_and_nam
 
     assert res["status"] == "failed" and "not found" in res["message"]
     assert successor not in str(res) and foreign not in str(res)
+    assert store.docs == before
+
+
+@pytest.mark.parametrize("closing", ["archived", "merged"])
+async def test_a_successor_that_is_not_current_is_named_as_the_successor(store, closing):
+    a = await create(store, "likes tea")
+    s = await create(store, "likes green tea")
+    if closing == "archived":
+        await store.adapter.update_fact(s, {"state": "ARCHIVED"}, ACC)
+    else:
+        merged = (await store.adapter.merge_facts([s], "likes green tea daily", meta()))["new_fact_id"]
+    before = snapshot(store)
+
+    res = await store.adapter.update_fact(a, {"state": "SUPERSEDED", "superseded_by": s}, ACC)
+
+    assert res["status"] == "failed" and res["fact_id"] == a
+    assert res["message"].startswith(f"successor fact {s} ")
+    assert res["message"].endswith("; search again") and res["message"].count("search again") == 1
+    assert ("is archived" in res["message"]) if closing == "archived" else (merged in res["message"])
     assert store.docs == before
 
 
