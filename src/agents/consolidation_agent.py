@@ -46,14 +46,21 @@ class ToolResponse:
 
 class _TrackingFactManagement(FactManagementPort):
     """
-    Pass-through wrapper over FactManagementPort.
-    Records (fact_id, content) for every written fact (CREATE / UPDATE / MERGE).
-    Used by Stage 1 to seed the Stage 2 cluster review.
+    Pass-through wrapper over FactManagementPort, one per run, passed to every stage of that run.
+
+    Records only what the store reports as written:
+    - `changed` holds (fact_id, content) for a create, a content update (the id of the version written,
+      from the result) and a merge. It seeds the content search of Stage 2a; it is not every id that changed:
+      tags-only and metadata-only versions change the id and are not in it.
+    - `wrote` is set by any successful write, a state-only update included. It decides whether a run that
+      failed still refreshes the biographical cache.
+    A not_found, failed or refused result records nothing.
     """
 
     def __init__(self, real: FactManagementPort) -> None:
         self._real = real
         self.changed: List[Tuple[str, str]] = []  # (fact_id, content)
+        self.wrote = False
 
     async def search_existing_facts(
         self,
@@ -71,8 +78,10 @@ class _TrackingFactManagement(FactManagementPort):
 
     async def create_fact(self, content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
         result = await self._real.create_fact(content=content, metadata=metadata)
-        if fid := result.get("fact_id"):
-            self.changed.append((fid, content))
+        if result.get("status") == "created":
+            self.wrote = True
+            if fid := result.get("fact_id"):
+                self.changed.append((fid, content))
         return result
 
     async def update_fact(
@@ -81,8 +90,11 @@ class _TrackingFactManagement(FactManagementPort):
         result = await self._real.update_fact(
             fact_id=fact_id, updates=updates, account_id=account_id
         )
-        if content := updates.get("content"):
-            self.changed.append((fact_id, content))
+        if result.get("status") == "updated":
+            self.wrote = True
+            content = updates.get("content")
+            if content and (written_id := result.get("fact_id")):
+                self.changed.append((written_id, content))
         return result
 
     async def merge_facts(
@@ -91,8 +103,10 @@ class _TrackingFactManagement(FactManagementPort):
         result = await self._real.merge_facts(
             fact_ids=fact_ids, merged_content=merged_content, metadata=metadata
         )
-        if fid := result.get("new_fact_id"):
-            self.changed.append((fid, merged_content))
+        if result.get("status") == "merged":
+            self.wrote = True
+            if fid := result.get("new_fact_id"):
+                self.changed.append((fid, merged_content))
         return result
 
 
@@ -542,63 +556,65 @@ class ConsolidationAgent(BaseAgent):
 
         total_facts_affected = 0
         batches_processed = 0
+        tracker = _TrackingFactManagement(self._fact_management)
+        refreshed = False
 
-        for pass_num in range(1, n_passes + 1):
-            emails = await self._indexed_email_repo.get_unconsolidated_batch(
-                user_id, limit=batch_size
-            )
-            if not emails:
-                logger.info(
-                    f"📧 [ConsolidationAgent] Email triage pass {pass_num}: no unconsolidated emails"
+        try:
+            for pass_num in range(1, n_passes + 1):
+                emails = await self._indexed_email_repo.get_unconsolidated_batch(
+                    user_id, limit=batch_size
                 )
-                break
+                if not emails:
+                    logger.info(
+                        f"📧 [ConsolidationAgent] Email triage pass {pass_num}: no unconsolidated emails"
+                    )
+                    break
 
-            logger.info(
-                f"📧 [ConsolidationAgent] Email triage pass {pass_num}/{n_passes}: "
-                f"{len(emails)} candidates"
-            )
+                logger.info(
+                    f"📧 [ConsolidationAgent] Email triage pass {pass_num}/{n_passes}: "
+                    f"{len(emails)} candidates"
+                )
 
-            candidates_text = self._format_email_candidates(emails)
-            system_alert = (
-                "[system_alert] The system has scanned the user's email inbox on their behalf "
-                "and selected candidates for inclusion in the fact database. "
-                "The selection contains noise. Evaluate the incoming data and process it "
-                "according to your algorithm.\n\n"
-                f"Candidates:\n{candidates_text}"
-            )
+                candidates_text = self._format_email_candidates(emails)
+                system_alert = (
+                    "[system_alert] The system has scanned the user's email inbox on their behalf "
+                    "and selected candidates for inclusion in the fact database. "
+                    "The selection contains noise. Evaluate the incoming data and process it "
+                    "according to your algorithm.\n\n"
+                    f"Candidates:\n{candidates_text}"
+                )
 
-            ops = await self._run_consolidation_loop(
-                user_message_text=system_alert,
-                system_prompt=system_prompt,
-                user_id=user_id,
-                account_id=account_id,
-                pass_label="email",
-            )
+                ops = await self._run_consolidation_loop(
+                    user_message_text=system_alert,
+                    system_prompt=system_prompt,
+                    user_id=user_id,
+                    account_id=account_id,
+                    pass_label="email",
+                    fact_management=tracker,
+                )
 
-            now = datetime.now(timezone.utc)
-            email_ids = [e.email_id for e in emails]
-            await self._indexed_email_repo.mark_consolidated(user_id, email_ids, now)
+                now = datetime.now(timezone.utc)
+                email_ids = [e.email_id for e in emails]
+                await self._indexed_email_repo.mark_consolidated(user_id, email_ids, now)
 
-            facts_affected = sum(1 for op in ops if op.get("action") in ("CREATE", "UPDATE", "MERGE"))
-            total_facts_affected += facts_affected
-            batches_processed += 1
+                facts_affected = sum(1 for op in ops if op.get("action") in ("CREATE", "UPDATE", "MERGE"))
+                total_facts_affected += facts_affected
+                batches_processed += 1
 
-            logger.info(
-                f"✅ [ConsolidationAgent] Email triage pass {pass_num} done: "
-                f"{len(ops)} ops, {facts_affected} facts affected"
-            )
+                logger.info(
+                    f"✅ [ConsolidationAgent] Email triage pass {pass_num} done: "
+                    f"{len(ops)} ops, {facts_affected} facts affected"
+                )
 
-            if len(emails) < batch_size:
-                break  # no more unconsolidated emails
+                if len(emails) < batch_size:
+                    break  # no more unconsolidated emails
 
-        if batches_processed > 0:
-            await self._repo.refresh_biographical_context_cache(
-                owner_id=account_id,
-                facts_limit=self.facts_limit,
-                principles_limit=self.principles_limit,
-            )
-            if self.prompt_builder:
-                self.prompt_builder.invalidate_biographical_cache(account_id)
+            if batches_processed > 0:
+                await self._refresh_biographical_cache(account_id)
+                refreshed = True
+        finally:
+            if tracker.wrote and not refreshed:
+                await self._refresh_biographical_cache(account_id)
 
         total_duration = time.time() - start_time
         return AgentResponse.success(
@@ -608,6 +624,16 @@ class ConsolidationAgent(BaseAgent):
             confidence=1.0,
             metadata={"total_duration_ms": int(total_duration * 1000)},
         )
+
+    async def _refresh_biographical_cache(self, account_id: str) -> None:
+        """Rebuild the account's biographical cache and drop the PromptBuilder's copy; the repo never raises."""
+        await self._repo.refresh_biographical_context_cache(
+            owner_id=account_id,
+            facts_limit=self.facts_limit,
+            principles_limit=self.principles_limit,
+        )
+        if self.prompt_builder:
+            self.prompt_builder.invalidate_biographical_cache(account_id)
 
     async def _handle_consolidate_full(
         self,
@@ -760,9 +786,8 @@ class ConsolidationAgent(BaseAgent):
         )
 
 
-        # Install tracker to capture written (fact_id, content) pairs
         tracker = _TrackingFactManagement(self._fact_management)
-        self._fact_management = tracker
+        finished = False
         try:
             ops1 = await self._run_consolidation_loop(
                 user_message_text="Begin deliberate consolidation.",
@@ -770,52 +795,60 @@ class ConsolidationAgent(BaseAgent):
                 user_id=user_id,
                 account_id=account_id,
                 pass_label="stage1",
+                fact_management=tracker,
             )
+            stage1_changed = list(tracker.changed)
+
+            logger.info(
+                f"👨‍🏫 [ConsolidationAgent] Stage 1 done: {len(ops1)} ops, "
+                f"{len(stage1_changed)} facts written"
+            )
+
+            # Stage 2a: inline fact-cluster review (skip if disabled or nothing was written)
+            ops2: List[Dict[str, Any]] = []
+            if self.INLINE_CLUSTER_REVIEW and stage1_changed:
+                cluster = await self._build_review_cluster(stage1_changed, account_id)
+                if cluster:
+                    logger.info(
+                        f"👨‍🏫 [ConsolidationAgent] Stage 2a: reviewing cluster of {len(cluster)} facts"
+                    )
+                    system_prompt_2 = await self.prompt_builder.build_for_agent(
+                        agent_type="consolidation",
+                        user_id=user_id,
+                        account_id=account_id,
+                        routing_metadata=None,
+                        include_directives=False,  # directives are curated as records (Stage 2b), never obeyed
+                        biographical_facts=biographical_facts,
+                        conversation_history=[],
+                    )
+                    ops2 = await self._run_consolidation_loop(
+                        user_message_text=self._build_cluster_message(cluster),
+                        system_prompt=system_prompt_2,
+                        user_id=user_id,
+                        account_id=account_id,
+                        pass_label="stage2a",
+                        fact_management=tracker,
+                    )
+                    logger.info(f"👨‍🏫 [ConsolidationAgent] Stage 2a done: {len(ops2)} ops")
+
+            # Stage 2b: directive rulebook review — UNCONDITIONAL (living-organism curation).
+            # Runs every consolidation regardless of Stage 1 changes; sees the FULL rulebook.
+            ops_dir = await self._review_directives(
+                user_id, account_id, biographical_facts, fact_management=tracker
+            )
+            finished = True
+            return {"operations": ops1 + ops2 + ops_dir}
         finally:
-            self._fact_management = tracker._real
-
-        logger.info(
-            f"👨‍🏫 [ConsolidationAgent] Stage 1 done: {len(ops1)} ops, "
-            f"{len(tracker.changed)} facts written"
-        )
-
-        # Stage 2a: inline fact-cluster review (skip if disabled or nothing was written)
-        ops2: List[Dict[str, Any]] = []
-        if self.INLINE_CLUSTER_REVIEW and tracker.changed:
-            cluster = await self._build_review_cluster(tracker.changed, account_id)
-            if cluster:
-                logger.info(
-                    f"👨‍🏫 [ConsolidationAgent] Stage 2a: reviewing cluster of {len(cluster)} facts"
-                )
-                system_prompt_2 = await self.prompt_builder.build_for_agent(
-                    agent_type="consolidation",
-                    user_id=user_id,
-                    account_id=account_id,
-                    routing_metadata=None,
-                    include_directives=False,  # directives are curated as records (Stage 2b), never obeyed
-                    biographical_facts=biographical_facts,
-                    conversation_history=[],
-                )
-                ops2 = await self._run_consolidation_loop(
-                    user_message_text=self._build_cluster_message(cluster),
-                    system_prompt=system_prompt_2,
-                    user_id=user_id,
-                    account_id=account_id,
-                    pass_label="stage2a",
-                )
-                logger.info(f"👨‍🏫 [ConsolidationAgent] Stage 2a done: {len(ops2)} ops")
-
-        # Stage 2b: directive rulebook review — UNCONDITIONAL (living-organism curation).
-        # Runs every consolidation regardless of Stage 1 changes; sees the FULL rulebook.
-        ops_dir = await self._review_directives(user_id, account_id, biographical_facts)
-
-        return {"operations": ops1 + ops2 + ops_dir}
+            # A failed run that wrote must not leave the cache holding the replaced version's text.
+            if not finished and tracker.wrote:
+                await self._refresh_biographical_cache(account_id)
 
     async def _review_directives(
         self,
         user_id: str,
         account_id: str,
         biographical_facts: List[Dict],
+        fact_management: Optional[FactManagementPort] = None,
     ) -> List[Dict[str, Any]]:
         """Stage 2b: curate the entire agent-directive rulebook (STANDING_DIRECTIVES_RFC).
 
@@ -853,15 +886,19 @@ class ConsolidationAgent(BaseAgent):
             user_id=user_id,
             account_id=account_id,
             pass_label="stage2b",
+            fact_management=fact_management,
         )
-        ops += await self._enforce_directive_cap(account_id)
+        ops += await self._enforce_directive_cap(account_id, fact_management=fact_management)
         logger.info(f"👨‍🏫 [ConsolidationAgent] Stage 2b done: {len(ops)} ops")
         return ops
 
-    async def _enforce_directive_cap(self, account_id: str) -> List[Dict[str, Any]]:
+    async def _enforce_directive_cap(
+        self, account_id: str, fact_management: Optional[FactManagementPort] = None
+    ) -> List[Dict[str, Any]]:
         """Deterministic hard-cap backstop: if the LLM left more than DIRECTIVE_HARD_CAP current
         directives, invalidate the lowest-priority tail. Fires only when curation under-trimmed —
         merge (the LLM's job) preserves content; this only guarantees the ceiling."""
+        port = fact_management if fact_management is not None else self._fact_management
         directives = await self._repo.get_active_facts_ordered(
             account_id, domain=FactDomain.AGENT_DIRECTIVE.value, limit=None
         )
@@ -874,7 +911,7 @@ class ConsolidationAgent(BaseAgent):
         )
         ops: List[Dict[str, Any]] = []
         for fact in overflow:
-            await self._fact_management.update_fact(
+            await port.update_fact(
                 fact.id, {"state": "invalidated"}, account_id=account_id
             )
             ops.append({"action": "INVALIDATE", "fact_id": fact.id, "reason": "directive cap backstop"})
@@ -887,10 +924,13 @@ class ConsolidationAgent(BaseAgent):
         user_id: str,
         account_id: str,
         pass_label: str = "consolidation",
+        fact_management: Optional[FactManagementPort] = None,
     ) -> List[Dict[str, Any]]:
         """
         Single multi-turn LLM loop for one consolidation pass.
         Returns parsed operations list from the final report.
+
+        `fact_management` is the port this pass's tools run on (a run's tracker); None means the agent's own.
 
         Ops alerts (best-effort, never change the result): a pass that exhausts its turns without
         a final report always posts a 🚨; a pass that ends with a report posts a 📊 stats line
@@ -961,6 +1001,7 @@ class ConsolidationAgent(BaseAgent):
                 tool_calls=response.tool_calls,
                 user_id=user_id,
                 account_id=account_id,
+                fact_management=fact_management,
             )
 
             history.append(Message(
@@ -1160,9 +1201,10 @@ class ConsolidationAgent(BaseAgent):
         self,
         tool_calls: List[ToolCall],
         user_id: str,
-        account_id: str
+        account_id: str,
+        fact_management: Optional[FactManagementPort] = None,
     ) -> List[ToolResponse]:
-        """Execute fact management tools via FactManagementPort.
+        """Execute fact management tools via FactManagementPort (`fact_management`, else the agent's own).
 
         All tool calls within a single LLM turn are dispatched concurrently via
         asyncio.gather. search_existing_facts calls are always independent (each
@@ -1170,6 +1212,8 @@ class ConsolidationAgent(BaseAgent):
         reference fact_ids from prior search results, never each other.
         asyncio.gather preserves order — tool_responses[i] matches tool_calls[i].
         """
+
+        port = fact_management if fact_management is not None else self._fact_management
 
         async def _execute_one(tool_call: ToolCall) -> ToolResponse:
             logger.info(f"🔧 [ConsolidationAgent] Executing tool: {tool_call.name}")
@@ -1188,7 +1232,7 @@ class ConsolidationAgent(BaseAgent):
                         f"limit={limit})"
                     )
 
-                    result = await self._fact_management.search_existing_facts(
+                    result = await port.search_existing_facts(
                         keywords=keywords,
                         primary_query=primary_query,
                         alternative_query=alternative_query,
@@ -1204,7 +1248,7 @@ class ConsolidationAgent(BaseAgent):
                     fact_attributes["account_id"] = account_id
                     fact_attributes["user_id"] = user_id
 
-                    result = await self._fact_management.create_fact(
+                    result = await port.create_fact(
                         content=tool_call.args.get("content", ""),
                         metadata=fact_attributes
                     )
@@ -1214,7 +1258,7 @@ class ConsolidationAgent(BaseAgent):
                     )
 
                 elif tool_call.name == "update_fact":
-                    result = await self._fact_management.update_fact(
+                    result = await port.update_fact(
                         fact_id=tool_call.args.get("fact_id", ""),
                         updates=tool_call.args.get("updates", {}),
                         account_id=account_id
@@ -1229,7 +1273,7 @@ class ConsolidationAgent(BaseAgent):
                     fact_attributes["account_id"] = account_id
                     fact_attributes["user_id"] = user_id
 
-                    result = await self._fact_management.merge_facts(
+                    result = await port.merge_facts(
                         fact_ids=tool_call.args.get("fact_ids", []),
                         merged_content=tool_call.args.get("merged_content", ""),
                         metadata=fact_attributes
@@ -1358,14 +1402,15 @@ class ConsolidationAgent(BaseAgent):
                         },
                         "updates": {
                             "type": "object",
-                            "description": "Fields to update (content, tags, metadata, state, reported_date)",
+                            "description": "Fields to update (content, tags, metadata, temporal_class, state, reported_date, superseded_by)",
                             "properties": {
                                 "content": {"type": "string"},
-                                "tags": {"type": "array", "items": {"type": "string"}},
+                                "tags": {"type": "array", "items": {"type": "string"}, "description": "full list; system tags are kept"},
                                 "metadata": {"type": "object", "description": "Structured data to add or update; merged key by key into the fact's metadata"},
                                 "temporal_class": {"type": "string"},
                                 "state": {"type": "string"},
-                                "reported_date": {"type": "string"}
+                                "reported_date": {"type": "string"},
+                                "superseded_by": {"type": "string", "description": "with state SUPERSEDED: id of the fact that replaces this one; required then"}
                             }
                         }
                     },
