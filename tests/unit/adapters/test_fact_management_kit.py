@@ -470,8 +470,12 @@ async def test_search_result_dicts_carry_the_listed_fields_and_serialise(store):
     fid = await create(store, "mother is Maria", reported_date="2026-03-04T10:00:00+00:00")
     with RequestContext(user_id=USER, account_id=ACC):
         (got,) = await _searching(store).search_existing_facts(["family"], "mother is Maria", timezone="UTC")
+    # Reviewer edit (facts S3, T5; plan §3.3, §6 E): the model-facing dict gains `expiry` (the stored decision in the
+    # shape the model sends) and `due` (horizons only); `ttl_days` / `expires_at` stay out. The fact was created with
+    # {kind: none}, so the decision shows as none with no due day.
     assert set(got) == {"fact_id", "content", "similarity", "source", "type", "domain", "temporal_class", "state",
-                        "context_priority", "tags", "metadata", "reported_date", "version"}
+                        "context_priority", "tags", "metadata", "reported_date", "version", "expiry", "due"}
+    assert got["expiry"] == {"kind": "none"} and got["due"] is None
     assert (got["fact_id"], got["content"], got["type"], got["domain"], got["temporal_class"]) == (
         fid, "mother is Maria", "event", "biographical", "stable")
     assert (got["state"], got["context_priority"], got["version"]) == ("current", "medium", 1)

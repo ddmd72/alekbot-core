@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.domain.search import EnrichedFact
 from tests.support.fact_store import FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx
 
@@ -61,9 +62,12 @@ async def test_failed_create_fact_warning_logs_no_content(caplog, monkeypatch, f
         assert not any(secret in m for m in fm), secret
 
 
+# Reviewer edit (facts S3, T5; plan §3.3): the adapter now renders each hit's stored decision through
+# `EnrichedFact.expiry_decision`, so the hand-made stand-in (which had no such method and made the search fall into its
+# "failed" branch) is replaced by a real EnrichedFact with the same values. Every assertion is unchanged.
 async def test_search_existing_facts_logs_no_query_keyword_or_fact_text(caplog):
     store = FactStore()
-    fact = SimpleNamespace(
+    fact = EnrichedFact(
         fact_id="fact-12345678", content="Maria lives at 12 Oak Street", relevance_score=0.9, source="text",
         fact_type="event", domain="biographical", temporal_class="stable", state="current",
         context_priority="medium", tags=[], metadata={}, reported_date=None, version=1,
