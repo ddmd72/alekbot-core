@@ -62,7 +62,7 @@ async def test_write_superseding_creates_the_new_doc_and_closes_every_replaced_d
     sources = [await resolve(store, "f-a"), await resolve(store, "f-b")]
     merged = make_fact("merged")
 
-    await store.repo.write_superseding(merged, sources, NOW)
+    await store.repo.write_superseding(merged, sources, NOW, actor="stage2a")
 
     assert store.docs["f-merged"]["text"] == "merged"
     for source_id in ("f-a", "f-b"):
@@ -70,6 +70,10 @@ async def test_write_superseding_creates_the_new_doc_and_closes_every_replaced_d
         assert doc["state"] == "superseded" and type(doc["state"]) is str
         assert doc["is_current"] is False and doc["valid_to"] == NOW and doc["last_updated"] == NOW
         assert doc["superseded_by"] == "f-merged"
+        # Reviewer edit (facts S3, T3; plan §3.8): `actor` is now a required keyword, and each closed document gets
+        # its own trail entry in the same commit.
+        assert doc["lifecycle_events"] == [{"at": NOW, "from": "current", "to": "superseded", "actor": "stage2a",
+                                            "reason": "merged into f-merged"}]
     assert stamp(store, "f-merged") == stamp(store, "f-a") == stamp(store, "f-b")
 
 
@@ -81,7 +85,7 @@ async def test_write_superseding_checks_each_source_token_against_its_own_snapsh
     store.interfere("f-b", {"text": "changed elsewhere"})   # interleaving source: a commit lands on b at its transactional read
 
     with pytest.raises(FactWriteConflict) as caught:
-        await store.repo.write_superseding(make_fact("merged"), sources, NOW)
+        await store.repo.write_superseding(make_fact("merged"), sources, NOW, actor="stage2a")
 
     assert caught.value.fact_id == "f-b"
     assert store.docs["f-b"]["text"] == "changed elsewhere"     # the interference happened
@@ -97,7 +101,7 @@ async def test_write_superseding_on_a_changed_doc_raises_conflict_and_writes_not
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(FactWriteConflict) as caught:
-        await store.repo.write_superseding(version_of(stale, "f-new", "new"), [stale], NOW)
+        await store.repo.write_superseding(version_of(stale, "f-new", "new"), [stale], NOW, actor="stage1")
 
     assert caught.value.fact_id == "f-old"
     assert store.docs == before
@@ -109,7 +113,7 @@ async def test_write_superseding_on_a_deleted_doc_raises_conflict(store):
     await store.repo.facts_col.document("f-old").delete()
 
     with pytest.raises(FactWriteConflict):
-        await store.repo.write_superseding(version_of(stale, "f-new", "new"), [stale], NOW)
+        await store.repo.write_superseding(version_of(stale, "f-new", "new"), [stale], NOW, actor="stage1")
     assert "f-new" not in store.docs
 
 
@@ -120,7 +124,7 @@ async def test_write_superseding_with_an_existing_new_id_writes_nothing(store):
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(AlreadyExists):
-        await store.repo.write_superseding(version_of(old, "f-taken", "new"), [old], NOW)
+        await store.repo.write_superseding(version_of(old, "f-taken", "new"), [old], NOW, actor="stage1")
 
     assert store.docs == before
 
@@ -134,7 +138,7 @@ async def test_write_superseding_with_nothing_to_replace_is_refused_before_any_i
 
     monkeypatch.setattr(store.db, "transaction", no_transaction)
     with pytest.raises(ValueError, match="replaces no document"):
-        await store.repo.write_superseding(make_fact("new"), [], NOW)
+        await store.repo.write_superseding(make_fact("new"), [], NOW, actor="stage1")
 
     assert store.docs == before
 
@@ -151,7 +155,7 @@ async def test_write_superseding_refuses_a_new_fact_without_a_vector_before_any_
 
     monkeypatch.setattr(store.db, "transaction", no_transaction)
     with pytest.raises(ValueError, match=missing):
-        await store.repo.write_superseding(incomplete, [old], NOW)
+        await store.repo.write_superseding(incomplete, [old], NOW, actor="stage1")
 
     assert store.docs == before
 
@@ -159,13 +163,16 @@ async def test_write_superseding_refuses_a_new_fact_without_a_vector_before_any_
 async def test_written_version_doc_passes_check_fact_and_is_found_by_every_reader(store):
     await seed(store, "old", lineage_id="L")
     old = await resolve(store, "f-old")
-    await store.repo.write_superseding(version_of(old, "f-new", "new"), [old], NOW)
+    await store.repo.write_superseding(version_of(old, "f-new", "new"), [old], NOW, actor="stage1")
 
     doc = store.docs["f-new"]
     assert check_fact("f-new", doc) == [] and check_fact("f-old", store.docs["f-old"]) == []
     assert all(type(doc[name]) is Vector for name in ("vector", "tags_vector", "metadata_vector"))
     assert doc["context_priority_rank"] == 3 and doc["version"] == 2 and doc["replaces_fact_id"] == "f-old"
     assert doc["lineage_id"] == "L" and doc["superseded_by"] is None
+    # Reviewer edit (facts S3, T3; plan §3.8): the closed version carries its "replaced by" entry and still passes the audit.
+    assert store.docs["f-old"]["lifecycle_events"] == [{"at": NOW, "from": "current", "to": "superseded",
+                                                        "actor": "stage1", "reason": "replaced by f-new"}]
     assert [f.id for f in await store.repo.get_active_facts_ordered(ACC)] == ["f-new"]
     for field, query in (("vector", "new"), ("tags_vector", "t new"), ("metadata_vector", "m new")):
         found = await store.repo.search_facts(embed(query), field, limit=10, user_id=USER, account_id=ACC)
