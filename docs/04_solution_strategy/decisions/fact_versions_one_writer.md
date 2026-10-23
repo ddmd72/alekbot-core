@@ -1,12 +1,13 @@
 # Decision: fact versions are documents, one writer per account holds a lease (Facts S2, 2026-10-23)
 
 **Decision.** Spec: `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` D3, D8, D9; owner's map: `docs/05_building_blocks/memory/README.md` §2.4, §3.
-- A content change writes a new document of the same lineage and closes the old one (`superseded_by`) in one transaction. A lifecycle change is a field-masked in-place write. Every write carries the `update_time` of the document it read; a conflict re-resolves once, a second one is a tool error. Stale ids are followed forward inside the lineage.
-- One memory-writing run per account: a Firestore lease per batch (fresh owner token, 900 s run + 60 s margin). A loser defers itself with a task named per 120 s bucket. Under the lease a `processing` batch older than 60 s is a zombie.
+- A content change writes a new document of the same lineage and closes the old one (`superseded_by`) in one transaction. A lifecycle change is a field-masked in-place write. Every write carries the `update_time` of the document it read; a conflict re-resolves once, a second one is a tool error, and a content or tags update whose re-resolve lands on another version refuses too (a full replacement over an unseen version would drop its change). Stale ids are followed forward inside the lineage; the result says so (`resolved_from`). The tokens are compared for equality only: `DatetimeWithNanoseconds ==` ignores nanoseconds and Firestore commit times are microsecond-grained, so precision is no risk.
+- One memory-writing run per account: a Firestore lease per batch (fresh owner token, 900 s run + 60 s margin). A loser defers itself with a task named per 120 s bucket. Under the lease a `processing` batch older than 60 s is a zombie; a zombie reset, on the lease path and on the sweep path, counts the lost run (`attempts` + 1, `failed` at 3, then the sweep's bounded revivals: 12 runs in a batch's life), so a batch that kills its worker cannot loop for ever.
 - **No per-write fence.** A run is bounded by its timeout (lease end − margin), not by a check before each write; a commit already on the wire at cancellation may land after, which the margin covers. The cache refresh in a `finally` also runs on that cancel: it rebuilds a cache document, it writes no fact.
 - A `release` that finds no lease document stays silent, although it can mean "our lease expired, was taken, and was released"; only a release that finds another owner logs a WARNING.
 - `consolidate_cluster` has no live caller (dry-run scripts only). If it gets one it needs the lease and the run tracker with refresh-on-failure.
-- The plan's "three gathered updates of one fact: a later one may fail" cannot be reproduced on the fake (all three apply); in production a second conflict fails the call.
+- The real-Firestore parity run (`make test-cloud`) is a deploy prerequisite: every precondition and the first lease read a token or a missing document that only the real store can vouch for.
+- The plan's "three gathered updates of one fact: a later one may fail" cannot be reproduced on the fake, and its R2-M4 outcome "two content changes both apply" is superseded: the later one is refused.
 
 **Rejected.**
 - An in-process lock (the old per-fact lock): it holds inside one process only, and tasks of one user run on several instances.
