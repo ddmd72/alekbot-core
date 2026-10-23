@@ -215,17 +215,21 @@ async def test_get_active_facts_with_tags_returns_facts_carrying_at_least_one(st
 
 @PROJECTION_READERS
 async def test_projection_reads_return_no_vectors_and_leave_the_omitted_fields_at_the_default(store, reader):
-    fact = make_fact("full", tags=["a"], metadata={"k": "v"}, ttl_days=30, context="said at lunch", version=3,
+    fact = make_fact("full", tags=["a"], metadata={"k": "v"}, ttl_days=30, expiry_kind="horizon", context="said at lunch", version=3,
                      replaces_fact_id="old-1", expires_at=T0 + timedelta(days=30), temporal_class=TemporalClass.STABLE,
                      context_priority=ContextPriority.HIGH, visibility=FactVisibility.USER_PRIVATE,
                      reported_date=T0 - timedelta(days=1), valid_to=T0 + timedelta(days=2), is_current=False,
                      age_days=3)
     await store.repo.add_fact(fact)
     (got,) = await reader(store)
+    expiry_fields = {"ttl_days", "expires_at", "expiry_kind"}
+    shown = set() if reader is _ordered else expiry_fields        # the list readers show the stored decision (Facts S3, T6 item 15)
     assert (got.vector, got.tags_vector, got.metadata_vector) == (None, None, None)
-    assert (got.temporal_class, got.context, got.ttl_days, got.expires_at, got.replaces_fact_id) == (None,) * 5
-    omitted = {"vector", "tags_vector", "metadata_vector", "temporal_class", "context", "ttl_days", "expires_at",
-               "replaces_fact_id"}
+    assert (got.temporal_class, got.context, got.replaces_fact_id) == (None,) * 3
+    assert {name: getattr(got, name) for name in shown} == {name: getattr(fact, name) for name in shown}
+    assert all(getattr(got, name) is None for name in expiry_fields - shown)
+    omitted = {"vector", "tags_vector", "metadata_vector", "temporal_class", "context", "replaces_fact_id"} | (
+        expiry_fields - shown)
     assert got.model_dump(exclude=omitted) == fact.model_dump(exclude=omitted)
 
 

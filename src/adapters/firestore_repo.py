@@ -258,6 +258,7 @@ class FirestoreFactRepository(FactRepository):
             "valid_from", "valid_to", "created_at", "last_updated",
             "source", "version", "language", "visibility",
             "reported_date", "is_current", "metadata",
+            "expiry_kind", "ttl_days", "expires_at",  # the stored expiry decision, shown by the consolidator's cluster pass
         ])
 
         docs = await query.get()
