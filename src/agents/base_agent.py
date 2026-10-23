@@ -10,7 +10,6 @@ import random
 import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Dict, Iterator, Optional, List, TYPE_CHECKING
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig
