@@ -82,3 +82,27 @@ async def test_the_alert_goes_back_to_the_channel_the_command_came_from():
 
     kwargs = notifications.notify.await_args.kwargs
     assert (kwargs["channel_id_override"], kwargs["platform_override"]) == ("C1", "slack")
+
+
+async def test_an_error_from_consolidate_now_gets_an_honest_failure_message_and_no_success_alert():
+    queue = MagicMock(enqueue_batch=AsyncMock(return_value="b1"))
+    message = MagicMock(role="user", created_at="2026-01-01T00:00:00")
+    message.parts = [MagicMock(text="hello", consolidation_text=None)]
+    session = MagicMock(user_id=_USER, session_id="s1", messages=[message])
+    session.extract_oldest_messages = MagicMock(return_value=[message])
+    store = MagicMock(load_session=AsyncMock(return_value=session), save_session=AsyncMock())
+    agent_factory = MagicMock(get_session_store=MagicMock(return_value=store), ensure_agents_for_user=AsyncMock())
+    notifications = MagicMock(notify=AsyncMock())
+    handler = ConversationHandler(
+        coordinator=MagicMock(), agent_factory=agent_factory, file_service=MagicMock(), consolidation_queue=queue,
+        overflow_callback=AsyncMock(side_effect=RuntimeError("firestore down")), notification_service=notifications,
+    )
+    channel = MagicMock(send_message=AsyncMock(), send_status=AsyncMock())
+    context = MessageContext(text="$consolidate", session_id="s1", user_id=_USER, account_id="a1")
+
+    await handler.handle_command("consolidate", context, channel)
+
+    queue.enqueue_batch.assert_awaited_once()
+    failure = channel.send_message.await_args.args[0]
+    assert "did not run" in failure and "queued" in failure
+    notifications.notify.assert_not_awaited()
