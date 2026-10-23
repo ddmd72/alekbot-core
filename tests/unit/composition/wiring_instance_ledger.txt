@@ -1,4 +1,6 @@
-# Instances per adapter and service class in the container-owned part of the production graph (the walk does not enter a BaseAgent).
+# Instances per counted class in the production graph: adapters, services, handlers, composition classes, AgentCoordinator and AgentRegistry.
+# The walk does not enter a BaseAgent, so per-agent copies are not counted; the persistent-store adapters (firestore_*, gcs_*, bigquery_*) are also
+# counted over the FULL walk, agents included, and must equal the same count (a second repository built inside an agent build).
 # Read by test_application_graph_wiring.py; it fails both ways (a class not listed, a count that differs).
 # Line: <module.Class> <count>  # <reason> <evidence>. A count above 1 names where each instance is built; a duplicate construction is the #148 class.
 
@@ -50,7 +52,7 @@ src.adapters.grok_image_adapter.GrokImageAdapter 1  # by-design single instance
 src.adapters.grok_video_adapter.GrokVideoAdapter 1  # by-design single instance
 src.adapters.groovy_prompt_assembler.GroovyPromptAssembler 1  # by-design single instance
 src.adapters.in_memory_provider_resilience.InMemoryProviderResilience 1  # by-design single instance
-src.adapters.microsoft.graph_auth.MicrosoftGraphTokenProvider 2  # by-design one for To Do (todo_adapter.py:110), one for OneDrive (onedrive_adapter.py:231), refresh shared by provider key
+src.adapters.microsoft.graph_auth.MicrosoftGraphTokenProvider 2  # by-design one per Graph integration, To Do (todo_adapter.py:110) and OneDrive (onedrive_adapter.py:231), each with its own credentials record and token cache (graph_auth.py:46-47)
 src.adapters.microsoft.onedrive_adapter.OneDriveAdapter 1  # by-design single instance
 src.adapters.microsoft.todo_adapter.MicrosoftToDoAdapter 1  # by-design single instance
 src.adapters.notification_channel_factory.NotificationChannelFactory 1  # by-design single instance
@@ -72,6 +74,16 @@ src.adapters.telegram.webhook_adapter.TelegramWebhookAdapter 1  # by-design sing
 src.adapters.twilio_telephony_adapter.TwilioTelephonyAdapter 1  # by-design single instance
 src.adapters.unsplash_adapter.UnsplashAdapter 1  # by-design single instance
 src.adapters.xml_prompt_assembler.XmlPromptAssembler 1  # by-design single instance
+src.composition.application_graph.ApplicationGraph 1  # by-design the root of the graph, built once by build_application_graph
+src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-design single instance shared by both extractor agents
+src.composition.service_container.ServiceContainer 1  # by-design one container owns every shared adapter; a second would be a second set of repositories
+src.composition.user_agent_factory.UserAgentFactory 1  # by-design one factory owns the per-user agent cache; a second would split it
+src.composition.user_agent_factory._UserContext 1  # by-design one per cached user; the test seeds one user
+src.handlers.agent_worker_handler.AgentWorkerHandler 1  # by-design the only handler of agent_execution tasks, WorkerHandler holds it by identity
+src.handlers.conversation_handler.ConversationHandler 2  # by-design one per platform, Slack and Telegram
+src.handlers.worker_handler.WorkerHandler 1  # by-design the only /worker dispatcher
+src.infrastructure.agent_coordinator.AgentCoordinator 1  # by-design one registry of live agents; a second would route to a different set
+src.infrastructure.agent_registry.AgentRegistry 1  # by-design one declaration registry shared by the coordinator and the factory
 src.services.agent_context_builder.AgentContextBuilder 1  # by-design single instance
 src.services.agent_fallback_service.AgentFallbackService 1  # by-design single instance
 src.services.alerting_llm_proxy.AlertingLLMProxy 1  # by-design single instance

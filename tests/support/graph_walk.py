@@ -4,9 +4,9 @@ It reads the values production builds, so it needs no map from constructor param
 
 - `none_attributes(walk(root))`: every attribute of a reportable object that is `None`, keyed by the shortest path from
   the root. The walk enters everything, agents included.
-- `instance_counts(walk_outside_agents(root))`: how many instances of each adapter and service class the container-owned
-  part holds. That walk does not enter a `BaseAgent`, so the per-agent copies of a proxy or a prompt builder are not
-  counted.
+- `instance_counts(walk_outside_agents(root))`: how many instances of each adapter, service, handler and composition
+  class the container-owned part holds. That walk does not enter a `BaseAgent`, so the per-agent copies of a proxy or a
+  prompt builder are not counted. `store_counts(walk(root))` counts the persistent-store adapters over the full walk.
 
 What is walked: instances of classes defined under `src.`, plus the containers that hold them (list, tuple, set,
 dict), bound methods (through `__self__`), closures (through the cells) and `functools.partial` (function, arguments).
@@ -22,7 +22,11 @@ from pydantic import BaseModel
 
 SRC = "src."
 DOMAIN = "src.domain."
-COUNTED_LAYERS = ("src.adapters.", "src.services.")
+COUNTED_LAYERS = ("src.adapters.", "src.services.", "src.handlers.", "src.composition.")
+COUNTED_CLASSES = ("src.infrastructure.agent_coordinator.AgentCoordinator", "src.infrastructure.agent_registry.AgentRegistry")
+# Persistent-store adapters are also counted over the full walk, agents included (a second repository built inside
+# an agent build never reaches the container-owned count).
+STORE_MODULE_PREFIXES = ("firestore_", "gcs_", "bigquery_")
 
 
 class Node(NamedTuple):
@@ -156,13 +160,32 @@ def attribute_values(nodes: List[Node]) -> Dict[Tuple[str, str], List[Any]]:
     return index
 
 
+def _qualified(obj: Any) -> str:
+    return f"{type(obj).__module__}.{type(obj).__qualname__}"
+
+
 def instance_counts(nodes: List[Node]) -> Counter:
-    """Instances per adapter and service class among `nodes` (a walk that did not enter any `BaseAgent`)."""
+    """Instances per counted class among `nodes` (a walk that did not enter any `BaseAgent`).
+
+    Counted: adapters, services, handlers and composition classes, plus `AgentCoordinator` and `AgentRegistry`.
+    """
+    counts: Counter = Counter()
+    for node in nodes:
+        name = _qualified(node.obj)
+        counted = type(node.obj).__module__.startswith(COUNTED_LAYERS) or name in COUNTED_CLASSES
+        if is_src_instance(node.obj) and counted and not is_agent(node.obj):
+            counts[name] += 1
+    return counts
+
+
+def store_counts(nodes: List[Node]) -> Counter:
+    """Instances of the persistent-store adapter classes (`firestore_*`, `gcs_*`, `bigquery_*` modules) among `nodes`."""
     counts: Counter = Counter()
     for node in nodes:
         module = type(node.obj).__module__
-        if is_src_instance(node.obj) and module.startswith(COUNTED_LAYERS) and not is_agent(node.obj):
-            counts[f"{module}.{type(node.obj).__qualname__}"] += 1
+        if is_src_instance(node.obj) and module.startswith("src.adapters.") \
+                and module.rsplit(".", 1)[-1].startswith(STORE_MODULE_PREFIXES):
+            counts[_qualified(node.obj)] += 1
     return counts
 
 

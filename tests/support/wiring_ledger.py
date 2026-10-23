@@ -13,7 +13,8 @@ The evidence is a few words naming where the reason is read. A line with no evid
 
 None ledger keys: a path from `app` (exact), `Class.attr` (every walked instance of the class that has the attribute is
 `None`; one instance with a value fails the line, so a half-wired class cannot hide behind it), or `Class.attr*` (any
-instance may be `None`: an optional declaration field). Instance ledger lines: `<module.Class> <count>`.
+instance may be `None`: an optional declaration field; refused on adapter, service, handler and composition
+classes). Instance ledger lines: `<module.Class> <count>`.
 """
 import re
 from collections import Counter
@@ -23,6 +24,8 @@ VOCABULARY = ("off-in-prod", "optional-knob", "lazy", "runtime", "by-design")
 _REASON = re.compile(r"^(?P<reason>" + "|".join(VOCABULARY) + r"|defect:D\d+)\s+(?P<evidence>\S.*)$")
 # A loop that `start()` creates: it must be running, so it never has a ledger line (R3-B1).
 STARTED_LOOPS = ("_flush_task", "_sweep_task")
+# `Class.attr*` (any instance may be None) is for declarations; on these layers a half-wired instance must not hide.
+WIRING_LAYERS = ("src.adapters.", "src.services.", "src.handlers.", "src.composition.")
 
 
 class Entry(NamedTuple):
@@ -62,6 +65,14 @@ def _split_class_attr(key: str) -> Optional[Tuple[str, str, bool]]:
     return (match[1], match[2], bool(match[3])) if match else None
 
 
+def hits_owner(observed: Sequence[Any], hits: Sequence[int], klass: str):
+    """The classes named `klass` in the MRO of the owners of the observed rows `hits`."""
+    for i in hits:
+        for candidate in observed[i].owner.__mro__:
+            if candidate.__name__ == klass:
+                yield candidate
+
+
 def compare_nones(observed: Sequence[Any], entries: Sequence[Entry], values: Dict[Tuple[str, str], List[Any]]) -> List[str]:
     """Problems between the observed `None` attributes and the ledger, both ways.
 
@@ -86,6 +97,11 @@ def compare_nones(observed: Sequence[Any], entries: Sequence[Entry], values: Dic
             problems.append(f"line {entry.line}: stale {entry.key!r}: no walked {klass} has {attr} = None")
             continue
         covered.update(hits)
+        if any_instance:
+            owner = next(c for c in hits_owner(observed, hits, klass))
+            if owner.__module__.startswith(WIRING_LAYERS):
+                problems.append(f"line {entry.line}: {entry.key!r}: `*` is refused on adapters, services, handlers and composition "
+                                f"classes ({owner.__module__}); list the None instances by path")
         valued = [v for v in values.get((klass, attr), []) if v is not None]
         if valued and not any_instance:
             problems.append(
@@ -97,6 +113,18 @@ def compare_nones(observed: Sequence[Any], entries: Sequence[Entry], values: Dic
     for entry in entries:
         if any(loop in entry.key for loop in STARTED_LOOPS):
             problems.append(f"line {entry.line}: {entry.key!r}: a started loop is never ledgered (it must be running after start())")
+    return problems
+
+
+def compare_store_counts(full_walk_counts: Counter, entries: Sequence[Entry]) -> List[str]:
+    """Store classes counted over the full walk (agents included) must equal the ledger, so a second repository
+    built inside an agent build is reported even though the container-owned count does not see it."""
+    expected = parse_counts(entries)
+    problems = []
+    for name in sorted(full_walk_counts):
+        if full_walk_counts[name] != expected.get(name, 0):
+            problems.append(f"{name}: {full_walk_counts[name]} instance(s) in the full walk (agents included), "
+                            f"the ledger says {expected.get(name, 0)}")
     return problems
 
 

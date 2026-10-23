@@ -45,7 +45,8 @@ def none_problems(app) -> List[str]:
 def instance_problems(app) -> List[str]:
     entries = wiring_ledger.parse(INSTANCE_LEDGER.read_text())
     counts = graph_walk.instance_counts(graph_walk.walk_outside_agents(app))
-    return wiring_ledger.compare_counts(counts, entries)
+    stores = graph_walk.store_counts(graph_walk.walk(app))
+    return wiring_ledger.compare_counts(counts, entries) + wiring_ledger.compare_store_counts(stores, entries)
 
 
 def platform_problems(graph: ProdGraph) -> List[str]:
@@ -167,6 +168,36 @@ async def test_a_telegram_adapter_that_was_not_built_is_reported(prod_graph):
     problems = platform_problems(prod_graph)
 
     assert any("Telegram adapter was not built" in p for p in problems), problems
+
+
+@pytest.mark.slow
+async def test_a_second_store_built_inside_an_agent_is_reported_by_the_full_walk(prod_graph):
+    """The #148 shape one level down: the container-owned count does not enter agents, the store count does."""
+    app = prod_graph.app
+    agent = app.coordinator.agents["smart_response_agent_u1"]
+    agent.private_repository = copy.copy(app.container.repository)
+
+    problems = instance_problems(app)
+
+    repo_class = type(app.container.repository).__qualname__
+    owned = wiring_ledger.compare_counts(graph_walk.instance_counts(graph_walk.walk_outside_agents(app)),
+                                         wiring_ledger.parse(INSTANCE_LEDGER.read_text()))
+    assert owned == [], "the container-owned count must not see it"
+    assert any(repo_class in p and "2 instance(s) in the full walk" in p and "ledger says 1" in p for p in problems), problems
+
+
+@pytest.mark.slow
+async def test_a_second_coordinator_a_second_handler_and_a_second_factory_are_reported(prod_graph):
+    app = prod_graph.app
+    app.container.second_coordinator = copy.copy(app.coordinator)
+    app.container.second_worker = copy.copy(app.worker_handler)
+    app.container.second_factory = copy.copy(app.agent_factory)
+    app.container.second_handler = copy.copy(app.slack_adapter.conversation_handler)
+
+    problems = instance_problems(app)
+
+    for name, was, now in (("AgentCoordinator", 1, 2), ("WorkerHandler", 1, 2), ("UserAgentFactory", 1, 2), ("ConversationHandler", 2, 3)):
+        assert any(name in p and f"ledger says {was}, the graph has {now}" in p for p in problems), (name, problems)
 
 
 def drop_from_factory(monkeypatch, factory_class, **dropped) -> None:
@@ -299,7 +330,7 @@ def test_the_instance_count_does_not_enter_an_agent_but_the_none_walk_does():
     outside = make(service_class)
     inside = make(service_class, missing=None)
     agent = make(agent_class, copy_of_service=inside)
-    root = make(src_class("Root", module="src.composition.fake"), service=outside, agent=agent)
+    root = make(src_class("Root", module="src.infrastructure.fake"), service=outside, agent=agent)
 
     counts = graph_walk.instance_counts(graph_walk.walk_outside_agents(root))
     nones = {n.path for n in graph_walk.none_attributes(graph_walk.walk(root))}
@@ -324,6 +355,7 @@ def row(path, klass, attr):
 
 Owner = src_class("Owner")
 SubOwner = src_class("SubOwner", bases=(Owner,))
+Declaration = src_class("Declaration", module="src.infrastructure.fake")
 
 
 def compare(lines, observed, values=None):
@@ -349,14 +381,23 @@ def test_a_line_whose_none_is_gone_is_reported_stale():
 
 
 def test_a_class_line_fails_when_one_instance_has_a_value_unless_it_ends_with_a_star():
-    observed = [row("app.a.x", Owner, "x")]
-    values = {("Owner", "x"): [None, "wired"]}
+    observed = [row("app.a.x", Declaration, "x")]
+    values = {("Declaration", "x"): [None, "wired"]}
 
-    strict = compare("Owner.x  # runtime filled by a request\n", observed, values)
-    star = compare("Owner.x*  # by-design optional declaration field\n", observed, values)
+    strict = compare("Declaration.x  # runtime filled by a request\n", observed, values)
+    star = compare("Declaration.x*  # by-design optional declaration field\n", observed, values)
 
     assert len(strict) == 1 and "1 instance(s) have a value" in strict[0]
     assert star == []
+
+
+@pytest.mark.parametrize("module", ["src.adapters.fake", "src.services.fake", "src.handlers.fake", "src.composition.fake"])
+def test_a_star_line_is_refused_on_a_wiring_layer_class(module):
+    owner = src_class("Wired", module=module)
+
+    problems = compare("Wired.x*  # by-design optional declaration field\n", [row("app.a.x", owner, "x")], {("Wired", "x"): [None, "wired"]})
+
+    assert len(problems) == 1 and "`*` is refused" in problems[0] and module in problems[0]
 
 
 def test_a_class_line_covers_a_subclass_instance():
@@ -401,6 +442,26 @@ def test_the_instance_ledger_fails_both_ways_on_a_count_and_on_a_class():
     assert "src.a.One: ledger says 1, the graph has 2" in problems
     assert "unledgered class: src.a.New has 1 instance(s)" in problems
     assert "src.a.Two: ledger says 2, the graph has 0" in problems
+
+
+def test_the_store_count_over_the_full_walk_fails_when_it_exceeds_the_ledger():
+    entries = wiring_ledger.parse("src.adapters.firestore_repo.Repo 1  # by-design single instance\n")
+
+    assert wiring_ledger.compare_store_counts(Counter({"src.adapters.firestore_repo.Repo": 1}), entries) == []
+    assert "2 instance(s) in the full walk" in wiring_ledger.compare_store_counts(Counter({"src.adapters.firestore_repo.Repo": 2}), entries)[0]
+    assert "the ledger says 0" in wiring_ledger.compare_store_counts(Counter({"src.adapters.gcs_new.New": 1}), entries)[0]
+
+
+def test_only_store_adapters_are_counted_in_the_store_count():
+    store = make(src_class("Repo", module="src.adapters.firestore_repo"))
+    prompt_v3_store = make(src_class("TokenRepo", module="src.adapters.prompt_v3.firestore_token_repository"))
+    other = make(src_class("Proxy", module="src.adapters.alerting_proxy"))
+    service = make(src_class("Svc", module="src.services.gcs_thing"))
+    root = make(Holder, a=store, b=prompt_v3_store, c=other, d=service)
+
+    counts = graph_walk.store_counts(graph_walk.walk(root))
+
+    assert counts == Counter({"src.adapters.firestore_repo.Repo": 1, "src.adapters.prompt_v3.firestore_token_repository.TokenRepo": 1})
 
 
 def test_the_committed_ledgers_parse_and_use_the_vocabulary():
