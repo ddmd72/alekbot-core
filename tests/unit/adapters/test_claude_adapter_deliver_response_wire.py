@@ -317,6 +317,20 @@ async def test_non_object_deliver_input_becomes_empty_args_with_a_warning(caplog
                and "input_type=str" in r.getMessage() for r in caplog.records)
 
 
+async def test_raw_content_is_the_sdk_response_with_thinking_and_tool_use_blocks():
+    """The engine echoes raw_content back into history; Claude's preserved thinking needs the blocks,
+    thinking signature included, exactly as the SDK returned them."""
+    adapter = ClaudeAdapter(api_key="k")
+    thinking = MagicMock(type="thinking", thinking="reasoning", signature="sig_abc")
+    deliver = _tool_block("deliver_response", {"response": _ANSWER}, tc_id="tu_7")
+    sdk_response = _response(thinking, deliver)
+    _install(adapter, sdk_response)
+    result = await adapter.generate_content(_req())
+    assert result.raw_content is sdk_response
+    assert result.raw_content.content == [thinking, deliver]
+    assert result.raw_content.content[0].signature == "sig_abc"
+
+
 async def test_other_tool_calls_are_untouched():
     adapter = ClaudeAdapter(api_key="k")
     _install(adapter, _response(_tool_block("search_memory", {"q": "x"}, tc_id="tu_9")))
