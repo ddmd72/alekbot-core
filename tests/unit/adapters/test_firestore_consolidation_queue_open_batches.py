@@ -86,7 +86,9 @@ class TestZombieThreshold:
         assert await _status(queue, "young") == BatchStatus.PROCESSING.value
         assert await _status(queue, "old") == BatchStatus.RETRY_PENDING.value
         old = (await queue.collection.document("old").get()).to_dict()
-        assert old["processing_started_at"] is None and old["attempts"] == 0
+        # A zombie reset counts the lost run (decisions/consolidation_failed_batch_bounded.md, "Lost runs count"):
+        # the batch was stored with attempts 0, so the reset leaves 1, not 0.
+        assert old["processing_started_at"] is None and old["attempts"] == 1
 
     async def test_the_default_threshold_is_unchanged(self, queue):
         assert _ZOMBIE_THRESHOLD_SECONDS == 1800
