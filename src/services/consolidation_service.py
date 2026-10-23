@@ -20,7 +20,7 @@ from enum import Enum
 from typing import Any, Callable, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
-from ..domain.consolidation import MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch
+from ..domain.consolidation import MAX_BATCH_ATTEMPTS, MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch
 from ..domain.consolidation_run import ConsolidationRun
 from ..domain.memory_write_lease import (
     LEASE_BUSY_RETRY_DELAY_S,
@@ -275,15 +275,15 @@ class ConsolidationService:
 
         attempts = await self._queue.increment_attempts(batch.batch_id)
         error_str = str(response.error)
-        if attempts >= 3:
+        if attempts >= MAX_BATCH_ATTEMPTS:
             await self._mark_failed(batch, attempts, error_str)
         else:
             await self._queue.update_batch_status(
                 batch.batch_id, BatchStatus.RETRY_PENDING, error=error_str
             )
             logger.warning(
-                "⚠️ [Librarian] Batch %s failed (attempt %d/3) user=%s: %s",
-                batch.batch_id, attempts, batch.user_id[:8], error_str,
+                "⚠️ [Librarian] Batch %s failed (attempt %d/%d) user=%s: %s",
+                batch.batch_id, attempts, MAX_BATCH_ATTEMPTS, batch.user_id[:8], error_str,
             )
         return _Step.FAILED
 
