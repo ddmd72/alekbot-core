@@ -1146,88 +1146,96 @@ class ConsolidationAgent(BaseAgent):
             )])
         ]
 
-        for turn in range(self.MAX_CONSOLIDATION_TURNS):
-            logger.info(
-                f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1}/{self.MAX_CONSOLIDATION_TURNS}"
-            )
+        try:
+            for turn in range(self.MAX_CONSOLIDATION_TURNS):
+                logger.info(
+                    f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1}/{self.MAX_CONSOLIDATION_TURNS}"
+                )
 
-            request = LLMRequest(
-                model_name=self.model_name,
-                system_instruction=system_prompt,
-                messages=history,
-                tools=self._get_tool_declarations(),
-                max_tokens=self.MAX_TOKENS,
-                timeout=500,
-                thinking=self.THINKING_EFFORT or None,
-            )
+                request = LLMRequest(
+                    model_name=self.model_name,
+                    system_instruction=system_prompt,
+                    messages=history,
+                    tools=self._get_tool_declarations(),
+                    max_tokens=self.MAX_TOKENS,
+                    timeout=500,
+                    thinking=self.THINKING_EFFORT or None,
+                )
 
-            response: LLMResponse = await self._call_llm(request, turn=turn + 1)
+                response: LLMResponse = await self._call_llm(request, turn=turn + 1)
 
-            if not response.tool_calls:
-                logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — final report received")
-                ops = self._parse_operations_report(response.text or "")
-                # TEMPORARY monitoring for the Sonnet 5.5 stall (2026-10-20); remove once
-                # consolidation's model is settled.
-                if self._stats_alerts:
-                    await self._post_alert(
-                        stats.format_summary(len(ops), time.monotonic() - started)
-                    )
-                await self._close_pass(stats, account_id)
-                return ops
+                if not response.tool_calls:
+                    logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — final report received")
+                    ops = self._parse_operations_report(response.text or "")
+                    # TEMPORARY monitoring for the Sonnet 5.5 stall (2026-10-20); remove once
+                    # consolidation's model is settled.
+                    if self._stats_alerts:
+                        await self._post_alert(
+                            stats.format_summary(len(ops), time.monotonic() - started)
+                        )
+                    return ops
 
-            logger.info(
-                f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — executing {len(response.tool_calls)} tools"
-            )
+                logger.info(
+                    f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — executing {len(response.tool_calls)} tools"
+                )
 
-            stats.record_turn([(tc.name, tc.args or {}) for tc in response.tool_calls])
+                stats.record_turn([(tc.name, tc.args or {}) for tc in response.tool_calls])
 
-            if response.raw_content:
-                history.append(Message(role="model", parts=[], raw_content=response.raw_content))
-            else:
+                if response.raw_content:
+                    history.append(Message(role="model", parts=[], raw_content=response.raw_content))
+                else:
+                    history.append(Message(
+                        role="model",
+                        parts=[MessagePart(tool_call=tc) for tc in response.tool_calls]
+                    ))
+
+                # Mirror RouterAgent pattern: touch Firestore between LLM and find_nearest
+                # to keep Cloud Run CPU active and unblock gRPC calls.
+                try:
+                    await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
+                except Exception as e:
+                    logger.warning(f"⚠️ Keep-alive biographical cache read failed (ignored): {e}")
+
+                tool_responses = await self._execute_fact_management_tools(
+                    tool_calls=response.tool_calls,
+                    user_id=user_id,
+                    account_id=account_id,
+                    write_context=write_context,
+                    fact_management=fact_management,
+                )
+
+                stats.record_outcomes(
+                    [(tc.name, tc.args or {}) for tc in response.tool_calls], [tr.outcome for tr in tool_responses]
+                )
+
                 history.append(Message(
-                    role="model",
-                    parts=[MessagePart(tool_call=tc) for tc in response.tool_calls]
+                    role="user",
+                    parts=[
+                        MessagePart(tool_response={
+                            "name": tr.name,
+                            "response": {"result": tr.result_str}
+                        })
+                        for tr in tool_responses
+                    ]
                 ))
 
-            # Mirror RouterAgent pattern: touch Firestore between LLM and find_nearest
-            # to keep Cloud Run CPU active and unblock gRPC calls.
-            try:
-                await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
-            except Exception as e:
-                logger.warning(f"⚠️ Keep-alive biographical cache read failed (ignored): {e}")
-
-            tool_responses = await self._execute_fact_management_tools(
-                tool_calls=response.tool_calls,
-                user_id=user_id,
-                account_id=account_id,
-                write_context=write_context,
-                fact_management=fact_management,
-            )
-
-            stats.record_outcomes(
-                [(tc.name, tc.args or {}) for tc in response.tool_calls], [tr.outcome for tr in tool_responses]
-            )
-
-            history.append(Message(
-                role="user",
-                parts=[
-                    MessagePart(tool_response={
-                        "name": tr.name,
-                        "response": {"result": tr.result_str}
-                    })
-                    for tr in tool_responses
-                ]
-            ))
-
-        alert_text = stats.format_limit_alert(time.monotonic() - started)
-        logger.error(f"⚠️ [ConsolidationAgent] Max turns reached without final report: {alert_text}")
-        await self._post_alert(alert_text)
-        await self._close_pass(stats, account_id)
-        return []
+            alert_text = stats.format_limit_alert(time.monotonic() - started)
+            logger.error(f"⚠️ [ConsolidationAgent] Max turns reached without final report: {alert_text}")
+            await self._post_alert(alert_text)
+            return []
+        finally:
+            await self._close_pass(stats, account_id)
 
     async def _close_pass(self, stats: ConsolidationPassStats, account_id: str) -> None:
-        """After a pass: an expiry refusal that was never answered is always a 🚨 (also with the stats line off), and
-        the pass's expiry errors are added to the account's day. Best effort, never changes the pass."""
+        """End of every pass, also one that raises: an expiry refusal that was never answered is always a 🚨 (also
+        with the stats line off), and the pass's expiry errors are added to the account's day. Best effort: it never
+        raises and never changes the pass."""
+        try:
+            await self._report_pass(stats, account_id)
+        except Exception as e:
+            logger.warning(f"⚠️ [ConsolidationAgent] Pass close-out failed: {type(e).__name__}")
+
+    async def _report_pass(self, stats: ConsolidationPassStats, account_id: str) -> None:
         if stats.abandoned:
             await self._post_alert(stats.format_abandoned_alert())
         if not stats.expiry_errors or self._lifecycle_counters is None:
