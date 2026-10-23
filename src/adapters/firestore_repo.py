@@ -436,27 +436,6 @@ class FirestoreFactRepository(FactRepository):
         logger.debug(f"🔍 [search_facts] Found {len(results)} results")
         return results
 
-    async def update_fact(self, fact: FactEntity) -> None:
-        doc_ref = self.facts_col.document(fact.id)
-        data = fact.model_dump()
-        
-        # SESSION 2026-02-09: FIX - Vector() wrapper REQUIRED for correct serialization
-        # Without Vector() wrapper, Firestore saves as map {0: val, 1: val, ...} instead of array
-        # Vector() wrapper ensures proper vector field recognition by Firestore Vector Search
-        
-        if 'vector' in data and data['vector'] is not None:
-            data['vector'] = Vector(data['vector'])
-        if 'tags_vector' in data and data['tags_vector'] is not None:
-            data['tags_vector'] = Vector(data['tags_vector'])
-        if 'metadata_vector' in data and data['metadata_vector'] is not None:
-            data['metadata_vector'] = Vector(data['metadata_vector'])
-
-        data['context_priority_rank'] = _PRIORITY_RANK.get(
-            data.get('context_priority') or 'medium', 3
-        )
-
-        await doc_ref.set(data)
-
     @log_execution_time
     async def get_active_facts_ordered(
         self,
