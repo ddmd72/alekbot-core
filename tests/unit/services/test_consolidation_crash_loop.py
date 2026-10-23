@@ -16,7 +16,9 @@ from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentResponse
 from src.domain.consolidation import MAX_BATCH_ATTEMPTS, MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch
 from src.domain.memory_write_lease import lease_until
+from src.domain.user import UserBotConfig
 from src.services.consolidation_service import ConsolidationService
+from tests.support.account_owners import OwnedAccounts
 from tests.support.firestore_eval import EvalDb
 
 USER = "user-abcdef123"
@@ -47,7 +49,7 @@ class _Factory:
 
 class _Profiles:
     async def get_user(self, user_id):
-        return SimpleNamespace(account_id="acc-1")
+        return SimpleNamespace(account_id="acc-1", config=UserBotConfig())
 
 
 @pytest.fixture
@@ -60,6 +62,7 @@ def world(monkeypatch):
     service = ConsolidationService(
         queue=queue, coordinator=coordinator, agent_factory=_Factory(),
         lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=RUN_S, user_repo=_Profiles(),
+        account_repo=OwnedAccounts({"acc-1": USER}),
         clock=lambda: state.now,
     )
     return SimpleNamespace(queue=queue, coordinator=coordinator, service=service, state=state, db=db)
