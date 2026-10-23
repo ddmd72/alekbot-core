@@ -9,10 +9,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
+from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.consolidation import BatchStatus, ConsolidationBatch
 from src.ports.consolidation_queue import ConsolidationQueue
 from src.services.consolidation_service import ConsolidationService, _INTENT_CONSOLIDATE_FULL
+from tests.support.firestore_eval import EvalDb
 
 
 # ---------------------------------------------------------------------------
@@ -83,11 +86,22 @@ def user_repo():
 
 
 @pytest.fixture
-def service(queue, coordinator, agent_factory, user_repo):
+def lease():
+    """The real memory-write lease on the evaluating fake (FACT_LIFECYCLE_RFC D9): every run takes and releases it."""
+    return FirestoreMemoryWriteLease(EvalDb(), EnvironmentConfig())
+
+
+_RUN_TIMEOUT_S = 900.0   # CONSOLIDATION.timeout_ms / 1000, as composition injects it
+
+
+@pytest.fixture
+def service(queue, coordinator, agent_factory, user_repo, lease):
     return ConsolidationService(
         queue=queue,
         coordinator=coordinator,
         agent_factory=agent_factory,
+        lease=lease,
+        run_timeout_s=_RUN_TIMEOUT_S,
         user_repo=user_repo,
     )
 
@@ -134,7 +148,7 @@ class TestNoBatches:
     async def test_resets_processing_before_fetching(self, service, queue):
         queue.get_pending_batches.return_value = []
         call_order = []
-        queue.reset_recoverable_batches.side_effect = lambda uid: call_order.append("reset")
+        queue.reset_recoverable_batches.side_effect = lambda uid, **kw: call_order.append("reset")
         queue.get_pending_batches.side_effect = lambda **kw: call_order.append("fetch") or []
 
         await service.process_user_batches(user_id=_USER_ID)
@@ -185,7 +199,7 @@ class TestSingleBatchSuccess:
         queue.get_pending_batches.return_value = []
         call_order = []
         agent_factory.ensure_agents_for_user.side_effect = lambda uid: call_order.append("ensure")
-        queue.reset_recoverable_batches.side_effect = lambda uid: call_order.append("reset")
+        queue.reset_recoverable_batches.side_effect = lambda uid, **kw: call_order.append("reset")
 
         await service.process_user_batches(user_id=_USER_ID)
 
@@ -293,11 +307,13 @@ class TestExceptionHandling:
 
         assert result is False
 
-    async def test_no_user_repo_uses_user_id_as_account_id(self, queue, coordinator, agent_factory):
+    async def test_no_user_repo_uses_user_id_as_account_id(self, queue, coordinator, agent_factory, lease):
         service = ConsolidationService(
             queue=queue,
             coordinator=coordinator,
             agent_factory=agent_factory,
+            lease=lease,
+            run_timeout_s=_RUN_TIMEOUT_S,
             user_repo=None,
         )
         queue.get_pending_batches.return_value = []

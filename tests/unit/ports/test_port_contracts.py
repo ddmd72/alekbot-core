@@ -76,7 +76,8 @@ class TestConsolidationQueueContract:
             assert count == 1, f"{method_name} defined {count} times, expected 1"
 
     def test_all_abstract_methods_count(self):
-        """Port should have exactly these 8 abstract methods (cleanup_old_batches removed, S1b task C)."""
+        """Port should have exactly these 9 abstract methods (cleanup_old_batches removed, S1b task C;
+        has_open_batches added by FACT_LIFECYCLE_RFC S2, the lease loser's deferral check)."""
         abstract_methods = {
             name for name, method in inspect.getmembers(ConsolidationQueue)
             if getattr(method, "__isabstractmethod__", False)
@@ -84,7 +85,7 @@ class TestConsolidationQueueContract:
         assert abstract_methods == {
             "enqueue_batch", "get_pending_batches", "get_queue_size", "delete_batch",
             "update_batch_status", "increment_attempts", "reset_recoverable_batches",
-            "get_stuck_batch_user_ids",
+            "get_stuck_batch_user_ids", "has_open_batches",
         }, f"Unexpected abstract methods: {abstract_methods}"
 
     def test_enqueue_batch_signature(self):
