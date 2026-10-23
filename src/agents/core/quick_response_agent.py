@@ -43,7 +43,7 @@ from ...ports.session_store import SessionStore
 from ...ports.prompt_builder_port import PromptBuilderPort
 from ...ports.llm_port import AgentExecutionContext
 from ...utils.logger import logger
-from ...utils.llm_response_parser import parse_llm_response
+from ...utils.llm_response_parser import extract_structured_response
 from ...domain.messaging import SmartResponse
 
 if TYPE_CHECKING:
@@ -246,6 +246,7 @@ class QuickResponseAgent(BaseAgent):
                 calling_agent_id=self.agent_id,
                 max_retries=self.MAX_AGENT_RETRIES,
                 retry_backoff=self.RETRY_BACKOFF_SECONDS,
+                terminal_tool="deliver_response",
             )
 
             if delegation_result.failed:
@@ -256,7 +257,9 @@ class QuickResponseAgent(BaseAgent):
                 )
 
             # Parse response text into SmartResponse
-            user_text, history_summary, rich, link_list = parse_llm_response(delegation_result.text)
+            user_text, history_summary, rich, link_list = extract_structured_response(
+                delegation_result.terminal_tool_args, delegation_result.text
+            )
             final_rich = rich if rich else delegation_result.structured_data
             smart_response = SmartResponse(text=user_text or "", structured_data=final_rich, link_list=link_list)
             total_tokens = delegation_result.total_tokens
@@ -265,6 +268,19 @@ class QuickResponseAgent(BaseAgent):
             if smart_response.text:
                 smart_response.text = self._sanitize_response(smart_response.text)
 
+            # An answer the user would see as nothing is a failure, not a silent success.
+            if (not smart_response.text.strip() and final_rich is None
+                    and not delegation_result.delivery_items):
+                logger.error(
+                    "empty_answer agent=%s model=%s terminal=%s",
+                    self.agent_id, self.model_name, bool(delegation_result.terminal_tool_args),
+                    extra={"event": "empty_answer", "agent_id": self.agent_id,
+                           "via_terminal_tool": bool(delegation_result.terminal_tool_args)},
+                )
+                return AgentResponse.failure(
+                    task_id=message.task_id, agent_id=self.agent_id, error="empty_answer",
+                )
+
             # Post-processing: fire-and-forget history summary (plain-text path).
             summary_task = None
             if not history_summary and smart_response.text and self.history_summary_service:
@@ -272,7 +288,7 @@ class QuickResponseAgent(BaseAgent):
                     self.history_summary_service.summarize_model_response(smart_response.text)
                 )
 
-            self._on_agent_success(len(smart_response.text), total_tokens, output_text=delegation_result.text)
+            self._on_agent_success(len(smart_response.text), total_tokens, output_text=delegation_result.text or smart_response.text)
 
             metadata = {
                 "model": self.model_name,

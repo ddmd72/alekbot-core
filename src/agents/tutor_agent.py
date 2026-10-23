@@ -213,7 +213,16 @@ class TutorAgent(BaseAgent):
             full_response, response_summary, _rich, _links = extract_structured_response(
                 terminal_tool_args, raw_text
             )
-            full_response = full_response or "No response from model."
+            if not (full_response or "").strip():
+                logger.error(
+                    "empty_answer agent=%s model=%s terminal=%s",
+                    self.agent_id, self.model_name, bool(terminal_tool_args),
+                    extra={"event": "empty_answer", "agent_id": self.agent_id,
+                           "via_terminal_tool": bool(terminal_tool_args)},
+                )
+                return AgentResponse.failure(
+                    task_id=message.task_id, agent_id=self.agent_id, error="empty_answer",
+                )
 
             summary_task = None
             if self.history_summary_service and not response_summary and full_response:
