@@ -365,9 +365,12 @@ class TestFactManagementPortContract:
     def test_search_existing_facts_signature(self):
         sig = inspect.signature(FactManagementPort.search_existing_facts)
         params = list(sig.parameters.keys())
-        assert params == ["self", "keywords", "primary_query", "alternative_query", "limit"]
+        # Reviewer edit (facts S3, T4a; plan §3.2): the owner's zone is a required keyword, no default.
+        assert params == ["self", "keywords", "primary_query", "alternative_query", "limit", "timezone"]
         assert sig.parameters["alternative_query"].default == ""
         assert sig.parameters["limit"].default == 20
+        assert sig.parameters["timezone"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert sig.parameters["timezone"].default is inspect.Parameter.empty
 
 
 class TestFactManagementPortMockImplementation:
@@ -400,12 +403,18 @@ class TestFactManagementPortMockImplementation:
     def test_create_fact_signature(self):
         sig = inspect.signature(FactManagementPort.create_fact)
         params = list(sig.parameters.keys())
-        assert params == ["self", "content", "metadata"]
+        # Reviewer edit (facts S3, T4a; plan §3.2): every write takes its pass's context, a required keyword, no default.
+        assert params == ["self", "content", "metadata", "context"]
+        assert sig.parameters["context"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert sig.parameters["context"].default is inspect.Parameter.empty
 
     def test_update_fact_signature(self):
         sig = inspect.signature(FactManagementPort.update_fact)
         params = list(sig.parameters.keys())
-        assert params == ["self", "fact_id", "updates", "account_id"]
+        # Reviewer edit (facts S3, T4a; plan §3.2): as create_fact.
+        assert params == ["self", "fact_id", "updates", "account_id", "context"]
+        assert sig.parameters["context"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert sig.parameters["context"].default is inspect.Parameter.empty
 
 
 # =============================================================================
