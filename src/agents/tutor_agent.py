@@ -202,18 +202,29 @@ class TutorAgent(BaseAgent):
                         error="max_turns_exhausted",
                     )
                 terminal_tool_args = result.terminal_tool_args
+                async_dispatches = result.async_dispatches
                 raw_text = result.text
                 token_count = result.total_tokens
             else:
                 response = await self._call_llm(base_request)
                 terminal_tool_args = None
+                async_dispatches = []
                 raw_text = response.text or ""
                 token_count = response.usage_metadata.total_tokens if response.usage_metadata else 0
 
             full_response, response_summary, _rich, _links = extract_structured_response(
                 terminal_tool_args, raw_text
             )
-            full_response = full_response or "No response from model."
+            if not (full_response or "").strip() and not async_dispatches:
+                logger.error(
+                    "empty_answer agent=%s model=%s terminal=%s",
+                    self.agent_id, self.model_name, terminal_tool_args is not None,
+                    extra={"event": "empty_answer", "agent_id": self.agent_id,
+                           "via_terminal_tool": terminal_tool_args is not None},
+                )
+                return AgentResponse.failure(
+                    task_id=message.task_id, agent_id=self.agent_id, error="empty_answer",
+                )
 
             summary_task = None
             if self.history_summary_service and not response_summary and full_response:

@@ -47,6 +47,7 @@ from src.ports.llm_port import (
     Message,
     MessagePart,
     ProviderCapabilities,
+    ToolCall,
     UsageMetadata,
 )
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
@@ -68,9 +69,21 @@ def _make_provider(model_label: str) -> MagicMock:
         # SAME instance must overlap — proven by the test's wall-clock.
         await asyncio.sleep(CALL_DURATION)
         # Build a terminal-tool LLM response so DelegationEngine exits cleanly.
+        # The engine detects the terminal call from ``tool_calls`` (raw_content
+        # alone is ignored), so the deliver_response call goes there too.
         return LLMResponse(
             text="",
-            tool_calls=[],
+            tool_calls=[
+                ToolCall(
+                    name="deliver_response",
+                    args={
+                        "full_response": f"reply from {model_label}",
+                        "response_summary": f"summary {model_label}",
+                        "rich_content": None,
+                    },
+                    thought_signature=f"call-{model_label}",
+                )
+            ],
             usage_metadata=UsageMetadata(
                 prompt_tokens=10, completion_tokens=10, total_tokens=20,
             ),
@@ -267,3 +280,7 @@ async def test_concurrent_execute_runs_in_parallel_with_per_call_overrides(
     # 6. Each call's metadata reports the correct (per-call) model.
     assert response_a.metadata["model"] == "model-A"
     assert response_b.metadata["model"] == "model-B"
+
+    # 7. Each call delivered its OWN provider's answer — no cross-call leakage.
+    assert response_a.result.text == "reply from A"
+    assert response_b.result.text == "reply from B"
