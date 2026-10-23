@@ -23,6 +23,7 @@ from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..domain.entities import FactDomain
+from ..domain.fact_write_context import FactWriteContext
 from ..domain.request_context import get_effective_account_id
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
@@ -68,16 +69,21 @@ class _TrackingFactManagement(FactManagementPort):
         primary_query: str,
         alternative_query: str = "",
         limit: int = 20,
+        *,
+        timezone: str,
     ) -> List[Dict[str, Any]]:
         return await self._real.search_existing_facts(
             keywords=keywords,
             primary_query=primary_query,
             alternative_query=alternative_query,
             limit=limit,
+            timezone=timezone,
         )
 
-    async def create_fact(self, content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
-        result = await self._real.create_fact(content=content, metadata=metadata)
+    async def create_fact(
+        self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext
+    ) -> Dict[str, Any]:
+        result = await self._real.create_fact(content=content, metadata=metadata, context=context)
         if result.get("status") == "created":
             self.wrote = True
             if fid := result.get("fact_id"):
@@ -85,10 +91,10 @@ class _TrackingFactManagement(FactManagementPort):
         return result
 
     async def update_fact(
-        self, fact_id: str, updates: Dict[str, Any], account_id: str
+        self, fact_id: str, updates: Dict[str, Any], account_id: str, *, context: FactWriteContext
     ) -> Dict[str, Any]:
         result = await self._real.update_fact(
-            fact_id=fact_id, updates=updates, account_id=account_id
+            fact_id=fact_id, updates=updates, account_id=account_id, context=context
         )
         if result.get("status") == "updated":
             self.wrote = True
@@ -98,10 +104,10 @@ class _TrackingFactManagement(FactManagementPort):
         return result
 
     async def merge_facts(
-        self, fact_ids: List[str], merged_content: str, metadata: Dict[str, Any]
+        self, fact_ids: List[str], merged_content: str, metadata: Dict[str, Any], *, context: FactWriteContext
     ) -> Dict[str, Any]:
         result = await self._real.merge_facts(
-            fact_ids=fact_ids, merged_content=merged_content, metadata=metadata
+            fact_ids=fact_ids, merged_content=merged_content, metadata=metadata, context=context
         )
         if result.get("status") == "merged":
             self.wrote = True
@@ -481,6 +487,7 @@ class ConsolidationAgent(BaseAgent):
                 user_id=user_id,
                 account_id=account_id,
                 pass_label="cluster",
+                write_context=self._write_context("cluster"),
             )
 
             facts_affected = sum(1 for op in ops if op.get("action") in ("CREATE", "UPDATE", "MERGE"))
@@ -591,6 +598,7 @@ class ConsolidationAgent(BaseAgent):
                     account_id=account_id,
                     pass_label="email",
                     fact_management=tracker,
+                    write_context=self._write_context("email"),
                 )
 
                 now = datetime.now(timezone.utc)
@@ -796,6 +804,7 @@ class ConsolidationAgent(BaseAgent):
                 account_id=account_id,
                 pass_label="stage1",
                 fact_management=tracker,
+                write_context=self._write_context("stage1"),
             )
             stage1_changed = list(tracker.changed)
 
@@ -807,7 +816,8 @@ class ConsolidationAgent(BaseAgent):
             # Stage 2a: inline fact-cluster review (skip if disabled or nothing was written)
             ops2: List[Dict[str, Any]] = []
             if self.INLINE_CLUSTER_REVIEW and stage1_changed:
-                cluster = await self._build_review_cluster(stage1_changed, account_id)
+                context_2a = self._write_context("stage2a")
+                cluster = await self._build_review_cluster(stage1_changed, account_id, timezone=context_2a.timezone)
                 if cluster:
                     logger.info(
                         f"👨‍🏫 [ConsolidationAgent] Stage 2a: reviewing cluster of {len(cluster)} facts"
@@ -828,13 +838,14 @@ class ConsolidationAgent(BaseAgent):
                         account_id=account_id,
                         pass_label="stage2a",
                         fact_management=tracker,
+                        write_context=context_2a,
                     )
                     logger.info(f"👨‍🏫 [ConsolidationAgent] Stage 2a done: {len(ops2)} ops")
 
             # Stage 2b: directive rulebook review — UNCONDITIONAL (living-organism curation).
             # Runs every consolidation regardless of Stage 1 changes; sees the FULL rulebook.
             ops_dir = await self._review_directives(
-                user_id, account_id, biographical_facts, fact_management=tracker
+                user_id, account_id, biographical_facts, self._write_context("stage2b"), fact_management=tracker
             )
             finished = True
             return {"operations": ops1 + ops2 + ops_dir}
@@ -848,6 +859,7 @@ class ConsolidationAgent(BaseAgent):
         user_id: str,
         account_id: str,
         biographical_facts: List[Dict],
+        write_context: FactWriteContext,
         fact_management: Optional[FactManagementPort] = None,
     ) -> List[Dict[str, Any]]:
         """Stage 2b: curate the entire agent-directive rulebook (STANDING_DIRECTIVES_RFC).
@@ -887,13 +899,15 @@ class ConsolidationAgent(BaseAgent):
             account_id=account_id,
             pass_label="stage2b",
             fact_management=fact_management,
+            write_context=write_context,
         )
-        ops += await self._enforce_directive_cap(account_id, fact_management=fact_management)
+        backstop = self._write_context("backstop", write_context.timezone, write_context.span)
+        ops += await self._enforce_directive_cap(account_id, backstop, fact_management=fact_management)
         logger.info(f"👨‍🏫 [ConsolidationAgent] Stage 2b done: {len(ops)} ops")
         return ops
 
     async def _enforce_directive_cap(
-        self, account_id: str, fact_management: Optional[FactManagementPort] = None
+        self, account_id: str, write_context: FactWriteContext, fact_management: Optional[FactManagementPort] = None
     ) -> List[Dict[str, Any]]:
         """Deterministic hard-cap backstop: if the LLM left more than DIRECTIVE_HARD_CAP current
         directives, invalidate the lowest-priority tail. Fires only when curation under-trimmed —
@@ -912,10 +926,19 @@ class ConsolidationAgent(BaseAgent):
         ops: List[Dict[str, Any]] = []
         for fact in overflow:
             await port.update_fact(
-                fact.id, {"state": "invalidated"}, account_id=account_id
+                fact.id, {"state": "invalidated"}, account_id=account_id, context=write_context
             )
             ops.append({"action": "INVALIDATE", "fact_id": fact.id, "reason": "directive cap backstop"})
         return ops
+
+    @staticmethod
+    def _write_context(
+        pass_label: str, timezone: str = "UTC", span: Optional[Tuple[datetime, datetime]] = None
+    ) -> FactWriteContext:
+        """The write context of a pass: only the conversation passes (stage1, email) let the model's dates count."""
+        return FactWriteContext(
+            actor=pass_label, timezone=timezone, span=span, model_dates=pass_label in ("stage1", "email")
+        )
 
     async def _run_consolidation_loop(
         self,
@@ -925,12 +948,15 @@ class ConsolidationAgent(BaseAgent):
         account_id: str,
         pass_label: str = "consolidation",
         fact_management: Optional[FactManagementPort] = None,
+        *,
+        write_context: FactWriteContext,
     ) -> List[Dict[str, Any]]:
         """
         Single multi-turn LLM loop for one consolidation pass.
         Returns parsed operations list from the final report.
 
         `fact_management` is the port this pass's tools run on (a run's tracker); None means the agent's own.
+        `write_context` goes with every write the pass's tools make.
 
         Ops alerts (best-effort, never change the result): a pass that exhausts its turns without
         a final report always posts a 🚨; a pass that ends with a report posts a 📊 stats line
@@ -1001,6 +1027,7 @@ class ConsolidationAgent(BaseAgent):
                 tool_calls=response.tool_calls,
                 user_id=user_id,
                 account_id=account_id,
+                write_context=write_context,
                 fact_management=fact_management,
             )
 
@@ -1033,6 +1060,8 @@ class ConsolidationAgent(BaseAgent):
         self,
         changed: List[Tuple[str, str]],
         account_id: str,
+        *,
+        timezone: str,
     ) -> List[Dict[str, Any]]:
         """
         For each written (fact_id, content) from Stage 1 → semantic search → merge,
@@ -1046,6 +1075,7 @@ class ConsolidationAgent(BaseAgent):
                 primary_query=content,
                 alternative_query="",
                 limit=20,
+                timezone=timezone,
             )
 
         contents = [c for _, c in changed if c]
@@ -1202,6 +1232,7 @@ class ConsolidationAgent(BaseAgent):
         tool_calls: List[ToolCall],
         user_id: str,
         account_id: str,
+        write_context: FactWriteContext,
         fact_management: Optional[FactManagementPort] = None,
     ) -> List[ToolResponse]:
         """Execute fact management tools via FactManagementPort (`fact_management`, else the agent's own).
@@ -1236,7 +1267,8 @@ class ConsolidationAgent(BaseAgent):
                         keywords=keywords,
                         primary_query=primary_query,
                         alternative_query=alternative_query,
-                        limit=limit
+                        limit=limit,
+                        timezone=write_context.timezone,
                     )
                     return ToolResponse(
                         name=tool_call.name,
@@ -1250,7 +1282,8 @@ class ConsolidationAgent(BaseAgent):
 
                     result = await port.create_fact(
                         content=tool_call.args.get("content", ""),
-                        metadata=fact_attributes
+                        metadata=fact_attributes,
+                        context=write_context,
                     )
                     return ToolResponse(
                         name=tool_call.name,
@@ -1261,7 +1294,8 @@ class ConsolidationAgent(BaseAgent):
                     result = await port.update_fact(
                         fact_id=tool_call.args.get("fact_id", ""),
                         updates=tool_call.args.get("updates", {}),
-                        account_id=account_id
+                        account_id=account_id,
+                        context=write_context,
                     )
                     return ToolResponse(
                         name=tool_call.name,
@@ -1276,7 +1310,8 @@ class ConsolidationAgent(BaseAgent):
                     result = await port.merge_facts(
                         fact_ids=tool_call.args.get("fact_ids", []),
                         merged_content=tool_call.args.get("merged_content", ""),
-                        metadata=fact_attributes
+                        metadata=fact_attributes,
+                        context=write_context,
                     )
                     return ToolResponse(
                         name=tool_call.name,
