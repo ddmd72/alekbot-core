@@ -40,7 +40,7 @@ graph LR
 - **`TelegramWebhookAdapter`**: The "Driving" adapter. Handles HTTPS POST requests from Telegram, verifies signatures, and routes to `ConversationHandler`.
 - **`TelegramResponseChannel`**: The "Driven" adapter. Implements the `ResponseChannel` protocol to send messages and status updates back to Telegram.
 - **`TelegramMediaAdapter`**: Implements `PlatformMediaPort`. Delivers binary media — `upload_image` → `bot.send_photo(BytesIO)`, `upload_file` → `bot.send_document(BytesIO)`.
-- **`TelegramAdapterFactory`**: Composition root (`composition/telegram_adapter_factory.py`). Wires `TelegramMediaAdapter` → `RichContentService` → `ConversationHandler` → `TelegramWebhookAdapter`. Mirrors `SlackAdapterFactory` pattern. Receives the shared `html_renderer` singleton from `main.py`.
+- **`TelegramAdapterFactory`**: Composition root (`composition/telegram_adapter_factory.py`). Wires `TelegramMediaAdapter` → `RichContentService` → `ConversationHandler` → `TelegramWebhookAdapter`. Mirrors `SlackAdapterFactory` pattern. Receives the shared `html_renderer` singleton from `build_application_graph`.
 
 ---
 
@@ -175,7 +175,7 @@ ConversationHandler._deliver_rich_content()
 ### Configuration
 
 - `src/config/environment.py`: `validate_telegram_config()` helper.
-- `main.py`: Initialization via `TelegramAdapterFactory.create_adapter()`.
+- `src/composition/application_graph.py`: Initialization via `TelegramAdapterFactory.create_adapter()`; `main.py` registers the returned blueprint.
 
 ### Tests
 

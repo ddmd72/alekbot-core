@@ -35,6 +35,7 @@ class LelikSummarizerAgent(BaseAgent):
         prompt_builder: PromptBuilderPort,
     ) -> None:
         super().__init__(config)
+        self._set_execution_context(execution_context)
         self._llm = execution_context.provider
         self.model_name = execution_context.model_name
         self.prompt_builder = prompt_builder

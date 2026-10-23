@@ -17,7 +17,7 @@ Structured JSON fields allow filtering:
 - Used in Cloud Logging queries.
 
 ## 4. Tracing (OpenTelemetry)
-- Traces are initialized via `init_telemetry("alek-core")` in `main.py`.
+- Traces are initialized via `init_telemetry("alek-core")` in `main()` (`main.py`), before the application graph is built.
 - Spans include: `slack.event.received`, `conversation.handle_message`, `llm.generate.*`, `tool.execute`.
 - Trace IDs are injected into logs for correlation.
 

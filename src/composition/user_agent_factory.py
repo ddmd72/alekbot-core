@@ -609,6 +609,16 @@ class UserAgentFactory(AgentFactoryPort):
             agents_to_register.append(notes_agent)
         if tasks_agent:
             agents_to_register.append(tasks_agent)
+        # Inject coordinator, prompt-content store and quota service into all agents so billing and
+        # capture work universally. Before registration: once registered an agent is routable, and a
+        # request that reaches it during the awaits below must be billed and captured.
+        # Quick/Smart/Router already set self.coordinator in their constructors;
+        # overwriting with the same value is harmless.
+        for agent in agents_to_register:
+            if agent is not None:
+                agent.coordinator = self.coordinator
+                agent._prompt_content_store = self.prompt_content_store
+                agent._quota_service = self.quota_service
         self._register_agents(agents_to_register)
 
         # Preload prompt assembly cache (warm-up optimization, non-critical)
@@ -625,15 +635,6 @@ class UserAgentFactory(AgentFactoryPort):
                 await asyncio.gather(*preload_coros)
             except Exception as e:
                 logger.warning(f"Failed to preload prompt cache for user {user_id[:8]}: {e}")
-
-        # Inject coordinator into all agents so billing works universally.
-        # Quick/Smart/Router already set self.coordinator in their constructors;
-        # overwriting with the same value is harmless.
-        for agent in agents_to_register:
-            if agent is not None:
-                agent.coordinator = self.coordinator
-                agent._prompt_content_store = self.prompt_content_store
-                agent._quota_service = self.quota_service
 
         cached = {
             "last_used": time.time(),

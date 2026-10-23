@@ -197,7 +197,7 @@ Bot(token)
   → TelegramWebhookAdapter
 ```
 
-Both factories receive the same `html_renderer` singleton from `main.py`.
+Both factories receive the same `html_renderer` singleton from `build_application_graph`.
 
 ---
 
@@ -309,7 +309,7 @@ platform-free. No-op when links are already anchored, empty, or malformed (missi
 | `src/composition/telegram_adapter_factory.py` | Telegram composition root (wires RichContentService) |
 | `src/handlers/conversation_handler.py` | `_deliver_rich_content()` routing |
 | `src/config/settings.py` | `ENABLE_HTML_RENDERER` flag |
-| `main.py` | Renderer lifecycle (lazy init, graceful stop) |
+| `src/composition/application_graph.py` | Renderer lifecycle (lazy init in the builder, stopped by `ApplicationGraph.shutdown`) |
 | `firestore_utils/uploads/OUTPUT_FORMAT_JSON.groovy` | LLM output format with `widget` type |
 | `scripts/test_html_render.py` | Local smoke test for Playwright rendering |
 

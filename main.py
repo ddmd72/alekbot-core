@@ -1,10 +1,7 @@
 import sys
 import os
 import signal
-import logging
 import asyncio
-from slack_bolt.async_app import AsyncApp
-from twilio.rest import Client as TwilioClient
 
 from src.config.settings import load_settings
 from src.web.worker_oidc_verifier import build_oidc_gate, parse_sa_emails
@@ -12,61 +9,20 @@ from src.web.twilio_signature_verifier import verify_twilio_signature
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from src.web.mcp_error_logger import McpErrorLogger
-from src.adapters.firestore_dedup_store import FirestoreDedupStore
-from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
-from src.adapters.firestore_user_repo import FirestoreUserRepository
-from src.adapters.firestore_account_repo import FirestoreAccountRepository
-from src.adapters.firestore_quota_service import FirestoreQuotaService
-from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQueue
-from src.services.iam_service import IAMService
-from src.composition.user_agent_factory import UserAgentFactory
-from src.composition.slack_adapter_factory import SlackAdapterFactory
+from src.composition.application_graph import build_application_graph
 from src.utils.logger import logger, quiet_third_party_loggers
 from src.utils.telemetry import init_telemetry
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.domain.memory_telemetry import SCOPE_WORKER_TASK
 from src.utils.memory_scope import memory_scope
-from src.services.file_upload_service import FileUploadService
-from src.composition.service_container import ServiceContainer
-from src.infrastructure.agent_coordinator import AgentCoordinator
-from src.infrastructure.agent_registry import AgentRegistry
-from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
-from src.adapters.gcp_task_queue import GcpTaskQueue
-from src.handlers.agent_worker_handler import AgentWorkerHandler
 from src.domain.cloud_task_delivery import CloudTaskDelivery
-from src.domain.agent import AgentConfig
-from src.agents.infrastructure.billing_agent import BillingAgent
-from src.agents.infrastructure.logger_agent import LoggerAgent
 from src.web.oauth_app import create_oauth_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from src.web.deep_research_webhooks import create_deep_research_webhooks_blueprint
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from src.composition.mcp_setup import build_mcp_components
-from src.services.task_setup_service import TaskSetupService
-from src.services.authentication_service import AuthenticationService
-from src.services.session_service import SessionService
-from src.services.auth_provider_registry import AuthProviderRegistry
-from src.config.auth import AuthConfig
-from src.adapters.firebase_auth_adapter import FirebaseAuthAdapter
-from src.services.google_oauth_service import GoogleOAuthService, GMAIL_SCOPES
-from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
-from src.adapters.firestore_channel_binding_adapter import FirestoreChannelBindingAdapter
-from src.adapters.notification_channel_factory import NotificationChannelFactory
-from src.services.channel_binding_service import ChannelBindingService
-from src.services.companion_window_resolver import CompanionWindowResolver
-from src.adapters.slack.media_adapter import SlackMediaAdapter
-from src.adapters.slack.response_channel import SlackResponseChannel
-from src.adapters.telegram.response_channel import TelegramResponseChannel
-from src.services.user_notification_service import UserNotificationService
-from src.infrastructure.notification_sla import NOTIFICATION_SLA
-from src.handlers.worker_handler import WorkerHandler
-from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
-from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
-from src.adapters.cloud_run_jobs_adapter import CloudRunJobsAdapter
-from src.adapters.gcs_media_adapter import GcsMediaAdapter
-from src.services.provider_registry import ProviderRegistry
 
 
 async def main():
@@ -128,754 +84,73 @@ async def main():
         # NOTE: Embedding initialization moved to UserAgentFactory.ensure_agents_for_user()
         # where repository is created with proper BiographicalContextService injection
 
-        logger.info("� Initializing Account Repository...")
-        account_repo = FirestoreAccountRepository(
-            db_client=db_client,
-            collection_name=env_config.account_collection_name
-        )
-
-        logger.info("�👤 Initializing User Repository...")
-        user_repo = FirestoreUserRepository(db_client, env_config, account_repo)
-
-        logger.info("💌 Initializing Invite Code Service...")
-        from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
-        from src.services.invite_code_service import InviteCodeService
-        
-        invite_repo = FirestoreInviteCodeRepository(db_client, env_config)
-        
-        # IAM-Centric Architecture (2026-02-05)
-        logger.info("📋 Initializing Whitelist Repository...")
-        from src.adapters.firestore_whitelist_repo import FirestoreWhitelistRepository
-        whitelist_repo = FirestoreWhitelistRepository(db_client, env_config)
-        
-        logger.info("🆔 Initializing IAM Service...")
-        iam_service = IAMService(
-            user_repo=user_repo,
-            account_repo=account_repo,
-            whitelist_repo=whitelist_repo
-        )
-        
-        logger.info("💌 Initializing Invite Code Service (with whitelist)...")
-        invite_service = InviteCodeService(
-            invite_repo,
-            user_repo,
-            account_repo,
-            whitelist_repo
-        )
-
-        logger.info("🎯 Initializing Agent Registry...")
-        agent_registry = AgentRegistry()
-        for descriptor in ALL_DESCRIPTORS:
-            agent_registry.register(descriptor)
-
-        agent_task_queue = None
-        if config.get("GOOGLE_CLOUD_PROJECT"):
-            queue_suffix = "dev" if env_config.is_development else "prod"
-            service_url = config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
-            agent_task_queue = GcpTaskQueue(
-                project_id=config["GOOGLE_CLOUD_PROJECT"],
-                location="us-central1",
-                queue_name=f"agent-tasks-{queue_suffix}",
-                service_url=service_url,
-                service_account_email=config.get("SERVICE_ACCOUNT_EMAIL"),
-            )
-            await agent_task_queue.create_queue_if_not_exists()
-            logger.info(f"📬 Agent task queue initialized: agent-tasks-{queue_suffix}")
-        else:
-            logger.info("📬 Agent task queue: disabled (no GCP project)")
-
-        # Ops alert sink — shared by the AgentCoordinator (delegation-loop alerts),
-        # AlertingLLMProxy (LLM 4xx alerts), the billing daily summary, and the daily
-        # budget alert in FirestoreQuotaService. Optional: wired only when
-        # BILLING_SLACK_WEBHOOK_URL is set. Built here because the coordinator, just
-        # below, is the earliest consumer.
-        _alert_webhook = None
-        _alert_webhook_url = os.getenv("BILLING_SLACK_WEBHOOK_URL")
-        if _alert_webhook_url:
-            from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
-            _alert_webhook = SlackWebhookAdapter(_alert_webhook_url)
-            logger.info("✅ Ops Slack webhook configured (billing + LLM client-error alerts)")
-
-        logger.info("🎯 Initializing Agent Coordinator...")
-        coordinator = AgentCoordinator(
-            registry=agent_registry,
-            task_queue=agent_task_queue,
-            alert_sink=_alert_webhook,
-        )
-
-        logger.info("🔧 Initializing Agent Worker Handler...")
-        # notification_service and media_storage wired below after they are created
-        agent_worker_handler = AgentWorkerHandler(coordinator=coordinator)
-
-        logger.info("💳 Initializing Billing Agent...")
-        quota_service = FirestoreQuotaService(account_repo, alert_sink=_alert_webhook)
-        billing_agent = BillingAgent(
-            config=AgentConfig(
-                agent_id="billing_agent",
-                agent_type="billing",
-                timeout_ms=None,
-                capabilities=["usage_tracking", "quota_management"]
-            ),
-            quota_service=quota_service
-        )
-        coordinator.register_agent(billing_agent)
-        await billing_agent.start()
-
-        logger.info("🧾 Initializing Logger Agent...")
-        log_sink = None
-        if not env_config.is_development:
-            try:
-                from src.adapters.gcp_log_sink import GcpLogSink
-                log_sink = GcpLogSink()
-            except Exception as e:
-                logger.error(f"❌ Failed to initialize GcpLogSink: {e}")
-                raise
-
-        logger_agent = LoggerAgent(
-            config=AgentConfig(
-                agent_id="logger_agent",
-                agent_type="logger",
-                timeout_ms=None,
-                capabilities=["centralized_logging", "trace_correlation"]
-            ),
-            env_config=env_config,
-            log_sink=log_sink
-        )
-        coordinator.register_agent(logger_agent)
-        await logger_agent.start()
-
-        logger.info("📦 Initializing Consolidation Queue...")
-        consolidation_queue = FirestoreConsolidationQueue(
-            db_client=db_client,
-            env_config=env_config
-        )
-
-        logger.info("🔗 Initializing Channel Binding Service...")
-        channel_binding_adapter = FirestoreChannelBindingAdapter(
-            db_client=db_client, env_config=env_config
-        )
-        channel_binding_service = ChannelBindingService(port=channel_binding_adapter)
-
-        logger.info("🧑‍🏫 Initializing Companion Window Resolver...")
-        companion_window_resolver = CompanionWindowResolver(channel_binding_service)
-
-        # Overflow routing — when a session's sliding window overflows, the batch goes
-        # either to Alek's consolidation pipeline or to a companion's extraction pipeline,
-        # decided by the channel binding (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §9 item 3:
-        # "Absorb the ad-hoc flags one at a time: ChannelBinding stateless first").
-        # Built here, not with the rest of the companion pipeline further below, because
-        # ServiceContainer's session store needs overflow_callback at construction time.
-        # companion_extraction_queue is constructed here for the same reason and reused
-        # by the companion extraction pipeline below.
-        logger.info("🌊 Initializing Overflow Routing Service...")
-        from src.adapters.firestore_companion_extraction_queue import FirestoreCompanionExtractionQueue
-        from src.services.overflow_routing_service import OverflowRoutingService
-
-        companion_extraction_queue = FirestoreCompanionExtractionQueue(db_client=db_client, env_config=env_config)
-        overflow_routing_service = OverflowRoutingService(
-            channel_binding_service=channel_binding_service,
-            user_repo=user_repo,
-            consolidation_queue=consolidation_queue,
-            companion_extraction_queue=companion_extraction_queue,
-            task_queue=agent_task_queue,
-        )
-        overflow_callback = overflow_routing_service.route_overflow
-
-        # 1. Shared service container (LLM adapters, repositories, prompt infra, session store)
-        logger.info("🏭 Initializing Service Container...")
-        container = ServiceContainer(
-            config=config,
-            db_client=db_client,
-            env_config=env_config,
-            account_repo=account_repo,
-            overflow_callback=overflow_callback,
-            threshold_resolver=companion_window_resolver.resolve,
-            alert_webhook=_alert_webhook,
-        )
-        file_service = FileUploadService(container.llm_port)
-        session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
-
-        # Long-running turns (LONG_RUNNING_TURNS_RFC) — registry + service shared by both
-        # platform adapters (status/late-answer delivery) and UserAgentFactory (Smart's
-        # running-jobs note + cancel_long_turn tool).
-        from src.adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
-        from src.services.long_turn_service import LongTurnService
-        long_turn_registry = FirestoreLongTurnRegistry(db_client, env_config.long_turns_collection)
-        long_turn_service = LongTurnService(registry=long_turn_registry, session_store=session_store)
-
-        # Wire file ref resolver into coordinator for specialist delegation
-        if container.file_conversion_service:
-            coordinator._file_ref_resolver = container.file_conversion_service.resolve_content
-
-        logger.info("🌐 Initializing Language Services...")
-        from src.adapters.file_localization_adapter import FileLocalizationAdapter
-        from src.services.language_preference_service import LanguagePreferenceService
-        from src.services.localization_service import LocalizationService as _LocalizationService
-        from src.domain.language import LanguageCode
-        _localization = _LocalizationService(FileLocalizationAdapter())
-        _system_lang = LanguageCode.from_str(
-            config.get("SYSTEM_DEFAULT_LANGUAGE", "en"), default=LanguageCode.EN
-        )
-        _language_service = LanguagePreferenceService(
-            user_repo=user_repo,
-            account_repo=account_repo,
-            profile_repo=container.profile_repo,
-            prompt_builder=container.assembly_service,
-            system_default_language=_system_lang,
-        )
-
-        # Async job adapters (Deep Research) — pure API clients, no queue logic.
-        # Per-user selection via UserBotConfig.agent_providers["deep_research"]
-        # ("claude" default, "openai" alternative). Tier → model mapping is adapter-internal.
-        # Optional model_override pins a specific model from env var, bypassing tier mapping.
-        # Gemini provider removed 2026-05-29 — see decisions/gemini_deep_research_adapter_removal.md.
-        job_registry = ProviderRegistry()
-        _openai_dr_fetch = None
-        if config.get("OPENAI_API_KEY"):
-            _openai_dr_adapter = OpenAIDeepResearchAdapter(
-                api_key=config["OPENAI_API_KEY"],
-                webhook_url=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_URL"),
-                model_override=os.getenv("OPENAI_DEEP_RESEARCH_MODEL"),
-            )
-            _openai_dr_fetch = _openai_dr_adapter.fetch_response
-            job_registry.register("openai", _openai_dr_adapter)
-            logger.info("🔬 Deep research adapter registered: provider=openai")
-        if config.get("ANTHROPIC_API_KEY") and config.get("GOOGLE_CLOUD_PROJECT"):
-            queue_suffix = "dev" if env_config.is_development else "prod"
-            cloud_jobs_adapter = CloudRunJobsAdapter(
-                project=config["GOOGLE_CLOUD_PROJECT"],
-                region="us-central1",
-            )
-            job_registry.register("claude", ClaudeDeepResearchAdapter(
-                job_runner=cloud_jobs_adapter,
-                job_name=f"alek-research-job-{queue_suffix}",
-                model_override=os.getenv("CLAUDE_DEEP_RESEARCH_MODEL"),
-            ))
-            logger.info("🔬 Deep research adapter registered: provider=claude (Cloud Run Job)")
-
-        # Image generation adapter — reuses the same XAI_API_KEY secret as GrokAdapter
-        # (LLMPort). Separate registry/adapter: ImageGenerationPort is a structurally
-        # different port (see docs/10_rfcs/IMAGE_GENERATION_RFC.md §3.6-3.7).
-        image_registry = ProviderRegistry()
-        if config.get("XAI_API_KEY"):
-            from src.adapters.grok_image_adapter import GrokImageAdapter
-            image_registry.register("grok", GrokImageAdapter(api_key=config["XAI_API_KEY"]))
-            logger.info("🎨 Image generation adapter registered: provider=grok")
-        else:
-            logger.info("ℹ️ Image generation not configured (XAI_API_KEY not set)")
-
-        # Video generation adapter — reuses the same XAI_API_KEY secret as
-        # GrokImageAdapter/GrokAdapter. Separate registry/adapter: VideoGenerationPort
-        # is a structurally different port (see
-        # docs/10_rfcs/VIDEO_GENERATION_RFC.md §3.5-3.6). Needs task_queue — the
-        # adapter enqueues the first poll tick as a side effect of submission.
-        # GrokVideoAdapter.__init__ type-hints task_queue: TaskQueue (Task 1) — the raw
-        # port, not the TaskDispatchService services/-layer wrapper (which also isn't
-        # constructed until much later in this function, after UserAgentFactory). Passing
-        # agent_task_queue (already constructed above, the actual TaskQueue implementation)
-        # both satisfies the adapter's real dependency and keeps adapters/ depending only
-        # on ports/, not services/.
-        video_registry = ProviderRegistry()
-        if config.get("XAI_API_KEY"):
-            from src.adapters.grok_video_adapter import GrokVideoAdapter
-            video_registry.register(
-                "grok", GrokVideoAdapter(api_key=config["XAI_API_KEY"], task_queue=agent_task_queue)
-            )
-            logger.info("🎬 Video generation adapter registered: provider=grok")
-        else:
-            logger.info("ℹ️ Video generation not configured (XAI_API_KEY not set)")
-
-        # GCS media adapter for HTML report uploads (optional — requires GCS_MEDIA_BUCKET).
-        # Keyless V4 signed-URL minting via IAM signBlob as the runtime's own identity
-        # (for the /f/<token> capability route); no signer email is passed in.
-        gcs_bucket = config.get("GCS_MEDIA_BUCKET", "")
-        gcs_media_adapter = (
-            GcsMediaAdapter(bucket_name=gcs_bucket)
-            if gcs_bucket else None
-        )
-
-        # File access: capability tokens + link builder for private file storage.
-        # Reuses the same HS256 secret as the Cabinet session service. Constructed
-        # here (before delivery services) so DocumentDeliveryService can mint links.
-        from src.services.file_access_token_service import FileAccessTokenService
-        from src.services.file_link_service import FileLinkService
-        _file_secret = config.get("OAUTH_SESSION_SECRET") or "dev-secret-change-in-production-must-be-32-chars-long"
-        file_token_service = FileAccessTokenService(secret_key=_file_secret)
-        file_link_service = (
-            FileLinkService(
-                token_service=file_token_service,
-                base_url=config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080",
-            )
-            if gcs_media_adapter else None
-        )
-
-        # Short links: /s/<code> alias wrapping the /f/<token> capability link,
-        # so what lands in chat is short. Firestore-backed (repo layer only —
-        # ShortLinkService owns the code-generation/collision logic).
-        from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepository
-        from src.services.short_link_service import ShortLinkService
-        short_link_service = (
-            ShortLinkService(
-                repository=FirestoreShortLinkRepository(db_client=db_client, env_config=env_config),
-                base_url=config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080",
-            )
-            if gcs_media_adapter else None
-        )
-
-        # Notification service — channel adapters (Slack, Telegram) registered later via set_* methods.
-        notification_state_repo = FirestoreNotificationStateAdapter(
-            db_client=db_client, env_config=env_config
-        )
-        notification_channel_factory = NotificationChannelFactory()  # adapters wired below
-        notification_service = UserNotificationService(
-            state_repo=notification_state_repo,
-            channel_factory=notification_channel_factory,
-            coordinator=coordinator,
-            notification_sla=NOTIFICATION_SLA,
-            session_store=session_store,
-        )
-        _language_service._notification_service = notification_service
-
-        # DocumentDeliveryService — GCS-backed, used by both async (AgentWorkerHandler)
-        # and sync (ConversationHandler) document delivery paths.
-        doc_delivery_service = None
-        if gcs_media_adapter:
-            from src.services.document_delivery_service import DocumentDeliveryService
-            doc_delivery_service = DocumentDeliveryService(
-                storage=gcs_media_adapter, link_service=file_link_service
-            )
-            logger.info("✅ DocumentDeliveryService initialized")
-        else:
-            logger.info("ℹ️ DocumentDeliveryService disabled (GCS_MEDIA_BUCKET not set)")
-
-        # Wire notification + media + task_queue + doc_delivery into AgentWorkerHandler.
-        agent_worker_handler._notification = notification_service
-        agent_worker_handler._media_storage = gcs_media_adapter
-        agent_worker_handler._task_queue = agent_task_queue
-        agent_worker_handler._doc_delivery_service = doc_delivery_service
-        agent_worker_handler._link_service = file_link_service
-        agent_worker_handler._short_link_service = short_link_service
-        # Opt-in copy of deep research reports to the user's drive (decisions/deep_research_drive_copy.md).
-        # Always wired: with no drive on this deployment, an opted-in user gets the "not connected" line.
-        from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
-        agent_worker_handler._deep_research_drive_copy = DeepResearchDriveCopyService(
-            users=user_repo,
-            drive=container.user_drive_service,
-            localization=_localization,
-            language=_language_service,
-        )
-        # Anthropic client — created once, shared by ClaudeDeepResearchRunnerAgent instances.
-        # The agent receives the client via constructor; does not import or instantiate the SDK.
-        anthropic_client = None
-        if config.get("ANTHROPIC_API_KEY"):
-            from anthropic import AsyncAnthropic
-            anthropic_client = AsyncAnthropic(api_key=config["ANTHROPIC_API_KEY"])
-
-        logger.info("🧑‍🏫 Initializing Companion Context infrastructure...")
-        from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
-        from src.adapters.firestore_companion_cache_repository import FirestoreCompanionCacheRepository
-        from src.services.search_enrichment_service import SearchEnrichmentService
-        from src.services.companion_context_assembler_service import CompanionContextAssemblerService
-        from src.domain.settings import SearchConfig
-
-        companion_memory_repo = FirestoreCompanionMemoryRepository(db_client=db_client, env_config=env_config)
-        companion_cache_repo = FirestoreCompanionCacheRepository(db_client=db_client, env_config=env_config)
-
-        _companion_search_config = SearchConfig()
-        _companion_enrichment = SearchEnrichmentService(
-            repository=container.repository,
-            embedding_service=container.embedding_service,
-            keyword_limit=_companion_search_config.DEFAULT_KEYWORD_LIMIT,
-            phrase_one_limit=_companion_search_config.DEFAULT_PHRASE_ONE_LIMIT,
-            phrase_two_limit=_companion_search_config.DEFAULT_PHRASE_TWO_LIMIT,
-            total_limit=10,
-        )
-        companion_context_assembler = CompanionContextAssemblerService(
-            companion_repo=companion_memory_repo,
-            cache_repo=companion_cache_repo,
-            embedding_service=container.embedding_service,
-            enrichment_port=_companion_enrichment,
-            fact_repo=container.repository,
-        )
-
-        # 2. Initialize UserAgentFactory — receives ports only, no adapter instantiation
-        logger.info("🏭 Initializing User Agent Factory...")
-        agent_factory = UserAgentFactory(
-            config=config,
-            env_config=env_config,
-            coordinator=coordinator,
-            user_repo=user_repo,
-            account_repo=account_repo,
-            **container.agent_services(),
-            job_registry=job_registry,
-            image_registry=image_registry,
-            video_registry=video_registry,
-            task_queue=agent_task_queue,
-            anthropic_client=anthropic_client,
-            quota_service=quota_service,
-            companion_context_assembler=companion_context_assembler,
-            notification_service=notification_service,
-            long_turn_registry=long_turn_registry,
-            localization=_localization,
-            language_service=_language_service,
-            alert_sink=_alert_webhook,
-        )
-        coordinator.set_agent_factory(agent_factory)  # Enable lazy agent instantiation
-        _language_service._ensure_agents = agent_factory.ensure_agents_for_user
-        await agent_factory.start()
-
-        logger.info("🧑‍🏫 Initializing Companion Extraction pipeline...")
-        from src.composition.companion_extractor_runner import CompanionExtractorRunner
-        from src.services.companion_extraction_service import CompanionExtractionService
-        from src.services.prompt_builder import PromptBuilder
-
-        # companion_memory_repo/companion_cache_repo constructed earlier (before
-        # UserAgentFactory), reused here — see "Initializing Companion Context infrastructure" above.
-        # companion_extraction_queue constructed earlier too (before ServiceContainer) — see
-        # "Initializing Overflow Routing Service" above.
-        # repo=None is safe: TutorExtractorAgent always calls build_for_agent() with
-        # include_biographical=False, and PromptBuilder only touches self.repo when
-        # include_biographical=True (see PromptBuilder.build_for_agent). Same pattern
-        # as ServiceContainer's _email_prompt_builder for EmailClassificationAgent.
-        companion_prompt_builder = PromptBuilder(repo=None, assembly_service=container.assembly_service)
-        companion_extractor_runner = CompanionExtractorRunner(
-            context_builder=container.context_builder,
-            user_repo=user_repo,
-            prompt_builder=companion_prompt_builder,
-            quota_service=quota_service,
-            prompt_content_store=container.prompt_content_store,
-        )
-        companion_extraction_service = CompanionExtractionService(
-            queue=companion_extraction_queue,
-            companion_repo=companion_memory_repo,
-            cache_repo=companion_cache_repo,
-            embedding_service=container.embedding_service,
-            extractor=companion_extractor_runner,
-        )
-
-        # ====================================================================
-        # Initialize OAuth + Cabinet Services (will be registered on Slack app)
-        # RFC: docs/10_rfcs/USER_INVITE_DEEP_LINK_RFC.md
-        # Note: Blueprints registered after slack_adapter creation
-        # ====================================================================
-        logger.info("🔐 Initializing OAuth + Cabinet Services...")
-        auth_config = AuthConfig(config)  # Pass config with secrets from Secret Manager
-        firebase_adapter = FirebaseAuthAdapter(
-            project_id=auth_config.firebase_project_id,
-            web_api_key=auth_config.firebase_web_api_key,
-            service_account_path=auth_config.firebase_service_account,
-            oauth_client_id=auth_config.google_oauth_client_id,
-            oauth_client_secret=auth_config.google_oauth_client_secret,
-        )
-        auth_registry = AuthProviderRegistry(providers={"firebase": firebase_adapter})
-        
-        # Services
-        auth_service = AuthenticationService(
-            auth_registry=auth_registry,
-            user_repo=user_repo,
-            account_repo=account_repo,
-            whitelist_repo=whitelist_repo,
-        )
-        session_service = SessionService(
-            secret_key=auth_config.oauth_session_secret,
-            access_token_ttl=auth_config.access_token_ttl,
-            refresh_token_ttl=auth_config.refresh_token_ttl
-        )
-
-        # Gmail OAuth (web-only service for OAuth flow, not part of indexing pipeline)
-        gmail_oauth_service = GoogleOAuthService(
-            client_id=auth_config.google_oauth_client_id,
-            client_secret=auth_config.google_oauth_client_secret,
-            scopes=GMAIL_SCOPES,
-        )
-        # Google Tasks OAuth — same flow, different scope
-        google_tasks_oauth_service = GoogleOAuthService(
-            client_id=auth_config.google_oauth_client_id,
-            client_secret=auth_config.google_oauth_client_secret,
-            scopes=["https://www.googleapis.com/auth/tasks"],
-        )
-
-        # Email adapters — reuse from ServiceContainer (no duplicate instantiation)
-        oauth_credentials_port = container.oauth_credentials
-        indexed_email_repo = container.indexed_email_repo
-        email_job_repo = container.email_job_repo
-        email_indexing_service = container.email_indexing_service
-
-        # MS To Do services — reuse adapters from ServiceContainer
-        task_setup_service = None
-        if container.ms_todo_adapter and agent_task_queue:
-            service_url = config.get("CLOUD_RUN_SERVICE_URL") or "http://localhost:8080"
-            task_setup_service = TaskSetupService(
-                lifecycle=container.ms_todo_adapter,
-                task_config=container.task_config_repo,
-                tasks_provider=container.ms_todo_adapter,
-                oauth_credentials=oauth_credentials_port,
-                task_search_index=container.task_search_index,
-                task_queue=agent_task_queue,
-                notification_url_base=service_url,
-            )
+        app = build_application_graph(config, db_client)
+        await app.start()
 
         # Create blueprints (will be registered on slack_adapter.quart_app)
         oauth_bp = create_oauth_blueprint(
-            auth_service=auth_service,
-            session_service=session_service,
-            auth_registry=auth_registry,
-            auth_config=auth_config,
-            invite_service=invite_service,
-            gmail_oauth_service=gmail_oauth_service,
-            oauth_credentials_port=oauth_credentials_port,
-            google_tasks_oauth_service=google_tasks_oauth_service,
+            auth_service=app.auth_service,
+            session_service=app.session_service,
+            auth_registry=app.auth_registry,
+            auth_config=app.auth_config,
+            invite_service=app.invite_service,
+            gmail_oauth_service=app.gmail_oauth_service,
+            oauth_credentials_port=app.container.oauth_credentials,
+            google_tasks_oauth_service=app.google_tasks_oauth_service,
             ms_todo_client_id=config.get("MICROSOFT_TODO_CLIENT_ID", ""),
             ms_todo_client_secret=config.get("MICROSOFT_TODO_CLIENT_SECRET", ""),
             ms_todo_redirect_uri=config.get("MICROSOFT_TODO_REDIRECT_URI", ""),
             onedrive_redirect_uri=config.get("ONEDRIVE_REDIRECT_URI", ""),
-            task_queue=agent_task_queue,
-        )
-
-        # Twilio Verify client for phone-binding OTP (Voice Companion RFC §4.6,
-        # Slice 1 Task 11) — same conditional-construction guard as
-        # UserAgentFactory._telephony (user_agent_factory.py ~line 208-212):
-        # optional, MVP/dev-only feature, gracefully absent when unconfigured.
-        # The Cabinet's phone-binding routes already 501 cleanly on None.
-        twilio_account_sid = config.get("TWILIO_ACCOUNT_SID")
-        twilio_auth_token = config.get("TWILIO_AUTH_TOKEN")
-        twilio_verify_service_sid = config.get("TWILIO_VERIFY_SERVICE_SID")
-        twilio_verify_client = (
-            TwilioClient(twilio_account_sid, twilio_auth_token).verify.v2.services(
-                twilio_verify_service_sid
-            )
-            if twilio_account_sid and twilio_auth_token and twilio_verify_service_sid
-            else None
+            task_queue=app.agent_task_queue,
         )
 
         cabinet_bp = create_user_cabinet_blueprint(
-            invite_service=invite_service,
-            session_service=session_service,
-            user_repo=user_repo,
-            fact_repo=container.repository,
-            embedding_service=container.embedding_service,
-            oauth_credentials_port=oauth_credentials_port,
-            gmail_oauth_service=gmail_oauth_service,
-            google_tasks_oauth_service=google_tasks_oauth_service,
-            indexed_email_repo=indexed_email_repo,
-            email_indexing_service=email_indexing_service,
-            email_job_repo=email_job_repo,
-            task_queue=agent_task_queue,
-            task_setup=task_setup_service,
-            tasks_provider=container.ms_todo_adapter,
-            language_service=_language_service,
-            agent_note_port=container.notes_adapter,
-            recurrence_port=container.recurrence_adapter,
-            twilio_verify_client=twilio_verify_client,
-            user_drive=container.user_drive,
-            drive_search_service=container.drive_search_service,
-            drive_task_queue=container.drive_task_queue,
-            drive_transcribe_switch_on=container.drive_transcribe_switch_on,
-        )
-
-        # Services for WorkerHandler — wrap ports so the handler never imports ports directly
-        from src.services.consolidation_service import ConsolidationService
-        from src.services.email_embedding_repair_service import EmailEmbeddingRepairService
-        from src.services.reminders_service import RemindersService
-        from src.services.task_dispatch_service import TaskDispatchService
-        _consolidation_service = ConsolidationService(
-            queue=consolidation_queue,
-            coordinator=coordinator,
-            agent_factory=agent_factory,
-            indexed_email_repo=indexed_email_repo,
-            user_repo=user_repo,
-        ) if consolidation_queue else None
-        _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
-        from src.domain.notification_kind import NotificationKind as _NotificationKind
-        from src.infrastructure.notification_sla import dispatch_deadline_s
-        _reminders_service = RemindersService(
-            notes_port=container.notes_adapter,
-            user_repo=user_repo,
-            task_dispatch=_task_dispatch_service,
-            recurrence=container.recurrence_adapter,
-            # Derived from NOTIFICATION_SLA here, in the composition root, because
-            # services cannot import the infrastructure layer (REQ-ARCH-22).
-            dispatch_deadline_s=dispatch_deadline_s(_NotificationKind.REMINDER),
-        ) if (container.notes_adapter and _task_dispatch_service) else None
-        _email_embedding_repair_service = EmailEmbeddingRepairService(
-            email_repo=indexed_email_repo,
-            embedding=container.embedding_service,
-        ) if (indexed_email_repo and container.embedding_service) else None
-
-        # AgentFallbackService: Smart (FAILED/TIMEOUT) → Quick → synthetic apology.
-        # Built once here (composition root) and injected into ConversationHandler —
-        # it no longer assembles its own fallback service from raw parts (that was a
-        # handlers/ layer doing composition/'s job). The two-phase timeout retry
-        # (SmartRetryService) was retired 2026-10-05 — see LONG_RUNNING_TURNS_RFC §5.9.
-        from src.services.agent_fallback_service import AgentFallbackService
-
-        _fallback_service = AgentFallbackService(
-            coordinator=coordinator,
-            alert_webhook=_alert_webhook,
-        )
-
-        # Drive index fan-out (USER_DRIVE_INDEXING_RFC §7.1, §12.1; RFC Δ5, Δ6). Built only when the
-        # drive queue exists (DRIVE_INDEXER_URL set): its ticks run on the indexer service.
-        _drive_sync_scheduler = None
-        if container.drive_task_queue and container.drive_index_repo and container.user_drive:
-            from src.composition.drive_indexing_setup import build_drive_sync_scheduler
-            _drive_sync_scheduler = build_drive_sync_scheduler(
-                repo=container.drive_index_repo,
-                queue=container.drive_task_queue,
-                drive=container.user_drive,
-                users=user_repo,
-                oauth_credentials=oauth_credentials_port,
-                notifier=notification_service,
-                alert_sink=_alert_webhook,
-                ensure_agents=agent_factory.ensure_agents_for_user,
-                localization=_localization,
-                language=_language_service,
-            )
-
-        # Worker handler — dispatches Cloud Tasks to appropriate handlers
-        # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
-        # from running twice; a claim whose attempt died is taken over by the retry.
-        # TTL 3600s is garbage collection and the done-window, not the liveness rule.
-        worker_handler = WorkerHandler(
-            task_claims=FirestoreTaskClaimStore(
-                db_client=db_client,
-                collection_name=env_config.worker_task_dedup_collection,
-                ttl_seconds=3600,
-            ),
-            # One review per user per local date; 48 h outlives the 3 h window and the date edge.
-            daily_review_marks=FirestoreDedupStore(
-                db_client=db_client,
-                collection_name=env_config.worker_task_dedup_collection,
-                ttl_seconds=172800,
-            ),
-            agent_worker_handler=agent_worker_handler,
-            email_indexing_service=email_indexing_service,
-            notification_service=notification_service,
-            consolidation_service=_consolidation_service,
-            coordinator=coordinator,
-            agent_factory=agent_factory,
-            indexed_email_repo=indexed_email_repo,
-            user_repo=user_repo,
-            task_dispatch=_task_dispatch_service,
-            video_registry=video_registry,
-            quota_service=quota_service,
-            media_storage=gcs_media_adapter,
-            task_setup=task_setup_service,
-            task_indexing=container.task_indexing,
-            reminders_service=_reminders_service,
-            notes_port=container.notes_adapter,
-            email_review=container.email_review_service,
-            account_repo=account_repo,
-            billing_webhook=_alert_webhook,
-            email_embedding_repair=_email_embedding_repair_service,
-            link_service=file_link_service,
-            short_link_service=short_link_service,
-            companion_extraction=companion_extraction_service,
-            oauth_credentials=oauth_credentials_port,
-            drive_sync_scheduler=_drive_sync_scheduler,
-            deep_research_fetch=_openai_dr_fetch,
-            prompt_content_store=container.prompt_content_store,
+            invite_service=app.invite_service,
+            session_service=app.session_service,
+            user_repo=app.user_repo,
+            fact_repo=app.container.repository,
+            embedding_service=app.container.embedding_service,
+            oauth_credentials_port=app.container.oauth_credentials,
+            gmail_oauth_service=app.gmail_oauth_service,
+            google_tasks_oauth_service=app.google_tasks_oauth_service,
+            indexed_email_repo=app.container.indexed_email_repo,
+            email_indexing_service=app.container.email_indexing_service,
+            email_job_repo=app.container.email_job_repo,
+            task_queue=app.agent_task_queue,
+            task_setup=app.task_setup_service,
+            tasks_provider=app.container.ms_todo_adapter,
+            language_service=app.language_service,
+            agent_note_port=app.container.notes_adapter,
+            recurrence_port=app.container.recurrence_adapter,
+            twilio_verify_client=app.twilio_verify_client,
+            user_drive=app.container.user_drive,
+            drive_search_service=app.container.drive_search_service,
+            drive_task_queue=app.container.drive_task_queue,
+            drive_transcribe_switch_on=app.container.drive_transcribe_switch_on,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(
             webhook_secret=config.get("OPENAI_DEEP_RESEARCH_WEBHOOK_SECRET"),
-            task_queue=_task_dispatch_service,
-            fetch_response=_openai_dr_fetch,
-            # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
-            dedup_store=FirestoreDedupStore(
-                db_client=db_client,
-                collection_name=env_config.worker_task_dedup_collection,
-                ttl_seconds=259200,
-            ),
+            task_queue=app.task_dispatch,
+            fetch_response=app.deep_research_fetch,
+            dedup_store=app.deep_research_dedup_store,
         )
 
         ms_tasks_webhook_bp = create_microsoft_tasks_webhook_blueprint(
-            task_indexing=container.task_indexing,
-            task_setup=task_setup_service,
+            task_indexing=app.container.task_indexing,
+            task_setup=app.task_setup_service,
             webhook_secret=config.get("MICROSOFT_TASKS_WEBHOOK_SECRET"),
         )
-
         logger.info("✅ OAuth + Cabinet services initialized")
 
     except Exception as e:
-        logger.error(f"❌ Infrastructure Initialization Error: {e}")
+        logger.error(f"❌ Infrastructure Initialization Error: {e}", exc_info=True)
         sys.exit(1)
 
     try:
-        # HTML renderer (optional — lazy-starts Chromium on first widget request)
-        html_renderer = None
-        if config.get("ENABLE_HTML_RENDERER"):
-            from src.adapters.playwright_html_renderer import PlaywrightHtmlRenderer
-            html_renderer = PlaywrightHtmlRenderer()
-            logger.info("✅ HTML renderer (Playwright) enabled")
-        else:
-            logger.info("ℹ️ HTML renderer disabled (ENABLE_HTML_RENDERER not set)")
-
-        # Audio transcription (optional — voice messages stay an honest alert without it)
-        audio_service = None
-        if config.get("OPENAI_API_KEY"):
-            from src.adapters.openai_transcription_adapter import OpenAITranscriptionAdapter
-            audio_service = OpenAITranscriptionAdapter(
-                api_key=config["OPENAI_API_KEY"],
-                model=os.getenv("OPENAI_TRANSCRIPTION_MODEL"),
-            )
-        else:
-            logger.info("ℹ️ Audio transcription disabled (OPENAI_API_KEY not set)")
-
-        logger.info("🔌 Initializing Slack Adapter...")
-
-        bot_token = config["SLACK_BOT_TOKEN"]
-
-        logger.debug(f"Bot token starts with: {bot_token[:10]}...")
-
-        logger.debug("Creating AsyncApp...")
-        app = AsyncApp(token=bot_token)
-        logger.debug("AsyncApp created successfully")
-
-        slack_adapter = SlackAdapterFactory.create_adapter(
-            app=app,
-            config=config,
-            env_config=env_config,
-            coordinator=coordinator,
-            agent_factory=agent_factory,
-            iam_service=iam_service,
-            file_service=file_service,
-            session_store=session_store,
-            db_client=db_client,
-            consolidation_queue=consolidation_queue,
-            consolidation_config=config.get("CONSOLIDATION"),
-            audio_service=audio_service,
-            html_renderer=html_renderer,
-            notification_service=notification_service,
-            indexed_email_repo=container.indexed_email_repo,
-            user_repo=user_repo,
-            language_service=_language_service,
-            localization=_localization,
-            file_conversion_service=container.file_conversion_service,
-            channel_binding_service=channel_binding_service,
-            fallback_service=_fallback_service,
-            short_link_service=short_link_service,
-            skill_service=container.skill_service,
-            memory_fact_service=container.memory_fact_service,
-            long_turn_service=long_turn_service,
-        )
-        worker_handler.attach_slack_worker(slack_adapter.handle_queued_event)
-        notification_channel_factory.register_factory(
-            "slack",
-            lambda channel_id: SlackResponseChannel(
-                app_client=slack_adapter.app.client,
-                channel_id=channel_id,
-                bot_token=slack_adapter.slack_bot_token,
-            ),
-        )
-
-        # Wire Slack media adapter into notification service for async file delivery (DOCX).
-        notification_service.register_platform_media("slack", SlackMediaAdapter(
-            app_client=slack_adapter.app.client,
-            bot_token=config.get("SLACK_BOT_TOKEN", ""),
-        ))
-
-        slack_adapter.register_handlers()
+        slack_adapter = app.slack_adapter
+        telegram_adapter = app.telegram_adapter
+        worker_handler = app.worker_handler
 
         # ====================================================================
         # PHASE 0.5.1: Shared Quart App with Blueprint Pattern
@@ -904,22 +179,22 @@ async def main():
                 main_app.register_blueprint(ms_tasks_webhook_bp)
 
                 # /f/<token> capability route for private file access
-                if gcs_media_adapter:
+                if app.media_storage:
                     from src.web.file_access_app import create_file_access_blueprint
                     main_app.register_blueprint(
                         create_file_access_blueprint(
-                            token_service=file_token_service,
-                            media_storage=gcs_media_adapter,
-                            session_service=session_service,
+                            token_service=app.file_token_service,
+                            media_storage=app.media_storage,
+                            session_service=app.session_service,
                         )
                     )
                     logger.info("✅ File access blueprint registered at /f/<token>")
 
                 # /s/<code> short-link redirect, wraps /f/<token> for shorter chat links
-                if short_link_service:
+                if app.short_link_service:
                     from src.web.short_link_app import create_short_link_blueprint
                     main_app.register_blueprint(
-                        create_short_link_blueprint(short_links=short_link_service)
+                        create_short_link_blueprint(short_links=app.short_link_service)
                     )
                     logger.info("✅ Short link blueprint registered at /s/<code>")
 
@@ -964,14 +239,14 @@ async def main():
 
                 async def _voice_summary_consumer(*, call_id, user_id, account_id, transcript_text, turns):
                     # LelikSummarizerAgent-backed consumer (Task 15). Reuses
-                    # companion_extractor_runner (constructed above, "Initializing
-                    # Companion Extraction pipeline") the same way tutor batches do,
+                    # companion_extractor_runner (built by build_application_graph,
+                    # "Initializing Companion Extraction pipeline") the same way tutor batches do,
                     # just with companion_type="voice" — turns are already
                     # {"request_text", "response_text", ...} dicts (see
                     # HttpCallControlPlaneAdapter.submit_transcript), the same
                     # List[dict] shape CompanionExtractorRunner.extract() expects,
                     # so no reshaping is needed before handing them over.
-                    extraction = await companion_extractor_runner.extract(
+                    extraction = await app.companion_extractor_runner.extract(
                         companion_type="voice",
                         account_id=account_id,
                         created_by_user_id=user_id,
@@ -982,7 +257,7 @@ async def main():
                         logger.warning(f"voice call {call_id}: summarizer returned an empty summary, nothing to deliver")
                         return
                     from src.domain.voice_call_note import call_event_from_turns
-                    profile = await user_repo.get_user(user_id)
+                    profile = await app.user_repo.get_user(user_id)
                     try:
                         kind_record = await voice_ephemeral_store.get(f"voice_call_kind:{call_id}")
                         call_kind = (kind_record or {}).get("call_kind", "phone")
@@ -992,7 +267,7 @@ async def main():
                         # default header and keep delivering.
                         logger.warning(f"voice call {call_id}: failed to read call kind, defaulting to phone", exc_info=True)
                         call_kind = "phone"
-                    await notification_service.notify_call_summary(
+                    await app.notification_service.notify_call_summary(
                         user_id, account_id, summary,
                         call_event=call_event_from_turns(
                             turns, profile.config.timezone if profile else "UTC", call_kind=call_kind
@@ -1008,13 +283,13 @@ async def main():
                     from src.domain.language import LanguageCode
                     if failed:
                         try:
-                            lang = await _language_service.resolve_ui_language(user_id)
+                            lang = await app.language_service.resolve_ui_language(user_id)
                         except Exception:
                             # The line still goes out, in English, rather than being lost.
                             logger.warning(f"voice late answer: UI language lookup failed for {user_id}", exc_info=True)
                             lang = LanguageCode.EN
-                        output = _localization.get_ui_string(lang, UIMessage.VOICE_REQUEST_FAILED)
-                    await notification_service.notify_raw(user_id, account_id, late_answer_text(request, output))
+                        output = app.localization.get_ui_string(lang, UIMessage.VOICE_REQUEST_FAILED)
+                    await app.notification_service.notify_raw(user_id, account_id, late_answer_text(request, output))
 
                 from urllib.parse import urlsplit
                 _relay_parts = urlsplit(config.get("VOICE_RELAY_STREAM_URL", ""))
@@ -1033,15 +308,15 @@ async def main():
                 main_app.register_blueprint(
                     create_voice_control_plane_blueprint(
                         ephemeral_store=voice_ephemeral_store,
-                        quota_service=quota_service,
-                        prompt_content_store=container.prompt_content_store,
+                        quota_service=app.quota_service,
+                        prompt_content_store=app.container.prompt_content_store,
                         summary_consumer=_voice_summary_consumer,
                         oidc_verifier=_voice_oidc_verifier,
                         # A summary-pipeline failure is otherwise completely
                         # silent: the call completes, usage is billed, and
                         # nothing reaches chat or memory.
-                        alert_sink=_alert_webhook,
-                        lelik_agent_provider=agent_factory.get_lelik,
+                        alert_sink=app.alert_sink,
+                        lelik_agent_provider=app.agent_factory.get_lelik,
                         late_answer_sink=_voice_late_answer_sink,
                         relay_warmup=_relay_warmup if _relay_http_url else None,
                     )
@@ -1057,16 +332,16 @@ async def main():
                 # Task 10's review). Reuses voice_ephemeral_store minted just above
                 # (same ticket/one-call-marker store the control plane reads/releases,
                 # not a second FirestoreEphemeralStore instance) plus other
-                # already-constructed instances: user_repo, _alert_webhook,
+                # already-constructed instances: user_repo, the alert sink,
                 # notification_service, agent_factory.
 
                 main_app.register_blueprint(
                     create_voice_webhook_blueprint(
-                        user_repository=user_repo,
+                        user_repository=app.user_repo,
                         ephemeral_store=voice_ephemeral_store,
-                        alert_sink=_alert_webhook,
-                        notification_service=notification_service,
-                        lelik_agent_provider=agent_factory.get_lelik,
+                        alert_sink=app.alert_sink,
+                        notification_service=app.notification_service,
+                        lelik_agent_provider=app.agent_factory.get_lelik,
                         answer_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/voice/answer",
                         signature_verifier=_voice_twilio_signature_verifier,
                         relay_stream_url=config.get("VOICE_RELAY_STREAM_URL", ""),
@@ -1082,7 +357,7 @@ async def main():
                 # above. MVP/dev-only like the rest of Voice Companion: skipped (not a boot
                 # failure) when either the Cloudflare app credentials or the relay's own
                 # wss:// URL isn't configured, so the app boots exactly as before this feature
-                # existed. `_alert_webhook` is passed through unguarded, the same risk the
+                # existed. `app.alert_sink` is passed through unguarded, the same risk the
                 # Twilio webhook blueprint just above already carries: with no alert webhook
                 # configured it is None, and a failed `VoiceCallSetupService.prepare` releases
                 # the ticket and marker first, then crashes on `None.post` — the request ends in
@@ -1096,8 +371,8 @@ async def main():
 
                     relay_parts = urlsplit(config.get("VOICE_RELAY_STREAM_URL", ""))
                     main_app.register_blueprint(create_voice_web_call_blueprint(
-                        session_service=session_service,
-                        call_setup=VoiceCallSetupService(voice_ephemeral_store, _alert_webhook, agent_factory.get_lelik),
+                        session_service=app.session_service,
+                        call_setup=VoiceCallSetupService(voice_ephemeral_store, app.alert_sink, app.agent_factory.get_lelik),
                         media_room=CloudflareSfuAdapter(config["CLOUDFLARE_SFU_APP_ID"], config["CLOUDFLARE_SFU_APP_SECRET"]),
                         ephemeral_store=voice_ephemeral_store,
                         relay_base_url=f"{relay_parts.scheme}://{relay_parts.netloc}",
@@ -1111,91 +386,15 @@ async def main():
                         "CLOUDFLARE_SFU_APP_SECRET/VOICE_RELAY_STREAM_URL not fully configured"
                     )
 
-                # ====================================================================
-                # PHASE 3: Telegram Integration (Optional)
-                # Initialize Telegram adapter if configured
-                # ====================================================================
-                from src.config.environment import validate_telegram_config
-                telegram_config = validate_telegram_config()
-                telegram_adapter = None
-
-                if telegram_config:
-                    logger.info("🤖 Initializing Telegram adapter...")
+                # Telegram adapter (built by the application graph when configured): its blueprint goes on the shared app.
+                if telegram_adapter is not None:
                     try:
-                        from src.adapters.platform.factory import PlatformAdapterFactory
-                        from src.composition.telegram_adapter_factory import TelegramAdapterFactory
-
-                        # Initialize dedup store for Telegram
-                        dedup_store = FirestoreDedupStore(
-                            db_client=db_client,
-                            collection_name=env_config.event_dedup_collection
-                        )
-
-                        # Create adapter via factory (wires RichContentService + html_renderer)
-                        telegram_adapter = TelegramAdapterFactory.create_adapter(
-                            token=telegram_config["token"],
-                            webhook_secret=telegram_config["webhook_secret"],
-                            dedup_store=dedup_store,
-                            session_store=session_store,
-                            coordinator=coordinator,
-                            agent_factory=agent_factory,
-                            iam_service=iam_service,
-                            file_service=file_service,
-                            consolidation_queue=consolidation_queue,
-                            consolidation_config=config.get("CONSOLIDATION"),
-                            audio_service=audio_service,
-                            html_renderer=html_renderer,
-                            notification_service=notification_service,
-                            indexed_email_repo=container.indexed_email_repo,
-                            user_repo=user_repo,
-                            language_service=_language_service,
-                            localization=_localization,
-                            file_conversion_service=container.file_conversion_service,
-                            fallback_service=_fallback_service,
-                            short_link_service=short_link_service,
-                            skill_service=container.skill_service,
-                            memory_fact_service=container.memory_fact_service,
-                            task_queue=agent_task_queue,
-                            long_turn_service=long_turn_service,
-                        )
-                        worker_handler.attach_telegram_worker(telegram_adapter.handle_queued_update)
-                        def _make_telegram_channel(adapter, channel_id):
-                            try:
-                                return TelegramResponseChannel(
-                                    bot=adapter.bot,
-                                    chat_id=int(channel_id),
-                                )
-                            except (ValueError, TypeError) as e:
-                                logger.error(
-                                    f"[NotificationFactory] Invalid Telegram chat_id "
-                                    f"'{channel_id}': {e}"
-                                )
-                                return None
-
-                        notification_channel_factory.register_factory(
-                            "telegram",
-                            lambda channel_id: _make_telegram_channel(
-                                telegram_adapter, channel_id
-                            ),
-                        )
-                        # File delivery to a Telegram chat (notify_file_bytes picks the port by platform)
-                        from src.adapters.telegram.media_adapter import TelegramMediaAdapter
-                        notification_service.register_platform_media(
-                            "telegram", TelegramMediaAdapter(bot=telegram_adapter.bot))
-
-                        # Register Telegram blueprint
                         telegram_bp = telegram_adapter.get_blueprint()
                         main_app.register_blueprint(telegram_bp, url_prefix="/telegram")
-
-                        # Register in factory
-                        PlatformAdapterFactory.register("telegram", telegram_adapter)
-
                         logger.info("✅ Telegram adapter registered at /telegram/webhook")
                     except Exception as e:
                         logger.error(f"❌ Failed to initialize Telegram adapter: {e}", exc_info=True)
                         logger.warning("🤖 Bot will continue without Telegram support")
-                else:
-                    logger.info("ℹ️ Telegram not configured (TELEGRAM_BOT_TOKEN not set)")
                 
                 # Add CORS headers for web UI
                 _ALLOWED_ORIGINS = {
@@ -1218,7 +417,7 @@ async def main():
                 
                 # Public landing at `/` (signed-in owner → /cabinet), /og.png, /robots.txt
                 from src.web.landing_app import create_landing_blueprint
-                main_app.register_blueprint(create_landing_blueprint(session_service))
+                main_app.register_blueprint(create_landing_blueprint(app.session_service))
 
                 # Add health endpoint
                 @main_app.route("/health", methods=["GET"])
@@ -1288,8 +487,8 @@ async def main():
                     from src.domain.settings import SearchConfig
                     _mcp_search_config = SearchConfig()
                     mcp_search_enrichment = SearchEnrichmentService(
-                        repository=container.repository,
-                        embedding_service=container.embedding_service,
+                        repository=app.container.repository,
+                        embedding_service=app.container.embedding_service,
                         keyword_limit=_mcp_search_config.DEFAULT_KEYWORD_LIMIT,
                         phrase_one_limit=_mcp_search_config.DEFAULT_PHRASE_ONE_LIMIT,
                         phrase_two_limit=_mcp_search_config.DEFAULT_PHRASE_TWO_LIMIT,
@@ -1298,7 +497,7 @@ async def main():
                     mcp_components = build_mcp_components(
                         db_client=db_client,
                         env_config=env_config,
-                        auth_config=auth_config,
+                        auth_config=app.auth_config,
                         search_enrichment_service=mcp_search_enrichment,
                     )
                     # Consent blueprint is built in main.py (not in
@@ -1307,7 +506,7 @@ async def main():
                     # built by build_mcp_components into the factory.
                     mcp_consent_bp = build_mcp_consent_blueprint(
                         mcp_service=mcp_components.authorization_service,
-                        session_service=session_service,
+                        session_service=app.session_service,
                     )
                     main_app.register_blueprint(mcp_consent_bp)
                     logger.info("✅ MCP connector initialized (/mcp + /mcp/consent)")
@@ -1421,14 +620,7 @@ async def main():
                     pass
 
         # Drain in-flight background tasks before exit
-        logger.info("🛑 Draining background tasks...")
-        if session_store._pending_tasks:
-            await asyncio.gather(*list(session_store._pending_tasks), return_exceptions=True)
-        await agent_factory.shutdown()
-        await billing_agent.shutdown()
-        await logger_agent.shutdown()
-        if html_renderer:
-            await html_renderer.stop()
+        await app.shutdown()
         if memory_telemetry:
             await memory_telemetry.stop()
         logger.info("✅ Graceful shutdown complete")

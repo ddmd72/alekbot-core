@@ -78,7 +78,7 @@ ACP v1 had SmartAgent hardcoding tool schemas per specialist (tight coupling). A
 - **AgentCoordinator** adds `handle_delegation()` — translates the generic tool call into a concrete AgentMessage routed to the right specialist.
 - **ExecutionMode:** SYNC (search queries, inline result) or ASYNC (long tasks, Cloud Tasks + callback).
 
-Adding a new agent = register `AgentDescriptor` in `main.py` + add entry to `PROTOCOL_SMART_AGENT_SELECTION` Firestore token. Zero agent code changes.
+Adding a new agent = declare the `AgentDescriptor` in `agent_manifest.py` (registered by `build_application_graph`) + add entry to `PROTOCOL_SMART_AGENT_SELECTION` Firestore token. Zero agent code changes.
 
 See: [Agent Registry Building Block](../agent_registry/README.md) for full details.
 

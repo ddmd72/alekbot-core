@@ -19,7 +19,7 @@ AgentDescriptor instances:
     type-level identifier — coordinator never routes TO orchestrators via registry.
 
 ALL_DESCRIPTORS:
-    Specialist descriptors imported by main.py and registered into AgentRegistry at startup.
+    Specialist descriptors imported by build_application_graph and registered into AgentRegistry at startup.
     Orchestrator descriptors are NOT in ALL_DESCRIPTORS — they are not registered in the
     registry (coordinators route to them directly by agent_id, not via intent lookup).
 

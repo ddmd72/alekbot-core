@@ -85,6 +85,7 @@ class WebSearchAgent(BaseAgent):
         user_id: Optional[str] = None
     ):
         super().__init__(config)
+        self._set_execution_context(execution_context)
         self.execution_context = execution_context
         self._llm = execution_context.provider
         self.model_name = execution_context.model_name

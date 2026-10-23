@@ -157,7 +157,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     `AgentProviderStrategy.STRATEGIES`; any FAILOVER-triggering error (a Grok timeout at 420s)
     raised `BothProvidersUnavailableError` straight away. Fixed by calling
     `_set_execution_context()` in all four constructors, mirroring the pattern NotesAgent already
-    used. See `decisions/html_page_fallback_context_wiring.md`.
+    used. See `decisions/html_page_fallback_context_wiring.md` (addendum 2026-10-23: five more agents wired,
+    `ConsolidationAgent` and `TutorExtractorAgent` get no fallback by owner ruling; `test_agents_set_execution_context.py` guards the class).
   - **Recitation handling is Gemini-specific.** `_call_llm_recitation_aware` retries an empty-200
     block; only `GeminiAdapter` maps `finish_reason`, so on Grok the retry never fires. Probed
     2026-08-15: xAI refuses verbatim-reproduction with `status='completed'` and refusal **text**,
@@ -272,7 +273,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   - **Two independent provider axes, one resolved name.** Text-LLM step: standard
     `AgentProviderStrategy`/`ProviderRegistry[LLMPort]` path (`agent_type="image_generation"`).
     Pixel-rendering step: a separate `ProviderRegistry[ImageGenerationPort]` (`image_registry`, wired
-    in `main.py`), resolved via `AgentContextBuilder.resolve_image_generation_context()`. Both axes
+    in `build_application_graph`), resolved via `AgentContextBuilder.resolve_image_generation_context()`. Both axes
     read the same resolved provider name, so a future per-user override switches text-crafting and
     pixel-rendering together. `allowed_providers: ["grok"]`, no fallback (RFC §6 decision #8) —
     `GrokImageAdapter` is the only registered implementation today.
@@ -400,9 +401,12 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     ["lelik_summarizer"]` — end-of-call summarization is mechanical bulk work, not
     `tutor_extractor`'s judgment call. The pin is load-bearing precisely *because* the agent is not
     manifest-registered: `test_every_llm_agent_has_a_default_tier` cannot see it, so without the
-    entry it would silently fall through to the user's `default_tier`. There is **no
-    `AgentProviderStrategy.STRATEGIES["lelik_summarizer"]`** either, so provider resolution falls back
-    to `STRATEGIES["quick"]` (`agent_context_builder.py:206`).
+    entry it would silently fall through to the user's `default_tier`.
+    **Provider: `STRATEGIES["lelik_summarizer"]`, quick's providers (claude default) with `fallback: None`** —
+    a conscious trade-off (owner, 2026-10-23, P9 D8): when the provider fails, the call note is lost rather than
+    written by a second model. Call notes are rarely critical, a second summarizer would need its own prompt and
+    quality work, and the failure is loud: `/voice/submit-transcript` logs it and posts an ops alert ("end-of-call
+    summary failed"); there is no retry. Until then it had no entry and inherited quick's claude → gemini.
 - AlekGatewayAgent (`alek_gateway_agent.py`, `agent_type="alek"`, **`internal=True`**, `eager=False`,
   intent `ask_alek`) — Alek as a specialist behind a zero-LLM gateway (RFC §4.7), named only by
   `LELIK.allowed_intents` (see the registry rule below — an internal intent an explicit allowlist
@@ -467,7 +471,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `decisions/delegate_tool_contract_and_strict.md`. `eager: bool` (default True): eager → created in `ensure_agents_for_user()`;
   lazy (`eager=False`) → created on first delegation via `AgentFactoryPort.create_agent_on_demand()`
   (DocGenerator/DocPlanner/Pdf/Html/DeepResearch/ClaudeDeepResearchRunner/FileManagement). Specialists
-  registered via `ALL_DESCRIPTORS` in `main.py`; orchestrators set a class-level `_descriptor`
+  registered via `ALL_DESCRIPTORS` in `build_application_graph`; orchestrators set a class-level `_descriptor`
   (coordinator never routes TO them via registry).
   **Registry rule (2026-09-23):** `internal=True` means "not offered by default" — excluded from
   `get_available_intents()` and from `get_available_intents_for(d)` when `d.allowed_intents is None`.
