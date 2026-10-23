@@ -316,14 +316,15 @@ class TestQuickResponseAgentErrorHandling:
 
     @pytest.mark.asyncio
     async def test_execute_handles_empty_response(self, quick_agent, mock_llm_port):
-        """Should handle empty LLM response."""
+        """An empty LLM response is a failure, not a silent success (owner decision 2026-10-23)."""
         mock_llm_port.generate_content.return_value = MockLLMResponse(text="")
         message = create_query_message("Hello")
         
         response = await quick_agent.execute(message)
         
-        assert response.status == AgentStatus.SUCCESS
-        assert response.result.text == ""
+        assert response.status == AgentStatus.FAILED
+        assert response.error == "empty_answer"
+        assert response.result is None
 
 
 # ============================================================================
@@ -372,13 +373,15 @@ class TestQuickResponseAgentSanitization:
 
     @pytest.mark.asyncio
     async def test_sanitize_handles_only_tool_code(self, quick_agent, mock_llm_port):
-        """Should return empty string if response is just 'tool_code'."""
+        """A bare 'tool_code' answer sanitises to nothing, so the turn is an empty-answer failure."""
         mock_llm_port.generate_content.return_value = MockLLMResponse(text="tool_code")
         message = create_query_message("Hello")
         
         response = await quick_agent.execute(message)
         
-        assert response.result.text == ""
+        assert response.status == AgentStatus.FAILED
+        assert response.error == "empty_answer"
+        assert response.result is None
 
     def test_sanitize_preserves_normal_text(self, quick_agent):
         """Sanitization should preserve normal text."""
