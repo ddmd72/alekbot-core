@@ -203,8 +203,10 @@ the live one (a lineage whose last document was merged away has none). Two kinds
   `temporal_class`, `state` and `reported_date` updates do not refuse; they re-resolve and apply to the newer version.
   Two calls of one turn on the same fact therefore settle in the store, across processes. A content change and an
   archive of one fact in one turn: the archive has no embedding to wait for, so it normally commits first and the
-  content call then fails with "fact X is archived". Two content (or two tags) changes: the first applies, the later
-  one is refused ("changed concurrently; search again") and the model must search again.
+  content call then fails with "fact X is archived". Two content (or two tags) changes gathered in one turn, both
+  reading the same version: the first applies, the later one is refused ("changed concurrently; search again") and the
+  model must search again. A **later call that still sends the old id** is not refused: it is forwarded to the current
+  version and applied over it, with `resolved_from`.
 - **A merge is one transaction.** `merge_facts` resolves every source forward, builds the merged fact (new id, new
   lineage, three vectors) and then, in one transaction, creates it and closes every source with
   `superseded_by` = the merged id (`fact_management_adapter.py:386-427`, `firestore_repo.py:562-587`). A failure writes
@@ -663,7 +665,7 @@ page sent, not the version that was invalidated.
 **Today's behaviour when the fact was rewritten meanwhile (open owner decision).** If the consolidator rewrote the fact
 after the page loaded (a content change, so the id moved on), the delete lands on the **new version** the owner never
 saw, and the page says "Fact deleted" and removes the row it showed. That includes the case where the row was the
-subject of the owner's own "Correct" request that has just been applied: the correction is gone from memory and nothing
+subject of the owner's own correction (the Cabinet's "Edit" button, modal "Correct Fact", which drafts a correction request for the chat) that has just been applied: the correction is gone from memory and nothing
 says so. A proposal is waiting for the owner (refuse with the 409 below when the text changed, so the owner sees the new
 text first); until it is decided, the behaviour above stands (RFC "S2 as built").
 
@@ -738,7 +740,7 @@ service the command only enqueues.
 | Stage 3 raises, or runs past its share of the budget | caught in `_handle_consolidate_full`: one ERROR line (`Stage 3 (email) failed` / `timed out`); with under 30 s of budget left it is skipped with an INFO line (`consolidation_agent.py:658-698`) | Stage 1–2b writes stand | **succeeds and is deleted** | no: the emails stay unconsolidated and the next run picks them up |
 | batch `failed` (3 attempts or lost runs) | the per-task path never revives it (it only resets zombies), so a newer batch is taken next (`get_pending_batches` selects `pending` / `retry_pending` only). The hourly sweep revives it: `retry_pending`, attempts 0, `revivals` +1, at most 3 revivals (`firestore_consolidation_queue.py:111-202`). If the round after the 3rd revival fails too, the service (or the queue, for lost runs) logs one `❌ [Librarian] CONSOLIDATION_GAVE_UP batch_id=… user_id=<8> revivals=3 messages=n` and the batch stays `failed` in the queue with its messages; nothing revives it again (the owner decides) | each run pays for the stages that ran before the failure; at most 12 runs in a batch's life (4 rounds × 3) | bounded: 12 runs, then given up | yes, up to the cap |
 | worker crashes mid-batch | batch stays `processing`, the lease is not released, and **no cache refresh happens** (the `finally` of §3 step 9 does not run when the instance dies, so the baseline keeps the replaced version's id and text until the retried run ends) | partial writes stand | the next tasks of that account defer every 120 s (§3 step 3) until the lease expires (at most 16 min after it was taken); the winner then resets the batch (older than 60 s) to `retry_pending` with attempts + 1 and runs it. Without a lease (the sweep) the threshold is 1800 s. A batch that kills its worker three times is `failed` (then the sweep's bounded revivals; 12 runs in all) instead of looping | yes, but only if a task arrives to defer: Cloud Tasks retries the killed request (the queue's retry settings), a new overflow comes, or the hourly sweep |
-| internal error inside a batch (a store or queue error, not an agent failure) | logged `Unhandled error in batch processing` and swallowed; `$consolidate` reports "A batch failed and stays queued" | writes so far stand | stays as it was (`pending`, or `processing` if the error came after the mark: then a zombie later) | the next task continues the chain only if the broken batch is no longer `pending` and another batch waits; otherwise the hourly sweep |
+| internal error inside a batch (a store or queue error, not an agent failure) | logged `Unhandled error in batch processing` and swallowed; `$consolidate` reports "A batch failed and stays queued" | writes so far stand | stays as it was (`pending`, or `processing` if the error came after the mark: then a zombie later) | the next task continues the chain only if the broken batch is no longer `pending` and another batch waits; otherwise the hourly sweep. **Known residual:** an error after the agent has finished (for example a failed `delete_batch`) leaves the batch `processing`, so it re-runs as a zombie (attempts + 1) although its facts are already written |
 | baseline refresh fails | logged, swallowed (`firestore_repo.py:775-779`) | stored | succeeds | old baseline until the next run |
 | enqueue of the batch fails at overflow | logged `Error in overflow routing` (`overflow_routing_service.py:64-69`) | — | **lost**: the messages were already cut from the session | no |
 | batch stored but the Cloud Task enqueue fails | logged | — | waits in the queue | the hourly sweep |
@@ -973,12 +975,22 @@ not damage done by S2:
 - an old-revision Cabinet delete from a page loaded before a version write updates the closed document
   (`state=invalidated`, `is_current=true`, `superseded_by` kept): `lineage_multiple_current`, `superseded_by_on_open_doc`
   and `lineage_open_below_highest_version`. The owner's delete did not apply and the current version is still shown;
-  delete the fact again in the Cabinet (the new route resolves the stale id to the live version).
+  reload the Cabinet and delete the live fact from the list again. (A delete started from the stale row would hit the
+  closed document, which is now `invalidated` and an accepted end state, and change nothing.) That delete does **not**
+  clear `lineage_multiple_current`: both documents of the lineage keep `is_current=true`. Set the closed document's
+  `is_current` back to false by hand in the Firestore console, or the class stays red.
 
-Then re-run the audit with the **end of the roll-forward drain** as `--s2-cutoff`: the old revision's closes now count as
-pre-S2, so anything else that shows is real. A skipped drain (old and new revision consolidating together) shows as
-`lineage_multiple_current` plus `replaces_not_pointing_back`; delete the reopened older document in the Cabinet (it is
-`current` with no `superseded_by`, so it resolves to itself).
+Then re-run the audit with the **end of the roll-forward drain** as `--s2-cutoff`. **The cutoff moves only
+`superseded_without_successor`** (the old revision's closes then count as pre-S2). `replaces_version_mismatch`,
+`lineage_multiple_current`, `superseded_by_on_open_doc`, `lineage_open_below_highest_version` and
+`replaces_not_pointing_back` take no cutoff and stay listed. Match their ids against documents whose `last_updated` lies
+inside the rollback window: those are the expected ones, any other is real.
+
+A skipped drain (old and new revision consolidating together) shows as `lineage_multiple_current` plus
+`replaces_not_pointing_back`: an old-revision blind write re-opened an older version (it is `current` with no
+`superseded_by`). Do not delete either by reflex: the re-opened document carries the old run's own update, so it may hold
+the newest wording. Compare both texts and their `last_updated` in the console first, keep the newer wording, and
+delete (in the Cabinet) or close the other.
 
 ### 9.7 The prompt snapshot and its vocabulary tests
 
