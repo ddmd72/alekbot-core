@@ -1473,13 +1473,17 @@ class ConversationHandler(ConversationHandlerPort):
         if run is None:
             return f"{queued}; consolidation runs in the background."
         if run.deferred:
+            if run.unattended:
+                return (f"{queued}; another memory run is in progress and no background queue is running here, "
+                        "so send $consolidate again later.")
             return f"{queued}; queued behind another memory run in progress, it continues in the background."
         if run.processed:
             outcome = f"{queued}; {run.processed} batch(es) consolidated now."
         else:
             outcome = f"{queued}; no batch was consolidated in this request."
         if run.has_more:
-            outcome += " The rest continues in the background."
+            outcome += (" More batches are waiting and no background queue is running here, so send $consolidate "
+                        "again to continue." if run.unattended else " The rest continues in the background.")
         return outcome
 
     async def handle_command(
@@ -1583,7 +1587,8 @@ class ConversationHandler(ConversationHandlerPort):
                 except Exception as exc:
                     logger.error(f"[Librarian] $consolidate failed for user {context.user_id[:8]}: {exc}", exc_info=True)
                     await response_channel.send_message(
-                        "❌ Memory consolidation did not run. The command's messages are queued and a later run will pick them up.",
+                        "❌ Memory consolidation stopped with an error. The command's messages are queued; "
+                        "a later run picks up whatever is left.",
                         thread_id=context.thread_id,
                     )
                     return
