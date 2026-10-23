@@ -235,7 +235,12 @@ mandatory before team/multi-user rollout.
 
 ---
 
-### TD-4: `update_fact` overwrites fact text in place — no SCD2 history [P2] — 🔲 OPEN
+### TD-4: `update_fact` overwrites fact text in place — no SCD2 history [P2] — ✅ CLOSED by Facts S2 (2026-10-23)
+
+> **Closed.** A content change of `update_fact` now writes a new document of the same lineage (`version`+1, `replaces_fact_id`)
+> and closes the old one with `superseded_by`, in one transaction. History starts at the S2 deploy: texts overwritten
+> before it are not recoverable. See `docs/04_solution_strategy/decisions/fact_versions_one_writer.md` and the memory
+> map §2.4. The text below is the original problem statement.
 
 - **Problem:** `update_fact` (`fact_management_adapter.py`, `update_fact`) mutates the **same** document:
   it sets `existing.text = new_content`, bumps `existing.version += 1` and calls
