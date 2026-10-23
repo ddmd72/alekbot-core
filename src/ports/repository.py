@@ -67,8 +67,8 @@ class FactRepository(ABC):
 
         Order: none; callers sort.
         Limit: none.
-        Projection: no vectors; temporal_class, context, ttl_days, expires_at and replaces_fact_id
-            keep the model default (observed).
+        Projection: no vectors; temporal_class, context and replaces_fact_id keep the model default;
+            expiry_kind, ttl_days and expires_at are returned (observed).
         """
         pass
 
