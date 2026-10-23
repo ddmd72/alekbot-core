@@ -226,7 +226,11 @@ def test_closure_fields_are_in_place_fields():
 
 
 def test_in_place_fields_exclude_content_and_lineage_keys():
-    assert IN_PLACE_FIELDS == {"state", "is_current", "valid_to", "superseded_by", "reported_date", "last_updated"}
+    # S2's six keys plus the five expiry/lifecycle keys Facts S3 writes in place (plan §1.1, RFC D2).
+    assert IN_PLACE_FIELDS == {
+        "state", "is_current", "valid_to", "superseded_by", "reported_date", "last_updated",
+        "expiry_kind", "ttl_days", "expires_at", "stale_since", "lifecycle_events",
+    }
     assert not IN_PLACE_FIELDS & {"text", "tags", "metadata", "temporal_class", "version", "lineage_id", "id"}
 
 
