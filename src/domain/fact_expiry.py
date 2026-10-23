@@ -100,7 +100,7 @@ def _parse_day(raw: Any) -> date:
         try:
             day = date.fromisoformat(text) if len(text) == 10 else datetime.fromisoformat(text.replace("Z", "+00:00")).date()
         except ValueError:
-            pass
+            day = None  # malformed text: refused below with the shapes
     if day is None:
         raise _malformed(f"kind date needs `date` as YYYY-MM-DD, got {raw!r}")
     if not MIN_YEAR <= day.year <= MAX_YEAR:
