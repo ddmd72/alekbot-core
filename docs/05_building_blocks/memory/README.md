@@ -142,19 +142,19 @@ of 87 written priorities was `historical` (`decisions/fact_s1_defects.md`); the 
 `domain/fact_lifecycle.py:11-26` maps a state to its flags; every retirement path uses it (adapter update and merge,
 Cabinet invalidate, the directive backstop):
 
-| State | `is_current` | `valid_to` | Typical cause |
-|---|---|---|---|
-| `current`, `stale` | true | none | created; `stale` is never set |
-| `archived` | true | now | "was true, no longer" (the prompt's Negation rule) |
-| `invalidated` | true | now | "was never true", Stage 2b removal, Cabinet, backstop |
-| `superseded` | **false** | now | a document replaced by a newer version of its lineage, a merge source, or a compound fact the model split (it must name the fact that replaces it, `superseded_by`; the call is refused without it) |
+| State | `is_current` | `valid_to` | `superseded_by` | Typical cause |
+|---|---|---|---|---|
+| `current`, `stale` | true | none | none | created; `stale` is never set |
+| `archived` | true | now | none | "was true, no longer" (the prompt's Negation rule) |
+| `invalidated` | true | now | none | "was never true", Stage 2b removal, Cabinet, backstop |
+| `superseded` | **false** | now | the successor's id (empty on documents closed before S2) | a document replaced by a newer version of its lineage, a merge source, or a compound fact the model split (it must name the fact that replaces it; the call is refused without it) |
 
 `is_current` means "latest document of its lineage", not "visible". Visibility is `state` alone. No `src/` code reads `is_current`; the data audit checks it (§9.6).
 
 ### 2.4 Updates, merges, versions, lineage
 
-A fact is a **lineage**: the documents that share one `lineage_id`, told apart by `version`. Exactly one of them is
-the live one. Two kinds of write exist (`fact_update_plan.py:30-73`):
+A fact is a **lineage**: the documents that share one `lineage_id`, told apart by `version`. At most one of them is
+the live one (a lineage whose last document was merged away has none). Two kinds of write exist (`fact_update_plan.py:30-73`):
 
 - **A content change is a new document.** If an `update_fact` changes the text, the tags, the metadata or the
   `temporal_class`, the store writes a new document: new `id`, same `lineage_id`, `version` + 1,
