@@ -253,3 +253,56 @@ async def test_a_conflict_is_not_a_failed_run():
     await world.service.sweep()
 
     assert [t for t in world.sink.texts if "run failed" in t] == []
+
+
+# ------------------------------------------------------------------------------------------------ F5 follow-up: the alert is capped
+
+async def test_a_hung_sink_cannot_hold_the_original_error(monkeypatch, caplog):
+    import asyncio
+    import time
+
+    world = JanitorWorld()
+    world.service.FAILURE_ALERT_TIMEOUT_S = 0.05
+
+    async def hang():
+        await asyncio.sleep(30)
+
+    world.sink.at_post = hang
+
+    async def failing(now):
+        raise RuntimeError("original failure")
+
+    monkeypatch.setattr(world.repo, "find_due_facts", failing)
+
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="original failure"):
+        await world.service.sweep()
+
+    assert time.monotonic() - started < 5
+    assert world.sink.texts == []
+    assert any(r.levelno == logging.WARNING and "was cut after" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_cancellation_during_the_failure_alert_is_not_swallowed(monkeypatch):
+    import asyncio
+
+    world = JanitorWorld()
+    entered = asyncio.Event()
+
+    async def hang():
+        entered.set()
+        await asyncio.sleep(30)
+
+    world.sink.at_post = hang
+
+    async def failing(now):
+        raise RuntimeError("original failure")
+
+    monkeypatch.setattr(world.repo, "find_due_facts", failing)
+
+    task = asyncio.ensure_future(world.service.sweep())
+    await entered.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
