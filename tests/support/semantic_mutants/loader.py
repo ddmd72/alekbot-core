@@ -14,13 +14,14 @@ import importlib.machinery
 import sys
 from typing import Optional
 
-from .operators import apply_mutant
+from .operators import DEFAULT_OPERATORS, apply_mutant
 
 
 class _MutantLoader(importlib.machinery.SourceFileLoader):
-    def __init__(self, fullname: str, path: str, number: int, on_load):
+    def __init__(self, fullname: str, path: str, number: int, on_load, operators: str = DEFAULT_OPERATORS):
         super().__init__(fullname, path)
         self._number = number
+        self._operators = operators
         self._on_load = on_load
 
     def get_code(self, fullname):  # no .pyc in or out
@@ -28,15 +29,16 @@ class _MutantLoader(importlib.machinery.SourceFileLoader):
 
     def source_to_code(self, data, path, *, _optimize=-1):
         source = data.decode("utf-8") if isinstance(data, (bytes, bytearray)) else data
-        tree = apply_mutant(source, self._number)
+        tree = apply_mutant(source, self._number, self._operators)
         self._on_load()
         return compile(tree, path, "exec", dont_inherit=True, optimize=_optimize)
 
 
 class MutantFinder(importlib.abc.MetaPathFinder):
-    def __init__(self, module: str, number: int):
+    def __init__(self, module: str, number: int, operators: str = DEFAULT_OPERATORS):
         self.module = module
         self.number = number
+        self.operators = operators
         self.loaded = False
 
     def _mark_loaded(self) -> None:
@@ -48,14 +50,14 @@ class MutantFinder(importlib.abc.MetaPathFinder):
         spec = importlib.machinery.PathFinder.find_spec(fullname, path)
         if spec is None or not isinstance(spec.loader, importlib.machinery.SourceFileLoader):
             return None  # not a plain source module: leave it alone (the driver reports "never loaded")
-        spec.loader = _MutantLoader(fullname, spec.loader.path, self.number, self._mark_loaded)
+        spec.loader = _MutantLoader(fullname, spec.loader.path, self.number, self._mark_loaded, self.operators)
         return spec
 
 
-def install(module: str, number: int) -> MutantFinder:
+def install(module: str, number: int, operators: str = DEFAULT_OPERATORS) -> MutantFinder:
     if module in sys.modules:
         raise RuntimeError(f"{module} is already imported: the mutant cannot be loaded in this process")
-    finder = MutantFinder(module, number)
+    finder = MutantFinder(module, number, operators)
     sys.meta_path.insert(0, finder)
     return finder
 

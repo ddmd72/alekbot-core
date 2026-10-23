@@ -22,6 +22,15 @@ The success value of `except-success` follows the enclosing function's return an
 `list`/`List[..]`/`Sequence` -> `[]`; `dict`/`Dict[..]`/`Mapping` -> `{}`; `set` -> `set()`; `str` -> `""`; `int` -> `0`;
 `float` -> `0.0`; anything else (no annotation, `None`, `Optional[..]`, a class) -> `None`.
 
+A second, opt-in operator set (`operators="wiring"`, CLI `--operators wiring`) replaces the default set above for
+modules that only wire things together (the composition root); the default set and its numbering are untouched:
+  wire-drop       one non-constant value replaced by `None`: a keyword value or a positional argument of a call to a
+                  CamelCase callable or a `create_*`/`build_*` function, or the value of a
+                  dict literal anywhere in the module. Constants (numbers, strings, booleans, `None`, `-1`, an
+                  f-string without a placeholder), `*args` and `**kwargs` are never mutated.
+  call-skip       one statement-level call (awaited or not) whose attribute name is `attach_*`, `register_*`, `set_*`
+                  or `register` replaced by `pass`; a call on a logger (a name in the receiver contains "log") is left alone
+
 A mutant that is semantically identical to the original (an `order_by` whose order nothing observes, a skipped write
 to a throwaway object) is "equivalent": a reviewer rules it out in the driver's --equivalent file; the tool never does.
 """
@@ -29,12 +38,19 @@ to a throwaway object) is "equivalent": a reviewer rules it out in the driver's 
 import ast
 import copy
 import hashlib
+import re
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 WRITE_CALLS = {"set", "update", "create", "delete"}
 DOC_WRITE_CALLS = {"set", "update", "create", "add"}
 _TENANCY_WORDS = ("user_id", "account_id", "tenant")
+DEFAULT_OPERATORS = "default"
+WIRING_OPERATORS = "wiring"
+OPERATOR_SETS = (DEFAULT_OPERATORS, WIRING_OPERATORS)
+_CAMEL_CASE = re.compile(r"^[A-Z][A-Za-z0-9]*[a-z][A-Za-z0-9]*$")  # at least one lower-case letter: not a CONSTANT
+_BUILDER = re.compile(r"^(create|build)_")
+_SKIPPABLE_CALL = re.compile(r"^(attach_|register_|set_)|^register$")
 _DIRECTIONS = {"ASCENDING": "DESCENDING", "DESCENDING": "ASCENDING", "asc": "desc", "desc": "asc"}
 
 
@@ -283,10 +299,100 @@ def _write_skip_variants(node: ast.Expr) -> List[_Variant]:
     return [_Variant("write-skip", f"skip the write `{_src(call)}`", lambda: ast.Pass())]
 
 
+def _is_constant(node: ast.expr) -> bool:
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        return _is_constant(node.operand)
+    if isinstance(node, ast.JoinedStr):
+        return not any(isinstance(v, ast.FormattedValue) for v in node.values)
+    return False
+
+
+def _callee_name(node: ast.Call) -> str:
+    if isinstance(node.func, ast.Name):
+        return node.func.id
+    return node.func.attr if isinstance(node.func, ast.Attribute) else ""
+
+
+def _is_wiring_call(node: ast.Call) -> bool:
+    name = _callee_name(node)
+    return bool(_CAMEL_CASE.match(name) or _BUILDER.match(name))
+
+
+def _none() -> ast.Constant:
+    return ast.Constant(None)
+
+
+def _wire_drop_call_variants(node: ast.Call) -> List[_Variant]:
+    if not _is_wiring_call(node):
+        return []
+    out: List[_Variant] = []
+    for i, arg in enumerate(node.args):
+        if isinstance(arg, ast.Starred) or _is_constant(arg):
+            continue
+
+        def drop_arg(node=node, i=i):
+            clone = copy.deepcopy(node)
+            clone.args[i] = _none()
+            return clone
+
+        out.append(_Variant("wire-drop", f"pass None for the argument {_src(arg)} of `{_own(node)}`", drop_arg))
+    for i, kw in enumerate(node.keywords):
+        if kw.arg is None or _is_constant(kw.value):
+            continue
+
+        def drop_kw(node=node, i=i):
+            clone = copy.deepcopy(node)
+            clone.keywords[i].value = _none()
+            return clone
+
+        out.append(_Variant("wire-drop", f"pass None for {kw.arg}={_src(kw.value)} in `{_own(node)}`", drop_kw))
+    return out
+
+
+def _wire_drop_dict_variants(node: ast.Dict) -> List[_Variant]:
+    out: List[_Variant] = []
+    for j, (key, value) in enumerate(zip(node.keys, node.values)):
+        if key is None or _is_constant(value):
+            continue  # a **spread, or a constant
+
+        def drop_value(node=node, j=j):
+            clone = copy.deepcopy(node)
+            clone.values[j] = _none()
+            return clone
+
+        out.append(_Variant("wire-drop", f"store None for {_src(key)}: {_src(value)} in a dict literal", drop_value))
+    return out
+
+
+def _call_skip_variants(node: ast.Expr) -> List[_Variant]:
+    call = node.value.value if isinstance(node.value, ast.Await) else node.value
+    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) and _SKIPPABLE_CALL.match(call.func.attr)):
+        return []
+    receiver = [n.id if isinstance(n, ast.Name) else n.attr for n in ast.walk(call.func.value) if isinstance(n, (ast.Name, ast.Attribute))]
+    if any("log" in name.lower() for name in receiver):
+        return []  # a logger's own setter (`logger.set_x`, `self.logger.set_x`, `logging.getLogger(..).set_x`) is not wiring
+    return [_Variant("call-skip", f"skip the call `{_src(call)}`", lambda: ast.Pass())]
+
+
+def _wiring_variants(node: ast.AST) -> List[_Variant]:
+    if isinstance(node, ast.Call):
+        return _wire_drop_call_variants(node)
+    if isinstance(node, ast.Dict):
+        return _wire_drop_dict_variants(node)
+    if isinstance(node, ast.Expr):
+        return _call_skip_variants(node)
+    return []
+
+
 class _Walker(ast.NodeTransformer):
     """Pre-order walk shared by enumeration (target None) and application (target = (visit, variant))."""
 
-    def __init__(self, target: Optional[Tuple[int, int]] = None):
+    def __init__(self, target: Optional[Tuple[int, int]] = None, operators: str = DEFAULT_OPERATORS):
+        if operators not in OPERATOR_SETS:
+            raise ValueError(f"unknown operator set {operators!r}: choose from {', '.join(OPERATOR_SETS)}")
+        self.operators = operators
         self.target = target
         self.visit_no = 0
         self.found: List[Tuple[int, int, _Variant, int]] = []  # (visit, variant, variant object, lineno)
@@ -295,6 +401,8 @@ class _Walker(ast.NodeTransformer):
         self.applied = False
 
     def _variants(self, node: ast.AST) -> List[_Variant]:
+        if self.operators == WIRING_OPERATORS:
+            return _wiring_variants(node)
         fn = self._fns[-1] if self._fns else None
 
         def written() -> Set[str]:
@@ -330,8 +438,8 @@ class _Walker(ast.NodeTransformer):
                 self._fns.pop()
 
 
-def enumerate_mutants(source: str) -> List[Mutant]:
-    walker = _Walker()
+def enumerate_mutants(source: str, operators: str = DEFAULT_OPERATORS) -> List[Mutant]:
+    walker = _Walker(operators=operators)
     walker.visit(ast.parse(source))
     mutants, seen = [], {}
     for number, (visit, v, variant, lineno) in enumerate(walker.found, 1):
@@ -342,13 +450,13 @@ def enumerate_mutants(source: str) -> List[Mutant]:
     return mutants
 
 
-def apply_mutant(source: str, number: int) -> ast.Module:
+def apply_mutant(source: str, number: int, operators: str = DEFAULT_OPERATORS) -> ast.Module:
     """The module AST with mutant `number` (1-based, as `enumerate_mutants` numbers them) applied."""
-    mutants = enumerate_mutants(source)
+    mutants = enumerate_mutants(source, operators)
     if not 1 <= number <= len(mutants):
         raise ValueError(f"mutant {number} does not exist: the module has {len(mutants)}")
     chosen = mutants[number - 1]
-    walker = _Walker(target=(chosen.visit, chosen.variant))
+    walker = _Walker(target=(chosen.visit, chosen.variant), operators=operators)
     tree = walker.visit(ast.parse(source))
     assert walker.applied, f"mutant {number} was not applied (source changed between enumeration and application?)"
     return ast.fix_missing_locations(tree)
