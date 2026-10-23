@@ -114,8 +114,8 @@ class GrokAdapter(LLMPort):
     )
 
     # Name of the synthesized terminal tool. Must match the `terminal_tool` value
-    # SmartResponseAgent passes to DelegationEngine — adapters cannot import agents,
-    # so the string is duplicated deliberately.
+    # Smart, Quick and Tutor pass to DelegationEngine — adapters cannot import agents,
+    # so the string is duplicated deliberately (ClaudeAdapter duplicates the same name).
     TERMINAL_TOOL_NAME = "deliver_response"
 
     # Accepted `reasoning.effort` values, probed live 2026-08-15 (one call per cell,

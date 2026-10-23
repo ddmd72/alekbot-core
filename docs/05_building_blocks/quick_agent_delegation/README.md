@@ -319,8 +319,8 @@ returns plain text instead of JSON (non-JSON path).
 | Prompt token | `PROTOCOL_QUICK_AGENT_SELECTION` | `PROTOCOL_SMART_AGENT_SELECTION` |
 | Web specialist | WebSearchLightAgent (ECO, single pass, `internal=True`) | WebSearchAgent (BALANCED, full synthesis) |
 | History cleaning | Yes (`_clean_history_for_quick`) | Yes (`_sanitize_tool_history`) |
-| Output format | JSON envelope always | `deliver_response` terminal tool |
-| Delegation engine | `DelegationEngine` (shared) | `DelegationEngine` (shared, `terminal_tool="deliver_response"`) |
+| Output format | JSON envelope; ends on `deliver_response` on Claude/Grok | `deliver_response` terminal tool |
+| Delegation engine | `DelegationEngine` (shared, `terminal_tool="deliver_response"`) | `DelegationEngine` (shared, `terminal_tool="deliver_response"`) |
 | History summary | From JSON field, HistorySummaryService as fallback | `HistorySummaryService` fire-and-forget |
 | Model tier | BALANCED | PERFORMANCE |
 

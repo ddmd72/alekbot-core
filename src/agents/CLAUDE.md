@@ -316,7 +316,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   #1, final whole-branch review 2026-08-31). See `decisions/companion_write_path.md`.
   **Phase G — structured output + Smart-parity history:** JSON-schema reply (`_RESPONSE_SCHEMA`:
   `full_response`/`response_summary`) via `response_schema` on Claude/Gemini/OpenAI, same
-  `deliver_response` terminal-tool path as Smart on Grok (`extract_structured_response`, shared
+  `deliver_response` terminal-tool path as Smart on Grok and on Claude with tools (Claude without tools keeps
+  `output_config.format`; `extract_structured_response`, shared
   helper factored out of `SmartResponseAgent`). Summary compression is in-band when the model
   emits `response_summary`, else async fallback via `HistorySummaryService`
   (fire-and-forget `asyncio.create_task`, mirrors Quick's own-configured-service guard). History
@@ -559,18 +560,26 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `decisions/delegate_mode_parameter_removed.md`.
   API: `engine.execute(call_llm, base_request, context, max_turns, terminal_tool?, intent_remap?,
   intent_fanout?)`.
-  Smart: passes `terminal_tool="deliver_response"`. **This branch is live and provider-dependent —
+  Smart, Quick and Tutor pass `terminal_tool="deliver_response"`. **This branch is live and provider-dependent —
   it is NOT vestigial** (that claim was true until 2026-08-15 and is now retracted; TD-3 is closed
   as invalid, do not "clean up" the machinery):
   - **Grok** — constrained JSON and function calling compete on xAI, so `GrokAdapter` moves the
     answer off the text channel and onto a synthesized `deliver_response` function whose parameters
     ARE `_RESPONSE_SCHEMA`. The loop ends via the **terminal-tool** branch and
     `_build_smart_response` reads `terminal_tool_args`. This is Smart's only reply path on Grok.
-  - **Claude / Gemini / OpenAI** — structured output arrives via `response_schema` (Claude:
-    `output_config.format` → schema-valid JSON as *text*, no tool — the synthesized `respond` tool
-    was removed 2026-07-02, see [`src/adapters/CLAUDE.md`](../adapters/CLAUDE.md) → Agent Output
-    Format Standards; Gemini/OpenAI: native JSON). The loop ends via *no-tool-calls → return text*
-    and `_build_smart_response` parses `result.text`.
+  - **Claude** (since 2026-10-23, `decisions/claude_deliver_response_string_tool.md`) — a request with
+    a schema **and** client tools: `ClaudeAdapter` drops `output_config.format` and appends
+    `deliver_response(response: string)`; the schema is not in the tool, it comes from the prompt
+    (`OUTPUT_FORMAT_JSON`). The args (`{"response": "<string>"}`) reach `extract_structured_response`,
+    which runs `parse_llm_response` on the string — one parser, all repairs, `first_object` recovery.
+    Under `max_tokens` a call with an empty or missing `response` is dropped by the adapter. A schema
+    request without client tools keeps `output_config.format` (JSON as text, loop ends on no tool calls).
+  - **Gemini / OpenAI** — native JSON via `response_schema`. The loop ends via *no-tool-calls → return
+    text* and `_build_smart_response` parses `result.text`.
+  - **Observability and failure.** Every parse logs one `llm_response_parse` event (`source`, `outcome`:
+    parsed / first_object / repaired / unparseable / truncated, `via`). An orchestrator turn that ends
+    with empty user text, no rich content and no delivery items fails as `empty_answer` (Smart, Quick,
+    Tutor, all providers), unless the turn dispatched an ASYNC intent (`async_dispatches`).
 
   **A terminal tool can arrive alongside real work in the same batch.** The model may dispatch an
   async hop and answer in one breath (`create_html_page` + `deliver_response` — exactly what the
@@ -578,10 +587,14 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `delivery_items`/`history_context` into the result, and *then* returns the terminal answer; no
   result is fed back, since the model has already written its reply. Returning before that dispatch
   silently dropped the 2026-08-17 briefing page — see `decisions/terminal_tool_co_emitted_calls.md`.
-  Quick: `intent_remap={}` (disabled), `intent_fanout` from descriptor.
+  Quick: `intent_remap={}` (disabled), `terminal_tool="deliver_response"`, `intent_fanout` from descriptor.
   Bound agents: plain text response, no terminal tool, no remap, no fanout.
-  `DelegationResult` carries: `text`, `terminal_tool_args`, `total_tokens`, `delivery_items`,
-  `history_contexts`, `structured_data`, `messages`, `failed`.
+  `DelegationResult` carries: `text` (also the text written beside a terminal call), `terminal_tool_args`,
+  `total_tokens`, `delivery_items`, `history_contexts`, `structured_data`, `messages`, `failed`,
+  `async_dispatches` (work dispatched that the user will receive later: ASYNC intents, and SYNC intents that
+  acknowledge and deliver in the background; an orchestrator turn that has one is not an `empty_answer` —
+  the user gets the result, a retry would send a second one; the skip logs INFO `empty_text_after_async`).
+  The engine logs `terminal_sync_sibling` when a SYNC call is co-emitted with the terminal one (log only).
   **Intent fan-out** (`intent_fanout`): declarative 1:N dispatch-time expansion. Configured via
   `FanoutSpec(intents, hint)` on `AgentDescriptor`. When LLM dispatches an intent that has a
   fan-out mapping (e.g. `search_web`), the engine runs the primary + all secondary intents
