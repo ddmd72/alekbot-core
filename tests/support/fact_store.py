@@ -3,7 +3,7 @@ import hashlib
 import random
 from pathlib import Path
 from types import SimpleNamespace
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from unittest.mock import AsyncMock
 
 from src.adapters.fact_management_adapter import FactManagementAdapter
@@ -64,3 +64,7 @@ class FactStore:
     def docs(self) -> dict:
         """The raw stored documents, as Firestore holds them."""
         return self.db.collection(FACTS).docs
+
+    def interfere(self, fact_id: str, fields: Dict[str, Any], after_read: bool = False) -> None:
+        """Another writer commits `fields` to the fact when the next transaction reads it (`EvalDb.interfere_on_txn_read`)."""
+        self.db.interfere_on_txn_read(FACTS, fact_id, fields, after_read=after_read)

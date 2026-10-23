@@ -12,6 +12,16 @@ from src.ports.repository import FactRepository
 from src.config.environment import EnvironmentConfig, Environment
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _eval_transactions_everywhere():
+    """Every `@firestore.async_transactional` runs the evaluating fake's loop for a transaction of `EvalDb`, in every test;
+    any other transaction reaches the decorator that was installed before (tests/support/firestore_eval.py)."""
+    from tests.support.firestore_eval import dispatching_transactions
+
+    with dispatching_transactions():
+        yield
+
+
 @pytest.fixture
 def mock_env_config():
     config = MagicMock(spec=EnvironmentConfig)
