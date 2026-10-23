@@ -283,7 +283,7 @@ class FactManagementAdapter(FactManagementPort):
             try:
                 if plan.kind == "version":
                     new_fact, embedded = await self._complete_version(plan, embedded)
-                    await self._repo.write_superseding(new_fact, [stored], now)
+                    await self._repo.write_superseding(new_fact, [stored], now, actor="consolidation")
                     written = new_fact
                 else:
                     await self._repo.update_fact_fields(stored, plan.fields)
@@ -413,7 +413,7 @@ class FactManagementAdapter(FactManagementPort):
                     metadata["account_id"], metadata["user_id"], [attrs]
                 ))[0]
             try:
-                await self._repo.write_superseding(merged, sources, datetime.now(timezone.utc))
+                await self._repo.write_superseding(merged, sources, datetime.now(timezone.utc), actor="consolidation")
             except FactWriteConflict:
                 logger.warning(f"⚠️  [FactManagement] Merge conflicted on write (attempt {attempt})")
                 if attempt == 2:

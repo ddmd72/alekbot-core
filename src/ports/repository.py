@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import AbstractSet, List, Optional, Dict, Any, Mapping, Sequence, Tuple
+from ..domain.due_fact import DueFact
 from ..domain.entities import FactEntity, FactState
 from ..domain.stored_fact import StoredFact
 
@@ -141,8 +142,8 @@ class FactRepository(ABC):
 
         Tenancy: account_id, else the RequestContext account, else the user id (observed).
         Order: nearest first (callers rank by position, RRF).
-        Projection: `vector` and `context` are returned; tags_vector, metadata_vector, ttl_days,
-            expires_at and replaces_fact_id are None, is_current is True and last_updated is now
+        Projection: `vector`, `context` and the expiry decision (expiry_kind, ttl_days, expires_at) are returned;
+            tags_vector, metadata_vector and replaces_fact_id are None, is_current is True and last_updated is now
             (model defaults, observed).
         Errors: no user id (argument or RequestContext) raises ValueError.
         """
@@ -186,12 +187,14 @@ class FactRepository(ABC):
 
     @abstractmethod
     async def write_superseding(
-        self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime
+        self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime, *, actor: str
     ) -> None:
         """Create `new_fact` and close every `replaced` document in one transaction.
 
-        A closed document gets state superseded, is_current False, valid_to and last_updated `now` and
-        `superseded_by=new_fact.id`. Used for a version (one replaced document, same lineage) and a merge.
+        A closed document gets state superseded, is_current False, valid_to and last_updated `now`,
+        `superseded_by=new_fact.id` and a `lifecycle_events` entry of its own (from its stored state, `actor`, reason
+        "replaced by <id>" for a version, "merged into <id>" for a merge). Used for a version (one replaced document,
+        same lineage) and a merge. `new_fact` is stored as given: its own trail is the caller's.
         Stored through the same writer as add_fact (Vector wrapping, priority rank).
         Atomicity: each replaced document must still carry the `update_time` it was read with; otherwise
             FactWriteConflict naming it, nothing written. A read-time abort, or a client that gave up after
@@ -292,13 +295,45 @@ class FactRepository(ABC):
         Resolution: resolve_current with CABINET_ACCEPTS (every state but superseded). The document the walk ends
             on is invalidated, so a stale id from an open page still reaches the fact, but only when its text equals
             the text of `fact_id` (what the page showed); a newer text raises FactResolutionError (the page reloads).
-        Effect: state invalidated, is_current True, valid_to and last_updated now; version unchanged.
+        Effect: state invalidated, is_current True, valid_to and last_updated now; version unchanged; one
+            `lifecycle_events` entry (actor "cabinet", reason "deleted in the Cabinet").
         Errors: a missing id raises ValueError; a fact of another account, or a legacy one, raises PermissionError;
             FactResolutionError when the chain ends in a merge, has no successor or ends on a different text
             (`current_id` names that version); FactWriteConflict after one
             re-resolve that also conflicted. Nothing is written in any of these cases.
         Atomicity: a transaction under the document's update_time precondition.
         Idempotency: a repeated call succeeds and moves valid_to and last_updated (observed).
+        """
+        pass
+
+    @abstractmethod
+    async def find_due_facts(self, now: datetime) -> List[DueFact]:
+        """Return every `state == "current"` fact of every account whose `expires_at` is at or before `now`.
+
+        Projection: account id, expires_at, expiry_kind, lifecycle_events and the change token; no text, no vectors.
+        Tenancy: none (the janitor sweeps all accounts); each result names its account.
+        Legacy: a document without `expires_at` (or with a null one) is not returned; one without `expiry_kind` is,
+            with `expiry_kind=None`; one without `account_id` is skipped (logged).
+        Order: none.
+        """
+        pass
+
+    @abstractmethod
+    async def stale_due_fact(self, due: DueFact, now: datetime) -> None:
+        """Mark `due` stale in place: state stale, is_current True, valid_to null, `stale_since` and `last_updated`
+        `now`, and a `lifecycle_events` entry (actor "janitor", reason "expired <expires_at ISO>"). Nothing else changes.
+
+        Atomicity: a transaction under `due.update_time`.
+        Errors: FactWriteConflict when the document changed since it was read, or no longer exists; nothing is written.
+        """
+        pass
+
+    @abstractmethod
+    async def stale_backlog(self) -> Dict[str, Tuple[int, Optional[datetime]]]:
+        """Return, per account id, how many facts are `state == "stale"` and the oldest `stale_since` among them.
+
+        A stale fact without `stale_since` counts but has no age; an account whose stale facts all lack it maps to
+        (count, None). An account with no stale fact is absent; a document without `account_id` is skipped (logged).
         """
         pass
 

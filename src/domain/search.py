@@ -5,7 +5,11 @@ Contains entities related to semantic search, context enrichment, and retrieval.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from .entities import ExpiryKind
+from .fact_expiry import expiry_view
+from .fact_write_context import as_utc
 
 @dataclass
 class EnrichedFact:
@@ -26,6 +30,16 @@ class EnrichedFact:
     reported_date: Optional[str] = None  # ISO string
     context: Optional[str] = None
     version: Optional[int] = None
+    # The stored expiry decision, raw. `expires_at` is an aware-UTC ISO string like `reported_date`: this object is
+    # serialised with the agent context, which a datetime would break. Read it through `expiry_decision`.
+    expiry_kind: Optional[ExpiryKind] = None
+    ttl_days: Optional[int] = None
+    expires_at: Optional[str] = None
+
+    def expiry_decision(self, timezone: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+        """The stored decision as the model sees it (`expiry_view`); the one place `expires_at` is read back to a time."""
+        expires = as_utc(self.expires_at) if self.expires_at is not None else None
+        return expiry_view(self.expiry_kind, self.ttl_days, expires, timezone)
 
 @dataclass
 class EnrichedContext:

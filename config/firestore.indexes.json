@@ -1262,6 +1262,20 @@
     ]
   },
   {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "state",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "expires_at",
+        "order": "ASCENDING"
+      }
+    ]
+  },
+  {
     "collectionGroup": "development_email_indexing_jobs_v1",
     "queryScope": "COLLECTION",
     "fields": [

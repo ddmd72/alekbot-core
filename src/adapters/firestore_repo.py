@@ -7,9 +7,19 @@ from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.vector import Vector
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
+from ..domain.due_fact import DueFact
 from ..domain.entities import FactEntity, FactState
 from ..domain.exceptions import FactResolutionError, FactWriteConflict, InPlaceFieldRefused
-from ..domain.fact_lifecycle import CABINET_ACCEPTS, IN_PLACE_FIELDS, closure_fields, forward_step, lifecycle_fields
+from ..domain.fact_expiry import as_expiry_kind
+from ..domain.fact_lifecycle import (
+    CABINET_ACCEPTS,
+    IN_PLACE_FIELDS,
+    closure_fields,
+    forward_step,
+    lifecycle_event,
+    lifecycle_fields,
+    with_event,
+)
 from ..domain.stored_fact import StoredFact
 from ..domain.vector_math import cosine_similarity
 from ..domain.deduplication_service import SmartDeduplication
@@ -333,7 +343,12 @@ class FirestoreFactRepository(FactRepository):
                     f"fact {fact_id} was rewritten after the page loaded; reload", current_id=stored.fact.id,
                 )
             now = datetime.datetime.now(datetime.timezone.utc)
-            fields = {**lifecycle_fields(FactState.INVALIDATED, now), "last_updated": now}
+            event = lifecycle_event(now, stored.fact.state, FactState.INVALIDATED, "cabinet", "deleted in the Cabinet")
+            fields = {
+                **lifecycle_fields(FactState.INVALIDATED, now),
+                "last_updated": now,
+                "lifecycle_events": with_event(stored.fact.lifecycle_events, event),
+            }
             try:
                 await self.update_fact_fields(stored, fields)
                 return
@@ -411,6 +426,7 @@ class FirestoreFactRepository(FactRepository):
                 "text", "type", "state", "domain", "tags", "context_priority",
                 "valid_from", "valid_to", "created_at", "source", "version",
                 "visibility", "metadata", "temporal_class", "reported_date", "context",
+                "expiry_kind", "ttl_days", "expires_at",  # the stored expiry decision, shown to the consolidator
                 "vector",  # Required by SearchEnrichmentService for RRF semantic dedup
                 # tags_vector and metadata_vector excluded (~6KB saved per result)
             ])
@@ -567,7 +583,9 @@ class FirestoreFactRepository(FactRepository):
                 raise FactResolutionError(f"fact {fact_id} was superseded and its successor is unknown; search again")
             fact = self._fact_from_snapshot(snap)
 
-    async def write_superseding(self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime.datetime) -> None:
+    async def write_superseding(
+        self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime.datetime, *, actor: str
+    ) -> None:
         if not replaced:
             raise ValueError(f"write_superseding of {new_fact.id} replaces no document; use add_fact")
         missing = [name for name in _VECTOR_FIELDS if getattr(new_fact, name) is None]
@@ -575,9 +593,10 @@ class FirestoreFactRepository(FactRepository):
             raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a version without vectors leaves vector search")
         new_ref = self.facts_col.document(new_fact.id)
         document = self._to_document(new_fact)
-        closure = _encode_fields(closure_fields(new_fact.id, now))
         tokens = {stored.fact.id: stored.update_time for stored in replaced}
         refs = [self.facts_col.document(fact_id) for fact_id in tokens]
+        # A document read under its token and still carrying it is unchanged, so its stored trail is the one to extend.
+        closures = [_encode_fields(self._closure(new_fact, stored, now, actor)) for stored in replaced]
 
         async def body(transaction: Any) -> None:
             snaps = {}
@@ -589,10 +608,18 @@ class FirestoreFactRepository(FactRepository):
                 if snap is None or not snap.exists or snap.update_time != token:
                     raise FactWriteConflict(fact_id)
             transaction.create(new_ref, document)
-            for ref in refs:
+            for ref, closure in zip(refs, closures):
                 transaction.update(ref, closure)
 
         await self._in_transaction(body, next(iter(tokens), new_fact.id))
+
+    @staticmethod
+    def _closure(new_fact: FactEntity, stored: StoredFact, now: datetime.datetime, actor: str) -> Dict[str, Any]:
+        """The in-place write that closes `stored` in favour of `new_fact`, with its trail entry."""
+        merged = stored.fact.lineage_id != new_fact.lineage_id
+        reason = f"{'merged into' if merged else 'replaced by'} {new_fact.id}"
+        entry = lifecycle_event(now, stored.fact.state, FactState.SUPERSEDED, actor, reason)
+        return {**closure_fields(new_fact.id, now), "lifecycle_events": with_event(stored.fact.lifecycle_events, entry)}
 
     async def update_fact_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
         refused = set(fields) - IN_PLACE_FIELDS
@@ -927,6 +954,61 @@ class FirestoreFactRepository(FactRepository):
             f"for account {resolved_account_id[:8]}..."
         )
         return results
+
+    async def find_due_facts(self, now: datetime.datetime) -> List[DueFact]:
+        query = (
+            self.facts_col
+            .where(filter=FieldFilter("state", "==", "current"))
+            .where(filter=FieldFilter("expires_at", "<=", now))
+            .select(["account_id", "expires_at", "expiry_kind", "lifecycle_events"])
+        )
+        due: List[DueFact] = []
+        async for snap in query.stream():
+            data = snap.to_dict()
+            if not data.get("account_id"):
+                logger.warning(f"[FactRepo] due fact {snap.id} has no account_id (legacy document); skipped")
+                continue
+            due.append(DueFact(
+                fact_id=snap.id,
+                account_id=data["account_id"],
+                expires_at=data["expires_at"],
+                expiry_kind=as_expiry_kind(data.get("expiry_kind")),
+                update_time=snap.update_time,
+                lifecycle_events=list(data.get("lifecycle_events") or []),
+            ))
+        return due
+
+    async def stale_due_fact(self, due: DueFact, now: datetime.datetime) -> None:
+        ref = self.facts_col.document(due.fact_id)
+
+        async def body(transaction: Any) -> None:
+            snap = await ref.get(transaction=transaction)
+            if not snap.exists or snap.update_time != due.update_time:
+                raise FactWriteConflict(due.fact_id)
+            entry = lifecycle_event(
+                now, FactState.CURRENT, FactState.STALE, "janitor", f"expired {due.expires_at.isoformat()}"
+            )
+            events = with_event((snap.to_dict() or {}).get("lifecycle_events") or [], entry)
+            fields = {**lifecycle_fields(FactState.STALE, now), "stale_since": now, "last_updated": now, "lifecycle_events": events}
+            transaction.update(ref, _encode_fields(fields))
+
+        await self._in_transaction(body, due.fact_id)
+
+    async def stale_backlog(self) -> Dict[str, Tuple[int, Optional[datetime.datetime]]]:
+        query = self.facts_col.where(filter=FieldFilter("state", "==", "stale")).select(["account_id", "stale_since"])
+        counts: Dict[str, int] = {}
+        oldest: Dict[str, Optional[datetime.datetime]] = {}
+        async for snap in query.stream():
+            data = snap.to_dict()
+            account_id = data.get("account_id")
+            if not account_id:
+                logger.warning(f"[FactRepo] stale fact {snap.id} has no account_id (legacy document); skipped")
+                continue
+            since = data.get("stale_since")
+            counts[account_id] = counts.get(account_id, 0) + 1
+            known = oldest.get(account_id)
+            oldest[account_id] = since if known is None or (since is not None and since < known) else known
+        return {account_id: (count, oldest[account_id]) for account_id, count in counts.items()}
 
     async def get_legacy_facts(
         self,
