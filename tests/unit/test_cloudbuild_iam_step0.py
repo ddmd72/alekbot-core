@@ -40,17 +40,19 @@ def test_script_fails_fast_and_reads_identity_from_secret():
 def test_every_oidc_job_pins_an_audience():
     script = _scheduler_script()
     assert script.count("--oidc-service-account-email") == script.count("--oidc-token-audience")
-    # 12 jobs, update + create each; the /health keep-alive is the one job without OIDC
-    assert script.count("--oidc-token-audience") >= 12 * 2 - 2
+    # 13 jobs, update + create each; the /health keep-alive is the one job without OIDC
+    assert script.count("--oidc-token-audience") >= 13 * 2 - 2
 
 
-def test_all_twelve_jobs_are_build_managed():
+def test_all_thirteen_jobs_are_build_managed():
     names = set(re.findall(r"scheduler jobs (?:create|update) http (\S+)", _scheduler_script()))
     assert "alek-voice-relay-dev-keep-alive" in names and "alek-bot-dev-keep-alive" in names
     # S1b F1: the email indexing watchdog and the companion consolidation sweep are build-managed too
     assert "alek-bot-dev-email-indexing-watchdog" in names
     assert "alek-bot-dev-sweep-companion-consolidation" in names
-    assert len(names) == 12
+    # Facts S3 T10: the fact janitor's daily job
+    assert "alek-bot-dev-fact-lifecycle-sweep" in names
+    assert len(names) == 13
 
 
 def test_renew_task_subscriptions_is_never_deleted():
