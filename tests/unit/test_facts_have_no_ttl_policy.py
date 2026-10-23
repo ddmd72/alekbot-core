@@ -2,8 +2,9 @@
 
 Firestore deletes a document whose TTL field has passed. The facts collection's `expires_at` is a decision (the janitor
 stales the fact, never deletes it), and the janitor's own counters carry no such field. The tree is scanned in Python:
-every `ttls update` command in the docs, scripts and config is read with its line continuations joined, and none may
-name the facts collection, the counters collection or the posted-line collection.
+every `ttls update` command in the docs, scripts and config is read with its line continuations joined (a quoted or
+backticked value is read too), and none may name the facts collection, the counters collection or the posted-line
+collection. A collection held in a shell variable (`--collection-group=$FACTS`) is out of reach of a text scan and is not resolved.
 """
 import os
 import re
@@ -21,7 +22,7 @@ SKIP_DIRS = {".git", "node_modules", "archive", "__pycache__", ".venv", "venv", 
 FACTS_MARK = "domain_facts"
 LIFECYCLE_NAMES = ("fact_lifecycle_daily", "fact_lifecycle_lines")
 _COMMAND = re.compile(r"\bttls\s+update\b")
-_GROUP = re.compile(r"--collection-group(?:=|\s+)([^\s\\'\"]+)")
+_GROUP = re.compile(r"--collection-group(?:=|\s+)[\"'`]?([^\s\\'\"`]+)")
 
 
 def joined_lines(text: str) -> List[str]:
@@ -47,7 +48,7 @@ def forbidden_ttl_groups(text: str) -> List[str]:
         if not _COMMAND.search(line):
             continue
         for group in _GROUP.findall(line):
-            if FACTS_MARK in group or group.endswith(LIFECYCLE_NAMES):
+            if FACTS_MARK in group or any(name in group for name in LIFECYCLE_NAMES):
                 found.append(group)
     return found
 
@@ -91,6 +92,11 @@ def test_the_scan_reaches_the_deploy_docs_that_do_declare_ttl_policies():
     ("gcloud firestore fields ttls update expires_at --collection-group=<prefix>fact_lifecycle_lines", ["<prefix>fact_lifecycle_lines"]),
     ("gcloud firestore fields ttls update expires_at --collection-group=<prefix>worker_task_dedup", []),
     ("gcloud firestore fields ttls update expires_at --collection-group=development_domain_email_facts_v1", []),
+    ('gcloud firestore fields ttls update expires_at --collection-group="development_domain_facts_v2"', ["development_domain_facts_v2"]),
+    ("gcloud firestore fields ttls update expires_at --collection-group='domain_facts_v2'", ["domain_facts_v2"]),
+    ('gcloud firestore fields ttls update expires_at --collection-group "${PREFIX}domain_facts_v2"', ["${PREFIX}domain_facts_v2"]),
+    ("`gcloud firestore fields ttls update expires_at --collection-group=<prefix>fact_lifecycle_daily`", ["<prefix>fact_lifecycle_daily"]),
+    ('gcloud firestore fields ttls update expires_at --collection-group="development_domain_email_facts_v1"', []),
     ("the facts collection is domain_facts_v2 and has no ttls policy", []),
     ("--collection-group=development_domain_facts_v2 is only a flag without the command", []),
 ])
