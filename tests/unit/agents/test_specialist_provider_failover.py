@@ -71,15 +71,17 @@ async def test_a_provider_outage_runs_the_declared_fallback(agent_type, error):
 
 
 @pytest.mark.parametrize("agent_type", sorted(BUILDERS))
-async def test_a_failure_of_the_primary_is_counted_by_the_providers_breaker(agent_type):
+async def test_repeated_failures_of_the_primary_open_the_providers_breaker(agent_type):
     primary, fallback = _provider(error=LLMUnavailableError("down", http_status=503)), _provider(answer="fallback ok")
     context = _context(primary, fallback)
     agent = BUILDERS[agent_type](context)
+    assert context.resilience_port.is_provider_open("openai") is False
 
-    await agent._call_llm(REQUEST)
+    for _ in range(5):  # InMemoryProviderResilience opens after failure_threshold = 5 failures
+        await agent._call_llm(REQUEST)
 
     assert agent._agent_execution_context is context
-    assert context.resilience_port._failures.get("openai"), "the primary's failure must reach the resilience port"
+    assert context.resilience_port.is_provider_open("openai") is True
 
 
 @pytest.mark.parametrize("agent_type", sorted(BUILDERS))
