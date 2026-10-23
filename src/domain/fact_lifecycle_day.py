@@ -11,6 +11,34 @@ SNAPSHOT_FIELDS = frozenset({
 COUNTER_FIELDS = frozenset({"expiry_tool_errors"})
 
 
+_SNAPSHOT_COUNTS = frozenset({"due", "newly_due", "no_decision", "staled", "would_stale", "stale_conflicts", "backlog"})
+
+
+def check_snapshot(values: Mapping[str, Any]) -> None:
+    """Raise ValueError unless `values` is a whole janitor snapshot: exactly SNAPSHOT_FIELDS, each of its type.
+
+    A snapshot is written with merge, so a missing field would keep the earlier run's value and break "the last run wins".
+    `oldest_stale_days` may be None (it is stored as null, replacing an earlier age).
+    """
+    missing = sorted(SNAPSHOT_FIELDS - set(values))
+    unknown = sorted(set(values) - SNAPSHOT_FIELDS)
+    if missing or unknown:
+        raise ValueError(f"a snapshot has exactly the snapshot fields; missing {missing}, not snapshot fields {unknown}")
+    if not isinstance(values["run_at"], datetime):
+        raise ValueError("run_at must be a datetime")
+    if not isinstance(values["breaker"], str):
+        raise ValueError("breaker must be a string")
+    for name in sorted(_SNAPSHOT_COUNTS):
+        if not _is_count(values[name]):
+            raise ValueError(f"{name} must be a non-negative integer")
+    if values["oldest_stale_days"] is not None and not _is_count(values["oldest_stale_days"]):
+        raise ValueError("oldest_stale_days must be a non-negative integer or None")
+
+
+def _is_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def day_doc_id(account_id: str, day: date) -> str:
     """The id of one account's document for one UTC day."""
     return f"{account_id}:{day.isoformat()}"

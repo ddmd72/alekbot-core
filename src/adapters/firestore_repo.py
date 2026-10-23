@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+from dataclasses import replace
 from enum import Enum
 from typing import AbstractSet, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from google.api_core.exceptions import Aborted
@@ -20,6 +21,7 @@ from ..domain.fact_lifecycle import (
     lifecycle_fields,
     with_event,
 )
+from ..domain.fact_lifecycle_sweep import stale_fields
 from ..domain.stored_fact import StoredFact
 from ..domain.vector_math import cosine_similarity
 from ..domain.deduplication_service import SmartDeduplication
@@ -986,11 +988,8 @@ class FirestoreFactRepository(FactRepository):
             snap = await ref.get(transaction=transaction)
             if not snap.exists or snap.update_time != due.update_time:
                 raise FactWriteConflict(due.fact_id)
-            entry = lifecycle_event(
-                now, FactState.CURRENT, FactState.STALE, "janitor", f"expired {due.expires_at.isoformat()}"
-            )
-            events = with_event((snap.to_dict() or {}).get("lifecycle_events") or [], entry)
-            fields = {**lifecycle_fields(FactState.STALE, now), "stale_since": now, "last_updated": now, "lifecycle_events": events}
+            stored_events = (snap.to_dict() or {}).get("lifecycle_events") or []
+            fields = stale_fields(replace(due, lifecycle_events=list(stored_events)), now)
             transaction.update(ref, _encode_fields(fields))
 
         await self._in_transaction(body, due.fact_id)

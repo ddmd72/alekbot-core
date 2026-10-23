@@ -13,7 +13,7 @@ from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 
 from ..config.environment import EnvironmentConfig
-from ..domain.fact_lifecycle_day import COUNTER_FIELDS, SNAPSHOT_FIELDS, FactLifecycleDay, day_doc_id
+from ..domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot, day_doc_id
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..utils.logger import logger
 
@@ -32,9 +32,7 @@ class FirestoreFactLifecycleCounters(FactLifecycleCountersPort):
 
     async def record_sweep(self, account_id: str, day: date, values: Mapping[str, Any]) -> None:
         self._check(account_id, day)
-        unknown = sorted(set(values) - SNAPSHOT_FIELDS)
-        if unknown:
-            raise ValueError(f"not snapshot fields: {unknown}")
+        check_snapshot(values)
         data: Dict[str, Any] = {"account_id": account_id, "day": day.isoformat(), **values}
         await self._daily.document(day_doc_id(account_id, day)).set(data, merge=True)
 
