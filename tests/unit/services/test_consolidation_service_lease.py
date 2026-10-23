@@ -479,7 +479,7 @@ async def test_consolidate_now_without_a_task_queue_warns_on_has_more(make_servi
     with caplog.at_level(logging.WARNING):
         run = await service.consolidate_now(USER)
 
-    assert run == ConsolidationRun(processed=1, has_more=True)
+    assert run == ConsolidationRun(processed=1, has_more=True, unattended=True)
     assert [r for r in caplog.records if r.levelno == logging.WARNING and "no queue for the continuation" in r.getMessage()]
     assert (await _doc(queue, "b2"))["status"] == BatchStatus.PENDING.value
 
@@ -492,7 +492,7 @@ async def test_busy_without_a_task_queue_logs_a_warning_and_returns_deferred(mak
     with caplog.at_level(logging.WARNING):
         run = await service.consolidate_now(USER)
 
-    assert run == ConsolidationRun(deferred=True)
+    assert run == ConsolidationRun(deferred=True, unattended=True)
     assert [r for r in caplog.records if r.levelno == logging.WARNING and "no queue to defer to" in r.getMessage()]
 
 
