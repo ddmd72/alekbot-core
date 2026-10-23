@@ -3523,6 +3523,13 @@
             `${API}/api/user/facts/${fact.id}/invalidate`,
             { method: "POST", credentials: "include" },
           );
+          if (res.status === 409) {
+            const data = await res.json().catch(() => ({}));
+            closeModal();
+            showToast(data.error || "This fact changed. Reloading the list.", "error");
+            await browseInit();
+            return;
+          }
           if (!res.ok) throw new Error();
           closeModal();
           allFacts.splice(_modalFactIdx, 1);
