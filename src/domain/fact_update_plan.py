@@ -57,8 +57,6 @@ def plan_fact_update(current: FactEntity, update: ParsedFactUpdate, now: datetim
         "valid_from": now,
         "last_updated": now,
         "superseded_by": None,
-        "is_current": True,
-        "valid_to": None,
         "text": new_text,
         # An order-only tag difference is not a change, so the tags of the new version follow the update's order.
         "tags": new_tags,
@@ -67,8 +65,7 @@ def plan_fact_update(current: FactEntity, update: ParsedFactUpdate, now: datetim
     }
     if update.temporal_class is not None:
         changes["temporal_class"] = update.temporal_class
-    if update.state is not None and update.state != current.state:
-        changes.update(lifecycle_fields(update.state, now))
+    changes.update(lifecycle_fields(update.state or current.state, now))
     if stale:
         changes.update({"vector": None, "tags_vector": None, "metadata_vector": None})
     return FactUpdatePlan("version", {}, current.model_copy(update=changes, deep=True), stale, new_texts if stale else None)

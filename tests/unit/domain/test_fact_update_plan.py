@@ -159,6 +159,30 @@ def test_a_given_reported_date_wins_over_now():
     assert version.reported_date == datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
 
+def test_a_tags_only_version_re_embeds_with_the_new_tags_and_drops_the_old_vectors():
+    result = plan({"tags": ["relatives"]})
+    assert result.vectors_stale
+    assert result.embedding_texts == fact_embedding_texts("mother is Maria", ["relatives", "consolidated"], {"name": "Maria"})
+    assert result.embedding_texts[1] == "relatives"
+    assert (result.version_fact.vector, result.version_fact.tags_vector, result.version_fact.metadata_vector) == (None,) * 3
+
+
+def test_a_metadata_only_version_re_embeds_with_the_merged_metadata_and_drops_the_old_vectors():
+    result = plan({"metadata": {"city": "Springfield"}})
+    merged = {"name": "Maria", "city": "Springfield"}
+    assert result.vectors_stale
+    assert result.embedding_texts == fact_embedding_texts("mother is Maria", ["family", "mother", "consolidated"], merged)
+    assert result.embedding_texts[2] == '{"name": "Maria", "city": "Springfield"}'
+    assert (result.version_fact.vector, result.version_fact.tags_vector, result.version_fact.metadata_vector) == (None,) * 3
+
+
+def test_a_text_only_version_re_embeds_all_three_texts():
+    result = plan({"content": "mother is Mariia"})
+    assert result.vectors_stale
+    assert result.embedding_texts == fact_embedding_texts("mother is Mariia", ["family", "mother", "consolidated"], {"name": "Maria"})
+    assert (result.version_fact.vector, result.version_fact.tags_vector, result.version_fact.metadata_vector) == (None,) * 3
+
+
 def test_a_text_change_marks_the_vectors_stale_and_lists_the_texts_to_embed():
     result = plan({"content": "mother is Mariia", "tags": ["relatives"], "metadata": {"city": "Springfield"}})
     assert result.vectors_stale
@@ -256,3 +280,46 @@ def test_a_hand_built_superseded_update_with_content_is_refused():
     update = ParsedFactUpdate(state=FactState.SUPERSEDED, superseded_by="n", content="x")
     with pytest.raises(ValueError, match="cannot be combined"):
         plan_fact_update(current_fact(), update, NOW)
+
+
+# ------------------------------------------------------------------------------------------------ review additions
+
+@pytest.mark.parametrize("state", [FactState.ARCHIVED, FactState.INVALIDATED])
+def test_a_version_of_a_closed_state_carries_that_states_flags(state):
+    fact = current_fact(state=state, valid_to=NOW - timedelta(days=5))
+    version = plan({"content": "mother is Mariia"}, fact).version_fact
+    expected = lifecycle_fields(state, NOW)
+    assert (version.state, version.is_current, version.valid_to) == (state, expected["is_current"], NOW)
+
+
+def test_a_version_never_inherits_a_stray_superseded_by_or_a_stale_valid_to():
+    fact = current_fact(superseded_by="x", valid_to=NOW - timedelta(days=5))
+    version = plan({"content": "mother is Mariia"}, fact).version_fact
+    assert (version.superseded_by, version.is_current, version.valid_to, version.state) == (
+        None, True, None, FactState.CURRENT)
+
+
+@pytest.mark.parametrize("updates,field", [
+    ({"content": "mother is Mariia"}, "metadata"), ({"content": "mother is Mariia"}, "tags"),
+    ({"temporal_class": "DYNAMIC"}, "metadata"), ({"temporal_class": "DYNAMIC"}, "tags")])
+def test_a_version_shares_no_metadata_or_tags_object_with_the_old_fact(updates, field):
+    old = current_fact()
+    before = old.model_copy(deep=True)
+    version = plan(updates, old).version_fact
+    assert getattr(version, field) is not getattr(old, field)
+    if field == "metadata":
+        version.metadata["k"] = "v"
+    else:
+        version.tags.append("k")
+    assert old == before
+
+
+def test_duplicate_tags_are_counted_so_adding_a_repeat_is_a_version():
+    result = plan({"tags": ["family", "family", "mother"]})
+    assert result.kind == "version" and result.version_fact.tags == ["family", "family", "mother", "consolidated"]
+
+
+def test_the_same_duplicates_in_another_order_are_not_a_change():
+    fact = current_fact(tags=["family", "mother", "family", "consolidated"])
+    result = plan({"tags": ["mother", "family", "family"]}, fact)
+    assert result.kind == "in_place"

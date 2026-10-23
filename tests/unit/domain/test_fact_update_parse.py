@@ -101,7 +101,7 @@ def test_superseded_needs_superseded_by():
 def test_superseded_with_superseded_by_parses():
     parsed = parse_fact_update({"state": "superseded", "superseded_by": "new-1", "reported_date": "2020-01-02"})
     assert parsed.state is FactState.SUPERSEDED and parsed.superseded_by == "new-1"
-    assert parsed.reported_date == datetime(2020, 1, 2)
+    assert parsed.reported_date == datetime(2020, 1, 2, tzinfo=timezone.utc)
 
 
 def test_superseded_by_alone_is_refused():
