@@ -521,7 +521,9 @@ async def test_unique_compares_only_current_facts_of_the_facts_account(store, kw
 
 # ----------------------------------------------------------------------------- get_latest_fact_by_lineage
 
-async def test_latest_by_lineage_returns_the_is_current_document_in_any_state(store):
+async def test_latest_by_lineage_returns_the_non_superseded_document_in_any_state(store):
+    # S2 (decision 17, D-7): the latest document is the highest version whose state is not superseded, any other state
+    # included; `is_current` is no longer read. Highest-version selection is pinned in test_fact_repository_versions_kit.py.
     put_raw(store, "a-elsewhere", "other lineage", entity={"lineage_id": "M"})
     put_raw(store, "b-old", "v1", entity={"lineage_id": "L"}, is_current=False, state="superseded")
     put_raw(store, "c-new", "v2", entity={"lineage_id": "L"}, is_current=True, state="archived")
