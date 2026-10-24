@@ -64,7 +64,7 @@ class FactReviewQuestion(BaseModel):
 
     Frozen, and `model_copy` validates again: a question that exists is a legal one."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     question_id: str = Field(min_length=1)
     account_id: str = Field(min_length=1)
