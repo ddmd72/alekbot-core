@@ -94,6 +94,7 @@ from src.services.language_preference_service import LanguagePreferenceService
 from src.services.localization_service import LocalizationService as _LocalizationService
 from src.services.long_turn_service import LongTurnService
 from src.services.overflow_routing_service import OverflowRoutingService
+from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.services.prompt_builder import PromptBuilder
 from src.services.provider_registry import ProviderRegistry
 from src.services.reminders_service import RemindersService
@@ -641,6 +642,9 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         else None
     )
 
+    # The one owner-zone resolver: the consolidation run here, the memory review and the owner's answers later (Facts S4).
+    _owner_zones = OwnerTimezoneResolver(account_repo=account_repo, user_repo=user_repo)
+
     # Services for WorkerHandler — wrap ports so the handler never imports ports directly.
     # The one ConsolidationService also serves `$consolidate` on both chat adapters (Facts S2).
     _consolidation_service = ConsolidationService(
@@ -652,7 +656,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         task_queue=agent_task_queue,
         indexed_email_repo=indexed_email_repo,
         user_repo=user_repo,
-        account_repo=account_repo,
+        owner_zones=_owner_zones,
     ) if consolidation_queue else None
     _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
     _reminders_service = RemindersService(

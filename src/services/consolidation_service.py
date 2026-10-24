@@ -17,7 +17,7 @@ import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
 from ..domain.consolidation import MAX_BATCH_ATTEMPTS, MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch
@@ -29,19 +29,19 @@ from ..domain.memory_write_lease import (
     defer_bucket,
     lease_until,
 )
-from ..domain.owner_timezone import failure_reason, owner_to_read, owner_zone
 from ..domain.request_context import RequestContext
-from ..ports.account_repository import AccountRepository
 from ..ports.consolidation_queue import ConsolidationQueue
 from ..ports.memory_write_lease import MemoryWriteLeasePort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
 
+if TYPE_CHECKING:
+    from .owner_timezone_resolver import OwnerTimezoneResolver
+
 _INTENT_CONSOLIDATE_FULL = "consolidate_full"  # mirrors Intent.CONSOLIDATE_FULL
 _NO_ACCOUNT_ERROR = "user has no account"
 _NO_PROFILE_ERROR = "user has no profile"
-_FALLBACK_TIMEZONE = "UTC"
 _DEFERRAL_DEADLINE_S = 1800  # same Cloud Tasks dispatch deadline as enqueue_consolidation_task
 _MARGIN_S = LEASE_MARGIN.total_seconds()
 
@@ -78,7 +78,7 @@ class ConsolidationService:
         lease: MemoryWriteLeasePort,
         run_timeout_s: float,
         user_repo: UserRepository,
-        account_repo: AccountRepository,
+        owner_zones: OwnerTimezoneResolver,
         task_queue: Optional[TaskQueue] = None,
         indexed_email_repo: Optional[object] = None,
         clock: Callable[[], datetime] = _utcnow,
@@ -93,7 +93,7 @@ class ConsolidationService:
         self._task_queue = task_queue
         self._indexed_email_repo = indexed_email_repo
         self._user_repo = user_repo
-        self._account_repo = account_repo
+        self._owner_zones = owner_zones
         self._clock = clock
 
     async def find_stuck_users(self) -> list[str]:
@@ -155,7 +155,7 @@ class ConsolidationService:
         if account_id is None:
             return ConsolidationRun(failed=1)
 
-        owner_timezone = await self._owner_timezone(account_id)
+        owner_timezone = (await self._owner_zones.resolve(account_id)).zone
         processed = 0
         touched: list[str] = []
         failed = 0
@@ -198,30 +198,6 @@ class ConsolidationService:
         except Exception as exc:
             self._log_unhandled(user_id, exc)
             return None
-
-    async def _owner_timezone(self, account_id: str) -> str:
-        """The account owner's IANA zone, once per run; the account comes from the profile only and the zone never
-        decides it. Any missing step, an invalid zone or a failing repository gives UTC and one WARNING: a store hiccup
-        never fails a batch."""
-        try:
-            step = owner_to_read(await self._account_repo.get_account(account_id))
-            if step.owner_id is None:
-                return self._zone_unresolved(account_id, step.unresolved or "")
-            if step.owner_count > 1:
-                logger.warning(
-                    "[Librarian] account %s has %d owners; the timezone of the first is used", account_id[:8], step.owner_count,
-                )
-            resolved = owner_zone(await self._user_repo.get_user(step.owner_id))
-            if resolved.unresolved is not None:
-                return self._zone_unresolved(account_id, resolved.unresolved)
-            return resolved.zone
-        except Exception as exc:
-            return self._zone_unresolved(account_id, failure_reason(exc))
-
-    @staticmethod
-    def _zone_unresolved(account_id: str, why: str) -> str:
-        logger.warning("[Librarian] owner timezone unresolved for account %s: %s; using UTC", account_id[:8], why)
-        return _FALLBACK_TIMEZONE
 
     async def _has_other_pending(self, user_id: str, touched: list[str]) -> bool:
         """After an internal error: whether the chain can go on. It can when a batch other than the one that broke is
