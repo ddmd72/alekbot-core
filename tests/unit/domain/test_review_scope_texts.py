@@ -2,6 +2,7 @@
 none tells a pass with no search tool to search, and a refusal is one tagged failed result."""
 import pytest
 
+from src.domain.fact_review_basis import parse_history
 from src.domain.fact_review_rules import (
     ASK_HELD, CHANGED_OUTSIDE, UPDATES_SHAPE_REFUSAL, asked_refusal, changed_outside_refusal, decided_refusal,
     not_in_batch_refusal, not_under_review_refusal,
@@ -45,6 +46,13 @@ def test_the_updates_shape_text_names_the_place_and_every_field():
     for name in ("content", "tags", "metadata", "temporal_class", "state", "superseded_by", "expiry"):
         assert name in UPDATES_SHAPE_REFUSAL
     assert "reported_date" not in UPDATES_SHAPE_REFUSAL and "search" not in UPDATES_SHAPE_REFUSAL
+
+
+def test_a_history_that_is_not_text_names_its_place_and_shape():
+    with pytest.raises(ValueError) as caught:
+        parse_history(["ended"])
+    assert str(caught.value) == "history must be text: one sentence in the past tense saying it ended, got list"
+    assert parse_history(None) is None and parse_history("Worked at Acme.") == "Worked at Acme."
 
 
 def test_the_held_ask_text_says_code_writes_the_question():

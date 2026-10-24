@@ -9,12 +9,12 @@ builders. What it owns is the pass's state: which batch facts have a result, and
 import asyncio
 import dataclasses
 from datetime import datetime
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Set
 
 from ..domain.entities import FactEntity, FactState
 from ..domain.exceptions import FactBornDueError, FactExpiryError, FactResolutionError
 from ..domain.fact_review_ask import AskRequest, parse_ask_owner
-from ..domain.fact_review_basis import ReviewAction, ReviewBasis, parse_review_basis
+from ..domain.fact_review_basis import ReviewAction, ReviewBasis, parse_history, parse_review_basis
 from ..domain.fact_review_batch import ReviewBatch
 from ..domain.fact_review_outcome import MADE_CURRENT, ReviewDecision, review_outcome
 from ..domain.fact_review_question import FactReviewQuestion
@@ -23,7 +23,9 @@ from ..domain.fact_review_rules import (
     ASK_HELD,
     STAYS_STALE_REFUSAL,
     UPDATES_SHAPE_REFUSAL,
+    ask_refusal,
     asked_refusal,
+    basis_refusal,
     changed_outside_refusal,
     decided_refusal,
     not_in_batch_refusal,
@@ -43,6 +45,7 @@ from ..domain.fact_tool_result import (
 )
 from ..domain.fact_update import ParsedFactUpdate, parse_fact_update
 from ..domain.fact_write_context import FactWriteContext
+from ..domain.local_time import local_date
 from ..domain.pass_actor import PassActor
 from ..domain.stored_fact import StoredFact
 from ..ports.fact_update_port import FactUpdatePort
@@ -82,8 +85,9 @@ class FactReviewScope:
         self._asks: Dict[str, AskRequest] = {}
 
     async def update_fact(self, args: Mapping[str, Any]) -> Dict[str, Any]:
-        """One `update_fact(fact_id, updates, basis?)`: refused with a tagged text, or written; the result is the write
-        path's (a resolution or conflict failure reads as the fact having changed outside the review)."""
+        """One `update_fact(fact_id, updates, basis?, history?)` (`basis` and `history` also accepted inside `updates`):
+        refused with a tagged text, or written; the result is the write path's (a resolution or conflict failure reads
+        as the fact having changed outside the review)."""
         async with self._lock:
             return await self._update(args)
 
@@ -120,10 +124,8 @@ class FactReviewScope:
         if not isinstance(raw_updates, Mapping):
             return refused_result(fact_id, REFUSED_SCOPE, UPDATES_SHAPE_REFUSAL)
         updates = dict(raw_updates)
-        nested_basis = updates.pop("basis", None)  # R3-10: a basis sent inside updates is honoured, never dropped
-        raw_basis = args.get("basis")
-        if raw_basis is None:
-            raw_basis = nested_basis
+        raw_basis = _argument(args, updates, "basis")  # R3-10: sent inside updates, it is honoured, never dropped
+        raw_history = _argument(args, updates, "history")
         try:
             update = parse_fact_update(updates, self._tz)
         except FactExpiryError as error:
@@ -135,6 +137,7 @@ class FactReviewScope:
             return refused_result(fact_id, REFUSED_SCOPE, str(error))
         try:
             basis = parse_review_basis(raw_basis) if raw_basis is not None else None
+            history = parse_history(raw_history)
         except ValueError as error:
             return refused_result(fact_id, REFUSED_BASIS, str(error))
         stored = await self._resolve(fact_id, lineage)
@@ -146,10 +149,16 @@ class FactReviewScope:
             return refused_result(fact_id, REFUSED_SCOPE, STAYS_STALE_REFUSAL)
         named = await self._named(update.superseded_by if action == "supersede" else _evidence_id(basis))
         question = self._questions.get(basis.question_id) if basis is not None and basis.question_id else None
+        refusal = basis_refusal(
+            current, update, basis, named_fact=named, question=question, made_current=self._made_current(),
+            history=history, today=local_date(self._now, self._tz), tz=self._tz,
+        )
+        if refusal is not None:
+            return refused_result(fact_id, REFUSED_BASIS, refusal)
         result = await self._writer.apply_fact_update(
             current.id, update, self._account_id, context=self._context,
             evidence_at=_evidence_at(basis, named, question),
-            reason=self._reason(action, basis, update, named, current),
+            reason=self._reason(action, basis, update, named, current), history=history,
         )
         if result.get("status") not in WRITTEN_STATUSES:
             if "refused" not in result and not await self._unchanged(stored, lineage):
@@ -210,6 +219,12 @@ class FactReviewScope:
         if taken is not None:
             return refused_result(request.fact_id, REFUSED_SCOPE, taken)
         fact = self._by_lineage[lineage]
+        refusal = ask_refusal(
+            fact, request.fallback, request.fallback_date, request.noise, self._open_by_fact.get(fact.id),
+            self._now, self._tz,
+        )
+        if refusal is not None:
+            return refused_result(request.fact_id, REFUSED_ASK, refusal)
         self._asks[lineage] = dataclasses.replace(request, fact_id=fact.id)
         return {"fact_id": fact.id, "status": STATUS_ASKED, "message": ASK_HELD}
 
@@ -243,6 +258,10 @@ class FactReviewScope:
         decision = self._decisions.get(lineage)
         return (decision is not None and decision.outcome in MADE_CURRENT) or self._by_lineage[lineage].id in self._open_by_fact
 
+    def _made_current(self) -> Set[str]:
+        """The documents this pass made current: they count as current evidence and successors (R3-13)."""
+        return {self._left[lineage].id for lineage, d in self._decisions.items() if d.outcome in MADE_CURRENT}
+
     async def _named(self, fact_id: Optional[str]) -> Optional[FactEntity]:
         """The fact an evidence or successor id names: the document this pass's write left, for a lineage it wrote, else
         the stored document of that id."""
@@ -252,6 +271,13 @@ class FactReviewScope:
         if lineage is not None and lineage in self._decisions:
             return self._left[lineage]
         return await self._facts.get_fact_by_id(fact_id)
+
+
+def _argument(args: Mapping[str, Any], updates: Dict[str, Any], name: str) -> Any:
+    """A call argument from the top level, else from inside `updates`, from which it is removed either way."""
+    nested = updates.pop(name, None)
+    value = args.get(name)
+    return nested if value is None else value
 
 
 def _evidence_id(basis: Optional[ReviewBasis]) -> Optional[str]:
