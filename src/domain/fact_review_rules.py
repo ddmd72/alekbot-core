@@ -412,6 +412,37 @@ def is_dated_plan(fact: FactEntity, question: Optional[FactReviewQuestion] = Non
 
 STAYS_STALE_REFUSAL: Final[str] = "this pass changes the fact's state; reported_date is kept by the system"
 
+# The texts of the review pass's own scope (plan §3.5). `place` is the argument the refusal is about, as the model wrote it
+# (`update_fact.fact_id`).
+CHANGED_OUTSIDE: Final[str] = "this fact changed outside the review; leave it, it stays as it is"
+UPDATES_SHAPE_REFUSAL: Final[str] = (
+    "update_fact.updates must be an object of the fields to change: "
+    "{content?, tags?, metadata?, temporal_class?, state?, superseded_by?, expiry?}"
+)
+ASK_HELD: Final[str] = (
+    "held: code writes the question and sends it to the owner after this pass; this fact needs nothing more now"
+)
+
+
+def not_in_batch_refusal(place: str) -> str:
+    return f"{place} names no fact of this batch: use the fact_id of a fact listed for this review"
+
+
+def asked_refusal(place: str) -> str:
+    return f"{place}: you asked the owner about this fact in this pass; it stays as it is until he answers"
+
+
+def decided_refusal(place: str) -> str:
+    return f"{place}: this fact was already decided in this pass; leave it"
+
+
+def changed_outside_refusal(place: str) -> str:
+    return f"{place}: {CHANGED_OUTSIDE}"
+
+
+def not_under_review_refusal(place: str) -> str:
+    return f"{place} names a current fact with no question in this batch; leave it, it stays as it is"
+
 
 def review_action(current: FactEntity, update: ParsedFactUpdate) -> Optional[ReviewAction]:
     """What a review write does to `current`, or None when it leaves the fact as it is (a stale fact stays stale).
@@ -505,14 +536,19 @@ def _reply_refusal(fact: FactEntity, basis: ReviewBasis, question: Optional[Fact
     return None
 
 
-def _date_passed_refusal(fact: FactEntity, basis: ReviewBasis, today: date, tz: str) -> Optional[str]:
+def plan_date(fact: FactEntity, basis: ReviewBasis, tz: str) -> Optional[date]:
+    """The date a `date_passed` basis says has passed: a `date` fact's own (its last day in the owner's zone `tz`), else
+    `basis.on`; None when there is none."""
     if as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE:
         kept = stored_expiry(fact.expiry_kind, fact.ttl_days, fact.expires_at, tz)
-        own = kept.on if kept is not None else None
-    else:
-        own = basis.on
-        if own is None:
-            return "basis.date: the plan's date (YYYY-MM-DD), which must be before today"
+        return kept.on if kept is not None else None
+    return basis.on
+
+
+def _date_passed_refusal(fact: FactEntity, basis: ReviewBasis, today: date, tz: str) -> Optional[str]:
+    own = plan_date(fact, basis, tz)
+    if own is None and as_expiry_kind(fact.expiry_kind) is not ExpiryKind.DATE:
+        return "basis.date: the plan's date (YYYY-MM-DD), which must be before today"
     if own is None or own >= today:
         return f"basis.date_passed: the plan's date {own.isoformat() if own else 'is unknown'} is not before today ({today.isoformat()})"
     return None
