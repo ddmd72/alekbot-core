@@ -47,7 +47,7 @@ class FactReviewStore(ABC):
     ) -> Optional[FactReviewQuestion]:
         """The question posted at that message, in any status: `user_id`, `message_platform`, `message_channel` and
         `message_id` all equal. The same message id in another channel, platform or user's question is not it (None).
-        No transaction."""
+        Two questions on one message is a bug, not a case to serve: logged as ERROR, and None. No transaction."""
 
     # ------------------------------------------------------------------------------------------------ question writes
 
@@ -99,7 +99,9 @@ class FactReviewStore(ABC):
         `sent_today(state, today) + 1` with `sent_on = today` (a new day starts at 1). An account without a state
         document starts from an empty state. Returns the claimed question; None when one is out, today's sends are used
         up, a delivery failed today or nothing is queued. A commit that loses to a concurrent writer re-runs and decides
-        again on what it then reads."""
+        again on what it then reads. The question the state points at, if it no longer validates, is logged as ERROR
+        and raised (nothing is written); other unreadable questions are skipped. Raises ValueError for an empty
+        `account_id` or `session_id`."""
 
     @abstractmethod
     async def mark_appended(self, question_id: str, at: datetime) -> bool:
@@ -120,8 +122,9 @@ class FactReviewStore(ABC):
     async def requeue_front(self, question_id: str, failed_today: bool) -> bool:
         """`requeued()` (its `queue_key` kept, the attempt forgotten), in one transaction over the question and its
         account's state: the state's `current_question_id` is cleared when it names this question, and with
-        `failed_today` `delivery_failed_on` becomes the state's `sent_on` (the owner-local day of the claim). False: no
-        such question, or not a pending one that was never posted; the state is then untouched."""
+        `failed_today` `delivery_failed_on` becomes the state's `sent_on` (the owner-local day of the claim), only while
+        the pointer names this question (otherwise a WARNING, and it is not set). False: no such question, or not a
+        pending one that was never posted; the state is then untouched."""
 
     @abstractmethod
     async def mark_unanswered(self, question_id: str) -> bool:
