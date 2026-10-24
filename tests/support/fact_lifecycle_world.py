@@ -2,7 +2,7 @@
 cache, the real counters adapter on the same fake database, a recording alert sink and a movable clock."""
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
-from typing import Any, Awaitable, Callable, List, Optional, Set
+from typing import Any, Awaitable, Callable, List, Optional, Set, Tuple
 
 from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
 from src.adapters.firestore_repo import FirestoreFactRepository
@@ -47,14 +47,29 @@ class FaultyRepo(FirestoreFactRepository):
         await super().stale_due_fact(due, now)
 
 
+def make_fact_world() -> Tuple[FactStore, FaultyRepo, BiographicalContextService]:
+    """The evaluating fact store (index refusal on), a repository over it that refreshes the real biographical cache, and
+    that service; `repo.fail_on` names the fact ids whose staling fails."""
+    store = FactStore(indexes=INDEXES_FILE)
+    bio = BiographicalContextService(store.repo)
+    repo = FaultyRepo(store.db, make_env_config(), embedding_service=store.embedder, biographical_context_service=bio)
+    repo.fail_on = set()
+    bio.set_repository(repo)
+    return store, repo, bio
+
+
+async def seed_fact(repo: FirestoreFactRepository, text: str, **over: Any) -> str:
+    """A fact written through the repository; `expires_at` given without a kind is a horizon-less date decision."""
+    if "expires_at" in over:
+        over.setdefault("expiry_kind", ExpiryKind.DATE)
+    fact = make_fact(text, **over)
+    await repo.add_fact(fact)
+    return fact.id
+
+
 class JanitorWorld:
     def __init__(self, dry_run: bool = False, with_sink: bool = True) -> None:
-        self.store = FactStore(indexes=INDEXES_FILE)
-        env = make_env_config()
-        bio = BiographicalContextService(self.store.repo)
-        self.repo = FaultyRepo(self.store.db, env, embedding_service=self.store.embedder, biographical_context_service=bio)
-        self.repo.fail_on = set()
-        bio.set_repository(self.repo)
+        self.store, self.repo, _ = make_fact_world()
         self.env = EnvironmentConfig()
         self.counters = FirestoreFactLifecycleCounters(self.store.db, self.env)
         self.sink = RecordingSink()
@@ -89,12 +104,7 @@ class JanitorWorld:
         return self.store.db.collection(self.env.fact_lifecycle_lines_collection).docs
 
     async def seed(self, text: str, **over: Any) -> str:
-        """A fact written through the repository; `expires_at` given without a kind is a horizon-less date decision."""
-        if "expires_at" in over:
-            over.setdefault("expiry_kind", ExpiryKind.DATE)
-        fact = make_fact(text, **over)
-        await self.repo.add_fact(fact)
-        return fact.id
+        return await seed_fact(self.repo, text, **over)
 
     async def seed_due(self, text: str, **over: Any) -> str:
         over.setdefault("expires_at", PAST)

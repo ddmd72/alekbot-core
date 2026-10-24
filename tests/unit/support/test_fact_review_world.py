@@ -1,4 +1,5 @@
 """The review pass's world (tests/support/fact_review_world.py, recording_task_queue.py): each fake behaves like the port it stands for."""
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -9,7 +10,7 @@ from src.domain.language import LanguageCode
 from src.domain.llm import Message, MessagePart
 from src.domain.ui_messages import UIMessage
 from tests.support.fact_kit import ACC, USER
-from tests.support.fact_lifecycle_world import NOW, JanitorWorld
+from tests.support.fact_lifecycle_world import NOW, PAST, JanitorWorld
 from tests.support.fact_review_world import ReviewWorld
 
 
@@ -27,9 +28,9 @@ def pair(text):
 async def test_a_batch_append_is_stored_in_order_under_the_session(world):
     await world.session_store.append_messages_batch("u:c", pair("one"), "u", raise_on_error=True)
     await world.session_store.append_messages_batch("u:c", pair("two"), "u")
-    assert [m.parts[0].text for m in world.session_store.messages("u:c")] == ["one", "ok", "two", "ok"]
+    assert [m.parts[0].text for m in await world.session_store.messages("u:c")] == ["one", "ok", "two", "ok"]
     assert await world.session_store.get_latest_session_id("u") == "u:c"
-    assert world.session_store.messages("u:other") == []
+    assert await world.session_store.messages("u:other") == []
 
 
 async def test_a_failed_append_raises_only_when_asked_and_stores_nothing(world):
@@ -37,21 +38,71 @@ async def test_a_failed_append_raises_only_when_asked_and_stores_nothing(world):
     with pytest.raises(RuntimeError):
         await world.session_store.append_messages_batch("u:c", pair("lost"), "u", raise_on_error=True)
     await world.session_store.append_messages_batch("u:c", pair("swallowed"), "u")
-    assert world.session_store.messages("u:c") == []
+    assert await world.session_store.messages("u:c") == []
     world.session_store.fail = False
     await world.session_store.append_messages_batch("u:c", pair("kept"), "u", raise_on_error=True)
-    assert len(world.session_store.messages("u:c")) == 2
+    assert len(await world.session_store.messages("u:c")) == 2
+
+
+async def test_the_store_keeps_a_copy_not_the_callers_message(world):
+    message = Message(role="model", parts=[MessagePart(text="summary", full_text="full")])
+    await world.session_store.append_messages_batch("u:c", [message], "u")
+    message.parts[0].text = "edited after the append"
+    [stored] = await world.session_store.messages("u:c")
+    assert (stored.parts[0].text, stored.parts[0].full_text) == ("summary", "full")
+    stored.parts[0].text = "edited after the load"
+    assert (await world.session_store.messages("u:c"))[0].parts[0].text == "summary"
+
+
+async def test_the_owner_falls_back_to_the_session_id_as_in_production(world):
+    await world.session_store.append_messages_batch("u:c", pair("one"))
+    assert (await world.session_store.load_session("u:c")).owner_id == "u:c"
+
+
+async def test_the_latest_session_is_the_one_with_the_latest_activity(world):
+    await world.session_store.append_messages_batch("u:a", pair("one"), "u")
+    await world.session_store.append_messages_batch("u:b", pair("two"), "u")
+    await world.session_store.append_messages_batch("u:a", pair("three"), "u")
+    assert await world.session_store.get_latest_session_id("u") == "u:a"
+
+
+async def test_an_overflow_over_the_window_is_cut_in_batches_and_reported(world):
+    store = world.session_store
+    await store.append_messages_batch("u:c", [Message(role="user", parts=[MessagePart(text=f"m{i}")]) for i in range(200)], "u")
+    await store.append_messages_batch("u:c", pair("new"), "u")
+    await asyncio.sleep(0)
+    [(owner, session_id, batch)] = store.overflow
+    assert (owner, session_id, len(batch)) == ("u", "u:c", 100)
+    assert len(await store.messages("u:c")) == 102
 
 
 # ----------------------------------------------------------------------------------------------- notifier, state
 
-async def test_the_notifier_records_each_send_with_its_result(world):
-    assert await world.notifier.notify_raw("u", "a", "first") is True
-    world.notifier.result = False
-    assert await world.notifier.notify_raw("u", "a", "second", "C1", "slack") is False
-    assert world.notifier.texts == ["first", "second"]
-    assert [item["delivered"] for item in world.notifier.sent] == [True, False]
-    assert (world.notifier.sent[1]["channel_id"], world.notifier.sent[1]["platform"]) == ("C1", "slack")
+async def test_a_raw_notification_goes_to_the_primary_channel_then_the_last_active(world):
+    await world.notification_state.save("u", "telegram", "T9")
+    assert await world.notifier.notify_raw("u", "a", "to last active") is True
+    await world.notification_state.save_primary("u", "slack", "C1")
+    assert await world.notifier.notify_raw("u", "a", "to primary") is True
+    assert await world.notifier.notify_raw("u", "a", "to override", "C7", "slack") is True
+    assert world.channels.sent == [("telegram", "T9", "to last active"), ("slack", "C1", "to primary"),
+                                   ("slack", "C7", "to override")]
+
+
+async def test_a_raw_notification_with_no_stored_channel_is_not_delivered(world):
+    assert await world.notifier.notify_raw("u", "a", "nobody home") is False
+    assert world.channels.sent == []
+
+
+async def test_a_raw_notification_on_an_unconfigured_platform_or_a_failing_send_is_not_delivered(world):
+    await world.notification_state.save_primary("u", "slack", "C1")
+    world.channels.unconfigured.add("slack")
+    assert await world.notifier.notify_raw("u", "a", "no platform") is False
+    world.channels.unconfigured.clear()
+    world.channels.fail = True
+    assert await world.notifier.notify_raw("u", "a", "send fails") is False
+    world.channels.fail = False
+    assert await world.notifier.notify_raw("u", "a", "back") is True
+    assert world.channels.sent == [("slack", "C1", "back")]
 
 
 async def test_primary_and_last_active_channels_are_kept_apart(world):
@@ -73,14 +124,16 @@ async def test_channel_bindings_save_get_and_delete(world):
     assert await world.channel_bindings.get("C1") is None
 
 
-async def test_the_language_service_answers_per_user_with_system_defaults(world):
+async def test_the_language_service_ties_the_ui_language_to_the_preferred_one(world):
     assert await world.language.get_preference("u") == (None, True)
     assert await world.language.resolve_ui_language("u") == LanguageCode.EN
-    world.language.preferences["u"] = (LanguageCode.UK, False)
-    world.language.ui_languages["u"] = LanguageCode.FR
-    assert await world.language.get_preference("u") == (LanguageCode.UK, False)
+    world.language.account_default = LanguageCode.FR
     assert await world.language.resolve_ui_language("u") == LanguageCode.FR
+    world.language.preferences["u"] = (LanguageCode.UK, False)
+    assert await world.language.get_preference("u") == (LanguageCode.UK, False)
+    assert await world.language.resolve_ui_language("u") == LanguageCode.UK
     assert await world.language.get_preference("v") == (None, True)
+    assert await world.language.resolve_ui_language("v") == LanguageCode.FR
 
 
 def test_the_localization_is_the_real_file_adapter(world):
@@ -134,6 +187,11 @@ async def test_each_world_has_its_own_queue(world):
     assert other.enqueued != [] and len(world.enqueued) == 1
 
 
+async def test_concurrent_enqueues_of_one_key_create_one_task(world):
+    results = await asyncio.gather(*[world.queue.enqueue_worker_task("fact_review", {}, dedup_key="k") for _ in range(50)])
+    assert len([r for r in results if r]) == 1 and len(world.enqueued) == 1
+
+
 async def test_the_janitor_world_has_the_same_queue_on_first_use():
     janitor = JanitorWorld()
     assert await janitor.queue.enqueue_worker_task("fact_review", {"user_id": USER}, dedup_key="k")
@@ -150,6 +208,22 @@ async def test_a_seeded_stale_fact_is_stale_since_now_and_in_the_backlog(world):
     assert stored["state"] == FactState.STALE.value and stored["stale_since"] == NOW
     assert world.docs[fresh]["state"] == FactState.CURRENT.value
     assert await world.repo.stale_backlog() == {ACC: (1, NOW)}
+
+
+async def test_staling_refreshes_the_biographical_cache_built_before(world):
+    await world.seed("kept fact")
+    gone = await world.seed("old plan", expires_at=PAST)
+    await world.repo.refresh_biographical_context_cache(ACC)
+    assert {item["text"] for item in await world.repo.get_biographical_context_cached(ACC)} == {"kept fact", "old plan"}
+    await world.stale(gone)
+    assert {item["text"] for item in await world.repo.get_biographical_context_cached(ACC)} == {"kept fact"}
+
+
+async def test_seeding_a_stale_fact_that_is_not_due_says_so(world):
+    with pytest.raises(AssertionError, match="not due"):
+        await world.seed_stale("future plan", expires_at=NOW + timedelta(days=5))
+    with pytest.raises(AssertionError, match="not due"):
+        await world.stale("no-such-fact")
 
 
 async def test_a_stale_fact_is_hidden_from_readers_like_after_the_sweep(world):
