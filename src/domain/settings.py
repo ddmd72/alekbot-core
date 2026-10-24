@@ -9,9 +9,12 @@
 # can import it without violating the hexagonal config/ boundary.
 # ========================================================================
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, Final, List
 
 from .billing import AccountTier
+
+# The memory review runs when this many owner-local days passed since the last one (per user: `fact_review_interval_days`).
+DEFAULT_FACT_REVIEW_INTERVAL_DAYS: Final[int] = 1
 
 
 @dataclass

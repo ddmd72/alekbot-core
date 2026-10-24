@@ -104,6 +104,21 @@ def compute_expiry(expiry: Expiry, reported_date: datetime, timezone: str) -> Di
     return {"expiry_kind": ExpiryKind.NONE, "ttl_days": None, "expires_at": None}
 
 
+def horizon_from_now(days: int, reported_date: datetime, now: datetime) -> Dict[str, Any]:
+    """`expiry_kind`, `ttl_days` and `expires_at` for a horizon of `days` counted from the later of `reported_date` and `now`.
+
+    Stored as every horizon is, `expires_at = reported_date + ttl_days` whole days, so it can fall up to a day after
+    `base + days`. The review and the owner's answers bring a fact back this way: nobody spoke of it today, so counting
+    from `reported_date` alone would be born due.
+    """
+    if days < 1:
+        raise ValueError("a horizon from now is at least one day")
+    reported = local_moment(reported_date, "UTC")
+    target = max(reported, local_moment(now, "UTC")) + timedelta(days=days)
+    ttl_days = -((reported - target) // _DAY)  # ceil((target - reported) / 1 day)
+    return compute_expiry(Expiry(ExpiryKind.HORIZON, days=ttl_days), reported, "UTC")
+
+
 def born_due(
     fields: Mapping[str, Any], reported_date: datetime, now: datetime, timezone: str, cleanup: bool
 ) -> Tuple[Dict[str, Any], Optional[str]]:
