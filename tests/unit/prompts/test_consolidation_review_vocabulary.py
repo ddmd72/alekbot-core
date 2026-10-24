@@ -193,3 +193,70 @@ def test_the_lifecycle_token_round_trips_through_the_serializer():
     for kind, name in (("profiles", "consolidation_review"), ("blueprints", "consolidation_review_v1")):
         yaml_text = (pv.SNAPSHOT / kind / f"{name}.yaml").read_text(encoding="utf-8")
         assert pv.ser.doc_to_yaml(pv.ser.doc_from_yaml(yaml_text)) == yaml_text
+
+
+# ------------------------------------------------------------------------------------- T7 fix round (review B1, S1, S2)
+
+REVIEW_PROMPT = render_static("consolidation_review")
+LEAVE_LINE = "A fact whose question is open or timed out is not asked again; when nothing decides it, its outcome is leave."
+
+
+def _in_this_pass():
+    return re.search(r'^\s*in_this_pass: "([^"]*)"', LIFECYCLE, re.MULTILINE).group(1)
+
+
+def test_the_review_prompt_carries_taxonomys_conversation_rules_so_lifecycle_replaces_them():
+    """B1: the review renders TAXONOMY, whose expiry lines are for the conversation passes; LIFECYCLE says what replaces
+    them in this pass."""
+    for conversation_rule in ("N counts from reported_date", "A horizon counts from reported_date, not from Today",
+                              "DISCARD it if it no longer matters, or rewrite it as history"):
+        assert conversation_rule in REVIEW_PROMPT, conversation_rule
+    line = _in_this_pass()
+    assert line.startswith("In this pass these rules replace the kinds table's horizon line and its date rules: ")
+    assert "a horizon counts from now, not from reported_date" in line
+    assert "a plan whose date has passed is archived with basis date_passed, never rewritten as history or discarded" in line
+    assert f'in_this_pass: "{line}"' in REVIEW_PROMPT
+
+
+def test_every_domain_scope_reference_the_review_sees_is_scoped_by_lifecycle():
+    """B1 / S3: TAXONOMY points at Domain_Scope, which the review profile does not render; LIFECYCLE scopes those lines."""
+    references = [line for line in REVIEW_PROMPT.split("\n") if "Domain_Scope" in line and "in_this_pass" not in line]
+    assert references, "TAXONOMY no longer refers to Domain_Scope: this pin can go"
+    assert "rule Domain_Scope()" not in REVIEW_PROMPT
+    line = _in_this_pass()
+    assert "The taxonomy's lines that point to Domain_Scope (a reply to a memory-review question) are for consolidating "\
+           "a conversation (Stage 1)" in line
+    assert "here a reply is question.reply, decided by the reply mapping below" in line
+
+
+def test_the_header_and_the_lifecycle_token_say_when_a_fact_is_left():
+    """S1 / F2: an open or timed-out question is not asked again (`ask_refusal` refuses it); with nothing to decide it
+    the outcome is leave, in the header and in LIFECYCLE alike, right after step (4)."""
+    header_lines = _REVIEW_HEADER.split("\n")
+    assert header_lines[header_lines.index("(4) anything else: ask_owner.") + 1] == LEAVE_LINE
+    order = re.search(r"outcome_order: \[(.*?)\]", LIFECYCLE, re.DOTALL).group(1)
+    steps = [s.strip().rstrip(",").strip('"') for s in order.strip().split("\n")]
+    assert steps[steps.index("(4) anything else: ask_owner.") + 1] == LEAVE_LINE
+
+
+def test_the_checklist_outcomes_include_leave_with_no_call():
+    outcomes = re.search(r'"outcome: ([^"]*)"', LIFECYCLE).group(1)
+    assert outcomes.startswith("supersede, revive, rewrite, archive, invalidate, ask_owner or leave, ")
+    assert "leave is a fact whose question is open or timed out and that nothing decides: make no call for it." in outcomes
+    assert "its outcome is leave, and its question stays open" in PROSE
+    assert "otherwise its outcome is leave, and its fallback applies after this pass" in PROSE
+
+
+def test_a_dated_plan_is_defined_as_is_dated_plan_counts_it():
+    """S2: `is_dated_plan` counts a date fact and a fact whose question falls back to archive."""
+    from src.domain.fact_review_rules import is_dated_plan
+    from tests.support.review_rule_builders import fact, question
+    from src.domain.fact_review_question import QuestionStatus
+
+    definition = "a fact of expiry kind date, or one whose question's fallback is archive"
+    assert f"A dated plan is {definition}." in PROSE
+    assert f"dated_plan_passed: true when the fact is a dated plan ({definition}) whose date is before today." in PROSE
+    standing = fact()
+    assert not is_dated_plan(standing, question(QuestionStatus.ASKED, fallback="revive"))
+    assert is_dated_plan(standing, question(QuestionStatus.ASKED, fallback="archive", noise=True))
+    assert is_dated_plan(fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=standing.expires_at))

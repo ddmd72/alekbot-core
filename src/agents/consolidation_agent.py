@@ -456,6 +456,7 @@ _REVIEW_HEADER = (
     "(2) the reply or evidence says it still holds: revive it with that basis (rewrite its text if the text changed);\n"
     "(3) it is over: archive it (basis reply, evidence or date_passed); it was never true: invalidate it;\n"
     "(4) anything else: ask_owner.\n"
+    "A fact whose question is open or timed out is not asked again; when nothing decides it, its outcome is leave.\n"
     "Code writes and sends any question later; ask_owner only says what happens if he does not answer.\n"
     "Every listed fact gets exactly one outcome.\n"
     "Before any call, write one line per listed fact, in the order listed: "

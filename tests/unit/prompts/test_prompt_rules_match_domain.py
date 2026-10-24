@@ -280,3 +280,95 @@ def test_history_goes_with_an_ended_reply_and_never_with_a_dated_plan():
     plan = basis_refusal(fact(**_PAST_PLAN), archive, reply, named_fact=None, question=_REPLIED,
                          made_current=frozenset(), history="The trip took place.", today=TODAY, tz="UTC")
     assert plan == "history: a plan that is over is archived only; leave history out"
+
+
+# ---------------------------------------------------------------------------------- T7 fix round (review S4, S6)
+
+async def test_the_word_limit_every_prompt_states_is_the_limit_count_words_reports():
+    """S4: the number the prompts state is the one the code's `count_words` reports (no domain constant yet, F1)."""
+    import json
+    from unittest.mock import AsyncMock
+
+    from src.ports.llm_port import ToolCall
+    from src.ports.fact_management_port import FactManagementPort
+    from tests.unit.agents.test_consolidation_agent import _make_agent
+
+    agent, _, _, _ = _make_agent(fact_management=AsyncMock(spec=FactManagementPort))
+    [result] = await agent._execute_fact_management_tools(
+        [ToolCall(name="count_words", args={"text": "one two"})], "u1", "acc", agent._write_context("stage1"))
+    limit = json.loads(result.result_str)["limit"]
+    policies = pv.ser.token_from_file(pv.token_path("CONSOLIDATION_POLICIES").read_text(encoding="utf-8"))["content"]
+    taxonomy = pv.ser.token_from_file(pv.token_path("CONSOLIDATION_TAXONOMY").read_text(encoding="utf-8"))["content"]
+    stated = {
+        "cluster": re.findall(r"no fact may exceed (\d+) words", CLUSTER),
+        "count_words": re.findall(r"≤(\d+) words", _COUNT_WORDS_DESCRIPTION),
+        "review count_words": re.findall(r"≤(\d+) words", _REVIEW_COUNT_WORDS_DESCRIPTION),
+        "lifecycle": re.findall(r"the (\d+)-word limit", LIFECYCLE),
+        "Size_Triggers_Review": re.findall(r"Existing facts retrieved from DB that exceed (\d+) words", policies),
+        "Size_Triggers_Review trigger": re.findall(r"existing_fact\.word_count > (\d+) AND", policies),
+        "Directive_Maintenance": re.findall(r"Self-contained atomic rule, max (\d+) words", taxonomy),
+    }
+    assert all(len(found) == 1 for found in stated.values()), stated
+    assert {int(found[0]) for found in stated.values()} == {limit}, (limit, stated)
+    over = await agent._execute_fact_management_tools(
+        [ToolCall(name="count_words", args={"text": " ".join(["w"] * (limit + 1))})], "u1", "acc",
+        agent._write_context("stage1"))
+    assert json.loads(over[0].result_str)["within_limit"] is False
+
+
+def _ask(fallback, *, kind=ExpiryKind.HORIZON, fallback_date=None, noise=False, open_question=None):
+    from src.domain.fact_review_rules import ask_refusal
+
+    subject = fact(**_PAST_PLAN) if kind is ExpiryKind.DATE else fact()
+    return ask_refusal(subject, fallback, fallback_date, noise, open_question, NOW, "UTC")
+
+
+ASKING = " ".join(re.search(r"asking: \[(.*?)\n    \]", LIFECYCLE, re.DOTALL).group(1).split())
+
+
+@pytest.mark.parametrize("case,refused", [
+    (dict(fallback="revive"), False),
+    (dict(fallback="revive", fallback_date=TODAY - timedelta(days=3)), True),
+    (dict(fallback="revive", noise=True), True),
+    (dict(fallback="archive", kind=ExpiryKind.DATE), False),
+    (dict(fallback="archive", fallback_date=TODAY - timedelta(days=3)), False),
+    (dict(fallback="archive", noise=True), False),
+    (dict(fallback="archive"), True),
+    (dict(fallback="archive", fallback_date=TODAY), True),
+    (dict(fallback="archive", fallback_date=TODAY + timedelta(days=3)), True),
+    (dict(fallback="later"), True),
+], ids=["revive", "revive+date", "revive+noise", "archive-date-fact", "archive-past-date", "archive-noise",
+        "archive-bare", "archive-date-today", "archive-future-date", "unknown"])
+def test_the_fallback_rule_the_prompts_state_is_the_one_ask_refusal_applies(case, refused):
+    """S6: LIFECYCLE's asking lines and `_ASK_OWNER_SCHEMA`'s fallback description, against `ask_refusal`."""
+    from src.agents.consolidation_agent import _ASK_OWNER_SCHEMA
+
+    fallback = _ASK_OWNER_SCHEMA["parameters"]["properties"]["fallback"]["description"]
+    assert ("revive or archive; archive only for a fact of expiry kind date, with a past fallback_date, or with noise"
+            in fallback)
+    assert _ASK_OWNER_SCHEMA["parameters"]["properties"]["fallback_date"]["description"].endswith("before today")
+    assert ("revive by default; archive only for a fact of expiry kind date (its plan is over once the date passes), "
+            "with a past fallback_date (the day of the plan, YYYY-MM-DD, before today), or with noise: true") in ASKING
+    assert (_ask(**case) is not None) == refused, case
+
+
+@pytest.mark.parametrize("asked_days_ago", [3, 20], ids=["open", "timed-out"])
+def test_a_fact_whose_question_is_open_or_timed_out_is_not_asked_again(asked_days_ago):
+    """S6 / S1: LIFECYCLE's "no open question" and "Do not ask it again", against `ask_refusal`."""
+    q = question(QuestionStatus.ASKED, asked_at=NOW - timedelta(days=asked_days_ago))
+    assert q.is_timed_out(NOW) == (asked_days_ago == 20)
+    assert "one listed fact with no result in this pass and no open question" in ASKING
+    assert "Do not ask it again." in ASKING
+    assert "A fact whose question is open or timed out is not asked again" in LIFECYCLE
+    for fallback in ("revive", "archive"):
+        refusal = _ask(fallback, kind=ExpiryKind.DATE, open_question=q)
+        assert refusal is not None and "leave it" in refusal
+
+
+def test_a_date_fact_archived_on_date_passed_uses_its_own_date():
+    """S6 (optional): "A fact of expiry kind date uses its own date: leave date out" against `plan_date`."""
+    from src.domain.fact_review_rules import plan_date
+
+    assert "A fact of expiry kind date uses its own date: leave date out." in LIFECYCLE
+    assert plan_date(fact(**_PAST_PLAN), ReviewBasis("date_passed"), "UTC") == date(2026, 9, 30)
+    assert _basis_refusal("archive", "date_passed") is None

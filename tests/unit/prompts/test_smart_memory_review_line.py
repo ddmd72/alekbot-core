@@ -51,10 +51,13 @@ def test_smart_answers_briefly_and_does_not_ask_again():
     assert "do not ask it again" in _value("question_pair")
 
 
-def test_smart_never_says_it_saved_anything():
-    assert "Never say you saved anything." in _value("memory")
+def test_smart_never_says_it_saved_anything_about_a_memory_review_question():
+    """Scoped to the question and its answer (T7 review S7), so a real receipt ("saved to your drive") stays sayable."""
+    sentence = "About a memory-review question or its answer, never say you saved or remembered anything."
+    assert sentence in _value("memory")
     saved = [m.start() for m in re.finditer(r"\bsaved?\b", BODY, re.IGNORECASE)]
-    assert len(saved) == 1, "the only 'saved' in the token is the prohibition"
+    assert len(saved) == 1, "the only 'saved' in the token is the scoped prohibition"
+    assert not re.search(r"(?<!, )never say you saved", BODY, re.IGNORECASE), "an unscoped prohibition"
 
 
 def test_no_propose_memory_facts_for_a_memory_review_question_or_its_answer():
