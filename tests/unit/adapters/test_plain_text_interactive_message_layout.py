@@ -13,6 +13,8 @@ LABELS = [("still_true", "yes"), ("ended", "no longer"), ("never", "never"), ("d
 
 
 class Channel:
+    max_message_length = 4096  # Telegram's
+
     def __init__(self):
         self.sent = []
 
@@ -81,3 +83,30 @@ async def test_the_plain_text_is_the_plans_message():
         "Is this still true?\n\n«Takes vitamin D»\n\n1 — Yes  2 — No longer  3 — Never  4 — Don't remember"
         "\n\nReply to this message with a digit, or in your own words."
     )
+
+
+# ------------------------------------------------------------------------------------------------ length (T5b fix round, M2)
+
+async def test_a_quote_longer_than_the_channel_allows_is_cut_and_the_rest_stays_whole():
+    text = await sent_text(message(quote="x" * 5000))
+    assert len(text) <= Channel.max_message_length
+    assert text.startswith("Is this still true?\n\n«xxx")
+    assert text.endswith("x…»\n\n1 — yes  2 — no longer  3 — never  4 — don't remember\n\nReply with a digit.")
+
+
+async def test_the_cut_fills_the_channels_limit_exactly():
+    text = await sent_text(message(quote="x" * 5000))
+    assert len(text) == Channel.max_message_length
+
+
+async def test_a_quote_that_fits_is_not_touched():
+    quote = "x" * 3900
+    assert f"«{quote}»" in await sent_text(message(quote=quote))
+
+
+async def test_a_message_whose_fixed_part_leaves_no_room_for_the_quote_goes_without_it():
+    msg = message(quote="x" * 5000, reply_hint="h" * 4090)
+    text = await sent_text(msg)
+    assert "«" not in text
+    assert text.endswith("h" * 4090)
+    assert "1 — yes" in text

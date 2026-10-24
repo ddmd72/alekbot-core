@@ -23,7 +23,7 @@ async def test_the_text_goes_out_literally_with_no_parse_mode():
     kwargs = bot.send_message.call_args.kwargs
     assert kwargs["text"] == text
     assert kwargs["chat_id"] == 555
-    assert kwargs.get("parse_mode") is None
+    assert "parse_mode" in kwargs and kwargs["parse_mode"] is None  # absent would let a bot's Defaults apply
 
 
 async def test_a_telegram_error_is_raised():

@@ -5,11 +5,13 @@ import pytest
 from slack_sdk.errors import SlackApiError
 
 from src.adapters.slack.binding_codec import decode
-from src.adapters.slack.interactive_message_adapter import MAX_TEXT_CHARS, SlackInteractiveMessageAdapter
+from src.adapters.slack.interactive_message_adapter import (
+    MAX_BUTTON_TEXT_CHARS, MAX_TEXT_CHARS, SlackInteractiveMessageAdapter,
+)
 from src.domain.choice_outcome import ChoiceOutcome
 from src.domain.interactive_binding import InteractiveBinding
 from src.domain.interactive_message import InteractiveMessage
-from src.domain.interactive_option import InteractiveOption
+from src.domain.interactive_option import MAX_LABEL_CHARS, InteractiveOption
 from src.domain.messaging import MessageRef
 
 LABELS = [("still_true", "yes"), ("ended", "no longer"), ("never", "never"), ("dont_know", "don't remember")]
@@ -61,7 +63,9 @@ async def test_post_sends_blocks_and_a_text_fallback_to_the_channel():
     assert quote == {"type": "section", "text": {"type": "mrkdwn", "text": "> Lives in Lisbon"}}
     assert hint["type"] == "context" and hint["elements"][0]["text"] == "Reply with a digit."
     assert actions["type"] == "actions"
-    assert kwargs["text"] == "Is this still true?\n1 — yes  2 — no longer  3 — never  4 — don't remember\nReply with a digit."
+    assert kwargs["text"] == (
+        "Is this still true?\n«Lives in Lisbon»\n1 — yes  2 — no longer  3 — never  4 — don't remember\nReply with a digit."
+    )
 
 
 async def test_the_buttons_carry_the_option_ids_as_plain_text_labels_and_the_binding_as_the_block_id():
@@ -106,7 +110,9 @@ async def test_the_prompt_the_hint_and_the_fallback_text_are_escaped_too():
     for field in mrkdwn_fields(kwargs["blocks"]):
         assert "<" not in field["text"].replace("&lt;", "").replace("&gt;", "")
     assert kwargs["blocks"][0]["text"]["text"] == "Still &lt;b&gt;true&lt;/b&gt; &amp; right?"
-    assert kwargs["text"] == "Still &lt;b&gt;true&lt;/b&gt; &amp; right?\n1 — yes &lt;b&gt;  2 — no &amp; more\nReply &lt;now&gt;"
+    assert kwargs["text"] == (
+        "Still &lt;b&gt;true&lt;/b&gt; &amp; right?\n«Lives in Lisbon»\n1 — yes &lt;b&gt;  2 — no &amp; more\nReply &lt;now&gt;"
+    )
     # labels are plain_text: escaping them would show the entities
     assert [b["text"]["text"] for b in kwargs["blocks"][-1]["elements"]] == ["yes <b>", "no & more"]
 
@@ -157,7 +163,7 @@ async def test_show_choice_updates_the_message_without_the_actions_and_shows_the
     kwargs = c.chat_update.call_args.kwargs
     assert (kwargs["channel"], kwargs["ts"]) == ("D0REAL", "1760.01")
     blocks = kwargs["blocks"]
-    assert all(b["type"] != "actions" for b in blocks)
+    assert [b["type"] for b in blocks] == ["section", "section", "context"]  # no actions, no hint
     assert blocks[0]["text"]["text"] == "Is this still true?"
     assert blocks[1]["text"]["text"] == "> Lives in Lisbon"
     assert blocks[-1] == {"type": "context", "elements": [{"type": "plain_text", "text": "✓ no longer", "emoji": False}]}
@@ -169,7 +175,7 @@ async def test_show_choice_without_a_chosen_option_shows_the_note():
     outcome = ChoiceOutcome(message=question(), note="This question is closed.")
     await SlackInteractiveMessageAdapter(c).show_choice(REF, outcome)
     blocks = c.chat_update.call_args.kwargs["blocks"]
-    assert all(b["type"] != "actions" for b in blocks)
+    assert [b["type"] for b in blocks] == ["section", "section", "context"]  # no actions, no hint
     assert blocks[-1]["elements"][0]["text"] == "This question is closed."
 
 
@@ -193,3 +199,35 @@ async def test_another_platforms_ref_is_refused_before_anything_is_sent():
         await SlackInteractiveMessageAdapter(c).show_choice(
             MessageRef("telegram", "555", "9"), ChoiceOutcome(message=question(), note="Closed."))
     c.chat_update.assert_not_called()
+
+
+# ------------------------------------------------------------------------------------------------ limits
+
+def test_the_domains_label_bound_fits_slacks_button_text_limit():
+    assert MAX_BUTTON_TEXT_CHARS == 75
+    assert MAX_LABEL_CHARS <= MAX_BUTTON_TEXT_CHARS
+
+
+async def test_a_label_of_the_domains_longest_goes_out_unchanged_as_the_button_text():
+    c = client()
+    label = "x" * MAX_LABEL_CHARS
+    msg = question(options=[InteractiveOption(id="a", label=label), InteractiveOption(id="b", label="no")])
+    await SlackInteractiveMessageAdapter(c).post("slack", "D0OWNER", msg)
+    button = posted(c)["blocks"][-1]["elements"][0]
+    assert button["text"]["text"] == label
+    assert len(button["text"]["text"]) <= MAX_BUTTON_TEXT_CHARS
+
+
+async def test_the_notification_text_carries_the_escaped_quote():
+    c = client()
+    await SlackInteractiveMessageAdapter(c).post("slack", "D0OWNER", question(quote="Told <!channel> & co"))
+    assert "«Told &lt;!channel&gt; &amp; co»" in posted(c)["text"]
+
+
+async def test_a_long_quote_is_cut_in_the_notification_text_and_the_options_and_hint_stay():
+    c = client()
+    await SlackInteractiveMessageAdapter(c).post("slack", "D0OWNER", question(quote="&" * 5000))
+    text = posted(c)["text"]
+    assert len(text) <= MAX_TEXT_CHARS
+    assert "&amp;…»" in text
+    assert text.endswith("1 — yes  2 — no longer  3 — never  4 — don't remember\nReply with a digit.")

@@ -13,19 +13,21 @@ from .binding_codec import encode
 PLATFORM = "slack"
 # Slack's limit for the text of a section block (and of the other text objects we use).
 MAX_TEXT_CHARS = 3000
+# Slack's limit for the text of a button; a domain option label is at most this long (pinned by a test).
+MAX_BUTTON_TEXT_CHARS = 75
 ELLIPSIS = "…"
 
 _ESCAPES = {"&": "&amp;", "<": "&lt;", ">": "&gt;"}  # Slack's documented rule for mrkdwn text
 
 
-def _capped(pieces: List[str]) -> str:
-    """The pieces joined, cut at `MAX_TEXT_CHARS` with an ellipsis. A piece is never cut in half (an escape such as
-    `&amp;` must stay whole)."""
+def _capped(pieces: List[str], limit: int = MAX_TEXT_CHARS) -> str:
+    """The pieces joined, cut at `limit` with an ellipsis. A piece is never cut in half (an escape such as `&amp;` must
+    stay whole)."""
     total = 0
     kept: List[str] = []
     for piece in pieces:
-        if total + len(piece) > MAX_TEXT_CHARS:
-            while kept and total + len(ELLIPSIS) > MAX_TEXT_CHARS:
+        if total + len(piece) > limit:
+            while kept and total + len(ELLIPSIS) > limit:
                 total -= len(kept.pop())
             return "".join(kept) + ELLIPSIS
         kept.append(piece)
@@ -62,12 +64,19 @@ def _subject_blocks(message: InteractiveMessage) -> List[Dict[str, Any]]:
 
 
 def _fallback_text(message: InteractiveMessage) -> str:
-    """What a notification or a client without blocks shows: the prompt, the numbered options and the reply hint."""
+    """What a notification or a client without blocks shows: the prompt, the quoted subject, the numbered options and the
+    reply hint. A long quote is cut to fit `MAX_TEXT_CHARS` so that the options and the hint always stay."""
     options = "  ".join(f"{number} — {option.label}" for number, option in message.numbered_options())
-    lines = [message.prompt.strip(), options]
-    if message.reply_hint.strip():
-        lines.append(message.reply_hint.strip())
-    return _mrkdwn("\n".join(lines))
+    head = _mrkdwn(message.prompt.strip())
+    tail = _mrkdwn("\n".join([options, message.reply_hint.strip()] if message.reply_hint.strip() else [options]))
+    quote = message.quote.strip()
+    if not quote:
+        return f"{head}\n{tail}"
+    budget = MAX_TEXT_CHARS - len(head) - len(tail) - 2 - 2  # two newlines, two guillemets
+    if budget <= len(ELLIPSIS):
+        return f"{head}\n{tail}"
+    shown = _capped([_ESCAPES.get(ch, ch) for ch in quote], budget)
+    return f"{head}\n«{shown}»\n{tail}"
 
 
 class SlackInteractiveMessageAdapter(InteractiveMessagePort):
