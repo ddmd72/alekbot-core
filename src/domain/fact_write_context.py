@@ -5,9 +5,9 @@ from datetime import datetime
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .entities import FactState
+from .entities import ExpiryKind, FactState
 from .fact_expiry import Expiry
-from .fact_lifecycle import born_due, compute_expiry
+from .fact_lifecycle import born_due, compute_expiry, horizon_from_now
 from .local_time import local_date, local_moment
 from .pass_actor import PassActor
 
@@ -77,9 +77,29 @@ def decide_expiry(
     Lives here, not in `fact_lifecycle`: the context's actor table imports `fact_lifecycle`, so the reverse import is a cycle.
     Raises FactExpiryError (FactBornDueError) when the decision is due and this pass does not floor it.
     """
-    return born_due(
-        compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, context.floors_due_horizon
-    )
+    return born_due(compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, context.actor)
+
+
+def reviews_stored_memory(context: FactWriteContext) -> bool:
+    """The review and the owner's answers: the passes whose row reaches a stale fact (S4-D5, plan §3.6)."""
+    return FactState.STALE in context.accepts
+
+
+def review_horizon(
+    decision: Expiry, reported: datetime, now: datetime, context: FactWriteContext
+) -> Tuple[Dict[str, Any], Optional[str]]:
+    """The stored fields of a review or owner revive or rewrite (S4-D5): a horizon counted from the later of `reported`
+    (the date after the basis rule) and `now`, stored from `reported`; a `date` or `none` as `compute_expiry` stores it.
+    Then the born-due rule of the pass's row, which has no floor.
+
+    Raises ValueError for a context that is no review or owner pass, FactBornDueError for a decision that is due."""
+    if not reviews_stored_memory(context):
+        raise ValueError(f"a review horizon belongs to the review or the owner, not to {context.actor}")
+    if decision.kind is ExpiryKind.HORIZON and decision.days is not None:
+        fields = horizon_from_now(decision.days, reported, now)
+    else:
+        fields = compute_expiry(decision, reported, context.timezone)
+    return born_due(fields, reported, now, context.timezone, context.actor)
 
 
 def span_of(times: Iterable[datetime]) -> Optional[Tuple[datetime, datetime]]:
@@ -105,6 +125,12 @@ def kept_reported_date_note(reported: datetime, timezone: str) -> str:
         f"reported_date is kept by the system in this pass ({local_date(reported, timezone).isoformat()}); "
         "expiry horizons count from it"
     )
+
+
+REVIEW_REPORTED_DATE_NOTE = (
+    "reported_date is kept by the system in this pass (it moves only on evidence or the owner's answer); "
+    "expiry horizons count from now"
+)
 
 
 def reported_date_for_new(
@@ -167,11 +193,23 @@ def reported_date_for_merge(
 
 
 def reported_date_for_update(
-    ctx: FactWriteContext, model_value: Optional[datetime], stored: datetime, content_change: bool, now: datetime
+    ctx: FactWriteContext,
+    model_value: Optional[datetime],
+    stored: datetime,
+    content_change: bool,
+    now: datetime,
+    evidence_at: Optional[datetime] = None,
 ) -> Tuple[datetime, Optional[str]]:
-    """The `reported_date` after an update, and a note. It means "when the owner last stated it": it never moves back."""
+    """The `reported_date` after an update, and a note. It means "when the owner last stated it": it never moves back.
+
+    The review and the owner (`reviews_stored_memory`): the later of `stored` and `evidence_at` (the evidence fact's
+    date, the reply's or the answer's time), else `stored`; a date the model sent is never used and gets
+    REVIEW_REPORTED_DATE_NOTE. The caller passes `evidence_at` only for a revive. Every other pass ignores `evidence_at`."""
     now = as_utc(now)
     stored = as_utc(stored)
+    if reviews_stored_memory(ctx):
+        chosen = max(stored, as_utc(evidence_at)) if evidence_at is not None else stored
+        return chosen, (REVIEW_REPORTED_DATE_NOTE if model_value is not None else None)
     if not ctx.model_dates:
         note = kept_reported_date_note(stored, ctx.timezone) if model_value is not None else None
         return stored, note

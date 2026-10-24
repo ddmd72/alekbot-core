@@ -1,12 +1,13 @@
 """SCD2 flags that go with a fact state."""
 
 from datetime import datetime, time, timedelta
-from typing import AbstractSet, Any, Callable, Dict, Final, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Any, Callable, Dict, Final, List, Mapping, Optional, Protocol, Sequence, Tuple, assert_never
 
 from .entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType
 from .exceptions import FactBornDueError, FactExpiryError, FactResolutionError
 from .fact_expiry import EXPIRY_NONE, NOTHING_WRITTEN, Expiry, as_expiry_kind
 from .local_time import local_date, local_moment, zone_or_utc
+from .refusal_wording import RefusalWording
 
 LIFECYCLE_EVENTS_CAP: Final[int] = 20
 _DAY = timedelta(days=1)
@@ -163,14 +164,33 @@ def resolves_too_soon(expires_at: datetime, now: datetime) -> bool:
     return local_moment(expires_at, "UTC") <= local_moment(now, "UTC") + _DAY
 
 
+class DateRefusalRule(Protocol):
+    """The part of a pass's row the born-due rule reads: whether a due horizon is floored, and which text a refusal gets.
+
+    `PassActor` is one (its rows); the protocol lives here because `pass_actor` imports this module."""
+
+    @property
+    def floors_due_horizon(self) -> bool: ...
+
+    @property
+    def refusal_wording(self) -> RefusalWording: ...
+
+
+# The review's way out of a born-due refusal (Facts S4 plan §3.6): no DISCARD, no candidate, no history rewrite.
+_REVIEW_WAY_OUT: Final[str] = (
+    "this pass reviews stored memory: give a horizon (counted from now), or archive with basis date_passed when its date "
+    "is over; doing nothing keeps the fact hidden"
+)
+
+
 def born_due(
-    fields: Mapping[str, Any], reported_date: datetime, now: datetime, timezone: str, cleanup: bool
+    fields: Mapping[str, Any], reported_date: datetime, now: datetime, timezone: str, rule: DateRefusalRule
 ) -> Tuple[Dict[str, Any], Optional[str]]:
     """No expiry is born due: `fields` (from compute_expiry) as they may be written, and an optional note for the model.
 
-    A decision that `resolves_too_soon` (at or before now + 1 day) is refused with FactExpiryError. The one exception is a horizon on a
-    cleanup pass (stage 2a/2b, backstop, cluster), which cannot move `reported_date`: it is floored to now + 2 days, so
-    the fact reaches review soon.
+    A decision that `resolves_too_soon` (at or before now + 1 day) is refused with FactBornDueError, worded by
+    `rule.refusal_wording`. The one exception is a horizon on a pass whose row `floors_due_horizon` (stage 2a/2b,
+    backstop, cluster), which cannot move `reported_date`: it is floored to now + 2 days, so the fact reaches review soon.
     """
     kind, expires_at = as_expiry_kind(fields.get("expiry_kind")), fields.get("expires_at")
     if kind not in (ExpiryKind.DATE, ExpiryKind.HORIZON) or expires_at is None:
@@ -180,46 +200,77 @@ def born_due(
     if not resolves_too_soon(expires, now):
         return dict(fields), None
     if kind is ExpiryKind.DATE:
-        raise _date_refusal(expires, reported_date, now, timezone, cleanup)
-    if cleanup:
+        raise _date_refusal(expires, reported_date, now, timezone, rule.refusal_wording)
+    if rule.floors_due_horizon:
         review_on = now + _CLEANUP_FLOOR
         note = (
             f"counted from {local_date(reported_date, timezone).isoformat()} this horizon had already passed; "
             f"the fact goes to review on {local_date(review_on, timezone).isoformat()}"
         )
         return {**fields, "expires_at": review_on}, note
-    raise FactBornDueError(
-        f"counted from when the owner said it ({local_date(reported_date, timezone).isoformat()}), a horizon of "
-        f"{fields.get('ttl_days')} days {'ended' if expires <= now else 'ends'} {local_date(expires, timezone).isoformat()}: "
-        f"give at least {_min_horizon_days(reported_date, now)} days, rewrite the fact as history with {{kind: none}}, "
-        f"or DISCARD it. {NOTHING_WRITTEN}"
-    )
+    raise _horizon_refusal(fields, expires, reported_date, now, timezone, rule.refusal_wording)
+
+
+def _horizon_refusal(
+    fields: Mapping[str, Any], expires: datetime, reported_date: datetime, now: datetime, timezone: str,
+    wording: RefusalWording,
+) -> FactBornDueError:
+    ended = "ended" if expires <= now else "ends"
+    expires_on = local_date(expires, timezone).isoformat()
+    match wording:
+        case RefusalWording.STAGE1:
+            return FactBornDueError(
+                f"counted from when the owner said it ({local_date(reported_date, timezone).isoformat()}), a horizon of "
+                f"{fields.get('ttl_days')} days {ended} {expires_on}: "
+                f"give at least {_min_horizon_days(reported_date, now)} days, rewrite the fact as history with {{kind: none}}, "
+                f"or DISCARD it. {NOTHING_WRITTEN}"
+            )
+        case RefusalWording.CLEANUP:
+            # No cleanup row refuses a horizon today (they all floor it); the text is the cleanup one if one ever does.
+            return FactBornDueError(
+                f"counted from when the owner said it ({local_date(reported_date, timezone).isoformat()}), a horizon of "
+                f"{fields.get('ttl_days')} days {ended} {expires_on}: this pass reviews stored memory: do not drop the "
+                f"fact. Give at least {_min_horizon_days(reported_date, now)} days, or rewrite it as what happened "
+                f"(past tense, the outcome if known) with {{kind: none}}. {NOTHING_WRITTEN}"
+            )
+        case RefusalWording.REVIEW:
+            return FactBornDueError(f"this horizon {ended} {expires_on}, too soon: {_REVIEW_WAY_OUT}. {NOTHING_WRITTEN}")
+        case _:
+            assert_never(wording)
 
 
 def _date_refusal(
-    expires: datetime, reported_date: datetime, now: datetime, timezone: str, cleanup: bool
+    expires: datetime, reported_date: datetime, now: datetime, timezone: str, wording: RefusalWording
 ) -> FactBornDueError:
     last_day = local_date(expires - timedelta(microseconds=1), timezone)
     today = local_date(now, timezone)
-    if last_day < today and cleanup:
-        # The subject is a stored fact, not a candidate: dropping it loses memory.
-        return FactBornDueError(
-            f"the date {last_day.isoformat()} is past (today is {today.isoformat()} in {timezone}): this pass reviews "
-            "stored memory: do not drop the fact because its date passed. Rewrite it as what happened (past tense, the outcome if known) "
-            f"with {{kind: none}}, or give a future date if the plan still holds. {NOTHING_WRITTEN}"
-        )
-    if last_day < today:
-        return FactBornDueError(
-            f"the date {last_day.isoformat()} is past (today is {today.isoformat()} in {timezone}): DISCARD the "
-            "candidate if it no longer matters, or rewrite the fact as what happened (past tense, the outcome if "
-            f"known) with {{kind: none}}. {NOTHING_WRITTEN}"
-        )
     # A date after today can land here only on a 23-hour DST day, in its last hour.
     plan = "a plan for today is not over yet" if last_day == today else f"a plan ending {last_day.isoformat()} is too close"
-    return FactBornDueError(
-        f"{plan}: give a short horizon of at least "
-        f"{_min_horizon_days(reported_date, now)} days so it is reviewed after it happened. {NOTHING_WRITTEN}"
-    )
+    past = f"the date {last_day.isoformat()} is past (today is {today.isoformat()} in {timezone})"
+    match wording:
+        case RefusalWording.REVIEW:
+            # Chosen before any DISCARD text: the review and the owner hold stored memory, never a candidate.
+            return FactBornDueError(f"{past if last_day < today else plan}: {_REVIEW_WAY_OUT}. {NOTHING_WRITTEN}")
+        case RefusalWording.CLEANUP if last_day < today:
+            # The subject is a stored fact, not a candidate: dropping it loses memory.
+            return FactBornDueError(
+                f"{past}: this pass reviews "
+                "stored memory: do not drop the fact because its date passed. Rewrite it as what happened (past tense, the outcome if known) "
+                f"with {{kind: none}}, or give a future date if the plan still holds. {NOTHING_WRITTEN}"
+            )
+        case RefusalWording.STAGE1 if last_day < today:
+            return FactBornDueError(
+                f"{past}: DISCARD the "
+                "candidate if it no longer matters, or rewrite the fact as what happened (past tense, the outcome if "
+                f"known) with {{kind: none}}. {NOTHING_WRITTEN}"
+            )
+        case RefusalWording.STAGE1 | RefusalWording.CLEANUP:
+            return FactBornDueError(
+                f"{plan}: give a short horizon of at least "
+                f"{_min_horizon_days(reported_date, now)} days so it is reviewed after it happened. {NOTHING_WRITTEN}"
+            )
+        case _:
+            assert_never(wording)
 
 
 def _min_horizon_days(reported_date: datetime, now: datetime) -> int:
@@ -272,3 +323,22 @@ def lifecycle_event(
 def with_event(events: Sequence[Mapping[str, Any]], event: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """`events` plus `event`, the newest LIFECYCLE_EVENTS_CAP kept."""
     return [dict(e) for e in [*events, event]][-LIFECYCLE_EVENTS_CAP:]
+
+
+def revival_fields(
+    fact: FactEntity, expiry_fields: Mapping[str, Any], now: datetime, actor: str, reason: str
+) -> Dict[str, Any]:
+    """The in-place write that brings `fact` (stale, or current and waiting for an answer) back to current: state current,
+    `stale_since` cleared, `expiry_fields` (empty = the decision stays as stored), and one trail entry under `actor` with
+    the code-built `reason`, stamped `now` (the moment a horizon in `expiry_fields` was counted from, so the window a
+    later silence doubles is exact). The entry is written even when the fact was already current.
+
+    The one builder for a review revive, an owner's answer and a question's fallback."""
+    event = lifecycle_event(now, fact.state, FactState.CURRENT, actor, reason)
+    return {
+        **lifecycle_fields(FactState.CURRENT, now),
+        **expiry_fields,
+        "stale_since": None,
+        "last_updated": now,
+        "lifecycle_events": with_event(fact.lifecycle_events, event),
+    }

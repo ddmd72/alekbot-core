@@ -7,7 +7,7 @@ three label lists (the agent's, the stats', the write rules' `not model_dates`);
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Dict, Final, FrozenSet
+from typing import Dict, Final, FrozenSet, Optional
 
 from .entities import FactState
 from .fact_lifecycle import CONSOLIDATION_ACCEPTS, REVIEW_ACCEPTS
@@ -52,6 +52,12 @@ class PassActor(StrEnum):
         """Which text a date refusal gets."""
         return _ROWS[self].refusal_wording
 
+    @property
+    def closing_reason(self) -> Optional[str]:
+        """The trail reason of an in-place state change the caller gave none for; None = the caller must give one (the
+        review and the owner, whose reasons are code-built and always passed in)."""
+        return _ROWS[self].closing_reason
+
 
 @dataclass(frozen=True)
 class _Row:
@@ -60,30 +66,31 @@ class _Row:
     accepts: FrozenSet[FactState]
     born_due_refusal_is_loss: bool
     refusal_wording: RefusalWording
+    closing_reason: Optional[str]
 
 
 _CONVERSATION = _Row(
     model_dates=True, floors_due_horizon=False, accepts=CONSOLIDATION_ACCEPTS, born_due_refusal_is_loss=False,
-    refusal_wording=RefusalWording.STAGE1,
+    refusal_wording=RefusalWording.STAGE1, closing_reason="model",
 )
 # A cleanup pass has a model that can answer a refusal, and the fact it holds is stored memory: dropping it is a loss.
 _CLEANUP = _Row(
     model_dates=False, floors_due_horizon=True, accepts=CONSOLIDATION_ACCEPTS, born_due_refusal_is_loss=True,
-    refusal_wording=RefusalWording.CLEANUP,
+    refusal_wording=RefusalWording.CLEANUP, closing_reason="model",
 )
 # Code, no model: nothing to answer a refusal, so none is counted.
 _BACKSTOP = _Row(
     model_dates=False, floors_due_horizon=True, accepts=CONSOLIDATION_ACCEPTS, born_due_refusal_is_loss=False,
-    refusal_wording=RefusalWording.CLEANUP,
+    refusal_wording=RefusalWording.CLEANUP, closing_reason="directive cap",
 )
 # The review brings a hidden fact back with a horizon counted from now (S4-D5), so it has no floor to fall back on.
 _REVIEW = _Row(
     model_dates=False, floors_due_horizon=False, accepts=REVIEW_ACCEPTS, born_due_refusal_is_loss=True,
-    refusal_wording=RefusalWording.REVIEW,
+    refusal_wording=RefusalWording.REVIEW, closing_reason=None,
 )
 _OWNER = _Row(
     model_dates=False, floors_due_horizon=False, accepts=REVIEW_ACCEPTS, born_due_refusal_is_loss=False,
-    refusal_wording=RefusalWording.REVIEW,
+    refusal_wording=RefusalWording.REVIEW, closing_reason=None,
 )
 
 _ROWS: Final[Dict[PassActor, _Row]] = {
