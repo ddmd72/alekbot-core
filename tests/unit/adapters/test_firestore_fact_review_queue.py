@@ -1,6 +1,9 @@
 """Facts S4 · T4a2: the review store's queue and current question (plan §2.2, §3.7, §3.13), the real adapter on the
 review world's evaluating Firestore fake. Claims and releases are transactions over the state document and the
-questions; the decisions are the domain's (`current_question`, `may_send`, `next_in_queue`, `sent_today`)."""
+questions; the decisions are the domain's (`current_question`, `may_send`, `next_in_queue`, `sent_today`).
+
+Reviewer edit (S4 T8e re-review): `close_and_release` returns `QuestionClose` (T8e review F1), so each close asserts
+the exact member: RELEASED where the closed question was the current one, CLOSED where it was not, REFUSED for False."""
 import asyncio
 import logging
 from datetime import date, timedelta
@@ -10,6 +13,7 @@ from pydantic import ValidationError
 
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_question import ClosedBy, QuestionStatus
+from src.domain.fact_review_question_close import QuestionClose
 from src.domain.fact_review_rules import MAX_QUESTIONS_PER_DAY
 from src.domain.fact_review_state import FactReviewState
 from src.domain.messaging import MessageRef
@@ -140,7 +144,7 @@ async def test_the_sixth_claim_of_a_day_gives_none(world):
     for i in range(MAX_QUESTIONS_PER_DAY):
         claimed = await store.claim_next("acc", TODAY, SESSION)
         assert claimed is not None and claimed.question_id == f"q{i}"
-        assert await store.close_and_release(claimed.question_id, ClosedBy.REVIEW, None, None, AT) is True
+        assert await store.close_and_release(claimed.question_id, ClosedBy.REVIEW, None, None, AT) is QuestionClose.RELEASED
 
     assert await store.claim_next("acc", TODAY, SESSION) is None
     assert doc(world, f"q{MAX_QUESTIONS_PER_DAY}")["status"] == "queued"
@@ -204,7 +208,7 @@ async def test_a_question_the_owner_closed_while_pending_stays_closed_after_mark
     store = world.review_store
     await store.claim_next("acc", TODAY, SESSION)
     await deliver(world, "q1")
-    assert await store.close_and_release("q1", ClosedBy.OWNER, AnswerKind.ENDED, "button", AT) is True
+    assert await store.close_and_release("q1", ClosedBy.OWNER, AnswerKind.ENDED, "button", AT) is QuestionClose.RELEASED
 
     assert await store.mark_asked("q1", AT + timedelta(seconds=1)) is False
 
@@ -276,10 +280,10 @@ async def test_close_and_release_frees_the_slot_only_for_the_current_question(wo
     store = world.review_store
     await store.claim_next("acc", TODAY, SESSION)
 
-    assert await store.close_and_release("other", ClosedBy.RESOLVED_ELSEWHERE, None, None, AT) is True
+    assert await store.close_and_release("other", ClosedBy.RESOLVED_ELSEWHERE, None, None, AT) is QuestionClose.CLOSED
     assert (await store.get_state("acc")).current_question_id == "current"
 
-    assert await store.close_and_release("current", ClosedBy.REVIEW, None, None, AT) is True
+    assert await store.close_and_release("current", ClosedBy.REVIEW, None, None, AT) is QuestionClose.RELEASED
     assert (await store.get_state("acc")).current_question_id is None
     assert doc(world, "current")["status"] == doc(world, "other")["status"] == "closed"
 
@@ -289,7 +293,7 @@ async def test_a_refused_close_and_release_leaves_the_pointer(world):
     store = world.review_store
     await store.claim_next("acc", TODAY, SESSION)
 
-    assert await store.close_and_release("q1", ClosedBy.TIMEOUT, None, None, AT) is False   # a question never asked does not time out
+    assert await store.close_and_release("q1", ClosedBy.TIMEOUT, None, None, AT) is QuestionClose.REFUSED   # never asked: no timeout
 
     assert (await store.get_state("acc")).current_question_id == "q1" and doc(world, "q1")["status"] == "pending"
 
@@ -333,7 +337,7 @@ async def test_every_queue_write_on_a_missing_question_is_false(world):
     assert await store.complete_delivered("nope") is False
     assert await store.requeue_front("nope", failed_today=True) is False
     assert await store.mark_unanswered("nope") is False
-    assert await store.close_and_release("nope", ClosedBy.REVIEW, None, None, AT) is False
+    assert await store.close_and_release("nope", ClosedBy.REVIEW, None, None, AT) is QuestionClose.REFUSED
     assert world.question_docs == {} and world.state_doc() is None
 
 
