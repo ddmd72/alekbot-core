@@ -345,8 +345,6 @@ that:
 Every edit above was applied by the implementer only after an explicit per-test reviewer ruling
 ("intended change", never "code wrong").
 
-
-
 ## 13. Pre-merge closeout (2026-09-28)
 
 **Cabinet HTML revalidates.** `/cabinet` and `/cabinet/call` are served with

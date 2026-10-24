@@ -1557,7 +1557,7 @@ class DeliberateFactCurator extends Agent {
                 examples: [
                     {
                         existing: "User's weight: 105 kg (Jun 1)",
-                        new: "User weighs 72 kg",
+                        new: "User weighs 100 kg",
                         action: "UPDATE",
                         result: "User's weight: 100 kg (Jun 12), was 105 kg (Jun 1)"
                     },

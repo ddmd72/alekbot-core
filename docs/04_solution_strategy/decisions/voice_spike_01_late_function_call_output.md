@@ -73,8 +73,6 @@ window opened) and no `error` events during the late-submission phase on either 
 is not a connectivity or auth problem, it is a genuine model-behavior difference. Full stdout is
 inlined in the Appendix below.
 
-open item).
-
 ## Verdict
 
 **None of the plan's three pre-written branches (all-pass / OpenAI-passes-xAI-fails / all-fail)
