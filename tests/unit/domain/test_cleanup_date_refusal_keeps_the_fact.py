@@ -7,6 +7,7 @@ import pytest
 from src.domain.exceptions import FactBornDueError
 from src.domain.fact_expiry import NOTHING_WRITTEN, parse_expiry
 from src.domain.fact_lifecycle import born_due, compute_expiry
+from src.domain.pass_actor import PassActor
 from tests.support.fact_write import on
 
 PARIS = "Europe/Paris"
@@ -17,7 +18,7 @@ REPORTED = NOW - timedelta(days=30)
 def refusal(date_text, *, cleanup):
     fields = compute_expiry(parse_expiry(on(date_text)), REPORTED, PARIS)
     with pytest.raises(FactBornDueError) as refused:
-        born_due(fields, REPORTED, NOW, PARIS, cleanup)
+        born_due(fields, REPORTED, NOW, PARIS, PassActor.STAGE2A if cleanup else PassActor.STAGE1)
     return str(refused.value)
 
 

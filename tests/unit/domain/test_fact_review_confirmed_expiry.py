@@ -9,6 +9,7 @@ from src.domain.fact_expiry import Expiry
 from src.domain.exceptions import FactBornDueError
 from src.domain.fact_lifecycle import born_due, compute_expiry, resolves_too_soon
 from src.domain.fact_update import parse_fact_update
+from src.domain.pass_actor import PassActor
 from src.domain.fact_review_rules import confirmed_expiry, fallback_fields, fallback_window_days, keeps_expiry
 from tests.support.review_rule_builders import NOW, fact, question
 
@@ -108,7 +109,7 @@ def test_the_bound_is_the_write_paths_one_day_margin():
 def _write_accepts(sent, reported, now, tz):
     """What the write path does with an expiry a confirmation sent: parse, compute, refuse when born due."""
     expiry = parse_fact_update({"expiry": sent}, tz).expiry
-    born_due(compute_expiry(expiry, reported, tz), reported, now, tz, False)
+    born_due(compute_expiry(expiry, reported, tz), reported, now, tz, PassActor.OWNER)
 
 
 @pytest.mark.parametrize("name, now, expires_at, tz", [
@@ -150,7 +151,7 @@ def test_a_date_the_rule_does_not_keep_is_one_the_write_path_would_refuse(expire
     plan = dated(expires_at)
     assert keeps_expiry(plan, NOW) is False
     with pytest.raises(FactBornDueError):
-        born_due({"expiry_kind": ExpiryKind.DATE, "expires_at": expires_at}, plan.reported_date, NOW, MADRID, False)
+        born_due({"expiry_kind": ExpiryKind.DATE, "expires_at": expires_at}, plan.reported_date, NOW, MADRID, PassActor.OWNER)
 
 
 def test_a_date_in_its_last_day_gets_the_window_on_both_paths():

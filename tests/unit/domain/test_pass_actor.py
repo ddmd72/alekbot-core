@@ -9,7 +9,11 @@ from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.consolidation_pass_stats import OUTCOME_BORN_DUE, ConsolidationPassStats
 from src.domain.entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
 from src.domain.exceptions import FactBornDueError
-from src.domain.fact_lifecycle import CABINET_ACCEPTS, CONSOLIDATION_ACCEPTS, REVIEW_ACCEPTS
+from src.domain.fact_lifecycle import (
+    CABINET_ACCEPTS, CONSOLIDATION_ACCEPTS, REVIEW_ACCEPTS, horizon_from_now, resolves_too_soon,
+)
+from src.domain.fact_review_basis import ReviewBasis
+from src.domain.fact_review_reasons import basis_reason
 from src.domain.fact_update import parse_fact_update
 from src.domain.fact_update_lifecycle import finish_fact_update
 from src.domain.fact_update_plan import plan_fact_update
@@ -185,11 +189,11 @@ def old_fact():
         vector=[0.1], tags_vector=[0.2], metadata_vector=[0.3])
 
 
-def rewrite_with_a_due_horizon(label):
+def rewrite_with_a_due_horizon(label, days=14, reason=None):
     current = old_fact()
-    update = parse_fact_update({"content": "meeting with Ana, rewritten", "expiry": horizon(14)})
+    update = parse_fact_update({"content": "meeting with Ana, rewritten", "expiry": horizon(days)})
     context = FactWriteContext.for_pass(PassActor(label), "UTC", SPAN)
-    return finish_fact_update(plan_fact_update(current, update, NOW), current, update, context, NOW)
+    return finish_fact_update(plan_fact_update(current, update, NOW), current, update, context, NOW, reason=reason)
 
 
 @pytest.mark.parametrize("label", ["stage2a", "stage2b", "cluster", "backstop"])
@@ -200,8 +204,13 @@ def test_the_update_path_floors_a_due_horizon_for_every_actor_whose_row_floors(l
 
 @pytest.mark.parametrize("label", ["review", "owner"])
 def test_the_update_path_refuses_a_due_horizon_for_an_actor_whose_row_does_not_floor(label):
-    with pytest.raises(FactBornDueError):
-        rewrite_with_a_due_horizon(label)
+    # S4-D5: the review and the owner count a horizon from now, so 14 days is no longer due for them. One day from a
+    # reported_date a whole number of days back ends exactly at now + 1 day: due counted from now, and refused (a
+    # flooring row would have stored now + 2 days). The reason is the code-built one these rows must always pass.
+    assert resolves_too_soon(horizon_from_now(1, old_fact().reported_date, NOW)["expires_at"], NOW)
+    reason = basis_reason("rewrite", ReviewBasis("evidence", evidence_fact_id="e1234567-rest"))
+    with pytest.raises(FactBornDueError, match="this pass reviews stored memory"):
+        rewrite_with_a_due_horizon(label, days=1, reason=reason)
 
 
 @pytest.fixture
