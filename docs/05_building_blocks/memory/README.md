@@ -602,11 +602,14 @@ fact text, 8 characters of the user id):
   same text; a refused update, when no later successful, non-closing update targets the same fact (retiring the fact without
   its new text is the loss, not an answer). A **born-due** refusal on a cleanup pass is also answered by the rewrite it asks
   for, which has other text: a later successful merge of the same set of `fact_ids`; for a create, a later successful
-  create of the same domain whose **content words** overlap its own (shared / union at least 0.5; digit-only tokens,
-  tokens under 3 characters, a short stop list and the subjects "user"/"owner" do not count). A create made from facts
-  (`derived_from`) is answered only by one from the same set that also passes the text rule, so a sibling split part never
-  answers a dropped one. Residual: a heavy rewrite that keeps few words alerts. The comparisons use hashes held in memory,
-  never logged. `abandoned > 0` posts "🚨 Consolidation left expiry
+  create of the same domain in which **more than half of the refused fact's content words** appear (digit-only
+  tokens, tokens under 3 characters, a short stop list, the subjects "user"/"owner" and the planning words "plans",
+  "intends", "scheduled", "going", "starts"… do not count, because a past-tense rewrite drops them; the words the rewrite
+  adds cost nothing). A create made from facts (`derived_from`) is answered only by one from the same set that also
+  passes the text rule, so a sibling split part never answers a dropped one. Residual, on both sides: a near-duplicate of
+  the same subject (the same kind of event with another date or place, e.g. a Lisbon trip vs a Porto trip) is taken as the
+  answer, so a dropped fact goes unseen; a rewrite that keeps half or fewer of the content words alerts. The comparisons
+  use hashes held in memory, never logged. `abandoned > 0` posts "🚨 Consolidation left expiry
   refusals unanswered" with the pass label, model, tool names and text lengths. It errs towards an alert: a retry that
   rewrites the text counts as abandoned.
 - **Close-out.** The abandoned 🚨 and the add of the pass's expiry errors to the account's day (`expiry_tool_errors`, §5.5)
