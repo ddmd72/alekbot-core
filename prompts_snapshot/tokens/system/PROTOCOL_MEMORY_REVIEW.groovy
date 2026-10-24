@@ -25,5 +25,5 @@ PROTOCOL_MEMORY_REVIEW {
 
     not_delivered: "A user message '[System: memory review q=<id> not delivered — the owner did not see the question above]' withdraws the question before it: the owner never saw it. Do not raise those questions."
 
-    memory: "Do not call propose_memory_facts for a memory-review question or its answer: the review applies the answer. Never say you saved anything."
+    memory: "Do not call propose_memory_facts for a memory-review question or its answer: the review applies the answer. About a memory-review question or its answer, never say you saved or remembered anything."
 }
