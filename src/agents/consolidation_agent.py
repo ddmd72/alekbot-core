@@ -13,10 +13,12 @@ Session 2026-02-16: Phase 3 - Multi-turn tool use integration
 
 import re
 import copy
+import hashlib
 import json
 import time
 import asyncio
-from typing import List, Dict, Any, Optional, Tuple
+from collections import Counter
+from typing import List, Dict, Any, FrozenSet, Optional, Tuple
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -24,12 +26,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..ports.indexed_email_repository import IndexedEmailRepository
-from ..domain.entities import FactDomain
+from ..domain.entities import FactDomain, FactState, normalize_fact_taxonomy
 from ..domain.fact_expiry import expiry_view
+from ..domain.fact_lifecycle import CLOSING_STATES
 from ..domain.fact_lifecycle_day import CounterField
+from ..domain.fact_argument_parsing import parse_enum
 from ..domain.fact_update import ParsedFactUpdate
 from ..domain.fact_write_context import FactWriteContext, as_utc, span_of
 from ..domain.local_time import local_day, local_moment, local_stamp
+from ..domain.new_fact_attributes import parse_derived_from, parse_new_fact
 from ..domain.pass_actor import PassActor
 from ..domain.request_context import get_effective_account_id
 from ..ports.repository import FactRepository
@@ -42,7 +47,7 @@ from ..utils.logger import logger
 from ..ports.llm_port import AgentExecutionContext
 from ..ports.fact_write_port import FactWritePort
 from ..ports.alert_sink import AlertSinkPort
-from ..domain.consolidation_pass_stats import OUTCOME_ERROR, OUTCOME_OK, ConsolidationPassStats
+from ..domain.consolidation_pass_stats import OUTCOME_ERROR, OUTCOME_OK, ConsolidationPassStats, PassCall, PassTool
 from ..domain.fact_tool_result import HISTORY_FACT_ID, STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..infrastructure.agent_config import CONSOLIDATION
@@ -134,6 +139,121 @@ def _with_top_level_expiry(args: Dict[str, Any], container: str) -> Any:
     if "expiry" not in args or not isinstance(inner, dict) or "expiry" in inner:
         return inner
     return {**inner, "expiry": args["expiry"]}
+
+
+_PASS_TOOLS: Dict[str, PassTool] = {
+    "search_existing_facts": PassTool.SEARCH,
+    "create_fact": PassTool.CREATE,
+    "update_fact": PassTool.UPDATE,
+    "merge_facts": PassTool.MERGE,
+    "count_words": PassTool.COUNT,
+}
+
+
+def _pass_call(tool_call: ToolCall, timezone_name: str) -> PassCall:
+    """One tool call as the pass stats read it, normalised by the parsers the write path uses (so `" id"` and `"id"`
+    are one source). An argument the parsers refuse leaves its field empty: such a call is never a success, and a
+    refusal is matched by its text or its fact id only."""
+    args = tool_call.args or {}
+    tool = _PASS_TOOLS.get(tool_call.name, PassTool.OTHER)
+    identity = json.dumps(args, sort_keys=True, default=str, ensure_ascii=False)
+    fingerprint = hashlib.sha256(f"{tool_call.name}:{identity}".encode("utf-8")).hexdigest()
+    if tool in (PassTool.CREATE, PassTool.MERGE):
+        text = args.get("content" if tool is PassTool.CREATE else "merged_content")
+        text = text if isinstance(text, str) else ""
+        attributes = _with_top_level_expiry(args, "fact_attributes")
+        attributes = attributes if isinstance(attributes, dict) else {}
+        try:
+            domain = parse_new_fact({**normalize_fact_taxonomy(attributes), "content": text}, timezone_name).domain
+        except ValueError:
+            domain = None
+        sources = _fact_ids(attributes.get("derived_from") if tool is PassTool.CREATE else args.get("fact_ids"))
+        return PassCall.with_text(tool, fingerprint, text, sources=sources, domain=domain)
+    if tool is PassTool.UPDATE:
+        fact_id = args.get("fact_id")
+        updates = args.get("updates")
+        closing = isinstance(updates, dict) and _closes(updates.get("state"))
+        return PassCall(tool, fingerprint, key=fact_id if isinstance(fact_id, str) else "", closing=closing)
+    return PassCall(tool, fingerprint)
+
+
+def _closes(state: Any) -> bool:
+    """Whether an update's `state` closes its fact, read as the update parser reads it (the state alone: the rest of a
+    closing call may be refused)."""
+    if not state:
+        return False
+    try:
+        return parse_enum(FactState, "state", state) in CLOSING_STATES
+    except ValueError:
+        return False
+
+
+def _fact_ids(raw: Any) -> FrozenSet[str]:
+    """The ids a create names in `derived_from` or a merge in `fact_ids`; empty when the parser refuses them."""
+    try:
+        return frozenset(parse_derived_from(raw))
+    except ValueError:
+        return frozenset()
+
+
+# The ops lines of a pass (`AlertSinkPort`). Privacy: only the first 8 characters of the user id, tool kinds, counts,
+# text lengths and the first 8 characters of a fact id; never an argument's text or a fact's content.
+
+
+def _errors_text(stats: ConsolidationPassStats) -> str:
+    born = f", born due {stats.born_due}" if stats.born_due else ""
+    return f"tool-error turns {stats.error_turns} (expiry {stats.expiry_errors}{born}, abandoned {stats.abandoned})"
+
+
+def _counts_text(stats: ConsolidationPassStats) -> str:
+    return " ".join(f"{tool.value}×{n}" for tool, n in stats.counts.items()) or "none"
+
+
+def _sequence_text(stats: ConsolidationPassStats) -> str:
+    """Compact per-turn tool sequence, e.g. `t1 search×3 · t2 create×3`."""
+    parts = []
+    for i, tools in enumerate(stats.turns, start=1):
+        body = " ".join(f"{tool.value}×{n}" for tool, n in Counter(tools).items()) or "-"
+        parts.append(f"t{i} {body}")
+    return " · ".join(parts)
+
+
+def _summary_line(
+    stats: ConsolidationPassStats, model: str, effort: Any, user_id: str, report_ops: int, seconds: float
+) -> str:
+    """The temporary per-pass stats line (pass ended with a final report). Turns count every LLM call, the final
+    report included, because that is what the turn cap caps."""
+    return (
+        f"📊 Consolidation pass `{stats.actor.value}` | model {model} | effort {effort} | "
+        f"turns {stats.turns_used + 1}/{stats.max_turns} | tools: {_counts_text(stats)} | "
+        f"repeats {stats.repeats} | writes {stats.writes} | {_errors_text(stats)} | report ops {report_ops} | "
+        f"{seconds:.0f}s | user {(user_id or '')[:8]}\n{_sequence_text(stats)}"
+    )
+
+
+def _limit_alert(stats: ConsolidationPassStats, model: str, effort: Any, user_id: str, seconds: float) -> str:
+    """The permanent alert: turn cap reached, no final report."""
+    return (
+        f"🚨 Consolidation hit the turn limit without a final report | pass `{stats.actor.value}` | "
+        f"model {model} | effort {effort} | turns {stats.turns_used}/{stats.max_turns} | "
+        f"writes so far {stats.writes} | repeats {stats.repeats} | {_errors_text(stats)} | {seconds:.0f}s | "
+        f"user {(user_id or '')[:8]}\n{_sequence_text(stats)}"
+    )
+
+
+def _abandoned_alert(stats: ConsolidationPassStats, model: str, user_id: str) -> str:
+    """The permanent alert for refusals that were never answered: the pass, tool kinds and text lengths (or the fact
+    id's first 8 characters), never the text."""
+    calls = stats.abandoned_calls()
+    parts = [
+        f"update fact {call.key[:8]}" if call.tool is PassTool.UPDATE else f"{call.tool.value} (text {call.size} chars)"
+        for call in calls[:5]
+    ]
+    return (
+        f"🚨 Consolidation left expiry refusals unanswered | pass `{stats.actor.value}` | model {model} | "
+        f"abandoned {len(calls)}: {', '.join(parts)} | user {(user_id or '')[:8]}\n"
+        "A refused write that is never resent saves nothing; check what the pass retired next to it."
+    )
 
 
 class _TrackingFactManagement(FactManagementPort):
@@ -1164,13 +1284,7 @@ class ConsolidationAgent(BaseAgent):
         a final report always posts a 🚨; a pass that ends with a report posts a 📊 stats line
         while CONSOLIDATION_STATS_ALERTS is on.
         """
-        stats = ConsolidationPassStats(
-            actor=write_context.actor,
-            model=self.model_name,
-            effort=self.THINKING_EFFORT,
-            max_turns=self.MAX_CONSOLIDATION_TURNS,
-            user_id=user_id,
-        )
+        stats = ConsolidationPassStats(write_context.actor, self.MAX_CONSOLIDATION_TURNS)
         started = time.monotonic()
         today = local_day(datetime.now(timezone.utc), write_context.timezone)
         history: List[Message] = [
@@ -1203,16 +1317,17 @@ class ConsolidationAgent(BaseAgent):
                     # TEMPORARY monitoring for the Sonnet 5.5 stall (2026-10-20); remove once
                     # consolidation's model is settled.
                     if self._stats_alerts:
-                        await self._post_alert(
-                            stats.format_summary(len(ops), time.monotonic() - started)
-                        )
+                        await self._post_alert(_summary_line(
+                            stats, self.model_name, self.THINKING_EFFORT, user_id, len(ops), time.monotonic() - started
+                        ))
                     return ops
 
                 logger.info(
                     f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — executing {len(response.tool_calls)} tools"
                 )
 
-                stats.record_turn([(tc.name, tc.args or {}) for tc in response.tool_calls])
+                calls = [_pass_call(tc, write_context.timezone) for tc in response.tool_calls]
+                stats.record_turn(calls)
 
                 if response.raw_content:
                     history.append(Message(role="model", parts=[], raw_content=response.raw_content))
@@ -1237,9 +1352,7 @@ class ConsolidationAgent(BaseAgent):
                     fact_management=fact_management,
                 )
 
-                stats.record_outcomes(
-                    [(tc.name, tc.args or {}) for tc in response.tool_calls], [tr.outcome for tr in tool_responses]
-                )
+                stats.record_outcomes(calls, [tr.outcome for tr in tool_responses])
 
                 history.append(Message(
                     role="user",
@@ -1252,27 +1365,29 @@ class ConsolidationAgent(BaseAgent):
                     ]
                 ))
 
-            alert_text = stats.format_limit_alert(time.monotonic() - started)
+            alert_text = _limit_alert(
+                stats, self.model_name, self.THINKING_EFFORT, user_id, time.monotonic() - started
+            )
             logger.error(f"⚠️ [ConsolidationAgent] Max turns reached without final report: {alert_text}")
             await self._post_alert(alert_text)
             return []
         finally:
-            await self._close_pass(stats, account_id)
+            await self._close_pass(stats, account_id, user_id)
 
-    async def _close_pass(self, stats: ConsolidationPassStats, account_id: str) -> None:
+    async def _close_pass(self, stats: ConsolidationPassStats, account_id: str, user_id: str) -> None:
         """End of every pass, also one that raises: an expiry refusal that was never answered is always a 🚨 (also
         with the stats line off), and the pass's expiry errors are added to the account's day. Best effort, capped
         at CLOSE_OUT_TIMEOUT_S: it never raises (a cancellation excepted) and never changes the pass."""
         try:
-            await asyncio.wait_for(self._report_pass(stats, account_id), timeout=self.CLOSE_OUT_TIMEOUT_S)
+            await asyncio.wait_for(self._report_pass(stats, account_id, user_id), timeout=self.CLOSE_OUT_TIMEOUT_S)
         except asyncio.TimeoutError:
             logger.warning(f"⚠️ [ConsolidationAgent] Pass close-out cut after {self.CLOSE_OUT_TIMEOUT_S:.0f}s")
         except Exception as e:  # a cancellation is not an Exception: it propagates
             logger.warning(f"⚠️ [ConsolidationAgent] Pass close-out failed: {type(e).__name__}")
 
-    async def _report_pass(self, stats: ConsolidationPassStats, account_id: str) -> None:
+    async def _report_pass(self, stats: ConsolidationPassStats, account_id: str, user_id: str) -> None:
         if stats.abandoned:
-            await self._post_alert(stats.format_abandoned_alert())
+            await self._post_alert(_abandoned_alert(stats, self.model_name, user_id))
         if not stats.expiry_errors or self._lifecycle_counters is None:
             return
         try:

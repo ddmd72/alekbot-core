@@ -90,7 +90,8 @@ logged only a WARNING and returned `[]`, so nobody would have noticed.
   logged at WARNING and never changes the pass result.
 - Cost recorded before 2026-10-20 over-reports Sonnet 5.5 cache reads 2x (0.10x applied instead of
   0.05x). For history, reprice from BigQuery `prompt_content` tokens.
-- Code: `src/domain/consolidation_pass_stats.py` (pure stats and text),
-  `ConsolidationAgent._run_consolidation_loop` (collects and posts). `UserAgentFactory` receives
+- Code: `src/domain/consolidation_pass_stats.py` (pure stats over typed `PassCall`s, no text),
+  `ConsolidationAgent._run_consolidation_loop` (builds the calls, collects, renders and posts; the line layouts live in
+  `consolidation_agent.py` since Facts S4 T6b). `UserAgentFactory` receives
   `alert_sink` from `main.py` and reads the env knob, then passes both in: REQ-ARCH-01 forbids
   `os.getenv` inside `agents/`, so the call site is the composition layer.
