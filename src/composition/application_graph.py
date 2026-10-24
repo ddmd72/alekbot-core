@@ -74,6 +74,7 @@ from src.infrastructure.notification_sla import NOTIFICATION_SLA, dispatch_deadl
 from src.services.agent_fallback_service import AgentFallbackService
 from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
+from src.services.cabinet_fact_service import CabinetFactService
 from src.services.channel_binding_service import ChannelBindingService
 from src.services.companion_context_assembler_service import CompanionContextAssemblerService
 from src.services.companion_extraction_service import CompanionExtractionService
@@ -121,6 +122,7 @@ class ApplicationGraph:
     user_repo: FirestoreUserRepository
     account_repo: FirestoreAccountRepository
     invite_service: InviteCodeService
+    cabinet_facts: CabinetFactService
     quota_service: FirestoreQuotaService
     alert_sink: Optional[SlackWebhookAdapter]
     session_service: SessionService
@@ -705,6 +707,9 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         dry_run=_fact_sweep_dry_run,
     )
 
+    # The Cabinet's fact writes (the owner's delete), over the same fact repository the agents use.
+    cabinet_facts = CabinetFactService(container.repository)
+
     # Worker handler — dispatches Cloud Tasks to appropriate handlers
     # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
     # from running twice; a claim whose attempt died is taken over by the retry.
@@ -908,6 +913,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         user_repo=user_repo,
         account_repo=account_repo,
         invite_service=invite_service,
+        cabinet_facts=cabinet_facts,
         quota_service=quota_service,
         alert_sink=_alert_webhook,
         session_service=session_service,

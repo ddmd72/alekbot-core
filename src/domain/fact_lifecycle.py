@@ -88,6 +88,37 @@ def closure_fields(successor_id: str, now: datetime) -> dict[str, Any]:
     return {**lifecycle_fields(FactState.SUPERSEDED, now), "superseded_by": successor_id, "last_updated": now}
 
 
+def superseded_closure(stored_fact: FactEntity, new_fact: FactEntity, now: datetime, actor: str) -> dict[str, Any]:
+    """The in-place write that closes `stored_fact` in favour of `new_fact`, with its trail entry.
+
+    The reason is `merged into <id>` when the lineages differ, else `replaced by <id>`. `actor` is the trail actor as
+    written (a pass label, or a non-pass writer).
+    """
+    merged = stored_fact.lineage_id != new_fact.lineage_id
+    reason = f"{'merged into' if merged else 'replaced by'} {new_fact.id}"
+    entry = lifecycle_event(now, stored_fact.state, FactState.SUPERSEDED, actor, reason)
+    return {**closure_fields(new_fact.id, now), "lifecycle_events": with_event(stored_fact.lifecycle_events, entry)}
+
+
+def cabinet_invalidation(shown_text: str, stored_fact: FactEntity, requested_id: str, now: datetime) -> dict[str, Any]:
+    """The in-place write of the owner's Cabinet delete of `requested_id`, which resolved to `stored_fact`.
+
+    A version is closed with its own text kept, so `shown_text` (the text of `requested_id`) is what the owner's page
+    displayed. When the walk moved to a newer document with another text, that text was never seen: FactResolutionError
+    (the page reloads) instead of deleting it (owner, 2026-10-23).
+    """
+    if stored_fact.id != requested_id and stored_fact.text != shown_text:
+        raise FactResolutionError(
+            f"fact {requested_id} was rewritten after the page loaded; reload", current_id=stored_fact.id,
+        )
+    event = lifecycle_event(now, stored_fact.state, FactState.INVALIDATED, "cabinet", "deleted in the Cabinet")
+    return {
+        **lifecycle_fields(FactState.INVALIDATED, now),
+        "last_updated": now,
+        "lifecycle_events": with_event(stored_fact.lifecycle_events, event),
+    }
+
+
 def compute_expiry(expiry: Expiry, reported_date: datetime, timezone: str) -> Dict[str, Any]:
     """`expiry_kind`, `ttl_days` and `expires_at` (aware UTC) for a decision.
 

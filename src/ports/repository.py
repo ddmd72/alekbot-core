@@ -23,7 +23,7 @@ class FactRepository(ABC):
     - Legacy documents: a document with `owner_id` and no `account_id` is absent from every
       account-scoped read (they filter the stored `account_id`). Where one is returned (by-id reads,
       resolve_current), `owner_id` reads as `account_id` and
-      `created_by_user_id`. invalidate_fact refuses it with PermissionError. A missing `visibility`
+      `created_by_user_id`. A missing `visibility`
       reads as account_shared, "private" as user_private. A document without `state` matches no
       state-filtered read. A document missing a field a read orders by is absent from that read
       (observed). A stored document that does not validate as FactEntity fails the whole call
@@ -31,7 +31,7 @@ class FactRepository(ABC):
     - Vectors are returned as lists of floats. A read with a projection leaves the omitted fields at
       the model default (named per method).
     - Atomicity: add_fact is an unconditional whole-document write, last writer wins. The
-      version and in-place writes (write_superseding, update_fact_fields, invalidate_fact) are transactions
+      version and in-place writes (write_superseding, update_fact_fields) are transactions
       under an `update_time` precondition: a document changed since it was read raises FactWriteConflict and
       nothing is written. A StoredFact carries the token it was read with; compare it for equality only.
     - Errors: backend errors propagate unless the method says it never raises.
@@ -284,25 +284,6 @@ class FactRepository(ABC):
         Limit: ignored; the whole cache is returned (observed).
         Errors: a missing or empty cache returns []; a backend failure raises (Lelik fails the call
             closed on it); the adapter logs it and re-raises.
-        """
-        pass
-
-    @abstractmethod
-    async def invalidate_fact(self, fact_id: str, account_id: str) -> None:
-        """Mark a fact invalidated (Cabinet write path), following a superseded id to its current version.
-
-        Tenancy: the stored account_id of `fact_id` must equal `account_id`.
-        Resolution: resolve_current with CABINET_ACCEPTS (every state but superseded). The document the walk ends
-            on is invalidated, so a stale id from an open page still reaches the fact, but only when its text equals
-            the text of `fact_id` (what the page showed); a newer text raises FactResolutionError (the page reloads).
-        Effect: state invalidated, is_current True, valid_to and last_updated now; version unchanged; one
-            `lifecycle_events` entry (actor "cabinet", reason "deleted in the Cabinet").
-        Errors: a missing id raises ValueError; a fact of another account, or a legacy one, raises PermissionError;
-            FactResolutionError when the chain ends in a merge, has no successor or ends on a different text
-            (`current_id` names that version); FactWriteConflict after one
-            re-resolve that also conflicted. Nothing is written in any of these cases.
-        Atomicity: a transaction under the document's update_time precondition.
-        Idempotency: a repeated call succeeds and moves valid_to and last_updated (observed).
         """
         pass
 

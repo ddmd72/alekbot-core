@@ -41,18 +41,11 @@ from src.domain.billing import calculate_cost
 from src.domain.due_fact import DueFact
 from src.domain.email import IndexedEmail, IndexingState
 from src.domain.entities import FactEntity, FactState
-from src.domain.exceptions import FactResolutionError, FactWriteConflict, InPlaceFieldRefused
-from src.domain.fact_lifecycle import (
-    CABINET_ACCEPTS,
-    IN_PLACE_FIELDS,
-    closure_fields,
-    forward_step,
-    lifecycle_event,
-    lifecycle_fields,
-    with_event,
-)
+from src.domain.exceptions import FactWriteConflict, InPlaceFieldRefused
+from src.domain.fact_lifecycle import IN_PLACE_FIELDS, superseded_closure
 from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot
 from src.domain.fact_lifecycle_sweep import stale_fields
+from src.domain.fact_resolution import resolve_chain
 from src.domain.fact_write_context import NO_READABLE_SOURCE_NOTE, FactWriteContext
 from src.domain.owner_timezone import failure_reason, owner_to_read, owner_zone
 from src.domain.pass_actor import PassActor
@@ -196,20 +189,10 @@ class NoWriteFactRepository(FactRepository):
     async def resolve_current(
         self, fact_id: str, account_id: str, accepted: AbstractSet[FactState]
     ) -> Optional[StoredFact]:
-        stored = await self._read(fact_id, account_id)
-        if stored is None or stored.fact.account_id != account_id:
-            return None
-        origin_lineage_id = stored.fact.lineage_id
-        hops = 0
-        while True:
-            next_id = forward_step(stored.fact, accepted, origin_lineage_id, fact_id, account_id, hops)
-            if next_id is None:
-                return stored
-            hops += 1
-            following = await self._read(next_id, account_id)
-            if following is None:
-                raise FactResolutionError(f"fact {fact_id} was superseded and its successor is unknown; search again")
-            stored = following
+        async def read(next_id: str) -> Optional[StoredFact]:
+            return await self._read(next_id, account_id)
+
+        return await resolve_chain(read, fact_id, account_id, accepted)
 
     async def write_superseding(
         self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime, *, actor: str
@@ -229,11 +212,7 @@ class NoWriteFactRepository(FactRepository):
             raise ValueError(f"fact {new_fact.id} already exists")
         closed: List[FactEntity] = []
         for stored in replaced:
-            merged = stored.fact.lineage_id != new_fact.lineage_id
-            reason = f"{'merged into' if merged else 'replaced by'} {new_fact.id}"
-            entry = lifecycle_event(now, stored.fact.state, FactState.SUPERSEDED, actor, reason)
-            fields = {**closure_fields(new_fact.id, now), "lifecycle_events": with_event(stored.fact.lifecycle_events, entry)}
-            closed.append(stored.fact.model_copy(update=fields))
+            closed.append(stored.fact.model_copy(update=superseded_closure(stored.fact, new_fact, now, actor)))
         self._put(new_fact)
         for fact in closed:
             self._put(fact)
@@ -251,40 +230,6 @@ class NoWriteFactRepository(FactRepository):
         await self._check_token(stored.fact.id, stored.fact.account_id, stored.update_time)
         base = self._base(stored)
         self._put(FactEntity.model_validate({**base.model_dump(), **fields}))
-
-    async def invalidate_fact(self, fact_id: str, account_id: str) -> None:
-        async with self._lock:
-            await self._invalidate(fact_id, account_id)
-
-    async def _invalidate(self, fact_id: str, account_id: str) -> None:
-        shown = await self.get_fact_by_id(fact_id)
-        if shown is None:
-            raise ValueError(f"Fact not found: {fact_id}")
-        if shown.account_id != account_id:
-            raise PermissionError("Not authorized to modify this fact")
-        for attempt in (1, 2):
-            stored = await self.resolve_current(fact_id, account_id, CABINET_ACCEPTS)
-            if stored is None:
-                raise ValueError(f"Fact not found: {fact_id}")
-            if stored.fact.id != fact_id and stored.fact.text != shown.text:
-                raise FactResolutionError(
-                    f"fact {fact_id} was rewritten after the page loaded; reload", current_id=stored.fact.id,
-                )
-            now = datetime.now(timezone.utc)
-            event = lifecycle_event(now, stored.fact.state, FactState.INVALIDATED, "cabinet", "deleted in the Cabinet")
-            fields = {
-                **lifecycle_fields(FactState.INVALIDATED, now),
-                "last_updated": now,
-                "lifecycle_events": with_event(stored.fact.lifecycle_events, event),
-            }
-            try:
-                await self._apply_fields(stored, fields)
-            except FactWriteConflict:
-                if attempt == 2:
-                    raise
-                continue
-            self._record("invalidate_fact", fact_id=stored.fact.id)
-            return
 
     async def stale_due_fact(self, due: DueFact, now: datetime) -> None:
         async with self._lock:

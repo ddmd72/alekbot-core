@@ -788,16 +788,17 @@ let procedures and file notes become facts and directives (`decisions/memory_fac
 
 ### 5.2 Cabinet invalidate
 
-`POST /api/user/facts/<id>/invalidate` (`user_cabinet_app.py:850-871`) → `invalidate_fact` (`firestore_repo.py:316-343`):
-the id must exist (else 404) and its stored account must be the caller's (else 403). Then the repository
-**follows the id forward** to the fact that is live now (`CABINET_ACCEPTS`: every state except `superseded`, so the owner
+`POST /api/user/facts/<id>/invalidate` (`user_cabinet_app.py`) → `CabinetFactService.invalidate`
+(`services/cabinet_fact_service.py`; the rule itself is `cabinet_invalidation` in `domain/fact_lifecycle.py`, the walk is
+`domain/fact_resolution.py::resolve_chain`): the id must exist (else 404) and its stored account must be the caller's
+(else 403). Then the service **follows the id forward** through the repository's `resolve_current` to the fact that is live now (`CABINET_ACCEPTS`: every state except `superseded`, so the owner
 can still delete a fact the consolidator archived meanwhile) and sets `state=invalidated`, `valid_to`, `last_updated` and a `lifecycle_events` entry (actor `cabinet`, reason `deleted in
 the Cabinet`) on that document, in place, under the `update_time` precondition. A page loaded before the consolidator versioned the
 fact therefore deletes the **current version**, not a closed document (before S2 it would have re-opened the old
 document and left two `is_current` documents in one lineage), **but only when that version still has the text the
-page showed**: a closed version keeps its own text, so the repository compares it with the text of the id the page
+page showed**: a closed version keeps its own text, so the service compares it with the text of the id the page
 sent. On a conflict it resolves once more, and the text check runs again.
-Search stops returning the fact at once. **The route then rebuilds the baseline** with
+Search stops returning the fact at once. **The service then rebuilds the baseline** with
 `refresh_biographical_context_cache(owner_id=account_id)` (§3 step 9), so the fact leaves the next prompt too. That
 method never raises: it logs `❌ [FirestoreRepo] Failed to refresh biographical cache for <account>: …` (ERROR) and
 returns, the invalidate still answers 200, and the baseline keeps the fact until the next consolidation run. (The route

@@ -11,6 +11,7 @@ from ..services.session_service import SessionService
 from ..services.google_oauth_service import GoogleOAuthService
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.drive_search_service import DriveSearchService
+from ..services.cabinet_fact_service import CabinetFactService
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
@@ -62,6 +63,7 @@ def create_user_cabinet_blueprint(
     drive_search_service: Optional[DriveSearchService] = None,
     drive_task_queue: Optional[TaskQueue] = None,
     drive_transcribe_switch_on: bool = False,
+    cabinet_facts: Optional[CabinetFactService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -851,12 +853,13 @@ def create_user_cabinet_blueprint(
     @auth_required
     async def invalidate_fact(fact_id: str):
         """Mark a specific fact as invalidated. User Cabinet write path."""
+        if cabinet_facts is None:
+            return jsonify({"error": "unavailable"}), 503
         try:
-            await fact_repo.invalidate_fact(fact_id=fact_id, account_id=g.account_id)
+            # The service also refreshes the baseline (user_context cache, read on every request, otherwise rebuilt
+            # only by consolidation) so the fact leaves the prompt; the repository logs and swallows a refresh failure.
+            await cabinet_facts.invalidate(fact_id=fact_id, account_id=g.account_id)
             logger.info(f"🗑️ Fact {fact_id} invalidated by user {g.user_id}")
-            # The baseline (user_context cache, read on every request) is rebuilt only by consolidation;
-            # refresh it now so the fact leaves the prompt. The repository logs and swallows a refresh failure.
-            await fact_repo.refresh_biographical_context_cache(owner_id=g.account_id)
             return jsonify({"status": "invalidated"}), 200
         except PermissionError:
             return jsonify({"error": "Not authorized"}), 403

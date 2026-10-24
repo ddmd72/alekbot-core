@@ -10,18 +10,11 @@ from google.cloud.firestore_v1.vector import Vector
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from ..domain.due_fact import DueFact
 from ..domain.entities import FactEntity, FactState
-from ..domain.exceptions import FactResolutionError, FactWriteConflict, InPlaceFieldRefused
+from ..domain.exceptions import FactWriteConflict, InPlaceFieldRefused
 from ..domain.fact_expiry import as_expiry_kind
-from ..domain.fact_lifecycle import (
-    CABINET_ACCEPTS,
-    IN_PLACE_FIELDS,
-    closure_fields,
-    forward_step,
-    lifecycle_event,
-    lifecycle_fields,
-    with_event,
-)
+from ..domain.fact_lifecycle import IN_PLACE_FIELDS, superseded_closure
 from ..domain.fact_lifecycle_sweep import stale_fields
+from ..domain.fact_resolution import resolve_chain
 from ..domain.stored_fact import StoredFact
 from ..domain.vector_math import cosine_similarity
 from ..domain.deduplication_service import SmartDeduplication
@@ -326,41 +319,6 @@ class FirestoreFactRepository(FactRepository):
         next_cursor = page_docs[-1].id if has_more and page_docs else None
         return results, next_cursor
 
-    async def invalidate_fact(self, fact_id: str, account_id: str) -> None:
-        """Mark a fact invalidated, following a superseded id to its current version unless that version has another
-        text than the one the page showed (FactResolutionError, the route's 409). Security: account_id verified."""
-        doc = await self.facts_col.document(fact_id).get()
-        if not doc.exists:
-            raise ValueError(f"Fact not found: {fact_id}")
-        shown = doc.to_dict()
-        if shown.get("account_id") != account_id:
-            raise PermissionError("Not authorized to modify this fact")
-        for attempt in (1, 2):
-            stored = await self.resolve_current(fact_id, account_id, CABINET_ACCEPTS)
-            if stored is None:
-                raise ValueError(f"Fact not found: {fact_id}")
-            # A version is closed with its own text kept, so `shown` is what the owner's page displayed. A newer
-            # text was never seen: refuse and let the page reload instead of deleting it (owner, 2026-10-23).
-            if stored.fact.id != fact_id and stored.fact.text != shown.get("text"):
-                raise FactResolutionError(
-                    f"fact {fact_id} was rewritten after the page loaded; reload", current_id=stored.fact.id,
-                )
-            now = datetime.datetime.now(datetime.timezone.utc)
-            event = lifecycle_event(now, stored.fact.state, FactState.INVALIDATED, "cabinet", "deleted in the Cabinet")
-            fields = {
-                **lifecycle_fields(FactState.INVALIDATED, now),
-                "last_updated": now,
-                "lifecycle_events": with_event(stored.fact.lifecycle_events, event),
-            }
-            try:
-                await self.update_fact_fields(stored, fields)
-                return
-            except FactWriteConflict:
-                logger.warning(f"[FactRepo] invalidate of {fact_id} conflicted (attempt {attempt})")
-                if attempt == 2:
-                    raise
-
-
     @log_execution_time
     async def search_facts(
         self,
@@ -568,23 +526,14 @@ class FirestoreFactRepository(FactRepository):
     async def resolve_current(
         self, fact_id: str, account_id: str, accepted: AbstractSet[FactState]
     ) -> Optional[StoredFact]:
+        return await resolve_chain(self._read_stored, fact_id, account_id, accepted)
+
+    async def _read_stored(self, fact_id: str) -> Optional[StoredFact]:
+        """The whole document with its change token, or None when there is none."""
         snap = await self.facts_col.document(fact_id).get()
         if not snap.exists:
             return None
-        fact = self._fact_from_snapshot(snap)
-        if fact.account_id != account_id:
-            return None  # decided before forward_step, which raises on a foreign account
-        origin_lineage_id = fact.lineage_id
-        hops = 0
-        while True:
-            next_id = forward_step(fact, accepted, origin_lineage_id, fact_id, account_id, hops)
-            if next_id is None:
-                return StoredFact(fact, snap.update_time)
-            hops += 1
-            snap = await self.facts_col.document(next_id).get()
-            if not snap.exists:
-                raise FactResolutionError(f"fact {fact_id} was superseded and its successor is unknown; search again")
-            fact = self._fact_from_snapshot(snap)
+        return StoredFact(self._fact_from_snapshot(snap), snap.update_time)
 
     async def write_superseding(
         self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime.datetime, *, actor: str
@@ -619,10 +568,7 @@ class FirestoreFactRepository(FactRepository):
     @staticmethod
     def _closure(new_fact: FactEntity, stored: StoredFact, now: datetime.datetime, actor: str) -> Dict[str, Any]:
         """The in-place write that closes `stored` in favour of `new_fact`, with its trail entry."""
-        merged = stored.fact.lineage_id != new_fact.lineage_id
-        reason = f"{'merged into' if merged else 'replaced by'} {new_fact.id}"
-        entry = lifecycle_event(now, stored.fact.state, FactState.SUPERSEDED, actor, reason)
-        return {**closure_fields(new_fact.id, now), "lifecycle_events": with_event(stored.fact.lifecycle_events, entry)}
+        return superseded_closure(stored.fact, new_fact, now, actor)
 
     async def update_fact_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
         refused = set(fields) - IN_PLACE_FIELDS
