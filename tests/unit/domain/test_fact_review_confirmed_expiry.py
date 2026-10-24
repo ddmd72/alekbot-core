@@ -1,5 +1,9 @@
 """What a confirmation keeps of a fact's own expiry decision (Facts S4 · T1c review M1): the owner's yes, a silence and
-"I don't remember" all follow one rule, `keeps_expiry` / `confirmed_expiry`."""
+"I don't remember" all follow one rule, `keeps_expiry` / `confirmed_expiry`.
+
+Reviewer edit (facts S4, T3c): `confirmed_expiry` returns the decision as an `Expiry` (the typed write path's input), not
+the model's `{kind, ...}` dict; each expected dict is the Expiry it parsed to, and the write path is compute + born-due
+with no parse in front."""
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
@@ -8,7 +12,6 @@ from src.domain.entities import ExpiryKind, FactDomain, FactState, FactType
 from src.domain.fact_expiry import Expiry
 from src.domain.exceptions import FactBornDueError
 from src.domain.fact_lifecycle import born_due, compute_expiry, resolves_too_soon
-from src.domain.fact_update import parse_fact_update
 from src.domain.pass_actor import PassActor
 from src.domain.fact_review_rules import confirmed_expiry, fallback_fields, fallback_window_days, keeps_expiry
 from tests.support.review_rule_builders import NOW, fact, question
@@ -51,12 +54,13 @@ def test_a_naive_moment_is_read_as_utc():
 
 
 @pytest.mark.parametrize("stale, expected", [
-    (fact(**NONE), {"kind": "none"}),
-    (fact(domain=FactDomain.AGENT_DIRECTIVE), {"kind": "none"}),
-    (fact(domain=FactDomain.AGENT_DIRECTIVE, expiry_kind=ExpiryKind.DATE, expires_at=AHEAD, ttl_days=None), {"kind": "none"}),
-    (dated(AHEAD), {"kind": "date", "date": "2026-10-28"}),
-    (dated(NOW - DAY), {"kind": "horizon", "days": 118}),  # 59 days given since it was reported, doubled
-    (fact(), {"kind": "horizon", "days": 28}),
+    (fact(**NONE), Expiry(ExpiryKind.NONE)),
+    (fact(domain=FactDomain.AGENT_DIRECTIVE), Expiry(ExpiryKind.NONE)),
+    (fact(domain=FactDomain.AGENT_DIRECTIVE, expiry_kind=ExpiryKind.DATE, expires_at=AHEAD, ttl_days=None),
+     Expiry(ExpiryKind.NONE)),
+    (dated(AHEAD), Expiry(ExpiryKind.DATE, on=date(2026, 10, 28))),
+    (dated(NOW - DAY), Expiry(ExpiryKind.HORIZON, days=118)),  # 59 days given since it was reported, doubled
+    (fact(), Expiry(ExpiryKind.HORIZON, days=28)),
 ])
 def test_the_expiry_a_confirmation_sends(stale, expected):
     assert confirmed_expiry(stale, NOW, MADRID) == expected
@@ -64,7 +68,7 @@ def test_the_expiry_a_confirmation_sends(stale, expected):
 
 def test_the_horizon_is_the_rules_own_window_not_a_copy():
     stale = fact()
-    assert confirmed_expiry(stale, NOW, MADRID)["days"] == fallback_window_days(stale)
+    assert confirmed_expiry(stale, NOW, MADRID).days == fallback_window_days(stale)
 
 
 # ------------------------------------------------------------------------------------------------ the fallback
@@ -107,9 +111,8 @@ def test_the_bound_is_the_write_paths_one_day_margin():
 
 
 def _write_accepts(sent, reported, now, tz):
-    """What the write path does with an expiry a confirmation sent: parse, compute, refuse when born due."""
-    expiry = parse_fact_update({"expiry": sent}, tz).expiry
-    born_due(compute_expiry(expiry, reported, tz), reported, now, tz, PassActor.OWNER)
+    """What the write path does with an expiry a confirmation sent: compute, refuse when born due (typed: no parse)."""
+    born_due(compute_expiry(sent, reported, tz), reported, now, tz, PassActor.OWNER)
 
 
 @pytest.mark.parametrize("name, now, expires_at, tz", [
@@ -140,8 +143,8 @@ def _write_accepts(sent, reported, now, tz):
 def test_what_a_yes_sends_always_passes_the_write_paths_born_due_check(name, now, expires_at, tz):
     plan = dated(expires_at).model_copy(update={"reported_date": now - 30 * DAY})
     sent = confirmed_expiry(plan, now, tz)
-    if sent["kind"] == "horizon":
-        assert sent["days"] >= 14  # counted from now by the review horizon, never born due
+    if sent.kind is ExpiryKind.HORIZON:
+        assert sent.days >= 14  # counted from now by the review horizon, never born due
     else:
         _write_accepts(sent, plan.reported_date, now, tz)
 
@@ -156,7 +159,7 @@ def test_a_date_the_rule_does_not_keep_is_one_the_write_path_would_refuse(expire
 
 def test_a_date_in_its_last_day_gets_the_window_on_both_paths():
     last_day = dated(NOW + timedelta(hours=12))
-    assert confirmed_expiry(last_day, NOW, MADRID)["kind"] == "horizon"
+    assert confirmed_expiry(last_day, NOW, MADRID).kind is ExpiryKind.HORIZON
     fields = fallback_fields(last_day, question(), NOW, "timeout")
     assert fields["expiry_kind"] is ExpiryKind.HORIZON
 
@@ -170,7 +173,7 @@ PINNED = [{"domain": FactDomain.AGENT_DIRECTIVE}, {"type": FactType.PRINCIPLE}, 
 def test_a_yes_leaves_a_pinned_fact_that_had_a_horizon_permanent(pinned):
     stale = fact(**pinned)  # a horizon with a past due date
     sent = confirmed_expiry(stale, NOW, MADRID)
-    stored = compute_expiry(parse_fact_update({"expiry": sent}, MADRID).expiry, stale.reported_date, MADRID)
+    stored = compute_expiry(sent, stale.reported_date, MADRID)
     assert stored == {"expiry_kind": ExpiryKind.NONE, "ttl_days": None, "expires_at": None}
 
 
@@ -188,4 +191,4 @@ def test_a_pinned_fact_with_a_date_ahead_is_permanent_too():
     plan = dated(AHEAD).model_copy(update={"domain": FactDomain.AGENT_DIRECTIVE})
     revived = plan.model_copy(update=fallback_fields(plan, question(), NOW, "timeout"))
     assert revived.expiry_kind is ExpiryKind.NONE
-    assert confirmed_expiry(plan, NOW, MADRID) == {"kind": "none"}
+    assert confirmed_expiry(plan, NOW, MADRID) == Expiry(ExpiryKind.NONE)

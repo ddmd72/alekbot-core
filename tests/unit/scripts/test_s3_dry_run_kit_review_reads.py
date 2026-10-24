@@ -13,7 +13,7 @@ import pytest
 from scripts.consolidation.s3_dry_run_kit import NoWriteFactRepository
 from src.domain.entities import FactState
 from src.domain.exceptions import FactWriteConflict
-from src.domain.fact_lifecycle import REVIEW_ACCEPTS, lifecycle_fields
+from src.domain.fact_lifecycle import REVIEW_ACCEPTS, archive_fields, lifecycle_fields
 from src.domain.stored_fact import StoredFact
 from src.ports.repository import FactRepository
 from tests.support.fact_kit import ACC, OTHER, USER, make_fact, put_raw
@@ -228,16 +228,19 @@ async def test_archive_and_add_is_recorded_and_leaves_the_live_store_byte_identi
     stored, new = await staged(store, kit)
     before = live_state(store)
 
-    await kit.archive_and_add(stored, new, NOW, actor="review", reason="rewritten as f-new")
+    await kit.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "rewritten as f-new"), new)
 
     assert live_state(store) == before
-    assert kit.writes == [{"kind": "archive_and_add", "archived_id": "old", "new_id": "f-new", "actor": "review"}]
+    # Reviewer edit (facts S4, T3c): the store is handed the archive's fields, no actor, so its write record has none;
+    # the actor is the trail entry's, inside the fields it applied.
+    assert kit.writes == [{"kind": "archive_and_add", "archived_id": "old", "new_id": "f-new"}]
+    assert kit.overlay_document("old").lifecycle_events[-1]["actor"] == "review"
 
 
 async def test_the_overlay_holds_the_archived_fact_and_the_new_one(store, kit):
     stored, new = await staged(store, kit)
 
-    await kit.archive_and_add(stored, new, NOW, actor="review", reason="rewritten as f-new")
+    await kit.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "rewritten as f-new"), new)
 
     old = kit.overlay_document("old")
     assert old.state is FactState.ARCHIVED and old.valid_to == NOW and old.stale_since == NOW - timedelta(days=3)
@@ -249,10 +252,13 @@ async def test_the_overlay_holds_the_archived_fact_and_the_new_one(store, kit):
 
 async def test_a_second_archive_of_the_same_token_is_a_conflict(store, kit):
     stored, new = await staged(store, kit)
-    await kit.archive_and_add(stored, new, NOW, actor="review", reason="r")
+    await kit.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "r"), new)
 
     with pytest.raises(FactWriteConflict):
-        await kit.archive_and_add(stored, make_fact("other", lineage_id="lin-other"), NOW, actor="review", reason="r")
+        await kit.archive_and_add(
+            stored, archive_fields(stored.fact, NOW, "review", "r"),
+            make_fact("other", lineage_id="lin-other"),
+        )
 
     assert [w["kind"] for w in kit.writes] == ["archive_and_add"] and kit.overlay_document("f-other") is None
 
@@ -261,11 +267,17 @@ async def test_archive_and_add_refuses_another_account_missing_vectors_and_a_tak
     stored, new = await staged(store, kit)
 
     with pytest.raises(ValueError):
-        await kit.archive_and_add(stored, make_fact("x", account=OTHER), NOW, actor="review", reason="r")
+        await kit.archive_and_add(
+            stored, archive_fields(stored.fact, NOW, "review", "r"),
+            make_fact("x", account=OTHER),
+        )
     with pytest.raises(ValueError, match="tags_vector"):
-        await kit.archive_and_add(stored, make_fact("y", tags_vector=None), NOW, actor="review", reason="r")
+        await kit.archive_and_add(
+            stored, archive_fields(stored.fact, NOW, "review", "r"),
+            make_fact("y", tags_vector=None),
+        )
     with pytest.raises(ValueError, match="already exists"):
-        await kit.archive_and_add(stored, make_fact("n", id="old"), NOW, actor="review", reason="r")
+        await kit.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "r"), make_fact("n", id="old"))
 
     assert kit.writes == [] and kit.overlay_document("old") is None
 
@@ -276,6 +288,9 @@ async def test_archive_and_add_refuses_a_stored_fact_read_as_another_account(sto
     as_other = StoredFact(stored.fact.model_copy(update={"account_id": OTHER}), stored.update_time)
 
     with pytest.raises(PermissionError, match="Not authorized to modify this fact"):
-        await kit.archive_and_add(as_other, make_fact("x", account=OTHER), NOW, actor="review", reason="r")
+        await kit.archive_and_add(
+            as_other, archive_fields(as_other.fact, NOW, "review", "r"),
+            make_fact("x", account=OTHER),
+        )
 
     assert [w["kind"] for w in kit.writes] == ["add_fact"] and kit.overlay_document("f-x") is None

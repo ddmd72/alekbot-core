@@ -2,7 +2,7 @@
 cache, the real counters adapter on the same fake database, a recording alert sink and a movable clock."""
 from datetime import datetime, timedelta, timezone
 from functools import cached_property
-from typing import Any, Awaitable, Callable, List, Optional, Set, Tuple
+from typing import Any, Awaitable, Callable, List, Mapping, Optional, Set, Tuple
 
 from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
 from src.adapters.firestore_repo import FirestoreFactRepository
@@ -41,10 +41,10 @@ class FaultyRepo(FirestoreFactRepository):
 
     fail_on: Set[str]
 
-    async def stale_due_fact(self, due: DueFact, now: datetime) -> None:
+    async def stale_due_fact(self, due: DueFact, fields: Mapping[str, Any]) -> None:
         if due.fact_id in self.fail_on:
             raise RuntimeError("store unavailable")
-        await super().stale_due_fact(due, now)
+        await super().stale_due_fact(due, fields)
 
 
 def make_fact_world() -> Tuple[FactStore, FaultyRepo, BiographicalContextService]:

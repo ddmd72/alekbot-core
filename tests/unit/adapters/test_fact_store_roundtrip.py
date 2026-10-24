@@ -274,10 +274,13 @@ def _record_commits(repo, on_ok):
     original, commits = repo.write_superseding, []
 
     # Reviewer edit (facts S3, T3): the stand-in takes and forwards the new required `actor` keyword.
-    async def recording(new_fact, replaced, now, *, actor):
+    # Reviewer edit (facts S4, T3c): the port now takes (new_fact, [(stored, closure fields)]); the stand-in forwards
+    # that shape and still records the replaced ids.
+    async def recording(new_fact, closures):
+        replaced = [stored for stored, _ in closures]
         ids = [stored.fact.id for stored in replaced]
         try:
-            await original(new_fact, replaced, now, actor=actor)
+            await original(new_fact, closures)
         except FactWriteConflict:
             commits.append(("conflict", ids))
             raise

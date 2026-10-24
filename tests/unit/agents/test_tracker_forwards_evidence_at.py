@@ -1,19 +1,27 @@
-"""The consolidation run's tracker forwards the review keywords of `update_fact` (facts S4 · T3a): `evidence_at`, `reason`
-and `history` reach the port unchanged, and the write is still recorded. A consolidation call sets none of them and
-reaches the port with the same keywords as before."""
+"""The consolidation run's tracker forwards the review keywords (facts S4 · T3a): `evidence_at`, `reason` and `history`
+reach the port unchanged, and the write is still recorded. A consolidation call sets none of them and reaches the port
+with the same keywords as before.
+
+Reviewer edit (facts S4, T3c): the review keywords left the model's `update_fact`; they travel with code's typed
+`apply_fact_update` (FactUpdatePort), which the tracker forwards whole. The recording port implements both entries."""
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 from src.agents.consolidation_agent import _TrackingFactManagement
+from src.domain.entities import FactState
+from src.domain.fact_review_answers import ARCHIVE_ONLY
 from src.domain.fact_tool_result import HISTORY_FACT_ID
+from src.domain.fact_update import ParsedFactUpdate
 from src.ports.fact_management_port import FactManagementPort
+from src.ports.fact_update_port import FactUpdatePort
 from tests.support.fact_write import ctx
 
 SAID = datetime(2026, 10, 24, 9, 30, tzinfo=timezone.utc)
 HISTORY = "No longer true (the owner said so in Oct 2026): works at Acme"
+REVIVE = ParsedFactUpdate(state=FactState.CURRENT)
 
 
-class RecordingPort(FactManagementPort):
+class RecordingPort(FactManagementPort, FactUpdatePort):
     """A port that archives in memory and answers like the adapter: an update with history creates one more fact."""
 
     def __init__(self) -> None:
@@ -26,11 +34,19 @@ class RecordingPort(FactManagementPort):
     async def create_fact(self, content, metadata, *, context):
         return {"fact_id": None, "status": "failed", "message": "unused"}
 
-    async def update_fact(self, fact_id, updates, account_id, *, context, **review):
-        self.updates.append({"fact_id": fact_id, "updates": updates, "context": context, **review})
+    async def update_fact(self, fact_id, updates, account_id, *, context):
+        self.updates.append({"fact_id": fact_id, "updates": updates, "context": context})
         self.facts[fact_id] = updates.get("state", self.facts[fact_id])
+        return {"fact_id": fact_id, "status": "updated", "version": 1, "message": "ok"}
+
+    async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None,
+                                history=None):
+        self.updates.append({"fact_id": fact_id, "update": update, "context": context,
+                             "evidence_at": evidence_at, "reason": reason, "history": history})
+        if update.state is not None:
+            self.facts[fact_id] = update.state.value
         result = {"fact_id": fact_id, "status": "updated", "version": 1, "message": "ok"}
-        if review.get("history"):
+        if history:
             self.facts["f-history"] = "current"
             result[HISTORY_FACT_ID] = "f-history"
         return result
@@ -44,13 +60,12 @@ async def test_the_tracker_forwards_all_three_keywords_and_records_the_write():
     tracker = _TrackingFactManagement(port)
     owner = ctx("owner")
 
-    result = await tracker.update_fact(
-        "f-old", {"state": "archived"}, "acc", context=owner, evidence_at=SAID, reason="ended q=q7 (digit)",
-        history=HISTORY,
+    result = await tracker.apply_fact_update(
+        "f-old", ARCHIVE_ONLY, "acc", context=owner, evidence_at=SAID, reason="ended q=q7 (digit)", history=HISTORY,
     )
 
     assert port.updates == [{
-        "fact_id": "f-old", "updates": {"state": "archived"}, "context": owner,
+        "fact_id": "f-old", "update": ARCHIVE_ONLY, "context": owner,
         "evidence_at": SAID, "reason": "ended q=q7 (digit)", "history": HISTORY,
     }]
     assert result[HISTORY_FACT_ID] == "f-history" and port.facts == {"f-old": "archived", "f-history": "current"}
@@ -62,12 +77,13 @@ async def test_a_revive_forwards_its_evidence_date_and_reason_without_history():
     port = RecordingPort()
     tracker = _TrackingFactManagement(port)
 
-    await tracker.update_fact(
-        "f-old", {"state": "current"}, "acc", context=ctx("review"), evidence_at=SAID, reason="revived on e1234567",
-    )
+    await tracker.apply_fact_update("f-old", REVIVE, "acc", context=ctx("review"), evidence_at=SAID,
+                                    reason="revived on e1234567")
 
     (call,) = port.updates
-    assert (call["evidence_at"], call["reason"]) == (SAID, "revived on e1234567") and "history" not in call
+    # The typed port names all three keywords; no history reaches it.
+    assert (call["evidence_at"], call["reason"], call["history"]) == (SAID, "revived on e1234567", None)
+    assert call["update"] == REVIVE
     assert tracker.wrote is True and tracker.changed == []
 
 

@@ -7,13 +7,13 @@ import pytest
 
 from src.domain.entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
 from src.domain.exceptions import FactBornDueError, FactExpiryError
-from src.domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE
+from src.domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE, Expiry
 from src.domain.fact_lifecycle import horizon_from_now
 from src.domain.fact_review_basis import ReviewBasis
 from src.domain.fact_review_reasons import answer_reason, basis_reason, gives_window_reason
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_rules import STAYS_STALE_REFUSAL, confirmed_expiry, fallback_window_days
-from src.domain.fact_update import parse_fact_update
+from src.domain.fact_update import ParsedFactUpdate, parse_fact_update
 from src.domain.fact_update_lifecycle import FactFinish, finish_fact_update
 from src.domain.fact_update_plan import plan_fact_update
 from src.domain.fact_write_context import REVIEW_REPORTED_DATE_NOTE
@@ -119,8 +119,11 @@ def test_a_pinned_revive_gets_none(actor, updates):
 def test_a_pinned_still_true_arrives_as_none_and_stays_none(actor):
     current = pinned_fact(FactState.CURRENT)
     sent = confirmed_expiry(current, NOW, "Europe/Paris")
-    assert sent == {"kind": "none"}
-    fields = finish({"expiry": sent}, current, actor).plan.fields
+    # Reviewer edit (facts S4, T3c): the decision is an Expiry, sent as the typed update, so no parse in front.
+    assert sent == Expiry(ExpiryKind.NONE)
+    update = ParsedFactUpdate(expiry=sent)
+    plan = plan_fact_update(current, update, NOW)
+    fields = finish_fact_update(plan, current, update, ctx(actor), NOW, reason=REVIVED).plan.fields
     assert fields["expiry_kind"] is ExpiryKind.NONE and fields["expires_at"] is None
 
 

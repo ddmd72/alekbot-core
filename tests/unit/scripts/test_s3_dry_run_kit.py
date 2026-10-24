@@ -41,7 +41,8 @@ from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepos
 from src.config.environment import EnvironmentConfig
 from src.domain.entities import FactState
 from src.domain.exceptions import FactResolutionError, FactWriteConflict, InPlaceFieldRefused
-from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
+from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS, superseded_closure
+from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.agent import AgentIntent, AgentMessage
 from src.domain.llm import LLMResponse, ToolCall, UsageMetadata
 from src.domain.prompt_v3.profile_slot import ProfileToken
@@ -131,6 +132,11 @@ def kit_adapter(store: FactStore):
 # ----------------------------------------------------------------------------------------------- the overlay store
 
 
+def closed_by(new, replaced, now, actor):
+    """The closures a caller builds (`superseded_closure`), which the store applies."""
+    return [(stored, superseded_closure(stored.fact, new, now, actor)) for stored in replaced]
+
+
 async def test_a_create_a_version_a_merge_and_an_invalidate_leave_the_live_store_byte_identical_and_are_recorded(store):
     first, second, third, fourth = [await seed(store, t) for t in ("alpha fact", "beta fact", "gamma fact", "delta fact")]
     before = live_state(store)
@@ -195,8 +201,8 @@ async def test_a_stale_token_conflicts_in_the_overlay_and_against_the_live_store
     with pytest.raises(FactWriteConflict):
         await repo.update_fact_fields(stale, {"last_updated": datetime(2026, 10, 3, tzinfo=timezone.utc)})
     with pytest.raises(FactWriteConflict):
-        await repo.write_superseding((await repo.get_fact_by_id(first)).model_copy(update={"id": "v2"}), [stale],
-                                     datetime(2026, 10, 3, tzinfo=timezone.utc), actor="x")
+        version = (await repo.get_fact_by_id(first)).model_copy(update={"id": "v2"})
+        await repo.write_superseding(version, closed_by(version, [stale], datetime(2026, 10, 3, tzinfo=timezone.utc), "x"))
     assert (await repo.get_fact_by_id(second)).state is FactState.CURRENT
     assert [w["kind"] for w in repo.writes] == ["update_fact_fields"]
 
@@ -209,10 +215,10 @@ async def test_the_overlay_refuses_a_field_outside_the_in_place_set_and_a_versio
     with pytest.raises(InPlaceFieldRefused):
         await repo.update_fact_fields(stored, {"text": "rewritten"})
     with pytest.raises(ValueError):
-        await repo.write_superseding(stored.fact.model_copy(update={"id": "v2", "vector": None}), [stored],
-                                     datetime(2026, 10, 3, tzinfo=timezone.utc), actor="x")
+        version = stored.fact.model_copy(update={"id": "v2", "vector": None})
+        await repo.write_superseding(version, closed_by(version, [stored], datetime(2026, 10, 3, tzinfo=timezone.utc), "x"))
     with pytest.raises(ValueError):
-        await repo.write_superseding(stored.fact, [], datetime(2026, 10, 3, tzinfo=timezone.utc), actor="x")
+        await repo.write_superseding(stored.fact, [])
     assert repo.writes == []
 
 
@@ -243,7 +249,7 @@ async def test_stale_due_fact_and_add_fact_if_unique_write_the_overlay_only(stor
     (due,) = await repo.find_due_facts(datetime(2026, 10, 1, tzinfo=timezone.utc))
     now = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
-    await repo.stale_due_fact(due, now)
+    await repo.stale_due_fact(due, stale_fields(due, now))
     stored, new_id = await repo.add_fact_if_unique((await repo.get_fact_by_id(due_id)).model_copy(update={"id": "extra"}))
 
     assert live_state(store) == before and (stored, new_id) == (True, "extra")
@@ -251,7 +257,7 @@ async def test_stale_due_fact_and_add_fact_if_unique_write_the_overlay_only(stor
     assert fact.state is FactState.STALE and fact.stale_since == now
     assert [w["kind"] for w in repo.writes] == ["stale_due_fact", "add_fact_if_unique"]
     with pytest.raises(FactWriteConflict):
-        await repo.stale_due_fact(due, now)
+        await repo.stale_due_fact(due, stale_fields(due, now))
 
 
 async def test_the_current_lists_show_the_passes_own_writes_so_the_directive_cap_backstop_sees_the_trimmed_rulebook(store):
@@ -803,9 +809,11 @@ async def test_two_concurrent_writes_to_the_same_fact_one_wins_and_the_other_con
     stored = await repo.resolve_current(first, ACC, CONSOLIDATION_ACCEPTS)
     now = datetime(2026, 10, 3, tzinfo=timezone.utc)
 
+    v_a = stored.fact.model_copy(update={"id": "v-a", "version": 2})
+    v_b = stored.fact.model_copy(update={"id": "v-b", "version": 2})
     results = await asyncio.gather(
-        repo.write_superseding(stored.fact.model_copy(update={"id": "v-a", "version": 2}), [stored], now, actor="a"),
-        repo.write_superseding(stored.fact.model_copy(update={"id": "v-b", "version": 2}), [stored], now, actor="b"),
+        repo.write_superseding(v_a, closed_by(v_a, [stored], now, "a")),
+        repo.write_superseding(v_b, closed_by(v_b, [stored], now, "b")),
         return_exceptions=True,
     )
 

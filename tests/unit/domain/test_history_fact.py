@@ -1,5 +1,5 @@
 """The history fact written beside an archive (facts S4 · T3a, S4-D27): `history_fact`, its trail entry (`history_trail`,
-`history_reason`) and when an `update_fact` call may carry one (`history_refusal`)."""
+`history_reason`) and when a typed update may carry one (`history_refusal`)."""
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -8,8 +8,9 @@ from src.domain.entities import (
     ContextPriority, ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass,
 )
 from src.domain.fact_expiry import EXPIRY_NONE
-from src.domain.fact_review_answers import ended_text, history_fact, history_refusal, history_trail
+from src.domain.fact_review_answers import ARCHIVE_ONLY, ended_text, history_fact, history_refusal, history_trail
 from src.domain.fact_review_reasons import gives_window_reason, history_reason, is_revive_reason, is_rewrite_reason
+from src.domain.fact_update import ParsedFactUpdate, parse_fact_update
 from tests.support.fact_write import ctx
 
 UTC = timezone.utc
@@ -92,42 +93,54 @@ def test_the_history_reason_names_the_archived_fact_and_is_no_revive_or_rewrite(
 
 
 # ---------------------------------------------------------------------------------------------- history_refusal
+# Reviewer edit (facts S4, T3c): `history_refusal` judges the typed update (`ParsedFactUpdate`), which only code's
+# typed write path carries. The model-argument cases stay, each as the update the parser makes of it (so the case of the
+# state string is still pinned, now in the parser); the refusal is reworded for code ("archives the fact and changes
+# nothing else"), and typed updates the parser could never produce are added.
 
 @pytest.mark.parametrize("actor", ["review", "owner"])
 @pytest.mark.parametrize("state", ["archived", "ARCHIVED", " Archived "])
 def test_an_exact_archive_of_the_review_or_the_owner_may_carry_history(actor, state):
-    assert history_refusal("No longer true: x", {"state": state}, ctx(actor), SAID) is None
+    update = parse_fact_update({"state": state})
+
+    assert update == ARCHIVE_ONLY
+    assert history_refusal("No longer true: x", update, ctx(actor), SAID) is None
 
 
-@pytest.mark.parametrize("updates", [
-    {"state": "invalidated"},
-    {"state": "current"},
-    {"state": "archived", "expiry": {"kind": "none"}},
-    {"state": "archived", "reported_date": "2026-10-01"},
-    {"content": "x"},
-    {},
-    {"state": None},
-])
-def test_anything_but_exactly_state_archived_is_refused(updates):
-    refusal = history_refusal("No longer true: x", updates, ctx("owner"), SAID)
+@pytest.mark.parametrize("update", [
+    parse_fact_update({"state": "invalidated"}),
+    parse_fact_update({"state": "current"}),
+    parse_fact_update({"state": "archived", "expiry": {"kind": "none"}}),
+    parse_fact_update({"state": "archived", "reported_date": "2026-10-01"}),
+    parse_fact_update({"content": "x"}),
+    parse_fact_update({}),
+    parse_fact_update({"state": None}),
+    ParsedFactUpdate(state=FactState.ARCHIVED, expiry=EXPIRY_NONE),
+    ParsedFactUpdate(state=FactState.ARCHIVED, tags=["x"]),
+    ParsedFactUpdate(state=FactState.SUPERSEDED, superseded_by="f-new"),
+], ids=["invalidated", "current", "archived+expiry", "archived+reported_date", "content", "empty", "state None",
+        "typed archived+expiry", "typed archived+tags", "typed superseded"])
+def test_anything_but_exactly_state_archived_is_refused(update):
+    refusal = history_refusal("No longer true: x", update, ctx("owner"), SAID)
 
-    assert refusal is not None and 'exactly {"state": "archived"}' in refusal and "nothing was written" in refusal
+    assert refusal is not None and "archives the fact and changes nothing else" in refusal
+    assert "nothing was written" in refusal
 
 
 @pytest.mark.parametrize("actor", ["stage1", "email", "stage2a", "stage2b", "cluster", "backstop"])
 def test_a_consolidation_pass_may_not_write_history(actor):
-    refusal = history_refusal("No longer true: x", {"state": "archived"}, ctx(actor), SAID)
+    refusal = history_refusal("No longer true: x", ARCHIVE_ONLY, ctx(actor), SAID)
 
     assert refusal is not None and refusal.startswith("history: only the review or the owner") and actor in refusal
 
 
 def test_an_empty_history_text_is_refused_with_its_own_message():
-    refusal = history_refusal("  ", {"state": "archived"}, ctx("review"), SAID)
+    refusal = history_refusal("  ", ARCHIVE_ONLY, ctx("review"), SAID)
 
     assert refusal is not None and "is empty" in refusal
 
 
 def test_history_without_the_moment_it_was_said_is_refused():
-    refusal = history_refusal("No longer true: x", {"state": "archived"}, ctx("owner"), None)
+    refusal = history_refusal("No longer true: x", ARCHIVE_ONLY, ctx("owner"), None)
 
     assert refusal is not None and "evidence_at" in refusal
