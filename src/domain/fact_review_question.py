@@ -16,7 +16,7 @@ from .messaging import MessageRef
 
 # A sent question waits this long from `asked_at`, answered or not; a queued question never times out.
 QUESTION_TIMEOUT = timedelta(days=14)
-# A closed question is kept this long, for the Cabinet, the digest and the trail, then expires.
+# A closed question is kept this long after `closed_at`, for the Cabinet, the digest and the trail, then expires.
 QUESTION_RETENTION = timedelta(days=90)
 # What the owner's answers in words may add up to on one question (the review reads them once).
 MAX_REPLY_CHARS = 2000
@@ -53,14 +53,14 @@ _ATTEMPT_FIELDS = (
     "session_id", "appended_at", "message_ref", "asked_at", "reply_text", "reply_at", "offered_at",
 )
 _SENT_FIELDS = ("asked_at", "session_id", "appended_at", "message_ref")
-_CLOSING_FIELDS = ("closed_at", "closed_by", "purge_after", "answer", "answer_source")
+_CLOSING_FIELDS = ("closed_at", "closed_by", "answer", "answer_source")
 
 
 class FactReviewQuestion(BaseModel):
     """About exactly one fact. `quoted_text` is the fact's text when it was queued (what the owner is shown); `queue_key`
     orders the queue (the fact's `stale_since`, oldest first). `message_ref` is where the question was posted, which is
     how a reply is matched to it. `reply_text` collects the owner's answers in words until the review has read them
-    (`offered_at`). `purge_after` exists only on a closed question. Every datetime is timezone-aware.
+    (`offered_at`). Every datetime is timezone-aware.
 
     Frozen, and `model_copy` validates again: a question that exists is a legal one."""
 
@@ -88,7 +88,6 @@ class FactReviewQuestion(BaseModel):
     answer_source: Optional[AnswerSource] = None
     closed_at: Optional[AwareDatetime] = None
     closed_by: Optional[ClosedBy] = None
-    purge_after: Optional[AwareDatetime] = None
 
     # ------------------------------------------------------------------------------------------------ invariants
 
@@ -101,7 +100,7 @@ class FactReviewQuestion(BaseModel):
         if self.status is QuestionStatus.CLOSED:
             self._check_closing()
         elif any(getattr(self, name) is not None for name in _CLOSING_FIELDS):
-            raise ValueError("only a closed question has an answer, closed_at, closed_by or purge_after")
+            raise ValueError("only a closed question has an answer, closed_at or closed_by")
         return self
 
     def _check_attempt(self) -> None:
@@ -130,9 +129,6 @@ class FactReviewQuestion(BaseModel):
     def _check_closing(self) -> None:
         if self.closed_at is None or self.closed_by is None:
             raise ValueError("a closed question has closed_at and closed_by")
-        # Only "set and later": the retention may change, and a question stored under the old one must still be read.
-        if self.purge_after is None or self.purge_after <= self.closed_at:
-            raise ValueError("purge_after is set and later than closed_at")
         if self.closed_by is ClosedBy.OWNER:
             if self.answer is None or self.answer_source not in _OWNER_SOURCES:
                 raise ValueError("an owner close has an answer and a source of digit, button or cabinet")
@@ -247,12 +243,11 @@ class FactReviewQuestion(BaseModel):
         answer: Optional[AnswerKind] = None,
         source: Optional[AnswerSource] = None,
     ) -> Self:
-        """open -> closed. `purge_after` is `at` plus `QUESTION_RETENTION`. An owner close carries the answer and its
-        source; a review close on the owner's words has source `review`; the others carry neither."""
+        """open -> closed, kept `QUESTION_RETENTION` from `at`. An owner close carries the answer and its source; a review
+        close on the owner's words has source `review`; the others carry neither."""
         self._require(self.is_open, "closed")
         return self._moved(
             status=QuestionStatus.CLOSED, closed_by=by, closed_at=at, answer=answer, answer_source=source,
-            purge_after=at + QUESTION_RETENTION,
         )
 
     # ------------------------------------------------------------------------------------------------ plumbing

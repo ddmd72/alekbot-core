@@ -531,10 +531,19 @@ class EnvironmentConfig:
     @property
     def fact_review_questions_collection(self) -> str:
         """
-        The memory review's questions, one per fact, doc id = question id (Facts S4 plan §2.2). Its TTL field is
-        `purge_after`, set only on a closed question; no field is named `expires_at`. Dev: development_fact_review_questions
+        The memory review's questions, one per fact, doc id = question id (Facts S4 plan §2.2). A closed question expires
+        (`FirestoreFactReviewStore` says how); no field is named `expires_at`. Dev: development_fact_review_questions
         """
         return f"{self.firestore_collection_prefix}fact_review_questions"
+
+    @property
+    def fact_review_messages_collection(self) -> str:
+        """
+        The memory review's message claims, doc id `<user_id>:digest:<iso_week>` (Facts S4 plan §2.2): the weekly digest
+        is claimed once per ISO week. A claim expires (`FirestoreFactReviewStore` says how); no field is named
+        `expires_at`. Dev: development_fact_review_messages
+        """
+        return f"{self.firestore_collection_prefix}fact_review_messages"
 
     @property
     def fact_review_state_collection(self) -> str:
