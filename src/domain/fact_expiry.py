@@ -98,8 +98,35 @@ def expiry_view(
     return {"kind": "horizon", "days": expiry.days}, due
 
 
+def expiry_refusal(expiry: Expiry) -> Optional[str]:
+    """Why a decided `expiry` may not be written, or None: the bounds `parse_expiry` holds a model's expiry to (a horizon
+    of 1 to MAX_HORIZON_DAYS whole days, a date's year between MIN_YEAR and MAX_YEAR), in the parser's words without its
+    advice to the model. Not checked by `Expiry` itself: a stored legacy value is read into one as it is."""
+    if expiry.on is not None and not _year_in_range(expiry.on):
+        return f"expiry: {_year_refusal(expiry.on)}"
+    if expiry.kind is ExpiryKind.HORIZON and not _days_in_range(expiry.days):
+        return f"expiry: {_days_refusal(expiry.days)}"
+    return None
+
+
 def _malformed(why: str) -> FactExpiryError:
     return FactExpiryError(f"Invalid expiry: {why}. Use one of {EXPIRY_SHAPES}. {NOTHING_WRITTEN}")
+
+
+def _year_in_range(day: date) -> bool:
+    return MIN_YEAR <= day.year <= MAX_YEAR
+
+
+def _year_refusal(day: date) -> str:
+    return f"the year of `date` must be between {MIN_YEAR} and {MAX_YEAR}, got {day.isoformat()}"
+
+
+def _days_in_range(days: object) -> bool:
+    return isinstance(days, int) and not isinstance(days, bool) and 1 <= days <= MAX_HORIZON_DAYS
+
+
+def _days_refusal(days: object) -> str:
+    return f"kind horizon needs `days` as a whole number from 1 to {MAX_HORIZON_DAYS}, got {days!r}"
 
 
 def _parse_day(raw: Any) -> date:
@@ -116,8 +143,8 @@ def _parse_day(raw: Any) -> date:
             day = None  # malformed text: refused below with the shapes
     if day is None:
         raise _malformed(f"kind date needs `date` as YYYY-MM-DD, got {raw!r}")
-    if not MIN_YEAR <= day.year <= MAX_YEAR:
-        raise _malformed(f"the year of `date` must be between {MIN_YEAR} and {MAX_YEAR}, got {day.isoformat()}")
+    if not _year_in_range(day):
+        raise _malformed(_year_refusal(day))
     return day
 
 
@@ -126,6 +153,7 @@ def _parse_days(raw: Any) -> int:
         raw = int(raw)
     elif isinstance(raw, str) and raw.strip().isascii() and raw.strip().isdigit():  # "90": accept liberally
         raw = int(raw.strip())
-    if isinstance(raw, int) and not isinstance(raw, bool) and 1 <= raw <= MAX_HORIZON_DAYS:
-        return raw
-    raise _malformed(f"kind horizon needs `days` as a whole number from 1 to {MAX_HORIZON_DAYS}, got {raw!r}")
+    if _days_in_range(raw):
+        days: int = raw
+        return days
+    raise _malformed(_days_refusal(raw))

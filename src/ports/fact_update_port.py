@@ -1,10 +1,6 @@
-"""FactUpdatePort — code's write of one fact update, typed: the review's decisions and the owner's answers.
-
-Why a port of its own and not a fifth method of `FactManagementPort`: that port is the consolidation model's tool surface
-(model JSON in, results the model reads), and its every implementer (the tracker, the dry-run wrappers, the test fakes)
-is a model tool wrapper. This one takes an update code has already decided (`ParsedFactUpdate`) and the inputs only code
-has: the evidence moment, the code-built trail reason and a history fact's text. `FactManagementAdapter` implements both
-with one apply, so the model's `update_fact` is `parse_fact_update` + this write.
+"""FactUpdatePort — code's write of one fact update, typed: an update code has already decided (`ParsedFactUpdate`),
+with the inputs only code has (the evidence moment, the code-built trail reason, a history fact's text). The model's
+`FactManagementPort.update_fact` parses its arguments to the same type and runs the same write rules.
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
@@ -32,7 +28,8 @@ class FactUpdatePort(ABC):
 
         Args:
             fact_id: any id of the fact's chain; a superseded id is followed to the current version.
-            update: the decided update; `notes` are carried into the result's `note`.
+            update: the decided update; `notes` are carried into the result's `note`. It is held to the rules the
+                model's arguments are parsed under (domain.fact_update.typed_update_refusal) before anything is read.
             account_id: the caller's account.
             context: the pass the write belongs to; its actor is written to the trail.
             evidence_at: the moment the review's evidence or the owner's answer is from; it may move a revive's

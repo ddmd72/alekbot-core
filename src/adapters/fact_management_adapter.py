@@ -17,7 +17,7 @@ from ..domain.fact_tool_result import (
     expiry_refusal_tags,
     with_notes,
 )
-from ..domain.fact_update import ParsedFactUpdate, parse_fact_update
+from ..domain.fact_update import ParsedFactUpdate, parse_fact_update, typed_update_refusal
 from ..domain.fact_update_lifecycle import finish_fact_update
 from ..domain.fact_update_plan import (
     FactUpdatePlan,
@@ -290,7 +290,8 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
         history: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Code's update: `update` already decided, with the inputs only code has.
+        Code's update: `update` already decided, with the inputs only code has. It is first held to the rules the
+        model's arguments are parsed under (`typed_update_refusal`); a refused one is failed, nothing read or written.
 
         Args:
             evidence_at: The review's or the owner's evidence moment (finish_fact_update); the history fact's date
@@ -300,6 +301,10 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
         Returns:
             Result dict as update_fact's, plus history_fact_id with history
         """
+        invalid = typed_update_refusal(update)
+        if invalid is not None:
+            logger.warning(f"⚠️  [FactManagement] update {fact_id[:8]} refused (invalid update): {invalid}")
+            return {"fact_id": fact_id, "status": STATUS_FAILED, "message": invalid}
         if history is not None:
             refusal = history_refusal(history, update, context, evidence_at)
             if refusal is not None:

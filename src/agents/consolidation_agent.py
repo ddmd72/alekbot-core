@@ -135,10 +135,10 @@ def _with_top_level_expiry(args: Dict[str, Any], container: str) -> Any:
     return {**inner, "expiry": args["expiry"]}
 
 
-class _TrackingFactManagement(FactManagementPort, FactUpdatePort):
+class _TrackingFactManagement(FactManagementPort):
     """
-    Pass-through wrapper over FactManagementPort (and FactUpdatePort, when the wrapped port has the typed path), one per
-    run, passed to every stage of that run.
+    Pass-through wrapper over FactManagementPort, one per run, passed to every stage of that run
+    (`_TrackingFactUpdates` adds the typed update; `_tracker_for` picks the one the port allows).
 
     Records only what the store reports as written:
     - `changed` holds (fact_id, content) for a create, a content update (the id of the version written,
@@ -196,25 +196,6 @@ class _TrackingFactManagement(FactManagementPort, FactUpdatePort):
         self._record_update(result, updates.get("content"), None)
         return result
 
-    async def apply_fact_update(
-        self,
-        fact_id: str,
-        update: ParsedFactUpdate,
-        account_id: str,
-        *,
-        context: FactWriteContext,
-        evidence_at: Optional[datetime] = None,
-        reason: Optional[str] = None,
-        history: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        if not isinstance(self._real, FactUpdatePort):
-            raise TypeError(f"{type(self._real).__name__} has no typed update path (FactUpdatePort)")
-        result = await self._real.apply_fact_update(
-            fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history
-        )
-        self._record_update(result, update.content, history)
-        return result
-
     def _record_update(self, result: Dict[str, Any], content: Optional[str], history: Optional[str]) -> None:
         """One rule for both update paths: an updated result is a write; a content change records the version written,
         a history fact records itself."""
@@ -237,6 +218,40 @@ class _TrackingFactManagement(FactManagementPort, FactUpdatePort):
             if fid := result.get("new_fact_id"):
                 self.changed.append((fid, merged_content))
         return result
+
+
+class _TrackingFactUpdates(_TrackingFactManagement, FactUpdatePort):
+    """The tracker over a port that also has the typed update: both update paths are forwarded and recorded alike.
+    Built only over a FactUpdatePort, so a port without the typed path is refused when the tracker is built."""
+
+    def __init__(self, real: FactManagementPort) -> None:
+        if not isinstance(real, FactUpdatePort):
+            raise TypeError(f"{type(real).__name__} has no typed update path (FactUpdatePort)")
+        super().__init__(real)
+        self._typed: FactUpdatePort = real
+
+    async def apply_fact_update(
+        self,
+        fact_id: str,
+        update: ParsedFactUpdate,
+        account_id: str,
+        *,
+        context: FactWriteContext,
+        evidence_at: Optional[datetime] = None,
+        reason: Optional[str] = None,
+        history: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        result = await self._typed.apply_fact_update(
+            fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history
+        )
+        self._record_update(result, update.content, history)
+        return result
+
+
+
+def _tracker_for(real: FactManagementPort) -> _TrackingFactManagement:
+    """The run's tracker: with the typed update when `real` has it (production's adapter always does)."""
+    return _TrackingFactUpdates(real) if isinstance(real, FactUpdatePort) else _TrackingFactManagement(real)
 
 
 # Stage 3 (email) runs under what is left of the agent's budget minus this margin, so the agent's own
@@ -688,7 +703,7 @@ class ConsolidationAgent(BaseAgent):
 
         total_facts_affected = 0
         batches_processed = 0
-        tracker = _TrackingFactManagement(self._fact_management)
+        tracker = _tracker_for(self._fact_management)
         refreshed = False
         owner_timezone = self._owner_timezone(message)
 
@@ -930,7 +945,7 @@ class ConsolidationAgent(BaseAgent):
         )
 
 
-        tracker = _TrackingFactManagement(self._fact_management)
+        tracker = _tracker_for(self._fact_management)
         finished = False
         try:
             ops1 = await self._run_consolidation_loop(
