@@ -22,9 +22,10 @@ GOLDEN = {
     (2, 2): "eaddca63bfa2498893cb5644b06e065234c73eab151ec80eace891e3a04a0af5",
     (3, 2): "7c3482296ff0118b7e3e67b5a22e33c6dca74636f2bdd7af68caf2d1484e5341",   # KEYS_VERSION 3, as above
     # KEYS_VERSION 4, as above: (3, 2) plus the query's `va:`/`ma:` beside `v:`/`m:` (Δ60) and `sl:` for the scene
-    # names in these texts ("квартиры", "houses"; D40) — stripped of those, it hashes to (3, 2) again. The fixture
-    # holds no capture record and no capture word; CAPTURE_GOLDEN below covers them
-    (4, 2): "7d5cf3dfdff6d7585c6c17ccde84852bd0e87cc5f299f230d0cf46f8c565bf23",
+    # names in these texts ("квартиры", "houses"; D40). The fixture holds no capture record and no capture word;
+    # CAPTURE_GOLDEN below covers them. Re-pinned when a lease text's city became an invented one (2026-10-24): the
+    # older pins above describe the texts before that change
+    (4, 2): "c985a4034ed86ede8900cb8a5f3da490eb23aa0ccacfde1500fca6c320784944",
 }
 # The capture keys (§26.3, Δ57, Δ58) on their own fixture, pinned per KEYS_VERSION like GOLDEN: a detected scan, a
 # camera-detected document photo, a model's screenshot, a digital file (no words), a photograph (no capture keys
