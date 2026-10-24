@@ -6,7 +6,8 @@ import pytest
 
 from src.domain.entities import ExpiryKind, FactDomain, FactType
 from src.domain.exceptions import FactExpiryError
-from src.domain.fact_expiry import NOTHING_WRITTEN, Expiry, as_expiry_kind, expiry_view, parse_expiry
+from src.adapters.firestore_repo import _expiry_kind
+from src.domain.fact_expiry import NOTHING_WRITTEN, Expiry, expiry_view, parse_expiry
 from src.domain.fact_lifecycle import born_due, compute_expiry, expiry_pinned
 from src.domain.pass_actor import PassActor
 from tests.support.fact_write import horizon, on
@@ -24,43 +25,49 @@ def utc(*args):
 # --- F1: a kind that arrives as a string -------------------------------------------------------------------------
 
 
-def test_as_expiry_kind_accepts_members_and_known_strings_only():
-    assert as_expiry_kind(ExpiryKind.DATE) is ExpiryKind.DATE
-    assert as_expiry_kind("horizon") is ExpiryKind.HORIZON
-    assert as_expiry_kind("forever") is None and as_expiry_kind(None) is None and as_expiry_kind(3) is None
+# Reviewer edit (Facts S4 T6c, L4): a stored kind string is decoded by the repository (`_expiry_kind`, beside the raw
+# projection), no longer by the domain's `as_expiry_kind`; the domain's `expiry_view` takes the enum only. Same cases.
+def test_the_repository_decoder_accepts_members_and_known_strings_only():
+    assert _expiry_kind(ExpiryKind.DATE) is ExpiryKind.DATE
+    assert _expiry_kind("horizon") is ExpiryKind.HORIZON
+    assert _expiry_kind("forever") is None and _expiry_kind(None) is None and _expiry_kind(3) is None
 
 
-def test_expiry_view_reads_string_kinds_like_members():
+def test_expiry_view_reads_each_member_and_no_kind_as_no_view():
     midnight = utc(2026, 7, 10, 22, 0)
-    assert expiry_view("none", None, None, PARIS) == ({"kind": "none"}, None)
-    assert expiry_view("date", None, midnight, PARIS) == ({"kind": "date", "date": "2026-07-10"}, None)
-    assert expiry_view("horizon", 7, midnight, PARIS) == ({"kind": "horizon", "days": 7}, "2026-07-11")
-    assert expiry_view("nonsense", 7, midnight, PARIS) == (None, None)
+    assert expiry_view(ExpiryKind.NONE, None, None, PARIS) == ({"kind": "none"}, None)
+    assert expiry_view(ExpiryKind.DATE, None, midnight, PARIS) == ({"kind": "date", "date": "2026-07-10"}, None)
+    assert expiry_view(ExpiryKind.HORIZON, 7, midnight, PARIS) == ({"kind": "horizon", "days": 7}, "2026-07-11")
+    assert expiry_view(_expiry_kind("nonsense"), 7, midnight, PARIS) == (None, None)
 
 
-def string_fields(expiry, reported):
+# Reviewer edit (Facts S4 T6c, L4): `born_due` reads `compute_expiry`'s fields, whose kind is the member; a stored kind
+# string is decoded by the repository before any domain rule sees it. The three F1 cases keep their assertions with the
+# member (the string form is no longer a domain input).
+def decided_fields(expiry, reported):
     got = compute_expiry(parse_expiry(expiry), reported, PARIS)
-    return {**got, "expiry_kind": got["expiry_kind"].value}
+    assert isinstance(got["expiry_kind"], ExpiryKind)
+    return got
 
 
 @pytest.mark.parametrize("cleanup", [False, True])
-def test_a_past_date_given_as_a_string_kind_is_refused_on_every_pass(cleanup):
+def test_a_past_date_is_refused_on_every_pass(cleanup):
     reported = NOW - timedelta(hours=1)
     with pytest.raises(FactExpiryError, match="is past"):
-        born_due(string_fields(on("2026-10-20"), reported), reported, NOW, PARIS, CLEANUP if cleanup else CONVERSATION)
+        born_due(decided_fields(on("2026-10-20"), reported), reported, NOW, PARIS, CLEANUP if cleanup else CONVERSATION)
 
 
-def test_a_horizon_given_as_a_string_kind_is_floored_on_a_cleanup_pass_and_refused_otherwise():
+def test_a_due_horizon_is_floored_on_a_cleanup_pass_and_refused_otherwise():
     reported = NOW - timedelta(days=30)
-    due = string_fields(horizon(14), reported)
+    due = decided_fields(horizon(14), reported)
     floored, note = born_due(due, reported, NOW, PARIS, CLEANUP)
-    assert floored["expires_at"] == NOW + timedelta(days=2) and floored["expiry_kind"] == "horizon" and note
+    assert floored["expires_at"] == NOW + timedelta(days=2) and floored["expiry_kind"] is ExpiryKind.HORIZON and note
     with pytest.raises(FactExpiryError, match="horizon of 14 days"):
         born_due(due, reported, NOW, PARIS, CONVERSATION)
 
 
-def test_a_string_none_kind_is_never_due():
-    fields = {"expiry_kind": "none", "ttl_days": None, "expires_at": None}
+def test_a_none_kind_is_never_due():
+    fields = {"expiry_kind": ExpiryKind.NONE, "ttl_days": None, "expires_at": None}
     assert born_due(fields, NOW, NOW, PARIS, CONVERSATION) == (fields, None)
 
 

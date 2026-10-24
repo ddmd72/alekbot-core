@@ -984,8 +984,8 @@ class TestHandleConsolidateEmailDirect:
         email.text = "user subscribed to newsletter"
         email.category = "NEWSLETTER"
         email.tags = ["newsletter"]
-        email.email_date = MagicMock()
-        email.email_date.strftime = MagicMock(return_value="2026-01-01")
+        # Reviewer edit (Facts S4 T6c, L4): `as_utc` takes a datetime only; IndexedEmail.email_date is one.
+        email.email_date = datetime(2026, 1, 1)  # naive = UTC, as email dates are stored
         email.from_address = "news@example.com"
         email.subject = "Weekly digest"
         email.attachments = []

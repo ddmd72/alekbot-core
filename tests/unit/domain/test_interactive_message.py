@@ -166,10 +166,13 @@ def test_a_choice_travels_through_the_house_task_encoder_and_comes_back_equal():
     assert InteractiveChoice.from_payload(wire["choice"]) == choice
 
 
-def test_the_encoder_alone_cannot_write_the_datetime_which_is_why_the_payload_exists():
+def test_the_encoder_alone_now_writes_the_choice_and_it_reads_back():
+    # Reviewer edit (Facts S4 T6c, L4 / S4 L14): the task queue's one encoder writes datetimes and enums, also inside a
+    # pydantic dump, so the choice crosses a task without `to_payload()` (whose removal is T5d's).
     from src.adapters.gcp_task_queue import _DomainEncoder
-    with pytest.raises(TypeError):
-        json.dumps({"choice": a_choice()}, cls=_DomainEncoder)
+    choice = a_choice()
+    wire = json.loads(json.dumps({"choice": choice}, cls=_DomainEncoder))
+    assert InteractiveChoice.from_payload(wire["choice"]) == choice
 
 
 @pytest.mark.parametrize("payload", [

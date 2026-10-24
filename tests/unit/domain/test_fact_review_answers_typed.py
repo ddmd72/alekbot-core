@@ -85,7 +85,8 @@ def test_an_answer_change_with_an_update_needs_its_reason_and_moment():
 
 @pytest.mark.parametrize("kind, ttl, at, tz, expected", [
     (ExpiryKind.NONE, None, None, MADRID, EXPIRY_NONE),
-    ("none", None, None, MADRID, EXPIRY_NONE),
+    # Reviewer edit (Facts S4 T6c, L4): the string-kind row ("none") is gone; stored_expiry / expiry_view take the enum,
+    # and a stored string is decoded by the repository (test_fact_expiry_review_fixes, test_fact_view).
     (ExpiryKind.DATE, None, ENDS_28_OCT, MADRID, Expiry(ExpiryKind.DATE, on=date(2026, 10, 28))),
     (ExpiryKind.DATE, None, datetime(2026, 10, 29, 23, 30, tzinfo=timezone.utc), MADRID,
      Expiry(ExpiryKind.DATE, on=date(2026, 10, 30))),

@@ -11,8 +11,10 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+from pydantic import ValidationError
 
 from src.adapters.fact_management_adapter import FactManagementAdapter
+from src.domain.entities import ExpiryKind, FactEntity, FactType
 from src.domain.request_context import RequestContext
 from src.domain.search import EnrichedContext, EnrichedFact
 from src.services.search_enrichment_service import SearchEnrichmentService
@@ -124,11 +126,16 @@ class _Enrichment:
         return EnrichedContext(facts=[self._fact], total_sources=1, dedup_count=0, biographical_dedup_count=0)
 
 
-async def test_a_reported_date_that_is_not_iso_is_shown_as_stored_and_the_rest_still_renders():
-    fact = EnrichedFact(fact_id="f", content="c", source="keyword", reported_date="last spring")
+async def test_a_reported_date_that_is_not_a_time_never_reaches_the_hit_and_the_rest_still_renders():
+    # Reviewer edit (Facts S4 T6c, L4): `EnrichedFact.reported_date` is an aware datetime built from the stored fact, so
+    # text that is not a time is refused when the fact is read (its validation), not shown "as stored" by the view.
+    with pytest.raises(ValidationError):
+        FactEntity(id="f", account_id=ACC, created_by_user_id=USER, lineage_id="f", text="c", type=FactType.STATE,
+                   reported_date="last spring")  # type: ignore[arg-type]
+    fact = EnrichedFact(fact_id="f", content="c", source="keyword", reported_date=datetime(2026, 3, 1, 9, 0, tzinfo=timezone.utc))
     adapter = FactManagementAdapter(SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), _Enrichment(fact))
     (got,) = await adapter.search_existing_facts(["k"], "q", timezone="Europe/Paris")
-    assert got["reported_date"] == "last spring" and got["expiry"] is None
+    assert got["reported_date"] == "2026-03-01T10:00:00+01:00" and got["expiry"] is None
 
 
 async def test_a_missing_reported_date_stays_missing():
@@ -141,8 +148,9 @@ async def test_a_missing_reported_date_stays_missing():
 async def test_the_date_shown_follows_the_zone_it_is_asked_in():
     """The same moment is a different calendar day east of Paris: the owner's zone, not the host's, decides."""
     midnight_paris = datetime.combine(datetime(2026, 12, 25).date() + timedelta(days=1), time.min, tzinfo=PARIS)
-    fact = EnrichedFact(fact_id="f", content="c", source="keyword", expiry_kind="date",
-                        expires_at=midnight_paris.astimezone(timezone.utc).isoformat())
+    # Reviewer edit (Facts S4 T6c, L4): the hit holds the kind as the enum and `expires_at` as an aware datetime.
+    fact = EnrichedFact(fact_id="f", content="c", source="keyword", expiry_kind=ExpiryKind.DATE,
+                        expires_at=midnight_paris.astimezone(timezone.utc))
     adapter = FactManagementAdapter(SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), _Enrichment(fact))
     (paris,) = await adapter.search_existing_facts(["k"], "q", timezone="Europe/Paris")
     (tokyo,) = await adapter.search_existing_facts(["k"], "q", timezone=TOKYO)

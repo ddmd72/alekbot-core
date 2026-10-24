@@ -53,31 +53,45 @@ def test_a_context_is_frozen():
 # --- as_utc, span_of, clamp ------------------------------------------------------------------------------------------
 
 
+# Reviewer edit (Facts S4 T6c, L4): the domain's `as_utc` takes a datetime only; the epoch and ISO-string forms of the
+# session store are parsed where the agent reads them (`consolidation_agent._session_time`). The raw forms below are read
+# by that parser to the same moment; `as_utc` refuses them with TypeError.
+SESSION_FORMS = [1_792_000_000.0, "2026-10-14T17:46:40", "2026-10-14T17:46:40Z", "2026-10-14T19:46:40+02:00"]
+
+
 @pytest.mark.parametrize(
     "value",
     [
-        1_792_000_000.0,
-        "2026-10-14T17:46:40",
-        "2026-10-14T17:46:40Z",
-        "2026-10-14T19:46:40+02:00",
         datetime(2026, 10, 14, 17, 46, 40),
         datetime(2026, 10, 14, 19, 46, 40, tzinfo=timezone(timedelta(hours=2))),
     ],
 )
-def test_as_utc_reads_epoch_naive_and_aware_values_as_the_same_utc_moment(value):
+def test_as_utc_reads_naive_and_aware_datetimes_as_the_same_utc_moment(value):
     moment = as_utc(value)
     assert moment.tzinfo is not None and moment.utcoffset() == timedelta(0)
     assert moment == datetime.fromtimestamp(1_792_000_000.0, tz=UTC)
 
 
+@pytest.mark.parametrize("value", SESSION_FORMS)
+def test_the_session_store_forms_are_read_by_the_agents_parser_not_by_as_utc(value):
+    from src.agents.consolidation_agent import _session_time
+
+    moment = _session_time(value)
+    assert moment.tzinfo is not None and moment.utcoffset() == timedelta(0)
+    assert moment == datetime.fromtimestamp(1_792_000_000.0, tz=UTC)
+    with pytest.raises(TypeError):
+        as_utc(value)  # type: ignore[arg-type]
+
+
 def test_a_naive_email_date_is_utc_not_host_local():
     assert as_utc(datetime(2026, 10, 22, 12, 0)) == datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
-    assert as_utc("2026-10-22T12:00:00") == datetime(2026, 10, 22, 12, 0, tzinfo=UTC)
+    with pytest.raises(TypeError):
+        as_utc("2026-10-22T12:00:00")  # type: ignore[arg-type]  # an email date is a datetime (IndexedEmail.email_date)
 
 
 def test_as_utc_refuses_a_string_that_is_not_iso():
-    with pytest.raises(ValueError):
-        as_utc("INVALID")
+    with pytest.raises(TypeError):
+        as_utc("INVALID")  # type: ignore[arg-type]
 
 
 def test_span_of_takes_the_earliest_and_latest_naive_and_aware_alike():

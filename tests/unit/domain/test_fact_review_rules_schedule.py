@@ -226,10 +226,13 @@ def test_an_entry_in_the_future_counts():
     assert revives_in_30_days([_event("revived on a", at=NOW + DAY)], NOW) == 1
 
 
-def test_a_naive_or_iso_string_time_is_read_as_utc():
+def test_a_naive_time_is_read_as_utc_and_an_iso_string_is_not_a_time():
+    # Reviewer edit (Facts S4 T6c, L4): `as_utc` takes a datetime only, so a trail entry whose `at` is text is unreadable
+    # and counts for nothing, like "not a time" below. The store returns datetimes; text there would be a transport form.
     naive = _event("revived on a", at=datetime(2026, 10, 20, 12, 0))
     text = _event("revived on b", at="2026-10-20T12:00:00Z")
-    assert revives_in_30_days([naive, text], NOW) == 2
+    assert revives_in_30_days([naive], NOW) == 1
+    assert revives_in_30_days([naive, text], NOW) == 1
 
 
 @pytest.mark.parametrize(

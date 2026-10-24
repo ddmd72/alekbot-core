@@ -473,8 +473,11 @@ async def test_search_result_dicts_carry_the_listed_fields_and_serialise(store):
     # Reviewer edit (facts S3, T5; plan §3.3, §6 E): the model-facing dict gains `expiry` (the stored decision in the
     # shape the model sends) and `due` (horizons only); `ttl_days` / `expires_at` stay out. The fact was created with
     # {kind: none}, so the decision shows as none with no due day.
+    # Reviewer edit (Facts S4 T6c, M6): the hit is built on `fact_view`, so it also carries `reported`, the owner's
+    # calendar day of `reported_date` (what the Stage 2a cluster message shows without re-parsing).
     assert set(got) == {"fact_id", "content", "similarity", "source", "type", "domain", "temporal_class", "state",
-                        "context_priority", "tags", "metadata", "reported_date", "version", "expiry", "due"}
+                        "context_priority", "tags", "metadata", "reported_date", "reported", "version", "expiry", "due"}
+    assert got["reported"] == "2026-03-04"
     assert got["expiry"] == {"kind": "none"} and got["due"] is None
     assert (got["fact_id"], got["content"], got["type"], got["domain"], got["temporal_class"]) == (
         fid, "mother is Valentina", "event", "biographical", "stable")
