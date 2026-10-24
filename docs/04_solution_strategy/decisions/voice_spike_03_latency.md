@@ -52,7 +52,6 @@ latency budget or to compare providers — that needs the same measurement run f
 against both providers, which is real Slice-1-adjacent work, not this spike's job.
 
 **Owner's explicit call, recorded in intent:** no value in refining this further at POC
-
 stage; cloud numbers will differ; the POC result is good enough to move on. This spike is
 considered closed on that basis, not because every angle was exhausted.
 

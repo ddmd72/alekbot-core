@@ -1853,7 +1853,7 @@ class DeliberateFactCurator extends Agent {
                 updates={
                     "content": "User's weight: 90 kg (Jun 12), was 95 kg (Jun 3), 100 kg (Jun 1)",
                     "tags": ["weight", "health", "biometrics", "tracking", "loss"],
-                    "reported_date": "2026-02-16T10:00:00"
+                    "reported_date": "2026-06-12T10:00:00"
                 }
             )
             '''
@@ -1952,7 +1952,7 @@ class DeliberateFactCurator extends Agent {
                 updates={
                     "content": "User's weight: 90 kg (Jun 12), was 95 kg (Jun 3), 100 kg (Jun 1)",
                     "tags": ["weight", "health", "biometrics", "tracking", "loss"],
-                    "reported_date": "2026-02-16T10:00:00"
+                    "reported_date": "2026-06-12T10:00:00"
                 }
             )
 

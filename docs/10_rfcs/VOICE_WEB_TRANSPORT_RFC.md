@@ -18,7 +18,7 @@ The Twilio path works but has two costs the owner no longer accepts:
 
 - **Money.** Identity is proven by a callback, so every call is an outbound PSTN call to a mobile
   number: $0.0486–0.18/min + Media Streams $0.0044/min + AMD $0.0075/call (Twilio price list for
-  2026-09-27) — roughly $0.05–0.19 per minute before the realtime model.
+  the destination, 2026-09-27) — roughly $0.05–0.19 per minute before the realtime model.
 - **Audio.** G.711 μ-law at 8 kHz both ways. The model *speaks* narrowband and *hears* narrowband.
   On the spike (§6) the same model over wideband PCM was judged by the owner far better, with the
   voice and intonation Twilio could not carry.
