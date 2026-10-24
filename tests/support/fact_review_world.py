@@ -5,13 +5,14 @@ channels) and a recording alert sink.
 
 Nothing here decides a fact rule: the fakes store and answer like their ports, and the rest is production code.
 The review store (T4a1) is the real Firestore adapter on the same fake database (`world.review_store`); `seed_question`
-stores a domain model through that adapter's own document form. The interactive-message port's fake (T5a) is here.
+and `seed_state` store domain models through that adapter's own document form. The interactive-message port's fake
+(T5a) is here.
 """
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
-from src.adapters.firestore_fact_review_store import FirestoreFactReviewStore, question_document
+from src.adapters.firestore_fact_review_store import FirestoreFactReviewStore, question_document, state_document
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.adapters.firestore_session_store import FirestoreSessionStore
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
@@ -19,6 +20,7 @@ from src.config.environment import EnvironmentConfig
 from src.domain.channel_binding import ChannelBinding
 from src.domain.choice_outcome import ChoiceOutcome
 from src.domain.fact_review_question import FactReviewQuestion, QuestionStatus
+from src.domain.fact_review_state import FactReviewState
 from src.domain.interactive_message import InteractiveMessage
 from src.domain.language import LanguageCode
 from src.domain.llm import Message
@@ -230,8 +232,8 @@ class ReviewWorld:
         return self.store.db.collection(self.env.fact_review_questions_collection).docs
 
     async def seed_question(self, status: QuestionStatus = QuestionStatus.QUEUED, **over: Any) -> FactReviewQuestion:
-        """A question in `status` (`review_rule_builders.question`: exactly the fields that status needs, `over` on top),
-        stored in the store's own document form; returns the model."""
+        """A question in `status` (`review_rule_builders.question`: exactly the fields that status needs, `over` on
+        top), stored in the store's own document form; returns the model."""
         return await self.put_question(build_question(status, **over))
 
     async def put_question(self, question: FactReviewQuestion) -> FactReviewQuestion:
@@ -239,6 +241,18 @@ class ReviewWorld:
         await self.store.db.collection(self.env.fact_review_questions_collection).document(question.question_id).set(
             question_document(question))
         return question
+
+    async def seed_state(self, **over: Any) -> FactReviewState:
+        """A review state (account `acc` unless `over` names one, as `review_rule_builders.state`), stored in the
+        store's own document form; returns the model."""
+        state = FactReviewState(**{"account_id": "acc", **over})
+        await self.store.db.collection(self.env.fact_review_state_collection).document(state.account_id).set(
+            state_document(state))
+        return state
+
+    def state_doc(self, account_id: str = "acc") -> Optional[dict]:
+        """The raw stored review state of the account, or None."""
+        return self.store.db.collection(self.env.fact_review_state_collection).docs.get(account_id)
 
     @property
     def enqueued(self) -> List[Tuple[str, Dict[str, Any]]]:

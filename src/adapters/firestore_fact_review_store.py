@@ -1,19 +1,25 @@
 """
 FirestoreFactReviewStore — FactReviewStore on Firestore (Facts S4 plan §2.2, §3.13).
 
-`{prefix}fact_review_questions/{question_id}`: a `FactReviewQuestion` as its own `model_dump`, with the message ref held as
-`message_platform`, `message_channel` and `message_id` (null until posted), statuses and closers as their string values,
-`fallback_date` as an ISO date string and every datetime as an aware UTC timestamp. Its TTL field is `purge_after`, set
-only on a closed question; no field is named `expires_at`.
+`{prefix}fact_review_questions/{question_id}`: a `FactReviewQuestion` as its own `model_dump`, with the message ref held
+as `message_platform`, `message_channel` and `message_id` (null until posted), statuses and closers as their string
+values, `fallback_date` as an ISO date string and every datetime as an aware UTC timestamp. Its TTL field is
+`purge_after`, set only on a closed question; no field is named `expires_at`.
+
+`{prefix}fact_review_state/{account_id}`: a `FactReviewState` as its `model_dump` (its read-only mappings as maps, its
+calendar days as ISO date strings). This store writes only the fields it changes (`current_question_id`, `sent`,
+`sent_on`, `delivery_failed_on`), merged, so the other writers' fields stay as they are.
 
 Every query is served by single-field indexes (an equality next to an `in`, or four equalities; the parity scenario
-`equality_and_in_without_composite`); queue order is the domain's, in code. A write reads the question in a transaction,
-calls the question's own move and writes the result: this adapter decides no transition.
+`equality_and_in_without_composite`); queue order is the domain's, in code. A write reads in a transaction, calls the
+question's own move (and the domain's queue rules for a claim) and writes the result: this adapter decides no
+transition.
 """
 from datetime import date, datetime
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Sequence, TypeVar
 
+from google.api_core.exceptions import AlreadyExists
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 from pydantic import ValidationError
@@ -22,14 +28,23 @@ from ..config.environment import EnvironmentConfig
 from ..domain.exceptions import QuestionTransitionError
 from ..domain.fact_review_answer_kind import AnswerKind
 from ..domain.fact_review_question import AnswerSource, ClosedBy, FactReviewQuestion, QuestionStatus
+from ..domain.fact_review_rules import current_question, may_send, next_in_queue, sent_today
+from ..domain.fact_review_state import FactReviewState
 from ..domain.messaging import MessageRef
 from ..ports.fact_review_store import FactReviewStore
 from ..utils.logger import logger
 
 T = TypeVar("T")
 
-OPEN_STATUSES = [s.value for s in (QuestionStatus.QUEUED, QuestionStatus.PENDING, QuestionStatus.ASKED, QuestionStatus.UNANSWERED)]
+OPEN_STATUSES = [
+    s.value for s in (QuestionStatus.QUEUED, QuestionStatus.PENDING, QuestionStatus.ASKED, QuestionStatus.UNANSWERED)
+]
 _REF_FIELDS = ("message_platform", "message_channel", "message_id")
+# What a state change of this store is allowed to touch; anything else in the state document belongs to other writers.
+_STATE_FIELDS = frozenset({"current_question_id", "sent", "sent_on", "delivery_failed_on"})
+
+# A state change: from the state read in the transaction to the fields to change (empty: leave the state alone).
+StateChange = Callable[[FactReviewState], Dict[str, Any]]
 
 
 def _stored(value: Any) -> Any:
@@ -65,10 +80,21 @@ def question_from(data: Dict[str, Any]) -> FactReviewQuestion:
     return FactReviewQuestion.model_validate(fields)
 
 
+def state_document(state: FactReviewState) -> Dict[str, Any]:
+    """The stored form of a review state: its `model_dump`, calendar days as ISO strings."""
+    return {k: _stored(v) for k, v in state.model_dump().items()}
+
+
+def state_from(data: Dict[str, Any]) -> FactReviewState:
+    """A stored review state validated by the model (raises `ValidationError` for one it no longer accepts)."""
+    return FactReviewState.model_validate(data)
+
+
 class FirestoreFactReviewStore(FactReviewStore):
     def __init__(self, db_client: Any, env_config: EnvironmentConfig) -> None:
         self._db = db_client
         self._questions = db_client.collection(env_config.fact_review_questions_collection)
+        self._states = db_client.collection(env_config.fact_review_state_collection)
 
     # ------------------------------------------------------------------------------------------------ reads
 
@@ -92,7 +118,9 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def all_open(self) -> List[FactReviewQuestion]:
         return self._valid(await self._questions.where(filter=FieldFilter("status", "in", OPEN_STATUSES)).get())
 
-    async def by_message(self, user_id: str, platform: str, channel_id: str, message_id: str) -> Optional[FactReviewQuestion]:
+    async def by_message(
+        self, user_id: str, platform: str, channel_id: str, message_id: str,
+    ) -> Optional[FactReviewQuestion]:
         if not (user_id and platform and channel_id and message_id):
             return None
         query = (
@@ -105,6 +133,12 @@ class FirestoreFactReviewStore(FactReviewStore):
         if len(found) > 1:
             logger.error(f"❌ [FactReviewStore] {len(found)} questions share one message; the first by id is used")
         return min(found, key=lambda q: q.question_id) if found else None
+
+    async def get_state(self, account_id: str) -> Optional[FactReviewState]:
+        if not account_id:
+            raise ValueError("account_id is required to read the review state")
+        snap = await self._states.document(account_id).get()
+        return self._the_state(snap) if snap.exists else None
 
     # ------------------------------------------------------------------------------------------------ question writes
 
@@ -126,6 +160,86 @@ class FirestoreFactReviewStore(FactReviewStore):
         at: datetime,
     ) -> bool:
         return await self._move(question_id, lambda q: q.closed(closed_by, at, answer, source))
+
+    # ------------------------------------------------------------------------------------ queue and current question
+
+    async def create_queued(self, question: FactReviewQuestion) -> bool:
+        if question.status is not QuestionStatus.QUEUED:
+            raise ValueError(f"only a queued question is created, not a {question.status.value} one")
+        try:
+            await self._questions.document(question.question_id).create(question_document(question))
+        except AlreadyExists:
+            logger.info(f"[FactReviewStore] question {question.question_id[:12]} exists; not created again")
+            return False
+        return True
+
+    async def claim_next(self, account_id: str, today: date, session_id: str) -> Optional[FactReviewQuestion]:
+        if not account_id:
+            raise ValueError("account_id is required to claim a review question")
+        if isinstance(today, datetime):
+            raise ValueError("today must be a date, not a datetime")
+        state_ref = self._states.document(account_id)
+
+        async def body(transaction: Any) -> Optional[FactReviewQuestion]:
+            snap = await state_ref.get(transaction=transaction)
+            state = self._the_state(snap) if snap.exists else FactReviewState(account_id=account_id)
+            questions = self._valid(await self._open_of_account(account_id).get(transaction=transaction))
+            if not may_send(state, today, current_question(state, questions)):
+                return None
+            chosen = next_in_queue(questions)
+            if chosen is None:
+                return None
+            try:
+                claimed = chosen.claimed(session_id)
+            except QuestionTransitionError as exc:
+                logger.info(f"[FactReviewStore] question {chosen.question_id[:12]} not claimed: {exc}")
+                return None
+            changes = {
+                "current_question_id": claimed.question_id, "sent": sent_today(state, today) + 1, "sent_on": today,
+            }
+            state_write = self._state_write(state, changes)
+            transaction.set(self._questions.document(claimed.question_id), question_document(claimed))
+            transaction.set(state_ref, state_write, merge=True)
+            return claimed
+
+        return await self._in_transaction(body, f"claim for account {account_id[:8]}")
+
+    async def mark_appended(self, question_id: str, at: datetime) -> bool:
+        return await self._move(question_id, lambda q: q.appended(at))
+
+    async def mark_asked(self, question_id: str, at: datetime) -> bool:
+        return await self._move(question_id, lambda q: q.asked(at))
+
+    async def complete_delivered(self, question_id: str) -> bool:
+        return await self._move(question_id, lambda q: q.completed())
+
+    async def requeue_front(self, question_id: str, failed_today: bool) -> bool:
+        def change(state: FactReviewState) -> Dict[str, Any]:
+            changes = _released(state, question_id)
+            if failed_today:
+                if state.sent_on is None:
+                    logger.warning(f"⚠️ [FactReviewStore] failed delivery of {question_id[:12]} with no claim day; "
+                                   f"delivery_failed_on not set")
+                else:
+                    changes["delivery_failed_on"] = state.sent_on
+            return changes
+
+        return await self._move(question_id, lambda q: q.requeued(), change)
+
+    async def mark_unanswered(self, question_id: str) -> bool:
+        return await self._move(question_id, lambda q: q.unanswered(), lambda state: _released(state, question_id))
+
+    async def close_and_release(
+        self,
+        question_id: str,
+        closed_by: ClosedBy,
+        answer: Optional[AnswerKind],
+        source: Optional[AnswerSource],
+        at: datetime,
+    ) -> bool:
+        return await self._move(
+            question_id, lambda q: q.closed(closed_by, at, answer, source), lambda state: _released(state, question_id),
+        )
 
     # ------------------------------------------------------------------------------------------------ plumbing
 
@@ -154,9 +268,34 @@ class FirestoreFactReviewStore(FactReviewStore):
             logger.error(f"❌ [FactReviewStore] question {snap.id[:12]} no longer validates; the write is not applied")
             raise
 
-    async def _move(self, question_id: str, move: Callable[[FactReviewQuestion], FactReviewQuestion]) -> bool:
-        """Read the question, apply `move`, write the result, in one transaction. False when the question is missing,
-        the move is refused, or it returns the question unchanged."""
+    def _the_state(self, snap: Any) -> FactReviewState:
+        """The account's state: an unreadable one is logged and raised (a claim on it would overwrite what it holds)."""
+        try:
+            return state_from(snap.to_dict() or {})
+        except ValidationError:
+            logger.error(f"❌ [FactReviewStore] review state {snap.id[:8]} no longer validates; nothing is applied")
+            raise
+
+    @staticmethod
+    def _state_write(state: FactReviewState, changes: Dict[str, Any]) -> Dict[str, Any]:
+        """The merged write of `changes`: validated as the whole state they make, then only those fields (and the
+        account id, for a state document that does not exist yet)."""
+        unknown = set(changes) - _STATE_FIELDS
+        if unknown:
+            raise ValueError(f"the review store does not write state fields {sorted(unknown)}")
+        changed = FactReviewState.model_validate({**state.model_dump(), **changes})
+        document = state_document(changed)
+        return {"account_id": changed.account_id, **{name: document[name] for name in changes}}
+
+    async def _move(
+        self,
+        question_id: str,
+        move: Callable[[FactReviewQuestion], FactReviewQuestion],
+        state_change: Optional[StateChange] = None,
+    ) -> bool:
+        """Read the question (and, with `state_change`, its account's state), apply `move`, write the result, in one
+        transaction. False when the question is missing, the move is refused or returns the question unchanged; the
+        state is then not written either. A missing state document is left missing."""
         if not question_id:
             return False
         ref = self._questions.document(question_id)
@@ -173,12 +312,23 @@ class FirestoreFactReviewStore(FactReviewStore):
                 return False
             if after is before:
                 return False
+            state_write: Optional[Dict[str, Any]] = None
+            state_ref = self._states.document(before.account_id)
+            if state_change is not None:
+                state_snap = await state_ref.get(transaction=transaction)
+                if state_snap.exists:
+                    state = self._the_state(state_snap)
+                    changes = state_change(state)
+                    if changes:
+                        state_write = self._state_write(state, changes)
             transaction.set(ref, question_document(after))
+            if state_write is not None:
+                transaction.set(state_ref, state_write, merge=True)
             return True
 
-        return await self._in_transaction(body, question_id)
+        return await self._in_transaction(body, f"question {question_id[:12]}")
 
-    async def _in_transaction(self, body: Callable[[Any], Awaitable[T]], question_id: str) -> T:
+    async def _in_transaction(self, body: Callable[[Any], Awaitable[T]], what: str) -> T:
         """Run `body` in a fresh transaction; an aborted commit re-runs it (the client's retries), so every decision is
         taken again on what the retry reads. An error after the last attempt is logged and raised."""
         @firestore.async_transactional
@@ -188,5 +338,10 @@ class FirestoreFactReviewStore(FactReviewStore):
         try:
             return await run(self._db.transaction())
         except Exception as exc:
-            logger.error(f"❌ [FactReviewStore] transaction on question {question_id[:12]} failed: {type(exc).__name__}: {exc}")
+            logger.error(f"❌ [FactReviewStore] transaction on {what} failed: {type(exc).__name__}: {exc}")
             raise
+
+
+def _released(state: FactReviewState, question_id: str) -> Dict[str, Any]:
+    """The pointer cleared when, and only when, it names this question."""
+    return {"current_question_id": None} if state.current_question_id == question_id else {}
