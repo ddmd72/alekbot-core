@@ -139,8 +139,9 @@ class _TrackingFactManagement(FactManagementPort):
 
     Records only what the store reports as written:
     - `changed` holds (fact_id, content) for a create, a content update (the id of the version written,
-      from the result), a merge and a history fact created beside an archive. It seeds the content search of Stage 2a; it is not every id that changed:
-      tags-only and metadata-only versions change the id and are not in it.
+      from the result), a merge and a history fact created beside an archive. It seeds the content search
+      of Stage 2a; it is not every id that changed: tags-only and metadata-only versions change the id and
+      are not in it.
     - `wrote` is set by any successful write, a state-only update included. It decides whether a run that
       failed still refreshes the biographical cache.
     A not_found, failed or refused result records nothing.
@@ -190,7 +191,8 @@ class _TrackingFactManagement(FactManagementPort):
         history: Optional[str] = None,
     ) -> Dict[str, Any]:
         # Forwarded unchanged; only the ones the caller set, so a consolidation call (it sets none) reaches the port
-        # exactly as before.
+        # exactly as before. Every default is None, so this is the same call; it also keeps working with the test fakes
+        # that still have the S3 signature (they are behind the port).
         review = {
             name: value
             for name, value in (("evidence_at", evidence_at), ("reason", reason), ("history", history))

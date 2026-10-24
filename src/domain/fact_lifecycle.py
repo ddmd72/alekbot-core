@@ -126,6 +126,13 @@ def archive_fields(fact: FactEntity, now: datetime, actor: str, reason: str) -> 
     }
 
 
+def walked_to_unseen_text(shown_text: str, stored_fact: FactEntity, requested_id: str) -> bool:
+    """True when following `requested_id` forward reached a newer document (`stored_fact`) whose text is not
+    `shown_text`, the text of `requested_id` that the owner saw. The same text (a tags-only version) is no change to
+    him. The one rule of the Cabinet delete and of a history archive."""
+    return stored_fact.id != requested_id and stored_fact.text != shown_text
+
+
 def cabinet_invalidation(shown_text: str, stored_fact: FactEntity, requested_id: str, now: datetime) -> dict[str, Any]:
     """The in-place write of the owner's Cabinet delete of `requested_id`, which resolved to `stored_fact`.
 
@@ -133,7 +140,7 @@ def cabinet_invalidation(shown_text: str, stored_fact: FactEntity, requested_id:
     displayed. When the walk moved to a newer document with another text, that text was never seen: FactResolutionError
     (the page reloads) instead of deleting it (owner, 2026-10-23).
     """
-    if stored_fact.id != requested_id and stored_fact.text != shown_text:
+    if walked_to_unseen_text(shown_text, stored_fact, requested_id):
         raise FactResolutionError(
             f"fact {requested_id} was rewritten after the page loaded; reload", current_id=stored_fact.id,
         )

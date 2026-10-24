@@ -9,8 +9,8 @@ from .entities import ExpiryKind, FactEntity, FactState
 from .exceptions import FactExpiryError
 from .fact_expiry import EXPIRY_SHAPES, NOTHING_WRITTEN, Expiry, as_expiry_kind
 from .fact_lifecycle import (
-    check_pin, compute_expiry, expiry_pinned, lifecycle_event, lifecycle_fields, required_decision, revival_fields,
-    with_event,
+    archive_fields, check_pin, compute_expiry, expiry_pinned, lifecycle_event, lifecycle_fields, required_decision,
+    revival_fields, with_event,
 )
 from .fact_review_reasons import is_rewrite_reason, superseded_reason
 from .fact_review_rules import STAYS_STALE_REFUSAL, review_action
@@ -48,9 +48,10 @@ def finish_fact_update(
       predecessor's trail plus its own. The entry's reason is `reason`, else the row's `closing_reason`.
 
     The review and the owner (`reviews_stored_memory`) go by `review_action` instead (Facts S4 plan §3.6): a revive or a
-    rewrite comes back current with a horizon counted from now and strictly not born due; a close is the in-place S3
-    write with `stale_since` kept. `reason` is required for them (ValueError); `evidence_at` moves a revive's
-    `reported_date` (the later of the two) and nothing else. Every other pass ignores `evidence_at`.
+    rewrite comes back current with a horizon counted from now and strictly not born due; an archive is
+    `archive_fields`; another close is the in-place S3 write; both keep `stale_since`. `reason` is required for them
+    (ValueError); `evidence_at` moves a revive's `reported_date` (the later of the two) and nothing else. Every other
+    pass ignores `evidence_at`.
 
     Raises FactExpiryError, whose text is what the model reads; nothing has been written at that point.
     """
@@ -99,6 +100,9 @@ def _finish_review(
         )
     elif action == "revive":
         finished, decision_note = _review_revive(plan, current, update, context, now, reported, reason)
+    elif action == "archive":
+        # One rule for every review archive: `archive_and_add` writes `archive_fields` too, beside a history fact.
+        finished = dataclasses.replace(plan, fields=archive_fields(current, now, context.actor, reason))
     else:
         finished, _ = _finish_in_place(plan, current, update, context, now, reported, reason)
     if decision_note is not None:
