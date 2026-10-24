@@ -6,7 +6,7 @@ from ..domain.entities import FactEntity, normalize_fact_taxonomy
 from ..domain.exceptions import FactBornDueError, FactExpiryError, FactResolutionError, FactWriteConflict
 from ..domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE
 from ..domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
-from ..domain.fact_review_answers import history_fact, history_refusal, history_trail
+from ..domain.fact_review_answers import history_fact, history_moved_refusal, history_refusal, history_trail
 from ..domain.fact_tool_result import (
     HISTORY_FACT_ID,
     STATUS_CREATED,
@@ -326,7 +326,8 @@ class FactManagementAdapter(FactManagementPort):
         logger.debug(f"🔄 [FactManagement] Updating fact {fact_id[:8]}...")
         parsed: Optional[ParsedFactUpdate] = None
         embedded: Optional[Tuple[List[str], List[List[float]]]] = None
-        built_history: Optional[Tuple[str, FactEntity]] = None   # (the archived id it was built from, the entity)
+        built_history: Optional[FactEntity] = None   # the history fact, built and embedded once, without its trail
+        shown_text: Optional[str] = None             # the text of `fact_id`, which the history describes
         first_resolved_id: Optional[str] = None
         attempt = 0
         while True:
@@ -345,6 +346,13 @@ class FactManagementAdapter(FactManagementPort):
                 if moved is not None:
                     logger.warning(f"⚠️  [FactManagement] Fact {fact_id[:8]} moved forward between attempts; update refused")
                     return {"fact_id": fact_id, "status": STATUS_FAILED, "message": moved}
+            if history is not None:
+                if shown_text is None:
+                    shown_text = await self._requested_text(fact_id, stored)
+                refusal = history_moved_refusal(shown_text, stored.fact, fact_id)
+                if refusal is not None:
+                    logger.warning(f"⚠️  [FactManagement] update_fact {fact_id[:8]} refused (history): {refusal}")
+                    return {"fact_id": fact_id, "status": STATUS_FAILED, "message": refusal}
             update = await self._with_resolved_successor(parsed, stored, account_id)
             now = datetime.now(timezone.utc)
             finish = finish_fact_update(
@@ -354,21 +362,19 @@ class FactManagementAdapter(FactManagementPort):
             plan = finish.plan
             history_entity: Optional[FactEntity] = None
             if history is not None:
-                # Built (and embedded) once per document read: tags only change with a new version, so a re-read of the
-                # same id carries the same domain, type and tags.
                 if evidence_at is None or reason is None:
                     raise RuntimeError("history_refusal and finish_fact_update let no history through without both")
-                if built_history is None or built_history[0] != stored.fact.id:
+                # Built once: a retry lands on a document with the text the history describes (history_moved_refusal).
+                if built_history is None:
                     attrs = history_fact(stored.fact, history, evidence_at, context.timezone)
-                    entity = (await self._fact_write_service.build_facts(
+                    built_history = (await self._fact_write_service.build_facts(
                         account_id, stored.fact.created_by_user_id, [attrs]
                     ))[0]
-                    built_history = (stored.fact.id, entity)
-                history_entity = history_trail(built_history[1], stored.fact.id, now, context.actor)
+                history_entity = history_trail(built_history, stored.fact.id, now, context.actor)
             try:
                 if history_entity is not None:
-                    # finish_fact_update has validated the archive (a review or owner close, its reason given);
-                    # the repository writes it through `archive_fields` beside the new fact, in one transaction.
+                    # finish_fact_update built the archive with `archive_fields`; the repository writes the same rule
+                    # beside the new fact, in one transaction.
                     await self._repo.archive_and_add(stored, history_entity, now, actor=context.actor, reason=reason)
                     written = stored.fact
                 elif plan.kind == "version":
@@ -399,10 +405,18 @@ class FactManagementAdapter(FactManagementPort):
             if stored.fact.id != fact_id:
                 result["resolved_from"] = fact_id
                 result["message"] = (
-                    f"Fact updated successfully; fact {fact_id} was replaced earlier, "
+                    f"{result['message']}; fact {fact_id} was replaced earlier, "
                     f"so the update was applied to its current version {stored.fact.id}"
                 )
             return result
+
+    async def _requested_text(self, fact_id: str, stored: StoredFact) -> str:
+        """The text of `fact_id` itself, which `stored` was resolved from. A requested document that cannot be read
+        gives "", which no stored text equals, so a moved history archive is refused."""
+        if stored.fact.id == fact_id:
+            return stored.fact.text
+        requested = await self._repo.get_fact_by_id(fact_id)
+        return requested.text if requested is not None else ""
 
     async def _with_resolved_successor(
         self, update: ParsedFactUpdate, stored: StoredFact, account_id: str
