@@ -158,7 +158,8 @@ class FactReviewStore(ABC):
 
     @abstractmethod
     async def mark_enqueued(self, account_id: str, at: datetime) -> bool:
-        """`enqueued_at = at`. Creates the state document when the account has none. Always True."""
+        """`enqueued_at = at`, and `unsuccessful_since = at` only when it is empty (the alert clock starts at the first
+        enqueue since a success). Creates the state document when the account has none. Always True."""
 
     @abstractmethod
     async def mark_started(self, account_id: str, at: datetime) -> bool:
@@ -199,14 +200,15 @@ class FactReviewStore(ABC):
     # ------------------------------------------------------------------------------------------------ digest claim
 
     @abstractmethod
-    async def claim_digest(self, user_id: str, iso_week: str) -> bool:
-        """True for the first claim of the user's weekly digest for `iso_week` (`YYYY-Www`, e.g. `2026-W43`), False
-        while that claim stands. Raises ValueError for an empty `user_id` or a malformed `iso_week`."""
+    async def claim_digest(self, user_id: str, day: date, at: datetime) -> bool:
+        """True for the first claim, made `at`, of the user's weekly digest for the ISO week of `day` (the owner's local
+        day of the run, `iso_week_of`); False while that week's claim stands. Raises ValueError for an empty `user_id`,
+        a `datetime` as `day` or a naive `at`."""
 
     @abstractmethod
-    async def release_digest(self, user_id: str, iso_week: str) -> None:
-        """Drop the claim, so the week's digest may be claimed again; no claim is no error. ValueError as for
-        `claim_digest`."""
+    async def release_digest(self, user_id: str, day: date) -> None:
+        """Drop the claim of the ISO week of `day`, so that week's digest may be claimed again; no claim is no error.
+        Raises ValueError for an empty `user_id` or a `datetime` as `day`."""
 
     # ------------------------------------------------------------------------------------------------ expiry
 

@@ -5,8 +5,8 @@ Each scenario is `async def scenario(db, col) -> result`: it writes into the col
 error class name). `SCENARIOS` pairs every function with its expected value: Firestore's documented behaviour, never
 what a backend happens to answer. Every expected value was confirmed on the test database on 2026-10-22 (except the two
 Facts S3 scenarios, range_timestamp_excludes_null_and_missing and projected_query_update_time_matches_transactional_read,
-and the Facts S4 scenario equality_and_in_without_composite: documented behaviour, not yet run on the test database,
-owner `make test-cloud` before deploy); where the
+and the Facts S4 scenarios equality_and_in_without_composite and set_merge_fields_replaces_a_map_whole: documented
+behaviour, not yet run on the test database, owner `make test-cloud` before deploy); where the
 documentation is silent (`!=` and null or another type, equality plus array-contains, the error class of a precondition on
 a deleted document, the order of several implicit inequality fields) that run is the source.
 
@@ -287,6 +287,26 @@ async def delete_missing_document(db: Any, col: str) -> Any:
     d = c.document("nobody")
     outcome = await _outcome(d.delete())
     return {"delete": outcome, "exists": (await d.get()).exists, "ids": await _ids(c)}
+
+
+async def set_merge_fields_replaces_a_map_whole(db: Any, col: str) -> Any:
+    """The review store's state marks: `set(..., merge=[fields])` replaces each listed field whole, a map too (a removed
+    key is gone), keeps the fields not listed, and creates a missing document with the listed fields only. `merge=True`
+    merges maps key by key, for contrast."""
+    c = db.collection(col)
+    seed = {"account_id": "x", "sent": 3, "offers": {"f1": 2, "f2": 1},
+            "labels": {"uk": {"a": "1", "b": "2"}, "en": {"a": "A"}}}
+    change = {"account_id": "x", "offers": {"f2": 1}, "labels": {"uk": {"a": "9"}}}
+    await c.document("fields").set(seed)
+    await c.document("fields").set(change, merge=["account_id", "offers", "labels"])
+    after_fields = (await c.document("fields").get()).to_dict()
+    await c.document("fields").set({"offers": {}}, merge=["offers"])
+    await c.document("true").set(seed)
+    await c.document("true").set(change, merge=True)
+    await c.document("missing").set(change, merge=["account_id", "offers"])
+    return {"merge_fields": after_fields, "last_key_removed": (await c.document("fields").get()).to_dict()["offers"],
+            "merge_true": (await c.document("true").get()).to_dict(),
+            "created": (await c.document("missing").get()).to_dict()}
 
 
 async def set_replaces_whole_document(db: Any, col: str) -> Any:
@@ -602,6 +622,12 @@ SCENARIOS: List[Scenario] = [
     Scenario("update_precondition_deleted", update_precondition_deleted, "FailedPrecondition"),
     Scenario("delete_missing_document", delete_missing_document, {"delete": "ok", "exists": False, "ids": []}),
     Scenario("set_replaces_whole_document", set_replaces_whole_document, {"b": 3, "m": {"x": 9}}),
+    Scenario("set_merge_fields_replaces_a_map_whole", set_merge_fields_replaces_a_map_whole, {
+        "merge_fields": {"account_id": "x", "sent": 3, "offers": {"f2": 1}, "labels": {"uk": {"a": "9"}}},
+        "last_key_removed": {},
+        "merge_true": {"account_id": "x", "sent": 3, "offers": {"f1": 2, "f2": 1},
+                       "labels": {"uk": {"a": "9", "b": "2"}, "en": {"a": "A"}}},
+        "created": {"account_id": "x", "offers": {"f2": 1}}}),
     Scenario("aware_datetime_stored_as_utc", aware_datetime_stored_as_utc, {
         "utc_fields": (2026, 10, 22, 12, 30, 45, 123456), "offset": timedelta(0), "same_instant": True}),
     Scenario("document_ids_are_case_sensitive", document_ids_are_case_sensitive, {

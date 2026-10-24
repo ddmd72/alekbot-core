@@ -287,6 +287,15 @@ def interval_elapsed(last_review_at: Optional[datetime], now: datetime, tz: str,
     return (local_date(now, tz) - local_date(last_review_at, tz)).days >= interval
 
 
+def iso_week_of(day: date) -> str:
+    """The ISO week of a calendar day as `YYYY-Www` (the ISO year, which differs from the calendar year around 1 January):
+    the weekly digest goes out once per such week. Raises ValueError for a datetime, which is not a day."""
+    if isinstance(day, datetime):
+        raise ValueError("day must be a date, not a datetime")
+    year, week, _ = day.isocalendar()
+    return f"{year:04d}-W{week:02d}"
+
+
 def digest_due(state: FactReviewState, now: datetime) -> bool:
     """Something was set aside since the last digest and the last one is DIGEST_INTERVAL old (or there is none)."""
     if state.undigested_since is None:
