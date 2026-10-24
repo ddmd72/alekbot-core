@@ -1,19 +1,25 @@
-"""The history pair around a memory-review question (Facts S4 · T1a, plan §3.7, §3.9, §3.10): the exact shapes, their
-parsers, and what the consolidation serializer does with them."""
+"""The history pair around a memory-review question (Facts S4 · T1a, plan §3.7, §3.9, §3.10): the exact shapes the builders
+render and what the consolidation serializer does with them. The parsers are gone (S4 inward L12): the model is the only
+reader of these shapes, so each test renders a frame or a reply and asserts its exact text."""
 import pytest
 
 from src.domain.consolidation_serialization import serialize_messages_for_consolidation
-from src.domain.fact_review_frame import (
-    not_delivered_frame,
-    parse_frame,
-    parse_not_delivered_frame,
-    parse_reply_part,
-    reply_part,
-    review_frame,
-)
+from src.domain.fact_review_frame import not_delivered_frame, reply_part, review_frame
 from src.domain.llm import Message, MessagePart
 
 QID = "q-7f3a9c"
+
+
+def _frame(qid):
+    return f"[System: memory review q={qid} — Alek asked the owner about a fact he could not confirm]"
+
+
+def _not_delivered(qid):
+    return f"[System: memory review q={qid} not delivered — the owner did not see the question above]"
+
+
+def _marker(qid):
+    return f"[Reply to memory review q={qid}] "
 
 
 def test_the_frames_and_the_reply_marker_have_the_exact_shapes_the_prompt_names():
@@ -24,28 +30,36 @@ def test_the_frames_and_the_reply_marker_have_the_exact_shapes_the_prompt_names(
     assert reply_part(QID, "3 — it's Y now") == "[Reply to memory review q=q-7f3a9c] 3 — it's Y now"
 
 
-def test_each_text_round_trips_to_its_question_id():
-    assert parse_frame(review_frame(QID)) == QID
-    assert parse_not_delivered_frame(not_delivered_frame(QID)) == QID
-    assert parse_reply_part(reply_part(QID, "2")) == (QID, "2")
+@pytest.mark.parametrize("qid", [QID, "a", "a_b-9", "Q2"])
+def test_each_text_carries_its_question_id_once_in_the_place_its_shape_names(qid):
+    assert review_frame(qid) == _frame(qid)
+    assert not_delivered_frame(qid) == _not_delivered(qid)
+    assert reply_part(qid, "2") == _marker(qid) + "2"
+    for text in (review_frame(qid), not_delivered_frame(qid), reply_part(qid, "2")):
+        assert text.count(f"q={qid}") == 1
 
 
-def test_the_owners_words_come_back_exactly_as_written():
+def test_the_owners_words_follow_the_marker_exactly_as_written():
     words = "  yes — still here.\n\nSecond paragraph with [brackets] and q=other \n"
-    assert parse_reply_part(reply_part(QID, words)) == (QID, words)
-    assert parse_reply_part(reply_part(QID, "")) == (QID, "")
+    assert reply_part(QID, words) == _marker(QID) + words
+    assert reply_part(QID, "") == _marker(QID)
 
 
-def test_a_reply_that_quotes_a_marker_is_still_one_reply():
+def test_a_reply_that_quotes_a_marker_is_still_one_reply_under_its_own_marker():
     quoted = reply_part("q-other", "no")
-    assert parse_reply_part(reply_part(QID, quoted)) == (QID, quoted)
+    text = reply_part(QID, quoted)
+    assert text == _marker(QID) + quoted
+    assert text.startswith(_marker(QID)) and text.index(_marker("q-other")) == len(_marker(QID))
 
 
-def test_each_parser_reads_only_its_own_text():
-    frame, undelivered, reply = review_frame(QID), not_delivered_frame(QID), reply_part(QID, "1")
-    assert parse_frame(undelivered) is None and parse_frame(reply) is None
-    assert parse_not_delivered_frame(frame) is None and parse_not_delivered_frame(reply) is None
-    assert parse_reply_part(frame) is None and parse_reply_part(undelivered) is None
+def test_the_three_shapes_differ_and_none_is_the_start_of_another():
+    shapes = [review_frame(QID), not_delivered_frame(QID), reply_part(QID, "1")]
+    for a in shapes:
+        for b in shapes:
+            if a is not b:
+                assert not b.startswith(a), (a, b)
+    assert shapes[0].startswith("[System: memory review q=") and shapes[1].startswith("[System: memory review q=")
+    assert shapes[2].startswith("[Reply to memory review q=")
 
 
 @pytest.mark.parametrize("text", [
@@ -61,15 +75,15 @@ def test_each_parser_reads_only_its_own_text():
     "2",
     "",
 ])
-def test_an_ordinary_note_or_message_is_neither_frame_nor_reply(text):
-    assert parse_frame(text) is None
-    assert parse_not_delivered_frame(text) is None
-    assert parse_reply_part(text) is None
+def test_an_ordinary_note_or_message_has_neither_the_frame_nor_the_reply_shape(text):
+    assert text not in (review_frame("abc"), not_delivered_frame("abc"))
+    assert not text.startswith(reply_part("abc", ""))
 
 
-def test_a_reply_marker_must_start_the_text():
-    assert parse_reply_part(" " + reply_part(QID, "2")) is None
-    assert parse_reply_part("ok " + reply_part(QID, "2")) is None
+def test_the_reply_marker_starts_the_text():
+    text = reply_part(QID, "2")
+    assert text.startswith("[Reply to memory review q=")
+    assert text.index("[Reply to memory review q=") == 0 and text.count("[Reply to memory review q=") == 1
 
 
 @pytest.mark.parametrize("bad", ["", "a b", "a]b", "a\nb", "abc\n", "q=1", "x" * 65, "ід"])
@@ -79,9 +93,11 @@ def test_a_question_id_that_would_break_the_shape_is_refused_when_writing(bad):
             write(bad)
 
 
-def test_the_ids_longest_allowed_form_round_trips():
+def test_the_ids_longest_allowed_form_is_rendered_whole():
     longest = "A" * 64
-    assert parse_frame(review_frame(longest)) == longest
+    assert review_frame(longest) == _frame(longest)
+    assert not_delivered_frame(longest) == _not_delivered(longest)
+    assert reply_part(longest, "2") == _marker(longest) + "2"
 
 
 def test_the_markers_survive_the_consolidation_serializers_user_part_rendering():
@@ -94,6 +110,4 @@ def test_the_markers_survive_the_consolidation_serializers_user_part_rendering()
     ]
     rendered = serialize_messages_for_consolidation(history)
     user_texts = [m["parts"][0]["text"] for m in rendered if m["role"] == "user"]
-    assert [parse_frame(t) for t in user_texts] == [QID, None, None]
-    assert [parse_reply_part(t) for t in user_texts] == [None, (QID, "3 — it's Y now"), None]
-    assert [parse_not_delivered_frame(t) for t in user_texts] == [None, None, "q2"]
+    assert user_texts == [_frame(QID), _marker(QID) + "3 — it's Y now", _not_delivered("q2")]
