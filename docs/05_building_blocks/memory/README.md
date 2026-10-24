@@ -276,8 +276,10 @@ account's owner profile (`ConsolidationService._owner_timezone` deciding with `d
 `message.context["owner_timezone"]`; a dry-run script without it gets UTC.
 
 **Born due is refused** (`born_due`, `fact_lifecycle.py:107-137`): a decision that resolves at or before now + 1 day would be
-stale on arrival. A past `date` is refused on every pass ("discard it, or rewrite it as history with `{kind: none}`"); today's
-date is refused too ("a plan for today is not over yet: give a short horizon"); on Stage 1 and email passes a horizon whose
+stale on arrival. A past `date` is refused on every pass: on Stage 1 and email with "discard the candidate, or rewrite it as
+history with `{kind: none}`", on a cleanup pass with "do not drop the fact because its date passed: rewrite it as history with
+`{kind: none}` or give a future date" (S3-D12, no DISCARD: the subject is a stored fact); today's date is refused too
+("a plan for today is not over yet: give a short horizon"); on Stage 1 and email passes a horizon whose
 end falls at or before now + 1 day is refused with the minimum N (counted with a one-day margin). **Cleanup passes**
 (Stage 2a, Stage 2b, the directive backstop, `consolidate_cluster`; they cannot move `reported_date`) are not refused for a
 due horizon: `expires_at` becomes now + 2 days, kind and days are kept, and the result carries a note, so the fact reaches
@@ -294,8 +296,8 @@ is refused from the model on update, create and merge: only the system marks a f
 write context: the actor (`stage1`, `stage2a`, `stage2b`, `backstop`, `email`, `cluster`), the owner's zone, the **span**
 (first and last message time of the batch, any role; for email the oldest and newest `email_date`, naive dates read as UTC;
 none for `cluster`) and whether the model's date counts. On Stage 1 and email passes the model's `reported_date` is clamped
-into the span (never after now) and used; a missing one is the span end. A merge on any pass is never dated before its newest source (the later of the model's clamped date and the
-sources' latest). A create or merge on a cleanup pass ignores a
+into the span (never after now) and used; a missing one is the span end. A merge on any pass is never dated before its
+newest source (the later of the model's clamped date and the sources' latest). A create or merge on a cleanup pass ignores a
 model date (the result says so) and takes the latest date of its sources: for a create, the facts named in the optional
 `derived_from` (a decomposition part or a demotion; read by id, same account only), else the span end, else now. An update
 never moves the date back (`max(stored, new)`), and a cleanup pass keeps the stored one. A model value may be an ISO time with
@@ -308,8 +310,9 @@ DISCARD, and cleanup passes never extend.
 
 **What the model sees.** The consolidator's search results carry `expiry` in the shape it sends, `due` (the local end date of
 a horizon) and `reported_date` as an ISO time with the owner's offset; never `ttl_days`, `expires_at` or `expiry_kind`. A
-`date` view sent back unchanged keeps the same `expires_at` unless that date is today or past: then it is refused as born due; a fact with no `expiry_kind` shows `expiry: null`, which Stage 2a
-tells the model means "classified separately" (it decides `expiry` only for what it writes in the pass). **One timestamp
+`date` view sent back unchanged keeps the same `expires_at` unless that date is today or past: then it is refused as born
+due; a fact with no `expiry_kind` shows `expiry: null`, which Stage 2a tells the model means "classified separately"
+(it decides `expiry` only for what it writes in the pass). **One timestamp
 format:** the consolidator's conversation lines (`User (2026-10-22 Thu 12:00 CEST): …`) and every pass's user message
 (`Today: 2026-10-23 Fri (Europe/Paris, the owner's timezone).`) use the formatter Smart's own message stamps use
 (`domain/local_time.py`), in the owner's zone, with year and weekday.
@@ -592,11 +595,16 @@ fact text, 8 characters of the user id):
 - **Tool-error turns (S3).** Both lines carry `tool-error turns N (expiry N[, born due N], abandoned M)`. A turn is a
   tool-error turn when any of its calls failed (`status` failed or not found, an `error` key, or a refusal over `expiry`);
   `expiry` counts the refusals over a missing or malformed `expiry` and the born-due ones; `born due` is shown only when
-  non-zero (the refusal text itself tells the model to discard or rewrite, so these are never abandoned).
+  non-zero. On Stage 1 and email they are never abandoned (the refusal text lets the model discard the candidate); on
+  `stage2a`, `stage2b` and `cluster` they can be (next bullet, S3-D12).
 - **Abandoned refusals, 🚨 permanent, also with the stats line off.** A refused create or merge (missing or malformed
-  `expiry`) is abandoned when no later successful create or merge in the same pass has the same text; a refused update, when
-  no later successful, non-closing update targets the same fact (retiring the fact without its new text is the loss, not an
-  answer). The comparison is a hash held in memory, never logged. `abandoned > 0` posts "🚨 Consolidation left expiry
+  `expiry`, or, on a cleanup pass, born due) is abandoned when no later successful create or merge in the same pass has the
+  same text; a refused update, when no later successful, non-closing update targets the same fact (retiring the fact without
+  its new text is the loss, not an answer). A **born-due** refusal on a cleanup pass is also answered by the rewrite it asks
+  for, which has other text: a later successful merge of the same set of `fact_ids`; for a create, a later successful create
+  with the same non-empty `derived_from` set, or, for a create without `derived_from`, one of the same domain that keeps at
+  least half of its distinct words. Residual: a dropped split part is counted as answered when a sibling part has the same
+  `derived_from`. The comparisons use hashes held in memory, never logged. `abandoned > 0` posts "🚨 Consolidation left expiry
   refusals unanswered" with the pass label, model, tool names and text lengths. It errs towards an alert: a retry that
   rewrites the text counts as abandoned.
 - **Close-out.** The abandoned 🚨 and the add of the pass's expiry errors to the account's day (`expiry_tool_errors`, §5.5)
@@ -933,7 +941,7 @@ tree and fails on one; `decisions/fact_expiry_and_janitor.md`).
 | `create_fact` missing a required attribute | `status: failed`, message names the fields (`fact_management_adapter.py:159-167`) | none | — | the model may retry |
 | bad value (an enum such as `domain`, `state`, `temporal_class`, `context_priority` (`HISTORICAL` is read as `ARCHIVAL`); a malformed date, `tags: null` or `[]`, empty `content`; `state=superseded` on a create or merge, `state=stale` on a create, merge or update; `superseded_by` missing, or given without `superseded`) | checked **before** any embedding or write; the `ValueError` is caught → `status: failed` with the message (`fact_management_adapter.py:192-198,244-250,372-374`; `new_fact_attributes.py:45-103`, `fact_update.py:32-71`). One bad fact fails a whole legacy `add_facts_batch` call | none for that call | — | the model may retry |
 | `create_fact`, `merge_facts` or a version-making `update_fact` with a missing, `null` or malformed `expiry` | `status: failed`, `refused: "expiry"`, the text names where `expiry` goes (`fact_attributes` / `updates`) and the three shapes, and ends "Nothing was written. Resend this call with a valid expiry before retiring any fact it replaces." Checked before any embedding or write (§2.7). A malformed merge leaves its sources current | none | — | the model resends; a refusal never answered is an abandoned refusal (🚨, §3.11) |
-| an `expiry` born due (past or today's `date`; on Stage 1 or email a horizon ending within a day) | as above plus `born_due: true`; the text offers discard, rewrite as history (`none`), or a short or longer horizon; counted as an expiry error, never as abandoned | none | — | the model resends or discards |
+| an `expiry` born due (past or today's `date`; on Stage 1 or email a horizon ending within a day) | as above plus `born_due: true`; on Stage 1 and email the text offers discard, rewrite as history (`none`), or a short or longer horizon, and it is counted as an expiry error, never as abandoned; on a cleanup pass a past date reads "do not drop the fact… rewrite as history or give a future date" (no discard) and an unanswered one is abandoned (🚨, §3.11) | none | — | the model resends, rewrites or (conversation passes only) discards |
 | a due horizon on a cleanup pass (Stage 2a, Stage 2b, backstop, cluster) | **not** refused: written with `expires_at` = now + 2 days and a `note` ("counted from … this horizon had already passed; the fact goes to review on …") | written | — | — |
 | `expiry` sent with a closing state (update, or a create or merge that is archived or invalidated) | ignored, one line in the result `note`, logged at INFO; the fact is written or closed | written | — | — |
 | a `reported_date` or `derived_from` the pass ignores (cleanup pass, or `derived_from` on Stage 1) | not an error: the result's `note` says "reported_date is kept by the system in this pass (…)" or that `derived_from` was ignored | written | — | — |

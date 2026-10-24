@@ -11,9 +11,10 @@ never tool arguments or fact content.
 
 import hashlib
 import json
+import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, List, Sequence, Tuple
 
 from .fact_lifecycle import CLOSING_STATES
 
@@ -22,6 +23,8 @@ _CLOSING_VALUES = frozenset(state.value for state in CLOSING_STATES)
 _NEW_TEXT_TOOLS = {"create_fact": "content", "merge_facts": "merged_content"}
 # Passes whose subject is stored memory: an unanswered born-due refusal there is a loss.
 _CLEANUP_LABELS = frozenset({"stage2a", "stage2b", "cluster"})
+# A born-due create is answered by a rewrite that shares this much of its words (distinct, hashed in memory).
+_REWRITE_OVERLAP = 0.5
 
 # What one tool call came to. `expiry` is a refusal of a missing or malformed `expiry`; `born_due` one of a well-formed
 # `expiry` that resolves already due (on a conversation pass the model may discard the candidate, so it is not an
@@ -66,6 +69,9 @@ class _Outcome:
     outcome: str
     size: int
     closing: bool = False
+    sources: FrozenSet[str] = frozenset()   # merge: its fact_ids; create: its derived_from
+    words: FrozenSet[int] = frozenset()     # hashes of the text's distinct words, kept in memory only
+    domain: str = ""
 
 
 def _closes(name: str, args: Dict[str, Any]) -> bool:
@@ -82,6 +88,55 @@ def _outcome_key(name: str, args: Dict[str, Any]) -> Tuple[str, int]:
         return hashlib.sha256(text.encode("utf-8")).hexdigest(), len(text)
     fact_id = args.get("fact_id")
     return (fact_id if isinstance(fact_id, str) else ""), 0
+
+
+def _sources(name: str, args: Dict[str, Any]) -> FrozenSet[str]:
+    """The ids a create was made from (`derived_from`) or a merge joins (`fact_ids`); unreadable shapes are empty."""
+    if name == "merge_facts":
+        raw = args.get("fact_ids")
+    elif name == "create_fact":
+        attrs = args.get("fact_attributes")
+        raw = attrs.get("derived_from") if isinstance(attrs, dict) else None
+    else:
+        return frozenset()
+    if isinstance(raw, str):
+        raw = [raw]
+    return frozenset(i for i in raw if isinstance(i, str) and i) if isinstance(raw, (list, tuple)) else frozenset()
+
+
+def _word_hashes(name: str, args: Dict[str, Any]) -> FrozenSet[int]:
+    if name not in _NEW_TEXT_TOOLS:
+        return frozenset()
+    text = args.get(_NEW_TEXT_TOOLS[name])
+    words = set(re.findall(r"\w+", text.lower())) if isinstance(text, str) else set()
+    return frozenset(int(hashlib.sha256(w.encode("utf-8")).hexdigest()[:12], 16) for w in words)
+
+
+def _domain(args: Dict[str, Any]) -> str:
+    attrs = args.get("fact_attributes")
+    value = attrs.get("domain") if isinstance(attrs, dict) else None
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+def _rewrites(refused: _Outcome, later: _Outcome) -> bool:
+    """Whether `later` (a successful create or merge) is the rewrite a born-due refusal asks for, which has other text.
+
+    A merge is answered by a merge of the same non-empty set of facts. A create made from facts is answered by a create
+    from the same set. A create from none is answered by a create of the same domain that keeps at least half
+    of its distinct words. Residual, by decision: a split part that is dropped is counted as answered when a sibling
+    part shares its `derived_from` set, because a split's parts are all made from the same fact; the 🚨 does not catch
+    that one.
+    """
+    if later.closing or later.outcome != OUTCOME_OK:
+        return False
+    if refused.name == "merge_facts":
+        return later.name == "merge_facts" and bool(refused.sources) and later.sources == refused.sources
+    if later.name != "create_fact":
+        return False
+    if refused.sources:
+        return later.sources == refused.sources
+    kept = len(refused.words & later.words)
+    return bool(refused.words) and later.domain == refused.domain and kept >= _REWRITE_OVERLAP * len(refused.words)
 
 
 class ConsolidationPassStats:
@@ -120,7 +175,10 @@ class ConsolidationPassStats:
         failed = False
         for (name, args), outcome in zip(calls, outcomes):
             key, size = _outcome_key(name, args)
-            self._outcomes.append(_Outcome(name, key, outcome, size, _closes(name, args)))
+            self._outcomes.append(_Outcome(
+                name, key, outcome, size, _closes(name, args), _sources(name, args), _word_hashes(name, args),
+                _domain(args),
+            ))
             failed = failed or outcome != OUTCOME_OK
         if failed:
             self.error_turns += 1
@@ -137,17 +195,20 @@ class ConsolidationPassStats:
     def _abandoned(self) -> List[_Outcome]:
         """Refusals over a missing or malformed `expiry` that no later successful call answers: a create or merge
         with the same text, a non-closing update of the same fact (retiring the fact is the loss, not an answer).
-        On a cleanup pass a born-due refusal counts the same way. Approximate on purpose: a retry that rewrites the
-        text counts as abandoned, which errs towards an alert."""
+        On a cleanup pass a born-due refusal counts the same way, and its answer (a past-tense rewrite, so other text)
+        is found by `_rewrites`. Approximate on purpose: a retry of a missing-`expiry` refusal that rewrites the text
+        counts as abandoned, which errs towards an alert."""
         counted = (OUTCOME_EXPIRY, OUTCOME_BORN_DUE) if self.pass_label in _CLEANUP_LABELS else (OUTCOME_EXPIRY,)
         found = []
         for i, refused in enumerate(self._outcomes):
             if refused.outcome not in counted or refused.name not in _WRITE_TOOLS:
                 continue
             same_kind = (refused.name,) if refused.name == "update_fact" else tuple(_NEW_TEXT_TOOLS)
+            rewritable = refused.outcome == OUTCOME_BORN_DUE and refused.name != "update_fact"
             resolved = any(
-                later.outcome == OUTCOME_OK and later.name in same_kind and later.key == refused.key
-                and not later.closing
+                (later.outcome == OUTCOME_OK and later.name in same_kind and later.key == refused.key
+                 and not later.closing)
+                or (rewritable and _rewrites(refused, later))
                 for later in self._outcomes[i + 1:]
             )
             if not resolved:

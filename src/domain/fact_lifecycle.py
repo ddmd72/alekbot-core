@@ -146,7 +146,7 @@ def _date_refusal(
         # The subject is a stored fact, not a candidate: dropping it loses memory.
         return FactBornDueError(
             f"the date {last_day.isoformat()} is past (today is {today.isoformat()} in {timezone}): this pass reviews "
-            "stored memory, so do not drop the fact. Rewrite it as what happened (past tense, the outcome if known) "
+            "stored memory: do not drop the fact because its date passed. Rewrite it as what happened (past tense, the outcome if known) "
             f"with {{kind: none}}, or give a future date if the plan still holds. {NOTHING_WRITTEN}"
         )
     if last_day < today:
