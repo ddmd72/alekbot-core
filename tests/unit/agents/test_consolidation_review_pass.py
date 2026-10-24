@@ -298,7 +298,16 @@ async def test_the_message_has_no_budget_and_asks_for_no_question_text(world):
     text = _user_text(agent)
     assert text.startswith("SYSTEM MAINTENANCE — STALE FACT REVIEW")
     assert "Every listed fact gets exactly one outcome." in text
-    assert "<fact_id> | <outcome>" in text
+    assert ("<fact_id> | neighbour_says=<id|none> | reply=<yes|no|over|never|unclear|none> | dated_plan_passed=<bool> | "
+            "outcome=<…>") in text
+    header = text.split("Facts under review:")[0]
+    order = ["(1) a current fact states the same thing: supersede it by that fact",
+             "(2) the reply or evidence says it still holds: revive it with that basis",
+             "(3) it is over: archive it (basis reply, evidence or date_passed); it was never true: invalidate it",
+             "(4) anything else: ask_owner"]
+    assert all(step in header for step in order)
+    assert [header.index(step) for step in order] == sorted(header.index(step) for step in order)
+    assert "keep it stale" not in header and "no call" not in header
     lowered = text.lower()
     assert "budget" not in lowered and "question text" not in lowered and "question_text" not in lowered
     assert "at most" not in lowered.split("facts under review:")[0]

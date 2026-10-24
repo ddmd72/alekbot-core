@@ -107,13 +107,15 @@ def message_language(
     return reported or ui_language.value
 
 
-def check_labels(labels: Mapping[str, object]) -> Optional[str]:
+def check_labels(labels: object) -> Optional[str]:
     """Why a model-written label set may not be used, or None when it may.
 
-    It must be exactly `LABEL_KEYS`, each a text of one line with no digit (the options are numbered by the message),
+    It must be a mapping of exactly `LABEL_KEYS`, each a text of one line with no digit (the options are numbered by the message),
     no `[`, no control or format character (a bidi override could move the digits) and no URL. The four option labels are at most `MAX_OPTION_WORDS` words and `MAX_LABEL_CHARS`
     characters (the bound an option takes, so a set that passes can always be posted) and differ from each other; every
     other text is at most `MAX_TEXT_CHARS` characters."""
+    if not isinstance(labels, Mapping):
+        return "the labels are not an object"
     if set(labels) != LABEL_KEYS:
         return "the labels are not exactly the expected keys"
     for key in sorted(LABEL_KEYS):

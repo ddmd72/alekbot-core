@@ -450,12 +450,17 @@ def _abandoned_alert(stats: ConsolidationPassStats, model: str, user_id: str) ->
 
 _REVIEW_HEADER = (
     "SYSTEM MAINTENANCE — STALE FACT REVIEW\n\n"
-    "The facts below are stale: their expiry passed and the owner has not said them again. Decide each one, taking the "
-    "outcomes in the order your instructions give: revive it, rewrite it, archive, invalidate or supersede it "
-    "(update_fact, with its basis), ask the owner about it (ask_owner), or keep it stale (no call). Code writes and sends "
-    "any question later; ask_owner only says what happens if he does not answer.\n"
+    "The facts below are stale: their expiry passed and the owner has not said them again. Decide each one by the first "
+    "of these that applies:\n"
+    "(1) a current fact states the same thing: supersede it by that fact;\n"
+    "(2) the reply or evidence says it still holds: revive it with that basis (rewrite its text if the text changed);\n"
+    "(3) it is over: archive it (basis reply, evidence or date_passed); it was never true: invalidate it;\n"
+    "(4) anything else: ask_owner.\n"
+    "Code writes and sends any question later; ask_owner only says what happens if he does not answer.\n"
     "Every listed fact gets exactly one outcome.\n"
-    "Before any call, write one line per listed fact, in the order listed: <fact_id> | <outcome>.\n\n"
+    "Before any call, write one line per listed fact, in the order listed: "
+    "<fact_id> | neighbour_says=<id|none> | reply=<yes|no|over|never|unclear|none> | dated_plan_passed=<bool> | "
+    "outcome=<…>.\n\n"
     "Each fact shows `expiry` (the decision it carries, null when none is recorded), `due` (the day a horizon fell due), "
     "`reported` (the day the owner last said it), `stale_since`, its earlier `versions`, its `neighbours` (the current "
     "facts nearest to it) and, when the owner was asked about it, its `question` with any `reply`.\n\n"
@@ -512,27 +517,35 @@ def _review_line(item: ReviewItem, question: Optional[FactReviewQuestion], tz: s
     return line
 
 
-def _report_object(text: str) -> Dict[str, Any]:
-    """The final report's JSON object: the whole text, or one ```json block in it; {} when there is none. The fenced form
-    is read as `_parse_operations_report` reads it (its documented exception): the tools have written everything by now,
-    and an unread report only leaves `message_language` and `labels` unset."""
-    candidates = [text.strip()]
+def _report_object(text: str) -> Optional[Dict[str, Any]]:
+    """The final report's JSON object, or None when it has none: a ```json block in the text, else the whole text, else
+    an object embedded in prose.
+
+    Documented exception to the "no regex fallbacks" rule (CLAUDE.md, Agent Output Format Standards): every write is
+    done through the tools by this point, so the report's operations are cosmetic, and a parse retry would re-bill a whole
+    turn; an unread review report only leaves `message_language` and `labels` unset."""
     fenced = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fenced:
-        candidates.append(fenced.group(1))
-    for candidate in candidates:
-        try:
-            data = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(data, dict):
-            return data
-    return {}
+        return _json_object(fenced.group(1))
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        embedded = re.search(r"\{.*\}", text, re.DOTALL)
+        return _json_object(embedded.group(0)) if embedded else None
+    return data if isinstance(data, dict) else None
 
 
-def _operations_of(data: Any) -> List[Dict[str, Any]]:
-    """The `operations` of a parsed final report; a report that is no JSON object has none."""
-    return data.get("operations", []) if isinstance(data, dict) else []
+def _json_object(text: str) -> Optional[Dict[str, Any]]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _operations_of(report: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The `operations` of a final report's object; a report with no object has none."""
+    return report.get("operations", []) if report is not None else []
 
 
 def _reported_language(report: Mapping[str, Any]) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
@@ -542,7 +555,7 @@ def _reported_language(report: Mapping[str, Any]) -> Tuple[Optional[str], Option
     raw = report.get("labels")
     if raw is None:
         return language, None
-    refusal = check_labels(raw) if isinstance(raw, Mapping) else "the labels are not an object"
+    refusal = check_labels(raw)
     if refusal is not None:
         logger.warning(f"⚠️ [ConsolidationAgent] Review labels refused: {refusal}")
         return language, None
@@ -1357,7 +1370,8 @@ class ConsolidationAgent(BaseAgent):
             if tracker.wrote:
                 await self._refresh_biographical_cache(account_id)
 
-        language, labels = _reported_language(report)
+        # The language is asked for in mirror mode only (§3.17); a fixed-mode report's language is not read.
+        language, labels = _reported_language(report) if task.mirror else (None, None)
         outcomes = [asdict(d) for d in scope.decisions()]
         total_duration = time.time() - start_time
         logger.info(
@@ -1729,7 +1743,7 @@ class ConsolidationAgent(BaseAgent):
                     logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — final report received")
                     ops = self._parse_operations_report(response.text or "")
                     if report is not None:
-                        report.update(_report_object(response.text or ""))
+                        report.update(_report_object(response.text or "") or {})
                     # TEMPORARY monitoring for the Sonnet 5.5 stall (2026-10-20); remove once
                     # consolidation's model is settled.
                     if self._stats_alerts:
@@ -2327,8 +2341,8 @@ class ConsolidationAgent(BaseAgent):
     
     def _parse_operations_report(self, response_text: str) -> List[Dict[str, Any]]:
         """
-        Parse final operations report from LLM (Step 8).
-        
+        Parse final operations report from LLM (Step 8), read by `_report_object` (the one reader of a final report).
+
         Expected JSON format:
         {
             "operations": [
@@ -2338,45 +2352,15 @@ class ConsolidationAgent(BaseAgent):
             ]
         }
         """
-        try:
-            # Documented exception to the "no regex fallbacks" rule (CLAUDE.md, Agent Output
-            # Format Standards): all DB operations are already executed via tool calls by this
-            # point — the report is cosmetic, and a parse-retry would re-bill a full
-            # consolidation turn for zero data value.
-            json_match = re.search(
-                r"```json\s*(\{.*?\})\s*```",
-                response_text,
-                re.DOTALL
-            )
-            if json_match:
-                data = json.loads(json_match.group(1))
-                return _operations_of(data)
-
-            # Try direct JSON parsing
-            try:
-                data = json.loads(response_text)
-                return _operations_of(data)
-            except json.JSONDecodeError:
-                logger.debug("Direct JSON parse failed, trying embedded JSON fallback")
-
-            # LLM returned plain text (e.g. narrative explanation) — extract
-            # any embedded JSON object as fallback
-            embedded = re.search(r"\{.*\"operations\".*\}", response_text, re.DOTALL)
-            if embedded:
-                data = json.loads(embedded.group(0))
-                return _operations_of(data)
-
-            # Plain text response — tools already executed, report is cosmetic
+        report = _report_object(response_text)
+        if report is None:
+            # Plain text or JSON that is no object — tools already executed, the report is cosmetic
             logger.warning(
-                "⚠️ [ConsolidationAgent] Final report was plain text (not JSON). "
+                "⚠️ [ConsolidationAgent] Final report held no JSON object. "
                 "DB operations completed normally via tool calls."
             )
-            return []
+        return _operations_of(report)
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"⚠️ [ConsolidationAgent] Could not parse operations report: {e}")
-            return []
-    
     # ========================================================================
     # Legacy v2 methods (backward compatibility)
     # ========================================================================

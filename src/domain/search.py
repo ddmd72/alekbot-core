@@ -6,7 +6,7 @@ Contains entities related to semantic search, context enrichment, and retrieval.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 from .entities import ExpiryKind, FactEntity
 from .fact_expiry import expiry_view
@@ -83,17 +83,17 @@ class SearchLimits:
     total_limit: int
 
 
-def fact_view(fact: Union[FactEntity, EnrichedFact], timezone: str) -> Dict[str, Any]:
-    """A stored fact as the consolidator sees it, from the document or from its search hit (which carries the same
-    stored fields): `fact_id`, `content`, the decision as `expiry` (the shape the model sends; null when none is recorded)
-    and `due` (the local day a horizon falls due), `reported_date` (the moment, with the owner's offset) and `reported`
-    (the owner's calendar day of it)."""
-    if isinstance(fact, EnrichedFact):
-        fact_id, content = fact.fact_id, fact.content
-    else:
-        fact_id, content = fact.id, fact.text
-    expiry, due = expiry_view(fact.expiry_kind, fact.ttl_days, fact.expires_at, timezone)
-    reported = fact.reported_date
+def _view(
+    fact_id: str,
+    content: str,
+    expiry_kind: Optional[ExpiryKind],
+    ttl_days: Optional[int],
+    expires_at: Optional[datetime],
+    reported: Optional[datetime],
+    timezone: str,
+) -> Dict[str, Any]:
+    """The one view of a stored fact's fields, whoever holds them (`fact_view`, `consolidation_hit`)."""
+    expiry, due = expiry_view(expiry_kind, ttl_days, expires_at, timezone)
     return {
         "fact_id": fact_id,
         "content": content,
@@ -104,25 +104,34 @@ def fact_view(fact: Union[FactEntity, EnrichedFact], timezone: str) -> Dict[str,
     }
 
 
-def consolidation_hit(fact: EnrichedFact, timezone: str) -> Dict[str, Any]:
-    """One search hit as the consolidator's `search_existing_facts` returns it: the search's own fields and the fact's
-    `fact_view`, dates in the owner's zone."""
-    view = fact_view(fact, timezone)
+def fact_view(fact: FactEntity, timezone: str) -> Dict[str, Any]:
+    """A stored fact as the consolidator sees it: `fact_id`, `content`, the decision as `expiry` (the shape the model
+    sends; null when none is recorded) and `due` (the local day a horizon falls due), `reported_date` (the moment, with
+    the owner's offset) and `reported` (the owner's calendar day of it)."""
+    return _view(fact.id, fact.text, fact.expiry_kind, fact.ttl_days, fact.expires_at, fact.reported_date, timezone)
+
+
+def consolidation_hit(hit: EnrichedFact, timezone: str) -> Dict[str, Any]:
+    """One search hit as the consolidator's `search_existing_facts` returns it: the search's own fields and the stored
+    fact's view (the same one `fact_view` gives), dates in the owner's zone."""
+    view = _view(
+        hit.fact_id, hit.content, hit.expiry_kind, hit.ttl_days, hit.expires_at, hit.reported_date, timezone,
+    )
     return {
         "fact_id": view["fact_id"],
         "content": view["content"],
-        "similarity": fact.relevance_score,
-        "source": fact.source,
-        "type": fact.fact_type,
-        "domain": fact.domain,
-        "temporal_class": fact.temporal_class,
-        "state": fact.state,
-        "context_priority": fact.context_priority,
-        "tags": fact.tags or [],
-        "metadata": fact.metadata or {},
+        "similarity": hit.relevance_score,
+        "source": hit.source,
+        "type": hit.fact_type,
+        "domain": hit.domain,
+        "temporal_class": hit.temporal_class,
+        "state": hit.state,
+        "context_priority": hit.context_priority,
+        "tags": hit.tags or [],
+        "metadata": hit.metadata or {},
         "reported_date": view["reported_date"],
         "reported": view["reported"],
         "expiry": view["expiry"],
         "due": view["due"],
-        "version": fact.version,
+        "version": hit.version,
     }

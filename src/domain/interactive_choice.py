@@ -12,8 +12,9 @@ class InteractiveChoice(BaseModel):
     """Who picked which option on which message. `platform_user_id` is the platform's own id of the clicker (not yet a
     user of ours); `message_ref` is the message the control sat on, on the same platform as the choice.
 
-    It travels in a task payload as `to_payload()` (plain JSON types; the house encoder alone cannot write the `at`
-    datetime) and comes back with `from_payload()`, which gives None for a payload that is not a choice."""
+    It travels in a task payload as `to_payload()` (plain JSON types; the house task encoder now writes the `at` datetime
+    too, so the pair is due for removal) and comes back with `from_payload()`, which gives None for a payload that is not
+    a choice."""
 
     model_config = ConfigDict(frozen=True)
 
