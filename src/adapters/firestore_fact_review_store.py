@@ -55,6 +55,7 @@ _STATE_FIELDS = frozenset({
     "current_question_id", "sent", "sent_on", "delivery_failed_on",
     "enqueued_at", "started_at", "last_review_at", "last_failed_at", "unsuccessful_since", "offers",
     "last_digest_at", "undigested_since", "oldest_alert_at", "queue_alert_at", "message_language", "labels",
+    "label_digests",
 })
 
 # A state change: from the state read in the transaction to the fields to change (empty: leave the state alone).
@@ -324,10 +325,14 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def mark_queue_alert(self, account_id: str, at: Optional[datetime]) -> bool:
         return await self._mark(account_id, lambda state: {"queue_alert_at": at})
 
-    async def set_language(self, account_id: str, lang: str, labels: Mapping[str, str]) -> bool:
+    async def set_language(self, account_id: str, lang: str, labels: Mapping[str, str], labels_digest: str) -> bool:
         return await self._mark(
             account_id,
-            lambda state: {"message_language": lang, "labels": {**state.labels, lang: dict(labels)}},
+            lambda state: {
+                "message_language": lang,
+                "labels": {**state.labels, lang: dict(labels)},
+                "label_digests": {**state.label_digests, lang: labels_digest},
+            },
         )
 
     # ------------------------------------------------------------------------------------------------ digest claim
