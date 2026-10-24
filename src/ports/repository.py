@@ -23,7 +23,8 @@ class FactRepository(ABC):
     - Legacy documents: a document with `owner_id` and no `account_id` is absent from every
       account-scoped read (they filter the stored `account_id`). Where one is returned (by-id reads,
       resolve_current), `owner_id` reads as `account_id` and
-      `created_by_user_id`. A missing `visibility`
+      `created_by_user_id`; an in-place write (update_fact_fields) refuses it with PermissionError, since tenancy of
+      a write is the stored `account_id`. A missing `visibility`
       reads as account_shared, "private" as user_private. A document without `state` matches no
       state-filtered read. A document missing a field a read orders by is absent from that read
       (observed). A stored document that does not validate as FactEntity fails the whole call
@@ -210,7 +211,10 @@ class FactRepository(ABC):
 
         Allowed keys: IN_PLACE_FIELDS (domain/fact_lifecycle.py); any other raises InPlaceFieldRefused before any I/O.
         Enum values are stored as their value.
-        Errors: FactWriteConflict when the document changed since `stored` was read, or no longer exists.
+        Errors: FactWriteConflict when the document changed since `stored` was read, or no longer exists;
+            PermissionError when the stored `account_id` is not `stored.fact.account_id` (a legacy document, whose
+            `owner_id` reads as its account, or a stray `owner_id` beside another account's `account_id`). Nothing is
+            written in either case; both are checked inside the transaction.
         """
         pass
 

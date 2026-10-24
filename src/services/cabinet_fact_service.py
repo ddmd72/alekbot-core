@@ -23,7 +23,8 @@ class CabinetFactService:
         Effect: state invalidated, is_current True, valid_to and last_updated now; version unchanged; one
             `lifecycle_events` entry (actor "cabinet", reason "deleted in the Cabinet"). Then the biographical cache of
             the account is refreshed (the repository logs and swallows a refresh failure), so the fact leaves the prompt.
-        Errors: a missing id raises ValueError; a fact of another account raises PermissionError; FactResolutionError
+        Errors: a missing id raises ValueError; a fact of another account raises PermissionError, here or from the
+            write's tenancy precondition on the stored account_id (a legacy or stray `owner_id`); FactResolutionError
             when the chain ends in a merge, has no successor or ends on a different text (`current_id` names that
             version); FactWriteConflict after one re-resolve that also conflicted. Nothing is written and the cache is
             not refreshed in any of these cases.

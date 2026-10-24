@@ -127,6 +127,11 @@ class NoWriteFactRepository(FactRepository):
     token (a synthetic counter per written document) or, for a document the pass has not written, the live
     `update_time`. Vector searches, the paginated, lineage and domain reads, `find_due_facts` and `stale_backlog` see the
     live store only; `get_fact_by_id`, `resolve_current` and the three current-fact lists see the overlay too.
+
+    Tenancy: `update_fact_fields` refuses with PermissionError when the document's `account_id` is not the one `stored`
+    was read with, as the live store does. The kit reads live documents through the port, which shows a legacy
+    `owner_id` (or a stray one beside another account's `account_id`) as the caller's account, so it does not reproduce
+    the live store's refusal for such documents; none is live (FACT_LIFECYCLE_RFC D-7).
     """
 
     def __init__(self, real: FactRepository) -> None:
@@ -227,7 +232,12 @@ class NoWriteFactRepository(FactRepository):
             self._record("update_fact_fields", fact_id=stored.fact.id, fields=sorted(fields))
 
     async def _apply_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
-        await self._check_token(stored.fact.id, stored.fact.account_id, stored.update_time)
+        current = await self._read(stored.fact.id, stored.fact.account_id)
+        if current is None or current.update_time != stored.update_time:
+            raise FactWriteConflict(stored.fact.id)
+        # The store's tenancy precondition (`FirestoreFactRepository.update_fact_fields`), on the document as the kit sees it.
+        if current.fact.account_id != stored.fact.account_id:
+            raise PermissionError("Not authorized to modify this fact")
         base = self._base(stored)
         self._put(FactEntity.model_validate({**base.model_dump(), **fields}))
 

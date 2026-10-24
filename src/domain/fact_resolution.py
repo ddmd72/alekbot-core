@@ -7,7 +7,7 @@ from typing import AbstractSet, Awaitable, Callable, Optional
 
 from .entities import FactState
 from .exceptions import FactResolutionError
-from .fact_lifecycle import forward_step
+from .fact_lifecycle import forward_step, successor_unknown
 from .stored_fact import StoredFact
 
 FactReader = Callable[[str], Awaitable[Optional[StoredFact]]]
@@ -36,5 +36,5 @@ async def resolve_chain(
         hops += 1
         following = await read(next_id)
         if following is None:
-            raise FactResolutionError(f"fact {start_id} was superseded and its successor is unknown; search again")
+            raise FactResolutionError(successor_unknown(start_id))
         stored = following
