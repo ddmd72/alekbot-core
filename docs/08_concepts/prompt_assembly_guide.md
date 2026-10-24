@@ -1,8 +1,5 @@
 # Prompt Assembly Guide
 
-**Status:** ✅ Active
-**Last Updated:** 2026-02-27
-
 ## Overview
 
 Explains how prompts are assembled in Alek Core using the **class-collection assembly model (v4)**. The central service is `PromptAssemblyService`. Agents never touch prompt construction directly — they call `PromptBuilderPort.build_for_agent()`.
@@ -32,11 +29,15 @@ Agent (SmartAgent, QuickAgent, ConsolidationAgent, RouterAgent, ...)
   └─ build_system_prompt()
        ↓
 PromptBuilderPort (port interface)
-  └─ UserPromptBuilder (service implementation)
+  └─ UserPromptBuilder (service implementation, src/services/prompt_builder.py)
        └─ build_for_agent(agent_type, user_id, routing_metadata, ...)
             ├─ BiographicalContextService.get_biographical_context_cached(account_id)
+            ├─ Split the cached facts into three channels:
+            │    directives (agent_directive domain) → standing_directives
+            │    query-specific (tagged semantic_lens) → query_specific_context
+            │    everything else                      → static biographical context
             └─ PromptAssemblyService.assemble(agent_type, user_id, account_id,
-                                               biographical_facts, conversation_history)
+                                               biographical_facts, conversation_history, ...)
                  ├─ PHASE 1: _assemble_static_template()  ← cached 24h
                  │    │
                  │    │  ── sequential (profile must be fetched first to get blueprint_id) ──
@@ -56,11 +57,13 @@ PromptBuilderPort (port interface)
                  │    └─ Wrap: "class {outer_class} {\n\n{sections}\n\n}"
                  │
                  └─ PHASE 2: _inject_runtime_context()  ← every request
-                      ├─ Split biographical_facts: static vs semantic_lens (Q-S)
-                      ├─ Format + validate both via SecurityPort (UNTRUSTED zone)
-                      ├─ Format + validate conversation_history via SecurityPort
-                      ├─ Append knowledge_base {} block (bio + history, only if non-empty)
-                      └─ Append <!-- CACHE_BOUNDARY --> + current_datetime + Q-S context
+                      ├─ Format + validate bio, directives, Q-S context and
+                      │  conversation_history via SecurityPort (UNTRUSTED zone)
+                      ├─ Add knowledge_base {} (location, bio, history; only if non-empty)
+                      │  and any extra_static_blocks
+                      ├─ Append the skills catalog, then standing_directives {}
+                      └─ Append <!-- CACHE_BOUNDARY --> + active_reminders
+                         + current_date_time (only with include_datetime) + Q-S context
 ```
 
 ---
@@ -110,17 +113,20 @@ The section names and their order come from `blueprint.class_order`. Empty secti
 
 Takes the cached static template and appends runtime content. Runs on every request — never cached.
 
-Steps:
-1. Split `biographical_facts` into static (long-term memory) and semantic (query-specific, tagged `semantic_lens`)
-2. Format static facts with `BiographicalFactsFormatter` (domain-grouped Markdown)
-3. Validate both via `SecurityPort` (UNTRUSTED zone)
-4. Format and validate `conversation_history` via `SecurityPort`
-5. Build `knowledge_base {}` block if either biographical_context or conversation_history is non-empty:
+Steps (the three fact channels arrive already split by `UserPromptBuilder`, §6):
+1. Format static facts with `BiographicalFactsFormatter` (domain-grouped Markdown) and directives with its
+   `format_directives`
+2. Validate bio, directives and the Q-S context via `SecurityPort` (UNTRUSTED zone)
+3. Format and validate `conversation_history` via `SecurityPort`
+4. Build `knowledge_base {}` if any of `user_location`, biographical context or conversation history is non-empty;
+   `extra_static_blocks` go right after it:
    - `kb_preamble=True` → placed **before** the blueprint template (conversational agents)
    - `kb_preamble=False` (default) → placed **after** the blueprint template (consolidation)
+5. Append the skills catalog (Smart), then `standing_directives {}`, the last static block
 6. Append `<!-- CACHE_BOUNDARY -->`
-7. Append `current_date_time {}` (always)
-8. Append `query_specific_context` block (only if Q-S facts present)
+7. Append `active_reminders {}` (only when the orchestrator has reminders)
+8. Append `current_date_time {}` (only with `include_datetime=True`; by default the time is stamped into user messages)
+9. Append `query_specific_context` block (only if Q-S facts present)
 
 ---
 
@@ -145,6 +151,9 @@ class Alek extends Agent {
   protocols { ... }
   output_format { ... }
 }
+
+available_skills { ... }               ← Smart, when the user has skills
+standing_directives { ... }            ← binding user rules, last static block
 
 [DYNAMIC SUFFIX — sent fresh every request]
 ```
@@ -171,9 +180,10 @@ knowledge_base {                       ← AFTER blueprint (postamble)
 [DYNAMIC SUFFIX — sent fresh every request]
 
 <!-- CACHE_BOUNDARY -->
-current_date_time {
-    2026-02-25 14:32 Tuesday (UTC)
-    System time is UTC. The user's local time may differ...
+active_reminders { ... }      ← only when the orchestrator has reminders
+
+current_date_time {           ← only with include_datetime=True
+    2026-02-25 14:32 Wednesday (CET)
 }
 
 query_specific_context: '''   ← only when router found semantic facts
@@ -234,15 +244,26 @@ request = LLMRequest(
 async def build_for_agent(
     self,
     agent_type: str,
-    user_id: str,
+    user_id: Optional[str] = None,
     account_id: Optional[str] = None,
     routing_metadata: Optional[RoutingMetadata] = None,
     capabilities: Optional[ProviderCapabilities] = None,
-    include_biographical: bool = True,
+    biographical_facts: Optional[List[Dict]] = None,
     conversation_history: Optional[List[dict]] = None,
+    include_biographical: bool = True,
+    include_directives: bool = True,
     kb_preamble: bool = False,
+    agent_notes: Optional[List[dict]] = None,
+    extra_static_blocks: Optional[List[str]] = None,
+    include_datetime: bool = False,
+    skills_catalog: Optional[str] = None,
 ) -> str
 ```
+
+The flags not covered below: `include_directives=False` keeps `standing_directives {}` out (the consolidator curates
+directives as records and never obeys them); `agent_notes` fills `active_reminders {}`; `extra_static_blocks` carries a
+large static payload (an email triage batch) into the cached prefix instead of the user message; `include_datetime`
+adds `current_date_time {}`; `skills_catalog` is Smart's `available_skills {}`.
 
 ### `kb_preamble` Flag
 
@@ -274,19 +295,22 @@ Facts come from two sources:
 1. **Long-term memory** (`BiographicalContextService`) — slow-changing, high-quality, stored in Firestore as `FactEntity`. These go in the **static** section before the boundary.
 2. **Query-specific (Q-S) context** — semantic search results from the router, tagged `semantic_lens` by `merge_enriched_context_with_biographical()`. These go in the **dynamic** section after the boundary.
 
-The split happens in `_inject_runtime_context()`:
+The split happens in `UserPromptBuilder.build_for_agent()`, which also takes the standing directives (the
+`agent_directive` domain) out into their own channel. In outline:
 ```python
-static_facts  = [f for f in biographical_facts if "semantic_lens" not in f.get("tags", [])]
-semantic_facts = [f for f in biographical_facts if "semantic_lens" in f.get("tags", [])]
+directives  = [f for f in facts if domain(f) == "agent_directive"] if include_directives else []
+static_bio  = [f for f in facts if not directive(f) and "semantic_lens" not in tags(f)]
+qs_facts    = [f for f in facts if "semantic_lens" in tags(f)]
 ```
 
-**Why this split:** Long-term biographical facts rarely change (updated every ~30 new messages via consolidation). Placing them before the boundary means they are cached with the static template content. Q-S context changes every request (different query → different semantic search results), so it must be in the dynamic suffix.
+**Why this split:** Long-term biographical facts rarely change (the cache is refreshed by consolidation). Placing them before the boundary means they are cached with the static template content. Q-S context changes every request (different query → different semantic search results), so it must be in the dynamic suffix.
 
 ---
 
 ## 7. Cache Boundary and Anthropic Prompt Caching
 
-`PROMPT_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"` is defined in `src/ports/llm_port.py`.
+`PROMPT_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"` is defined in `src/domain/llm.py` (re-exported by
+`src/ports/llm_port.py`).
 
 When `ClaudeAdapter` receives a request with `cache_config.enabled=True` and the boundary marker is present in `system_instruction`, it splits the instruction into two `system_parts` blocks:
 
@@ -311,11 +335,11 @@ See [HEXAGONAL_PROMPT_CACHING_RFC.md](../10_rfcs/HEXAGONAL_PROMPT_CACHING_RFC.md
 | File | Purpose |
 |------|---------|
 | `src/ports/prompt_builder_port.py` | `PromptBuilderPort` ABC — what agents call |
-| `src/services/user_prompt_builder.py` | Concrete implementation: fetches bio context, calls assembly service |
+| `src/services/prompt_builder.py` | `UserPromptBuilder`: fetches bio context, splits the fact channels, calls assembly service |
 | `src/services/prompt_v3/prompt_assembly_service.py` | Two-phase assembly, class-collection model, 24h cache |
 | `src/services/prompt_v3/biographical_formatter.py` | Domain-grouped Markdown formatting of biographical facts |
 | `src/services/prompt_v3/context_formatter.py` | Conversation history formatting |
-| `src/ports/llm_port.py` | `PROMPT_CACHE_BOUNDARY` constant |
+| `src/domain/llm.py` | `PROMPT_CACHE_BOUNDARY` constant |
 | `src/adapters/claude_adapter.py` | Splits at boundary, applies `cache_control: ephemeral` |
 | `src/domain/prompt_v3/blueprint.py` | `Blueprint(id, outer_class, class_order)` |
 | `src/domain/prompt_v3/token.py` | `Token(id, category, class_, content)` |
@@ -394,5 +418,5 @@ assembly_service.invalidate_cache()
 3. **Profile drives everything:** Which blueprint to use, which tokens to include, in what order — all in the agent profile document. `blueprint_id` lives in the profile, not in application code.
 4. **Override by class+category:** Account/user can only replace tokens with matching `class + category`. Cannot add new sections. `non_overridable: true` blocks replacement entirely.
 5. **One `knowledge_base` block:** Bio + history share a single block; neither emits empty wrappers.
-6. **Cache boundary:** Static prefix (blueprint + bio + history for consolidation) cached by Anthropic; dynamic suffix (datetime + Q-S context) sent fresh.
+6. **Cache boundary:** Static prefix (blueprint + bio + history for consolidation + skills + directives) cached by Anthropic; dynamic suffix (reminders, optional datetime, Q-S context) sent fresh.
 7. **Agent differences:** Smart/Quick → bio in static, history in messages; Consolidation → history in static (gets cached), history not in messages; Router/MemorySearch → no biographical context at all.
