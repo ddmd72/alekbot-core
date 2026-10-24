@@ -63,7 +63,7 @@ def build(store: FactStore, *responses: LLMResponse, stats: bool = False):
 
 async def run(agent: ConsolidationAgent, label: str = "stage1"):
     return await agent._run_consolidation_loop(
-        user_message_text="begin", system_prompt="SYS", user_id=USER, account_id=ACC, pass_label=label,
+        user_message_text="begin", system_prompt="SYS", user_id=USER, account_id=ACC,
         write_context=ctx(actor=label, timezone="UTC"),
     )
 

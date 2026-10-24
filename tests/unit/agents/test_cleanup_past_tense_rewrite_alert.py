@@ -16,8 +16,8 @@ def store():
 
 async def run(agent, label):
     return await agent._run_consolidation_loop(
-        user_message_text="begin", system_prompt="SYS", user_id=USER, account_id=ACC, pass_label=label,
-        write_context=ctx(actor=label, timezone="UTC", model_dates=label in ("stage1", "email")),
+        user_message_text="begin", system_prompt="SYS", user_id=USER, account_id=ACC,
+        write_context=ctx(actor=label, timezone="UTC"),
     )
 
 

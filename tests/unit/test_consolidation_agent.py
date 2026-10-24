@@ -372,7 +372,7 @@ class TestConsolidationAgentV3:
                 "account_id": "account-123",
                 "user_id": "user123",
             },
-            context=FactWriteContext(actor="stage1", timezone="UTC", span=None, model_dates=True),
+            context=FactWriteContext(actor="stage1", timezone="UTC", span=None),
         )
 
     @pytest.mark.asyncio
@@ -411,7 +411,7 @@ class TestConsolidationAgentV3:
             fact_id="existing-456",
             updates={"content": "User owns two cats"},
             account_id="account-123",
-            context=FactWriteContext(actor="stage1", timezone="UTC", span=None, model_dates=True),
+            context=FactWriteContext(actor="stage1", timezone="UTC", span=None),
         )
 
     @pytest.mark.asyncio

@@ -36,7 +36,7 @@ def _agent_with(responses, sink, stats=True):
 async def _run(agent, user_id=_USER_ID, label="stage1"):
     return await agent._run_consolidation_loop(
         user_message_text="begin", system_prompt="SYS",
-        user_id=user_id, account_id=_ACCOUNT_ID, pass_label=label,
+        user_id=user_id, account_id=_ACCOUNT_ID,
         write_context=agent._write_context(label),
     )
 
@@ -158,7 +158,7 @@ class TestPrivacy:
 class TestPassStats:
 
     def test_repeats_counts_identical_consecutive_turns_order_insensitive(self):
-        s = ConsolidationPassStats("p", "m", "medium", 15, "u" * 20)
+        s = ConsolidationPassStats("stage1", "m", "medium", 15, "u" * 20)
         s.record_turn([("a", {"x": 1}), ("b", {"y": 2})])
         s.record_turn([("b", {"y": 2}), ("a", {"x": 1})])  # same set, other order
         s.record_turn([("a", {"x": 2})])                    # different args
@@ -168,7 +168,7 @@ class TestPassStats:
         assert s.counts == {"a": 4, "b": 2}
 
     def test_non_consecutive_duplicates_are_not_repeats(self):
-        s = ConsolidationPassStats("p", "m", "medium", 15, "u")
+        s = ConsolidationPassStats("stage1", "m", "medium", 15, "u")
         s.record_turn([("a", {})])
         s.record_turn([("b", {})])
         s.record_turn([("a", {})])

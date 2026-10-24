@@ -18,7 +18,7 @@ def store():
 
 @pytest.mark.parametrize("actor", ["stage2a", "stage2b", "cluster", "backstop"])
 async def test_a_cleanup_pass_is_told_to_keep_the_fact(store, actor):
-    res = await store.adapter.create_fact("the trip", META, context=ctx(actor, model_dates=False))
+    res = await store.adapter.create_fact("the trip", META, context=ctx(actor))
     assert (res["status"], res["refused"], res["born_due"]) == ("failed", "expiry", True)
     assert "discard" not in res["message"].lower() and "do not drop the fact" in res["message"]
     assert not store.docs

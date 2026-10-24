@@ -23,7 +23,7 @@ def stage1(span=SPAN):
 
 
 def cleanup(span=SPAN):
-    return ctx(actor="stage2a", span=span, model_dates=False)
+    return ctx(actor="stage2a", span=span)
 
 
 @pytest.fixture

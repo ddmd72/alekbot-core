@@ -159,7 +159,7 @@ async def test_a_part_created_in_the_pass_can_be_named_when_the_compound_it_repl
     compound = await seed(store, "walks daily and cooks and reads")
     before = live_state(store)
     repo, adapter = kit_adapter(store)
-    context = ctx(actor="cluster", timezone="UTC", model_dates=False)
+    context = ctx(actor="cluster", timezone="UTC")
 
     part = await adapter.create_fact("walks daily", meta(), context=context)
     retired = await adapter.update_fact(
@@ -252,7 +252,7 @@ async def test_the_current_lists_show_the_passes_own_writes_so_the_directive_cap
     rule = lambda text, **o: seed(store, text, domain="agent_directive", **o)       # noqa: E731
     kept, dropped = await rule("always answer in English", context_priority="high"), await rule("never use tables")
     repo, adapter = kit_adapter(store)
-    context = ctx(actor="stage2b", timezone="UTC", model_dates=False)
+    context = ctx(actor="stage2b", timezone="UTC")
 
     await adapter.update_fact(dropped, {"state": "invalidated"}, ACC, context=context)
     added = await adapter.create_fact("cite sources", meta(domain="agent_directive", context_priority="critical"), context=context)
@@ -562,10 +562,10 @@ async def kit_agent(store: FactStore, tmp_path: Path, *responses: LLMResponse, e
     return agent, kit
 
 
-async def run_pass(agent, label: str = "stage1", timezone_name: str = "UTC", model_dates: bool = True):
+async def run_pass(agent, label: str = "stage1", timezone_name: str = "UTC"):
     return await agent._run_consolidation_loop(
-        user_message_text="begin", system_prompt="SYS", user_id=USER, account_id=ACC, pass_label=label,
-        write_context=ctx(actor=label, timezone=timezone_name, model_dates=model_dates),
+        user_message_text="begin", system_prompt="SYS", user_id=USER, account_id=ACC,
+        write_context=ctx(actor=label, timezone=timezone_name),
     )
 
 
@@ -640,7 +640,7 @@ async def test_the_report_counts_naive_reported_dates_per_pass_and_in_total_over
     agent, kit = await kit_agent(store, tmp_path, first, answered(), second, answered())
 
     await run_pass(agent, "stage1")
-    await run_pass(agent, "stage2a", model_dates=False)
+    await run_pass(agent, "stage2a")
 
     report = kit.report()
     assert [p["pass"] for p in report["passes"]] == ["stage1", "stage2a"]

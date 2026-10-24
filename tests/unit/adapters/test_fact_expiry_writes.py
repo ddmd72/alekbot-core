@@ -18,7 +18,7 @@ from tests.support.fact_write import EXPIRY_NONE, ctx, horizon, on
 
 PARIS = ZoneInfo("Europe/Paris")
 GENERIC_PIN_TEXT = "expiry is required for this fact"
-CLEANUP = {"actor": "stage2a", "model_dates": False}
+CLEANUP = {"actor": "stage2a"}
 
 
 @pytest.fixture

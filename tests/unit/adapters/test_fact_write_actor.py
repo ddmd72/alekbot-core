@@ -24,7 +24,7 @@ def meta(**over):
 
 
 def context(actor):
-    return ctx(actor=actor, model_dates=actor in ("stage1", "email"))
+    return ctx(actor=actor)
 
 
 async def seeded(store, text="mother is Maria"):

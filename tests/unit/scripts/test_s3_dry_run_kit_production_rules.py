@@ -155,7 +155,7 @@ async def test_a_create_through_the_recorder_is_a_cleanup_row_with_its_derived_f
         kit.repo = kit_module.NoWriteFactRepository(store.repo)
         adapter = FactManagementAdapter(kit.repo, store.embedder, store.write, production_adapter(store)._search_enrichment)
         recorder = kit_module.WriteRecorder(adapter, kit)
-        cleanup = ctx(actor="stage2a", timezone="UTC", model_dates=False)
+        cleanup = ctx(actor="stage2a", timezone="UTC")
 
         await recorder.create_fact("walks daily", meta(), context=cleanup)
         await recorder.create_fact("reads at night", meta(derived_from=[source]), context=cleanup)
@@ -175,7 +175,7 @@ async def test_a_create_naming_only_unreadable_sources_counts_as_undated(store, 
         kit.repo = kit_module.NoWriteFactRepository(store.repo)
         adapter = FactManagementAdapter(kit.repo, store.embedder, store.write, production_adapter(store)._search_enrichment)
         recorder = kit_module.WriteRecorder(adapter, kit)
-        cleanup = ctx(actor="stage2a", timezone="UTC", model_dates=False)
+        cleanup = ctx(actor="stage2a", timezone="UTC")
 
         await recorder.create_fact("walks daily", meta(derived_from=["no-such-fact"]), context=cleanup)
         await recorder.create_fact("reads at night", meta(derived_from=["no-such-fact", readable]), context=cleanup)

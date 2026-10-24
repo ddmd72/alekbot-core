@@ -3,6 +3,7 @@ from datetime import date, datetime
 from typing import Any, Dict, Final, Optional, Tuple, Union
 
 from src.domain.fact_write_context import FactWriteContext
+from src.domain.pass_actor import PassActor
 
 __all__ = ["EXPIRY_NONE", "ctx", "horizon", "on"]
 
@@ -23,7 +24,7 @@ def ctx(
     actor: str = "stage1",
     timezone: str = "Europe/Paris",
     span: Optional[Tuple[datetime, datetime]] = None,
-    model_dates: bool = True,
 ) -> FactWriteContext:
-    """A `FactWriteContext`; the defaults are a Stage 1 pass in the owner's Paris calendar with no message span."""
-    return FactWriteContext(actor=actor, timezone=timezone, span=span, model_dates=model_dates)
+    """A `FactWriteContext`; the defaults are a Stage 1 pass in the owner's Paris calendar with no message span. The
+    pass's rules (`model_dates` and the rest) come from its `PassActor` row."""
+    return FactWriteContext(actor=PassActor(actor), timezone=timezone, span=span)
