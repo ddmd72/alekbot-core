@@ -40,6 +40,9 @@ REVIEW_ACCEPTS: frozenset[FactState] = frozenset({FactState.STALE, FactState.CUR
 CLOSING_STATES: frozenset[FactState] = frozenset({FactState.ARCHIVED, FactState.INVALIDATED, FactState.SUPERSEDED})
 # The owner may invalidate a fact the consolidator archived meanwhile.
 CABINET_ACCEPTS: frozenset[FactState] = frozenset(FactState) - {FactState.SUPERSEDED}
+# The states of a fact the review or the owner closed, as the review reads them back (`get_recently_closed`). A superseded
+# fact is not one: its successor carries what it said.
+REVIEW_CLOSED_STATES: frozenset[FactState] = frozenset({FactState.ARCHIVED, FactState.INVALIDATED})
 
 # Everything else on a stored fact is written by a new version document.
 IN_PLACE_FIELDS: frozenset[str] = frozenset(
@@ -109,7 +112,12 @@ def superseded_closure(stored_fact: FactEntity, new_fact: FactEntity, now: datet
 def archive_fields(fact: FactEntity, now: datetime, actor: str, reason: str) -> dict[str, Any]:
     """The in-place write that archives `fact`: state archived, `valid_to` and `last_updated` `now`, one trail entry
     (`fact.state` -> archived, `actor`, the code-built `reason`). `stale_since` is not touched: how long the fact waited
-    stays on the record."""
+    stays on the record.
+
+    Raises ValueError for a fact that is not stale or current (REVIEW_ACCEPTS): archiving a superseded document would give
+    its lineage a second visible head, and a closed one is closed already."""
+    if fact.state not in REVIEW_ACCEPTS:
+        raise ValueError(f"fact {fact.id} is {fact.state.value}; only a stale or current fact is archived")
     event = lifecycle_event(now, fact.state, FactState.ARCHIVED, actor, reason)
     return {
         **lifecycle_fields(FactState.ARCHIVED, now),

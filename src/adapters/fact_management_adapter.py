@@ -6,7 +6,9 @@ from ..domain.entities import FactEntity, normalize_fact_taxonomy
 from ..domain.exceptions import FactBornDueError, FactExpiryError, FactResolutionError, FactWriteConflict
 from ..domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE
 from ..domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
+from ..domain.fact_review_answers import history_fact, history_refusal, history_trail
 from ..domain.fact_tool_result import (
+    HISTORY_FACT_ID,
     STATUS_CREATED,
     STATUS_FAILED,
     STATUS_MERGED,
@@ -250,7 +252,15 @@ class FactManagementAdapter(FactManagementPort):
         return data
 
     async def update_fact(
-        self, fact_id: str, updates: Dict[str, Any], account_id: str, *, context: FactWriteContext
+        self,
+        fact_id: str,
+        updates: Dict[str, Any],
+        account_id: str,
+        *,
+        context: FactWriteContext,
+        evidence_at: Optional[datetime] = None,
+        reason: Optional[str] = None,
+        history: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Update existing fact with error handling.
@@ -260,12 +270,22 @@ class FactManagementAdapter(FactManagementPort):
             updates: Fields to update (content, tags, metadata, state, etc.)
             account_id: Caller account; a fact of another account is reported as not found
             context: The pass this write belongs to (actor, owner's zone, span, who decides dates)
+            evidence_at: The review's or the owner's evidence moment (finish_fact_update); the history fact's date
+            reason: The code-built trail reason of a review or owner write (finish_fact_update)
+            history: The text of a fact to create beside an archive (history_refusal, history_fact)
 
         Returns:
-            Result dict with fact_id (the document written), status, version, message
+            Result dict with fact_id (the document written), status, version, message (and history_fact_id)
         """
         try:
-            return await self._update_with_one_retry(fact_id, updates, account_id, context)
+            if history is not None:
+                refusal = history_refusal(history, updates, context, evidence_at)
+                if refusal is not None:
+                    logger.warning(f"⚠️  [FactManagement] update_fact {fact_id[:8]} refused (history): {refusal}")
+                    return {"fact_id": fact_id, "status": STATUS_FAILED, "message": refusal}
+            return await self._update_with_one_retry(
+                fact_id, updates, account_id, context, evidence_at=evidence_at, reason=reason, history=history
+            )
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] update_fact {fact_id[:8]} refused (expiry): {e}")
             return {
@@ -293,16 +313,26 @@ class FactManagementAdapter(FactManagementPort):
             }
 
     async def _update_with_one_retry(
-        self, fact_id: str, updates: Dict[str, Any], account_id: str, context: FactWriteContext
+        self,
+        fact_id: str,
+        updates: Dict[str, Any],
+        account_id: str,
+        context: FactWriteContext,
+        *,
+        evidence_at: Optional[datetime],
+        reason: Optional[str],
+        history: Optional[str],
     ) -> Dict[str, Any]:
         logger.debug(f"🔄 [FactManagement] Updating fact {fact_id[:8]}...")
         parsed: Optional[ParsedFactUpdate] = None
         embedded: Optional[Tuple[List[str], List[List[float]]]] = None
+        built_history: Optional[Tuple[str, FactEntity]] = None   # (the archived id it was built from, the entity)
         first_resolved_id: Optional[str] = None
         attempt = 0
         while True:
             attempt += 1
-            stored = await self._repo.resolve_current(fact_id, account_id, CONSOLIDATION_ACCEPTS)
+            # The pass's row decides which stored states its own target may be in (the review and the owner reach stale).
+            stored = await self._repo.resolve_current(fact_id, account_id, context.accepts)
             if stored is None:
                 logger.warning(f"⚠️  [FactManagement] Fact not found: {fact_id[:8]}")
                 return {"fact_id": fact_id, "status": STATUS_NOT_FOUND, "message": "Fact not found"}
@@ -317,10 +347,31 @@ class FactManagementAdapter(FactManagementPort):
                     return {"fact_id": fact_id, "status": STATUS_FAILED, "message": moved}
             update = await self._with_resolved_successor(parsed, stored, account_id)
             now = datetime.now(timezone.utc)
-            finish = finish_fact_update(plan_fact_update(stored.fact, update, now), stored.fact, update, context, now)
+            finish = finish_fact_update(
+                plan_fact_update(stored.fact, update, now), stored.fact, update, context, now,
+                evidence_at=evidence_at, reason=reason,
+            )
             plan = finish.plan
+            history_entity: Optional[FactEntity] = None
+            if history is not None:
+                # Built (and embedded) once per document read: tags only change with a new version, so a re-read of the
+                # same id carries the same domain, type and tags.
+                if evidence_at is None or reason is None:
+                    raise RuntimeError("history_refusal and finish_fact_update let no history through without both")
+                if built_history is None or built_history[0] != stored.fact.id:
+                    attrs = history_fact(stored.fact, history, evidence_at, context.timezone)
+                    entity = (await self._fact_write_service.build_facts(
+                        account_id, stored.fact.created_by_user_id, [attrs]
+                    ))[0]
+                    built_history = (stored.fact.id, entity)
+                history_entity = history_trail(built_history[1], stored.fact.id, now, context.actor)
             try:
-                if plan.kind == "version":
+                if history_entity is not None:
+                    # finish_fact_update has validated the archive (a review or owner close, its reason given);
+                    # the repository writes it through `archive_fields` beside the new fact, in one transaction.
+                    await self._repo.archive_and_add(stored, history_entity, now, actor=context.actor, reason=reason)
+                    written = stored.fact
+                elif plan.kind == "version":
                     new_fact, embedded = await self._complete_version(plan, embedded)
                     await self._repo.write_superseding(new_fact, [stored], now, actor=context.actor)
                     written = new_fact
@@ -341,6 +392,9 @@ class FactManagementAdapter(FactManagementPort):
                 "version": written.version,
                 "message": "Fact updated successfully",
             }
+            if history_entity is not None:
+                result[HISTORY_FACT_ID] = history_entity.id
+                result["message"] = f"Fact archived; history fact {history_entity.id} created beside it"
             _with_notes(result, finish.notes, "update_fact")
             if stored.fact.id != fact_id:
                 result["resolved_from"] = fact_id
