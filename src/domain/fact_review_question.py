@@ -110,6 +110,8 @@ class FactReviewQuestion(BaseModel):
                 raise ValueError("a pending question has a session_id")
             if self.asked_at is not None:
                 raise ValueError("a pending question has not been asked yet")
+            if self.message_ref is not None and self.appended_at is None:
+                raise ValueError("a posted question was appended first")
         elif self.status in _SENT:
             if any(getattr(self, name) is None for name in _SENT_FIELDS):
                 raise ValueError("an asked or unanswered question has asked_at, session_id, appended_at and a message_ref")
@@ -125,8 +127,9 @@ class FactReviewQuestion(BaseModel):
     def _check_closing(self) -> None:
         if self.closed_at is None or self.closed_by is None:
             raise ValueError("a closed question has closed_at and closed_by")
-        if self.purge_after != self.closed_at + QUESTION_RETENTION:
-            raise ValueError("purge_after is closed_at plus the retention")
+        # Only "set and later": the retention may change, and a question stored under the old one must still be read.
+        if self.purge_after is None or self.purge_after <= self.closed_at:
+            raise ValueError("purge_after is set and later than closed_at")
         if self.closed_by is ClosedBy.OWNER:
             if self.answer is None or self.answer_source not in _OWNER_SOURCES:
                 raise ValueError("an owner close has an answer and a source of digit, button or cabinet")
@@ -190,8 +193,8 @@ class FactReviewQuestion(BaseModel):
         return self._moved(appended_at=at)
 
     def posted(self, ref: MessageRef) -> Self:
-        """The post succeeded and landed at `ref` (once)."""
-        self._require(self.status is QuestionStatus.PENDING and not self.delivered, "posted")
+        """The post succeeded and landed at `ref` (once, and only after the frame was appended)."""
+        self._require(self.status is QuestionStatus.PENDING and self.appended_at is not None and not self.delivered, "posted")
         return self._moved(message_ref=ref)
 
     def asked(self, at: datetime) -> Self:
@@ -203,9 +206,7 @@ class FactReviewQuestion(BaseModel):
         """A delivered `pending` question whose move to asked was lost: asked, at the latest time known to precede the
         post (`appended_at`). The one rule for housekeeping, an intake reply and a click that find it so."""
         self._require(self.status is QuestionStatus.PENDING and self.delivered, "completed")
-        if self.appended_at is None:
-            raise QuestionTransitionError("a question that was never appended has no time to complete it at")
-        return self.asked(self.appended_at)
+        return self._moved(status=QuestionStatus.ASKED, asked_at=self.appended_at)
 
     def requeued(self) -> Self:
         """A pending question that was never posted goes back to the queue, its place (`queue_key`) kept and the

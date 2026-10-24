@@ -2,7 +2,7 @@
 import re
 from datetime import date
 from types import MappingProxyType
-from typing import Dict, Mapping, Optional, Self
+from typing import Any, Dict, Mapping, Optional, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
@@ -15,7 +15,9 @@ class FactReviewState(BaseModel):
     the questions sent on the local day `sent_on`; `delivery_failed_on` is the local day a post failed (no retry that day).
     `offers` counts how often a stale fact went to the model without a decision. `message_language` and `labels` are
     the last language the review reported for the owner's messages and the texts the model wrote for it (by language).
-    Frozen, and its two mappings are read-only; the store writes changes. Every datetime is timezone-aware."""
+    Frozen, and its two mappings are read-only; the store writes changes. Every datetime is timezone-aware. A deep copy
+    (`copy.deepcopy`, `model_copy(deep=True)`) is rebuilt from the dump, because read-only mappings cannot be copied
+    as they are."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -64,6 +66,9 @@ class FactReviewState(BaseModel):
         if self.sent > 0 and self.sent_on is None:
             raise ValueError("sent questions are counted for a day: sent_on")
         return self
+
+    def __deepcopy__(self, memo: Optional[Dict[int, Any]] = None) -> Self:
+        return type(self).model_validate(self.model_dump())
 
     @field_serializer("offers")
     def _offers_as_dict(self, value: Mapping[str, int]) -> Dict[str, int]:
