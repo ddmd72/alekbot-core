@@ -181,6 +181,17 @@ _REVIEW_WAY_OUT: Final[str] = (
     "this pass reviews stored memory: give a horizon (counted from now), or archive with basis date_passed when its date "
     "is over; doing nothing keeps the fact hidden"
 )
+# The shortest horizon counted from now that `resolves_too_soon` never refuses: a 1-day one ends within a day of
+# now + 1 day, and exactly on it when reported_date is a whole number of days back (plan §3.6: "N < 2").
+MIN_REVIEW_HORIZON_DAYS: Final[int] = 2
+
+
+def short_review_horizon(days: int) -> FactBornDueError:
+    """The refusal of a review or owner horizon under MIN_REVIEW_HORIZON_DAYS, whatever the offset of reported_date."""
+    return FactBornDueError(
+        f"a horizon of {days} day counted from now is too short (at least {MIN_REVIEW_HORIZON_DAYS} days): "
+        f"{_REVIEW_WAY_OUT}. {NOTHING_WRITTEN}"
+    )
 
 
 def born_due(

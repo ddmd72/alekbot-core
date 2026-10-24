@@ -44,6 +44,11 @@ def basis_reason(action: ReviewAction, basis: ReviewBasis, plan_date: Optional[d
     return f"archived: date passed {plan_date.isoformat()}"
 
 
+def superseded_reason(successor_id: str) -> str:
+    """A fact closed in favour of `successor_id` (S3's text, also the review's and the owner's supersede)."""
+    return f"superseded by {successor_id}"
+
+
 def queued_reason(question_id: str) -> str:
     """The fact was made current while its question waits."""
     return f"queued for the owner q={question_id}"
@@ -82,6 +87,11 @@ def is_revive_reason(reason: object) -> bool:
     )
 
 
+def is_rewrite_reason(reason: object) -> bool:
+    """The reason of a review rewrite (`rewritten on …`): a new version, not a revive."""
+    return isinstance(reason, str) and reason.startswith(_REWRITTEN)
+
+
 def gives_window_reason(reason: object) -> bool:
     """A revive or a rewrite: both give the fact a horizon from that moment, so the next silence doubles it."""
-    return is_revive_reason(reason) or (isinstance(reason, str) and reason.startswith(_REWRITTEN))
+    return is_revive_reason(reason) or is_rewrite_reason(reason)

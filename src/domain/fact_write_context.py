@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .entities import ExpiryKind, FactState
 from .fact_expiry import Expiry
-from .fact_lifecycle import born_due, compute_expiry, horizon_from_now
+from .fact_lifecycle import MIN_REVIEW_HORIZON_DAYS, born_due, compute_expiry, horizon_from_now, short_review_horizon
 from .local_time import local_date, local_moment
 from .pass_actor import PassActor
 
@@ -82,6 +82,8 @@ def decide_expiry(
 
 def reviews_stored_memory(context: FactWriteContext) -> bool:
     """The review and the owner's answers: the passes whose row reaches a stale fact (S4-D5, plan §3.6)."""
+    # Derived from `accepts` (the card's rule): a future row that accepts STALE without the review's write rules needs
+    # its own column in the PassActor table instead.
     return FactState.STALE in context.accepts
 
 
@@ -92,10 +94,13 @@ def review_horizon(
     (the date after the basis rule) and `now`, stored from `reported`; a `date` or `none` as `compute_expiry` stores it.
     Then the born-due rule of the pass's row, which has no floor.
 
-    Raises ValueError for a context that is no review or owner pass, FactBornDueError for a decision that is due."""
+    Raises ValueError for a context that is no review or owner pass, FactBornDueError for a decision that is due or a
+    horizon under MIN_REVIEW_HORIZON_DAYS."""
     if not reviews_stored_memory(context):
         raise ValueError(f"a review horizon belongs to the review or the owner, not to {context.actor}")
     if decision.kind is ExpiryKind.HORIZON and decision.days is not None:
+        if decision.days < MIN_REVIEW_HORIZON_DAYS:
+            raise short_review_horizon(decision.days)
         fields = horizon_from_now(decision.days, reported, now)
     else:
         fields = compute_expiry(decision, reported, context.timezone)
