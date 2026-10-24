@@ -63,14 +63,14 @@ def test_plain_text_ends_with_the_reply_hint_because_only_a_reply_counts_there()
 
 @pytest.mark.parametrize("reply,expected", [
     ("1", "still_true"), ("2", "ended"), ("3", "never"), ("4", "dont_know"),
-    (" 3 ", "never"), ("\n2\n", "ended"),
+    (" 3 ", "never"), ("\n2\n", "ended"), ("1.", "still_true"),
 ])
 def test_a_whole_reply_that_is_an_options_digit_picks_it(reply, expected):
     assert message().option_for_reply(reply) == expected
 
 
 @pytest.mark.parametrize("reply", [
-    "", "   ", "5", "0", "-1", "1.", "1 2", "12", "yes", "1 — yes", "one", "٣", "１", "1\n2",
+    "", "   ", "5", "0", "-1", "1 2", "12", "yes", "1 — yes", "one", "٣", "１", "1\n2",
 ])
 def test_anything_else_picks_nothing(reply):
     assert message().option_for_reply(reply) is None

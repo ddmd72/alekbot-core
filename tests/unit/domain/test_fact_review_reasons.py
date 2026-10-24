@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from src.domain.fact_review_answers import AnswerKind
+from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_basis import ReviewBasis
 from src.domain.fact_review_reasons import (
     answer_reason,

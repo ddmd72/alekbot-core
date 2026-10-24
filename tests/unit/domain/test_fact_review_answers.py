@@ -4,7 +4,6 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from src.domain import fact_review_answer_kind, fact_review_answers
 from src.domain.entities import ExpiryKind, FactDomain, FactState, FactType
 from src.domain.fact_lifecycle import compute_expiry
 from src.domain.fact_update import parse_fact_update
@@ -37,10 +36,6 @@ def message(ids=("still_true", "ended", "never", "dont_know")) -> InteractiveMes
 
 def test_the_four_kinds_are_the_four_option_ids_in_order():
     assert [kind.value for kind in AnswerKind] == ["still_true", "ended", "never", "dont_know"]
-
-
-def test_the_kind_lives_in_its_own_module_and_the_old_home_still_names_it():
-    assert fact_review_answers.AnswerKind is fact_review_answer_kind.AnswerKind is AnswerKind
 
 
 # ------------------------------------------------------------------------------------------------ digit_answer

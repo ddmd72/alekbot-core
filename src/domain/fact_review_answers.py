@@ -13,7 +13,7 @@ from .fact_review_rules import confirmed_expiry, fallback_fields, is_dated_plan
 from .interactive_message import InteractiveMessage
 from .local_time import local_moment
 
-__all__ = ["AnswerKind", "answer_updates", "digit_answer", "ended_text"]
+__all__ = ["answer_updates", "digit_answer", "ended_text"]
 
 # English whatever the process locale: the text is written into a stored fact.
 _MONTHS: Final[tuple[str, ...]] = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")

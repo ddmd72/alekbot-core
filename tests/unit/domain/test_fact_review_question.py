@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.domain.exceptions import QuestionTransitionError
-from src.domain.fact_review_answers import AnswerKind
+from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_question import (
     MAX_REPLY_CHARS,
     QUESTION_RETENTION,
