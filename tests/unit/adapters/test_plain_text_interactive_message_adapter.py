@@ -47,6 +47,13 @@ def question():
     )
 
 
+# What the adapter lays `question()` out as (the old `InteractiveMessage.as_plain_text` output, pinned; T5b reviewer, L10).
+QUESTION_TEXT = (
+    "Is this still true?\n\n«Lives in Lisbon»\n\n1 — yes  2 — no longer  3 — never  4 — don't remember"
+    "\n\nReply to this message with a digit."
+)
+
+
 @pytest.fixture
 def channels():
     made = {}
@@ -60,7 +67,7 @@ async def test_the_text_goes_to_the_platforms_channel_and_the_channels_ref_comes
     factory, made = channels
     ref = await PlainTextInteractiveMessageAdapter(factory).post("telegram", "555", question())
     assert ref == MessageRef("telegram", "555", "101")
-    assert made["555"].sent == [question().as_plain_text()]
+    assert made["555"].sent == [QUESTION_TEXT]
 
 
 async def test_each_post_is_its_own_message_with_its_own_ref(channels):
@@ -100,4 +107,4 @@ async def test_showing_a_choice_changes_nothing_because_there_are_no_controls(ch
     adapter = PlainTextInteractiveMessageAdapter(factory)
     ref = await adapter.post("telegram", "555", question())
     await adapter.show_choice(ref, ChoiceOutcome(message=question(), chosen_option_id="never"))
-    assert made["555"].sent == [question().as_plain_text()]
+    assert made["555"].sent == [QUESTION_TEXT]

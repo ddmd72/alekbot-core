@@ -1,5 +1,7 @@
-"""The provider-neutral interactive message (Facts S4 · T5a, plan §3.20): what it renders, how a digit picks an option, the
-binding's token rule and the shapes it refuses."""
+"""The provider-neutral interactive message (Facts S4 · T5a, plan §3.20): how a digit picks an option, the binding's
+kind and id rules and the shapes it refuses. The plain-text layout is the adapter's
+(`tests/unit/adapters/test_plain_text_interactive_message_layout.py`, T5b L10); the block-id codec is Slack's
+(`tests/unit/adapters/test_slack_binding_codec.py`, T5c L7)."""
 import json
 from datetime import datetime, timezone
 
@@ -30,33 +32,6 @@ def message(**over):
     )
     fields.update(over)
     return InteractiveMessage(**fields)
-
-
-# ------------------------------------------------------------------------------------------------ plain text
-
-def test_plain_text_is_the_prompt_the_quote_and_the_numbered_options_on_one_line():
-    assert message(reply_hint="").as_plain_text() == (
-        "Is this still true?\n\n«Lives in Lisbon»\n\n1 — yes  2 — no longer  3 — never  4 — don't remember"
-    )
-
-
-def test_plain_text_without_a_quote_has_no_empty_guillemets():
-    text = message(quote="  ", reply_hint=" ").as_plain_text()
-    assert "«" not in text
-    assert text == "Is this still true?\n\n1 — yes  2 — no longer  3 — never  4 — don't remember"
-
-
-def test_plain_text_quotes_the_subject_as_stored():
-    text = message(quote="Живе в Лісабоні — «стара адреса»").as_plain_text()
-    assert "«Живе в Лісабоні — «стара адреса»»" in text
-
-
-def test_plain_text_ends_with_the_reply_hint_because_only_a_reply_counts_there():
-    assert message().as_plain_text() == (
-        "Is this still true?\n\n«Lives in Lisbon»\n\n1 — yes  2 — no longer  3 — never  4 — don't remember"
-        "\n\nReply with a digit."
-    )
-    assert message(quote="").as_plain_text().endswith("4 — don't remember\n\nReply with a digit.")
 
 
 # ------------------------------------------------------------------------------------------------ digits
@@ -90,25 +65,19 @@ def test_option_looks_up_by_id():
 
 # ------------------------------------------------------------------------------------------------ binding
 
-def test_the_token_round_trips_and_ids_may_carry_a_colon():
-    for ident in ("q1", "u:123:abc", "a.b-c_d"):
-        binding = InteractiveBinding(kind="fact_question", id=ident)
-        assert binding.token() == f"fact_question:{ident}"
-        assert InteractiveBinding.parse(binding.token()) == binding
-
-
-@pytest.mark.parametrize("token", [
-    "", "fact_question", ":q1", "fact_question:", "Fact_Question:q1", "1kind:q1", "fact question:q1",
-    "fact_question:q 1", "fact_question:q\n1", "fact_question:" + "x" * 201, "k" * 41 + ":q1",
+@pytest.mark.parametrize("kind,ident", [
+    ("", "q1"), ("Fact_Question", "q1"), ("1kind", "q1"), ("fact question", "q1"), ("k" * 41, "q1"),
+    ("fact_question", ""), ("fact_question", "q 1"), ("fact_question", "q\n1"), ("fact_question", "x" * 129),
 ])
-def test_a_token_that_is_not_ours_parses_to_nothing(token):
-    assert InteractiveBinding.parse(token) is None
+def test_a_binding_refuses_a_kind_that_is_not_a_name_and_an_id_that_is_not_one_word(kind, ident):
+    with pytest.raises(ValidationError):
+        InteractiveBinding(kind=kind, id=ident)
 
 
-def test_the_longest_binding_fits_a_255_character_field():
-    longest = InteractiveBinding(kind="k" * 40, id="x" * 200)
-    assert len(longest.token()) <= 255
-    assert InteractiveBinding.parse(longest.token()) == longest
+def test_the_longest_binding_is_a_forty_character_kind_and_a_128_character_id():
+    longest = InteractiveBinding(kind="k" * 40, id="x" * 128)
+    assert (len(longest.kind), len(longest.id)) == (40, 128)
+    assert InteractiveBinding(kind="fact_question", id="u:123:abc").id == "u:123:abc"
 
 
 def test_a_binding_survives_the_task_payload_encoder():
