@@ -347,7 +347,7 @@ example_4_merge_car_details: {
     - Tags: ["car", "features", "accessories"]
 
     STEP 3 - SEARCH:
-    Query: "user car honda civic features"
+    Query: "user car skoda fabia features"
     Domain: POSSESSION
     Results: [
         {
@@ -357,7 +357,7 @@ example_4_merge_car_details: {
         },
         {
             fact_id: "car-2",
-            content: "Honda Civic has automatic gearbox",
+            content: "Skoda Fabia has automatic gearbox",
             similarity: 0.82
         },
         {
@@ -368,7 +368,7 @@ example_4_merge_car_details: {
     ]
 
     STEP 4 - ANALYZE:
-    - Multiple facts (3) about SAME entity (Honda Civic)
+    - Multiple facts (3) about SAME entity (Skoda Fabia)
     - All high similarity (>0.75)
     - Facts are complementary (different aspects)
     - Combined fact would be more useful

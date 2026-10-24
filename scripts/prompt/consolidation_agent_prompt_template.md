@@ -423,7 +423,7 @@ ASSISTANT: Ты весил 76кг в январе 2025.
             
             case_echo_confirmation_trap: {
                 input: """
-ASSISTANT: Based on our history, you weigh 95kg.
+ASSISTANT: Based on our history, you weigh 75kg.
 USER: Да, всё верно.
 """,
                 output: {
