@@ -212,7 +212,8 @@ def test_the_review_prompt_carries_taxonomys_conversation_rules_so_lifecycle_rep
                               "DISCARD it if it no longer matters, or rewrite it as history"):
         assert conversation_rule in REVIEW_PROMPT, conversation_rule
     line = _in_this_pass()
-    assert line.startswith("In this pass these rules replace the kinds table's horizon line and its date rules: ")
+    assert line.startswith("In this pass two taxonomy lines are replaced: the horizon line that counts N from "
+                           "reported_date, and the date rule that discards a past plan or rewrites it as history. ")
     assert "a horizon counts from now, not from reported_date" in line
     assert "a plan whose date has passed is archived with basis date_passed, never rewritten as history or discarded" in line
     assert f'in_this_pass: "{line}"' in REVIEW_PROMPT
@@ -260,3 +261,21 @@ def test_a_dated_plan_is_defined_as_is_dated_plan_counts_it():
     assert not is_dated_plan(standing, question(QuestionStatus.ASKED, fallback="revive"))
     assert is_dated_plan(standing, question(QuestionStatus.ASKED, fallback="archive", noise=True))
     assert is_dated_plan(fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=standing.expires_at))
+
+
+def test_a_passed_plan_that_moved_is_not_archived():
+    """N2: the archive of a passed plan yields to step (2) when the reply or evidence says the plan moved."""
+    assert ("archived with basis date_passed, never rewritten as history or discarded, unless the reply or evidence "
+            "says it moved.") in _in_this_pass()
+    assert "(2) the reply or evidence says it still holds: revive it with that basis" in PROSE
+
+
+def test_the_range_rule_stays_in_force_in_the_review():
+    """N1: only the horizon line and the past-plan rule are replaced; the range and month rules still apply."""
+    range_rule = "A range -> its last day. Only a month -> its last day."
+    assert range_rule in REVIEW_PROMPT
+    line = _in_this_pass()
+    assert "Every other date rule still applies (a range -> its last day; only a month -> its last day)." in line
+    assert "replace the kinds table's horizon line and its date rules" not in line
+    replaced = re.search(r"two taxonomy lines are replaced: ([^.]*)\.", line).group(1)
+    assert "range" not in replaced and "month" not in replaced
