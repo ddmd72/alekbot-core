@@ -50,3 +50,22 @@ async def test_failures_are_settable_and_leave_nothing_recorded():
     with pytest.raises(RuntimeError):
         await port.show_choice(ref, ChoiceOutcome(message=question(), note="Closed."))
     assert port.has_controls(ref)
+
+
+async def test_a_plain_platform_never_has_controls_and_showing_a_choice_does_nothing():
+    port = ReviewWorld().interactive
+    port.plain_platforms.add("telegram")
+    ref = await port.post("telegram", "555", question())
+    assert not port.has_controls(ref)
+    await port.show_choice(ref, ChoiceOutcome(message=question(), chosen_option_id="a"))
+    assert port.shown == {}
+    slack_ref = await port.post("slack", "D1", question())
+    assert port.has_controls(slack_ref)
+
+
+async def test_the_ref_carries_the_channel_the_platform_returns_not_the_one_asked_for():
+    port = ReviewWorld().interactive
+    port.normalise["U1"] = "D9"
+    first = await port.post("slack", "U1", question())
+    second = await port.post("slack", "D9", question())
+    assert (first.channel_id, first.message_id) == ("D9", "m1") and second.message_id == "m2"

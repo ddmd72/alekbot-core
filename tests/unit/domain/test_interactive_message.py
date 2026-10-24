@@ -10,7 +10,7 @@ from src.domain.choice_outcome import ChoiceOutcome
 from src.domain.interactive_binding import InteractiveBinding
 from src.domain.interactive_choice import InteractiveChoice
 from src.domain.interactive_message import InteractiveMessage
-from src.domain.interactive_option import InteractiveOption
+from src.domain.interactive_option import MAX_LABEL_CHARS, InteractiveOption
 from src.domain.messaging import MessageRef
 
 LABELS = [("still_true", "yes"), ("ended", "no longer"), ("never", "never"), ("dont_know", "don't remember")]
@@ -35,21 +35,28 @@ def message(**over):
 # ------------------------------------------------------------------------------------------------ plain text
 
 def test_plain_text_is_the_prompt_the_quote_and_the_numbered_options_on_one_line():
-    assert message().as_plain_text() == (
+    assert message(reply_hint="").as_plain_text() == (
         "Is this still true?\n\n«Lives in Lisbon»\n\n1 — yes  2 — no longer  3 — never  4 — don't remember"
     )
 
 
 def test_plain_text_without_a_quote_has_no_empty_guillemets():
-    text = message(quote="  ").as_plain_text()
+    text = message(quote="  ", reply_hint=" ").as_plain_text()
     assert "«" not in text
     assert text == "Is this still true?\n\n1 — yes  2 — no longer  3 — never  4 — don't remember"
 
 
-def test_plain_text_quotes_the_subject_as_stored_and_never_adds_the_reply_hint():
+def test_plain_text_quotes_the_subject_as_stored():
     text = message(quote="Живе в Лісабоні — «стара адреса»").as_plain_text()
     assert "«Живе в Лісабоні — «стара адреса»»" in text
-    assert "Reply with a digit." not in text
+
+
+def test_plain_text_ends_with_the_reply_hint_because_only_a_reply_counts_there():
+    assert message().as_plain_text() == (
+        "Is this still true?\n\n«Lives in Lisbon»\n\n1 — yes  2 — no longer  3 — never  4 — don't remember"
+        "\n\nReply with a digit."
+    )
+    assert message(quote="").as_plain_text().endswith("4 — don't remember\n\nReply with a digit.")
 
 
 # ------------------------------------------------------------------------------------------------ digits
@@ -126,10 +133,15 @@ def test_option_ids_must_be_unique():
         message(options=options([("a", "one"), ("a", "two")]))
 
 
-@pytest.mark.parametrize("label", ["", "   ", "two\nlines"])
-def test_an_option_label_is_one_non_empty_line(label):
+@pytest.mark.parametrize("label", ["", "   ", "two\nlines", "x" * (MAX_LABEL_CHARS + 1)])
+def test_an_option_label_is_one_non_empty_line_that_fits_a_button(label):
     with pytest.raises(ValidationError):
         InteractiveOption(id="a", label=label)
+
+
+def test_a_label_of_exactly_the_button_limit_is_accepted():
+    assert len(InteractiveOption(id="a", label="é" * MAX_LABEL_CHARS).label) == MAX_LABEL_CHARS
+    assert MAX_LABEL_CHARS == 75
 
 
 @pytest.mark.parametrize("ident", ["", "has space", "a:b", "x" * 65, "ü"])
@@ -165,8 +177,8 @@ def test_an_outcome_shows_the_chosen_option_or_a_note_and_never_neither():
         ChoiceOutcome(message=msg, chosen_option_id="not_an_option")
 
 
-def test_a_choice_travels_in_a_task_payload_and_comes_back_equal():
-    choice = InteractiveChoice(
+def a_choice(**over):
+    fields = dict(
         binding=InteractiveBinding(kind="fact_question", id="q1"),
         option_id="ended",
         platform="slack",
@@ -174,8 +186,40 @@ def test_a_choice_travels_in_a_task_payload_and_comes_back_equal():
         message_ref=MessageRef(platform="slack", channel_id="D1", message_id="1700000000.000100"),
         at=datetime(2026, 10, 24, 9, 30, tzinfo=timezone.utc),
     )
-    wire = json.loads(json.dumps(choice.model_dump(mode="json")))
-    assert InteractiveChoice.model_validate(wire) == choice
+    fields.update(over)
+    return InteractiveChoice(**fields)
+
+
+def test_a_choice_travels_through_the_house_task_encoder_and_comes_back_equal():
+    from src.adapters.gcp_task_queue import _DomainEncoder
+    choice = a_choice()
+    wire = json.loads(json.dumps({"choice": choice.to_payload()}, cls=_DomainEncoder))
+    assert InteractiveChoice.from_payload(wire["choice"]) == choice
+
+
+def test_the_encoder_alone_cannot_write_the_datetime_which_is_why_the_payload_exists():
+    from src.adapters.gcp_task_queue import _DomainEncoder
+    with pytest.raises(TypeError):
+        json.dumps({"choice": a_choice()}, cls=_DomainEncoder)
+
+
+@pytest.mark.parametrize("payload", [
+    None, "x", [], {}, {"binding": {"kind": "fact_question", "id": "q1"}},
+    {**a_choice().to_payload(), "option_id": ""},
+    {**a_choice().to_payload(), "at": "yesterday"},
+    {**a_choice().to_payload(), "binding": {"kind": "Bad Kind", "id": "q1"}},
+])
+def test_a_payload_that_is_not_a_choice_gives_none(payload):
+    assert InteractiveChoice.from_payload(payload) is None
+
+
+def test_the_reference_must_be_on_the_choices_platform():
+    with pytest.raises(ValidationError):
+        a_choice(platform="telegram")
+    assert a_choice(platform="telegram", message_ref=MessageRef("telegram", "1", "2")).platform == "telegram"
+    wire = a_choice().to_payload()
+    wire["platform"] = "telegram"
+    assert InteractiveChoice.from_payload(wire) is None
 
 
 @pytest.mark.parametrize("field", ["option_id", "platform", "platform_user_id"])
