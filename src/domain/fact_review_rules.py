@@ -7,10 +7,12 @@ from datetime import date, datetime, timedelta, timezone
 from typing import AbstractSet, Any, Callable, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence
 
 from .entities import ExpiryKind, FactEntity, FactState
-from .fact_expiry import as_expiry_kind, expiry_view
+from .fact_expiry import EXPIRY_NONE, as_expiry_kind, expiry_view
 from .fact_update import ParsedFactUpdate
 from .fact_update_plan import content_changed
-from .fact_lifecycle import expiry_pinned, horizon_from_now, lifecycle_event, lifecycle_fields, with_event
+from .fact_lifecycle import (
+    compute_expiry, expiry_pinned, horizon_from_now, lifecycle_event, lifecycle_fields, resolves_too_soon, with_event,
+)
 from .fact_review_basis import ReviewAction, ReviewBasis
 from .fact_review_question import FactReviewQuestion, QuestionFallback, QuestionStatus
 from .fact_review_reasons import FallbackActor, fallback_reason, gives_window_reason, is_revive_reason
@@ -169,14 +171,15 @@ def fallback_window_days(fact: FactEntity) -> int:
 
 def keeps_expiry(fact: FactEntity, now: datetime) -> bool:
     """Whether a confirmation of the fact (the owner's yes, a silence, "I don't remember") leaves its own decision as it
-    is: a pinned fact or one whose decision is `none` stays permanent, and a `date` still ahead stays that date. Anything
+    is: a pinned fact or one whose decision is `none` stays permanent, and a `date` still ahead stays that date unless the write path would refuse it as born due. Anything
     else (a horizon, a date that has passed, a legacy fact with no kind) is given the doubled window instead."""
     return _holds_no_expiry(fact) or _date_ahead(fact, now)
 
 
 def confirmed_expiry(fact: FactEntity, now: datetime, tz: str) -> Dict[str, Any]:
     """The `expiry` a confirmation sends: `{kind: none}` for a pinned fact or one that is permanent, the fact's own date
-    while it is ahead (`tz`: the owner's zone), else a horizon of `fallback_window_days`. `keeps_expiry` is the same
+    while it is ahead (`tz`: the owner's zone), else a horizon of `fallback_window_days`. A date inside its last day (`resolves_too_soon`, the write path's bound) is not
+    kept: the write would refuse it. `keeps_expiry` is the same
     decision as a yes or no."""
     if expiry_pinned(fact.domain, fact.type, fact.tags):
         return {"kind": ExpiryKind.NONE.value}
@@ -195,7 +198,7 @@ def _date_ahead(fact: FactEntity, now: datetime) -> bool:
     return (
         as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE
         and fact.expires_at is not None
-        and as_utc(fact.expires_at) > as_utc(now)
+        and not resolves_too_soon(fact.expires_at, now)
     )
 
 
@@ -209,7 +212,7 @@ def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetim
 
     `archive`: the fact is archived, its `stale_since` kept. `revive`: current again, `stale_since` cleared, a horizon of
     `fallback_window_days` counted from now and stored from `reported_date` (which stays); a fact whose decision
-    `keeps_expiry` keeps it, so the expiry fields are left alone. Either way the trail
+    `keeps_expiry` keeps it, so the expiry fields are left alone (a pinned fact that had a horizon gets `none`). Either way the trail
     gets one entry under `actor`, with a code-built reason."""
     if fact.state not in (FactState.STALE, FactState.CURRENT):
         raise ValueError(f"a fallback applies to a stale or current fact, not a {fact.state.value} one")
@@ -218,6 +221,8 @@ def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetim
     if target is FactState.CURRENT:
         if not keeps_expiry(fact, now):
             fields.update(horizon_from_now(fallback_window_days(fact), fact.reported_date, now))
+        elif expiry_pinned(fact.domain, fact.type, fact.tags) and as_expiry_kind(fact.expiry_kind) is not ExpiryKind.NONE:
+            fields.update(compute_expiry(EXPIRY_NONE, fact.reported_date, "UTC"))  # a pinned fact is permanent, as a yes says
         fields["stale_since"] = None
     fields["last_updated"] = now
     event = lifecycle_event(now, fact.state, target, actor, fallback_reason(question.question_id, question.fallback, actor))

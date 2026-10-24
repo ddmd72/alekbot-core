@@ -119,12 +119,18 @@ def horizon_from_now(days: int, reported_date: datetime, now: datetime) -> Dict[
     return compute_expiry(Expiry(ExpiryKind.HORIZON, days=ttl_days), reported, "UTC")
 
 
+def resolves_too_soon(expires_at: datetime, now: datetime) -> bool:
+    """The one bound of "born due": an expiry that resolves at or before now + 1 day is refused on write (the day's margin
+    covers the model answering later). `born_due` and the rules that keep a stored date read it here."""
+    return local_moment(expires_at, "UTC") <= local_moment(now, "UTC") + _DAY
+
+
 def born_due(
     fields: Mapping[str, Any], reported_date: datetime, now: datetime, timezone: str, cleanup: bool
 ) -> Tuple[Dict[str, Any], Optional[str]]:
     """No expiry is born due: `fields` (from compute_expiry) as they may be written, and an optional note for the model.
 
-    A decision that resolves at or before now + 1 day is refused with FactExpiryError. The one exception is a horizon on a
+    A decision that `resolves_too_soon` (at or before now + 1 day) is refused with FactExpiryError. The one exception is a horizon on a
     cleanup pass (stage 2a/2b, backstop, cluster), which cannot move `reported_date`: it is floored to now + 2 days, so
     the fact reaches review soon.
     """
@@ -133,7 +139,7 @@ def born_due(
         return dict(fields), None
     now = local_moment(now, "UTC")
     expires = local_moment(expires_at, "UTC")
-    if expires > now + _DAY:
+    if not resolves_too_soon(expires, now):
         return dict(fields), None
     if kind is ExpiryKind.DATE:
         raise _date_refusal(expires, reported_date, now, timezone, cleanup)
