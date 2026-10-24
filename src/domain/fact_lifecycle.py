@@ -51,6 +51,11 @@ IN_PLACE_FIELDS: frozenset[str] = frozenset(
 MAX_FORWARD_HOPS = 50
 
 
+def successor_unknown(start_id: str) -> str:
+    """The refusal when `start_id` was superseded and its successor cannot be read (none stored, or the document is gone)."""
+    return f"fact {start_id} was superseded and its successor is unknown; search again"
+
+
 def forward_step(
     fact: FactEntity,
     accepted: AbstractSet[FactState],
@@ -72,7 +77,7 @@ def forward_step(
         return None
     if fact.state is FactState.SUPERSEDED:
         if fact.superseded_by is None:
-            raise FactResolutionError(f"fact {start_id} was superseded and its successor is unknown; search again")
+            raise FactResolutionError(successor_unknown(start_id))
         if hops >= MAX_FORWARD_HOPS:
             raise FactResolutionError(f"fact {start_id} has more than {MAX_FORWARD_HOPS} forward hops; search again")
         return fact.superseded_by

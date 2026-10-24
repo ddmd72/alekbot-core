@@ -548,7 +548,7 @@ class FirestoreFactRepository(FactRepository):
         tokens = {stored.fact.id: stored.update_time for stored in replaced}
         refs = [self.facts_col.document(fact_id) for fact_id in tokens]
         # A document read under its token and still carrying it is unchanged, so its stored trail is the one to extend.
-        closures = [_encode_fields(self._closure(new_fact, stored, now, actor)) for stored in replaced]
+        closures = [_encode_fields(superseded_closure(stored.fact, new_fact, now, actor)) for stored in replaced]
 
         async def body(transaction: Any) -> None:
             snaps = {}
@@ -565,11 +565,6 @@ class FirestoreFactRepository(FactRepository):
 
         await self._in_transaction(body, next(iter(tokens), new_fact.id))
 
-    @staticmethod
-    def _closure(new_fact: FactEntity, stored: StoredFact, now: datetime.datetime, actor: str) -> Dict[str, Any]:
-        """The in-place write that closes `stored` in favour of `new_fact`, with its trail entry."""
-        return superseded_closure(stored.fact, new_fact, now, actor)
-
     async def update_fact_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
         refused = set(fields) - IN_PLACE_FIELDS
         if refused:
@@ -582,6 +577,10 @@ class FirestoreFactRepository(FactRepository):
             snap = await ref.get(transaction=transaction)
             if not snap.exists or snap.update_time != stored.update_time:
                 raise FactWriteConflict(fact_id)
+            # Tenancy on the stored field, not on the read's view: a legacy `owner_id` (or a stray one beside another
+            # account's `account_id`) reads as the caller's account, but the stored document is not the caller's.
+            if snap.to_dict().get("account_id") != stored.fact.account_id:
+                raise PermissionError("Not authorized to modify this fact")
             transaction.update(ref, encoded)
 
         await self._in_transaction(body, fact_id)
