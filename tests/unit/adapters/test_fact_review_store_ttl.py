@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from src.adapters.firestore_fact_review_store import question_document
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_question import QUESTION_RETENTION, ClosedBy, FactReviewQuestion, QuestionStatus
+from src.domain.fact_review_question_close import QuestionClose
 from tests.support.fact_review_world import ReviewWorld
 from tests.support.review_rule_builders import NOW
 from tests.support.review_rule_builders import question as build_question
@@ -71,7 +72,8 @@ async def test_closing_through_close_and_release_writes_the_ttl_field_too(world)
     await world.seed_state(current_question_id="q1")
     await world.seed_question(QuestionStatus.ASKED)
 
-    assert await world.review_store.close_and_release("q1", ClosedBy.TIMEOUT, None, None, AT)
+    # Reviewer edit (S4 T8e re-review): the exact `QuestionClose` member (T8e review F1), not truthiness.
+    assert await world.review_store.close_and_release("q1", ClosedBy.TIMEOUT, None, None, AT) is QuestionClose.RELEASED
 
     assert world.question_docs["q1"]["purge_after"] == AT + QUESTION_RETENTION
     assert world.state_doc()["current_question_id"] is None
