@@ -1,5 +1,6 @@
 """
-FactReviewStore — the memory review's questions and its per-account state (Facts S4 plan §2.2, §3.7, §3.13).
+FactReviewStore — the memory review's questions, its per-account state and its message claims (Facts S4 plan §2.2,
+§3.7, §3.13).
 
 The queue and the current question: `claim_next` is the one way a question goes out, deciding with the domain's
 `current_question`, `may_send`, `next_in_queue` and `sent_today` inside one transaction over the state document and the
@@ -12,10 +13,15 @@ transaction, calls that method and writes the result. A move the method refuses 
 write's `False`, never an exception to the caller. `False` also means the question does not exist. A stored document
 the model no longer validates is skipped (logged as ERROR) by the list reads; for the one question or state a write is
 about, it is logged as ERROR and raised, because answering "refused" would hide it. Store errors raise.
+
+The state marks each write exactly their fields, validated as the whole state they make, in a transaction over the
+state document. Only `mark_enqueued` creates a missing state document; every other mark answers False for an account
+with none and writes nothing. Each raises ValueError for an empty `account_id`, or for a value the state does not
+validate, before anything is written.
 """
 from abc import ABC, abstractmethod
 from datetime import date, datetime
-from typing import List, Optional, Sequence
+from typing import List, Mapping, Optional, Sequence
 
 from ..domain.fact_review_answer_kind import AnswerKind
 from ..domain.fact_review_question import AnswerSource, ClosedBy, FactReviewQuestion
@@ -77,8 +83,8 @@ class FactReviewStore(ABC):
         at: datetime,
     ) -> bool:
         """`closed(closed_by, at, answer, source)`, in a transaction over the question only: the state's pointer is not
-        touched (`close_and_release` does that). `purge_after` comes with the close. False: no such question, it is
-        closed already, or the answer and source do not fit the closer."""
+        touched (`close_and_release` does that). A closed question expires `QUESTION_RETENTION` after `closed_at`. False:
+        no such question, it is closed already, or the answer and source do not fit the closer."""
 
     # ------------------------------------------------------------------------------------ queue and current question
 
@@ -143,3 +149,68 @@ class FactReviewStore(ABC):
         """`closed(closed_by, at, answer, source)`, in one transaction over the question and its account's state,
         clearing `current_question_id` only when it names this question. False as for `close`; the state is then
         untouched."""
+
+    # ------------------------------------------------------------------------------------------------ state marks
+
+    @abstractmethod
+    async def all_states(self) -> List[FactReviewState]:
+        """Every account's review state, unordered; one that no longer validates is skipped (ERROR). No transaction."""
+
+    @abstractmethod
+    async def mark_enqueued(self, account_id: str, at: datetime) -> bool:
+        """`enqueued_at = at`. Creates the state document when the account has none. Always True."""
+
+    @abstractmethod
+    async def mark_started(self, account_id: str, at: datetime) -> bool:
+        """`started_at = at`."""
+
+    @abstractmethod
+    async def mark_succeeded(self, account_id: str, at: datetime) -> bool:
+        """`last_review_at = at`, and `unsuccessful_since` cleared."""
+
+    @abstractmethod
+    async def mark_failed(self, account_id: str, at: datetime) -> bool:
+        """`last_failed_at = at`; `unsuccessful_since = at` only when it is empty (the first failure since a success)."""
+
+    @abstractmethod
+    async def set_offers(self, account_id: str, offers: Mapping[str, int]) -> bool:
+        """`offers` replaced by `offers` (fact id -> times offered without a decision)."""
+
+    @abstractmethod
+    async def mark_removed(self, account_id: str, fact_ids: Sequence[str]) -> bool:
+        """The `offers` entries of these facts dropped; the others kept."""
+
+    @abstractmethod
+    async def mark_digest(self, account_id: str, at: datetime) -> bool:
+        """`last_digest_at = at`, and `undigested_since` cleared."""
+
+    @abstractmethod
+    async def mark_oldest_alert(self, account_id: str, at: datetime) -> bool:
+        """`oldest_alert_at = at`."""
+
+    @abstractmethod
+    async def mark_queue_alert(self, account_id: str, at: Optional[datetime]) -> bool:
+        """`queue_alert_at = at`; None re-arms the alert."""
+
+    @abstractmethod
+    async def set_language(self, account_id: str, lang: str, labels: Mapping[str, str]) -> bool:
+        """`message_language = lang`, and the labels of `lang` replaced by `labels` (other languages' kept)."""
+
+    # ------------------------------------------------------------------------------------------------ digest claim
+
+    @abstractmethod
+    async def claim_digest(self, user_id: str, iso_week: str) -> bool:
+        """True for the first claim of the user's weekly digest for `iso_week` (`YYYY-Www`, e.g. `2026-W43`), False
+        while that claim stands. Raises ValueError for an empty `user_id` or a malformed `iso_week`."""
+
+    @abstractmethod
+    async def release_digest(self, user_id: str, iso_week: str) -> None:
+        """Drop the claim, so the week's digest may be claimed again; no claim is no error. ValueError as for
+        `claim_digest`."""
+
+    # ------------------------------------------------------------------------------------------------ expiry
+
+    @abstractmethod
+    async def purge_overdue(self, before: datetime) -> int:
+        """How many closed questions and digest claims are past their expiry at `before` and still stored: what the
+        store's own expiry has not removed yet. Raises ValueError for a naive `before`."""

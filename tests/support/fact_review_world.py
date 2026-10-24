@@ -256,6 +256,15 @@ class ReviewWorld:
         return self.store.db.collection(self.env.fact_review_state_collection).docs.get(account_id)
 
     @property
+    def message_docs(self) -> dict:
+        """The raw stored message claims (the weekly digest's), by doc id, as Firestore holds them."""
+        return self.store.db.collection(self.env.fact_review_messages_collection).docs
+
+    async def seed_raw_state(self, account_id: str, document: Dict[str, Any]) -> None:
+        """A state document stored exactly as given: an old shape or one the model no longer validates."""
+        await self.store.db.collection(self.env.fact_review_state_collection).document(account_id).set(document)
+
+    @property
     def enqueued(self) -> List[Tuple[str, Dict[str, Any]]]:
         return self.tasks.worker_tasks()
 
