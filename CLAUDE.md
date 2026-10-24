@@ -754,8 +754,8 @@ the indexer's kill switch `DRIVE_TRANSCRIBE_ENABLED` (a Cloud Build substitution
 (`transcribe` class, `TRANSCRIBE_USD_PER_MONTH` $20, no initial-build share): a whole file's estimate is **reserved** before its first window and settled at
 collection in the reservation's month; a file that does not fit is parked whole until next month; an optional `DRIVE_TRANSCRIBE_USD_CAP_DEV` can only lower the
 cap. Billing keeps the held `gemini-3.8-flash` price (≈ $0.16/audio hour, ≈ 125 h/month until 2027). No `prompt_content`/Logfire row per window (a batch is not a
-call). `open_file_from_drive` on a transcribed recording returns the transcript (`original: true` → a link). Rollout and levers: `docs/07_deployment/README.md` →
-"Transcripts of recordings (§27)"; the owner's map `docs/05_building_blocks/user_drive/README.md` §4.23; decision `decisions/drive_transcripts_t1.md`.
+call). `open_file_from_drive` on a transcribed recording returns the transcript (`original: true` → a link). Rollout: the rollout notes (ops); levers: `docs/07_deployment/README.md` →
+"Standing levers"; the owner's map `docs/05_building_blocks/user_drive/README.md` §4.23; decision `decisions/drive_transcripts_t1.md`.
 **Mirror folder T2 (RFC §27.9, Δ183–Δ244; built on `feat/drive-transcripts-t2`, not deployed).** The indexer writes each transcript as `<name>.md` into a bot-owned
 **`_Transcripts`** folder at the App Folder root (D49: the same name in every language; fixed `_README.md`, `Archive`, `Long paths`), reconciled by `DriveTranscriptMirror`
 (ports only) as the **last step of `_work_off`**, with its own op/read/stamp budgets and a 45 s reserved tail. State lives in two collections **no purge deletes**:
@@ -782,7 +782,7 @@ tiers About / Mentioned in (exact), By translation / Labelled (automatic), Relat
 z-floor `Z_RELATED` 2.5, uncalibrated); a coverage line names what was not searched or described; results in a
 nonce-tagged `<drive_document>` wrapper; reads only `drive_query` (a time span goes in the date fields). A sync state
 built by v1 (no `keys` in `applied_versions`) is gated (D30): no tick work, search answers "being rebuilt"; the rollout
-rebuilds every user (`docs/07_deployment/README.md` § Search v2). Smart's drive guidance (incl. the `tiers` line and
+rebuilds every user (rollout notes, ops). Smart's drive guidance (incl. the `tiers` line and
 "find is answered from the results; open a file only for its contents") is the system skill `drive-search`
 (`src/skills/smart/drive-search/SKILL.md`, D32), loaded before the first drive search; the `drive_specialist` block of
 `PROTOCOL_AGENT_SELECTION` keeps only when to search the drive, the pointer and the untrusted-text line. Not in

@@ -343,7 +343,7 @@ substitutions:
   _DRIVE_TRANSCRIBE_ENABLED: "off"
   _DRIVE_TRANSCRIBE_USD_CAP: ""
   # Sandbox render service (S1). `inprocess` keeps the DOCX engine in the main process; the rest is empty until the service
-  # identity and URL exist (docs/07_deployment/README.md, two-pass note).
+  # identity and URL exist (docs/07_deployment/README.md § Sandbox render service).
   _SANDBOX_RENDER: "inprocess"
   _SANDBOX_RENDER_URL: ""
   _SANDBOX_RENDER_SA: ""

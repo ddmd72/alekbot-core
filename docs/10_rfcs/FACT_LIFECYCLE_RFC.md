@@ -751,7 +751,7 @@ Where the built code differs from the S2 plan:
 **S3 as built (2026-10-23).** On the S2–S5 branch, not deployed (it ships with S4 and S5 in one switch window). Where this
 text and the code differ, the code wins and is described here. The owner's map is `docs/05_building_blocks/memory/README.md`
 (§2.7, §3.11, §5.5); the decision record is `decisions/fact_expiry_and_janitor.md`; the deploy steps are in
-`docs/07_deployment/README.md` ("Facts S2", which now carries S3).
+the rollout notes (ops).
 
 *Two owner decisions of 2026-10-23, built first.*
 - **Cabinet delete of a stale row (F1 S-1).** `invalidate_fact` follows the id forward as in D8, but when the walk moved
@@ -849,7 +849,7 @@ recording counters store and a cost meter with a $30 cumulative cap. It writes n
 counter or account usage counter; `prompt_content` rows (account id empty, only when `DEBUG_PROMPTS=true` with a prompt dataset set), model and embedding
 calls leave the Mac, and no Logfire span does. It needs `CONSOLIDATION__PROMPT_VERSION` v3, one bench at a time. Gates: no
 `stage2a` or `cluster` pass over 13 turns, zero abandoned refusals, and the owner reads the decision table. Commands and costs:
-deploy README step M.
+the rollout notes (ops), step M.
 
 *Notes for S4 and S5.*
 - **S4:** the breaker's rule becomes the review interval + 72 h (D6) when `last_review_at` is wired (S3 passes none and pins

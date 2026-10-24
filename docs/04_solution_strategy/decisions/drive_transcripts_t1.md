@@ -6,7 +6,7 @@
 arrive "through the extractor seam"; they did not, see below). It stays correct for everything else it names.
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §27 (owner decisions D41–D47 in §21; the 38 engineering
 deltas of the build are Δ136–Δ175 in §27.16 and the as-built summary is §27.19); owner's map
-[user_drive/README.md](../../05_building_blocks/user_drive/README.md) §4.23; rollout `docs/07_deployment/README.md` → "Transcripts of recordings (§27)".
+[user_drive/README.md](../../05_building_blocks/user_drive/README.md) §4.23; rollout notes (ops).
 
 ## Decision
 

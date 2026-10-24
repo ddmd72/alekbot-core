@@ -62,7 +62,7 @@ make deploy-indexes       # python scripts/infrastructure/deploy_firestore_index
 Index builds are asynchronous — vector search returns errors until they finish (minutes).
 
 `deploy_firestore_indexes.py` skips vector entries. The drive index's vector indexes are created by
-`scripts/infrastructure/create_drive_vector_indexes.sh` (see `docs/07_deployment/README.md` → Drive Indexer Service).
+`scripts/infrastructure/create_drive_vector_indexes.sh` (see `docs/07_deployment/README.md` → Firestore indexes).
 Both take the project id explicitly: `.env` holds `GOOGLE_CLOUD_PROJECT`, not `PROJECT_ID`, so pass
 `PROJECT_ID=<PROJECT_ID>` to the make target and the script.
 
@@ -93,6 +93,10 @@ Cloud Scheduler jobs (consolidation watchdog, daily email review, reminder firin
 subscription renewal, billing summary) are documented in
 [`docs/07_deployment/SCHEDULERS.md`](docs/07_deployment/SCHEDULERS.md). Keep-alive setup:
 [`docs/07_deployment/KEEP_ALIVE_SETUP.md`](docs/07_deployment/KEEP_ALIVE_SETUP.md).
+
+The other deploy units (relay, indexer, sandbox, research job), the one-time project setup they need (secrets,
+TTL policies, Twilio) and the two-pass first deploys of their URLs:
+[`docs/07_deployment/README.md`](docs/07_deployment/README.md).
 
 ---
 
