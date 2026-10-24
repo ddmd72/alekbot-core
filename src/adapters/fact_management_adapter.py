@@ -1,11 +1,11 @@
 import dataclasses
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..domain.entities import FactEntity, normalize_fact_taxonomy
 from ..domain.exceptions import FactBornDueError, FactExpiryError, FactResolutionError, FactWriteConflict
 from ..domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE
-from ..domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
+from ..domain.fact_lifecycle import CONSOLIDATION_ACCEPTS, superseded_closure
 from ..domain.fact_review_answers import history_fact, history_moved_refusal, history_refusal, history_trail
 from ..domain.fact_tool_result import (
     HISTORY_FACT_ID,
@@ -31,6 +31,7 @@ from ..domain.new_fact_attributes import NewFactAttributes, decided_attributes, 
 from ..domain.search import SearchLimits, consolidation_hit
 from ..domain.stored_fact import StoredFact
 from ..ports.fact_management_port import FactManagementPort
+from ..ports.fact_update_port import FactUpdatePort
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_write_port import FactWritePort
@@ -38,9 +39,10 @@ from ..ports.search_enrichment_port import SearchEnrichmentPort
 from ..utils.logger import logger
 
 
-class FactManagementAdapter(FactManagementPort):
+class FactManagementAdapter(FactManagementPort, FactUpdatePort):
     """
-    Implementation of deliberate fact management tools.
+    Implementation of deliberate fact management tools (FactManagementPort, the model's) and of code's typed update
+    (FactUpdatePort); both updates run one apply.
 
     Coordinates FactRepository, EmbeddingService, FactWriteService and
     SearchEnrichmentService to provide search/create/update/merge/discard
@@ -258,33 +260,71 @@ class FactManagementAdapter(FactManagementPort):
         account_id: str,
         *,
         context: FactWriteContext,
+    ) -> Dict[str, Any]:
+        """
+        The model's update: `updates` parsed (`parse_fact_update`), then the one apply `apply_fact_update` uses.
+
+        The parse runs inside the apply, after the fact is resolved, so a missing or unresolvable fact is reported
+        before an invalid argument, as it always was.
+
+        Args:
+            fact_id: UUID of fact to update; a superseded id is followed to its current version
+            updates: Fields to update (content, tags, metadata, state, etc.), as the model sends them
+            account_id: Caller account; a fact of another account is reported as not found
+            context: The pass this write belongs to (actor, owner's zone, span, who decides dates)
+
+        Returns:
+            Result dict with fact_id (the document written), status, version, message
+        """
+        return await self._update(fact_id, account_id, context, lambda: parse_fact_update(updates, context.timezone))
+
+    async def apply_fact_update(
+        self,
+        fact_id: str,
+        update: ParsedFactUpdate,
+        account_id: str,
+        *,
+        context: FactWriteContext,
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Update existing fact with error handling.
+        Code's update: `update` already decided, with the inputs only code has.
 
         Args:
-            fact_id: UUID of fact to update; a superseded id is followed to its current version
-            updates: Fields to update (content, tags, metadata, state, etc.)
-            account_id: Caller account; a fact of another account is reported as not found
-            context: The pass this write belongs to (actor, owner's zone, span, who decides dates)
             evidence_at: The review's or the owner's evidence moment (finish_fact_update); the history fact's date
             reason: The code-built trail reason of a review or owner write (finish_fact_update)
             history: The text of a fact to create beside an archive (history_refusal, history_fact)
 
         Returns:
-            Result dict with fact_id (the document written), status, version, message (and history_fact_id)
+            Result dict as update_fact's, plus history_fact_id with history
         """
+        if history is not None:
+            refusal = history_refusal(history, update, context, evidence_at)
+            if refusal is not None:
+                logger.warning(f"⚠️  [FactManagement] update {fact_id[:8]} refused (history): {refusal}")
+                return {"fact_id": fact_id, "status": STATUS_FAILED, "message": refusal}
+        return await self._update(
+            fact_id, account_id, context, lambda: update, evidence_at=evidence_at, reason=reason, history=history
+        )
+
+    async def _update(
+        self,
+        fact_id: str,
+        account_id: str,
+        context: FactWriteContext,
+        parse: Callable[[], ParsedFactUpdate],
+        *,
+        evidence_at: Optional[datetime] = None,
+        reason: Optional[str] = None,
+        history: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """The one apply of both entries: every refusal becomes a failed result. `parse` gives the update once, after
+        the first resolution."""
         try:
-            if history is not None:
-                refusal = history_refusal(history, updates, context, evidence_at)
-                if refusal is not None:
-                    logger.warning(f"⚠️  [FactManagement] update_fact {fact_id[:8]} refused (history): {refusal}")
-                    return {"fact_id": fact_id, "status": STATUS_FAILED, "message": refusal}
             return await self._update_with_one_retry(
-                fact_id, updates, account_id, context, evidence_at=evidence_at, reason=reason, history=history
+                fact_id, account_id, context, parse, evidence_at=evidence_at, reason=reason, history=history
             )
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] update_fact {fact_id[:8]} refused (expiry): {e}")
@@ -315,9 +355,9 @@ class FactManagementAdapter(FactManagementPort):
     async def _update_with_one_retry(
         self,
         fact_id: str,
-        updates: Dict[str, Any],
         account_id: str,
         context: FactWriteContext,
+        parse: Callable[[], ParsedFactUpdate],
         *,
         evidence_at: Optional[datetime],
         reason: Optional[str],
@@ -338,7 +378,7 @@ class FactManagementAdapter(FactManagementPort):
                 logger.warning(f"⚠️  [FactManagement] Fact not found: {fact_id[:8]}")
                 return {"fact_id": fact_id, "status": STATUS_NOT_FOUND, "message": "Fact not found"}
             if parsed is None:
-                parsed = parse_fact_update(updates, context.timezone)
+                parsed = parse()
             if first_resolved_id is None:
                 first_resolved_id = stored.fact.id
             else:
@@ -373,13 +413,14 @@ class FactManagementAdapter(FactManagementPort):
                 history_entity = history_trail(built_history, stored.fact.id, now, context.actor)
             try:
                 if history_entity is not None:
-                    # finish_fact_update built the archive with `archive_fields`; the repository writes the same rule
-                    # beside the new fact, in one transaction.
-                    await self._repo.archive_and_add(stored, history_entity, now, actor=context.actor, reason=reason)
+                    # finish_fact_update built the archive (`archive_fields`, history_refusal let only an archive
+                    # through); the repository writes it beside the new fact, in one transaction.
+                    await self._repo.archive_and_add(stored, plan.fields, history_entity)
                     written = stored.fact
                 elif plan.kind == "version":
                     new_fact, embedded = await self._complete_version(plan, embedded)
-                    await self._repo.write_superseding(new_fact, [stored], now, actor=context.actor)
+                    closure = superseded_closure(stored.fact, new_fact, now, context.actor)
+                    await self._repo.write_superseding(new_fact, [(stored, closure)])
                     written = new_fact
                 else:
                     await self._repo.update_fact_fields(stored, plan.fields)
@@ -538,8 +579,10 @@ class FactManagementAdapter(FactManagementPort):
                 merged = (await self._fact_write_service.build_facts(
                     metadata["account_id"], metadata["user_id"], [decided]
                 ))[0]
+            now = datetime.now(timezone.utc)
+            closures = [(source, superseded_closure(source.fact, merged, now, context.actor)) for source in sources]
             try:
-                await self._repo.write_superseding(merged, sources, datetime.now(timezone.utc), actor=context.actor)
+                await self._repo.write_superseding(merged, closures)
             except FactWriteConflict:
                 logger.warning(f"⚠️  [FactManagement] Merge conflicted on write (attempt {attempt})")
                 if attempt == 2:

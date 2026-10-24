@@ -2,8 +2,8 @@
 FactLifecycleCountersPort — the per-account, per-day numbers of the fact lifecycle (FACT_LIFECYCLE_RFC D10).
 
 The janitor writes a snapshot of its run (`record_sweep`); the consolidator adds the expiry tool errors it meets
-(`add`). Days are UTC days. The daily ops line is posted at most once a day (`claim_line`). The store has no TTL policy
-and no field named `expires_at`.
+(`add`). Days are UTC days. The daily ops line is posted at most once a day (`claim_line`). The numbers are kept until
+deleted: they expire by no rule of the store.
 """
 from abc import ABC, abstractmethod
 from datetime import date

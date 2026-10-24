@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from ..domain.fact_write_context import FactWriteContext
 
@@ -103,11 +102,11 @@ class FactManagementPort(ABC):
         account_id: str,
         *,
         context: FactWriteContext,
-        evidence_at: Optional[datetime] = None,
-        reason: Optional[str] = None,
-        history: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Update one fact: a new version document for a content change, an in-place write for a lifecycle change.
+
+        The model's entry: `updates` is parsed (domain.fact_update.parse_fact_update) and applied by the same write as
+        code's typed entry (ports.fact_update_port.FactUpdatePort.apply_fact_update).
 
         Args:
             fact_id: any id of the fact's chain; a superseded id is followed to the current version.
@@ -118,15 +117,6 @@ class FactManagementPort(ABC):
                 content key). Absent keys keep the stored value; other keys are ignored (observed).
             account_id: the caller's account.
             context: the pass the write belongs to; its actor is written to the lifecycle trail of the closed version.
-            evidence_at: the moment the review's evidence or the owner's answer is from; it may move a revive's
-                reported_date (domain.fact_update_lifecycle.finish_fact_update) and is the history fact's
-                reported_date. Other passes ignore it.
-            reason: the code-built trail reason of a review or owner write (the builders of
-                domain.fact_review_reasons); finish_fact_update requires it for them.
-            history: the text of a fact to create beside an archive (domain.fact_review_answers.history_refusal says
-                when a call may carry it, history_fact and history_trail build the fact). The archive and the new fact
-                are one transaction (FactRepository.archive_and_add). A call refused for its history is "failed" with
-                nothing written.
 
         Tenancy: a fact of another account, or a missing id, is "not_found"; nothing is written.
         Returns: {"fact_id", "status": "updated" | "not_found" | "failed", "message"}, plus "version" and "note"
@@ -135,8 +125,6 @@ class FactManagementPort(ABC):
             `fact_id` is the id of the document written: the new version's id after a content change, else the
             current document's id, which differs from the argument when it was followed forward. When the argument
             was followed forward, the result also has "resolved_from" (the argument) and says so in its message.
-            With `history`, `fact_id` is the archived fact and "history_fact_id"
-            (domain.fact_tool_result.HISTORY_FACT_ID) the new one.
         Versions: a change of text, tags, metadata or temporal_class writes a new document (new id, same lineage,
             version + 1, `replaces_fact_id`, `created_at` copied, `valid_from` now) and closes the old one
             (superseded, `superseded_by` = the new id) in one transaction. The new version needs `expiry` (decided again
@@ -154,7 +142,8 @@ class FactManagementPort(ABC):
         Resolution: the target must end in a state of `context.accepts` (the consolidator: current; the review and the
             owner: stale or current). An id that was merged into another lineage, whose successor is unknown, or whose
             end is in another state is "failed" with a message that names the current id when there is one. The review
-            and the owner write through domain.fact_update_lifecycle.finish_fact_update.
+            and the owner write through domain.fact_update_lifecycle.finish_fact_update, which needs the code-built
+            reason only the typed entry carries.
         Conflict: a document changed between the read and the write is read again once, re-embedding only when the
             embedding texts changed; a second conflict is "failed" ("changed concurrently; search again"). An update
             with content or tags (full replacements) is also "failed" the same way when the read-again lands on a

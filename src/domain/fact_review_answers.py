@@ -2,10 +2,9 @@
 
 Digits only: there is no word parsing in code. An answer in words goes to the review model as text."""
 from datetime import datetime
-from typing import Any, Dict, Final, Mapping, Optional
+from typing import Final, Optional
 
 from .entities import ContextPriority, FactEntity, FactState, TemporalClass
-from .fact_argument_parsing import parse_enum
 from .fact_expiry import EXPIRY_NONE
 from .fact_lifecycle import compute_expiry, lifecycle_event, walked_to_unseen_text, with_event
 from .fact_review_answer_change import AnswerChange
@@ -13,15 +12,19 @@ from .fact_review_answer_kind import AnswerKind
 from .fact_review_question import AnswerSource, FactReviewQuestion
 from .fact_review_reasons import answer_reason, history_reason
 from .fact_review_rules import confirmed_expiry, fallback_fields, is_dated_plan
+from .fact_update import ParsedFactUpdate
 from .fact_write_context import FactWriteContext, as_utc, reviews_stored_memory
 from .interactive_message import InteractiveMessage
 from .local_time import local_moment
 from .new_fact_attributes import NewFactAttributes
 
 __all__ = [
-    "answer_updates", "digit_answer", "ended_text", "history_fact", "history_moved_refusal", "history_refusal",
-    "history_trail",
+    "ARCHIVE_ONLY", "answer_updates", "digit_answer", "ended_text", "history_fact", "history_moved_refusal",
+    "history_refusal", "history_trail",
 ]
+
+# The one update a history fact goes with: the fact archived, nothing else changed.
+ARCHIVE_ONLY: Final[ParsedFactUpdate] = ParsedFactUpdate(state=FactState.ARCHIVED)
 
 # English whatever the process locale: the text is written into a stored fact.
 _MONTHS: Final[tuple[str, ...]] = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -79,19 +82,15 @@ def history_trail(fact: FactEntity, archived_id: str, at: datetime, actor: str) 
 
 
 def history_refusal(
-    history: str, updates: Mapping[str, Any], context: FactWriteContext, evidence_at: Optional[datetime]
+    history: str, update: ParsedFactUpdate, context: FactWriteContext, evidence_at: Optional[datetime]
 ) -> Optional[str]:
-    """Why an `update_fact` call may not carry `history`, as the text of the failed result, or None when it may: only a
-    review or owner write (`reviews_stored_memory`) whose `updates` are exactly `{"state": "archived"}` (any case), with
-    a non-empty text and `evidence_at` (the history fact's `reported_date`). Nothing is written when it is refused."""
+    """Why a write may not carry `history`, as the reason of the failed result, or None when it may: only a review or
+    owner write (`reviews_stored_memory`) whose update is an archive and nothing else (`ARCHIVE_ONLY`), with a non-empty
+    text and `evidence_at` (the history fact's `reported_date`). Nothing is written when it is refused."""
     if not reviews_stored_memory(context):
         return f"history: only the review or the owner write a history fact, not {context.actor}; nothing was written"
-    try:
-        state: Optional[FactState] = parse_enum(FactState, "state", updates.get("state"))
-    except ValueError:
-        state = None
-    if set(updates) != {"state"} or state is not FactState.ARCHIVED:
-        return 'history goes only with an update that is exactly {"state": "archived"}; nothing was written'
+    if update != ARCHIVE_ONLY:
+        return "history goes only with an update that archives the fact and changes nothing else; nothing was written"
     if not history.strip():
         return "history: the text of the fact to create beside the archive is empty; nothing was written"
     if evidence_at is None:
@@ -116,6 +115,8 @@ def answer_updates(
 ) -> AnswerChange:
     """What the owner's answer does to the fact he was asked about (`source`: where the answer came from).
 
+    The update is typed (`ParsedFactUpdate`), for the typed write path; `dont_know` is the fallback's in-place fields
+    (`AnswerChange` says why two shapes).
     `still_true`: current again, keeping the fact's own decision when it is permanent or a date still ahead
     (`confirmed_expiry`), else for the window a silence would give, counted from now.
     `ended`: archived; a standing fact also gets its `ended_text` as a history fact, a dated plan (`is_dated_plan`) is
@@ -123,15 +124,15 @@ def answer_updates(
     (`fallback_fields`). The trail reasons are the domain builders'."""
     if kind is AnswerKind.DONT_KNOW:
         return AnswerChange(fields=fallback_fields(fact, question, now, "owner"))
-    updates: Dict[str, Any]
+    update: ParsedFactUpdate
     history: Optional[str] = None
     if kind is AnswerKind.STILL_TRUE:
-        updates = {"state": FactState.CURRENT.value, "expiry": confirmed_expiry(fact, now, tz)}
+        update = ParsedFactUpdate(state=FactState.CURRENT, expiry=confirmed_expiry(fact, now, tz))
     elif kind is AnswerKind.ENDED:
-        updates = {"state": FactState.ARCHIVED.value}
+        update = ARCHIVE_ONLY
         history = None if is_dated_plan(fact, question) else ended_text(fact.text, now, tz)
     else:
-        updates = {"state": FactState.INVALIDATED.value}
+        update = ParsedFactUpdate(state=FactState.INVALIDATED)
     return AnswerChange(
-        updates=updates, reason=answer_reason(kind, question.question_id, source), evidence_at=now, history=history
+        update=update, reason=answer_reason(kind, question.question_id, source), evidence_at=now, history=history
     )

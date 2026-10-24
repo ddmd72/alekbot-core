@@ -23,11 +23,8 @@ HISTORY_FACT_ID = "history_fact_id"
 # The statuses that mean a fact was written.
 WRITTEN_STATUSES: FrozenSet[str] = frozenset({STATUS_CREATED, STATUS_UPDATED, STATUS_MERGED})
 
-# Value of the `refused` tag. Only `expiry` is written today; the other three are declared for S4's review tools.
+# Value of the `refused` tag. A new tag is declared together with the write that sets it.
 REFUSED_EXPIRY = "expiry"
-REFUSED_BASIS = "basis"
-REFUSED_SCOPE = "scope"
-REFUSED_ASK = "ask"
 
 # Codes of the notes a reader needs to recognise. The text stays in the domain beside the rule that writes it; the
 # result carries the code in `note_codes`, so no reader matches prose.

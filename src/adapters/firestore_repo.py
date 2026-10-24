@@ -1,6 +1,5 @@
 import asyncio
 import datetime
-from dataclasses import replace
 from enum import Enum
 from typing import AbstractSet, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from google.api_core.exceptions import Aborted
@@ -12,8 +11,7 @@ from ..domain.due_fact import DueFact
 from ..domain.entities import FactEntity, FactState
 from ..domain.exceptions import FactWriteConflict, InPlaceFieldRefused
 from ..domain.fact_expiry import as_expiry_kind
-from ..domain.fact_lifecycle import IN_PLACE_FIELDS, REVIEW_CLOSED_STATES, archive_fields, superseded_closure
-from ..domain.fact_lifecycle_sweep import stale_fields
+from ..domain.fact_lifecycle import IN_PLACE_FIELDS, REVIEW_CLOSED_STATES
 from ..domain.fact_resolution import resolve_chain
 from ..domain.fact_review_rules import stale_order_key
 from ..domain.stored_fact import StoredFact
@@ -72,6 +70,13 @@ def _has_aborted_in_chain(exc: BaseException) -> bool:
 def _projection(*omitted: str) -> List[str]:
     """The stored field names of a FactEntity read without `omitted` (the document id is not a field)."""
     return [name for name in FactEntity.model_fields if name not in omitted and name != "id"]
+
+
+def _require_in_place(fields: Mapping[str, Any]) -> None:
+    """An in-place write names only IN_PLACE_FIELDS; anything else is a programming error, refused before any I/O."""
+    refused = set(fields) - IN_PLACE_FIELDS
+    if refused:
+        raise InPlaceFieldRefused(refused)
 
 
 def _encode_fields(fields: Mapping[str, Any]) -> Dict[str, Any]:
@@ -508,6 +513,8 @@ class FirestoreFactRepository(FactRepository):
         return sorted_facts[:limit]
 
     async def get_stale_facts(self, account_id: str) -> List[FactEntity]:
+        """Sorted in code (`stale_order_key`): the query is the two equalities on account_id and state and needs no
+        composite index."""
         query = (
             self.facts_col
             .where(filter=FieldFilter("account_id", "==", account_id))
@@ -518,6 +525,7 @@ class FirestoreFactRepository(FactRepository):
         return sorted(facts, key=stale_order_key)
 
     async def get_recently_closed(self, account_id: str, since: datetime.datetime, limit: int) -> List[FactEntity]:
+        """Needs the composite index (account_id ASC, state ASC, valid_to DESC) in config/firestore.indexes.json."""
         query = (
             self.facts_col
             .where(filter=FieldFilter("account_id", "==", account_id))
@@ -568,23 +576,23 @@ class FirestoreFactRepository(FactRepository):
         return StoredFact(self._fact_from_snapshot(snap), snap.update_time)
 
     async def write_superseding(
-        self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime.datetime, *, actor: str
+        self, new_fact: FactEntity, closures: Sequence[Tuple[StoredFact, Mapping[str, Any]]]
     ) -> None:
-        if not replaced:
+        if not closures:
             raise ValueError(f"write_superseding of {new_fact.id} replaces no document; use add_fact")
+        for _, fields in closures:
+            _require_in_place(fields)
         missing = [name for name in _VECTOR_FIELDS if getattr(new_fact, name) is None]
         if missing:
             raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a version without vectors leaves vector search")
         new_ref = self.facts_col.document(new_fact.id)
         document = self._to_document(new_fact)
-        tokens = {stored.fact.id: stored.update_time for stored in replaced}
-        refs = [self.facts_col.document(fact_id) for fact_id in tokens]
-        # A document read under its token and still carrying it is unchanged, so its stored trail is the one to extend.
-        closures = [_encode_fields(superseded_closure(stored.fact, new_fact, now, actor)) for stored in replaced]
+        tokens = {stored.fact.id: stored.update_time for stored, _ in closures}
+        writes = [(self.facts_col.document(stored.fact.id), _encode_fields(fields)) for stored, fields in closures]
 
         async def body(transaction: Any) -> None:
             snaps = {}
-            for ref in refs:
+            for ref, _ in writes:
                 snap = await ref.get(transaction=transaction)
                 snaps[snap.id] = snap
             for fact_id, token in tokens.items():
@@ -592,15 +600,13 @@ class FirestoreFactRepository(FactRepository):
                 if snap is None or not snap.exists or snap.update_time != token:
                     raise FactWriteConflict(fact_id)
             transaction.create(new_ref, document)
-            for ref, closure in zip(refs, closures):
-                transaction.update(ref, closure)
+            for ref, encoded in writes:
+                transaction.update(ref, encoded)
 
         await self._in_transaction(body, next(iter(tokens), new_fact.id))
 
     async def update_fact_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
-        refused = set(fields) - IN_PLACE_FIELDS
-        if refused:
-            raise InPlaceFieldRefused(refused)
+        _require_in_place(fields)
         fact_id = stored.fact.id
         ref = self.facts_col.document(fact_id)
         encoded = _encode_fields(fields)
@@ -622,8 +628,9 @@ class FirestoreFactRepository(FactRepository):
             raise PermissionError("Not authorized to modify this fact")
 
     async def archive_and_add(
-        self, archived: StoredFact, new_fact: FactEntity, now: datetime.datetime, *, actor: str, reason: str
+        self, archived: StoredFact, fields: Mapping[str, Any], new_fact: FactEntity
     ) -> None:
+        _require_in_place(fields)
         account_id = archived.fact.account_id
         if new_fact.account_id != account_id:
             raise ValueError(f"fact {new_fact.id} belongs to another account than the archived {archived.fact.id}")
@@ -633,8 +640,7 @@ class FirestoreFactRepository(FactRepository):
         archived_ref = self.facts_col.document(archived.fact.id)
         new_ref = self.facts_col.document(new_fact.id)
         document = self._to_document(new_fact)
-        # A document read under its token and still carrying it is unchanged, so its stored trail is the one to extend.
-        closure = _encode_fields(archive_fields(archived.fact, now, actor, reason))
+        encoded = _encode_fields(fields)
 
         async def body(transaction: Any) -> None:
             snap = await archived_ref.get(transaction=transaction)
@@ -642,7 +648,7 @@ class FirestoreFactRepository(FactRepository):
                 raise FactWriteConflict(archived.fact.id)
             self._require_stored_account(snap, account_id)
             transaction.create(new_ref, document)
-            transaction.update(archived_ref, closure)
+            transaction.update(archived_ref, encoded)
 
         await self._in_transaction(body, archived.fact.id)
 
@@ -987,16 +993,16 @@ class FirestoreFactRepository(FactRepository):
             ))
         return due
 
-    async def stale_due_fact(self, due: DueFact, now: datetime.datetime) -> None:
+    async def stale_due_fact(self, due: DueFact, fields: Mapping[str, Any]) -> None:
+        _require_in_place(fields)
         ref = self.facts_col.document(due.fact_id)
+        encoded = _encode_fields(fields)
 
         async def body(transaction: Any) -> None:
             snap = await ref.get(transaction=transaction)
             if not snap.exists or snap.update_time != due.update_time:
                 raise FactWriteConflict(due.fact_id)
-            stored_events = (snap.to_dict() or {}).get("lifecycle_events") or []
-            fields = stale_fields(replace(due, lifecycle_events=list(stored_events)), now)
-            transaction.update(ref, _encode_fields(fields))
+            transaction.update(ref, encoded)
 
         await self._in_transaction(body, due.fact_id)
 

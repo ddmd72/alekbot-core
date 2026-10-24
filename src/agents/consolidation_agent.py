@@ -26,6 +26,7 @@ from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..domain.entities import FactDomain
 from ..domain.fact_expiry import expiry_view
+from ..domain.fact_update import ParsedFactUpdate
 from ..domain.fact_write_context import FactWriteContext, as_utc, span_of
 from ..domain.local_time import local_day, local_moment, local_stamp
 from ..domain.pass_actor import PassActor
@@ -33,6 +34,7 @@ from ..domain.request_context import get_effective_account_id
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_management_port import FactManagementPort
+from ..ports.fact_update_port import FactUpdatePort
 from ..ports.llm_port import LLMResponse, ToolCall, Message, MessagePart, LLMRequest
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
@@ -133,9 +135,10 @@ def _with_top_level_expiry(args: Dict[str, Any], container: str) -> Any:
     return {**inner, "expiry": args["expiry"]}
 
 
-class _TrackingFactManagement(FactManagementPort):
+class _TrackingFactManagement(FactManagementPort, FactUpdatePort):
     """
-    Pass-through wrapper over FactManagementPort, one per run, passed to every stage of that run.
+    Pass-through wrapper over FactManagementPort (and FactUpdatePort, when the wrapped port has the typed path), one per
+    run, passed to every stage of that run.
 
     Records only what the store reports as written:
     - `changed` holds (fact_id, content) for a create, a content update (the id of the version written,
@@ -186,29 +189,42 @@ class _TrackingFactManagement(FactManagementPort):
         account_id: str,
         *,
         context: FactWriteContext,
+    ) -> Dict[str, Any]:
+        result = await self._real.update_fact(
+            fact_id=fact_id, updates=updates, account_id=account_id, context=context
+        )
+        self._record_update(result, updates.get("content"), None)
+        return result
+
+    async def apply_fact_update(
+        self,
+        fact_id: str,
+        update: ParsedFactUpdate,
+        account_id: str,
+        *,
+        context: FactWriteContext,
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
     ) -> Dict[str, Any]:
-        # Forwarded unchanged; only the ones the caller set, so a consolidation call (it sets none) reaches the port
-        # exactly as before. Every default is None, so this is the same call; it also keeps working with the test fakes
-        # that still have the S3 signature (they are behind the port).
-        review = {
-            name: value
-            for name, value in (("evidence_at", evidence_at), ("reason", reason), ("history", history))
-            if value is not None
-        }
-        result = await self._real.update_fact(
-            fact_id=fact_id, updates=updates, account_id=account_id, context=context, **review
+        if not isinstance(self._real, FactUpdatePort):
+            raise TypeError(f"{type(self._real).__name__} has no typed update path (FactUpdatePort)")
+        result = await self._real.apply_fact_update(
+            fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history
         )
-        if result.get("status") == STATUS_UPDATED:
-            self.wrote = True
-            content = updates.get("content")
-            if content and (written_id := result.get("fact_id")):
-                self.changed.append((written_id, content))
-            if history and (history_id := result.get(HISTORY_FACT_ID)):
-                self.changed.append((history_id, history))
+        self._record_update(result, update.content, history)
         return result
+
+    def _record_update(self, result: Dict[str, Any], content: Optional[str], history: Optional[str]) -> None:
+        """One rule for both update paths: an updated result is a write; a content change records the version written,
+        a history fact records itself."""
+        if result.get("status") != STATUS_UPDATED:
+            return
+        self.wrote = True
+        if content and (written_id := result.get("fact_id")):
+            self.changed.append((written_id, content))
+        if history and (history_id := result.get(HISTORY_FACT_ID)):
+            self.changed.append((history_id, history))
 
     async def merge_facts(
         self, fact_ids: List[str], merged_content: str, metadata: Dict[str, Any], *, context: FactWriteContext

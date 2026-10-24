@@ -3,16 +3,24 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from .fact_update import ParsedFactUpdate
+
 
 @dataclass(frozen=True)
 class AnswerChange:
-    """One of two writes. `updates` goes through `update_fact` (the S2 preconditions and the review path) with `reason`
-    for the trail, `evidence_at` (the moment of the answer: a revive's evidence date, and the date of the history fact)
-    and `history` (the text of the fact to create beside an archive, None for none). `fields` is an in-place write of
-    the question's fallback (`fallback_fields`), whose trail entry is already inside it. The question is not touched
-    here: its close is the caller's, through the question's own methods."""
+    """One of two writes, in two shapes because they are two kinds of write.
 
-    updates: Optional[Dict[str, Any]] = None
+    `update` is a change the fact's write rules must decide (an S2 precondition, the review's rules in
+    `finish_fact_update`, a new version or a history fact beside an archive): it goes through the typed write path with
+    `reason` for the trail, `evidence_at` (the moment of the answer: a revive's evidence date, and the date of the
+    history fact) and `history` (the text of the fact to create beside an archive, None for none).
+
+    `fields` is the question's fallback (`fallback_fields`), already decided whole, its trail entry inside it: nothing
+    is left for the write rules, so it is applied in place as it is.
+
+    The question is not touched here: its close is the caller's, through the question's own methods."""
+
+    update: Optional[ParsedFactUpdate] = None
     reason: Optional[str] = None
     evidence_at: Optional[datetime] = None
     history: Optional[str] = None
@@ -20,7 +28,7 @@ class AnswerChange:
 
     def __post_init__(self) -> None:
         if self.fields is not None:
-            if any(part is not None for part in (self.updates, self.reason, self.evidence_at, self.history)):
+            if any(part is not None for part in (self.update, self.reason, self.evidence_at, self.history)):
                 raise ValueError("an in-place fallback carries no update, reason, evidence date or history")
-        elif self.updates is None or not self.reason or self.evidence_at is None:
-            raise ValueError("an update needs its updates, its reason and the moment of the answer")
+        elif self.update is None or not self.reason or self.evidence_at is None:
+            raise ValueError("an update needs its update, its reason and the moment of the answer")

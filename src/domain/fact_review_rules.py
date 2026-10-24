@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import AbstractSet, Any, Callable, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence
 
 from .entities import ExpiryKind, FactEntity, FactState
-from .fact_expiry import EXPIRY_NONE, as_expiry_kind, expiry_view
+from .fact_expiry import EXPIRY_NONE, Expiry, as_expiry_kind, stored_expiry
 from .fact_update import ParsedFactUpdate
 from .fact_update_plan import content_changed
 from .fact_lifecycle import (
@@ -182,18 +182,18 @@ def keeps_expiry(fact: FactEntity, now: datetime) -> bool:
     return _holds_no_expiry(fact) or _date_ahead(fact, now)
 
 
-def confirmed_expiry(fact: FactEntity, now: datetime, tz: str) -> Dict[str, Any]:
-    """The `expiry` a confirmation sends: `{kind: none}` for a pinned fact or one that is permanent, the fact's own date
-    while it is ahead (`tz`: the owner's zone), else a horizon of `fallback_window_days`. A date inside its last day (`resolves_too_soon`, the write path's bound) is not
-    kept: the write would refuse it. `keeps_expiry` is the same
+def confirmed_expiry(fact: FactEntity, now: datetime, tz: str) -> Expiry:
+    """The decision a confirmation writes: `none` for a pinned fact or one that is permanent, the fact's own date while it
+    is ahead (`stored_expiry`; `tz`: the owner's zone), else a horizon of `fallback_window_days`. A date inside its last
+    day (`resolves_too_soon`, the write path's bound) is not kept: the write would refuse it. `keeps_expiry` is the same
     decision as a yes or no."""
     if expiry_pinned(fact.domain, fact.type, fact.tags):
-        return {"kind": ExpiryKind.NONE.value}
+        return EXPIRY_NONE
     if keeps_expiry(fact, now):
-        view, _ = expiry_view(fact.expiry_kind, fact.ttl_days, fact.expires_at, tz)
-        if view is not None:  # always: a permanent fact and a date with its moment both have a view
-            return view
-    return {"kind": ExpiryKind.HORIZON.value, "days": fallback_window_days(fact)}
+        kept = stored_expiry(fact.expiry_kind, fact.ttl_days, fact.expires_at, tz)
+        if kept is not None:  # always: a permanent fact and a date with its moment both have one
+            return kept
+    return Expiry(ExpiryKind.HORIZON, days=fallback_window_days(fact))
 
 
 def _holds_no_expiry(fact: FactEntity) -> bool:
@@ -498,8 +498,8 @@ def _reply_refusal(fact: FactEntity, basis: ReviewBasis, question: Optional[Fact
 
 def _date_passed_refusal(fact: FactEntity, basis: ReviewBasis, today: date, tz: str) -> Optional[str]:
     if as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE:
-        view, _ = expiry_view(fact.expiry_kind, fact.ttl_days, fact.expires_at, tz)
-        own = date.fromisoformat(view["date"]) if view is not None and "date" in view else None
+        kept = stored_expiry(fact.expiry_kind, fact.ttl_days, fact.expires_at, tz)
+        own = kept.on if kept is not None else None
     else:
         own = basis.on
         if own is None:

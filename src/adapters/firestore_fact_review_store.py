@@ -99,6 +99,7 @@ class FirestoreFactReviewStore(FactReviewStore):
     # ------------------------------------------------------------------------------------------------ reads
 
     async def get_questions(self, ids: Sequence[str]) -> List[FactReviewQuestion]:
+        """One `get_all` over the wanted documents."""
         wanted = list(dict.fromkeys(i for i in ids if i))
         if not wanted:
             return []
@@ -111,6 +112,7 @@ class FirestoreFactReviewStore(FactReviewStore):
         return [found[i] for i in wanted if i in found]
 
     async def questions_for_account(self, account_id: str) -> List[FactReviewQuestion]:
+        """Served by single-field indexes (an equality and an `in`)."""
         if not account_id:
             raise ValueError("account_id is required to read the account's review questions")
         return self._valid(await self._open_of_account(account_id).get())
@@ -121,6 +123,7 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def by_message(
         self, user_id: str, platform: str, channel_id: str, message_id: str,
     ) -> Optional[FactReviewQuestion]:
+        """Equalities on the stored fields `user_id`, `message_platform`, `message_channel` and `message_id`."""
         if not (user_id and platform and channel_id and message_id):
             return None
         query = (

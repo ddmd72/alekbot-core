@@ -28,13 +28,13 @@ class FactReviewStore(ABC):
 
     @abstractmethod
     async def get_questions(self, ids: Sequence[str]) -> List[FactReviewQuestion]:
-        """The questions with these ids, read in one `get_all`, in the order of `ids` (a repeated id once). A missing id
-        is left out. No transaction."""
+        """The questions with these ids, read in one batch, in the order of `ids` (a repeated id once). A missing id is
+        left out. No transaction."""
 
     @abstractmethod
     async def questions_for_account(self, account_id: str) -> List[FactReviewQuestion]:
-        """The account's open questions: `account_id ==` and `status in [queued, pending, asked, unanswered]`, served by
-        single-field indexes. Unordered: queue order is `queue_order`'s. No transaction."""
+        """The account's open questions: `account_id ==` and `status in [queued, pending, asked, unanswered]`. Unordered:
+        queue order is `queue_order`'s. No transaction."""
 
     @abstractmethod
     async def all_open(self) -> List[FactReviewQuestion]:
@@ -45,8 +45,8 @@ class FactReviewStore(ABC):
     async def by_message(
         self, user_id: str, platform: str, channel_id: str, message_id: str,
     ) -> Optional[FactReviewQuestion]:
-        """The question posted at that message, in any status: `user_id`, `message_platform`, `message_channel` and
-        `message_id` all equal. The same message id in another channel, platform or user's question is not it (None).
+        """The question posted at that message, in any status: its user and its message ref's platform, channel and
+        message id all equal. The same message id in another channel, platform or user's question is not it (None).
         Two questions on one message is a bug, not a case to serve: logged as ERROR, and None. No transaction."""
 
     # ------------------------------------------------------------------------------------------------ question writes

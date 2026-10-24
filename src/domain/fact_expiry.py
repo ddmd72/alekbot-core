@@ -64,27 +64,38 @@ def as_expiry_kind(value: object) -> Optional[ExpiryKind]:
         return None
 
 
+def stored_expiry(
+    kind: Union[ExpiryKind, str, None], ttl_days: Optional[int], expires_at: Optional[datetime], timezone: str
+) -> Optional[Expiry]:
+    """A stored decision as an Expiry, the one a write could send to keep it (`timezone`: the owner's zone, which a date's
+    last day is read in). Sent back unchanged it keeps the same `expires_at`, unless the date is today or past (refused as
+    born due) or a cleanup pass floored a horizon (floored again from the new now). No kind, or a kind without its data,
+    is None: there is no decision to send. `kind` may be the stored string."""
+    kind = as_expiry_kind(kind)
+    if kind is ExpiryKind.NONE:
+        return EXPIRY_NONE
+    if kind is ExpiryKind.DATE and expires_at is not None:
+        # One microsecond before the next midnight is the last moment of the day, DST-safe (a day can be 23 h).
+        return Expiry(ExpiryKind.DATE, on=local_date(local_moment(expires_at, "UTC") - timedelta(microseconds=1), timezone))
+    if kind is ExpiryKind.HORIZON and ttl_days is not None:
+        return Expiry(ExpiryKind.HORIZON, days=ttl_days)
+    return None
+
+
 def expiry_view(
     kind: Union[ExpiryKind, str, None], ttl_days: Optional[int], expires_at: Optional[datetime], timezone: str
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """A stored decision as the model sends it, plus `due` (a local ISO date) for a horizon.
-
-    Sending a date or none view back unchanged keeps the same `expires_at`, unless the date is today or past: then it is
-    refused as born due. A horizon keeps it too, unless a cleanup pass floored it (then a resend is floored again from
-    the new now). No kind, or a kind without its data, is no view: the
-    model is not shown a decision it could not resend. `kind` may be the stored string.
-    """
-    kind = as_expiry_kind(kind)
-    if kind is ExpiryKind.NONE:
+    """`stored_expiry` as the model sends it, plus `due` (a local ISO date) for a horizon. No decision is no view: the
+    model is not shown a decision it could not resend."""
+    expiry = stored_expiry(kind, ttl_days, expires_at, timezone)
+    if expiry is None:
+        return None, None
+    if expiry.kind is ExpiryKind.NONE:
         return {"kind": "none"}, None
-    if kind is ExpiryKind.DATE and expires_at is not None:
-        # One microsecond before the next midnight is the last moment of the day, DST-safe (a day can be 23 h).
-        last_day = local_date(local_moment(expires_at, "UTC") - timedelta(microseconds=1), timezone)
-        return {"kind": "date", "date": last_day.isoformat()}, None
-    if kind is ExpiryKind.HORIZON and ttl_days is not None:
-        due = local_date(expires_at, timezone).isoformat() if expires_at is not None else None
-        return {"kind": "horizon", "days": ttl_days}, due
-    return None, None
+    if expiry.on is not None:  # kind date (Expiry's own invariant)
+        return {"kind": "date", "date": expiry.on.isoformat()}, None
+    due = local_date(expires_at, timezone).isoformat() if expires_at is not None else None
+    return {"kind": "horizon", "days": expiry.days}, due
 
 
 def _malformed(why: str) -> FactExpiryError:
