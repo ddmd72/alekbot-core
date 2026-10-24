@@ -25,6 +25,7 @@ GOLDEN = {
     # names in these texts ("квартиры", "houses"; D40). The fixture holds no capture record and no capture word;
     # CAPTURE_GOLDEN below covers them. Re-pinned when a lease text's city became an invented one (2026-10-24): the
     # older pins above describe the texts before that change
+    (4, 2): "c985a4034ed86ede8900cb8a5f3da490eb23aa0ccacfde1500fca6c320784944",
 }
 # The capture keys (§26.3, Δ57, Δ58) on their own fixture, pinned per KEYS_VERSION like GOLDEN: a detected scan, a
 # camera-detected document photo, a model's screenshot, a digital file (no words), a photograph (no capture keys
