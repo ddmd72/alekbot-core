@@ -64,12 +64,13 @@ def parse_day(value: Any, place: str) -> Optional[date]:
     """`YYYY-MM-DD` as a date; None when absent. Raises ValueError naming `place` for anything else."""
     if value is None or value == "":
         return None
+    message = f"{place} must be a date as YYYY-MM-DD, got {value!r}"
     if isinstance(value, str) and _DAY.fullmatch(value.strip()):
         try:
             return date.fromisoformat(value.strip())
-        except ValueError:
-            pass
-    raise ValueError(f"{place} must be a date as YYYY-MM-DD, got {value!r}")
+        except ValueError as error:  # e.g. 2026-02-30: the right shape, not a real day
+            raise ValueError(message) from error
+    raise ValueError(message)
 
 
 def _text(raw: Mapping[str, Any], name: str) -> Optional[str]:
