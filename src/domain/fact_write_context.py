@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .entities import ExpiryKind, FactState
@@ -59,13 +59,10 @@ class FactWriteContext:
         return self.actor.floors_due_horizon
 
 
-def as_utc(value: Union[float, str, datetime]) -> datetime:
-    """`value` as an aware UTC datetime: epoch seconds, an ISO string or a datetime. A naive time is UTC (email dates are).
-
-    Raises ValueError for a string that is not ISO-8601.
-    """
-    if isinstance(value, str):
-        value = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+def as_utc(value: datetime) -> datetime:
+    """`value` as an aware UTC datetime; a naive time is UTC. Raises TypeError for anything that is not a datetime."""
+    if not isinstance(value, datetime):
+        raise TypeError(f"as_utc takes a datetime, not {type(value).__name__}")
     return local_moment(value, "UTC")
 
 

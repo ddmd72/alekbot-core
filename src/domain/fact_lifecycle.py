@@ -5,7 +5,7 @@ from typing import AbstractSet, Any, Callable, Dict, Final, List, Mapping, Optio
 
 from .entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType
 from .exceptions import FactBornDueError, FactExpiryError, FactResolutionError, InPlaceFieldRefused
-from .fact_expiry import EXPIRY_NONE, NOTHING_WRITTEN, Expiry, as_expiry_kind
+from .fact_expiry import EXPIRY_NONE, NOTHING_WRITTEN, Expiry
 from .local_time import local_date, local_moment, zone_or_utc
 from .refusal_wording import RefusalWording
 
@@ -238,7 +238,7 @@ def born_due(
     `rule.refusal_wording`. The one exception is a horizon on a pass whose row `floors_due_horizon` (stage 2a/2b,
     backstop, cluster), which cannot move `reported_date`: it is floored to now + 2 days, so the fact reaches review soon.
     """
-    kind, expires_at = as_expiry_kind(fields.get("expiry_kind")), fields.get("expires_at")
+    kind, expires_at = fields.get("expiry_kind"), fields.get("expires_at")
     if kind not in (ExpiryKind.DATE, ExpiryKind.HORIZON) or expires_at is None:
         return dict(fields), None
     now = local_moment(now, "UTC")

@@ -808,7 +808,7 @@ default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run
 C.../D..., Telegram chat_id) has its own session/history/consolidation stream (a DM is just channel D...).
 Adapters resolve session_id synchronously. Async delivery uses `origin_channel_id` from message context
 (propagated via DelegationEngine passthrough); system notifications go to primary channel. `GcpTaskQueue`
-uses `_DomainEncoder` for transparent Pydantic serialization in Cloud Task payloads.
+uses `_DomainEncoder` for transparent Pydantic, datetime and enum serialization in Cloud Task payloads.
 
 **Multilingual Support** — two independent axes: (1) **response language** via prompt tokens
 (`LANG_MIRROR` default = mirror input; `LANG_FIXED_{UK,EN,FR,ES}` = fixed); `LanguagePreferenceService`

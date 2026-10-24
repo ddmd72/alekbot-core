@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .entities import ExpiryKind, FactEntity, FactState
 from .exceptions import FactExpiryError
-from .fact_expiry import EXPIRY_SHAPES, NOTHING_WRITTEN, Expiry, as_expiry_kind
+from .fact_expiry import EXPIRY_SHAPES, NOTHING_WRITTEN, Expiry
 from .fact_lifecycle import (
     archive_fields, check_pin, compute_expiry, expiry_pinned, lifecycle_event, lifecycle_fields, required_decision,
     revival_fields, with_event,
@@ -211,7 +211,7 @@ def _closing_reason(update: ParsedFactUpdate, context: FactWriteContext, reason:
 
 def _later_horizon(current: FactEntity, reported: datetime) -> Optional[datetime]:
     """`expires_at` of a horizon fact whose `reported_date` moved: never earlier than it was. None = leave it."""
-    if as_expiry_kind(current.expiry_kind) is not ExpiryKind.HORIZON or current.ttl_days is None:
+    if current.expiry_kind is not ExpiryKind.HORIZON or current.ttl_days is None:
         return None
     counted: datetime = compute_expiry(Expiry(ExpiryKind.HORIZON, days=current.ttl_days), reported, "UTC")["expires_at"]
     if current.expires_at is None:

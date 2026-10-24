@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, Final, Optional, Tuple, Union
+from typing import Any, Dict, Final, Optional, Tuple
 
 from .entities import ExpiryKind
 from .exceptions import FactExpiryError
@@ -53,25 +53,13 @@ def parse_expiry(raw: object) -> Expiry:
     raise _malformed(f"kind {kind_raw!r} is unknown")
 
 
-def as_expiry_kind(value: object) -> Optional[ExpiryKind]:
-    """`value` as an ExpiryKind: a member stays itself, a known string (a stored or projected kind) becomes the member,
-    anything else is None. Callers compare the result with `is`, which a plain string would fail."""
-    if isinstance(value, ExpiryKind):
-        return value
-    try:
-        return ExpiryKind(value)
-    except ValueError:
-        return None
-
-
 def stored_expiry(
-    kind: Union[ExpiryKind, str, None], ttl_days: Optional[int], expires_at: Optional[datetime], timezone: str
+    kind: Optional[ExpiryKind], ttl_days: Optional[int], expires_at: Optional[datetime], timezone: str
 ) -> Optional[Expiry]:
     """A stored decision as an Expiry, the one a write could send to keep it (`timezone`: the owner's zone, which a date's
     last day is read in). Sent back unchanged it keeps the same `expires_at`, unless the date is today or past (refused as
     born due) or a cleanup pass floored a horizon (floored again from the new now). No kind, or a kind without its data,
-    is None: there is no decision to send. `kind` may be the stored string."""
-    kind = as_expiry_kind(kind)
+    is None: there is no decision to send."""
     if kind is ExpiryKind.NONE:
         return EXPIRY_NONE
     if kind is ExpiryKind.DATE and expires_at is not None:
@@ -83,7 +71,7 @@ def stored_expiry(
 
 
 def expiry_view(
-    kind: Union[ExpiryKind, str, None], ttl_days: Optional[int], expires_at: Optional[datetime], timezone: str
+    kind: Optional[ExpiryKind], ttl_days: Optional[int], expires_at: Optional[datetime], timezone: str
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """`stored_expiry` as the model sends it, plus `due` (a local ISO date) for a horizon. No decision is no view: the
     model is not shown a decision it could not resend."""

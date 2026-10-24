@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import AbstractSet, Any, Callable, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence
 
 from .entities import ExpiryKind, FactEntity, FactState
-from .fact_expiry import EXPIRY_NONE, Expiry, as_expiry_kind, stored_expiry
+from .fact_expiry import EXPIRY_NONE, Expiry, stored_expiry
 from .fact_update import ParsedFactUpdate
 from .fact_update_plan import content_changed
 from .fact_lifecycle import (
@@ -197,12 +197,12 @@ def confirmed_expiry(fact: FactEntity, now: datetime, tz: str) -> Expiry:
 
 
 def _holds_no_expiry(fact: FactEntity) -> bool:
-    return expiry_pinned(fact.domain, fact.type, fact.tags) or as_expiry_kind(fact.expiry_kind) is ExpiryKind.NONE
+    return expiry_pinned(fact.domain, fact.type, fact.tags) or fact.expiry_kind is ExpiryKind.NONE
 
 
 def _date_ahead(fact: FactEntity, now: datetime) -> bool:
     return (
-        as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE
+        fact.expiry_kind is ExpiryKind.DATE
         and fact.expires_at is not None
         and not resolves_too_soon(fact.expires_at, now)
     )
@@ -227,7 +227,7 @@ def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetim
         expiry: Dict[str, Any] = {}
         if not keeps_expiry(fact, now):
             expiry = horizon_from_now(fallback_window_days(fact), fact.reported_date, now)
-        elif expiry_pinned(fact.domain, fact.type, fact.tags) and as_expiry_kind(fact.expiry_kind) is not ExpiryKind.NONE:
+        elif expiry_pinned(fact.domain, fact.type, fact.tags) and fact.expiry_kind is not ExpiryKind.NONE:
             expiry = compute_expiry(EXPIRY_NONE, fact.reported_date, "UTC")  # a pinned fact is permanent, as a yes says
         return revival_fields(fact, expiry, now, actor, reason)
     fields: Dict[str, Any] = lifecycle_fields(FactState.ARCHIVED, now)
@@ -363,7 +363,7 @@ def queue_alert(state: FactReviewState, questions: Iterable[FactReviewQuestion])
 def kept_twice_fallback(fact: FactEntity) -> QuestionFallback:
     """What silence does to a fact the review asked about by itself: a dated plan is over (archive, Q8 and RFC P2), any
     other fact is kept (revive)."""
-    return "archive" if as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE else "revive"
+    return "archive" if fact.expiry_kind is ExpiryKind.DATE else "revive"
 
 
 def queued_question(
@@ -407,7 +407,7 @@ _BASIS_SHAPES: Final[Mapping[str, str]] = {
 def is_dated_plan(fact: FactEntity, question: Optional[FactReviewQuestion] = None) -> bool:
     """A plan with a date: a `date` fact, or one whose question falls back to archive. When it is over it is archived
     only, with no history fact (Q8)."""
-    return as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE or (question is not None and question.fallback == "archive")
+    return fact.expiry_kind is ExpiryKind.DATE or (question is not None and question.fallback == "archive")
 
 
 STAYS_STALE_REFUSAL: Final[str] = "this pass changes the fact's state; reported_date is kept by the system"
@@ -547,7 +547,7 @@ def _reply_refusal(subject: FactEntity, basis: ReviewBasis, question: Optional[F
 def plan_date(fact: FactEntity, basis: ReviewBasis, tz: str) -> Optional[date]:
     """The date a `date_passed` basis says has passed: a `date` fact's own (its last day in the owner's zone `tz`), else
     `basis.on`; None when there is none."""
-    if as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE:
+    if fact.expiry_kind is ExpiryKind.DATE:
         kept = stored_expiry(fact.expiry_kind, fact.ttl_days, fact.expires_at, tz)
         return kept.on if kept is not None else None
     return basis.on
@@ -555,7 +555,7 @@ def plan_date(fact: FactEntity, basis: ReviewBasis, tz: str) -> Optional[date]:
 
 def _date_passed_refusal(fact: FactEntity, basis: ReviewBasis, today: date, tz: str) -> Optional[str]:
     own = plan_date(fact, basis, tz)
-    if own is None and as_expiry_kind(fact.expiry_kind) is not ExpiryKind.DATE:
+    if own is None and fact.expiry_kind is not ExpiryKind.DATE:
         return "basis.date: the plan's date (YYYY-MM-DD), which must be before today"
     if own is None or own >= today:
         return f"basis.date_passed: the plan's date {own.isoformat() if own else 'is unknown'} is not before today ({today.isoformat()})"
@@ -607,6 +607,6 @@ def ask_refusal(
     today = local_date(now, tz)
     if fallback_date is not None and fallback_date >= today:
         return f"ask_owner.fallback_date: the plan's date must be before today ({today.isoformat()})"
-    if as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE or fallback_date is not None or noise:
+    if fact.expiry_kind is ExpiryKind.DATE or fallback_date is not None or noise:
         return None
     return "ask_owner.fallback archive: only for a dated plan, with a past fallback_date, or with noise; use revive"

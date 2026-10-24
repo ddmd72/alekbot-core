@@ -8,9 +8,8 @@ from google.cloud.firestore import FieldFilter
 from google.cloud.firestore_v1.vector import Vector
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from ..domain.due_fact import DueFact
-from ..domain.entities import FactEntity, FactState
+from ..domain.entities import ExpiryKind, FactEntity, FactState
 from ..domain.exceptions import FactWriteConflict
-from ..domain.fact_expiry import as_expiry_kind
 from ..domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
 from ..domain.fact_resolution import resolve_chain
 from ..domain.fact_review_rules import stale_order_key
@@ -65,6 +64,14 @@ def _has_aborted_in_chain(exc: BaseException) -> bool:
         seen.add(id(pending))
         pending = pending.__cause__ or pending.__context__
     return False
+
+
+def _expiry_kind(stored: object) -> Optional[ExpiryKind]:
+    """A raw projection's stored `expiry_kind` (the kind's value) as the enum; an absent or unknown value is None."""
+    try:
+        return ExpiryKind(stored)
+    except ValueError:
+        return None
 
 
 def _projection(*omitted: str) -> List[str]:
@@ -980,7 +987,7 @@ class FirestoreFactRepository(FactRepository):
                 fact_id=snap.id,
                 account_id=data["account_id"],
                 expires_at=data["expires_at"],
-                expiry_kind=as_expiry_kind(data.get("expiry_kind")),
+                expiry_kind=_expiry_kind(data.get("expiry_kind")),
                 update_time=snap.update_time,
                 lifecycle_events=list(data.get("lifecycle_events") or []),
             ))
