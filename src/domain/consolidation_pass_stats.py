@@ -17,12 +17,11 @@ from dataclasses import dataclass
 from typing import Any, Dict, FrozenSet, List, Sequence, Tuple
 
 from .fact_lifecycle import CLOSING_STATES
+from .pass_actor import PassActor
 
 _WRITE_TOOLS = frozenset({"create_fact", "update_fact", "merge_facts"})
 _CLOSING_VALUES = frozenset(state.value for state in CLOSING_STATES)
 _NEW_TEXT_TOOLS = {"create_fact": "content", "merge_facts": "merged_content"}
-# Passes whose subject is stored memory: an unanswered born-due refusal there is a loss.
-_CLEANUP_LABELS = frozenset({"stage2a", "stage2b", "cluster"})
 # A born-due create is answered by a rewrite that holds more than this share of its content words (hashed in memory).
 _REWRITE_OVERLAP = 0.5
 _MIN_WORD_LENGTH = 3
@@ -55,6 +54,14 @@ _SHORT_NAMES = {
 def stats_alerts_enabled(raw: str) -> bool:
     """Parse the CONSOLIDATION_STATS_ALERTS value: "0", "false", "no", "off" (any case) are off."""
     return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+def _born_due_refusal_is_loss(pass_label: str) -> bool:
+    """The pass actor's row; a label that is no pass actor (the loop's default `consolidation`) loses nothing."""
+    try:
+        return PassActor(pass_label).born_due_refusal_is_loss
+    except ValueError:
+        return False
 
 
 def _short(name: str) -> str:
@@ -209,10 +216,10 @@ class ConsolidationPassStats:
     def _abandoned(self) -> List[_Outcome]:
         """Refusals over a missing or malformed `expiry` that no later successful call answers: a create or merge
         with the same text, a non-closing update of the same fact (retiring the fact is the loss, not an answer).
-        On a cleanup pass a born-due refusal counts the same way, and its answer (a past-tense rewrite, so other text)
+        On a pass whose born-due refusal is a loss (`PassActor`) it counts the same way, and its answer (a past-tense rewrite, so other text)
         is found by `_rewrites`. Approximate on purpose: a retry of a missing-`expiry` refusal that rewrites the text
         counts as abandoned, which errs towards an alert."""
-        counted = (OUTCOME_EXPIRY, OUTCOME_BORN_DUE) if self.pass_label in _CLEANUP_LABELS else (OUTCOME_EXPIRY,)
+        counted = (OUTCOME_EXPIRY, OUTCOME_BORN_DUE) if _born_due_refusal_is_loss(self.pass_label) else (OUTCOME_EXPIRY,)
         found = []
         for i, refused in enumerate(self._outcomes):
             if refused.outcome not in counted or refused.name not in _WRITE_TOOLS:

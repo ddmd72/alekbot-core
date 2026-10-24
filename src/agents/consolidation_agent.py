@@ -28,6 +28,7 @@ from ..domain.entities import FactDomain
 from ..domain.fact_expiry import expiry_view
 from ..domain.fact_write_context import FactWriteContext, as_utc, span_of
 from ..domain.local_time import local_day, local_moment, local_stamp
+from ..domain.pass_actor import PassActor
 from ..domain.request_context import get_effective_account_id
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
@@ -1064,10 +1065,8 @@ class ConsolidationAgent(BaseAgent):
     def _write_context(
         pass_label: str, timezone: str = "UTC", span: Optional[Tuple[datetime, datetime]] = None
     ) -> FactWriteContext:
-        """The write context of a pass: only the conversation passes (stage1, email) let the model's dates count."""
-        return FactWriteContext(
-            actor=pass_label, timezone=timezone, span=span, model_dates=pass_label in ("stage1", "email")
-        )
+        """The write context of a pass (`PassActor` row); ValueError for a label that is no pass."""
+        return FactWriteContext.for_pass(PassActor(pass_label), timezone, span)
 
     @staticmethod
     def _owner_timezone(message: AgentMessage) -> str:

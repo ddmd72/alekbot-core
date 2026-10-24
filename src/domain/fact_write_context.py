@@ -2,19 +2,21 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Iterable, Optional, Sequence, Tuple, Union
+from typing import FrozenSet, Iterable, Optional, Sequence, Tuple, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .entities import FactState
 from .local_time import local_date, local_moment
+from .pass_actor import PassActor
 
 
 @dataclass(frozen=True)
 class FactWriteContext:
     """The pass a fact write belongs to. The caller builds it once per pass; there is no default and no ambient copy.
 
-    `actor`: stage1 | stage2a | stage2b | backstop | email | cluster. `span`: (first, last) time the owner spoke in
-    this batch, aware. `model_dates`: True = a model `reported_date` is clamped into the span and used (stage1, email);
-    False = ignored (cleanup passes: the system keeps the date).
+    `actor`: a `PassActor` value; build the context with `for_pass`, which takes `model_dates` from the actor's row.
+    `span`: (first, last) time the owner spoke in this batch, aware. `model_dates`: True = a model `reported_date` is
+    clamped into the span and used (stage1, email); False = ignored (the system keeps the date).
     """
 
     actor: str
@@ -33,6 +35,21 @@ class FactWriteContext:
                 raise ValueError("a write context span must be timezone-aware; convert with as_utc first")
             if first > last:
                 raise ValueError("a write context span must run from the earlier to the later time")
+
+    @classmethod
+    def for_pass(cls, actor: PassActor, timezone: str, span: Optional[Tuple[datetime, datetime]] = None) -> "FactWriteContext":
+        """The context of a pass: the one place a pass label becomes the write rules."""
+        return cls(actor=actor.value, timezone=timezone, span=span, model_dates=actor.model_dates)
+
+    @property
+    def accepts(self) -> FrozenSet[FactState]:
+        """The states the write's own target may be in; raises ValueError when `actor` is no `PassActor`."""
+        return PassActor(self.actor).accepts
+
+    @property
+    def floors_due_horizon(self) -> bool:
+        """Whether a horizon that resolves within a day is floored to two days from now; raises like `accepts`."""
+        return PassActor(self.actor).floors_due_horizon
 
 
 def as_utc(value: Union[float, str, datetime]) -> datetime:

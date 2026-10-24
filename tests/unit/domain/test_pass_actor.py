@@ -1,0 +1,220 @@
+"""The table of pass actors (Facts S4 T2a, hexagonal review H2): every row, every reader of the table, and that the S3
+labels behave exactly as they did when each reader kept its own list."""
+
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from src.agents.consolidation_agent import ConsolidationAgent
+from src.domain.consolidation_pass_stats import OUTCOME_BORN_DUE, OUTCOME_OK, ConsolidationPassStats
+from src.domain.entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
+from src.domain.exceptions import FactExpiryError
+from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
+from src.domain.fact_update import parse_fact_update
+from src.domain.fact_update_lifecycle import finish_fact_update
+from src.domain.fact_update_plan import plan_fact_update
+from src.domain.fact_write_context import FactWriteContext
+from src.domain.pass_actor import WORDING_CLEANUP, WORDING_REVIEW, WORDING_STAGE1, PassActor
+from tests.support.fact_store import INDEXES_FILE, FactStore
+from tests.support.fact_write import ctx, horizon
+
+UTC = timezone.utc
+NOW = datetime(2026, 10, 23, 9, 0, tzinfo=UTC)
+SPAN = (NOW - timedelta(days=1), NOW - timedelta(hours=2))
+REVIEW_ACCEPTS = frozenset({FactState.STALE, FactState.CURRENT})
+S3_LABELS = ("stage1", "email", "stage2a", "stage2b", "cluster", "backstop")
+
+# actor: (model_dates, floors_due_horizon, accepts, born_due_refusal_is_loss, refusal_wording)
+ROWS = {
+    "stage1": (True, False, CONSOLIDATION_ACCEPTS, False, WORDING_STAGE1),
+    "email": (True, False, CONSOLIDATION_ACCEPTS, False, WORDING_STAGE1),
+    "stage2a": (False, True, CONSOLIDATION_ACCEPTS, True, WORDING_CLEANUP),
+    "stage2b": (False, True, CONSOLIDATION_ACCEPTS, True, WORDING_CLEANUP),
+    "cluster": (False, True, CONSOLIDATION_ACCEPTS, True, WORDING_CLEANUP),
+    "backstop": (False, True, CONSOLIDATION_ACCEPTS, False, WORDING_CLEANUP),
+    "review": (False, False, REVIEW_ACCEPTS, True, WORDING_REVIEW),
+    "owner": (False, False, REVIEW_ACCEPTS, False, WORDING_REVIEW),
+}
+
+
+# --- the table ----------------------------------------------------------------------------------------------------
+
+
+def test_the_actors_are_exactly_the_eight_rows():
+    assert {a.value for a in PassActor} == set(ROWS)
+    assert all(isinstance(a.value, str) for a in PassActor)
+
+
+@pytest.mark.parametrize("label", ROWS)
+def test_every_property_of_every_row(label):
+    actor = PassActor(label)
+    model_dates, floors, accepts, loss, wording = ROWS[label]
+    assert actor.model_dates is model_dates
+    assert actor.floors_due_horizon is floors
+    assert actor.accepts == accepts
+    assert actor.born_due_refusal_is_loss is loss
+    assert actor.refusal_wording == wording
+
+
+def test_the_three_wordings_differ_and_the_review_pair_shares_one():
+    assert len({WORDING_STAGE1, WORDING_CLEANUP, WORDING_REVIEW}) == 3
+    assert PassActor.REVIEW.refusal_wording == PassActor.OWNER.refusal_wording
+
+
+@pytest.mark.parametrize("label", ["", "x", "consolidation", "Stage1", "STAGE1", "seed", "stage 2a"])
+def test_a_label_that_is_no_pass_is_a_value_error(label):
+    with pytest.raises(ValueError):
+        PassActor(label)
+
+
+# --- for_pass equals what each reader kept before -----------------------------------------------------------------
+
+
+def old_write_context(label, timezone_name, span):
+    """`ConsolidationAgent._write_context` before the table."""
+    return FactWriteContext(actor=label, timezone=timezone_name, span=span, model_dates=label in ("stage1", "email"))
+
+
+@pytest.mark.parametrize("label", S3_LABELS)
+@pytest.mark.parametrize("zone,span", [("UTC", None), ("Europe/Madrid", SPAN)], ids=["bare", "with_span"])
+def test_for_pass_equals_the_old_write_context_for_every_s3_label(label, zone, span):
+    got = FactWriteContext.for_pass(PassActor(label), zone, span)
+    assert got == old_write_context(label, zone, span)
+    assert type(got.actor) is str and got.actor == label
+
+
+@pytest.mark.parametrize("label", S3_LABELS)
+def test_the_agents_write_context_is_for_pass(label):
+    assert ConsolidationAgent._write_context(label, "Asia/Tokyo", SPAN) == FactWriteContext.for_pass(
+        PassActor(label), "Asia/Tokyo", SPAN)
+    assert ConsolidationAgent._write_context(label) == old_write_context(label, "UTC", None)
+
+
+def test_the_agents_write_context_refuses_a_label_that_is_no_pass():
+    with pytest.raises(ValueError):
+        ConsolidationAgent._write_context("x")
+
+
+@pytest.mark.parametrize("label", ROWS)
+def test_for_pass_takes_every_field_from_the_row(label):
+    got = FactWriteContext.for_pass(PassActor(label), "Europe/Paris", SPAN)
+    assert (got.actor, got.timezone, got.span, got.model_dates) == (label, "Europe/Paris", SPAN, ROWS[label][0])
+
+
+def test_for_pass_span_defaults_to_none():
+    assert FactWriteContext.for_pass(PassActor.STAGE1, "UTC").span is None
+
+
+@pytest.mark.parametrize("label", S3_LABELS)
+def test_the_derived_properties_equal_the_old_rules_for_every_s3_label(label):
+    got = FactWriteContext.for_pass(PassActor(label), "UTC", None)
+    assert got.floors_due_horizon is (not got.model_dates)          # the old `cleanup = not model_dates`
+    assert got.accepts == CONSOLIDATION_ACCEPTS                    # the old, only, resolve
+
+
+@pytest.mark.parametrize("label", ROWS)
+def test_the_context_properties_read_the_row(label):
+    got = FactWriteContext.for_pass(PassActor(label), "UTC", None)
+    assert got.accepts == ROWS[label][2] and got.floors_due_horizon is ROWS[label][1]
+
+
+def test_a_context_with_an_actor_that_is_no_pass_refuses_to_say_what_it_floors_or_accepts():
+    odd = FactWriteContext(actor="x", timezone="UTC", span=None, model_dates=True)
+    with pytest.raises(ValueError):
+        odd.floors_due_horizon
+    with pytest.raises(ValueError):
+        odd.accepts
+
+
+# --- the readers of the table -------------------------------------------------------------------------------------
+
+
+def stats(label):
+    return ConsolidationPassStats(label, "model-x", "medium", 15, "abcdef1234567890")
+
+
+@pytest.mark.parametrize("label", ROWS)
+def test_an_unanswered_born_due_refusal_is_abandoned_exactly_when_the_row_says_it_is_a_loss(label):
+    s = stats(label)
+    calls = [("create_fact", {"content": "the trip on the 3rd"})]
+    s.record_turn(calls)
+    s.record_outcomes(calls, [OUTCOME_BORN_DUE])
+    assert (s.born_due, s.abandoned) == (1, int(ROWS[label][3]))
+
+
+@pytest.mark.parametrize("label", ["consolidation", "p", ""])
+def test_a_label_that_is_no_pass_loses_nothing_on_a_born_due_refusal(label):
+    s = stats(label)
+    calls = [("create_fact", {"content": "the trip on the 3rd"})]
+    s.record_turn(calls)
+    s.record_outcomes(calls, [OUTCOME_BORN_DUE])
+    s.record_turn([("create_fact", {"content": "other"})])
+    s.record_outcomes([("create_fact", {"content": "other"})], [OUTCOME_OK])
+    assert (s.born_due, s.abandoned) == (1, 0)
+
+
+@pytest.mark.parametrize("label", ROWS)
+def test_a_missing_expiry_refusal_is_abandoned_on_every_label_the_row_does_not_change(label):
+    s = stats(label)
+    calls = [("create_fact", {"content": "x"})]
+    s.record_turn(calls)
+    s.record_outcomes(calls, ["expiry"])
+    assert s.abandoned == 1
+
+
+def old_fact():
+    reported = NOW - timedelta(days=90)
+    return FactEntity(
+        id="f1", account_id="acc", created_by_user_id="u1", lineage_id="lin", text="meeting with Ana", type=FactType.EVENT,
+        tags=["work"], metadata={}, domain=FactDomain.NETWORK, temporal_class=TemporalClass.DYNAMIC, version=2,
+        reported_date=reported, last_updated=reported, expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None,
+        vector=[0.1], tags_vector=[0.2], metadata_vector=[0.3])
+
+
+def rewrite_with_a_due_horizon(label):
+    current = old_fact()
+    update = parse_fact_update({"content": "meeting with Ana, rewritten", "expiry": horizon(14)})
+    context = FactWriteContext.for_pass(PassActor(label), "UTC", SPAN)
+    return finish_fact_update(plan_fact_update(current, update, NOW), current, update, context, NOW)
+
+
+@pytest.mark.parametrize("label", ["stage2a", "stage2b", "cluster", "backstop"])
+def test_the_update_path_floors_a_due_horizon_for_every_actor_whose_row_floors(label):
+    version = rewrite_with_a_due_horizon(label).plan.version_fact
+    assert version.expires_at == NOW + timedelta(days=2)
+
+
+@pytest.mark.parametrize("label", ["review", "owner"])
+def test_the_update_path_refuses_a_due_horizon_for_an_actor_whose_row_does_not_floor(label):
+    with pytest.raises(FactExpiryError, match="counted from when the owner said it"):
+        rewrite_with_a_due_horizon(label)
+
+
+@pytest.fixture
+def store():
+    return FactStore(indexes=INDEXES_FILE)
+
+
+async def create_with_a_due_horizon(store, context):
+    from tests.support.fact_kit import ACC, USER, put_raw
+
+    put_raw(store, "old-source", "seeded", entity={
+        "domain": "biographical", "reported_date": datetime.now(timezone.utc) - timedelta(days=100)})
+    meta = {
+        "account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
+        "context_priority": "medium", "tags": ["t"], "metadata": {}, "type": "event",
+        "expiry": horizon(30), "derived_from": "old-source",
+    }
+    return await store.adapter.create_fact("mother is Valentina", meta, context=context)
+
+
+@pytest.mark.parametrize("label", ["stage2a", "stage2b", "cluster", "backstop"])
+async def test_the_create_path_floors_a_due_horizon_for_every_actor_whose_row_floors(store, label):
+    res = await create_with_a_due_horizon(store, ctx(actor=label, model_dates=False))
+    assert res["status"] == "created" and "had already passed" in res["note"]
+
+
+@pytest.mark.parametrize("label", ["review", "owner"])
+async def test_the_create_path_refuses_a_due_horizon_for_an_actor_whose_row_does_not_floor(store, label):
+    res = await create_with_a_due_horizon(store, ctx(actor=label, model_dates=False))
+    assert (res["status"], res["refused"]) == ("failed", "expiry")
