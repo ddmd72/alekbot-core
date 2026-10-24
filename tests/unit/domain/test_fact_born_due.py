@@ -32,7 +32,9 @@ def test_a_past_date_is_refused_with_the_discard_or_history_text(cleanup):
         check(on("2026-10-20"), cleanup=cleanup)
     text = str(refused.value)
     assert "the date 2026-10-20 is past (today is 2026-10-23 in Europe/Paris)" in text
-    assert "DISCARD the candidate" in text and "{kind: none}" in text and "past tense" in text
+    assert "{kind: none}" in text and "past tense" in text
+    # S3-D12: only a conversation pass may discard its candidate; a cleanup pass reviews stored memory.
+    assert ("DISCARD the candidate" in text) is (not cleanup)
     assert text.endswith(NOTHING_WRITTEN)
 
 
