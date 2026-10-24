@@ -183,10 +183,10 @@ class FactManagementAdapter(FactManagementPort):
             decision = new_fact_decision(attrs, "create_fact")
             now = datetime.now(timezone.utc)
             derived = await self._derived_from_dates(attrs, metadata["account_id"], context)
-            reported, date_note = reported_date_for_new(
+            reported, date_notes = reported_date_for_new(
                 context, attrs.reported_date, derived, now, derived_named=len(attrs.derived_from)
             )
-            notes = [*attrs.notes, *([date_note] if date_note else [])]
+            notes = [*attrs.notes, *date_notes]
             attrs, due_note = decided_attributes(attrs, decision, reported, now, context)
             notes.extend([due_note] if due_note else [])
 
@@ -205,7 +205,12 @@ class FactManagementAdapter(FactManagementPort):
 
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] create_fact refused (expiry): {e}")
-            return {"fact_id": None, "status": STATUS_FAILED, **expiry_refusal_tags(isinstance(e, FactBornDueError)), "message": str(e)}
+            return {
+                "fact_id": None,
+                "status": STATUS_FAILED,
+                **expiry_refusal_tags(isinstance(e, FactBornDueError)),
+                "message": str(e),
+            }
         except Exception as e:
             logger.error(f"❌ [FactManagement] Create fact error: {e}", exc_info=True)
             return {
@@ -263,7 +268,12 @@ class FactManagementAdapter(FactManagementPort):
             return await self._update_with_one_retry(fact_id, updates, account_id, context)
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] update_fact {fact_id[:8]} refused (expiry): {e}")
-            return {"fact_id": fact_id, "status": STATUS_FAILED, **expiry_refusal_tags(isinstance(e, FactBornDueError)), "message": str(e)}
+            return {
+                "fact_id": fact_id,
+                "status": STATUS_FAILED,
+                **expiry_refusal_tags(isinstance(e, FactBornDueError)),
+                "message": str(e),
+            }
         except FactResolutionError as e:
             logger.warning(f"⚠️  [FactManagement] Cannot resolve fact {fact_id[:8]}: {e}")
             return {"fact_id": fact_id, "status": STATUS_FAILED, "message": str(e)}
@@ -451,10 +461,10 @@ class FactManagementAdapter(FactManagementPort):
                 return self._merge_failed("Failed to supersede any facts")
             if merged is None:
                 now = datetime.now(timezone.utc)
-                reported, date_note = reported_date_for_merge(
+                reported, date_notes = reported_date_for_merge(
                     context, attrs.reported_date, [source.fact.reported_date for source in sources], now
                 )
-                notes = [*attrs.notes, *([date_note] if date_note else [])]
+                notes = [*attrs.notes, *date_notes]
                 decided, due_note = decided_attributes(attrs, decision, reported, now, context)
                 notes.extend([due_note] if due_note else [])
                 merged = (await self._fact_write_service.build_facts(

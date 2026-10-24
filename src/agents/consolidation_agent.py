@@ -48,8 +48,7 @@ from ..infrastructure.agent_config import CONSOLIDATION
 @dataclass
 class ToolResponse:
     """Internal container for fact management tool results. `outcome` is one of the `OUTCOME_*` values of
-    `domain.consolidation_pass_stats`, read from the result: a `refused: "expiry"` tag, a failed or missing
-    fact, or an `error` key."""
+    `domain.consolidation_pass_stats`, read from the result by `domain.fact_tool_result.outcome_of`."""
     name: str
     result_str: str
     outcome: str = OUTCOME_OK

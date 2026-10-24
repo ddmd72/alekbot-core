@@ -12,11 +12,13 @@ class FactManagementPort(ABC):
     - Tenancy: a write belongs to the account named by the call (`account_id` argument or
       `metadata["account_id"]`); a fact of another account is treated as absent. Search is scoped to
       the RequestContext's effective account.
-    - Results are JSON-serialisable dicts; the caller hands them to the model verbatim.
+    - Results are JSON-serialisable dicts; the caller hands them to the model verbatim. The words of a result (statuses,
+      refusal tags, note codes) are `domain.fact_tool_result`.
     - Errors: never raises. A failure is a result with `status: "failed"` and a `message`; search
       returns []. A write refused for its `expiry` also has `refused: "expiry"`; nothing was written.
     - Notes: a write that succeeded but did not use something the caller sent (a `reported_date` in a cleanup pass, an
-      `expiry` on a closing state, a `derived_from` it could not read) or that moved a horizon has a `note` string.
+      `expiry` on a closing state, a `derived_from` it could not read) or that moved a horizon has a `note` string (and `note_codes` for a note a reader must
+      recognise).
     - Write context: every write takes the `FactWriteContext` of its pass (actor of the lifecycle trail, the owner's
       zone, the batch span, whether the model's dates count). It has no default.
     - Atomicity: no lock. Every write to a fact document is a transaction under the `update_time` precondition of the
@@ -70,8 +72,9 @@ class FactManagementPort(ABC):
             context: the pass the write belongs to.
 
         Tenancy: the fact belongs to metadata["account_id"], created by metadata["user_id"].
-        Returns (the words are `domain.fact_tool_result`): {"fact_id", "status": "created" | "failed", "message"} plus "note" (and "note_codes" for a known note) and, for a refused expiry,
-            "refused": "expiry" (and "born_due": True when the expiry was well formed but already due); fact_id is None unless created.
+        Returns: {"fact_id", "status": "created" | "failed", "message"} plus "note" and, for a refused expiry,
+            "refused": "expiry" (and "born_due": True when the expiry was well formed but already due);
+            fact_id is None unless created.
         Expiry: a current fact needs `expiry` (domain.fact_expiry shapes) unless it is pinned (agent directive,
             principle, mindset tag), which gets `none`; a fact born archived or invalidated carries none and a sent one is
             ignored with a note. The decision is computed from the fact's `reported_date` and is refused when it would
@@ -106,8 +109,9 @@ class FactManagementPort(ABC):
             context: the pass the write belongs to; its actor is written to the lifecycle trail of the closed version.
 
         Tenancy: a fact of another account, or a missing id, is "not_found"; nothing is written.
-        Returns (the words are `domain.fact_tool_result`): {"fact_id", "status": "updated" | "not_found" | "failed", "message"}, plus "version" and "note" when
-            updated and "refused": "expiry" (plus "born_due": True when it was already due) when the expiry was refused.
+        Returns: {"fact_id", "status": "updated" | "not_found" | "failed", "message"}, plus "version" and "note"
+            when updated and "refused": "expiry" (plus "born_due": True when it was already due) when the expiry
+            was refused.
             `fact_id` is the id of the document written: the new version's id after a content change, else the
             current document's id, which differs from the argument when it was followed forward. When the argument
             was followed forward, the result also has "resolved_from" (the argument) and says so in its message.
@@ -160,8 +164,9 @@ class FactManagementPort(ABC):
         Order: every argument of the merged fact is validated, then the sources are resolved, then the merged fact
             is embedded; nothing is written before the single transaction.
         Tenancy: missing sources and sources of another account are skipped and not reported.
-        Returns (the words are `domain.fact_tool_result`): {"new_fact_id", "old_fact_ids" (the resolved source ids), "old_facts_state", "status": "merged" |
-            "failed", "message"}, plus "note" when merged and "refused": "expiry" (plus "born_due": True when it was already due) when the expiry was refused.
+        Returns: {"new_fact_id", "old_fact_ids" (the resolved source ids), "old_facts_state", "status": "merged" |
+            "failed", "message"}, plus "note" when merged and "refused": "expiry" (plus "born_due": True when it
+            was already due) when the expiry was refused.
         Lifecycle: each source gets state superseded, is_current False, valid_to and `superseded_by` = the new id.
         Atomicity: all or nothing. An invalid value, an embedding failure or a lost race writes nothing and leaves
             every source as it was.
