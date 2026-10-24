@@ -5,6 +5,9 @@
   is written. A later version with the same text (tags only) is still archived.
 - L5: when the id was followed forward, the result message keeps the history line.
 - L3/L4: the stored history fact is stable and archival.
+
+Reviewer edit (S4 T8e): `apply_fact_update` returns a typed outcome (T3c review M2); these assertions read its model
+dict through the one renderer (`tests.support.fact_write.rendered`), so each keeps its meaning.
 """
 import copy
 from datetime import datetime, timedelta, timezone
@@ -17,7 +20,7 @@ from src.domain.fact_tool_result import HISTORY_FACT_ID
 from src.domain.fact_update import parse_fact_update
 from tests.support.fact_kit import ACC, T0, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
-from tests.support.fact_write import EXPIRY_NONE, ctx
+from tests.support.fact_write import EXPIRY_NONE, ctx, rendered
 
 UTC = timezone.utc
 ENDED = answer_reason(AnswerKind.ENDED, "q7", "digit")
@@ -39,10 +42,10 @@ def seed_current(store):
 
 
 async def archive_with_history(store, actor="owner"):
-    return await store.adapter.apply_fact_update(
+    return rendered(await store.adapter.apply_fact_update(
         "f-a", parse_fact_update({"state": "archived"}), ACC, context=ctx(actor), evidence_at=datetime.now(UTC),
         reason=ENDED, history=HISTORY,
-    )
+    ))
 
 
 @pytest.mark.parametrize("actor", ["review", "owner"])

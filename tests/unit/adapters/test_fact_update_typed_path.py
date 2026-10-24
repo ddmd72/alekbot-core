@@ -4,6 +4,9 @@
 forward the typed path and record its writes.
 
 On the evaluating Firestore fake with the index refusal ON, through the real repository, write service and adapter.
+
+Reviewer edit (S4 T8e): `apply_fact_update` returns a typed outcome (T3c review M2); these assertions read its model
+dict through the one renderer (`tests.support.fact_write.rendered`), so each keeps its meaning.
 """
 import copy
 import inspect
@@ -27,7 +30,7 @@ from src.ports.fact_management_port import FactManagementPort
 from src.ports.fact_update_port import FactUpdatePort
 from tests.support.fact_kit import ACC, T0, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
-from tests.support.fact_write import ctx
+from tests.support.fact_write import ctx, rendered
 from tests.support.review_rule_builders import question
 from tests.support.typed_writes import build_consolidation_agent
 
@@ -81,9 +84,9 @@ async def test_still_true_from_answer_updates_revives_the_stale_fact(store):
     said = datetime.now(UTC) - timedelta(hours=1)
     change = answer_updates(AnswerKind.STILL_TRUE, stored, question(fact_id="old"), said, "Europe/Madrid", "digit")
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", change.update, ACC, context=ctx("owner"), evidence_at=change.evidence_at, reason=change.reason,
-    )
+    ))
 
     assert res["status"] == "updated" and res["fact_id"] == "old" and HISTORY_FACT_ID not in res, res
     doc = store.docs["old"]
@@ -99,9 +102,9 @@ async def test_an_archive_with_history_writes_the_archive_and_the_history_fact(s
     said = datetime.now(UTC) - timedelta(hours=2)
     before = set(store.docs)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", ARCHIVE_ONLY, ACC, context=ctx(actor), evidence_at=said, reason=ENDED, history=HISTORY,
-    )
+    ))
 
     assert res["status"] == "updated" and res["fact_id"] == "old", res
     history_id = res[HISTORY_FACT_ID]
@@ -119,10 +122,10 @@ async def test_an_archive_with_history_writes_the_archive_and_the_history_fact(s
 async def test_a_typed_rewrite_is_a_current_version(store, actor):
     seed(store)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", ParsedFactUpdate(content="works at Beta", expiry=Expiry(ExpiryKind.HORIZON, days=90)), ACC,
         context=ctx(actor), reason=REWRITTEN,
-    )
+    ))
 
     assert res["status"] == "updated" and res["fact_id"] != "old" and res["version"] == 2, res
     new = store.docs[res["fact_id"]]
@@ -137,10 +140,10 @@ async def test_history_with_anything_but_the_archive_alone_is_failed_with_the_do
     seed(store)
     before = copy.deepcopy(store.docs)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", ParsedFactUpdate(state=FactState.INVALIDATED), ACC, context=ctx("owner"), evidence_at=datetime.now(UTC),
         reason=ENDED, history=HISTORY,
-    )
+    ))
 
     assert res == {
         "fact_id": "old", "status": "failed",
@@ -153,14 +156,14 @@ async def test_a_review_write_without_its_reason_is_failed_with_the_domains_reas
     seed(store)
     before = copy.deepcopy(store.docs)
 
-    res = await store.adapter.apply_fact_update("old", ARCHIVE_ONLY, ACC, context=ctx("review"))
+    res = rendered(await store.adapter.apply_fact_update("old", ARCHIVE_ONLY, ACC, context=ctx("review")))
 
     assert res["status"] == "failed" and "a review write carries its code-built trail reason" in res["message"], res
     assert store.docs == before
 
 
 async def test_a_missing_fact_is_not_found(store):
-    res = await store.adapter.apply_fact_update("nope", ARCHIVE_ONLY, ACC, context=ctx("owner"), reason=ENDED)
+    res = rendered(await store.adapter.apply_fact_update("nope", ARCHIVE_ONLY, ACC, context=ctx("owner"), reason=ENDED))
     assert res == {"fact_id": "nope", "status": "not_found", "message": "Fact not found"}
 
 
@@ -175,9 +178,9 @@ async def test_the_tracker_forwards_the_typed_update_and_records_the_history_fac
     tracker = _TrackingFactUpdates(store.adapter, store.adapter)
     assert isinstance(tracker, _TrackingFactUpdates)
 
-    res = await tracker.apply_fact_update(
+    res = rendered(await tracker.apply_fact_update(
         "old", ARCHIVE_ONLY, ACC, context=ctx("owner"), evidence_at=datetime.now(UTC), reason=ENDED, history=HISTORY,
-    )
+    ))
 
     assert res["status"] == "updated" and store.docs["old"]["state"] == "archived"
     assert tracker.wrote is True and tracker.changed == [(res[HISTORY_FACT_ID], HISTORY)]
@@ -187,10 +190,10 @@ async def test_the_tracker_records_a_typed_rewrite_under_the_version_written(sto
     seed(store)
     tracker = _TrackingFactUpdates(store.adapter, store.adapter)   # reviewer edits (T3c fix round, L1; S4 T6b)
 
-    res = await tracker.apply_fact_update(
+    res = rendered(await tracker.apply_fact_update(
         "old", ParsedFactUpdate(content="works at Beta", expiry=Expiry(ExpiryKind.HORIZON, days=90)), ACC,
         context=ctx("review"), reason=REWRITTEN,
-    )
+    ))
 
     assert tracker.changed == [(res["fact_id"], "works at Beta")] and res["fact_id"] != "old"
 
@@ -241,9 +244,9 @@ async def test_the_kits_recorder_forwards_the_typed_update_into_the_overlay_only
         adapter = FactManagementAdapter(kit.repo, store.embedder, store.write, store.adapter._search_enrichment)
         recorder = kit_module.WriteRecorder(adapter, kit)
 
-        res = await recorder.apply_fact_update(
+        res = rendered(await recorder.apply_fact_update(
             "old", ARCHIVE_ONLY, ACC, context=ctx("owner"), evidence_at=datetime.now(UTC), reason=ENDED, history=HISTORY,
-        )
+        ))
 
         assert res["status"] == "updated", res
         assert store.docs == live_before

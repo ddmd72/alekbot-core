@@ -4,6 +4,9 @@
 Each scenario runs twice on fresh twin stores: once through `update_fact` (the model's dict), once through
 `apply_fact_update(parse_fact_update(updates))`. Both results equal the result pinned from the adapter at 5a83780 (before
 T3c), and the stored documents end the same. A version's new id is random, so it is compared as `<version>`.
+
+Reviewer edit (S4 T8e): `apply_fact_update` returns a typed outcome (T3c review M2); these assertions read its model
+dict through the one renderer (`tests.support.fact_write.rendered`), so each keeps its meaning.
 """
 from datetime import datetime, timedelta
 
@@ -13,7 +16,7 @@ from src.domain.fact_update import parse_fact_update
 from src.ports.fact_update_port import FactUpdatePort
 from tests.support.fact_kit import ACC, T0, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
-from tests.support.fact_write import ctx, horizon
+from tests.support.fact_write import ctx, horizon, rendered
 
 NEW_VERSION = "<version>"
 _UPDATED = {"message": "Fact updated successfully", "status": "updated"}
@@ -119,9 +122,9 @@ async def test_update_fact_is_parse_plus_the_typed_apply_and_returns_what_it_did
     model, typed = twin(), twin()
 
     by_model = await model.adapter.update_fact(fact_id, updates, ACC, context=ctx("stage1"))
-    by_code = await typed.adapter.apply_fact_update(
+    by_code = rendered(await typed.adapter.apply_fact_update(
         fact_id, parse_fact_update(updates, "Europe/Paris"), ACC, context=ctx("stage1"),
-    )
+    ))
 
     assert normalised(by_model, fact_id) == pinned
     assert normalised(by_code, fact_id) == pinned
@@ -144,7 +147,7 @@ async def test_a_born_due_horizon_is_refused_the_same_way_on_both_paths():
     model, typed = twin(), twin()
 
     by_model = await model.adapter.update_fact("cur", updates, ACC, context=ctx("stage1"))
-    by_code = await typed.adapter.apply_fact_update("cur", parse_fact_update(updates), ACC, context=ctx("stage1"))
+    by_code = rendered(await typed.adapter.apply_fact_update("cur", parse_fact_update(updates), ACC, context=ctx("stage1")))
 
     assert by_model == by_code
     assert {k: v for k, v in by_model.items() if k != "message"} == {
