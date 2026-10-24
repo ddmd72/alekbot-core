@@ -58,9 +58,9 @@ LabelSource = Literal["ui", "model", "fallback"]
 
 _CODE = re.compile(r"[a-z]{2}")
 _URL = re.compile(r"(?i)[a-z][a-z0-9+.\-]*://|www\.")
-# `[` would imitate a history frame (`[System:`, `[Reply to memory review`); `<` and `>` are Slack's control syntax
-# (`<!channel>`, `<@U1>`), which a model-written text must not carry into a post.
-_FORBIDDEN = frozenset("[<>")
+# `[` would imitate a history frame (`[System:`, `[Reply to memory review`). What a platform reads as control syntax in
+# a text is that platform's adapter to escape, not a rule of the label.
+_FORBIDDEN = frozenset("[")
 _INVISIBLE = frozenset({"Cc", "Cf"})  # control and format characters: bidi overrides, zero-width spaces
 
 
@@ -111,7 +111,7 @@ def check_labels(labels: Mapping[str, object]) -> Optional[str]:
     """Why a model-written label set may not be used, or None when it may.
 
     It must be exactly `LABEL_KEYS`, each a text of one line with no digit (the options are numbered by the message),
-    no `[`, `<` or `>`, no control or format character (a bidi override could move the digits) and no URL. The four option labels are at most `MAX_OPTION_WORDS` words and `MAX_LABEL_CHARS`
+    no `[`, no control or format character (a bidi override could move the digits) and no URL. The four option labels are at most `MAX_OPTION_WORDS` words and `MAX_LABEL_CHARS`
     characters (the bound an option takes, so a set that passes can always be posted) and differ from each other; every
     other text is at most `MAX_TEXT_CHARS` characters."""
     if set(labels) != LABEL_KEYS:
@@ -137,7 +137,7 @@ def _text_problem(value: object, is_option: bool) -> Optional[str]:
     if any(ch.isdigit() for ch in text):
         return "has a digit"
     if any(ch in text for ch in _FORBIDDEN):
-        return "has [, < or >"
+        return "has ["
     if _URL.search(text):
         return "has a URL"
     if len(text) > (MAX_LABEL_CHARS if is_option else MAX_TEXT_CHARS):
