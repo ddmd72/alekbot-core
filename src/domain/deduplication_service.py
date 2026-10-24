@@ -165,7 +165,7 @@ class SmartDeduplication:
             
         Examples:
             >>> self._extract_and_sort_numbers("Bike ride 42.5 km")
-            [88.5]
+            [42.5]
             
             >>> self._extract_and_sort_numbers("2025-03-28")
             [3.0, 28.0, 2025.0]
