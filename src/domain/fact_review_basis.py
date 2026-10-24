@@ -46,7 +46,7 @@ def parse_review_basis(raw: object) -> ReviewBasis:
     if not isinstance(raw, Mapping):
         raise ValueError(f"basis must be an object: {_SHAPES}")
     kind = raw.get("kind")
-    if kind not in _OWN_FIELDS:
+    if not isinstance(kind, str) or kind not in _OWN_FIELDS:  # a list or an object is no kind, not a TypeError
         raise ValueError(f"basis.kind must be evidence, reply or date_passed, got {kind!r}: {_SHAPES}")
     foreign = [
         name for other, names in _OWN_FIELDS.items() if other != kind for name in names if raw.get(name) is not None
@@ -58,6 +58,16 @@ def parse_review_basis(raw: object) -> ReviewBasis:
     if kind == "reply":
         return ReviewBasis("reply", question_id=_text(raw, "question_id"), quote=_text(raw, "quote"))
     return ReviewBasis("date_passed", on=parse_day(raw.get("date"), "basis.date"))
+
+
+def parse_history(raw: object) -> Optional[str]:
+    """The `history` argument of a review archive: the text of the fact to create beside it, or None when absent. Raises
+    ValueError naming the place and the shape for anything that is not text; `basis_refusal` says when it may be sent."""
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        raise ValueError(f"history must be text: one sentence in the past tense saying it ended, got {type(raw).__name__}")
+    return raw
 
 
 def parse_day(value: Any, place: str) -> Optional[date]:
