@@ -6,8 +6,6 @@ from pydantic import BaseModel, ConfigDict, field_validator
 _ID = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
 
 # The tightest button text of the platforms we post to; a longer label would make the whole post fail there.
-# The question-label check of the memory review (T1d `check_labels`) bounds the option labels by this constant too, so
-# a label set that passes it can always be posted.
 MAX_LABEL_CHARS = 75
 
 
