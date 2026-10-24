@@ -47,12 +47,12 @@ def test_a_past_tense_rewrite_of_a_refused_merge_answers_it(label):
 
 
 @pytest.mark.parametrize("label", CLEANUP)
-def test_a_split_part_rewritten_with_the_same_derived_from_answers_it(label):
+def test_a_heavy_rewrite_that_keeps_few_words_alerts_even_with_the_same_derived_from(label):
     s = stats(label)
     turn(s, create("Meets the dentist on 2026-10-10", derived=["f1"]), OUTCOME_BORN_DUE)
     turn(s, create("Went to a dental check-up", derived=["f1"]), OUTCOME_OK)
 
-    assert s.abandoned == 0
+    assert s.abandoned == 1                                  # the accepted direction: errs towards an alert
 
 
 @pytest.mark.parametrize("label", CLEANUP)
@@ -92,12 +92,35 @@ def test_a_create_from_other_facts_does_not_answer_a_split_part(label):
 
 
 @pytest.mark.parametrize("label", CLEANUP)
-def test_the_residual_a_dropped_part_beside_a_sibling_with_the_same_derived_from_counts_as_answered(label):
+def test_a_dropped_part_beside_a_sibling_with_the_same_derived_from_is_abandoned(label):
     s = stats(label)
-    turn(s, create("Meets the dentist on 2026-10-10", derived=["f1"]), OUTCOME_BORN_DUE)
-    turn(s, create("Takes the pills daily", derived=["f1"]), OUTCOME_OK)
+    turn(s, create("The owner flew to Lisbon on 2026-10-10", derived=["f1"]), OUTCOME_BORN_DUE)
+    turn(s, create("The owner works as a data engineer at Acme", derived=["f1"]), OUTCOME_OK)
 
-    assert s.abandoned == 0
+    assert s.abandoned == 1
+
+
+@pytest.mark.parametrize("label", CLEANUP)
+def test_the_lisbon_rewrite_answers_with_and_without_derived_from(label):
+    for derived in (None, ["f1"]):
+        s = stats(label)
+        turn(s, create("Plans a trip to Lisbon on 2026-10-10", derived=derived), OUTCOME_BORN_DUE)
+        turn(s, create("Took a trip to Lisbon on 2026-10-10", derived=derived), OUTCOME_OK)
+
+        assert s.abandoned == 0
+
+
+@pytest.mark.parametrize("refused,other", [
+    ("User plans to fly to Lisbon on 2026-10-10", "User plans to renew the passport by 2026-12-01"),
+    ("User has a dentist appointment on 2026-10-20", "User has a car service appointment on 2026-11-05"),
+])
+@pytest.mark.parametrize("label", CLEANUP)
+def test_shared_boilerplate_and_dates_do_not_make_an_unrelated_create_the_answer(label, refused, other):
+    s = stats(label)
+    turn(s, create(refused), OUTCOME_BORN_DUE)
+    turn(s, create(other), OUTCOME_OK)
+
+    assert s.abandoned == 1
 
 
 @pytest.mark.parametrize("label", CLEANUP)

@@ -23,8 +23,15 @@ _CLOSING_VALUES = frozenset(state.value for state in CLOSING_STATES)
 _NEW_TEXT_TOOLS = {"create_fact": "content", "merge_facts": "merged_content"}
 # Passes whose subject is stored memory: an unanswered born-due refusal there is a loss.
 _CLEANUP_LABELS = frozenset({"stage2a", "stage2b", "cluster"})
-# A born-due create is answered by a rewrite that shares this much of its words (distinct, hashed in memory).
+# A born-due create is answered by a rewrite whose content words overlap this much (shared / union, hashed in memory).
 _REWRITE_OVERLAP = 0.5
+_MIN_WORD_LENGTH = 3
+# The house style opens every fact with the subject and links with these; they say nothing about which fact it is.
+_FILLER_WORDS = frozenset({
+    "the", "and", "for", "with", "from", "into", "onto", "that", "this", "these", "those", "has", "have", "had", "was",
+    "were", "are", "been", "being", "will", "would", "can", "could", "his", "her", "its", "their", "our", "not", "but",
+    "user", "owner",
+})
 
 # What one tool call came to. `expiry` is a refusal of a missing or malformed `expiry`; `born_due` one of a well-formed
 # `expiry` that resolves already due (on a conversation pass the model may discard the candidate, so it is not an
@@ -105,10 +112,14 @@ def _sources(name: str, args: Dict[str, Any]) -> FrozenSet[str]:
 
 
 def _word_hashes(name: str, args: Dict[str, Any]) -> FrozenSet[int]:
+    """Hashes of the content words of a created or merged text: no digit-only token, no short or filler word."""
     if name not in _NEW_TEXT_TOOLS:
         return frozenset()
     text = args.get(_NEW_TEXT_TOOLS[name])
-    words = set(re.findall(r"\w+", text.lower())) if isinstance(text, str) else set()
+    words = {
+        w for w in (re.findall(r"\w+", text.lower()) if isinstance(text, str) else [])
+        if len(w) >= _MIN_WORD_LENGTH and not w.isdigit() and w not in _FILLER_WORDS
+    }
     return frozenset(int(hashlib.sha256(w.encode("utf-8")).hexdigest()[:12], 16) for w in words)
 
 
@@ -121,22 +132,21 @@ def _domain(args: Dict[str, Any]) -> str:
 def _rewrites(refused: _Outcome, later: _Outcome) -> bool:
     """Whether `later` (a successful create or merge) is the rewrite a born-due refusal asks for, which has other text.
 
-    A merge is answered by a merge of the same non-empty set of facts. A create made from facts is answered by a create
-    from the same set. A create from none is answered by a create of the same domain that keeps at least half
-    of its distinct words. Residual, by decision: a split part that is dropped is counted as answered when a sibling
-    part shares its `derived_from` set, because a split's parts are all made from the same fact; the 🚨 does not catch
-    that one.
+    A merge is answered by a merge of the same non-empty set of facts. A create is answered by a create of the same
+    domain whose content words overlap its own (shared / union at least `_REWRITE_OVERLAP`); when it was made from
+    facts, the answer must also be made from the same set, so a sibling split part, which is another concept, fails the
+    text rule. Residual, on purpose: a heavy rewrite that keeps few words is not recognised and alerts.
     """
     if later.closing or later.outcome != OUTCOME_OK:
         return False
     if refused.name == "merge_facts":
         return later.name == "merge_facts" and bool(refused.sources) and later.sources == refused.sources
-    if later.name != "create_fact":
+    if later.name != "create_fact" or later.domain != refused.domain:
         return False
-    if refused.sources:
-        return later.sources == refused.sources
-    kept = len(refused.words & later.words)
-    return bool(refused.words) and later.domain == refused.domain and kept >= _REWRITE_OVERLAP * len(refused.words)
+    if refused.sources and later.sources != refused.sources:
+        return False
+    union = refused.words | later.words
+    return bool(union) and len(refused.words & later.words) >= _REWRITE_OVERLAP * len(union)
 
 
 class ConsolidationPassStats:

@@ -601,10 +601,12 @@ fact text, 8 characters of the user id):
   `expiry`, or, on a cleanup pass, born due) is abandoned when no later successful create or merge in the same pass has the
   same text; a refused update, when no later successful, non-closing update targets the same fact (retiring the fact without
   its new text is the loss, not an answer). A **born-due** refusal on a cleanup pass is also answered by the rewrite it asks
-  for, which has other text: a later successful merge of the same set of `fact_ids`; for a create, a later successful create
-  with the same non-empty `derived_from` set, or, for a create without `derived_from`, one of the same domain that keeps at
-  least half of its distinct words. Residual: a dropped split part is counted as answered when a sibling part has the same
-  `derived_from`. The comparisons use hashes held in memory, never logged. `abandoned > 0` posts "🚨 Consolidation left expiry
+  for, which has other text: a later successful merge of the same set of `fact_ids`; for a create, a later successful
+  create of the same domain whose **content words** overlap its own (shared / union at least 0.5; digit-only tokens,
+  tokens under 3 characters, a short stop list and the subjects "user"/"owner" do not count). A create made from facts
+  (`derived_from`) is answered only by one from the same set that also passes the text rule, so a sibling split part never
+  answers a dropped one. Residual: a heavy rewrite that keeps few words alerts. The comparisons use hashes held in memory,
+  never logged. `abandoned > 0` posts "🚨 Consolidation left expiry
   refusals unanswered" with the pass label, model, tool names and text lengths. It errs towards an alert: a retry that
   rewrites the text counts as abandoned.
 - **Close-out.** The abandoned 🚨 and the add of the pass's expiry errors to the account's day (`expiry_tool_errors`, §5.5)
