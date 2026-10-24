@@ -60,6 +60,8 @@ class SweepSnapshot:
     def __post_init__(self) -> None:
         if not isinstance(self.run_at, datetime):
             raise ValueError("run_at must be a datetime")
+        if not isinstance(self.breaker, str):
+            raise ValueError("breaker must be a string")
         for name in _SNAPSHOT_COUNTS:
             check_count(name, getattr(self, name))
         if self.oldest_stale_days is not None:
