@@ -17,8 +17,8 @@ class FactManagementPort(ABC):
     - Errors: never raises. A failure is a result with `status: "failed"` and a `message`; search
       returns []. A write refused for its `expiry` also has `refused: "expiry"`; nothing was written.
     - Notes: a write that succeeded but did not use something the caller sent (a `reported_date` in a cleanup pass, an
-      `expiry` on a closing state, a `derived_from` it could not read) or that moved a horizon has a `note` string (and `note_codes` for a note a reader must
-      recognise).
+      `expiry` on a closing state, a `derived_from` it could not read) or that moved a horizon has a `note` string
+      (and `note_codes` for a note a reader must recognise).
     - Write context: every write takes the `FactWriteContext` of its pass (actor of the lifecycle trail, the owner's
       zone, the batch span, whether the model's dates count). It has no default.
     - Atomicity: no lock. Every write to a fact document is a transaction under the `update_time` precondition of the
