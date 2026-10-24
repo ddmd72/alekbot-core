@@ -94,7 +94,10 @@ class RecordingChannelFactory(NotificationChannelFactoryPort):
 class RecordingInteractiveMessagePort(InteractiveMessagePort):
     """A platform that keeps what it was given. `post` numbers messages per channel and answers the ref; `show_choice`
     records the outcome (the message then has no controls), and fails for a message that was never posted, as a
-    platform does. `fail` / `fail_show` make the next calls raise; `unreachable` lists platforms that refuse every post."""
+    platform does. `fail` / `fail_show` make the next calls raise; `unreachable` lists platforms that refuse every post.
+    `plain_platforms` have no controls (as a platform served by the plain-text adapter): `show_choice` there does
+    nothing and `has_controls` is False. `normalise` maps a requested channel to the one the platform returns in the ref
+    (Slack answers a user id with the DM channel id), so code must store the ref's channel, not the one it asked for."""
 
     def __init__(self) -> None:
         self.posted: List[Tuple[MessageRef, InteractiveMessage]] = []
@@ -102,11 +105,14 @@ class RecordingInteractiveMessagePort(InteractiveMessagePort):
         self.fail = False
         self.fail_show = False
         self.unreachable: Set[str] = set()
+        self.plain_platforms: Set[str] = set()
+        self.normalise: Dict[str, str] = {}
         self._counter: Dict[Tuple[str, str], int] = {}
 
     async def post(self, platform: str, channel_id: str, message: InteractiveMessage) -> MessageRef:
         if self.fail or platform in self.unreachable:
             raise RuntimeError("post failed")
+        channel_id = self.normalise.get(channel_id, channel_id)
         number = self._counter.get((platform, channel_id), 0) + 1
         self._counter[(platform, channel_id)] = number
         ref = MessageRef(platform=platform, channel_id=channel_id, message_id=f"m{number}")
@@ -114,6 +120,8 @@ class RecordingInteractiveMessagePort(InteractiveMessagePort):
         return ref
 
     async def show_choice(self, ref: MessageRef, outcome: ChoiceOutcome) -> None:
+        if ref.platform in self.plain_platforms:
+            return
         if self.fail_show:
             raise RuntimeError("update failed")
         if all(posted_ref != ref for posted_ref, _ in self.posted):
@@ -125,7 +133,7 @@ class RecordingInteractiveMessagePort(InteractiveMessagePort):
 
     def has_controls(self, ref: MessageRef) -> bool:
         """True while the message at `ref` still offers its options (no outcome has been shown for it)."""
-        return ref not in self.shown
+        return ref.platform not in self.plain_platforms and ref not in self.shown
 
 
 class FakeNotificationState(NotificationStatePort):

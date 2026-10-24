@@ -12,7 +12,8 @@ MAX_OPTIONS = 5
 
 class InteractiveMessage(BaseModel):
     """What is asked (`prompt`), the quoted subject (`quote`, may be empty), the options in order, the binding that
-    routes the answer, and `reply_hint`, the line an adapter with controls shows as the fallback for them.
+    routes the answer, and `reply_hint`, the line that says how to answer without controls (by replying with a digit):
+    an adapter with controls shows it as the fallback for them, the plain text ends with it.
 
     The options are numbered from 1 in their order: a whole reply that is that digit picks the option, on every
     platform and in every language (`option_for_reply`); the digit rule lives here and nowhere else."""
@@ -53,9 +54,12 @@ class InteractiveMessage(BaseModel):
         return None
 
     def as_plain_text(self) -> str:
-        """Prompt, the quote in «», and the numbered options on one line: what a platform without controls shows."""
+        """Prompt, the quote in «», the numbered options on one line and last the reply hint: what a platform without
+        controls shows. The hint is part of the text because there only a reply to the message counts."""
         parts = [self.prompt.strip()]
         if self.quote.strip():
             parts.append(f"«{self.quote.strip()}»")
         parts.append("  ".join(f"{number} — {option.label}" for number, option in enumerate(self.options, start=1)))
+        if self.reply_hint.strip():
+            parts.append(self.reply_hint.strip())
         return "\n\n".join(parts)

@@ -10,7 +10,9 @@ _MAX_ID = 200
 
 class InteractiveBinding(BaseModel):
     """The one rule for turning a binding into a platform callback field and back (`token` / `parse`), so a poster and
-    the inbound route cannot disagree. The longest token (241 characters) fits the tightest platform field (255)."""
+    the inbound route cannot disagree. The longest token (241 characters) fits Slack's block id (255). Telegram's inline
+    keyboard `callback_data` is only 64 bytes: a Telegram keyboard (follow-up) must keep token plus option id within it,
+    with short ids or a server-side lookup."""
 
     model_config = ConfigDict(frozen=True)
 
