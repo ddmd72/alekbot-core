@@ -294,7 +294,8 @@ is refused from the model on update, create and merge: only the system marks a f
 write context: the actor (`stage1`, `stage2a`, `stage2b`, `backstop`, `email`, `cluster`), the owner's zone, the **span**
 (first and last message time of the batch, any role; for email the oldest and newest `email_date`, naive dates read as UTC;
 none for `cluster`) and whether the model's date counts. On Stage 1 and email passes the model's `reported_date` is clamped
-into the span (never after now) and used; a missing one is the span end. A create or merge on a cleanup pass ignores a
+into the span (never after now) and used; a missing one is the span end. A merge on any pass is never dated before its newest source (the later of the model's clamped date and the
+sources' latest). A create or merge on a cleanup pass ignores a
 model date (the result says so) and takes the latest date of its sources: for a create, the facts named in the optional
 `derived_from` (a decomposition part or a demotion; read by id, same account only), else the span end, else now. An update
 never moves the date back (`max(stored, new)`), and a cleanup pass keeps the stored one. A model value may be an ISO time with
@@ -307,7 +308,7 @@ DISCARD, and cleanup passes never extend.
 
 **What the model sees.** The consolidator's search results carry `expiry` in the shape it sends, `due` (the local end date of
 a horizon) and `reported_date` as an ISO time with the owner's offset; never `ttl_days`, `expires_at` or `expiry_kind`. A
-`date` view sent back unchanged keeps the same `expires_at`; a fact with no `expiry_kind` shows `expiry: null`, which Stage 2a
+`date` view sent back unchanged keeps the same `expires_at` unless that date is today or past: then it is refused as born due; a fact with no `expiry_kind` shows `expiry: null`, which Stage 2a
 tells the model means "classified separately" (it decides `expiry` only for what it writes in the pass). **One timestamp
 format:** the consolidator's conversation lines (`User (2026-10-22 Thu 12:00 CEST): …`) and every pass's user message
 (`Today: 2026-10-23 Fri (Europe/Paris, the owner's timezone).`) use the formatter Smart's own message stamps use

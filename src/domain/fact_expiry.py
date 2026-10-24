@@ -69,8 +69,9 @@ def expiry_view(
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """A stored decision as the model sends it, plus `due` (a local ISO date) for a horizon.
 
-    Sending a date or none view back unchanged keeps the same `expires_at`, and so does a horizon, unless a cleanup pass
-    floored it (then a resend is floored again from the new now). No kind, or a kind without its data, is no view: the
+    Sending a date or none view back unchanged keeps the same `expires_at`, unless the date is today or past (then it is
+    refused as born due), and so does a horizon, unless a cleanup pass floored it (then a resend is floored again from the
+    new now). No kind, or a kind without its data, is no view: the
     model is not shown a decision it could not resend. `kind` may be the stored string.
     """
     kind = as_expiry_kind(kind)

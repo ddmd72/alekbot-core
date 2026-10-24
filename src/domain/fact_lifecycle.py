@@ -121,7 +121,7 @@ def born_due(
     if expires > now + _DAY:
         return dict(fields), None
     if kind is ExpiryKind.DATE:
-        raise _date_refusal(expires, reported_date, now, timezone)
+        raise _date_refusal(expires, reported_date, now, timezone, cleanup)
     if cleanup:
         review_on = now + _CLEANUP_FLOOR
         note = (
@@ -137,9 +137,18 @@ def born_due(
     )
 
 
-def _date_refusal(expires: datetime, reported_date: datetime, now: datetime, timezone: str) -> FactBornDueError:
+def _date_refusal(
+    expires: datetime, reported_date: datetime, now: datetime, timezone: str, cleanup: bool
+) -> FactBornDueError:
     last_day = local_date(expires - timedelta(microseconds=1), timezone)
     today = local_date(now, timezone)
+    if last_day < today and cleanup:
+        # The subject is a stored fact, not a candidate: dropping it loses memory.
+        return FactBornDueError(
+            f"the date {last_day.isoformat()} is past (today is {today.isoformat()} in {timezone}): this pass reviews "
+            "stored memory, so do not drop the fact. Rewrite it as what happened (past tense, the outcome if known) "
+            f"with {{kind: none}}, or give a future date if the plan still holds. {NOTHING_WRITTEN}"
+        )
     if last_day < today:
         return FactBornDueError(
             f"the date {last_day.isoformat()} is past (today is {today.isoformat()} in {timezone}): DISCARD the "
