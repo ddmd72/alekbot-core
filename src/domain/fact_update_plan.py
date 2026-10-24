@@ -37,16 +37,8 @@ def plan_fact_update(current: FactEntity, update: ParsedFactUpdate, now: datetim
         if _carries_content(update):
             raise ValueError("state SUPERSEDED cannot be combined with content, tags, metadata or temporal_class")
 
-    new_tags = _resulting_tags(current.tags, update.tags)
-    new_metadata = {**current.metadata, **update.metadata} if update.metadata is not None else current.metadata
-    new_text = update.content if update.content is not None else current.text
-    content_changed = (
-        new_text != current.text
-        or Counter(new_tags) != Counter(current.tags)
-        or new_metadata != current.metadata
-        or (update.temporal_class is not None and update.temporal_class != current.temporal_class)
-    )
-    if not content_changed:
+    new_text, new_tags, new_metadata = _resulting_content(current, update)
+    if not content_changed(current, update):
         return FactUpdatePlan("in_place", _in_place_fields(current, update, now), None, False, None)
 
     old_texts = fact_embedding_texts(current.text, current.tags, current.metadata)
@@ -71,6 +63,25 @@ def plan_fact_update(current: FactEntity, update: ParsedFactUpdate, now: datetim
     if stale:
         changes.update({"vector": None, "tags_vector": None, "metadata_vector": None})
     return FactUpdatePlan("version", {}, current.model_copy(update=changes, deep=True), stale, new_texts if stale else None)
+
+
+def _resulting_content(current: FactEntity, update: ParsedFactUpdate) -> tuple[str, list[str], dict[str, Any]]:
+    new_tags = _resulting_tags(current.tags, update.tags)
+    new_metadata = {**current.metadata, **update.metadata} if update.metadata is not None else current.metadata
+    new_text = update.content if update.content is not None else current.text
+    return new_text, new_tags, new_metadata
+
+
+def content_changed(current: FactEntity, update: ParsedFactUpdate) -> bool:
+    """Whether `update` changes what the fact says (text, tags, metadata or temporal class): the one test that makes a
+    version document instead of an in-place write. An order-only tag difference is not a change."""
+    new_text, new_tags, new_metadata = _resulting_content(current, update)
+    return (
+        new_text != current.text
+        or Counter(new_tags) != Counter(current.tags)
+        or new_metadata != current.metadata
+        or (update.temporal_class is not None and update.temporal_class != current.temporal_class)
+    )
 
 
 def _carries_content(update: ParsedFactUpdate) -> bool:

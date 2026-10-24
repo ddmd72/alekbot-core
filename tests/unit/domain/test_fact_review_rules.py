@@ -4,19 +4,24 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from src.domain import fact_lifecycle_sweep
+from src.domain.entities import ExpiryKind
 from src.domain import fact_review_rules as rules
 from src.domain.fact_review_question import QUESTION_TIMEOUT, QuestionStatus
 from src.domain.fact_review_rules import (
     EARLIEST_QUEUE_KEY,
     becomes_unanswered,
+    current_question,
     due_timeouts,
     kept_twice,
+    kept_twice_fallback,
     may_send,
     next_in_queue,
     queue_key,
     queue_order,
+    queued_question,
     select_batch,
     sent_today,
+    stuck_pending,
 )
 from tests.support.review_rule_builders import NOW, fact, question, stale_since, state
 
@@ -36,7 +41,6 @@ def test_the_constants_are_the_plans_numbers():
     assert (rules.MIN_FALLBACK_DAYS, rules.MAX_FALLBACK_DAYS) == (14, 365)
     assert (rules.REVIVE_ALERT, rules.REVIVE_WINDOW) == (3, timedelta(days=30))
     assert rules.DIGEST_INTERVAL == timedelta(days=7)
-    assert rules.KEPT_TWICE_FALLBACK == "revive"
 
 
 def test_the_pool_cap_is_the_janitors_backlog_cap_not_a_second_copy():
@@ -218,30 +222,28 @@ TODAY = date(2026, 10, 24)
 YESTERDAY = date(2026, 10, 23)
 
 
+def out(status=Q.ASKED, **over):
+    """The question a state's pointer names."""
+    return question(status, question_id="out", fact_id="f9", **over)
+
+
 def test_may_send_when_nothing_is_out_and_nothing_sent_today():
-    assert may_send(state(), TODAY, open_current=False)
+    assert may_send(state(), TODAY, None)
 
 
-def test_may_send_refuses_while_the_current_question_is_open():
-    assert not may_send(state(current_question_id="q1"), TODAY, open_current=True)
-
-
-def test_a_pointer_to_a_question_that_is_no_longer_open_holds_nothing():
-    assert may_send(state(current_question_id="q1"), TODAY, open_current=False)
-
-
-def test_open_current_without_a_pointer_holds_nothing():
-    assert may_send(state(), TODAY, open_current=True)
+def test_may_send_refuses_while_a_question_is_out():
+    assert not may_send(state(current_question_id="out"), TODAY, out())
+    assert not may_send(state(current_question_id="out"), TODAY, out(Q.PENDING))
 
 
 @pytest.mark.parametrize("sent,allowed", [(0, True), (4, True), (5, False), (6, False)])
 def test_the_fifth_question_of_a_day_is_the_last(sent, allowed):
-    assert may_send(state(sent_on=TODAY, sent=sent), TODAY, open_current=False) is allowed
+    assert may_send(state(sent_on=TODAY, sent=sent), TODAY, None) is allowed
 
 
 def test_the_count_of_an_earlier_day_is_not_todays():
     st = state(sent_on=YESTERDAY, sent=5)
-    assert sent_today(st, TODAY) == 0 and may_send(st, TODAY, open_current=False)
+    assert sent_today(st, TODAY) == 0 and may_send(st, TODAY, None)
 
 
 def test_sent_today_is_the_count_of_the_same_local_day():
@@ -251,39 +253,119 @@ def test_sent_today_is_the_count_of_the_same_local_day():
 
 def test_may_send_refuses_after_a_failed_delivery_today_and_allows_after_midnight():
     st = state(delivery_failed_on=TODAY)
-    assert not may_send(st, TODAY, open_current=False)
-    assert may_send(st, TODAY + timedelta(days=1), open_current=False)
+    assert not may_send(st, TODAY, None)
+    assert may_send(st, TODAY + timedelta(days=1), None)
 
 
 def test_a_failed_delivery_of_an_earlier_day_does_not_block():
-    assert may_send(state(delivery_failed_on=YESTERDAY), TODAY, open_current=False)
+    assert may_send(state(delivery_failed_on=YESTERDAY), TODAY, None)
+
+
+# ------------------------------------------------------------------------------------------------ current_question
+
+@pytest.mark.parametrize("status", [Q.PENDING, Q.ASKED])
+def test_the_pointed_question_is_current_while_it_is_being_sent_or_sent(status):
+    q = out(status)
+    assert current_question(state(current_question_id="out"), [question(Q.QUEUED), q]) is q
+
+
+@pytest.mark.parametrize("status", [Q.QUEUED, Q.UNANSWERED, Q.CLOSED])
+def test_a_pointer_to_a_question_in_any_other_status_holds_nothing(status):
+    assert current_question(state(current_question_id="out"), [out(status)]) is None
+
+
+def test_no_pointer_or_a_pointer_to_nothing_is_no_current_question():
+    assert current_question(state(), [out()]) is None
+    assert current_question(state(current_question_id="gone"), [out()]) is None
+    assert current_question(state(current_question_id="out"), []) is None
+
+
+def test_an_open_question_the_state_does_not_point_at_is_not_current():
+    assert current_question(state(current_question_id="other"), [out()]) is None
+
+
+def test_the_claim_rule_is_the_three_functions_together():
+    st = state(current_question_id="out", sent_on=TODAY, sent=1)
+    questions = [out(), _queued("k1", 20), _queued("k0", 40)]
+    assert not may_send(st, TODAY, current_question(st, questions))
+    freed = state(sent_on=TODAY, sent=1)
+    assert may_send(freed, TODAY, current_question(freed, questions))
+    assert next_in_queue(questions).question_id == "k0"
 
 
 # ------------------------------------------------------------------------------------------------ becomes_unanswered
 
 def test_a_question_asked_on_an_earlier_local_day_becomes_unanswered():
-    assert becomes_unanswered(question(Q.ASKED, asked_at=NOW - timedelta(days=1)), TODAY, "UTC")
+    assert becomes_unanswered(question(Q.ASKED, asked_at=NOW - timedelta(days=1)), NOW, "UTC")
 
 
 def test_a_question_asked_today_stays_current():
-    assert not becomes_unanswered(question(Q.ASKED, asked_at=NOW - timedelta(hours=8)), TODAY, "UTC")
+    assert not becomes_unanswered(question(Q.ASKED, asked_at=NOW - timedelta(hours=8)), NOW, "UTC")
 
 
 def test_the_day_is_the_owners_not_utc():
     asked = question(Q.ASKED, asked_at=datetime(2026, 10, 23, 22, 30, tzinfo=timezone.utc))
-    assert becomes_unanswered(asked, TODAY, "UTC")  # 23 Oct in UTC
-    assert not becomes_unanswered(asked, TODAY, "Europe/Madrid")  # 00:30 on 24 Oct in Madrid
-    assert becomes_unanswered(asked, TODAY, "America/New_York")  # 23 Oct there too
+    assert becomes_unanswered(asked, NOW, "UTC")  # 23 Oct in UTC
+    assert not becomes_unanswered(asked, NOW, "Europe/Madrid")  # 00:30 on 24 Oct in Madrid
+    assert becomes_unanswered(asked, NOW, "America/New_York")  # 23 Oct there too
+
+
+def test_now_is_read_in_the_owners_zone_too():
+    asked = question(Q.ASKED, asked_at=datetime(2026, 10, 24, 10, 0, tzinfo=timezone.utc))
+    just_after_madrid_midnight = datetime(2026, 10, 24, 22, 30, tzinfo=timezone.utc)  # 25 Oct 00:30 in Madrid
+    assert becomes_unanswered(asked, just_after_madrid_midnight, "Europe/Madrid")
+    assert not becomes_unanswered(asked, just_after_madrid_midnight, "UTC")
 
 
 def test_a_recorded_reply_in_words_does_not_keep_a_question_current():
     replied = question(Q.ASKED, asked_at=NOW - timedelta(days=1), reply_text="not sure", reply_at=NOW - timedelta(hours=20))
-    assert becomes_unanswered(replied, TODAY, "UTC")
+    assert becomes_unanswered(replied, NOW, "UTC")
 
 
 @pytest.mark.parametrize("status", [Q.QUEUED, Q.PENDING, Q.UNANSWERED, Q.CLOSED])
 def test_only_an_asked_question_becomes_unanswered(status):
-    assert not becomes_unanswered(question(status, asked_at=NOW - timedelta(days=5)), TODAY, "UTC")
+    assert not becomes_unanswered(question(status, asked_at=NOW - timedelta(days=5)), NOW, "UTC")
+
+
+# ------------------------------------------------------------------------------------------------ stuck_pending
+
+def pending(**over):
+    return question(Q.PENDING, question_id="out", fact_id="f9", **over)
+
+
+def test_a_pending_question_claimed_on_an_earlier_day_is_stuck():
+    st = state(current_question_id="out", sent_on=YESTERDAY, sent=1)
+    assert stuck_pending(pending(), st, NOW, "UTC")
+    assert stuck_pending(pending(posted=True), st, NOW, "UTC")  # one with a ref too: housekeeping completes it
+
+
+def test_a_pending_question_claimed_today_may_still_be_sending():
+    st = state(current_question_id="out", sent_on=TODAY, sent=1)
+    assert not stuck_pending(pending(), st, NOW, "UTC")
+    assert not stuck_pending(pending(posted=True), st, NOW, "UTC")
+
+
+def test_a_pending_question_that_is_not_the_current_one_is_stuck_at_once():
+    st = state(current_question_id="other", sent_on=TODAY, sent=1)
+    assert stuck_pending(pending(), st, NOW, "UTC")
+    assert stuck_pending(pending(), state(sent_on=TODAY, sent=1), NOW, "UTC")
+
+
+def test_a_pending_question_with_no_claim_day_on_record_is_stuck():
+    assert stuck_pending(pending(), state(current_question_id="out"), NOW, "UTC")
+
+
+def test_the_claim_day_is_compared_in_the_owners_zone():
+    st = state(current_question_id="out", sent_on=date(2026, 10, 24), sent=1)
+    after_madrid_midnight = datetime(2026, 10, 24, 22, 30, tzinfo=timezone.utc)  # 25 Oct in Madrid
+    assert stuck_pending(pending(), st, after_madrid_midnight, "Europe/Madrid")
+    assert not stuck_pending(pending(), st, after_madrid_midnight, "UTC")
+
+
+@pytest.mark.parametrize("status", [Q.QUEUED, Q.ASKED, Q.UNANSWERED, Q.CLOSED])
+def test_only_a_pending_question_can_be_stuck(status):
+    st = state(sent_on=YESTERDAY, sent=1)
+    assert not stuck_pending(question(status), st, NOW, "UTC")
 
 
 # ------------------------------------------------------------------------------------------------ due_timeouts
@@ -325,3 +407,45 @@ def test_timeouts_come_in_queue_order():
         question(Q.UNANSWERED, question_id="a", asked_at=old, queue_key=NOW - timedelta(days=50)),
     ]
     assert [q.question_id for q in due_timeouts(qs, NOW)] == ["a", "b"]
+
+
+# ------------------------------------------------------------------------------------------------ queued_question
+
+def test_a_queued_question_quotes_the_fact_and_waits_where_the_fact_has_waited():
+    f = fact("f7", text="Drinks green tea", stale_since=stale_since(12))
+    q = queued_question(f, "qid", "owner-1", "revive", at=NOW)
+    assert q.status is Q.QUEUED and q.question_id == "qid" and q.user_id == "owner-1"
+    assert q.account_id == f.account_id and q.fact_id == "f7" and q.quoted_text == "Drinks green tea"
+    assert q.queue_key == f.stale_since and q.queued_at == NOW and q.fallback == "revive"
+    assert q.fallback_date is None and q.noise is False
+
+
+def test_a_queued_question_of_a_fact_with_no_stale_since_goes_to_the_front():
+    q = queued_question(fact("f7", stale_since=None), "qid", "u", "revive", at=NOW)
+    assert q.queue_key == EARLIEST_QUEUE_KEY and next_in_queue([q, _queued("later", 10)]).question_id == "qid"
+
+
+def test_a_queued_question_carries_the_asks_date_and_noise():
+    dated_q = queued_question(fact(), "a", "u", "archive", at=NOW, fallback_date=date(2026, 10, 1))
+    noisy = queued_question(fact(), "b", "u", "archive", at=NOW, noise=True)
+    assert dated_q.fallback_date == date(2026, 10, 1) and noisy.noise is True and noisy.fallback == "archive"
+
+
+def test_a_queued_question_is_a_valid_record_that_survives_a_dump():
+    q = queued_question(fact(), "qid", "u", "revive", at=NOW)
+    assert type(q).model_validate(q.model_dump()) == q
+
+
+def test_a_date_on_a_revive_question_is_refused_by_the_record():
+    with pytest.raises(ValueError):
+        queued_question(fact(), "qid", "u", "revive", at=NOW, fallback_date=date(2026, 10, 1))
+
+
+# ------------------------------------------------------------------------------------------------ kept_twice_fallback
+
+def test_silence_archives_a_dated_plan_and_keeps_every_other_fact():
+    assert kept_twice_fallback(fact(expiry_kind=ExpiryKind.DATE, ttl_days=None)) == "archive"
+    assert kept_twice_fallback(fact(expiry_kind=ExpiryKind.HORIZON)) == "revive"
+    assert kept_twice_fallback(fact(expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None)) == "revive"
+    assert kept_twice_fallback(fact(expiry_kind=None, ttl_days=14)) == "revive"  # a legacy plan: the model archives it
+    assert kept_twice_fallback(fact(expiry_kind="date")) == "archive"  # a stored kind is a string

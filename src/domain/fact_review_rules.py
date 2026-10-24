@@ -4,13 +4,16 @@ fact becomes then, and when the janitor must start a review. Pure: the services 
 
 Statuses of a question move only through the methods of `FactReviewQuestion`; nothing here builds a question by hand."""
 from datetime import date, datetime, timedelta, timezone
-from typing import AbstractSet, Any, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence
+from typing import AbstractSet, Any, Callable, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence
 
 from .entities import ExpiryKind, FactEntity, FactState
 from .fact_expiry import as_expiry_kind, expiry_view
+from .fact_update import ParsedFactUpdate
+from .fact_update_plan import content_changed
 from .fact_lifecycle import horizon_from_now, lifecycle_event, lifecycle_fields, with_event
-from .fact_review_basis import ReviewBasis
+from .fact_review_basis import ReviewAction, ReviewBasis
 from .fact_review_question import FactReviewQuestion, QuestionFallback, QuestionStatus
+from .fact_review_reasons import FallbackActor, fallback_reason, gives_window_reason, is_revive_reason
 from .fact_review_state import FactReviewState
 from .fact_write_context import as_utc
 from .local_time import local_date
@@ -29,26 +32,11 @@ REVIVE_WINDOW: Final[timedelta] = timedelta(days=30)
 DIGEST_INTERVAL: Final[timedelta] = timedelta(days=7)
 # `queue_key` of a fact with no `stale_since`: it queues before every dated one.
 EARLIEST_QUEUE_KEY: Final[datetime] = datetime(1970, 1, 1, tzinfo=timezone.utc)
-# What the owner's silence does to a fact the review asked about by itself (no model reason to archive it).
-KEPT_TWICE_FALLBACK: Final[QuestionFallback] = "revive"
-
-# Trail reasons. The fallback reasons are built here; the first and second belong to the review's and the owner's writes,
-# and every one of the four marks a revive for `revives_in_30_days`.
-REASON_REVIVED_ON: Final[str] = "revived on "
-REASON_CONFIRMED: Final[str] = "confirmed q="
-REASON_NO_ANSWER: Final[str] = "no answer to q="
-REASON_DID_NOT_REMEMBER: Final[str] = "did not remember q="
-_REVIVE_REASONS: Final[tuple[str, ...]] = (REASON_REVIVED_ON, REASON_CONFIRMED, REASON_NO_ANSWER, REASON_DID_NOT_REMEMBER)
-
 _DAY = timedelta(days=1)
 
 # Why the janitor starts a review, in the order they are tried.
-ReviewReason = Literal["stale", "reply", "timeout", "digest", "queue"]
-# Who applies a fallback: nobody answered (timeout), or the owner said he does not remember.
-FallbackActor = Literal["timeout", "owner"]
+ReviewReason = Literal["stale", "reply", "timeout", "pending", "digest", "queue"]
 QueueAlertAction = Literal["raise", "rearm"]
-# What a review write does to a fact, as the basis rules see it.
-ReviewAction = Literal["revive", "rewrite", "archive", "invalidate", "supersede"]
 
 
 # ------------------------------------------------------------------------------------------------ selection
@@ -112,25 +100,48 @@ def sent_today(state: FactReviewState, today: date) -> int:
     return state.sent if state.sent_on == today else 0
 
 
-def may_send(state: FactReviewState, today: date, open_current: bool) -> bool:
-    """Whether the next queued question may go out on the local day `today`.
+def current_question(state: FactReviewState, questions: Iterable[FactReviewQuestion]) -> Optional[FactReviewQuestion]:
+    """The question the state points at, when it can be the one out: being sent (`pending`) or sent (`asked`). A pointer
+    to anything else (closed, `unanswered`, missing) holds nothing."""
+    return next(
+        (
+            q for q in questions
+            if q.question_id == state.current_question_id and q.status in (QuestionStatus.PENDING, QuestionStatus.ASKED)
+        ),
+        None,
+    )
 
-    `open_current`: the question `state.current_question_id` names is still open (a pointer to a closed or missing one
-    holds nothing). Not while one is out, not after MAX_QUESTIONS_PER_DAY today, not on the day a delivery failed."""
-    if state.current_question_id is not None and open_current:
+
+def may_send(state: FactReviewState, today: date, current: Optional[FactReviewQuestion]) -> bool:
+    """Whether the next queued question may go out on the local day `today`; `current` comes from `current_question`.
+
+    Not while one is out, not after MAX_QUESTIONS_PER_DAY today, not on the day a delivery failed."""
+    if current is not None:
         return False
     if sent_today(state, today) >= MAX_QUESTIONS_PER_DAY:
         return False
     return state.delivery_failed_on != today
 
 
-def becomes_unanswered(question: FactReviewQuestion, today: date, tz: str) -> bool:
-    """An `asked` question sent on an earlier local day is `unanswered`: still open and timing out, no longer current.
-    A recorded reply in words does not keep it current (the review reads it once; undecided, it waits for the timeout)."""
+def becomes_unanswered(question: FactReviewQuestion, now: datetime, tz: str) -> bool:
+    """An `asked` question sent on an earlier owner-local day is `unanswered`: still open and timing out, no longer
+    current. A recorded reply in words does not keep it current (the review reads it once; undecided, it waits for the
+    timeout)."""
     return (
         question.status is QuestionStatus.ASKED
         and question.asked_at is not None
-        and local_date(question.asked_at, tz) < today
+        and local_date(question.asked_at, tz) < local_date(now, tz)
+    )
+
+
+def stuck_pending(question: FactReviewQuestion, state: FactReviewState, now: datetime, tz: str) -> bool:
+    """A `pending` question whose send is over: it is not the state's current one, or the day it was claimed (`sent_on`)
+    is an earlier owner-local day. A send claimed today may still be running (`mode="next"` holds no lease), so it is
+    left alone; a crash costs one day. Housekeeping completes it (it has a message ref) or retracts it (it has none)."""
+    return question.status is QuestionStatus.PENDING and (
+        state.current_question_id != question.question_id
+        or state.sent_on is None
+        or state.sent_on < local_date(now, tz)
     )
 
 
@@ -143,18 +154,22 @@ def due_timeouts(questions: Iterable[FactReviewQuestion], now: datetime) -> List
 
 def fallback_window_days(fact: FactEntity) -> int:
     """How long a silence brings a fact back for: twice the window it was last given, between MIN_FALLBACK_DAYS and
-    MAX_FALLBACK_DAYS; MIN_FALLBACK_DAYS when it has none. The window runs from the later of `reported_date` and the
-    fact's last revive to `expires_at`, so every silence doubles what the last one gave (28, 56, ... days), though a
-    horizon is stored from `reported_date`."""
+    MAX_FALLBACK_DAYS. The window runs from the later of `reported_date` and the fact's last revive or rewrite to
+    `expires_at` (whole days), so every silence doubles what the last one gave (28, 56, ... days), though a horizon is
+    stored from `reported_date`. A fact with no `expires_at` has its `ttl_days` as the window, else none (MIN).
+
+    Exact only when the writer that gave the window stamped its trail entry with the same `now` it counted the horizon
+    from, as `fallback_fields` does; a later stamp by a microsecond can cost a day."""
     if fact.expires_at is None:
-        return MIN_FALLBACK_DAYS
-    window = (as_utc(fact.expires_at) - _last_given(fact)).days
+        window = fact.ttl_days or 0
+    else:
+        window = (as_utc(fact.expires_at) - _last_given(fact)).days
     return min(MAX_FALLBACK_DAYS, max(MIN_FALLBACK_DAYS, 2 * window))
 
 
 def _last_given(fact: FactEntity) -> datetime:
-    revived = (t for e in fact.lifecycle_events if _is_revive(e) and (t := _event_time(e)) is not None)
-    return max([as_utc(fact.reported_date), *revived])
+    given = (t for e in fact.lifecycle_events if _leads_to_current(e, gives_window_reason) and (t := _event_time(e)) is not None)
+    return max([as_utc(fact.reported_date), *given])
 
 
 def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetime, actor: FallbackActor) -> Dict[str, Any]:
@@ -171,15 +186,9 @@ def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetim
         fields.update(horizon_from_now(fallback_window_days(fact), fact.reported_date, now))
         fields["stale_since"] = None
     fields["last_updated"] = now
-    event = lifecycle_event(now, fact.state, target, actor, _fallback_reason(question, actor))
+    event = lifecycle_event(now, fact.state, target, actor, fallback_reason(question.question_id, question.fallback, actor))
     fields["lifecycle_events"] = with_event(fact.lifecycle_events, event)
     return fields
-
-
-def _fallback_reason(question: FactReviewQuestion, actor: FallbackActor) -> str:
-    if actor == "owner":
-        return f"{REASON_DID_NOT_REMEMBER}{question.question_id}"
-    return f"{REASON_NO_ANSWER}{question.question_id}: {question.fallback}"
 
 
 # ------------------------------------------------------------------------------------------------ revive alert
@@ -189,7 +198,7 @@ def revives_in_30_days(events: Sequence[Mapping[str, Any]], now: datetime) -> in
 
     A revive is an entry into `current` whose code-built reason names one (a review revive, an owner's yes, a
     fallback); queueing a fact for the owner is not one. An entry that cannot be read counts for nothing."""
-    return sum(1 for e in events if _is_revive(e) and _within(e, now))
+    return sum(1 for e in events if _leads_to_current(e, is_revive_reason) and _within(e, now))
 
 
 def revive_alert_due(events: Sequence[Mapping[str, Any]], now: datetime) -> bool:
@@ -197,9 +206,8 @@ def revive_alert_due(events: Sequence[Mapping[str, Any]], now: datetime) -> bool
     return revives_in_30_days(events, now) >= REVIVE_ALERT
 
 
-def _is_revive(event: Mapping[str, Any]) -> bool:
-    reason = event.get("reason")
-    return event.get("to") == FactState.CURRENT.value and isinstance(reason, str) and reason.startswith(_REVIVE_REASONS)
+def _leads_to_current(event: Mapping[str, Any], reason_test: Callable[[object], bool]) -> bool:
+    return event.get("to") == FactState.CURRENT.value and reason_test(event.get("reason"))
 
 
 def _event_time(event: Mapping[str, Any]) -> Optional[datetime]:
@@ -250,25 +258,31 @@ def review_due(
 ) -> Optional[ReviewReason]:
     """Why the janitor should enqueue a review for the account now, or None. The first that holds:
     `stale` (stale facts after this run and the interval elapsed), `reply` (a recorded reply nobody read),
-    `timeout` (a question past its timeout), `digest` (due), `queue` (a queued question and no question that is out
-    today to wait for)."""
+    `timeout` (a question past its timeout), `pending` (a send that never finished, `stuck_pending`), `digest` (due),
+    `queue` (a queued question that may go out: no question out since today, under the day's cap, no failed delivery
+    today)."""
     if stale_after_run > 0 and interval_elapsed(state.last_review_at, now, tz, interval):
         return "stale"
     if any(q.reply_not_shown for q in questions):
         return "reply"
     if any(q.is_timed_out(now) for q in questions):
         return "timeout"
+    if any(stuck_pending(q, state, now, tz) for q in questions):
+        return "pending"
     if digest_due(state, now):
         return "digest"
-    if any(q.status is QuestionStatus.QUEUED for q in questions) and _slot_free(state, questions, local_date(now, tz), tz):
+    if any(q.status is QuestionStatus.QUEUED for q in questions) and _queue_may_go(state, questions, now, tz):
         return "queue"
     return None
 
 
-def _slot_free(state: FactReviewState, questions: Sequence[FactReviewQuestion], today: date, tz: str) -> bool:
-    """No current question is open, or the one that is was sent on an earlier day (it becomes unanswered at the next run)."""
-    current = next((q for q in questions if q.question_id == state.current_question_id and q.is_open), None)
-    return current is None or becomes_unanswered(current, today, tz)
+def _queue_may_go(state: FactReviewState, questions: Sequence[FactReviewQuestion], now: datetime, tz: str) -> bool:
+    """A queued question may be sent at the next run: the current one, if any, was sent on an earlier day (it becomes
+    unanswered there), and the day's cap and a failed delivery allow it."""
+    current = current_question(state, questions)
+    if current is not None and not becomes_unanswered(current, now, tz):
+        return False
+    return may_send(state, local_date(now, tz), None)
 
 
 # ------------------------------------------------------------------------------------------------ the pool and the queue alert
@@ -278,14 +292,49 @@ def pool(stale_count: int, questions: Iterable[FactReviewQuestion]) -> int:
     return stale_count + len(_open_fact_ids(questions))
 
 
-def queue_alert(state: FactReviewState, queued_count: int) -> Optional[QueueAlertAction]:
-    """One alert when the queue passes QUEUE_ALERT (`raise`: record it in `queue_alert_at`), and nothing more until it
-    has fallen to QUEUE_ALERT or fewer (`rearm`: clear the record)."""
-    if queued_count > QUEUE_ALERT and state.queue_alert_at is None:
+def queue_alert(state: FactReviewState, questions: Iterable[FactReviewQuestion]) -> Optional[QueueAlertAction]:
+    """One alert when the queued questions pass QUEUE_ALERT (`raise`: record it in `queue_alert_at`), and nothing more
+    until they are QUEUE_ALERT or fewer again (`rearm`: clear the record)."""
+    queued = sum(1 for q in questions if q.status is QuestionStatus.QUEUED)
+    if queued > QUEUE_ALERT and state.queue_alert_at is None:
         return "raise"
-    if queued_count <= QUEUE_ALERT and state.queue_alert_at is not None:
+    if queued <= QUEUE_ALERT and state.queue_alert_at is not None:
         return "rearm"
     return None
+
+
+# ------------------------------------------------------------------------------------------------ a question about a fact
+
+def kept_twice_fallback(fact: FactEntity) -> QuestionFallback:
+    """What silence does to a fact the review asked about by itself: a dated plan is over (archive, Q8 and RFC P2), any
+    other fact is kept (revive)."""
+    return "archive" if as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE else "revive"
+
+
+def queued_question(
+    fact: FactEntity,
+    question_id: str,
+    user_id: str,
+    fallback: QuestionFallback,
+    *,
+    at: datetime,
+    fallback_date: Optional[date] = None,
+    noise: bool = False,
+) -> FactReviewQuestion:
+    """A new `queued` question about `fact`: it quotes the fact's text now and takes its place in line from the fact's
+    `stale_since` (`queue_key`). The one construction for an ask (the review) and a kept-twice question (code)."""
+    return FactReviewQuestion(
+        question_id=question_id,
+        account_id=fact.account_id,
+        user_id=user_id,
+        fact_id=fact.id,
+        quoted_text=fact.text,
+        fallback=fallback,
+        fallback_date=fallback_date,
+        noise=noise,
+        queue_key=queue_key(fact),
+        queued_at=at,
+    )
 
 
 # ------------------------------------------------------------------------------------------------ basis and ask refusals
@@ -306,12 +355,34 @@ def is_dated_plan(fact: FactEntity, question: Optional[FactReviewQuestion] = Non
     return as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE or (question is not None and question.fallback == "archive")
 
 
+STAYS_STALE_REFUSAL: Final[str] = "this pass changes the fact's state; reported_date is kept by the system"
+
+
+def review_action(current: FactEntity, update: ParsedFactUpdate) -> Optional[ReviewAction]:
+    """What a review write does to `current`, or None when it leaves the fact as it is (a stale fact stays stale).
+
+    A closing state decides alone (`supersede`, `archive`, `invalidate`), whatever else the call carries. Otherwise a
+    change of what the fact says (text, tags, metadata, temporal class: the version rule of `plan_fact_update`) is a
+    `rewrite`, and a state `current`, or a new expiry on a fact that is already current, is a `revive`."""
+    if update.state is FactState.SUPERSEDED:
+        return "supersede"
+    if update.state is FactState.ARCHIVED:
+        return "archive"
+    if update.state is FactState.INVALIDATED:
+        return "invalidate"
+    if content_changed(current, update):
+        return "rewrite"
+    if update.state is FactState.CURRENT or (update.expiry is not None and current.state is FactState.CURRENT):
+        return "revive"
+    return None
+
+
 def basis_refusal(
-    action: ReviewAction,
-    fact: FactEntity,
+    current: FactEntity,
+    update: ParsedFactUpdate,
     basis: Optional[ReviewBasis],
     *,
-    evidence: Optional[FactEntity],
+    named_fact: Optional[FactEntity],
     question: Optional[FactReviewQuestion],
     made_current: AbstractSet[str],
     history: Optional[str],
@@ -320,10 +391,16 @@ def basis_refusal(
 ) -> Optional[str]:
     """Why a review change has no reason behind it, as the text the model reads, or None when it has.
 
-    `evidence`: the fact `basis.evidence_fact_id` names (for a supersede, the successor), as read, or None when there is
-    none. `question`: the batch question `basis.question_id` names, or None. `made_current`: ids this pass made current.
-    `history`: the text of the history fact sent with an archive. A fact comes back only on another fact or the owner's
-    words; a plan is archived on its passed date; supersede names its successor, not a basis."""
+    The action is `review_action(current, update)`; a call that changes nothing is refused with STAYS_STALE_REFUSAL.
+    `named_fact`: the fact `basis.evidence_fact_id` names (for a supersede, `update.superseded_by`), as read, or None
+    when there is none. `question`: the batch question `basis.question_id` names, or None. `made_current`: ids this pass
+    made current. `history`: the text of the history fact sent with an archive. A fact comes back only on another fact
+    or the owner's words; a plan is archived on its passed date; supersede names its successor, not a basis."""
+    action = review_action(current, update)
+    if action is None:
+        return STAYS_STALE_REFUSAL
+    fact = current
+    evidence = named_fact
     if history is not None and action != "archive":
         return _HISTORY_ONLY_WITH_ARCHIVE
     if action == "supersede":
@@ -361,7 +438,7 @@ def _evidence_refusal(
 
 
 def _reply_refusal(fact: FactEntity, basis: ReviewBasis, question: Optional[FactReviewQuestion]) -> Optional[str]:
-    if not basis.question_id or question is None or question.fact_id != fact.id:
+    if not basis.question_id or question is None or question.question_id != basis.question_id or question.fact_id != fact.id:
         return "basis.question_id: the id of the question about this fact in the batch"
     if not question.reply_text:
         return "basis.question_id names a question with no recorded reply from the owner"

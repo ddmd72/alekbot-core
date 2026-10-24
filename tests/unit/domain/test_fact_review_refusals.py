@@ -1,10 +1,12 @@
 """What the review may change without a reason, and whom it may ask (Facts S4 · T1b2, plan §3.5)."""
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
-from src.domain.entities import ExpiryKind, FactState
+from src.domain.entities import ExpiryKind, FactState, TemporalClass
 from src.domain.fact_review_basis import ReviewBasis
+from src.domain.fact_update import ParsedFactUpdate
 from src.domain.fact_review_question import QuestionStatus
 from src.domain.fact_review_rules import (
     REVIVE_NEEDS_BASIS,
@@ -20,11 +22,22 @@ OTHER = lambda **o: fact("ev", lineage_id="L-ev", state=FactState.CURRENT, **o) 
 REPLIED = dict(reply_text="Yes, I still drink it every morning", reply_at=NOW - timedelta(hours=5))
 
 
+def update_for(action):
+    """The update a review call of this action carries."""
+    return {
+        "revive": ParsedFactUpdate(state=FactState.CURRENT),
+        "rewrite": ParsedFactUpdate(content="Drinks green tea daily", state=FactState.CURRENT),
+        "archive": ParsedFactUpdate(state=FactState.ARCHIVED),
+        "invalidate": ParsedFactUpdate(state=FactState.INVALIDATED),
+        "supersede": ParsedFactUpdate(state=FactState.SUPERSEDED, superseded_by="x"),
+    }[action]
+
+
 def refuse(action="revive", basis=None, *, subject=None, evidence=None, q=None, made_current=frozenset(), history=None,
            today=TODAY, tz="UTC"):
     return basis_refusal(
-        action, subject or fact(), basis, evidence=evidence, question=q, made_current=made_current, history=history,
-        today=today, tz=tz,
+        subject or fact(), update_for(action), basis, named_fact=evidence, question=q, made_current=made_current,
+        history=history, today=today, tz=tz,
     )
 
 
@@ -134,6 +147,12 @@ def test_a_reply_basis_needs_a_question_of_this_fact_in_the_batch():
     assert "basis.question_id" in refuse("revive", reply_basis(), q=question(Q.ASKED, fact_id="other", **REPLIED))
 
 
+def test_the_question_must_be_the_one_the_basis_names():
+    other = question(Q.ASKED, question_id="q2", **REPLIED)
+    assert "basis.question_id" in refuse("revive", reply_basis(qid="q1"), q=other)
+    assert refuse("revive", reply_basis(qid="q2"), q=other) is None
+
+
 def test_a_question_without_a_recorded_reply_backs_nothing():
     assert "no recorded reply" in refuse("revive", reply_basis(), q=question(Q.ASKED))
 
@@ -170,13 +189,21 @@ def test_a_dated_fact_with_no_stored_date_has_no_passed_date():
 
 
 def test_the_dated_facts_day_is_the_owners_not_utc():
-    ends_late_utc = fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=datetime(2026, 10, 24, 23, 30, tzinfo=timezone.utc))
-    today = date(2026, 10, 24)
-    assert "not before today" in refuse("archive", ReviewBasis("date_passed"), subject=ends_late_utc, today=today, tz="UTC")
-    # 23:30 UTC is already 01:30 on the 25th in Madrid: the plan's last day is the 24th there as well, which is today
-    assert "not before today" in refuse("archive", ReviewBasis("date_passed"), subject=ends_late_utc, today=today, tz="Europe/Madrid")
-    over = fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=datetime(2026, 10, 24, 22, 30, tzinfo=timezone.utc))
-    assert refuse("archive", ReviewBasis("date_passed"), subject=over, today=date(2026, 10, 25), tz="UTC") is None
+    # a plan for the 24th, stored as the owner's local midnight that ends it
+    ny = fact(**dated(date(2026, 10, 24), ZoneInfo("America/New_York")))  # 25 Oct 04:00 UTC
+    assert ny.expires_at == datetime(2026, 10, 25, 4, 0, tzinfo=timezone.utc)
+    on_the_25th = date(2026, 10, 25)
+    assert refuse("archive", ReviewBasis("date_passed"), subject=ny, today=on_the_25th, tz="America/New_York") is None
+    # read in UTC the plan would end on the 25th, which is not before the 25th
+    assert "not before today" in refuse("archive", ReviewBasis("date_passed"), subject=ny, today=on_the_25th, tz="UTC")
+    # and on the 24th, New York time, it has not passed
+    assert "not before today" in refuse("archive", ReviewBasis("date_passed"), subject=ny, today=date(2026, 10, 24), tz="America/New_York")
+
+
+def test_a_plan_east_of_utc_is_the_same_day_in_both_readings():
+    madrid = fact(**dated(date(2026, 10, 24), ZoneInfo("Europe/Madrid")))  # 24 Oct 22:00 UTC
+    assert refuse("archive", ReviewBasis("date_passed"), subject=madrid, today=date(2026, 10, 25), tz="Europe/Madrid") is None
+    assert "not before today" in refuse("archive", ReviewBasis("date_passed"), subject=madrid, today=date(2026, 10, 24), tz="Europe/Madrid")
 
 
 @pytest.mark.parametrize("action", ["revive", "rewrite", "invalidate"])
