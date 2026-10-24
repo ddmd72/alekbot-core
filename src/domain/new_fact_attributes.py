@@ -100,7 +100,7 @@ def parse_new_fact(fact_data: Mapping[str, Any], timezone_name: Optional[str] = 
         context=_validated("context", _OPTIONAL_STR, fact_data.get("context")),
         reported_date=parse_reported_date(fact_data.get("reported_date"), timezone_name),
         expiry=expiry,
-        derived_from=_parse_derived_from(fact_data.get("derived_from")),
+        derived_from=parse_derived_from(fact_data.get("derived_from")),
         notes=notes,
     )
 
@@ -130,7 +130,9 @@ def decided_attributes(
     return dataclasses.replace(attrs, reported_date=reported, expiry_fields=fields), note
 
 
-def _parse_derived_from(raw: Any) -> Tuple[str, ...]:
+def parse_derived_from(raw: Any) -> Tuple[str, ...]:
+    """Fact ids named by `derived_from` (one id or a list), each stripped, in order, without repeats; () for None.
+    Raises ValueError for anything else."""
     if raw is None:
         return ()
     items = [raw] if isinstance(raw, str) else raw

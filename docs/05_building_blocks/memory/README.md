@@ -585,8 +585,9 @@ is written. Whether it is in the baseline depends on §4.1.
 
 ### 3.11 Loop alerts and stats lines
 
-`ConsolidationPassStats` (`src/domain/consolidation_pass_stats.py`) counts each pass's tool calls (no arguments, no
-fact text, 8 characters of the user id):
+`ConsolidationPassStats` (`src/domain/consolidation_pass_stats.py`) counts each pass's tool calls. The agent turns each
+call into a typed `PassCall` through the write path's parsers (so `" id"` and `"id"` are one source), and renders the
+lines (`consolidation_agent.py`: no arguments, no fact text, 8 characters of the user id):
 - 🚨 permanent: a pass that uses all 15 turns without a final report logs an ERROR and posts to the ops sink
   (`consolidation_agent.py`, `_run_consolidation_loop`). The pass returns no operations; the writes it made stay.
 - 📊 temporary: while `CONSOLIDATION_STATS_ALERTS` is on (`os.getenv`, default on), every pass that ends with a report
@@ -1334,7 +1335,7 @@ an `expires_at`, so the janitor has nothing due even when it is switched on; new
 | `src/domain/fact_embedding.py` | the three embedding texts |
 | `src/domain/consolidation.py` | `ConsolidationBatch` (with `revivals`), `BatchStatus`, `MAX_FAILED_REVIVALS` |
 | `src/domain/consolidation_serialization.py` | messages → batch (summary vs full text) |
-| `src/domain/consolidation_pass_stats.py` | 📊 / 🚨 texts, tool-error turns, abandoned expiry refusals |
+| `src/domain/consolidation_pass_stats.py` | `PassCall`, tool-error turns, abandoned refusals (the 📊 / 🚨 texts are the agent's) |
 | `src/domain/fact_lifecycle_sweep.py`, `src/domain/fact_lifecycle_day.py`, `src/domain/due_fact.py` | the janitor's rules (breaker, per-run headroom, stale fields, log-only parse, the 🧹 line), a day's snapshot row, the projected due fact |
 | `src/domain/settings.py` | `ConsolidationSettings` (70/50), `SearchConfig` (limits, baseline 65/20, directives 15) |
 | `src/domain/search.py`, `src/domain/rrf.py`, `src/domain/deduplication_service.py`, `src/domain/vector_math.py` | search DTOs, RRF, number-aware dedup, cosine |

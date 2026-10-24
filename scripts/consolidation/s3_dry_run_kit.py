@@ -1074,10 +1074,12 @@ class DryRunKit:
             finally:
                 self.current_pass, self._pass_calls = previous
 
-        async def report_pass(stats: Any, account_id: str) -> None:
+        async def report_pass(stats: Any, account_id: str, user_id: str) -> None:
+            from src.agents.consolidation_agent import _sequence_text
+
             self.passes.append({
-                "pass": stats.pass_label,
-                "model": stats.model,
+                "pass": stats.actor.value,
+                "model": agent.model_name,
                 "llm_calls": self._pass_calls,
                 "max_turns": stats.max_turns,
                 "tool_turns": stats.turns_used,
@@ -1088,9 +1090,9 @@ class DryRunKit:
                 "abandoned_refusals": stats.abandoned,
                 "writes": stats.writes,
                 "repeats": stats.repeats,
-                "sequence": stats.sequence(),
+                "sequence": _sequence_text(stats),
             })
-            await close(stats, account_id)
+            await close(stats, account_id, user_id)
 
         agent._run_consolidation_loop = run_loop
         agent._report_pass = report_pass
