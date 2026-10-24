@@ -1,5 +1,6 @@
 """The validated attributes of a fact about to be created."""
 
+import dataclasses
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Mapping, Optional, Tuple
@@ -8,8 +9,10 @@ from pydantic import TypeAdapter, ValidationError
 
 from .entities import ContextPriority, FactDomain, FactState, FactType, TemporalClass
 from .fact_argument_parsing import parse_enum, parse_reported_date
-from .fact_expiry import EXPIRY_IGNORED_ON_CLOSE, Expiry, parse_expiry
-from .fact_lifecycle import CLOSING_STATES
+from .exceptions import FactExpiryError
+from .fact_expiry import EXPIRY_IGNORED_ON_CLOSE, EXPIRY_SHAPES, NOTHING_WRITTEN, Expiry, parse_expiry
+from .fact_lifecycle import CLOSING_STATES, expiry_pinned, required_decision
+from .fact_write_context import FactWriteContext, decide_expiry
 
 # Unknown type names fall back to EVENT, as the write service always did.
 _TYPE_BY_NAME = {member.value: member for member in FactType}
@@ -100,6 +103,31 @@ def parse_new_fact(fact_data: Mapping[str, Any], timezone_name: Optional[str] = 
         derived_from=_parse_derived_from(fact_data.get("derived_from")),
         notes=notes,
     )
+
+
+def new_fact_decision(attrs: NewFactAttributes, tool: str) -> Optional[Expiry]:
+    """The expiry decision a new fact is written with: None for a fact born closed (it carries none). A current fact
+    needs one inside `fact_attributes` unless it is pinned (a pinned one gets `none`)."""
+    if attrs.state in CLOSING_STATES:
+        return None
+    return required_decision(
+        attrs.expiry,
+        expiry_pinned(attrs.domain, attrs.type, attrs.tags),
+        lambda: FactExpiryError(
+            f"{tool} needs `expiry` inside `fact_attributes`, decided from the content: use one of {EXPIRY_SHAPES}. "
+            f"{NOTHING_WRITTEN}"
+        ),
+    )
+
+
+def decided_attributes(
+    attrs: NewFactAttributes, decision: Optional[Expiry], reported: datetime, now: datetime, context: FactWriteContext
+) -> Tuple[NewFactAttributes, Optional[str]]:
+    """`attrs` with the resolved `reported_date` and, for a current fact, the computed expiry fields (never born due)."""
+    if decision is None:
+        return dataclasses.replace(attrs, reported_date=reported), None
+    fields, note = decide_expiry(decision, reported, now, context)
+    return dataclasses.replace(attrs, reported_date=reported, expiry_fields=fields), note
 
 
 def _parse_derived_from(raw: Any) -> Tuple[str, ...]:

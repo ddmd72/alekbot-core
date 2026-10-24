@@ -65,6 +65,30 @@ def plan_fact_update(current: FactEntity, update: ParsedFactUpdate, now: datetim
     return FactUpdatePlan("version", {}, current.model_copy(update=changes, deep=True), stale, new_texts if stale else None)
 
 
+def concurrent_update_refusal(
+    fact_id: str, first_resolved_id: str, resolved_id: str, update: ParsedFactUpdate
+) -> Optional[str]:
+    """The refusal text when an update's `content` or `tags` would land on a version other than the first one resolved, else None.
+
+    They replace whole: written over a version the model never saw, they would drop its change.
+    """
+    if resolved_id != first_resolved_id and (update.content is not None or update.tags is not None):
+        return f"fact {fact_id} changed concurrently; search again"
+    return None
+
+
+def merge_source_moved_refusal(first_ids: list[str], ids: list[str]) -> Optional[str]:
+    """The refusal text when the merge sources resolved to other documents than on the first attempt, else None."""
+    return "source changed; search again" if ids != first_ids else None
+
+
+def successor_refusal(successor_id: str, closing_id: str) -> Optional[str]:
+    """The refusal text when the successor is the fact being closed (a fact cannot succeed itself), else None."""
+    if successor_id == closing_id:
+        return "superseded_by must name a different fact than the one being closed"
+    return None
+
+
 def _resulting_content(current: FactEntity, update: ParsedFactUpdate) -> tuple[str, list[str], dict[str, Any]]:
     new_tags = _resulting_tags(current.tags, update.tags)
     new_metadata = {**current.metadata, **update.metadata} if update.metadata is not None else current.metadata

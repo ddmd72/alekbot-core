@@ -4,25 +4,19 @@ from typing import List, Dict, Any, Optional, Sequence, Tuple
 
 from ..domain.entities import FactEntity, normalize_fact_taxonomy
 from ..domain.exceptions import FactBornDueError, FactExpiryError, FactResolutionError, FactWriteConflict
-from ..domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE, EXPIRY_SHAPES, NOTHING_WRITTEN, Expiry
-from ..domain.fact_lifecycle import (
-    CLOSING_STATES,
-    CONSOLIDATION_ACCEPTS,
-    born_due,
-    check_pin,
-    compute_expiry,
-    expiry_pinned,
-)
+from ..domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE
+from ..domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
 from ..domain.fact_update import ParsedFactUpdate, parse_fact_update
 from ..domain.fact_update_lifecycle import finish_fact_update
-from ..domain.fact_update_plan import FactUpdatePlan, plan_fact_update
-from ..domain.fact_write_context import (
-    FactWriteContext,
-    kept_reported_date_note,
-    reported_date_for_merge,
-    reported_date_for_new,
+from ..domain.fact_update_plan import (
+    FactUpdatePlan,
+    concurrent_update_refusal,
+    merge_source_moved_refusal,
+    plan_fact_update,
+    successor_refusal,
 )
-from ..domain.new_fact_attributes import NewFactAttributes, parse_new_fact
+from ..domain.fact_write_context import FactWriteContext, reported_date_for_merge, reported_date_for_new
+from ..domain.new_fact_attributes import NewFactAttributes, decided_attributes, new_fact_decision, parse_new_fact
 from ..domain.search import SearchLimits, consolidation_hit
 from ..domain.stored_fact import StoredFact
 from ..ports.fact_management_port import FactManagementPort
@@ -177,14 +171,14 @@ class FactManagementAdapter(FactManagementPort):
             metadata = normalize_fact_taxonomy(metadata)
 
             attrs = parse_new_fact(self._new_fact_data(content, metadata), context.timezone)
-            decision = _required_decision(attrs, "create_fact")
+            decision = new_fact_decision(attrs, "create_fact")
             now = datetime.now(timezone.utc)
             derived = await self._derived_from_dates(attrs, metadata["account_id"], context)
             reported, date_note = reported_date_for_new(
                 context, attrs.reported_date, derived, now, derived_named=len(attrs.derived_from)
             )
             notes = [*attrs.notes, *([date_note] if date_note else [])]
-            attrs, due_note = _decided(attrs, decision, reported, now, context)
+            attrs, due_note = decided_attributes(attrs, decision, reported, now, context)
             notes.extend([due_note] if due_note else [])
 
             entity = (await self._fact_write_service.build_facts(
@@ -214,9 +208,8 @@ class FactManagementAdapter(FactManagementPort):
     async def _derived_from_dates(
         self, attrs: NewFactAttributes, account_id: str, context: FactWriteContext
     ) -> List[datetime]:
-        """`reported_date` of each readable fact named by `derived_from` (same account); only a cleanup pass uses them."""
-        if context.model_dates:
-            return []
+        """`reported_date` of each readable fact named by `derived_from` (same account). The domain decides whether a pass
+        whose model dates do not count uses them, and says so when it does not."""
         dates: List[datetime] = []
         for fact_id in attrs.derived_from:
             source = await self._repo.get_fact_by_id(fact_id)
@@ -298,14 +291,11 @@ class FactManagementAdapter(FactManagementPort):
                 parsed = parse_fact_update(updates, context.timezone)
             if first_resolved_id is None:
                 first_resolved_id = stored.fact.id
-            elif stored.fact.id != first_resolved_id and (parsed.content is not None or parsed.tags is not None):
-                # content and tags replace whole: written over a version the model never saw, they would drop its change
-                logger.warning(f"⚠️  [FactManagement] Fact {fact_id[:8]} moved forward between attempts; update refused")
-                return {
-                    "fact_id": fact_id,
-                    "status": "failed",
-                    "message": f"fact {fact_id} changed concurrently; search again",
-                }
+            else:
+                moved = concurrent_update_refusal(fact_id, first_resolved_id, stored.fact.id, parsed)
+                if moved is not None:
+                    logger.warning(f"⚠️  [FactManagement] Fact {fact_id[:8]} moved forward between attempts; update refused")
+                    return {"fact_id": fact_id, "status": "failed", "message": moved}
             update = await self._with_resolved_successor(parsed, stored, account_id)
             now = datetime.now(timezone.utc)
             finish = finish_fact_update(plan_fact_update(stored.fact, update, now), stored.fact, update, context, now)
@@ -353,8 +343,9 @@ class FactManagementAdapter(FactManagementPort):
             raise FactResolutionError(f"successor {reason}; search again", current_id=e.current_id) from e
         if successor is None:
             raise FactResolutionError("successor fact not found")
-        if successor.fact.id == stored.fact.id:
-            raise ValueError("superseded_by must name a different fact than the one being closed")
+        same = successor_refusal(successor.fact.id, stored.fact.id)
+        if same is not None:
+            raise ValueError(same)
         return dataclasses.replace(update, superseded_by=successor.fact.id)
 
     async def _complete_version(
@@ -429,7 +420,7 @@ class FactManagementAdapter(FactManagementPort):
         account_id = metadata.get("account_id")
         metadata = normalize_fact_taxonomy(metadata)
         attrs = parse_new_fact(self._new_fact_data(merged_content, metadata), context.timezone)
-        decision = _required_decision(attrs, "merge_facts")
+        decision = new_fact_decision(attrs, "merge_facts")
 
         notes: List[str] = []
         merged: Optional[FactEntity] = None
@@ -441,21 +432,21 @@ class FactManagementAdapter(FactManagementPort):
             ids = [source.fact.id for source in sources]
             if first_ids is None:
                 first_ids = ids
-            elif ids != first_ids:
-                logger.warning("⚠️  [FactManagement] A merge source moved forward between attempts")
-                return self._merge_failed("source changed; search again")
+            else:
+                moved = merge_source_moved_refusal(first_ids, ids)
+                if moved is not None:
+                    logger.warning("⚠️  [FactManagement] A merge source moved forward between attempts")
+                    return self._merge_failed(moved)
             if not sources:
                 logger.error("❌ [FactManagement] No facts successfully superseded")
                 return self._merge_failed("Failed to supersede any facts")
             if merged is None:
                 now = datetime.now(timezone.utc)
-                reported = reported_date_for_merge(
+                reported, date_note = reported_date_for_merge(
                     context, attrs.reported_date, [source.fact.reported_date for source in sources], now
                 )
-                notes = list(attrs.notes)
-                if not context.model_dates and attrs.reported_date is not None:
-                    notes.append(kept_reported_date_note(reported, context.timezone))
-                decided, due_note = _decided(attrs, decision, reported, now, context)
+                notes = [*attrs.notes, *([date_note] if date_note else [])]
+                decided, due_note = decided_attributes(attrs, decision, reported, now, context)
                 notes.extend([due_note] if due_note else [])
                 merged = (await self._fact_write_service.build_facts(
                     metadata["account_id"], metadata["user_id"], [decided]
@@ -493,32 +484,6 @@ class FactManagementAdapter(FactManagementPort):
 def _expiry_refusal(error: FactExpiryError) -> Dict[str, Any]:
     """The tags of an expiry refusal: `refused`, and `born_due` when the expiry was well formed but already due."""
     return {"refused": "expiry", "born_due": True} if isinstance(error, FactBornDueError) else {"refused": "expiry"}
-
-
-def _required_decision(attrs: NewFactAttributes, tool: str) -> Optional[Expiry]:
-    """The expiry decision a new fact is written with: None for a fact born closed (it carries none). A current fact
-    needs one inside `fact_attributes` unless it is pinned (a pinned one gets `none`)."""
-    if attrs.state in CLOSING_STATES:
-        return None
-    pinned = expiry_pinned(attrs.domain, attrs.type, attrs.tags)
-    if attrs.expiry is None and not pinned:
-        raise FactExpiryError(
-            f"{tool} needs `expiry` inside `fact_attributes`, decided from the content: use one of {EXPIRY_SHAPES}. "
-            f"{NOTHING_WRITTEN}"
-        )
-    return check_pin(attrs.expiry, pinned)
-
-
-def _decided(
-    attrs: NewFactAttributes, decision: Optional[Expiry], reported: datetime, now: datetime, context: FactWriteContext
-) -> Tuple[NewFactAttributes, Optional[str]]:
-    """`attrs` with the resolved `reported_date` and, for a current fact, the computed expiry fields (never born due)."""
-    if decision is None:
-        return dataclasses.replace(attrs, reported_date=reported), None
-    fields, note = born_due(
-        compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, context.floors_due_horizon
-    )
-    return dataclasses.replace(attrs, reported_date=reported, expiry_fields=fields), note
 
 
 def _with_notes(result: Dict[str, Any], notes: Sequence[str], tool: str) -> Dict[str, Any]:
