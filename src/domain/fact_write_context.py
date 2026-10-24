@@ -2,10 +2,12 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import FrozenSet, Iterable, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, FrozenSet, Iterable, Optional, Sequence, Tuple, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .entities import FactState
+from .fact_expiry import Expiry
+from .fact_lifecycle import born_due, compute_expiry
 from .local_time import local_date, local_moment
 from .pass_actor import PassActor
 
@@ -67,6 +69,19 @@ def as_utc(value: Union[float, str, datetime]) -> datetime:
     return local_moment(value, "UTC")
 
 
+def decide_expiry(
+    decision: Expiry, reported: datetime, now: datetime, context: FactWriteContext
+) -> Tuple[Dict[str, Any], Optional[str]]:
+    """compute_expiry, then the born-due rule of this pass. The one place a decision becomes stored fields.
+
+    Lives here, not in `fact_lifecycle`: the context's actor table imports `fact_lifecycle`, so the reverse import is a cycle.
+    Raises FactExpiryError (FactBornDueError) when the decision is due and this pass does not floor it.
+    """
+    return born_due(
+        compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, context.floors_due_horizon
+    )
+
+
 def span_of(times: Iterable[datetime]) -> Optional[Tuple[datetime, datetime]]:
     """(earliest, latest) of `times` as aware UTC, or None when there are none."""
     moments = [as_utc(t) for t in times]
@@ -85,7 +100,7 @@ NO_READABLE_SOURCE_NOTE = "derived_from named no readable fact of this account; 
 
 
 def kept_reported_date_note(reported: datetime, timezone: str) -> str:
-    """The one line a cleanup pass gets when its call carried a `reported_date`."""
+    """The one line a pass whose model dates do not count gets when its call carried a `reported_date`."""
     return (
         f"reported_date is kept by the system in this pass ({local_date(reported, timezone).isoformat()}); "
         "expiry horizons count from it"
@@ -102,7 +117,7 @@ def reported_date_for_new(
 ) -> Tuple[datetime, Optional[str]]:
     """The `reported_date` of a created fact, and a note for the model when something it sent was not used.
 
-    `derived`: the dates of the readable `derived_from` sources, used only on a cleanup pass (the latest). `derived_named`:
+    `derived`: the dates of the readable `derived_from` sources, used only on a pass whose model dates do not count (the latest). `derived_named`:
     how many ids the call named, so a source that cannot be read, or a `derived_from` ignored in a conversation pass, is said.
     """
     now = as_utc(now)
@@ -126,10 +141,11 @@ def reported_date_for_new(
 
 def reported_date_for_merge(
     ctx: FactWriteContext, model_value: Optional[datetime], source_dates: Sequence[datetime], now: datetime
-) -> datetime:
-    """The `reported_date` of a merged fact: never earlier than the newest merged fact's own date.
+) -> Tuple[datetime, Optional[str]]:
+    """The `reported_date` of a merged fact, and a note when the model's date was not used.
 
-    A cleanup pass takes exactly that date. A conversation pass takes the later of that and the model's span-clamped
+    Never earlier than the newest merged fact's own date. A pass whose model dates do not count takes exactly that date
+    (and says so when the call carried one). A conversation pass takes the later of that and the model's span-clamped
     date (else the span end), like an update.
     """
     now = as_utc(now)
@@ -139,10 +155,13 @@ def reported_date_for_merge(
             chosen = clamp_to_span(model_value, ctx.span, now)
         else:
             chosen = min(as_utc(ctx.span[1]), now) if ctx.span is not None else now
-        return max(chosen, newest) if newest is not None else chosen
+        return (max(chosen, newest) if newest is not None else chosen), None
     if newest is not None:
-        return newest
-    return min(as_utc(ctx.span[1]), now) if ctx.span is not None else now
+        chosen = newest
+    else:
+        chosen = min(as_utc(ctx.span[1]), now) if ctx.span is not None else now
+    note = kept_reported_date_note(chosen, ctx.timezone) if model_value is not None else None
+    return chosen, note
 
 
 def reported_date_for_update(

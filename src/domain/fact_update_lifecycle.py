@@ -8,17 +8,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from .entities import ExpiryKind, FactEntity, FactState
 from .exceptions import FactExpiryError
 from .fact_expiry import EXPIRY_SHAPES, NOTHING_WRITTEN, Expiry, as_expiry_kind
-from .fact_lifecycle import (
-    born_due,
-    check_pin,
-    compute_expiry,
-    expiry_pinned,
-    lifecycle_event,
-    with_event,
-)
+from .fact_lifecycle import check_pin, compute_expiry, expiry_pinned, lifecycle_event, required_decision, with_event
 from .fact_update import ParsedFactUpdate
 from .fact_update_plan import FactUpdatePlan
-from .fact_write_context import FactWriteContext, as_utc, reported_date_for_update
+from .fact_write_context import FactWriteContext, as_utc, decide_expiry, reported_date_for_update
 
 
 @dataclass(frozen=True)
@@ -70,12 +63,8 @@ def _finish_version(
     note: Optional[str] = None
     if version.state is FactState.CURRENT:
         pinned = expiry_pinned(version.domain, version.type, version.tags)
-        if update.expiry is None and not pinned:
-            raise _missing_for_version(update)
-        decision = check_pin(update.expiry, pinned)
-        fields, note = born_due(
-            compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, context.floors_due_horizon
-        )
+        decision = required_decision(update.expiry, pinned, lambda: _missing_for_version(update))
+        fields, note = decide_expiry(decision, reported, now, context)
         changes.update(fields)
     # The version's own entry has no `from`: the document is born in this state; the old one's closure is the other entry.
     entry = lifecycle_event(now, None, version.state, context.actor, f"version {version.version} of {current.id}")
@@ -99,9 +88,7 @@ def _finish_in_place(
         fields["lifecycle_events"] = with_event(current.lifecycle_events, entry)
     elif update.expiry is not None:
         decision = check_pin(update.expiry, expiry_pinned(current.domain, current.type, current.tags))
-        decided, note = born_due(
-            compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, context.floors_due_horizon
-        )
+        decided, note = decide_expiry(decision, reported, now, context)
         fields.update(decided)
     elif reported != stored_reported:
         later = _later_horizon(current, reported)

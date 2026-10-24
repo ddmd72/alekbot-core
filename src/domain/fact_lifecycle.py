@@ -1,7 +1,7 @@
 """SCD2 flags that go with a fact state."""
 
 from datetime import datetime, time, timedelta
-from typing import AbstractSet, Any, Dict, Final, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Any, Callable, Dict, Final, List, Mapping, Optional, Sequence, Tuple
 
 from .entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType
 from .exceptions import FactBornDueError, FactExpiryError, FactResolutionError
@@ -244,6 +244,16 @@ def check_pin(expiry: Optional[Expiry], pinned: bool) -> Expiry:
     if expiry is None:
         raise FactExpiryError(f"expiry is required for this fact. {NOTHING_WRITTEN}")
     return expiry
+
+
+def required_decision(expiry: Optional[Expiry], pinned: bool, missing: Callable[[], FactExpiryError]) -> Expiry:
+    """The decision to write: required unless the fact is pinned (a pinned one gets `none`), then `check_pin`.
+
+    `missing` builds the refusal for the caller's own place; it is raised when an unpinned fact carries no decision.
+    """
+    if expiry is None and not pinned:
+        raise missing()
+    return check_pin(expiry, pinned)
 
 
 def lifecycle_event(
