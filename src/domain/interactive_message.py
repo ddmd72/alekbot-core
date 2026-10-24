@@ -12,8 +12,7 @@ MAX_OPTIONS = 5
 
 class InteractiveMessage(BaseModel):
     """What is asked (`prompt`), the quoted subject (`quote`, may be empty), the options in order, the binding that
-    routes the answer, and `reply_hint`, the line that says how to answer without controls (by replying with a digit):
-    an adapter with controls shows it as the fallback for them, an adapter without ends its text with it.
+    routes the answer, and `reply_hint`, the line that says how to answer without controls (by replying with a digit).
 
     The options are numbered from 1 in their order: a whole reply that is that digit picks the option, on every
     platform and in every language (`option_for_reply`); the digit rule lives here (`numbered_options`) and nowhere else.

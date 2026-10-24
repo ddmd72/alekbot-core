@@ -8,16 +8,28 @@ from ..ports.notification_channel_factory_port import NotificationChannelFactory
 from ..utils.logger import logger
 
 
-def _layout(message: InteractiveMessage) -> str:
+ELLIPSIS = "…"
+_SEPARATOR = "\n\n"
+
+
+def _layout(message: InteractiveMessage, max_length: int) -> str:
     """Prompt, the quote in «», the numbered options on one line and last the reply hint. The hint is part of the text
-    because on a platform without controls only a reply to the message counts."""
-    parts = [message.prompt.strip()]
-    if message.quote.strip():
-        parts.append(f"«{message.quote.strip()}»")
-    parts.append("  ".join(f"{number} — {option.label}" for number, option in message.numbered_options()))
+    because on a platform without controls only a reply to the message counts. The text fits `max_length`: a quote that
+    would overflow it is cut with an ellipsis, and the prompt, the options and the hint are never touched (the digits
+    must survive)."""
+    options = "  ".join(f"{number} — {option.label}" for number, option in message.numbered_options())
+    head = [message.prompt.strip()]
+    tail = [options]
     if message.reply_hint.strip():
-        parts.append(message.reply_hint.strip())
-    return "\n\n".join(parts)
+        tail.append(message.reply_hint.strip())
+    quote = message.quote.strip()
+    if quote:
+        # the quote's section is «» around it and one separator before it
+        budget = max_length - len(_SEPARATOR.join(head + tail)) - len(_SEPARATOR) - 2
+        if len(quote) > budget:
+            quote = quote[: budget - len(ELLIPSIS)].rstrip() + ELLIPSIS if budget > len(ELLIPSIS) else ""
+    parts = head + ([f"«{quote}»"] if quote else []) + tail
+    return _SEPARATOR.join(parts)
 
 
 class PlainTextInteractiveMessageAdapter(InteractiveMessagePort):
@@ -31,7 +43,7 @@ class PlainTextInteractiveMessageAdapter(InteractiveMessagePort):
             logger.error(f"[PlainTextInteractive] no channel for platform={platform} channel={channel_id}")
             raise RuntimeError(f"no channel for platform {platform}")
         try:
-            return await channel.send_message_ref(_layout(message))
+            return await channel.send_message_ref(_layout(message, channel.max_message_length))
         except Exception as exc:
             logger.error(
                 f"[PlainTextInteractive] post failed platform={platform} channel={channel_id} "
