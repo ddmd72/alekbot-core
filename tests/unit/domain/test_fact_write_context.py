@@ -150,15 +150,16 @@ def test_derived_from_is_ignored_with_a_note_in_a_conversation_pass():
 
 def test_merge_in_a_conversation_pass_follows_the_create_rule():
     # S3-D11: the clamped model date is never earlier than the newest source, so a source at LAST lifts it to LAST.
-    assert reported_date_for_merge(STAGE1, FIRST - timedelta(days=5), [LAST], NOW) == LAST
-    assert reported_date_for_merge(STAGE1, FIRST - timedelta(days=5), [FIRST - timedelta(days=10)], NOW) == FIRST
-    assert reported_date_for_merge(STAGE1, None, [datetime(2020, 1, 1, tzinfo=UTC)], NOW) == LAST
+    # The model's date is used on a conversation pass, so there is nothing to say.
+    assert reported_date_for_merge(STAGE1, FIRST - timedelta(days=5), [LAST], NOW) == (LAST, None)
+    assert reported_date_for_merge(STAGE1, FIRST - timedelta(days=5), [FIRST - timedelta(days=10)], NOW) == (FIRST, None)
+    assert reported_date_for_merge(STAGE1, None, [datetime(2020, 1, 1, tzinfo=UTC)], NOW) == (LAST, None)
 
 
 def test_merge_in_a_cleanup_pass_takes_the_latest_source_date_and_ignores_the_model():
     a, b = datetime(2026, 2, 1, tzinfo=UTC), datetime(2026, 5, 1, tzinfo=UTC)
-    assert reported_date_for_merge(STAGE2A, NOW, [a, b], NOW) == b
-    assert reported_date_for_merge(STAGE2A, NOW, [], NOW) == LAST
+    assert reported_date_for_merge(STAGE2A, NOW, [a, b], NOW) == (b, kept_reported_date_note(b, "Europe/Paris"))
+    assert reported_date_for_merge(STAGE2A, NOW, [], NOW) == (LAST, kept_reported_date_note(LAST, "Europe/Paris"))
 
 
 # --- update ----------------------------------------------------------------------------------------------------------
