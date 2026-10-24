@@ -11,6 +11,7 @@ from typing import Dict, Final, FrozenSet, Optional
 
 from .entities import FactState
 from .fact_lifecycle import CONSOLIDATION_ACCEPTS, REVIEW_ACCEPTS
+from .fact_lifecycle_day import CounterField
 from .refusal_wording import RefusalWording
 
 
@@ -48,6 +49,17 @@ class PassActor(StrEnum):
         return _ROWS[self].born_due_refusal_is_loss
 
     @property
+    def closing_answers_refusal(self) -> bool:
+        """True = a later write that closes a refused fact answers the refusal (the review: an archive is an outcome);
+        elsewhere retiring the fact is the loss the 🚨 alert is for."""
+        return _ROWS[self].closing_answers_refusal
+
+    @property
+    def refusals_counter(self) -> CounterField:
+        """The day counter the pass's refused calls are added to."""
+        return _ROWS[self].refusals_counter
+
+    @property
     def refusal_wording(self) -> RefusalWording:
         """Which text a date refusal gets."""
         return _ROWS[self].refusal_wording
@@ -67,6 +79,8 @@ class _Row:
     born_due_refusal_is_loss: bool
     refusal_wording: RefusalWording
     closing_reason: Optional[str]
+    closing_answers_refusal: bool = False
+    refusals_counter: CounterField = CounterField.EXPIRY_TOOL_ERRORS
 
 
 _CONVERSATION = _Row(
@@ -87,6 +101,7 @@ _BACKSTOP = _Row(
 _REVIEW = _Row(
     model_dates=False, floors_due_horizon=False, accepts=REVIEW_ACCEPTS, born_due_refusal_is_loss=True,
     refusal_wording=RefusalWording.REVIEW, closing_reason=None,
+    closing_answers_refusal=True, refusals_counter=CounterField.REVIEW_REFUSALS,
 )
 _OWNER = _Row(
     model_dates=False, floors_due_horizon=False, accepts=REVIEW_ACCEPTS, born_due_refusal_is_loss=False,

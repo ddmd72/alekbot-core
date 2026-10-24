@@ -87,7 +87,7 @@ moves a fact whose expiry has passed from `current` to `stale` (§5.5); it is lo
 | `ConsolidationService` | takes the account's memory-write lease, takes one pending batch, runs the agent, deletes or retries the batch; defers itself when the lease is taken | `src/services/consolidation_service.py` |
 | `FirestoreMemoryWriteLease` | the lease: one memory-writing run per account | `src/adapters/firestore_memory_write_lease.py` |
 | `ConsolidationAgent` | the model loop, all stages | `src/agents/consolidation_agent.py` |
-| `FactManagementAdapter` | the model's tools (`FactManagementPort`): search, create, update, merge; and code's typed update (`FactUpdatePort.apply_fact_update`: a decided `ParsedFactUpdate`, checked by `typed_update_refusal`, with the review's and the owner's `evidence_at`, `reason` and `history`), one apply under both updates; follows stale ids forward, writes under preconditions; applies the expiry, `reported_date` and trail rules of the pass's write context (§2.7) | `src/adapters/fact_management_adapter.py` |
+| `FactManagementAdapter` | the model's tools (`FactManagementPort`): search, create, update, merge; and code's typed update (the agent's own `fact_updates` dependency, the same adapter in composition; `FactUpdatePort.apply_fact_update`: a decided `ParsedFactUpdate`, checked by `typed_update_refusal`, with the review's and the owner's `evidence_at`, `reason` and `history`), one apply under both updates; follows stale ids forward, writes under preconditions; applies the expiry, `reported_date` and trail rules of the pass's write context (§2.7) | `src/adapters/fact_management_adapter.py` |
 | `FactLifecycleSweepService` | the janitor: stales due facts, applies the breaker and the per-run cap, refreshes the baseline, stores the day's snapshot, posts the 🧹 line (§5.5) | `src/services/fact_lifecycle_sweep_service.py` |
 | `FirestoreFactLifecycleCounters` | the janitor's snapshots, the tool-error increments and the posted-line mark | `src/adapters/firestore_fact_lifecycle_counters.py` |
 | `FactWriteService` | builds a `FactEntity` with its three vectors and stores it | `src/services/fact_write_service.py` |
@@ -613,7 +613,15 @@ lines (`consolidation_agent.py`: no arguments, no fact text, 8 characters of the
   use hashes held in memory, never logged. `abandoned > 0` posts "🚨 Consolidation left expiry
   refusals unanswered" with the pass label, model, tool names and text lengths. It errs towards an alert: a retry that
   rewrites the text counts as abandoned.
-- **Close-out.** The abandoned 🚨 and the add of the pass's expiry errors to the account's day (`expiry_tool_errors`, §5.5)
+- **The review pass (Facts S4, T6b).** `_run_consolidation_loop(pass_kind="review", max_turns=review_max_turns (15),
+  review_scope=FactReviewScope)` offers three tools (`update_fact` with `basis` and `history` and no `reported_date`,
+  `ask_owner`, `count_words`); `update_fact` and `ask_owner` go to the scope, any other tool is unknown. A review refusal
+  (`refused`: `basis`, `scope`, `ask`) is its own outcome, shown as `review refusals N` in the tool-error part. In the
+  review an expiry, born-due or review refusal is abandoned when no later successful update or ask of the same fact
+  answers it, and there an archive or another closing write counts as an answer (`PassActor.closing_answers_refusal`);
+  the 🚨 then reads "left refusals unanswered".
+- **Close-out.** The abandoned 🚨 and the add of the pass's refused calls to the account's day (`expiry_tool_errors`; the
+  review's expiry and review refusals go to `review_refusals` instead, `PassActor.refusals_counter`, F14; §5.5)
   run at the end of every pass, also one that raises, in a `finally`. The close-out is best effort and capped at 10 s
   (`CLOSE_OUT_TIMEOUT_S`): it never raises and never changes the pass, a hung sink delays a timeout by at most 10 s, and a
   cancellation propagates.

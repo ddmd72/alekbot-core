@@ -576,6 +576,7 @@ class UserAgentFactory(AgentFactoryPort):
             embedding_service=self.embedding_service,
             fact_write_service=self.fact_write_service,
             fact_management_port=fact_management_adapter,
+            fact_updates=fact_management_adapter,  # the adapter is both ports
             prompt_version=self.config["CONSOLIDATION"].prompt_version,
             prompt_builder=prompt_builder,
             facts_limit=facts_limit,

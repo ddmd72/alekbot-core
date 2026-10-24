@@ -18,7 +18,7 @@ import json
 import time
 import asyncio
 from collections import Counter
-from typing import List, Dict, Any, FrozenSet, Optional, Tuple
+from typing import List, Dict, Any, FrozenSet, Literal, Optional, Tuple
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -29,7 +29,6 @@ from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..domain.entities import FactDomain, FactState, normalize_fact_taxonomy
 from ..domain.fact_expiry import expiry_view
 from ..domain.fact_lifecycle import CLOSING_STATES
-from ..domain.fact_lifecycle_day import CounterField
 from ..domain.fact_argument_parsing import parse_enum
 from ..domain.fact_update import ParsedFactUpdate
 from ..domain.fact_write_context import FactWriteContext, as_utc, span_of
@@ -47,10 +46,14 @@ from ..utils.logger import logger
 from ..ports.llm_port import AgentExecutionContext
 from ..ports.fact_write_port import FactWritePort
 from ..ports.alert_sink import AlertSinkPort
-from ..domain.consolidation_pass_stats import OUTCOME_ERROR, OUTCOME_OK, ConsolidationPassStats, PassCall, PassTool
+from ..domain.consolidation_pass_stats import (
+    OUTCOME_ERROR, OUTCOME_OK, OUTCOME_REVIEW_REFUSAL, ConsolidationPassStats, PassCall, PassTool,
+)
+from ..domain.fact_review_ask import parse_ask_owner
 from ..domain.fact_tool_result import HISTORY_FACT_ID, STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..infrastructure.agent_config import CONSOLIDATION
+from ..infrastructure.fact_review_scope import FactReviewScope
 
 
 @dataclass
@@ -109,6 +112,152 @@ _DERIVED_FROM_SCHEMA: Dict[str, Any] = {
 }
 
 
+# The review pass's tools (Facts S4 §3.5). Every property is described, and no constraint the parsers refuse is
+# advertised (no enum, bound or pattern): the rules are in the descriptions and enforced by the scope, so a wrong value
+# comes back as a refusal the model can act on.
+_REVIEW_EXPIRY_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "When the fact stops being current again, decided from its content: {kind: date, date: YYYY-MM-DD} the last day "
+        "it holds; a horizon counts from now: `{kind: horizon, days: N}` means review again in N days (N ≥ 2); "
+        "{kind: none} history, stable or permanent. Not used when the state closes the fact."
+    ),
+    "properties": {
+        "kind": {"type": "string", "description": "date, horizon or none"},
+        "date": {"type": "string", "description": "with kind date: YYYY-MM-DD, the last day the fact holds"},
+        "days": {"type": "integer", "description": "with kind horizon: N ≥ 2, the days from now until the next review"},
+    },
+    "required": ["kind"],
+}
+
+_BASIS_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "Why the change is right, one of three kinds: {kind: evidence, evidence_fact_id} another current fact shows it; "
+        "{kind: reply, question_id, quote} the owner's reply to this fact's question; {kind: date_passed, date?} the "
+        "plan's date is over. A revive, a rewrite and an invalidation need evidence or reply; an archive needs evidence, "
+        "reply or date_passed."
+    ),
+    "properties": {
+        "kind": {"type": "string", "description": "evidence, reply or date_passed"},
+        "evidence_fact_id": {
+            "type": "string",
+            "description": "with kind evidence: the id of a current fact that shows it, not a version of this fact",
+        },
+        "question_id": {"type": "string", "description": "with kind reply: the id of the question the owner answered"},
+        "quote": {"type": "string", "description": "with kind reply: the owner's words, copied from his reply"},
+        "date": {
+            "type": "string",
+            "description": (
+                "with kind date_passed: YYYY-MM-DD, the day of the plan, before today; leave it out for a fact of "
+                "expiry kind date (its own date is used)"
+            ),
+        },
+    },
+    "required": ["kind"],
+}
+
+_REVIEW_UPDATE_SCHEMA: Dict[str, Any] = {
+    "name": "update_fact",
+    "description": (
+        "Decide one fact of the batch: revive it (state CURRENT with an expiry), rewrite its text, archive, invalidate "
+        "or supersede it, with the basis for the change. One result per fact in this pass."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "fact_id": {
+                "type": "string",
+                "description": "id of the batch fact, or of the version this pass wrote for it",
+            },
+            "updates": {
+                "type": "object",
+                "description": (
+                    "Fields to change; the call changes the fact's state or its text. reported_date is kept by the "
+                    "system; review horizons count from now."
+                ),
+                "properties": {
+                    "content": {"type": "string", "description": "the new text; leave it out to keep the text"},
+                    "tags": {
+                        "type": "array", "items": {"type": "string"}, "description": "full list; system tags are kept",
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "description": "Structured data to add or update; merged key by key into the fact's metadata",
+                    },
+                    "temporal_class": {"type": "string", "description": "PERMANENT/STABLE/DYNAMIC/EPHEMERAL"},
+                    "state": {
+                        "type": "string",
+                        "description": "CURRENT (revive), ARCHIVED, INVALIDATED or SUPERSEDED; leave it out to keep it",
+                    },
+                    "superseded_by": {
+                        "type": "string",
+                        "description": "with state SUPERSEDED: id of the current fact that replaces this one; required then",
+                    },
+                    "expiry": _REVIEW_EXPIRY_SCHEMA,
+                },
+            },
+            "basis": _BASIS_SCHEMA,
+            "history": {
+                "type": "string",
+                "description": (
+                    "with an archive whose basis is the owner's reply that it ended: one sentence in the past tense "
+                    "saying it ended, kept as a new fact beside the archived one; not for a dated plan"
+                ),
+            },
+        },
+        "required": ["fact_id", "updates"],
+    },
+}
+
+_ASK_OWNER_SCHEMA: Dict[str, Any] = {
+    "name": "ask_owner",
+    "description": (
+        "Ask the owner about one fact of the batch when nothing here decides it. Code writes the question and sends it "
+        "later; you say only what happens if he does not answer. An asked fact takes no other result in this pass."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "fact_id": {"type": "string", "description": "id of the batch fact to ask about"},
+            "fallback": {
+                "type": "string",
+                "description": (
+                    "what happens when the owner does not answer: revive or archive; archive only for a fact of expiry "
+                    "kind date, with a past fallback_date, or with noise"
+                ),
+            },
+            "fallback_date": {
+                "type": "string",
+                "description": "with fallback archive: YYYY-MM-DD, the day of the plan, before today",
+            },
+            "noise": {
+                "type": "boolean",
+                "description": "with fallback archive: true when the fact reads as noise, not as something the owner said",
+            },
+        },
+        "required": ["fact_id", "fallback"],
+    },
+}
+
+
+def _count_words_tool() -> Dict[str, Any]:
+    return {
+        "name": "count_words",
+        "description": "Count words in a text string. Call this BEFORE create_fact or update_fact to verify content is ≤40 words. Returns exact word_count, within_limit flag, and excess words if any.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to count words in (e.g. the planned content field value)"
+                }
+            },
+            "required": ["text"]
+        }
+    }
+
+
 def _expiry_property(extra: str = "") -> Dict[str, Any]:
     """A copy of `_EXPIRY_SCHEMA` (an adapter may rewrite a schema in place), its description extended by `extra`."""
     schema = copy.deepcopy(_EXPIRY_SCHEMA)
@@ -147,7 +296,11 @@ _PASS_TOOLS: Dict[str, PassTool] = {
     "update_fact": PassTool.UPDATE,
     "merge_facts": PassTool.MERGE,
     "count_words": PassTool.COUNT,
+    "ask_owner": PassTool.ASK,
 }
+
+# Which tools a pass offers: the consolidation passes', or the review's three (Facts S4 §3.5).
+PassKind = Literal["consolidation", "review"]
 
 
 def _pass_call(tool_call: ToolCall, timezone_name: str) -> PassCall:
@@ -174,7 +327,18 @@ def _pass_call(tool_call: ToolCall, timezone_name: str) -> PassCall:
         updates = args.get("updates")
         closing = isinstance(updates, dict) and _closes(updates.get("state"))
         return PassCall(tool, fingerprint, key=fact_id if isinstance(fact_id, str) else "", closing=closing)
+    if tool is PassTool.ASK:
+        return PassCall(tool, fingerprint, key=_asked_fact(args))
     return PassCall(tool, fingerprint)
+
+
+def _asked_fact(args: Dict[str, Any]) -> str:
+    """The fact an `ask_owner` call names, as its parser reads it; the raw id when the parser refuses the call."""
+    try:
+        return parse_ask_owner(args).fact_id
+    except ValueError:
+        fact_id = args.get("fact_id")
+        return fact_id if isinstance(fact_id, str) else ""
 
 
 def _closes(state: Any) -> bool:
@@ -202,7 +366,10 @@ def _fact_ids(raw: Any) -> FrozenSet[str]:
 
 def _errors_text(stats: ConsolidationPassStats) -> str:
     born = f", born due {stats.born_due}" if stats.born_due else ""
-    return f"tool-error turns {stats.error_turns} (expiry {stats.expiry_errors}{born}, abandoned {stats.abandoned})"
+    review = f", review refusals {stats.review_refusals}" if stats.review_refusals else ""
+    return (
+        f"tool-error turns {stats.error_turns} (expiry {stats.expiry_errors}{born}{review}, abandoned {stats.abandoned})"
+    )
 
 
 def _counts_text(stats: ConsolidationPassStats) -> str:
@@ -244,14 +411,16 @@ def _limit_alert(stats: ConsolidationPassStats, model: str, effort: Any, user_id
 def _abandoned_alert(stats: ConsolidationPassStats, model: str, user_id: str) -> str:
     """The permanent alert for refusals that were never answered: the pass, tool kinds and text lengths (or the fact
     id's first 8 characters), never the text."""
-    calls = stats.abandoned_calls()
+    outcomes = stats.abandoned_outcomes()
     parts = [
-        f"update fact {call.key[:8]}" if call.tool is PassTool.UPDATE else f"{call.tool.value} (text {call.size} chars)"
-        for call in calls[:5]
+        f"{o.call.tool.value} fact {o.call.key[:8]}" if o.call.tool in (PassTool.UPDATE, PassTool.ASK)
+        else f"{o.call.tool.value} (text {o.call.size} chars)"
+        for o in outcomes[:5]
     ]
+    what = "refusals" if any(o.outcome == OUTCOME_REVIEW_REFUSAL for o in outcomes) else "expiry refusals"
     return (
-        f"🚨 Consolidation left expiry refusals unanswered | pass `{stats.actor.value}` | model {model} | "
-        f"abandoned {len(calls)}: {', '.join(parts)} | user {(user_id or '')[:8]}\n"
+        f"🚨 Consolidation left {what} unanswered | pass `{stats.actor.value}` | model {model} | "
+        f"abandoned {len(outcomes)}: {', '.join(parts)} | user {(user_id or '')[:8]}\n"
         "A refused write that is never resent saves nothing; check what the pass retired next to it."
     )
 
@@ -259,7 +428,7 @@ def _abandoned_alert(stats: ConsolidationPassStats, model: str, user_id: str) ->
 class _TrackingFactManagement(FactManagementPort):
     """
     Pass-through wrapper over FactManagementPort, one per run, passed to every stage of that run
-    (`_TrackingFactUpdates` adds the typed update; `_tracker_for` picks the one the port allows).
+    (`_TrackingFactUpdates` adds the typed update, over the agent's own typed port).
 
     Records only what the store reports as written:
     - `changed` holds (fact_id, content) for a create, a content update (the id of the version written,
@@ -342,14 +511,12 @@ class _TrackingFactManagement(FactManagementPort):
 
 
 class _TrackingFactUpdates(_TrackingFactManagement, FactUpdatePort):
-    """The tracker over a port that also has the typed update: both update paths are forwarded and recorded alike.
-    Built only over a FactUpdatePort, so a port without the typed path is refused when the tracker is built."""
+    """The run's tracker: the model's writes go to `real`, the typed update to `typed` (production passes the one
+    adapter as both); both update paths are recorded alike."""
 
-    def __init__(self, real: FactManagementPort) -> None:
-        if not isinstance(real, FactUpdatePort):
-            raise TypeError(f"{type(real).__name__} has no typed update path (FactUpdatePort)")
+    def __init__(self, real: FactManagementPort, typed: FactUpdatePort) -> None:
         super().__init__(real)
-        self._typed: FactUpdatePort = real
+        self._typed = typed
 
     async def apply_fact_update(
         self,
@@ -368,11 +535,6 @@ class _TrackingFactUpdates(_TrackingFactManagement, FactUpdatePort):
         self._record_update(result, update.content, history)
         return result
 
-
-
-def _tracker_for(real: FactManagementPort) -> _TrackingFactManagement:
-    """The run's tracker: with the typed update when `real` has it (production's adapter always does)."""
-    return _TrackingFactUpdates(real) if isinstance(real, FactUpdatePort) else _TrackingFactManagement(real)
 
 
 # Stage 3 (email) runs under what is left of the agent's budget minus this margin, so the agent's own
@@ -422,6 +584,8 @@ class ConsolidationAgent(BaseAgent):
         alert_sink: Optional[AlertSinkPort] = None,
         stats_alerts: bool = False,
         lifecycle_counters: Optional[FactLifecycleCountersPort] = None,
+        *,
+        fact_updates: FactUpdatePort,
     ):
         """
         Initialize Consolidation Agent v3.
@@ -440,8 +604,11 @@ class ConsolidationAgent(BaseAgent):
             prompt_builder: Prompt builder for cache invalidation
             facts_limit: Biographical cache limit
             principles_limit: Principles cache limit
-            lifecycle_counters: Per-day lifecycle numbers; the expiry tool errors of each pass are added to it
+            lifecycle_counters: Per-day lifecycle numbers; the refused calls of each pass are added to it
+            fact_updates: The typed write path (code-built updates, the review's writes); required
         """
+        if fact_updates is None:
+            raise TypeError("ConsolidationAgent needs the typed write port (fact_updates: FactUpdatePort)")
         super().__init__(config)
         self.execution_context = execution_context
         self._llm = execution_context.provider
@@ -450,6 +617,7 @@ class ConsolidationAgent(BaseAgent):
         self._embedding = embedding_service
         self._fact_write_service = fact_write_service
         self._fact_management = fact_management_port  # NEW
+        self._fact_updates = fact_updates
         self.prompt_version = prompt_version  # NEW
         self.prompt_builder = prompt_builder
         self.user_id = None  # Consolidation is system-level, no user context
@@ -824,7 +992,7 @@ class ConsolidationAgent(BaseAgent):
 
         total_facts_affected = 0
         batches_processed = 0
-        tracker = _tracker_for(self._fact_management)
+        tracker = _TrackingFactUpdates(self._fact_management, self._fact_updates)
         refreshed = False
         owner_timezone = self._owner_timezone(message)
 
@@ -1066,7 +1234,7 @@ class ConsolidationAgent(BaseAgent):
         )
 
 
-        tracker = _tracker_for(self._fact_management)
+        tracker = _TrackingFactUpdates(self._fact_management, self._fact_updates)
         finished = False
         try:
             ops1 = await self._run_consolidation_loop(
@@ -1272,19 +1440,29 @@ class ConsolidationAgent(BaseAgent):
         fact_management: Optional[FactManagementPort] = None,
         *,
         write_context: FactWriteContext,
+        pass_kind: PassKind = "consolidation",
+        max_turns: Optional[int] = None,
+        review_scope: Optional[FactReviewScope] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Single multi-turn LLM loop for one consolidation pass.
+        Single multi-turn LLM loop for one consolidation or review pass.
         Returns parsed operations list from the final report.
 
         `fact_management` is the port this pass's tools run on (a run's tracker); None means the agent's own.
-        `write_context` goes with every write the pass's tools make; its actor names the pass in the ops alerts.
+        `write_context` goes with every write the pass's tools make; its actor names the pass in the ops alerts and
+        the stats. `pass_kind` picks the tools (`_get_tool_declarations`); a review pass needs its `review_scope`, which
+        serves its `update_fact` and `ask_owner`, and no other pass takes one. `max_turns` caps the loop and is the cap
+        the stats report (None = MAX_CONSOLIDATION_TURNS).
 
         Ops alerts (best-effort, never change the result): a pass that exhausts its turns without
         a final report always posts a 🚨; a pass that ends with a report posts a 📊 stats line
         while CONSOLIDATION_STATS_ALERTS is on.
         """
-        stats = ConsolidationPassStats(write_context.actor, self.MAX_CONSOLIDATION_TURNS)
+        if (pass_kind == "review") != (review_scope is not None):
+            raise ValueError(f"a {pass_kind} pass {'needs' if pass_kind == 'review' else 'takes no'} review scope")
+        max_turns = self.MAX_CONSOLIDATION_TURNS if max_turns is None else max_turns
+        tools = self._get_tool_declarations(pass_kind)
+        stats = ConsolidationPassStats(write_context.actor, max_turns)
         started = time.monotonic()
         today = local_day(datetime.now(timezone.utc), write_context.timezone)
         history: List[Message] = [
@@ -1294,16 +1472,14 @@ class ConsolidationAgent(BaseAgent):
         ]
 
         try:
-            for turn in range(self.MAX_CONSOLIDATION_TURNS):
-                logger.info(
-                    f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1}/{self.MAX_CONSOLIDATION_TURNS}"
-                )
+            for turn in range(max_turns):
+                logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1}/{max_turns}")
 
                 request = LLMRequest(
                     model_name=self.model_name,
                     system_instruction=system_prompt,
                     messages=history,
-                    tools=self._get_tool_declarations(),
+                    tools=tools,
                     max_tokens=self.MAX_TOKENS,
                     timeout=500,
                     thinking=self.THINKING_EFFORT or None,
@@ -1350,6 +1526,7 @@ class ConsolidationAgent(BaseAgent):
                     account_id=account_id,
                     write_context=write_context,
                     fact_management=fact_management,
+                    review_scope=review_scope,
                 )
 
                 stats.record_outcomes(calls, [tr.outcome for tr in tool_responses])
@@ -1375,8 +1552,8 @@ class ConsolidationAgent(BaseAgent):
             await self._close_pass(stats, account_id, user_id)
 
     async def _close_pass(self, stats: ConsolidationPassStats, account_id: str, user_id: str) -> None:
-        """End of every pass, also one that raises: an expiry refusal that was never answered is always a 🚨 (also
-        with the stats line off), and the pass's expiry errors are added to the account's day. Best effort, capped
+        """End of every pass, also one that raises: a refusal that was never answered is always a 🚨 (also with the
+        stats line off), and the pass's refused calls are added to the account's day. Best effort, capped
         at CLOSE_OUT_TIMEOUT_S: it never raises (a cancellation excepted) and never changes the pass."""
         try:
             await asyncio.wait_for(self._report_pass(stats, account_id, user_id), timeout=self.CLOSE_OUT_TIMEOUT_S)
@@ -1388,12 +1565,11 @@ class ConsolidationAgent(BaseAgent):
     async def _report_pass(self, stats: ConsolidationPassStats, account_id: str, user_id: str) -> None:
         if stats.abandoned:
             await self._post_alert(_abandoned_alert(stats, self.model_name, user_id))
-        if not stats.expiry_errors or self._lifecycle_counters is None:
+        counts = stats.day_counts()
+        if not counts or self._lifecycle_counters is None:
             return
         try:
-            await self._lifecycle_counters.add(
-                account_id, datetime.now(timezone.utc).date(), {CounterField.EXPIRY_TOOL_ERRORS: stats.expiry_errors}
-            )
+            await self._lifecycle_counters.add(account_id, datetime.now(timezone.utc).date(), counts)
         except Exception as e:
             logger.warning(f"⚠️ [ConsolidationAgent] Lifecycle counters not updated: {type(e).__name__}")
 
@@ -1620,8 +1796,12 @@ class ConsolidationAgent(BaseAgent):
         account_id: str,
         write_context: FactWriteContext,
         fact_management: Optional[FactManagementPort] = None,
+        review_scope: Optional[FactReviewScope] = None,
     ) -> List[ToolResponse]:
         """Execute fact management tools via FactManagementPort (`fact_management`, else the agent's own).
+
+        With a `review_scope` (the review pass) only the review's tools run: `update_fact` and `ask_owner` go to the
+        scope, `count_words` stays the agent's own, and any other tool is unknown.
 
         All tool calls within a single LLM turn are dispatched concurrently via
         asyncio.gather. search_existing_facts calls are always independent (each
@@ -1635,6 +1815,28 @@ class ConsolidationAgent(BaseAgent):
         async def _execute_one(tool_call: ToolCall) -> ToolResponse:
             logger.info(f"🔧 [ConsolidationAgent] Executing tool: {tool_call.name}")
             try:
+                if review_scope is not None and tool_call.name in ("update_fact", "ask_owner"):
+                    if tool_call.name == "update_fact":
+                        args = tool_call.args
+                        if "updates" in args:  # a top-level expiry moves into updates, as on the other passes
+                            args = {**args, "updates": _with_top_level_expiry(args, "updates")}
+                        result = await review_scope.update_fact(args)
+                    else:
+                        result = await review_scope.ask_owner(tool_call.args)
+                    return ToolResponse(
+                        name=tool_call.name,
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=outcome_of(result),
+                    )
+
+                if review_scope is not None and tool_call.name != "count_words":
+                    logger.warning(f"⚠️ Unknown review tool: {tool_call.name}")
+                    return ToolResponse(
+                        name=tool_call.name,
+                        result_str=json.dumps({"error": f"Unknown tool: {tool_call.name}"}),
+                        outcome=OUTCOME_ERROR,
+                    )
+
                 if tool_call.name == "search_existing_facts":
                     keywords = tool_call.args.get("keywords", [])
                     primary_query = tool_call.args.get("primary_query", "")
@@ -1747,10 +1949,13 @@ class ConsolidationAgent(BaseAgent):
 
         return [await _execute_one(tool_calls[0])]
     
-    def _get_tool_declarations(self) -> List[Dict[str, Any]]:
+    def _get_tool_declarations(self, pass_kind: PassKind = "consolidation") -> List[Dict[str, Any]]:
         """
-        Build tool declarations for ConsolidationAgent v3.
-        
+        Build tool declarations for ConsolidationAgent v3. Module constants only, never `self` (tests call it unbound).
+
+        `pass_kind="review"`: the review's three tools (Facts S4 §3.5): `update_fact` (with `basis` and `history`, no
+        `reported_date`), `ask_owner` and `count_words`, as fresh copies (an adapter may rewrite a schema in place).
+
         4 tools from CONSOLIDATION_V3_PROMPT.txt:
         - search_existing_facts
         - create_fact
@@ -1760,6 +1965,10 @@ class ConsolidationAgent(BaseAgent):
         Note: discard_candidate removed - DISCARD is an LLM decision (not a tool call).
         LLM simply doesn't call create/update/merge for discarded candidates.
         """
+        if pass_kind == "review":
+            return [copy.deepcopy(_REVIEW_UPDATE_SCHEMA), copy.deepcopy(_ASK_OWNER_SCHEMA), _count_words_tool()]
+        if pass_kind != "consolidation":
+            raise ValueError(f"no tools for pass kind {pass_kind!r}")
         return [
             {
                 "name": "search_existing_facts",
@@ -1841,20 +2050,7 @@ class ConsolidationAgent(BaseAgent):
                     "required": ["fact_id", "updates"]
                 }
             },
-            {
-                "name": "count_words",
-                "description": "Count words in a text string. Call this BEFORE create_fact or update_fact to verify content is ≤40 words. Returns exact word_count, within_limit flag, and excess words if any.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "text": {
-                            "type": "string",
-                            "description": "The text to count words in (e.g. the planned content field value)"
-                        }
-                    },
-                    "required": ["text"]
-                }
-            },
+            _count_words_tool(),
             {
                 "name": "merge_facts",
                 "description": "Consolidate multiple facts into one enriched fact",

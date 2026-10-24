@@ -7,7 +7,9 @@ a write into "not a write". The words are `domain.fact_tool_result`; the port's 
 
 from typing import Any, Dict, FrozenSet, List, Sequence
 
-from .consolidation_pass_stats import OUTCOME_BORN_DUE, OUTCOME_ERROR, OUTCOME_EXPIRY, OUTCOME_OK
+from .consolidation_pass_stats import (
+    OUTCOME_BORN_DUE, OUTCOME_ERROR, OUTCOME_EXPIRY, OUTCOME_OK, OUTCOME_REVIEW_REFUSAL,
+)
 from .fact_write_context import NO_READABLE_SOURCE_NOTE
 
 # `status` of a tool result.
@@ -32,6 +34,7 @@ REFUSED_EXPIRY = "expiry"
 REFUSED_BASIS = "basis"
 REFUSED_SCOPE = "scope"
 REFUSED_ASK = "ask"
+_REVIEW_REFUSALS: FrozenSet[str] = frozenset({REFUSED_BASIS, REFUSED_SCOPE, REFUSED_ASK})
 
 # Codes of the notes a reader needs to recognise. The text stays in the domain beside the rule that writes it; the
 # result carries the code in `note_codes`, so no reader matches prose.
@@ -54,11 +57,15 @@ def refused_result(fact_id: Any, tag: str, message: str) -> Dict[str, Any]:
 
 def outcome_of(result: Any) -> str:
     """What a tool result came to, as one of the `OUTCOME_*` values of `consolidation_pass_stats`: an expiry refusal
-    (born due or not), a failed or missing fact or an `error` key, else ok. A result that is not a dict is ok."""
+    (born due or not), a review refusal (`basis`, `scope`, `ask`), a failed or missing fact or an `error` key, else ok.
+    A result that is not a dict is ok."""
     if not isinstance(result, dict):
         return OUTCOME_OK
-    if result.get("refused") == REFUSED_EXPIRY:
+    refused = result.get("refused")
+    if refused == REFUSED_EXPIRY:
         return OUTCOME_BORN_DUE if result.get("born_due") else OUTCOME_EXPIRY
+    if refused in _REVIEW_REFUSALS:
+        return OUTCOME_REVIEW_REFUSAL
     if result.get("status") in (STATUS_FAILED, STATUS_NOT_FOUND) or "error" in result:
         return OUTCOME_ERROR
     return OUTCOME_OK

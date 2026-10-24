@@ -15,15 +15,18 @@ from enum import StrEnum
 from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from .entities import FactDomain
+from .fact_lifecycle_day import CounterField
 from .pass_actor import PassActor
 
 # What one tool call came to. `expiry` is a refusal of a missing or malformed `expiry`; `born_due` one of a well-formed
 # `expiry` that resolves already due (on a conversation pass the model may discard the candidate, so it is not an
-# abandoned refusal there; on a cleanup pass the subject is a stored fact and it is).
+# abandoned refusal there; on a cleanup pass the subject is a stored fact and it is). `review_refusal` is a refusal of the
+# review pass's own rules (`refused`: basis, scope or ask).
 OUTCOME_OK = "ok"
 OUTCOME_ERROR = "error"
 OUTCOME_EXPIRY = "expiry"
 OUTCOME_BORN_DUE = "born_due"
+OUTCOME_REVIEW_REFUSAL = "review_refusal"
 
 # A born-due create is answered by a rewrite that holds more than this share of its content words (hashed in memory).
 _REWRITE_OVERLAP = 0.5
@@ -52,11 +55,15 @@ class PassTool(StrEnum):
     UPDATE = "update"
     MERGE = "merge"
     COUNT = "count"
+    ASK = "ask"
     OTHER = "other"
 
 
 _WRITES = frozenset({PassTool.CREATE, PassTool.UPDATE, PassTool.MERGE})
 _NEW_TEXT = frozenset({PassTool.CREATE, PassTool.MERGE})
+# The calls about one stored fact, keyed by its id: a refusal of one is answered by a later success of either.
+_ON_A_FACT = frozenset({PassTool.UPDATE, PassTool.ASK})
+_ANSWERABLE = _WRITES | {PassTool.ASK}
 
 
 @dataclass(frozen=True)
@@ -64,7 +71,7 @@ class PassCall:
     """One tool call as the stats read it, built by the caller from the call's normalised arguments.
 
     `fingerprint` identifies the arguments (a repeated turn has the same ones); `key` is a hash of the text (create,
-    merge, see `with_text`) or the fact id (update); `size` the text length; `closing` an update that moves its fact
+    merge, see `with_text`) or the fact id (update, ask); `size` the text length; `closing` an update that moves its fact
     to a closing state; `sources` the ids a create is made from or a merge joins; `words` hashes of the text's content
     words; `domain` the new fact's domain. The text itself is never kept.
     """
@@ -168,38 +175,55 @@ class ConsolidationPassStats:
         return sum(1 for o in self._outcomes if o.outcome == OUTCOME_BORN_DUE)
 
     def abandoned_calls(self) -> List[PassCall]:
+        """The calls of `abandoned_outcomes`."""
+        return [o.call for o in self.abandoned_outcomes()]
+
+    def abandoned_outcomes(self) -> List[PassOutcome]:
         """Refusals that no later successful call answers, in pass order.
 
-        Counted: a missing or malformed `expiry`, always; a born-due one where the pass says it is a loss (`PassActor`).
-        A refusal of a create or merge is answered by a create or merge with the same text; one of an update by a
-        non-closing update of the same fact (retiring the fact is the loss, not an answer). A born-due create or merge is also answered by its rewrite (a past-tense one, so other text), found by
+        Counted: a missing or malformed `expiry`, always; a born-due one where the pass says it is a loss (`PassActor`);
+        a review refusal. A refusal of a create or merge is answered by a create or merge with the same text; one of an
+        update or an ask by an update or an ask of the same fact, which must not close it unless the pass's closing write
+        answers a refusal (`PassActor.closing_answers_refusal`; elsewhere retiring the fact is the loss, not an answer).
+        A born-due create or merge is also answered by its rewrite (a past-tense one, so other text), found by
         `_rewrites`. Approximate on purpose: a retry of a missing-`expiry` refusal that rewrites the text counts as
         abandoned, which errs towards an alert."""
-        counted = {OUTCOME_EXPIRY}
+        counted = {OUTCOME_EXPIRY, OUTCOME_REVIEW_REFUSAL}
         if self.actor.born_due_refusal_is_loss:
             counted.add(OUTCOME_BORN_DUE)
-        found = []
+        found: List[PassOutcome] = []
         for i, refused in enumerate(self._outcomes):
             call = refused.call
-            if refused.outcome not in counted or call.tool not in _WRITES:
+            if refused.outcome not in counted or call.tool not in _ANSWERABLE:
                 continue
-            same_kind = {PassTool.UPDATE} if call.tool is PassTool.UPDATE else _NEW_TEXT
+            same_kind = _ON_A_FACT if call.tool in _ON_A_FACT else _NEW_TEXT
             rewritable = refused.outcome == OUTCOME_BORN_DUE and call.tool in _NEW_TEXT
             resolved = any(
                 later.outcome == OUTCOME_OK and (
                     (later.call.tool in same_kind and later.call.key == call.key
-                     and not later.call.closing)
+                     and (not later.call.closing or self.actor.closing_answers_refusal))
                     or (rewritable and _rewrites(call, later.call))
                 )
                 for later in self._outcomes[i + 1:]
             )
             if not resolved:
-                found.append(call)
+                found.append(refused)
         return found
 
     @property
+    def review_refusals(self) -> int:
+        """Calls the review pass's own rules refused (basis, scope, ask)."""
+        return sum(1 for o in self._outcomes if o.outcome == OUTCOME_REVIEW_REFUSAL)
+
+    def day_counts(self) -> Dict[CounterField, int]:
+        """What this pass adds to the account's day: its refused calls (expiry and review refusals) under the pass's
+        counter (`PassActor.refusals_counter`); empty when there were none."""
+        refused = self.expiry_errors + self.review_refusals
+        return {self.actor.refusals_counter: refused} if refused else {}
+
+    @property
     def abandoned(self) -> int:
-        return len(self.abandoned_calls())
+        return len(self.abandoned_outcomes())
 
     @property
     def turns_used(self) -> int:
