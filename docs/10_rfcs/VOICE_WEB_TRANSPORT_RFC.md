@@ -236,8 +236,7 @@ stay green. Live: §10.
 
 ## 12. UAT round 1 (2026-09-28)
 
-The owner's first live web calls (2026-09-27) surfaced five gaps. Plan:
-`docs/superpowers/plans/2026-09-28-voice-web-uat-round1.md`.
+The owner's first live web calls (2026-09-27) surfaced five gaps. Plan: the UAT round 1 plan (archived).
 
 **Bluetooth HFP.** A headset paired over Bluetooth exposes its microphone through the HFP
 profile, which forces the *entire* Bluetooth link — including the speaker leg — down to

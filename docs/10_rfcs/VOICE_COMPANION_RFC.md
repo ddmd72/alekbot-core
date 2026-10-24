@@ -1489,7 +1489,7 @@ unit and this is genuinely optional.
    doesn't cleanly outweigh OpenAI's much larger tested surface. Owner's call: pick the provider
    empirically while building Slice 1, not from this data; run the missing xAI-parity spikes only
    if that build surfaces a concrete reason to.
-   `docs/superpowers/plans/2026-09-20-voice-companion-phase0-spikes.md` (closing section).
+   the Phase 0 spikes plan (archived), closing section.
 5. **Where reasoning effort should sit** for a phone call, and what it costs on the text-output leg
    (§4.3, §6) — Phase 0.4.
    **Answered (2026-09-21):** 5/5 tested levels retained a planted fact on a short text-only probe;
