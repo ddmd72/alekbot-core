@@ -1,6 +1,9 @@
 """The history pair around a memory-review question, as text: the frame the question is sent under, the frame that
 retracts it when it was not delivered, and the marker on the owner's reply. One question id in each; the consolidation
-prompt names these exact shapes, so a reader finds them with the parsers here and nowhere else."""
+prompt names these exact shapes, so a reader finds them with the parsers here and nowhere else.
+
+The parsers serve readers of history (prompt pins, statistics, tests) and never bind an answer: an answer binds only
+through the question's message ref (a reply to that message, a click on it), so typing a marker yourself applies nothing."""
 import re
 from typing import Optional, Tuple
 
