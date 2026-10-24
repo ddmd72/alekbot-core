@@ -1,4 +1,5 @@
 """The account's review state: its fields, read-only mappings and shape checks (Facts S4 · T1a, plan §2.2, §3.7, §3.17)."""
+import copy
 from datetime import date, datetime, timezone
 
 import pytest
@@ -102,3 +103,24 @@ def test_labels_are_kept_under_a_language_code(language):
 def test_a_naive_time_is_refused(field):
     with pytest.raises(ValidationError, match="timezone"):
         FactReviewState(account_id="acc", **{field: datetime(2026, 10, 24, 9, 0)})
+
+
+def test_a_deep_copy_is_a_valid_equal_state_that_shares_nothing():
+    state = FactReviewState(
+        account_id="acc", offers={"f1": 1}, labels={"pl": {"question": "q"}}, sent=2, sent_on=date(2026, 10, 24),
+        message_language="pl", last_review_at=NOW,
+    )
+    for clone in (copy.deepcopy(state), state.model_copy(deep=True)):
+        assert clone == state and clone is not state
+        assert clone.offers is not state.offers and clone.labels is not state.labels
+        assert clone.labels["pl"] is not state.labels["pl"]
+        with pytest.raises(TypeError):
+            clone.offers["f1"] = 5
+        assert FactReviewState.model_validate(clone.model_dump()) == clone
+
+
+def test_a_state_inside_another_structure_deep_copies_too():
+    state = FactReviewState(account_id="acc", offers={"f1": 1})
+    holder = {"state": state, "again": state}
+    cloned = copy.deepcopy(holder)
+    assert cloned["state"] == state and cloned["state"] is not state

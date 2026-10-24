@@ -68,7 +68,7 @@ MOVES = {
 # (state, move) -> the status the move leads to; every other pair is refused.
 ALLOWED = {
     ("queued", "claimed"): Q.PENDING, ("queued", "closed"): Q.CLOSED,
-    ("pending_new", "appended"): Q.PENDING, ("pending_new", "posted"): Q.PENDING,
+    ("pending_new", "appended"): Q.PENDING,
     ("pending_new", "requeued"): Q.QUEUED, ("pending_new", "closed"): Q.CLOSED,
     ("pending_appended", "posted"): Q.PENDING, ("pending_appended", "requeued"): Q.QUEUED,
     ("pending_appended", "closed"): Q.CLOSED,
@@ -136,12 +136,11 @@ def test_asked_stamps_the_time_and_keeps_the_message():
     assert (q.status, q.asked_at, q.message_ref, q.appended_at) == (Q.ASKED, T_ASKED, REF, T_APPEND)
 
 
-def test_a_posted_question_that_was_never_appended_cannot_be_asked():
-    unappended = make(status=Q.PENDING, session_id="u1:D1", message_ref=REF)
-    with pytest.raises(QuestionTransitionError, match="appended_at"):
-        unappended.asked(T_ASKED)
-    with pytest.raises(QuestionTransitionError, match="no time to complete"):
-        unappended.completed()
+def test_a_question_cannot_be_posted_before_its_frame_is_appended():
+    pending = STATES["pending_new"]()
+    with pytest.raises(QuestionTransitionError, match="cannot be posted"):
+        pending.posted(REF)
+    assert pending.appended(T_APPEND).posted(REF).delivered
 
 
 def test_completed_is_asked_at_the_latest_time_known_before_the_post():
@@ -377,6 +376,13 @@ def test_a_sent_question_has_everything_the_send_recorded(status, missing):
 
 # ------------------------------------------------------------------------------------------------ invariants: replies
 
+def test_a_pending_question_with_a_message_was_appended_first():
+    with pytest.raises(ValidationError, match="posted question was appended first"):
+        make(status=Q.PENDING, session_id="u1:D1", message_ref=REF)
+    make(status=Q.PENDING, session_id="u1:D1", appended_at=T_APPEND, message_ref=REF)
+    make(status=Q.PENDING, session_id="u1:D1", appended_at=T_APPEND)
+
+
 def test_a_reply_and_its_time_go_together():
     with pytest.raises(ValidationError, match="go together"):
         make(status=Q.ASKED, reply_text="words", **SENT)
@@ -386,7 +392,7 @@ def test_a_reply_and_its_time_go_together():
 
 def test_a_reply_needs_a_question_that_was_asked():
     with pytest.raises(ValidationError, match="needs a question that was asked"):
-        make(status=Q.PENDING, session_id="s", message_ref=REF, reply_text="words", reply_at=NOW)
+        make(status=Q.PENDING, session_id="s", appended_at=T_APPEND, message_ref=REF, reply_text="words", reply_at=NOW)
 
 
 def test_offered_needs_a_reply():
@@ -426,11 +432,18 @@ def test_a_closed_question_says_when_and_by_whom():
         make(**closed_fields(ClosedBy.RESOLVED_ELSEWHERE, closed_at=None))
 
 
-def test_the_purge_time_is_the_closing_time_plus_the_retention_exactly():
+def test_a_stored_closed_question_needs_a_purge_time_later_than_its_closing():
     make(**closed_fields(ClosedBy.RESOLVED_ELSEWHERE))
-    for wrong in (None, NOW, NOW + QUESTION_RETENTION + timedelta(seconds=1), NOW + QUESTION_RETENTION - timedelta(seconds=1)):
-        with pytest.raises(ValidationError, match="purge_after is closed_at plus the retention"):
+    for wrong in (None, NOW, NOW - timedelta(seconds=1), NOW - QUESTION_RETENTION):
+        with pytest.raises(ValidationError, match="purge_after is set and later than closed_at"):
             make(**closed_fields(ClosedBy.RESOLVED_ELSEWHERE, purge_after=wrong))
+
+
+@pytest.mark.parametrize("retention", [timedelta(seconds=1), timedelta(days=30), timedelta(days=365)])
+def test_a_question_stored_under_another_retention_still_reads(retention):
+    stored = make(**closed_fields(ClosedBy.RESOLVED_ELSEWHERE, purge_after=NOW + retention))
+    assert stored.purge_after == NOW + retention
+    assert FactReviewQuestion.model_validate(stored.model_dump()) == stored
 
 
 def test_an_owner_close_needs_an_answer_and_a_source_of_his_ways():
