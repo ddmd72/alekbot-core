@@ -27,6 +27,7 @@ from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentResponse
 from src.domain.llm import ToolCall
 from src.domain.entities import FactDomain, FactState
+from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, USER
 from tests.support.fact_write import EXPIRY_NONE, horizon
 from tests.support.firestore_eval import EvalDb
@@ -241,7 +242,8 @@ async def test_written_entries_leave_out_what_was_retired_and_what_failed(store,
     agent, kit = await kit_agent(store, tmp_path, metered(calls(part, create("no expiry", expiry=OMIT))), answered())
 
     await support.execute(agent, bench3.build_size_review_message(kit, "x", [], USER, ACC), USER, ACC, "Stage 1")
-    await kit.repo.invalidate_fact(next(r["fact_id"] for r in kit.rows if r["status"] == "created"), ACC)
+    # Reviewer edit (facts S4, T2c): the Cabinet delete is CabinetFactService over the kit's repository.
+    await CabinetFactService(kit.repo).invalidate(next(r["fact_id"] for r in kit.rows if r["status"] == "created"), ACC)
 
     assert any(r["status"] == "failed" for r in kit.rows)
     assert await support.written_entries(kit, 0, "UTC") == []

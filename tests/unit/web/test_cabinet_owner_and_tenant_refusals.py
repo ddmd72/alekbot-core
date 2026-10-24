@@ -16,6 +16,7 @@ from src.adapters.firestore_email_job_repo import FirestoreEmailJobRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.domain.agent_note import NoteCreate
 from src.domain.email import IndexingJob
+from src.services.cabinet_fact_service import CabinetFactService
 from src.web import user_cabinet_app
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_store import FactStore
@@ -49,6 +50,7 @@ class World:
             embedding_service=self.facts.embedder,
             email_job_repo=self.jobs,
             agent_note_port=self.notes,
+            cabinet_facts=CabinetFactService(self.facts.repo),   # reviewer edit, facts S4 T2c: the route delegates to it
         ))
         self.client = app.test_client()
 

@@ -1,5 +1,5 @@
 """FactRepository version kit (Facts S2 · T2): `resolve_current`, `write_superseding`, `update_fact_fields`, Cabinet
-`invalidate_fact` via resolution, `get_lineage` and `get_latest_fact_by_lineage`, on the evaluating Firestore fake with the
+the Cabinet delete via resolution (`CabinetFactService.invalidate` over this repository, facts S4 T2c), `get_lineage` and `get_latest_fact_by_lineage`, on the evaluating Firestore fake with the
 index refusal ON (`config/firestore.indexes.json`).
 
 Every document is seeded through a real write (`add_fact` or a field `update`), never by assigning into `col.docs`:
@@ -16,6 +16,7 @@ from scripts.data_audit.facts import check_fact, check_lineages
 from src.domain.entities import FactEntity, FactState
 from src.domain.exceptions import FactResolutionError, FactWriteConflict, InPlaceFieldRefused
 from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
+from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, OTHER, T0, USER, make_fact
 from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, embed
 
@@ -320,12 +321,14 @@ async def test_resolve_current_missing_is_none(store):
 async def test_resolve_current_foreign_start_is_none_even_when_merged_in_its_account(store, monkeypatch):
     await seed_closed(store, "x", "f-y", account=OTHER, lineage_id="L1")
     await seed(store, "y", account=OTHER, lineage_id="L2")
-    import src.adapters.firestore_repo as repo_module
+    # Reviewer edit (facts S4, T2c): the walk moved from the repository into src/domain/fact_resolution.py
+    # (resolve_chain), so the patched name is that module's forward_step.
+    import src.domain.fact_resolution as walk_module
 
     def never(*args, **kwargs):
         raise AssertionError("forward_step was called for a foreign start document")
 
-    monkeypatch.setattr(repo_module, "forward_step", never)
+    monkeypatch.setattr(walk_module, "forward_step", never)
     assert await resolve(store, "f-x") is None
 
 
@@ -353,7 +356,7 @@ async def test_resolve_current_names_the_merged_document_of_another_lineage(stor
     assert caught.value.current_id == "f-m"
 
 
-# ------------------------------------------------------------------------------------------ invalidate_fact
+# ------------------------------------------------------------------------------------------ the Cabinet delete (CabinetFactService over this repository; facts S4 T2c, reviewer edit)
 
 async def test_invalidate_on_a_superseded_id_of_the_same_text_invalidates_the_current_version_and_leaves_one_is_current_per_lineage(store):
     # same text in both versions (e.g. a tags-only version): a newer text is refused, test_fact_invalidate_shown_text.py
@@ -361,7 +364,7 @@ async def test_invalidate_on_a_superseded_id_of_the_same_text_invalidates_the_cu
     await seed(store, "likes tea", id="f-v2", lineage_id="L", version=2)
     old_before = copy.deepcopy(store.docs["f-v1"])
 
-    await store.repo.invalidate_fact("f-v1", ACC)
+    await CabinetFactService(store.repo).invalidate("f-v1", ACC)
 
     assert store.docs["f-v2"]["state"] == "invalidated" and type(store.docs["f-v2"]["state"]) is str
     assert store.docs["f-v2"]["is_current"] is True and store.docs["f-v2"]["valid_to"] is not None
@@ -375,7 +378,7 @@ async def test_invalidate_merged_source_raises_resolution_error_and_writes_nothi
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(FactResolutionError) as caught:
-        await store.repo.invalidate_fact("f-a", ACC)
+        await CabinetFactService(store.repo).invalidate("f-a", ACC)
 
     assert caught.value.current_id == "f-m" and not isinstance(caught.value, ValueError)
     assert store.docs == before
@@ -385,7 +388,7 @@ async def test_invalidate_one_conflict_resolves_again_and_succeeds(store):
     await seed(store, "x")
     store.interfere("f-x", {"text": "edited elsewhere"})
 
-    await store.repo.invalidate_fact("f-x", ACC)
+    await CabinetFactService(store.repo).invalidate("f-x", ACC)
 
     assert store.docs["f-x"]["text"] == "edited elsewhere"          # the interference happened
     assert store.docs["f-x"]["state"] == "invalidated"
@@ -398,7 +401,7 @@ async def test_invalidate_conflict_from_a_concurrent_version_of_the_same_text_la
     closure = {"state": "superseded", "is_current": False, "superseded_by": "f-v2", "valid_to": NOW}
     store.interfere("f-v1", closure)    # a version write closes f-v1 between invalidate's resolve and its write
 
-    await store.repo.invalidate_fact("f-v1", ACC)
+    await CabinetFactService(store.repo).invalidate("f-v1", ACC)
 
     assert store.docs["f-v1"]["state"] == "superseded" and store.docs["f-v1"]["is_current"] is False
     assert store.docs["f-v1"]["superseded_by"] == "f-v2" and store.docs["f-v1"]["valid_to"] == NOW
@@ -412,7 +415,7 @@ async def test_invalidate_second_conflict_raises_and_writes_nothing(store):
     store.interfere("f-x", {"text": "second edit"})
 
     with pytest.raises(FactWriteConflict):
-        await store.repo.invalidate_fact("f-x", ACC)
+        await CabinetFactService(store.repo).invalidate("f-x", ACC)
 
     assert store.docs["f-x"]["text"] == "second edit" and store.docs["f-x"]["state"] == "current"
 
@@ -423,7 +426,7 @@ async def test_invalidate_aborted_is_conflict_not_value_error(store):
     store.db.raise_on_txn_read(FACTS, "f-x", Aborted("contention"))
 
     with pytest.raises(FactWriteConflict) as caught:
-        await store.repo.invalidate_fact("f-x", ACC)
+        await CabinetFactService(store.repo).invalidate("f-x", ACC)
 
     assert not isinstance(caught.value, ValueError) and store.docs["f-x"]["state"] == "current"
 

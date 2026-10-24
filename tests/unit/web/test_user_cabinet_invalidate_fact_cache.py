@@ -10,6 +10,7 @@ from quart import Quart
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.domain.entities import FactDomain
 from src.services.biographical_context_service import BiographicalContextService
+from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import make_fact
 from tests.support.fact_store import FACTS, FactStore, make_env_config
@@ -31,9 +32,10 @@ def _app(fact_repo):
     session_service = MagicMock()
     session_service.verify_access_token = MagicMock(
         return_value={"sub": _USER_ID, "account_id": _ACCOUNT_ID, "role": "owner"})
+    # Reviewer edit (facts S4, T2c): the route delegates to CabinetFactService, which the blueprint now takes.
     bp = create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=fact_repo, embedding_service=MagicMock(),
+        fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo),
     )
     app = Quart("test_app")
     app.register_blueprint(bp)

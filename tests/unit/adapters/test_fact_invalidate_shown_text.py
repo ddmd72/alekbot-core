@@ -1,5 +1,5 @@
 """Cabinet delete of a stale row (owner decision 2026-10-23, FACT_LIFECYCLE_RFC §9 "S3 as built"): the page showed the
-text of the id it sends. When that id was superseded by a version with another text, `invalidate_fact` refuses with
+text of the id it sends. When that id was superseded by a version with another text, the Cabinet delete (`CabinetFactService.invalidate`, facts S4 T2c) refuses with
 FactResolutionError (the route answers 409 and the page reloads) and writes nothing; the same-text case is pinned in
 test_fact_repository_versions_kit.py.
 
@@ -11,6 +11,7 @@ import pytest
 
 from src.domain.entities import FactState
 from src.domain.exceptions import FactResolutionError
+from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, T0, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore
 
@@ -38,7 +39,7 @@ async def test_a_stale_row_whose_text_was_rewritten_is_refused_and_nothing_is_wr
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(FactResolutionError, match="rewritten after the page loaded") as caught:
-        await store.repo.invalidate_fact("f-v1", ACC)
+        await CabinetFactService(store.repo).invalidate("f-v1", ACC)
 
     assert caught.value.current_id == "f-v2" and not isinstance(caught.value, ValueError)
     assert store.docs == before
@@ -47,7 +48,7 @@ async def test_a_stale_row_whose_text_was_rewritten_is_refused_and_nothing_is_wr
 async def test_the_current_row_itself_is_invalidated_whatever_its_text(store):
     await _seed(store, "x", "lives in Puçol")
 
-    await store.repo.invalidate_fact("f-x", ACC)
+    await CabinetFactService(store.repo).invalidate("f-x", ACC)
 
     assert store.docs["f-x"]["state"] == "invalidated"
 
@@ -60,7 +61,7 @@ async def test_a_version_written_between_resolve_and_write_with_another_text_is_
     v2_before = copy.deepcopy(store.docs["f-v2"])
 
     with pytest.raises(FactResolutionError, match="rewritten after the page loaded"):
-        await store.repo.invalidate_fact("f-v1", ACC)
+        await CabinetFactService(store.repo).invalidate("f-v1", ACC)
 
     assert store.docs["f-v2"] == v2_before
     assert store.docs["f-v1"]["state"] == "superseded"

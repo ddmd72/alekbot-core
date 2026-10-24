@@ -52,6 +52,7 @@ from src.ports.prompt_v3.token_repository import TokenRepository
 from src.ports.repository import FactRepository
 from src.ports.search_enrichment_port import SearchEnrichmentPort
 from src.ports.security_port import RiskLevel, SecurityPort, TrustZone, ValidationResult
+from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, USER, put_raw
 from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx, horizon
@@ -76,7 +77,7 @@ def memory_dir(tmp_path, monkeypatch):
 
 
 _LIVE_WRITES = frozenset({
-    "add_fact", "add_fact_if_unique", "write_superseding", "update_fact_fields", "invalidate_fact", "stale_due_fact",
+    "add_fact", "add_fact_if_unique", "write_superseding", "update_fact_fields", "stale_due_fact",
     "refresh_biographical_context_cache",
 })
 assert _LIVE_WRITES <= FactRepository.__abstractmethods__
@@ -139,11 +140,16 @@ async def test_a_create_a_version_a_merge_and_an_invalidate_leave_the_live_store
     created = await adapter.create_fact("new fact", meta(), context=context)
     versioned = await adapter.update_fact(first, {"content": "alpha fact, corrected", "expiry": EXPIRY_NONE}, ACC, context=context)
     merged = await adapter.merge_facts([second, third], "beta and gamma", meta(), context=context)
-    await repo.invalidate_fact(fourth, ACC)
+    await CabinetFactService(repo).invalidate(fourth, ACC)
 
     assert (created["status"], versioned["status"], merged["status"]) == ("created", "updated", "merged"), (created, versioned, merged)
     assert live_state(store) == before
-    assert [w["kind"] for w in repo.writes] == ["add_fact", "write_superseding", "write_superseding", "invalidate_fact"]
+    # Reviewer edit (facts S4, T2c): the Cabinet delete is CabinetFactService over the kit's repository, so it is
+    # recorded as the port writes it makes: the in-place write on the fact and the cache refresh after it.
+    assert [w["kind"] for w in repo.writes] == [
+        "add_fact", "write_superseding", "write_superseding", "update_fact_fields", "refresh_biographical_context_cache",
+    ]
+    assert repo.writes[3]["fact_id"] == fourth
     assert repo.writes[1]["replaced"] == [first] and repo.writes[1]["new_id"] == versioned["fact_id"]
     assert repo.writes[2]["replaced"] == [second, third] and repo.writes[2]["new_id"] == merged["new_fact_id"]
     # the overlay answers reads: the closed documents, the new version and the merge, the invalidated fact
@@ -218,11 +224,11 @@ async def test_invalidate_refuses_a_foreign_account_a_missing_id_and_a_page_olde
                                           context=ctx(actor="stage1", timezone="UTC"))
 
     with pytest.raises(PermissionError):
-        await repo.invalidate_fact(first, "acc-other")
+        await CabinetFactService(repo).invalidate(first, "acc-other")
     with pytest.raises(ValueError):
-        await repo.invalidate_fact("missing", ACC)
+        await CabinetFactService(repo).invalidate("missing", ACC)
     with pytest.raises(FactResolutionError):                # the page showed the old text; a newer one is never deleted unseen
-        await repo.invalidate_fact(first, ACC)
+        await CabinetFactService(repo).invalidate(first, ACC)
 
     assert (await repo.get_fact_by_id(versioned["fact_id"])).state is FactState.CURRENT
     assert live_state(store) == before

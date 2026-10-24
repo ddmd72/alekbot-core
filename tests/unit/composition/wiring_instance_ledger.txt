@@ -92,6 +92,7 @@ src.services.alerting_llm_proxy.AlertingLLMProxy 1  # by-design single instance
 src.services.auth_provider_registry.AuthProviderRegistry 1  # by-design single instance
 src.services.authentication_service.AuthenticationService 1  # by-design single instance
 src.services.biographical_context_service.BiographicalContextService 1  # by-design single instance
+src.services.cabinet_fact_service.CabinetFactService 1  # by-design single instance, the Cabinet's fact writes over the one fact repository (facts S4 T2c, application_graph.py)
 src.services.channel_binding_service.ChannelBindingService 1  # by-design single instance
 src.services.companion_context_assembler_service.CompanionContextAssemblerService 1  # by-design single instance
 src.services.companion_extraction_service.CompanionExtractionService 1  # by-design single instance
