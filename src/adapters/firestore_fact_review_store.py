@@ -6,7 +6,7 @@ as `message_platform`, `message_channel` and `message_id` (null until posted), s
 values, `fallback_date` as an ISO date string and every datetime as an aware UTC timestamp.
 
 `{prefix}fact_review_messages/{user_id}:digest:{iso_week}`: the weekly digest's claim (`user_id`, `kind` = `digest`,
-`claimed_at`), created once; a release deletes it.
+`claimed_at`), created once; a release deletes it. `iso_week` is the domain's `iso_week_of(day)`.
 
 TTL: the collections' Firestore TTL policies are on the field `purge_after`, which exists only in storage. It is
 written at serialisation: on a closed question as `closed_at + QUESTION_RETENTION` (an open question has none), and on a
@@ -15,15 +15,15 @@ digest claim as `claimed_at + QUESTION_RETENTION`. A read ignores it. `purge_ove
 
 `{prefix}fact_review_state/{account_id}`: a `FactReviewState` as its `model_dump` (its read-only mappings as maps, its
 calendar days as ISO date strings). This store writes only the fields a change touches, each replaced whole (a map
-too: `set(..., merge=[fields])`), so the other writers' fields stay as they are.
+too: every state write is `set(..., merge=[fields])`, parity scenario `set_merge_fields_replaces_a_map_whole`), so
+the other writers' fields stay as they are.
 
 Every query is served by single-field indexes (an equality next to an `in`, or four equalities; the parity scenario
 `equality_and_in_without_composite`; a range on `purge_after`); queue order is the domain's, in code. A write reads in a
 transaction, calls the question's own move (and the domain's queue rules for a claim) and writes the result: this
 adapter decides no transition.
 """
-import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from enum import Enum
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, TypeVar
 
@@ -36,7 +36,7 @@ from ..config.environment import EnvironmentConfig
 from ..domain.exceptions import QuestionTransitionError
 from ..domain.fact_review_answer_kind import AnswerKind
 from ..domain.fact_review_question import QUESTION_RETENTION, AnswerSource, ClosedBy, FactReviewQuestion, QuestionStatus
-from ..domain.fact_review_rules import current_question, may_send, next_in_queue, sent_today
+from ..domain.fact_review_rules import current_question, iso_week_of, may_send, next_in_queue, sent_today
 from ..domain.fact_review_state import FactReviewState
 from ..domain.messaging import MessageRef
 from ..ports.fact_review_store import FactReviewStore
@@ -50,7 +50,6 @@ OPEN_STATUSES = [
 _REF_FIELDS = ("message_platform", "message_channel", "message_id")
 # The field the collections' TTL policies are on; storage only, never a model field.
 _TTL_FIELD = "purge_after"
-_ISO_WEEK = re.compile(r"\d{4}-W(0[1-9]|[1-4]\d|5[0-3])")
 # What a state change of this store is allowed to touch; anything else in the state document belongs to other writers.
 _STATE_FIELDS = frozenset({
     "current_question_id", "sent", "sent_on", "delivery_failed_on",
@@ -230,7 +229,7 @@ class FirestoreFactReviewStore(FactReviewStore):
             }
             state_write = self._state_write(state, changes)
             transaction.set(self._questions.document(claimed.question_id), question_document(claimed))
-            transaction.set(state_ref, state_write, merge=True)
+            transaction.set(state_ref, state_write, merge=list(state_write))
             return claimed
 
         return await self._in_transaction(body, f"claim for account {account_id[:8]}")
@@ -289,7 +288,11 @@ class FirestoreFactReviewStore(FactReviewStore):
         return states
 
     async def mark_enqueued(self, account_id: str, at: datetime) -> bool:
-        return await self._mark(account_id, lambda state: {"enqueued_at": at}, create=True)
+        return await self._mark(
+            account_id,
+            lambda state: {"enqueued_at": at, "unsuccessful_since": state.unsuccessful_since or at},
+            create=True,
+        )
 
     async def mark_started(self, account_id: str, at: datetime) -> bool:
         return await self._mark(account_id, lambda state: {"started_at": at})
@@ -329,21 +332,19 @@ class FirestoreFactReviewStore(FactReviewStore):
 
     # ------------------------------------------------------------------------------------------------ digest claim
 
-    async def claim_digest(self, user_id: str, iso_week: str) -> bool:
-        ref = self._digest_ref(user_id, iso_week)
-        claimed_at = datetime.now(timezone.utc)
-        document = {
-            "user_id": user_id, "kind": "digest", "claimed_at": claimed_at,
-            _TTL_FIELD: claimed_at + QUESTION_RETENTION,
-        }
+    async def claim_digest(self, user_id: str, day: date, at: datetime) -> bool:
+        ref = self._digest_ref(user_id, day)
+        if at.tzinfo is None:
+            raise ValueError("at must be timezone-aware")
+        document = {"user_id": user_id, "kind": "digest", "claimed_at": at, _TTL_FIELD: at + QUESTION_RETENTION}
         try:
             await ref.create(document)
         except AlreadyExists:
             return False
         return True
 
-    async def release_digest(self, user_id: str, iso_week: str) -> None:
-        await self._digest_ref(user_id, iso_week).delete()
+    async def release_digest(self, user_id: str, day: date) -> None:
+        await self._digest_ref(user_id, day).delete()
 
     # ------------------------------------------------------------------------------------------------ expiry
 
@@ -403,12 +404,10 @@ class FirestoreFactReviewStore(FactReviewStore):
         document = state_document(changed)
         return {"account_id": changed.account_id, **{name: document[name] for name in changes}}
 
-    def _digest_ref(self, user_id: str, iso_week: str) -> Any:
+    def _digest_ref(self, user_id: str, day: date) -> Any:
         if not user_id:
             raise ValueError("user_id is required for the digest claim")
-        if not _ISO_WEEK.fullmatch(iso_week or ""):
-            raise ValueError(f"iso_week is YYYY-Www, not {iso_week!r}")
-        return self._messages.document(f"{user_id}:digest:{iso_week}")
+        return self._messages.document(f"{user_id}:digest:{iso_week_of(day)}")
 
     async def _mark(self, account_id: str, change: StateChange, create: bool = False) -> bool:
         """Read the account's state and write `change(state)`, each field replaced whole, in one transaction. A
@@ -464,7 +463,7 @@ class FirestoreFactReviewStore(FactReviewStore):
                         state_write = self._state_write(state, changes)
             transaction.set(ref, question_document(after))
             if state_write is not None:
-                transaction.set(state_ref, state_write, merge=True)
+                transaction.set(state_ref, state_write, merge=list(state_write))
             return True
 
         return await self._in_transaction(body, f"question {question_id[:12]}")
