@@ -72,7 +72,7 @@ async def test_documents_written_by_the_real_writer_are_clean_in_every_state():
         assert res["status"] == "updated" and store.docs[fid]["state"] == state.lower(), res
         assert check_fact(fid, store.docs[fid]) == [], state
     fid = await _created(store, EXPIRY_NONE)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Maria Doe", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert res["status"] == "updated" and store.docs[fid]["state"] == "superseded", res
     assert check_fact(fid, store.docs[fid]) == [] and check_fact(res["fact_id"], store.docs[res["fact_id"]]) == []
     fid = await _created(store, horizon(30))
