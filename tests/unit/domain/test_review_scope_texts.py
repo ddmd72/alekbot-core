@@ -4,7 +4,7 @@ import pytest
 
 from src.domain.fact_review_basis import parse_history
 from src.domain.fact_review_rules import (
-    ASK_HELD, CHANGED_OUTSIDE, UPDATES_SHAPE_REFUSAL, asked_refusal, changed_outside_refusal, decided_refusal,
+    ASK_HELD, ASK_OWNER_PLACE, UPDATE_FACT_PLACE, CHANGED_OUTSIDE, UPDATES_SHAPE_REFUSAL, asked_refusal, changed_outside_refusal, decided_refusal,
     not_in_batch_refusal, not_under_review_refusal,
 )
 from src.domain.fact_tool_result import (
@@ -16,14 +16,14 @@ PLACED = [not_in_batch_refusal, asked_refusal, decided_refusal, changed_outside_
 
 
 @pytest.mark.parametrize("text", PLACED)
-@pytest.mark.parametrize("place", ["update_fact.fact_id", "ask_owner.fact_id"])
+@pytest.mark.parametrize("place", [UPDATE_FACT_PLACE, ASK_OWNER_PLACE])
 def test_every_scope_refusal_names_its_place_and_never_says_search(text, place):
     message = text(place)
     assert message.startswith(place) and "search" not in message.lower()
 
 
 def test_the_scope_texts_say_what_each_rule_is():
-    place = "update_fact.fact_id"
+    place = UPDATE_FACT_PLACE
     assert not_in_batch_refusal(place) == (
         "update_fact.fact_id names no fact of this batch: use the fact_id of a fact listed for this review"
     )
@@ -34,6 +34,10 @@ def test_the_scope_texts_say_what_each_rule_is():
     assert not_under_review_refusal(place) == (
         "update_fact.fact_id names a current fact with no question in this batch; leave it, it stays as it is"
     )
+
+
+def test_the_places_are_the_review_tools_fact_id_arguments():
+    assert (UPDATE_FACT_PLACE, ASK_OWNER_PLACE) == ("update_fact.fact_id", "ask_owner.fact_id")
 
 
 def test_the_changed_outside_text_is_the_plans_and_leaves_the_fact():

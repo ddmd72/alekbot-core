@@ -13,7 +13,7 @@ from src.domain.fact_review_basis import ReviewBasis
 from src.domain.fact_review_question import QuestionStatus
 from src.domain.fact_review_reasons import basis_reason, superseded_reason
 from src.domain.fact_review_rules import (
-    STAYS_STALE_REFUSAL, asked_refusal, changed_outside_refusal, decided_refusal, not_in_batch_refusal,
+    ASK_OWNER_PLACE, STAYS_STALE_REFUSAL, UPDATE_FACT_PLACE, asked_refusal, changed_outside_refusal, decided_refusal, not_in_batch_refusal,
     not_under_review_refusal,
 )
 from src.domain.fact_write_context import REVIEW_REPORTED_DATE_NOTE, kept_reported_date_note
@@ -27,7 +27,7 @@ from tests.support.review_rule_builders import question as build_question
 TZ = "Europe/Paris"
 HORIZON = {"kind": "horizon", "days": 30}
 REVIVE = {"state": "current", "expiry": HORIZON}
-UPDATE, ASK = "update_fact.fact_id", "ask_owner.fact_id"
+UPDATE, ASK = UPDATE_FACT_PLACE, ASK_OWNER_PLACE
 
 
 @pytest.fixture
