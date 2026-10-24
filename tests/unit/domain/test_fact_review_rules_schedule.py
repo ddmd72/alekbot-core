@@ -1,5 +1,5 @@
 """The review's fallbacks, revive alert, interval, janitor trigger, pool and queue alert (Facts S4 · T1b, plan §3.8, §3.11, §3.12)."""
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -41,6 +41,13 @@ def test_the_window_doubles_between_14_and_365_days(window_days, expected):
 
 def test_a_fact_with_no_expiry_comes_back_for_14_days():
     assert fallback_window_days(fact(expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None)) == 14
+
+
+def test_a_legacy_fact_with_a_ttl_and_no_expires_at_doubles_its_ttl():
+    legacy = fact(expiry_kind=None, ttl_days=30, expires_at=None)
+    assert fallback_window_days(legacy) == 60
+    assert fallback_window_days(fact(expiry_kind=None, ttl_days=3, expires_at=None)) == 14
+    assert fallback_window_days(fact(expiry_kind=None, ttl_days=400, expires_at=None)) == 365
 
 
 def test_the_window_counts_whole_days_of_expires_at_minus_reported_date():
@@ -381,6 +388,50 @@ def test_a_queued_question_with_nothing_out_is_due():
     assert due(questions=[question(Q.QUEUED)]) == "queue"
 
 
+def test_a_stuck_pending_question_is_due_even_with_an_empty_queue():
+    stuck = question(Q.PENDING, question_id="out", fact_id="f9")
+    st = state(current_question_id="out", sent_on=NOW.date() - DAY, sent=1, last_review_at=NOW - 2 * DAY)
+    assert due(questions=[stuck], st=st) == "pending"
+    assert due(questions=[question(Q.PENDING, question_id="out", fact_id="f9", posted=True)], st=st) == "pending"
+
+
+def test_a_pending_question_claimed_today_is_not_due():
+    sending = question(Q.PENDING, question_id="out", fact_id="f9")
+    st = state(current_question_id="out", sent_on=NOW.date(), sent=1, last_review_at=NOW - 2 * DAY)
+    assert due(questions=[sending], st=st) is None
+
+
+def test_a_stuck_pending_question_comes_after_a_timeout_and_before_the_digest():
+    stuck = question(Q.PENDING, question_id="out", fact_id="f9")
+    timed_out = question(Q.ASKED, question_id="t", fact_id="f1", asked_at=NOW - timedelta(days=15))
+    st = state(current_question_id="out", sent_on=NOW.date() - DAY, sent=1, undigested_since=NOW - DAY, last_review_at=NOW - 2 * DAY)
+    assert due(questions=[stuck, timed_out], st=st) == "timeout"
+    assert due(questions=[stuck], st=st) == "pending"
+
+
+def test_a_queued_question_is_not_due_when_the_days_five_are_sent():
+    st = state(sent_on=NOW.date(), sent=5, last_review_at=NOW - 2 * DAY)
+    assert due(questions=[question(Q.QUEUED)], st=st) is None
+    assert due(questions=[question(Q.QUEUED)], st=state(sent_on=NOW.date(), sent=4, last_review_at=NOW - 2 * DAY)) == "queue"
+
+
+def test_a_queued_question_is_not_due_on_the_day_a_delivery_failed():
+    st = state(delivery_failed_on=NOW.date(), last_review_at=NOW - 2 * DAY)
+    assert due(questions=[question(Q.QUEUED)], st=st) is None
+    assert due(questions=[question(Q.QUEUED)], st=state(delivery_failed_on=NOW.date() - DAY, last_review_at=NOW - 2 * DAY)) == "queue"
+
+
+def test_yesterdays_count_does_not_stop_todays_queue():
+    st = state(sent_on=NOW.date() - DAY, sent=5, last_review_at=NOW - 2 * DAY)
+    assert due(questions=[question(Q.QUEUED)], st=st) == "queue"
+
+
+def test_a_pointer_to_an_unanswered_question_does_not_block_the_queue():
+    other = question(Q.UNANSWERED, question_id="out", fact_id="f9", asked_at=NOW - 2 * DAY)
+    st = state(current_question_id="out", last_review_at=NOW - 2 * DAY)
+    assert due(questions=[question(Q.QUEUED), other], st=st) == "queue"
+
+
 def test_a_queued_question_waits_while_one_sent_today_is_still_out():
     out = question(Q.ASKED, question_id="out", fact_id="f9", asked_at=NOW - timedelta(hours=3))
     assert due(questions=[question(Q.QUEUED), out], st=state(current_question_id="out", last_review_at=NOW - 2 * DAY)) is None
@@ -433,6 +484,22 @@ def test_the_queue_reason_uses_the_owners_day_for_the_current_question():
     assert due(questions=[question(Q.QUEUED), out], st=st, now=_at(24, 9, 0), tz="Europe/Madrid") is None
 
 
+def test_the_queue_reasons_today_is_the_owners_even_just_after_local_midnight():
+    asked = datetime(2026, 10, 24, 10, 0, tzinfo=timezone.utc)
+    out = question(Q.ASKED, question_id="out", fact_id="f9", asked_at=asked)
+    st = state(current_question_id="out", sent_on=date(2026, 10, 24), sent=1, last_review_at=_at(24, 10, 0))
+    after_madrid_midnight = _at(24, 22, 30)  # 25 Oct 00:30 in Madrid, still the 24th in UTC
+    assert due(questions=[question(Q.QUEUED), out], st=st, now=after_madrid_midnight, tz="Europe/Madrid") == "queue"
+    assert due(questions=[question(Q.QUEUED), out], st=st, now=after_madrid_midnight, tz="UTC") is None
+
+
+def test_the_days_cap_is_the_owners_day_just_after_local_midnight():
+    st = state(sent_on=date(2026, 10, 24), sent=5, last_review_at=_at(24, 10, 0))
+    after_madrid_midnight = _at(24, 22, 30)  # the 25th in Madrid: a new day, the 24th's five do not count
+    assert due(questions=[question(Q.QUEUED)], st=st, now=after_madrid_midnight, tz="Europe/Madrid") == "queue"
+    assert due(questions=[question(Q.QUEUED)], st=st, now=after_madrid_midnight, tz="UTC") is None
+
+
 # ------------------------------------------------------------------------------------------------ pool
 
 @pytest.mark.parametrize("status", [Q.QUEUED, Q.PENDING, Q.ASKED, Q.UNANSWERED])
@@ -458,25 +525,37 @@ def test_forty_five_queued_and_five_stale_fill_the_pool_cap():
 
 # ------------------------------------------------------------------------------------------------ queue_alert
 
+def queued(count):
+    return [question(Q.QUEUED, question_id=f"q{n}", fact_id=f"f{n}") for n in range(count)]
+
+
 def test_the_queue_alert_fires_once_above_thirty_five_and_not_at_thirty_five():
-    assert queue_alert(state(), 35) is None
-    assert queue_alert(state(), 36) == "raise"
-    assert queue_alert(state(queue_alert_at=NOW), 36) is None
-    assert queue_alert(state(queue_alert_at=NOW), 37) is None
-    assert queue_alert(state(queue_alert_at=NOW), 100) is None
+    assert queue_alert(state(), queued(35)) is None
+    assert queue_alert(state(), queued(36)) == "raise"
+    assert queue_alert(state(queue_alert_at=NOW), queued(36)) is None
+    assert queue_alert(state(queue_alert_at=NOW), queued(37)) is None
+    assert queue_alert(state(queue_alert_at=NOW), queued(100)) is None
 
 
 def test_the_queue_alert_rearms_when_the_queue_falls_to_thirty_five_or_fewer():
-    assert queue_alert(state(queue_alert_at=NOW), 35) == "rearm"
-    assert queue_alert(state(queue_alert_at=NOW), 0) == "rearm"
-    assert queue_alert(state(), 0) is None
+    assert queue_alert(state(queue_alert_at=NOW), queued(35)) == "rearm"
+    assert queue_alert(state(queue_alert_at=NOW), []) == "rearm"
+    assert queue_alert(state(), []) is None
+
+
+def test_only_queued_questions_count_toward_the_queue_alert():
+    sent = [question(Q.ASKED, question_id=f"a{n}", fact_id=f"fa{n}") for n in range(10)]
+    closed = [question(Q.CLOSED, question_id=f"c{n}", fact_id=f"fc{n}") for n in range(10)]
+    assert queue_alert(state(), [*queued(30), *sent, *closed]) is None
+    assert queue_alert(state(), [*queued(36), *sent, *closed]) == "raise"
+    assert queue_alert(state(queue_alert_at=NOW), [*queued(30), *sent, *closed]) == "rearm"
 
 
 def test_the_queue_alert_crosses_rearms_and_crosses_again():
     marked = None
     fired = []
     for count in (30, 36, 37, 40, 35, 36, 36):
-        action = queue_alert(state(queue_alert_at=marked), count)
+        action = queue_alert(state(queue_alert_at=marked), queued(count))
         if action == "raise":
             marked = NOW
             fired.append(count)
