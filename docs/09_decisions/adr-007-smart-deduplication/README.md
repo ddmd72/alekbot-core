@@ -1,331 +1,47 @@
 # ADR-007: Smart Deduplication Strategy
 
-**Status:** Accepted  
-**Date:** 2026-02-08  
-**Deciders:** Dmytro Deleur, AI Assistant  
-**Session:** SESSION_2026_02_08_DEDUPLICATION_OPTIMIZATION
-
----
+**Status:** Accepted (2026-02-08) — still in force on the paths listed under Scope.
+**Deciders:** Dmytro Deleur, AI Assistant
 
 ## Context
 
-### Problem Statement
-
-The current deduplication algorithm (threshold=0.85) was **too aggressive**, resulting in:
-
-- **67% fact reduction** (902 → 297 facts in production)
-- Loss of important contextual information
-- Rejection of detailed versions in favor of brief ones
-- False positives due to high semantic similarity
-
-**Key Issue:** System prioritized avoiding duplicates over preserving valuable information.
-
-### Analysis
-
-From deduplication reports:
-
-- 39% of fact pairs had similarity 0.95-0.96 (moderately similar)
-- Many "duplicates" were actually **complementary information**:
-  - "Weight 75 kg" vs "Weight 75 kg in Example City, representing 15kg loss"
-  - "Vitamin D 32 ng/mL" vs "Vitamin D 32 ng/mL, within reference range"
-
----
+Fact deduplication at cosine similarity 0.85 was too aggressive: it dropped about two thirds of the facts, and most
+of the "duplicates" were complementary — the same statement with a place, a date or an interpretation added, or
+with a different value. LLM-written facts are phrased very consistently, so high similarity alone says little.
 
 ## Decision
 
-Implement **Smart Deduplication Strategy** with philosophy:
+> **Better to keep a duplicate than to lose information.**
 
-> **"Better to add a duplicate than to lose important information"**
+`SmartDeduplication` (`src/domain/deduplication_service.py`) judges a pair in four steps:
 
-### Algorithm (4 Levels)
+1. similarity < 0.96 (`moderate_threshold`) → not a duplicate;
+2. the numbers in the two texts differ (compared as sorted lists) → not a duplicate;
+3. similarity ≥ the strict threshold (0.98 by default) → duplicate;
+4. the existing text is shorter than 85 % of the new one → not a duplicate (the new one is more detailed);
+   otherwise → duplicate.
 
-```python
-def is_duplicate(new_text, existing_text, similarity):
-    # Level 1: similarity < 0.96 → NOT duplicate
-    if similarity < 0.96:
-        return False
+Examples (invented):
+- "Gym membership costs 40 EUR a month" vs "Gym membership costs 45 EUR a month" → numbers differ → kept.
+- "Prefers window seats" vs "Prefers window seats on long-haul flights" → the new text is much longer → kept.
+- "Event on 2025-03-28" vs "Event on 2025-03-29" → numbers differ → kept.
+- "Owns a road bike" vs "Owns a road bike." at 0.99 → duplicate.
 
-    # Level 2: Numbers differ (sorted) → NOT duplicate
-    new_nums = extract_and_sort(new_text)
-    existing_nums = extract_and_sort(existing_text)
-    if new_nums != existing_nums:
-        return False  # Early exit
+## Scope
 
-    # Level 3: similarity ≥ 0.98 → DUPLICATE
-    if similarity >= 0.98:
-        return True
-
-    # Level 4: Length heuristic (15% threshold)
-    if existing/new < 0.85:  # New is 15%+ longer
-        return False  # New more detailed
-
-    # Default: DUPLICATE
-    return True
-```
-
-### Key Features
-
-1. **Raised threshold:** 0.85 → 0.96
-2. **Number-aware comparison:**
-   - Sorted arrays for order-independent matching
-   - "75 kg, 185 cm" = "185 cm, 75 kg"
-3. **Length-based heuristic:** Preserve detailed versions
-4. **Early exit optimization:** Fast rejection of obvious non-duplicates
-
----
+- **Read path:** `SearchEnrichmentService.enrich_context` drops duplicates from the ranked list with it (Router
+  prefetch, `search_memory`, the claude.ai connector); the consolidator's own search turns it off
+  (`skip_semantic_dedup=True`).
+- **Write path:** `FactWriteService` checks it (threshold 0.96) only when `skip_deduplication` is False. Live
+  consolidation writes pass `skip_deduplication=True`: the consolidator decides duplicates itself after searching.
 
 ## Consequences
 
-### Positive
+- Fewer false positives, at the cost of an occasional real duplicate.
+- Sorted numbers ignore order, so "from 80 to 75" equals "from 75 to 80": a change of direction is not detected.
+  Accepted, because a change of value is the case that matters and versioning (SCD2) carries history.
 
-✅ **Reduced false positives:** 30-40% reduction vs 67% (more conservative)  
-✅ **Preserved important details:** Location, interpretation, measurements  
-✅ **Number-sensitive:** Different values/dates always preserved  
-✅ **LLM-friendly:** Handles consistent phrasing from AI generation  
-✅ **Fast:** Early exit on Level 1 (< 0.96) and Level 2 (numbers differ)
+## Rejected alternatives
 
-### Negative
-
-⚠️ **Potential true duplicates:** May occasionally add real duplicates  
-⚠️ **Sorted numbers limitation:** Cannot distinguish temporal changes
-
-- Example: "85→75 kg" = "83→85 kg" (both have [83, 85])
-- **Mitigation:** Acceptable for static facts (user confirmed)
-
-### Trade-offs
-
-| Metric          | Old (0.85)       | New (0.96)           |
-| --------------- | ---------------- | -------------------- |
-| Threshold       | 0.85             | 0.96                 |
-| Reduction       | ~67%             | ~30-40%              |
-| False Positives | High             | Low                  |
-| False Negatives | Low              | Moderate             |
-| Philosophy      | Avoid duplicates | Preserve information |
-
----
-
-## Implementation
-
-### Files Changed
-
-1. **`src/services/deduplication_service.py`** (NEW)
-   - SmartDeduplicationService class
-   - 4-level algorithm
-   - Number extraction with sorting
-
-2. **`src/adapters/firestore_repo.py`**
-   - Updated `add_fact_if_unique` method
-   - Integrated SmartDeduplicationService
-   - Enhanced logging with reasons
-   - Added `_cosine_similarity()` helper (numpy-based, replaced scipy)
-
-3. **`src/services/fact_write_service.py`**
-   - Updated threshold: 0.85 → 0.96
-   - Added session comment
-
-4. **`tests/unit/services/test_deduplication_service.py`** (NEW)
-   - 27 unit tests
-   - Real-world scenarios
-   - Edge case coverage
-
-5. **`requirements.txt`**
-   - Removed scipy dependency (replaced with numpy)
-
-### Thresholds
-
-```python
-MODERATE_THRESHOLD = 0.96  # Quick exit if below
-STRICT_THRESHOLD = 0.98     # Duplicate if above
-LENGTH_RATIO = 0.85         # 15% difference
-```
-
----
-
-## Rationale
-
-### Why 0.96 instead of 0.95?
-
-From report analysis:
-
-- **0.95-0.96 range:** 39% of pairs were NOT true duplicates
-- **0.96-0.97 range:** More reliable duplicate indicators
-- **Conservative approach:** Err on side of preservation
-
-### Why sorted numbers?
-
-**Pros:**
-
-- LLM generates facts with inconsistent order
-- "75 kg, 185 cm" ≡ "185 cm, 75 kg"
-- Simplifies comparison logic
-
-**Cons:**
-
-- Cannot detect temporal changes
-- "from 85 to 83" = "from 83 to 85"
-
-**Decision:** User confirmed static facts only (no temporal dynamics)
-
-### Why 15% length threshold?
-
-**Analysis:**
-
-- 10%: Too sensitive (noise)
-- 20%: Too lenient (misses details)
-- **15%:** Balanced sweet spot
-
-**Examples:**
-
-- "Weight 75 kg" (13 chars)
-- "Weight 75 kg in Example City" (21 chars)
-- Ratio: 13/21 = 0.62 < 0.85 → Preserved ✅
-
----
-
-## Examples
-
-### Scenario 1: Different Values
-
-```
-New: "Weight 84 kg"
-Existing: "Weight 75 kg"
-Similarity: 0.97
-
-Numbers: [84] != [83]
-→ NOT duplicate ✅
-```
-
-### Scenario 2: Added Detail
-
-```
-New: "Weight 75 kg in Example City"
-Existing: "Weight 75 kg"
-Similarity: 0.96
-
-Numbers: [83] == [83]
-Length: 17/33 = 0.52 < 0.85
-→ NOT duplicate ✅
-```
-
-### Scenario 3: LLM Rewording
-
-```
-New: "Patient has Periodontitis"
-Existing: "Patient has periodontitis condition"
-Similarity: 0.99
-
-Numbers: none
-Similarity ≥ 0.98
-→ DUPLICATE ❌
-```
-
-### Scenario 4: Different Dates
-
-```
-New: "Event on 2025-03-29"
-Existing: "Event on 2025-03-28"
-Similarity: 0.99
-
-Numbers: [3, 29, 2025] != [3, 28, 2025]
-→ NOT duplicate ✅
-```
-
----
-
-## Testing
-
-27 unit tests covering:
-
-- ✅ All 4 algorithm levels
-- ✅ User-provided real-world scenarios
-- ✅ Edge cases (floats, ranges, dates)
-- ✅ Number extraction logic
-
-**Run tests:**
-
-```bash
-pytest tests/unit/services/test_deduplication_service.py -v
-```
-
----
-
-## Monitoring
-
-### Success Metrics
-
-- **Fact retention rate:** 60-70% (vs 33% before)
-- **User complaints:** Reduced missing information reports
-- **Duplicate complaints:** Acceptable level
-
-### Logging
-
-New logs include deduplication reasons:
-
-```
-⏭️  [Dedup] Duplicate detected: strict_similarity: 0.99 >= 0.98
-✅ [Dedup] NOT duplicate: numbers_differ: [83] != [84]
-✅ [Dedup] NOT duplicate: new_more_detailed: existing 0.52 < 0.85
-```
-
----
-
-## References
-
-- **Reports:** `reports/DEDUPLICATION_REPORT.md`
-- **Session:** `docs/SESSION_2026_02_08_DEDUPLICATION_OPTIMIZATION.md`
-- **Tests:** `tests/unit/services/test_deduplication_service.py`
-- **Service:** `src/services/deduplication_service.py`
-
----
-
-## Future Considerations
-
-1. **Temporal awareness:** Detect "from X to Y" patterns
-2. **Type-specific thresholds:** Events vs States vs Principles
-3. **Multi-vector deduplication:** Use tags/metadata vectors
-4. **ML-based approach:** Train model on accepted/rejected pairs
-5. **User feedback loop:** Learn from manual corrections
-
----
-
-## Status
-
-- **Implemented:** 2026-02-08
-- **Updated:** 2026-02-08 (scipy → numpy for cosine similarity)
-- **Tested:** 27 unit tests passing
-- **Deployed:** Pending
-- **Monitoring:** TBD
-
----
-
-## Implementation Notes
-
-### Scipy Removal (2026-02-08)
-
-**Problem:** scipy dependency caused import errors in production/local environments due to missing build tools or environment mismatches.
-
-**Solution:** Replaced `scipy.spatial.distance.cosine` with numpy-based implementation:
-
-```python
-# Before (scipy):
-from scipy.spatial.distance import cosine
-distance = cosine(vec1, vec2)
-similarity = 1.0 - distance
-
-# After (numpy):
-import numpy as np
-dot_product = np.dot(vec1, vec2)
-norm1 = np.linalg.norm(vec1)
-norm2 = np.linalg.norm(vec2)
-similarity = dot_product / (norm1 * norm2)
-```
-
-**Benefits:**
-
-- ✅ numpy already in requirements.txt (no new dependency)
-- ✅ Identical mathematical result
-- ✅ Reduces Docker image size by ~100MB
-- ✅ Eliminates scipy build dependencies (gcc, gfortran, BLAS/LAPACK)
-- ✅ Works in all environments (local, Cloud Run, Docker)
-
-**Implementation:** `src/adapters/firestore_repo.py::_cosine_similarity()`
+- **One higher threshold, no number check** — still merges facts that differ only in a value or a date.
+- **Keep 0.85** — the loss of detail described above.

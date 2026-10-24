@@ -1,50 +1,34 @@
 # ADR 006: Semantic Firestore Collection Naming
 
-**Status:** Accepted  
-**Date:** 2026-02-05  
-**Context:**  
-The current Firestore collection naming convention is inconsistent in development environments:
+**Status:** Accepted (2026-02-05) — still in force; the migration it planned is done.
 
-- Core collections use `_oauth` suffix (e.g., `development_users_oauth`).
-- Infrastructure collections have no suffix (e.g., `development_sessions`).
-- Prompt v3 collections use a hardcoded `dev_` prefix (e.g., `dev_prompt_system_tokens`).
-- Prefixes vary between `development_` (from `environment.py`) and `dev_` (from legacy code).
+## Context
 
-**Decision:**  
-Adopt a **Semantic Separation** strategy for collection naming, distinguishing between **Domain** (business logic, versioned) and **Infrastructure** (technical, stable) collections.
+Collection names had drifted: an `_oauth` suffix on core collections, no suffix on infrastructure collections, and a
+hardcoded `dev_` prefix on prompt collections next to the configured `development_` prefix.
 
-### Naming Convention
+## Decision
 
-Format: `{prefix}{category}_{name}[_version]`
+Separate **domain** collections (business entities, schema-versioned) from **infrastructure** collections
+(technical, versionless). Every name is built in `EnvironmentConfig` (`src/config/environment.py`); no adapter
+hardcodes a name or a prefix.
 
-1. **Prefix:** Environment-specific (e.g., `development_`, `test_`, or empty for production).
-2. **Category:** `domain_` for business entities, empty for infrastructure.
-3. **Name:** Entity name (e.g., `users`, `sessions`).
-4. **Version:** `_v2`, `_v3` etc. for domain entities. Infrastructure collections are versionless.
+Format: `{prefix}{category}{name}[_vN]`
 
-### Schema Matrix
+1. **Prefix:** `EnvironmentConfig.firestore_collection_prefix` (environment-specific; see
+   `docs/04_solution_strategy/decisions/collection_prefix_retained.md`).
+2. **Category:** `domain_` for core business entities; empty for infrastructure.
+3. **Version:** `_vN` on domain collections, bumped on a breaking schema change so old and new can live side by side.
 
-| Type       | Old Dev Name                      | New Dev Name                      | Notes              |
-| :--------- | :-------------------------------- | :-------------------------------- | :----------------- |
-| **Domain** | `development_users_oauth`         | `development_domain_users_v2`     | OAuth Schema v2    |
-| **Domain** | `development_accounts_oauth`      | `development_domain_accounts_v2`  | Billing v2         |
-| **Domain** | `development_facts_oauth`         | `development_domain_facts_v2`     | Memory v2          |
-| **Domain** | `dev_prompt_*`                    | `development_domain_prompt_*_v3`  | Prompt System v3   |
-| **Infra**  | `development_sessions`            | `development_sessions`            | No change (stable) |
-| **Infra**  | `development_consolidation_queue` | `development_consolidation_queue` | No change (stable) |
-| **Infra**  | `development_event_dedup`         | `development_event_dedup`         | No change (stable) |
-| **Infra**  | `development_user_context`        | `development_user_context`        | No change (stable) |
+Examples: `domain_users_v2`, `domain_accounts_v2`, `domain_facts_v2`, `domain_prompt_tokens_v3`,
+`domain_whitelist_v1`, `domain_email_facts_v1` (domain); `sessions`, `consolidation_queue`, `event_dedup`,
+`worker_task_dedup`, `long_turns` (infrastructure).
 
-**Consequences:**
+Collections added later for feature subsystems (drive index, skills, fact review, memory-write leases) use the plain
+`{prefix}{name}` form.
 
-- **Positive:** Clear distinction between business data and technical implementation. Explicit versioning allows side-by-side migration. Eliminates hardcoded `dev_` prefixes.
-- **Negative:** Requires data migration for domain collections. Longer collection names.
-- **Risks:** Migration script must ensure data integrity. Code updates required across all adapters.
+## Consequences
 
-**Migration Plan:**
-
-1. Update code to use new names.
-2. Run migration script to copy data (Dev first).
-3. Validate (UAT).
-4. Deprecate and delete old collections.
-5. Repeat for Production (future phase).
+- Business data and technical state are distinguishable by name; a versioned domain collection can be migrated by
+  copying into `_vN+1`.
+- Firestore has no rename, so changing a name is always a copy-all-documents migration plus re-creating its indexes.

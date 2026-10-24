@@ -1052,8 +1052,8 @@ Detailed docs in `docs/` (arc42). Read as needed:
 
 **Where to write records:** multi-step refactors with a migration plan → `docs/10_rfcs/`;
 single backward-looking decision records (50–150 lines: decision + alternatives + why) →
-`docs/04_solution_strategy/decisions/`. Do NOT write to `docs/09_decisions/` (arc42 §9 canonical
-home) until its planned cleanup — only ADR-001 lives there now.
+`docs/04_solution_strategy/decisions/`. Do NOT add records to `docs/09_decisions/` (arc42 §9): it
+keeps only the older ADR-004–ADR-008, whose decisions still shape the code.
 
 ## Language
 

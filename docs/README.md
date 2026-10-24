@@ -64,7 +64,7 @@ Architecture Decision Records.
 Feature and refactoring proposals.
 
 ### [11 Quality](./11_quality/README.md)
-Quality goals, testing strategy, use cases.
+Quality gates and where the test rules live.
 
 ### [12 Risks](./12_risks/README.md)
 Risk management and [Implementation Roadmap](./12_risks/IMPLEMENTATION_ROADMAP.md).
