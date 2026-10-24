@@ -1017,7 +1017,7 @@ class DryRunKit:
         loop, close = agent._run_consolidation_loop, agent._report_pass
 
         async def run_loop(*args: Any, **kwargs: Any) -> Any:
-            label = kwargs.get("pass_label") or (args[4] if len(args) > 4 else "consolidation")
+            label = kwargs["write_context"].actor.value
             previous = (self.current_pass, self._pass_calls)
             self.current_pass, self._pass_calls = label, 0
             try:

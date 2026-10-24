@@ -589,7 +589,6 @@ class ConsolidationAgent(BaseAgent):
                 system_prompt=system_prompt,
                 user_id=user_id,
                 account_id=account_id,
-                pass_label="cluster",
                 write_context=self._write_context("cluster", owner_timezone),
             )
 
@@ -701,7 +700,6 @@ class ConsolidationAgent(BaseAgent):
                     system_prompt=system_prompt,
                     user_id=user_id,
                     account_id=account_id,
-                    pass_label="email",
                     fact_management=tracker,
                     write_context=self._write_context(
                         "email", owner_timezone, self._times_span([e.email_date for e in emails], "email dates")
@@ -917,7 +915,6 @@ class ConsolidationAgent(BaseAgent):
                 system_prompt=system_prompt,
                 user_id=user_id,
                 account_id=account_id,
-                pass_label="stage1",
                 fact_management=tracker,
                 write_context=self._write_context("stage1", owner_timezone, span),
             )
@@ -951,7 +948,6 @@ class ConsolidationAgent(BaseAgent):
                         system_prompt=system_prompt_2,
                         user_id=user_id,
                         account_id=account_id,
-                        pass_label="stage2a",
                         fact_management=tracker,
                         write_context=context_2a,
                     )
@@ -1013,7 +1009,6 @@ class ConsolidationAgent(BaseAgent):
             system_prompt=system_prompt,
             user_id=user_id,
             account_id=account_id,
-            pass_label="stage2b",
             fact_management=fact_management,
             write_context=write_context,
         )
@@ -1115,7 +1110,6 @@ class ConsolidationAgent(BaseAgent):
         system_prompt: str,
         user_id: str,
         account_id: str,
-        pass_label: str = "consolidation",
         fact_management: Optional[FactManagementPort] = None,
         *,
         write_context: FactWriteContext,
@@ -1125,14 +1119,14 @@ class ConsolidationAgent(BaseAgent):
         Returns parsed operations list from the final report.
 
         `fact_management` is the port this pass's tools run on (a run's tracker); None means the agent's own.
-        `write_context` goes with every write the pass's tools make.
+        `write_context` goes with every write the pass's tools make; its actor names the pass in the ops alerts.
 
         Ops alerts (best-effort, never change the result): a pass that exhausts its turns without
         a final report always posts a 🚨; a pass that ends with a report posts a 📊 stats line
         while CONSOLIDATION_STATS_ALERTS is on.
         """
         stats = ConsolidationPassStats(
-            pass_label=pass_label,
+            actor=write_context.actor,
             model=self.model_name,
             effort=self.THINKING_EFFORT,
             max_turns=self.MAX_CONSOLIDATION_TURNS,

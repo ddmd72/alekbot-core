@@ -175,7 +175,7 @@ class FactRepository(ABC):
         """Follow `fact_id` through `superseded_by`, within its lineage, to the document a caller may write.
 
         Args:
-            accepted: the states the walk may end in (domain/fact_lifecycle.py: CONSOLIDATION_ACCEPTS, CABINET_ACCEPTS).
+            accepted: the states the walk may end in (domain/fact_lifecycle.py: CONSOLIDATION_ACCEPTS, REVIEW_ACCEPTS, CABINET_ACCEPTS).
 
         Returns: the end document, whole (vectors included, as lists), with the `update_time` it was read with;
             None when the start document is missing or belongs to another account (decided before any hop).
