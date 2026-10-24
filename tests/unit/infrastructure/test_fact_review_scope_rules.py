@@ -107,6 +107,36 @@ async def test_a_quote_from_the_reply_archives_on_the_reply(world):
     assert [(d.outcome, d.basis_kind) for d in scope.decisions()] == [("archived", "reply")]
 
 
+async def test_a_follow_up_on_the_same_reply_after_a_rewrite_passes(world):
+    fact = await world.seed("works at Acme")
+    scope = await scope_of(world, fact, questions=[asked(fact, reply="I work at Globex now")])
+    first = await scope.update_fact(
+        {"fact_id": fact, "updates": {"content": "works at Globex", "expiry": HORIZON}, "basis": on_reply("at Globex")}
+    )
+
+    second = await scope.update_fact({
+        "fact_id": first["fact_id"], "updates": {"tags": ["work", "globex"], "expiry": HORIZON},
+        "basis": on_reply("at Globex"),
+    })
+
+    assert first["status"] == "updated" and first["fact_id"] != fact, first
+    assert second["status"] == "updated" and second["fact_id"] != first["fact_id"], second
+    assert world.docs[second["fact_id"]]["tags"] == ["work", "globex"]
+    [decision] = scope.decisions()
+    assert (decision.fact_id, decision.outcome, decision.basis_kind) == (fact, "rewritten", "reply")
+
+
+async def test_a_reply_to_the_question_about_another_fact_is_refused(world):
+    asked_about, other = await world.seed("works at Acme"), await stale(world, "b")
+    scope = await scope_of(world, asked_about, other, questions=[asked(asked_about, reply="I work at Globex now")])
+
+    res = await scope.update_fact({"fact_id": other, "updates": ARCHIVE, "basis": on_reply("at Globex")})
+
+    assert res["refused"] == "basis"
+    assert res["message"] == "basis.question_id: the id of the question about this fact in the batch"
+    assert state_of(world, other) == "stale"
+
+
 async def test_a_basis_kind_that_is_a_list_or_an_object_is_a_value_error_with_the_shape_text(world):
     fact = await stale(world, "a")
     scope = await scope_of(world, fact)
@@ -195,7 +225,9 @@ async def test_evidence_may_name_a_batch_fact_this_pass_rewrote_by_its_batch_id(
     assert rewritten["fact_id"] != a and state_of(world, a) == "superseded"
     assert res["status"] == "updated", res
     assert state_of(world, b) == "invalidated"
-    assert last_reason(world, b) == basis_reason("invalidate", ReviewBasis("evidence", evidence_fact_id=a))
+    assert last_reason(world, b) == basis_reason(
+        "invalidate", ReviewBasis("evidence", evidence_fact_id=rewritten["fact_id"])
+    )
 
 
 async def test_a_stale_fact_is_no_evidence(world):

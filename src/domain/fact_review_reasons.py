@@ -2,12 +2,14 @@
 
 A reason is code-built text in a fact's `lifecycle_events`. Two rules read them back (the revive alert and the window a
 silence doubles), so the writers and the readers live here and nowhere else; no caller spells a reason."""
-from datetime import date
+import dataclasses
+from datetime import date, datetime
 from typing import Final, Literal, Optional
 
+from .entities import FactEntity
 from .fact_review_answer_kind import AnswerKind
 from .fact_review_basis import ReviewAction, ReviewBasis
-from .fact_review_question import AnswerSource, QuestionFallback
+from .fact_review_question import AnswerSource, FactReviewQuestion, QuestionFallback
 
 # Who applies a fallback: nobody answered (timeout), or the owner said he does not remember.
 FallbackActor = Literal["timeout", "owner"]
@@ -42,6 +44,39 @@ def basis_reason(action: ReviewAction, basis: ReviewBasis, plan_date: Optional[d
     if action != "archive" or plan_date is None:
         raise ValueError("a date_passed basis backs an archive and needs the plan's date")
     return f"archived: date passed {plan_date.isoformat()}"
+
+
+def review_reason(
+    action: ReviewAction,
+    basis: Optional[ReviewBasis],
+    named: Optional[FactEntity],
+    superseded_by: Optional[str],
+    plan_date: Optional[date] = None,
+) -> Optional[str]:
+    """The trail reason of a review write the basis rules let through (plan §3.5): a supersede names its successor, any
+    other action its basis (`basis_reason`; `plan_date` for `date_passed`). `named` is the fact the evidence or the
+    successor id was read as; the reason cites that document, the one the decision rests on. None without a basis."""
+    if action == "supersede":
+        return superseded_reason(named.id if named is not None else str(superseded_by))
+    if basis is None:
+        return None
+    if basis.kind == "evidence" and named is not None:
+        basis = dataclasses.replace(basis, evidence_fact_id=named.id)
+    return basis_reason(action, basis, plan_date)
+
+
+def evidence_moment(
+    basis: Optional[ReviewBasis], named: Optional[FactEntity], question: Optional[FactReviewQuestion]
+) -> Optional[datetime]:
+    """When what a review write rests on was said (plan §3.5): the evidence fact's `reported_date`, or the owner's reply's
+    `reply_at`; None for `date_passed`, no basis, or a fact or question that is not there."""
+    if basis is None:
+        return None
+    if basis.kind == "evidence":
+        return named.reported_date if named is not None else None
+    if basis.kind == "reply":
+        return question.reply_at if question is not None else None
+    return None
 
 
 def superseded_reason(successor_id: str) -> str:

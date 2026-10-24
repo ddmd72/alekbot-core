@@ -412,8 +412,9 @@ def is_dated_plan(fact: FactEntity, question: Optional[FactReviewQuestion] = Non
 
 STAYS_STALE_REFUSAL: Final[str] = "this pass changes the fact's state; reported_date is kept by the system"
 
-# The texts of the review pass's own scope (plan §3.5). `place` is the argument the refusal is about, as the model wrote it
-# (`update_fact.fact_id`).
+# The texts of the review pass's own scope (plan §3.5). `place` is the argument the refusal is about, as the model wrote it.
+UPDATE_FACT_PLACE: Final[str] = "update_fact.fact_id"
+ASK_OWNER_PLACE: Final[str] = "ask_owner.fact_id"
 CHANGED_OUTSIDE: Final[str] = "this fact changed outside the review; leave it, it stays as it is"
 UPDATES_SHAPE_REFUSAL: Final[str] = (
     "update_fact.updates must be an object of the fields to change: "
@@ -474,13 +475,16 @@ def basis_refusal(
     history: Optional[str],
     today: date,
     tz: str,
+    subject: Optional[FactEntity] = None,
 ) -> Optional[str]:
     """Why a review change has no reason behind it, as the text the model reads, or None when it has.
 
     The action is `review_action(current, update)`; a call that changes nothing is refused with STAYS_STALE_REFUSAL.
     `named_fact`: the fact `basis.evidence_fact_id` names (for a supersede, `update.superseded_by`), as read, or None
     when there is none. `question`: the batch question `basis.question_id` names, or None. `made_current`: ids this pass
-    made current. `history`: the text of the history fact sent with an archive. A fact comes back only on another fact
+    made current. `history`: the text of the history fact sent with an archive. `subject`: the batch fact the pass is
+    deciding (the document its question names), when `current` is a later version of it; default `current`. A fact
+    comes back only on another fact
     or the owner's words; a plan is archived on its passed date; supersede names its successor, not a basis."""
     action = review_action(current, update)
     if action is None:
@@ -497,7 +501,7 @@ def basis_refusal(
         return f"basis.kind date_passed backs only an archive; {action} needs {_BASIS_SHAPES[action]}"
     refusal = (
         _evidence_refusal(fact, basis, evidence, made_current) if basis.kind == "evidence"
-        else _reply_refusal(fact, basis, question) if basis.kind == "reply"
+        else _reply_refusal(subject or fact, basis, question) if basis.kind == "reply"
         else _date_passed_refusal(fact, basis, today, tz)
     )
     return refusal or _history_refusal(action, fact, basis, question, history)
@@ -523,8 +527,12 @@ def _evidence_refusal(
     return _usable_fact_refusal("basis.evidence_fact_id", evidence, fact, made_current)
 
 
-def _reply_refusal(fact: FactEntity, basis: ReviewBasis, question: Optional[FactReviewQuestion]) -> Optional[str]:
-    if not basis.question_id or question is None or question.question_id != basis.question_id or question.fact_id != fact.id:
+def _reply_refusal(subject: FactEntity, basis: ReviewBasis, question: Optional[FactReviewQuestion]) -> Optional[str]:
+    """`subject`: the batch fact the question is about, whichever version of its lineage is being written (R3-13)."""
+    if (
+        not basis.question_id or question is None or question.question_id != basis.question_id
+        or question.fact_id != subject.id
+    ):
         return "basis.question_id: the id of the question about this fact in the batch"
     if not question.reply_text:
         return "basis.question_id names a question with no recorded reply from the owner"

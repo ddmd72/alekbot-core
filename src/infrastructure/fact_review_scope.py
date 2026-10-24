@@ -14,14 +14,15 @@ from typing import Any, Dict, List, Mapping, Optional, Set
 from ..domain.entities import FactEntity, FactState
 from ..domain.exceptions import FactBornDueError, FactExpiryError, FactResolutionError
 from ..domain.fact_review_ask import AskRequest, parse_ask_owner
-from ..domain.fact_review_basis import ReviewAction, ReviewBasis, parse_history, parse_review_basis
+from ..domain.fact_review_basis import ReviewBasis, parse_history, parse_review_basis
 from ..domain.fact_review_batch import ReviewBatch
 from ..domain.fact_review_outcome import MADE_CURRENT, ReviewDecision, review_outcome
-from ..domain.fact_review_question import FactReviewQuestion
-from ..domain.fact_review_reasons import basis_reason, superseded_reason
+from ..domain.fact_review_reasons import evidence_moment, review_reason
 from ..domain.fact_review_rules import (
     ASK_HELD,
+    ASK_OWNER_PLACE,
     STAYS_STALE_REFUSAL,
+    UPDATE_FACT_PLACE,
     UPDATES_SHAPE_REFUSAL,
     ask_refusal,
     asked_refusal,
@@ -43,17 +44,13 @@ from ..domain.fact_tool_result import (
     expiry_refusal_tags,
     refused_result,
 )
-from ..domain.fact_update import ParsedFactUpdate, parse_fact_update
+from ..domain.fact_update import parse_fact_update
 from ..domain.fact_write_context import FactWriteContext
 from ..domain.local_time import local_date
 from ..domain.pass_actor import PassActor
 from ..domain.stored_fact import StoredFact
 from ..ports.fact_update_port import FactUpdatePort
 from ..ports.repository import FactRepository
-
-_UPDATE_PLACE = "update_fact.fact_id"
-_ASK_PLACE = "ask_owner.fact_id"
-
 
 class FactReviewScope:
     """The review pass's tool handler. `facts` reads documents (membership, evidence, the written result); `writer` is
@@ -114,12 +111,12 @@ class FactReviewScope:
         fact_id = args.get("fact_id")
         lineage = await self._lineage(fact_id)
         if lineage is None:
-            return refused_result(fact_id, REFUSED_SCOPE, not_in_batch_refusal(_UPDATE_PLACE))
-        taken = self._result_refusal(lineage, _UPDATE_PLACE, write=True)
+            return refused_result(fact_id, REFUSED_SCOPE, not_in_batch_refusal(UPDATE_FACT_PLACE))
+        taken = self._result_refusal(lineage, UPDATE_FACT_PLACE, write=True)
         if taken is not None:
             return refused_result(fact_id, REFUSED_SCOPE, taken)
         if self._left[lineage].state is FactState.CURRENT and not self._may_write_current(lineage):
-            return refused_result(fact_id, REFUSED_SCOPE, not_under_review_refusal(_UPDATE_PLACE))
+            return refused_result(fact_id, REFUSED_SCOPE, not_under_review_refusal(UPDATE_FACT_PLACE))
         raw_updates = args.get("updates")
         if not isinstance(raw_updates, Mapping):
             return refused_result(fact_id, REFUSED_SCOPE, UPDATES_SHAPE_REFUSAL)
@@ -142,7 +139,7 @@ class FactReviewScope:
             return refused_result(fact_id, REFUSED_BASIS, str(error))
         stored = await self._resolve(fact_id, lineage)
         if stored is None:
-            return refused_result(fact_id, REFUSED_SCOPE, changed_outside_refusal(_UPDATE_PLACE))
+            return refused_result(fact_id, REFUSED_SCOPE, changed_outside_refusal(UPDATE_FACT_PLACE))
         current = stored.fact
         action = review_action(current, update)
         if action is None:
@@ -151,34 +148,28 @@ class FactReviewScope:
         question = self._questions.get(basis.question_id) if basis is not None and basis.question_id else None
         refusal = basis_refusal(
             current, update, basis, named_fact=named, question=question, made_current=self._made_current(),
-            history=history, today=local_date(self._now, self._tz), tz=self._tz,
+            history=history, today=local_date(self._now, self._tz), tz=self._tz, subject=self._by_lineage[lineage],
         )
         if refusal is not None:
             return refused_result(fact_id, REFUSED_BASIS, refusal)
         result = await self._writer.apply_fact_update(
             current.id, update, self._account_id, context=self._context,
-            evidence_at=_evidence_at(basis, named, question),
-            reason=self._reason(action, basis, update, named, current), history=history,
+            evidence_at=evidence_moment(basis, named, question),
+            reason=review_reason(
+                action, basis, named, update.superseded_by,
+                plan_date(current, basis, self._tz) if basis is not None and basis.kind == "date_passed" else None,
+            ),
+            history=history,
         )
         if result.get("status") not in WRITTEN_STATUSES:
             if "refused" not in result and not await self._unchanged(stored, lineage):
-                return refused_result(fact_id, REFUSED_SCOPE, changed_outside_refusal(_UPDATE_PLACE))
+                return refused_result(fact_id, REFUSED_SCOPE, changed_outside_refusal(UPDATE_FACT_PLACE))
             return result
         written = await self._facts.get_fact_by_id(result["fact_id"])
         if written is None:
             raise RuntimeError(f"fact {result['fact_id']} was written and cannot be read back")
         self._record(lineage, written, basis)
         return result
-
-    def _reason(
-        self, action: ReviewAction, basis: Optional[ReviewBasis], update: ParsedFactUpdate,
-        named: Optional[FactEntity], current: FactEntity,
-    ) -> Optional[str]:
-        if action == "supersede":
-            return superseded_reason(named.id if named is not None else str(update.superseded_by))
-        if basis is None:
-            return None
-        return basis_reason(action, basis, plan_date(current, basis, self._tz) if basis.kind == "date_passed" else None)
 
     async def _resolve(self, fact_id: str, lineage: str) -> Optional[StoredFact]:
         """The document `fact_id` resolves to, when it is the one the pass expects for its lineage (the batch's, or the
@@ -214,8 +205,8 @@ class FactReviewScope:
             return refused_result(args.get("fact_id") if isinstance(args, Mapping) else None, REFUSED_ASK, str(error))
         lineage = await self._lineage(request.fact_id)
         if lineage is None:
-            return refused_result(request.fact_id, REFUSED_SCOPE, not_in_batch_refusal(_ASK_PLACE))
-        taken = self._result_refusal(lineage, _ASK_PLACE, write=False)
+            return refused_result(request.fact_id, REFUSED_SCOPE, not_in_batch_refusal(ASK_OWNER_PLACE))
+        taken = self._result_refusal(lineage, ASK_OWNER_PLACE, write=False)
         if taken is not None:
             return refused_result(request.fact_id, REFUSED_SCOPE, taken)
         fact = self._by_lineage[lineage]
@@ -282,16 +273,3 @@ def _argument(args: Mapping[str, Any], updates: Dict[str, Any], name: str) -> An
 
 def _evidence_id(basis: Optional[ReviewBasis]) -> Optional[str]:
     return basis.evidence_fact_id if basis is not None and basis.kind == "evidence" else None
-
-
-def _evidence_at(
-    basis: Optional[ReviewBasis], named: Optional[FactEntity], question: Optional[FactReviewQuestion]
-) -> Optional[datetime]:
-    """The moment the change rests on: the evidence fact's `reported_date`, or the owner's reply's `reply_at`."""
-    if basis is None:
-        return None
-    if basis.kind == "evidence":
-        return named.reported_date if named is not None else None
-    if basis.kind == "reply":
-        return question.reply_at if question is not None else None
-    return None
