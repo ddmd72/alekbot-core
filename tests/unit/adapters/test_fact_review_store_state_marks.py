@@ -57,7 +57,8 @@ async def test_all_states_of_an_empty_store_is_empty(world):
 
 async def test_mark_enqueued_creates_a_missing_state(world):
     assert await world.review_store.mark_enqueued("acc", NOW) is True
-    assert await read_state(world) == FactReviewState(account_id="acc", enqueued_at=NOW)
+    # The enqueue also starts the alert clock (T4b review M1, plan §3.12).
+    assert await read_state(world) == FactReviewState(account_id="acc", enqueued_at=NOW, unsuccessful_since=NOW)
 
 
 @pytest.mark.parametrize("mark", [
@@ -79,10 +80,10 @@ async def test_every_other_mark_leaves_a_missing_state_missing(world, mark):
 
 # ------------------------------------------------------------------------------------------------ each mark
 
-async def test_mark_enqueued_on_an_existing_state_changes_only_enqueued_at(world):
+async def test_mark_enqueued_on_an_existing_state_changes_only_enqueued_at_and_the_empty_alert_clock(world):
     before = await world.seed_state(enqueued_at=NOW, started_at=NOW, offers={"f1": 1})
     assert await world.review_store.mark_enqueued("acc", T1)
-    assert await read_state(world) == before.model_copy(update={"enqueued_at": T1})
+    assert await read_state(world) == before.model_copy(update={"enqueued_at": T1, "unsuccessful_since": T1})
 
 
 async def test_mark_started(world):
