@@ -20,9 +20,12 @@ from .fact_lifecycle import CLOSING_STATES
 _WRITE_TOOLS = frozenset({"create_fact", "update_fact", "merge_facts"})
 _CLOSING_VALUES = frozenset(state.value for state in CLOSING_STATES)
 _NEW_TEXT_TOOLS = {"create_fact": "content", "merge_facts": "merged_content"}
+# Passes whose subject is stored memory: an unanswered born-due refusal there is a loss.
+_CLEANUP_LABELS = frozenset({"stage2a", "stage2b", "cluster"})
 
 # What one tool call came to. `expiry` is a refusal of a missing or malformed `expiry`; `born_due` one of a well-formed
-# `expiry` that resolves already due (the model is told to discard or rewrite, so it is never an abandoned refusal).
+# `expiry` that resolves already due (on a conversation pass the model may discard the candidate, so it is not an
+# abandoned refusal there; on a cleanup pass the subject is a stored fact and it is).
 OUTCOME_OK = "ok"
 OUTCOME_ERROR = "error"
 OUTCOME_EXPIRY = "expiry"
@@ -134,11 +137,12 @@ class ConsolidationPassStats:
     def _abandoned(self) -> List[_Outcome]:
         """Refusals over a missing or malformed `expiry` that no later successful call answers: a create or merge
         with the same text, a non-closing update of the same fact (retiring the fact is the loss, not an answer).
-        Approximate on purpose: a retry that rewrites the text counts
-        as abandoned, which errs towards an alert."""
+        On a cleanup pass a born-due refusal counts the same way. Approximate on purpose: a retry that rewrites the
+        text counts as abandoned, which errs towards an alert."""
+        counted = (OUTCOME_EXPIRY, OUTCOME_BORN_DUE) if self.pass_label in _CLEANUP_LABELS else (OUTCOME_EXPIRY,)
         found = []
         for i, refused in enumerate(self._outcomes):
-            if refused.outcome != OUTCOME_EXPIRY or refused.name not in _WRITE_TOOLS:
+            if refused.outcome not in counted or refused.name not in _WRITE_TOOLS:
                 continue
             same_kind = (refused.name,) if refused.name == "update_fact" else tuple(_NEW_TEXT_TOOLS)
             resolved = any(
@@ -186,7 +190,7 @@ class ConsolidationPassStats:
         return f"tool-error turns {self.error_turns} (expiry {self.expiry_errors}{born}, abandoned {self.abandoned})"
 
     def format_abandoned_alert(self) -> str:
-        """The permanent alert for refusals of a missing or malformed `expiry` that were never answered: the pass label,
+        """The permanent alert for refusals of `expiry` that were never answered: the pass label,
         tool names and text lengths (or the fact id's first 8 characters), never the text."""
         parts = []
         for o in self._abandoned()[:5]:

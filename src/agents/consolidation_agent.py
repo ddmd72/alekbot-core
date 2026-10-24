@@ -1423,6 +1423,8 @@ class ConsolidationAgent(BaseAgent):
             "they are critical for long-term memory accuracy.\n\n"
             "Each fact shows `expiry`: the decision it carries in the shape you send it (null when none is\n"
             "recorded), `due`: the day a horizon falls due, and `reported`: the day the owner last said it.\n"
+            "A `date` that is today or past is refused if you send it back: rewrite that fact as what happened\n"
+            "with `{kind: none}`, or give a future date if the plan still holds; never drop it.\n"
             "A horizon counts from `reported`; this pass cannot change `reported`. Give `expiry` only on a\n"
             "create, a merge or a rewrite you make in this pass; do not send `expiry` for a fact you do not\n"
             "otherwise change: facts with `expiry: null` are classified separately.\n"

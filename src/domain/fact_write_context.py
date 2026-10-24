@@ -105,13 +105,21 @@ def reported_date_for_new(
 def reported_date_for_merge(
     ctx: FactWriteContext, model_value: Optional[datetime], source_dates: Sequence[datetime], now: datetime
 ) -> datetime:
-    """The `reported_date` of a merged fact. A cleanup pass takes the latest of the merged facts' own dates."""
+    """The `reported_date` of a merged fact: never earlier than the newest merged fact's own date.
+
+    A cleanup pass takes exactly that date. A conversation pass takes the later of that and the model's span-clamped
+    date (else the span end), like an update.
+    """
     now = as_utc(now)
+    newest = max((as_utc(d) for d in source_dates), default=None)
     if ctx.model_dates:
         if model_value is not None:
-            return clamp_to_span(model_value, ctx.span, now)
-    elif source_dates:
-        return max(as_utc(d) for d in source_dates)
+            chosen = clamp_to_span(model_value, ctx.span, now)
+        else:
+            chosen = min(as_utc(ctx.span[1]), now) if ctx.span is not None else now
+        return max(chosen, newest) if newest is not None else chosen
+    if newest is not None:
+        return newest
     return min(as_utc(ctx.span[1]), now) if ctx.span is not None else now
 
 
