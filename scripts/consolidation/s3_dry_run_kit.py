@@ -43,7 +43,7 @@ from src.domain.email import IndexedEmail, IndexingState
 from src.domain.entities import FactEntity, FactState
 from src.domain.exceptions import FactWriteConflict
 from src.domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
-from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot
+from src.domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot, check_count
 from src.domain.fact_resolution import resolve_chain
 from src.domain.fact_review_rules import stale_order_key
 from src.domain.fact_update import ParsedFactUpdate
@@ -460,11 +460,12 @@ class NoWriteIndexedEmails(IndexedEmailRepository):
 # ------------------------------------------------------------------------------------------------ counters and alerts
 
 class RecordingCounters(FactLifecycleCountersPort):
-    """Stands in for the live lifecycle-counters store: it validates as the production store does and keeps what it is given."""
+    """Stands in for the live lifecycle-counters store: it keeps the typed values it is given and refuses what the
+    production store refuses."""
 
     def __init__(self) -> None:
-        self.adds: List[Tuple[str, date, Dict[str, int]]] = []
-        self.sweeps: List[Tuple[str, date, Dict[str, Any]]] = []
+        self.adds: List[Tuple[str, date, Dict[CounterField, int]]] = []
+        self.sweeps: List[Tuple[str, date, SweepSnapshot]] = []
         self._claimed: set = set()
 
     @staticmethod
@@ -476,31 +477,33 @@ class RecordingCounters(FactLifecycleCountersPort):
 
     @property
     def expiry_tool_errors(self) -> int:
-        return sum(counts.get("expiry_tool_errors", 0) for _, _, counts in self.adds)
+        return sum(counts.get(CounterField.EXPIRY_TOOL_ERRORS, 0) for _, _, counts in self.adds)
 
-    async def record_sweep(self, account_id: str, day: date, values: Mapping[str, Any]) -> None:
+    async def record_sweep(self, account_id: str, day: date, snapshot: SweepSnapshot) -> None:
         self._check(account_id, day)
-        check_snapshot(values)
-        self.sweeps.append((account_id, day, dict(values)))
+        self.sweeps.append((account_id, day, snapshot))
 
-    async def add(self, account_id: str, day: date, counts: Mapping[str, int]) -> None:
+    async def add(self, account_id: str, day: date, counts: Mapping[CounterField, int]) -> None:
         self._check(account_id, day)
-        unknown = sorted(set(counts) - COUNTER_FIELDS)
-        if unknown:
-            raise ValueError(f"not counter fields: {unknown}")
+        added: Dict[CounterField, int] = {}
         for name, value in counts.items():
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f"count {name} must be a non-negative integer")
-        added = {name: value for name, value in counts.items() if value}
+            counter = CounterField(name)
+            check_count(counter.value, value)
+            if value:
+                added[counter] = value
         if added:
             self.adds.append((account_id, day, added))
 
     async def for_day(self, day: date) -> List[FactLifecycleDay]:
-        totals: Dict[str, int] = Counter()
+        snapshots = {account_id: snapshot for account_id, added_day, snapshot in self.sweeps if added_day == day}
+        totals: Dict[str, Counter] = {}
         for account_id, added_day, counts in self.adds:
             if added_day == day:
-                totals[account_id] += counts.get("expiry_tool_errors", 0)
-        return [FactLifecycleDay(account_id=a, day=day, expiry_tool_errors=n) for a, n in sorted(totals.items())]
+                totals.setdefault(account_id, Counter()).update(counts)
+        return [
+            FactLifecycleDay.of(account_id, day, snapshots.get(account_id), dict(totals.get(account_id, {})))
+            for account_id in sorted(set(snapshots) | set(totals))
+        ]
 
     async def claim_line(self, day: date) -> bool:
         first = day not in self._claimed

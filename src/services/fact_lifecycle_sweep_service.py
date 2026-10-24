@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from ..domain.due_fact import DueFact
 from ..domain.exceptions import FactWriteConflict
-from ..domain.fact_lifecycle_day import FactLifecycleDay
+from ..domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot
 from ..domain.fact_lifecycle_sweep import breaker_reason, daily_line, stale_fields, stale_headroom
 from ..domain.fact_write_context import as_utc
 from ..ports.alert_sink import AlertSinkPort
@@ -87,15 +87,15 @@ class FactLifecycleSweepService:
                 previous_runs.get(account_id),
             )
             tool_errors = yesterday[account_id].expiry_tool_errors if account_id in yesterday else 0
-            rows.append(_row(account_id, day, snapshot, tool_errors))
+            rows.append(FactLifecycleDay.of(account_id, day, snapshot, {CounterField.EXPIRY_TOOL_ERRORS: tool_errors}))
             totals["accounts"] += 1
-            totals["due"] += snapshot["due"]
-            totals["staled"] += snapshot["staled"]
-            totals["would_stale"] += snapshot["would_stale"]
-            totals["deferred"] += snapshot["deferred"]
-            totals["conflicts"] += snapshot["stale_conflicts"]
-            totals["no_decision"] += snapshot["no_decision"]
-            totals["breaker_tripped"] += int(snapshot["breaker"] != _BREAKER_OK)
+            totals["due"] += snapshot.due
+            totals["staled"] += snapshot.staled
+            totals["would_stale"] += snapshot.would_stale
+            totals["deferred"] += snapshot.deferred
+            totals["conflicts"] += snapshot.stale_conflicts
+            totals["no_decision"] += snapshot.no_decision
+            totals["breaker_tripped"] += int(snapshot.breaker != _BREAKER_OK)
         progress["stage"], progress["account"] = "the ops line", ""
         seen = set(accounts)
         rows.extend(
@@ -113,7 +113,7 @@ class FactLifecycleSweepService:
         dues: List[DueFact],
         backlog: Tuple[int, Optional[datetime]],
         previous_run: Optional[datetime],
-    ) -> Dict[str, Any]:
+    ) -> SweepSnapshot:
         stale_count, oldest = backlog
         reason = breaker_reason(stale_count, None, now)      # S4 wires the last successful review
         # Oldest expiry first, so the cap defers the newest; the id makes the order total.
@@ -131,25 +131,26 @@ class FactLifecycleSweepService:
             await self._hold_back(account_id, reason, len(decided))
 
         breaker = _BREAKER_OK if reason is None else (_BREAKER_WOULD_TRIP if self._dry_run else _BREAKER_TRIPPED)
-        snapshot: Dict[str, Any] = {
-            "run_at": now,
-            "due": len(dues),
-            "newly_due": newly_due,
-            "no_decision": len(dues) - len(decided),
-            "staled": staled,
-            "would_stale": would_stale,
-            "deferred": deferred,
-            "stale_conflicts": conflicts,
-            "breaker": breaker,
-            "backlog": stale_count,
-            "oldest_stale_days": max(0, (now - as_utc(oldest)).days) if oldest is not None else None,
-        }
+        snapshot = SweepSnapshot(
+            run_at=now,
+            due=len(dues),
+            newly_due=newly_due,
+            no_decision=len(dues) - len(decided),
+            staled=staled,
+            would_stale=would_stale,
+            deferred=deferred,
+            stale_conflicts=conflicts,
+            breaker=breaker,
+            backlog=stale_count,
+            oldest_stale_days=max(0, (now - as_utc(oldest)).days) if oldest is not None else None,
+            review_enqueued=0,      # S4's review is not wired yet
+        )
         # Written in log-only mode too: the numbers are what the owner reads before the janitor is switched on.
         await self._counters.record_sweep(account_id, day, snapshot)
         logger.info(
-            f"[FactLifecycle] account={account_id[:8]} due={snapshot['due']} newly_due={newly_due} "
-            f"no_decision={snapshot['no_decision']} staled={staled} would_stale={would_stale} deferred={deferred} conflicts={conflicts} "
-            f"backlog={stale_count} breaker={reason or _BREAKER_OK} review_enqueued=0 dry_run={self._dry_run}"
+            f"[FactLifecycle] account={account_id[:8]} due={snapshot.due} newly_due={newly_due} "
+            f"no_decision={snapshot.no_decision} staled={staled} would_stale={would_stale} deferred={deferred} conflicts={conflicts} "
+            f"backlog={stale_count} breaker={reason or _BREAKER_OK} review_enqueued={snapshot.review_enqueued} dry_run={self._dry_run}"
         )
         return snapshot
 
@@ -236,12 +237,3 @@ def _group(dues: List[DueFact]) -> Dict[str, List[DueFact]]:
         grouped.setdefault(due.account_id, []).append(due)
     return grouped
 
-
-def _row(account_id: str, day: date, snapshot: Mapping[str, Any], tool_errors: int) -> FactLifecycleDay:
-    return FactLifecycleDay(
-        account_id=account_id, day=day, run_at=snapshot["run_at"], due=snapshot["due"],
-        newly_due=snapshot["newly_due"], no_decision=snapshot["no_decision"], staled=snapshot["staled"],
-        would_stale=snapshot["would_stale"], deferred=snapshot["deferred"], stale_conflicts=snapshot["stale_conflicts"],
-        breaker=snapshot["breaker"], backlog=snapshot["backlog"], oldest_stale_days=snapshot["oldest_stale_days"],
-        expiry_tool_errors=tool_errors,
-    )

@@ -26,6 +26,7 @@ from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..domain.entities import FactDomain
 from ..domain.fact_expiry import expiry_view
+from ..domain.fact_lifecycle_day import CounterField
 from ..domain.fact_update import ParsedFactUpdate
 from ..domain.fact_write_context import FactWriteContext, as_utc, span_of
 from ..domain.local_time import local_day, local_moment, local_stamp
@@ -1276,7 +1277,7 @@ class ConsolidationAgent(BaseAgent):
             return
         try:
             await self._lifecycle_counters.add(
-                account_id, datetime.now(timezone.utc).date(), {"expiry_tool_errors": stats.expiry_errors}
+                account_id, datetime.now(timezone.utc).date(), {CounterField.EXPIRY_TOOL_ERRORS: stats.expiry_errors}
             )
         except Exception as e:
             logger.warning(f"⚠️ [ConsolidationAgent] Lifecycle counters not updated: {type(e).__name__}")
