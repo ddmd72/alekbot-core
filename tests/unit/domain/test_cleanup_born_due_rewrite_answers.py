@@ -154,3 +154,76 @@ def test_the_alert_never_carries_the_text():
     turn(s, create("Plans a trip to Lisbon on 2026-10-10"), OUTCOME_BORN_DUE)
 
     assert "Lisbon" not in s.format_abandoned_alert()
+
+
+# Ten realistic past-tense rewrites in the house style, each the answer the refusal asks for (T2b re-review 2, M2).
+ANSWERED = [
+    ("User plans to move to Springfield in September 2026", "User moved to Springfield in September 2026"),
+    ("User intends to submit the tax return by 2026-06-30", "User submitted the tax return in June 2026"),
+    ("User will attend the Madrid conference on Oct 15", "User attended the Madrid conference on Oct 15 and gave a talk"),
+    ("User is scheduled for knee surgery on 2026-10-05", "User had knee surgery on 2026-10-05; recovery went well"),
+    ("User has a dentist appointment on 2026-10-12", "User had the dentist appointment on 2026-10-12; no cavities"),
+    ("User expects the visa decision by 2026-10-30", "User received the visa decision on 2026-10-28"),
+    ("User starts the new job at Acme on 2026-10-01", "User started the new job at Acme"),
+    ("User is going to the Rome marathon on 2026-10-18", "User ran the Rome marathon in 3h 45m"),
+]
+NOT_ANSWERED = [        # the two noted losses: fly/flew leaves exactly half, and the car sale is a real heavy rewrite
+    ("User plans to fly to Lisbon on 2026-10-10 for the PyCon conference", "User flew to Lisbon on 2026-10-10 for PyCon"),
+    ("Plans to sell the car before 2026-10-01", "Sold the car in September 2026 for 9000 EUR"),
+]
+
+
+@pytest.mark.parametrize("label", CLEANUP)
+@pytest.mark.parametrize("refused,rewrite", ANSWERED)
+def test_a_realistic_past_tense_rewrite_answers_the_refusal(label, refused, rewrite):
+    s = stats(label)
+    turn(s, create(refused), OUTCOME_BORN_DUE)
+    turn(s, create(rewrite), OUTCOME_OK)
+
+    assert s.abandoned == 0
+
+
+@pytest.mark.parametrize("refused,rewrite", NOT_ANSWERED)
+def test_a_rewrite_that_keeps_half_or_fewer_of_the_words_alerts(refused, rewrite):
+    s = stats("stage2a")
+    turn(s, create(refused), OUTCOME_BORN_DUE)
+    turn(s, create(rewrite), OUTCOME_OK)
+
+    assert s.abandoned == 1
+
+
+@pytest.mark.parametrize("label", CLEANUP)
+@pytest.mark.parametrize("refused,other", [
+    ("User plans to fly to Lisbon on 2026-10-10", "User plans to renew the passport by 2026-12-01"),
+    ("User will attend the Madrid conference on Oct 15", "User attended a wedding in Springfield"),
+])
+def test_unrelated_creates_still_alert_under_containment(label, refused, other):
+    s = stats(label)
+    turn(s, create(refused), OUTCOME_BORN_DUE)
+    turn(s, create(other), OUTCOME_OK)
+
+    assert s.abandoned == 1
+
+
+def test_exactly_half_of_the_words_is_not_enough():
+    s = stats("stage2a")                # dentist, appointment vs car, service, appointment: 1 of 2
+    turn(s, create("User has a dentist appointment on 2026-10-20"), OUTCOME_BORN_DUE)
+    turn(s, create("User has a car service appointment on 2026-11-05"), OUTCOME_OK)
+
+    assert s.abandoned == 1
+
+
+def test_the_residual_a_near_duplicate_of_the_same_subject_is_taken_as_the_answer():
+    s = stats("stage2a")
+    turn(s, create("User plans a trip to Lisbon with Ana on 2026-10-10"), OUTCOME_BORN_DUE)
+    turn(s, create("User plans a trip to Porto with Ana on 2026-11-10"), OUTCOME_OK)
+
+    assert s.abandoned == 0
+
+
+def test_a_split_sibling_with_the_same_derived_from_still_alerts_under_containment():
+    s = stats("stage2a")
+    turn(s, create("User flew to Lisbon on 2026-10-10", derived=["f1"]), OUTCOME_BORN_DUE)
+    turn(s, create("User works as a data engineer at Acme", derived=["f1"]), OUTCOME_OK)
+
+    assert s.abandoned == 1

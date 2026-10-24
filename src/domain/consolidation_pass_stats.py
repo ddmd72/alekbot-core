@@ -23,14 +23,17 @@ _CLOSING_VALUES = frozenset(state.value for state in CLOSING_STATES)
 _NEW_TEXT_TOOLS = {"create_fact": "content", "merge_facts": "merged_content"}
 # Passes whose subject is stored memory: an unanswered born-due refusal there is a loss.
 _CLEANUP_LABELS = frozenset({"stage2a", "stage2b", "cluster"})
-# A born-due create is answered by a rewrite whose content words overlap this much (shared / union, hashed in memory).
+# A born-due create is answered by a rewrite that holds more than this share of its content words (hashed in memory).
 _REWRITE_OVERLAP = 0.5
 _MIN_WORD_LENGTH = 3
-# The house style opens every fact with the subject and links with these; they say nothing about which fact it is.
+# The house style opens every fact with the subject and links with these, and a past-tense rewrite always drops the
+# planning words; none of them says which fact it is.
 _FILLER_WORDS = frozenset({
     "the", "and", "for", "with", "from", "into", "onto", "that", "this", "these", "those", "has", "have", "had", "was",
     "were", "are", "been", "being", "will", "would", "can", "could", "his", "her", "its", "their", "our", "not", "but",
     "user", "owner",
+    "plans", "plan", "planned", "planning", "intends", "intend", "scheduled", "going", "wants", "expects", "upcoming",
+    "starts", "start",
 })
 
 # What one tool call came to. `expiry` is a refusal of a missing or malformed `expiry`; `born_due` one of a well-formed
@@ -133,9 +136,11 @@ def _rewrites(refused: _Outcome, later: _Outcome) -> bool:
     """Whether `later` (a successful create or merge) is the rewrite a born-due refusal asks for, which has other text.
 
     A merge is answered by a merge of the same non-empty set of facts. A create is answered by a create of the same
-    domain whose content words overlap its own (shared / union at least `_REWRITE_OVERLAP`); when it was made from
-    facts, the answer must also be made from the same set, so a sibling split part, which is another concept, fails the
-    text rule. Residual, on purpose: a heavy rewrite that keeps few words is not recognised and alerts.
+    domain that holds more than half of its content words (containment, so the outcome words a rewrite adds cost
+    nothing); when it was made from facts, the answer must also be made from the same set, so a sibling split part,
+    which is another concept, fails the text rule. Residual, on both sides, on purpose: a near-duplicate of the same
+    subject (the same kind of event with another date or place) is taken as the answer and a dropped fact goes
+    unseen; a rewrite that keeps half or fewer of the words alerts.
     """
     if later.closing or later.outcome != OUTCOME_OK:
         return False
@@ -145,8 +150,7 @@ def _rewrites(refused: _Outcome, later: _Outcome) -> bool:
         return False
     if refused.sources and later.sources != refused.sources:
         return False
-    union = refused.words | later.words
-    return bool(union) and len(refused.words & later.words) >= _REWRITE_OVERLAP * len(union)
+    return bool(refused.words) and len(refused.words & later.words) > _REWRITE_OVERLAP * len(refused.words)
 
 
 class ConsolidationPassStats:
