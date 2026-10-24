@@ -529,6 +529,22 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}fact_lifecycle_lines"
 
     @property
+    def fact_review_questions_collection(self) -> str:
+        """
+        The memory review's questions, one per fact, doc id = question id (Facts S4 plan §2.2). Its TTL field is
+        `purge_after`, set only on a closed question; no field is named `expires_at`. Dev: development_fact_review_questions
+        """
+        return f"{self.firestore_collection_prefix}fact_review_questions"
+
+    @property
+    def fact_review_state_collection(self) -> str:
+        """
+        The memory review's state, one per account, doc id = account id (Facts S4 plan §2.2). No TTL policy and no field
+        named `expires_at`. Dev: development_fact_review_state
+        """
+        return f"{self.firestore_collection_prefix}fact_review_state"
+
+    @property
     def long_turns_collection(self) -> str:
         """
         Long chat turns (LONG_RUNNING_TURNS_RFC §5.4). Dev: development_long_turns

@@ -4,19 +4,21 @@ plus fakes of the neighbours that carry state (notification state, channel bindi
 channels) and a recording alert sink.
 
 Nothing here decides a fact rule: the fakes store and answer like their ports, and the rest is production code.
-The review store and the question/state seeds join this file in the tasks that create those types (T4a1/T4b), because a
-fake cannot subclass a port that does not exist yet; the interactive-message port's fake (T5a) is here.
+The review store (T4a1) is the real Firestore adapter on the same fake database (`world.review_store`); `seed_question`
+stores a domain model through that adapter's own document form. The interactive-message port's fake (T5a) is here.
 """
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
+from src.adapters.firestore_fact_review_store import FirestoreFactReviewStore, question_document
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.adapters.firestore_session_store import FirestoreSessionStore
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.config.environment import EnvironmentConfig
 from src.domain.channel_binding import ChannelBinding
 from src.domain.choice_outcome import ChoiceOutcome
+from src.domain.fact_review_question import FactReviewQuestion, QuestionStatus
 from src.domain.interactive_message import InteractiveMessage
 from src.domain.language import LanguageCode
 from src.domain.llm import Message
@@ -30,6 +32,7 @@ from src.ports.notification_state_port import NotificationStatePort
 from src.services.user_notification_service import UserNotificationService
 from tests.support.fact_lifecycle_world import NOW, PAST, RecordingSink, make_fact_world, seed_fact
 from tests.support.recording_task_queue import make_task_queue
+from tests.support.review_rule_builders import question as build_question
 
 
 class ReviewSessionStore(FirestoreSessionStore):
@@ -206,6 +209,7 @@ class ReviewWorld:
         self.notifier = UserNotificationService(self.notification_state, self.channels, coordinator=None, notification_sla={})
         self.channel_bindings = FakeChannelBindings()
         self.language = FakeLanguageService()
+        self.review_store = FirestoreFactReviewStore(self.store.db, self.env)
         self.now = NOW
 
     def clock(self) -> datetime:
@@ -219,6 +223,22 @@ class ReviewWorld:
     @property
     def docs(self) -> dict:
         return self.store.docs
+
+    @property
+    def question_docs(self) -> dict:
+        """The raw stored review questions, as Firestore holds them."""
+        return self.store.db.collection(self.env.fact_review_questions_collection).docs
+
+    async def seed_question(self, status: QuestionStatus = QuestionStatus.QUEUED, **over: Any) -> FactReviewQuestion:
+        """A question in `status` (`review_rule_builders.question`: exactly the fields that status needs, `over` on top),
+        stored in the store's own document form; returns the model."""
+        return await self.put_question(build_question(status, **over))
+
+    async def put_question(self, question: FactReviewQuestion) -> FactReviewQuestion:
+        """Store a question model as it is, in the store's own document form (replacing one with its id)."""
+        await self.store.db.collection(self.env.fact_review_questions_collection).document(question.question_id).set(
+            question_document(question))
+        return question
 
     @property
     def enqueued(self) -> List[Tuple[str, Dict[str, Any]]]:
