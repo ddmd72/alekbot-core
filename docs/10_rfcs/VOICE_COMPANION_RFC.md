@@ -884,8 +884,8 @@ BigQuery `prompt_content` and the relay logs.
   fan-out at 3 turns). That is too slow for "instant" and too shallow for "thorough": one search,
   no cross-check. On the same weather question Alek fanned out four parallel lookups and got it
   right.
-- 2 of the 8 `ask_alek` calls were errands ("remove the 2 Oct appointment", "set a reminder to
-  meet a friend"). The caller waited 30–60 s for a confirmation they did not need.
+- 2 of the 8 `ask_alek` calls were errands ("move the Friday standup", "set a reminder to
+  water the plants"). The caller waited 30–60 s for a confirmation they did not need.
 - Every search result's links went to chat, whether or not anyone wanted them.
 - The commission text reached Smart with the delegation timestamp twice (coordinator prefix +
   Smart's own `_inject_timestamps`).
@@ -1021,8 +1021,8 @@ spoken anchor ("humor: rare"); a copilot role (acknowledge, report, stop; no nar
 brief status instead of hosting (reverses `5a49944`).
 
 **Copilot register, step 2 (2026-09-29).** Step 1 (few-shot removed) barely moved the call. The
-owner named the real irritant: Lelik narrates **how** he is answering ("коротко і по суті", "без
-пафосу", "я не вигадую, чекаю на відповідь, щоб не брехати…"). This is the model voicing its own
+owner named the real irritant: Lelik narrates **how** he is answering ("просто й по ділу", "без
+зайвих слів", "я не гадаю, дочекаюся відповіді, щоб не помилитися…"). This is the model voicing its own
 instructions as content. The sources are the shared character tokens (`HUMOR_PRESET_RANEVSKAYA`
 `ALWAYS_ACTIVE` with `self_deprecation: mock own AI nature`, `VOICE_APHORISTIC` "get to the point",
 the "never verbose or preachy" directive) and the protocol's "say one short line before
@@ -1045,10 +1045,10 @@ awaits it. Job: `alek-voice-relay-dev-keep-alive`.
 
 **Copilot register, step 3 (2026-09-29): Lelik gets his own voice and humor.** Step 2 was
 verified in place: the token was uploaded before the prompt was assembled, and the relay ran the
-new anchor. Lelik still opened with "почнемо… а не з церемоній" and waited with "озвучу… без зайвих
-церемоній, тільки суть", which are paraphrases of `VOICE_APHORISTIC` ("never open with a greeting…
+new anchor. Lelik still opened with "одразу до справи… без привітань" and waited with "скажу… коротко,
+лише головне", which are paraphrases of `VOICE_APHORISTIC` ("never open with a greeting…
 start with substance", "get to the point"). One anchor line loses to a whole voice token. The owner's
-only USER override is `LANG_FIXED_UK`, so both slots come from the `lelik` profile itself and can
+only USER override is a fixed-language token, so both slots come from the `lelik` profile itself and can
 change there without touching Smart.
 - `VOICE_APHORISTIC` → `VOICE_COPILOT`: service lines ("checking", "handed to Alek", "still
   coming") are a few plain words; real answers get the depth they need; every sentence is about
@@ -1105,7 +1105,7 @@ xAI drops a cancelled reply's item from the conversation itself. Other differenc
 
 ## 5. Transport — telephony, with media relayed through us
 
-**Telephony, not a browser page.** A Spanish Twilio number is already provisioned and owned; what
+**Telephony, not a browser page.** A local Twilio number is already provisioned and owned; what
 remains is configuration, not paperwork. If the European path (§5.2) is ever taken, account and
 number must be homed in `IE1`.
 
@@ -1147,9 +1147,9 @@ over a WebSocket only the relay can know that: audio is written into Twilio far 
   no reply of its own — the words stay in the conversation for Lelik's next turn. Cost: interrupting
   Lelik means talking over him for a second.
 - **The call opens with the caller's own request** (`caller_opening`, 2026-09-25). Before the
-  pickup note the relay adds one `user` item in the owner's words: talk faster and more like a
-  person, no narrator spacing inside a phrase, don't repeat one intonation in every phrase, greet
-  me by name and ask how to help. Live, the same delivery rules as system text (anchor,
+  pickup note the relay adds one `user` item written as the caller's own request about pace,
+  phrasing and greeting (for example: keep a natural pace, sound like a person, greet me and ask
+  how to help). Live, the same delivery rules as system text (anchor,
   `SPOKEN_DELIVERY`) left Lelik a narrator; the owner asking in-call changed him at once, and the
   model then keeps matching its own earlier turns. The first reply answers this item.
   **Superseded 2026-09-28:** the item is now only a cue to speak first — "Welcome the user. Do not

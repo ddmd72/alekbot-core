@@ -921,7 +921,7 @@ truncated content, unknown senders), calls the tool for those, then classifies e
 
 **Tool:** `get_email_details(email_ids: List[str])` → returns `{body_text, attachments: List[str]}`
 per email via `format=full` Gmail API. Attachment filenames are first-class signals
-(e.g., `contract_rigert.pdf` confirms legal value even if subject is vague).
+(e.g., `contract_smith.pdf` confirms legal value even if subject is vague).
 
 **Prompt design:** Groovy DSL cognitive process framework (`EMAIL_CLASSIFIER_COGNITIVE_PROCESS` token in Firestore).
 Two-test selection model (email passes if EITHER test is satisfied):
@@ -1869,7 +1869,7 @@ attachment content. Bot never fetches attachment binaries without a direct user 
 
 ```
 Bot: "You have 3 unpaid invoices in your inbox (total €1,234). Want reminders?"
-Bot: "Your PZU insurance renewal is in 2 weeks based on your email."
+Bot: "Your car insurance renewal is in 2 weeks based on your email."
 ```
 
 ---

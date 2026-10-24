@@ -49,9 +49,9 @@ Post-backfill audit: 0 violations of the flag and vector invariants. Backup: `sc
 - **`ttl_days` is whatever the model writes, and nothing reads it.** The tool schema says "auto-calculated from
   temporal_class" (`consolidation_agent.py:1318`); nothing calculates it. Ephemeral: 14 (44 facts), 30–120 (25), none
   (22). Dynamic: none on 96. Stable: 180–730 on 20, although the old RFC says stable facts never expire.
-- **A class is not an expiry.** Class-based TTL would archive "the owner and his partner took a trip, Feb 13–16"
-  (`dynamic`, 90 d) and "the owner works on his employer's apps" (`dynamic`, 90 d): one is history and never stops
-  being true, the other is true until the owner changes jobs. Only the content says when a fact stops being true.
+- **A class is not an expiry.** Class-based TTL would archive "the user and Sam took a weekend trip, Mar 6–8"
+  (`dynamic`, 90 d) and "the user works as a project manager" (`dynamic`, 90 d): one is history and never stops
+  being true, the other is true until the user changes jobs. Only the content says when a fact stops being true.
 - **The old RFC contradicts itself.** §2.2/§4.4 tie expiry to the class; §4.5 stales every fact after 30 days without
   an update, including PERMANENT ones.
 
@@ -62,7 +62,7 @@ Post-backfill audit: 0 violations of the flag and vector invariants. Backup: `sc
 - `lineage_id` is unique per document: no lineage has two documents. `replaces_fact_id` is empty everywhere.
 - `merge_facts` supersedes its sources **before** it creates the merged fact (`:376-395` then `:425-430`): a failed
   create leaves the sources hidden with no successor, and the merged fact has no link to them.
-- The model compensates by keeping history inside the text ("auto-recharges $30.79 (Sep 5), $30.33 (Sep 25)…"),
+- The model compensates by keeping history inside the text ("phone plan tops up $20 (Mar 1), $25 (Apr 1)…"),
   which grows on every update.
 - The only serialization of writes is an in-process lock per input id (`:219-231`); two instances or two passes on
   one account can interleave.
@@ -98,7 +98,7 @@ changes meaning, gains a writer or loses one without its row in that map being r
 
 **Non-goals**
 
-- Semantics of state facts (weight, balances, "programs 12 h/day as of Feb"): what "as of" means to Smart and whether
+- Semantics of state facts (a reading streak, balances, "practises guitar 1 h/day as of Mar"): what "as of" means to Smart and whether
   Smart should see the date. Separate research (owner, 2026-10-21). This RFC only gives such facts a review path.
 - Browsing versions, and a "what did I used to…" search. The data model must allow it later. (A read-only view of
   stale and recently archived facts is proposed for S4, pending the owner, §8 P3.)
@@ -106,13 +106,13 @@ changes meaning, gains a writer or loses one without its row in that map being r
 
 ## 3. Kinds of facts, from the live data
 
-| Kind | Examples (live, paraphrased) | When it stops being current | Expiry answer |
+| Kind | Examples (invented, shaped like the live data) | When it stops being current | Expiry answer |
 |---|---|---|---|
-| Past event | "had an appointment on Apr 16", "a trip Feb 13–16", "a trip in 2013" | never; it is history | none |
-| Planned event | "checkup Sep 25, bring ID", "a visit Sep 30–Oct 3", "a festival Sep 7" | after its date; the plan is dead, an outcome may exist | date |
-| Validity or deadline | "a service deletes videos ~Apr 27", "a driving licence renewal due Oct 1", "passport expires 2031" | after the date the "valid / pending" claim is false | date |
+| Past event | "had a team offsite on May 12", "a weekend trip Mar 6–8", "a trip in 2015" | never; it is history | none |
+| Planned event | "car service Nov 4, bring the logbook", "a conference Nov 18–20", "a concert Dec 5" | after its date; the plan is dead, an outcome may exist | date |
+| Validity or deadline | "a cloud trial ends ~May 20", "a library card renewal due Nov 30", "a gym contract ends 2028" | after the date the "valid / pending" claim is false | date |
 | Current activity (ephemeral) | "refactoring the doc pipeline (Jun 2026)", "exploring a grounding API" | silently; no end date is said | horizon |
-| Changing state | weight, balances, subscriptions, "programs 12 h/day" | becomes doubtful, not false on a date | horizon |
+| Changing state | a reading streak, balances, subscriptions, "practises guitar 1 h/day" | becomes doubtful, not false on a date | horizon |
 | Stable / permanent | job, address, birthdate, marriage | only by an explicit change | none |
 | Noise that passed the filter | "a transfer ready for pickup", "testing token rotation" | days | horizon (short) |
 | Standing directive, principle | `agent_directive` domain, `principle` type, `mindset` tag | only by Stage 2b curation | none, pinned by code (D1) |
@@ -144,7 +144,7 @@ expiry: {"kind": "none"}                           // past event, stable, perman
 
 - A missing or malformed `expiry` where it is required is a tool error the model must correct, not a default. Today
   22% of facts have no TTL; silence must be impossible.
-- On a content change the model decides again: a rewrite can turn a plan into history ("checkup occurred…" → `none`).
+- On a content change the model decides again: a rewrite can turn a plan into history ("the car service took place…" → `none`).
 - **Pinned in code:** a fact with domain `agent_directive`, type `principle` or tag `mindset` takes `expiry: none` only;
   anything else is a tool error. Their lifecycle stays with Stage 2b (`STANDING_DIRECTIVES_RFC.md`), which reads only
   `current` directives (`consolidation_agent.py:798-843`); a directive that went stale would stop binding Smart and
@@ -333,7 +333,7 @@ falls to about a third of §7's daily estimate.
 | Outcome | When | Effect | `expiry` | `reported_date` |
 |---|---|---|---|---|
 | revive | still true: the owner confirmed, or a neighbour confirms it | `state=current`, in place | required; no born-due (D2) | moves to the evidence (D2 table) |
-| rewrite | can be restated as what is now true ("the Sep 25 checkup took place; result in fact X") | new version (D8), `current` | required | preserved |
+| rewrite | can be restated as what is now true ("the Nov 4 car service took place; result in fact X") | new version (D8), `current` | required | preserved |
 | archive | it was true and is over (a dead plan, an ended activity) | `state=archived`, `valid_to=now`, in place | refused | preserved |
 | invalidate | it was never true | `state=invalidated`, `valid_to=now`, in place | refused | preserved |
 | supersede | a current fact already says the newer thing | `state=superseded`, `superseded_by=<that fact>` | refused | preserved |
@@ -389,10 +389,10 @@ naturally; Smart does not write memory.
 **Resolving: ordinary consolidation (owner, Q2), plus a recorded reply (pending P1).**
 
 - The pair and the reply leave the window with the next overflow batch (median 6.4 h, up to 30 h). Stage 1 extracts
-  what the owner said as a normal fact, restated in full from the question and the reply: "User still takes protein
-  X (confirmed Oct 2026)". Stage 1 cannot see the stale fact (Q1), so this is a new current fact, and the review pass
+  what the owner said as a normal fact, restated in full from the question and the reply: "User still takes evening
+  pottery classes (confirmed Oct 2026)". Stage 1 cannot see the stale fact (Q1), so this is a new current fact, and the review pass
   finds it as a neighbour created after `asked_at`. A framed **negative** answer is recorded the same way, as a
-  restated fact ("User stopped taking protein X (Oct 2026)"); today the live rule handles "I stopped…" as an update of
+  restated fact ("User stopped taking pottery classes (Oct 2026)"); today the live rule handles "I stopped…" as an update of
   the existing fact (`CONSOLIDATION_TAXONOMY.groovy:301-335`), which Stage 1 cannot find under Q1.
 - **Recorded reply (P1, pending).** When `ConsolidationService` processes a batch that contains a memory-review frame,
   code sets `pair_consolidated_at` on those questions and stores the owner's messages that follow the frame in that
@@ -463,7 +463,7 @@ due); `reported_date` is unchanged and the event's actor is `timeout`.
   copied, `created_at` orders nothing inside a lineage; across facts it keeps ordering the baseline, the domain
   channel and the Cabinet by when the owner first said it, so a consolidator rewrite does not jump a fact to the
   front of its domain.
-- **Text history stays in the text** for time series (Smart sees only current facts, and "how did my weight change"
+- **Text history stays in the text** for time series (Smart sees only current facts, and "how did my savings change"
   needs the series). Versions are for recovery and a later archive view, not for Smart.
 - **Tracker.** `_TrackingFactManagement` records the result id (`result["fact_id"]`, the new version), and only on
   success.

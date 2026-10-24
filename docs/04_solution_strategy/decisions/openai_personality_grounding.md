@@ -53,8 +53,8 @@ OpenAI 2026 models prioritize clarity over scaffolding. Personality instructions
 ## Validation
 
 Tested on production requests:
-- Filmoteca d'Estiu question: ✅ Personality present (paradox, dark humor, self-deprecation)
-- "Piwko doma" redirect: ✅ Presupposition + Reframing + Metaphor all working
+- Open-air cinema question: ✅ Personality present (paradox, dark humor, self-deprecation)
+- "Movie night at home" redirect: ✅ Presupposition + Reframing + Metaphor all working
 - Bot successfully guides user to conclusion without direct argument
 
 ## Decision

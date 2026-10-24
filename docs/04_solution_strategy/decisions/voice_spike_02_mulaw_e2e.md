@@ -13,14 +13,14 @@ reversion (the specific risk named in RFC §7's spike table).
 
 ## Method
 
-Real phone call from the owner's personal number to the provisioned Twilio number
-(the Spanish local number in `TWILIO_PHONE_NUMBER`), Twilio's Voice webhook pointed at the relay
+Real phone call from the owner's phone to the provisioned Twilio number
+(the local number in `TWILIO_PHONE_NUMBER`), Twilio's Voice webhook pointed at the relay
 script (exposed via `ngrok http 8765`),
 `PROVIDER=openai`. xAI was not reached this session (see Revisit-if).
 
 ## Result: audio was clean
 
-The owner's own words: "связь отличная" (connection quality is excellent). No garbling, no
+The owner's verdict: connection quality was excellent. No garbling, no
 resampling artifacts, no dropped audio reported once the session actually connected and
 exchanged a full turn. This confirms RFC §5's core claim for the OpenAI leg: the `audio/pcmu`
 format is accepted end to end with no transcoding needed.

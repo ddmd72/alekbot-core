@@ -19,7 +19,7 @@ arriving) — not from `speech_started`, which would incorrectly fold in however
 was still mid-sentence. Real call, `PROVIDER=openai`, owner's personal phone → the provisioned
 Twilio number → relay (local machine, exposed via `ngrok http 8765`) → `gpt-realtime-2.1`.
 
-**Path measured:** phone → PSTN → Twilio → ngrok tunnel → owner's laptop (Western Europe) →
+**Path measured:** phone → PSTN → Twilio → ngrok tunnel → owner's laptop →
 OpenAI's Realtime API → back. This is **not** the eventual production path — Slice 1 deploys the
 relay to Cloud Run (`us-central1` per RFC §5.2's "pragmatic v1: all three on the US path"), not a
 developer's laptop behind a home/office connection and an ngrok tunnel. Numbers here are a
@@ -51,8 +51,7 @@ latency, on a laptop, on OpenAI. **Not** good enough to set a production
 latency budget or to compare providers — that needs the same measurement run from `us-central1`
 against both providers, which is real Slice-1-adjacent work, not this spike's job.
 
-**Owner's explicit call, recorded verbatim in intent:** "нет смысла делать сейчас, в облаке будут
-немного другие цифры, для ПОК результат хороший" — no value in refining this further at POC
+**Owner's explicit call, recorded in intent:** no value in refining this further at POC
 stage; cloud numbers will differ; the POC result is good enough to move on. This spike is
 considered closed on that basis, not because every angle was exhausted.
 

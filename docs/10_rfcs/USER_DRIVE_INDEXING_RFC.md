@@ -1642,7 +1642,7 @@ studies on the live index (private, `scripts/memory/`). Designed in §25.
   re-opened found photos to confirm them. Cost: one `use_skill` turn on the first drive search of a conversation.
   The live check after the change (a place-name query): one skill load, two searches, no file opened, 58 s.
 
-**Owner decisions (2026-10-14, card accuracy, capture and inaccessible files)** — after a live session on the owner's
+**Owner decisions (2026-10-14, card accuracy, capture and inaccessible files)** — after a live session on a set of
 identity-document scans (observations in §26.1, described generically). Designed in §26; **proposed, not built**.
 - **D33 Files the bot cannot open are shown honestly, not deleted.** Existence is decided by delta only: a 404 by id
   while indexing means "no access", not "deleted". The record goes to an `inaccessible` state, keeps its metadata card,
@@ -3632,7 +3632,7 @@ S4 the small fixes (§26.5), S5 the two scripts (§26.6), S6 the photo location 
 cross-cutting round of fixes (Δ89–Δ91, A4–A6). Where this section and §3.4, §7.6, §8.2,
 §10.2, §10.4, §24.4 or §25.2–§25.5 disagree, this section wins for what is built; for the rest the text above describes
 the code. Every example below is synthetic: the observations were
-made on the owner's identity documents, and none of their content, names or numbers appears here.
+made on a live index, and none of their content, names or numbers appears here.
 
 ### 26.1 What was observed (2026-10-14)
 1. **Files the bot cannot open were deleted from the index as "gone".** The bot's OneDrive access is an ordinary ACL
@@ -4145,7 +4145,7 @@ the first; no reset reopens them.
 | Δ89 | Native topics weight 1 | Graded and reported, weight 0 in `V` | Interpretation in the user's language; with weight 1 most fully confirmed cards fell under 90 % and Smart would open almost every file |
 | Δ90 | A word's df for the strict-AND allowances counts every key | Counted without `sl:` keys | Scene labels must not make document words ("travel", "квартира") missable |
 | Δ91 | An in-text ID or digit-group value is keyed as printed | Also keyed by its separator-free casefolded form, both sides (not amounts or dates) | "QX4471902" finds a card printing "QX 4471902" |
-| Δ92 | The lenient date reader knew spaced/dotted day-month-year forms and full month names | Also bilingual abbreviated months with a 2- or 4-digit year (`27 ЛИП/JUL 22`), compact `13JUN2024`, ISO basic `20261009T180724Z`, and day + month without a year when the year is elsewhere in the text; `ACCURACY_VERSION` 2 (re-grade from stored text, no model call) | The first revision report on the live index (2026-10-19, D37) listed these shapes recurring across files; identity documents averaged 76 % |
+| Δ92 | The lenient date reader knew spaced/dotted day-month-year forms and full month names | Also bilingual abbreviated months with a 2- or 4-digit year (`27 ЛИП/JUL 22`), compact `13JUN2024`, ISO basic `20261009T180724Z`, and day + month without a year when the year is elsewhere in the text; `ACCURACY_VERSION` 2 (re-grade from stored text, no model call) | The first revision report on the live index (2026-10-19, D37) listed these shapes recurring across files; one document class averaged 76 % |
 | Δ93 | The coverage line (and a filter listing's envelope) always said "N files cannot be opened by the bot" when the scope held closed files | Said only when the search found nothing (any scope), where it explains why a not-found may be incomplete; with results it is omitted (a matching closed file keeps the access line on its card), and the folder-scoped closed-file read is skipped | The owner, live 2026-10-19: noise on every found result |
 | Δ94 | The offline Search v2 eval exited 1 on three lost v1-passing cases and on two meaning-only cases under lexical vectors; the G2 integration test read `card.window` (removed by the v2 card) | Gold flag `accepted_loss` (reason) on `family-latest-dogovor`, `g2-amount-deposit-porto`, `g2-clause-nda-term`: listed under "accepted losses", out of the "v1-passing cases lost" bar. Gold flag `requires_embeddings: "semantic"` on `sem-related-german` and `sem-related-dentist`: skipped under `--embeddings lexical`, counted under `gemini`. The harness (`runner._windows`, `metrics.py`) reads `card.passage`. `bars_v2.json` and `Z_RELATED` unchanged (related lines per negative stays a known miss until calibrated) | D29 strict AND blocks a conversational query word no file holds (owner accepted v2, 2026-10-19); lexical vectors cannot represent meaning; the window field was renamed in 6e1a4dc0 |
 | Δ127 | The manifest `drive_query` text (§25.13.6) said "the subject in the user's words (any language)" and never that every word must match | Appends "All words must match: use the user's few key words in one language."; the `drive-search` skill gains the same discipline (one language, no synonyms or translations, at most one re-search after a "no file holds" line, "all" is still a find, a value question opens the file) | G3 2026-10-19: Smart wrote synonym and translation bags under strict AND, each "No file holds" line started another bag, and 26 of 147 runs hit the 15-turn cap; the Protocol `tiers` line (§25.5.7) lost its clause ", so a search in another language can still find more", which contradicted the one-language rule |
@@ -4284,7 +4284,7 @@ and JSONL); a response schema works in batch (with the trap of Δ131); batch acc
 re-upload path of Δ104); job expiry (`EXPIRED`) and its resubmit; **unique** (not repeated) audio longer than 22 min — the silent `STOP` at
 87 min may depend on repetition; the short-clip early-timestamp effect on real audio.
 
-Measured earlier (spike, one 21:47 Russian-language recording, 93.7 MB webm; REPORT §1–§2):
+Measured earlier (spike, one 21:47 recording, 93.7 MB webm; REPORT §1–§2):
 - **Extraction.** `ffmpeg` straight on the Graph pre-authenticated download URL, `-vn -ac 1 -ar 16000 -c:a libopus
   -b:a 24k`: 18.3 s wall, 23.2 CPU-s (≈ 1.07 CPU-s per audio minute), 18.8 MB RSS, 3.9 MB out, **0 seeks** — a
   webm is read sequentially and in full (all 93.7 MB) even with `-vn`, because audio and video are interleaved.

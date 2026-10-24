@@ -10,11 +10,11 @@ screen-off on iOS Safari, which the phone path (Twilio callback) can. That rejec
 stood, but it left two costs the owner no longer accepted once a screen-on browser call
 became a real option (`docs/10_rfcs/VOICE_WEB_TRANSPORT_RFC.md` §1):
 
-- **Money.** Every phone call is an outbound PSTN call to a Spanish mobile — roughly
-  $0.05–0.19/minute (Twilio ES rates, 2026-09-27) before the realtime model itself.
+- **Money.** Every phone call is an outbound PSTN call to a mobile number — roughly
+  $0.05–0.19/minute (Twilio mobile rates for the destination, 2026-09-27) before the realtime model itself.
 - **Audio quality.** Twilio Media Streams is G.711 μ-law at 8 kHz both ways. The owner's
-  verdict after the spike, hearing the same model over wideband PCM: "an order of
-  magnitude better — the voice and intonation we could not get over Twilio."
+  verdict after the spike, hearing the same model over wideband PCM: far better, with the
+  voice and intonation Twilio could not carry.
 
 A second transport only pays for itself if it (a) reuses `VoiceSessionService` and Lelik's
 persona unchanged, (b) keeps the relay in the media path — VOICE_COMPANION §5's argument

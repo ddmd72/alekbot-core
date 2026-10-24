@@ -20,7 +20,7 @@ Because the transcript would never reach session history, and history is the who
 `FileConversionService.process_attachment` returns a **reference-only** MessagePart — content
 lives in GCS, not in the turn. So a spoken message would have left history holding the
 synthetic "no text + attachment" fallback instead. Observed live before the fix: a Slack voice
-memo recorded `Подивись на цей файл` as the user turn, with the transcript reachable only
+memo recorded the generic file fallback (`FILE_FALLBACK_GENERIC`) as the user turn, with the transcript reachable only
 through a file-ref resolution that is not persisted. Consolidation would have had nothing to
 read, and speaking would not have made the exocortex smarter — which was the requirement.
 
@@ -44,8 +44,8 @@ Cabinet: `PUT /api/user/voice-languages`; shape validated by `normalize_voice_la
 
 Deliberately not `LanguageCode`: that enum is the closed set of *translated UI languages*
 (uk/en/fr/es) and has no `ru` — it cannot express what a household speaks. A multilingual
-speaker is the normal case here, not an edge one: one 22-second test message carried Russian,
-English (`Get`, `MCP`) and Ukrainian, and all three survived.
+speaker is the normal case here, not an edge one: one 22-second test message mixed three
+languages, English terms (`Get`, `MCP`) among them, and all three survived.
 
 This forced `languages` onto `AudioTranscriptionPort.transcribe` — the setting is per user and
 per call, so it cannot live on a singleton adapter.
@@ -53,7 +53,7 @@ per call, so it cannot live on a singleton adapter.
 ## Rejected
 
 - **A vocabulary `prompt` with domain terms** — shipped first, then removed. OpenAI requires
-  `prompt` to match the audio language, and the language is a user setting; a Russian carrier
+  `prompt` to match the audio language, and the language is a user setting; a fixed-language carrier
   sentence hardcoded in an adapter is wrong on both counts.
 - **`keywords`** (also `gpt-transcribe`-only) — no evidence yet that term biasing is needed.
   Revisit after real transcripts, not before.
