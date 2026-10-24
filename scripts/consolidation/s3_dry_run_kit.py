@@ -46,7 +46,8 @@ from src.domain.fact_lifecycle import IN_PLACE_FIELDS, superseded_closure
 from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot
 from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_resolution import resolve_chain
-from src.domain.fact_write_context import NO_READABLE_SOURCE_NOTE, FactWriteContext
+from src.domain.fact_tool_result import NOTE_NO_READABLE_SOURCE, STATUS_CREATED, WRITTEN_STATUSES
+from src.domain.fact_write_context import FactWriteContext
 from src.domain.owner_timezone import failure_reason, owner_to_read, owner_zone
 from src.domain.pass_actor import PassActor
 from src.domain.prompt_v3.slot import OwnerType
@@ -1023,7 +1024,7 @@ class DryRunKit:
         result = await call
         written_id = result.get(id_key)
         stored = None
-        if written_id and self.repo is not None and result.get("status") in ("created", "updated", "merged"):
+        if written_id and self.repo is not None and result.get("status") in WRITTEN_STATUSES:
             stored = await self.repo.get_fact_by_id(written_id)
         row.update({
             "status": result.get("status"),
@@ -1037,7 +1038,7 @@ class DryRunKit:
             "reported_date_chosen": None if stored is None else stored.reported_date.isoformat(),
             "state_stored": None if stored is None else stored.state.value,
             "notes": result.get("note"),
-            "derived_from_unreadable": NO_READABLE_SOURCE_NOTE in (result.get("note") or ""),
+            "derived_from_unreadable": NOTE_NO_READABLE_SOURCE in (result.get("note_codes") or []),
         })
         return result
 
@@ -1051,7 +1052,7 @@ class DryRunKit:
             total.update(counted)
         undated: Counter = Counter(
             row["pass"] for row in self.rows
-            if row["action"] == "create" and row["status"] == "created" and row["cleanup"]
+            if row["action"] == "create" and row["status"] == STATUS_CREATED and row["cleanup"]
             and (not row["derived_from_named"] or row["derived_from_unreadable"])
         )
         return {

@@ -213,8 +213,8 @@ class ConsolidationPassStats:
         """Refusals over a missing or malformed `expiry` that no later successful call answers: a create or merge
         with the same text, a non-closing update of the same fact (retiring the fact is the loss, not an answer).
         On a pass whose born-due refusal is a loss (`PassActor`) it counts the same way, and its answer (a
-        past-tense rewrite, so other text) is found by `_rewrites`. Approximate on purpose: a retry of a missing-`expiry` refusal that rewrites the text
-        counts as abandoned, which errs towards an alert."""
+        past-tense rewrite, so other text) is found by `_rewrites`. Approximate on purpose: a retry of a
+        missing-`expiry` refusal that rewrites the text counts as abandoned, which errs towards an alert."""
         counted = (
             (OUTCOME_EXPIRY, OUTCOME_BORN_DUE) if self.actor.born_due_refusal_is_loss else (OUTCOME_EXPIRY,)
         )
