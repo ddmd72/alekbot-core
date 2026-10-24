@@ -12,7 +12,7 @@ from .fact_lifecycle import (
     check_pin, compute_expiry, expiry_pinned, lifecycle_event, lifecycle_fields, required_decision, revival_fields,
     with_event,
 )
-from .fact_review_reasons import gives_window_reason
+from .fact_review_reasons import is_rewrite_reason, superseded_reason
 from .fact_review_rules import STAYS_STALE_REFUSAL, review_action
 from .fact_update import ParsedFactUpdate
 from .fact_update_plan import FactUpdatePlan
@@ -94,7 +94,7 @@ def _finish_review(
         finished, decision_note = _review_version(plan, current, update, context, now, reported, reason)
     elif plan.kind != "in_place":
         raise ValueError(
-            f"this pass makes a {action} in place: send the state alone, without text, tags, metadata or "
+            f"this pass makes an {action} in place: send the state alone, without text, tags, metadata or "
             "temporal_class"
         )
     elif action == "revive":
@@ -127,12 +127,13 @@ def _review_version(
     reported: datetime, reason: str,
 ) -> Tuple[FactUpdatePlan, Optional[str]]:
     """A rewrite: a current version (whatever the stored state was), `reported_date` stored, the review horizon. Its own
-    entry leads to current with the rewrite's reason, so the window a later silence doubles counts from it."""
+    entry leads to current with the rewrite's reason (`is_rewrite_reason`, never a revive's), so the window a later
+    silence doubles counts from it."""
     version = plan.version_fact
     if version is None:
         raise ValueError("a version plan carries its version document")
-    if not gives_window_reason(reason):
-        raise ValueError(f"a rewrite's trail reason must be a rewrite or revive reason, not {reason!r}")
+    if not is_rewrite_reason(reason):
+        raise ValueError(f"a rewrite's trail reason must be a rewrite reason, not {reason!r}")
     pinned = expiry_pinned(version.domain, version.type, version.tags)
     decision = required_decision(update.expiry, pinned, lambda: _missing_for_version(update))
     expiry_fields, note = review_horizon(decision, reported, now, context)
@@ -197,7 +198,7 @@ def _closing_reason(update: ParsedFactUpdate, context: FactWriteContext, reason:
     if reason is not None:
         return reason
     if update.superseded_by is not None:
-        return f"superseded by {update.superseded_by}"
+        return superseded_reason(update.superseded_by)
     default = context.actor.closing_reason
     if default is None:
         raise ValueError(f"a {context.actor} state change carries its code-built trail reason; none was given")
