@@ -4,8 +4,9 @@ Each scenario is `async def scenario(db, col) -> result`: it writes into the col
 (a `firestore.AsyncClient` or the H1 fake `EvalDb`) and returns ONE observable value (ids in order, field values, an
 error class name). `SCENARIOS` pairs every function with its expected value: Firestore's documented behaviour, never
 what a backend happens to answer. Every expected value was confirmed on the test database on 2026-10-22 (except the two
-Facts S3 scenarios, range_timestamp_excludes_null_and_missing and projected_query_update_time_matches_transactional_read:
-documented behaviour, not yet run on the test database, owner `make test-cloud` before deploy); where the
+Facts S3 scenarios, range_timestamp_excludes_null_and_missing and projected_query_update_time_matches_transactional_read,
+and the Facts S4 scenario equality_and_in_without_composite: documented behaviour, not yet run on the test database,
+owner `make test-cloud` before deploy); where the
 documentation is silent (`!=` and null or another type, equality plus array-contains, the error class of a precondition on
 a deleted document, the order of several implicit inequality fields) that run is the source.
 
@@ -192,7 +193,10 @@ async def equality_and_in_without_composite(db: Any, col: str) -> Any:
     in_query = _where(_where(c, "account_id", "==", "x"), "status", "in", ["queued", "asked", "unanswered"])
     four = _where(_where(_where(_where(c, "account_id", "==", "x"), "platform", "==", "slack"), "channel", "==", "C1"),
                   "message_id", "==", "m1")
-    return {"in": await _ids_or_error(in_query), "four_equalities": await _ids_or_error(four)}
+    # membership only: the claim is "no composite needed"; the order of an `in` result without `order_by` is not documented
+    # and the review store orders in code (plan §3.13)
+    results = {"in": await _ids_or_error(in_query), "four_equalities": await _ids_or_error(four)}
+    return {k: sorted(v) if isinstance(v, list) else v for k, v in results.items()}
 
 
 # ----------------------------------------------------------------------------------------- dotted paths
