@@ -179,7 +179,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.MEMORY_ANSWER_NOTED.value: "Merci, c'est noté.",
     UIMessage.MEMORY_REPLY_NOTED.value: "Noté — j'en tiendrai compte.",
     UIMessage.MEMORY_ALREADY_ANSWERED.value: "Déjà répondu, merci.",
-    UIMessage.MEMORY_QUESTION_CLOSED.value: "Cette question est close.",
+    UIMessage.MEMORY_QUESTION_CLOSED.value: "Cette question est fermée.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Les faits que j'ai mis de côté cette semaine :",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Pour en rétablir un, dis-moi dans le chat que c'est toujours vrai.",
 }

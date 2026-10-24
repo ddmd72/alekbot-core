@@ -5,11 +5,12 @@ pass reported from the owner's recent messages. The texts: UI strings for uk/en/
 model's translation of `CANONICAL_LABELS`, kept only if `check_labels` passes. There is no word table in code, and the
 digits 1-4 mean the same in every language."""
 import re
+import unicodedata
 from types import MappingProxyType
-from typing import Final, List, Mapping, Optional
+from typing import Final, List, Literal, Mapping, Optional
 
 from .fact_review_answer_kind import AnswerKind
-from .fact_review_question import FactReviewQuestion
+from .fact_review_question import FACT_QUESTION_KIND, FactReviewQuestion
 from .fact_review_state import FactReviewState
 from .interactive_binding import InteractiveBinding
 from .interactive_message import InteractiveMessage
@@ -17,7 +18,6 @@ from .interactive_option import MAX_LABEL_CHARS, InteractiveOption
 from .language import LanguageCode
 from .ui_messages import UIMessage
 
-FACT_QUESTION_KIND: Final[str] = "fact_question"  # the binding kind that routes a choice to the fact-question handler
 MAX_TEXT_CHARS: Final[int] = 120  # the question line, the hint, the acknowledgements, the closed note, the digest lines
 MAX_OPTION_WORDS: Final[int] = 4
 
@@ -53,10 +53,40 @@ CANONICAL_LABELS: Final[Mapping[str, str]] = MappingProxyType({
     UIMessage.MEMORY_DIGEST_FOOTER.value: "To bring one back, tell me in chat that it is still true.",
 })
 
+# Where the texts of a message language come from (`label_source`).
+LabelSource = Literal["ui", "model", "fallback"]
+
+_CODE = re.compile(r"[a-z]{2}")
 _URL = re.compile(r"(?i)[a-z][a-z0-9+.\-]*://|www\.")
 # `[` would imitate a history frame (`[System:`, `[Reply to memory review`); `<` and `>` are Slack's control syntax
 # (`<!channel>`, `<@U1>`), which a model-written text must not carry into a post.
 _FORBIDDEN = frozenset("[<>")
+_INVISIBLE = frozenset({"Cc", "Cf"})  # control and format characters: bidi overrides, zero-width spaces
+
+
+def parse_message_language(raw: object) -> Optional[str]:
+    """A language code the review reported, as the one form kept: two ASCII letters, lowercased ("RU" -> "ru"); anything
+    else ("ru-RU", "Russian", "", a number, None) is no language."""
+    if not isinstance(raw, str):
+        return None
+    code = raw.strip().lower()
+    return code if _CODE.fullmatch(code) else None
+
+
+def ui_strings_language(code: str) -> Optional[LanguageCode]:
+    """The language whose UI strings serve `code` (uk, en, fr, es), or None when the texts must be model-written."""
+    parsed = parse_message_language(code)
+    return next((language for language in LanguageCode if language.value == parsed), None)
+
+
+def label_source(code: str, cached: Optional[Mapping[str, object]]) -> LabelSource:
+    """Where the texts for `code` come from: `ui` (the UI strings), `model` (the label set the review cached for it, which
+    must pass `check_labels` now, whenever it was written), else `fallback` (the UI language's texts)."""
+    if ui_strings_language(code) is not None:
+        return "ui"
+    if parse_message_language(code) is None:
+        return "fallback"
+    return "model" if cached is not None and check_labels(cached) is None else "fallback"
 
 
 def message_language(
@@ -69,20 +99,19 @@ def message_language(
     """The language code (ISO 639-1) the owner's review messages are in.
 
     Fixed (`agent_mirror` False): the owner's language, else the system default; always one of uk/en/fr/es. Mirror: the
-    language the last pass reported from his messages (`state.message_language`; any language), and until there is one
-    the UI language."""
+    language the last pass reported from his messages (`state.message_language`, read through `parse_message_language`;
+    any language), and until there is one the UI language."""
     if not agent_mirror:
         return (preferred or system_default).value
-    if state is not None and state.message_language:
-        return state.message_language
-    return ui_language.value
+    reported = parse_message_language(state.message_language) if state is not None else None
+    return reported or ui_language.value
 
 
 def check_labels(labels: Mapping[str, object]) -> Optional[str]:
     """Why a model-written label set may not be used, or None when it may.
 
     It must be exactly `LABEL_KEYS`, each a text of one line with no digit (the options are numbered by the message),
-    no `[`, `<` or `>`, and no URL. The four option labels are at most `MAX_OPTION_WORDS` words and `MAX_LABEL_CHARS`
+    no `[`, `<` or `>`, no control or format character (a bidi override could move the digits) and no URL. The four option labels are at most `MAX_OPTION_WORDS` words and `MAX_LABEL_CHARS`
     characters (the bound an option takes, so a set that passes can always be posted) and differ from each other; every
     other text is at most `MAX_TEXT_CHARS` characters."""
     if set(labels) != LABEL_KEYS:
@@ -103,6 +132,8 @@ def _text_problem(value: object, is_option: bool) -> Optional[str]:
     text = value.strip()
     if len(text.splitlines()) != 1:
         return "more than one line"
+    if any(unicodedata.category(ch) in _INVISIBLE for ch in text):
+        return "has a control or format character"
     if any(ch.isdigit() for ch in text):
         return "has a digit"
     if any(ch in text for ch in _FORBIDDEN):
