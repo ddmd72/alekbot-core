@@ -529,7 +529,7 @@ class TestFactRepositoryContract:
         assert getattr(FactRepository.search_facts_by_domain, "__isabstractmethod__", False)
 
     def test_all_abstract_methods_count(self):
-        """Port should have exactly 20 abstract methods.
+        """Port should have exactly 23 abstract methods.
 
         F7.2 (2026-05-18): added search_facts_by_domain to close the
         port/adapter contract gap — search_facts_by_domain was called via
@@ -541,12 +541,14 @@ class TestFactRepositoryContract:
         2026-10-23 (FACT_LIFECYCLE_RFC S3, T3): the janitor's find_due_facts, stale_due_fact and stale_backlog added
         (21; reviewer edit, plan §5 T3).
         2026-10-24 (facts S4, T2c): invalidate_fact deleted, the Cabinet delete is CabinetFactService (20; reviewer edit).
+        2026-10-24 (facts S4, T3b): the review's get_stale_facts, get_recently_closed and archive_and_add added
+        (23; reviewer edit, card T3b).
         """
         abstract_methods = {
             name for name, method in inspect.getmembers(FactRepository)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 20, f"Expected 20 abstract methods, got {abstract_methods}"
+        assert len(abstract_methods) == 23, f"Expected 23 abstract methods, got {abstract_methods}"
         assert {"find_due_facts", "stale_due_fact", "stale_backlog"} <= abstract_methods
         assert "invalidate_fact" not in abstract_methods
 
