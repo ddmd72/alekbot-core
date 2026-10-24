@@ -42,7 +42,8 @@ def test_the_history_fact_says_the_text_holds_forever_and_keeps_the_old_facts_ta
     assert attrs.expiry == EXPIRY_NONE
     assert attrs.expiry_fields == {"expiry_kind": ExpiryKind.NONE, "ttl_days": None, "expires_at": None}
     assert (attrs.domain, attrs.type, attrs.tags) == (old.domain, old.type, old.tags)
-    assert (attrs.temporal_class, attrs.context_priority) == (old.temporal_class, old.context_priority)
+    # Reviewer edit (facts S4, T3a re-review, L3/L4 arbiter): a history fact is stable and archival, not copied.
+    assert (attrs.temporal_class, attrs.context_priority) == (TemporalClass.STABLE, ContextPriority.ARCHIVAL)
     assert attrs.reported_date == SAID
     assert attrs.metadata == {} and attrs.context is None and attrs.derived_from == ()
 
