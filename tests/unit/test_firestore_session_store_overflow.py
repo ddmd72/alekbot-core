@@ -89,8 +89,8 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
 
         role: "user"
         parts:
-          0: {"text": "У меня бекенд отвалился..."}
-          1: {"consolidation_text": "Save Toyota Corolla left mirror damage fact"}
+          0: {"text": "Бэкенд упал..."}
+          1: {"consolidation_text": "Save Skoda Fabia 2015 tyre change fact"}
 
     The consolidation serializer (overflow_callback / $consolidate path) uses:
         [{"text": p.full_text or p.consolidation_text or p.text}
@@ -102,8 +102,8 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
     raw_firestore_message = {
         "role": "user",
         "parts": [
-            {"text": "У меня бекенд отвалился и не сохранило сохрани пожалуйста еще раз"},
-            {"consolidation_text": "Save Toyota Corolla left mirror damage fact"},
+            {"text": "Бэкенд упал, сохрани, пожалуйста, ещё раз"},
+            {"consolidation_text": "Save Skoda Fabia 2015 tyre change fact"},
         ],
         "created_at": 1774481644.1386607,
     }
@@ -116,10 +116,10 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
     assert len(messages) == 1
     msg = messages[0]
     assert len(msg.parts) == 2
-    assert msg.parts[0].text == "У меня бекенд отвалился и не сохранило сохрани пожалуйста еще раз"
+    assert msg.parts[0].text == "Бэкенд упал, сохрани, пожалуйста, ещё раз"
     assert msg.parts[0].consolidation_text is None
     assert msg.parts[1].text is None
-    assert msg.parts[1].consolidation_text == "Save Toyota Corolla left mirror damage fact"
+    assert msg.parts[1].consolidation_text == "Save Skoda Fabia 2015 tyre change fact"
 
     # Apply the consolidation serializer expression (identical to main.py:248 and conversation_handler.py:759)
     serialized_parts = [
@@ -129,8 +129,8 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
     ]
 
     assert len(serialized_parts) == 2
-    assert serialized_parts[0] == {"text": "У меня бекенд отвалился и не сохранило сохрани пожалуйста еще раз"}
-    assert serialized_parts[1] == {"text": "Save Toyota Corolla left mirror damage fact"}
+    assert serialized_parts[0] == {"text": "Бэкенд упал, сохрани, пожалуйста, ещё раз"}
+    assert serialized_parts[1] == {"text": "Save Skoda Fabia 2015 tyre change fact"}
 
 
 @pytest.mark.asyncio

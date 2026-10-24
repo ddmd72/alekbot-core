@@ -51,4 +51,4 @@ def test_a_triple_inside_a_phone_or_iban_run_is_not_a_date(text):
 
 
 def test_a_date_beside_a_short_run_is_still_a_date():
-    assert "2031-05-25" in content_terms("Issued 25 05 2031 in Valencia")
+    assert "2031-05-25" in content_terms("Issued 25 05 2031 in Springfield")

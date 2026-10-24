@@ -13,7 +13,7 @@ NOW = datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc)
 EARLIER = NOW - timedelta(days=3)
 
 
-def _fact(fact_id: str, text: str = "lives in Valencia", lineage: str = "L", **over) -> FactEntity:
+def _fact(fact_id: str, text: str = "lives in Springfield", lineage: str = "L", **over) -> FactEntity:
     fields = dict(id=fact_id, account_id="acc", created_by_user_id="usr", lineage_id=lineage, text=text,
                   type=FactType.STATE, created_at=EARLIER, valid_from=EARLIER, last_updated=EARLIER)
     fields.update(over)
@@ -66,7 +66,7 @@ def test_the_closure_keeps_only_the_newest_events_and_does_not_touch_the_stored_
 def test_the_requested_fact_itself_is_invalidated_with_the_cabinet_trail_entry():
     stored = _fact("f-x", state=FactState.ARCHIVED, lifecycle_events=[OLD_EVENT])
 
-    fields = cabinet_invalidation("lives in Valencia", stored, "f-x", NOW)
+    fields = cabinet_invalidation("lives in Springfield", stored, "f-x", NOW)
 
     assert fields == {
         "state": FactState.INVALIDATED, "is_current": True, "valid_to": NOW, "last_updated": NOW,
@@ -82,7 +82,7 @@ def test_the_requested_id_itself_passes_whatever_text_the_page_showed():
 
 
 def test_a_followed_version_with_the_text_the_page_showed_is_invalidated():
-    fields = cabinet_invalidation("lives in Valencia", _fact("f-v2", version=2), "f-v1", NOW)
+    fields = cabinet_invalidation("lives in Springfield", _fact("f-v2", version=2), "f-v1", NOW)
 
     assert fields["state"] is FactState.INVALIDATED
     assert fields["lifecycle_events"][-1] == {"at": NOW, "from": "current", "to": "invalidated", "actor": "cabinet",
@@ -91,7 +91,7 @@ def test_a_followed_version_with_the_text_the_page_showed_is_invalidated():
 
 def test_a_followed_version_with_a_newer_text_is_refused_naming_it():
     with pytest.raises(FactResolutionError) as caught:
-        cabinet_invalidation("lives in Valencia", _fact("f-v2", text="lives in Puçol", version=2), "f-v1", NOW)
+        cabinet_invalidation("lives in Springfield", _fact("f-v2", text="lives at 12 Oak Street, Springfield", version=2), "f-v1", NOW)
 
     assert str(caught.value) == "fact f-v1 was rewritten after the page loaded; reload"
     assert caught.value.current_id == "f-v2" and not isinstance(caught.value, ValueError)

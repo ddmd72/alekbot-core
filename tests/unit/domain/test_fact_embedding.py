@@ -6,14 +6,14 @@ from src.domain.fact_embedding import fact_embedding_texts
 
 
 def test_order_is_text_tags_metadata():
-    out = fact_embedding_texts("mother is Valentina", ["family", "mother"], {"name": "Valentina"})
-    assert out == ["mother is Valentina", "family mother", '{"name": "Valentina"}']
+    out = fact_embedding_texts("mother is Maria", ["family", "mother"], {"name": "Maria"})
+    assert out == ["mother is Maria", "family mother", '{"name": "Maria"}']
 
 
 def test_metadata_keeps_non_ascii():
-    out = fact_embedding_texts("t", ["x"], {"ім'я": "Валентина"})
-    assert out[2] == json.dumps({"ім'я": "Валентина"}, ensure_ascii=False)
-    assert "Валентина" in out[2]
+    out = fact_embedding_texts("t", ["x"], {"ім'я": "Марія"})
+    assert out[2] == json.dumps({"ім'я": "Марія"}, ensure_ascii=False)
+    assert "Марія" in out[2]
 
 
 def test_empty_or_none_tags_fall_back_to_text():

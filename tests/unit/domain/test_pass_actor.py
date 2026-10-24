@@ -233,7 +233,7 @@ async def create_with_a_due_horizon(store, context):
         "context_priority": "medium", "tags": ["t"], "metadata": {}, "type": "event",
         "expiry": horizon(30), "derived_from": "old-source",
     }
-    return await store.adapter.create_fact("mother is Valentina", meta, context=context)
+    return await store.adapter.create_fact("mother is Maria", meta, context=context)
 
 
 @pytest.mark.parametrize("label", ["stage2a", "stage2b", "cluster", "backstop"])

@@ -46,7 +46,7 @@ def test_dedupe_preserves_first_occurrence_order():
 
 
 def test_no_urls_returns_empty_list():
-    assert extract_result_links("Sunny, 24°C in Valencia.") == []
+    assert extract_result_links("Sunny, 24°C in Springfield.") == []
     assert extract_result_links("") == []
 
 

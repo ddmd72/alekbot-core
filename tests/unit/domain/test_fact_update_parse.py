@@ -23,11 +23,11 @@ def test_an_empty_call_parses_to_nothing_set():
 
 def test_a_full_call_parses_every_key_and_lowercases_enums():
     parsed = parse_fact_update({
-        "content": "mother is Valentyna", "tags": ["family"], "metadata": {"name": "Valya"},
+        "content": "mother is Mariia", "tags": ["family"], "metadata": {"name": "Masha"},
         "state": "ARCHIVED", "temporal_class": "DYNAMIC", "reported_date": "2020-01-02T03:04:05Z",
     })
     assert parsed == ParsedFactUpdate(
-        content="mother is Valentyna", tags=["family"], metadata={"name": "Valya"}, state=FactState.ARCHIVED,
+        content="mother is Mariia", tags=["family"], metadata={"name": "Masha"}, state=FactState.ARCHIVED,
         temporal_class=TemporalClass.DYNAMIC, reported_date=datetime(2020, 1, 2, 3, 4, 5, tzinfo=timezone.utc))
 
 
@@ -69,7 +69,7 @@ def test_empty_or_non_string_content_is_refused(content):
 
 # -------------------------------------------------------------------------------------------------- metadata
 
-@pytest.mark.parametrize("metadata", ["name=Valya", ["a"], 3, None])
+@pytest.mark.parametrize("metadata", ["name=Masha", ["a"], 3, None])
 def test_a_non_dict_metadata_is_ignored(metadata):
     # Reviewer edit (facts S3, T2): the model may no longer send STALE (D1); ARCHIVED carries the same point.
     assert parse_fact_update({"metadata": metadata, "state": "ARCHIVED"}) == ParsedFactUpdate(state=FactState.ARCHIVED)

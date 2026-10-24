@@ -149,9 +149,9 @@ class TestMarker:
     async def test_deliver_deep_research_marks_the_html_task_with_the_question(self):
         queue = AsyncMock()
         await deliver_deep_research(result_text="findings", user_id=USER, account_id=ACCOUNT,
-                                    query="Heat pumps in Valencia?", task_queue=queue)
+                                    query="Heat pumps in Springfield?", task_queue=queue)
         ctx = queue.enqueue_agent_task.call_args.kwargs["context"]
-        assert ctx[DEEP_RESEARCH_REPORT_CONTEXT_KEY] == "Heat pumps in Valencia?"
+        assert ctx[DEEP_RESEARCH_REPORT_CONTEXT_KEY] == "Heat pumps in Springfield?"
 
     async def test_a_huge_question_is_bounded_in_the_marker(self):
         queue = AsyncMock()

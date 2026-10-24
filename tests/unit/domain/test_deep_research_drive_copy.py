@@ -57,7 +57,7 @@ class TestFilename:
             "2026-10-14 Best e-bikes under 2000 EUR.html"
 
     def test_a_long_query_is_shortened_at_a_word(self):
-        query = "Compare the long term total cost of ownership of heat pumps versus gas boilers in Valencia apartments"
+        query = "Compare the long term total cost of ownership of heat pumps versus gas boilers in Springfield apartments"
         name = deep_research_drive_filename(DAY, "", query)
         stem = name[len("2026-10-14 "):-len(".html")]
         assert stem.endswith("…")
