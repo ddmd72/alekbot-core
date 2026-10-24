@@ -42,8 +42,7 @@ see Revisit-if).
 
 **681ms p50 / 910ms p95 sits inside the working conversational-latency bar this plan set going in
 (~800-1200ms p50).** That bar is not sourced from the RFC or an external voice-UX reference — it
-was this plan's own working heuristic (`docs/superpowers/plans/2026-09-20-voice-companion-phase0-spikes.md`,
-Task 4), picked as a reasonable-sounding round number for "does this feel like a normal phone call
+was this plan's own working heuristic (archived plan, Task 4), picked as a reasonable-sounding round number for "does this feel like a normal phone call
 pause," not measured or cited against a named source. Treat it as the owner's/plan's working bar,
 not an industry standard, until something more rigorous replaces it. Measured over a home
 connection + ngrok rather than the eventual Cloud Run deployment, the 681ms/910ms figures still

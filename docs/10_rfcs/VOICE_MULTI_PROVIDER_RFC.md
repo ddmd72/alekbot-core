@@ -59,7 +59,7 @@ bare mode.
 - Making one character text work on every provider. §6 gives this up on purpose.
 - Tuning Alek's latency for voice: owner decision 2026-09-30, Alek is expected to take its time.
 - The topic-generating character trait and `idle_timeout_ms`. Those belong to a separate test
-  session (plan `docs/superpowers/plans/2026-09-30-lelik-on-grok.md`).
+  session (archived plan).
 
 ## 4. Design
 
