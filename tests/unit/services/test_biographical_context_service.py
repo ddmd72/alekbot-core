@@ -235,7 +235,7 @@ class TestDirectivesChannel:
 
     async def test_directives_excluded_from_fill_and_bio_facts(self, service, mock_repo):
         directive = make_fact("Always trace logic.", domain=FactDomain.AGENT_DIRECTIVE)
-        biog = make_fact("Born in Kyiv")
+        biog = make_fact("Born in Springfield")
         # Q1 biographical (under limit → fill), Q2 directives, Q3 fill returns bio + a directive
         mock_repo.get_active_facts_ordered.side_effect = [[biog], [directive], [biog, directive]]
 
@@ -243,5 +243,5 @@ class TestDirectivesChannel:
 
         bio_texts = [f["text"] for f in result["facts"]]
         assert "Always trace logic." not in bio_texts  # directive never leaks into bio channel
-        assert "Born in Kyiv" in bio_texts
+        assert "Born in Springfield" in bio_texts
         assert [d["text"] for d in result["directives"]] == ["Always trace logic."]

@@ -20,7 +20,7 @@ def _agent(prompt="light prompt", prompt_error=None, llm_text="Sunny, 24 degrees
     return agent, prompt_builder
 
 
-def _message(query="[Sep 29, 07:14 UTC] weather in Valencia tomorrow"):
+def _message(query="[Sep 29, 07:14 UTC] weather in Springfield tomorrow"):
     return AgentMessage.create(sender="lelik", recipient="web_search_light_agent_u1", intent=AgentIntent.QUERY,
                                payload={"query": query, "intent": "search_web_light"},
                                context={"user_id": "u1", "account_id": "a1"})
@@ -36,7 +36,7 @@ async def test_one_grounded_call_without_the_delegation_timestamp():
     assert response.result == "Sunny, 24 degrees."
     request = agent._call_llm.await_args.args[0]
     assert request.use_grounding is True
-    assert request.messages[0].parts[0].text == "weather in Valencia tomorrow"
+    assert request.messages[0].parts[0].text == "weather in Springfield tomorrow"
     assert "light prompt" in request.system_instruction
     agent._call_llm.assert_awaited_once()
     assert prompt_builder.build_for_agent.await_args.kwargs["agent_type"] == "websearch_light"

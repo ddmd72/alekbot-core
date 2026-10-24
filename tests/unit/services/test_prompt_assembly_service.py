@@ -103,11 +103,11 @@ async def test_current_datetime_not_in_static_part():
 async def test_static_biographical_context_before_boundary():
     """Static biographical facts must appear BEFORE the boundary (appended to static section)."""
     service = _make_service()
-    static_fact = {"text": "Born in Kyiv", "tags": []}
+    static_fact = {"text": "Born in Springfield", "tags": []}
     result = await _inject(service, facts=[static_fact])
     boundary_pos = result.index(PROMPT_CACHE_BOUNDARY)
     static_part = result[:boundary_pos]
-    assert "Born in Kyiv" in static_part
+    assert "Born in Springfield" in static_part
 
 
 @pytest.mark.asyncio
@@ -165,7 +165,7 @@ async def test_conversation_history_absent_when_empty():
 async def test_kb_preamble_false_appends_knowledge_base_after_template():
     """Default (kb_preamble=False): knowledge_base block appended after blueprint."""
     service = _make_service()
-    static_fact = {"text": "Born in Kyiv", "tags": []}
+    static_fact = {"text": "Born in Springfield", "tags": []}
     result = await service._inject_runtime_context(
         prompt=TEMPLATE,
         biographical_facts=[static_fact],
@@ -184,7 +184,7 @@ async def test_kb_preamble_false_appends_knowledge_base_after_template():
 async def test_kb_preamble_true_prepends_knowledge_base_before_template():
     """kb_preamble=True: knowledge_base block placed BEFORE the blueprint template."""
     service = _make_service()
-    static_fact = {"text": "Born in Kyiv", "tags": []}
+    static_fact = {"text": "Born in Springfield", "tags": []}
     result = await service._inject_runtime_context(
         prompt=TEMPLATE,
         biographical_facts=[static_fact],
@@ -203,7 +203,7 @@ async def test_kb_preamble_true_prepends_knowledge_base_before_template():
 async def test_extra_static_blocks_placed_after_kb_before_blueprint():
     """extra_static_blocks with kb_preamble=True: block appears after knowledge_base {} and before blueprint."""
     service = _make_service()
-    static_fact = {"text": "Born in Kyiv", "tags": []}
+    static_fact = {"text": "Born in Springfield", "tags": []}
     result = await service._inject_runtime_context(
         prompt=TEMPLATE,
         biographical_facts=[static_fact],
@@ -233,7 +233,7 @@ async def test_extra_static_blocks_survive_kb_preamble_false_with_kb_parts():
         biographical_facts=[],
         conversation_history=[],
         user_id="test_user",
-        user_location="Valencia, Spain",
+        user_location="Springfield",
         kb_preamble=False,
         extra_static_blocks=["companion_context {\ntest\n}"],
     )

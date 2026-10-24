@@ -17,7 +17,7 @@ async def test_batch_embeds_recipe_texts_before_consolidated_tag():
     repo.add_fact = AsyncMock(return_value="id")
     service = FactWriteService(repo, embedding)
 
-    text, tags, metadata = "Mother is Валентина", ["family"], {"name": "Валентина"}
+    text, tags, metadata = "Mother is Марія", ["family"], {"name": "Марія"}
     expected = fact_embedding_texts(text, list(tags), metadata)
 
     await service.add_facts_batch(

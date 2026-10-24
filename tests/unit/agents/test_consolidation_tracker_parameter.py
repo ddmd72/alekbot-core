@@ -212,17 +212,17 @@ def meta(**over):
 
 async def test_tracker_records_the_result_id_of_a_version(store):
     tracker = _TrackingFactManagement(store.adapter)
-    created = await tracker.create_fact("mother is Valentina", meta(), context=ctx())
+    created = await tracker.create_fact("mother is Maria", meta(), context=ctx())
     old = created["fact_id"]
-    assert tracker.changed == [(old, "mother is Valentina")]
+    assert tracker.changed == [(old, "mother is Maria")]
 
-    result = await tracker.update_fact(old, {"content": "mother is Valentina Ivanova", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    result = await tracker.update_fact(old, {"content": "mother is Maria Doe", "expiry": EXPIRY_NONE}, ACC, context=ctx())
 
     assert result["status"] == "updated" and result["fact_id"] != old
-    assert tracker.changed[-1] == (result["fact_id"], "mother is Valentina Ivanova")
-    again = await tracker.update_fact(old, {"content": "mother is Valentina I.", "expiry": EXPIRY_NONE}, ACC, context=ctx())       # the stale id, followed forward
+    assert tracker.changed[-1] == (result["fact_id"], "mother is Maria Doe")
+    again = await tracker.update_fact(old, {"content": "mother is Maria D.", "expiry": EXPIRY_NONE}, ACC, context=ctx())       # the stale id, followed forward
     assert again["fact_id"] not in (old, result["fact_id"])
-    assert tracker.changed[-1] == (again["fact_id"], "mother is Valentina I.") and len(tracker.changed) == 3
+    assert tracker.changed[-1] == (again["fact_id"], "mother is Maria D.") and len(tracker.changed) == 3
 
 
 async def test_tracker_records_a_merge_by_its_new_id_and_a_state_only_update_as_a_write_without_a_seed(store):
@@ -240,7 +240,7 @@ async def test_tracker_records_a_merge_by_its_new_id_and_a_state_only_update_as_
 
 
 async def test_tracker_records_nothing_for_not_found_failed_or_refused(store):
-    fid = (await store.adapter.create_fact("mother is Valentina", meta(), context=ctx()))["fact_id"]
+    fid = (await store.adapter.create_fact("mother is Maria", meta(), context=ctx()))["fact_id"]
     foreign = (await store.adapter.create_fact("foreign", meta(account_id=OTHER), context=ctx()))["fact_id"]
     tracker = _TrackingFactManagement(store.adapter)
 

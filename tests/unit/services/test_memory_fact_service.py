@@ -13,7 +13,7 @@ from src.services.memory_fact_service import MemoryFactService
 from tests.unit.services.memory_fact_fakes import InMemoryMemoryFactDraftRepository
 
 DRAFT = MemoryFactDraft(facts=[
-    ProposedFact(text="User's daughter Ana was born on 2015-06-01.", source="birth-certificate.pdf"),
+    ProposedFact(text="User's child Jamie was born on 2016-09-12.", source="birth-certificate.pdf"),
     ProposedFact(text="User's passport expires on 2031-03-04.", source="passport.pdf"),
 ])
 
@@ -130,7 +130,7 @@ async def test_propose_logs_counts_only(service, caplog):
         await service.propose("user-12345678", "s", DRAFT)
     text = "\n".join(r.getMessage() for r in caplog.records if "[MemoryFacts]" in r.getMessage())
     assert "[MemoryFacts] proposed n=2 user=user-123" in text
-    assert "passport" not in text and "Ana" not in text
+    assert "passport" not in text and "Jamie" not in text
 
 
 async def test_confirm_appends_the_pair_to_the_origin_session_then_deletes(service, repo, sessions):

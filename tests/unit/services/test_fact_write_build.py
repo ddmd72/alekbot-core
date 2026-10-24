@@ -33,15 +33,15 @@ def store():
 async def test_build_facts_embeds_and_writes_nothing(store):
     embedder = CountingEmbedder()
     store.write._embedding = embedder
-    attrs = [parse_new_fact({"text": "mother is Valentina", "tags": ["family"], "metadata": {"name": "Valentina"}}),
+    attrs = [parse_new_fact({"text": "mother is Maria", "tags": ["family"], "metadata": {"name": "Maria"}}),
              parse_new_fact({"text": "be calm", "type": "principle"})]
 
     entities = await store.write.build_facts(ACC, USER, attrs)
 
     assert store.docs == {}
-    assert [e.text for e in entities] == ["mother is Valentina", "be calm"]
+    assert [e.text for e in entities] == ["mother is Maria", "be calm"]
     assert len({e.id for e in entities}) == 2 and len({e.lineage_id for e in entities}) == 2
-    assert embedder.calls[0] == fact_embedding_texts("mother is Valentina", ["family"], {"name": "Valentina"})
+    assert embedder.calls[0] == fact_embedding_texts("mother is Maria", ["family"], {"name": "Maria"})
     for entity, expected in zip(entities, embedder.calls):
         assert entity.vector == embed(expected[0])
         assert entity.tags_vector == embed(expected[1])

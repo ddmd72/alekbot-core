@@ -55,11 +55,11 @@ def build_agent(store):
 
 async def test_stage1_updates_one_fact_twice_the_second_lands_on_the_current_version_and_stage2a_is_seeded_with_it(store):
     agent, port = build_agent(store)
-    first = (await port.create_fact("mother is Valentina", {
+    first = (await port.create_fact("mother is Maria", {
         "account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
         "context_priority": "medium", "tags": ["family"], "metadata": {}, "expiry": EXPIRY_NONE},
         context=ctx()))["fact_id"]
-    llm_script: List[LLMResponse] = [update(first, "mother is Valentina Ivanova"), update(first, "mother is Valentina Petrova")]
+    llm_script: List[LLMResponse] = [update(first, "mother is Maria Doe"), update(first, "mother is Maria A. Doe")]
     requests: List[str] = []
 
     async def call(request, turn=1):
@@ -85,11 +85,11 @@ async def test_stage1_updates_one_fact_twice_the_second_lands_on_the_current_ver
     chain = sorted((d for d in store.docs.values() if d["lineage_id"] == store.docs[first]["lineage_id"]), key=lambda d: d["version"])
     assert [d["version"] for d in chain] == [1, 2, 3]                                   # no fork: v3 is built on v2
     assert [d["state"] for d in chain] == ["superseded", "superseded", "current"]
-    assert [d["text"] for d in chain][1:] == ["mother is Valentina Ivanova", "mother is Valentina Petrova"]
+    assert [d["text"] for d in chain][1:] == ["mother is Maria Doe", "mother is Maria A. Doe"]
     v2, v3 = chain[1]["id"], chain[2]["id"]
     assert chain[2]["replaces_fact_id"] == v2 and chain[1]["replaces_fact_id"] == first
 
     (seed,) = seeds                                                                      # Stage 2a ran once, on the new ids
-    assert seed == [(v2, "mother is Valentina Ivanova"), (v3, "mother is Valentina Petrova")]
+    assert seed == [(v2, "mother is Maria Doe"), (v3, "mother is Maria A. Doe")]
     cluster_message = next(t for t in requests if "FACT CLUSTER REVIEW" in t)
     assert v3 in cluster_message and first not in cluster_message and v2 not in cluster_message

@@ -143,7 +143,7 @@ async def test_directives_split_into_own_channel(mock_repo, mock_assembly_servic
     """agent_directive facts route to the directives= channel, out of biographical_facts."""
     builder = PromptBuilder(mock_repo, assembly_service=mock_assembly_service)
     facts = [
-        {"text": "Born in Kyiv", "domain": "biographical", "tags": []},
+        {"text": "Born in Springfield", "domain": "biographical", "tags": []},
         {"text": "Never give partial answers.", "domain": "agent_directive", "tags": []},
     ]
     await builder.build_for_agent(agent_type="smart", user_id="u1", biographical_facts=facts)
@@ -151,7 +151,7 @@ async def test_directives_split_into_own_channel(mock_repo, mock_assembly_servic
     kwargs = mock_assembly_service.assemble.call_args.kwargs
     bio_texts = [f["text"] for f in kwargs["biographical_facts"]]
     dir_texts = [d["text"] for d in kwargs["directives"]]
-    assert bio_texts == ["Born in Kyiv"]
+    assert bio_texts == ["Born in Springfield"]
     assert dir_texts == ["Never give partial answers."]
 
 
@@ -160,7 +160,7 @@ async def test_include_directives_false_drops_directive_channel(mock_repo, mock_
     """include_directives=False (consolidator gate): directives never routed to a block."""
     builder = PromptBuilder(mock_repo, assembly_service=mock_assembly_service)
     facts = [
-        {"text": "Born in Kyiv", "domain": "biographical", "tags": []},
+        {"text": "Born in Springfield", "domain": "biographical", "tags": []},
         {"text": "Never give partial answers.", "domain": "agent_directive", "tags": []},
     ]
     await builder.build_for_agent(
@@ -171,4 +171,4 @@ async def test_include_directives_false_drops_directive_channel(mock_repo, mock_
     kwargs = mock_assembly_service.assemble.call_args.kwargs
     assert kwargs["directives"] == []
     # directive still excluded from the bio channel (never rendered as a bio fact)
-    assert [f["text"] for f in kwargs["biographical_facts"]] == ["Born in Kyiv"]
+    assert [f["text"] for f in kwargs["biographical_facts"]] == ["Born in Springfield"]

@@ -55,12 +55,12 @@ def _cached_texts(store):
 class TestCabinetFactService:
     async def test_the_fact_is_invalidated_with_its_trail_entry_and_leaves_the_cache_once(self, world):
         store, repo, service = world
-        await _seed(repo, _bio("lives in Valencia"), _bio("has a cat"))
+        await _seed(repo, _bio("lives in Springfield"), _bio("has a cat"))
         started = datetime.now(timezone.utc)
 
-        await service.invalidate("f-lives in Valencia", ACC)
+        await service.invalidate("f-lives in Springfield", ACC)
 
-        doc = store.docs["f-lives in Valencia"]
+        doc = store.docs["f-lives in Springfield"]
         assert (doc["state"], doc["is_current"], doc["version"]) == ("invalidated", True, 1)
         assert started <= doc["valid_to"] <= datetime.now(timezone.utc) and doc["last_updated"] == doc["valid_to"]
         assert doc["lifecycle_events"] == [{"at": doc["valid_to"], "from": "current", "to": "invalidated",
@@ -73,9 +73,9 @@ class TestCabinetFactService:
         store, repo, service = world
         await _seed(
             repo,
-            _bio("v1", text="lives in Valencia", lineage_id="L", state=FactState.SUPERSEDED, is_current=False,
+            _bio("v1", text="lives in Springfield", lineage_id="L", state=FactState.SUPERSEDED, is_current=False,
                  valid_to=T0, superseded_by="f-v2"),
-            _bio("v2", text="lives in Valencia", lineage_id="L", version=2),
+            _bio("v2", text="lives in Springfield", lineage_id="L", version=2),
         )
         v1_before = copy.deepcopy(store.docs["f-v1"])
 
@@ -107,9 +107,9 @@ class TestCabinetFactService:
         store, repo, service = world
         await _seed(
             repo,
-            _bio("v1", text="mother is Valentina", lineage_id="L", state=FactState.SUPERSEDED, is_current=False,
+            _bio("v1", text="mother is Maria", lineage_id="L", state=FactState.SUPERSEDED, is_current=False,
                  valid_to=T0, superseded_by="f-v2"),
-            _bio("v2", text="mother is Valentina Stepanivna", lineage_id="L", version=2),
+            _bio("v2", text="mother is Maria Doe", lineage_id="L", version=2),
         )
         before = copy.deepcopy(store.docs)
 
@@ -147,7 +147,7 @@ class TestCabinetFactService:
     async def test_a_conflict_whose_writer_rewrote_the_text_is_refused_on_the_retry(self, world):
         store, repo, service = world
         await _seed(repo, _bio("v1", text="works remotely", lineage_id="L"),
-                    _bio("v2", text="works remotely from Valencia", lineage_id="L", version=2))
+                    _bio("v2", text="works remotely from Springfield", lineage_id="L", version=2))
         store.interfere("f-v1", {"state": "superseded", "is_current": False, "superseded_by": "f-v2", "valid_to": T0})
 
         with pytest.raises(FactResolutionError, match="rewritten after the page loaded"):

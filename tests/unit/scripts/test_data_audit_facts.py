@@ -21,7 +21,7 @@ def raw(**over):
     """A stored fact as a plain dict (not built through FactEntity)."""
     doc = {
         "id": "f1", "account_id": ACC, "created_by_user_id": "usr-1", "lineage_id": "L1",
-        "text": "mother is Valentina", "type": "event", "state": "current", "is_current": True, "valid_to": None,
+        "text": "mother is Maria", "type": "event", "state": "current", "is_current": True, "valid_to": None,
         "vector": Vector([0.1, 0.2]), "tags_vector": Vector([0.3]), "metadata_vector": Vector([0.4]),
         "created_at": NOW, "reported_date": NOW, "valid_from": NOW, "last_updated": NOW,
     }
@@ -48,9 +48,9 @@ def test_each_state_with_its_lifecycle_flags_is_clean(state):
 
 
 async def _created(store, expiry):
-    res = await store.adapter.create_fact("mother is Valentina", {
+    res = await store.adapter.create_fact("mother is Maria", {
         "account_id": ACC, "user_id": "usr-1", "domain": "biographical", "temporal_class": "stable",
-        "context_priority": "medium", "tags": ["family"], "metadata": {"name": "Valentina"}, "type": "event",
+        "context_priority": "medium", "tags": ["family"], "metadata": {"name": "Maria"}, "type": "event",
         "expiry": expiry,
     }, context=ctx())
     assert res["status"] == "created", res
@@ -72,7 +72,7 @@ async def test_documents_written_by_the_real_writer_are_clean_in_every_state():
         assert res["status"] == "updated" and store.docs[fid]["state"] == state.lower(), res
         assert check_fact(fid, store.docs[fid]) == [], state
     fid = await _created(store, EXPIRY_NONE)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentyna", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Maria Doe", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert res["status"] == "updated" and store.docs[fid]["state"] == "superseded", res
     assert check_fact(fid, store.docs[fid]) == [] and check_fact(res["fact_id"], store.docs[res["fact_id"]]) == []
     fid = await _created(store, horizon(30))

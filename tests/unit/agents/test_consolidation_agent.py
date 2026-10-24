@@ -884,7 +884,7 @@ class TestHandleConsolidateClusterDirect:
         fm = AsyncMock(spec=FactManagementPort)
         agent, repo, fact_write, pb = _make_agent(fact_management=fm)
 
-        cluster = [{"fact_id": "f1", "content": "user lives in Spain", "similarity": 0.9}]
+        cluster = [{"fact_id": "f1", "content": "user lives in Springfield", "similarity": 0.9}]
         ops = [{"action": "UPDATE", "fact_id": "f1", "reason": "enriched"}]
         agent._run_consolidation_loop = AsyncMock(return_value=ops)
 
@@ -1175,7 +1175,7 @@ class TestExecuteDeliberateProcessV3:
         ops1 = [{"action": "CREATE", "fact_id": "new-1"}]
         agent._run_consolidation_loop = AsyncMock(return_value=ops1)
 
-        messages = [{"role": "user", "text": "I moved to Spain"}]
+        messages = [{"role": "user", "text": "I moved to Springfield"}]
         with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
             result = await agent._execute_deliberate_process_v3(
                 messages, _USER_ID, _ACCOUNT_ID, []
@@ -1350,12 +1350,12 @@ class TestBuildReviewCluster:
         agent, repo, fact_write, pb = _make_agent(fact_management=fm)
 
         facts_result = [
-            {"fact_id": "f1", "content": "user lives in Spain", "similarity": 0.9},
+            {"fact_id": "f1", "content": "user lives in Springfield", "similarity": 0.9},
             {"fact_id": "f2", "content": "user is a developer", "similarity": 0.7},
         ]
         fm.search_existing_facts = AsyncMock(return_value=facts_result)
 
-        changed = [("new-1", "user moved to Spain from Ukraine")]
+        changed = [("new-1", "user moved to Springfield from Barcelona")]
         result = await agent._build_review_cluster(changed, _ACCOUNT_ID, timezone="UTC")
 
         assert len(result) == 2
@@ -1442,12 +1442,12 @@ class TestLegacyMethods:
         repo.get_biographical_context_cached = AsyncMock(return_value=[
             {"text": "I am a developer", "tags": ["anchor", "profession"]},
             {"text": "I like coffee", "tags": ["preference"]},
-            {"text": "I live in Spain", "tags": ["anchor", "location"]},
+            {"text": "I live in Springfield", "tags": ["anchor", "location"]},
         ])
 
         result = await agent._get_existing_anchors_list(_ACCOUNT_ID)
 
-        assert result == ["I am a developer", "I live in Spain"]
+        assert result == ["I am a developer", "I live in Springfield"]
         repo.get_biographical_context_cached.assert_called_once_with(owner_id=_ACCOUNT_ID, limit=100)
 
     async def test_get_existing_anchors_list_empty_cache(self):

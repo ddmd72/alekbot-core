@@ -32,7 +32,7 @@ def _agent(delegation_result: str):
 
 @pytest.mark.asyncio
 async def test_result_without_urls_posts_no_copy():
-    agent, notifications, _ = _agent("sunny, 24°C in Valencia")
+    agent, notifications, _ = _agent("sunny, 24°C in Springfield")
 
     await agent.delegate(
         user_id="u1", account_id="a1",

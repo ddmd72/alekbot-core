@@ -257,11 +257,11 @@ class TestToolLoop:
     async def test_direct_answer_no_tool_calls(self, agent, mock_llm, mock_maps_port):
         """LLM answers directly without calling any tool."""
         mock_llm.generate_content.return_value = LLMResponse(
-            text="Погода в Києві: +12°C, хмарно.",
+            text="Погода у Львові: +12°C, хмарно.",
             tool_calls=[],
         )
 
-        response = await agent.execute(_make_message({"query": "яка погода в Києві?"}))
+        response = await agent.execute(_make_message({"query": "яка погода у Львові?"}))
 
         assert response.status == AgentStatus.SUCCESS
         assert "погода" in response.result["text"].lower()
@@ -327,7 +327,7 @@ class TestToolLoop:
                 text=None,
                 tool_calls=[
                     _make_tool_call("places_search", {"query": "аптека"}),
-                    _make_tool_call("weather_lookup", {"location": "Kyiv"}),
+                    _make_tool_call("weather_lookup", {"location": "Lviv"}),
                 ],
             ),
             LLMResponse(text="Аптека поблизу: є. Погода: +10°C.", tool_calls=[]),

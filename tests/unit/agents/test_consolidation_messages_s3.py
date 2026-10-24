@@ -287,13 +287,13 @@ async def seed_and_search(store: FactStore, agent: ConsolidationAgent) -> List[D
         responses = await agent._execute_fact_management_tools(
             [create("trip to Rome in January", expiry=on("2027-01-15"), reported_date=reported),
              create("takes the pills daily", expiry=horizon(30), reported_date=reported),
-             create("was 83 kg in March 2025")],
+             create("was 68 kg in May 2025")],
             USER, ACC, write_context=ctx())
     assert [json.loads(r.result_str)["status"] for r in responses] == ["created"] * 3, [r.result_str for r in responses]
     put_raw(store, "legacy", "an old note without a decision")
     with RequestContext(user_id=USER, account_id=ACC):
         return await agent._fact_management.search_existing_facts(
-            keywords=["trip", "pills", "weight", "note"], primary_query="trip to Rome pills 83 kg old note", limit=20, timezone=PARIS)
+            keywords=["trip", "pills", "weight", "note"], primary_query="trip to Rome pills 68 kg old note", limit=20, timezone=PARIS)
 
 
 async def test_stage2a_entries_carry_expiry_due_and_the_owners_reported_day(store):
@@ -306,7 +306,7 @@ async def test_stage2a_entries_carry_expiry_due_and_the_owners_reported_day(stor
     assert pills["expiry"] == {"kind": "horizon", "days": 30}
     assert pills["due"] == local_stamp(utc(22, 23, 30) + timedelta(days=30), PARIS)[:10]
     assert trip["reported"] == pills["reported"] == "2026-10-23"                 # the owner's calendar day, not the UTC day
-    assert shown["was 83 kg in March 2025"]["expiry"] == {"kind": "none"}
+    assert shown["was 68 kg in May 2025"]["expiry"] == {"kind": "none"}
     legacy = shown["an old note without a decision"]
     assert legacy["expiry"] is None and "due" not in legacy                      # classified separately, shown as null
 
@@ -355,8 +355,8 @@ async def test_the_cluster_passs_auto_fetched_facts_show_the_same_expiry_as_the_
         response = await agent._handle_consolidate_cluster(message("consolidate_cluster", {"limit": 10}), USER, ACC, [], 0.0)
     assert response.status.value == "success", response
     fetched = {e["content"]: e for e in entries(pass_text(agent, CLUSTER))}
-    assert set(fetched) >= {"trip to Rome in January", "takes the pills daily", "was 83 kg in March 2025"}
-    for content in ("trip to Rome in January", "takes the pills daily", "was 83 kg in March 2025"):
+    assert set(fetched) >= {"trip to Rome in January", "takes the pills daily", "was 68 kg in May 2025"}
+    for content in ("trip to Rome in January", "takes the pills daily", "was 68 kg in May 2025"):
         for key in ("expiry", "reported"):
             assert fetched[content][key] == from_search[content][key], (content, key)
         assert fetched[content].get("due") == from_search[content].get("due"), content

@@ -94,7 +94,7 @@ async def test_complex_query_routes_to_smart_agent():
         sender="conversation_handler",
         recipient="router_agent_u1",
         intent=AgentIntent.QUERY,
-        payload={"text": "Яка погода в Києві?"},
+        payload={"text": "Яка погода у Львові?"},
         context={"session_id": "s1", "user_id": "u1"}
     )
 
