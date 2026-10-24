@@ -16,7 +16,7 @@ class FactReviewState(BaseModel):
     `offers` counts how often a stale fact went to the model without a decision. `message_language` and `labels` are
     the last language the review reported for the owner's messages and the texts the model wrote for it (by language);
     `label_digests` holds, by language, the digest of the canonical texts each label set was written for.
-    Frozen, and its two mappings are read-only; the store writes changes. Every datetime is timezone-aware. A deep copy
+    Frozen, and its three mappings are read-only; the store writes changes. Every datetime is timezone-aware. A deep copy
     (`copy.deepcopy`, `model_copy(deep=True)`) is rebuilt from the dump, because read-only mappings cannot be copied
     as they are."""
 

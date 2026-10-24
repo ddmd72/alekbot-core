@@ -2,8 +2,7 @@
 
 The one place the language I/O of the memory review lives: the owner's language setting, the system default, the
 account's review state and the UI language are read here, and every decision over them is a domain call in
-`domain/fact_review_language.py` (`message_language`, `current_labels`, `label_source`, `ui_strings_language`,
-`fact_question_message`). The question, its acknowledgements and its notes all come from one source, so an
+`domain/fact_review_language.py` (`message_language`, `review_labels`, `fact_question_message`). The question, its acknowledgements and its notes all come from one source, so an
 acknowledgement is in the language of its question.
 """
 
@@ -14,11 +13,9 @@ from typing import Callable, Mapping, Optional, Tuple
 from ..domain.fact_lifecycle_day import CounterField
 from ..domain.fact_review_language import (
     LABEL_KEYS,
-    current_labels,
     fact_question_message,
-    label_source,
     message_language,
-    ui_strings_language,
+    review_labels,
 )
 from ..domain.fact_review_question import FactReviewQuestion
 from ..domain.fact_review_state import FactReviewState
@@ -40,9 +37,13 @@ class FactQuestionTexts:
     """`language_for`, `labels_for`, `message_for` and `text`, each over one read of the account's review state.
 
     The texts of a language come from the UI strings (uk, en, fr, es), from the label set the review cached for it, or,
-    when that set is missing, stale or refused, from the owner's UI language; each fallback adds one `labels_fallback`
-    to the account's day (best effort: a counter that fails is a WARNING, never a lost message). A review-state read
-    that raises is logged and raised: the caller decides.
+    when that set is missing, stale or refused, from the owner's UI language (`review_labels` decides).
+
+    One call is one message the owner sees, counted once: each call of `labels_for`, `message_for` or `text` that falls
+    back adds one `labels_fallback` to the account's day, so an event that shows several texts calls `labels_for` once
+    and takes them from its result. The count is best effort: a counter that fails is a WARNING, never a lost message.
+    A read that raises (the language setting, the review state, the UI language) is logged, naming the read, and
+    raised: the caller decides.
     """
 
     def __init__(
@@ -67,13 +68,11 @@ class FactQuestionTexts:
         return code
 
     async def labels_for(self, user_id: str, account_id: str) -> Mapping[str, str]:
-        """Every text of `LABEL_KEYS` in the message language, from the source `label_source` names."""
+        """Every text of `LABEL_KEYS` in the message language, from the source `review_labels` names."""
         code, state, ui_language = await self._read(user_id, account_id)
-        cached = current_labels(state, code)
-        source = label_source(code, cached)
-        if source == "model" and cached is not None:
+        source, language, cached = review_labels(code, state, ui_language)
+        if cached is not None:
             return MappingProxyType(dict(cached))
-        language = ui_strings_language(code) or ui_language
         if source == "fallback":
             logger.info(
                 "[FactQuestionTexts] no usable labels for %r on account %s; using the UI language %s",
@@ -88,22 +87,26 @@ class FactQuestionTexts:
 
     async def text(self, user_id: str, account_id: str, message: UIMessage) -> str:
         """One text of the review (an acknowledgement, the closed note, a digest line) from the same source as
-        `labels_for`, so it is in the language of the question it answers. Raises ValueError for a message that is not
-        one of the review's texts."""
+        `labels_for`, so it is in the language of the question it answers. One call is one message the owner sees,
+        counted once: a fallback here adds one `labels_fallback`, so a message built from several texts takes them from
+        one `labels_for` instead. Raises ValueError for a message that is not one of the review's texts."""
         if message.value not in LABEL_KEYS:
             raise ValueError(f"{message.value} is not a memory review text")
         return (await self.labels_for(user_id, account_id))[message.value]
 
     async def _read(self, user_id: str, account_id: str) -> Tuple[str, Optional[FactReviewState], LanguageCode]:
-        preferred, agent_mirror = await self._language.get_preference(user_id)
+        step = "the language setting"
         try:
+            preferred, agent_mirror = await self._language.get_preference(user_id)
+            step = "the review state"
             state = await self._review_store.get_state(account_id)
+            step = "the UI language"
+            ui_language = await self._language.resolve_ui_language(user_id)
         except Exception as exc:
             logger.error(
-                "[FactQuestionTexts] review state of account %s not read: %s: %s", account_id[:8], type(exc).__name__, exc,
+                "[FactQuestionTexts] %s of account %s not read: %s: %s", step, account_id[:8], type(exc).__name__, exc,
             )
             raise
-        ui_language = await self._language.resolve_ui_language(user_id)
         return message_language(preferred, agent_mirror, self._system_default, state, ui_language), state, ui_language
 
     async def _count_fallback(self, account_id: str) -> None:

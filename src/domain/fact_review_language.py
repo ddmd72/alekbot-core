@@ -9,7 +9,7 @@ import json
 import re
 import unicodedata
 from types import MappingProxyType
-from typing import Final, List, Literal, Mapping, Optional
+from typing import Final, List, Literal, Mapping, Optional, Tuple
 
 from .fact_review_answer_kind import AnswerKind
 from .fact_review_question import FACT_QUESTION_KIND, FactReviewQuestion
@@ -54,7 +54,6 @@ CANONICAL_LABELS: Final[Mapping[str, str]] = MappingProxyType({
     UIMessage.MEMORY_DIGEST_HEADER.value: "Facts I put aside this week:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "To bring one back, tell me in chat that it is still true.",
 })
-
 
 
 def labels_digest() -> str:
@@ -108,6 +107,22 @@ def current_labels(state: Optional[FactReviewState], code: str) -> Optional[Mapp
     if cached is None or state.label_digests.get(code) != labels_digest():
         return None
     return cached
+
+
+def review_labels(
+    code: str, state: Optional[FactReviewState], ui_language: LanguageCode,
+) -> Tuple[LabelSource, Optional[LanguageCode], Optional[Mapping[str, str]]]:
+    """Where the review's texts in `code` come from: `(source, strings language, cached set)`.
+
+    The cached set is the account's current one for `code` (`current_labels`: written for today's canonical texts) and
+    `label_source` decides over it. `ui`: the UI strings of `code`'s own language, the cache ignored. `model`: the cached
+    set, and no strings language. `fallback`: the UI strings of `ui_language`. The strings language is set exactly when
+    the cached set is not."""
+    cached = current_labels(state, code)
+    source = label_source(code, cached)
+    if source == "model":
+        return source, None, cached
+    return source, ui_strings_language(code) or ui_language, None
 
 
 def message_language(

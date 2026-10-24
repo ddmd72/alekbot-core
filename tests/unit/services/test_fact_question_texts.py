@@ -157,7 +157,7 @@ async def test_the_fallback_is_the_ui_language_not_ukrainian_by_default(world):
     assert await fallbacks(world) == 1
 
 
-async def test_every_fallback_is_counted_once(world):
+async def test_each_call_that_falls_back_counts_once(world):
     await mirror_ru_bad(world)
     resolver = texts(world)
 
