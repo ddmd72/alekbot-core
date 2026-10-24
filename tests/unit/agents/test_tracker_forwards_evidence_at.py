@@ -3,11 +3,12 @@ reach the port unchanged, and the write is still recorded. A consolidation call 
 with the same keywords as before.
 
 Reviewer edit (facts S4, T3c): the review keywords left the model's `update_fact`; they travel with code's typed
-`apply_fact_update` (FactUpdatePort), which the tracker forwards whole. The recording port implements both entries."""
+`apply_fact_update` (FactUpdatePort), which the tracker forwards whole. The recording port implements both entries.
+Reviewer edit (T3c fix round, L1): the typed forwarding is `_TrackingFactUpdates`, built by the run's `_tracker_for`."""
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-from src.agents.consolidation_agent import _TrackingFactManagement
+from src.agents.consolidation_agent import _TrackingFactManagement, _TrackingFactUpdates, _tracker_for
 from src.domain.entities import FactState
 from src.domain.fact_review_answers import ARCHIVE_ONLY
 from src.domain.fact_tool_result import HISTORY_FACT_ID
@@ -57,7 +58,8 @@ class RecordingPort(FactManagementPort, FactUpdatePort):
 
 async def test_the_tracker_forwards_all_three_keywords_and_records_the_write():
     port = RecordingPort()
-    tracker = _TrackingFactManagement(port)
+    tracker = _tracker_for(port)
+    assert isinstance(tracker, _TrackingFactUpdates)
     owner = ctx("owner")
 
     result = await tracker.apply_fact_update(
@@ -75,7 +77,7 @@ async def test_the_tracker_forwards_all_three_keywords_and_records_the_write():
 
 async def test_a_revive_forwards_its_evidence_date_and_reason_without_history():
     port = RecordingPort()
-    tracker = _TrackingFactManagement(port)
+    tracker = _tracker_for(port)
 
     await tracker.apply_fact_update("f-old", REVIVE, "acc", context=ctx("review"), evidence_at=SAID,
                                     reason="revived on e1234567")
