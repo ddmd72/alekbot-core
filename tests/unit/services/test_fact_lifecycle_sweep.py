@@ -2,11 +2,12 @@
 
 What is asserted is what the store holds and what the sink received, never a call.
 """
+from dataclasses import fields
 from datetime import timedelta
 
 import pytest
 
-from src.domain.fact_lifecycle_day import SNAPSHOT_FIELDS
+from src.domain.fact_lifecycle_day import SweepSnapshot
 from tests.support.fact_kit import ACC, OTHER, make_fact
 from tests.support.fact_lifecycle_world import FUTURE, NOW, PAST, JanitorWorld
 
@@ -247,7 +248,7 @@ async def test_the_snapshot_always_carries_the_whole_field_set_oldest_age_none_i
     await world.seed_due("x")
     await world.service.sweep()
     snap = snapshot_of(world)
-    assert set(snap) == SNAPSHOT_FIELDS | {"account_id", "day"}
+    assert set(snap) == {f.name for f in fields(SweepSnapshot)} | {"account_id", "day"}
     assert snap["oldest_stale_days"] is None and snap["run_at"] == NOW and snap["breaker"] == "ok"
 
 

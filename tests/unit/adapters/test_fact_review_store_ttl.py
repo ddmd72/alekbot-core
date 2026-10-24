@@ -3,6 +3,7 @@ never part of the domain record. The real adapter on the review world's evaluati
 from datetime import timedelta
 
 import pytest
+from pydantic import ValidationError
 
 from src.adapters.firestore_fact_review_store import question_document
 from src.domain.fact_review_answer_kind import AnswerKind
@@ -74,3 +75,22 @@ async def test_closing_through_close_and_release_writes_the_ttl_field_too(world)
 
     assert world.question_docs["q1"]["purge_after"] == AT + QUESTION_RETENTION
     assert world.state_doc()["current_question_id"] is None
+
+
+def test_the_domain_record_refuses_a_field_it_does_not_have():
+    # extra="forbid" (T4b review): a stored field the model does not know is loud, never read and then dropped by the
+    # next whole-document write.
+    closed = build_question(QuestionStatus.ASKED).closed(ClosedBy.REVIEW, AT)
+    with pytest.raises(ValidationError, match="purge_after"):
+        FactReviewQuestion.model_validate({**closed.model_dump(), "purge_after": AT})
+
+
+async def test_a_stored_question_with_an_unknown_field_is_skipped_by_a_list_read_and_raised_by_a_write(world):
+    closed = build_question(QuestionStatus.ASKED).closed(ClosedBy.REVIEW, AT)
+    document = {**question_document(closed), "renamed_field": "x"}
+    await world.store.db.collection(world.env.fact_review_questions_collection).document("q1").set(document)
+
+    assert await world.review_store.get_questions(["q1"]) == []
+    with pytest.raises(ValidationError):
+        await world.review_store.close("q1", ClosedBy.TIMEOUT, None, None, AT)
+    assert world.question_docs["q1"] == document

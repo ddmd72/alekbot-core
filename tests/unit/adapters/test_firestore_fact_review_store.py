@@ -58,7 +58,7 @@ async def test_every_field_round_trips_through_the_stored_form(world):
 
     assert back == full
     doc = stored(world, "full")
-    assert set(doc) == model_fields()
+    assert set(doc) == model_fields() | {"purge_after"}          # the store's TTL field, on a closed question only
     assert (doc["message_platform"], doc["message_channel"], doc["message_id"]) == (REF.platform, REF.channel_id, REF.message_id)
     assert doc["status"] == "closed" and type(doc["status"]) is str
     assert doc["closed_by"] == "owner" and doc["answer"] == "ended" and doc["answer_source"] == "digit"
@@ -279,7 +279,7 @@ async def test_purge_after_is_set_only_by_the_close(world):
     assert await store.set_message_ref("posted", REF) is True
     assert await store.record_reply("q1", "it ended", NOW) is True
     assert await store.mark_offered("q1", NOW) is True
-    assert stored(world, "posted")["purge_after"] is None and stored(world, "q1")["purge_after"] is None
+    assert "purge_after" not in stored(world, "posted") and "purge_after" not in stored(world, "q1")
 
     assert await store.close("q1", ClosedBy.REVIEW, None, "review", AT) is True
 

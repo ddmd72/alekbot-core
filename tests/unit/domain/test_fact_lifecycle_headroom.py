@@ -1,11 +1,15 @@
 """Facts S3 · F1 (owner, 2026-10-23): the backlog cap bounds a single run. The headroom rule and the `deferred` figure's
 place in the snapshot, the day row and the ops line."""
+from dataclasses import fields
 from datetime import date, datetime, timezone
 
 import pytest
 
-from src.domain.fact_lifecycle_day import SNAPSHOT_FIELDS, FactLifecycleDay, check_snapshot
+from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
+from src.config.environment import EnvironmentConfig
+from src.domain.fact_lifecycle_day import FactLifecycleDay, SweepSnapshot
 from src.domain.fact_lifecycle_sweep import BREAKER_BACKLOG, daily_line, stale_headroom
+from tests.support.firestore_eval import EvalDb
 
 NOW = datetime(2026, 10, 23, 7, 30, tzinfo=timezone.utc)
 ZERO = dict(due=0, newly_due=0, no_decision=0, staled=0, would_stale=0, deferred=0, stale_conflicts=0, backlog=0,
@@ -19,21 +23,25 @@ def test_the_headroom_is_the_cap_minus_the_backlog_never_below_zero(stale_count,
 
 
 def test_deferred_is_a_snapshot_field_and_a_snapshot_without_it_is_refused():
-    assert "deferred" in SNAPSHOT_FIELDS
+    assert "deferred" in {f.name for f in fields(SweepSnapshot)}
     whole = {"run_at": NOW, "due": 1, "newly_due": 1, "no_decision": 0, "staled": 0, "would_stale": 0, "deferred": 0,
-             "stale_conflicts": 0, "breaker": "ok", "backlog": 0, "oldest_stale_days": None}
-    check_snapshot(whole)
-    with pytest.raises(ValueError, match="deferred"):
-        check_snapshot({k: v for k, v in whole.items() if k != "deferred"})
+             "stale_conflicts": 0, "breaker": "ok", "backlog": 0, "oldest_stale_days": None, "review_enqueued": 0}
+    SweepSnapshot(**whole)
+    with pytest.raises(TypeError, match="'deferred'"):
+        SweepSnapshot(**{k: v for k, v in whole.items() if k != "deferred"})
     for bad in (-1, 1.5, True, "3", None):
         with pytest.raises(ValueError):
-            check_snapshot({**whole, "deferred": bad})
+            SweepSnapshot(**{**whole, "deferred": bad})
 
 
-def test_a_day_row_reads_deferred_and_an_old_document_without_it_reads_zero():
-    base = {"account_id": "acc-1", "day": "2026-10-23"}
-    assert FactLifecycleDay.from_document({**base, "deferred": 7}).deferred == 7
-    assert FactLifecycleDay.from_document(base).deferred == 0
+async def test_a_day_row_reads_deferred_and_an_old_document_without_it_reads_zero():
+    # The stored document's decoder is the counters adapter's (S4 T4b): read through `for_day`.
+    db, env = EvalDb(), EnvironmentConfig()
+    docs = db.collection(env.fact_lifecycle_daily_collection).docs
+    docs["acc-1:2026-10-23"] = {"account_id": "acc-1", "day": "2026-10-23", "deferred": 7}
+    docs["acc-2:2026-10-23"] = {"account_id": "acc-2", "day": "2026-10-23"}
+    rows = await FirestoreFactLifecycleCounters(db, env).for_day(date(2026, 10, 23))
+    assert [(row.account_id, row.deferred) for row in rows] == [("acc-1", 7), ("acc-2", 0)]
 
 
 def test_the_ops_line_shows_deferred_next_to_staled_and_would_stale():

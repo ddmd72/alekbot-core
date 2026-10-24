@@ -5,6 +5,7 @@ import pytest
 
 from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
 from src.config.environment import EnvironmentConfig
+from src.domain.fact_lifecycle_day import SweepSnapshot
 from tests.support.firestore_eval import EvalDb
 
 DAY = date(2026, 10, 23)
@@ -12,9 +13,10 @@ DAY = date(2026, 10, 23)
 
 def snapshot(**over):
     values = {"run_at": datetime(2026, 10, 23, 7, tzinfo=timezone.utc), "due": 0, "newly_due": 0, "no_decision": 0, "staled": 0,
-              "would_stale": 0, "deferred": 0, "stale_conflicts": 0, "breaker": "", "backlog": 0, "oldest_stale_days": None}
+              "would_stale": 0, "deferred": 0, "stale_conflicts": 0, "breaker": "", "backlog": 0, "oldest_stale_days": None,
+              "review_enqueued": 0}
     values.update(over)
-    return values
+    return SweepSnapshot(**values)
 
 
 @pytest.fixture

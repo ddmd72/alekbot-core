@@ -5,6 +5,7 @@ from itertools import product
 import pytest
 from pydantic import ValidationError
 
+from src.adapters.firestore_fact_review_store import question_document, question_from
 from src.domain.exceptions import QuestionTransitionError
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_question import (
@@ -235,7 +236,8 @@ def test_offered_marks_the_reply_shown_and_closes_the_door_on_more_words():
 def test_closing_sets_the_purge_time_from_the_retention(state):
     closed = STATES[state]().closed(ClosedBy.RESOLVED_ELSEWHERE, NOW)
     assert (closed.status, closed.closed_at, closed.closed_by) == (Q.CLOSED, NOW, ClosedBy.RESOLVED_ELSEWHERE)
-    assert closed.purge_after == NOW + timedelta(days=90) == NOW + QUESTION_RETENTION
+    # The purge time is the store's TTL field since S4 T4b, written at serialisation from `closed_at`.
+    assert question_document(closed)["purge_after"] == NOW + timedelta(days=90) == NOW + QUESTION_RETENTION
     assert not closed.is_open
 
 
@@ -411,13 +413,13 @@ def test_a_reply_cannot_be_empty_or_longer_than_the_bound():
 # ------------------------------------------------------------------------------------------------ invariants: closing
 
 def closed_fields(by, **over):
-    fields = dict(status=Q.CLOSED, closed_at=NOW, closed_by=by, purge_after=NOW + QUESTION_RETENTION)
+    fields = dict(status=Q.CLOSED, closed_at=NOW, closed_by=by)
     fields.update(over)
     return fields
 
 
 @pytest.mark.parametrize("name,value", [
-    ("closed_at", NOW), ("closed_by", ClosedBy.REVIEW), ("purge_after", NOW), ("answer", AnswerKind.ENDED),
+    ("closed_at", NOW), ("closed_by", ClosedBy.REVIEW), ("answer", AnswerKind.ENDED),
     ("answer_source", "cabinet"),
 ])
 def test_only_a_closed_question_carries_a_closing(name, value):
@@ -427,23 +429,18 @@ def test_only_a_closed_question_carries_a_closing(name, value):
 
 def test_a_closed_question_says_when_and_by_whom():
     with pytest.raises(ValidationError, match="closed_at and closed_by"):
-        make(**closed_fields(None, purge_after=None))
+        make(**closed_fields(None))
     with pytest.raises(ValidationError, match="closed_at and closed_by"):
         make(**closed_fields(ClosedBy.RESOLVED_ELSEWHERE, closed_at=None))
 
 
-def test_a_stored_closed_question_needs_a_purge_time_later_than_its_closing():
-    make(**closed_fields(ClosedBy.RESOLVED_ELSEWHERE))
-    for wrong in (None, NOW, NOW - timedelta(seconds=1), NOW - QUESTION_RETENTION):
-        with pytest.raises(ValidationError, match="purge_after is set and later than closed_at"):
-            make(**closed_fields(ClosedBy.RESOLVED_ELSEWHERE, purge_after=wrong))
-
-
 @pytest.mark.parametrize("retention", [timedelta(seconds=1), timedelta(days=30), timedelta(days=365)])
 def test_a_question_stored_under_another_retention_still_reads(retention):
-    stored = make(**closed_fields(ClosedBy.RESOLVED_ELSEWHERE, purge_after=NOW + retention))
-    assert stored.purge_after == NOW + retention
-    assert FactReviewQuestion.model_validate(stored.model_dump()) == stored
+    # The stored purge time is the store's TTL field since S4 T4b; its decoder ignores it.
+    closed = make(**closed_fields(ClosedBy.RESOLVED_ELSEWHERE))
+    stored = {**question_document(closed), "purge_after": NOW + retention}
+    assert question_from(stored) == closed
+    assert FactReviewQuestion.model_validate(closed.model_dump()) == closed
 
 
 def test_an_owner_close_needs_an_answer_and_a_source_of_his_ways():
@@ -538,7 +535,6 @@ NAIVE = datetime(2026, 10, 24, 9, 0)
     ("reply_at", lambda: make(status=Q.ASKED, reply_text="w", reply_at=NAIVE, **SENT)),
     ("offered_at", lambda: make(status=Q.ASKED, reply_text="w", reply_at=NOW, offered_at=NAIVE, **SENT)),
     ("closed_at", lambda: make(**closed_fields(ClosedBy.RESOLVED_ELSEWHERE, closed_at=NAIVE))),
-    ("purge_after", lambda: make(**closed_fields(ClosedBy.RESOLVED_ELSEWHERE, purge_after=NAIVE))),
 ])
 def test_a_naive_time_is_refused_when_the_question_is_built(field, build):
     with pytest.raises(ValidationError, match="timezone"):
