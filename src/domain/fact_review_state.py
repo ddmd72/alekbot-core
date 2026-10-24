@@ -14,7 +14,8 @@ class FactReviewState(BaseModel):
     """`current_question_id` is the one question the owner may answer by reply (none when no question is out). `sent` counts
     the questions sent on the local day `sent_on`; `delivery_failed_on` is the local day a post failed (no retry that day).
     `offers` counts how often a stale fact went to the model without a decision. `message_language` and `labels` are
-    the last language the review reported for the owner's messages and the texts the model wrote for it (by language).
+    the last language the review reported for the owner's messages and the texts the model wrote for it (by language);
+    `label_digests` holds, by language, the digest of the canonical texts each label set was written for.
     Frozen, and its two mappings are read-only; the store writes changes. Every datetime is timezone-aware. A deep copy
     (`copy.deepcopy`, `model_copy(deep=True)`) is rebuilt from the dump, because read-only mappings cannot be copied
     as they are."""
@@ -39,6 +40,7 @@ class FactReviewState(BaseModel):
     delivery_failed_on: Optional[date] = None
     message_language: Optional[str] = None
     labels: Mapping[str, Mapping[str, str]] = Field(default_factory=dict)
+    label_digests: Mapping[str, str] = Field(default_factory=dict)
 
     @field_validator("message_language")
     @classmethod
@@ -61,6 +63,13 @@ class FactReviewState(BaseModel):
             raise ValueError("labels are kept by ISO 639-1 code: two lowercase letters")
         return MappingProxyType({language: MappingProxyType(dict(texts)) for language, texts in value.items()})
 
+    @field_validator("label_digests")
+    @classmethod
+    def _digests_are_by_language(cls, value: Mapping[str, str]) -> Mapping[str, str]:
+        if any(not _LANGUAGE.fullmatch(language) for language in value):
+            raise ValueError("label digests are kept by ISO 639-1 code: two lowercase letters")
+        return MappingProxyType(dict(value))
+
     @model_validator(mode="after")
     def _sent_belongs_to_a_day(self) -> Self:
         if self.sent > 0 and self.sent_on is None:
@@ -72,6 +81,10 @@ class FactReviewState(BaseModel):
 
     @field_serializer("offers")
     def _offers_as_dict(self, value: Mapping[str, int]) -> Dict[str, int]:
+        return dict(value)
+
+    @field_serializer("label_digests")
+    def _digests_as_dict(self, value: Mapping[str, str]) -> Dict[str, str]:
         return dict(value)
 
     @field_serializer("labels")

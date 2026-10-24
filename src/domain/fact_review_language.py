@@ -4,6 +4,8 @@ Which language: the response-language setting decides. Fixed -> that language; m
 pass reported from the owner's recent messages. The texts: UI strings for uk/en/fr/es; for any other language the review
 model's translation of `CANONICAL_LABELS`, kept only if `check_labels` passes. There is no word table in code, and the
 digits 1-4 mean the same in every language."""
+import hashlib
+import json
 import re
 import unicodedata
 from types import MappingProxyType
@@ -53,6 +55,14 @@ CANONICAL_LABELS: Final[Mapping[str, str]] = MappingProxyType({
     UIMessage.MEMORY_DIGEST_FOOTER.value: "To bring one back, tell me in chat that it is still true.",
 })
 
+
+
+def labels_digest() -> str:
+    """A stable hash of `CANONICAL_LABELS` (keys and English texts): a label set written for other texts is stale."""
+    canonical = json.dumps(dict(sorted(CANONICAL_LABELS.items())), ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
 # Where the texts of a message language come from (`label_source`).
 LabelSource = Literal["ui", "model", "fallback"]
 
@@ -87,6 +97,17 @@ def label_source(code: str, cached: Optional[Mapping[str, object]]) -> LabelSour
     if parse_message_language(code) is None:
         return "fallback"
     return "model" if cached is not None and check_labels(cached) is None else "fallback"
+
+
+def current_labels(state: Optional[FactReviewState], code: str) -> Optional[Mapping[str, str]]:
+    """The label set the review cached for `code`, only when it was written for the current canonical texts (its digest
+    is `labels_digest()`); a set written for other texts, or with no digest, is absent until a new one is written."""
+    if state is None:
+        return None
+    cached = state.labels.get(code)
+    if cached is None or state.label_digests.get(code) != labels_digest():
+        return None
+    return cached
 
 
 def message_language(

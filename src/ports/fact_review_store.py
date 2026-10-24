@@ -194,8 +194,9 @@ class FactReviewStore(ABC):
         """`queue_alert_at = at`; None re-arms the alert."""
 
     @abstractmethod
-    async def set_language(self, account_id: str, lang: str, labels: Mapping[str, str]) -> bool:
-        """`message_language = lang`, and the labels of `lang` replaced by `labels` (other languages' kept)."""
+    async def set_language(self, account_id: str, lang: str, labels: Mapping[str, str], labels_digest: str) -> bool:
+        """`message_language = lang`, and the labels of `lang` replaced by `labels`, written for the canonical texts of
+        `labels_digest` (stored as `label_digests[lang]`); other languages' labels and digests kept."""
 
     # ------------------------------------------------------------------------------------------------ digest claim
 
