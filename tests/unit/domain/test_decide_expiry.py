@@ -9,6 +9,7 @@ from src.domain.exceptions import FactBornDueError
 from src.domain.fact_expiry import parse_expiry
 from src.domain.fact_write_context import FactWriteContext, decide_expiry
 from src.domain.pass_actor import PassActor
+from src.domain.refusal_wording import RefusalWording
 from tests.support.fact_write import EXPIRY_NONE, horizon, on
 
 PARIS = "Europe/Paris"
@@ -52,9 +53,16 @@ def test_a_due_horizon_on_a_flooring_pass_is_floored_to_two_days_from_now_with_a
     assert note is not None and "this horizon had already passed" in note and "2026-10-25" in note
 
 
+# The text is the row's (S4 T2): Stage 1 names the horizon it was given; the review's names when it ends and its way out.
+DUE_HORIZON_TEXT = {
+    RefusalWording.STAGE1: "a horizon of 1 days ends",
+    RefusalWording.REVIEW: "this horizon ends 2026-10-24, too soon: this pass reviews stored memory",
+}
+
+
 @pytest.mark.parametrize("actor", NOT_FLOORING)
 def test_a_due_horizon_on_a_pass_that_does_not_floor_is_refused(actor):
-    with pytest.raises(FactBornDueError, match="a horizon of 1 days ends"):
+    with pytest.raises(FactBornDueError, match=DUE_HORIZON_TEXT[actor.refusal_wording]):
         decide(horizon(1), actor)
 
 
