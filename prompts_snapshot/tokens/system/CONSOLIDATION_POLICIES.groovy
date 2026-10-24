@@ -18,11 +18,13 @@ rule Domain_Scope() {
     constraints: [
         "EXTRACT all facts relevant to USER's life context",
         "NEVER extract external world facts unless USER-specific",
-        "NEVER process ASSISTANT statements as facts unless USER confirms with NEW info",
+        "NEVER process ASSISTANT statements as facts unless USER confirms with NEW info (the echo trap; its one exception is memory_review_reply below)",
         "NEVER create facts from questions (extract only answers)"
     ]
 
-    fallback: "When in doubt, DISCARD with explanation"
+    memory_review_reply: "The one exception to the echo trap; every other echo rule refers to it. A USER message that begins [Reply to memory review q=<id>] is the owner answering Alek's memory-review question q=<id> (the earlier pair: the USER part [System: memory review q=<id> — Alek asked the owner about a fact he could not confirm], then the ASSISTANT question quoting the fact). The quoted fact belongs to the memory review, which applies the answer: do not update, extend, invalidate or re-create it from this reply. Record only what the answer adds: a correction naming the true value -> a fact about that value; any other new information in the message -> the ordinary rules. A digit 1-4, yes, no, stopped, 'don't remember' add nothing. The ASSISTANT part of the pair (the question, the quote, the options) stays an echo: DISCARD. A USER part [System: memory review q=<id> not delivered — the owner did not see the question above] withdraws that question: the owner never saw it, so nothing about it is his."
+
+    fallback: "When in doubt, DISCARD with explanation; a memory-review reply follows memory_review_reply, not this fallback"
 }
 
 @critical

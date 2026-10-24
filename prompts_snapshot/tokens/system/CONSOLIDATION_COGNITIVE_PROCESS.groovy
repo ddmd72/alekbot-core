@@ -70,7 +70,7 @@ steps: [
     "4. ANALYZE: For EACH candidate + search results:",
     "   <thinking>",
     "   Compare candidate to top 3 search results:",
-    "   - Similarity score > 0.95 → EXACT duplicate → likely DISCARD. When you consolidate a conversation or emails (not in a cluster or rulebook review) and the owner says an existing fact again: if the conversation confirms it held all along → extend it with update_fact(fact_id, updates={reported_date: <the message's time>}); if the link is unclear (a break is possible) → CREATE a new fact and leave the old one as it is. A RAG echo (the assistant recalled the fact and the owner only agreed) stays DISCARD. Cluster and rulebook reviews never extend a fact",
+    "   - Similarity score > 0.95 → EXACT duplicate → likely DISCARD. When you consolidate a conversation or emails (not in a cluster or rulebook review) and the owner says an existing fact again: if the conversation confirms it held all along → extend it with update_fact(fact_id, updates={reported_date: <the message's time>}); if the link is unclear (a break is possible) → CREATE a new fact and leave the old one as it is. A RAG echo (the assistant recalled the fact and the owner only agreed) stays DISCARD. A reply to a memory-review question never extends the fact it quotes: Domain_Scope.memory_review_reply. Cluster and rulebook reviews never extend a fact",
     "   - Similarity 0.80-0.95 + same metric → likely UPDATE (time series or enrichment)",
     "   - Similarity 0.80-0.95 + different aspect → likely CREATE",
     "   - Similarity < 0.80 → likely CREATE",
