@@ -412,9 +412,14 @@ class TestFactManagementPortMockImplementation:
         sig = inspect.signature(FactManagementPort.update_fact)
         params = list(sig.parameters.keys())
         # Reviewer edit (facts S3, T4a; plan §3.2): as create_fact.
-        assert params == ["self", "fact_id", "updates", "account_id", "context"]
+        # Reviewer edit (facts S4, T3a): the review and owner write path adds evidence_at, reason and history,
+        # keyword-only and None by default, so a consolidation call is unchanged.
+        assert params == ["self", "fact_id", "updates", "account_id", "context", "evidence_at", "reason", "history"]
         assert sig.parameters["context"].kind is inspect.Parameter.KEYWORD_ONLY
         assert sig.parameters["context"].default is inspect.Parameter.empty
+        for name in ("evidence_at", "reason", "history"):
+            assert sig.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+            assert sig.parameters[name].default is None
 
 
 # =============================================================================
