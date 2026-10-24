@@ -11,7 +11,8 @@ from .fact_expiry import EXPIRY_NONE, as_expiry_kind, expiry_view
 from .fact_update import ParsedFactUpdate
 from .fact_update_plan import content_changed
 from .fact_lifecycle import (
-    compute_expiry, expiry_pinned, horizon_from_now, lifecycle_event, lifecycle_fields, resolves_too_soon, with_event,
+    compute_expiry, expiry_pinned, horizon_from_now, lifecycle_event, lifecycle_fields, resolves_too_soon, revival_fields,
+    with_event,
 )
 from .fact_review_basis import ReviewAction, ReviewBasis
 from .fact_review_question import FactReviewQuestion, QuestionFallback, QuestionStatus
@@ -216,16 +217,17 @@ def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetim
     gets one entry under `actor`, with a code-built reason."""
     if fact.state not in (FactState.STALE, FactState.CURRENT):
         raise ValueError(f"a fallback applies to a stale or current fact, not a {fact.state.value} one")
-    target = FactState.ARCHIVED if question.fallback == "archive" else FactState.CURRENT
-    fields: Dict[str, Any] = lifecycle_fields(target, now)
-    if target is FactState.CURRENT:
+    reason = fallback_reason(question.question_id, question.fallback, actor)
+    if question.fallback != "archive":
+        expiry: Dict[str, Any] = {}
         if not keeps_expiry(fact, now):
-            fields.update(horizon_from_now(fallback_window_days(fact), fact.reported_date, now))
+            expiry = horizon_from_now(fallback_window_days(fact), fact.reported_date, now)
         elif expiry_pinned(fact.domain, fact.type, fact.tags) and as_expiry_kind(fact.expiry_kind) is not ExpiryKind.NONE:
-            fields.update(compute_expiry(EXPIRY_NONE, fact.reported_date, "UTC"))  # a pinned fact is permanent, as a yes says
-        fields["stale_since"] = None
+            expiry = compute_expiry(EXPIRY_NONE, fact.reported_date, "UTC")  # a pinned fact is permanent, as a yes says
+        return revival_fields(fact, expiry, now, actor, reason)
+    fields: Dict[str, Any] = lifecycle_fields(FactState.ARCHIVED, now)
     fields["last_updated"] = now
-    event = lifecycle_event(now, fact.state, target, actor, fallback_reason(question.question_id, question.fallback, actor))
+    event = lifecycle_event(now, fact.state, FactState.ARCHIVED, actor, reason)
     fields["lifecycle_events"] = with_event(fact.lifecycle_events, event)
     return fields
 
