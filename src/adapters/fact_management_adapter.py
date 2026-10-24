@@ -6,6 +6,15 @@ from ..domain.entities import FactEntity, normalize_fact_taxonomy
 from ..domain.exceptions import FactBornDueError, FactExpiryError, FactResolutionError, FactWriteConflict
 from ..domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE
 from ..domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
+from ..domain.fact_tool_result import (
+    STATUS_CREATED,
+    STATUS_FAILED,
+    STATUS_MERGED,
+    STATUS_NOT_FOUND,
+    STATUS_UPDATED,
+    expiry_refusal_tags,
+    with_notes,
+)
 from ..domain.fact_update import ParsedFactUpdate, parse_fact_update
 from ..domain.fact_update_lifecycle import finish_fact_update
 from ..domain.fact_update_plan import (
@@ -163,7 +172,7 @@ class FactManagementAdapter(FactManagementPort):
                 logger.error(f"❌ [FactManagement] Missing required fields: {missing}")
                 return {
                     "fact_id": None,
-                    "status": "failed",
+                    "status": STATUS_FAILED,
                     "message": f"Missing required fields: {missing}"
                 }
 
@@ -189,19 +198,19 @@ class FactManagementAdapter(FactManagementPort):
 
             result: Dict[str, Any] = {
                 "fact_id": entity.id,
-                "status": "created",
+                "status": STATUS_CREATED,
                 "message": "Fact created successfully",
             }
             return _with_notes(result, notes, "create_fact")
 
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] create_fact refused (expiry): {e}")
-            return {"fact_id": None, "status": "failed", **_expiry_refusal(e), "message": str(e)}
+            return {"fact_id": None, "status": STATUS_FAILED, **expiry_refusal_tags(isinstance(e, FactBornDueError)), "message": str(e)}
         except Exception as e:
             logger.error(f"❌ [FactManagement] Create fact error: {e}", exc_info=True)
             return {
                 "fact_id": None,
-                "status": "failed",
+                "status": STATUS_FAILED,
                 "message": f"Error creating fact: {str(e)}"
             }
 
@@ -254,22 +263,22 @@ class FactManagementAdapter(FactManagementPort):
             return await self._update_with_one_retry(fact_id, updates, account_id, context)
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] update_fact {fact_id[:8]} refused (expiry): {e}")
-            return {"fact_id": fact_id, "status": "failed", **_expiry_refusal(e), "message": str(e)}
+            return {"fact_id": fact_id, "status": STATUS_FAILED, **expiry_refusal_tags(isinstance(e, FactBornDueError)), "message": str(e)}
         except FactResolutionError as e:
             logger.warning(f"⚠️  [FactManagement] Cannot resolve fact {fact_id[:8]}: {e}")
-            return {"fact_id": fact_id, "status": "failed", "message": str(e)}
+            return {"fact_id": fact_id, "status": STATUS_FAILED, "message": str(e)}
         except FactWriteConflict:
             logger.warning(f"⚠️  [FactManagement] Fact {fact_id[:8]} changed concurrently twice; update refused")
             return {
                 "fact_id": fact_id,
-                "status": "failed",
+                "status": STATUS_FAILED,
                 "message": f"fact {fact_id} changed concurrently; search again",
             }
         except Exception as e:
             logger.error(f"❌ [FactManagement] Update fact error: {e}", exc_info=True)
             return {
                 "fact_id": fact_id,
-                "status": "failed",
+                "status": STATUS_FAILED,
                 "message": f"Error updating fact: {str(e)}"
             }
 
@@ -286,7 +295,7 @@ class FactManagementAdapter(FactManagementPort):
             stored = await self._repo.resolve_current(fact_id, account_id, CONSOLIDATION_ACCEPTS)
             if stored is None:
                 logger.warning(f"⚠️  [FactManagement] Fact not found: {fact_id[:8]}")
-                return {"fact_id": fact_id, "status": "not_found", "message": "Fact not found"}
+                return {"fact_id": fact_id, "status": STATUS_NOT_FOUND, "message": "Fact not found"}
             if parsed is None:
                 parsed = parse_fact_update(updates, context.timezone)
             if first_resolved_id is None:
@@ -295,7 +304,7 @@ class FactManagementAdapter(FactManagementPort):
                 moved = concurrent_update_refusal(fact_id, first_resolved_id, stored.fact.id, parsed)
                 if moved is not None:
                     logger.warning(f"⚠️  [FactManagement] Fact {fact_id[:8]} moved forward between attempts; update refused")
-                    return {"fact_id": fact_id, "status": "failed", "message": moved}
+                    return {"fact_id": fact_id, "status": STATUS_FAILED, "message": moved}
             update = await self._with_resolved_successor(parsed, stored, account_id)
             now = datetime.now(timezone.utc)
             finish = finish_fact_update(plan_fact_update(stored.fact, update, now), stored.fact, update, context, now)
@@ -318,7 +327,7 @@ class FactManagementAdapter(FactManagementPort):
             logger.info(f"✅ [FactManagement] Updated fact {written.id[:8]} to version {written.version}")
             result = {
                 "fact_id": written.id,
-                "status": "updated",
+                "status": STATUS_UPDATED,
                 "version": written.version,
                 "message": "Fact updated successfully",
             }
@@ -392,7 +401,7 @@ class FactManagementAdapter(FactManagementPort):
             return await self._merge_with_one_retry(fact_ids, merged_content, metadata, context)
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] merge_facts refused (expiry): {e}")
-            return {**self._merge_failed(str(e)), **_expiry_refusal(e)}
+            return {**self._merge_failed(str(e)), **expiry_refusal_tags(isinstance(e, FactBornDueError))}
         except FactResolutionError as e:
             logger.warning(f"⚠️  [FactManagement] Merge refused: {e}")
             return self._merge_failed(str(e))
@@ -409,7 +418,7 @@ class FactManagementAdapter(FactManagementPort):
             "new_fact_id": None,
             "old_fact_ids": [],
             "old_facts_state": "FAILED",
-            "status": "failed",
+            "status": STATUS_FAILED,
             "message": message,
         }
 
@@ -463,7 +472,7 @@ class FactManagementAdapter(FactManagementPort):
                 "new_fact_id": merged.id,
                 "old_fact_ids": ids,
                 "old_facts_state": "SUPERSEDED",
-                "status": "merged",
+                "status": STATUS_MERGED,
                 "message": f"Merged {len(ids)} facts",
             }
             return _with_notes(result, notes, "merge_facts")
@@ -481,15 +490,8 @@ class FactManagementAdapter(FactManagementPort):
         return list(sources.values())
 
 
-def _expiry_refusal(error: FactExpiryError) -> Dict[str, Any]:
-    """The tags of an expiry refusal: `refused`, and `born_due` when the expiry was well formed but already due."""
-    return {"refused": "expiry", "born_due": True} if isinstance(error, FactBornDueError) else {"refused": "expiry"}
-
-
 def _with_notes(result: Dict[str, Any], notes: Sequence[str], tool: str) -> Dict[str, Any]:
     """Put the notes into the tool result as `note`, and log an ignored expiry (the domain does not log)."""
     if EXPIRY_IGNORED_ON_CLOSE in notes:
         logger.info(f"ℹ️  [FactManagement] {tool}: {EXPIRY_IGNORED_ON_CLOSE}")
-    if notes:
-        result["note"] = "; ".join(notes)
-    return result
+    return with_notes(result, notes)

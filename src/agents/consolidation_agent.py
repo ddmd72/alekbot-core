@@ -39,9 +39,8 @@ from ..utils.logger import logger
 from ..ports.llm_port import AgentExecutionContext
 from ..ports.fact_write_port import FactWritePort
 from ..ports.alert_sink import AlertSinkPort
-from ..domain.consolidation_pass_stats import (
-    OUTCOME_BORN_DUE, OUTCOME_ERROR, OUTCOME_EXPIRY, OUTCOME_OK, ConsolidationPassStats,
-)
+from ..domain.consolidation_pass_stats import OUTCOME_ERROR, OUTCOME_OK, ConsolidationPassStats
+from ..domain.fact_tool_result import STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..infrastructure.agent_config import CONSOLIDATION
 
@@ -54,16 +53,6 @@ class ToolResponse:
     name: str
     result_str: str
     outcome: str = OUTCOME_OK
-
-
-def _outcome_of(result: Any) -> str:
-    if not isinstance(result, dict):
-        return OUTCOME_OK
-    if result.get("refused") == "expiry":
-        return OUTCOME_BORN_DUE if result.get("born_due") else OUTCOME_EXPIRY
-    if result.get("status") in ("failed", "not_found") or "error" in result:
-        return OUTCOME_ERROR
-    return OUTCOME_OK
 
 
 _EXPIRY_SCHEMA: Dict[str, Any] = {
@@ -184,7 +173,7 @@ class _TrackingFactManagement(FactManagementPort):
         self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext
     ) -> Dict[str, Any]:
         result = await self._real.create_fact(content=content, metadata=metadata, context=context)
-        if result.get("status") == "created":
+        if result.get("status") == STATUS_CREATED:
             self.wrote = True
             if fid := result.get("fact_id"):
                 self.changed.append((fid, content))
@@ -196,7 +185,7 @@ class _TrackingFactManagement(FactManagementPort):
         result = await self._real.update_fact(
             fact_id=fact_id, updates=updates, account_id=account_id, context=context
         )
-        if result.get("status") == "updated":
+        if result.get("status") == STATUS_UPDATED:
             self.wrote = True
             content = updates.get("content")
             if content and (written_id := result.get("fact_id")):
@@ -209,7 +198,7 @@ class _TrackingFactManagement(FactManagementPort):
         result = await self._real.merge_facts(
             fact_ids=fact_ids, merged_content=merged_content, metadata=metadata, context=context
         )
-        if result.get("status") == "merged":
+        if result.get("status") == STATUS_MERGED:
             self.wrote = True
             if fid := result.get("new_fact_id"):
                 self.changed.append((fid, merged_content))
@@ -1041,7 +1030,7 @@ class ConsolidationAgent(BaseAgent):
                 fact.id, {"state": "invalidated"}, account_id=account_id, context=write_context
             )
             status = result.get("status") if isinstance(result, dict) else None
-            if status != "updated":
+            if status != STATUS_UPDATED:
                 not_applied += 1
                 logger.error(
                     f"❌ [ConsolidationAgent] Directive cap backstop: invalidating {fact.id[:8]} was not applied "
@@ -1505,7 +1494,7 @@ class ConsolidationAgent(BaseAgent):
                     return ToolResponse(
                         name=tool_call.name,
                         result_str=json.dumps(result, ensure_ascii=False),
-                        outcome=_outcome_of(result),
+                        outcome=outcome_of(result),
                     )
 
                 elif tool_call.name == "create_fact":
@@ -1521,7 +1510,7 @@ class ConsolidationAgent(BaseAgent):
                     return ToolResponse(
                         name=tool_call.name,
                         result_str=json.dumps(result, ensure_ascii=False),
-                        outcome=_outcome_of(result),
+                        outcome=outcome_of(result),
                     )
 
                 elif tool_call.name == "update_fact":
@@ -1534,7 +1523,7 @@ class ConsolidationAgent(BaseAgent):
                     return ToolResponse(
                         name=tool_call.name,
                         result_str=json.dumps(result, ensure_ascii=False),
-                        outcome=_outcome_of(result),
+                        outcome=outcome_of(result),
                     )
 
                 elif tool_call.name == "merge_facts":
@@ -1551,7 +1540,7 @@ class ConsolidationAgent(BaseAgent):
                     return ToolResponse(
                         name=tool_call.name,
                         result_str=json.dumps(result, ensure_ascii=False),
-                        outcome=_outcome_of(result),
+                        outcome=outcome_of(result),
                     )
 
                 elif tool_call.name == "count_words":
@@ -1566,7 +1555,7 @@ class ConsolidationAgent(BaseAgent):
                     return ToolResponse(
                         name=tool_call.name,
                         result_str=json.dumps(result, ensure_ascii=False),
-                        outcome=_outcome_of(result),
+                        outcome=outcome_of(result),
                     )
 
                 else:

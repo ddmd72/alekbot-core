@@ -21,6 +21,7 @@ from scripts.consolidation import s3_dry_run_kit as kit_module
 from scripts.consolidation.s3_dry_run_kit import DryRunKit, add_kit_arguments, check_budget_flag, inside_memory_dir
 from src.domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStatus
 from src.domain.entities import FactState
+from src.domain.fact_tool_result import WRITTEN_STATUSES
 
 G1_MAX_TURNS = 13
 G1_PASSES = ("stage2a", "cluster")
@@ -204,7 +205,7 @@ async def written_entries(kit: DryRunKit, first_row: int, timezone: str) -> List
     seen: set = set()
     for row in kit.rows[first_row:]:
         fact_id = row.get("fact_id")
-        if not fact_id or fact_id in seen or row.get("status") not in ("created", "updated", "merged"):
+        if not fact_id or fact_id in seen or row.get("status") not in WRITTEN_STATUSES:
             continue
         seen.add(fact_id)
         fact = await kit.repo.get_fact_by_id(fact_id) if kit.repo else None
