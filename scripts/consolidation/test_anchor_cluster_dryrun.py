@@ -40,6 +40,7 @@ load_dotenv()
 
 from google.cloud import firestore
 
+from scripts.consolidation.legacy_dry_run_ports import install_dry_run
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.composition.service_container import ServiceContainer
@@ -249,7 +250,7 @@ async def run_anchor(
 ) -> Tuple[List[Dict], List[Dict], float]:
     """Run one anchor + cluster through the agent."""
     dry_run = ClusterDryRunAdapter(real_fm, cluster)
-    consolidation_agent._fact_management = dry_run
+    install_dry_run(consolidation_agent, dry_run)
 
     llm_turns: List[Dict[str, Any]] = []
 

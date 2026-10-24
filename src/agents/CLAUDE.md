@@ -262,15 +262,17 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   - **Stats lines.** `ConsolidationPassStats` records each turn's tool outcomes (`ok` / `error` / `expiry` / `born_due`): the 📊
     line and the turn-limit 🚨 carry `tool-error turns N (expiry N[, born due N], abandoned M)`. An abandoned refusal (an `expiry` refusal
     no later success answers) posts a 🚨 **also with `CONSOLIDATION_STATS_ALERTS` off**, and the pass's expiry errors are added to
-    the account's day, both in a `finally` capped at 10 s (`CLOSE_OUT_TIMEOUT_S`, best effort, never raises). The agent builds a typed `PassCall` per call
+    the account's day, both in a `finally` capped at 10 s (`CLOSE_OUT_TIMEOUT_S`, best effort, never raises). `_enforce_directive_cap`
+    reports no op and posts a 🚨 when the backstop's update is not `updated`. The agent builds a typed `PassCall` per call
     (`_pass_call`, through the write path's parsers) and renders the lines itself (`_summary_line`, `_limit_alert`,
     `_abandoned_alert`); the stats never see a tool argument.
   - **The review pass's loop (Facts S4 T6b).** `_get_tool_declarations("review")` gives `update_fact` (basis, history, no
     `reported_date`), `ask_owner` and `count_words`; `_run_consolidation_loop(pass_kind="review", max_turns=…, review_scope=…)`
-    sends the first two to `FactReviewScope` (`infrastructure/fact_review_scope.py`). Review refusals are counted, can be
-    abandoned, and go to `review_refusals`. The typed write port is the agent's own required `fact_updates` dependency
-    (composition passes the adapter twice); every run's tracker is `_TrackingFactUpdates(model port, typed port)`. `_enforce_directive_cap`
-    reports no op and posts a 🚨 when the backstop's update is not `updated`.
+    sends the first two to `FactReviewScope` (`infrastructure/fact_review_scope.py`); the pass kind must match the write
+    context's actor. All review refusals go to `review_refusals`; only born-due and `scope` refusals can be abandoned (a
+    basis or ask refusal leaves the fact kept), and any success of the same fact in the pass answers them. The typed write
+    port is the agent's own required `fact_updates` dependency (a `FactUpdatePort`, refused otherwise when the agent is
+    built; composition passes the adapter twice); every run's tracker is `_TrackingFactUpdates(model port, typed port)`.
 - DeepResearch (async, provider-agnostic, intent `deep_research`) — `create_interaction()` returns
   ACK (job_id); result delivered by adapter. **Default Claude** (`ClaudeDeepResearchRunnerAgent`,
   `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+

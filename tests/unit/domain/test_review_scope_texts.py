@@ -11,7 +11,7 @@ from src.domain.fact_tool_result import (
     REFUSED_ASK, REFUSED_BASIS, REFUSED_SCOPE, STATUS_ASKED, WRITTEN_STATUSES, outcome_of, refused_result,
 )
 from src.domain.consolidation_pass_stats import (
-    OUTCOME_ERROR, OUTCOME_OK, OUTCOME_REVIEW_REFUSAL, ConsolidationPassStats, PassCall, PassTool,
+    OUTCOME_ERROR, OUTCOME_OK, OUTCOME_REVIEW_REFUSAL, OUTCOME_SCOPE_REFUSAL, ConsolidationPassStats, PassCall, PassTool,
 )
 from src.domain.pass_actor import PassActor
 
@@ -70,9 +70,12 @@ def test_the_held_ask_text_says_code_writes_the_question():
 def test_a_refusal_is_a_tagged_failed_result_counted_as_an_error(tag):
     # Reviewer edit (S4 T6b, plan T6b `_outcome_of`): a review refusal is now its own outcome, which the stats count as a
     # review refusal and still as a tool-error turn (no longer a plain `error`, never an expiry error).
+    # Fix-round edit (S4 T6b review M1, plan §3.6): a scope refusal is told apart from basis and ask, because only scope
+    # (with born-due) can be abandoned; it is still a review refusal and a tool-error turn.
     result = refused_result("f1", tag, "why")
     assert result == {"fact_id": "f1", "status": "failed", "refused": tag, "message": "why"}
-    assert outcome_of(result) == OUTCOME_REVIEW_REFUSAL != OUTCOME_ERROR
+    expected = OUTCOME_SCOPE_REFUSAL if tag == REFUSED_SCOPE else OUTCOME_REVIEW_REFUSAL
+    assert outcome_of(result) == expected != OUTCOME_ERROR
     stats = ConsolidationPassStats(PassActor.REVIEW, 15)
     call = [PassCall(PassTool.UPDATE, "u", key="f1")]
     stats.record_turn(call)
