@@ -890,9 +890,9 @@ attempt deadline, created by the deploy (`docs/07_deployment/SCHEDULERS.md`). Co
    stale up to 50 of an account's facts, then the breaker holds the rest). Once S4 wires the review time, a backlog is no
    longer an automatic stop and the headroom bounds each run: at a backlog of 50 it is 0, so nothing is staled and
    everything due is deferred until a review lowers the backlog.
-5. *Stale:* `stale_due_fact` is one transaction under the snapshot's `update_time`: `state=stale`, `is_current` true,
-   `valid_to` none, `stale_since` and `last_updated` = now, and the trail entry `{current → stale, actor janitor, reason
-   "expired <ISO>"}`. A changed or deleted document is a conflict (`FactWriteConflict`), skipped and counted until the next
+5. *Stale:* the service builds the write (`stale_fields`, from the trail the snapshot projected) and `stale_due_fact`
+   applies it in one transaction under the snapshot's `update_time`: `state=stale`, `is_current` true, `valid_to` none,
+   `stale_since` and `last_updated` = now, and the trail entry `{current → stale, actor janitor, reason "expired <ISO>"}`. A changed or deleted document is a conflict (`FactWriteConflict`), skipped and counted until the next
    run; any other error stops the run (below). It never archives, deletes or reads text, and takes no lease.
 6. *Baseline:* each account that staled anything gets `refresh_biographical_context_cache`, so the fact leaves every prompt
    (§4.1).

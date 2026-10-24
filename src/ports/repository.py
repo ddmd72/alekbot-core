@@ -190,42 +190,42 @@ class FactRepository(ABC):
 
     @abstractmethod
     async def write_superseding(
-        self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime, *, actor: str
+        self, new_fact: FactEntity, closures: Sequence[Tuple[StoredFact, Mapping[str, Any]]]
     ) -> None:
-        """Create `new_fact` and close every `replaced` document in one transaction.
+        """Create `new_fact` and close every replaced document with its fields, in one transaction.
 
-        A closed document gets state superseded, is_current False, valid_to and last_updated `now`,
-        `superseded_by=new_fact.id` and a `lifecycle_events` entry of its own (from its stored state, `actor`, reason
-        "replaced by <id>" for a version, "merged into <id>" for a merge). Used for a version (one replaced document,
-        same lineage) and a merge. `new_fact` is stored as given: its own trail is the caller's.
-        Stored through the same writer as add_fact (Vector wrapping, priority rank).
+        `closures` pairs each replaced document with the in-place write that closes it, built by the caller
+        (domain.fact_lifecycle.superseded_closure: state superseded, `superseded_by=new_fact.id`, its trail entry). Used
+        for a version (one replaced document, same lineage) and a merge. `new_fact` is stored as given: its own trail is
+        the caller's, and it is stored as add_fact stores a fact. The store decides nothing about either: it applies them.
         Atomicity: each replaced document must still carry the `update_time` it was read with; otherwise
             FactWriteConflict naming it, nothing written. A read-time abort, or a client that gave up after
             repeated aborts, is also FactWriteConflict (a read-time abort does not say which document was contended,
-            so its conflict names the first replaced id). An existing `new_fact.id` fails the commit.
-        Errors: ValueError, before any I/O, when `replaced` is empty or `new_fact` lacks one of its three vectors.
+            so its conflict names the first replaced id). An existing `new_fact.id` is a bug (ids are fresh uuid4s): the
+            commit fails with the backend's error, nothing written.
+        Errors, before any I/O: InPlaceFieldRefused when a closure names a field outside IN_PLACE_FIELDS
+            (domain/fact_lifecycle.py); ValueError when `closures` is empty or `new_fact` lacks one of its three vectors.
         """
         pass
 
     @abstractmethod
     async def archive_and_add(
-        self, archived: StoredFact, new_fact: FactEntity, now: datetime, *, actor: str, reason: str
+        self, archived: StoredFact, fields: Mapping[str, Any], new_fact: FactEntity
     ) -> None:
-        """Archive the document `archived` in place and create `new_fact`, in one transaction.
+        """Write `fields` onto the document `archived` in place and create `new_fact`, in one transaction.
 
-        The archived document gets `archive_fields`: state archived, is_current True, valid_to and last_updated `now`, and
-        one `lifecycle_events` entry (its stored state -> archived, `actor`, `reason`); `stale_since` is kept. `new_fact`
-        is stored as given through the same writer as add_fact (Vector wrapping, priority rank): its own trail is the
-        caller's.
+        `fields` is the archive, built by the caller (domain.fact_lifecycle.archive_fields: state archived, valid_to, one
+        `lifecycle_events` entry); `new_fact` is stored as given, as add_fact stores a fact: its own trail is the caller's.
+        The store decides nothing about either: it applies them.
         Tenancy: `new_fact.account_id` must be `archived.fact.account_id`; inside the transaction the stored `account_id`
             must be it too (as update_fact_fields).
         Atomicity: the archived document must still carry the `update_time` it was read with; otherwise FactWriteConflict,
             nothing written. A read-time abort, or a client that gave up after repeated aborts, is also FactWriteConflict.
-            An existing `new_fact.id` fails the commit with the Firestore client's AlreadyExists
-            (google.api_core.exceptions), raised as it is; nothing is archived.
-        Errors: ValueError, before any I/O, when the accounts differ, `new_fact` lacks one of its three vectors or
-            `archived.fact` is not stale or current (`archive_fields`); PermissionError when the stored `account_id` is
-            not `archived.fact.account_id`.
+            An existing `new_fact.id` is a bug (ids are fresh uuid4s): the commit fails with the backend's error, raised
+            as it is; nothing is archived.
+        Errors: before any I/O, InPlaceFieldRefused when `fields` names a field outside IN_PLACE_FIELDS, ValueError when
+            the accounts differ or `new_fact` lacks one of its three vectors; PermissionError when the stored
+            `account_id` is not `archived.fact.account_id`.
         """
         pass
 
@@ -246,8 +246,7 @@ class FactRepository(ABC):
     async def get_stale_facts(self, account_id: str) -> List[FactEntity]:
         """Return every `state == "stale"` fact of account `account_id`, longest stale first.
 
-        Order: `stale_since` ascending, a fact without it first, then the id (sorted in code: the query is the two
-            equalities on account_id and state and needs no composite index).
+        Order: `stale_since` ascending, a fact without it first, then the id.
         Projection: every field except `tags_vector` and `metadata_vector` (they read as None); `vector` is a list of
             floats (the review's neighbour query); `id` is the document id.
         Tenancy: only that account's documents (the stored `account_id`).
@@ -261,7 +260,6 @@ class FactRepository(ABC):
         Order: `valid_to` descending (the newest closure first).
         Projection: no vectors (they read as None); `id` is the document id.
         Tenancy: only that account's documents (the stored `account_id`).
-        Index: needs the composite (account_id ASC, state ASC, valid_to DESC) in config/firestore.indexes.json.
         """
         pass
 
@@ -351,12 +349,15 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
-    async def stale_due_fact(self, due: DueFact, now: datetime) -> None:
-        """Mark `due` stale in place: state stale, is_current True, valid_to null, `stale_since` and `last_updated`
-        `now`, and a `lifecycle_events` entry (actor "janitor", reason "expired <expires_at ISO>"). Nothing else changes.
+    async def stale_due_fact(self, due: DueFact, fields: Mapping[str, Any]) -> None:
+        """Write `fields` onto the document of `due` in place, only those fields: the janitor's stale write, built by
+        the caller (domain.fact_lifecycle_sweep.stale_fields from the trail `due` was read with). The store decides
+        nothing about it: it applies it.
 
-        Atomicity: a transaction under `due.update_time`.
-        Errors: FactWriteConflict when the document changed since it was read, or no longer exists; nothing is written.
+        Atomicity: a transaction under `due.update_time`; a document still carrying it has the trail `due` holds.
+        Errors: InPlaceFieldRefused, before any I/O, when `fields` names a field outside IN_PLACE_FIELDS
+            (domain/fact_lifecycle.py); FactWriteConflict when the document changed since it was read, or no longer
+            exists; nothing is written.
         """
         pass
 

@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from ..domain.due_fact import DueFact
 from ..domain.exceptions import FactWriteConflict
 from ..domain.fact_lifecycle_day import FactLifecycleDay
-from ..domain.fact_lifecycle_sweep import breaker_reason, daily_line, stale_headroom
+from ..domain.fact_lifecycle_sweep import breaker_reason, daily_line, stale_fields, stale_headroom
 from ..domain.fact_write_context import as_utc
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
@@ -165,7 +165,7 @@ class FactLifecycleSweepService:
                     break
                 attempted += 1
                 try:
-                    await self._repo.stale_due_fact(due, now)
+                    await self._repo.stale_due_fact(due, stale_fields(due, now))
                 except FactWriteConflict:
                     conflicts += 1
                     logger.info(f"[FactLifecycle] fact {due.fact_id[:8]} changed since it was read; skipped until the next run")

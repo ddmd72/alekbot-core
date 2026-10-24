@@ -29,7 +29,7 @@ import itertools
 import json
 import os
 from collections import Counter
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -42,11 +42,11 @@ from src.domain.due_fact import DueFact
 from src.domain.email import IndexedEmail, IndexingState
 from src.domain.entities import FactEntity, FactState
 from src.domain.exceptions import FactWriteConflict, InPlaceFieldRefused
-from src.domain.fact_lifecycle import IN_PLACE_FIELDS, REVIEW_CLOSED_STATES, archive_fields, superseded_closure
+from src.domain.fact_lifecycle import IN_PLACE_FIELDS, REVIEW_CLOSED_STATES
 from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot
-from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_resolution import resolve_chain
 from src.domain.fact_review_rules import stale_order_key
+from src.domain.fact_update import ParsedFactUpdate
 from src.domain.fact_tool_result import NOTE_NO_READABLE_SOURCE, STATUS_CREATED, WRITTEN_STATUSES
 from src.domain.fact_write_context import FactWriteContext, as_utc
 from src.domain.owner_timezone import failure_reason, owner_to_read, owner_zone
@@ -58,6 +58,7 @@ from src.domain.stored_fact import StoredFact
 from src.ports.alert_sink import AlertSinkPort
 from src.ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from src.ports.fact_management_port import FactManagementPort
+from src.ports.fact_update_port import FactUpdatePort
 from src.ports.indexed_email_repository import IndexedEmailRepository
 from src.ports.prompt_v3.token_repository import TokenRepository
 from src.ports.repository import FactRepository
@@ -126,6 +127,13 @@ def inside_memory_dir(path: Path) -> Path:
 
 
 # ------------------------------------------------------------------------------------------------ the fact store
+
+def _require_in_place(fields: Mapping[str, Any]) -> None:
+    """The store's guard (`FirestoreFactRepository`): an in-place write names only IN_PLACE_FIELDS, before any read."""
+    refused = set(fields) - IN_PLACE_FIELDS
+    if refused:
+        raise InPlaceFieldRefused(refused)
+
 
 class NoWriteFactRepository(FactRepository):
     """The live fact repository for reads; every write goes to an in-memory overlay and is recorded in `writes`.
@@ -208,40 +216,40 @@ class NoWriteFactRepository(FactRepository):
         return await resolve_chain(read, fact_id, account_id, accepted)
 
     async def write_superseding(
-        self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime, *, actor: str
+        self, new_fact: FactEntity, closures: Sequence[Tuple[StoredFact, Mapping[str, Any]]]
     ) -> None:
-        if not replaced:
+        if not closures:
             raise ValueError(f"write_superseding of {new_fact.id} replaces no document; use add_fact")
+        for _, fields in closures:
+            _require_in_place(fields)
         missing = [name for name in _VECTORS if getattr(new_fact, name) is None]
         if missing:
             raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a version without vectors leaves vector search")
         async with self._lock:
-            await self._supersede(new_fact, replaced, now, actor)
+            await self._supersede(new_fact, closures)
 
-    async def _supersede(self, new_fact: FactEntity, replaced: Sequence[StoredFact], now: datetime, actor: str) -> None:
-        for stored in replaced:
+    async def _supersede(self, new_fact: FactEntity, closures: Sequence[Tuple[StoredFact, Mapping[str, Any]]]) -> None:
+        for stored, _ in closures:
             await self._check_token(stored.fact.id, stored.fact.account_id, stored.update_time)
         if new_fact.id in self._docs or await self._real.get_fact_by_id(new_fact.id) is not None:
             raise ValueError(f"fact {new_fact.id} already exists")
-        closed: List[FactEntity] = []
-        for stored in replaced:
-            closed.append(stored.fact.model_copy(update=superseded_closure(stored.fact, new_fact, now, actor)))
+        # A document read under its token and still carrying it is unchanged, so the fields apply to it as read.
+        closed = [stored.fact.model_copy(update=dict(fields)) for stored, fields in closures]
         self._put(new_fact)
         for fact in closed:
             self._put(fact)
-        self._record("write_superseding", new_id=new_fact.id, replaced=[s.fact.id for s in replaced], actor=actor)
+        self._record("write_superseding", new_id=new_fact.id, replaced=[stored.fact.id for stored, _ in closures])
 
     async def archive_and_add(
-        self, archived: StoredFact, new_fact: FactEntity, now: datetime, *, actor: str, reason: str
+        self, archived: StoredFact, fields: Mapping[str, Any], new_fact: FactEntity
     ) -> None:
+        _require_in_place(fields)
         account_id = archived.fact.account_id
         if new_fact.account_id != account_id:
             raise ValueError(f"fact {new_fact.id} belongs to another account than the archived {archived.fact.id}")
         missing = [name for name in _VECTORS if getattr(new_fact, name) is None]
         if missing:
             raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a fact without vectors leaves vector search")
-        # Before any read, as the repository: `archive_fields` refuses a fact that is not stale or current.
-        closed = archived.fact.model_copy(update=archive_fields(archived.fact, now, actor, reason))
         async with self._lock:
             current = await self._read(archived.fact.id, account_id)
             if current is None or current.update_time != archived.update_time:
@@ -251,13 +259,11 @@ class NoWriteFactRepository(FactRepository):
             if new_fact.id in self._docs or await self._real.get_fact_by_id(new_fact.id) is not None:
                 raise ValueError(f"fact {new_fact.id} already exists")
             self._put(new_fact)
-            self._put(closed)
-            self._record("archive_and_add", archived_id=archived.fact.id, new_id=new_fact.id, actor=actor)
+            self._put(archived.fact.model_copy(update=dict(fields)))
+            self._record("archive_and_add", archived_id=archived.fact.id, new_id=new_fact.id)
 
     async def update_fact_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
-        refused = set(fields) - IN_PLACE_FIELDS
-        if refused:
-            raise InPlaceFieldRefused(refused)
+        _require_in_place(fields)
         async with self._lock:
             await self._apply_fields(stored, fields)
             self._record("update_fact_fields", fact_id=stored.fact.id, fields=sorted(fields))
@@ -272,13 +278,14 @@ class NoWriteFactRepository(FactRepository):
         base = self._base(stored)
         self._put(FactEntity.model_validate({**base.model_dump(), **fields}))
 
-    async def stale_due_fact(self, due: DueFact, now: datetime) -> None:
+    async def stale_due_fact(self, due: DueFact, fields: Mapping[str, Any]) -> None:
+        _require_in_place(fields)
         async with self._lock:
             await self._check_token(due.fact_id, due.account_id, due.update_time)
+            # The whole document, to hold the overlay copy; the fields are applied to it as given.
             base = self._docs.get(due.fact_id) or await self._real.get_fact_by_id(due.fact_id)
             if base is None:
                 raise FactWriteConflict(due.fact_id)
-            fields = stale_fields(replace(due, lifecycle_events=list(base.lifecycle_events)), now)
             self._put(FactEntity.model_validate({**base.model_dump(), **fields}))
             self._record("stale_due_fact", fact_id=due.fact_id)
 
@@ -782,8 +789,8 @@ class OwnFactsSearch:
         return [*self._own.get(primary_query, []), *hits][:limit]
 
 
-class WriteRecorder(FactManagementPort):
-    """Wraps the real adapter (built on the overlay): one report row per create, update and merge call."""
+class WriteRecorder(FactManagementPort, FactUpdatePort):
+    """Wraps the real adapter (built on the overlay): one report row per create, update (model or typed) and merge call."""
 
     def __init__(self, inner: FactManagementPort, kit: "DryRunKit") -> None:
         self._inner = inner
@@ -804,9 +811,17 @@ class WriteRecorder(FactManagementPort):
         )
 
     async def update_fact(
+        self, fact_id: str, updates: Dict[str, Any], account_id: str, *, context: FactWriteContext
+    ) -> Dict[str, Any]:
+        return await self._kit.logged(
+            "update", context, updates.get("expiry"), updates.get("reported_date"), "fact_id",
+            self._inner.update_fact(fact_id, updates, account_id, context=context),
+        )
+
+    async def apply_fact_update(
         self,
         fact_id: str,
-        updates: Dict[str, Any],
+        update: ParsedFactUpdate,
         account_id: str,
         *,
         context: FactWriteContext,
@@ -814,10 +829,14 @@ class WriteRecorder(FactManagementPort):
         reason: Optional[str] = None,
         history: Optional[str] = None,
     ) -> Dict[str, Any]:
+        if not isinstance(self._inner, FactUpdatePort):
+            raise TypeError(f"{type(self._inner).__name__} has no typed update path (FactUpdatePort)")
+        # The report row shows what was sent; a typed update sends no model JSON, so its decision is shown as written.
+        reported = update.reported_date.isoformat() if update.reported_date is not None else None
         return await self._kit.logged(
-            "update", context, updates.get("expiry"), updates.get("reported_date"), "fact_id",
-            self._inner.update_fact(
-                fact_id, updates, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history,
+            "update", context, update.expiry, reported, "fact_id",
+            self._inner.apply_fact_update(
+                fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history,
             ),
         )
 
