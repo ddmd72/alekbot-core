@@ -36,6 +36,10 @@ make install-dev          # prod deps + pytest/black/flake8/mypy
 cp .env.example .env      # then fill in real values — see §3
 ```
 
+Personal-data hooks (pre-commit + commit-msg, the denylist check of `scripts/pii_gate/`): `git config core.hooksPath .githooks`
+and `git config pii.denylistFile <path to your private denylist>` (or export `PII_DENYLIST_FILE`). They then run any hook already
+in `.git/hooks/` too; to keep your own hooks path instead, call `.githooks/pre-commit` and `.githooks/commit-msg "$1"` from your hooks.
+
 ---
 
 ## 3. Configure `.env`

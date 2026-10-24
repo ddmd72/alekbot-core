@@ -1,0 +1,13 @@
+#!/bin/sh
+# Personal-data gate, commit-msg: the commit message against the private denylist (same setup as pre-commit).
+root="$(git rev-parse --show-toplevel)" || exit 1
+denylist="${PII_DENYLIST_FILE:-$(git config --get pii.denylistFile)}"
+if [ -n "$denylist" ]; then
+  PYTHONPATH="$root" python3 -m scripts.pii_gate.denylist_check --message "$1" --denylist "$denylist" || exit 1
+fi
+legacy="$(git rev-parse --git-common-dir)/hooks/commit-msg"
+here="$(cd "$(dirname "$0")" && pwd)"
+configured="$(cd "$root" && cd "$(git config --get core.hooksPath || echo /nonexistent)" 2>/dev/null && pwd)"
+if [ "$configured" = "$here" ] && [ -z "$PII_GATE_CHAINED" ] && [ -x "$legacy" ]; then
+  PII_GATE_CHAINED=1 exec "$legacy" "$@"
+fi

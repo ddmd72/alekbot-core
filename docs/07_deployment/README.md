@@ -287,6 +287,16 @@ limit) it samples every second.
   ```
 - The drive queue, every scheduler job and the deadlines: [SCHEDULERS.md](SCHEDULERS.md).
 
+### Personal-data gate (GitHub)
+
+`.github/workflows/pii_gate.yml` checks every PR (CLAUDE.md, "PERSONAL DATA RULE") and fails closed until three
+repository secrets exist (Settings → Secrets and variables → Actions):
+- `PII_DENYLIST` — the private denylist's content (`hard|soft <regex>` per line);
+- `PII_PROFILE` — the private profile the model reads;
+- `ANTHROPIC_API_KEY` — for the semantic check (`claude-haiku-5-5`; a repository variable `PII_GATE_MODEL` overrides it).
+
+A false positive is overridden with the PR label `pii-ok` (create it once). PRs from forks get no secrets and fail.
+
 ---
 
 ## First deploy: the two-pass URLs
