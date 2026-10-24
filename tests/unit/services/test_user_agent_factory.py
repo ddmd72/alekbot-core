@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import Mock, MagicMock, AsyncMock
+from src.adapters.fact_management_adapter import FactManagementAdapter
 from src.composition.user_agent_factory import UserAgentFactory
 from src.domain.user import UserProfile, UserBotConfig, PerformanceTier
 from src.domain.settings import ConsolidationSettings
@@ -33,7 +34,9 @@ def mock_dependencies():
         "component_service": Mock(),
         "assembly_service": None,
         "fact_write_service": Mock(),
-        "fact_management_adapter_factory": Mock(return_value=Mock()),
+        # Reviewer edit (S4 T6b review M3): the factory passes this adapter as the consolidation agent's model port and
+        # typed port, and the agent refuses a typed port that is not a FactUpdatePort; a mock of the production class is both.
+        "fact_management_adapter_factory": Mock(return_value=Mock(spec=FactManagementAdapter)),
         "email_search_service": Mock(),
     }
 
