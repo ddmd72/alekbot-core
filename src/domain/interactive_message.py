@@ -46,8 +46,16 @@ class InteractiveMessage(BaseModel):
         return next((o for o in self.options if o.id == option_id), None)
 
     def option_for_reply(self, text: str) -> Optional[str]:
-        """The id of the option whose digit is the whole of `text` (surrounding whitespace aside); None otherwise."""
+        """The id of the option whose digit is the whole of `text`; None otherwise.
+
+        Around the digit a chat client's punctuation is not words: surrounding whitespace, backticks that wrap the whole
+        text (the chat adapters' own rule for a copied command, any number of them) and one full stop after the digit
+        (`3`, `2.`)."""
         reply = text.strip()
+        if reply.startswith("`") and reply.endswith("`"):
+            reply = reply.strip("`").strip()
+        if reply.endswith("."):
+            reply = reply[:-1].rstrip()
         for number, option in enumerate(self.options, start=1):
             if reply == str(number):
                 return option.id

@@ -1,11 +1,14 @@
 """The owner's answers (Facts S4 · T1c, plan §3.16): which reply is a digit answer, what each answer does to its fact,
 and the text of the history fact an "ended" leaves behind."""
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
 from src.domain import fact_review_answer_kind, fact_review_answers
-from src.domain.entities import ExpiryKind, FactState
+from src.domain.entities import ExpiryKind, FactDomain, FactState, FactType
+from src.domain.fact_lifecycle import compute_expiry
+from src.domain.fact_update import parse_fact_update
+from src.domain.fact_expiry import Expiry
 from src.domain.fact_review_answer_change import AnswerChange
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_answers import answer_updates, digit_answer, ended_text
@@ -18,6 +21,8 @@ from tests.support.review_rule_builders import NOW, fact, question
 
 DAY = timedelta(days=1)
 MADRID = "Europe/Madrid"
+# a plan whose last day is 28 Oct in Madrid: it is due at the start of the next local day
+ENDS_28_OCT = compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 28)), NOW, MADRID)["expires_at"]
 
 
 def message(ids=("still_true", "ended", "never", "dont_know")) -> InteractiveMessage:
@@ -50,7 +55,7 @@ def test_a_digit_is_the_answer_of_its_option(text, kind):
 @pytest.mark.parametrize("text, kind", [
     (" 2 ", AnswerKind.ENDED), ("\n3\n", AnswerKind.NEVER), ("2.", AnswerKind.ENDED), (" 2. ", AnswerKind.ENDED),
     ("`3`", AnswerKind.NEVER), (" `3` ", AnswerKind.NEVER), ("` 3 `", AnswerKind.NEVER), ("`3.`", AnswerKind.NEVER),
-    ("1 .", AnswerKind.STILL_TRUE),
+    ("1 .", AnswerKind.STILL_TRUE), ("``3``", AnswerKind.NEVER), ("```\n4\n```", AnswerKind.DONT_KNOW),
 ])
 def test_the_punctuation_a_chat_client_puts_around_a_lone_digit_is_not_words(text, kind):
     assert digit_answer(message(), text) is kind
@@ -58,7 +63,7 @@ def test_the_punctuation_a_chat_client_puts_around_a_lone_digit_is_not_words(tex
 
 @pytest.mark.parametrize("text", [
     "0", "5", "12", "11", "21", "-1", "1.5", "1,", "(1)", "1!", "1)", "2 уже нет", "уже нет 2", "да", "yes", "Yes 1",
-    "one", "", " ", "\n", ".", "..", "`", "``", "```", "`1", "1`", "``3``", "`3`.", "1..", "1 2", "١", "２",
+    "one", "", " ", "\n", ".", "..", "`", "``", "```", "`1", "1`", "`3`.", "1..", "1 2", "١", "２",
 ])
 def test_anything_but_a_lone_digit_is_words_and_words_are_the_reviews(text):
     assert digit_answer(message(), text) is None
@@ -267,3 +272,77 @@ def test_an_in_place_change_carries_nothing_else():
     for extra in ({"updates": {"state": "archived"}}, {"reason": "r"}, {"evidence_at": NOW}, {"history": "h"}):
         with pytest.raises(ValueError):
             AnswerChange(fields={"state": FactState.CURRENT}, **extra)
+
+
+# ------------------------------------------------------------------------------------------------ the month names (L1)
+
+def test_the_month_names_are_english_whatever_the_process_locale(monkeypatch):
+    import locale
+    monkeypatch.setattr(locale, "setlocale", lambda *a, **k: "uk_UA.UTF-8")  # nothing the text reads may go through it
+    names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    for month, name in enumerate(names, start=1):
+        at = datetime(2026, month, 15, 12, 0, tzinfo=timezone.utc)
+        assert ended_text("x", at, "UTC") == f"No longer true (the owner said so in {name} 2026): x"
+
+
+# ------------------------------------------------------------------------------------------------ what a yes keeps (M1)
+
+def test_still_true_on_a_permanent_fact_keeps_it_permanent():
+    permanent = fact(state=FactState.CURRENT, stale_since=None, expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None)
+    assert answer_updates(AnswerKind.STILL_TRUE, permanent, question(), NOW, MADRID, "digit").updates == {
+        "state": "current", "expiry": {"kind": "none"},
+    }
+
+
+@pytest.mark.parametrize("pinned", [
+    {"domain": FactDomain.AGENT_DIRECTIVE}, {"type": FactType.PRINCIPLE}, {"tags": ["Mindset"]},
+])
+def test_still_true_on_a_pinned_fact_is_none_even_with_a_stale_horizon(pinned):
+    change = answer_updates(AnswerKind.STILL_TRUE, fact(**pinned), question(), NOW, MADRID, "digit")
+    assert change.updates["expiry"] == {"kind": "none"}
+
+
+def test_still_true_on_a_date_that_is_still_ahead_keeps_that_date():
+    ahead = fact(state=FactState.CURRENT, expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=ENDS_28_OCT)
+    expiry = answer_updates(AnswerKind.STILL_TRUE, ahead, question(), NOW, MADRID, "digit").updates["expiry"]
+    assert expiry == {"kind": "date", "date": "2026-10-28"}  # the last day of the plan, in the owner's zone
+
+
+def test_the_date_is_read_in_the_owners_zone():
+    ahead = fact(state=FactState.CURRENT, expiry_kind=ExpiryKind.DATE, ttl_days=None,
+                 expires_at=datetime(2026, 10, 29, 23, 30, tzinfo=timezone.utc))  # 00:30 on 30 Oct in Madrid
+    assert answer_updates(AnswerKind.STILL_TRUE, ahead, question(), NOW, MADRID, "digit").updates["expiry"]["date"] == "2026-10-30"
+    assert answer_updates(AnswerKind.STILL_TRUE, ahead, question(), NOW, "UTC", "digit").updates["expiry"]["date"] == "2026-10-29"
+
+
+@pytest.mark.parametrize("make", [
+    lambda: fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=NOW),
+    lambda: fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=NOW - DAY),
+    lambda: fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=None),
+    lambda: fact(),
+    lambda: fact(expiry_kind=None, ttl_days=None, expires_at=None),
+], ids=["date due now", "date past", "date without a moment", "due horizon", "legacy unclassified"])
+def test_still_true_on_anything_else_gets_the_doubled_window(make):
+    stale = make()
+    days = answer_updates(AnswerKind.STILL_TRUE, stale, question(), NOW, MADRID, "digit").updates["expiry"]
+    assert days == {"kind": "horizon", "days": fallback_window_days(stale)}
+
+
+# ------------------------------------------------------------------------------------------------ the write path accepts them (L9)
+
+@pytest.mark.parametrize("make, expected", [
+    (fact, Expiry(ExpiryKind.HORIZON, days=28)),
+    (lambda: fact(expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None), Expiry(ExpiryKind.NONE)),
+    (lambda: fact(domain=FactDomain.AGENT_DIRECTIVE), Expiry(ExpiryKind.NONE)),
+    (lambda: fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=ENDS_28_OCT),
+     Expiry(ExpiryKind.DATE, on=date(2026, 10, 28))),
+])
+def test_what_still_true_sends_parses_as_the_write_path_reads_it(make, expected):
+    parsed = parse_fact_update(answer_updates(AnswerKind.STILL_TRUE, make(), question(), NOW, MADRID, "digit").updates, MADRID)
+    assert (parsed.state, parsed.expiry) == (FactState.CURRENT, expected)
+
+
+@pytest.mark.parametrize("kind, state", [(AnswerKind.ENDED, FactState.ARCHIVED), (AnswerKind.NEVER, FactState.INVALIDATED)])
+def test_what_ended_and_never_send_parse_as_a_closing_state_with_nothing_else(kind, state):
+    parsed = parse_fact_update(answer_updates(kind, fact(), question(), NOW, MADRID, "digit").updates, MADRID)
+    assert (parsed.state, parsed.expiry, parsed.content, parsed.notes) == (state, None, None, ())

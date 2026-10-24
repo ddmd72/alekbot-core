@@ -21,6 +21,9 @@ QUESTION_RETENTION = timedelta(days=90)
 # What the owner's answers in words may add up to on one question (the review reads them once).
 MAX_REPLY_CHARS = 2000
 
+# The binding kind that routes a choice made on a question's message to the fact-question handler.
+FACT_QUESTION_KIND = "fact_question"
+
 # What happens to the fact when nobody answers.
 QuestionFallback = Literal["revive", "archive"]
 # Where an answer came from. `review` is the review applying the owner's words.

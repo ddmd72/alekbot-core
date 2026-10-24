@@ -4,15 +4,19 @@ import pytest
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_language import (
     CANONICAL_LABELS,
-    FACT_QUESTION_KIND,
     LABEL_KEYS,
     MAX_OPTION_WORDS,
     MAX_TEXT_CHARS,
     OPTION_KEYS,
     check_labels,
     fact_question_message,
+    label_source,
     message_language,
+    parse_message_language,
+    ui_strings_language,
 )
+from src.domain.fact_review_question import FACT_QUESTION_KIND
+from src.domain.fact_review_state import FactReviewState
 from src.domain.interactive_option import MAX_LABEL_CHARS
 from src.domain.language import LanguageCode
 from src.domain.ui_messages import UIMessage
@@ -105,6 +109,7 @@ def test_the_keys_must_be_exactly_the_label_keys():
 @pytest.mark.parametrize("bad", [
     "two\nlines", "two\r\nlines", "a b", "with 1 digit", "digit ٣ arabic", "has [bracket", "has <!channel>", "closing > sign",
     "see https://example.com", "see www.example.com", "ftp://x", "", "   ", "\n",
+    "evil\u202etext", "zero\u200bwidth", "joiner\u200d", "bell\x07", "tab\there", "bom\ufeff",
 ], ids=lambda v: repr(v)[:20])
 def test_each_bad_shape_is_refused_for_every_text(key, bad):
     assert check_labels(good(**{key: bad})) is not None
@@ -208,3 +213,62 @@ def test_missing_labels_are_named_and_nothing_is_built():
 def test_a_label_the_option_cannot_carry_is_the_messages_own_refusal_not_a_silent_cut():
     with pytest.raises(ValueError):
         fact_question_message(question(), {**CANONICAL_LABELS, OPTION: "x" * (MAX_LABEL_CHARS + 1)})
+
+
+def test_an_empty_text_is_refused_for_being_no_text_not_for_its_lines():
+    for empty in ("", "   ", "\n"):
+        assert "not a text" in check_labels(good(**{OPTION: empty}))
+
+
+def test_a_control_or_format_character_is_named():
+    assert "control or format" in check_labels(good(**{OPTION: "evil\u202etext"}))
+    assert "control or format" in check_labels(good(**{QUESTION_LINE: "zero\u200bwidth"}))
+
+
+def test_ordinary_punctuation_and_letters_in_any_script_are_not_control_characters():
+    assert check_labels(good(**{QUESTION_LINE: "¿Sigue siendo cierto? — «да», 好吗？"})) is None
+
+
+# ------------------------------------------------------------------------------------------------ a reported language (M3)
+
+@pytest.mark.parametrize("raw, parsed", [("ru", "ru"), ("RU", "ru"), (" Uk ", "uk"), ("de", "de"), ("\nfr\n", "fr")])
+def test_a_reported_language_is_two_ascii_letters_lowercased(raw, parsed):
+    assert parse_message_language(raw) == parsed
+
+
+@pytest.mark.parametrize("raw", ["ru-RU", "Russian", "", "  ", None, 3, ["ru"], "r", "rus", "r1", "р", "рu", "ru\nuk", b"ru"])
+def test_anything_else_is_no_language(raw):
+    assert parse_message_language(raw) is None
+
+
+@pytest.mark.parametrize("code, language", [("uk", UK), ("en", EN), ("fr", FR), ("es", ES), ("UK", UK), (" es ", ES)])
+def test_four_languages_have_ui_strings(code, language):
+    assert ui_strings_language(code) is language
+
+
+@pytest.mark.parametrize("code", ["ru", "de", "ru-RU", "", "Ukrainian", "xx"])
+def test_any_other_language_has_no_ui_strings(code):
+    assert ui_strings_language(code) is None
+
+
+def test_mirror_with_a_stored_code_in_the_wrong_case_reads_it_as_the_code():
+    stored = FactReviewState.model_construct(account_id="acc", message_language="UK")  # the state itself refuses this
+    assert message_language(None, True, EN, stored, FR) == "uk"
+    bad = FactReviewState.model_construct(account_id="acc", message_language="Russian")
+    assert message_language(None, True, EN, bad, FR) == "fr"
+
+
+def test_label_source_is_ui_for_the_four_languages_whatever_is_cached():
+    assert label_source("uk", None) == "ui"
+    assert label_source("ES", {"junk": "x"}) == "ui"
+
+
+def test_label_source_is_the_model_set_only_while_it_passes_the_check_now():
+    assert label_source("ru", good()) == "model"
+    assert label_source("ru", None) == "fallback"
+    assert label_source("ru", {}) == "fallback"
+    assert label_source("ru", good(**{OPTION: "has 1 digit"})) == "fallback"
+    older = dict(CANONICAL_LABELS)
+    del older[FOOTER]  # a set written before a key was added
+    assert label_source("ru", older) == "fallback"
+    assert label_source("ru-RU", good()) == "fallback"

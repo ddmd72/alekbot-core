@@ -206,7 +206,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.MEMORY_REPLY_HINT.value: "Відповідай на це повідомлення цифрою або своїми словами.",
     UIMessage.MEMORY_ANSWER_NOTED.value: "Дякую, записано.",
     UIMessage.MEMORY_REPLY_NOTED.value: "Прийнято — я це врахую.",
-    UIMessage.MEMORY_ALREADY_ANSWERED.value: "Вже є відповідь, дякую.",
+    UIMessage.MEMORY_ALREADY_ANSWERED.value: "На це питання вже є відповідь, дякую.",
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Це питання закрите.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Факти, які я відклав цього тижня:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Щоб повернути один із них, напиши мені в чаті, що це досі так.",
