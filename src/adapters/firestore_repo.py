@@ -9,9 +9,9 @@ from google.cloud.firestore_v1.vector import Vector
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from ..domain.due_fact import DueFact
 from ..domain.entities import FactEntity, FactState
-from ..domain.exceptions import FactWriteConflict, InPlaceFieldRefused
+from ..domain.exceptions import FactWriteConflict
 from ..domain.fact_expiry import as_expiry_kind
-from ..domain.fact_lifecycle import IN_PLACE_FIELDS, REVIEW_CLOSED_STATES
+from ..domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
 from ..domain.fact_resolution import resolve_chain
 from ..domain.fact_review_rules import stale_order_key
 from ..domain.stored_fact import StoredFact
@@ -70,13 +70,6 @@ def _has_aborted_in_chain(exc: BaseException) -> bool:
 def _projection(*omitted: str) -> List[str]:
     """The stored field names of a FactEntity read without `omitted` (the document id is not a field)."""
     return [name for name in FactEntity.model_fields if name not in omitted and name != "id"]
-
-
-def _require_in_place(fields: Mapping[str, Any]) -> None:
-    """An in-place write names only IN_PLACE_FIELDS; anything else is a programming error, refused before any I/O."""
-    refused = set(fields) - IN_PLACE_FIELDS
-    if refused:
-        raise InPlaceFieldRefused(refused)
 
 
 def _encode_fields(fields: Mapping[str, Any]) -> Dict[str, Any]:
@@ -581,7 +574,7 @@ class FirestoreFactRepository(FactRepository):
         if not closures:
             raise ValueError(f"write_superseding of {new_fact.id} replaces no document; use add_fact")
         for _, fields in closures:
-            _require_in_place(fields)
+            require_in_place(fields)
         missing = [name for name in _VECTOR_FIELDS if getattr(new_fact, name) is None]
         if missing:
             raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a version without vectors leaves vector search")
@@ -606,7 +599,7 @@ class FirestoreFactRepository(FactRepository):
         await self._in_transaction(body, next(iter(tokens), new_fact.id))
 
     async def update_fact_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
-        _require_in_place(fields)
+        require_in_place(fields)
         fact_id = stored.fact.id
         ref = self.facts_col.document(fact_id)
         encoded = _encode_fields(fields)
@@ -630,7 +623,7 @@ class FirestoreFactRepository(FactRepository):
     async def archive_and_add(
         self, archived: StoredFact, fields: Mapping[str, Any], new_fact: FactEntity
     ) -> None:
-        _require_in_place(fields)
+        require_in_place(fields)
         account_id = archived.fact.account_id
         if new_fact.account_id != account_id:
             raise ValueError(f"fact {new_fact.id} belongs to another account than the archived {archived.fact.id}")
@@ -994,7 +987,7 @@ class FirestoreFactRepository(FactRepository):
         return due
 
     async def stale_due_fact(self, due: DueFact, fields: Mapping[str, Any]) -> None:
-        _require_in_place(fields)
+        require_in_place(fields)
         ref = self.facts_col.document(due.fact_id)
         encoded = _encode_fields(fields)
 

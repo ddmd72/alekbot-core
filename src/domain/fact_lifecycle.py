@@ -4,7 +4,7 @@ from datetime import datetime, time, timedelta
 from typing import AbstractSet, Any, Callable, Dict, Final, List, Mapping, Optional, Protocol, Sequence, Tuple, assert_never
 
 from .entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType
-from .exceptions import FactBornDueError, FactExpiryError, FactResolutionError
+from .exceptions import FactBornDueError, FactExpiryError, FactResolutionError, InPlaceFieldRefused
 from .fact_expiry import EXPIRY_NONE, NOTHING_WRITTEN, Expiry, as_expiry_kind
 from .local_time import local_date, local_moment, zone_or_utc
 from .refusal_wording import RefusalWording
@@ -53,6 +53,14 @@ IN_PLACE_FIELDS: frozenset[str] = frozenset(
 )
 
 MAX_FORWARD_HOPS = 50
+
+
+def require_in_place(fields: Mapping[str, Any]) -> None:
+    """An in-place write names only IN_PLACE_FIELDS: raises InPlaceFieldRefused (a programming error) for any other.
+    Every store checks it before any I/O."""
+    refused = set(fields) - IN_PLACE_FIELDS
+    if refused:
+        raise InPlaceFieldRefused(refused)
 
 
 def successor_unknown(start_id: str) -> str:

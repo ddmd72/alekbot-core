@@ -41,8 +41,8 @@ from src.domain.billing import calculate_cost
 from src.domain.due_fact import DueFact
 from src.domain.email import IndexedEmail, IndexingState
 from src.domain.entities import FactEntity, FactState
-from src.domain.exceptions import FactWriteConflict, InPlaceFieldRefused
-from src.domain.fact_lifecycle import IN_PLACE_FIELDS, REVIEW_CLOSED_STATES
+from src.domain.exceptions import FactWriteConflict
+from src.domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
 from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot
 from src.domain.fact_resolution import resolve_chain
 from src.domain.fact_review_rules import stale_order_key
@@ -127,13 +127,6 @@ def inside_memory_dir(path: Path) -> Path:
 
 
 # ------------------------------------------------------------------------------------------------ the fact store
-
-def _require_in_place(fields: Mapping[str, Any]) -> None:
-    """The store's guard (`FirestoreFactRepository`): an in-place write names only IN_PLACE_FIELDS, before any read."""
-    refused = set(fields) - IN_PLACE_FIELDS
-    if refused:
-        raise InPlaceFieldRefused(refused)
-
 
 class NoWriteFactRepository(FactRepository):
     """The live fact repository for reads; every write goes to an in-memory overlay and is recorded in `writes`.
@@ -221,7 +214,7 @@ class NoWriteFactRepository(FactRepository):
         if not closures:
             raise ValueError(f"write_superseding of {new_fact.id} replaces no document; use add_fact")
         for _, fields in closures:
-            _require_in_place(fields)
+            require_in_place(fields)
         missing = [name for name in _VECTORS if getattr(new_fact, name) is None]
         if missing:
             raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a version without vectors leaves vector search")
@@ -243,7 +236,7 @@ class NoWriteFactRepository(FactRepository):
     async def archive_and_add(
         self, archived: StoredFact, fields: Mapping[str, Any], new_fact: FactEntity
     ) -> None:
-        _require_in_place(fields)
+        require_in_place(fields)
         account_id = archived.fact.account_id
         if new_fact.account_id != account_id:
             raise ValueError(f"fact {new_fact.id} belongs to another account than the archived {archived.fact.id}")
@@ -263,7 +256,7 @@ class NoWriteFactRepository(FactRepository):
             self._record("archive_and_add", archived_id=archived.fact.id, new_id=new_fact.id)
 
     async def update_fact_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
-        _require_in_place(fields)
+        require_in_place(fields)
         async with self._lock:
             await self._apply_fields(stored, fields)
             self._record("update_fact_fields", fact_id=stored.fact.id, fields=sorted(fields))
@@ -279,7 +272,7 @@ class NoWriteFactRepository(FactRepository):
         self._put(FactEntity.model_validate({**base.model_dump(), **fields}))
 
     async def stale_due_fact(self, due: DueFact, fields: Mapping[str, Any]) -> None:
-        _require_in_place(fields)
+        require_in_place(fields)
         async with self._lock:
             await self._check_token(due.fact_id, due.account_id, due.update_time)
             # The whole document, to hold the overlay copy; the fields are applied to it as given.
@@ -790,9 +783,14 @@ class OwnFactsSearch:
 
 
 class WriteRecorder(FactManagementPort, FactUpdatePort):
-    """Wraps the real adapter (built on the overlay): one report row per create, update (model or typed) and merge call."""
+    """Wraps the real adapter (built on the overlay): one report row per create, update (model or typed) and merge call.
+
+    The wrapped port must offer the typed update too (a FactUpdatePort, or a wrapper that forwards its methods); one that
+    does not is refused when the recorder is built."""
 
     def __init__(self, inner: FactManagementPort, kit: "DryRunKit") -> None:
+        if not callable(getattr(inner, "apply_fact_update", None)):
+            raise TypeError(f"{type(inner).__name__} has no typed update path (FactUpdatePort)")
         self._inner = inner
         self._kit = kit
 
@@ -829,13 +827,11 @@ class WriteRecorder(FactManagementPort, FactUpdatePort):
         reason: Optional[str] = None,
         history: Optional[str] = None,
     ) -> Dict[str, Any]:
-        if not isinstance(self._inner, FactUpdatePort):
-            raise TypeError(f"{type(self._inner).__name__} has no typed update path (FactUpdatePort)")
         # The report row shows what was sent; a typed update sends no model JSON, so its decision is shown as written.
         reported = update.reported_date.isoformat() if update.reported_date is not None else None
         return await self._kit.logged(
             "update", context, update.expiry, reported, "fact_id",
-            self._inner.apply_fact_update(
+            self._inner.apply_fact_update(  # type: ignore[attr-defined]  # checked when built
                 fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history,
             ),
         )
