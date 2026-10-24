@@ -3,7 +3,7 @@
 owner's calendar. A real repository on the evaluating Firestore fake; the embedder is the deterministic hash one.
 
 Reviewer edit (Facts S4 T6c, L4 and M6): `expires_at` is an aware UTC datetime (no longer an ISO string), the view is
-`fact_view` (no longer `EnrichedFact.expiry_decision`), and the context crosses a Cloud Task through the task queue's
+`consolidation_hit` (no longer `EnrichedFact.expiry_decision`), and the context crosses a Cloud Task through the task queue's
 one encoder, `_DomainEncoder`, which writes datetimes and enums (no longer through a plain `json.dumps`).
 """
 import json
@@ -15,7 +15,7 @@ import pytest
 from src.adapters.gcp_task_queue import _DomainEncoder
 from src.domain.entities import ExpiryKind
 from src.domain.request_context import RequestContext
-from src.domain.search import fact_view
+from src.domain.search import consolidation_hit
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, T0, USER, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore
@@ -52,7 +52,7 @@ async def enrich(service, **kw):
 
 
 def decision(fact, zone):
-    view = fact_view(fact, zone)
+    view = consolidation_hit(fact, zone)  # T6c re-review, S3: a hit's view is consolidation_hit
     return view["expiry"], view["due"]
 
 
