@@ -8,7 +8,7 @@ from src.domain.consolidation import ConsolidationBatch
 from src.domain.consolidation_run import ConsolidationRun
 from src.domain.user import UserBotConfig
 from src.services.consolidation_service import ConsolidationService
-from tests.support.account_owners import OwnedAccounts
+from tests.support.account_owners import owner_zones
 
 USER = "user-1"
 
@@ -23,10 +23,11 @@ def _service(*, task_queue, lease_free):
         setattr(queue, name, AsyncMock())
     lease = MagicMock(acquire=AsyncMock(return_value=lease_free), release=AsyncMock())
     coordinator = MagicMock(route_message=AsyncMock(return_value=AgentResponse.success("b1", "agent", {})))
+    profiles = _Profiles()
     return ConsolidationService(
         queue=queue, coordinator=coordinator, agent_factory=MagicMock(ensure_agents_for_user=AsyncMock()),
-        lease=lease, run_timeout_s=900.0, user_repo=_Profiles(), task_queue=task_queue,
-        account_repo=OwnedAccounts({"acc-1": USER}),
+        lease=lease, run_timeout_s=900.0, user_repo=profiles, task_queue=task_queue,
+        owner_zones=owner_zones({"acc-1": USER}, profiles),
     )
 
 

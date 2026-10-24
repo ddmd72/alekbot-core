@@ -29,10 +29,10 @@ async def test_under_the_sealed_deploy_env_the_sweep_is_log_only(prod_graph: Pro
     assert prod_graph.app.worker_handler._fact_lifecycle_sweep._dry_run is True
 
 
-async def test_the_graphs_consolidation_service_holds_the_account_repository(prod_graph: ProdGraph):
+async def test_the_graphs_consolidation_service_reads_the_owner_zone_through_the_account_repository(prod_graph: ProdGraph):
     app = prod_graph.app
 
-    assert app.worker_handler._consolidation._account_repo is app.account_repo
+    assert app.worker_handler._consolidation._owner_zones._account_repo is app.account_repo
 
 
 async def test_the_graph_answers_the_scheduler_task_with_the_empty_run_totals(prod_graph: ProdGraph):

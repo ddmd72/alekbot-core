@@ -28,6 +28,7 @@ from src.domain.llm import LLMResponse, ToolCall
 from src.domain.user import PerformanceTier, UserBotConfig, UserProfile
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.services.consolidation_service import ConsolidationService
+from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import EXPIRY_NONE, on
@@ -116,7 +117,7 @@ def coordinator():
 def build(queue, db, coordinator, users: Users, accounts: Accounts) -> ConsolidationService:
     return ConsolidationService(
         queue=queue, coordinator=coordinator, agent_factory=CachedAgents(), lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()),
-        run_timeout_s=900.0, user_repo=users, account_repo=accounts,
+        run_timeout_s=900.0, user_repo=users, owner_zones=OwnerTimezoneResolver(accounts, users),
     )
 
 
@@ -264,8 +265,8 @@ async def test_a_user_without_an_account_still_fails_the_batch_and_reads_no_acco
     assert (await queue.collection.document("b1").get()).to_dict()["status"] == BatchStatus.FAILED.value
 
 
-def test_the_account_repository_is_required(queue, db, coordinator):
-    with pytest.raises(TypeError, match="account_repo"):
+def test_the_owner_zone_resolver_is_required(queue, db, coordinator):
+    with pytest.raises(TypeError, match="owner_zones"):
         ConsolidationService(
             queue=queue, coordinator=coordinator, agent_factory=CachedAgents(),
             lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=900.0, user_repo=Users(),

@@ -122,6 +122,7 @@ src.services.localization_service.LocalizationService 1  # by-design single inst
 src.services.long_turn_service.LongTurnService 1  # by-design single instance
 src.services.memory_fact_service.MemoryFactService 1  # by-design single instance
 src.services.overflow_routing_service.OverflowRoutingService 1  # by-design single instance
+src.services.owner_timezone_resolver.OwnerTimezoneResolver 1  # by-design single instance, built once as _owner_zones in application_graph.py and held by the one ConsolidationService; FactReviewService and FactAnswerService take the same one (Facts S4 T7c, T8a, T8e)
 src.services.prompt_builder.PromptBuilder 1  # by-design single instance
 src.services.prompt_builder.UserPromptBuilder 1  # by-design single instance
 src.services.prompt_cache_strategy.PromptCacheStrategy 1  # by-design single instance
