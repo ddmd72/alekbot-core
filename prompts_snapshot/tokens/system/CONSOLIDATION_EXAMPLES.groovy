@@ -41,7 +41,7 @@ example_1_update_weight: {
     STEP 4 - ANALYZE:
     - Top result: 95% similarity
     - Same metric (weight in kg)
-    - Different data point (new measurement, 9 days later)
+    - Different data point (new measurement, 7 days later)
     - Match type: TIME SERIES UPDATE
 
     STEP 5 - DECIDE:
@@ -90,41 +90,41 @@ example_2_create_new_habit: {
     reasoning: '''
     <thinking>
     STEP 1 - EXTRACT:
-    - Candidate: "User started morning yoga practice (30 min daily)"
+    - Candidate: "User started evening swimming practice (45 min daily)"
 
     STEP 2 - CLASSIFY:
     - Domain: HEALTH
     - Temporal: DYNAMIC (new habit, may change)
     - State: CURRENT
     - Expiry: {kind: horizon, days: 90} (a new habit may change; review if not said again)
-    - Tags: ["yoga", "habit", "health", "morning", "routine"]
+    - Tags: ["swimming", "habit", "health", "evening", "routine"]
     - Metadata: {"duration_min": 45, "frequency": "daily", "time_of_day": "evening"}
     - Context: "Q1 2026 habit formation"
 
     STEP 3 - SEARCH:
-    Query: "user yoga morning practice habit"
+    Query: "user swimming evening practice habit"
     Domain: HEALTH
     Results: [] (no matches)
 
     STEP 4 - ANALYZE:
-    - No existing facts about yoga
+    - No existing facts about swimming
     - Match type: NO MATCH
 
     STEP 5 - DECIDE:
     Operation: CREATE new fact
-    Reason: New entity (yoga habit not previously recorded)
+    Reason: New entity (swimming habit not previously recorded)
     Heuristic: "Candidate is new entity"
 
     STEP 6 - EXECUTE:
     create_fact(
-        content="User started morning yoga practice (30 min daily) in Q1 2026",
+        content="User started evening swimming practice (45 min daily) in Q1 2026",
         fact_attributes={
             "domain": "HEALTH",
             "temporal_class": "DYNAMIC",
             "state": "CURRENT",
             "context_priority": "MEDIUM",
             "expiry": {"kind": "horizon", "days": 90},
-            "tags": ["yoga", "habit", "health", "morning", "routine"],
+            "tags": ["swimming", "habit", "health", "evening", "routine"],
             "metadata": {
                 "duration_min": 45,
                 "frequency": "daily",
@@ -137,10 +137,10 @@ example_2_create_new_habit: {
     )
 
     STEP 7 - VERIFY:
-    ✓ Fact created successfully (fact_id: yoga-habit-456)
+    ✓ Fact created successfully (fact_id: swim-habit-456)
 
     STEP 8 - REPORT:
-    Action: CREATE new yoga habit fact
+    Action: CREATE new swimming habit fact
     </thinking>
     '''
 
@@ -148,7 +148,7 @@ example_2_create_new_habit: {
         "operations": [
             {
                 "action": "CREATE",
-                "fact_id": "yoga-habit-456",
+                "fact_id": "swim-habit-456",
                 "reason": "New habit not previously recorded"
             }
         ]
