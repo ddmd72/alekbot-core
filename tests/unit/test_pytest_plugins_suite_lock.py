@@ -3,7 +3,6 @@
 import json
 import os
 import stat
-import threading
 import types
 
 import pytest
@@ -58,8 +57,20 @@ def test_a_large_session_waits_then_gives_up_naming_the_holder(pytester, holder)
 
 
 def test_a_large_session_runs_once_the_holder_lets_go(pytester, holder, monkeypatch):
+    # The holder lets go when the inner session reports that it waits, not on a timer: a timer raced the inner
+    # session's start-up, and on a loaded machine it fired before collection finished, so nothing was waited for.
     monkeypatch.setenv("PYTEST_LOCK_TIMEOUT_S", "5")
-    threading.Timer(0.3, holder.release).start()
+    real_acquire = suite_lock.SuiteLock.acquire
+
+    def acquire_releasing_the_holder_on_the_wait_report(self, timeout_s, report_s, poll_s, say):
+        def say_then_let_go(message):
+            say(message)
+            if "waiting for another test session" in message:
+                holder.release()
+
+        return real_acquire(self, timeout_s, report_s, poll_s, say_then_let_go)
+
+    monkeypatch.setattr(suite_lock.SuiteLock, "acquire", acquire_releasing_the_holder_on_the_wait_report)
     result = _run(pytester)
     result.assert_outcomes(passed=3)
     assert "waiting for another test session" in _everything(result)
