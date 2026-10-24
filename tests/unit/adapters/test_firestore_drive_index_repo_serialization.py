@@ -52,7 +52,7 @@ def full_record() -> DriveIndexRecord:
         model_outages=2, model_read_at=T - timedelta(hours=3),
         # Search v2 (§25.2.1): every field, the nested profile with every one of its own fields set
         profile=DriveProfile(
-            title="Boarding pass Valencia–Rome", what_it_is="An airline boarding pass", language="es",
+            title="Boarding pass Barcelona–Rome", what_it_is="An airline boarding pass", language="es",
             doc_type="ticket", life_domains=("travel",), dates=(ProfileDate("valid_until", date(2026, 5, 12), "12 05 2026"),),
             entities=(ProfileEntity("Roma", "place", "ROMA FCO", ("rome", "рим")),),
             key_values=(KeyValue("reference", "AB 12-34", "ab1234"),), topics=("flight",), topics_native=("vuelo",),

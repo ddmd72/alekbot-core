@@ -34,13 +34,13 @@ def store():
 def meta(**over):
     base = {
         "account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
-        "context_priority": "medium", "tags": ["family"], "metadata": {"name": "Valentina"}, "type": "event",
+        "context_priority": "medium", "tags": ["family"], "metadata": {"name": "Maria"}, "type": "event",
     }
     base.update(over)
     return base
 
 
-async def create(store, text="mother is Valentina", **over):
+async def create(store, text="mother is Maria", **over):
     res = await store.adapter.create_fact(text, meta(**over), context=ctx())
     assert res["status"] == "created", res
     return res["fact_id"]
@@ -50,7 +50,7 @@ async def search(store, zone="Europe/Paris"):
     adapter = FactManagementAdapter(store.repo, store.embedder, store.write,
                                     SearchEnrichmentService(store.repo, store.embedder, 7, 10, 10, 20))
     with RequestContext(user_id=USER, account_id=ACC):
-        return await adapter.search_existing_facts(["family"], "mother is Valentina", timezone=zone)
+        return await adapter.search_existing_facts(["family"], "mother is Maria", timezone=zone)
 
 
 def in_days(days):
@@ -88,7 +88,7 @@ async def test_none_is_shown_as_none_without_a_due_day(store):
 
 
 async def test_a_fact_with_no_recorded_kind_shows_no_decision_whatever_ttl_days_holds(store):
-    put_raw(store, "legacy", "mother is Valentina", entity={"domain": "biographical", "ttl_days": 90},
+    put_raw(store, "legacy", "mother is Maria", entity={"domain": "biographical", "ttl_days": 90},
             expires_at=datetime(2027, 1, 1, tzinfo=timezone.utc))
     (got,) = await search(store)
     assert got["expiry"] is None and got["due"] is None

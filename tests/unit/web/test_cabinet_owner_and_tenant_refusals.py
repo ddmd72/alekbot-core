@@ -164,7 +164,7 @@ class TestForeignReminder:
 # --------------------------------------------------------------------------- another account's fact
 
 async def _stranger_fact(w: World) -> str:
-    res = await w.facts.adapter.create_fact("mother is Valentina", {
+    res = await w.facts.adapter.create_fact("mother is Maria", {
         "account_id": STRANGER[1], "user_id": STRANGER[0], "domain": "biographical", "temporal_class": "stable",
         "context_priority": "medium", "tags": ["family"], "metadata": {}, "type": "event", "expiry": EXPIRY_NONE},
         context=ctx())

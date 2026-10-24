@@ -35,7 +35,7 @@ async def _seed_chain(store, old_text, new_text):
 
 
 async def test_a_stale_row_whose_text_was_rewritten_is_refused_and_nothing_is_written(store):
-    await _seed_chain(store, "mother is Valentina", "mother is Valentina Stepanivna")
+    await _seed_chain(store, "mother is Maria", "mother is Maria Doe")
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(FactResolutionError, match="rewritten after the page loaded") as caught:
@@ -46,7 +46,7 @@ async def test_a_stale_row_whose_text_was_rewritten_is_refused_and_nothing_is_wr
 
 
 async def test_the_current_row_itself_is_invalidated_whatever_its_text(store):
-    await _seed(store, "x", "lives in Puçol")
+    await _seed(store, "x", "lives in Springfield")
 
     await CabinetFactService(store.repo).invalidate("f-x", ACC)
 
@@ -55,7 +55,7 @@ async def test_the_current_row_itself_is_invalidated_whatever_its_text(store):
 
 async def test_a_version_written_between_resolve_and_write_with_another_text_is_refused(store):
     await _seed(store, "v1", "works remotely", lineage_id="L")
-    await _seed(store, "v2", "works remotely from Valencia", lineage_id="L", version=2)
+    await _seed(store, "v2", "works remotely from Springfield", lineage_id="L", version=2)
     closure = {"state": "superseded", "is_current": False, "superseded_by": "f-v2", "valid_to": T0}
     store.interfere("f-v1", closure)    # a version write closes f-v1 between invalidate's resolve and its write
     v2_before = copy.deepcopy(store.docs["f-v2"])

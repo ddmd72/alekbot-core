@@ -212,7 +212,7 @@ async def test_submit_transcript_records_each_turn_to_prompt_content_store(app_a
         "turns": [
             {
                 "request_text": "what's the weather",
-                "response_text": "sunny in Valencia",
+                "response_text": "sunny in Springfield",
                 "started_at": "2026-09-22T10:00:00+00:00",
                 "ended_at": "2026-09-22T10:00:02+00:00",
                 "finish_reason": "completed",
@@ -239,7 +239,7 @@ async def test_submit_transcript_records_each_turn_to_prompt_content_store(app_a
     assert first_call.kwargs["provider"] == "openai"
     assert first_call.kwargs["request"].model_name == "gpt-realtime-2.1"
     assert "what's the weather" in first_call.kwargs["request"].messages[0].parts[0].text
-    assert first_call.kwargs["response"].text == "sunny in Valencia"
+    assert first_call.kwargs["response"].text == "sunny in Springfield"
     assert first_call.kwargs["latency_ms"] == pytest.approx(2000.0)
 
     second_call = prompt_content_store.record_turn.await_args_list[1]

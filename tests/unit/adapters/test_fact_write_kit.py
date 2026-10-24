@@ -56,8 +56,8 @@ def _near(similarity):
 
 async def test_each_fact_gets_a_new_id_a_new_lineage_the_account_the_user_and_three_vectors(store):
     saved, skipped, ids = await add(store, [
-        {"text": "mother is Valentina", "tags": ["family"], "metadata": {"name": "Valentina"}},
-        {"content": "owns a Toyota", "tags": [], "type": "state"},
+        {"text": "mother is Maria", "tags": ["family"], "metadata": {"name": "Maria"}},
+        {"content": "owns a Skoda", "tags": [], "type": "state"},
     ])
     assert (saved, skipped) == (2, 0) and len(ids) == 2 and len(store.docs) == 2
     first, second = (store.docs[i] for i in ids)
@@ -66,7 +66,7 @@ async def test_each_fact_gets_a_new_id_a_new_lineage_the_account_the_user_and_th
         assert (doc["account_id"], doc["created_by_user_id"], doc["is_current"], doc["version"]) == (ACC, USER, True, 1)
         assert all(isinstance(doc[k], Vector) for k in ("vector", "tags_vector", "metadata_vector"))
     for field, text in zip(("vector", "tags_vector", "metadata_vector"),
-                           fact_embedding_texts("mother is Valentina", ["family"], {"name": "Valentina"})):
+                           fact_embedding_texts("mother is Maria", ["family"], {"name": "Maria"})):
         assert stored_vector(first[field]) == pytest.approx(embed(text))
     assert second["metadata"] == {}
 

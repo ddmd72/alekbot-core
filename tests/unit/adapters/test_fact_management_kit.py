@@ -31,14 +31,14 @@ def store():
 def meta(**over):
     base = {
         "account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
-        "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Valentina"}, "type": "event",
+        "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Maria"}, "type": "event",
         "expiry": EXPIRY_NONE,
     }
     base.update(over)
     return base
 
 
-async def create(store, text="mother is Valentina", **over):
+async def create(store, text="mother is Maria", **over):
     res = await store.adapter.create_fact(text, meta(**over), context=ctx())
     assert res["status"] == "created", res
     return res["fact_id"]
@@ -63,24 +63,24 @@ async def test_create_fact_stores_one_document_with_the_given_attributes(store):
     # Reviewer edit (facts S3, T4a): a fact born archived needs no `expiry` and carries no decision (owner Q9, plan §3.4),
     # so none is sent: a sent one would add a `note` to the exact key set below.
     attributes = meta(
-        tags=["family"], metadata={"name": "Valentina"}, context="said at lunch", ttl_days=30, type="STATE",
+        tags=["family"], metadata={"name": "Maria"}, context="said at lunch", ttl_days=30, type="STATE",
         domain="BIOGRAPHICAL", temporal_class="STABLE", context_priority="HIGH", state="ARCHIVED",
         reported_date="2026-03-04T10:00:00Z")
     attributes.pop("expiry", None)
-    res = await store.adapter.create_fact("mother is Valentina", attributes, context=ctx())
+    res = await store.adapter.create_fact("mother is Maria", attributes, context=ctx())
     assert set(res) == {"fact_id", "status", "message"} and res["status"] == "created"
     json.dumps(res)
     doc = store.docs[res["fact_id"]]
     assert len(store.docs) == 2 and store.docs[other] == other_before
-    assert (doc["account_id"], doc["created_by_user_id"], doc["text"]) == (ACC, USER, "mother is Valentina")
-    assert doc["tags"] == ["family", "consolidated"] and doc["metadata"] == {"name": "Valentina"}
+    assert (doc["account_id"], doc["created_by_user_id"], doc["text"]) == (ACC, USER, "mother is Maria")
+    assert doc["tags"] == ["family", "consolidated"] and doc["metadata"] == {"name": "Maria"}
     assert (doc["domain"], doc["temporal_class"], doc["context_priority"], doc["state"], doc["type"]) == (
         "biographical", "stable", "high", "archived", "state")
     assert (doc["context"], doc["ttl_days"], doc["version"]) == ("said at lunch", None, 1)
     assert (doc["expiry_kind"], doc["expires_at"]) == (None, None)
     assert doc["reported_date"] == datetime(2026, 3, 4, 10, 0, tzinfo=timezone.utc)
     assert doc["lineage_id"] and doc["id"] == res["fact_id"]
-    texts = fact_embedding_texts("mother is Valentina", ["family"], {"name": "Valentina"})
+    texts = fact_embedding_texts("mother is Maria", ["family"], {"name": "Maria"})
     for field, text in zip(("vector", "tags_vector", "metadata_vector"), texts):
         assert stored_vector(doc[field]) == pytest.approx(embed(text))
 
@@ -92,7 +92,7 @@ async def test_create_fact_defaults_type_event_state_current_and_reported_date_n
     # Reviewer edit (facts S3, T4a): a current fact needs `expiry` (D1, plan §3.4), so it joins the minimum set. The
     # context has no span, so the date default is still now (plan §3.5).
     required["expiry"] = EXPIRY_NONE
-    res = await store.adapter.create_fact("mother is Valentina", required, context=ctx())
+    res = await store.adapter.create_fact("mother is Maria", required, context=ctx())
     assert res["status"] == "created"
     doc = store.docs[res["fact_id"]]
     assert doc["type"] == "event" and doc["state"] == "current"
@@ -114,7 +114,7 @@ async def test_create_fact_is_current_with_no_valid_to_whatever_the_state(store,
 
 async def test_create_fact_refuses_state_superseded_and_writes_nothing(store):
     # Reviewer edit (facts S2, D-2): was the [superseded] case above; a fact cannot be born superseded without a successor.
-    res = await store.adapter.create_fact("mother is Valentina", meta(state="superseded"), context=ctx())
+    res = await store.adapter.create_fact("mother is Maria", meta(state="superseded"), context=ctx())
     assert res["status"] == "failed" and res["fact_id"] is None and "SUPERSEDED" in res["message"]
     assert store.docs == {}
 
@@ -132,7 +132,7 @@ async def test_create_fact_without_a_required_key_fails_and_writes_nothing(store
     before = snapshot(store)
     bad = meta()
     del bad[key]
-    res = await store.adapter.create_fact("mother is Valentina", bad, context=ctx())
+    res = await store.adapter.create_fact("mother is Maria", bad, context=ctx())
     assert res["status"] == "failed" and res["fact_id"] is None and key in res["message"]
     assert store.docs == before
 
@@ -140,19 +140,19 @@ async def test_create_fact_without_a_required_key_fails_and_writes_nothing(store
 @pytest.mark.parametrize("bad", [{"domain": "astrology"}, {"temporal_class": "sometimes"}, {"state": "zombie"},
                                  {"context_priority": "urgent"}])
 async def test_create_fact_with_an_invalid_enum_value_fails_and_writes_nothing(store, bad):
-    res = await store.adapter.create_fact("mother is Valentina", meta(**bad), context=ctx())
+    res = await store.adapter.create_fact("mother is Maria", meta(**bad), context=ctx())
     assert res["status"] == "failed" and res["fact_id"] is None
     assert store.docs == {}
 
 
 async def test_create_fact_with_a_required_key_set_to_none_passes_the_check(store):
-    res = await store.adapter.create_fact("mother is Valentina", meta(domain=None), context=ctx())
+    res = await store.adapter.create_fact("mother is Maria", meta(domain=None), context=ctx())
     assert res["status"] == "created" and store.docs[res["fact_id"]]["domain"] is None
 
 
 async def test_create_fact_never_raises_on_an_embedding_failure(store):
     store.write._embedding = FailingEmbedder()
-    res = await store.adapter.create_fact("mother is Valentina", meta(), context=ctx())
+    res = await store.adapter.create_fact("mother is Maria", meta(), context=ctx())
     assert res["status"] == "failed" and res["fact_id"] is None and store.docs == {}
 
 
@@ -168,7 +168,7 @@ def _plain(doc):
 
 async def test_update_returns_the_result_dict_and_json(store):
     fid = await create(store)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentyna", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     # Reviewer edit (facts S2, D8): `fact_id` is the document written, the new version, which replaces the argument.
     assert set(res) == {"fact_id", "status", "version", "message"} and res["fact_id"] != fid
     assert store.docs[res["fact_id"]]["replaces_fact_id"] == fid and res["version"] == 2
@@ -183,16 +183,16 @@ async def test_update_tags_replaces_them_whole_and_recomputes_all_three_vectors(
     assert res["fact_id"] != fid and store.docs[fid]["tags"] == ["family", "mother", "consolidated"]
     assert doc["tags"] == ["relatives", "consolidated"] and doc["version"] == 2
     for field, text in zip(("vector", "tags_vector", "metadata_vector"),
-                           fact_embedding_texts("mother is Valentina", ["relatives"], {"name": "Valentina"})):
+                           fact_embedding_texts("mother is Maria", ["relatives"], {"name": "Maria"})):
         assert stored_vector(doc[field]) == pytest.approx(embed(text))
 
 
 async def test_update_metadata_overwrites_a_shared_key_and_keeps_the_others(store):
-    fid = await create(store, metadata={"name": "Valentina", "city": "Kyiv"})
-    res = await store.adapter.update_fact(fid, {"metadata": {"name": "Valya"}, "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    fid = await create(store, metadata={"name": "Maria", "city": "Springfield"})
+    res = await store.adapter.update_fact(fid, {"metadata": {"name": "Masha"}, "expiry": EXPIRY_NONE}, ACC, context=ctx())
     # Reviewer edit (facts S2, D8): read through the returned id; the old version keeps its metadata.
-    assert store.docs[res["fact_id"]]["metadata"] == {"name": "Valya", "city": "Kyiv"}
-    assert res["fact_id"] != fid and store.docs[fid]["metadata"] == {"name": "Valentina", "city": "Kyiv"}
+    assert store.docs[res["fact_id"]]["metadata"] == {"name": "Masha", "city": "Springfield"}
+    assert res["fact_id"] != fid and store.docs[fid]["metadata"] == {"name": "Maria", "city": "Springfield"}
 
 
 async def test_update_temporal_class_is_case_insensitive_bumps_version_and_keeps_vectors(store):
@@ -213,8 +213,8 @@ async def test_update_with_the_stored_values_changes_no_version_or_reported_date
     fid = await create(store)
     before = _plain(store.docs[fid])
     res = await store.adapter.update_fact(
-        fid, {"content": "mother is Valentina", "tags": ["family", "mother", "consolidated"],
-              "metadata": {"name": "Valentina"}, "temporal_class": "STABLE"}, ACC, context=ctx())
+        fid, {"content": "mother is Maria", "tags": ["family", "mother", "consolidated"],
+              "metadata": {"name": "Maria"}, "temporal_class": "STABLE"}, ACC, context=ctx())
     assert res["status"] == "updated" and res["version"] == 1
     assert _without(_plain(store.docs[fid]), "last_updated") == _without(before, "last_updated")
 
@@ -261,7 +261,7 @@ async def test_update_state_applies_the_lifecycle_fields(store, state, is_curren
     # test_update_on_an_archived_fact_is_refused). SUPERSEDED needs its successor. The write stays in place, with no
     # embedding and the stored vectors, version and id (covers the retired mock tests of state-only updates).
     fid = await create(store)
-    successor = await create(store, "mother is Valentyna")
+    successor = await create(store, "mother is Mariya")
     before = _plain(store.docs[fid])
     store.adapter._embedding = FailingEmbedder()
     updates = {"state": state, "superseded_by": successor} if state == "SUPERSEDED" else {"state": state}
@@ -289,12 +289,12 @@ async def test_repeating_an_update_changes_only_last_updated(store):
     # changes only its last_updated, in place.
     fid = await create(store)
     res = await store.adapter.update_fact(
-        fid, {"content": "mother is Valentyna", "tags": ["family"], "expiry": EXPIRY_NONE}, ACC, context=ctx())
+        fid, {"content": "mother is Mariya", "tags": ["family"], "expiry": EXPIRY_NONE}, ACC, context=ctx())
     v2 = res["fact_id"]
     first = _plain(store.docs[v2])
     old = _plain(store.docs[fid])
     again = await store.adapter.update_fact(
-        fid, {"content": "mother is Valentyna", "tags": ["family"], "expiry": EXPIRY_NONE}, ACC, context=ctx())
+        fid, {"content": "mother is Mariya", "tags": ["family"], "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert (again["fact_id"], again["version"]) == (v2, 2) and len(store.docs) == 2
     second = _plain(store.docs[v2])
     assert {k for k in second if second[k] != first[k]} == {"last_updated"}
@@ -447,9 +447,9 @@ def _searching(store):
 
 
 async def test_search_returns_the_current_facts_of_the_context_account_in_any_domain(store):
-    own = [await create(store, "mother is Valentina"), await create(store, "owns a Toyota", domain="possession"),
+    own = [await create(store, "mother is Maria"), await create(store, "owns a Skoda", domain="possession"),
            await create(store, "has a cold", domain="health")]
-    await create(store, "mother was Valentina", state="archived")
+    await create(store, "mother was Maria", state="archived")
     await create(store, "foreign mother", account_id=OTHER)
     with RequestContext(user_id=USER, account_id=ACC):
         got = await _searching(store).search_existing_facts(["family"], "mother", timezone="UTC")
@@ -467,9 +467,9 @@ async def test_search_account_is_the_context_account_else_the_user_id(store):
 
 
 async def test_search_result_dicts_carry_the_listed_fields_and_serialise(store):
-    fid = await create(store, "mother is Valentina", reported_date="2026-03-04T10:00:00+00:00")
+    fid = await create(store, "mother is Maria", reported_date="2026-03-04T10:00:00+00:00")
     with RequestContext(user_id=USER, account_id=ACC):
-        (got,) = await _searching(store).search_existing_facts(["family"], "mother is Valentina", timezone="UTC")
+        (got,) = await _searching(store).search_existing_facts(["family"], "mother is Maria", timezone="UTC")
     # Reviewer edit (facts S3, T5; plan §3.3, §6 E): the model-facing dict gains `expiry` (the stored decision in the
     # shape the model sends) and `due` (horizons only); `ttl_days` / `expires_at` stay out. The fact was created with
     # {kind: none}, so the decision shows as none with no due day.
@@ -480,20 +480,20 @@ async def test_search_result_dicts_carry_the_listed_fields_and_serialise(store):
     assert got["reported"] == "2026-03-04"
     assert got["expiry"] == {"kind": "none"} and got["due"] is None
     assert (got["fact_id"], got["content"], got["type"], got["domain"], got["temporal_class"]) == (
-        fid, "mother is Valentina", "event", "biographical", "stable")
+        fid, "mother is Maria", "event", "biographical", "stable")
     assert (got["state"], got["context_priority"], got["version"]) == ("current", "medium", 1)
-    assert got["tags"] == ["family", "mother", "consolidated"] and got["metadata"] == {"name": "Valentina"}
+    assert got["tags"] == ["family", "mother", "consolidated"] and got["metadata"] == {"name": "Maria"}
     assert got["reported_date"] == "2026-03-04T10:00:00+00:00" and got["similarity"] is None
     assert isinstance(got["source"], str) and got["source"]
     json.dumps(got)
 
 
 async def test_search_ranks_the_best_match_first(store):
-    await create(store, "mother is Valentina")
-    best = await create(store, "owns a Toyota Corolla", tags=["car"], metadata={"make": "Toyota"})
+    await create(store, "mother is Maria")
+    best = await create(store, "owns a Skoda Fabia 2015", tags=["car"], metadata={"make": "Skoda"})
     await create(store, "likes green tea", tags=["drinks"], metadata={})
     with RequestContext(user_id=USER, account_id=ACC):
-        got = await _searching(store).search_existing_facts(["car"], "owns a Toyota Corolla", timezone="UTC")
+        got = await _searching(store).search_existing_facts(["car"], "owns a Skoda Fabia 2015", timezone="UTC")
     assert got[0]["fact_id"] == best
 
 

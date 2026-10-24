@@ -212,7 +212,7 @@ class TestMCPClientCallTool:
         }
         with patch("aiohttp.ClientSession", return_value=_make_aiohttp_mock(text_response)):
             client = MCPClient(_MCP_URL, _API_KEY)
-            result = await client.call_tool("weather_lookup", {"location": "Kyiv"})
+            result = await client.call_tool("weather_lookup", {"location": "Lviv"})
 
         assert result == {"text": "plain text result"}
 
@@ -268,24 +268,24 @@ class TestMCPMapsAdapterArgNormalization:
     def test_weather_zero_date_and_hour_dropped(self):
         out = MCPMapsAdapter._normalize_arguments(
             "lookup_weather",
-            {"location": {"address": "Kyiv, UA"}, "date": {"day": 0, "month": 0, "year": 0}, "hour": 0},
+            {"location": {"address": "Lviv, UA"}, "date": {"day": 0, "month": 0, "year": 0}, "hour": 0},
         )
         assert "date" not in out
         assert "hour" not in out
-        assert out["location"] == {"address": "Kyiv, UA"}
+        assert out["location"] == {"address": "Lviv, UA"}
 
     def test_weather_partial_date_dropped(self):
         # day=0 is a protobuf placeholder, not a usable weather date.
         out = MCPMapsAdapter._normalize_arguments(
             "lookup_weather",
-            {"location": {"address": "Kyiv, UA"}, "date": {"day": 0, "month": 6, "year": 2026}},
+            {"location": {"address": "Lviv, UA"}, "date": {"day": 0, "month": 6, "year": 2026}},
         )
         assert "date" not in out
 
     def test_weather_valid_date_and_hour_kept(self):
         out = MCPMapsAdapter._normalize_arguments(
             "lookup_weather",
-            {"location": {"address": "Kyiv, UA"}, "date": {"day": 15, "month": 7, "year": 2026}, "hour": 14},
+            {"location": {"address": "Lviv, UA"}, "date": {"day": 15, "month": 7, "year": 2026}, "hour": 14},
         )
         assert out["date"] == {"day": 15, "month": 7, "year": 2026}
         assert out["hour"] == 14
@@ -296,7 +296,7 @@ class TestMCPMapsAdapterArgNormalization:
         out = MCPMapsAdapter._normalize_arguments(
             "lookup_weather",
             {"location": {
-                "address": "Kyiv, UA",
+                "address": "Lviv, UA",
                 "latLng": {"latitude": 50.45, "longitude": 30.52},
                 "placeId": "abc",
             }},
@@ -328,19 +328,19 @@ class TestMCPMapsAdapterArgNormalization:
         out = MCPMapsAdapter._normalize_arguments(
             "compute_routes",
             {
-                "origin": {"address": "Kyiv", "latLng": {"latitude": 0, "longitude": 0}},
+                "origin": {"address": "Lviv", "latLng": {"latitude": 0, "longitude": 0}},
                 "destination": {"address": "Lviv", "latLng": {"latitude": 49.84, "longitude": 24.03}},
                 "travelMode": "DRIVE",
             },
         )
-        assert out["origin"] == {"address": "Kyiv"}
+        assert out["origin"] == {"address": "Lviv"}
         assert out["destination"] == {"latLng": {"latitude": 49.84, "longitude": 24.03}}
         assert out["travelMode"] == "DRIVE"
 
     # -- passthrough / safety ----------------------------------------------
 
     def test_search_places_passthrough_unchanged(self):
-        args = {"textQuery": "pharmacy in Kyiv", "regionCode": "UA"}
+        args = {"textQuery": "pharmacy in Lviv", "regionCode": "UA"}
         out = MCPMapsAdapter._normalize_arguments("search_places", args)
         assert out == args
 
@@ -350,7 +350,7 @@ class TestMCPMapsAdapterArgNormalization:
         assert out == args
 
     def test_input_dict_not_mutated(self):
-        original = {"location": {"address": "Kyiv", "latLng": {"latitude": 0, "longitude": 0}},
+        original = {"location": {"address": "Lviv", "latLng": {"latitude": 0, "longitude": 0}},
                     "date": {"day": 0, "month": 0, "year": 0}, "hour": 0}
         snapshot = json.loads(json.dumps(original))
         MCPMapsAdapter._normalize_arguments("lookup_weather", original)
@@ -363,9 +363,9 @@ class TestMCPMapsAdapterArgNormalization:
         adapter = MCPMapsAdapter(mock_client)
         await adapter.call_tool(
             "lookup_weather",
-            {"location": {"address": "Kyiv, UA"}, "date": {"day": 0, "month": 0, "year": 0}, "hour": 0},
+            {"location": {"address": "Lviv, UA"}, "date": {"day": 0, "month": 0, "year": 0}, "hour": 0},
         )
 
         mock_client.call_tool.assert_awaited_once_with(
-            "lookup_weather", {"location": {"address": "Kyiv, UA"}}
+            "lookup_weather", {"location": {"address": "Lviv, UA"}}
         )

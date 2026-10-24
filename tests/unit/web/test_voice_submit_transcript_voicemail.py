@@ -53,7 +53,7 @@ async def test_machine_verdict_but_a_real_conversation_keeps_the_summary():
     # The owner starts with a long request, so AMD calls it a machine — then keeps talking.
     app, _, summary_consumer = _app({"answered_by": "machine_end_other"})
 
-    await _submit(app, ["what's the weather in Valencia tomorrow", "and in the evening?", "thanks, bye"])
+    await _submit(app, ["what's the weather in Springfield tomorrow", "and in the evening?", "thanks, bye"])
 
     summary_consumer.assert_awaited_once()
 

@@ -169,7 +169,7 @@ def test_the_visible_text_bound_is_exclusive():
 
 def test_a_widget_article_does_not_replace_the_content():
     page = ("<html><head><title>My trip notes</title></head><body>"
-            "<div id='content'><h1>Trip to Valencia</h1><p>We booked the hotel Las Arenas for 3 nights, total 540 EUR."
+            "<div id='content'><h1>Trip to Barcelona</h1><p>We booked the hotel Las Arenas for 3 nights, total 540 EUR."
             "</p><p>Passport number in the safe.</p></div>"
             "<div class='related'><article><h3>Related: Paella recipe</h3></article></div></body></html>")
     text, _ = html_page_text(page)

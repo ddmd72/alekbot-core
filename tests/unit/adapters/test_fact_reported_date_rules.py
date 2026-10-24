@@ -53,7 +53,7 @@ def reported(store, fid):
 
 
 async def create(store, context, **over):
-    res = await store.adapter.create_fact("mother is Valentina", meta(**over), context=context)
+    res = await store.adapter.create_fact("mother is Maria", meta(**over), context=context)
     assert res["status"] == "created", res
     return res
 

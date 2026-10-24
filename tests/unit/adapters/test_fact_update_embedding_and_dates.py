@@ -32,10 +32,10 @@ class CountingEmbedder:
 
 async def create(store, **over):
     meta = {"account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
-            "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Valentina"},
+            "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Maria"},
             "expiry": EXPIRY_NONE}
     meta.update(over)
-    res = await store.adapter.create_fact("mother is Valentina", meta, context=ctx())
+    res = await store.adapter.create_fact("mother is Maria", meta, context=ctx())
     assert res["status"] == "created", res
     return res["fact_id"]
 
@@ -50,7 +50,7 @@ async def test_the_same_text_again_does_not_embed_and_stays_in_place(store):
     # was test_fact_management_adapter.py::test_same_text_again_does_not_reembed
     fid = await create(store)
     embedder = counting(store)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentina", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Maria", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert (res["status"], res["fact_id"], res["version"]) == ("updated", fid, 1) and list(store.docs) == [fid]
     assert embedder.calls == 0
 
@@ -61,7 +61,7 @@ async def test_a_non_dict_metadata_is_ignored_and_does_not_embed(store):
     embedder = counting(store)
     res = await store.adapter.update_fact(fid, {"metadata": "oops", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert (res["status"], res["fact_id"], res["version"]) == ("updated", fid, 1) and list(store.docs) == [fid]
-    assert store.docs[fid]["metadata"] == {"name": "Valentina"} and embedder.calls == 0
+    assert store.docs[fid]["metadata"] == {"name": "Maria"} and embedder.calls == 0
 
 
 async def test_a_foreign_accounts_update_does_not_embed(store):
@@ -105,7 +105,7 @@ async def test_a_content_change_without_a_date_keeps_reported_date_on_the_new_ve
     # with a span moves it to max(stored, span end), test_fact_write_context.py).
     fid = await create(store, reported_date=(datetime.now(timezone.utc) - timedelta(days=30)).isoformat())
     old_reported = store.docs[fid]["reported_date"]
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentina P.", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Maria D.", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     new = store.docs[res["fact_id"]]
     assert res["version"] == 2 and new["version"] == 2
     assert new["reported_date"] == old_reported

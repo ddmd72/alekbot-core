@@ -23,7 +23,7 @@ OTHER = "acc-2"
 def _meta(**over):
     base = {
         "account_id": ACC, "user_id": "usr-1", "domain": "biographical", "temporal_class": "stable",
-        "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Valentina"},
+        "context_priority": "medium", "tags": ["family", "mother"], "metadata": {"name": "Maria"},
         "type": "event", "expiry": EXPIRY_NONE,
     }
     base.update(over)
@@ -35,7 +35,7 @@ def store():
     return FactStore()
 
 
-async def _create(store, text="mother is Valentina", **over):
+async def _create(store, text="mother is Maria", **over):
     res = await store.adapter.create_fact(text, _meta(**over), context=ctx())
     assert res["status"] == "created", res
     return res["fact_id"]
@@ -45,7 +45,7 @@ async def test_create_fact_stores_vectors_for_the_embedding_texts_and_a_real_dat
     fid = await _create(store, reported_date="2026-03-04T10:00:00Z")
     doc = store.docs[fid]
     # the write service adds the system tag "consolidated" after embedding; the recipe ignores it
-    texts = fact_embedding_texts("mother is Valentina", ["family", "mother"], {"name": "Valentina"})
+    texts = fact_embedding_texts("mother is Maria", ["family", "mother"], {"name": "Maria"})
     assert stored_vector(doc["vector"]) == pytest.approx(embed(texts[0]))
     assert stored_vector(doc["tags_vector"]) == pytest.approx(embed(texts[1]))
     assert stored_vector(doc["metadata_vector"]) == pytest.approx(embed(texts[2]))
@@ -58,28 +58,28 @@ async def test_create_fact_stores_vectors_for_the_embedding_texts_and_a_real_dat
 async def test_update_content_reembeds_and_bumps_version(store):
     # Reviewer edit (facts S2, D8): a content change is a new version document; it is read through the returned id.
     fid = await _create(store)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentyna Ivanivna", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya Doe", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert res["status"] == "updated" and res["version"] == 2
     new_id = res["fact_id"]
     assert new_id != fid
     doc = store.docs[new_id]
-    assert doc["text"] == "mother is Valentyna Ivanivna"
-    assert stored_vector(doc["vector"]) == pytest.approx(embed("mother is Valentyna Ivanivna"))
+    assert doc["text"] == "mother is Mariya Doe"
+    assert stored_vector(doc["vector"]) == pytest.approx(embed("mother is Mariya Doe"))
     assert doc["version"] == 2
     read = await store.repo.get_fact_by_id(new_id)
-    assert read is not None and read.text == "mother is Valentyna Ivanivna" and read.version == 2
+    assert read is not None and read.text == "mother is Mariya Doe" and read.version == 2
     old = await store.repo.get_fact_by_id(fid)
-    assert old is not None and old.text == "mother is Valentina" and old.version == 1 and old.superseded_by == new_id
+    assert old is not None and old.text == "mother is Maria" and old.version == 1 and old.superseded_by == new_id
 
 
 async def test_update_metadata_merges_and_reembeds_metadata_vector(store):
     # Reviewer edit (facts S2, D8): a metadata change is a new version document, read through the returned id.
     fid = await _create(store)
-    res = await store.adapter.update_fact(fid, {"metadata": {"city": "Kyiv"}, "expiry": EXPIRY_NONE}, ACC, context=ctx())
-    assert res["fact_id"] != fid and store.docs[fid]["metadata"] == {"name": "Valentina"}
+    res = await store.adapter.update_fact(fid, {"metadata": {"city": "Springfield"}, "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    assert res["fact_id"] != fid and store.docs[fid]["metadata"] == {"name": "Maria"}
     doc = store.docs[res["fact_id"]]
-    assert doc["metadata"] == {"name": "Valentina", "city": "Kyiv"}
-    texts = fact_embedding_texts("mother is Valentina", doc["tags"], doc["metadata"])
+    assert doc["metadata"] == {"name": "Maria", "city": "Springfield"}
+    texts = fact_embedding_texts("mother is Maria", doc["tags"], doc["metadata"])
     assert stored_vector(doc["metadata_vector"]) == pytest.approx(embed(texts[2]))
 
 
@@ -99,7 +99,7 @@ async def test_state_only_update_keeps_vectors_version_and_reported_date(store):
 async def test_superseded_update_closes_the_version(store):
     # Reviewer edit (facts S2, D8): SUPERSEDED alone is refused and writes nothing; with superseded_by it closes the fact.
     fid = await _create(store)
-    successor = await _create(store, "mother is Valentyna")
+    successor = await _create(store, "mother is Mariya")
     before = copy.deepcopy(store.docs)
     refused = await store.adapter.update_fact(fid, {"state": "SUPERSEDED"}, ACC, context=ctx())
     assert refused["status"] == "failed" and store.docs == before
@@ -211,14 +211,14 @@ async def test_concurrent_content_and_state_updates_of_one_fact_archive_wins_and
     fid = await _create(store)
     emb = _slow(store)
     r1, r2 = await asyncio.gather(
-        store.adapter.update_fact(fid, {"content": "mother is Valentyna", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
+        store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
         store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC, context=ctx()),
     )
     assert r2["status"] == "updated"
     assert r1["status"] == "failed" and r1["message"] == f"fact {fid} is archived"
     assert emb.calls == 1  # the content call embedded before it lost the race
     doc = store.docs[fid]
-    assert doc["text"] == "mother is Valentina" and doc["version"] == 1
+    assert doc["text"] == "mother is Maria" and doc["version"] == 1
     assert doc["state"] == "archived" and doc["valid_to"] is not None
     assert list(store.docs) == [fid]  # no version document, so one is_current per lineage
 

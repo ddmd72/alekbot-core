@@ -8,13 +8,13 @@ from src.domain.search import EnrichedFact
 from tests.support.fact_store import FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx
 
-_TEXT = "my mother Valentyna Ivanivna lives at Calle Mayor 12"
+_TEXT = "my mother Maria Doe lives at 12 Oak Street"
 _META = {
     "account_id": "acc-1", "user_id": "usr-1", "domain": "biographical", "temporal_class": "stable",
-    "context_priority": "medium", "tags": ["family-secret-tag"], "metadata": {"name": "Valentyna-Ivanivna-meta"},
+    "context_priority": "medium", "tags": ["family-secret-tag"], "metadata": {"name": "Maria-Doe-meta"},
     "type": "event", "expiry": EXPIRY_NONE,
 }
-_SECRETS = ["Valentyna", "Calle Mayor", "family-secret-tag", "Valentyna-Ivanivna-meta", "usr-1", "acc-1"]
+_SECRETS = ["Maria", "Oak Street", "family-secret-tag", "Maria-Doe-meta", "usr-1", "acc-1"]
 
 
 async def test_create_fact_logs_no_content_or_metadata_values(caplog):
@@ -68,7 +68,7 @@ async def test_failed_create_fact_warning_logs_no_content(caplog, monkeypatch, f
 async def test_search_existing_facts_logs_no_query_keyword_or_fact_text(caplog):
     store = FactStore()
     fact = EnrichedFact(
-        fact_id="fact-12345678", content="Valentyna lives at Calle Mayor 12", relevance_score=0.9, source="text",
+        fact_id="fact-12345678", content="Maria lives at 12 Oak Street", relevance_score=0.9, source="text",
         fact_type="event", domain="biographical", temporal_class="stable", state="current",
         context_priority="medium", tags=[], metadata={}, reported_date=None, version=1,
     )
@@ -76,11 +76,11 @@ async def test_search_existing_facts_logs_no_query_keyword_or_fact_text(caplog):
 
     with caplog.at_level(logging.DEBUG):
         results = await store.adapter.search_existing_facts(
-            ["secret-keyword", "kw2"], "where does Valentyna live", "alt Calle query", timezone="UTC")
+            ["secret-keyword", "kw2"], "where does Maria live", "alt Oak query", timezone="UTC")
 
     assert len(results) == 1
     fm = [r.getMessage() for r in caplog.records if "[FactManagement]" in r.getMessage() or r.getMessage().startswith("   [")]
     assert any("keywords=2" in m and "primary_len=" in m for m in fm)     # shapes are still there
     assert any(f"content_len={len(fact.content)}" in m for m in fm)
-    for secret in ["secret-keyword", "where does", "Valentyna", "Calle"]:
+    for secret in ["secret-keyword", "where does", "Maria", "Oak"]:
         assert not any(secret in m for m in fm), secret

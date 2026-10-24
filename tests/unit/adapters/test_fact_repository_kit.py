@@ -123,7 +123,7 @@ async def test_a_document_missing_created_at_is_absent_from_a_read_ordered_by_it
 # ------------------------------------------------------------------------------------------------- add_fact
 
 async def test_add_fact_stores_the_whole_entity_under_its_id_and_returns_the_id(store):
-    fact = make_fact("mother is Valentina", tags=["family"], metadata={"name": "Valentina"}, ttl_days=30,
+    fact = make_fact("mother is Maria", tags=["family"], metadata={"name": "Maria"}, ttl_days=30,
                      context="said at lunch", version=3, replaces_fact_id="old-1", expires_at=T0 + timedelta(days=30),
                      temporal_class=TemporalClass.STABLE, context_priority=ContextPriority.HIGH,
                      visibility=FactVisibility.USER_PRIVATE)

@@ -29,7 +29,7 @@ def store():
 def meta(**over):
     base = {
         "account_id": ACC, "user_id": USER, "domain": "biographical", "temporal_class": "stable",
-        "context_priority": "medium", "tags": ["family"], "metadata": {"name": "Valentina"}, "type": "event",
+        "context_priority": "medium", "tags": ["family"], "metadata": {"name": "Maria"}, "type": "event",
     }
     base.update(over)
     return base
@@ -47,7 +47,7 @@ def seed(store, doc_id, text="seeded", **entity):
     return put_raw(store, doc_id, text, entity={"domain": "biographical", **entity})
 
 
-async def create(store, text="mother is Valentina", context=None, **over):
+async def create(store, text="mother is Maria", context=None, **over):
     res = await store.adapter.create_fact(text, meta(**over), context=context or ctx())
     assert res["status"] == "created", res
     return res["fact_id"]
@@ -86,7 +86,7 @@ async def test_create_stores_none_as_nulls_and_a_model_ttl_is_dropped(store):
 
 async def test_create_without_expiry_is_refused_before_anything_is_embedded_or_written(store, monkeypatch):
     embedder_refuses(store, monkeypatch)
-    res = await store.adapter.create_fact("mother is Valentina", meta(), context=ctx())
+    res = await store.adapter.create_fact("mother is Maria", meta(), context=ctx())
     assert (res["status"], res["refused"], res["fact_id"]) == ("failed", "expiry", None)
     assert "`fact_attributes`" in res["message"] and "Nothing was written" in res["message"]
     assert store.docs == {}
@@ -95,7 +95,7 @@ async def test_create_without_expiry_is_refused_before_anything_is_embedded_or_w
 @pytest.mark.parametrize("raw", [None, "soon", {"kind": "horizon"}, {"kind": "date", "date": "tomorrow"}, 7])
 async def test_create_with_a_malformed_expiry_is_refused_and_writes_nothing(store, monkeypatch, raw):
     embedder_refuses(store, monkeypatch)
-    res = await store.adapter.create_fact("mother is Valentina", meta(expiry=raw), context=ctx())
+    res = await store.adapter.create_fact("mother is Maria", meta(expiry=raw), context=ctx())
     assert (res["status"], res["refused"]) == ("failed", "expiry")
     assert "Nothing was written" in res["message"]
     assert store.docs == {}
@@ -103,11 +103,11 @@ async def test_create_with_a_malformed_expiry_is_refused_and_writes_nothing(stor
 
 async def test_the_generic_pin_text_never_reaches_a_tool_result(store):
     created = await create(store, expiry=EXPIRY_NONE)
-    other = await create(store, "mother lives in Kyiv", expiry=EXPIRY_NONE)
+    other = await create(store, "mother lives in Springfield", expiry=EXPIRY_NONE)
     results = [
         await store.adapter.create_fact("a new fact", meta(), context=ctx()),
         await store.adapter.merge_facts([created, other], "merged", meta(), context=ctx()),
-        await store.adapter.update_fact(created, {"content": "mother is Valentyna"}, ACC, context=ctx()),
+        await store.adapter.update_fact(created, {"content": "mother is Mariya"}, ACC, context=ctx()),
     ]
     assert [r["refused"] for r in results] == ["expiry"] * 3
     assert all(GENERIC_PIN_TEXT not in r["message"] for r in results)
@@ -118,7 +118,7 @@ async def test_the_generic_pin_text_never_reaches_a_tool_result(store):
 async def test_a_stage1_horizon_that_is_already_due_is_refused(store):
     old = (datetime.now(timezone.utc) - timedelta(days=100)).isoformat()
     res = await store.adapter.create_fact(
-        "mother is Valentina", meta(expiry=horizon(30), reported_date=old), context=ctx())
+        "mother is Maria", meta(expiry=horizon(30), reported_date=old), context=ctx())
     assert (res["status"], res["refused"]) == ("failed", "expiry")
     assert "give at least" in res["message"] and "Nothing was written" in res["message"]
     assert store.docs == {}
@@ -128,7 +128,7 @@ async def test_a_cleanup_horizon_that_is_already_due_is_floored_to_two_days_with
     seed(store, "old-source", reported_date=datetime.now(timezone.utc) - timedelta(days=100))
     started = datetime.now(timezone.utc)
     res = await store.adapter.create_fact(
-        "mother is Valentina", meta(expiry=horizon(30), derived_from="old-source"), context=ctx(**CLEANUP))
+        "mother is Maria", meta(expiry=horizon(30), derived_from="old-source"), context=ctx(**CLEANUP))
     assert res["status"] == "created"
     assert "had already passed" in res["note"]
     doc = store.docs[res["fact_id"]]
@@ -139,7 +139,7 @@ async def test_a_cleanup_horizon_that_is_already_due_is_floored_to_two_days_with
 @pytest.mark.parametrize("context", [ctx(), ctx(**CLEANUP)], ids=["stage1", "cleanup"])
 async def test_a_past_date_is_refused_on_every_kind_of_pass(store, context):
     res = await store.adapter.create_fact(
-        "mother is Valentina", meta(expiry=on(days_ahead(-3))), context=context)
+        "mother is Maria", meta(expiry=on(days_ahead(-3))), context=context)
     assert (res["status"], res["refused"]) == ("failed", "expiry")
     assert "is past" in res["message"]
     assert store.docs == {}
@@ -160,7 +160,7 @@ async def test_a_pinned_fact_gets_none_without_an_expiry_and_refuses_any_other(s
 
 
 async def test_create_as_stale_is_refused(store):
-    res = await store.adapter.create_fact("mother is Valentina", meta(state="stale", expiry=EXPIRY_NONE), context=ctx())
+    res = await store.adapter.create_fact("mother is Maria", meta(state="stale", expiry=EXPIRY_NONE), context=ctx())
     assert res["status"] == "failed" and "STALE" in res["message"] and "refused" not in res
     assert store.docs == {}
 
@@ -182,10 +182,10 @@ async def test_a_fact_born_closed_needs_no_expiry_and_a_sent_past_date_is_ignore
 # ----------------------------------------------------------------------------------------------- merge
 
 async def test_merge_stores_the_decision_on_the_merged_fact_and_closes_the_sources(store):
-    first = await create(store, "mother is Valentina", expiry=EXPIRY_NONE)
-    second = await create(store, "mother lives in Kyiv", expiry=EXPIRY_NONE)
+    first = await create(store, "mother is Maria", expiry=EXPIRY_NONE)
+    second = await create(store, "mother lives in Springfield", expiry=EXPIRY_NONE)
     day = days_ahead(20)
-    res = await store.adapter.merge_facts([first, second], "mother Valentina lives in Kyiv", meta(expiry=on(day)),
+    res = await store.adapter.merge_facts([first, second], "mother Maria lives in Springfield", meta(expiry=on(day)),
                                           context=ctx())
     assert res["status"] == "merged"
     merged = store.docs[res["new_fact_id"]]
@@ -195,8 +195,8 @@ async def test_merge_stores_the_decision_on_the_merged_fact_and_closes_the_sourc
 
 @pytest.mark.parametrize("over", [{}, {"expiry": {"kind": "horizon"}}], ids=["missing", "malformed"])
 async def test_merge_with_a_missing_or_malformed_expiry_is_refused_and_leaves_the_sources_current(store, monkeypatch, over):
-    first = await create(store, "mother is Valentina", expiry=EXPIRY_NONE)
-    second = await create(store, "mother lives in Kyiv", expiry=EXPIRY_NONE)
+    first = await create(store, "mother is Maria", expiry=EXPIRY_NONE)
+    second = await create(store, "mother lives in Springfield", expiry=EXPIRY_NONE)
     before = copy.deepcopy(store.docs)
     embedder_refuses(store, monkeypatch)
     res = await store.adapter.merge_facts([first, second], "merged", meta(**over), context=ctx())
@@ -213,9 +213,9 @@ async def test_merge_into_a_pinned_fact_defaults_to_none(store):
 
 
 async def test_a_cleanup_merge_horizon_that_is_due_is_floored_with_a_note(store):
-    first = await create(store, "mother is Valentina", expiry=EXPIRY_NONE,
+    first = await create(store, "mother is Maria", expiry=EXPIRY_NONE,
                          reported_date=(datetime.now(timezone.utc) - timedelta(days=200)).isoformat())
-    second = await create(store, "mother lives in Kyiv", expiry=EXPIRY_NONE,
+    second = await create(store, "mother lives in Springfield", expiry=EXPIRY_NONE,
                           reported_date=(datetime.now(timezone.utc) - timedelta(days=150)).isoformat())
     res = await store.adapter.merge_facts([first, second], "merged", meta(expiry=horizon(30)), context=ctx(**CLEANUP))
     assert res["status"] == "merged" and "had already passed" in res["note"]
@@ -223,8 +223,8 @@ async def test_a_cleanup_merge_horizon_that_is_due_is_floored_with_a_note(store)
 
 
 async def test_merge_as_archived_needs_no_expiry(store):
-    first = await create(store, "mother is Valentina", expiry=EXPIRY_NONE)
-    second = await create(store, "mother lives in Kyiv", expiry=EXPIRY_NONE)
+    first = await create(store, "mother is Maria", expiry=EXPIRY_NONE)
+    second = await create(store, "mother lives in Springfield", expiry=EXPIRY_NONE)
     res = await store.adapter.merge_facts([first, second], "merged", meta(state="archived", expiry=horizon(3)),
                                           context=ctx())
     assert res["status"] == "merged" and res["note"] == EXPIRY_IGNORED_ON_CLOSE
@@ -236,7 +236,7 @@ async def test_merge_as_archived_needs_no_expiry(store):
 async def test_a_content_change_stores_the_decision_on_the_new_version(store):
     fid = await create(store, expiry=EXPIRY_NONE)
     day = days_ahead(15)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentyna", "expiry": on(day)}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": on(day)}, ACC, context=ctx())
     assert res["status"] == "updated" and res["fact_id"] != fid
     version = store.docs[res["fact_id"]]
     assert (version["expiry_kind"], version["expires_at"]) == ("date", end_of_day_utc(day))
@@ -244,7 +244,7 @@ async def test_a_content_change_stores_the_decision_on_the_new_version(store):
 
 
 @pytest.mark.parametrize("updates,field", [
-    ({"content": "mother is Valentyna"}, "text"), ({"tags": ["family", "x"]}, "tags"),
+    ({"content": "mother is Mariya"}, "text"), ({"tags": ["family", "x"]}, "tags"),
     ({"temporal_class": "dynamic"}, "temporal_class"),
 ])
 async def test_a_content_change_without_expiry_is_refused_and_writes_nothing(store, monkeypatch, updates, field):
@@ -299,7 +299,7 @@ async def test_a_remention_moves_a_horizon_forward_and_never_back(store):
 async def test_a_remention_never_moves_a_floored_cleanup_horizon_earlier(store):
     seed(store, "old-source", reported_date=datetime.now(timezone.utc) - timedelta(days=100))
     created = await store.adapter.create_fact(
-        "mother is Valentina", meta(expiry=horizon(30), derived_from="old-source"), context=ctx(**CLEANUP))
+        "mother is Maria", meta(expiry=horizon(30), derived_from="old-source"), context=ctx(**CLEANUP))
     fid = created["fact_id"]
     floored = store.docs[fid]["expires_at"]
     old_batch = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
@@ -331,7 +331,7 @@ async def test_a_malformed_expiry_on_an_update_is_refused_before_the_embedding(s
     fid = await create(store, expiry=EXPIRY_NONE)
     before = copy.deepcopy(store.docs)
     embedder_refuses(store, monkeypatch)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentyna", "expiry": "soon"}, ACC,
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": "soon"}, ACC,
                                           context=ctx())
     assert (res["status"], res["refused"]) == ("failed", "expiry")
     assert store.docs == before

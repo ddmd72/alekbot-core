@@ -35,7 +35,7 @@ async def test_a_fact_born_closed_by_create_carries_the_end_of_the_message_span_
     attributes = meta(state="archived")
     attributes.pop("expiry")
 
-    res = await store.adapter.create_fact("mother is Valentina", attributes, context=ctx(span=(at(3), at(4, 18))))
+    res = await store.adapter.create_fact("mother is Maria", attributes, context=ctx(span=(at(3), at(4, 18))))
 
     assert res["status"] == "created"
     assert store.docs[res["fact_id"]]["reported_date"] == at(4, 18)
@@ -55,7 +55,7 @@ async def test_a_fact_born_closed_by_a_cleanup_merge_carries_the_latest_source_d
 
 
 async def test_a_current_fact_with_an_expiry_carries_the_end_of_the_message_span_as_its_reported_date(store):
-    res = await store.adapter.create_fact("mother is Valentina", meta(), context=ctx(span=(at(3), at(4, 18))))
+    res = await store.adapter.create_fact("mother is Maria", meta(), context=ctx(span=(at(3), at(4, 18))))
 
     assert res["status"] == "created"
     assert store.docs[res["fact_id"]]["reported_date"] == at(4, 18)

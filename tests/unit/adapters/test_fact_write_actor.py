@@ -27,7 +27,7 @@ def context(actor):
     return ctx(actor=actor)
 
 
-async def seeded(store, text="mother is Valentina"):
+async def seeded(store, text="mother is Maria"):
     res = await store.adapter.create_fact(text, meta(), context=context("stage1"))
     assert res["status"] == "created", res
     return res["fact_id"]
@@ -40,7 +40,7 @@ def trail(store, fact_id):
 @pytest.mark.parametrize("actor", ACTORS)
 async def test_a_version_close_and_the_versions_own_entry_carry_the_passes_actor(store, actor):
     old = await seeded(store)
-    res = await store.adapter.update_fact(old, {"content": "mother is Valentyna", "expiry": EXPIRY_NONE}, ACC,
+    res = await store.adapter.update_fact(old, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC,
                                           context=context(actor))
     assert res["status"] == "updated", res
     new = res["fact_id"]
@@ -54,8 +54,8 @@ async def test_a_version_close_and_the_versions_own_entry_carry_the_passes_actor
 
 @pytest.mark.parametrize("actor", ACTORS)
 async def test_a_merge_close_carries_the_passes_actor_on_every_source(store, actor):
-    first = await seeded(store, "mother is Valentina")
-    second = await seeded(store, "mother lives in Kyiv")
+    first = await seeded(store, "mother is Maria")
+    second = await seeded(store, "mother lives in Springfield")
     res = await store.adapter.merge_facts([first, second], "merged", meta(), context=context(actor))
     assert res["status"] == "merged", res
     for source in (first, second):
@@ -76,10 +76,10 @@ async def test_an_in_place_state_change_carries_the_passes_actor(store, actor):
 
 
 async def test_no_closure_is_written_under_the_old_placeholder_actor(store):
-    old = await seeded(store, "mother is Valentina")
-    other = await seeded(store, "mother lives in Kyiv")
+    old = await seeded(store, "mother is Maria")
+    other = await seeded(store, "mother lives in Springfield")
     third = await seeded(store, "mother likes tea")
-    await store.adapter.update_fact(old, {"content": "mother is Valentyna", "expiry": EXPIRY_NONE}, ACC,
+    await store.adapter.update_fact(old, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC,
                                     context=context("stage2a"))
     await store.adapter.merge_facts([other, third], "merged", meta(), context=context("stage2b"))
     actors = {event["actor"] for doc in store.docs.values() for event in doc["lifecycle_events"]}
