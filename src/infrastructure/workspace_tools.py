@@ -67,7 +67,7 @@ def build_workspace_tool_declaration() -> Dict[str, Any]:
                 "path": {
                     "type": "string",
                     "description": (
-                        "Workspace path, e.g. projects/flat-sale.md: lowercase letters, digits, - _ . and /, starting "
+                        "Workspace path, e.g. projects/garden-shed.md: lowercase letters, digits, - _ . and /, starting "
                         "with projects/, references/, scratch/ or files/, with a file extension, at most 120 "
                         "characters. For view and history also a folder (projects/) or \"\" for the whole workspace. "
                         "For copy: the destination."

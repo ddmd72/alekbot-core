@@ -25,12 +25,12 @@ def _resp(text="", tool_calls=None):
 
 
 async def test_a_newer_saved_version_is_loaded_over_a_stale_visible_body():
-    skill = Skill(name="morning-newspaper", description="Use for the newspaper.", body="v2 body", version=2)
+    skill = Skill(name="morning-briefing", description="Use for the morning briefing.", body="v2 body", version=2)
     history = [Message(role="user", parts=[MessagePart(text="make the newspaper")]),
-               Message(role="model", parts=[MessagePart(text='Issue.\n\n[Skill "morning-newspaper" v1]\nv1 body')])]
+               Message(role="model", parts=[MessagePart(text='Issue.\n\n[Skill "morning-briefing" v1]\nv1 body')])]
     llm = MagicMock(spec=LLMPort)
     llm.generate_content = AsyncMock(side_effect=[
-        _resp(tool_calls=[ToolCall(name="use_skill", args={"name": "morning-newspaper"})]), _resp("issue"),
+        _resp(tool_calls=[ToolCall(name="use_skill", args={"name": "morning-briefing"})]), _resp("issue"),
     ])
     store = MagicMock()
     store.load_session = AsyncMock(return_value=_Session(history))

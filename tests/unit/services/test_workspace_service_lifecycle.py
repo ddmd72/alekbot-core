@@ -57,12 +57,12 @@ class TestDelete:
         svc, store = _svc()
         store.seed(USER, P, "x")
         refs = WorkspaceReferences(
-            skills=(("morning-newspaper", f"At the start, view `workspace:{P}`."),),
+            skills=(("morning-briefing", f"At the start, view `workspace:{P}`."),),
             notes=({"note_id": "1729401234567", "text": "Morning briefing", "workspace_file": P},),
         )
         r = await svc.run(_call(references=refs), "delete", {"path": P})
         assert r.text.splitlines()[1:] == [
-            'Warning: skill "morning-newspaper" names this path',
+            'Warning: skill "morning-briefing" names this path',
             'Warning: reminder "Morning briefing" [1729401234567] uses this workspace file; update it '
             '(manage_self_reminders, context={"workspace_file": "<new path>"}) or restore the file.',
         ]

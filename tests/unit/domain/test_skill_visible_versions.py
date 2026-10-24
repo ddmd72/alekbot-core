@@ -13,8 +13,8 @@ def test_maps_name_to_version():
 
 
 def test_the_newest_visible_marker_wins():
-    msgs = [_model('[Skill "morning-newspaper" v1]\nold'), _model('[Skill "morning-newspaper" v3]\nnew')]
-    assert visible_skill_names(msgs) == {"morning-newspaper": 3}
+    msgs = [_model('[Skill "morning-briefing" v1]\nold'), _model('[Skill "morning-briefing" v3]\nnew')]
+    assert visible_skill_names(msgs) == {"morning-briefing": 3}
 
 
 def test_nothing_visible():

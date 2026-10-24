@@ -49,7 +49,7 @@ def test_classify_triggers():
         _row("t2", 1, '[Skill "spanish-tutor" v1]\nAt the start, view `workspace:projects/spanish-tutor.md`.',
              [_ws("view")]),
     ])
-    [user] = build_traces([_row("t3", 0, "keep a file for the flat sale", [_ws("create")])])
+    [user] = build_traces([_row("t3", 0, "keep a file for the garden shed", [_ws("create")])])
     assert [classify_trigger(t) for t in (reminder, skill, user)] == ["reminder", "skill", "user or instruction"]
 
 

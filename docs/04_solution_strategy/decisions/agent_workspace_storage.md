@@ -21,7 +21,7 @@ field, `workspace_file`, bound by code in NotesAgent and rendered at fire time a
   the user's drive is the user's area and is absent when not connected.
 - **Pull, not push.** A self-written block in every prompt was the riskiest part of rev 1 (injection, cache
   invalidation per write, ~600 tokens), and the evidence showed Smart does not start writes on its own.
-- **Origin labels over interactive-only writes.** The morning newspaper runs from a reminder and must update its own
+- **Origin labels over interactive-only writes.** The morning briefing runs from a reminder and must update its own
   file; a label makes every background write visible, history and restore undo it.
 - **One code-bound reminder field.** NotesAgent's LLM rewrites reminder text and loses paths in prose (D15). Nothing
   else about the field is special.

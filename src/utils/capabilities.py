@@ -206,7 +206,7 @@ learning plan).
 ---
 
 *Working files*
-For a long task or a recurring job I can keep my own working files — a plan, a running record, a long instruction a reminder follows — and show them to you when you ask: "keep a file for the flat sale", "where are we with the school choice?", "show me your workspace". Every change keeps the previous version, so anything can be brought back.
+For a long task or a recurring job I can keep my own working files — a plan, a running record, a long instruction a reminder follows — and show them to you when you ask: "keep a file for the garden shed", "where are we with the summer trip?", "show me your workspace". Every change keeps the previous version, so anything can be brought back.
 
 ---
 

@@ -266,14 +266,14 @@ class TestHistory:
 
 class TestReferences:
     refs = WorkspaceReferences(
-        skills=(("morning-newspaper", f"At the start, view `workspace:{P}`."), ("other", "nothing here")),
+        skills=(("morning-briefing", f"At the start, view `workspace:{P}`."), ("other", "nothing here")),
         notes=({"note_id": "1729401234567", "text": "Morning briefing", "workspace_file": P},
                {"note_id": "1", "text": "x", "workspace_file": None}),
     )
 
     def test_delete_warnings(self):
         assert find_references(P, self.refs) == [
-            'Warning: skill "morning-newspaper" names this path',
+            'Warning: skill "morning-briefing" names this path',
             'Warning: reminder "Morning briefing" [1729401234567] uses this workspace file; update it '
             '(manage_self_reminders, context={"workspace_file": "<new path>"}) or restore the file.',
         ]

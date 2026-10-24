@@ -133,14 +133,14 @@ async def test_missing_origin_falls_back_with_a_warning(caplog):
 
 async def test_references_carry_loaded_skills_and_reminders():
     service = _service()
-    skill = Skill(name="morning-newspaper", description="Use for the morning newspaper.",
+    skill = Skill(name="morning-briefing", description="Use for the morning briefing.",
                   body="View `workspace:projects/morning-briefing.md` first.", version=1)
     notes = [{"note_id": "1", "text": "Morning briefing", "workspace_file": "projects/morning-briefing.md"}]
     agent, llm = _agent(service, skills=[skill])
     _view_then_answer(llm)
     await agent.execute(_message({**CHAT, "agent_notes": notes}))
     call = service.run.await_args.args[0]
-    assert call.references.skills == (("morning-newspaper", skill.body),)
+    assert call.references.skills == (("morning-briefing", skill.body),)
     assert call.references.notes == tuple(notes)
 
 

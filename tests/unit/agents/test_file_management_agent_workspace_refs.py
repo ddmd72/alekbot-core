@@ -52,7 +52,7 @@ class TestOpen:
         conversion.resolve_content.assert_awaited_once_with("workspace:files/notes.txt", "user1")
 
     async def test_a_note_outside_files_is_refused(self, agent, conversion):
-        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:projects/flat-sale.md"))
+        resp = await agent.execute(_message(Intent.OPEN_FILE, "workspace:projects/garden-shed.md"))
         assert resp.status == AgentStatus.FAILED
         assert "view it with the workspace tool" in resp.error
         conversion.resolve_content.assert_not_called()
