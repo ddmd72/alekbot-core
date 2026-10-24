@@ -6,9 +6,9 @@ from src.domain.place_lookup import PLACE_LARGE_POPULATION, Place, PlaceIndex, P
 
 _SPAIN = ("Spain", "España", "Espagne", "Іспанія", "Испания")
 _BARCELONA = PlaceRow(41.3874, 2.1686, "Barcelona", "Barcelona", "Spain", 1_620_343,
-                     alt_names=("Barcelone", "Barcellona", "Барселона"), country_names=_SPAIN)
+                      alt_names=("Barcelone", "Barcellona", "Барселона"), country_names=_SPAIN)
 _FIGUERES = PlaceRow(42.2672, 2.9611, "Figueres", "Figueres", "Spain", 46_000,
-                    alt_names=("Figueras", "Фігерас"), country_names=_SPAIN, large=_BARCELONA)
+                     alt_names=("Figueras", "Фігерас"), country_names=_SPAIN, large=_BARCELONA)
 
 
 def test_geo_table_version_is_2_and_current():
@@ -21,7 +21,7 @@ def test_large_city_threshold():
 
 def test_forms_list_own_names_then_country_then_the_large_city():
     assert place_forms(_FIGUERES) == ("Figueres", "Figueras", "Фігерас", "Spain", "España", "Espagne", "Іспанія",
-                                     "Испания", "Barcelona", "Barcelone", "Barcellona", "Барселона")
+                                      "Испания", "Barcelona", "Barcelone", "Barcellona", "Барселона")
 
 
 def test_forms_are_deduplicated_ignoring_case_first_spelling_kept():
@@ -43,7 +43,7 @@ def test_place_carries_the_display_name_and_the_forms():
 
 def test_forms_follow_the_row_the_preference_chose():
     index = PlaceIndex([_BARCELONA, PlaceRow(41.3768, 2.0886, "Esplugues", "Esplugues", "Spain", 46_000,
-                                            large=_BARCELONA)])
+                                             large=_BARCELONA)])
     place = index.place(41.3768, 2.0886)        # Esplugues' centre: Barcelona outweighs it within 15 km
     assert place is not None and place.name == "Barcelona, Spain" and place.forms == place_forms(_BARCELONA)
 
