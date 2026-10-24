@@ -59,7 +59,8 @@ def note_codes_of(notes: Sequence[str]) -> List[str]:
 
 def with_notes(result: Dict[str, Any], notes: Sequence[str]) -> Dict[str, Any]:
     """Put the notes into the tool result (in place, and returned): `note` joins them with "; ", and `note_codes`
-    lists the codes of the known ones, present only when there is at least one."""
+    lists the codes of the known ones, present only when there is at least one. Each element of `notes` is one whole
+    note, so a code is found by equality; never pass several notes glued into one string."""
     if notes:
         result["note"] = "; ".join(notes)
         codes = note_codes_of(notes)

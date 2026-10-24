@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, FrozenSet, Iterable, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple, Union
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .entities import FactState
@@ -114,20 +114,23 @@ def reported_date_for_new(
     now: datetime,
     *,
     derived_named: int = 0,
-) -> Tuple[datetime, Optional[str]]:
-    """The `reported_date` of a created fact, and a note for the model when something it sent was not used.
+) -> Tuple[datetime, List[str]]:
+    """The `reported_date` of a created fact, and the notes for the model when something it sent was not used.
+
+    The notes are whole and separate (none, one or two), so a reader can recognise each by its code
+    (`domain.fact_tool_result`); the tool result joins them.
 
     `derived`: the dates of the readable `derived_from` sources, used only on a pass whose model dates do not count (the latest). `derived_named`:
     how many ids the call named, so a source that cannot be read, or a `derived_from` ignored in a conversation pass, is said.
     """
     now = as_utc(now)
     end = min(as_utc(ctx.span[1]), now) if ctx.span is not None else now
-    notes = []
+    notes: List[str] = []
     if ctx.model_dates:
         if derived_named or derived:
             notes.append("derived_from is ignored: in this pass the date comes from the conversation")
         chosen = clamp_to_span(model_value, ctx.span, now) if model_value is not None else end
-        return chosen, _joined(notes)
+        return chosen, notes
     if derived:
         chosen = max(as_utc(d) for d in derived)
     else:
@@ -136,13 +139,13 @@ def reported_date_for_new(
             notes.append(NO_READABLE_SOURCE_NOTE)
     if model_value is not None:
         notes.append(kept_reported_date_note(chosen, ctx.timezone))
-    return chosen, _joined(notes)
+    return chosen, notes
 
 
 def reported_date_for_merge(
     ctx: FactWriteContext, model_value: Optional[datetime], source_dates: Sequence[datetime], now: datetime
-) -> Tuple[datetime, Optional[str]]:
-    """The `reported_date` of a merged fact, and a note when the model's date was not used.
+) -> Tuple[datetime, List[str]]:
+    """The `reported_date` of a merged fact, and the notes (none or one) when the model's date was not used.
 
     Never earlier than the newest merged fact's own date. A pass whose model dates do not count takes exactly that date
     (and says so when the call carried one). A conversation pass takes the later of that and the model's span-clamped
@@ -155,13 +158,12 @@ def reported_date_for_merge(
             chosen = clamp_to_span(model_value, ctx.span, now)
         else:
             chosen = min(as_utc(ctx.span[1]), now) if ctx.span is not None else now
-        return (max(chosen, newest) if newest is not None else chosen), None
+        return (max(chosen, newest) if newest is not None else chosen), []
     if newest is not None:
         chosen = newest
     else:
         chosen = min(as_utc(ctx.span[1]), now) if ctx.span is not None else now
-    note = kept_reported_date_note(chosen, ctx.timezone) if model_value is not None else None
-    return chosen, note
+    return chosen, ([kept_reported_date_note(chosen, ctx.timezone)] if model_value is not None else [])
 
 
 def reported_date_for_update(
@@ -179,6 +181,3 @@ def reported_date_for_update(
         return max(stored, min(as_utc(ctx.span[1]), now)), None
     return stored, None
 
-
-def _joined(notes: Sequence[str]) -> Optional[str]:
-    return "; ".join(notes) if notes else None
