@@ -1048,7 +1048,7 @@ Detailed docs in `docs/` (arc42). Read as needed:
 - Architecture: `docs/04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md`
 - Structure: `docs/04_solution_strategy/current_implementation/STRUCTURE.md`
 - RFCs: `docs/10_rfcs/`
-- Roadmap: `docs/12_risks/IMPLEMENTATION_ROADMAP.md`
+- Risks and technical debt: `docs/12_risks/IMPLEMENTATION_ROADMAP.md`
 
 **Where to write records:** multi-step refactors with a migration plan → `docs/10_rfcs/`;
 single backward-looking decision records (50–150 lines: decision + alternatives + why) →
