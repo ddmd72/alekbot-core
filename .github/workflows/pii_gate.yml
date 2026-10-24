@@ -1,0 +1,108 @@
+name: Personal-data gate
+
+# The repository is public. Every PR's added lines and commit messages are checked against the owner's private
+# denylist (regex) and read by a cheap model against his private profile. Both live only in repository secrets.
+# Fail closed: a missing secret, an API error or an unreadable verdict fails the job. The PR label `pii-ok` overrides
+# a false positive. Nothing here prints a secret or a diff line. Setup: docs/07_deployment/README.md.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+concurrency:
+  group: pii-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: personal-data gate (denylist + semantic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'pii-ok') }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Overridden by the pii-ok label
+        if: env.OVERRIDE == 'true'
+        run: echo "::notice title=Personal-data gate overridden::The pii-ok label is set on this PR; both checks were skipped."
+
+      - uses: actions/checkout@v4
+        if: env.OVERRIDE != 'true'
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0          # the merge base with the PR's base must be reachable for BASE...HEAD
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        if: env.OVERRIDE != 'true'
+        with:
+          python-version: "3.13"  # stdlib only: nothing to install, so no pip cache
+
+      - name: Secrets are set
+        id: secrets
+        if: env.OVERRIDE != 'true'
+        env:
+          PII_DENYLIST: ${{ secrets.PII_DENYLIST }}
+          PII_PROFILE: ${{ secrets.PII_PROFILE }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          missing=0
+          for name in PII_DENYLIST PII_PROFILE ANTHROPIC_API_KEY; do
+            if [ -z "$(printenv "$name")" ]; then
+              echo "::error title=Personal-data gate::Repository secret $name is not set (or not available to this PR). The gate fails closed; see docs/07_deployment/README.md."
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Gate code from the base commit
+        # A PR is judged by the gate it was opened against, not by its own edited copy of it.
+        if: env.OVERRIDE != 'true' && steps.secrets.outcome == 'success'
+        run: |
+          gate="$RUNNER_TEMP/gate"
+          mkdir -p "$gate"
+          if git cat-file -e "$BASE_SHA:scripts/pii_gate/semantic_check.py" 2>/dev/null; then
+            git archive "$BASE_SHA" scripts/pii_gate | tar -x -C "$gate"
+          else
+            echo "::warning title=Personal-data gate::The base commit has no gate yet; this PR's own gate code runs."
+            cp -r --parents scripts/pii_gate "$gate"
+          fi
+          echo "GATE=$gate/scripts/pii_gate" >> "$GITHUB_ENV"
+
+      - name: Denylist check
+        if: env.OVERRIDE != 'true' && steps.secrets.outcome == 'success'
+        env:
+          PII_DENYLIST: ${{ secrets.PII_DENYLIST }}
+        run: python3 -I "$GATE/denylist_check.py" --require --range "$BASE_SHA...$HEAD_SHA"
+
+      - name: Semantic check
+        # Runs after a denylist failure too, so one run reports everything.
+        if: "!cancelled() && env.OVERRIDE != 'true' && steps.secrets.outcome == 'success'"
+        env:
+          PII_PROFILE: ${{ secrets.PII_PROFILE }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PII_GATE_MODEL: ${{ vars.PII_GATE_MODEL }}
+        run: python3 -I "$GATE/semantic_check.py" --range "$BASE_SHA...$HEAD_SHA"
+
+      - name: Notify Slack (failure only)
+        # The PR title is not sent: it is author text and could itself carry what the gate caught.
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REF: ${{ github.head_ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK_URL" ]; then
+            echo "SLACK_WEBHOOK_URL secret not set — skipping Slack notification."
+            exit 0
+          fi
+          TEXT="🔒❌ Personal-data gate *failed* — PR #$PR_NUMBER \`$REF\`
+          $RUN_URL"
+          curl -s -X POST -H 'Content-type: application/json' \
+            --data "$(jq -nc --arg t "$TEXT" '{text:$t}')" \
+            "$SLACK_WEBHOOK_URL" \
+            || echo "::warning::Slack notification failed (delivery only — gate result unaffected)"

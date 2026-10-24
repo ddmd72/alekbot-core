@@ -1,0 +1,19 @@
+#!/bin/sh
+# Personal-data gate, pre-commit: the staged diff's added lines against the private denylist.
+# Enable: git config core.hooksPath .githooks
+# Denylist: PII_DENYLIST_FILE=<path> in the environment, or git config pii.denylistFile <path>.
+# Without one the check prints a notice and passes. A hook in .git/hooks/pre-commit still runs after this one.
+root="$(git rev-parse --show-toplevel)" || exit 1
+denylist="${PII_DENYLIST_FILE:-$(git config --get pii.denylistFile)}"
+if [ -n "$denylist" ]; then
+  PYTHONPATH="$root" python3 -m scripts.pii_gate.denylist_check --staged --denylist "$denylist" || exit 1
+else
+  PYTHONPATH="$root" python3 -m scripts.pii_gate.denylist_check --staged || exit 1
+fi
+# Chain to .git/hooks only when core.hooksPath points here (else another hook called us).
+legacy="$(git rev-parse --git-common-dir)/hooks/pre-commit"
+here="$(cd "$(dirname "$0")" && pwd)"
+configured="$(cd "$root" && cd "$(git config --get core.hooksPath || echo /nonexistent)" 2>/dev/null && pwd)"
+if [ "$configured" = "$here" ] && [ -z "$PII_GATE_CHAINED" ] && [ -x "$legacy" ]; then
+  PII_GATE_CHAINED=1 exec "$legacy" "$@"
+fi
