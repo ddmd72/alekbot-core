@@ -5,7 +5,7 @@ silence doubles), so the writers and the readers live here and nowhere else; no 
 from datetime import date
 from typing import Final, Literal, Optional
 
-from .fact_review_answers import AnswerKind
+from .fact_review_answer_kind import AnswerKind
 from .fact_review_basis import ReviewAction, ReviewBasis
 from .fact_review_question import AnswerSource, QuestionFallback
 
