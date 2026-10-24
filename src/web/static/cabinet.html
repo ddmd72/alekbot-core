@@ -3523,6 +3523,12 @@
             `${API}/api/user/facts/${fact.id}/invalidate`,
             { method: "POST", credentials: "include" },
           );
+          if (res.status === 409) {
+            closeModal();
+            showToast("This fact changed in the meantime; the list was reloaded.", "error");
+            await browseInit();
+            return;
+          }
           if (!res.ok) throw new Error();
           closeModal();
           allFacts.splice(_modalFactIdx, 1);

@@ -76,6 +76,8 @@ from ..services.skill_service import SkillService
 from ..services.memory_fact_service import MemoryFactService
 from ..services.workspace_service import WorkspaceService
 from ..adapters.firestore_memory_fact_draft_repository import FirestoreMemoryFactDraftRepository
+from ..adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
+from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..services.skill_file_resolver import SkillFileResolver
 from ..services.file_conversion_service import FileConversionService
 from ..agents.email_classification_agent import EmailClassificationAgent
@@ -393,6 +395,9 @@ class ServiceContainer:
             session_store=self.session_store,
         )
 
+        # The fact lifecycle's per-day numbers (D10): the consolidator adds its expiry tool errors, the janitor its run.
+        self.fact_lifecycle_counters: FactLifecycleCountersPort = FirestoreFactLifecycleCounters(db_client, env_config)
+
         # Built after FileConversionService: copy sources (uploads, delivered documents) go through it (§12).
         self.workspace_service = (
             WorkspaceService(store=self.workspace_store, file_conversion=self.file_conversion_service)
@@ -453,6 +458,7 @@ class ServiceContainer:
             "prompt_content_store": self.prompt_content_store,
             "skill_service": self.skill_service,
             "memory_fact_service": self.memory_fact_service,
+            "lifecycle_counters": self.fact_lifecycle_counters,
             "workspace_service": self.workspace_service,
         }
 

@@ -339,7 +339,7 @@ sequenceDiagram
     participant OC as overflow_callback
     participant CT as Cloud Tasks
     participant W as /worker
-    participant CH as ConsolidationHandler
+    participant CH as ConsolidationService
     participant CA as ConsolidationAgent
     participant FR as FactRepository
     participant CQ as ConsolidationQueue
@@ -354,7 +354,8 @@ sequenceDiagram
     CT->>W: POST /worker {task_type=consolidation}
 
     Note over W: Full CPU — request stays alive
-    W->>CH: process_user_batches_on_overflow(user_id)
+    W->>CH: process_user_batches(user_id, max_batches=1)
+    CH->>CH: take the account's memory-write lease (busy: defer, see memory README §3)
     CH->>CQ: get_pending_batches(user_id)
     CQ-->>CH: batch (status=PENDING)
 
@@ -376,7 +377,7 @@ sequenceDiagram
 **CPU allocation note:** Cloud Tasks dispatches a separate HTTP request for consolidation. This request
 stays alive until consolidation completes, ensuring Cloud Run allocates full CPU throughout. Previously,
 `asyncio.create_task()` was used, which immediately returned 200 → CPU throttled to ~5% → 74–180s
-latency. See `src/handlers/consolidation_handler.py` for implementation.
+latency. See `src/services/consolidation_service.py` for implementation.
 
 ### 4.3 Consolidation Agent
 

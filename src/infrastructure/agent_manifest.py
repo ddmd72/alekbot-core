@@ -58,6 +58,8 @@ class Intent:
     CONSOLIDATE_CLUSTER  = "consolidate_cluster"
     CONSOLIDATE_EMAIL    = "consolidate_email"
     CONSOLIDATE_FULL     = "consolidate_full"
+    # The memory review's pass over stale facts (Facts S4 §3.3): a task of the consolidation agent, sent by the review service
+    REVIEW_STALE_FACTS   = "review_stale_facts"
     # Claude deep research runner (internal=True — invoked via agent_execution Cloud Task only)
     EXECUTE_DEEP_RESEARCH_CLAUDE = "execute_deep_research_claude"
     # Tasks management — single entry point; agent selects CRUD tool internally

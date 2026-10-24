@@ -132,6 +132,37 @@ gcloud scheduler jobs describe alek-bot-dev-billing-daily-summary \
   --attempt-deadline=60s \
   --project=$PROJECT_ID
 
+# Fact janitor (FACT_LIFECYCLE_RFC D4): once a day, after the 09:00 billing summary, stales every fact past its
+# `expires_at`. Log-only until the main service has FACT_LIFECYCLE_SWEEP_DRY_RUN=0. 180s: one pass per account.
+# No retry on purpose (no --max-retry-attempts): a retry could overlap a running sweep and double its per-run cap.
+# A failed run posts a 🚨 and the next day's run catches up.
+gcloud scheduler jobs describe alek-bot-dev-fact-lifecycle-sweep \
+  --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
+&& gcloud scheduler jobs update http alek-bot-dev-fact-lifecycle-sweep \
+  --schedule="30 9 * * *" \
+  --time-zone="Europe/Madrid" \
+  --uri="$SERVICE_URL/worker" \
+  --oidc-service-account-email="$SA" \
+  --oidc-token-audience="$SERVICE_URL/worker" \
+  --http-method=POST \
+  --message-body='{"task_type":"fact_lifecycle_sweep"}' \
+  --update-headers="Content-Type=application/json" \
+  --location=us-central1 \
+  --attempt-deadline=180s \
+  --project=$PROJECT_ID \
+|| gcloud scheduler jobs create http alek-bot-dev-fact-lifecycle-sweep \
+  --schedule="30 9 * * *" \
+  --time-zone="Europe/Madrid" \
+  --uri="$SERVICE_URL/worker" \
+  --oidc-service-account-email="$SA" \
+  --oidc-token-audience="$SERVICE_URL/worker" \
+  --http-method=POST \
+  --message-body='{"task_type":"fact_lifecycle_sweep"}' \
+  --headers="Content-Type=application/json" \
+  --location=us-central1 \
+  --attempt-deadline=180s \
+  --project=$PROJECT_ID
+
 gcloud scheduler jobs describe alek-bot-dev-repair-email-embeddings \
   --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
 && gcloud scheduler jobs update http alek-bot-dev-repair-email-embeddings \

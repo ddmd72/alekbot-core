@@ -9,4 +9,4 @@ eb7258cc  # select-drop 'state' (search_facts): query filters state=="current" a
 ae01e040  # select-drop 'owner_id' (get_active_facts): differs only for a doc with account_id+owner_id and no created_by_user_id; none exist in live data (2026-10-22: 0 of 1110) and no writer produces one
 f34776dd  # select-drop 'owner_id' (search_facts): same as ae01e040
 d46bfab7  # select-drop 'owner_id' (get_active_facts_ordered): same as ae01e040
-a39d02eb  # except-success L703 refresh_biographical_context_cache: handler only logs and falls through to None; identical observable behaviour
+1fcf455c  # except-success (2nd `except Exception` returns None in file order) refresh_biographical_context_cache: the handler only logs and falls through to the function's implicit None, the class the driver itself skips as equivalent (tests/CLAUDE.md: handlers that only log and already return the success value); the key is an ordinal, re-check it when a None-returning `except Exception` is added above

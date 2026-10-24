@@ -32,6 +32,9 @@ Supported task_types:
                                      where embedding_pending=True after transient API failures)
   - deep_research_failed          → the research Cloud Run Job failed: tell the user in the origin channel
   - video_generation_polling      → poll VideoGenerationPort job, deliver via deliver_video()
+  - fact_lifecycle_sweep          → the fact janitor (FACT_LIFECYCLE_RFC D4): stale every current fact whose `expires_at`
+                                     has passed, unless the account's breaker is tripped; log-only until
+                                     `FACT_LIFECYCLE_SWEEP_DRY_RUN=0`. Cron, daily 09:30 Europe/Madrid, not retried; a failed run answers 500
   - start_drive_sync              → fan-out: DriveSyncSchedulerService enqueues one drive_sync tick per
                                      user on the drive queue (the indexer service runs it), raises the
                                      staleness alert and the one reconnect notice (USER_DRIVE_INDEXING_RFC
@@ -62,6 +65,7 @@ if TYPE_CHECKING:
     from ..services.short_link_service import ShortLinkService
     from ..services.companion_extraction_service import CompanionExtractionService
     from ..services.drive_sync_scheduler_service import DriveSyncSchedulerService
+    from ..services.fact_lifecycle_sweep_service import FactLifecycleSweepService
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
@@ -130,7 +134,9 @@ class WorkerHandler:
         daily_review_marks: "Optional[DedupStore]" = None,
         deep_research_fetch: "Optional[Callable[[str], Awaitable[dict]]]" = None,
         prompt_content_store: "Optional[PromptContentStore]" = None,
+        fact_lifecycle_sweep: "Optional[FactLifecycleSweepService]" = None,
     ) -> None:
+        self._fact_lifecycle_sweep = fact_lifecycle_sweep
         self._task_claims = task_claims
         # Keys of attempts running in this process. Check-and-add has no await between, so
         # asyncio's single thread makes it race-free without a lock.
@@ -325,6 +331,8 @@ class WorkerHandler:
             return await self._handle_repair_email_embeddings()
         elif task_type == "start_drive_sync":
             return await self._handle_start_drive_sync()
+        elif task_type == "fact_lifecycle_sweep":
+            return await self._handle_fact_lifecycle_sweep()
         elif task_type is None and "event" in payload and "session_id" in payload:
             # Queued Slack event (GcpTaskQueue.enqueue_slack_event): no task_type by design.
             if self._slack_worker is None:
@@ -1272,4 +1280,22 @@ class WorkerHandler:
         logger.info(f"[Worker] billing_daily_summary: reported {reported} accounts")
         return {"reported": reported}, 200
 
+    # ------------------------------------------------------------------
+    # Fact lifecycle sweep (the janitor)
+    # ------------------------------------------------------------------
 
+    async def _handle_fact_lifecycle_sweep(self) -> Tuple[dict, int]:
+        """Run the fact janitor once. Called by Cloud Scheduler daily at 09:30 Europe/Madrid.
+
+        A failed run is logged with its type and answered 500 (a Cloud Tasks claim is released). The Scheduler job sets no retry,
+        on purpose: a retry could overlap a running sweep. The service's 🚨 reports the failure; the next day's run catches up.
+        """
+        if self._fact_lifecycle_sweep is None:
+            logger.warning("[Worker] fact_lifecycle_sweep: sweep service not configured")
+            return {"error": "fact lifecycle sweep not configured"}, 501
+        try:
+            totals = await self._fact_lifecycle_sweep.sweep()
+        except Exception as exc:
+            logger.error(f"[Worker] fact_lifecycle_sweep failed ({type(exc).__name__})", exc_info=True)
+            return {"error": "sweep_failed", "error_type": type(exc).__name__}, 500
+        return totals, 200

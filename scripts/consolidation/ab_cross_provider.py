@@ -55,6 +55,7 @@ load_dotenv()
 
 from google.cloud import firestore
 
+from scripts.consolidation.legacy_dry_run_ports import install_dry_run
 from src.domain.billing import calculate_cost
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
@@ -165,7 +166,7 @@ async def run_chat(
     if hasattr(real_fm, "_real"):
         real_fm = real_fm._real
     dry_run = DryRunFactManagementAdapter(real_fm)
-    agent._fact_management = dry_run
+    install_dry_run(agent, dry_run)
 
     llm_turns: List[Dict[str, Any]] = []
     usage = {"prompt": 0, "completion": 0, "cache_read": 0, "cache_write": 0, "calls": 0}

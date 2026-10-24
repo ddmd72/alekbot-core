@@ -58,7 +58,7 @@ gcloud logging read 'resource.type=cloud_scheduler_job' \
 > no HTTP request is actively being processed. `asyncio.create_task()` calls that immediately return
 > 200 trigger this throttling mid-execution. The fix for CPU throttling is architectural — background
 > jobs must be dispatched via Cloud Tasks (separate HTTP request = full CPU), not via `create_task`.
-> See `src/handlers/consolidation_handler.py` and `main.py:overflow_callback` for the applied pattern.
+> See `ConsolidationService` (`src/services/consolidation_service.py`) and the `/worker` `consolidation` task for the applied pattern.
 
 ---
 

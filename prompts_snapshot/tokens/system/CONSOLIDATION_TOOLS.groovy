@@ -21,7 +21,9 @@ uploaded_by: local_script
         limit: "Max results to return (default: 20)"
     }
 
-    returns: "List[Dict] with structure: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, domain: str, temporal_class: str, state: str, tags: List[str], similarity: float}"
+    returns: "List[Dict] with structure: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, domain: str, temporal_class: str, state: str, tags: List[str], reported_date: str, reported: str, expiry: dict, due: str, similarity: float}"
+
+    result_notes: "expiry is the fact's stored decision in the shape you send it: {kind: date, date}, {kind: horizon, days} or {kind: none}; null when none is recorded. due is the local day a horizon falls due. reported_date is when the owner last said the fact, with his offset; reported is its local day. Copy an expiry back unchanged to keep it, unless its date is before Today (then the fact is history, {kind: none}) or is Today (then a short horizon)."
 
     usage_example: '''
     results = search_existing_facts(
@@ -40,13 +42,14 @@ uploaded_by: local_script
         fact_attributes: {
             domain: "FactDomain (BIOGRAPHICAL, POSSESSION, etc.)"
             temporal_class: "TemporalClass (PERMANENT, STABLE, DYNAMIC, EPHEMERAL)"
-            state: "FactState (default: CURRENT)"
+            state: "FactState (default: CURRENT). A new fact is CURRENT; a fact closed at birth is ARCHIVED or INVALIDATED and carries no expiry. stale is set by the system; superseded only through update_fact"
             context_priority: "ContextPriority (CRITICAL, HIGH, MEDIUM, LOW, ARCHIVAL)"
-            ttl_days: "Auto-calculated from temporal_class (can override)"
+            expiry: "REQUIRED. When the fact stops being current, decided from its content with the kinds table: {kind: date, date: YYYY-MM-DD} the last day it holds, {kind: horizon, days: N} review if the owner has not said it again within N days, {kind: none} history, stable or permanent. Directives, principles and mindset facts: none"
             tags: "List[str] - General classifications (domain keywords, dates)"
             metadata: "Dict - Structured data (numeric values, specific dates, details)"
             context: "Optional temporal context (e.g., 'Q1 2026 project')"
-            reported_date: "When fact was recorded (now)"
+            reported_date: "The timestamp of the owner's message as shown in the conversation, with its offset, e.g. 2026-10-22T12:00+02:00 (when he said it, not now)"
+            derived_from: "List[str], cluster and rulebook reviews only: the ids of the fact(s) a part or a demotion is made from; their date is kept"
         }
     }
 
@@ -60,7 +63,7 @@ uploaded_by: local_script
             "temporal_class": "DYNAMIC",
             "state": "CURRENT",
             "context_priority": "MEDIUM",
-            "ttl_days": 365,
+            "expiry": {"kind": "none"},
             "tags": ["weight", "health", "biometrics", "2025", "diet"],
             "metadata": {
                 "weight_kg": 83,
@@ -69,7 +72,7 @@ uploaded_by: local_script
                 "weight_change_kg": -15
             },
             "context": "Historical weight record",
-            "reported_date": "2026-02-16T10:00:00"
+            "reported_date": "2026-10-22T12:00+02:00"
         }
     )
     '''
@@ -85,8 +88,10 @@ uploaded_by: local_script
             tags: "Optional: add tags"
             metadata: "Optional: add/update structured data"
             temporal_class: "Optional: can upgrade/downgrade"
-            state: "Optional: change state"
-            reported_date: "Always update to now"
+            state: "Optional: ARCHIVED, INVALIDATED or SUPERSEDED (SUPERSEDED needs superseded_by). A state change carries no expiry; stale is set by the system"
+            superseded_by: "With state SUPERSEDED: the id of the fact that replaces this one (required then). Create the replacing fact first"
+            expiry: "Required when the update changes the text, tags, metadata or temporal class: decide again from the new text, same shapes as create_fact. Alone it only changes the decision"
+            reported_date: "Only when the owner says the fact again: the timestamp of his message as shown in the conversation, with its offset (never now)"
         }
     }
 
@@ -96,14 +101,15 @@ uploaded_by: local_script
     result = update_fact(
         fact_id="weight-fact-123",
         updates={
-            "content": "User's weight: 80.5 kg (Feb 16), was 81 kg (Feb 7), 82.1 kg (Feb 5)",
+            "content": "User's weight: 80.5 kg (Oct 22), was 81 kg (Oct 13), 82.1 kg (Oct 11)",
             "tags": ["weight", "health", "biometrics", "tracking", "loss"],
             "metadata": {
                 "weight_kg": 80.5,
-                "measurement_date": "2026-02-16",
+                "measurement_date": "2026-10-22",
                 "trend": "decreasing"
             },
-            "reported_date": "2026-02-16T10:00:00"
+            "expiry": {"kind": "horizon", "days": 90},
+            "reported_date": "2026-10-22T12:00+02:00"
         }
     )
     '''
@@ -115,7 +121,7 @@ uploaded_by: local_script
     parameters: {
         fact_ids: "List of UUIDs to merge"
         merged_content: "New combined text"
-        fact_attributes: "Attributes for new fact (MUST include: domain, temporal_class, state, context_priority, tags, reported_date)"
+        fact_attributes: "Attributes for new fact, the same keys as create_fact (MUST include: domain, temporal_class, state, context_priority, tags, reported_date, expiry); expiry is decided again from the merged text"
     }
 
     returns: "{new_fact_id, old_fact_ids, old_facts_state: SUPERSEDED, status, message}"
@@ -137,7 +143,8 @@ uploaded_by: local_script
                 "plate": "SAMPLE-0000",
                 "location": "Springfield"
             },
-            "reported_date": "2026-02-16T10:00:00"
+            "expiry": {"kind": "none"},
+            "reported_date": "2026-10-22T12:00+02:00"
         }
     )
     '''

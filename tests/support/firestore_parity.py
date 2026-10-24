@@ -3,7 +3,10 @@
 Each scenario is `async def scenario(db, col) -> result`: it writes into the collection `col`, reads back through `db`
 (a `firestore.AsyncClient` or the H1 fake `EvalDb`) and returns ONE observable value (ids in order, field values, an
 error class name). `SCENARIOS` pairs every function with its expected value: Firestore's documented behaviour, never
-what a backend happens to answer. Every expected value was confirmed on the test database on 2026-10-22; where the
+what a backend happens to answer. Every expected value was confirmed on the test database on 2026-10-22 (except the two
+Facts S3 scenarios, range_timestamp_excludes_null_and_missing and projected_query_update_time_matches_transactional_read,
+and the Facts S4 scenarios equality_and_in_without_composite and set_merge_fields_replaces_a_map_whole: documented
+behaviour, not yet run on the test database, owner `make test-cloud` before deploy); where the
 documentation is silent (`!=` and null or another type, equality plus array-contains, the error class of a precondition on
 a deleted document, the order of several implicit inequality fields) that run is the source.
 
@@ -131,6 +134,16 @@ async def missing_field_filters_orderings(db: Any, col: str) -> Any:
             "is_null": await _ids(_where(c, "x", "==", None)), "in": await _ids(_where(c, "x", "in", [1, 2]))}
 
 
+async def range_timestamp_excludes_null_and_missing(db: Any, col: str) -> Any:
+    c = db.collection(col)
+    early, late = datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 6, 1, tzinfo=UTC)
+    await _seed(c, {"early": {"e": early}, "late": {"e": late}, "null": {"e": None}, "missing": {"y": 1},
+                    "text": {"e": "2026-01-01"}, "number": {"e": 5}})
+    cut = datetime(2026, 3, 1, tzinfo=UTC)
+    return {"le": await _ids(_where(c, "e", "<=", cut)), "gt": await _ids(_where(c, "e", ">", cut)),
+            "le_far_future": await _ids(_where(c, "e", "<=", datetime(2100, 1, 1, tzinfo=UTC)))}
+
+
 async def not_equal_missing_field(db: Any, col: str) -> Any:
     c = db.collection(col)
     await _seed(c, {"a": {"x": 1}, "c": {"y": 1}, "d": {"x": 2}})
@@ -166,6 +179,24 @@ async def equality_order_by_missing_field(db: Any, col: str) -> Any:
     c = db.collection(col)
     await _seed(c, {"a": {"u": 1, "t": 2}, "b": {"u": 1}, "c": {"u": 1, "t": 1}, "d": {"u": 2, "t": 0}})
     return await _ids(_where(c, "u", "==", 1).order_by("t"))
+
+
+async def equality_and_in_without_composite(db: Any, col: str) -> Any:
+    """The review store's reads: an equality next to an `in` on another field, and four equalities, with no composite index."""
+    c = db.collection(col)
+    await _seed(c, {
+        "a": {"account_id": "x", "status": "queued", "platform": "slack", "channel": "C1", "message_id": "m1"},
+        "b": {"account_id": "x", "status": "closed", "platform": "slack", "channel": "C1", "message_id": "m2"},
+        "c": {"account_id": "y", "status": "asked", "platform": "slack", "channel": "C1", "message_id": "m1"},
+        "d": {"account_id": "x", "status": "asked", "platform": "telegram", "channel": "C1", "message_id": "m1"},
+        "e": {"account_id": "x", "status": "unanswered"}})
+    in_query = _where(_where(c, "account_id", "==", "x"), "status", "in", ["queued", "asked", "unanswered"])
+    four = _where(_where(_where(_where(c, "account_id", "==", "x"), "platform", "==", "slack"), "channel", "==", "C1"),
+                  "message_id", "==", "m1")
+    # membership only: the claim is "no composite needed"; the order of an `in` result without `order_by` is not documented
+    # and the review store orders in code (plan §3.13)
+    results = {"in": await _ids_or_error(in_query), "four_equalities": await _ids_or_error(four)}
+    return {k: sorted(v) if isinstance(v, list) else v for k, v in results.items()}
 
 
 # ----------------------------------------------------------------------------------------- dotted paths
@@ -256,6 +287,26 @@ async def delete_missing_document(db: Any, col: str) -> Any:
     d = c.document("nobody")
     outcome = await _outcome(d.delete())
     return {"delete": outcome, "exists": (await d.get()).exists, "ids": await _ids(c)}
+
+
+async def set_merge_fields_replaces_a_map_whole(db: Any, col: str) -> Any:
+    """The review store's state marks: `set(..., merge=[fields])` replaces each listed field whole, a map too (a removed
+    key is gone), keeps the fields not listed, and creates a missing document with the listed fields only. `merge=True`
+    merges maps key by key, for contrast."""
+    c = db.collection(col)
+    seed = {"account_id": "x", "sent": 3, "offers": {"f1": 2, "f2": 1},
+            "labels": {"uk": {"a": "1", "b": "2"}, "en": {"a": "A"}}}
+    change = {"account_id": "x", "offers": {"f2": 1}, "labels": {"uk": {"a": "9"}}}
+    await c.document("fields").set(seed)
+    await c.document("fields").set(change, merge=["account_id", "offers", "labels"])
+    after_fields = (await c.document("fields").get()).to_dict()
+    await c.document("fields").set({"offers": {}}, merge=["offers"])
+    await c.document("true").set(seed)
+    await c.document("true").set(change, merge=True)
+    await c.document("missing").set(change, merge=["account_id", "offers"])
+    return {"merge_fields": after_fields, "last_key_removed": (await c.document("fields").get()).to_dict()["offers"],
+            "merge_true": (await c.document("true").get()).to_dict(),
+            "created": (await c.document("missing").get()).to_dict()}
 
 
 async def set_replaces_whole_document(db: Any, col: str) -> Any:
@@ -416,6 +467,28 @@ async def transactions_concurrent(db: Any, col: str) -> Any:
     return {"final": (await d.get()).to_dict()["n"], "body_ran_again": runs["n"] > 2}
 
 
+async def transactions_concurrent_create_on_missing(db: Any, col: str) -> Any:
+    # Only the outcome is guaranteed: the test database sometimes makes the loser's read wait for the winner's commit
+    # (pessimistic locking) instead of aborting and re-running its body (2 of 11 runs, 2026-10-23), so no run count.
+    d = db.collection(col).document("lease")
+
+    @firestore.async_transactional
+    async def take(tx: Any) -> str:
+        snap = await d.get(transaction=tx)
+        await asyncio.sleep(0.2)     # both transactions hold their read of the missing document before the first writes
+        if snap.exists:
+            return "saw"
+        tx.set(d, {"owner": "x"})
+        return "created"
+
+    async def start_later(delay: float) -> str:
+        await asyncio.sleep(delay)
+        return await take(db.transaction())
+
+    results = await asyncio.gather(start_later(0), start_later(0.05))
+    return {"results": sorted(results), "stored": (await d.get()).to_dict()}
+
+
 async def transaction_read_missing_document(db: Any, col: str) -> Any:
     d = db.collection(col).document("nobody")
 
@@ -446,6 +519,58 @@ async def transaction_delete_after_read(db: Any, col: str) -> Any:
             "second_transaction_sees": await read_again(db.transaction())}
 
 
+async def transaction_read_update_time(db: Any, col: str) -> Any:
+    d = db.collection(col).document("a")
+    await d.set({"v": 1})
+    other = db.collection(col).document("b")
+    await other.set({"v": 1})
+    plain = await d.get()
+
+    @firestore.async_transactional
+    async def read_in_transaction(tx: Any) -> Any:
+        return (await d.get(transaction=tx)).update_time
+
+    inside = await read_in_transaction(db.transaction())
+    await d.update({"v": 2})
+    after = await d.get()
+    inside_after = await read_in_transaction(db.transaction())
+    return {"equal_to_plain_read": inside == plain.update_time, "differs_after_write": after.update_time != plain.update_time,
+            "transaction_sees_new": inside_after == after.update_time,
+            "separate_writes_differ": plain.update_time != (await other.get()).update_time}
+
+
+async def projected_query_update_time_matches_transactional_read(db: Any, col: str) -> Any:
+    c = db.collection(col)
+    d = c.document("a")
+    await d.set({"v": 1, "w": 2})
+    await _seed(c, {"b": {"v": 1, "w": 2}})
+
+    @firestore.async_transactional
+    async def read_in_transaction(tx: Any) -> Any:
+        return (await d.get(transaction=tx)).update_time
+
+    projected = {s.id: s async for s in c.select(["v"]).stream()}
+    inside = await read_in_transaction(db.transaction())
+    full = await d.get()
+    return {"projected_fields": sorted(projected["a"].to_dict()),
+            "projected_equals_transactional": projected["a"].update_time == inside,
+            "projected_equals_plain_read": projected["a"].update_time == full.update_time,
+            "documents_differ": projected["a"].update_time != projected["b"].update_time}
+
+
+async def get_all_order_not_assumed(db: Any, col: str) -> Any:
+    c = db.collection(col)
+    await _seed(c, {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}})
+    refs = [c.document(i) for i in ("c", "a", "nobody", "b")]
+
+    @firestore.async_transactional
+    async def read_each(tx: Any) -> Dict[str, Any]:
+        return {snap.id: snap.to_dict() for snap in [await ref.get(transaction=tx) for ref in refs]}
+
+    return {"get_all": {snap.id: snap.to_dict() async for snap in db.get_all(refs)},
+            "in_transaction": await read_each(db.transaction())}
+
+
 # ------------------------------------------------------------------------------------ the table, indexes
 
 @dataclass(frozen=True)
@@ -468,11 +593,15 @@ SCENARIOS: List[Scenario] = [
     Scenario("two_range_fields_added_in_reverse", two_range_fields_added_in_reverse, ["c", "b", "a", "d"], group="composite"),
     Scenario("missing_field_filters_orderings", missing_field_filters_orderings,
              {"order_by": ["b", "a", "d"], "range": ["a", "d"], "is_null": ["b"], "in": ["a", "d"]}),
+    Scenario("range_timestamp_excludes_null_and_missing", range_timestamp_excludes_null_and_missing,
+             {"le": ["early"], "gt": ["late"], "le_far_future": ["early", "late"]}),
     Scenario("not_equal_missing_field", not_equal_missing_field, ["d"]),
     Scenario("not_equal_null_field", not_equal_null_field, ["d"]),
     Scenario("not_equal_other_type", not_equal_other_type, ["d", "s"]),
     Scenario("equality_array_contains", equality_array_contains, ["a"]),
     Scenario("equality_array_contains_any", equality_array_contains_any, ["a", "b"]),
+    Scenario("equality_and_in_without_composite", equality_and_in_without_composite,
+             {"in": ["a", "d", "e"], "four_equalities": ["a"]}),
     Scenario("equality_order_by_missing_field", equality_order_by_missing_field, ["c", "a"], group="composite"),
     Scenario("dotted_paths", dotted_paths, {
         "doc": {"ids": {"slack": "U1", "tg": "T1"}, "usage": {"n": 2}}, "get": 2, "where": ["a"], "order_by": ["b", "a"],
@@ -493,6 +622,12 @@ SCENARIOS: List[Scenario] = [
     Scenario("update_precondition_deleted", update_precondition_deleted, "FailedPrecondition"),
     Scenario("delete_missing_document", delete_missing_document, {"delete": "ok", "exists": False, "ids": []}),
     Scenario("set_replaces_whole_document", set_replaces_whole_document, {"b": 3, "m": {"x": 9}}),
+    Scenario("set_merge_fields_replaces_a_map_whole", set_merge_fields_replaces_a_map_whole, {
+        "merge_fields": {"account_id": "x", "sent": 3, "offers": {"f2": 1}, "labels": {"uk": {"a": "9"}}},
+        "last_key_removed": {},
+        "merge_true": {"account_id": "x", "sent": 3, "offers": {"f1": 2, "f2": 1},
+                       "labels": {"uk": {"a": "9", "b": "2"}, "en": {"a": "A"}}},
+        "created": {"account_id": "x", "offers": {"f2": 1}}}),
     Scenario("aware_datetime_stored_as_utc", aware_datetime_stored_as_utc, {
         "utc_fields": (2026, 10, 22, 12, 30, 45, 123456), "offset": timedelta(0), "same_instant": True}),
     Scenario("document_ids_are_case_sensitive", document_ids_are_case_sensitive, {
@@ -521,10 +656,22 @@ SCENARIOS: List[Scenario] = [
               "mixed_directions": "FailedPrecondition"},
              group="composite", refuses=True),
     Scenario("transactions_concurrent", transactions_concurrent, {"final": 2, "body_ran_again": True}),
+    Scenario("transactions_concurrent_create_on_missing", transactions_concurrent_create_on_missing,
+             {"results": ["created", "saw"], "stored": {"owner": "x"}}),
     Scenario("transaction_read_missing_document", transaction_read_missing_document,
              {"exists_in_transaction": False, "created": False}),
     Scenario("transaction_delete_after_read", transaction_delete_after_read,
              {"first_read": {"v": 1}, "exists_after": False, "second_transaction_sees": False}),
+    Scenario("transaction_read_update_time", transaction_read_update_time,
+             {"equal_to_plain_read": True, "differs_after_write": True, "transaction_sees_new": True,
+              "separate_writes_differ": True}),
+    Scenario("projected_query_update_time_matches_transactional_read",
+             projected_query_update_time_matches_transactional_read,
+             {"projected_fields": ["v"], "projected_equals_transactional": True, "projected_equals_plain_read": True,
+              "documents_differ": True}),
+    Scenario("get_all_order_not_assumed", get_all_order_not_assumed, {
+        "get_all": {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}, "nobody": None},
+        "in_transaction": {"a": {"v": 1}, "b": {"v": 2}, "c": {"v": 3}, "nobody": None}}),
 ]
 
 # Fields of each group's composite and vector indexes, in index order: (field, "ASC" | "VECTOR").

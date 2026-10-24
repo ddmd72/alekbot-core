@@ -31,6 +31,7 @@ from ..domain.voice_provider_profile import (
     resolve_voice_profile,
 )
 from ..ports.alert_sink import AlertSinkPort
+from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..domain.consolidation_pass_stats import stats_alerts_enabled
 from ..ports.user_repository import UserRepository
 from ..ports.account_repository import AccountRepository
@@ -196,6 +197,7 @@ class UserAgentFactory(AgentFactoryPort):
         language_service: Optional["LanguageServicePort"] = None,
         drive_search_service: Optional["DriveSearchService"] = None,
         alert_sink: Optional[AlertSinkPort] = None,
+        lifecycle_counters: Optional[FactLifecycleCountersPort] = None,
     ) -> None:
         # Resolved once: a bad SANDBOX_RENDER stops the start, and the sandbox runner is shared by all users.
         self._docx_runner_factory = docx_runner_factory()
@@ -243,6 +245,7 @@ class UserAgentFactory(AgentFactoryPort):
         self.user_drive_service = user_drive_service
         self.drive_search_service = drive_search_service
         self.alert_sink = alert_sink
+        self.lifecycle_counters = lifecycle_counters
         self.localization = localization
         self.language_service = language_service
 
@@ -573,12 +576,14 @@ class UserAgentFactory(AgentFactoryPort):
             embedding_service=self.embedding_service,
             fact_write_service=self.fact_write_service,
             fact_management_port=fact_management_adapter,
+            fact_updates=fact_management_adapter,  # the adapter is both ports
             prompt_version=self.config["CONSOLIDATION"].prompt_version,
             prompt_builder=prompt_builder,
             facts_limit=facts_limit,
             principles_limit=principles_limit,
             indexed_email_repo=self.indexed_email_repo,
             alert_sink=self.alert_sink,
+            lifecycle_counters=self.lifecycle_counters,
             # TEMPORARY knob (Sonnet 5.5 stall monitoring, 2026-10-20): optional, so os.getenv,
             # not load_settings(); default on. Remove once consolidation's model is settled.
             stats_alerts=stats_alerts_enabled(os.getenv("CONSOLIDATION_STATS_ALERTS", "1")),

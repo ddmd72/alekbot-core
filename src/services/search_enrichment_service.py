@@ -388,23 +388,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
             )
             
             return [
-                EnrichedFact(
-                    fact_id=fact.id,
-                    content=fact.text,
-                    vector=fact.vector,
-                    source=source_label,
-                    relevance_score=1.0,
-                    fact_type=fact.type.value if fact.type else None,
-                    domain=fact.domain.value if fact.domain else None,
-                    temporal_class=fact.temporal_class.value if fact.temporal_class else None,
-                    state=fact.state.value if fact.state else None,
-                    context_priority=fact.context_priority.value if fact.context_priority else None,
-                    tags=fact.tags,
-                    metadata=fact.metadata,
-                    reported_date=fact.reported_date.isoformat() if fact.reported_date else None,
-                    context=fact.context,
-                    version=fact.version,
-                )
+                EnrichedFact.from_fact(fact, source_label, 1.0)
                 for fact in facts
             ]
         except Exception as exc:
@@ -444,23 +428,7 @@ class SearchEnrichmentService(SearchEnrichmentPort):
             )
             
             return [
-                EnrichedFact(
-                    fact_id=fact.id,
-                    content=fact.text,
-                    vector=fact.vector,
-                    source=source_label,
-                    relevance_score=getattr(fact, "similarity", None),
-                    fact_type=fact.type.value if fact.type else None,
-                    domain=fact.domain.value if fact.domain else None,
-                    temporal_class=fact.temporal_class.value if fact.temporal_class else None,
-                    state=fact.state.value if fact.state else None,
-                    context_priority=fact.context_priority.value if fact.context_priority else None,
-                    tags=fact.tags,
-                    metadata=fact.metadata,
-                    reported_date=fact.reported_date.isoformat() if fact.reported_date else None,
-                    context=fact.context,
-                    version=fact.version,
-                )
+                EnrichedFact.from_fact(fact, source_label, getattr(fact, "similarity", None))
                 for fact in facts
             ]
         except Exception as exc:

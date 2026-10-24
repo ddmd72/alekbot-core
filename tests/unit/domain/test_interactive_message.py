@@ -1,0 +1,205 @@
+"""The provider-neutral interactive message (Facts S4 · T5a, plan §3.20): how a digit picks an option, the binding's
+kind and id rules and the shapes it refuses. The plain-text layout is the adapter's
+(`tests/unit/adapters/test_plain_text_interactive_message_layout.py`, T5b L10); the block-id codec is Slack's
+(`tests/unit/adapters/test_slack_binding_codec.py`, T5c L7)."""
+import json
+from datetime import datetime, timezone
+
+import pytest
+from pydantic import ValidationError
+
+from src.domain.choice_outcome import ChoiceOutcome
+from src.domain.interactive_binding import InteractiveBinding
+from src.domain.interactive_choice import InteractiveChoice
+from src.domain.interactive_message import InteractiveMessage
+from src.domain.interactive_option import MAX_LABEL_CHARS, InteractiveOption
+from src.domain.messaging import MessageRef
+
+LABELS = [("still_true", "yes"), ("ended", "no longer"), ("never", "never"), ("dont_know", "don't remember")]
+
+
+def options(pairs=LABELS):
+    return [InteractiveOption(id=i, label=label) for i, label in pairs]
+
+
+def message(**over):
+    fields = dict(
+        prompt="Is this still true?",
+        quote="Lives in Lisbon",
+        options=options(),
+        binding=InteractiveBinding(kind="fact_question", id="q1"),
+        reply_hint="Reply with a digit.",
+    )
+    fields.update(over)
+    return InteractiveMessage(**fields)
+
+
+# ------------------------------------------------------------------------------------------------ digits
+
+@pytest.mark.parametrize("reply,expected", [
+    ("1", "still_true"), ("2", "ended"), ("3", "never"), ("4", "dont_know"),
+    (" 3 ", "never"), ("\n2\n", "ended"), ("1.", "still_true"),
+])
+def test_a_whole_reply_that_is_an_options_digit_picks_it(reply, expected):
+    assert message().option_for_reply(reply) == expected
+
+
+@pytest.mark.parametrize("reply", [
+    "", "   ", "5", "0", "-1", "1 2", "12", "yes", "1 — yes", "one", "٣", "１", "1\n2",
+])
+def test_anything_else_picks_nothing(reply):
+    assert message().option_for_reply(reply) is None
+
+
+def test_the_digits_follow_the_order_of_the_options_whatever_their_ids():
+    reordered = message(options=options([("never", "x"), ("still_true", "y")]))
+    assert reordered.option_for_reply("1") == "never"
+    assert reordered.option_for_reply("2") == "still_true"
+    assert reordered.option_for_reply("3") is None
+
+
+def test_option_looks_up_by_id():
+    assert message().option("ended").label == "no longer"
+    assert message().option("missing") is None
+
+
+# ------------------------------------------------------------------------------------------------ binding
+
+@pytest.mark.parametrize("kind,ident", [
+    ("", "q1"), ("Fact_Question", "q1"), ("1kind", "q1"), ("fact question", "q1"), ("k" * 41, "q1"),
+    ("fact_question", ""), ("fact_question", "q 1"), ("fact_question", "q\n1"), ("fact_question", "x" * 129),
+])
+def test_a_binding_refuses_a_kind_that_is_not_a_name_and_an_id_that_is_not_one_word(kind, ident):
+    with pytest.raises(ValidationError):
+        InteractiveBinding(kind=kind, id=ident)
+
+
+def test_the_longest_binding_is_a_forty_character_kind_and_a_128_character_id():
+    longest = InteractiveBinding(kind="k" * 40, id="x" * 128)
+    assert (len(longest.kind), len(longest.id)) == (40, 128)
+    assert InteractiveBinding(kind="fact_question", id="u:123:abc").id == "u:123:abc"
+
+
+def test_a_binding_survives_the_task_payload_encoder():
+    from src.adapters.gcp_task_queue import _DomainEncoder
+    binding = InteractiveBinding(kind="fact_question", id="q1")
+    wire = json.loads(json.dumps({"binding": binding}, cls=_DomainEncoder))
+    assert InteractiveBinding(**wire["binding"]) == binding
+
+
+# ------------------------------------------------------------------------------------------------ refusals
+
+def test_two_to_five_options_are_accepted_and_one_or_six_are_not():
+    for count in (2, 5):
+        message(options=options([(f"o{i}", f"label {i}") for i in range(count)]))
+    for count in (0, 1, 6):
+        with pytest.raises(ValidationError):
+            message(options=options([(f"o{i}", f"label {i}") for i in range(count)]))
+
+
+def test_option_ids_must_be_unique():
+    with pytest.raises(ValidationError):
+        message(options=options([("a", "one"), ("a", "two")]))
+
+
+@pytest.mark.parametrize("label", ["", "   ", "two\nlines", "x" * (MAX_LABEL_CHARS + 1)])
+def test_an_option_label_is_one_non_empty_line_that_fits_a_button(label):
+    with pytest.raises(ValidationError):
+        InteractiveOption(id="a", label=label)
+
+
+def test_a_label_of_exactly_the_button_limit_is_accepted():
+    assert len(InteractiveOption(id="a", label="é" * MAX_LABEL_CHARS).label) == MAX_LABEL_CHARS
+    assert MAX_LABEL_CHARS == 75
+
+
+@pytest.mark.parametrize("ident", ["", "has space", "a:b", "x" * 65, "ü"])
+def test_an_option_id_is_a_short_token(ident):
+    with pytest.raises(ValidationError):
+        InteractiveOption(id=ident, label="ok")
+
+
+def test_a_prompt_is_required():
+    with pytest.raises(ValidationError):
+        message(prompt="  ")
+
+
+def test_the_model_is_immutable():
+    with pytest.raises(ValidationError):
+        message().prompt = "changed"
+    with pytest.raises(ValidationError):
+        options()[0].label = "changed"
+
+
+# ------------------------------------------------------------------------------------------------ outcome and choice
+
+def test_an_outcome_shows_the_chosen_option_or_a_note_and_never_neither():
+    msg = message()
+    assert ChoiceOutcome(message=msg, chosen_option_id="never").chosen_option.label == "never"
+    closed = ChoiceOutcome(message=msg, note="Closed.")
+    assert closed.chosen_option is None
+    with pytest.raises(ValidationError):
+        ChoiceOutcome(message=msg)
+    with pytest.raises(ValidationError):
+        ChoiceOutcome(message=msg, note="   ")
+    with pytest.raises(ValidationError):
+        ChoiceOutcome(message=msg, chosen_option_id="not_an_option")
+
+
+def a_choice(**over):
+    fields = dict(
+        binding=InteractiveBinding(kind="fact_question", id="q1"),
+        option_id="ended",
+        platform="slack",
+        platform_user_id="U123",
+        message_ref=MessageRef(platform="slack", channel_id="D1", message_id="1700000000.000100"),
+        at=datetime(2026, 10, 24, 9, 30, tzinfo=timezone.utc),
+    )
+    fields.update(over)
+    return InteractiveChoice(**fields)
+
+
+def test_a_choice_travels_through_the_house_task_encoder_and_comes_back_equal():
+    from src.adapters.gcp_task_queue import _DomainEncoder
+    choice = a_choice()
+    wire = json.loads(json.dumps({"choice": choice.to_payload()}, cls=_DomainEncoder))
+    assert InteractiveChoice.from_payload(wire["choice"]) == choice
+
+
+def test_the_encoder_alone_now_writes_the_choice_and_it_reads_back():
+    # Reviewer edit (Facts S4 T6c, L4 / S4 L14): the task queue's one encoder writes datetimes and enums, also inside a
+    # pydantic dump, so the choice crosses a task without `to_payload()` (whose removal is T5d's).
+    from src.adapters.gcp_task_queue import _DomainEncoder
+    choice = a_choice()
+    wire = json.loads(json.dumps({"choice": choice}, cls=_DomainEncoder))
+    assert InteractiveChoice.from_payload(wire["choice"]) == choice
+
+
+@pytest.mark.parametrize("payload", [
+    None, "x", [], {}, {"binding": {"kind": "fact_question", "id": "q1"}},
+    {**a_choice().to_payload(), "option_id": ""},
+    {**a_choice().to_payload(), "at": "yesterday"},
+    {**a_choice().to_payload(), "binding": {"kind": "Bad Kind", "id": "q1"}},
+])
+def test_a_payload_that_is_not_a_choice_gives_none(payload):
+    assert InteractiveChoice.from_payload(payload) is None
+
+
+def test_the_reference_must_be_on_the_choices_platform():
+    with pytest.raises(ValidationError):
+        a_choice(platform="telegram")
+    assert a_choice(platform="telegram", message_ref=MessageRef("telegram", "1", "2")).platform == "telegram"
+    wire = a_choice().to_payload()
+    wire["platform"] = "telegram"
+    assert InteractiveChoice.from_payload(wire) is None
+
+
+@pytest.mark.parametrize("field", ["option_id", "platform", "platform_user_id"])
+def test_a_choice_names_its_option_platform_and_clicker(field):
+    fields = dict(
+        binding=InteractiveBinding(kind="fact_question", id="q1"), option_id="a", platform="slack",
+        platform_user_id="U1", message_ref=MessageRef("slack", "D1", "1"), at=datetime(2026, 10, 24, tzinfo=timezone.utc),
+    )
+    fields[field] = ""
+    with pytest.raises(ValidationError):
+        InteractiveChoice(**fields)

@@ -7,12 +7,14 @@ from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from src.agents.consolidation_agent import ConsolidationAgent
 from src.domain.agent import AgentConfig, AgentMessage, AgentIntent, AgentStatus
 from src.domain.entities import FactEntity, FactType
+from src.domain.fact_write_context import FactWriteContext
 from src.ports.llm_port import AgentExecutionContext, ProviderCapabilities, LLMPort, LLMResponse
 from src.ports.fact_management_port import FactManagementPort
 from src.domain.llm import ToolCall
 from src.domain.user import PerformanceTier
 from src.domain.request_context import RequestContext
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
+from tests.support.typed_writes import NoTypedWrites, typed_port_for
 
 
 class TestConsolidationAgent:
@@ -78,7 +80,8 @@ class TestConsolidationAgent:
             repository=mock_repo,
             embedding_service=mock_embedding,
             fact_write_service=mock_fact_write_service,
-            prompt_builder=mock_prompt_builder
+            prompt_builder=mock_prompt_builder,
+            fact_updates=NoTypedWrites(),  # reviewer edit (S4 T6b): the typed port is required
         )
 
     @pytest.mark.asyncio
@@ -313,6 +316,7 @@ class TestConsolidationAgentV3:
             embedding_service=mock_embedding,
             fact_write_service=mock_fact_write_service,
             fact_management_port=mock_fact_management,
+            fact_updates=typed_port_for(mock_fact_management),  # reviewer edit (S4 T6b): the typed port is required
             prompt_version="v3",
             prompt_builder=mock_prompt_builder,
         )
@@ -358,6 +362,8 @@ class TestConsolidationAgentV3:
             response = await agent_v3.execute(message)
 
         assert response.status == AgentStatus.SUCCESS
+        # Reviewer edit (facts S3, T4a; plan §3.2): every write carries its pass's context. A Stage 1 run whose message has no
+        # owner zone and whose batch messages carry no time writes as stage1 in UTC with no span; the model's dates count.
         mock_fact_management.create_fact.assert_called_once_with(
             content="User owns a cat",
             metadata={
@@ -368,7 +374,8 @@ class TestConsolidationAgentV3:
                 "type": "state",
                 "account_id": "account-123",
                 "user_id": "user123",
-            }
+            },
+            context=FactWriteContext(actor="stage1", timezone="UTC", span=None),
         )
 
     @pytest.mark.asyncio
@@ -401,10 +408,13 @@ class TestConsolidationAgentV3:
             response = await agent_v3.execute(message)
 
         assert response.status == AgentStatus.SUCCESS
+        # Reviewer edit (facts S3, T4a; plan §3.2): every write carries its pass's context. A Stage 1 run whose message has no
+        # owner zone and whose batch messages carry no time writes as stage1 in UTC with no span; the model's dates count.
         mock_fact_management.update_fact.assert_called_once_with(
             fact_id="existing-456",
             updates={"content": "User owns two cats"},
             account_id="account-123",
+            context=FactWriteContext(actor="stage1", timezone="UTC", span=None),
         )
 
     @pytest.mark.asyncio
@@ -437,11 +447,13 @@ class TestConsolidationAgentV3:
             response = await agent_v3.execute(message)
 
         assert response.status == AgentStatus.SUCCESS
+        # Reviewer edit (facts S3, T4a; plan §3.2): a search carries the owner's zone; with none in the message it is UTC.
         mock_fact_management.search_existing_facts.assert_called_once_with(
             keywords=["pets", "cat"],
             primary_query="does user have pets",
             alternative_query="",
-            limit=10
+            limit=10,
+            timezone="UTC",
         )
 
     @pytest.mark.asyncio
@@ -469,6 +481,7 @@ class TestConsolidationAgentV3:
             embedding_service=mock_embedding,
             fact_write_service=mock_fact_write_service,
             fact_management_port=None,  # explicitly absent
+            fact_updates=NoTypedWrites(),  # reviewer edit (S4 T6b): every agent gets the typed port; v2 makes no typed write
             prompt_version="v3",
             prompt_builder=mock_prompt_builder,
         )

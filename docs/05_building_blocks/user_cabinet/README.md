@@ -245,10 +245,10 @@ facts = await fact_repo.search_facts(
     user_id=g.user_id,
 )
 
-# Write: account_id verified server-side in the adapter
-await fact_repo.invalidate_fact(
+# Write: account_id verified server-side in CabinetFactService
+await cabinet_facts.invalidate(
     fact_id=fact_id,
-    account_id=g.account_id,  # ← adapter checks doc.account_id == this
+    account_id=g.account_id,  # ← the service checks the stored fact's account_id == this
 )
 ```
 

@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.ports.alert_sink import AlertSinkPort
-from src.domain.consolidation_pass_stats import ConsolidationPassStats, stats_alerts_enabled
+from src.agents.consolidation_agent import _pass_call
+from src.domain.consolidation_pass_stats import ConsolidationPassStats, PassTool, stats_alerts_enabled
+from src.domain.pass_actor import PassActor
 from src.ports.llm_port import LLMResponse, ToolCall
 
 from tests.unit.agents.test_consolidation_agent import _make_agent, _USER_ID, _ACCOUNT_ID
@@ -36,7 +38,8 @@ def _agent_with(responses, sink, stats=True):
 async def _run(agent, user_id=_USER_ID, label="stage1"):
     return await agent._run_consolidation_loop(
         user_message_text="begin", system_prompt="SYS",
-        user_id=user_id, account_id=_ACCOUNT_ID, pass_label=label,
+        user_id=user_id, account_id=_ACCOUNT_ID,
+        write_context=agent._write_context(label),
     )
 
 
@@ -154,21 +157,38 @@ class TestPrivacy:
             assert "private fact" not in text
 
 
+def _typed(name, args):
+    return _pass_call(ToolCall(name=name, args=args), "UTC")
+
+
+# Reviewer edit (S4 T6b, S1–S3 review L2): the stats take typed calls, which the agent builds from each tool call, and
+# count by tool kind; a name the pass has no tool for is `other` (`PassTool.OTHER`). The two tools here are real ones
+# (`a` = search, `b` = count) so the per-tool counts stay apart; same scenarios, same numbers.
+A, B = "search_existing_facts", "count_words"
+
+
 class TestPassStats:
 
     def test_repeats_counts_identical_consecutive_turns_order_insensitive(self):
-        s = ConsolidationPassStats("p", "m", "medium", 15, "u" * 20)
-        s.record_turn([("a", {"x": 1}), ("b", {"y": 2})])
-        s.record_turn([("b", {"y": 2}), ("a", {"x": 1})])  # same set, other order
-        s.record_turn([("a", {"x": 2})])                    # different args
-        s.record_turn([("a", {"x": 2})])                    # repeat again
+        s = ConsolidationPassStats(PassActor.STAGE1, 15)
+        s.record_turn([_typed(A, {"x": 1}), _typed(B, {"y": 2})])
+        s.record_turn([_typed(B, {"y": 2}), _typed(A, {"x": 1})])  # same set, other order
+        s.record_turn([_typed(A, {"x": 2})])                        # different args
+        s.record_turn([_typed(A, {"x": 2})])                        # repeat again
         assert s.repeats == 2
         assert s.turns_used == 4
-        assert s.counts == {"a": 4, "b": 2}
+        assert s.counts == {PassTool.SEARCH: 4, PassTool.COUNT: 2}
 
     def test_non_consecutive_duplicates_are_not_repeats(self):
-        s = ConsolidationPassStats("p", "m", "medium", 15, "u")
-        s.record_turn([("a", {})])
-        s.record_turn([("b", {})])
-        s.record_turn([("a", {})])
+        s = ConsolidationPassStats(PassActor.STAGE1, 15)
+        s.record_turn([_typed(A, {})])
+        s.record_turn([_typed(B, {})])
+        s.record_turn([_typed(A, {})])
         assert s.repeats == 0
+
+    def test_two_unknown_tools_count_as_other_and_their_repeats_still_tell_them_apart(self):
+        s = ConsolidationPassStats(PassActor.STAGE1, 15)
+        s.record_turn([_typed("a", {"x": 1})])
+        s.record_turn([_typed("b", {"x": 1})])     # other tool, same arguments: no repeat
+        s.record_turn([_typed("b", {"x": 1})])
+        assert s.repeats == 1 and s.counts == {PassTool.OTHER: 3}

@@ -1050,6 +1050,272 @@ deep-research delivery is broken again on the old code (it reads metadata from i
 fails open on the new claim docs (it runs the task). Do not deploy between H:12 and H+2:12 local for any
 daily-review user (H = review hour): the old code left no marks, so a rollback in that span can run a second review.
 
+## Facts S2 and S3 — versions, one writer, expiry and the janitor (S2–S5 ship together)
+
+`docs/04_solution_strategy/decisions/fact_versions_one_writer.md`, `docs/04_solution_strategy/decisions/fact_expiry_and_janitor.md`,
+owner's map `docs/05_building_blocks/memory/README.md`. The code creates nothing live by itself: the owner steps are the
+parity run, the indexes, the model dry run, the prompt upload, the switch procedure, the stamp of the legacy stale facts
+and the audit. (The section keeps its S2 name; other documents link to it.)
+
+**Do not ship this yet.** S2 and S3 are built; S4 and S5 are not, and their steps (the review pass, the classify step, the
+janitor-on switch) are added here when they are. **The S2–S5 branch reaches `main` only in the switch window**: a deploy
+ships all of `main`, and S2 is safe only with this procedure and with S3's prompts (S3's code needs them too: the old tokens never mention `expiry` and still offer `ttl_days`, so
+creates are refused far more often; only the tool schema asks for it). If it merges earlier, the first
+deploy from `main` after the merge must follow this procedure, whoever runs it.
+
+**Order: step 0 parity run → 1 indexes `READY` → M model dry run (S3, from your Mac) → 2 pause → 3 drain → 4 prompt upload → 5 switch → 6 resume → 6a stamp the legacy stale facts → 7 audit.** The janitor job is created by the switch, in log-only mode; the S5 handover below says what comes after.
+
+0. **Real-Firestore parity run (a prerequisite, from your Mac).** `make test-cloud` on this branch, green for the three
+   scenarios `transaction_read_update_time`, `get_all_order_not_assumed` and `transactions_concurrent_create_on_missing`,
+   and for the two S3 scenarios `range_timestamp_excludes_null_and_missing` and
+   `projected_query_update_time_matches_transactional_read`. The cloud VM cannot run it (it ran the two S3 scenarios on the
+   local emulator only; the test database is the owner's). Every precondition compares the token of a plain read with the
+   token of a transactional read, and the first lease of each account reads a missing document inside a transaction; only the
+   real store can vouch for both. If the tokens differed, every consolidator update would fail twice ("changed
+   concurrently") and every Cabinet delete would answer 409: loud, nothing corrupted, but no memory is written until a
+   rollback. If the missing-document read did not protect the lease, two holders could write at once: silent. The comparison
+   itself is not a risk: the client's `==` on `DatetimeWithNanoseconds` ignores nanoseconds and Firestore commit times are
+   microsecond-grained. The janitor leans on the two S3 scenarios: its due query is a range filter on `expires_at`, which must
+   skip documents whose field is null or missing (a fact with expiry `none` has no `expires_at`; if the store returned them
+   the janitor would stale facts that never expire), and its write requires the `update_time` of a projected query read to
+   equal the token of a transactional read (if they differed every stale would be a conflict: loud, nothing corrupted).
+1. **Indexes (before the code).** `config/firestore.indexes.json` declares two composites on the facts collection:
+   `development_domain_facts_v2 (account_id ASC, lineage_id ASC, version ASC)`, which serves `get_lineage`, and (S3)
+   `development_domain_facts_v2 (state ASC, expires_at ASC)`, which serves the janitor's due query. Issue both with the
+   `deploy-indexes` Make target **in the same run** and wait until both are `READY`; no S2 production path queries the first
+   one until S4's prefetch, but the code must not meet either missing (the janitor's first run would fail with a missing-index
+   error: a 500 and a 🚨, nothing corrupted). The janitor's backlog query is a single equality and needs no composite. The old
+   `(lineage_id, created_at DESC)` index becomes unused and stays; deleting it is optional. The collection
+   `{prefix}memory_write_leases` (the lease, one document per account) is created by the first run: no index and **no TTL
+   policy**, because its expiry field is `lease_until`, never `expires_at`; a TTL must not be added. The same holds for the
+   janitor's two collections (`{prefix}fact_lifecycle_daily`, `{prefix}fact_lifecycle_lines`: created by the first run, no
+   index), and above all for the **facts collection**: its `expires_at` is a decision, the janitor stales and never deletes,
+   so a Firestore TTL policy on it would erase facts on the day they expire. No TTL policy may be declared for it or for the two lifecycle collections; no
+   such command is written anywhere in this repository, and a test (`tests/unit/test_facts_have_no_ttl_policy.py`) fails on one.
+
+**Step M: the model dry run of the S3 prompts (mandatory, owner Q8; from your Mac, before the pause).** It runs the five S3
+consolidation prompt tokens and the code-built messages against your real facts and a real model, and reports what the
+new rules did, before anything is uploaded or deployed. Nothing it does is written to your data.
+
+**Before you start.** The S3 branch is checked out (the five tokens are read from `prompts_snapshot/` in the working
+tree; nothing is uploaded). The dotenv file has the model keys and the dev user and account ids. The consolidation agent
+must be on the v3 prompt version (the kit refuses any other and says why): the dotenv file must not set
+`CONSOLIDATION__PROMPT_VERSION` to anything else. Run **one bench at a time**: the spend
+ledger is locked while a bench runs, and a second bench started meanwhile stops with "another dry-run process holds …".
+
+**What is and is not written.** The kit puts a no-write fact store under the real agent and the real
+`FactManagementAdapter`, a no-write email repository and a recording counters store. No fact, no biographical-cache
+document, no email "consolidated" mark and no lifecycle counter is written. A pass reads its own earlier writes back (a
+part created in a pass can be named by the compound retired later in it). Each bench's output ends with the report path
+and the gate lines.
+
+**What does leave the Mac (state this to yourself before you run):**
+- model calls to the consolidation provider (Sonnet 5.5 today; whatever the live config gives consolidation);
+- embedding calls (Gemini) for every create, version and search; the cost meter does not count them (cents);
+- when prompt capture is on in your environment (`DEBUG_PROMPTS=true` with a prompt dataset set), one `prompt_content`
+  row in the observability dataset per model call (`account_id` empty, 30-day TTL), holding the prompt and the answer, i.e.
+  your facts' text. Set `DEBUG_PROMPTS=false` for the run if you do not want those rows;
+- no Logfire or trace span leaves the Mac: the benches do not initialise telemetry, whatever the Logfire token says;
+- **no account usage counter is written**, so the spend does not appear in the billing summary or the daily budget
+  alert: it exists only in the kit's ledger.
+
+**What stays live (reads).** The biographical cache, the vector searches, `find_due_facts` and the paginated, lineage
+and domain reads see the live store only. So a fact a pass created is not found by a later search (Stage 2a's cluster is the one place seeded with the run's
+facts) and is not in the cache of the same run, and a fact born due in the run is not "due" to the janitor (the dry run does not run the janitor). Reads by
+id and the current-fact lists do see the pass's own writes. Search results are corrected for the run's own writes (a fact
+the run closed is dropped or replaced by its successor; the search is asked for a few more hits to make up for them).
+Stage 2a's cluster is built by production's own rule (the 30 longest of the hits), with the facts the run wrote counted
+among the hits as a fact finds itself in production: a short new fact is cut when 30 longer neighbours are found.
+
+**Cost and the cap.** The kit's meter prices every call by the model the request names, keeps one ledger across all
+runs in `scripts/memory/s3_dry_run_spend.json` and refuses the next call when the cumulative spend would pass **$30**
+(`--budget-usd` lowers that cumulative cap; a value above $30 is refused unless `--allow-over-owner-cap` is also given, which is the owner's call alone; a model with no price is refused before the call). The meter sees
+the requested model only: a provider failover, a retry or a timed-out attempt that the provider still bills is not seen,
+so the real bill can be somewhat higher; the estimates below leave room. A run stopped by the cap still writes its report.
+Expected total about $6-12 on Sonnet 5.5 (about $12-24 on Opus 5.5).
+
+**Flags.** `--s3-kit` turns the kit on; without it each bench behaves as it always did. `--timezone <IANA zone>`
+overrides the owner's zone, which is otherwise resolved as the consolidation service resolves it (UTC with a warning when
+it cannot be; the decisions are the pure functions of `domain/owner_timezone.py`, which the service and the kit both call over the same two reads). `--budget-usd` and `--allow-over-owner-cap` as above. A failed response from the agent (including a refused snapshot token) stops the
+bench with the failure printed; the report is still written.
+
+**Run in this order** (the estimate is per run, Sonnet 5.5 / Opus 5.5):
+
+| # | Command | What it checks | Est. |
+|---|---|---|---|
+| 1 | `python scripts/consolidation/test_stage1_classification_dryrun.py --s3-kit --rule baseline --messages 50` (run twice, for spread) | A real Stage 1 `consolidate` on the newest 50 turns of your latest session, with their stored times: expiry on every create and content update, `reported_date` from the stamps, the extension rule on re-mentions, past plans to history or discard; then the run's own Stage 2a and Stage 2b. `--rule new\|both` is refused with the kit (the rule defaults to `baseline`) | $1-2 / $2-4 |
+| 2 | `python scripts/consolidation/test_cluster_audit_dryrun.py --s3-kit --limit 20 --batch-size 5` | Each batch of your longest facts as a real `consolidate_cluster` pass (label and actor `cluster`) over an explicit cluster of the batch plus its search results: turns per pass, floored horizons and their note, `derived_from` on split parts, no ad-hoc classifying of facts that show `expiry: null` | $1.2-2.4 / $2.4-4.8 |
+| 3 | `python scripts/consolidation/test_decomposition_dryrun.py --s3-kit --limit 10` | The Stage 1 size review (the size gate lives there), then a `consolidate_cluster` pass over the facts Stage 1 wrote and their search results: every part created before the compound is retired, `superseded_by` named, no abandoned refusal. The Stage 1 `consolidate` also runs its own Stage 2a and 2b, so the report shows `stage1`, `stage2a`, `stage2b`, `cluster` | $1-2 / $2-4 |
+| 4 | `python scripts/consolidation/test_directive_review_dryrun.py --s3-kit --runs 2` | The production Stage 2b (`stage2b`) on your rulebook, twice from the same live rulebook (the kit forgets its own writes between runs): merges and rewrites need no expiry answer (pinned `none`), demotions carry an expiry and `derived_from`. `--prompt new\|both` and `--stage1 new` are refused with the kit | $0.6-1.2 / $1.2-2.4 |
+| 5 | `python scripts/email/test_consolidation_dryrun.py --s3-kit --limit 30` | A real `consolidate_email` pass (label and actor `email`) of one batch of up to 30 of your unconsolidated indexed emails, read live through a wrapper that marks nothing: `reported_date` = the email's date, past plans in old mail to history or discard. With no unconsolidated email it says so and stops (nothing run, nothing spent). `--facts-file` and `--category` do not apply | $0.4-1 / $0.8-2 |
+
+**Where the report lands, and the gates.** Each bench writes `scripts/memory/s3_dry_run_<bench>_<time>.json` (gitignored;
+it holds fact ids, the 📊/🚨 alert lines and your zone, so keep it local) and prints three gate lines read from it:
+- **G1:** every pass labelled `stage2a` or `cluster` used at most 13 model turns (`llm_calls` of the pass);
+- **G2:** zero abandoned expiry refusals in every run (`abandoned_refusals`);
+- **G3:** you read the write rows (`expiry_sent`, `decision_stored`, `reported_date_chosen`, `notes`) and find no row that
+  would hide a still-true fact within weeks or keep a dead plan current for ever. A debatable horizon length is not a
+  failure.
+Also reported, not gated: expiry refusals per pass, floored horizons, `derived_from` use, the share of naive
+`reported_date`s. A fourth line is printed next to G3: **cleanup creates without `derived_from`: N** (per pass and in
+total; `cleanup_creates_without_derived_from` in the report). A create on a cleanup pass (`stage2a`, `stage2b`, `cluster`)
+that names no source, or only ids that are no readable fact of the account, is dated to the end of its batch, or to now on a `cluster` pass, so its expiry horizon restarts from
+there although the content is old. The owner accepted that fallback (Q5); the count is how you see how often step M hit
+it, and you decide whether a high number is a prompt problem. It is not gated. The report also lists the five served tokens with the hash of their snapshot body.
+
+**What step M does not cover.** Bench 1 reads the newest turns of your latest session, so its batches are fresh. A late
+batch (plan risk 1: a horizon said in a batch days or weeks old is refused unless it ends after today) is not exercised;
+that risk stays open after step M, and G2 on `stage1` is measured on the easy case.
+
+**If a gate fails: no deploy.** Fix the tokens or the code-built messages, then re-run only the failing bench within
+what is left of the $30. The fix is on the branch before the pause.
+
+2. **Pause the queue** `agent-tasks-dev`:
+   `gcloud tasks queues pause agent-tasks-dev --location=us-central1 --project=<PROJECT_ID>`.
+   The old revision has no lease and writes a fact with a blind full-document `set()` that would re-open a closed
+   version and drop its `superseded_by`; no S2 precondition can catch a write that lands after its commit. So the old
+   and the new revision must never consolidate at the same time. **The pause holds every task on that queue**, not only
+   consolidation: Telegram chat (`telegram_update`, so a Telegram `$consolidate` is held too), reminders, async agent runs
+   and errands (`tell_alek`), deep-research delivery and daily reviews all wait; nothing is lost, and they run after the
+   resume. Keep the window short (one run is up to about 16 minutes, plus the build and the switch of step 5). Slack chat runs on its own queue
+   (`alek-bot-tasks-dev`) and keeps going, so **a Slack `$consolidate` is the one thing that can still start a run
+   outside the pause: send none from here until step 6**.
+3. **Drain. This is mandatory, not advice.** A batch is finished when its own `✅ [Librarian] Batch <id> … DELETED` or
+   `⚠️ … failed` line appears, or when its `processing_started_at` (epoch seconds, in `{prefix}consolidation_queue`) is
+   older than the bound below. "Nothing processing" means no document with `status == processing` that is still inside
+   the bound. The bound depends on which revision is draining:
+   - **Switching to S2 (draining the old revision): 16 minutes after the stamp.** The old agent class has the default
+     retry policy (up to 3 whole-run retries after a provider 429/503, each with its own 900 s timeout, while the stamp is
+     written once: main `base_agent.py:184`, `retry_policy.py:34-65`, `base_agent.py:599-601`). It cannot fire for
+     consolidation, because `ConsolidationAgent.execute` catches every exception and returns a failure response
+     (main `consolidation_agent.py:266-271`), so a provider error never reaches the retry loop and a run ends within its 900 s
+     timeout. **If the old revision's log nevertheless shows `transient error, retrying` for the consolidation agent, treat
+     that batch as in flight for 60 minutes (4 × 15) or until its own DELETED / failed line appears.**
+   - **Rolling back (draining the new revision): 16 minutes**, the lease length; the new code does not retry a run.
+   An older `processing` batch is a dead run, not work in flight (the new revision resets it as a zombie after 60 s, the
+   hourly sweep after 30 minutes): do not wait for it. Check twice, at least a minute apart, because a request dispatched
+   just before the pause can sit in its pre-mark phase for seconds; make the second check right before the switch.
+   Use the Firestore console; `python -m scripts.validation.inspect_consolidation` lists the last ten batches with their
+   status but not their start time. **The audit cutoff** is the time the last old-revision consolidation request ended:
+   the last `DELETED` or `failed` line of the old revision. Read it with `make fetch-logs K=<enough>` run **before** the
+   switch, with a K that reaches back past the whole drain (the default 300 lines may not, and both revisions' lines
+   are mixed after the switch); with no such line, use the time of the second check. Under the lease a `processing` batch
+   older than 60 s is a zombie, so a batch still running on the old revision would be reset and run a second time by
+   the new one: that is why the drain is not optional.
+4. **Upload the five S3 prompt tokens** (RFC §7.1, `firestore_utils/snapshot_upload.py`, `prompts_snapshot/README.md`),
+   between the drain and the switch, **only after step M passed its gates**: `CONSOLIDATION_TAXONOMY`,
+   `CONSOLIDATION_COGNITIVE_PROCESS`, `CONSOLIDATION_TOOLS`, `CONSOLIDATION_EXAMPLES` and `CONSOLIDATION_POLICIES`
+   (`CONSOLIDATION_OUTPUT_SPEC` and the profile are unchanged). The static template is cached for 24 hours per instance, and the
+   live tokens still tell the model to retire a split fact with `SUPERSEDED` alone, which S2 refuses, offer `ttl_days`
+   and never mention `expiry`, which the new code requires. Tokens uploaded first are harmless to the old
+   revision (it ignores an unknown `superseded_by`); tokens uploaded after the new revision's first
+   run leave S2 and S3 running on the old prompts for up to a day, costing tool-error turns on creates.
+5. **Switch traffic** to the new revision (the normal deploy). The deploy builds the image inside the paused window, so
+   Telegram, reminders and async runs wait for the build as well; build during a quiet hour, or accept the longer pause.
+   The deploy also creates the Scheduler job `alek-bot-dev-fact-lifecycle-sweep` (`30 9 * * *` Europe/Madrid, 180 s, no
+   retry) **in log-only mode and nothing needs to be set**: the main service reads `FACT_LIFECYCLE_SWEEP_DRY_RUN` and treats an
+   unset value as log-only (startup line `fact lifecycle sweep: log-only`). The janitor therefore writes nothing to facts or
+   the cache; each morning it stores its snapshot per account and posts its 🧹 line (`· log-only`). The first log-only week
+   checks the plumbing (the job runs and answers 200, the due query is served by its index, the counters and the line appear),
+   it is **not** a preview of janitor-on: before S5's classify no current fact has an `expires_at`, so `would_stale` stays near
+   zero. The 🧹 line and `{prefix}fact_lifecycle_daily` are the places to read. Do not trigger the job by hand while the 09:30
+   run is going (`docs/07_deployment/SCHEDULERS.md`).
+6. **Resume the queue:**
+   `gcloud tasks queues resume agent-tasks-dev --location=us-central1 --project=<PROJECT_ID>`.
+
+   6a. **Stamp the legacy stale facts (owner decision Q6, after the switch and the resume).** Stale facts that predate the
+   janitor have no `stale_since`, which S4's review queue and the janitor's backlog age need. From your Mac:
+   `python -m scripts.migration.fact_s3_stamp_legacy_stale` is a **dry run**: it reads only and prints **counts only**
+   (`candidates`: stale documents without `stale_since`; `already_stamped`); read `candidates` (2 were expected on 2026-10-23);
+   the ids, account prefixes, `last_updated` dates and the fact text go to a file under `scripts/memory/` (gitignored), never
+   to the terminal. Then the same command with `--apply` writes, per document and under the scan's `update_time`, only
+   `stale_since` = now and one `lifecycle_events` entry (`migration`, "legacy stale, stamped at S3") and prints `stamped`,
+   `skipped_changed` and `failed`; `last_updated`, state, text and vectors are untouched; a document changed since the scan is
+   skipped and counted (run it again); a second `--apply` stamps nothing. Until S4's first successful review the
+   breaker is tripped for an account with a stale fact, which is harmless while the janitor is log-only. **Expect
+   "oldest 0d" in the daily 🧹 line:** the two stamped facts have been stale for months by their `last_updated`, but the
+   backlog age counts from the stamp, so the line shows `backlog 2 (oldest 0d)` on the day you stamp and counts up from
+   there. It is not a new problem.
+7. **Audit after the first day:** `python -m scripts.data_audit.run facts --s2-cutoff <time from step 3>`; require
+   `lineage_multiple_current` = 0 and no version-chain violation (memory map §9.6, which also gives the healthy shape:
+   `superseded_without_successor_pre_s2` stays at 442). A later cutoff hides real post-S2 violations, an earlier one
+   reports the old revision's closes as violations. Also read the first mornings' janitor lines (step 5) and the first
+   consolidation 📊 lines: `stage2a` should stay well under the 15-turn cap (raise the cap only if Stage 2a starts hitting it),
+   and a 🚨 "left expiry refusals unanswered" or a rising `tool-error turns` count means the new prompts are costing turns.
+
+**Rollback.** The same procedure: pause, drain, roll back, resume. "Roll back" is: route 100 % of the Cloud Run traffic to
+the previous revision (in the console or with the traffic-update command you already use); the old image is not rebuilt.
+The drain in this direction drains the **new** revision, with the 16-minute rule of step 3. It is data-safe for S2's own
+fields; the old code ignores `superseded_by` and the lease documents, and the lease documents and any queued deferral
+tasks (a plain `consolidation` task) stay and are harmless to it. **Reading the audit afterwards (and after the
+roll-forward):** the old revision writes as it was designed, so documents dated inside the rollback window show three
+expected classes, and the memory map §9.6 says which and how to repair them:
+- `superseded_without_successor` (old merges and old `SUPERSEDED`-only updates close without `superseded_by`);
+- `replaces_version_mismatch` (an old in-place edit of an S2 version document bumped its `version`: a text was lost);
+- `lineage_multiple_current` with `superseded_by_on_open_doc` and `lineage_open_below_highest_version` (an old-revision
+  Cabinet delete from a stale page hit the closed document; the owner's delete did not apply and the current version is
+  still shown: reload and delete it again from the list. That does not clear `lineage_multiple_current`; restore the closed
+  document's closure by hand by setting `state=superseded` and `is_current=false` together; `is_current=false` alone
+  would give `is_current_mismatch`). A skipped drain is repaired the same way (memory map §9.6: carry any newer wording
+  over first, then close the re-opened older document by hand; a Cabinet delete does not clear it).
+
+**Rollback with S3 in the bundle.** Add the Scheduler job to the procedure: **pause `alek-bot-dev-fact-lifecycle-sweep`
+first** with
+`gcloud scheduler jobs pause alek-bot-dev-fact-lifecycle-sweep --location=us-central1 --project=<PROJECT_ID>`
+(the old revision answers 400 to an unknown `fact_lifecycle_sweep` task type, which only makes noise). While the
+janitor is log-only (every state before the S5 janitor-on) it has staled nothing, so nothing is hidden. **After a
+janitor-on** (S5), pause the job first and expect facts the janitor staled before the rollback to stay hidden on the old
+revision with no review: they are not `current`, so no reader returns them. The revert is by hand: find them by their last
+trail entry (`actor: janitor`, in `lifecycle_events`) and set them `current` again (state, `is_current` true, `valid_to`
+none, and clear `stale_since`); the baseline picks them up at the next consolidation run. They keep their past `expires_at`:
+after the roll-forward a janitor that is on stales them again at its next run. To keep one, also give it a new expiry (or null
+its `expires_at` and `expiry_kind`, which leaves it for S5's filtered re-classify), or keep the job paused until they are
+re-classified. The S3 tokens can stay uploaded: the old revision copies only the
+keys it knows from a create or an update, so it drops `expiry` and `derived_from`. Every document the old revision writes in
+the window is a full `set()` of the old model, so it **loses `expiry_kind`, `stale_since` and `lifecycle_events` and keeps a
+stale `expires_at`**; the janitor skips such a fact (a due fact with no `expiry_kind` is never staled, counted
+`no_decision`), so it cannot hide it.
+
+**Roll-forward.** After the drain, list the current documents whose `expiry_kind` is null and whose `last_updated` lies inside
+the rollback window, and re-classify them (S5's classify accepts a filtered set; **S5 note**: it must). Until then those
+facts carry no expiry decision and are never staled. **Resume the janitor job after the switch:**
+`gcloud scheduler jobs resume alek-bot-dev-fact-lifecycle-sweep --location=us-central1 --project=<PROJECT_ID>`. The deploy
+updates the job's fields but does not resume a paused job, so without this the janitor silently never runs again. Re-run the audit with the **end of the roll-forward drain** as
+`--s2-cutoff`. **The cutoff moves only `superseded_without_successor`.** The other classes stay listed: match their ids
+against documents last written inside the rollback window; those are the expected ones, any other is real.
+
+**S5 handover (owner decision Q7, 2026-10-23).** S3 leaves the janitor log-only and every existing fact without an
+expiry. The order from here, each step with the owner's reading before the next: (1) the one-time **classify**: a dry run
+writes the proposed decisions to `scripts/memory/`, the owner reads them, then apply replays the recorded decisions (the
+rule for classify and for the review: **when unsure, keep the fact**; classify defaults to `none` when unsure; the review
+revives a fact or asks the owner when unsure); (2) the **review dry run** (RFC §7 step 3b), nothing written or sent;
+(3) the janitor stays **log-only on the classified facts for as long as needed**: the owner reads `would_stale` per account,
+`deferred` and the breaker each morning in the 🧹 line; (4) the janitor is switched on **only on the owner's word**: add
+`FACT_LIFECYCLE_SWEEP_DRY_RUN=0` to the main service's `--set-env-vars` in `cloudbuild-dev.yaml` and deploy (that flag
+replaces every variable, so a switch set only on the running revision is lost at the next deploy). The edit goes to `main`
+through a PR like any change: a deploy reads the working tree, so an uncommitted edit ships once and is lost at the next
+deploy from `main`, which silently puts the janitor back in log-only. To stop the janitor at once, pause the job (the
+command in the rollback paragraph above); to go back to log-only, remove the variable (a PR and a deploy). S5 may instead
+carry the switch as a cloudbuild substitution fed by a deploy-only `.env` key, like `_DRIVE_UPGRADE_PASS`. Even then a run stales at
+most `50 − backlog` facts per account (oldest expiry first, the rest `deferred`), and until S4 wires the last successful review
+the breaker holds an account that has any stale fact. These steps are S5's; nothing in S3 performs them.
+
+**Live data (read 2026-10-23).** 1112 fact documents: current 563, superseded 442, archived 53, invalidated 52, stale 2.
+All 442 superseded documents lack `superseded_by` (a stale Cabinet id that reaches one gets "successor unknown"), every
+lineage has one document, versions continue from the stored `version`. No migration step for S2: history starts at the
+switch. Growth: 72 content updates a month at about 20 KB a document, about 1.4 MB a month. For S3: no current fact has an
+`expires_at` or `expiry_kind` (so a janitor-on before S5's classify would stale nothing), and the 2 stale documents have no
+`stale_since` (step 6a stamps them).
+
+**Prompts are S3's.** Before S3 the live consolidation tokens tell the model to retire a split fact with `SUPERSEDED` alone,
+which S2 refuses without `superseded_by`: `CONSOLIDATION_COGNITIVE_PROCESS.groovy:97`, `CONSOLIDATION_TAXONOMY.groovy:246,358`,
+`CONSOLIDATION_OUTPUT_SPEC.groovy:32`, and the code-built Stage 2a message ("decomposed, with the original superseded"). S3
+names the successor in the five edited tokens (create the parts first, then supersede with `superseded_by`); the code-built
+Stage 2a message still says "decomposed, with the original superseded" and asks for `derived_from` on each part, so the
+successor rule reaches that pass through the tokens and the tool schema (`superseded_by` is required with `SUPERSEDED`); the `OUTPUT_SPEC` line is the final-report convention, not a tool-call instruction, and stays. The
+same-day token upload of RFC §7.1 (step 4) puts them live. S2–S5 ship together, so live prompts never meet S2 code alone;
+measured cost if they ever did: about 2 tool errors a month.
+
 ## Cloud Tasks redelivery dedup
 
 `docs/04_solution_strategy/decisions/worker_task_dedup.md`. Two one-time owner steps, neither blocks
