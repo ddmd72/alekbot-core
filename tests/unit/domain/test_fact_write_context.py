@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.domain.fact_write_context import (
+    NO_READABLE_SOURCE_NOTE,
     FactWriteContext,
     as_utc,
     clamp_to_span,
@@ -99,14 +100,14 @@ def test_clamp_pulls_into_the_span_and_never_past_now():
 
 def test_create_in_a_conversation_pass_clamps_the_model_value():
     got, note = reported_date_for_new(STAGE1, FIRST - timedelta(days=30), [], NOW)
-    assert (got, note) == (FIRST, None)
+    assert (got, note) == (FIRST, [])
     inside = FIRST + timedelta(hours=3)
-    assert reported_date_for_new(STAGE1, inside, [], NOW) == (inside, None)
+    assert reported_date_for_new(STAGE1, inside, [], NOW) == (inside, [])
 
 
 def test_create_in_a_conversation_pass_without_a_value_gets_the_span_end_else_now():
-    assert reported_date_for_new(STAGE1, None, [], NOW) == (LAST, None)
-    assert reported_date_for_new(ctx("stage1", span=None), None, [], NOW) == (NOW, None)
+    assert reported_date_for_new(STAGE1, None, [], NOW) == (LAST, [])
+    assert reported_date_for_new(ctx("stage1", span=None), None, [], NOW) == (NOW, [])
 
 
 def test_the_span_end_is_never_after_now():
@@ -117,14 +118,14 @@ def test_the_span_end_is_never_after_now():
 def test_create_in_a_cleanup_pass_ignores_the_model_value_and_says_so():
     got, note = reported_date_for_new(STAGE2A, FIRST + timedelta(hours=1), [], NOW)
     assert got == LAST
-    assert note == "reported_date is kept by the system in this pass (2026-10-22); expiry horizons count from it"
+    assert note == ["reported_date is kept by the system in this pass (2026-10-22); expiry horizons count from it"]
 
 
 def test_create_in_a_cleanup_pass_takes_the_latest_derived_source_date():
     older, newer = datetime(2026, 3, 1, tzinfo=UTC), datetime(2026, 6, 1, 12, tzinfo=UTC)
-    assert reported_date_for_new(STAGE2A, None, [older, newer], NOW, derived_named=2) == (newer, None)
+    assert reported_date_for_new(STAGE2A, None, [older, newer], NOW, derived_named=2) == (newer, [])
     got, note = reported_date_for_new(STAGE2A, NOW, [older], NOW, derived_named=1)
-    assert got == older and note == kept_reported_date_note(older, "Europe/Paris")
+    assert got == older and note == [kept_reported_date_note(older, "Europe/Paris")]
 
 
 def test_derived_dates_may_be_naive_and_are_read_as_utc():
@@ -134,15 +135,15 @@ def test_derived_dates_may_be_naive_and_are_read_as_utc():
 
 def test_a_cleanup_create_with_no_readable_source_falls_back_to_the_span_end_with_a_note():
     got, note = reported_date_for_new(STAGE2A, None, [], NOW, derived_named=2)
-    assert got == LAST and "named no readable fact" in note
-    assert reported_date_for_new(ctx("stage2a", span=None), None, [], NOW) == (NOW, None)
+    assert got == LAST and note == [NO_READABLE_SOURCE_NOTE]
+    assert reported_date_for_new(ctx("stage2a", span=None), None, [], NOW) == (NOW, [])
 
 
 def test_derived_from_is_ignored_with_a_note_in_a_conversation_pass():
     got, note = reported_date_for_new(STAGE1, None, [], NOW, derived_named=1)
-    assert got == LAST and "derived_from is ignored" in note
+    assert got == LAST and note == ["derived_from is ignored: in this pass the date comes from the conversation"]
     got, note = reported_date_for_new(STAGE1, None, [datetime(2020, 1, 1, tzinfo=UTC)], NOW)
-    assert got == LAST and "derived_from is ignored" in note
+    assert got == LAST and note == ["derived_from is ignored: in this pass the date comes from the conversation"]
 
 
 # --- merge -----------------------------------------------------------------------------------------------------------
@@ -151,15 +152,15 @@ def test_derived_from_is_ignored_with_a_note_in_a_conversation_pass():
 def test_merge_in_a_conversation_pass_follows_the_create_rule():
     # S3-D11: the clamped model date is never earlier than the newest source, so a source at LAST lifts it to LAST.
     # The model's date is used on a conversation pass, so there is nothing to say.
-    assert reported_date_for_merge(STAGE1, FIRST - timedelta(days=5), [LAST], NOW) == (LAST, None)
-    assert reported_date_for_merge(STAGE1, FIRST - timedelta(days=5), [FIRST - timedelta(days=10)], NOW) == (FIRST, None)
-    assert reported_date_for_merge(STAGE1, None, [datetime(2020, 1, 1, tzinfo=UTC)], NOW) == (LAST, None)
+    assert reported_date_for_merge(STAGE1, FIRST - timedelta(days=5), [LAST], NOW) == (LAST, [])
+    assert reported_date_for_merge(STAGE1, FIRST - timedelta(days=5), [FIRST - timedelta(days=10)], NOW) == (FIRST, [])
+    assert reported_date_for_merge(STAGE1, None, [datetime(2020, 1, 1, tzinfo=UTC)], NOW) == (LAST, [])
 
 
 def test_merge_in_a_cleanup_pass_takes_the_latest_source_date_and_ignores_the_model():
     a, b = datetime(2026, 2, 1, tzinfo=UTC), datetime(2026, 5, 1, tzinfo=UTC)
-    assert reported_date_for_merge(STAGE2A, NOW, [a, b], NOW) == (b, kept_reported_date_note(b, "Europe/Paris"))
-    assert reported_date_for_merge(STAGE2A, NOW, [], NOW) == (LAST, kept_reported_date_note(LAST, "Europe/Paris"))
+    assert reported_date_for_merge(STAGE2A, NOW, [a, b], NOW) == (b, [kept_reported_date_note(b, "Europe/Paris")])
+    assert reported_date_for_merge(STAGE2A, NOW, [], NOW) == (LAST, [kept_reported_date_note(LAST, "Europe/Paris")])
 
 
 # --- update ----------------------------------------------------------------------------------------------------------
