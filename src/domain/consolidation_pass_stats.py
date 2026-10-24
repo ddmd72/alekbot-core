@@ -3,8 +3,8 @@
 Pure data: no I/O, no LLM, no text layout. Born from the Sonnet 5.5 adaptive-thinking stall
 (see docs/04_solution_strategy/decisions/sonnet55_adaptive_thinking_stall.md): a pass that
 runs out of turns without a final report must be loud, and while the model choice is being
-watched every pass reports a compact stats line. The agent, which owns the tool schema, turns each
-call into a `PassCall` and renders the lines; the stats never see a tool argument.
+watched every pass reports a compact stats line. The stats take typed calls (`PassCall`); they read no tool argument
+and lay out no text.
 """
 
 import hashlib
@@ -21,12 +21,15 @@ from .pass_actor import PassActor
 # What one tool call came to. `expiry` is a refusal of a missing or malformed `expiry`; `born_due` one of a well-formed
 # `expiry` that resolves already due (on a conversation pass the model may discard the candidate, so it is not an
 # abandoned refusal there; on a cleanup pass the subject is a stored fact and it is). `review_refusal` is a refusal of the
-# review pass's own rules (`refused`: basis, scope or ask).
+# review pass's reason or ask rules (`refused`: basis, ask): the fact is then kept, nothing is lost. `scope_refusal` is one
+# of the review pass's own rules on the call (`refused`: scope: the batch, one result per fact, the state, the shape).
 OUTCOME_OK = "ok"
 OUTCOME_ERROR = "error"
 OUTCOME_EXPIRY = "expiry"
 OUTCOME_BORN_DUE = "born_due"
 OUTCOME_REVIEW_REFUSAL = "review_refusal"
+OUTCOME_SCOPE_REFUSAL = "scope_refusal"
+_REVIEW_REFUSALS = frozenset({OUTCOME_REVIEW_REFUSAL, OUTCOME_SCOPE_REFUSAL})
 
 # A born-due create is answered by a rewrite that holds more than this share of its content words (hashed in memory).
 _REWRITE_OVERLAP = 0.5
@@ -182,13 +185,14 @@ class ConsolidationPassStats:
         """Refusals that no later successful call answers, in pass order.
 
         Counted: a missing or malformed `expiry`, always; a born-due one where the pass says it is a loss (`PassActor`);
-        a review refusal. A refusal of a create or merge is answered by a create or merge with the same text; one of an
-        update or an ask by an update or an ask of the same fact, which must not close it unless the pass's closing write
-        answers a refusal (`PassActor.closing_answers_refusal`; elsewhere retiring the fact is the loss, not an answer).
-        A born-due create or merge is also answered by its rewrite (a past-tense one, so other text), found by
+        a scope refusal (a basis or ask refusal leaves the fact kept: nothing is lost). A refusal of a create or merge is
+        answered by a later create or merge with the same text; one of an update or an ask by a later update or ask of the
+        same fact that does not close it (retiring the fact is the loss, not an answer). On a pass that gives each fact
+        one result (`PassActor.one_result_per_fact`) any successful update or ask of the fact in the pass answers it,
+        before or after, closing included. A born-due create or merge is also answered by its rewrite (a past-tense one, so other text), found by
         `_rewrites`. Approximate on purpose: a retry of a missing-`expiry` refusal that rewrites the text counts as
         abandoned, which errs towards an alert."""
-        counted = {OUTCOME_EXPIRY, OUTCOME_REVIEW_REFUSAL}
+        counted = {OUTCOME_EXPIRY, OUTCOME_SCOPE_REFUSAL}
         if self.actor.born_due_refusal_is_loss:
             counted.add(OUTCOME_BORN_DUE)
         found: List[PassOutcome] = []
@@ -196,15 +200,16 @@ class ConsolidationPassStats:
             call = refused.call
             if refused.outcome not in counted or call.tool not in _ANSWERABLE:
                 continue
+            one_result = self.actor.one_result_per_fact and call.tool in _ON_A_FACT
             same_kind = _ON_A_FACT if call.tool in _ON_A_FACT else _NEW_TEXT
             rewritable = refused.outcome == OUTCOME_BORN_DUE and call.tool in _NEW_TEXT
             resolved = any(
-                later.outcome == OUTCOME_OK and (
-                    (later.call.tool in same_kind and later.call.key == call.key
-                     and (not later.call.closing or self.actor.closing_answers_refusal))
-                    or (rewritable and _rewrites(call, later.call))
+                other.outcome == OUTCOME_OK and (
+                    (other.call.tool in same_kind and other.call.key == call.key
+                     and (one_result or not other.call.closing))
+                    or (rewritable and _rewrites(call, other.call))
                 )
-                for later in self._outcomes[i + 1:]
+                for other in (self._outcomes if one_result else self._outcomes[i + 1:])
             )
             if not resolved:
                 found.append(refused)
@@ -213,7 +218,7 @@ class ConsolidationPassStats:
     @property
     def review_refusals(self) -> int:
         """Calls the review pass's own rules refused (basis, scope, ask)."""
-        return sum(1 for o in self._outcomes if o.outcome == OUTCOME_REVIEW_REFUSAL)
+        return sum(1 for o in self._outcomes if o.outcome in _REVIEW_REFUSALS)
 
     def day_counts(self) -> Dict[CounterField, int]:
         """What this pass adds to the account's day: its refused calls (expiry and review refusals) under the pass's

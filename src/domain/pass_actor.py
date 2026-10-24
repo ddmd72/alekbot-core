@@ -49,10 +49,11 @@ class PassActor(StrEnum):
         return _ROWS[self].born_due_refusal_is_loss
 
     @property
-    def closing_answers_refusal(self) -> bool:
-        """True = a later write that closes a refused fact answers the refusal (the review: an archive is an outcome);
-        elsewhere retiring the fact is the loss the 🚨 alert is for."""
-        return _ROWS[self].closing_answers_refusal
+    def one_result_per_fact(self) -> bool:
+        """True = the pass gives each fact one result (the review), so any success of a fact in the pass, before or
+        after a refusal of it and closing included, answers the refusal; elsewhere only a later write that keeps the fact
+        does (retiring it is the loss the 🚨 alert is for)."""
+        return _ROWS[self].one_result_per_fact
 
     @property
     def refusals_counter(self) -> CounterField:
@@ -79,7 +80,7 @@ class _Row:
     born_due_refusal_is_loss: bool
     refusal_wording: RefusalWording
     closing_reason: Optional[str]
-    closing_answers_refusal: bool = False
+    one_result_per_fact: bool = False
     refusals_counter: CounterField = CounterField.EXPIRY_TOOL_ERRORS
 
 
@@ -101,7 +102,7 @@ _BACKSTOP = _Row(
 _REVIEW = _Row(
     model_dates=False, floors_due_horizon=False, accepts=REVIEW_ACCEPTS, born_due_refusal_is_loss=True,
     refusal_wording=RefusalWording.REVIEW, closing_reason=None,
-    closing_answers_refusal=True, refusals_counter=CounterField.REVIEW_REFUSALS,
+    one_result_per_fact=True, refusals_counter=CounterField.REVIEW_REFUSALS,
 )
 _OWNER = _Row(
     model_dates=False, floors_due_horizon=False, accepts=REVIEW_ACCEPTS, born_due_refusal_is_loss=False,

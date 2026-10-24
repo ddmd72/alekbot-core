@@ -71,6 +71,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from google.cloud import firestore
 
+from scripts.consolidation.legacy_dry_run_ports import install_dry_run
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.agents.consolidation_agent import ConsolidationAgent
@@ -456,7 +457,7 @@ async def run_once(
     if hasattr(real_fm, "_real"):
         real_fm = real_fm._real  # unwrap a previous run's adapter
     dry_run = DryRunFactManagementAdapter(real_fm)
-    agent._fact_management = dry_run
+    install_dry_run(agent, dry_run)
 
     original_build = agent.prompt_builder.build_for_agent
     patched = {"hit": False}

@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from google.cloud import firestore
 
+from scripts.consolidation.legacy_dry_run_ports import install_dry_run
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.composition.service_container import ServiceContainer
@@ -645,7 +646,7 @@ async def main(
 
         llm_turns_1: List[Dict[str, Any]] = []
         dry_run_1 = DryRunFactManagementAdapter(real_fm)
-        consolidation_agent._fact_management = dry_run_1
+        install_dry_run(consolidation_agent, dry_run_1)
         consolidation_agent._call_llm = _make_capturing(llm_turns_1)
 
         t1 = time.time()
@@ -675,7 +676,7 @@ async def main(
 
         llm_turns_2: List[Dict[str, Any]] = []
         dry_run_2 = ClusterDryRunAdapter(real_fm, cluster)
-        consolidation_agent._fact_management = dry_run_2
+        install_dry_run(consolidation_agent, dry_run_2)
         consolidation_agent._call_llm = _make_capturing(llm_turns_2)
 
         t2 = time.time()
@@ -707,7 +708,7 @@ async def main(
 
     llm_turns: List[Dict[str, Any]] = []
     dry_run = DryRunFactManagementAdapter(real_fm)
-    consolidation_agent._fact_management = dry_run
+    install_dry_run(consolidation_agent, dry_run)
     consolidation_agent._call_llm = _make_capturing(llm_turns)
     print("DryRunFactManagementAdapter injected (real reads, intercepted writes).")
 

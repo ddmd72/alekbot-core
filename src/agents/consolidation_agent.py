@@ -47,7 +47,7 @@ from ..ports.llm_port import AgentExecutionContext
 from ..ports.fact_write_port import FactWritePort
 from ..ports.alert_sink import AlertSinkPort
 from ..domain.consolidation_pass_stats import (
-    OUTCOME_ERROR, OUTCOME_OK, OUTCOME_REVIEW_REFUSAL, ConsolidationPassStats, PassCall, PassTool,
+    OUTCOME_ERROR, OUTCOME_OK, OUTCOME_SCOPE_REFUSAL, ConsolidationPassStats, PassCall, PassTool,
 )
 from ..domain.fact_review_ask import parse_ask_owner
 from ..domain.fact_tool_result import HISTORY_FACT_ID, STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
@@ -241,10 +241,17 @@ _ASK_OWNER_SCHEMA: Dict[str, Any] = {
 }
 
 
-def _count_words_tool() -> Dict[str, Any]:
+_COUNT_WORDS_DESCRIPTION = "Count words in a text string. Call this BEFORE create_fact or update_fact to verify content is ≤40 words. Returns exact word_count, within_limit flag, and excess words if any."
+_REVIEW_COUNT_WORDS_DESCRIPTION = (
+    "Count words in a text string. Call this BEFORE an update_fact that rewrites a fact's content to verify the new "
+    "content is ≤40 words. Returns exact word_count, within_limit flag, and excess words if any."
+)
+
+
+def _count_words_tool(description: str) -> Dict[str, Any]:
     return {
         "name": "count_words",
-        "description": "Count words in a text string. Call this BEFORE create_fact or update_fact to verify content is ≤40 words. Returns exact word_count, within_limit flag, and excess words if any.",
+        "description": description,
         "parameters": {
             "type": "object",
             "properties": {
@@ -417,7 +424,7 @@ def _abandoned_alert(stats: ConsolidationPassStats, model: str, user_id: str) ->
         else f"{o.call.tool.value} (text {o.call.size} chars)"
         for o in outcomes[:5]
     ]
-    what = "refusals" if any(o.outcome == OUTCOME_REVIEW_REFUSAL for o in outcomes) else "expiry refusals"
+    what = "refusals" if any(o.outcome == OUTCOME_SCOPE_REFUSAL for o in outcomes) else "expiry refusals"
     return (
         f"🚨 Consolidation left {what} unanswered | pass `{stats.actor.value}` | model {model} | "
         f"abandoned {len(outcomes)}: {', '.join(parts)} | user {(user_id or '')[:8]}\n"
@@ -607,8 +614,11 @@ class ConsolidationAgent(BaseAgent):
             lifecycle_counters: Per-day lifecycle numbers; the refused calls of each pass are added to it
             fact_updates: The typed write path (code-built updates, the review's writes); required
         """
-        if fact_updates is None:
-            raise TypeError("ConsolidationAgent needs the typed write port (fact_updates: FactUpdatePort)")
+        if not isinstance(fact_updates, FactUpdatePort):
+            raise TypeError(
+                f"ConsolidationAgent needs the typed write port: fact_updates must be a FactUpdatePort, "
+                f"got {type(fact_updates).__name__}"
+            )
         super().__init__(config)
         self.execution_context = execution_context
         self._llm = execution_context.provider
@@ -1450,16 +1460,20 @@ class ConsolidationAgent(BaseAgent):
 
         `fact_management` is the port this pass's tools run on (a run's tracker); None means the agent's own.
         `write_context` goes with every write the pass's tools make; its actor names the pass in the ops alerts and
-        the stats. `pass_kind` picks the tools (`_get_tool_declarations`); a review pass needs its `review_scope`, which
-        serves its `update_fact` and `ask_owner`, and no other pass takes one. `max_turns` caps the loop and is the cap
+        the stats. `pass_kind` picks the tools (`_get_tool_declarations`) and must match the actor (`review` with
+        PassActor.REVIEW only); a review pass needs its `review_scope`, which serves its `update_fact` and `ask_owner`,
+        and no other pass takes one. `max_turns` caps the loop and is the cap
         the stats report (None = MAX_CONSOLIDATION_TURNS).
 
         Ops alerts (best-effort, never change the result): a pass that exhausts its turns without
         a final report always posts a 🚨; a pass that ends with a report posts a 📊 stats line
         while CONSOLIDATION_STATS_ALERTS is on.
         """
-        if (pass_kind == "review") != (review_scope is not None):
-            raise ValueError(f"a {pass_kind} pass {'needs' if pass_kind == 'review' else 'takes no'} review scope")
+        review = pass_kind == "review"
+        if review != (write_context.actor is PassActor.REVIEW):
+            raise ValueError(f"a {pass_kind} pass cannot run under the {write_context.actor.value} actor")
+        if review != (review_scope is not None):
+            raise ValueError(f"a {pass_kind} pass {'needs' if review else 'takes no'} review scope")
         max_turns = self.MAX_CONSOLIDATION_TURNS if max_turns is None else max_turns
         tools = self._get_tool_declarations(pass_kind)
         stats = ConsolidationPassStats(write_context.actor, max_turns)
@@ -1951,7 +1965,7 @@ class ConsolidationAgent(BaseAgent):
     
     def _get_tool_declarations(self, pass_kind: PassKind = "consolidation") -> List[Dict[str, Any]]:
         """
-        Build tool declarations for ConsolidationAgent v3. Module constants only, never `self` (tests call it unbound).
+        Build tool declarations for ConsolidationAgent v3, from module constants only.
 
         `pass_kind="review"`: the review's three tools (Facts S4 §3.5): `update_fact` (with `basis` and `history`, no
         `reported_date`), `ask_owner` and `count_words`, as fresh copies (an adapter may rewrite a schema in place).
@@ -1966,7 +1980,10 @@ class ConsolidationAgent(BaseAgent):
         LLM simply doesn't call create/update/merge for discarded candidates.
         """
         if pass_kind == "review":
-            return [copy.deepcopy(_REVIEW_UPDATE_SCHEMA), copy.deepcopy(_ASK_OWNER_SCHEMA), _count_words_tool()]
+            return [
+                copy.deepcopy(_REVIEW_UPDATE_SCHEMA), copy.deepcopy(_ASK_OWNER_SCHEMA),
+                _count_words_tool(_REVIEW_COUNT_WORDS_DESCRIPTION),
+            ]
         if pass_kind != "consolidation":
             raise ValueError(f"no tools for pass kind {pass_kind!r}")
         return [
@@ -2050,7 +2067,7 @@ class ConsolidationAgent(BaseAgent):
                     "required": ["fact_id", "updates"]
                 }
             },
-            _count_words_tool(),
+            _count_words_tool(_COUNT_WORDS_DESCRIPTION),
             {
                 "name": "merge_facts",
                 "description": "Consolidate multiple facts into one enriched fact",

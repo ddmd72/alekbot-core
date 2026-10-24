@@ -102,3 +102,10 @@ def test_each_call_gets_fresh_copies():
     first["update_fact"]["parameters"]["properties"]["basis"]["description"] = "changed"
     assert second["update_fact"]["parameters"]["properties"]["basis"]["description"] != "changed"
     assert review_tools()["update_fact"]["parameters"]["properties"]["updates"]["properties"]["expiry"]["description"] != "changed"
+
+
+def test_the_review_count_words_names_only_the_review_tools():
+    text = review_tools()["count_words"]["description"]
+    assert "create_fact" not in text and "update_fact" in text
+    consolidation = {t["name"]: t for t in ConsolidationAgent._get_tool_declarations(None)}["count_words"]["description"]
+    assert consolidation.startswith("Count words in a text string. Call this BEFORE create_fact or update_fact")

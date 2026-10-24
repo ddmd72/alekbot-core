@@ -615,11 +615,14 @@ lines (`consolidation_agent.py`: no arguments, no fact text, 8 characters of the
   rewrites the text counts as abandoned.
 - **The review pass (Facts S4, T6b).** `_run_consolidation_loop(pass_kind="review", max_turns=review_max_turns (15),
   review_scope=FactReviewScope)` offers three tools (`update_fact` with `basis` and `history` and no `reported_date`,
-  `ask_owner`, `count_words`); `update_fact` and `ask_owner` go to the scope, any other tool is unknown. A review refusal
-  (`refused`: `basis`, `scope`, `ask`) is its own outcome, shown as `review refusals N` in the tool-error part. In the
-  review an expiry, born-due or review refusal is abandoned when no later successful update or ask of the same fact
-  answers it, and there an archive or another closing write counts as an answer (`PassActor.closing_answers_refusal`);
-  the 🚨 then reads "left refusals unanswered".
+  `ask_owner`, `count_words`); `update_fact` and `ask_owner` go to the scope, any other tool is unknown, and the pass kind
+  must match the actor. A review refusal (`refused`: `basis`, `ask`; outcome `review_refusal`) and a scope refusal
+  (`refused`: `scope`; outcome `scope_refusal`) are shown together as `review refusals N` in the tool-error part. Only an
+  expiry, born-due or scope refusal can be abandoned in the review: a basis or ask refusal leaves the fact kept (the
+  review reports it as kept). The review gives each fact one result (`PassActor.one_result_per_fact`), so any successful
+  update or ask of the fact anywhere in the pass, before or after the refusal and closing included, answers it; a
+  re-sent archive or a write after an ask is no loss. An abandoned scope refusal makes the 🚨 read "left refusals
+  unanswered".
 - **Close-out.** The abandoned 🚨 and the add of the pass's refused calls to the account's day (`expiry_tool_errors`; the
   review's expiry and review refusals go to `review_refusals` instead, `PassActor.refusals_counter`, F14; §5.5)
   run at the end of every pass, also one that raises, in a `finally`. The close-out is best effort and capped at 10 s
