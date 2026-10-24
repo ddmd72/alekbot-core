@@ -4,8 +4,8 @@ plus fakes of the neighbours that carry state (notification state, channel bindi
 channels) and a recording alert sink.
 
 Nothing here decides a fact rule: the fakes store and answer like their ports, and the rest is production code.
-The review store, the interactive-message port and the question/state seeds join this file in the tasks that create those
-types (T4a1/T4b, T5a), because a fake cannot subclass a port that does not exist yet.
+The review store and the question/state seeds join this file in the tasks that create those types (T4a1/T4b), because a
+fake cannot subclass a port that does not exist yet; the interactive-message port's fake (T5a) is here.
 """
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -16,10 +16,14 @@ from src.adapters.firestore_session_store import FirestoreSessionStore
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.config.environment import EnvironmentConfig
 from src.domain.channel_binding import ChannelBinding
+from src.domain.choice_outcome import ChoiceOutcome
+from src.domain.interactive_message import InteractiveMessage
 from src.domain.language import LanguageCode
 from src.domain.llm import Message
+from src.domain.messaging import MessageRef
 from src.domain.notification import NotificationChannel
 from src.ports.channel_binding_port import ChannelBindingPort
+from src.ports.interactive_message_port import InteractiveMessagePort
 from src.ports.language_service_port import LanguageServicePort
 from src.ports.notification_channel_factory_port import NotificationChannelFactoryPort
 from src.ports.notification_state_port import NotificationStatePort
@@ -85,6 +89,43 @@ class RecordingChannelFactory(NotificationChannelFactoryPort):
     def sent(self) -> List[Tuple[str, str, str]]:
         """(platform, channel_id, text) of every delivered text, per channel in order."""
         return [(c.platform, c.channel_id, text) for c in self.channels.values() for text in c.texts]
+
+
+class RecordingInteractiveMessagePort(InteractiveMessagePort):
+    """A platform that keeps what it was given. `post` numbers messages per channel and answers the ref; `show_choice`
+    records the outcome (the message then has no controls), and fails for a message that was never posted, as a
+    platform does. `fail` / `fail_show` make the next calls raise; `unreachable` lists platforms that refuse every post."""
+
+    def __init__(self) -> None:
+        self.posted: List[Tuple[MessageRef, InteractiveMessage]] = []
+        self.shown: Dict[MessageRef, ChoiceOutcome] = {}
+        self.fail = False
+        self.fail_show = False
+        self.unreachable: Set[str] = set()
+        self._counter: Dict[Tuple[str, str], int] = {}
+
+    async def post(self, platform: str, channel_id: str, message: InteractiveMessage) -> MessageRef:
+        if self.fail or platform in self.unreachable:
+            raise RuntimeError("post failed")
+        number = self._counter.get((platform, channel_id), 0) + 1
+        self._counter[(platform, channel_id)] = number
+        ref = MessageRef(platform=platform, channel_id=channel_id, message_id=f"m{number}")
+        self.posted.append((ref, message))
+        return ref
+
+    async def show_choice(self, ref: MessageRef, outcome: ChoiceOutcome) -> None:
+        if self.fail_show:
+            raise RuntimeError("update failed")
+        if all(posted_ref != ref for posted_ref, _ in self.posted):
+            raise RuntimeError("message_not_found")
+        self.shown[ref] = outcome
+
+    def message_at(self, ref: MessageRef) -> InteractiveMessage:
+        return next(message for posted_ref, message in self.posted if posted_ref == ref)
+
+    def has_controls(self, ref: MessageRef) -> bool:
+        """True while the message at `ref` still offers its options (no outcome has been shown for it)."""
+        return ref not in self.shown
 
 
 class FakeNotificationState(NotificationStatePort):
@@ -153,6 +194,7 @@ class ReviewWorld:
         self.session_store = ReviewSessionStore(self.store.db, sessions)
         self.notification_state = FakeNotificationState(NOW)
         self.channels = RecordingChannelFactory()
+        self.interactive = RecordingInteractiveMessagePort()
         self.notifier = UserNotificationService(self.notification_state, self.channels, coordinator=None, notification_sla={})
         self.channel_bindings = FakeChannelBindings()
         self.language = FakeLanguageService()
