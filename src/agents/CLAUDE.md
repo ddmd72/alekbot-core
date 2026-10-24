@@ -273,6 +273,15 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     basis or ask refusal leaves the fact kept), and any success of the same fact in the pass answers them. The typed write
     port is the agent's own required `fact_updates` dependency (a `FactUpdatePort`, refused otherwise when the agent is
     built; composition passes the adapter twice); every run's tracker is `_TrackingFactUpdates(model port, typed port)`.
+  - **The review task (Facts S4 T6c).** `payload["task"] == Intent.REVIEW_STALE_FACTS` → `_handle_review_stale_facts`. The
+    payload is a `FactReviewTask` (`domain/fact_review_task.py`: items with versions and neighbours, open questions,
+    `mirror`, `owner_messages`) in its one plain-data form (`encode_review_task` / `decode_review_task`). Prompt
+    `consolidation_review` (no fallback: a build failure is `AgentResponse.failure`); the scope is built over the run's
+    tracker from `self._fact_updates` read at run time; one loop capped at `CONSOLIDATION.review_max_turns`. The message
+    (`_build_review_message`) is code-built from `fact_view` (`domain/search.py`, the one view Stage 2a and the search hits
+    use too); in mirror mode it carries `owner_messages` and the language request. The result is the scope's outcomes,
+    asks and kept ids plus `message_language` / `labels` read from the final report through `parse_message_language` /
+    `check_labels` (None when malformed). The agent writes no question and posts or appends nothing.
 - DeepResearch (async, provider-agnostic, intent `deep_research`) — `create_interaction()` returns
   ACK (job_id); result delivered by adapter. **Default Claude** (`ClaudeDeepResearchRunnerAgent`,
   `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+
