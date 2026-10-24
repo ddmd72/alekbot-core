@@ -19,10 +19,9 @@ def past_plan(text="the trip on the 3rd"):
 
 
 async def run(agent, label):
-    cleanup = label not in ("stage1", "email")
     return await agent._run_consolidation_loop(
-        user_message_text="begin", system_prompt="SYS", user_id=USER, account_id=ACC, pass_label=label,
-        write_context=ctx(actor=label, timezone="UTC", model_dates=not cleanup),
+        user_message_text="begin", system_prompt="SYS", user_id=USER, account_id=ACC,
+        write_context=ctx(actor=label, timezone="UTC"),
     )
 
 

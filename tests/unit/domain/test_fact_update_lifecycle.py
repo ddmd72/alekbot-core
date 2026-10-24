@@ -18,8 +18,8 @@ UTC = timezone.utc
 NOW = datetime(2026, 10, 23, 9, 0, tzinfo=UTC)  # 11:00 in Paris
 STORED_REPORTED = NOW - timedelta(days=3)
 SPAN = (NOW - timedelta(days=1), NOW - timedelta(hours=2))
-STAGE1 = ctx("stage1", span=SPAN, model_dates=True)
-STAGE2A = ctx("stage2a", span=SPAN, model_dates=False)
+STAGE1 = ctx("stage1", span=SPAN)
+STAGE2A = ctx("stage2a", span=SPAN)
 GENERIC_PIN_TEXT = "expiry is required for this fact"
 
 
@@ -255,7 +255,7 @@ def test_a_re_mention_moves_a_horizon_to_the_new_date_plus_its_days():
 def test_a_re_mention_from_an_old_batch_never_moves_a_floored_fact_earlier():
     floored = fact(reported_date=NOW - timedelta(days=90), ttl_days=14, expires_at=NOW + timedelta(days=2))
     old_span = (NOW - timedelta(days=88), NOW - timedelta(days=87))
-    old_batch = ctx("stage1", span=old_span, model_dates=True)
+    old_batch = ctx("stage1", span=old_span)
     got = finish({"reported_date": (NOW - timedelta(days=87, hours=1)).isoformat()}, current=floored, context=old_batch)
     assert got.plan.fields["reported_date"] == NOW - timedelta(days=87, hours=1)
     assert "expires_at" not in got.plan.fields

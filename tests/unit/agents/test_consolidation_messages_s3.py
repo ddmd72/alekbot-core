@@ -285,7 +285,7 @@ async def seed_and_search(store: FactStore, agent: ConsolidationAgent) -> List[D
             [create("trip to Rome in January", expiry=on("2027-01-15"), reported_date=reported),
              create("takes the pills daily", expiry=horizon(30), reported_date=reported),
              create("was 83 kg in March 2025")],
-            USER, ACC, write_context=ctx(model_dates=True))
+            USER, ACC, write_context=ctx())
     assert [json.loads(r.result_str)["status"] for r in responses] == ["created"] * 3, [r.result_str for r in responses]
     put_raw(store, "legacy", "an old note without a decision")
     with RequestContext(user_id=USER, account_id=ACC):
@@ -329,7 +329,7 @@ async def test_a_date_entry_sent_back_unchanged_in_a_content_update_keeps_expire
         responses = await agent._execute_fact_management_tools(
             [ToolCall(name="update_fact", args={"fact_id": trip["fact_id"], "updates": {
                 "content": "trip to Rome in January 2027", "expiry": trip["expiry"]}})],
-            USER, ACC, write_context=ctx("stage2a", model_dates=False))
+            USER, ACC, write_context=ctx("stage2a"))
     assert json.loads(responses[0].result_str)["status"] == "updated", responses[0].result_str
     after = by_text(store, "trip to Rome in January 2027")
     assert after["expires_at"] == before["expires_at"] and after["expiry_kind"] == "date"

@@ -56,5 +56,5 @@ def test_no_source_dates_leave_the_old_conversation_rule():
 
 @pytest.mark.parametrize("actor", ["stage2a", "stage2b", "cluster", "backstop"])
 def test_a_cleanup_merge_still_takes_exactly_the_newest_source_date(actor):
-    cleanup = ctx(actor, span=SPAN, model_dates=False)
+    cleanup = ctx(actor, span=SPAN)
     assert reported_date_for_merge(cleanup, SPAN[0], [OLD, FRESH], NOW) == FRESH

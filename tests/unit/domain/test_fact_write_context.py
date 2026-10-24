@@ -21,8 +21,8 @@ NOW = datetime(2026, 10, 23, 9, 0, tzinfo=UTC)
 FIRST = datetime(2026, 10, 21, 8, 0, tzinfo=UTC)
 LAST = datetime(2026, 10, 22, 17, 30, tzinfo=UTC)
 SPAN = (FIRST, LAST)
-STAGE1 = ctx("stage1", span=SPAN, model_dates=True)
-STAGE2A = ctx("stage2a", span=SPAN, model_dates=False)
+STAGE1 = ctx("stage1", span=SPAN)
+STAGE2A = ctx("stage2a", span=SPAN)
 
 
 # --- the context ------------------------------------------------------------------------------------------------------
@@ -30,18 +30,18 @@ STAGE2A = ctx("stage2a", span=SPAN, model_dates=False)
 
 def test_a_naive_span_is_refused():
     with pytest.raises(ValueError, match="timezone-aware"):
-        FactWriteContext("stage1", "UTC", (datetime(2026, 10, 21), LAST), True)
+        FactWriteContext("stage1", "UTC", (datetime(2026, 10, 21), LAST))
 
 
 def test_a_backwards_span_is_refused():
     with pytest.raises(ValueError, match="earlier to the later"):
-        FactWriteContext("stage1", "UTC", (LAST, FIRST), True)
+        FactWriteContext("stage1", "UTC", (LAST, FIRST))
 
 
 @pytest.mark.parametrize("zone", ["", "Not/AZone", "/etc/passwd"])
 def test_an_unknown_zone_is_refused(zone):
     with pytest.raises(ValueError, match="unknown timezone"):
-        FactWriteContext("stage1", zone, None, True)
+        FactWriteContext("stage1", zone, None)
 
 
 def test_a_context_is_frozen():
@@ -135,7 +135,7 @@ def test_derived_dates_may_be_naive_and_are_read_as_utc():
 def test_a_cleanup_create_with_no_readable_source_falls_back_to_the_span_end_with_a_note():
     got, note = reported_date_for_new(STAGE2A, None, [], NOW, derived_named=2)
     assert got == LAST and "named no readable fact" in note
-    assert reported_date_for_new(ctx("stage2a", span=None, model_dates=False), None, [], NOW) == (NOW, None)
+    assert reported_date_for_new(ctx("stage2a", span=None), None, [], NOW) == (NOW, None)
 
 
 def test_derived_from_is_ignored_with_a_note_in_a_conversation_pass():

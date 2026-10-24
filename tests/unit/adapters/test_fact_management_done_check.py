@@ -48,7 +48,7 @@ async def test_a_fact_born_closed_by_a_cleanup_merge_carries_the_latest_source_d
     attributes.pop("expiry")
 
     res = await store.adapter.merge_facts(
-        [older, newer], "likes tea daily", attributes, context=ctx(actor="stage2a", model_dates=False))
+        [older, newer], "likes tea daily", attributes, context=ctx(actor="stage2a"))
 
     assert res["status"] == "merged"
     assert store.docs[res["new_fact_id"]]["reported_date"] == at(5, 9)

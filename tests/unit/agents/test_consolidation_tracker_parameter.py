@@ -122,9 +122,9 @@ async def test_stage1_runs_with_its_tracker_and_never_reassigns_the_agent_port()
     during: List[Any] = []
 
     async def spy_loop(**kw):
-        seen.append((kw["pass_label"], kw["fact_management"]))
+        seen.append((kw["write_context"].actor, kw["fact_management"]))
         during.append(agent._fact_management)
-        if kw["pass_label"] == "stage1":
+        if kw["write_context"].actor == "stage1":
             await kw["fact_management"].create_fact("first", {}, context=kw["write_context"])
         return []
 
@@ -261,7 +261,7 @@ async def test_tracker_records_nothing_for_not_found_failed_or_refused(store):
 def writes_then(exc, label="stage1", write=True):
     """A loop that writes through the run's tracker (when `write`), then raises `exc` in pass `label`."""
     async def loop(**kw):
-        if kw["pass_label"] == label:
+        if kw["write_context"].actor == label:
             if write:
                 await kw["fact_management"].create_fact("kept", {}, context=kw["write_context"])
             raise exc
@@ -276,9 +276,9 @@ async def test_failed_run_that_wrote_refreshes_the_cache_and_a_clean_failure_doe
     repo.get_active_facts_ordered = AsyncMock(return_value=[MagicMock(id="d1", text="rule")])
 
     async def loop(**kw):
-        if kw["pass_label"] == "stage1":
+        if kw["write_context"].actor == "stage1":
             await kw["fact_management"].create_fact("kept", {}, context=kw["write_context"])
-        if kw["pass_label"] == label:
+        if kw["write_context"].actor == label:
             raise RuntimeError("provider down")
         return []
 

@@ -28,7 +28,7 @@ def last_event(store, fact_id):
 
 async def test_the_backstop_invalidation_says_directive_cap(store):
     fid = await seeded(store, "never answer in verse")
-    res = await store.adapter.update_fact(fid, {"state": "invalidated"}, ACC, context=ctx(actor="backstop", model_dates=False))
+    res = await store.adapter.update_fact(fid, {"state": "invalidated"}, ACC, context=ctx(actor="backstop"))
     assert res["status"] == "updated", res
     event = last_event(store, fid)
     assert (event["from"], event["to"], event["actor"], event["reason"]) == ("current", "invalidated", "backstop", "directive cap")
@@ -37,13 +37,13 @@ async def test_the_backstop_invalidation_says_directive_cap(store):
 @pytest.mark.parametrize("actor", ["stage1", "stage2a", "stage2b", "email", "cluster"])
 async def test_every_other_pass_keeps_the_model_reason(store, actor):
     fid = await seeded(store, f"rule for {actor}")
-    await store.adapter.update_fact(fid, {"state": "invalidated"}, ACC, context=ctx(actor=actor, model_dates=actor in ("stage1", "email")))
+    await store.adapter.update_fact(fid, {"state": "invalidated"}, ACC, context=ctx(actor=actor))
     assert last_event(store, fid)["reason"] == "model"
 
 
 async def test_a_superseded_closure_keeps_its_successor_reason_even_from_the_backstop(store):
     old, new = await seeded(store, "old rule"), await seeded(store, "new rule")
     res = await store.adapter.update_fact(
-        old, {"state": "superseded", "superseded_by": new}, ACC, context=ctx(actor="backstop", model_dates=False))
+        old, {"state": "superseded", "superseded_by": new}, ACC, context=ctx(actor="backstop"))
     assert res["status"] == "updated", res
     assert last_event(store, old)["reason"] == f"superseded by {new}"
