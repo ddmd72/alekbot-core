@@ -4,10 +4,12 @@ fact becomes then, and when the janitor must start a review. Pure: the services 
 
 Statuses of a question move only through the methods of `FactReviewQuestion`; nothing here builds a question by hand."""
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence
+from typing import AbstractSet, Any, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence
 
-from .entities import FactEntity, FactState
+from .entities import ExpiryKind, FactEntity, FactState
+from .fact_expiry import as_expiry_kind, expiry_view
 from .fact_lifecycle import horizon_from_now, lifecycle_event, lifecycle_fields, with_event
+from .fact_review_basis import ReviewBasis
 from .fact_review_question import FactReviewQuestion, QuestionFallback, QuestionStatus
 from .fact_review_state import FactReviewState
 from .fact_write_context import as_utc
@@ -45,6 +47,8 @@ ReviewReason = Literal["stale", "reply", "timeout", "digest", "queue"]
 # Who applies a fallback: nobody answered (timeout), or the owner said he does not remember.
 FallbackActor = Literal["timeout", "owner"]
 QueueAlertAction = Literal["raise", "rearm"]
+# What a review write does to a fact, as the basis rules see it.
+ReviewAction = Literal["revive", "rewrite", "archive", "invalidate", "supersede"]
 
 
 # ------------------------------------------------------------------------------------------------ selection
@@ -282,3 +286,151 @@ def queue_alert(state: FactReviewState, queued_count: int) -> Optional[QueueAler
     if queued_count <= QUEUE_ALERT and state.queue_alert_at is not None:
         return "rearm"
     return None
+
+
+# ------------------------------------------------------------------------------------------------ basis and ask refusals
+
+REVIVE_NEEDS_BASIS: Final[str] = "nothing here says it still holds: ask the owner instead"
+_HISTORY_ONLY_WITH_ARCHIVE: Final[str] = "history goes only with an archive on basis {kind: reply} where the owner said it ended"
+_BASIS_SHAPES: Final[Mapping[str, str]] = {
+    "revive": "{kind: evidence, evidence_fact_id} or {kind: reply, question_id, quote}",
+    "rewrite": "{kind: evidence, evidence_fact_id} or {kind: reply, question_id, quote}",
+    "invalidate": "{kind: evidence, evidence_fact_id} or {kind: reply, question_id, quote}",
+    "archive": "{kind: evidence, evidence_fact_id}, {kind: reply, question_id, quote} or {kind: date_passed, date}",
+}
+
+
+def is_dated_plan(fact: FactEntity, question: Optional[FactReviewQuestion] = None) -> bool:
+    """A plan with a date: a `date` fact, or one whose question falls back to archive. When it is over it is archived
+    only, with no history fact (Q8)."""
+    return as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE or (question is not None and question.fallback == "archive")
+
+
+def basis_refusal(
+    action: ReviewAction,
+    fact: FactEntity,
+    basis: Optional[ReviewBasis],
+    *,
+    evidence: Optional[FactEntity],
+    question: Optional[FactReviewQuestion],
+    made_current: AbstractSet[str],
+    history: Optional[str],
+    today: date,
+    tz: str,
+) -> Optional[str]:
+    """Why a review change has no reason behind it, as the text the model reads, or None when it has.
+
+    `evidence`: the fact `basis.evidence_fact_id` names (for a supersede, the successor), as read, or None when there is
+    none. `question`: the batch question `basis.question_id` names, or None. `made_current`: ids this pass made current.
+    `history`: the text of the history fact sent with an archive. A fact comes back only on another fact or the owner's
+    words; a plan is archived on its passed date; supersede names its successor, not a basis."""
+    if history is not None and action != "archive":
+        return _HISTORY_ONLY_WITH_ARCHIVE
+    if action == "supersede":
+        return _usable_fact_refusal("superseded_by", evidence, fact, made_current)
+    if basis is None:
+        return REVIVE_NEEDS_BASIS if action == "revive" else f"basis: {action} needs a basis: {_BASIS_SHAPES[action]}"
+    if basis.kind == "date_passed" and action != "archive":
+        return f"basis.kind date_passed backs only an archive; {action} needs {_BASIS_SHAPES[action]}"
+    refusal = (
+        _evidence_refusal(fact, basis, evidence, made_current) if basis.kind == "evidence"
+        else _reply_refusal(fact, basis, question) if basis.kind == "reply"
+        else _date_passed_refusal(fact, basis, today, tz)
+    )
+    return refusal or _history_refusal(action, fact, basis, question, history)
+
+
+def _usable_fact_refusal(place: str, other: Optional[FactEntity], fact: FactEntity, made_current: AbstractSet[str]) -> Optional[str]:
+    if other is None:
+        return f"{place} names no fact of this account that is current"
+    if other.account_id != fact.account_id:
+        return f"{place} names no fact of this account that is current"
+    if other.lineage_id == fact.lineage_id:
+        return f"{place} is the fact's own lineage; another fact must say it"
+    if other.state is not FactState.CURRENT and other.id not in made_current:
+        return f"{place} names a fact that is {other.state.value}, not current"
+    return None
+
+
+def _evidence_refusal(
+    fact: FactEntity, basis: ReviewBasis, evidence: Optional[FactEntity], made_current: AbstractSet[str]
+) -> Optional[str]:
+    if not basis.evidence_fact_id:
+        return "basis.evidence_fact_id: the id of the current fact that says it"
+    return _usable_fact_refusal("basis.evidence_fact_id", evidence, fact, made_current)
+
+
+def _reply_refusal(fact: FactEntity, basis: ReviewBasis, question: Optional[FactReviewQuestion]) -> Optional[str]:
+    if not basis.question_id or question is None or question.fact_id != fact.id:
+        return "basis.question_id: the id of the question about this fact in the batch"
+    if not question.reply_text:
+        return "basis.question_id names a question with no recorded reply from the owner"
+    quote = _squash(basis.quote or "")
+    if not quote:
+        return "basis.quote: words copied from the owner's reply"
+    if quote not in _squash(question.reply_text):
+        return "basis.quote is not in the owner's reply; copy words from it"
+    return None
+
+
+def _date_passed_refusal(fact: FactEntity, basis: ReviewBasis, today: date, tz: str) -> Optional[str]:
+    if as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE:
+        view, _ = expiry_view(fact.expiry_kind, fact.ttl_days, fact.expires_at, tz)
+        own = date.fromisoformat(view["date"]) if view is not None and "date" in view else None
+    else:
+        own = basis.on
+        if own is None:
+            return "basis.date: the plan's date (YYYY-MM-DD), which must be before today"
+    if own is None or own >= today:
+        return f"basis.date_passed: the plan's date {own.isoformat() if own else 'is unknown'} is not before today ({today.isoformat()})"
+    return None
+
+
+def _history_refusal(
+    action: ReviewAction, fact: FactEntity, basis: ReviewBasis, question: Optional[FactReviewQuestion], history: Optional[str]
+) -> Optional[str]:
+    if history is None:
+        return None
+    if action != "archive" or basis.kind != "reply":
+        return _HISTORY_ONLY_WITH_ARCHIVE
+    if is_dated_plan(fact, question):
+        return "history: a plan that is over is archived only; leave history out"
+    if not history.strip():
+        return "history: one sentence in the past tense saying it ended"
+    return None
+
+
+def _squash(text: str) -> str:
+    return " ".join(text.casefold().split())
+
+
+def ask_refusal(
+    fact: FactEntity,
+    fallback: str,
+    fallback_date: Optional[date],
+    noise: bool,
+    open_question: Optional[FactReviewQuestion],
+    now: datetime,
+    tz: str,
+) -> Optional[str]:
+    """Why the owner may not be asked about this fact now, as the text the model reads, or None.
+
+    `open_question`: the fact's open question, if any. One that has timed out is a candidate sent back to the model once;
+    its fallback applies, so it is not asked again. `archive` is the fallback only of a `date` fact, one whose
+    `fallback_date` is before today, or noise; `fallback_date` and `noise` belong to archive."""
+    if open_question is not None:
+        if open_question.is_timed_out(now):
+            return "ask_owner: this fact's question timed out and its fallback applies; decide it or leave it"
+        return "ask_owner: this fact already has an open question; leave it"
+    if fallback not in ("revive", "archive"):
+        return "ask_owner.fallback: revive or archive"
+    if fallback == "revive":
+        if fallback_date is not None or noise:
+            return "ask_owner: fallback_date and noise go with fallback archive only"
+        return None
+    today = local_date(now, tz)
+    if fallback_date is not None and fallback_date >= today:
+        return f"ask_owner.fallback_date: the plan's date must be before today ({today.isoformat()})"
+    if as_expiry_kind(fact.expiry_kind) is ExpiryKind.DATE or fallback_date is not None or noise:
+        return None
+    return "ask_owner.fallback archive: only for a dated plan, with a past fallback_date, or with noise; use revive"
