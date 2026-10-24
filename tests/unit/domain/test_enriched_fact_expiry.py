@@ -1,7 +1,7 @@
 """`EnrichedFact` carries the stored expiry decision raw and reads it back to the model's view (Facts S3 · T3).
 
 Reviewer edit (Facts S4 T6c, L4 and M6): `EnrichedFact` holds `expires_at` as an aware datetime and `expiry_kind` as the
-enum, and the model's view is `fact_view` (`expiry_decision` is gone). The cases are the same; a value that is not a
+enum, and the model's view is `consolidation_hit` (`expiry_decision` is gone). The cases are the same; a value that is not a
 time or not a kind is now refused where it is decoded (the stored fact's validation, the repository's kind decoder), so
 it never reaches the search hit.
 """
@@ -11,7 +11,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.domain.entities import ExpiryKind, FactEntity, FactType
-from src.domain.search import EnrichedFact, fact_view
+from src.domain.search import EnrichedFact, consolidation_hit
 
 UTC = timezone.utc
 
@@ -21,7 +21,7 @@ def fact(**over):
 
 
 def decision(f, zone):
-    view = fact_view(f, zone)
+    view = consolidation_hit(f, zone)  # T6c re-review, S3: a hit's view is consolidation_hit
     return view["expiry"], view["due"]
 
 

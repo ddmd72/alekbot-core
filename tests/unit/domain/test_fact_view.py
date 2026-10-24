@@ -104,7 +104,10 @@ def test_the_view_equals_the_old_search_hit_on_every_key_they_share(name):
 
 @pytest.mark.parametrize("name", FACTS)
 def test_the_document_and_its_search_hit_give_the_same_view(name):
-    assert fact_view(hit(FACTS[name]), PARIS) == fact_view(FACTS[name], PARIS)
+    # Reviewer edit (T6c re-review, S3): `fact_view` takes the stored fact only; a hit's view is `consolidation_hit`,
+    # built on the same core, so the hit carries the document's view on every view key.
+    view, from_hit = fact_view(FACTS[name], PARIS), consolidation_hit(hit(FACTS[name]), PARIS)
+    assert {k: from_hit[k] for k in view} == view
 
 
 @pytest.mark.parametrize("name", FACTS)
@@ -133,7 +136,7 @@ def test_the_reported_day_is_the_owners_calendar_day_not_the_utc_day():
 
 
 def test_a_search_hit_without_a_reported_date_shows_none():
-    view = fact_view(EnrichedFact(fact_id="f", content="c", source="keyword"), PARIS)
+    view = consolidation_hit(EnrichedFact(fact_id="f", content="c", source="keyword"), PARIS)  # reviewer edit, S3
     assert (view["reported_date"], view["reported"], view["expiry"], view["due"]) == (None, None, None, None)
 
 
