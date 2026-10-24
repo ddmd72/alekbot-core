@@ -19,10 +19,10 @@ S4–S5 not built), decisions `docs/04_solution_strategy/decisions/{fact_s1_defe
 | What `is_current`, `valid_to`, `lineage_id`, `version`, `superseded_by` mean today; what an update or a merge does to them | §2.3, §2.4 |
 | Why an update gave the fact a new id; whether the old wording is kept and how to look at it; why an old id still works | §2.4, §9.3 |
 | When does a conversation become facts; why nothing happened after I told it something | §3 steps 1–3, §7 |
-| How to deploy or roll back the fact versions (S2) and the expiry work (S3), and how to read the audit afterwards | `docs/07_deployment/README.md` "Facts S2", §9.6 |
+| How to deploy or roll back the fact versions (S2) and the expiry work (S3), and how to read the audit afterwards | the rollout notes (ops), §9.6 |
 | When a fact ends: what `expiry` is, who computes `expires_at`, why a write was refused for its expiry, what "born due" means | §2.7, §6 |
 | What the daily janitor does, why a fact went `stale`, what log-only means, the breaker, the 🧹 morning line | §5.5, §9.1 |
-| How to run the model dry run of the S3 prompts before the deploy (step M) | `docs/07_deployment/README.md` step M, §9.5 |
+| How to run the model dry run of the S3 prompts before the deploy (step M) | the rollout notes (ops) step M, §9.5 |
 | What the memory-write lease is; why a consolidation task waited or ran twice a few minutes apart | §3 step 3, §6, §7 |
 | What the consolidator sees (whose words, which text of the bot's replies) and how it decides create / update / merge / discard | §3 steps 4–5 |
 | Why the bot remembered something wrong, or something it said itself (echo trap) | §3 step 5, §9.3 |
@@ -919,7 +919,7 @@ stays log-only. The startup line says `fact lifecycle sweep: log-only` or `: wri
 facts or the cache: `would_stale` counts **every** due fact with a decision whatever the breaker says, `deferred` is what the
 cap would hold, the breaker reads `would trip`, and no breaker 🚨 is posted. The snapshot and the line are written in log-only
 mode too, because the owner reads them before switching writes on. Nothing in the code switches writes on: S5 does it, **only
-on the owner's word** (`docs/07_deployment/README.md`). Before S5's classify no current fact has `expires_at`, so the first
+on the owner's word** (the rollout notes, ops; the switch is `FACT_LIFECYCLE_SWEEP_DRY_RUN` in `cloudbuild-dev.yaml`). Before S5's classify no current fact has `expires_at`, so the first
 log-only week checks the plumbing (the job runs, the query is served by its index, the counters and the line appear); it is
 not a preview of janitor-on.
 
@@ -1089,7 +1089,7 @@ eval (2026-07-15, older models and prices) put Sonnet ≈ $0.5 and Opus ≈ $1.5
 - S3 additions (estimates from the plan, not measured on live batches): the expiry schema (~180 tokens in the cached tool
   block), the `Today` line, the longer stamps and `expiry` / `due` / `reported` per Stage 2a entry add well under 1 % of a pass.
   The required `expiry` costs a turn only when the model omits or mistypes it; Stage 2a's 15-turn cap was not raised. The
-  model dry run before the deploy (`docs/07_deployment/README.md` step M) costs about $6-12 on Sonnet 5.5 (about $12-24 on
+  model dry run before the deploy (step M of the rollout notes, ops) costs about $6-12 on Sonnet 5.5 (about $12-24 on
   Opus 5.5), capped at $30 cumulative by its own meter; its calls are recorded only in its ledger, not in the account's
   counters.
 - The janitor calls no model: a few collection-wide queries, one transaction per staled fact, one cache rebuild per changed
@@ -1214,7 +1214,7 @@ cumulative; it prices the requested model only). What does leave the Mac: the mo
 (account id empty) only when `DEBUG_PROMPTS=true` with a prompt dataset set, and no Logfire span. It needs `CONSOLIDATION__PROMPT_VERSION` v3 and runs one
 bench at a time; bench 1 reads a fresh window only, so the late-batch case (a horizon said days ago) is not exercised. The
 report lists the served tokens, one row per write and the three gates; the commands, costs and gates are in
-`docs/07_deployment/README.md` step M.
+the rollout notes (ops), step M.
 
 ### 9.6 The data audit
 
@@ -1244,7 +1244,7 @@ never closes a document without a successor and never rewrites a closed one. A h
 late (old-revision closes counted as old) or old code ran after it; a non-zero `superseded_without_successor` is the
 alarm. The cutoff is the time the **last old-revision
 consolidation request ended** (after the queue was paused and drained), not the time of the deploy command, or a
-document the old revision closed in the mixed window is reported as a post-S2 violation (`docs/07_deployment/README.md`).
+document the old revision closed in the mixed window is reported as a post-S2 violation (the rollout notes, ops).
 With no cutoff, and version pointers present, the report says the class was not judged. `--limit` and `--account`
 make the cross-document classes unreliable (a target outside the read looks dangling).
 
@@ -1298,7 +1298,7 @@ result), and `tests/unit/prompts/test_consolidation_expiry_prompt.py` pins the S
 snapshot already says `ARCHIVAL`; **until the five are uploaded (deploy step 4) the live prompt is the pre-S3 one**: it offers
 `ttl_days` (ignored by the new code), never mentions `expiry` (only the tool schema requires it), tells the model to retire a split fact with `SUPERSEDED` alone (refused) and says `HISTORICAL` (read as
 `ARCHIVAL`). The static template is cached for 24 hours per instance,
-so the upload goes in before the switch (`docs/07_deployment/README.md`).
+so the upload goes in before the switch (the rollout notes, ops).
 
 ---
 

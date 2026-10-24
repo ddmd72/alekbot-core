@@ -3,8 +3,7 @@
 **Date:** 2026-10-21
 **Status:** Built on `feat/drive-transcripts-t2` (owner decisions D48, D49, OQ-T10), **not deployed**. Deploy gate: the Δ217 composite indexes `READY` (Δ230).
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §27.9 (design), §27.16 (rows Δ183–Δ244), §27.19 ("T2 as built");
-owner's map [user_drive/README.md](../../05_building_blocks/user_drive/README.md) §4.23; rollout `docs/07_deployment/README.md` → "Transcripts of
-recordings (§27)"; T1 record [drive_transcripts_t1.md](drive_transcripts_t1.md).
+owner's map [user_drive/README.md](../../05_building_blocks/user_drive/README.md) §4.23; rollout notes (ops); T1 record [drive_transcripts_t1.md](drive_transcripts_t1.md).
 
 ## Decision
 
