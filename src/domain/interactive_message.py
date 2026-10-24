@@ -13,10 +13,11 @@ MAX_OPTIONS = 5
 class InteractiveMessage(BaseModel):
     """What is asked (`prompt`), the quoted subject (`quote`, may be empty), the options in order, the binding that
     routes the answer, and `reply_hint`, the line that says how to answer without controls (by replying with a digit):
-    an adapter with controls shows it as the fallback for them, the plain text ends with it.
+    an adapter with controls shows it as the fallback for them, an adapter without ends its text with it.
 
     The options are numbered from 1 in their order: a whole reply that is that digit picks the option, on every
-    platform and in every language (`option_for_reply`); the digit rule lives here and nowhere else."""
+    platform and in every language (`option_for_reply`); the digit rule lives here (`numbered_options`) and nowhere else.
+    How the options, the quote and the hint are laid out is each platform adapter's business."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -45,6 +46,11 @@ class InteractiveMessage(BaseModel):
     def option(self, option_id: str) -> Optional[InteractiveOption]:
         return next((o for o in self.options if o.id == option_id), None)
 
+    def numbered_options(self) -> Tuple[Tuple[int, InteractiveOption], ...]:
+        """The options with their digits, 1 up, in order: the one digit rule, shared by whatever shows the digits and
+        `option_for_reply`."""
+        return tuple(enumerate(self.options, start=1))
+
     def option_for_reply(self, text: str) -> Optional[str]:
         """The id of the option whose digit is the whole of `text`; None otherwise.
 
@@ -56,18 +62,7 @@ class InteractiveMessage(BaseModel):
             reply = reply.strip("`").strip()
         if reply.endswith("."):
             reply = reply[:-1].rstrip()
-        for number, option in enumerate(self.options, start=1):
+        for number, option in self.numbered_options():
             if reply == str(number):
                 return option.id
         return None
-
-    def as_plain_text(self) -> str:
-        """Prompt, the quote in «», the numbered options on one line and last the reply hint: what a platform without
-        controls shows. The hint is part of the text because there only a reply to the message counts."""
-        parts = [self.prompt.strip()]
-        if self.quote.strip():
-            parts.append(f"«{self.quote.strip()}»")
-        parts.append("  ".join(f"{number} — {option.label}" for number, option in enumerate(self.options, start=1)))
-        if self.reply_hint.strip():
-            parts.append(self.reply_hint.strip())
-        return "\n\n".join(parts)

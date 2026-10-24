@@ -8,6 +8,18 @@ from ..ports.notification_channel_factory_port import NotificationChannelFactory
 from ..utils.logger import logger
 
 
+def _layout(message: InteractiveMessage) -> str:
+    """Prompt, the quote in «», the numbered options on one line and last the reply hint. The hint is part of the text
+    because on a platform without controls only a reply to the message counts."""
+    parts = [message.prompt.strip()]
+    if message.quote.strip():
+        parts.append(f"«{message.quote.strip()}»")
+    parts.append("  ".join(f"{number} — {option.label}" for number, option in message.numbered_options()))
+    if message.reply_hint.strip():
+        parts.append(message.reply_hint.strip())
+    return "\n\n".join(parts)
+
+
 class PlainTextInteractiveMessageAdapter(InteractiveMessagePort):
 
     def __init__(self, channel_factory: NotificationChannelFactoryPort):
@@ -19,11 +31,11 @@ class PlainTextInteractiveMessageAdapter(InteractiveMessagePort):
             logger.error(f"[PlainTextInteractive] no channel for platform={platform} channel={channel_id}")
             raise RuntimeError(f"no channel for platform {platform}")
         try:
-            return await channel.send_message_ref(message.as_plain_text())
+            return await channel.send_message_ref(_layout(message))
         except Exception as exc:
             logger.error(
                 f"[PlainTextInteractive] post failed platform={platform} channel={channel_id} "
-                f"binding={message.binding.token()}: {type(exc).__name__}"
+                f"binding={message.binding.kind}:{message.binding.id}: {type(exc).__name__}"
             )
             raise
 
