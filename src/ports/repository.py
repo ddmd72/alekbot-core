@@ -110,13 +110,15 @@ class FactRepository(ABC):
         limit: int = 100,
         cursor_doc_id: Optional[str] = None,
         domain: Optional[str] = None,
+        state: str = "current",
     ) -> Tuple[List[FactEntity], Optional[str]]:
-        """Return one page of `state == "current"` facts of account `owner_id` and the next cursor.
+        """Return one page of `state` facts of account `owner_id` (default `"current"`) and the next cursor.
 
         Args:
             limit: page size.
             cursor_doc_id: document id of the last fact of the previous page.
             domain: when set, only facts of that domain.
+            state: `"current"` or `"stale"`; anything else raises ValueError before any I/O.
 
         Order: newest first by created_at; pages do not overlap and together hold every matching fact.
         Returns: (facts, next_cursor); next_cursor is None exactly when no fact follows this page.
@@ -206,6 +208,26 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
+    async def archive_and_add(
+        self, archived: StoredFact, new_fact: FactEntity, now: datetime, *, actor: str, reason: str
+    ) -> None:
+        """Archive the document `archived` in place and create `new_fact`, in one transaction.
+
+        The archived document gets `archive_fields`: state archived, is_current True, valid_to and last_updated `now`, and
+        one `lifecycle_events` entry (its stored state -> archived, `actor`, `reason`); `stale_since` is kept. `new_fact`
+        is stored as given through the same writer as add_fact (Vector wrapping, priority rank): its own trail is the
+        caller's.
+        Tenancy: `new_fact.account_id` must be `archived.fact.account_id`; inside the transaction the stored `account_id`
+            must be it too (as update_fact_fields).
+        Atomicity: the archived document must still carry the `update_time` it was read with; otherwise FactWriteConflict,
+            nothing written. A read-time abort, or a client that gave up after repeated aborts, is also FactWriteConflict.
+            An existing `new_fact.id` fails the commit.
+        Errors: ValueError, before any I/O, when the accounts differ or `new_fact` lacks one of its three vectors;
+            PermissionError when the stored `account_id` is not `archived.fact.account_id`.
+        """
+        pass
+
+    @abstractmethod
     async def update_fact_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
         """Update `fields` of document `stored.fact.id` in place, only those fields, under its precondition.
 
@@ -215,6 +237,29 @@ class FactRepository(ABC):
             PermissionError when the stored `account_id` is not `stored.fact.account_id` (a legacy document, whose
             `owner_id` reads as its account, or a stray `owner_id` beside another account's `account_id`). Nothing is
             written in either case; both are checked inside the transaction.
+        """
+        pass
+
+    @abstractmethod
+    async def get_stale_facts(self, account_id: str) -> List[FactEntity]:
+        """Return every `state == "stale"` fact of account `account_id`, longest stale first.
+
+        Order: `stale_since` ascending, a fact without it first, then the id (sorted in code: the query is the two
+            equalities on account_id and state and needs no composite index).
+        Projection: every field except `tags_vector` and `metadata_vector` (they read as None); `vector` is a list of
+            floats (the review's neighbour query); `id` is the document id.
+        Tenancy: only that account's documents (the stored `account_id`).
+        """
+        pass
+
+    @abstractmethod
+    async def get_recently_closed(self, account_id: str, since: datetime, limit: int) -> List[FactEntity]:
+        """Return at most `limit` facts of account `account_id` that are `archived` or `invalidated` with `valid_to >= since`.
+
+        Order: `valid_to` descending (the newest closure first).
+        Projection: no vectors (they read as None); `id` is the document id.
+        Tenancy: only that account's documents (the stored `account_id`).
+        Index: needs the composite (account_id ASC, state ASC, valid_to DESC) in config/firestore.indexes.json.
         """
         pass
 

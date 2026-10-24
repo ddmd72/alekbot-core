@@ -49,6 +49,11 @@ def queue_key(fact: FactEntity) -> datetime:
     return as_utc(fact.stale_since) if fact.stale_since is not None else EARLIEST_QUEUE_KEY
 
 
+def stale_order_key(fact: FactEntity) -> tuple[datetime, str]:
+    """The order of a stale list: `queue_key` (longest stale first, no `stale_since` before every dated one), then the id."""
+    return queue_key(fact), fact.id
+
+
 def select_batch(
     stale: Sequence[FactEntity],
     questions: Iterable[FactReviewQuestion],

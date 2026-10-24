@@ -144,6 +144,15 @@
     ]
   },
   {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "valid_to", "order": "DESCENDING" }
+    ]
+  },
+  {
     "collectionGroup": "development_domain_email_facts_v1",
     "queryScope": "COLLECTION",
     "fields": [

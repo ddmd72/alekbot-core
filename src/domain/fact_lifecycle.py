@@ -106,6 +106,18 @@ def superseded_closure(stored_fact: FactEntity, new_fact: FactEntity, now: datet
     return {**closure_fields(new_fact.id, now), "lifecycle_events": with_event(stored_fact.lifecycle_events, entry)}
 
 
+def archive_fields(fact: FactEntity, now: datetime, actor: str, reason: str) -> dict[str, Any]:
+    """The in-place write that archives `fact`: state archived, `valid_to` and `last_updated` `now`, one trail entry
+    (`fact.state` -> archived, `actor`, the code-built `reason`). `stale_since` is not touched: how long the fact waited
+    stays on the record."""
+    event = lifecycle_event(now, fact.state, FactState.ARCHIVED, actor, reason)
+    return {
+        **lifecycle_fields(FactState.ARCHIVED, now),
+        "last_updated": now,
+        "lifecycle_events": with_event(fact.lifecycle_events, event),
+    }
+
+
 def cabinet_invalidation(shown_text: str, stored_fact: FactEntity, requested_id: str, now: datetime) -> dict[str, Any]:
     """The in-place write of the owner's Cabinet delete of `requested_id`, which resolved to `stored_fact`.
 

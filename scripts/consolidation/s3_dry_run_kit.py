@@ -42,12 +42,13 @@ from src.domain.due_fact import DueFact
 from src.domain.email import IndexedEmail, IndexingState
 from src.domain.entities import FactEntity, FactState
 from src.domain.exceptions import FactWriteConflict, InPlaceFieldRefused
-from src.domain.fact_lifecycle import IN_PLACE_FIELDS, superseded_closure
+from src.domain.fact_lifecycle import IN_PLACE_FIELDS, archive_fields, superseded_closure
 from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot
 from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_resolution import resolve_chain
+from src.domain.fact_review_rules import stale_order_key
 from src.domain.fact_tool_result import NOTE_NO_READABLE_SOURCE, STATUS_CREATED, WRITTEN_STATUSES
-from src.domain.fact_write_context import FactWriteContext
+from src.domain.fact_write_context import FactWriteContext, as_utc
 from src.domain.owner_timezone import failure_reason, owner_to_read, owner_zone
 from src.domain.pass_actor import PassActor
 from src.domain.prompt_v3.slot import OwnerType
@@ -83,6 +84,12 @@ S3_TOKEN_IDS: Tuple[str, ...] = (
 _ALL_STATES: AbstractSet[FactState] = frozenset(FactState)
 _PRIORITY_RANK = {"critical": 1, "high": 2, "medium": 3, "low": 4, "archival": 5}
 _VECTORS = ("vector", "tags_vector", "metadata_vector")
+_CLOSED_FOR_REVIEW: AbstractSet[FactState] = frozenset({FactState.ARCHIVED, FactState.INVALIDATED})
+
+
+def _without_vectors(doc: FactEntity, *names: str) -> FactEntity:
+    """A copy of an overlay document as the store's projection would return it: the named vectors read as None."""
+    return doc.model_copy(deep=True, update={name: None for name in names})
 
 
 class BudgetExceeded(RuntimeError):
@@ -126,8 +133,9 @@ class NoWriteFactRepository(FactRepository):
 
     Documents and change tokens of the overlay stand in for the store's: a precondition is checked against the overlay
     token (a synthetic counter per written document) or, for a document the pass has not written, the live
-    `update_time`. Vector searches, the paginated, lineage and domain reads, `find_due_facts` and `stale_backlog` see the
-    live store only; `get_fact_by_id`, `resolve_current` and the three current-fact lists see the overlay too.
+    `update_time`. Vector searches (which drop a hit the run closed, but add none), the paginated, lineage and domain
+    reads, `find_due_facts` and `stale_backlog` see the live store only; `get_fact_by_id`, `resolve_current`, the three
+    current-fact lists and the review's two reads (`get_stale_facts`, `get_recently_closed`) see the overlay too.
 
     Tenancy: `update_fact_fields` refuses with PermissionError when the document's `account_id` is not the one `stored`
     was read with, as the live store does. The kit reads live documents through the port, which shows a legacy
@@ -224,6 +232,28 @@ class NoWriteFactRepository(FactRepository):
             self._put(fact)
         self._record("write_superseding", new_id=new_fact.id, replaced=[s.fact.id for s in replaced], actor=actor)
 
+    async def archive_and_add(
+        self, archived: StoredFact, new_fact: FactEntity, now: datetime, *, actor: str, reason: str
+    ) -> None:
+        account_id = archived.fact.account_id
+        if new_fact.account_id != account_id:
+            raise ValueError(f"fact {new_fact.id} belongs to another account than the archived {archived.fact.id}")
+        missing = [name for name in _VECTORS if getattr(new_fact, name) is None]
+        if missing:
+            raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a fact without vectors leaves vector search")
+        async with self._lock:
+            current = await self._read(archived.fact.id, account_id)
+            if current is None or current.update_time != archived.update_time:
+                raise FactWriteConflict(archived.fact.id)
+            if current.fact.account_id != account_id:
+                raise PermissionError("Not authorized to modify this fact")
+            if new_fact.id in self._docs or await self._real.get_fact_by_id(new_fact.id) is not None:
+                raise ValueError(f"fact {new_fact.id} already exists")
+            closed = archived.fact.model_copy(update=archive_fields(archived.fact, now, actor, reason))
+            self._put(new_fact)
+            self._put(closed)
+            self._record("archive_and_add", archived_id=archived.fact.id, new_id=new_fact.id, actor=actor)
+
     async def update_fact_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
         refused = set(fields) - IN_PLACE_FIELDS
         if refused:
@@ -308,15 +338,50 @@ class NoWriteFactRepository(FactRepository):
         return sorted(facts, key=lambda f: len(f.text.split()), reverse=True)[:limit]
 
     async def get_paginated_facts(
-        self, owner_id: str, limit: int = 100, cursor_doc_id: Optional[str] = None, domain: Optional[str] = None
+        self, owner_id: str, limit: int = 100, cursor_doc_id: Optional[str] = None, domain: Optional[str] = None,
+        state: str = "current",
     ) -> Tuple[List[FactEntity], Optional[str]]:
-        return await self._real.get_paginated_facts(owner_id, limit, cursor_doc_id, domain)
+        return await self._real.get_paginated_facts(owner_id, limit, cursor_doc_id, domain, state)
+
+    async def get_stale_facts(self, account_id: str) -> List[FactEntity]:
+        """The live stale list with the pass's own writes applied: a fact the run staled joins it, one it changed shows the
+        overlay document, one it moved out of stale (revived, archived, closed) leaves it. Same projection and order."""
+        out: Dict[str, FactEntity] = {}
+        for fact in await self._real.get_stale_facts(account_id):
+            if fact.id not in self._docs:
+                out[fact.id] = fact
+        for fact_id, doc in self._docs.items():
+            if doc.account_id == account_id and doc.state is FactState.STALE:
+                out[fact_id] = _without_vectors(doc, "tags_vector", "metadata_vector")
+        return sorted(out.values(), key=stale_order_key)
+
+    async def get_recently_closed(self, account_id: str, since: datetime, limit: int) -> List[FactEntity]:
+        """The live list with the pass's own writes applied (as `get_stale_facts`). Each overlay document can displace one
+        live row, so the live read asks for that many more than `limit`."""
+        out: Dict[str, FactEntity] = {}
+        for fact in await self._real.get_recently_closed(account_id, since, limit + len(self._docs)):
+            if fact.id not in self._docs:
+                out[fact.id] = fact
+        floor = as_utc(since)
+        for fact_id, doc in self._docs.items():
+            if (
+                doc.account_id == account_id and doc.state in _CLOSED_FOR_REVIEW
+                and doc.valid_to is not None and as_utc(doc.valid_to) >= floor
+            ):
+                out[fact_id] = _without_vectors(doc, *_VECTORS)
+        ordered = sorted(out.values(), key=lambda f: f.id)
+        ordered.sort(key=lambda f: as_utc(f.valid_to) if f.valid_to is not None else floor, reverse=True)
+        return ordered[:limit]
 
     async def search_facts(
         self, query_vector: List[float], vector_field: str = "vector", limit: int = 5,
         user_id: Optional[str] = None, account_id: Optional[str] = None,
     ) -> List[FactEntity]:
-        return await self._real.search_facts(query_vector, vector_field, limit, user_id, account_id)
+        """The live hits without the ones the run closed (their overlay copy is not current): production's search sees only
+        current facts. A fact the run created is not a hit (it has no live rank)."""
+        hits = await self._real.search_facts(query_vector, vector_field, limit + self.closed_count(), user_id, account_id)
+        kept = [h for h in hits if (doc := self._docs.get(h.id)) is None or doc.state is FactState.CURRENT]
+        return kept[:limit]
 
     async def search_facts_by_domain(
         self, domains: List[str], limit: int = 10, account_id: Optional[str] = None, user_id: Optional[str] = None

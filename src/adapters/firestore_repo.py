@@ -12,9 +12,10 @@ from ..domain.due_fact import DueFact
 from ..domain.entities import FactEntity, FactState
 from ..domain.exceptions import FactWriteConflict, InPlaceFieldRefused
 from ..domain.fact_expiry import as_expiry_kind
-from ..domain.fact_lifecycle import IN_PLACE_FIELDS, superseded_closure
+from ..domain.fact_lifecycle import IN_PLACE_FIELDS, archive_fields, superseded_closure
 from ..domain.fact_lifecycle_sweep import stale_fields
 from ..domain.fact_resolution import resolve_chain
+from ..domain.fact_review_rules import stale_order_key
 from ..domain.stored_fact import StoredFact
 from ..domain.vector_math import cosine_similarity
 from ..domain.deduplication_service import SmartDeduplication
@@ -37,6 +38,8 @@ _gcp_retry_logger.addHandler(_GcpRetryForwarder())
 _gcp_retry_logger.setLevel(_logging.DEBUG)
 
 _VECTOR_FIELDS = ("vector", "tags_vector", "metadata_vector")
+_PAGINATED_STATES = ("current", "stale")
+_CLOSED_STATES = ("archived", "invalidated")
 
 # Numeric rank for context_priority — stored in Firestore only (not in FactEntity).
 # Allows efficient ORDER BY queries without changing the domain model.
@@ -65,6 +68,11 @@ def _has_aborted_in_chain(exc: BaseException) -> bool:
         seen.add(id(pending))
         pending = pending.__cause__ or pending.__context__
     return False
+
+
+def _projection(*omitted: str) -> List[str]:
+    """The stored field names of a FactEntity read without `omitted` (the document id is not a field)."""
+    return [name for name in FactEntity.model_fields if name not in omitted and name != "id"]
 
 
 def _encode_fields(fields: Mapping[str, Any]) -> Dict[str, Any]:
@@ -275,9 +283,10 @@ class FirestoreFactRepository(FactRepository):
         limit: int = 100,
         cursor_doc_id: Optional[str] = None,
         domain: Optional[str] = None,
+        state: str = "current",
     ) -> Tuple[List[FactEntity], Optional[str]]:
         """
-        Cursor-based paginated retrieval ordered by created_at DESC.
+        Cursor-based paginated retrieval of `state` facts ("current" or "stale"), ordered by created_at DESC.
 
         Fetches limit+1 docs to detect whether a next page exists without
         a separate COUNT query. The extra doc is never returned to the caller.
@@ -286,10 +295,12 @@ class FirestoreFactRepository(FactRepository):
           (account_id, state, created_at DESC)
           (account_id, state, domain, created_at DESC)  — when domain filter used
         """
+        if state not in _PAGINATED_STATES:
+            raise ValueError(f"get_paginated_facts reads state one of {_PAGINATED_STATES}, not {state!r}")
         query = (
             self.facts_col
             .where(filter=FieldFilter("account_id", "==", owner_id))
-            .where(filter=FieldFilter("state", "==", "current"))
+            .where(filter=FieldFilter("state", "==", state))
             .order_by("created_at", direction=firestore.Query.DESCENDING)
         )
 
@@ -497,6 +508,28 @@ class FirestoreFactRepository(FactRepository):
         sorted_facts = sorted(facts, key=lambda f: len(f.text.split()), reverse=True)
         return sorted_facts[:limit]
 
+    async def get_stale_facts(self, account_id: str) -> List[FactEntity]:
+        query = (
+            self.facts_col
+            .where(filter=FieldFilter("account_id", "==", account_id))
+            .where(filter=FieldFilter("state", "==", "stale"))
+            .select(_projection("tags_vector", "metadata_vector"))
+        )
+        facts = [self._fact_from_snapshot(snap) async for snap in query.stream()]
+        return sorted(facts, key=stale_order_key)
+
+    async def get_recently_closed(self, account_id: str, since: datetime.datetime, limit: int) -> List[FactEntity]:
+        query = (
+            self.facts_col
+            .where(filter=FieldFilter("account_id", "==", account_id))
+            .where(filter=FieldFilter("state", "in", list(_CLOSED_STATES)))
+            .where(filter=FieldFilter("valid_to", ">=", since))
+            .order_by("valid_to", direction=firestore.Query.DESCENDING)
+            .limit(limit)
+            .select(_projection(*_VECTOR_FIELDS))
+        )
+        return [self._fact_from_snapshot(snap) async for snap in query.stream()]
+
     async def get_lineage(self, account_id: str, lineage_id: str) -> List[FactEntity]:
         query = (
             self.facts_col
@@ -577,13 +610,42 @@ class FirestoreFactRepository(FactRepository):
             snap = await ref.get(transaction=transaction)
             if not snap.exists or snap.update_time != stored.update_time:
                 raise FactWriteConflict(fact_id)
-            # Tenancy on the stored field, not on the read's view: a legacy `owner_id` (or a stray one beside another
-            # account's `account_id`) reads as the caller's account, but the stored document is not the caller's.
-            if snap.to_dict().get("account_id") != stored.fact.account_id:
-                raise PermissionError("Not authorized to modify this fact")
+            self._require_stored_account(snap, stored.fact.account_id)
             transaction.update(ref, encoded)
 
         await self._in_transaction(body, fact_id)
+
+    @staticmethod
+    def _require_stored_account(snap: Any, account_id: str) -> None:
+        """Tenancy on the stored field, not on the read's view: a legacy `owner_id` (or a stray one beside another
+        account's `account_id`) reads as the caller's account, but the stored document is not the caller's."""
+        if snap.to_dict().get("account_id") != account_id:
+            raise PermissionError("Not authorized to modify this fact")
+
+    async def archive_and_add(
+        self, archived: StoredFact, new_fact: FactEntity, now: datetime.datetime, *, actor: str, reason: str
+    ) -> None:
+        account_id = archived.fact.account_id
+        if new_fact.account_id != account_id:
+            raise ValueError(f"fact {new_fact.id} belongs to another account than the archived {archived.fact.id}")
+        missing = [name for name in _VECTOR_FIELDS if getattr(new_fact, name) is None]
+        if missing:
+            raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a fact without vectors leaves vector search")
+        archived_ref = self.facts_col.document(archived.fact.id)
+        new_ref = self.facts_col.document(new_fact.id)
+        document = self._to_document(new_fact)
+        # A document read under its token and still carrying it is unchanged, so its stored trail is the one to extend.
+        closure = _encode_fields(archive_fields(archived.fact, now, actor, reason))
+
+        async def body(transaction: Any) -> None:
+            snap = await archived_ref.get(transaction=transaction)
+            if not snap.exists or snap.update_time != archived.update_time:
+                raise FactWriteConflict(archived.fact.id)
+            self._require_stored_account(snap, account_id)
+            transaction.create(new_ref, document)
+            transaction.update(archived_ref, closure)
+
+        await self._in_transaction(body, archived.fact.id)
 
     async def _in_transaction(self, body: Callable[[Any], Awaitable[None]], fact_id: str) -> None:
         """Run `body` in a fresh transaction. A read-time Aborted, the client's ValueError after 5 aborted commits and
