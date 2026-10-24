@@ -18,9 +18,9 @@ costs 4.7x less across all 40 calls.
 But a whole-agent downgrade fails. Measured on 7 real recorded user queries
 (`scripts/websearch/ab_user_queries.py`), ECO on `search_web`:
 
-- returned 6.0 findings on average vs 7.9 (on a Spanish legal query, 3 vs 8 — it stated
-  the legal opening and omitted the procedure: renunciation of temporary protection, TIE
-  documentation, salary threshold);
+- returned 6.0 findings on average vs 7.9 (on a legal-procedure query, 3 vs 8 — it stated
+  the legal opening and omitted the procedure: the required steps, documents and
+  thresholds);
 - dropped the OUTPUT_FORMAT JSON shape on 1 of 7, answering in prose;
 - ran 38.7s average vs 18.2s, with a **79s outlier against `timeout_ms = 90_000`**.
 

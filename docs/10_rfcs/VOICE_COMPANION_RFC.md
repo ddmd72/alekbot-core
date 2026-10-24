@@ -885,7 +885,7 @@ BigQuery `prompt_content` and the relay logs.
   no cross-check. On the same weather question Alek fanned out four parallel lookups and got it
   right.
 - 2 of the 8 `ask_alek` calls were errands ("remove the 2 Oct appointment", "set a reminder to
-  meet Olena"). The caller waited 30–60 s for a confirmation they did not need.
+  meet a friend"). The caller waited 30–60 s for a confirmation they did not need.
 - Every search result's links went to chat, whether or not anyone wanted them.
 - The commission text reached Smart with the delegation timestamp twice (coordinator prefix +
   Smart's own `_inject_timestamps`).

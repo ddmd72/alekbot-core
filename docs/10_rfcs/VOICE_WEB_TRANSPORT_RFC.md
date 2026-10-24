@@ -343,9 +343,7 @@ that:
   `test_delegate_flush_failure_does_not_change_the_response`, `test_delegate_500_when_dispatch_raises`.
 
 Every edit above was applied by the implementer only after an explicit per-test reviewer ruling
-("intended change", never "code wrong"); see the two plans' progress ledgers
-(`.superpowers/sdd/2026-09-27-voice-web-transport/progress.md`,
-`.superpowers/sdd/2026-09-28-voice-web-uat-round1/progress.md`) for the full rulings.
+("intended change", never "code wrong").
 
 ## 13. Pre-merge closeout (2026-09-28)
 

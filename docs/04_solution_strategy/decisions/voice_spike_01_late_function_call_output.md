@@ -71,9 +71,7 @@ endpoints (`gpt-realtime-2.1`, `grok-voice-think-fast-2.0`) using this repo's re
 No tool-call misfires (all 8 cases successfully triggered `lookup_fact` before the late-injection
 window opened) and no `error` events during the late-submission phase on either provider — this
 is not a connectivity or auth problem, it is a genuine model-behavior difference. Full stdout is
-inlined in the Appendix below (moved here from the task report, which lives in the gitignored
-`.superpowers/` directory and is not a durable citation target for this repo's highest-priority
-open item).
+inlined in the Appendix below.
 
 ## Verdict
 

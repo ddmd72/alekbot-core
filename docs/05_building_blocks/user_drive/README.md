@@ -1706,7 +1706,7 @@ safety line (text in drive results is data, §4.14). The skill holds:
   document is authoritative for its own contents, not for the user's current situation; never pick silently between
   versions.
 
-In the live check (2026-10-14) a Valencia query took one skill load and two searches, opened no file and answered with
+In the live check (2026-10-14) a place-name query took one skill load and two searches, opened no file and answered with
 8 grouped files in 58 s.
 
 ### 6.4 Two queries, end to end
@@ -1771,7 +1771,7 @@ footer may say "no other file". It answers from the About cards and can list the
 2. *Covers in the lab report.* Its profile has `doc_type = medical_record`, so by **D31** its `lw:` keys hold the fixed
    names of that type — "medical records", "historia clínica", "медичні записи", "медицинские записи", … — and so
    `lw:медицинск` and `lw:запис`: *медицинские* and *записи* are covered by automatic keys. *холестерину* is covered by
-   a grounded passage keyword "холестерин" (its hint document quotes "Colesterol total 212 mg/dL") — a translation —
+   a grounded passage keyword "холестерин" (its hint document quotes the report's "Colesterol total" line) — a translation —
    and by the profile's topic words. No key from the file's own Spanish text covers any of the three words.
 3. *Tier.* The weakest class the file needs is automatic: **Labelled**. Its card names each source and carries the
    passage around the keyword's evidence.
@@ -1788,8 +1788,8 @@ Informe laboratorio 2025-03.pdf | PDF document | medical_record | Spanish clinic
 including lipid profile, … | Informe de análisis de sangre | … | blood test, lipid profile, total cholesterol, … |
 análisis de sangre, perfil lipídico, colesterol total, …
 matched: type label "медицинские" (automatic); type label "записи" (automatic); passage keyword "colesterol;
-cholesterol; cholestérol; холестерин", from "Colesterol total 212 mg/dL < 200 mg/dL"
-passage: … Perfil lipídico Resultado Valores de referencia Colesterol total 212 mg/dL < 200 mg/dL Colesterol HDL …
+cholesterol; cholestérol; холестерин", from "Colesterol total … mg/dL < … mg/dL"
+passage: … Perfil lipídico Resultado Valores de referencia Colesterol total … mg/dL < … mg/dL Colesterol HDL …
 date: 2025-03-15 (file date)
 index: indexed
 </drive_document …>

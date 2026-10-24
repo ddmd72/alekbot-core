@@ -255,8 +255,8 @@ the anchors there, providers without it keep them in the user turn.
 
 The ported block named a specific persona verbatim — "Ranevskaya-filtered",
 "intellectual equal and co-conspirator", "aphoristic, paradoxical, sharp". Adapter code is
-shared by **every** account, so a second user of the same deployment (the owner's wife,
-their son) would receive a high-priority instruction to be someone else's character.
+shared by **every** account, so a second user of the same deployment (a family member,
+say) would receive a high-priority instruction to be someone else's character.
 
 Replaced by `build_persona_anchor()` in `domain/llm.py`, which **names the persona
 sections instead of quoting them**:

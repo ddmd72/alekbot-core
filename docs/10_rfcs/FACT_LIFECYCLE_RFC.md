@@ -110,7 +110,7 @@ changes meaning, gains a writer or loses one without its row in that map being r
 |---|---|---|---|
 | Past event | "had an appointment on Apr 16", "a trip Feb 13–16", "a trip in 2013" | never; it is history | none |
 | Planned event | "checkup Sep 25, bring ID", "a visit Sep 30–Oct 3", "a festival Sep 7" | after its date; the plan is dead, an outcome may exist | date |
-| Validity or deadline | "a service deletes videos ~Apr 27", "a residence document renewal due Oct 1", "passport expires 2028" | after the date the "valid / pending" claim is false | date |
+| Validity or deadline | "a service deletes videos ~Apr 27", "a driving licence renewal due Oct 1", "passport expires 2031" | after the date the "valid / pending" claim is false | date |
 | Current activity (ephemeral) | "refactoring the doc pipeline (Jun 2026)", "exploring a grounding API" | silently; no end date is said | horizon |
 | Changing state | weight, balances, subscriptions, "programs 12 h/day" | becomes doubtful, not false on a date | horizon |
 | Stable / permanent | job, address, birthdate, marriage | only by an explicit change | none |

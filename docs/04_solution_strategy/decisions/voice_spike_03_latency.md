@@ -19,7 +19,7 @@ arriving) — not from `speech_started`, which would incorrectly fold in however
 was still mid-sentence. Real call, `PROVIDER=openai`, owner's personal phone → the provisioned
 Twilio number → relay (local machine, exposed via `ngrok http 8765`) → `gpt-realtime-2.1`.
 
-**Path measured:** phone → PSTN → Twilio → ngrok tunnel → owner's laptop (Valencia, Spain) →
+**Path measured:** phone → PSTN → Twilio → ngrok tunnel → owner's laptop (Western Europe) →
 OpenAI's Realtime API → back. This is **not** the eventual production path — Slice 1 deploys the
 relay to Cloud Run (`us-central1` per RFC §5.2's "pragmatic v1: all three on the US path"), not a
 developer's laptop behind a home/office connection and an ngrok tunnel. Numbers here are a

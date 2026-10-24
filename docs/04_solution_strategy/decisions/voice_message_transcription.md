@@ -45,7 +45,7 @@ Cabinet: `PUT /api/user/voice-languages`; shape validated by `normalize_voice_la
 Deliberately not `LanguageCode`: that enum is the closed set of *translated UI languages*
 (uk/en/fr/es) and has no `ru` — it cannot express what a household speaks. A multilingual
 speaker is the normal case here, not an edge one: one 22-second test message carried Russian,
-English (`welcome home`, `Get`, `MCP`) and Ukrainian (`я тебе кохаю`), and all three survived.
+English (`Get`, `MCP`) and Ukrainian, and all three survived.
 
 This forced `languages` onto `AudioTranscriptionPort.transcribe` — the setting is per user and
 per call, so it cannot live on a singleton adapter.

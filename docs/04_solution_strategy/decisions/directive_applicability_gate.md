@@ -60,7 +60,7 @@ Applying "does this rule change behavior on EVERY request?" to the live rulebook
   formatting, information-sourcing policy, argumentation standard.
 - **5 fail, needing a trigger** — real-time data staleness, bookings-as-proof, PDF/DOCX formatting,
   background-task reporting, car-as-transport.
-- **2 are not behavioral rules at all** — "Run Valencia event radar Tuesday and Friday at 18:30" and
+- **2 are not behavioral rules at all** — "Run the local event radar Tuesday and Friday at 18:30" and
   "Run the slow-burn enrichment sweep every 3 days at 19:00" **exactly duplicate existing
   self-reminders** (`FREQ=WEEKLY;BYDAY=TU,FR` and `FREQ=DAILY;INTERVAL=3`, matching times). As
   directives they change nothing on a normal request and consume 2 of 15 cap slots.

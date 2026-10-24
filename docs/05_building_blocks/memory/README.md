@@ -1014,7 +1014,7 @@ tree and fails on one; `decisions/fact_expiry_and_janitor.md`).
    is selected (§4.1): a `biographical` fact with room under 65, or another domain when biographical facts leave room,
    ordered by priority then age. Otherwise it is reached by search only.
 
-**A correction** ("I moved to Valencia").
+**A correction** ("I moved to Lisbon").
 - Before consolidation: the baseline still says the old city; the bot sees the correction only in recent history, and
   the baseline note says history wins on conflict.
 - At consolidation: the consolidator searches, finds the old fact and either updates it (a new version document: the new

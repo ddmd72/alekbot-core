@@ -52,9 +52,9 @@ tests/
 ```python
 async def test_content_update_writes_a_new_version(store):        # store = FactStore(): real adapter, repo and service on a fake Firestore
     fid = await _create(store)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentyna Ivanivna"}, ACC)
+    res = await store.adapter.update_fact(fid, {"content": "lives in Springfield, Ohio"}, ACC)
     new = store.docs[res["fact_id"]]                                # assert on the raw stored documents, not on a mock call
-    assert new["text"] == "mother is Valentyna Ivanivna" and new["version"] == 2
+    assert new["text"] == "lives in Springfield, Ohio" and new["version"] == 2
     assert store.docs[fid]["superseded_by"] == res["fact_id"]       # the old document is closed in the same commit
 ```
 
