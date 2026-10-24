@@ -1,6 +1,7 @@
 """The janitor's world for tests (Facts S3 · T9): the evaluating fact store, a repository that refreshes the real biographical
 cache, the real counters adapter on the same fake database, a recording alert sink and a movable clock."""
 from datetime import datetime, timedelta, timezone
+from functools import cached_property
 from typing import Any, Awaitable, Callable, List, Optional, Set
 
 from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
@@ -65,6 +66,21 @@ class JanitorWorld:
     @property
     def docs(self) -> dict:
         return self.store.docs
+
+    @cached_property
+    def _queue_pair(self) -> tuple:
+        from tests.support.recording_task_queue import make_task_queue     # on use: most janitor tests never load the Cloud Tasks client
+        return make_task_queue()
+
+    @property
+    def queue(self) -> Any:
+        """The real `GcpTaskQueue` over a client that refuses a task name it has seen (built on first use)."""
+        return self._queue_pair[0]
+
+    @property
+    def tasks(self) -> Any:
+        """That queue's Cloud Tasks client: `worker_tasks()` lists the created tasks as (task_type, body)."""
+        return self._queue_pair[1]
 
     def daily_docs(self) -> dict:
         return self.store.db.collection(self.env.fact_lifecycle_daily_collection).docs

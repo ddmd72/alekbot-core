@@ -180,6 +180,21 @@ async def equality_order_by_missing_field(db: Any, col: str) -> Any:
     return await _ids(_where(c, "u", "==", 1).order_by("t"))
 
 
+async def equality_and_in_without_composite(db: Any, col: str) -> Any:
+    """The review store's reads: an equality next to an `in` on another field, and four equalities, with no composite index."""
+    c = db.collection(col)
+    await _seed(c, {
+        "a": {"account_id": "x", "status": "queued", "platform": "slack", "channel": "C1", "message_id": "m1"},
+        "b": {"account_id": "x", "status": "closed", "platform": "slack", "channel": "C1", "message_id": "m2"},
+        "c": {"account_id": "y", "status": "asked", "platform": "slack", "channel": "C1", "message_id": "m1"},
+        "d": {"account_id": "x", "status": "asked", "platform": "telegram", "channel": "C1", "message_id": "m1"},
+        "e": {"account_id": "x", "status": "unanswered"}})
+    in_query = _where(_where(c, "account_id", "==", "x"), "status", "in", ["queued", "asked", "unanswered"])
+    four = _where(_where(_where(_where(c, "account_id", "==", "x"), "platform", "==", "slack"), "channel", "==", "C1"),
+                  "message_id", "==", "m1")
+    return {"in": await _ids_or_error(in_query), "four_equalities": await _ids_or_error(four)}
+
+
 # ----------------------------------------------------------------------------------------- dotted paths
 
 async def dotted_paths(db: Any, col: str) -> Any:
@@ -561,6 +576,8 @@ SCENARIOS: List[Scenario] = [
     Scenario("not_equal_other_type", not_equal_other_type, ["d", "s"]),
     Scenario("equality_array_contains", equality_array_contains, ["a"]),
     Scenario("equality_array_contains_any", equality_array_contains_any, ["a", "b"]),
+    Scenario("equality_and_in_without_composite", equality_and_in_without_composite,
+             {"in": ["a", "d", "e"], "four_equalities": ["a"]}),
     Scenario("equality_order_by_missing_field", equality_order_by_missing_field, ["c", "a"], group="composite"),
     Scenario("dotted_paths", dotted_paths, {
         "doc": {"ids": {"slack": "U1", "tg": "T1"}, "usage": {"n": 2}}, "get": 2, "where": ["a"], "order_by": ["b", "a"],
