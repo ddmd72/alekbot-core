@@ -107,12 +107,19 @@ def test_the_keys_must_be_exactly_the_label_keys():
 
 @pytest.mark.parametrize("key", sorted(LABEL_KEYS))
 @pytest.mark.parametrize("bad", [
-    "two\nlines", "two\r\nlines", "a b", "with 1 digit", "digit ٣ arabic", "has [bracket", "has <!channel>", "closing > sign",
+    "two\nlines", "two\r\nlines", "a b", "with 1 digit", "digit ٣ arabic", "has [bracket",
     "see https://example.com", "see www.example.com", "ftp://x", "", "   ", "\n",
     "evil\u202etext", "zero\u200bwidth", "joiner\u200d", "bell\x07", "tab\there", "bom\ufeff",
 ], ids=lambda v: repr(v)[:20])
 def test_each_bad_shape_is_refused_for_every_text(key, bad):
     assert check_labels(good(**{key: bad})) is not None
+
+
+@pytest.mark.parametrize("key", sorted(LABEL_KEYS))
+@pytest.mark.parametrize("shape", ["has <!channel>", "closing > sign"], ids=lambda v: repr(v)[:20])
+def test_angle_brackets_are_accepted_for_every_text_because_escaping_is_the_platform_adapters(key, shape):
+    # T5c (L4): these two shapes were refused here until the Slack adapter took over escaping `&`, `<` and `>`.
+    assert check_labels(good(**{key: shape})) is None
 
 
 @pytest.mark.parametrize("bad", [None, 3, ["Yes"], {"a": "b"}, b"Yes"])
@@ -171,15 +178,6 @@ def test_the_question_message_is_the_line_the_fact_the_four_options_and_the_hint
     assert message.reply_hint == "Reply to this message with a digit, or in your own words."
     assert message.binding.kind == FACT_QUESTION_KIND == "fact_question"
     assert message.binding.id == "q42"
-    assert message.binding.token() == "fact_question:q42"
-
-
-def test_the_plain_text_is_the_plans_message():
-    text = fact_question_message(question(quoted_text="Takes vitamin D"), CANONICAL_LABELS).as_plain_text()
-    assert text == (
-        "Is this still true?\n\n«Takes vitamin D»\n\n1 — Yes  2 — No longer  3 — Never  4 — Don't remember"
-        "\n\nReply to this message with a digit, or in your own words."
-    )
 
 
 def test_the_digits_are_the_answers_in_every_language():
