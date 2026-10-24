@@ -13,7 +13,7 @@ import pytest
 from src.adapters.fact_management_adapter import FactManagementAdapter
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from src.agents.base_agent import BaseAgent
-from src.agents.consolidation_agent import ConsolidationAgent
+from src.agents.consolidation_agent import ConsolidationAgent, _session_time
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage
 from src.domain.email import IndexedEmail
 from src.domain.entities import FactDomain
@@ -240,7 +240,9 @@ def test_the_stamp_and_the_span_read_the_same_time_of_a_message():
     only_timestamp = {"role": "user", "text": "d", "timestamp": utc(24, 8).timestamp()}
     msgs = [both, bad_first, empty_first, only_timestamp]
     stamps = [line["timestamp"] for line in conversation(msgs, "UTC")]
-    seen = [as_utc(ConsolidationAgent._message_time(m)) for m in msgs]
+    # Reviewer edit (Facts S4 T6c, L4): the session store's raw times are parsed by the agent's `_session_time`; the
+    # domain's `as_utc` takes a datetime only.
+    seen = [_session_time(ConsolidationAgent._message_time(m)) for m in msgs]
     assert seen == [utc(20, 8), utc(22, 8), utc(23, 8), utc(24, 8)]
     assert stamps == [local_stamp(moment, "UTC") for moment in seen]
     assert ConsolidationAgent._times_span([ConsolidationAgent._message_time(m) for m in msgs], "message times") == (utc(20, 8), utc(24, 8))
@@ -314,10 +316,18 @@ def test_the_builder_still_accepts_entries_without_the_new_keys():
     assert entry == {"fact_id": "f1", "content": "plain", "similarity": 0.9, "expiry": None, "reported": None}
 
 
-@pytest.mark.parametrize("given,shown", [("not a date", None), ("", None), (None, None), ("2026-10-23T01:30:00+02:00", "2026-10-23")])
-def test_an_unreadable_reported_date_is_shown_as_null(given, shown):
+# Reviewer edit (Facts S4 T6c, M6): the cluster message no longer re-parses `reported_date`; it shows the entry's
+# `reported` day, which `fact_view` computes (search hit and cluster entry alike). An entry without that day shows null,
+# whatever its `reported_date` text says.
+@pytest.mark.parametrize("entry_fields,shown", [
+    ({"reported_date": "not a date"}, None), ({"reported_date": ""}, None), ({"reported_date": None}, None),
+    ({"reported_date": "2026-10-23T01:30:00+02:00"}, None),
+    ({"reported_date": "2026-10-23T01:30:00+02:00", "reported": "2026-10-23"}, "2026-10-23"),
+    ({"reported": None}, None),
+])
+def test_an_unreadable_reported_date_is_shown_as_null(entry_fields, shown):
     (entry,) = entries(ConsolidationAgent._build_cluster_message(
-        [{"fact_id": "f1", "content": "plain", "similarity": 0.9, "reported_date": given}]))
+        [{"fact_id": "f1", "content": "plain", "similarity": 0.9, **entry_fields}]))
     assert entry["reported"] == shown
 
 
