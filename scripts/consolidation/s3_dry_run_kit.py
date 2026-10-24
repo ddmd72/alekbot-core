@@ -55,6 +55,7 @@ from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, chec
 from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_write_context import NO_READABLE_SOURCE_NOTE, FactWriteContext
 from src.domain.owner_timezone import failure_reason, owner_to_read, owner_zone
+from src.domain.pass_actor import PassActor
 from src.domain.prompt_v3.slot import OwnerType
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
 from src.domain.search import EnrichedFact, consolidation_hit
@@ -867,9 +868,7 @@ class DryRunKit:
         return {"user_id": user_id, "account_id": account_id, "owner_timezone": self.timezone, **extra}
 
     def write_context(self, pass_label: str, span: Optional[Tuple[datetime, datetime]] = None) -> FactWriteContext:
-        from src.agents.consolidation_agent import ConsolidationAgent
-
-        return ConsolidationAgent._write_context(pass_label, self.timezone, span)
+        return FactWriteContext.for_pass(PassActor(pass_label), self.timezone, span)
 
     def install(self, agent: Any) -> None:
         """Put the kit under `agent`: its repository, its fact-management port, its counters, its alert sink, its model
@@ -1061,7 +1060,7 @@ class DryRunKit:
             "expiry_sent": expiry_sent,
             "reported_date_sent": reported_sent,
             "reported_date_form": reported_date_form(reported_sent),
-            "cleanup": not context.model_dates,
+            "cleanup": context.floors_due_horizon,
             "derived_from_named": derived_from_count(derived_from),
             "derived_from_unreadable": False,
         }

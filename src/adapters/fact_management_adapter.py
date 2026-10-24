@@ -516,7 +516,7 @@ def _decided(
     if decision is None:
         return dataclasses.replace(attrs, reported_date=reported), None
     fields, note = born_due(
-        compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, not context.model_dates
+        compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, context.floors_due_horizon
     )
     return dataclasses.replace(attrs, reported_date=reported, expiry_fields=fields), note
 

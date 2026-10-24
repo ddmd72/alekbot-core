@@ -74,7 +74,7 @@ def _finish_version(
             raise _missing_for_version(update)
         decision = check_pin(update.expiry, pinned)
         fields, note = born_due(
-            compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, not context.model_dates
+            compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, context.floors_due_horizon
         )
         changes.update(fields)
     # The version's own entry has no `from`: the document is born in this state; the old one's closure is the other entry.
@@ -100,7 +100,7 @@ def _finish_in_place(
     elif update.expiry is not None:
         decision = check_pin(update.expiry, expiry_pinned(current.domain, current.type, current.tags))
         decided, note = born_due(
-            compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, not context.model_dates
+            compute_expiry(decision, reported, context.timezone), reported, now, context.timezone, context.floors_due_horizon
         )
         fields.update(decided)
     elif reported != stored_reported:
