@@ -17,7 +17,7 @@ from src.domain.agent import AgentResponse
 from src.domain.consolidation import MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch
 from src.domain.user import UserBotConfig
 from src.services.consolidation_service import ConsolidationService
-from tests.support.account_owners import OwnedAccounts
+from tests.support.account_owners import owner_zones
 from tests.support.firestore_eval import EvalDb
 
 USER = "user-abcdef123"
@@ -55,9 +55,10 @@ def service(queue, coordinator):
     factory.ensure_agents_for_user = AsyncMock()
     # The real memory-write lease on the evaluating fake (FACT_LIFECYCLE_RFC D9): each task takes and releases it.
     lease = FirestoreMemoryWriteLease(EvalDb(), EnvironmentConfig())
+    profiles = _Profiles()
     return ConsolidationService(queue=queue, coordinator=coordinator, agent_factory=factory,
-                                lease=lease, run_timeout_s=900.0, user_repo=_Profiles(),
-                                account_repo=OwnedAccounts({"acc-1": USER}))
+                                lease=lease, run_timeout_s=900.0, user_repo=profiles,
+                                owner_zones=owner_zones({"acc-1": USER}, profiles))
 
 
 class _Profiles:

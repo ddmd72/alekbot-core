@@ -33,6 +33,7 @@ async def test_every_state_round_trips_through_all_states(world):
         oldest_alert_at=NOW, queue_alert_at=NOW, current_question_id="q1", sent_on=date(2026, 10, 24), sent=1,
         delivery_failed_on=date(2026, 10, 23), message_language="uk",
         labels={"uk": {"still_true": "Так", "ended": "Ні"}, "en": {"still_true": "Yes"}},
+        label_digests={"uk": "d-uk", "en": "d-en"},
     )
     other = await world.seed_state(account_id="acc-2")
 
@@ -71,7 +72,7 @@ async def test_mark_enqueued_creates_a_missing_state(world):
     lambda s: s.mark_oldest_alert("acc", NOW),
     lambda s: s.mark_queue_alert("acc", NOW),
     lambda s: s.mark_queue_alert("acc", None),
-    lambda s: s.set_language("acc", "uk", {"still_true": "Так"}),
+    lambda s: s.set_language("acc", "uk", {"still_true": "Так"}, "d1"),
 ])
 async def test_every_other_mark_leaves_a_missing_state_missing(world, mark):
     assert await mark(world.review_store) is False
@@ -153,7 +154,7 @@ async def test_set_language_replaces_that_languages_labels_and_keeps_the_others(
     await world.seed_state(message_language="en", labels={"en": {"still_true": "Yes"}, "uk": {"still_true": "Так",
                                                                                               "stale": "старе"}})
 
-    assert await world.review_store.set_language("acc", "uk", {"still_true": "Так", "ended": "Закінчилось"})
+    assert await world.review_store.set_language("acc", "uk", {"still_true": "Так", "ended": "Закінчилось"}, "d1")
 
     state = await read_state(world)
     assert state.message_language == "uk"
@@ -165,7 +166,7 @@ async def test_set_language_replaces_that_languages_labels_and_keeps_the_others(
 
 async def test_set_language_adds_a_new_language(world):
     await world.seed_state()
-    assert await world.review_store.set_language("acc", "es", {"still_true": "Sí"})
+    assert await world.review_store.set_language("acc", "es", {"still_true": "Sí"}, "d1")
     state = await read_state(world)
     assert state.message_language == "es" and dict(state.labels["es"]) == {"still_true": "Sí"}
 
@@ -196,8 +197,8 @@ async def test_a_mark_on_a_state_document_with_only_some_fields_writes_only_its_
 
 @pytest.mark.parametrize("mark", [
     lambda s: s.set_offers("acc", {"f1": -1}),
-    lambda s: s.set_language("acc", "ukr", {"still_true": "Так"}),
-    lambda s: s.set_language("acc", "UK", {"still_true": "Так"}),
+    lambda s: s.set_language("acc", "ukr", {"still_true": "Так"}, "d1"),
+    lambda s: s.set_language("acc", "UK", {"still_true": "Так"}, "d1"),
     lambda s: s.mark_started("acc", datetime(2026, 10, 24, 9, 0)),
     lambda s: s.mark_queue_alert("acc", datetime(2026, 10, 24, 9, 0)),
 ])
@@ -219,7 +220,7 @@ async def test_a_state_that_no_longer_validates_is_raised_not_overwritten(world)
 @pytest.mark.parametrize("mark", [
     lambda s: s.mark_enqueued("", NOW),
     lambda s: s.mark_failed("", NOW),
-    lambda s: s.set_language("", "uk", {}),
+    lambda s: s.set_language("", "uk", {}, "d1"),
 ])
 async def test_an_empty_account_id_is_refused(world, mark):
     with pytest.raises(ValueError):

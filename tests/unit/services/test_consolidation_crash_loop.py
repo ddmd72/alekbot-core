@@ -18,7 +18,7 @@ from src.domain.consolidation import MAX_BATCH_ATTEMPTS, MAX_FAILED_REVIVALS, Ba
 from src.domain.memory_write_lease import lease_until
 from src.domain.user import UserBotConfig
 from src.services.consolidation_service import ConsolidationService
-from tests.support.account_owners import OwnedAccounts
+from tests.support.account_owners import owner_zones
 from tests.support.firestore_eval import EvalDb
 
 USER = "user-abcdef123"
@@ -59,10 +59,11 @@ def world(monkeypatch):
     monkeypatch.setattr(queue_module, "time", SimpleNamespace(time=lambda: state.now.timestamp()))
     queue = FirestoreConsolidationQueue(db, SimpleNamespace(consolidation_queue_collection="development_consolidation_queue"))
     coordinator = _Coordinator()
+    profiles = _Profiles()
     service = ConsolidationService(
         queue=queue, coordinator=coordinator, agent_factory=_Factory(),
-        lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=RUN_S, user_repo=_Profiles(),
-        account_repo=OwnedAccounts({"acc-1": USER}),
+        lease=FirestoreMemoryWriteLease(db, EnvironmentConfig()), run_timeout_s=RUN_S, user_repo=profiles,
+        owner_zones=owner_zones({"acc-1": USER}, profiles),
         clock=lambda: state.now,
     )
     return SimpleNamespace(queue=queue, coordinator=coordinator, service=service, state=state, db=db)

@@ -16,6 +16,7 @@ from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.consolidation import BatchStatus, ConsolidationBatch
 from src.ports.consolidation_queue import ConsolidationQueue
 from src.services.consolidation_service import ConsolidationService, _INTENT_CONSOLIDATE_FULL
+from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from tests.support.account_owners import OwnedAccounts
 from tests.support.firestore_eval import EvalDb
 
@@ -111,7 +112,7 @@ def service(queue, coordinator, agent_factory, user_repo, account_repo, lease):
         lease=lease,
         run_timeout_s=_RUN_TIMEOUT_S,
         user_repo=user_repo,
-        account_repo=account_repo,
+        owner_zones=OwnerTimezoneResolver(account_repo, user_repo),
     )
 
 
@@ -330,7 +331,7 @@ class TestExceptionHandling:
             lease=lease,
             run_timeout_s=_RUN_TIMEOUT_S,
             user_repo=None,
-            account_repo=accounts,
+            owner_zones=OwnerTimezoneResolver(accounts, None),
         )
         queue.get_pending_batches.return_value = [_make_batch()]
 

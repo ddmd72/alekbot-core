@@ -25,7 +25,7 @@ from src.domain.request_context import get_current_account_id, get_current_user_
 from src.domain.memory_write_lease import LEASE_BUSY_RETRY_DELAY_S, LEASE_MARGIN, defer_bucket, lease_until
 from src.domain.user import UserBotConfig
 from src.services.consolidation_service import ConsolidationService
-from tests.support.account_owners import OwnedAccounts
+from tests.support.account_owners import owner_zones
 from tests.support.firestore_eval import EvalDb, EvalDocRef
 
 USER = "user-abcdef123"
@@ -171,10 +171,11 @@ def make_service(queue, lease, tasks, coordinator, clock):
     def build(**over):
         kwargs = dict(
             queue=queue, coordinator=coordinator, agent_factory=AgentFactory(), lease=lease, run_timeout_s=RUN_S,
-            task_queue=tasks, user_repo=UserRepo({USER: ACC, USER2: ACC}), account_repo=OwnedAccounts({ACC: USER}),
-            clock=clock,
+            task_queue=tasks, user_repo=UserRepo({USER: ACC, USER2: ACC}), clock=clock,
         )
         kwargs.update(over)
+        # The owner's profile is read from the service's own user store, as before T7c (an override reaches both).
+        kwargs.setdefault("owner_zones", owner_zones({ACC: USER}, kwargs["user_repo"]))
         return ConsolidationService(**kwargs)
     return build
 

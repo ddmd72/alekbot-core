@@ -1,7 +1,7 @@
 """Facts S3 final review L1, L3, L4: the kit calls production's rules instead of copies, counts undated cleanup creates,
 and keeps the owner's $30 cap.
 
-The owner zone is compared with `ConsolidationService._owner_timezone` over the same fakes; the search hit is compared
+The owner zone is compared with production's `OwnerTimezoneResolver` (what `ConsolidationService` calls) over the same fakes; the search hit is compared
 field for field with the dict the real `FactManagementAdapter` returns from the real `SearchEnrichmentService`.
 """
 import argparse
@@ -25,7 +25,7 @@ from scripts.consolidation.s3_dry_run_kit import (
 )
 from src.adapters.fact_management_adapter import FactManagementAdapter
 from src.domain.request_context import RequestContext
-from src.services.consolidation_service import ConsolidationService
+from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, USER
 from tests.support.fact_store import INDEXES_FILE, FactStore
@@ -61,10 +61,9 @@ SCENARIOS = {
 @pytest.mark.parametrize("name", list(SCENARIOS))
 async def test_the_kit_resolves_the_owner_zone_as_the_consolidation_service_does(name):
     accounts, users = SCENARIOS[name]()
-    service = ConsolidationService.__new__(ConsolidationService)
-    service._account_repo, service._user_repo = SCENARIOS[name]()
+    production = OwnerTimezoneResolver(*SCENARIOS[name]())
 
-    assert await owner_timezone(accounts, users, ACCOUNT) == await service._owner_timezone(ACCOUNT)
+    assert await owner_timezone(accounts, users, ACCOUNT) == (await production.resolve(ACCOUNT)).zone
 
 
 async def test_a_zone_override_still_wins_in_the_kit_and_must_be_a_zone():

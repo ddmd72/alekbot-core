@@ -35,7 +35,7 @@ def _recording_handler(*_args, **kwargs):
 def _service():
     return ConsolidationService(
         queue=MagicMock(), coordinator=MagicMock(), agent_factory=MagicMock(), lease=MagicMock(), run_timeout_s=900.0,
-        user_repo=MagicMock(), account_repo=MagicMock(),
+        user_repo=MagicMock(), owner_zones=MagicMock(),
     )
 
 
