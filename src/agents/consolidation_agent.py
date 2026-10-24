@@ -26,8 +26,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..ports.indexed_email_repository import IndexedEmailRepository
-from ..domain.entities import FactDomain, FactState, normalize_fact_taxonomy
-from ..domain.fact_expiry import expiry_view
+from ..domain.entities import FactDomain, FactEntity, FactState, normalize_fact_taxonomy
 from ..domain.fact_lifecycle import CLOSING_STATES
 from ..domain.fact_argument_parsing import parse_enum
 from ..domain.fact_update import ParsedFactUpdate
@@ -36,6 +35,7 @@ from ..domain.local_time import local_day, local_moment, local_stamp
 from ..domain.new_fact_attributes import parse_derived_from, parse_new_fact
 from ..domain.pass_actor import PassActor
 from ..domain.request_context import get_effective_account_id
+from ..domain.search import fact_view
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_management_port import FactManagementPort
@@ -337,6 +337,16 @@ def _pass_call(tool_call: ToolCall, timezone_name: str) -> PassCall:
     if tool is PassTool.ASK:
         return PassCall(tool, fingerprint, key=_asked_fact(args))
     return PassCall(tool, fingerprint)
+
+
+def _session_time(value: Any) -> datetime:
+    """A message time as the session store keeps it (epoch seconds, an ISO string or a datetime; a naive one is UTC), as
+    aware UTC. Raises ValueError, TypeError, OverflowError or OSError for one that cannot be read."""
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    elif not isinstance(value, datetime):
+        value = datetime.fromtimestamp(value, tz=timezone.utc)
+    return as_utc(value)
 
 
 def _asked_fact(args: Dict[str, Any]) -> str:
@@ -1421,7 +1431,7 @@ class ConsolidationAgent(BaseAgent):
         present = [v for v in (message.get("created_at"), message.get("timestamp")) if v is not None and v != ""]
         for value in present:
             try:
-                as_utc(value)
+                _session_time(value)
             except (ValueError, TypeError, OverflowError, OSError):
                 continue
             return value
@@ -1434,7 +1444,7 @@ class ConsolidationAgent(BaseAgent):
         unreadable = 0
         for value in values:
             try:
-                readable.append(as_utc(value))
+                readable.append(_session_time(value))
             except (ValueError, TypeError, OverflowError, OSError):
                 unreadable += 1
         if unreadable:
@@ -1779,29 +1789,15 @@ class ConsolidationAgent(BaseAgent):
             }
             if fact.get("due"):
                 obj["due"] = fact["due"]
-            obj["reported"] = ConsolidationAgent._reported_day(fact.get("reported_date"))
+            obj["reported"] = fact.get("reported")
             lines.append(f"{i}. {json.dumps(obj, ensure_ascii=False)}")
         return "\n".join(lines)
 
     @staticmethod
-    def _reported_day(stamp: Any) -> Optional[str]:
-        """The calendar day written in a `reported_date` already shown in the owner's offset; None when absent or unreadable."""
-        if not stamp:
-            return None
-        try:
-            return (stamp if isinstance(stamp, datetime) else datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))).date().isoformat()
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _cluster_entry(fact: Any, timezone: str) -> Dict[str, Any]:
-        """A stored fact as Stage 2a sees a search hit: its decision as `expiry` / `due`, `reported_date` in the owner's zone."""
-        expiry, due = expiry_view(fact.expiry_kind, fact.ttl_days, fact.expires_at, timezone)
-        reported = local_moment(fact.reported_date, timezone).isoformat(timespec="seconds") if fact.reported_date else None
-        return {
-            "fact_id": fact.id, "content": fact.text, "similarity": 0.0,
-            "expiry": expiry, "due": due, "reported_date": reported,
-        }
+    def _cluster_entry(fact: FactEntity, timezone: str) -> Dict[str, Any]:
+        """A stored fact as Stage 2a sees a search hit: its `fact_view`, with no similarity."""
+        view = fact_view(fact, timezone)
+        return {"fact_id": view.pop("fact_id"), "content": view.pop("content"), "similarity": 0.0, **view}
     
     async def _execute_fact_management_tools(
         self,
@@ -2208,7 +2204,7 @@ class ConsolidationAgent(BaseAgent):
             moment = self._message_time(msg)
             if moment is not None:
                 try:
-                    time_str = local_stamp(as_utc(moment), timezone)
+                    time_str = local_stamp(_session_time(moment), timezone)
                 except (ValueError, TypeError, OverflowError, OSError):
                     time_str = ""
 
