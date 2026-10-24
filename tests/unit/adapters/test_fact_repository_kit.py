@@ -22,6 +22,7 @@ from src.domain.entities import (
 )
 from src.domain.request_context import RequestContext
 from src.services.biographical_context_service import BiographicalContextService
+from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, DROP, OTHER, T0, USER, as_legacy, make_fact, put_raw
 from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, embed, make_env_config
 from tests.support.firestore_eval import stored_vector
@@ -559,7 +560,7 @@ async def test_latest_by_lineage_returns_vectors_as_lists(store):
     assert all(type(v) is list for v in (got.vector, got.tags_vector, got.metadata_vector))
 
 
-# ------------------------------------------------------------------------------------------- invalidate_fact
+# ------------------------------------------------------------------------------------------- the Cabinet delete (CabinetFactService over this repository; facts S4 T2c, reviewer edit)
 
 async def test_invalidate_changes_state_valid_to_and_last_updated_only(store):
     await store.repo.add_fact(make_fact("x"))
@@ -567,7 +568,7 @@ async def test_invalidate_changes_state_valid_to_and_last_updated_only(store):
     foreign_before = copy.deepcopy(store.docs["f-foreign"])
     before = plain(store.docs["f-x"])
     started = datetime.now(timezone.utc)
-    await store.repo.invalidate_fact("f-x", ACC)
+    await CabinetFactService(store.repo).invalidate("f-x", ACC)
     after = plain(store.docs["f-x"])
     # Reviewer edit (facts S3, T3; plan §3.8): the Cabinet invalidate writes its trail entry in the same write, so the
     # changed set gains lifecycle_events, and the entry itself is pinned.
@@ -584,25 +585,27 @@ async def test_invalidate_a_missing_id_raises_value_error_and_writes_nothing(sto
     put_raw(store, "other", "other")
     before = copy.deepcopy(store.docs)
     with pytest.raises(ValueError):
-        await store.repo.invalidate_fact("missing", ACC)
+        await CabinetFactService(store.repo).invalidate("missing", ACC)
     assert store.docs == before
 
 
 async def test_invalidate_a_fact_of_another_account_or_a_legacy_one_raises_permission_error_and_writes_nothing(store):
+    # Reviewer ruling (facts S4, T2c): re-pointed at CabinetFactService, the refusal is unchanged. Tenancy of a write is
+    # the stored account_id, not the owner_id compatibility view of get_fact_by_id; the legacy refusal stays.
     put_raw(store, "foreign", "foreign", account_id=OTHER)
     put_raw(store, "legacy", "legacy", **as_legacy())
     before = copy.deepcopy(store.docs)
     for fact_id in ("foreign", "legacy"):
         with pytest.raises(PermissionError):
-            await store.repo.invalidate_fact(fact_id, ACC)
+            await CabinetFactService(store.repo).invalidate(fact_id, ACC)
     assert store.docs == before
 
 
 async def test_invalidate_twice_succeeds_and_moves_valid_to_and_last_updated(store):
     await store.repo.add_fact(make_fact("x"))
-    await store.repo.invalidate_fact("f-x", ACC)
+    await CabinetFactService(store.repo).invalidate("f-x", ACC)
     first = copy.deepcopy(store.docs["f-x"])
-    await store.repo.invalidate_fact("f-x", ACC)
+    await CabinetFactService(store.repo).invalidate("f-x", ACC)
     second = store.docs["f-x"]
     assert second["valid_to"] > first["valid_to"] and second["last_updated"] > first["last_updated"]
     assert second["state"] == "invalidated"

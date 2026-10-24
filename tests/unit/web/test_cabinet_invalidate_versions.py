@@ -10,8 +10,10 @@ from quart import Quart
 
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.domain.exceptions import FactResolutionError, FactWriteConflict
+from src.domain.stored_fact import StoredFact
+from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
-from tests.support.fact_kit import ACC, USER
+from tests.support.fact_kit import ACC, USER, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore, make_env_config
 from tests.support.fact_write import EXPIRY_NONE, ctx
 
@@ -23,9 +25,10 @@ def _app(fact_repo):
     session_service = MagicMock()
     session_service.verify_access_token = MagicMock(return_value={"sub": USER, "account_id": ACC, "role": "owner"})
     app = Quart("test_cabinet_invalidate_versions")
+    # Reviewer edit (facts S4, T2c): the route delegates to CabinetFactService, which the blueprint now takes.
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=fact_repo, embedding_service=MagicMock(),
+        fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo),
     ))
     return app
 
@@ -79,9 +82,19 @@ async def test_an_unknown_id_is_still_a_404(repo):
     assert status == 404
 
 
+def _failing_repo(error):
+    """Reviewer edit (facts S4, T2c): the route calls CabinetFactService, so the error comes from the port call that raises
+    it in production: the walk for FactResolutionError, the in-place write (both attempts) for FactWriteConflict."""
+    fact = make_fact("x")
+    walk = AsyncMock(side_effect=error) if isinstance(error, FactResolutionError) else AsyncMock(
+        return_value=StoredFact(fact, "token"))
+    return MagicMock(get_fact_by_id=AsyncMock(return_value=fact), resolve_current=walk,
+                     update_fact_fields=AsyncMock(side_effect=error), refresh_biographical_context_cache=AsyncMock())
+
+
 @pytest.mark.parametrize("error", [FactResolutionError("fact x was merged into y"), FactWriteConflict("x")])
 async def test_both_errors_are_a_409_carrying_their_message(error):
-    fact_repo = MagicMock(invalidate_fact=AsyncMock(side_effect=error), refresh_biographical_context_cache=AsyncMock())
+    fact_repo = _failing_repo(error)
 
     status, body = await _invalidate(fact_repo, "x")
 
@@ -90,7 +103,7 @@ async def test_both_errors_are_a_409_carrying_their_message(error):
 
 
 async def test_the_technical_message_is_logged_for_the_operator(caplog):
-    fact_repo = MagicMock(invalidate_fact=AsyncMock(side_effect=FactResolutionError("fact x was merged into y")))
+    fact_repo = _failing_repo(FactResolutionError("fact x was merged into y"))
 
     with caplog.at_level("WARNING"):
         await _invalidate(fact_repo, "x")

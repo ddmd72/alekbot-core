@@ -11,6 +11,7 @@ import pytest
 from src.domain.entities import FactState
 from src.domain.fact_embedding import fact_embedding_texts
 from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS, lifecycle_fields
+from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_store import FactStore, embed
 from tests.support.fact_write import EXPIRY_NONE, ctx
 from tests.support.firestore_eval import stored_vector
@@ -110,7 +111,7 @@ async def test_superseded_update_closes_the_version(store):
 
 async def test_repo_invalidate_sets_state_and_valid_to(store):
     fid = await _create(store)
-    await store.repo.invalidate_fact(fid, ACC)
+    await CabinetFactService(store.repo).invalidate(fid, ACC)
     doc = store.docs[fid]
     assert doc["state"] == "invalidated" and doc["valid_to"] is not None and doc["is_current"] is True
 
@@ -127,7 +128,7 @@ async def test_invalidate_with_another_accounts_id_is_refused_and_changes_nothin
     fid = await _create(store)
     before = copy.deepcopy(store.docs[fid])
     with pytest.raises(PermissionError):
-        await store.repo.invalidate_fact(fid, OTHER)
+        await CabinetFactService(store.repo).invalidate(fid, OTHER)
     assert store.docs[fid] == before
 
 
@@ -160,7 +161,7 @@ async def test_lifecycle_invariants_hold_for_every_stored_document(store):
         await store.adapter.update_fact(a, {"state": "ARCHIVED"}, ACC, context=ctx()),
         await store.adapter.update_fact(b, {"state": "SUPERSEDED", "superseded_by": d}, ACC, context=ctx()),
     ]
-    await store.repo.invalidate_fact(c, ACC)
+    await CabinetFactService(store.repo).invalidate(c, ACC)
     # Reviewer edit (facts S3, T2): only the system marks a fact stale (D1, the model's STALE is refused), so d is
     # staled the way the system writes in place, through the repository, and the stale invariant below keeps its document.
     stored_d = await store.repo.resolve_current(d, ACC, CONSOLIDATION_ACCEPTS)
