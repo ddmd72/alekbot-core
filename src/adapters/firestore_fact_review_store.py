@@ -131,8 +131,9 @@ class FirestoreFactReviewStore(FactReviewStore):
         )
         found = self._valid(await query.get())
         if len(found) > 1:
-            logger.error(f"❌ [FactReviewStore] {len(found)} questions share one message; the first by id is used")
-        return min(found, key=lambda q: q.question_id) if found else None
+            logger.error(f"❌ [FactReviewStore] {len(found)} questions share one message; none is answered by it")
+            return None
+        return found[0] if found else None
 
     async def get_state(self, account_id: str) -> Optional[FactReviewState]:
         if not account_id:
@@ -176,6 +177,8 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def claim_next(self, account_id: str, today: date, session_id: str) -> Optional[FactReviewQuestion]:
         if not account_id:
             raise ValueError("account_id is required to claim a review question")
+        if not session_id:
+            raise ValueError("session_id is required to claim a review question")
         if isinstance(today, datetime):
             raise ValueError("today must be a date, not a datetime")
         state_ref = self._states.document(account_id)
@@ -183,7 +186,11 @@ class FirestoreFactReviewStore(FactReviewStore):
         async def body(transaction: Any) -> Optional[FactReviewQuestion]:
             snap = await state_ref.get(transaction=transaction)
             state = self._the_state(snap) if snap.exists else FactReviewState(account_id=account_id)
-            questions = self._valid(await self._open_of_account(account_id).get(transaction=transaction))
+            snaps = await self._open_of_account(account_id).get(transaction=transaction)
+            # The pointed-at question decides whether one is out: unreadable, it is raised, never skipped (a skipped one
+            # would read as "nothing out" and a second question would go). Other unreadable ones are skipped.
+            read = [self._the_question(s) if s.id == state.current_question_id else self._readable(s) for s in snaps]
+            questions = [q for q in read if q is not None]
             if not may_send(state, today, current_question(state, questions)):
                 return None
             chosen = next_in_queue(questions)
@@ -217,7 +224,11 @@ class FirestoreFactReviewStore(FactReviewStore):
         def change(state: FactReviewState) -> Dict[str, Any]:
             changes = _released(state, question_id)
             if failed_today:
-                if state.sent_on is None:
+                # `sent_on` is the day of the latest claim: this question's day only while the pointer names it.
+                if state.current_question_id != question_id:
+                    logger.warning(f"⚠️ [FactReviewStore] failed delivery of {question_id[:12]}, which is not the "
+                                   f"current question; delivery_failed_on not set")
+                elif state.sent_on is None:
                     logger.warning(f"⚠️ [FactReviewStore] failed delivery of {question_id[:12]} with no claim day; "
                                    f"delivery_failed_on not set")
                 else:
