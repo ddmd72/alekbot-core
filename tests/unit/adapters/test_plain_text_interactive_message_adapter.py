@@ -16,6 +16,8 @@ from src.domain.messaging import MessageRef, ResponseChannel
 class RefChannel:
     """A channel that numbers what it sends and answers the ref, as Telegram's does."""
 
+    max_message_length = 4096  # the ResponseChannel contract's property; Telegram's value
+
     def __init__(self, platform, channel_id):
         self.platform = platform
         self.channel_id = channel_id
