@@ -13,8 +13,8 @@ from typing import Any, Dict, List
 from src.agents.consolidation_agent import _TrackingFactManagement, _TrackingFactUpdates
 from src.domain.entities import FactState
 from src.domain.fact_review_answers import ARCHIVE_ONLY
-from src.domain.fact_tool_result import HISTORY_FACT_ID
 from src.domain.fact_update import ParsedFactUpdate
+from src.domain.fact_update_outcome import FactUpdateOutcome
 from src.ports.fact_management_port import FactManagementPort
 from src.ports.fact_update_port import FactUpdatePort
 from tests.support.fact_write import ctx
@@ -48,11 +48,13 @@ class RecordingPort(FactManagementPort, FactUpdatePort):
                              "evidence_at": evidence_at, "reason": reason, "history": history})
         if update.state is not None:
             self.facts[fact_id] = update.state.value
-        result = {"fact_id": fact_id, "status": "updated", "version": 1, "message": "ok"}
+        # Reviewer edit (S4 T8e): the typed path answers with a typed outcome (T3c review M2), not the model's dict.
+        history_id = None
         if history:
             self.facts["f-history"] = "current"
-            result[HISTORY_FACT_ID] = "f-history"
-        return result
+            history_id = "f-history"
+        return FactUpdateOutcome(fact_id=fact_id, written_id=fact_id, version=1, current_id=fact_id,
+                                 history_fact_id=history_id)
 
     async def merge_facts(self, fact_ids, merged_content, metadata, *, context):
         return {"new_fact_id": None, "old_fact_ids": [], "status": "failed", "message": "unused"}
@@ -72,7 +74,7 @@ async def test_the_tracker_forwards_all_three_keywords_and_records_the_write():
         "fact_id": "f-old", "update": ARCHIVE_ONLY, "context": owner,
         "evidence_at": SAID, "reason": "ended q=q7 (digit)", "history": HISTORY,
     }]
-    assert result[HISTORY_FACT_ID] == "f-history" and port.facts == {"f-old": "archived", "f-history": "current"}
+    assert result.history_fact_id == "f-history" and port.facts == {"f-old": "archived", "f-history": "current"}
     assert tracker.wrote is True
     assert tracker.changed == [("f-history", HISTORY)]
 

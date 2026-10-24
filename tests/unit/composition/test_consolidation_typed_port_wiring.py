@@ -12,6 +12,7 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 from src.agents.consolidation_agent import ConsolidationAgent, _TrackingFactUpdates
 from src.domain.agent import AgentConfig
 from src.domain.fact_update import ParsedFactUpdate
+from src.domain.fact_update_outcome import FactUpdateOutcome
 from src.domain.request_context import RequestContext
 from src.domain.user import PerformanceTier
 from src.ports.fact_update_port import FactUpdatePort
@@ -28,7 +29,8 @@ class _Typed(FactUpdatePort):
 
     async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None, history=None):
         self.calls.append((fact_id, update, account_id, evidence_at, reason, history))
-        return {"fact_id": f"{fact_id}-v2", "status": "updated"}
+        # Reviewer edit (S4 T8e): a typed outcome (T3c review M2), not the model's dict: a new version written.
+        return FactUpdateOutcome(fact_id=fact_id, written_id=f"{fact_id}-v2", version=2, current_id=fact_id)
 
 
 def _kwargs(**over):
@@ -69,7 +71,7 @@ async def test_the_tracker_sends_a_typed_update_to_the_typed_port_and_records_it
         "f1", ParsedFactUpdate(content="new text"), "acc", context=ctx(), reason="because", history="it ended",
     )
 
-    assert result["status"] == "updated" and typed.calls[0][0] == "f1" and typed.calls[0][4:] == ("because", "it ended")
+    assert result.written and typed.calls[0][0] == "f1" and typed.calls[0][4:] == ("because", "it ended")
     assert tracker.wrote and tracker.changed == [("f1-v2", "new text")]
     assert not model.method_calls
 

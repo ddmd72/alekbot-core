@@ -1,7 +1,11 @@
 """The typed entry refuses an update the parser's rules refuse, before anything is read or written (facts S4 · T3c
 review M1), and the wrappers refuse a port without the typed path when they are built (review L1).
 
-On the evaluating Firestore fake, through the real repository, write service and adapter."""
+On the evaluating Firestore fake, through the real repository, write service and adapter.
+
+Reviewer edit (S4 T8e): `apply_fact_update` returns a typed outcome (T3c review M2); these assertions read its model
+dict through the one renderer (`tests.support.fact_write.rendered`), so each keeps its meaning.
+"""
 import copy
 from datetime import date, datetime, timedelta, timezone
 
@@ -19,7 +23,7 @@ from src.ports.fact_management_port import FactManagementPort
 from src.ports.fact_update_port import FactUpdatePort
 from tests.support.fact_kit import ACC, T0, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
-from tests.support.fact_write import ctx
+from tests.support.fact_write import ctx, rendered
 from tests.support.typed_writes import build_consolidation_agent
 
 UTC = timezone.utc
@@ -58,9 +62,9 @@ async def test_a_typed_update_the_rules_refuse_fails_with_nothing_written(store,
     seed(store)
     before = copy.deepcopy(store.docs)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", update, ACC, context=ctx(actor), evidence_at=datetime.now(UTC), reason=ENDED,
-    )
+    ))
 
     assert res == {"fact_id": "old", "status": "failed", "message": typed_update_refusal(update)}
     assert res["message"] is not None
@@ -69,7 +73,7 @@ async def test_a_typed_update_the_rules_refuse_fails_with_nothing_written(store,
 
 @pytest.mark.parametrize("update", REFUSED, ids=IDS)
 async def test_the_check_comes_before_the_fact_is_looked_up(store, update):
-    res = await store.adapter.apply_fact_update("nope", update, ACC, context=ctx("owner"), reason=ENDED)
+    res = rendered(await store.adapter.apply_fact_update("nope", update, ACC, context=ctx("owner"), reason=ENDED))
 
     assert res["status"] == "failed" and res["message"] == typed_update_refusal(update)
 
@@ -77,9 +81,9 @@ async def test_the_check_comes_before_the_fact_is_looked_up(store, update):
 async def test_a_valid_typed_update_still_writes(store):
     seed(store)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", ParsedFactUpdate(state=FactState.ARCHIVED), ACC, context=ctx("owner"), reason=ENDED,
-    )
+    ))
 
     assert res["status"] == "updated" and store.docs["old"]["state"] == "archived"
 

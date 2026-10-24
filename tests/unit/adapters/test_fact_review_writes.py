@@ -5,6 +5,9 @@ in one transaction.
 
 On the evaluating Firestore fake with the index refusal ON, through the real repository, write service and adapter.
 Assertions are on the tool result and on the raw stored documents.
+
+Reviewer edit (S4 T8e): `apply_fact_update` returns a typed outcome (T3c review M2); these assertions read its model
+dict through the one renderer (`tests.support.fact_write.rendered`), so each keeps its meaning.
 """
 import copy
 from datetime import date, datetime, timedelta, timezone
@@ -22,7 +25,7 @@ from src.domain.fact_update import parse_fact_update
 from src.domain.stored_fact import StoredFact
 from tests.support.fact_kit import ACC, T0, USER, make_fact, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
-from tests.support.fact_write import ctx, horizon
+from tests.support.fact_write import ctx, horizon, rendered
 
 UTC = timezone.utc
 ACTORS = ["review", "owner"]
@@ -69,10 +72,10 @@ async def test_a_stale_fact_is_revived_with_the_reason_and_a_later_evidence_date
     seed(store, "old")
     evidence = datetime.now(UTC) - timedelta(days=1)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update({"state": "current", "expiry": horizon(30)}), ACC, context=ctx(actor),
         evidence_at=evidence, reason=REVIVED,
-    )
+    ))
 
     assert res["status"] == "updated" and res["fact_id"] == "old" and HISTORY_FACT_ID not in res, res
     doc = store.docs["old"]
@@ -86,10 +89,10 @@ async def test_a_stale_fact_is_revived_with_the_reason_and_a_later_evidence_date
 async def test_a_current_fact_waiting_for_an_answer_accepts_the_review_write(store, actor):
     seed(store, "old", state="current")
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update({"expiry": horizon(60)}), ACC, context=ctx(actor), evidence_at=datetime.now(UTC),
         reason=REVIVED,
-    )
+    ))
 
     assert res["status"] == "updated", res
     doc = store.docs["old"]
@@ -104,10 +107,10 @@ async def test_a_current_fact_waiting_for_an_answer_accepts_the_review_write(sto
 async def test_a_rewrite_of_a_stale_fact_is_a_current_version_and_supersedes_the_stale_one(store, actor):
     seed(store, "old", "works at Acme")
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update({"content": "works at Beta", "expiry": horizon(90)}), ACC, context=ctx(actor),
         reason=REWRITTEN,
-    )
+    ))
 
     assert res["status"] == "updated" and res["fact_id"] != "old" and res["version"] == 2, res
     new = store.docs[res["fact_id"]]
@@ -125,10 +128,10 @@ async def test_an_archive_with_history_writes_both_documents(store, actor):
     said = datetime.now(UTC) - timedelta(hours=2)
     before = set(store.docs)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update({"state": "archived"}), ACC, context=ctx(actor), evidence_at=said, reason=ENDED,
         history=HISTORY,
-    )
+    ))
 
     assert res["status"] == "updated" and res["fact_id"] == "old", res
     history_id = res[HISTORY_FACT_ID]
@@ -163,10 +166,10 @@ async def test_a_conflict_on_the_first_attempt_writes_no_history_fact_and_the_re
 
     store.repo.archive_and_add = counted
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update({"state": "archived"}), ACC, context=ctx("owner"), evidence_at=datetime.now(UTC),
         reason=ENDED, history=HISTORY,
-    )
+    ))
 
     assert res["status"] == "updated", res
     assert attempts == [res[HISTORY_FACT_ID]] * 2                    # the first commit lost the race; the same fact again
@@ -179,9 +182,9 @@ async def test_an_archive_without_history_writes_the_archive_only(store, actor):
     seed(store, "old")
     before = set(store.docs)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update({"state": "archived"}), ACC, context=ctx(actor), reason=ARCHIVED,
-    )
+    ))
 
     assert res["status"] == "updated" and HISTORY_FACT_ID not in res, res
     assert set(store.docs) == before
@@ -194,9 +197,9 @@ async def test_an_archive_without_history_writes_the_archive_only(store, actor):
 async def test_an_invalidate_closes_the_stale_fact(store, actor):
     seed(store, "old")
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update({"state": "invalidated"}), ACC, context=ctx(actor), reason=INVALIDATED,
-    )
+    ))
 
     assert res["status"] == "updated", res
     assert store.docs["old"]["state"] == "invalidated"
@@ -211,10 +214,10 @@ async def test_a_supersede_by_a_current_neighbour_passes(store, actor):
     seed(store, "old")
     seed(store, "near", state="current")
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update({"state": "superseded", "superseded_by": "near"}), ACC, context=ctx(actor),
         reason=superseded_reason("near"),
-    )
+    ))
 
     assert res["status"] == "updated", res
     doc = store.docs["old"]
@@ -229,10 +232,10 @@ async def test_a_supersede_by_a_stale_neighbour_is_refused_and_nothing_is_writte
     seed(store, "near")
     before = copy.deepcopy(store.docs)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update({"state": "superseded", "superseded_by": "near"}), ACC, context=ctx(actor),
         reason=superseded_reason("near"),
-    )
+    ))
 
     assert res["status"] == "failed" and res["message"].startswith("successor fact near is stale"), res
     assert store.docs == before
@@ -263,10 +266,10 @@ async def test_history_with_anything_but_an_exact_review_archive_is_refused_and_
     seed(store, "old")
     before = copy.deepcopy(store.docs)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update(updates), ACC, context=ctx(actor), evidence_at=datetime.now(UTC), reason=ENDED,
         history=HISTORY,
-    )
+    ))
 
     assert res["status"] == "failed" and res["message"].startswith("history"), res
     assert "nothing was written" in res["message"]
@@ -277,9 +280,9 @@ async def test_history_without_evidence_at_is_refused_and_nothing_is_written(sto
     seed(store, "old")
     before = copy.deepcopy(store.docs)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update({"state": "archived"}), ACC, context=ctx("owner"), reason=ENDED, history=HISTORY,
-    )
+    ))
 
     assert res["status"] == "failed" and "evidence_at" in res["message"], res
     assert store.docs == before
@@ -302,10 +305,10 @@ async def test_a_history_archive_without_a_reason_fails_and_writes_neither_docum
     seed(store, "old")
     before = copy.deepcopy(store.docs)
 
-    res = await store.adapter.apply_fact_update(
+    res = rendered(await store.adapter.apply_fact_update(
         "old", parse_fact_update({"state": "archived"}), ACC, context=ctx("owner"), evidence_at=datetime.now(UTC),
         history=HISTORY,
-    )
+    ))
 
     assert res["status"] == "failed" and "none was given" in res["message"], res
     assert store.docs == before
