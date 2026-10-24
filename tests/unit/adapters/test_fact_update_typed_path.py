@@ -14,7 +14,7 @@ import pytest
 from scripts.consolidation import s3_dry_run_kit as kit_module
 from scripts.consolidation.s3_dry_run_kit import DryRunKit
 from src.adapters.fact_management_adapter import FactManagementAdapter
-from src.agents.consolidation_agent import _TrackingFactManagement
+from src.agents.consolidation_agent import _TrackingFactManagement, _TrackingFactUpdates, _tracker_for
 from src.domain.entities import ExpiryKind, FactState
 from src.domain.fact_expiry import Expiry
 from src.domain.fact_review_answer_kind import AnswerKind
@@ -24,6 +24,7 @@ from src.domain.fact_review_reasons import answer_reason, basis_reason, history_
 from src.domain.fact_tool_result import HISTORY_FACT_ID
 from src.domain.fact_update import ParsedFactUpdate
 from src.ports.fact_management_port import FactManagementPort
+from src.ports.fact_update_port import FactUpdatePort
 from tests.support.fact_kit import ACC, T0, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import ctx
@@ -165,8 +166,11 @@ async def test_a_missing_fact_is_not_found(store):
 # ------------------------------------------------------------------------------------------------ the wrappers
 
 async def test_the_tracker_forwards_the_typed_update_and_records_the_history_fact(store):
+    # Reviewer edit (facts S4, T3c fix round, L1): the typed update moved to `_TrackingFactUpdates`; the run builds its
+    # tracker with `_tracker_for`, which over the production adapter is the typed one.
     seed(store)
-    tracker = _TrackingFactManagement(store.adapter)
+    tracker = _tracker_for(store.adapter)
+    assert isinstance(tracker, _TrackingFactUpdates)
 
     res = await tracker.apply_fact_update(
         "old", ARCHIVE_ONLY, ACC, context=ctx("owner"), evidence_at=datetime.now(UTC), reason=ENDED, history=HISTORY,
@@ -178,7 +182,7 @@ async def test_the_tracker_forwards_the_typed_update_and_records_the_history_fac
 
 async def test_the_tracker_records_a_typed_rewrite_under_the_version_written(store):
     seed(store)
-    tracker = _TrackingFactManagement(store.adapter)
+    tracker = _tracker_for(store.adapter)   # reviewer edit (T3c fix round, L1)
 
     res = await tracker.apply_fact_update(
         "old", ParsedFactUpdate(content="works at Beta", expiry=Expiry(ExpiryKind.HORIZON, days=90)), ACC,
@@ -190,7 +194,7 @@ async def test_the_tracker_records_a_typed_rewrite_under_the_version_written(sto
 
 async def test_the_tracker_records_nothing_for_a_refused_typed_update(store):
     seed(store)
-    tracker = _TrackingFactManagement(store.adapter)
+    tracker = _tracker_for(store.adapter)   # reviewer edit (T3c fix round, L1)
 
     await tracker.apply_fact_update("old", ARCHIVE_ONLY, ACC, context=ctx("review"))
 
@@ -212,8 +216,13 @@ class _ModelOnly(FactManagementPort):
 
 
 async def test_the_tracker_over_a_port_without_the_typed_path_says_so():
+    # Reviewer edit (facts S4, T3c fix round, L1): the refusal moved from the call to the build of the typed tracker.
+    # Over a model-only port the run gets the model-only tracker, which offers no typed update at all.
     with pytest.raises(TypeError, match="FactUpdatePort"):
-        await _TrackingFactManagement(_ModelOnly()).apply_fact_update("f", ARCHIVE_ONLY, ACC, context=ctx("owner"))
+        _TrackingFactUpdates(_ModelOnly())
+    model_only = _tracker_for(_ModelOnly())
+    assert type(model_only) is _TrackingFactManagement and not isinstance(model_only, FactUpdatePort)
+    assert not hasattr(model_only, "apply_fact_update")
 
 
 async def test_the_kits_recorder_forwards_the_typed_update_into_the_overlay_only(store, tmp_path, monkeypatch):
