@@ -111,7 +111,7 @@ def meta(**over: Any) -> Dict[str, Any]:
 
 
 async def seed(store: FactStore, text: str, **over: Any) -> str:
-    result = await store.adapter.create_fact(text, meta(**over), context=ctx(actor="seed"))
+    result = await store.adapter.create_fact(text, meta(**over), context=ctx(actor="stage1"))
     assert result["status"] == "created", result
     return result["fact_id"]
 
