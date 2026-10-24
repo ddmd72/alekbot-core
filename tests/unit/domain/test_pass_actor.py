@@ -6,34 +6,35 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.agents.consolidation_agent import ConsolidationAgent
-from src.domain.consolidation_pass_stats import OUTCOME_BORN_DUE, OUTCOME_OK, ConsolidationPassStats
+from src.domain.consolidation_pass_stats import OUTCOME_BORN_DUE, ConsolidationPassStats
 from src.domain.entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
-from src.domain.exceptions import FactExpiryError
-from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
+from src.domain.exceptions import FactBornDueError
+from src.domain.fact_lifecycle import CABINET_ACCEPTS, CONSOLIDATION_ACCEPTS, REVIEW_ACCEPTS
 from src.domain.fact_update import parse_fact_update
 from src.domain.fact_update_lifecycle import finish_fact_update
 from src.domain.fact_update_plan import plan_fact_update
 from src.domain.fact_write_context import FactWriteContext
-from src.domain.pass_actor import WORDING_CLEANUP, WORDING_REVIEW, WORDING_STAGE1, PassActor
+from src.domain.pass_actor import PassActor
+from src.domain.refusal_wording import RefusalWording
 from tests.support.fact_store import INDEXES_FILE, FactStore
-from tests.support.fact_write import ctx, horizon
+from tests.support.fact_write import horizon
 
 UTC = timezone.utc
 NOW = datetime(2026, 10, 23, 9, 0, tzinfo=UTC)
 SPAN = (NOW - timedelta(days=1), NOW - timedelta(hours=2))
-REVIEW_ACCEPTS = frozenset({FactState.STALE, FactState.CURRENT})
+STALE_OR_CURRENT = frozenset({FactState.STALE, FactState.CURRENT})
 S3_LABELS = ("stage1", "email", "stage2a", "stage2b", "cluster", "backstop")
 
 # actor: (model_dates, floors_due_horizon, accepts, born_due_refusal_is_loss, refusal_wording)
 ROWS = {
-    "stage1": (True, False, CONSOLIDATION_ACCEPTS, False, WORDING_STAGE1),
-    "email": (True, False, CONSOLIDATION_ACCEPTS, False, WORDING_STAGE1),
-    "stage2a": (False, True, CONSOLIDATION_ACCEPTS, True, WORDING_CLEANUP),
-    "stage2b": (False, True, CONSOLIDATION_ACCEPTS, True, WORDING_CLEANUP),
-    "cluster": (False, True, CONSOLIDATION_ACCEPTS, True, WORDING_CLEANUP),
-    "backstop": (False, True, CONSOLIDATION_ACCEPTS, False, WORDING_CLEANUP),
-    "review": (False, False, REVIEW_ACCEPTS, True, WORDING_REVIEW),
-    "owner": (False, False, REVIEW_ACCEPTS, False, WORDING_REVIEW),
+    "stage1": (True, False, CONSOLIDATION_ACCEPTS, False, RefusalWording.STAGE1),
+    "email": (True, False, CONSOLIDATION_ACCEPTS, False, RefusalWording.STAGE1),
+    "stage2a": (False, True, CONSOLIDATION_ACCEPTS, True, RefusalWording.CLEANUP),
+    "stage2b": (False, True, CONSOLIDATION_ACCEPTS, True, RefusalWording.CLEANUP),
+    "cluster": (False, True, CONSOLIDATION_ACCEPTS, True, RefusalWording.CLEANUP),
+    "backstop": (False, True, CONSOLIDATION_ACCEPTS, False, RefusalWording.CLEANUP),
+    "review": (False, False, STALE_OR_CURRENT, True, RefusalWording.REVIEW),
+    "owner": (False, False, STALE_OR_CURRENT, False, RefusalWording.REVIEW),
 }
 
 
@@ -56,8 +57,14 @@ def test_every_property_of_every_row(label):
     assert actor.refusal_wording == wording
 
 
+def test_the_state_sets_sit_beside_each_other_in_fact_lifecycle():
+    assert CONSOLIDATION_ACCEPTS == frozenset({FactState.CURRENT})
+    assert REVIEW_ACCEPTS == STALE_OR_CURRENT
+    assert REVIEW_ACCEPTS < CABINET_ACCEPTS
+
+
 def test_the_three_wordings_differ_and_the_review_pair_shares_one():
-    assert len({WORDING_STAGE1, WORDING_CLEANUP, WORDING_REVIEW}) == 3
+    assert len(set(RefusalWording)) == 3 == len({w.value for w in RefusalWording})
     assert PassActor.REVIEW.refusal_wording == PassActor.OWNER.refusal_wording
 
 
@@ -70,24 +77,26 @@ def test_a_label_that_is_no_pass_is_a_value_error(label):
 # --- for_pass equals what each reader kept before -----------------------------------------------------------------
 
 
-def old_write_context(label, timezone_name, span):
-    """`ConsolidationAgent._write_context` before the table."""
-    return FactWriteContext(actor=label, timezone=timezone_name, span=span, model_dates=label in ("stage1", "email"))
+def assert_equals_the_old_write_context(got, label, timezone_name, span):
+    """`ConsolidationAgent._write_context` before the table: the label, the zone, the span and `model_dates` for the
+    conversation passes only."""
+    assert (got.actor, got.timezone, got.span) == (label, timezone_name, span)
+    assert got.model_dates is (label in ("stage1", "email"))
 
 
 @pytest.mark.parametrize("label", S3_LABELS)
 @pytest.mark.parametrize("zone,span", [("UTC", None), ("Europe/Madrid", SPAN)], ids=["bare", "with_span"])
 def test_for_pass_equals_the_old_write_context_for_every_s3_label(label, zone, span):
     got = FactWriteContext.for_pass(PassActor(label), zone, span)
-    assert got == old_write_context(label, zone, span)
-    assert type(got.actor) is str and got.actor == label
+    assert_equals_the_old_write_context(got, label, zone, span)
+    assert got.actor is PassActor(label) and str(got.actor) == label and f"{got.actor}" == label
 
 
 @pytest.mark.parametrize("label", S3_LABELS)
 def test_the_agents_write_context_is_for_pass(label):
     assert ConsolidationAgent._write_context(label, "Asia/Tokyo", SPAN) == FactWriteContext.for_pass(
         PassActor(label), "Asia/Tokyo", SPAN)
-    assert ConsolidationAgent._write_context(label) == old_write_context(label, "UTC", None)
+    assert_equals_the_old_write_context(ConsolidationAgent._write_context(label), label, "UTC", None)
 
 
 def test_the_agents_write_context_refuses_a_label_that_is_no_pass():
@@ -99,6 +108,7 @@ def test_the_agents_write_context_refuses_a_label_that_is_no_pass():
 def test_for_pass_takes_every_field_from_the_row(label):
     got = FactWriteContext.for_pass(PassActor(label), "Europe/Paris", SPAN)
     assert (got.actor, got.timezone, got.span, got.model_dates) == (label, "Europe/Paris", SPAN, ROWS[label][0])
+    assert got == FactWriteContext(actor=label, timezone="Europe/Paris", span=SPAN)     # a plain label of a pass converts
 
 
 def test_for_pass_span_defaults_to_none():
@@ -118,19 +128,22 @@ def test_the_context_properties_read_the_row(label):
     assert got.accepts == ROWS[label][2] and got.floors_due_horizon is ROWS[label][1]
 
 
-def test_a_context_with_an_actor_that_is_no_pass_refuses_to_say_what_it_floors_or_accepts():
-    odd = FactWriteContext(actor="x", timezone="UTC", span=None, model_dates=True)
+@pytest.mark.parametrize("label", ["", "x", "seed", "Stage1", "consolidation"])
+def test_a_context_with_an_actor_that_is_no_pass_is_refused_where_it_is_built(label):
     with pytest.raises(ValueError):
-        odd.floors_due_horizon
-    with pytest.raises(ValueError):
-        odd.accepts
+        FactWriteContext(actor=label, timezone="UTC", span=None)
+
+
+def test_a_context_has_no_model_dates_to_pass_in():
+    with pytest.raises(TypeError):
+        FactWriteContext(actor="stage1", timezone="UTC", span=None, model_dates=False)     # type: ignore[call-arg]
 
 
 # --- the readers of the table -------------------------------------------------------------------------------------
 
 
 def stats(label):
-    return ConsolidationPassStats(label, "model-x", "medium", 15, "abcdef1234567890")
+    return ConsolidationPassStats(PassActor(label), "model-x", "medium", 15, "abcdef1234567890")
 
 
 @pytest.mark.parametrize("label", ROWS)
@@ -143,14 +156,15 @@ def test_an_unanswered_born_due_refusal_is_abandoned_exactly_when_the_row_says_i
 
 
 @pytest.mark.parametrize("label", ["consolidation", "p", ""])
-def test_a_label_that_is_no_pass_loses_nothing_on_a_born_due_refusal(label):
+def test_the_stats_of_a_label_that_is_no_pass_are_refused(label):
+    with pytest.raises(ValueError):
+        ConsolidationPassStats(label, "model-x", "medium", 15, "abcdef1234567890")      # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("label", ROWS)
+def test_the_stats_name_the_pass_by_its_actor(label):
     s = stats(label)
-    calls = [("create_fact", {"content": "the trip on the 3rd"})]
-    s.record_turn(calls)
-    s.record_outcomes(calls, [OUTCOME_BORN_DUE])
-    s.record_turn([("create_fact", {"content": "other"})])
-    s.record_outcomes([("create_fact", {"content": "other"})], [OUTCOME_OK])
-    assert (s.born_due, s.abandoned) == (1, 0)
+    assert (s.actor, s.pass_label) == (PassActor(label), label)
 
 
 @pytest.mark.parametrize("label", ROWS)
@@ -186,7 +200,7 @@ def test_the_update_path_floors_a_due_horizon_for_every_actor_whose_row_floors(l
 
 @pytest.mark.parametrize("label", ["review", "owner"])
 def test_the_update_path_refuses_a_due_horizon_for_an_actor_whose_row_does_not_floor(label):
-    with pytest.raises(FactExpiryError, match="counted from when the owner said it"):
+    with pytest.raises(FactBornDueError):
         rewrite_with_a_due_horizon(label)
 
 
@@ -210,11 +224,11 @@ async def create_with_a_due_horizon(store, context):
 
 @pytest.mark.parametrize("label", ["stage2a", "stage2b", "cluster", "backstop"])
 async def test_the_create_path_floors_a_due_horizon_for_every_actor_whose_row_floors(store, label):
-    res = await create_with_a_due_horizon(store, ctx(actor=label, model_dates=False))
+    res = await create_with_a_due_horizon(store, FactWriteContext.for_pass(PassActor(label), "UTC"))
     assert res["status"] == "created" and "had already passed" in res["note"]
 
 
 @pytest.mark.parametrize("label", ["review", "owner"])
 async def test_the_create_path_refuses_a_due_horizon_for_an_actor_whose_row_does_not_floor(store, label):
-    res = await create_with_a_due_horizon(store, ctx(actor=label, model_dates=False))
+    res = await create_with_a_due_horizon(store, FactWriteContext.for_pass(PassActor(label), "UTC"))
     assert (res["status"], res["refused"]) == ("failed", "expiry")

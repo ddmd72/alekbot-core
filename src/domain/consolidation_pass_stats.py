@@ -56,14 +56,6 @@ def stats_alerts_enabled(raw: str) -> bool:
     return raw.strip().lower() not in ("0", "false", "no", "off")
 
 
-def _born_due_refusal_is_loss(pass_label: str) -> bool:
-    """The pass actor's row; a label that is no pass actor (the loop's default `consolidation`) loses nothing."""
-    try:
-        return PassActor(pass_label).born_due_refusal_is_loss
-    except ValueError:
-        return False
-
-
 def _short(name: str) -> str:
     return _SHORT_NAMES.get(name, name)
 
@@ -165,13 +157,13 @@ class ConsolidationPassStats:
 
     def __init__(
         self,
-        pass_label: str,
+        actor: PassActor,
         model: str,
         effort: Any,
         max_turns: int,
         user_id: str,
     ) -> None:
-        self.pass_label = pass_label
+        self.actor = PassActor(actor)
         self.model = model
         self.effort = effort
         self.max_turns = max_turns
@@ -205,6 +197,10 @@ class ConsolidationPassStats:
             self.error_turns += 1
 
     @property
+    def pass_label(self) -> str:
+        return self.actor.value
+
+    @property
     def expiry_errors(self) -> int:
         """Refused calls over `expiry`, born-due ones included."""
         return sum(1 for o in self._outcomes if o.outcome in (OUTCOME_EXPIRY, OUTCOME_BORN_DUE))
@@ -216,10 +212,12 @@ class ConsolidationPassStats:
     def _abandoned(self) -> List[_Outcome]:
         """Refusals over a missing or malformed `expiry` that no later successful call answers: a create or merge
         with the same text, a non-closing update of the same fact (retiring the fact is the loss, not an answer).
-        On a pass whose born-due refusal is a loss (`PassActor`) it counts the same way, and its answer (a past-tense rewrite, so other text)
-        is found by `_rewrites`. Approximate on purpose: a retry of a missing-`expiry` refusal that rewrites the text
+        On a pass whose born-due refusal is a loss (`PassActor`) it counts the same way, and its answer (a
+        past-tense rewrite, so other text) is found by `_rewrites`. Approximate on purpose: a retry of a missing-`expiry` refusal that rewrites the text
         counts as abandoned, which errs towards an alert."""
-        counted = (OUTCOME_EXPIRY, OUTCOME_BORN_DUE) if _born_due_refusal_is_loss(self.pass_label) else (OUTCOME_EXPIRY,)
+        counted = (
+            (OUTCOME_EXPIRY, OUTCOME_BORN_DUE) if self.actor.born_due_refusal_is_loss else (OUTCOME_EXPIRY,)
+        )
         found = []
         for i, refused in enumerate(self._outcomes):
             if refused.outcome not in counted or refused.name not in _WRITE_TOOLS:

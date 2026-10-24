@@ -14,17 +14,17 @@ from .pass_actor import PassActor
 class FactWriteContext:
     """The pass a fact write belongs to. The caller builds it once per pass; there is no default and no ambient copy.
 
-    `actor`: a `PassActor` value; build the context with `for_pass`, which takes `model_dates` from the actor's row.
-    `span`: (first, last) time the owner spoke in this batch, aware. `model_dates`: True = a model `reported_date` is
-    clamped into the span and used (stage1, email); False = ignored (the system keeps the date).
+    `actor`: the pass (`PassActor`; a label that is no pass is refused here, a plain `str` of a pass is converted). Every
+    rule that depends on the pass (`model_dates`, `accepts`, `floors_due_horizon`) reads the actor's row, so a context
+    cannot disagree with the table. `span`: (first, last) time the owner spoke in this batch, aware.
     """
 
-    actor: str
+    actor: PassActor
     timezone: str
     span: Optional[Tuple[datetime, datetime]]
-    model_dates: bool
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "actor", PassActor(self.actor))
         try:
             ZoneInfo(self.timezone)
         except (ZoneInfoNotFoundError, KeyError, ValueError, OSError):
@@ -38,18 +38,23 @@ class FactWriteContext:
 
     @classmethod
     def for_pass(cls, actor: PassActor, timezone: str, span: Optional[Tuple[datetime, datetime]] = None) -> "FactWriteContext":
-        """The context of a pass: the one place a pass label becomes the write rules."""
-        return cls(actor=actor.value, timezone=timezone, span=span, model_dates=actor.model_dates)
+        """The context of a pass."""
+        return cls(actor=actor, timezone=timezone, span=span)
+
+    @property
+    def model_dates(self) -> bool:
+        """True = a model `reported_date` is clamped into the span and used (the conversation passes); False = ignored."""
+        return self.actor.model_dates
 
     @property
     def accepts(self) -> FrozenSet[FactState]:
-        """The states the write's own target may be in; raises ValueError when `actor` is no `PassActor`."""
-        return PassActor(self.actor).accepts
+        """The states the write's own target may be in."""
+        return self.actor.accepts
 
     @property
     def floors_due_horizon(self) -> bool:
-        """Whether a horizon that resolves within a day is floored to two days from now; raises like `accepts`."""
-        return PassActor(self.actor).floors_due_horizon
+        """Whether a horizon that resolves within a day is floored to two days from now."""
+        return self.actor.floors_due_horizon
 
 
 def as_utc(value: Union[float, str, datetime]) -> datetime:

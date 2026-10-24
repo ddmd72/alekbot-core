@@ -6,22 +6,17 @@ three label lists (the agent's, the stats', the write rules' `not model_dates`);
 """
 
 from dataclasses import dataclass
-from enum import Enum
-from typing import Dict, FrozenSet, Final
+from enum import StrEnum
+from typing import Dict, Final, FrozenSet
 
 from .entities import FactState
-from .fact_lifecycle import CONSOLIDATION_ACCEPTS
-
-# The three wordings of a date refusal. The texts need dates and live where the refusal is built; this is the choice.
-WORDING_STAGE1: Final[str] = "stage1"
-WORDING_CLEANUP: Final[str] = "cleanup"
-WORDING_REVIEW: Final[str] = "review"
-
-_REVIEW_ACCEPTS: Final[FrozenSet[FactState]] = frozenset({FactState.STALE, FactState.CURRENT})
+from .fact_lifecycle import CONSOLIDATION_ACCEPTS, REVIEW_ACCEPTS
+from .refusal_wording import RefusalWording
 
 
-class PassActor(str, Enum):
-    """The pass a fact write comes from. `PassActor("x")` raises ValueError for a label that is no pass."""
+class PassActor(StrEnum):
+    """The pass a fact write comes from. `PassActor("x")` raises ValueError for a label that is no pass; `str()` and
+    f-strings give the bare label, which the trail and the stored documents carry."""
 
     STAGE1 = "stage1"
     EMAIL = "email"
@@ -53,8 +48,8 @@ class PassActor(str, Enum):
         return _ROWS[self].born_due_refusal_is_loss
 
     @property
-    def refusal_wording(self) -> str:
-        """Which text a date refusal gets: WORDING_STAGE1, WORDING_CLEANUP or WORDING_REVIEW."""
+    def refusal_wording(self) -> RefusalWording:
+        """Which text a date refusal gets."""
         return _ROWS[self].refusal_wording
 
 
@@ -64,31 +59,31 @@ class _Row:
     floors_due_horizon: bool
     accepts: FrozenSet[FactState]
     born_due_refusal_is_loss: bool
-    refusal_wording: str
+    refusal_wording: RefusalWording
 
 
 _CONVERSATION = _Row(
     model_dates=True, floors_due_horizon=False, accepts=CONSOLIDATION_ACCEPTS, born_due_refusal_is_loss=False,
-    refusal_wording=WORDING_STAGE1,
+    refusal_wording=RefusalWording.STAGE1,
 )
 # A cleanup pass has a model that can answer a refusal, and the fact it holds is stored memory: dropping it is a loss.
 _CLEANUP = _Row(
     model_dates=False, floors_due_horizon=True, accepts=CONSOLIDATION_ACCEPTS, born_due_refusal_is_loss=True,
-    refusal_wording=WORDING_CLEANUP,
+    refusal_wording=RefusalWording.CLEANUP,
 )
 # Code, no model: nothing to answer a refusal, so none is counted.
 _BACKSTOP = _Row(
     model_dates=False, floors_due_horizon=True, accepts=CONSOLIDATION_ACCEPTS, born_due_refusal_is_loss=False,
-    refusal_wording=WORDING_CLEANUP,
+    refusal_wording=RefusalWording.CLEANUP,
 )
 # The review brings a hidden fact back with a horizon counted from now (S4-D5), so it has no floor to fall back on.
 _REVIEW = _Row(
-    model_dates=False, floors_due_horizon=False, accepts=_REVIEW_ACCEPTS, born_due_refusal_is_loss=True,
-    refusal_wording=WORDING_REVIEW,
+    model_dates=False, floors_due_horizon=False, accepts=REVIEW_ACCEPTS, born_due_refusal_is_loss=True,
+    refusal_wording=RefusalWording.REVIEW,
 )
 _OWNER = _Row(
-    model_dates=False, floors_due_horizon=False, accepts=_REVIEW_ACCEPTS, born_due_refusal_is_loss=False,
-    refusal_wording=WORDING_REVIEW,
+    model_dates=False, floors_due_horizon=False, accepts=REVIEW_ACCEPTS, born_due_refusal_is_loss=False,
+    refusal_wording=RefusalWording.REVIEW,
 )
 
 _ROWS: Final[Dict[PassActor, _Row]] = {
