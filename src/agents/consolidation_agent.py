@@ -30,6 +30,7 @@ from ..domain.entities import FactDomain, FactEntity, FactState, normalize_fact_
 from ..domain.fact_lifecycle import CLOSING_STATES
 from ..domain.fact_argument_parsing import parse_enum
 from ..domain.fact_update import ParsedFactUpdate
+from ..domain.fact_update_outcome import FactUpdateOutcome
 from ..domain.fact_write_context import FactWriteContext, as_utc, span_of
 from ..domain.local_time import local_date, local_day, local_moment, local_stamp
 from ..domain.new_fact_attributes import parse_derived_from, parse_new_fact
@@ -55,7 +56,7 @@ from ..domain.fact_review_language import (
 )
 from ..domain.fact_review_question import FactReviewQuestion
 from ..domain.fact_review_task import FactReviewTask, ReviewItem, decode_review_task
-from ..domain.fact_tool_result import HISTORY_FACT_ID, STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
+from ..domain.fact_tool_result import STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..infrastructure.agent_config import CONSOLIDATION
 from ..infrastructure.agent_manifest import Intent
@@ -621,18 +622,19 @@ class _TrackingFactManagement(FactManagementPort):
         result = await self._real.update_fact(
             fact_id=fact_id, updates=updates, account_id=account_id, context=context
         )
-        self._record_update(result, updates.get("content"), None)
+        if result.get("status") == STATUS_UPDATED:
+            self._record_update(result.get("fact_id"), updates.get("content"), None, None)
         return result
 
-    def _record_update(self, result: Dict[str, Any], content: Optional[str], history: Optional[str]) -> None:
-        """One rule for both update paths: an updated result is a write; a content change records the version written,
-        a history fact records itself."""
-        if result.get("status") != STATUS_UPDATED:
-            return
+    def _record_update(
+        self, written_id: Optional[str], content: Optional[str], history_id: Optional[str], history: Optional[str]
+    ) -> None:
+        """One rule for both update paths, called for an update that wrote: it is a write; a content change records the
+        version written, a history fact records itself."""
         self.wrote = True
-        if content and (written_id := result.get("fact_id")):
+        if content and written_id:
             self.changed.append((written_id, content))
-        if history and (history_id := result.get(HISTORY_FACT_ID)):
+        if history and history_id:
             self.changed.append((history_id, history))
 
     async def merge_facts(
@@ -666,12 +668,13 @@ class _TrackingFactUpdates(_TrackingFactManagement, FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        result = await self._typed.apply_fact_update(
+    ) -> FactUpdateOutcome:
+        outcome = await self._typed.apply_fact_update(
             fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history
         )
-        self._record_update(result, update.content, history)
-        return result
+        if outcome.written:
+            self._record_update(outcome.written_id, update.content, outcome.history_fact_id, history)
+        return outcome
 
 
 

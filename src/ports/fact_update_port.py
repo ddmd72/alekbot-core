@@ -4,9 +4,10 @@ with the inputs only code has (the evidence moment, the code-built trail reason,
 """
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from ..domain.fact_update import ParsedFactUpdate
+from ..domain.fact_update_outcome import FactUpdateOutcome
 from ..domain.fact_write_context import FactWriteContext
 
 
@@ -22,13 +23,13 @@ class FactUpdatePort(ABC):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> FactUpdateOutcome:
         """Apply `update` to one fact under the write rules of `FactManagementPort.update_fact` (versions, in place,
         resolution through `context.accepts`, the conflict retry, tenancy), which this method is the second entry to.
 
         Args:
             fact_id: any id of the fact's chain; a superseded id is followed to the current version.
-            update: the decided update; `notes` are carried into the result's `note`. It is held to the rules the
+            update: the decided update; its `notes` are carried into the outcome's `notes`. It is held to the rules the
                 model's arguments are parsed under (domain.fact_update.typed_update_refusal) before anything is read.
             account_id: the caller's account.
             context: the pass the write belongs to; its actor is written to the trail.
@@ -41,8 +42,11 @@ class FactUpdatePort(ABC):
                 when a call may carry it; history_fact and history_trail build the fact). The archive and the new fact
                 are one transaction (FactRepository.archive_and_add).
 
-        Returns: the result dict of `update_fact` (domain.fact_tool_result words). With `history`, `fact_id` is the
-            archived fact and "history_fact_id" (domain.fact_tool_result.HISTORY_FACT_ID) the new one.
-        Errors: never raises. A write the domain refuses is "failed" with nothing written; its `message` is the
-            refusal as the domain states it (for the caller's log, not a model's instructions).
+        Returns: the typed outcome (domain.fact_update_outcome.FactUpdateOutcome): the document written, its version,
+            the current document the update was applied to and the notes; with `history`, the archived fact is the one
+            written and `history_fact_id` the new one. `update_fact`'s dict is this outcome rendered
+            (domain.fact_tool_result.update_result).
+        Errors: never raises. A write that is refused or fails has `refusal` (domain.fact_update_outcome.UpdateRefusal,
+            e.g. CONFLICT after the retry, EXPIRY, BORN_DUE) and nothing written; its `refusal_text` is the refusal as the
+            domain states it (for the caller's log, not a model's instructions).
         """

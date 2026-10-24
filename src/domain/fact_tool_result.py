@@ -1,6 +1,7 @@
 """The words of the fact tool result: the dict `FactManagementPort` returns for a write.
 
-The adapter writes them, the consolidation agent reads the outcome, the tracker watches the writes, the directive-cap
+The adapter writes them (an update's dict through `update_result`, from its typed `FactUpdateOutcome`), the consolidation
+agent reads the outcome, the tracker watches the writes, the directive-cap
 backstop checks one status, and the dry-run kit counts them. One spelling lives here, so a misspelt literal cannot turn
 a write into "not a write". The words are `domain.fact_tool_result`; the port's docstrings point here.
 """
@@ -10,6 +11,7 @@ from typing import Any, Dict, FrozenSet, List, Sequence
 from .consolidation_pass_stats import (
     OUTCOME_BORN_DUE, OUTCOME_ERROR, OUTCOME_EXPIRY, OUTCOME_OK, OUTCOME_REVIEW_REFUSAL, OUTCOME_SCOPE_REFUSAL,
 )
+from .fact_update_outcome import EXPIRY_REFUSALS, FactUpdateOutcome, UpdateRefusal
 from .fact_write_context import NO_READABLE_SOURCE_NOTE
 
 # `status` of a tool result.
@@ -57,10 +59,41 @@ def refused_result(fact_id: Any, tag: str, message: str) -> Dict[str, Any]:
     return {"fact_id": fact_id, "status": STATUS_FAILED, "refused": tag, "message": message}
 
 
+def update_result(outcome: FactUpdateOutcome) -> Dict[str, Any]:
+    """The model's `update_fact` result for a typed update outcome: the one renderer of an update's dict.
+
+    Written: `fact_id` (the document written), `status` updated, `version`, `message`, then `history_fact_id`, the notes
+    (`with_notes`) and `resolved_from`, in that order. Not written: `fact_id` (the id asked for), `status` (not_found
+    or failed), the expiry tags of an expiry refusal, and the refusal text as `message`."""
+    if outcome.refusal is not None:
+        status = STATUS_NOT_FOUND if outcome.refusal is UpdateRefusal.NOT_FOUND else STATUS_FAILED
+        tags = expiry_refusal_tags(outcome.refusal is UpdateRefusal.BORN_DUE) if outcome.refusal in EXPIRY_REFUSALS else {}
+        return {"fact_id": outcome.fact_id, "status": status, **tags, "message": outcome.refusal_text}
+    message = (
+        "Fact updated successfully" if outcome.history_fact_id is None
+        else f"Fact archived; history fact {outcome.history_fact_id} created beside it"
+    )
+    if outcome.resolved_from is not None:
+        message = (
+            f"{message}; fact {outcome.fact_id} was replaced earlier, "
+            f"so the update was applied to its current version {outcome.current_id}"
+        )
+    result: Dict[str, Any] = {
+        "fact_id": outcome.written_id, "status": STATUS_UPDATED, "version": outcome.version, "message": message,
+    }
+    if outcome.history_fact_id is not None:
+        result[HISTORY_FACT_ID] = outcome.history_fact_id
+    with_notes(result, outcome.notes)
+    if outcome.resolved_from is not None:
+        result["resolved_from"] = outcome.resolved_from
+    return result
+
+
 def outcome_of(result: Any) -> str:
     """What a tool result came to, as one of the `OUTCOME_*` values of `consolidation_pass_stats`: an expiry refusal
     (born due or not), a review refusal (`basis`, `ask`), a scope refusal (`scope`), a failed or missing fact or an
-    `error` key, else ok.
+    `error` key, else ok. It reads the model's dict (the tool results a pass's stats count); code reads a typed update's
+    `FactUpdateOutcome` itself.
     A result that is not a dict is ok."""
     if not isinstance(result, dict):
         return OUTCOME_OK

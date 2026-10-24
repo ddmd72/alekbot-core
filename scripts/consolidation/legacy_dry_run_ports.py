@@ -7,9 +7,10 @@ pass. The S3 kit (`s3_dry_run_kit.py`) records both paths and is the way to dry-
 """
 
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from src.domain.fact_update import ParsedFactUpdate
+from src.domain.fact_update_outcome import FactUpdateOutcome
 from src.domain.fact_write_context import FactWriteContext
 from src.ports.fact_management_port import FactManagementPort
 from src.ports.fact_update_port import FactUpdatePort
@@ -28,7 +29,7 @@ class NoTypedWrites(FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> FactUpdateOutcome:
         raise RuntimeError(
             "this bench's dry run has no typed write path (the review pass): run it on the S3 kit (--s3-kit)"
         )

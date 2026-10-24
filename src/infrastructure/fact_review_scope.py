@@ -40,11 +40,12 @@ from ..domain.fact_tool_result import (
     REFUSED_SCOPE,
     STATUS_ASKED,
     STATUS_FAILED,
-    WRITTEN_STATUSES,
     expiry_refusal_tags,
     refused_result,
+    update_result,
 )
 from ..domain.fact_update import parse_fact_update
+from ..domain.fact_update_outcome import EXPIRY_REFUSALS
 from ..domain.fact_write_context import FactWriteContext
 from ..domain.local_time import local_date
 from ..domain.pass_actor import PassActor
@@ -83,8 +84,9 @@ class FactReviewScope:
 
     async def update_fact(self, args: Mapping[str, Any]) -> Dict[str, Any]:
         """One `update_fact(fact_id, updates, basis?, history?)` (`basis` and `history` also accepted inside `updates`):
-        refused with a tagged text, or written; the result is the write path's (a resolution or conflict failure reads
-        as the fact having changed outside the review)."""
+        refused with a tagged text, or written; the result is the write path's typed outcome rendered for the model
+        (`update_result`; a failure other than an expiry refusal, with the fact changed, reads as the fact having
+        changed outside the review)."""
         async with self._lock:
             return await self._update(args)
 
@@ -152,7 +154,7 @@ class FactReviewScope:
         )
         if refusal is not None:
             return refused_result(fact_id, REFUSED_BASIS, refusal)
-        result = await self._writer.apply_fact_update(
+        outcome = await self._writer.apply_fact_update(
             current.id, update, self._account_id, context=self._context,
             evidence_at=evidence_moment(basis, named, question),
             reason=review_reason(
@@ -161,15 +163,16 @@ class FactReviewScope:
             ),
             history=history,
         )
-        if result.get("status") not in WRITTEN_STATUSES:
-            if "refused" not in result and not await self._unchanged(stored, lineage):
+        if not outcome.written:
+            # An expiry refusal is about the update itself; any other may be the fact having changed outside the review.
+            if outcome.refusal not in EXPIRY_REFUSALS and not await self._unchanged(stored, lineage):
                 return refused_result(fact_id, REFUSED_SCOPE, changed_outside_refusal(UPDATE_FACT_PLACE))
-            return result
-        written = await self._facts.get_fact_by_id(result["fact_id"])
+            return update_result(outcome)
+        written = await self._facts.get_fact_by_id(outcome.written_id or "")
         if written is None:
-            raise RuntimeError(f"fact {result['fact_id']} was written and cannot be read back")
+            raise RuntimeError(f"fact {outcome.written_id} was written and cannot be read back")
         self._record(lineage, written, basis)
-        return result
+        return update_result(outcome)
 
     async def _resolve(self, fact_id: str, lineage: str) -> Optional[StoredFact]:
         """The document `fact_id` resolves to, when it is the one the pass expects for its lineage (the batch's, or the

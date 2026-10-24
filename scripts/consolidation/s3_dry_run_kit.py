@@ -47,7 +47,10 @@ from src.domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepS
 from src.domain.fact_resolution import resolve_chain
 from src.domain.fact_review_rules import stale_order_key
 from src.domain.fact_update import ParsedFactUpdate
-from src.domain.fact_tool_result import NOTE_NO_READABLE_SOURCE, STATUS_CREATED, WRITTEN_STATUSES
+from src.domain.fact_tool_result import (
+    NOTE_NO_READABLE_SOURCE, STATUS_CREATED, WRITTEN_STATUSES, note_codes_of, update_result,
+)
+from src.domain.fact_update_outcome import FactUpdateOutcome
 from src.domain.fact_write_context import FactWriteContext, as_utc
 from src.domain.pass_actor import PassActor
 from src.domain.prompt_v3.slot import OwnerType
@@ -815,11 +818,11 @@ class WriteRecorder(FactManagementPort, FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> FactUpdateOutcome:
         # The report row shows what was sent; a typed update sends no model JSON, so its decision is shown as written.
         reported = update.reported_date.isoformat() if update.reported_date is not None else None
-        return await self._kit.logged(
-            "update", context, update.expiry, reported, "fact_id",
+        return await self._kit.logged_typed(
+            context, update.expiry, reported,
             self._inner.apply_fact_update(  # type: ignore[attr-defined]  # checked when built
                 fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history,
             ),
@@ -1091,6 +1094,34 @@ class DryRunKit:
     ) -> Dict[str, Any]:
         """Run one write call and add its report row. The row's place is taken before the call, so rows keep the order
         the model emitted them in even when a turn's calls run concurrently."""
+        row = self._open_row(action, context, expiry_sent, reported_sent, derived_from)
+        result = await call
+        written_id = result.get(id_key)
+        written = result.get("status") in WRITTEN_STATUSES
+        await self._close_row(
+            row, result.get("status"), result.get("refused"), written_id, written, result.get("note"),
+            NOTE_NO_READABLE_SOURCE in (result.get("note_codes") or []),
+        )
+        return result
+
+    async def logged_typed(
+        self, context: FactWriteContext, expiry_sent: Any, reported_sent: Any, call: Any,
+    ) -> FactUpdateOutcome:
+        """`logged` for a typed update: what was written and the notes' codes come from the typed outcome; the row's
+        status, `refused` and notes are in the words of the model's dict (`update_result`), so both kinds of row read
+        alike in the report."""
+        row = self._open_row("update", context, expiry_sent, reported_sent, None)
+        outcome: FactUpdateOutcome = await call
+        shown = update_result(outcome)
+        await self._close_row(
+            row, shown["status"], shown.get("refused"), outcome.written_id if outcome.written else outcome.fact_id,
+            outcome.written, shown.get("note"), NOTE_NO_READABLE_SOURCE in note_codes_of(outcome.notes),
+        )
+        return outcome
+
+    def _open_row(
+        self, action: str, context: FactWriteContext, expiry_sent: Any, reported_sent: Any, derived_from: Any,
+    ) -> Dict[str, Any]:
         row: Dict[str, Any] = {
             "pass": self.current_pass or context.actor,
             "actor": context.actor,
@@ -1104,14 +1135,18 @@ class DryRunKit:
             "derived_from_unreadable": False,
         }
         self.rows.append(row)
-        result = await call
-        written_id = result.get(id_key)
+        return row
+
+    async def _close_row(
+        self, row: Dict[str, Any], status: Any, refused: Any, written_id: Any, written: bool, notes: Any,
+        derived_from_unreadable: bool,
+    ) -> None:
         stored = None
-        if written_id and self.repo is not None and result.get("status") in WRITTEN_STATUSES:
+        if written_id and self.repo is not None and written:
             stored = await self.repo.get_fact_by_id(written_id)
         row.update({
-            "status": result.get("status"),
-            "refused": result.get("refused"),
+            "status": status,
+            "refused": refused,
             "fact_id": written_id,
             "decision_stored": None if stored is None else {
                 "expiry_kind": getattr(stored.expiry_kind, "value", stored.expiry_kind),
@@ -1120,10 +1155,9 @@ class DryRunKit:
             },
             "reported_date_chosen": None if stored is None else stored.reported_date.isoformat(),
             "state_stored": None if stored is None else stored.state.value,
-            "notes": result.get("note"),
-            "derived_from_unreadable": NOTE_NO_READABLE_SOURCE in (result.get("note_codes") or []),
+            "notes": notes,
+            "derived_from_unreadable": derived_from_unreadable,
         })
-        return result
 
     def report(self) -> Dict[str, Any]:
         forms: Dict[str, Counter] = {}
