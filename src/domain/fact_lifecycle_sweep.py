@@ -7,9 +7,10 @@ from .due_fact import DueFact
 from .entities import FactState
 from .fact_lifecycle import lifecycle_event, lifecycle_fields, with_event
 from .fact_lifecycle_day import FactLifecycleDay
+from .fact_review_rules import POOL_CAP
 
 BREAKER_REVIEW_AGE: Final[timedelta] = timedelta(hours=72)
-BREAKER_BACKLOG: Final[int] = 50
+BREAKER_BACKLOG: Final[int] = POOL_CAP
 _OFF_VALUES: Final[frozenset[str]] = frozenset({"0", "false", "no", "off"})
 
 

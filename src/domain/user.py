@@ -242,6 +242,9 @@ class UserBotConfig(BaseModel):
     consolidation_threshold: Optional[int] = None
     consolidation_batch_size: Optional[int] = None
 
+    # Memory review (FACT_LIFECYCLE_RFC D6): days between reviews; None = the account default, then the system default.
+    fact_review_interval_days: Optional[int] = None
+
     # ========================================================================
     # NEW Multi-Vector Search Session (2026-02-07): Search context limits
     # Plan: docs/SESSION_2026_02_07_MULTI_VECTOR_SEMANTIC_SEARCH.md
