@@ -65,7 +65,7 @@ Feature and refactoring proposals.
 Quality gates and where the test rules live.
 
 ### [12 Risks](./12_risks/README.md)
-Risk management and [Implementation Roadmap](./12_risks/IMPLEMENTATION_ROADMAP.md).
+Open risks and technical debt ([register](./12_risks/IMPLEMENTATION_ROADMAP.md)).
 
 ---
 
