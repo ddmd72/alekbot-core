@@ -1,12 +1,13 @@
 """Facts S3 · T8: FirestoreFactLifecycleCounters on the evaluating fake (FACT_LIFECYCLE_RFC D10, plan §3.16)."""
 import asyncio
+from dataclasses import fields
 from datetime import date, datetime, timezone
 
 import pytest
 
 from src.adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
 from src.config.environment import EnvironmentConfig
-from src.domain.fact_lifecycle_day import COUNTER_FIELDS, SNAPSHOT_FIELDS, FactLifecycleDay
+from src.domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot
 from src.ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from tests.support.firestore_eval import EvalDb
 
@@ -32,9 +33,10 @@ def counters(db, env):
 
 def snapshot(**over):
     values = {"run_at": RUN_AT, "due": 4, "newly_due": 3, "no_decision": 1, "staled": 0, "would_stale": 3,
-              "deferred": 0, "stale_conflicts": 0, "breaker": "would trip", "backlog": 2, "oldest_stale_days": 11}
+              "deferred": 0, "stale_conflicts": 0, "breaker": "would trip", "backlog": 2, "oldest_stale_days": 11,
+              "review_enqueued": 0}
     values.update(over)
-    return values
+    return SweepSnapshot(**values)
 
 
 def test_it_is_the_port(counters):
@@ -142,14 +144,12 @@ async def test_nothing_stored_has_a_field_named_expires_at(counters, db, env):
 @pytest.mark.parametrize("call", [
     lambda c: c.record_sweep("", DAY, snapshot()),
     lambda c: c.record_sweep("acc-1", datetime(2026, 10, 23, 7, 0), snapshot()),
-    lambda c: c.record_sweep("acc-1", DAY, {"expires_at": RUN_AT}),
-    lambda c: c.record_sweep("acc-1", DAY, {"expiry_tool_errors": 0}),
     lambda c: c.add("", DAY, {"expiry_tool_errors": 1}),
     lambda c: c.add("acc-1", DAY, {"due": 1}),
     lambda c: c.add("acc-1", DAY, {"expiry_tool_errors": -1}),
     lambda c: c.add("acc-1", DAY, {"expiry_tool_errors": 1.5}),
     lambda c: c.add("acc-1", DAY, {"expiry_tool_errors": True}),
-], ids=["no-account", "datetime-day", "ttl-field", "counter-in-snapshot", "add-no-account", "snapshot-in-add",
+], ids=["no-account", "datetime-day", "add-no-account", "snapshot-in-add",
         "negative", "float", "bool"])
 async def test_a_bad_argument_is_refused_before_any_write(counters, db, env, call):
     with pytest.raises(ValueError):
@@ -158,9 +158,18 @@ async def test_a_bad_argument_is_refused_before_any_write(counters, db, env, cal
     assert db.collection(env.fact_lifecycle_daily_collection).docs == {}
 
 
+@pytest.mark.parametrize("extra", [{"expires_at": RUN_AT}, {"expiry_tool_errors": 0}], ids=["ttl-field", "counter-in-snapshot"])
+def test_a_snapshot_cannot_carry_a_ttl_field_or_a_counter(extra):
+    # The snapshot is a typed value now: a field outside it cannot be built, so it never reaches `record_sweep`.
+    with pytest.raises(TypeError):
+        snapshot(**extra)
+
+
 def test_the_two_field_sets_do_not_overlap_and_name_no_ttl_field():
-    assert not (SNAPSHOT_FIELDS & COUNTER_FIELDS)
-    assert "expires_at" not in SNAPSHOT_FIELDS | COUNTER_FIELDS
+    snapshot_fields = {f.name for f in fields(SweepSnapshot)}
+    counter_fields = {c.value for c in CounterField}
+    assert not (snapshot_fields & counter_fields)
+    assert "expires_at" not in snapshot_fields | counter_fields
 
 
 def test_the_collections_carry_the_environment_prefix_and_are_not_the_fact_collections():
