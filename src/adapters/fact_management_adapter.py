@@ -8,16 +8,15 @@ from ..domain.fact_expiry import EXPIRY_IGNORED_ON_CLOSE
 from ..domain.fact_lifecycle import CONSOLIDATION_ACCEPTS, superseded_closure
 from ..domain.fact_review_answers import history_fact, history_moved_refusal, history_refusal, history_trail
 from ..domain.fact_tool_result import (
-    HISTORY_FACT_ID,
     STATUS_CREATED,
     STATUS_FAILED,
     STATUS_MERGED,
-    STATUS_NOT_FOUND,
-    STATUS_UPDATED,
     expiry_refusal_tags,
+    update_result,
     with_notes,
 )
 from ..domain.fact_update import ParsedFactUpdate, parse_fact_update, typed_update_refusal
+from ..domain.fact_update_outcome import FactUpdateOutcome, UpdateRefusal
 from ..domain.fact_update_lifecycle import finish_fact_update
 from ..domain.fact_update_plan import (
     FactUpdatePlan,
@@ -274,9 +273,12 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
             context: The pass this write belongs to (actor, owner's zone, span, who decides dates)
 
         Returns:
-            Result dict with fact_id (the document written), status, version, message
+            Result dict with fact_id (the document written), status, version, message: the outcome of the one apply,
+            rendered (update_result)
         """
-        return await self._update(fact_id, account_id, context, lambda: parse_fact_update(updates, context.timezone))
+        return update_result(
+            await self._update(fact_id, account_id, context, lambda: parse_fact_update(updates, context.timezone))
+        )
 
     async def apply_fact_update(
         self,
@@ -288,7 +290,7 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> FactUpdateOutcome:
         """
         Code's update: `update` already decided, with the inputs only code has. It is first held to the rules the
         model's arguments are parsed under (`typed_update_refusal`); a refused one is failed, nothing read or written.
@@ -299,17 +301,17 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
             history: The text of a fact to create beside an archive (history_refusal, history_fact)
 
         Returns:
-            Result dict as update_fact's, plus history_fact_id with history
+            The typed outcome (update_fact renders the same outcome); history_fact_id with history
         """
         invalid = typed_update_refusal(update)
         if invalid is not None:
             logger.warning(f"⚠️  [FactManagement] update {fact_id[:8]} refused (invalid update): {invalid}")
-            return {"fact_id": fact_id, "status": STATUS_FAILED, "message": invalid}
+            return FactUpdateOutcome.refused(fact_id, UpdateRefusal.INVALID, invalid)
         if history is not None:
             refusal = history_refusal(history, update, context, evidence_at)
             if refusal is not None:
                 logger.warning(f"⚠️  [FactManagement] update {fact_id[:8]} refused (history): {refusal}")
-                return {"fact_id": fact_id, "status": STATUS_FAILED, "message": refusal}
+                return FactUpdateOutcome.refused(fact_id, UpdateRefusal.HISTORY, refusal)
         return await self._update(
             fact_id, account_id, context, lambda: update, evidence_at=evidence_at, reason=reason, history=history
         )
@@ -324,8 +326,8 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """The one apply of both entries: every refusal becomes a failed result. `parse` gives the update once, after
+    ) -> FactUpdateOutcome:
+        """The one apply of both entries: every refusal becomes a refused outcome. `parse` gives the update once, after
         the first resolution."""
         try:
             return await self._update_with_one_retry(
@@ -333,29 +335,19 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
             )
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] update_fact {fact_id[:8]} refused (expiry): {e}")
-            return {
-                "fact_id": fact_id,
-                "status": STATUS_FAILED,
-                **expiry_refusal_tags(isinstance(e, FactBornDueError)),
-                "message": str(e),
-            }
+            kind = UpdateRefusal.BORN_DUE if isinstance(e, FactBornDueError) else UpdateRefusal.EXPIRY
+            return FactUpdateOutcome.refused(fact_id, kind, str(e))
         except FactResolutionError as e:
             logger.warning(f"⚠️  [FactManagement] Cannot resolve fact {fact_id[:8]}: {e}")
-            return {"fact_id": fact_id, "status": STATUS_FAILED, "message": str(e)}
+            return FactUpdateOutcome.refused(fact_id, UpdateRefusal.UNRESOLVED, str(e))
         except FactWriteConflict:
             logger.warning(f"⚠️  [FactManagement] Fact {fact_id[:8]} changed concurrently twice; update refused")
-            return {
-                "fact_id": fact_id,
-                "status": STATUS_FAILED,
-                "message": f"fact {fact_id} changed concurrently; search again",
-            }
+            return FactUpdateOutcome.refused(
+                fact_id, UpdateRefusal.CONFLICT, f"fact {fact_id} changed concurrently; search again"
+            )
         except Exception as e:
             logger.error(f"❌ [FactManagement] Update fact error: {e}", exc_info=True)
-            return {
-                "fact_id": fact_id,
-                "status": STATUS_FAILED,
-                "message": f"Error updating fact: {str(e)}"
-            }
+            return FactUpdateOutcome.refused(fact_id, UpdateRefusal.ERROR, f"Error updating fact: {str(e)}")
 
     async def _update_with_one_retry(
         self,
@@ -367,7 +359,7 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
         evidence_at: Optional[datetime],
         reason: Optional[str],
         history: Optional[str],
-    ) -> Dict[str, Any]:
+    ) -> FactUpdateOutcome:
         logger.debug(f"🔄 [FactManagement] Updating fact {fact_id[:8]}...")
         parsed: Optional[ParsedFactUpdate] = None
         embedded: Optional[Tuple[List[str], List[List[float]]]] = None
@@ -381,7 +373,7 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
             stored = await self._repo.resolve_current(fact_id, account_id, context.accepts)
             if stored is None:
                 logger.warning(f"⚠️  [FactManagement] Fact not found: {fact_id[:8]}")
-                return {"fact_id": fact_id, "status": STATUS_NOT_FOUND, "message": "Fact not found"}
+                return FactUpdateOutcome.refused(fact_id, UpdateRefusal.NOT_FOUND, "Fact not found")
             if parsed is None:
                 parsed = parse()
             if first_resolved_id is None:
@@ -390,14 +382,14 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
                 moved = concurrent_update_refusal(fact_id, first_resolved_id, stored.fact.id, parsed)
                 if moved is not None:
                     logger.warning(f"⚠️  [FactManagement] Fact {fact_id[:8]} moved forward between attempts; update refused")
-                    return {"fact_id": fact_id, "status": STATUS_FAILED, "message": moved}
+                    return FactUpdateOutcome.refused(fact_id, UpdateRefusal.MOVED, moved)
             if history is not None:
                 if shown_text is None:
                     shown_text = await self._requested_text(fact_id, stored)
                 refusal = history_moved_refusal(shown_text, stored.fact, fact_id)
                 if refusal is not None:
                     logger.warning(f"⚠️  [FactManagement] update_fact {fact_id[:8]} refused (history): {refusal}")
-                    return {"fact_id": fact_id, "status": STATUS_FAILED, "message": refusal}
+                    return FactUpdateOutcome.refused(fact_id, UpdateRefusal.HISTORY, refusal)
             update = await self._with_resolved_successor(parsed, stored, account_id)
             now = datetime.now(timezone.utc)
             finish = finish_fact_update(
@@ -438,23 +430,15 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
                     raise
                 continue
             logger.info(f"✅ [FactManagement] Updated fact {written.id[:8]} to version {written.version}")
-            result = {
-                "fact_id": written.id,
-                "status": STATUS_UPDATED,
-                "version": written.version,
-                "message": "Fact updated successfully",
-            }
-            if history_entity is not None:
-                result[HISTORY_FACT_ID] = history_entity.id
-                result["message"] = f"Fact archived; history fact {history_entity.id} created beside it"
-            _with_notes(result, finish.notes, "update_fact")
-            if stored.fact.id != fact_id:
-                result["resolved_from"] = fact_id
-                result["message"] = (
-                    f"{result['message']}; fact {fact_id} was replaced earlier, "
-                    f"so the update was applied to its current version {stored.fact.id}"
-                )
-            return result
+            _log_ignored_expiry(finish.notes, "update_fact")
+            return FactUpdateOutcome(
+                fact_id=fact_id,
+                written_id=written.id,
+                version=written.version,
+                current_id=stored.fact.id,
+                history_fact_id=history_entity.id if history_entity is not None else None,
+                notes=tuple(finish.notes),
+            )
 
     async def _requested_text(self, fact_id: str, stored: StoredFact) -> str:
         """The text of `fact_id` itself, which `stored` was resolved from. A requested document that cannot be read
@@ -618,6 +602,10 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
 
 def _with_notes(result: Dict[str, Any], notes: Sequence[str], tool: str) -> Dict[str, Any]:
     """Put the notes into the tool result as `note`, and log an ignored expiry (the domain does not log)."""
+    _log_ignored_expiry(notes, tool)
+    return with_notes(result, notes)
+
+
+def _log_ignored_expiry(notes: Sequence[str], tool: str) -> None:
     if EXPIRY_IGNORED_ON_CLOSE in notes:
         logger.info(f"ℹ️  [FactManagement] {tool}: {EXPIRY_IGNORED_ON_CLOSE}")
-    return with_notes(result, notes)
