@@ -6,7 +6,7 @@ The queue and the current question: `claim_next` is the one way a question goes 
 `current_question`, `may_send`, `next_in_queue` and `sent_today` inside one transaction over the state document and the
 account's open questions, so two concurrent claims give one question. The writes that end an attempt
 (`requeue_front`, `mark_unanswered`, `close_and_release`) clear the state's `current_question_id` in the same
-transaction, and only when it names that question.
+transaction, and only when it names that question; `close_and_release` reports whether it did.
 
 The store decides no transition. Every status change is a method of `FactReviewQuestion`; a write reads the record in a
 transaction, calls that method and writes the result. A move the method refuses (`QuestionTransitionError`) is the
@@ -24,6 +24,7 @@ from datetime import date, datetime
 from typing import List, Mapping, Optional, Sequence
 
 from ..domain.fact_review_answer_kind import AnswerKind
+from ..domain.fact_review_question_close import QuestionClose
 from ..domain.fact_review_question import AnswerSource, ClosedBy, FactReviewQuestion
 from ..domain.fact_review_state import FactReviewState
 from ..domain.messaging import MessageRef
@@ -145,10 +146,11 @@ class FactReviewStore(ABC):
         answer: Optional[AnswerKind],
         source: Optional[AnswerSource],
         at: datetime,
-    ) -> bool:
+    ) -> QuestionClose:
         """`closed(closed_by, at, answer, source)`, in one transaction over the question and its account's state,
-        clearing `current_question_id` only when it names this question. False as for `close`; the state is then
-        untouched."""
+        clearing `current_question_id` only when it names this question. Returns what that transaction did: RELEASED
+        (closed, and the pointer, which named this question, cleared), CLOSED (closed, the pointer left as it was) or
+        REFUSED (as `close`'s False; the state is then untouched)."""
 
     # ------------------------------------------------------------------------------------------------ state marks
 

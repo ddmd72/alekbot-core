@@ -10,6 +10,7 @@ from typing import Any, List
 
 import pytest
 
+from src.adapters.firestore_fact_review_store import FirestoreFactReviewStore
 from src.adapters.plain_text_interactive_message_adapter import PlainTextInteractiveMessageAdapter
 from src.domain.entities import ExpiryKind, FactState
 from src.domain.fact_expiry import Expiry
@@ -89,11 +90,18 @@ def texts_of(world: ReviewWorld) -> FactQuestionTexts:
                              clock=world.clock)
 
 
-def service(world: ReviewWorld, fact_updates: Any = None, interactive: Any = None) -> FactAnswerService:
+def no_clock() -> Any:
+    """The clock of a service whose `apply` is under test: `apply` takes its moment from `at`, never from here."""
+    raise AssertionError("apply read the clock")
+
+
+def service(world: ReviewWorld, fact_updates: Any = None, interactive: Any = None, clock: Any = no_clock,
+            review_store: Any = None) -> FactAnswerService:
+    """The service on the world. Its clock raises unless one is given: only `close_question` may read it."""
     return FactAnswerService(
-        fact_updates=fact_updates or world.store.adapter, repo=world.repo, review_store=world.review_store,
+        fact_updates=fact_updates or world.store.adapter, repo=world.repo, review_store=review_store or world.review_store,
         counters=world.counters, task_queue=world.queue, session_store=world.session_store, texts=texts_of(world),
-        interactive=interactive or world.interactive, owner_zones=FixedZones(), clock=world.clock,
+        interactive=interactive or world.interactive, owner_zones=FixedZones(), clock=clock,
     )
 
 
@@ -176,38 +184,51 @@ async def test_the_trail_reason_is_answer_reasons_under_the_owner(kind):
     assert event["actor"] == "owner" and event["reason"] == answer_reason(kind, "q1", "digit")
 
 
-async def test_dont_know_uses_one_now_for_the_horizon_and_the_event():
+async def test_dont_know_uses_the_answers_moment_for_the_horizon_the_event_the_close_and_the_count():
     world = ReviewWorld()
     fact = await stale_fact(world)
     await question_on(world, fact)
     window = fallback_window_days(await world.repo.get_fact_by_id(fact))
-    world.advance(hours=3)
+    said = NOW + timedelta(days=1, hours=3)   # the owner's answer; the service's clock raises if read
 
-    await service(world).apply(ACC, USER, "q1", AnswerKind.DONT_KNOW, "digit", NOW)
+    await service(world).apply(ACC, USER, "q1", AnswerKind.DONT_KNOW, "digit", said)
 
     doc = world.docs[fact]
     event = doc["lifecycle_events"][-1]
-    assert event["at"] == world.now and event["actor"] == "owner"
-    assert doc["expires_at"] >= world.now + timedelta(days=window) and doc["stale_since"] is None
-    assert doc["expires_at"] < world.now + timedelta(days=window + 1)
-    assert stored_question(world)["closed_at"] == world.now
+    assert event["at"] == said and event["actor"] == "owner"
+    assert doc["expires_at"] >= said + timedelta(days=window) and doc["stale_since"] is None
+    assert doc["expires_at"] < said + timedelta(days=window + 1)
+    assert stored_question(world)["closed_at"] == said
+    rows = [row for row in await world.counters.for_day(said.date()) if row.account_id == ACC]
+    assert [row.answered_by_digit for row in rows] == [1]
 
 
-async def test_still_true_uses_one_now_for_the_evidence_and_the_horizon():
+async def test_still_true_uses_the_answers_moment_for_the_evidence_the_horizon_and_the_close():
     # The write path counts a horizon from its own clock; what this service decides is the update it sends.
     world = ReviewWorld()
     fact = await stale_fact(world)
     await question_on(world, fact)
     window = fallback_window_days(await world.repo.get_fact_by_id(fact))
-    world.advance(hours=3)
+    said = NOW + timedelta(hours=3)
     writes = KeptWrites(world.store.adapter)
 
-    await service(world, fact_updates=writes).apply(ACC, USER, "q1", AnswerKind.STILL_TRUE, "digit", NOW)
+    await service(world, fact_updates=writes).apply(ACC, USER, "q1", AnswerKind.STILL_TRUE, "digit", said)
 
     [(update, evidence_at)] = writes.sent
-    assert evidence_at == world.now and update.expiry == Expiry(ExpiryKind.HORIZON, days=window)
-    assert world.docs[fact]["reported_date"] == world.now and world.docs[fact]["state"] == "current"
-    assert stored_question(world)["closed_at"] == world.now
+    assert evidence_at == said and update.expiry == Expiry(ExpiryKind.HORIZON, days=window)
+    assert world.docs[fact]["reported_date"] == said and world.docs[fact]["state"] == "current"
+    assert stored_question(world)["closed_at"] == said
+
+
+async def test_a_naive_answer_moment_is_utc():
+    world = ReviewWorld()
+    fact = await stale_fact(world)
+    await question_on(world, fact)
+    said = NOW + timedelta(hours=2)
+
+    await service(world).apply(ACC, USER, "q1", AnswerKind.NEVER, "digit", said.replace(tzinfo=None))
+
+    assert stored_question(world)["closed_at"] == said
 
 
 # ------------------------------------------------------------------------------------------------ nothing written
@@ -388,7 +409,7 @@ async def test_closing_the_current_question_clears_the_slot_and_releases_the_nex
     fact = await stale_fact(world)
     question = await question_on(world, fact)
     await world.seed_state(account_id=ACC, current_question_id="q1", sent=1, sent_on=NOW.date())
-    answers = service(world)
+    answers = service(world, clock=world.clock)
 
     assert await answers.close_question(question, ClosedBy.TIMEOUT) is True
     assert await answers.close_question(question, ClosedBy.TIMEOUT) is False
@@ -417,7 +438,7 @@ async def test_closing_another_question_leaves_the_slot_and_releases_nothing():
     question = await question_on(world, fact)
     await world.seed_state(account_id=ACC, current_question_id="q-other", sent=1, sent_on=NOW.date())
 
-    assert await service(world).close_question(question, ClosedBy.REVIEW) is True
+    assert await service(world, clock=world.clock).close_question(question, ClosedBy.REVIEW) is True
 
     assert world.state_doc(ACC)["current_question_id"] == "q-other" and fact_review_tasks(world) == []
     assert stored_question(world)["status"] == "closed"
@@ -426,7 +447,7 @@ async def test_closing_another_question_leaves_the_slot_and_releases_nothing():
 async def test_every_close_of_a_slack_question_shows_its_outcome():
     world = ReviewWorld()
     closed_note = world.localization.get_ui_string(LanguageCode.EN, UIMessage.MEMORY_QUESTION_CLOSED)
-    answers = service(world)
+    answers = service(world, clock=world.clock)
     refs = {}
     for qid, text in (("q-answer", "a"), ("q-timeout", "b"), ("q-review", "c")):
         question = await question_on(world, await stale_fact(world, text), question_id=qid)
@@ -450,7 +471,7 @@ async def test_a_show_choice_failure_is_logged_and_the_close_stands(caplog):
     world.interactive.fail_show = True
 
     with caplog.at_level(logging.WARNING):
-        closed = await service(world).close_question(question, ClosedBy.TIMEOUT)
+        closed = await service(world, clock=world.clock).close_question(question, ClosedBy.TIMEOUT)
 
     assert closed is True and stored_question(world)["status"] == "closed"
     assert any("not re-rendered" in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
@@ -463,7 +484,7 @@ async def test_a_telegram_question_closes_through_the_router_and_nothing_changes
     router = InteractiveMessageRouter({"slack": world.interactive,
                                        "telegram": PlainTextInteractiveMessageAdapter(world.channels)})
 
-    closed = await service(world, interactive=router).close_question(question, ClosedBy.TIMEOUT)
+    closed = await service(world, interactive=router, clock=world.clock).close_question(question, ClosedBy.TIMEOUT)
 
     assert closed is True and stored_question(world)["status"] == "closed"
     assert channel.texts == [] and world.channels.sent == [] and world.interactive.shown == {}
@@ -474,6 +495,42 @@ async def test_a_note_that_is_not_a_review_text_is_refused():
     question = await question_on(world, await stale_fact(world))
 
     with pytest.raises(ValueError):
-        await service(world).close_question(question, ClosedBy.TIMEOUT, note=next(m for m in UIMessage if m.value not in LABEL_KEYS))
+        await service(world, clock=world.clock).close_question(question, ClosedBy.TIMEOUT, note=next(m for m in UIMessage if m.value not in LABEL_KEYS))
 
     assert stored_question(world)["status"] == "asked"
+
+
+async def test_the_close_takes_the_slots_release_from_its_own_transaction_and_reads_no_state():
+    """F1: whether the next question goes out is what `close_and_release` did, not a `get_state` read beside it. The
+    texts read the state through their own store; the service's store refuses a state read."""
+    world = ReviewWorld()
+    question = await question_on(world, await stale_fact(world))
+    await world.seed_state(account_id=ACC, current_question_id="q1", sent=1, sent_on=NOW.date())
+    store = FirestoreFactReviewStore(world.store.db, world.env)
+
+    async def no_state_read(account_id):
+        raise AssertionError("the close read the state outside its transaction")
+
+    store.get_state = no_state_read  # type: ignore[method-assign]
+
+    closed = await service(world, clock=world.clock, review_store=store).close_question(question, ClosedBy.TIMEOUT)
+
+    assert closed is True and world.state_doc(ACC)["current_question_id"] is None
+    assert [body["mode"] for body in fact_review_tasks(world)] == ["next"]
+    assert world.interactive.shown[question.message_ref].note
+
+
+async def test_an_answer_reads_no_state_either():
+    world = ReviewWorld()
+    fact = await stale_fact(world)
+    await question_on(world, fact, QuestionStatus.QUEUED)
+    store = FirestoreFactReviewStore(world.store.db, world.env)
+
+    async def no_state_read(account_id):
+        raise AssertionError("apply read the state")
+
+    store.get_state = no_state_read  # type: ignore[method-assign]
+
+    result = await service(world, review_store=store).apply(ACC, USER, "q1", AnswerKind.NEVER, "cabinet", world.now)
+
+    assert result is AnswerResult.APPLIED and stored_question(world)["status"] == "closed"
