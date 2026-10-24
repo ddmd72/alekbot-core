@@ -11,7 +11,7 @@ from typing import Any, Literal, Mapping, Optional, Self
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .exceptions import QuestionTransitionError
-from .fact_review_answers import AnswerKind
+from .fact_review_answer_kind import AnswerKind
 from .messaging import MessageRef
 
 # A sent question waits this long from `asked_at`, answered or not; a queued question never times out.
