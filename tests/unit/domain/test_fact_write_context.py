@@ -149,7 +149,9 @@ def test_derived_from_is_ignored_with_a_note_in_a_conversation_pass():
 
 
 def test_merge_in_a_conversation_pass_follows_the_create_rule():
-    assert reported_date_for_merge(STAGE1, FIRST - timedelta(days=5), [LAST], NOW) == FIRST
+    # S3-D11: the clamped model date is never earlier than the newest source, so a source at LAST lifts it to LAST.
+    assert reported_date_for_merge(STAGE1, FIRST - timedelta(days=5), [LAST], NOW) == LAST
+    assert reported_date_for_merge(STAGE1, FIRST - timedelta(days=5), [FIRST - timedelta(days=10)], NOW) == FIRST
     assert reported_date_for_merge(STAGE1, None, [datetime(2020, 1, 1, tzinfo=UTC)], NOW) == LAST
 
 
