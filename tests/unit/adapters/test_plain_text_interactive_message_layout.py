@@ -78,9 +78,9 @@ async def test_plain_text_ends_with_the_reply_hint_because_only_a_reply_counts_t
 # Moved from tests/unit/domain/test_fact_review_language.py (T5b reviewer, L10).
 
 async def test_the_plain_text_is_the_plans_message():
-    text = await sent_text(fact_question_message(question(quoted_text="Takes vitamin D"), CANONICAL_LABELS))
+    text = await sent_text(fact_question_message(question(quoted_text="Drinks green tea"), CANONICAL_LABELS))
     assert text == (
-        "Is this still true?\n\n«Takes vitamin D»\n\n1 — Yes  2 — No longer  3 — Never  4 — Don't remember"
+        "Is this still true?\n\n«Drinks green tea»\n\n1 — Yes  2 — No longer  3 — Never  4 — Don't remember"
         "\n\nReply to this message with a digit, or in your own words."
     )
 

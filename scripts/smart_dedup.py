@@ -35,13 +35,13 @@ OUTPUT FORMAT (JSON only):
 
 EXAMPLES:
 
-Fact A: "Weight was 88 kg in June 2025"
-Fact B: "Weight was approximately 88 kg (Example City) in June 2025, representing a 6 kg loss"
-→ {"keep": "B", "reason": "Includes location and weight loss context"}
+Fact A: "Monthly rent was 900 EUR in June 2025"
+Fact B: "Monthly rent was approximately 900 EUR (Example City) in June 2025, after a 60 EUR increase"
+→ {"keep": "B", "reason": "Includes location and rent change context"}
 
-Fact A: "The patient's Vitamin D was 41 ng/mL, within reference range"
-Fact B: "Vitamin D was 41 ng/mL"
-→ {"keep": "A", "reason": "Includes medical interpretation"}
+Fact A: "The car's tyre pressure was 2.4 bar, within the recommended range"
+Fact B: "Tyre pressure was 2.4 bar"
+→ {"keep": "A", "reason": "Includes interpretation"}
 """
 
 async def analyze_duplicate(fact_a: str, fact_b: str) -> Tuple[str, str]:

@@ -144,8 +144,8 @@ class _RecordedPromptBuilder:
 # venues"; the cheap models declined for a quarter of the price). Only 4 genuinely
 # geographic queries exist in ~430 recorded calls — that scarcity is itself a finding.
 GEO_SELECTORS: List[str] = [
-    "Find current jewellers and gold jewellery repair services",   # place discovery
-    "worth seeing in Serra",                                       # places + route + dinner
+    "Find current bicycle shops and bike repair services",         # place discovery
+    "worth seeing in Springfield",                                 # places + route + dinner
     "retrieve current live weather and today's forecast",           # weather lookup
     "verify current weather in Northgate and Springfield",                 # weather lookup
 ]

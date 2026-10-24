@@ -19,14 +19,14 @@ from tests.support.review_rule_builders import NOW, fact, question
 Q = QuestionStatus
 TODAY = date(2026, 10, 24)
 OTHER = lambda **o: fact("ev", lineage_id="L-ev", state=FactState.CURRENT, **o)  # noqa: E731
-REPLIED = dict(reply_text="Yes, I still take it every morning", reply_at=NOW - timedelta(hours=5))
+REPLIED = dict(reply_text="Yes, I still drink it every morning", reply_at=NOW - timedelta(hours=5))
 
 
 def update_for(action):
     """The update a review call of this action carries."""
     return {
         "revive": ParsedFactUpdate(state=FactState.CURRENT),
-        "rewrite": ParsedFactUpdate(content="Takes vitamin D3", state=FactState.CURRENT),
+        "rewrite": ParsedFactUpdate(content="Drinks green tea daily", state=FactState.CURRENT),
         "archive": ParsedFactUpdate(state=FactState.ARCHIVED),
         "invalidate": ParsedFactUpdate(state=FactState.INVALIDATED),
         "supersede": ParsedFactUpdate(state=FactState.SUPERSEDED, superseded_by="x"),
@@ -45,7 +45,7 @@ def evidence_basis(fid="ev"):
     return ReviewBasis("evidence", evidence_fact_id=fid)
 
 
-def reply_basis(quote="still take it", qid="q1"):
+def reply_basis(quote="still drink it", qid="q1"):
     return ReviewBasis("reply", question_id=qid, quote=quote)
 
 
@@ -128,7 +128,7 @@ def test_a_quote_found_in_the_owners_reply_is_a_basis():
 
 def test_the_quote_may_differ_in_case_and_spacing():
     q = question(Q.ASKED, **REPLIED)
-    assert refuse("revive", reply_basis("  STILL   take\nit "), q=q) is None
+    assert refuse("revive", reply_basis("  STILL   drink\nit "), q=q) is None
 
 
 def test_a_quote_not_in_the_reply_is_refused():
@@ -215,7 +215,7 @@ def test_a_passed_date_backs_only_an_archive(action):
 # ------------------------------------------------------------------------------------------------ history
 
 def test_history_goes_with_an_archive_on_a_reply_for_a_standing_fact():
-    assert refuse("archive", reply_basis(), q=question(Q.ASKED, **REPLIED), history="No longer true: takes vitamin D") is None
+    assert refuse("archive", reply_basis(), q=question(Q.ASKED, **REPLIED), history="No longer true: drinks green tea") is None
 
 
 @pytest.mark.parametrize("action", ["revive", "rewrite", "invalidate", "supersede"])

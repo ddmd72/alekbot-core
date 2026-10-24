@@ -24,7 +24,7 @@ from src.handlers.conversation_handler import ConversationHandler
 _USER_ID = "user-test"
 
 
-def _make_context(text="Вот что пишет почта про мою посылку", attachments=None) -> MessageContext:
+def _make_context(text="Вот что пишет магазин про мой заказ", attachments=None) -> MessageContext:
     return MessageContext(
         text=text,
         session_id="sess-test",
@@ -93,7 +93,7 @@ def _parts_seen_by_agent(coord) -> list:
 ATTACHMENT = FileAttachment(
     url="https://files.slack.com/files-pri/T1-F1/" + "x" * 260 + ".html",
     mime_type="text/html",
-    filename="view-source_https___www.correosaduanas.es_" + "x" * 200 + ".html",
+    filename="view-source_https___shop.example.com_" + "x" * 200 + ".html",
 )
 
 

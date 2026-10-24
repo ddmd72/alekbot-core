@@ -59,14 +59,14 @@ def _agent(workspace_service, skills=(), list_skills=None):
 
 def _message(extra):
     context = {"session_id": "u1:C1", "user_id": "u1", "account_id": "a1",
-               "current_message_parts": [MessagePart(text="where are we with the flat?")], **extra}
+               "current_message_parts": [MessagePart(text="where are we with the garden shed?")], **extra}
     return AgentMessage.create(sender="router", recipient="smart_response_agent_u1", intent=AgentIntent.QUERY,
-                               payload={"text": "where are we with the flat?"}, context=context)
+                               payload={"text": "where are we with the garden shed?"}, context=context)
 
 
 def _service():
     service = MagicMock()
-    service.run = AsyncMock(return_value=WorkspaceResult(text="[workspace:projects/flat-sale.md · generation 101]"))
+    service.run = AsyncMock(return_value=WorkspaceResult(text="[workspace:projects/garden-shed.md · generation 101]"))
     return service
 
 
@@ -76,7 +76,7 @@ def _tool_names(llm):
 
 def _view_then_answer(llm):
     llm.generate_content = AsyncMock(side_effect=[
-        _resp(tool_calls=[ToolCall(name="workspace", args={"command": "view", "path": "projects/flat-sale.md"})]),
+        _resp(tool_calls=[ToolCall(name="workspace", args={"command": "view", "path": "projects/garden-shed.md"})]),
         _resp("answer"),
     ])
 
@@ -118,7 +118,7 @@ async def test_origin_and_fire_reach_the_service(extra, origin, fire):
     assert response.status == AgentStatus.SUCCESS
     call, command, args = service.run.await_args.args
     assert (call.user_id, call.origin, call.fire_key, command) == ("u1", origin, fire, "view")
-    assert args["path"] == "projects/flat-sale.md"
+    assert args["path"] == "projects/garden-shed.md"
 
 
 async def test_missing_origin_falls_back_with_a_warning(caplog):

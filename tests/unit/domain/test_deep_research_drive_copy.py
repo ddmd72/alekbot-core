@@ -41,8 +41,8 @@ class TestFilename:
         assert deep_research_drive_filename(DAY, "Quantum computing", "q") == "2026-10-14 Quantum computing.html"
 
     def test_cyrillic_title_is_kept(self):
-        name = deep_research_drive_filename(DAY, "Ринок оренди у Валенсії", "q")
-        assert name == "2026-10-14 Ринок оренди у Валенсії.html"
+        name = deep_research_drive_filename(DAY, "Ринок оренди у Львові", "q")
+        assert name == "2026-10-14 Ринок оренди у Львові.html"
 
     def test_forbidden_characters_are_replaced(self):
         name = deep_research_drive_filename(DAY, 'A/B: "why"? <x> * y | z\\w', "q")

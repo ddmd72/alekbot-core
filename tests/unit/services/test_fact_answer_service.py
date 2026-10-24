@@ -35,7 +35,7 @@ from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
 
 TZ = "Europe/Paris"
-TEXT = "takes vitamin D every morning"
+TEXT = "drinks green tea every morning"
 KINDS = list(AnswerKind)
 OWNER_SOURCES = {QuestionStatus.QUEUED: "cabinet", QuestionStatus.ASKED: "digit", QuestionStatus.UNANSWERED: "button"}
 
@@ -237,7 +237,7 @@ async def test_a_rewritten_fact_the_owner_never_saw_is_changed_and_left_alone():
     world = ReviewWorld()
     put_raw(world.store, "v1", TEXT, state="superseded", is_current=False, superseded_by="v2",
             entity={"lineage_id": "lin-v"})
-    put_raw(world.store, "v2", "takes vitamin D twice a week", state="stale", stale_since=NOW,
+    put_raw(world.store, "v2", "drinks green tea twice a week", state="stale", stale_since=NOW,
             entity={"lineage_id": "lin-v", "version": 2})
     await question_on(world, "v1")
     before = {k: dict(v) for k, v in world.docs.items()}

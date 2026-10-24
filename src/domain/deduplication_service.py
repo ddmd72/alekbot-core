@@ -91,24 +91,24 @@ class SmartDeduplication:
             
             # Different values
             >>> service.is_duplicate(
-            ...     "Weight 91 kg",
-            ...     "Weight 88 kg",
+            ...     "Bike ride 45 km",
+            ...     "Bike ride 42 km",
             ...     0.97
             ... )
-            (False, "numbers_differ: [88.0] != [91.0]")
+            (False, "numbers_differ: [42.0] != [45.0]")
             
             # More detail
             >>> service.is_duplicate(
-            ...     "Weight 88 kg in Example City",
-            ...     "Weight 88 kg",
+            ...     "Bike ride 42 km in Example City",
+            ...     "Bike ride 42 km",
             ...     0.96
             ... )
             (False, "new_more_detailed: existing 85% shorter")
             
             # True duplicate
             >>> service.is_duplicate(
-            ...     "Weight was 88 kg",
-            ...     "Weight 88 kg",
+            ...     "Bike ride was 42 km",
+            ...     "Bike ride 42 km",
             ...     0.99
             ... )
             (True, "strict_similarity: 0.99 >= 0.98")
@@ -149,13 +149,13 @@ class SmartDeduplication:
         Extract all numbers from text and return sorted list.
         
         Sorting allows order-independent comparison:
-        "88 kg, 176 cm" == "176 cm, 88 kg"
+        "42 km, 150 min" == "150 min, 42 km"
         
         Handles:
         - Integers: "83"
         - Floats: "5.1"
         - Dates: "2025-03-28" → [2025, 3, 28]
-        - Ranges: "95-98 kg" → [95, 98]
+        - Ranges: "95-98 km" → [95, 98]
         
         Args:
             text: Input text
@@ -164,13 +164,13 @@ class SmartDeduplication:
             Sorted list of numbers found in text
             
         Examples:
-            >>> self._extract_and_sort_numbers("Weight 88.5 kg")
-            [88.5]
+            >>> self._extract_and_sort_numbers("Bike ride 42.5 km")
+            [42.5]
             
             >>> self._extract_and_sort_numbers("2025-03-28")
             [3.0, 28.0, 2025.0]
             
-            >>> self._extract_and_sort_numbers("Range 95-98 kg")
+            >>> self._extract_and_sort_numbers("Range 95-98 km")
             [95.0, 98.0]
             
             >>> self._extract_and_sort_numbers("No numbers here")

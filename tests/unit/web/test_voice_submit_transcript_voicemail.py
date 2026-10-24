@@ -41,7 +41,7 @@ async def test_machine_verdict_with_a_monologue_skips_the_summary_but_still_rele
     app, ephemeral_store, summary_consumer = _app({"answered_by": "machine_end_beep"})
 
     # A voicemail greeting can split into two turns while Lelik talks over it.
-    response = await _submit(app, ["", "Hi, you've reached Dima,", "leave a message after the tone"])
+    response = await _submit(app, ["", "Hi, you've reached Alex,", "leave a message after the tone"])
 
     assert response.status_code == 200
     summary_consumer.assert_not_awaited()

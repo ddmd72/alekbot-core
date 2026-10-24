@@ -19,10 +19,10 @@ U = ParsedFactUpdate
         (U(state=FactState.SUPERSEDED, superseded_by="x"), "supersede"),
         (U(state=FactState.ARCHIVED), "archive"),
         (U(state=FactState.INVALIDATED), "invalidate"),
-        (U(content="Takes vitamin D3", state=FactState.ARCHIVED), "archive"),
+        (U(content="Drinks green tea daily", state=FactState.ARCHIVED), "archive"),
         (U(tags=["health"], state=FactState.INVALIDATED), "invalidate"),
-        (U(content="Takes vitamin D3"), "rewrite"),
-        (U(content="Takes vitamin D3", state=CURRENT), "rewrite"),
+        (U(content="Drinks green tea daily"), "rewrite"),
+        (U(content="Drinks green tea daily", state=CURRENT), "rewrite"),
         (U(state=CURRENT), "revive"),
     ],
 )
@@ -45,7 +45,7 @@ def test_a_tag_order_difference_alone_is_no_change():
 
 
 def test_the_same_text_is_no_change():
-    assert review_action(fact(), U(content="Takes vitamin D", state=CURRENT)) == "revive"
+    assert review_action(fact(), U(content="Drinks green tea", state=CURRENT)) == "revive"
 
 
 def test_a_stale_fact_with_no_state_and_no_content_change_stays_stale():

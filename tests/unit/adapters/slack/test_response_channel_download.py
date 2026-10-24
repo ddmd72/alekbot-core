@@ -16,10 +16,10 @@ from src.adapters.slack.response_channel import SlackResponseChannel
 from src.utils.file_conversion import NAME_MAX_BYTES
 
 INCIDENT_FILENAME = (
-    "view-source_https___www.correosaduanas.es_webauth_correosAduanas_private_"
-    "tramitacionEnvioListado_tipoTramitacion=TRAMITACION_CORREOS&numEnvio=LT000000000GB"
-    "&idEnvio=00000000&numEnvioDom=LT000000000GB&descEstadoTram=PENDIENTE+INSPECCION"
-    "+PARADUANERA&ide.html"
+    "view-source_https___shop.example.com_webshop_customerAccount_orders_private_"
+    "orderStatusList_statusType=ORDER_TRACKING_STANDARD&orderNo=AB000000000XY"
+    "&orderId=0000000000&parcelNo=AB000000000XY&statusText=AWAITING+WAREHOUSE"
+    "+INSPECTION+PENDING+REVIEW&ide.html"
 )
 
 

@@ -412,10 +412,10 @@ def test_timeouts_come_in_queue_order():
 # ------------------------------------------------------------------------------------------------ queued_question
 
 def test_a_queued_question_quotes_the_fact_and_waits_where_the_fact_has_waited():
-    f = fact("f7", text="Takes vitamin D", stale_since=stale_since(12))
+    f = fact("f7", text="Drinks green tea", stale_since=stale_since(12))
     q = queued_question(f, "qid", "owner-1", "revive", at=NOW)
     assert q.status is Q.QUEUED and q.question_id == "qid" and q.user_id == "owner-1"
-    assert q.account_id == f.account_id and q.fact_id == "f7" and q.quoted_text == "Takes vitamin D"
+    assert q.account_id == f.account_id and q.fact_id == "f7" and q.quoted_text == "Drinks green tea"
     assert q.queue_key == f.stale_since and q.queued_at == NOW and q.fallback == "revive"
     assert q.fallback_date is None and q.noise is False
 

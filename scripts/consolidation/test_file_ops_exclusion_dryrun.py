@@ -8,7 +8,7 @@ exchanges plus one real fact. `--rule new` adds the file-operations line to
 Trivial_Exclusions in the ASSEMBLED prompt only — Firestore is untouched.
 
 A leak is any written fact that mentions a file location or operation — including a
-mixed one ("lease ends Dec 2027, contract in Договоры/"), the likeliest leak.
+mixed one ("lease ends Mar 2029, contract in Договоры/"), the likeliest leak.
 
     python scripts/consolidation/test_file_ops_exclusion_dryrun.py --rule both --runs 3
 """
@@ -61,13 +61,13 @@ BATCH = [
     _m("model", "Moved: Inbox/lease_2026.pdf → Договоры/Аренда/lease_2026.pdf."),
     _m("user", "Удали папку Встречи/2025"),
     _m("model", "Deleted folder Встречи/2025 (14 files)."),
-    _m("user", "Кстати, аренда квартиры заканчивается в декабре 2027"),
-    _m("model", "Noted: the lease ends in December 2027."),
+    _m("user", "Кстати, аренда квартиры заканчивается в марте 2029"),
+    _m("model", "Noted: the lease ends in March 2029."),
 ]
 _FILE_TERMS = re.compile(
     r"inbox|договор[ыи]/|аренда/|встречи/|lease_2026|\.pdf\b|\bdrive\b|диск|папк|folder|"
     r"\bsaved\b|\bmoved\b|\bdeleted\b|сохран|перен[её]с|удал", re.I)
-_REAL_FACT = re.compile(r"2027")
+_REAL_FACT = re.compile(r"2029")
 
 
 def _op_text(op: Dict[str, Any]) -> str:

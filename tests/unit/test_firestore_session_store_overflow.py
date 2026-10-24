@@ -85,11 +85,11 @@ async def test_session_store_overflow_logic():
 
 def test_consolidation_serializer_includes_consolidation_text_parts():
     """
-    Reproduce the real session history shape observed in Firestore:
+    Reproduce the session history shape stored in Firestore:
 
         role: "user"
         parts:
-          0: {"text": "Бэкенд упал..."}
+          0: {"text": "Сервер не ответил..."}
           1: {"consolidation_text": "Save Skoda Fabia 2015 tyre change fact"}
 
     The consolidation serializer (overflow_callback / $consolidate path) uses:
@@ -102,7 +102,7 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
     raw_firestore_message = {
         "role": "user",
         "parts": [
-            {"text": "Бэкенд упал, сохрани, пожалуйста, ещё раз"},
+            {"text": "Сервер не ответил, повтори, пожалуйста, ещё раз"},
             {"consolidation_text": "Save Skoda Fabia 2015 tyre change fact"},
         ],
         "created_at": 1774481644.1386607,
@@ -116,7 +116,7 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
     assert len(messages) == 1
     msg = messages[0]
     assert len(msg.parts) == 2
-    assert msg.parts[0].text == "Бэкенд упал, сохрани, пожалуйста, ещё раз"
+    assert msg.parts[0].text == "Сервер не ответил, повтори, пожалуйста, ещё раз"
     assert msg.parts[0].consolidation_text is None
     assert msg.parts[1].text is None
     assert msg.parts[1].consolidation_text == "Save Skoda Fabia 2015 tyre change fact"
@@ -129,7 +129,7 @@ def test_consolidation_serializer_includes_consolidation_text_parts():
     ]
 
     assert len(serialized_parts) == 2
-    assert serialized_parts[0] == {"text": "Бэкенд упал, сохрани, пожалуйста, ещё раз"}
+    assert serialized_parts[0] == {"text": "Сервер не ответил, повтори, пожалуйста, ещё раз"}
     assert serialized_parts[1] == {"text": "Save Skoda Fabia 2015 tyre change fact"}
 
 

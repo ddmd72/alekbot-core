@@ -106,7 +106,7 @@ async def test_superseded_state_is_refused(store, skip):
 
 
 async def test_build_facts_entity_matches_add_facts_batch_fields(store):
-    fact = {"text": "owns a Toyota", "tags": ["car"], "type": "STATE", "metadata": {"year": 2012}, "domain": "health",
+    fact = {"text": "owns a Skoda Fabia", "tags": ["car"], "type": "STATE", "metadata": {"year": 2015}, "domain": "health",
             "temporal_class": "dynamic", "state": "archived", "context_priority": "high", "ttl_days": 30,
             "context": "said at lunch", "reported_date": "2026-03-04T10:00:00Z"}
     (built,) = await store.write.build_facts(ACC, USER, [parse_new_fact(dict(fact, tags=list(fact["tags"])))])

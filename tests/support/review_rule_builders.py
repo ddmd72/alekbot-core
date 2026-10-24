@@ -16,7 +16,7 @@ def fact(fact_id: str = "f1", **over: Any) -> FactEntity:
     """A stale horizon fact reported 60 days before NOW with a 14-day horizon, unless `over` says otherwise."""
     reported = over.pop("reported_date", NOW - timedelta(days=60))
     fields: dict[str, Any] = dict(
-        id=fact_id, account_id="acc", created_by_user_id="u1", lineage_id=f"L-{fact_id}", text="Takes vitamin D",
+        id=fact_id, account_id="acc", created_by_user_id="u1", lineage_id=f"L-{fact_id}", text="Drinks green tea",
         type=FactType.STATE, state=FactState.STALE, is_current=True, reported_date=reported,
         expiry_kind=ExpiryKind.HORIZON, ttl_days=14, expires_at=reported + timedelta(days=14),
         stale_since=NOW - timedelta(days=10),
@@ -29,7 +29,7 @@ def question(status: QuestionStatus = QuestionStatus.QUEUED, **over: Any) -> Fac
     """A question in `status`, with exactly the fields that status needs."""
     asked_at = over.pop("asked_at", NOW - timedelta(days=3))
     fields: dict[str, Any] = dict(
-        question_id="q1", account_id="acc", user_id="u1", fact_id="f1", quoted_text="Takes vitamin D",
+        question_id="q1", account_id="acc", user_id="u1", fact_id="f1", quoted_text="Drinks green tea",
         fallback="revive", queue_key=NOW - timedelta(days=30), queued_at=NOW - timedelta(days=4),
     )
     if status is not QuestionStatus.QUEUED:

@@ -61,8 +61,8 @@ class PromptPreferences(BaseModel):
     vibe: str = "friendly"  # friendly, professional, witty
 
 # Fact domains Lelik's call-start prompt carries by default (owner decision 2026-10-21):
-# who the owner is and how he wants to be spoken to. Preference stays because it holds the
-# conversational rules ("no jokes about death while mourning", "address informally").
+# who the user is and how they want to be spoken to. Preference stays because it holds the
+# user's conversational rules (tone, form of address, topics to avoid).
 DEFAULT_VOICE_FACT_DOMAINS = (FactDomain.BIOGRAPHICAL.value, FactDomain.PREFERENCE.value)
 
 # Default per-agent tiers used as a fallback in get_tier_for_agent.

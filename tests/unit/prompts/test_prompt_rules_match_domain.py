@@ -214,11 +214,11 @@ def _named_kinds(action: str) -> set:
 
 _UPDATES = {
     "revive": ParsedFactUpdate(state=FactState.CURRENT),
-    "rewrite": ParsedFactUpdate(content="Takes vitamin D3", state=FactState.CURRENT),
+    "rewrite": ParsedFactUpdate(content="Drinks green tea daily", state=FactState.CURRENT),
     "archive": ParsedFactUpdate(state=FactState.ARCHIVED),
     "invalidate": ParsedFactUpdate(state=FactState.INVALIDATED),
 }
-_REPLIED = question(QuestionStatus.ASKED, reply_text="Yes, I still take it every morning", reply_at=NOW - timedelta(hours=5))
+_REPLIED = question(QuestionStatus.ASKED, reply_text="Yes, I still drink it every morning", reply_at=NOW - timedelta(hours=5))
 _EVIDENCE = fact("ev", lineage_id="L-ev", state=FactState.CURRENT)
 _PAST_PLAN = dict(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=datetime(2026, 10, 1, tzinfo=UTC))
 
@@ -227,7 +227,7 @@ def _basis_refusal(action: str, kind: str):
     subject = fact(**_PAST_PLAN) if kind == "date_passed" else fact()
     basis = {
         "evidence": ReviewBasis("evidence", evidence_fact_id="ev"),
-        "reply": ReviewBasis("reply", question_id="q1", quote="still take it"),
+        "reply": ReviewBasis("reply", question_id="q1", quote="still drink it"),
         "date_passed": ReviewBasis("date_passed"),
     }[kind]
     return basis_refusal(
@@ -273,9 +273,9 @@ def test_a_supersede_takes_no_basis_but_a_current_successor():
 
 def test_history_goes_with_an_ended_reply_and_never_with_a_dated_plan():
     assert "A dated plan is archived only, with no history." in LIFECYCLE
-    archive, reply = _UPDATES["archive"], ReviewBasis("reply", question_id="q1", quote="still take it")
+    archive, reply = _UPDATES["archive"], ReviewBasis("reply", question_id="q1", quote="still drink it")
     standing = basis_refusal(fact(), archive, reply, named_fact=None, question=_REPLIED, made_current=frozenset(),
-                             history="He stopped taking vitamin D in October 2026.", today=TODAY, tz="UTC")
+                             history="He stopped drinking green tea in October 2026.", today=TODAY, tz="UTC")
     assert standing is None
     plan = basis_refusal(fact(**_PAST_PLAN), archive, reply, named_fact=None, question=_REPLIED,
                          made_current=frozenset(), history="The trip took place.", today=TODAY, tz="UTC")

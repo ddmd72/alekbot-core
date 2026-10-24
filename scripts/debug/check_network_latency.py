@@ -48,7 +48,7 @@ async def test_simple_query(query_num: int):
         return 0
 
 async def main():
-    print(f"🚀 Network Latency Check (Spain -> us-central1)")
+    print(f"🚀 Network Latency Check (local -> us-central1)")
     print(f"Database: us-production")
     print("-" * 50)
 

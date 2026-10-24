@@ -1,8 +1,8 @@
 """Spoken-language codes for voice transcription.
 
 Separate from LanguageCode by design: that enum is the closed set of translated UI
-languages (uk/en/fr/es) and has no "ru" — it cannot express what a household actually
-speaks. Only the shape is validated here; which codes a recogniser supports is the
+languages (uk/en/fr/es) and has no "ru" — it cannot express every language a speaker
+uses. Only the shape is validated here; which codes a recogniser supports is the
 provider's business, not the domain's.
 """
 from __future__ import annotations

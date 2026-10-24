@@ -63,9 +63,9 @@ _LISTED = [[{"path": "Договоры/lease_2026.pdf", "ref": "drive:AAA"},
 SCENARIOS: List[Dict[str, Any]] = [
     {"text": f"Запомни этот файл {LEASE}", "expect": "save_file_to_drive", "folder": None},
     # the user's own words reach memory through consolidation: no memory tool, and no file saved to the drive
-    {"text": "Запомни, что аренда заканчивается в декабре 2027", "expect": None, "forbid": "save_file_to_drive"},
+    {"text": "Запомни, что аренда заканчивается в марте 2029", "expect": None, "forbid": "save_file_to_drive"},
     {"text": f"Запомни этот файл в папку Встречи {LEASE}", "expect": "save_file_to_drive", "folder": "Встречи"},
-    {"seed": _pair(f"Открой {LEASE}", "Lease agreement for the flat, 12 months, ends Dec 2027."),
+    {"seed": _pair(f"Открой {LEASE}", "Lease agreement for the flat, 12 months, ends Mar 2029."),
      "text": "Положи его в папку Договоры", "expect": "save_file_to_drive", "forbid": "move_file_in_drive"},
     {"seed": _pair("Что у меня на диске в папке Договоры?", "В папке Договоры два файла: договор аренды на 2026 и на 2025 год.", _LISTED),
      "text": "Открой второй", "expect": "open_file_from_drive", "ref": "drive:BBB"},

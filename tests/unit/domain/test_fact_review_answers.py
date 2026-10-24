@@ -94,7 +94,7 @@ def test_an_option_that_is_not_an_answer_is_a_bug_not_words():
 
 def test_ended_text_says_who_said_it_when_and_what_it_was():
     at = datetime(2026, 10, 24, 9, 0, tzinfo=timezone.utc)
-    assert ended_text("Takes vitamin D", at, MADRID) == "No longer true (the owner said so in Oct 2026): Takes vitamin D"
+    assert ended_text("Drinks green tea", at, MADRID) == "No longer true (the owner said so in Oct 2026): Drinks green tea"
 
 
 def test_the_month_is_the_owners_not_utcs():
@@ -164,8 +164,8 @@ def test_still_true_on_a_waiting_current_fact_is_the_same_write():
 def test_ended_on_a_standing_fact_archives_it_and_leaves_a_history_fact():
     change = answer_updates(AnswerKind.ENDED, fact(), question(), NOW, MADRID, "digit")
     assert change.update == ARCHIVE == ARCHIVE_ONLY
-    assert change.history == ended_text("Takes vitamin D", NOW, MADRID) == (
-        "No longer true (the owner said so in Oct 2026): Takes vitamin D"
+    assert change.history == ended_text("Drinks green tea", NOW, MADRID) == (
+        "No longer true (the owner said so in Oct 2026): Drinks green tea"
     )
     assert change.reason == "ended q=q1 (digit)"
     assert not is_revive_reason(change.reason)

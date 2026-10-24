@@ -17,7 +17,7 @@ async def test_the_ref_is_the_platform_the_chat_and_the_message_id_the_bot_retur
 async def test_the_text_goes_out_literally_with_no_parse_mode():
     bot = MagicMock()
     bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
-    text = "«Takes *vitamin_D* and `zinc`»  1 — yes"
+    text = "«Drinks *green_tea* and `coffee`»  1 — yes"
     await TelegramResponseChannel(bot, 555).send_message_ref(text)
     bot.send_message.assert_awaited_once()
     kwargs = bot.send_message.call_args.kwargs

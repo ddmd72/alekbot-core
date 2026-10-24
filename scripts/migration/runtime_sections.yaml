@@ -20,11 +20,11 @@ runtime_sections:
 
     example_content: |
       Biographical facts:
-      - Lives in Warsaw, Ukraine
+      - Lives in Springfield
       - Software engineer specializing in Python and distributed systems
       - Interested in AI, philosophy, productivity systems
-      - Prefers direct communication, values logic and clarity
-      - Learning Spanish, travels frequently
+      - Prefers short answers with examples
+      - Learning to play the guitar, enjoys hiking
 
     v3_integration: |
       Template placeholder: {{BIOGRAPHICAL_CONTEXT}}

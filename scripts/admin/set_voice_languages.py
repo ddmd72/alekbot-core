@@ -4,7 +4,7 @@ Mirrors PUT /api/user/voice-languages for when the Cabinet UI is not available.
 Writes only `config.voice_languages` — a targeted field update, so nothing else on the
 user document is round-tripped through the model.
 
-    python scripts/admin/set_voice_languages.py --languages ru uk en
+    python scripts/admin/set_voice_languages.py --languages fr en
     python scripts/admin/set_voice_languages.py --show
 """
 import argparse

@@ -82,8 +82,7 @@ USER_TURN_SYSTEM_ANCHOR = (
 # Restates nothing. It NAMES the persona sections of the assembled system prompt
 # and declares them binding — the content of those sections is per-user data in
 # Firestore (tokens + blueprint), and this is adapter-side code shared by every
-# account. The earlier version hardcoded one account's persona verbatim
-# ("Ranevskaya-filtered", "intellectual equal and co-conspirator"), which was
+# account. The earlier version hardcoded one account's persona verbatim, which was
 # simply wrong for any other user: a second account with different tokens got a
 # block instructing it to be someone else's character.
 #
