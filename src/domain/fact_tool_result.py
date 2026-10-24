@@ -16,6 +16,8 @@ STATUS_UPDATED = "updated"
 STATUS_MERGED = "merged"
 STATUS_FAILED = "failed"
 STATUS_NOT_FOUND = "not_found"
+# An `ask_owner` the review pass accepted and holds (nothing is written by the call).
+STATUS_ASKED = "asked"
 
 # Key of an `update_fact` result that archived its fact beside a new history fact: the id of that new fact.
 HISTORY_FACT_ID = "history_fact_id"
@@ -25,6 +27,11 @@ WRITTEN_STATUSES: FrozenSet[str] = frozenset({STATUS_CREATED, STATUS_UPDATED, ST
 
 # Value of the `refused` tag. A new tag is declared together with the write that sets it.
 REFUSED_EXPIRY = "expiry"
+# The review pass's refusals: the reason behind a change (`basis`), the pass's own rules and the update's arguments (batch,
+# one result per fact, state; `scope`), an ask (`ask`).
+REFUSED_BASIS = "basis"
+REFUSED_SCOPE = "scope"
+REFUSED_ASK = "ask"
 
 # Codes of the notes a reader needs to recognise. The text stays in the domain beside the rule that writes it; the
 # result carries the code in `note_codes`, so no reader matches prose.
@@ -38,6 +45,11 @@ _NOTE_CODES: Dict[str, str] = {
 def expiry_refusal_tags(born_due: bool) -> Dict[str, Any]:
     """The tags of an expiry refusal: `refused`, and `born_due` when the expiry was well formed but already due."""
     return {"refused": REFUSED_EXPIRY, "born_due": True} if born_due else {"refused": REFUSED_EXPIRY}
+
+
+def refused_result(fact_id: Any, tag: str, message: str) -> Dict[str, Any]:
+    """A failed call with nothing written: `refused` names the rule (`tag`), `message` is the text the model reads."""
+    return {"fact_id": fact_id, "status": STATUS_FAILED, "refused": tag, "message": message}
 
 
 def outcome_of(result: Any) -> str:
