@@ -1,18 +1,15 @@
 """What an interactive message is about: the kind routes a choice to its handler, the id names the thing asked."""
 import re
-from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 _KIND = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
-_MAX_ID = 200
+_MAX_ID = 128  # room for a uuid and then some; how a platform carries the binding is its adapter's codec
 
 
 class InteractiveBinding(BaseModel):
-    """The one rule for turning a binding into a platform callback field and back (`token` / `parse`), so a poster and
-    the inbound route cannot disagree. The longest token (241 characters) fits Slack's block id (255). Telegram's inline
-    keyboard `callback_data` is only 64 bytes: a Telegram keyboard (follow-up) must keep token plus option id within it,
-    with short ids or a server-side lookup."""
+    """What an interactive message is about: `kind` names the handler that answers it, `id` the thing asked. How a
+    platform carries a binding in its own callback field (and reads it back) is that platform adapter's codec."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -32,17 +29,3 @@ class InteractiveBinding(BaseModel):
         if not value or len(value) > _MAX_ID or any(ch.isspace() for ch in value):
             raise ValueError(f"binding id must be 1-{_MAX_ID} characters without whitespace")
         return value
-
-    def token(self) -> str:
-        return f"{self.kind}:{self.id}"
-
-    @classmethod
-    def parse(cls, token: str) -> Optional["InteractiveBinding"]:
-        """The binding a `token()` came from; None for anything else (a foreign or damaged field is not an error)."""
-        kind, separator, ident = token.partition(":")
-        if not separator:
-            return None
-        try:
-            return cls(kind=kind, id=ident)
-        except ValidationError:
-            return None
