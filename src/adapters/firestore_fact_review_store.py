@@ -25,7 +25,7 @@ adapter decides no transition.
 """
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, TypeVar
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, TypeVar
 
 from google.api_core.exceptions import AlreadyExists
 from google.cloud import firestore
@@ -35,6 +35,7 @@ from pydantic import ValidationError
 from ..config.environment import EnvironmentConfig
 from ..domain.exceptions import QuestionTransitionError
 from ..domain.fact_review_answer_kind import AnswerKind
+from ..domain.fact_review_question_close import QuestionClose
 from ..domain.fact_review_question import QUESTION_RETENTION, AnswerSource, ClosedBy, FactReviewQuestion, QuestionStatus
 from ..domain.fact_review_rules import current_question, iso_week_of, may_send, next_in_queue, sent_today
 from ..domain.fact_review_state import FactReviewState
@@ -271,10 +272,13 @@ class FirestoreFactReviewStore(FactReviewStore):
         answer: Optional[AnswerKind],
         source: Optional[AnswerSource],
         at: datetime,
-    ) -> bool:
-        return await self._move(
+    ) -> QuestionClose:
+        moved, state_written = await self._move_with_state(
             question_id, lambda q: q.closed(closed_by, at, answer, source), lambda state: _released(state, question_id),
         )
+        if not moved:
+            return QuestionClose.REFUSED
+        return QuestionClose.RELEASED if state_written else QuestionClose.CLOSED
 
     # ------------------------------------------------------------------------------------------------ state marks
 
@@ -441,22 +445,32 @@ class FirestoreFactReviewStore(FactReviewStore):
         """Read the question (and, with `state_change`, its account's state), apply `move`, write the result, in one
         transaction. False when the question is missing, the move is refused or returns the question unchanged; the
         state is then not written either. A missing state document is left missing."""
+        moved, _ = await self._move_with_state(question_id, move, state_change)
+        return moved
+
+    async def _move_with_state(
+        self,
+        question_id: str,
+        move: Callable[[FactReviewQuestion], FactReviewQuestion],
+        state_change: Optional[StateChange] = None,
+    ) -> Tuple[bool, bool]:
+        """`_move`, also reporting whether the state was written in the same transaction: (moved, state written)."""
         if not question_id:
-            return False
+            return False, False
         ref = self._questions.document(question_id)
 
-        async def body(transaction: Any) -> bool:
+        async def body(transaction: Any) -> Tuple[bool, bool]:
             snap = await ref.get(transaction=transaction)
             if not snap.exists:
-                return False
+                return False, False
             before = self._the_question(snap)
             try:
                 after = move(before)
             except QuestionTransitionError as exc:
                 logger.info(f"[FactReviewStore] question {question_id[:12]} not moved: {exc}")
-                return False
+                return False, False
             if after is before:
-                return False
+                return False, False
             state_write: Optional[Dict[str, Any]] = None
             state_ref = self._states.document(before.account_id)
             if state_change is not None:
@@ -469,7 +483,7 @@ class FirestoreFactReviewStore(FactReviewStore):
             transaction.set(ref, question_document(after))
             if state_write is not None:
                 transaction.set(state_ref, state_write, merge=list(state_write))
-            return True
+            return True, state_write is not None
 
         return await self._in_transaction(body, f"question {question_id[:12]}")
 

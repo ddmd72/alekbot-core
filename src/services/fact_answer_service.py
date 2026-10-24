@@ -19,8 +19,9 @@ from ..domain.fact_review_answer_kind import AnswerKind
 from ..domain.fact_review_answers import answer_updates
 from ..domain.fact_review_language import LABEL_KEYS, fact_question_message
 from ..domain.fact_review_question import AnswerSource, ClosedBy, FactReviewQuestion
+from ..domain.fact_review_question_close import QuestionClose
 from ..domain.fact_update_outcome import UpdateRefusal
-from ..domain.fact_write_context import FactWriteContext
+from ..domain.fact_write_context import FactWriteContext, as_utc
 from ..domain.pass_actor import PassActor
 from ..domain.ui_messages import UIMessage
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
@@ -85,8 +86,9 @@ class FactAnswerService:
     ) -> AnswerResult:
         """Apply the owner's answer `kind` to the question's fact and close the question.
 
-        One `now` from the clock serves the whole call: the domain's horizon, the trail event, the evidence moment and
-        the close. `at` (when the owner answered, as the caller saw it) is not read: the clock's moment is the answer's.
+        `at` is when the owner answered, and the one moment of the whole call: the domain's `now` (the evidence, the
+        kind of a still-true decision, an ended fact's month, a fallback's horizon and event), the close's `closed_at`
+        and the counters' day. The clock is not read.
 
         Results: `not_found` (no such question of this account and user) and `not_open` (closed already) write
         nothing. The fact is followed forward with the owner's write context; a fact gone, a chain that ends elsewhere,
@@ -99,7 +101,7 @@ class FactAnswerService:
         counter = _ANSWERED.get(source)
         if counter is None:
             raise ValueError(f"{source!r} is not where an owner answer comes from")
-        now = self._clock()
+        now = as_utc(at)
         question = next(iter(await self._review_store.get_questions([question_id])), None)
         if question is None or question.account_id != account_id or question.user_id != user_id:
             logger.info(f"[FactAnswer] question {question_id} not found for account {account_id[:8]}")
@@ -131,8 +133,8 @@ class FactAnswerService:
                 if outcome.refusal is UpdateRefusal.CONFLICT:
                     logger.warning(f"[FactAnswer] question {question_id}: the write conflicted; nothing written")
                     return AnswerResult.CONFLICT
-                if not outcome.written:
-                    return await self._not_applied(question, now, f"{outcome.refusal.value if outcome.refusal else None}: {outcome.refusal_text}")
+                if outcome.refusal is not None:
+                    return await self._not_applied(question, now, f"{outcome.refusal.value}: {outcome.refusal_text}")
         except FactWriteConflict:
             logger.warning(f"[FactAnswer] question {question_id}: the in-place write conflicted; nothing written")
             return AnswerResult.CONFLICT
@@ -152,10 +154,10 @@ class FactAnswerService:
         source: Optional[AnswerSource] = None,
         note: Optional[UIMessage] = None,
     ) -> bool:
-        """Close `question` (`closed(closed_by, now, answer, source)`) and, in the same transaction, clear the current
-        slot when it names this question (`close_and_release`). When it was the current one, the next question is
-        released: one `fact_review` task `{user_id, account_id, mode: "next"}`, named after the closed question, so a
-        retried close never enqueues twice. A question with a message ref has its message re-rendered without controls
+        """Close `question` (`closed(closed_by, now, answer, source)`, `now` the clock's) and, in the same transaction,
+        clear the current slot when it names this question (`close_and_release`). When that transaction cleared it, the
+        next question is released: one `fact_review` task `{user_id, account_id, mode: "next"}`, named after the closed
+        question, so a retried close never enqueues twice. A question with a message ref has its message re-rendered without controls
         (`show_choice`): the chosen option for an answer, else `note` (default `MEMORY_QUESTION_CLOSED`), all texts from
         one `labels_for`; best effort, a failure is a WARNING and the close stands.
 
@@ -177,15 +179,13 @@ class FactAnswerService:
         note: Optional[UIMessage],
         now: datetime,
     ) -> bool:
-        state = await self._review_store.get_state(question.account_id)
-        was_current = state is not None and state.current_question_id == question.question_id
         closed = await self._review_store.close_and_release(question.question_id, closed_by, answer, source, now)
-        if not closed:
+        if closed is QuestionClose.REFUSED:
             logger.warning(
                 f"[FactAnswer] question {question.question_id} not closed by {closed_by.value}: the store refused it"
             )
             return False
-        if was_current:
+        if closed is QuestionClose.RELEASED:
             await self._release_next(question)
         await self._show_closed(question, answer, note)
         return True
