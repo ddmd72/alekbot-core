@@ -18,9 +18,9 @@ import json
 import time
 import asyncio
 from collections import Counter
-from typing import List, Dict, Any, FrozenSet, Literal, Optional, Tuple
+from typing import List, Dict, Any, FrozenSet, Literal, Mapping, Optional, Tuple
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
@@ -31,7 +31,7 @@ from ..domain.fact_lifecycle import CLOSING_STATES
 from ..domain.fact_argument_parsing import parse_enum
 from ..domain.fact_update import ParsedFactUpdate
 from ..domain.fact_write_context import FactWriteContext, as_utc, span_of
-from ..domain.local_time import local_day, local_moment, local_stamp
+from ..domain.local_time import local_date, local_day, local_moment, local_stamp
 from ..domain.new_fact_attributes import parse_derived_from, parse_new_fact
 from ..domain.pass_actor import PassActor
 from ..domain.request_context import get_effective_account_id
@@ -50,9 +50,15 @@ from ..domain.consolidation_pass_stats import (
     OUTCOME_ERROR, OUTCOME_OK, OUTCOME_SCOPE_REFUSAL, ConsolidationPassStats, PassCall, PassTool,
 )
 from ..domain.fact_review_ask import parse_ask_owner
+from ..domain.fact_review_language import (
+    CANONICAL_LABELS, MAX_LABEL_CHARS, MAX_OPTION_WORDS, MAX_TEXT_CHARS, check_labels, parse_message_language,
+)
+from ..domain.fact_review_question import FactReviewQuestion
+from ..domain.fact_review_task import FactReviewTask, ReviewItem, decode_review_task
 from ..domain.fact_tool_result import HISTORY_FACT_ID, STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..infrastructure.agent_config import CONSOLIDATION
+from ..infrastructure.agent_manifest import Intent
 from ..infrastructure.fact_review_scope import FactReviewScope
 
 
@@ -442,6 +448,107 @@ def _abandoned_alert(stats: ConsolidationPassStats, model: str, user_id: str) ->
     )
 
 
+_REVIEW_HEADER = (
+    "SYSTEM MAINTENANCE — STALE FACT REVIEW\n\n"
+    "The facts below are stale: their expiry passed and the owner has not said them again. Decide each one, taking the "
+    "outcomes in the order your instructions give: revive it, rewrite it, archive, invalidate or supersede it "
+    "(update_fact, with its basis), ask the owner about it (ask_owner), or keep it stale (no call). Code writes and sends "
+    "any question later; ask_owner only says what happens if he does not answer.\n"
+    "Every listed fact gets exactly one outcome.\n"
+    "Before any call, write one line per listed fact, in the order listed: <fact_id> | <outcome>.\n\n"
+    "Each fact shows `expiry` (the decision it carries, null when none is recorded), `due` (the day a horizon fell due), "
+    "`reported` (the day the owner last said it), `stale_since`, its earlier `versions`, its `neighbours` (the current "
+    "facts nearest to it) and, when the owner was asked about it, its `question` with any `reply`.\n\n"
+    "Facts under review:"
+)
+
+
+def _review_language_instruction() -> str:
+    """The review's language request (mirror mode only, Facts S4 §3.17): the language of `owner_messages`, and for a
+    language without UI strings the labels translated from `CANONICAL_LABELS`."""
+    return (
+        "LANGUAGE — in your final report (its JSON object), give `message_language`: the ISO 639-1 code (two letters) of "
+        "the language the owner writes in, read from owner_messages. If it is not uk, en, fr or es, also give `labels`: "
+        "these English texts translated into it, under the same keys; every text one line, without digits, `[` or links, "
+        f"at most {MAX_TEXT_CHARS} characters; each of the four option labels at most {MAX_OPTION_WORDS} words and "
+        f"{MAX_LABEL_CHARS} characters, all four different.\n"
+        f"{json.dumps(dict(CANONICAL_LABELS), ensure_ascii=False)}"
+    )
+
+
+def _review_line(item: ReviewItem, question: Optional[FactReviewQuestion], tz: str, now: datetime) -> Dict[str, Any]:
+    """One batch fact as the review sees it: its `fact_view` with the review's own fields."""
+    fact = item.fact
+    view = fact_view(fact, tz)
+    line: Dict[str, Any] = {
+        "fact_id": view["fact_id"],
+        "content": view["content"],
+        "domain": fact.domain.value if fact.domain else None,
+        "type": fact.type.value,
+        "expiry": view["expiry"],
+    }
+    if view["due"]:
+        line["due"] = view["due"]
+    line["reported"] = view["reported"]
+    line["stale_since"] = local_date(fact.stale_since, tz).isoformat() if fact.stale_since else None
+    line["versions"] = [
+        {"version": v.version, "content": v.text, "valid_from": local_date(v.valid_from, tz).isoformat()}
+        for v in item.versions
+    ]
+    line["neighbours"] = [
+        {"fact_id": n.id, "content": n.text, "created": local_date(n.created_at, tz).isoformat(),
+         "reported": fact_view(n, tz)["reported"]}
+        for n in item.neighbours
+    ]
+    if question is not None:
+        line["question"] = {
+            "question_id": question.question_id,
+            "asked_on": local_date(question.asked_at, tz).isoformat() if question.asked_at else None,
+            "fallback": question.fallback,
+            "timed_out": question.is_timed_out(now),
+            "reply": question.reply_text,
+            "reply_at": local_moment(question.reply_at, tz).isoformat(timespec="seconds") if question.reply_at else None,
+        }
+    return line
+
+
+def _report_object(text: str) -> Dict[str, Any]:
+    """The final report's JSON object: the whole text, or one ```json block in it; {} when there is none. The fenced form
+    is read as `_parse_operations_report` reads it (its documented exception): the tools have written everything by now,
+    and an unread report only leaves `message_language` and `labels` unset."""
+    candidates = [text.strip()]
+    fenced = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if fenced:
+        candidates.append(fenced.group(1))
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
+    return {}
+
+
+def _operations_of(data: Any) -> List[Dict[str, Any]]:
+    """The `operations` of a parsed final report; a report that is no JSON object has none."""
+    return data.get("operations", []) if isinstance(data, dict) else []
+
+
+def _reported_language(report: Mapping[str, Any]) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """`message_language` and `labels` of a review's final report, read by the domain's rules
+    (`parse_message_language`, `check_labels`); either is None when absent or refused."""
+    language = parse_message_language(report.get("message_language"))
+    raw = report.get("labels")
+    if raw is None:
+        return language, None
+    refusal = check_labels(raw) if isinstance(raw, Mapping) else "the labels are not an object"
+    if refusal is not None:
+        logger.warning(f"⚠️ [ConsolidationAgent] Review labels refused: {refusal}")
+        return language, None
+    return language, dict(raw)
+
+
 class _TrackingFactManagement(FactManagementPort):
     """
     Pass-through wrapper over FactManagementPort, one per run, passed to every stage of that run
@@ -662,6 +769,7 @@ class ConsolidationAgent(BaseAgent):
         task = message.payload.get("task", "").lower()
         return task in [
             "consolidate", "consolidate_cluster", "consolidate_email", "consolidate_full",
+            Intent.REVIEW_STALE_FACTS,
             "synthesize", "librarian",  # legacy aliases → consolidate
         ]
     
@@ -674,6 +782,7 @@ class ConsolidationAgent(BaseAgent):
           consolidate_cluster  → Stage 2 cluster review only
           consolidate_email    → Stage 3 email triage only
           consolidate_full     → Stage 1 + Stage 2 + Stage 3 email
+          review_stale_facts   → the memory review's pass over a batch of stale facts (Facts S4 §3.3)
           synthesize/librarian → legacy aliases for consolidate
         """
         user_id = message.context.get("user_id")
@@ -725,6 +834,10 @@ class ConsolidationAgent(BaseAgent):
                 )
             if task == "consolidate_full":
                 return await self._handle_consolidate_full(
+                    message, user_id, account_id, bio_context_raw, start_time
+                )
+            if task == Intent.REVIEW_STALE_FACTS:
+                return await self._handle_review_stale_facts(
                     message, user_id, account_id, bio_context_raw, start_time
                 )
 
@@ -1171,6 +1284,105 @@ class ConsolidationAgent(BaseAgent):
             metadata={"total_duration_ms": int(total_duration * 1000)},
         )
 
+    async def _handle_review_stale_facts(
+        self,
+        message: AgentMessage,
+        user_id: str,
+        account_id: str,
+        bio_context_raw: List[Dict],
+        start_time: float,
+    ) -> AgentResponse:
+        """
+        Intent: review_stale_facts — the memory review's pass over one batch of stale facts (Facts S4 §3.3, §3.4).
+        Payload: the `FactReviewTask` as `encode_review_task` writes it (built by the review service).
+
+        One review loop under the `consolidation_review` prompt; its `update_fact` and `ask_owner` go to a
+        `FactReviewScope` over the run's tracker (the typed port read now, so a port installed after construction is
+        the one that writes). Result: the scope's outcomes, asks and kept facts, and the `message_language` and `labels`
+        of the final report (None when absent or malformed). The agent writes no question, and posts and appends nothing.
+        """
+        try:
+            task = decode_review_task(message.payload)
+        except ValueError as e:
+            logger.error(f"❌ [ConsolidationAgent] review_stale_facts: {e}")
+            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error=str(e))
+
+        zone = self._owner_timezone(message)
+        try:
+            system_prompt = await self.prompt_builder.build_for_agent(
+                agent_type="consolidation_review",
+                user_id=user_id,
+                account_id=account_id,
+                routing_metadata=None,
+                include_directives=False,  # directives are curated as records, never obeyed
+                biographical_facts=bio_context_raw or [],
+                conversation_history=[],
+            )
+        except Exception as e:
+            self._on_agent_error(e)
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error=f"review prompt failed: {type(e).__name__}: {e}",
+            )
+        if not system_prompt:
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error="review prompt is empty",
+            )
+
+        now = self._now()
+        tracker = _TrackingFactUpdates(self._fact_management, self._fact_updates)
+        scope = FactReviewScope(task.batch, account_id, zone, now, self._repo, tracker)
+        language_instruction = _review_language_instruction() if task.mirror else None
+        report: Dict[str, Any] = {}
+        try:
+            await self._run_consolidation_loop(
+                user_message_text=self._build_review_message(
+                    task, language_instruction, task.owner_messages, timezone=zone, now=now,
+                ),
+                system_prompt=system_prompt,
+                user_id=user_id,
+                account_id=account_id,
+                fact_management=tracker,
+                write_context=self._write_context("review", zone),
+                pass_kind="review",
+                max_turns=CONSOLIDATION.review_max_turns,
+                review_scope=scope,
+                report=report,
+            )
+        except Exception as e:
+            self._on_agent_error(e)
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error=f"review_stale_facts failed: {str(e)}",
+            )
+        finally:
+            if tracker.wrote:
+                await self._refresh_biographical_cache(account_id)
+
+        language, labels = _reported_language(report)
+        outcomes = [asdict(d) for d in scope.decisions()]
+        total_duration = time.time() - start_time
+        logger.info(
+            f"✅ [ConsolidationAgent] review_stale_facts done: {len(task.items)} facts, {len(outcomes)} decided, "
+            f"{len(scope.asks())} asked in {total_duration:.1f}s"
+        )
+        return AgentResponse.success(
+            task_id=message.task_id,
+            agent_id=self.agent_id,
+            result={
+                "outcomes": outcomes,
+                "asks": [asdict(a) for a in scope.asks()],
+                "kept": [f.id for f in scope.kept()],
+                "message_language": language,
+                "labels": labels,
+            },
+            confidence=1.0,
+            metadata={"total_duration_ms": int(total_duration * 1000)},
+        )
+
+    @staticmethod
+    def _now() -> datetime:
+        """The review pass's clock (its scope's `now`, the questions' timeout)."""
+        return datetime.now(timezone.utc)
+
     def _stage3_budget_s(self, message: AgentMessage, start_time: float) -> Optional[float]:
         """Seconds Stage 3 may run: what is left of this execution's budget minus a margin.
 
@@ -1463,6 +1675,7 @@ class ConsolidationAgent(BaseAgent):
         pass_kind: PassKind = "consolidation",
         max_turns: Optional[int] = None,
         review_scope: Optional[FactReviewScope] = None,
+        report: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Single multi-turn LLM loop for one consolidation or review pass.
@@ -1473,7 +1686,8 @@ class ConsolidationAgent(BaseAgent):
         the stats. `pass_kind` picks the tools (`_get_tool_declarations`) and must match the actor (`review` with
         PassActor.REVIEW only); a review pass needs its `review_scope`, which serves its `update_fact` and `ask_owner`,
         and no other pass takes one. `max_turns` caps the loop and is the cap
-        the stats report (None = MAX_CONSOLIDATION_TURNS).
+        the stats report (None = MAX_CONSOLIDATION_TURNS). `report`, when given, receives the final report's JSON object
+        (left empty when there is none or it is not one).
 
         Ops alerts (best-effort, never change the result): a pass that exhausts its turns without
         a final report always posts a 🚨; a pass that ends with a report posts a 📊 stats line
@@ -1514,6 +1728,8 @@ class ConsolidationAgent(BaseAgent):
                 if not response.tool_calls:
                     logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — final report received")
                     ops = self._parse_operations_report(response.text or "")
+                    if report is not None:
+                        report.update(_report_object(response.text or ""))
                     # TEMPORARY monitoring for the Sonnet 5.5 stall (2026-10-20); remove once
                     # consolidation's model is settled.
                     if self._stats_alerts:
@@ -1798,6 +2014,26 @@ class ConsolidationAgent(BaseAgent):
         """A stored fact as Stage 2a sees a search hit: its `fact_view`, with no similarity."""
         view = fact_view(fact, timezone)
         return {"fact_id": view.pop("fact_id"), "content": view.pop("content"), "similarity": 0.0, **view}
+
+    @staticmethod
+    def _build_review_message(
+        batch: FactReviewTask,
+        language_instruction: Optional[str],
+        owner_messages: Tuple[str, ...],
+        *,
+        timezone: str,
+        now: datetime,
+    ) -> str:
+        """The review pass's user message (Facts S4 §3.4): the header, one JSON line per batch fact (its `fact_view`, its
+        earlier versions, its nearest current facts and its open question), then, in mirror mode, the owner's messages
+        and the language instruction. No question budget and no question text: code writes and sends the questions."""
+        lines = [_REVIEW_HEADER, ""]
+        for i, item in enumerate(batch.items, 1):
+            lines.append(f"{i}. {json.dumps(_review_line(item, batch.question_for(item.fact.id), timezone, now), ensure_ascii=False)}")
+        if language_instruction is not None:
+            lines += ["", f"owner_messages (his latest messages, oldest first, verbatim): "
+                          f"{json.dumps(list(owner_messages), ensure_ascii=False)}", "", language_instruction]
+        return "\n".join(lines)
     
     async def _execute_fact_management_tools(
         self,
@@ -2114,12 +2350,12 @@ class ConsolidationAgent(BaseAgent):
             )
             if json_match:
                 data = json.loads(json_match.group(1))
-                return data.get("operations", [])
+                return _operations_of(data)
 
             # Try direct JSON parsing
             try:
                 data = json.loads(response_text)
-                return data.get("operations", [])
+                return _operations_of(data)
             except json.JSONDecodeError:
                 logger.debug("Direct JSON parse failed, trying embedded JSON fallback")
 
@@ -2128,7 +2364,7 @@ class ConsolidationAgent(BaseAgent):
             embedded = re.search(r"\{.*\"operations\".*\}", response_text, re.DOTALL)
             if embedded:
                 data = json.loads(embedded.group(0))
-                return data.get("operations", [])
+                return _operations_of(data)
 
             # Plain text response — tools already executed, report is cosmetic
             logger.warning(
