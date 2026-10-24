@@ -940,7 +940,9 @@ class DryRunKit:
         write_service = FactWriteService(self.repo, live._embedding)
         agent._fact_write_service = write_service
         adapter = FactManagementAdapter(self.repo, live._embedding, write_service, live._search_enrichment)
-        agent._fact_management = WriteRecorder(adapter, self)
+        recorder = WriteRecorder(adapter, self)
+        agent._fact_management = recorder
+        agent._fact_updates = recorder  # the typed path too: a review's writes must not reach the live store
         agent._lifecycle_counters = self.counters
         agent._alert_sink = self.sink
         agent._stats_alerts = True
