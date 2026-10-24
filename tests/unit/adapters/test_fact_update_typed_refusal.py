@@ -9,7 +9,7 @@ import pytest
 
 from scripts.consolidation import s3_dry_run_kit as kit_module
 from scripts.consolidation.s3_dry_run_kit import DryRunKit
-from src.agents.consolidation_agent import _TrackingFactManagement, _TrackingFactUpdates, _tracker_for
+from src.agents.consolidation_agent import _TrackingFactManagement, _TrackingFactUpdates
 from src.domain.entities import ExpiryKind, FactState
 from src.domain.fact_expiry import MAX_HORIZON_DAYS, MIN_YEAR, Expiry
 from src.domain.fact_review_answer_kind import AnswerKind
@@ -20,6 +20,7 @@ from src.ports.fact_update_port import FactUpdatePort
 from tests.support.fact_kit import ACC, T0, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import ctx
+from tests.support.typed_writes import build_consolidation_agent
 
 UTC = timezone.utc
 ENDED = answer_reason(AnswerKind.ENDED, "q7", "digit")
@@ -100,16 +101,23 @@ class _ModelOnly(FactManagementPort):
 
 
 def test_the_typed_tracker_refuses_a_port_without_the_typed_path_when_built():
+    # Reviewer edit (S4 T6b, T3c re-review L6): the typed port is the agent's own dependency, so a port without the
+    # typed path is refused where it is handed over, when the agent is built.
     with pytest.raises(TypeError, match="FactUpdatePort"):
-        _TrackingFactUpdates(_ModelOnly())
+        build_consolidation_agent(fact_updates=_ModelOnly())
 
 
 def test_the_run_gets_the_typed_tracker_over_the_adapter_and_the_plain_one_otherwise(store):
-    typed = _tracker_for(store.adapter)
-    plain = _tracker_for(_ModelOnly())
+    # Reviewer edit (S4 T6b, T3c re-review L6): `_tracker_for` is gone. The run's tracker is the typed one over the
+    # agent's two ports (production passes the adapter as both); "otherwise" is now no tracker at all: an agent given a
+    # model-only port as its typed port is refused when built. The model-only tracker class offers no typed update.
+    typed = _TrackingFactUpdates(store.adapter, store.adapter)
+    plain = _TrackingFactManagement(_ModelOnly())
 
     assert isinstance(typed, _TrackingFactUpdates) and isinstance(typed, FactUpdatePort)
     assert type(plain) is _TrackingFactManagement and not isinstance(plain, FactUpdatePort)
+    with pytest.raises(TypeError, match="FactUpdatePort"):
+        build_consolidation_agent(fact_updates=_ModelOnly())
 
 
 def test_the_kits_recorder_refuses_a_port_without_the_typed_path_when_built(tmp_path, monkeypatch):

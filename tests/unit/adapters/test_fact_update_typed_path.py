@@ -14,7 +14,7 @@ import pytest
 from scripts.consolidation import s3_dry_run_kit as kit_module
 from scripts.consolidation.s3_dry_run_kit import DryRunKit
 from src.adapters.fact_management_adapter import FactManagementAdapter
-from src.agents.consolidation_agent import _TrackingFactManagement, _TrackingFactUpdates, _tracker_for
+from src.agents.consolidation_agent import _TrackingFactManagement, _TrackingFactUpdates
 from src.domain.entities import ExpiryKind, FactState
 from src.domain.fact_expiry import Expiry
 from src.domain.fact_review_answer_kind import AnswerKind
@@ -29,6 +29,7 @@ from tests.support.fact_kit import ACC, T0, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import ctx
 from tests.support.review_rule_builders import question
+from tests.support.typed_writes import build_consolidation_agent
 
 UTC = timezone.utc
 ACTORS = ["review", "owner"]
@@ -168,8 +169,10 @@ async def test_a_missing_fact_is_not_found(store):
 async def test_the_tracker_forwards_the_typed_update_and_records_the_history_fact(store):
     # Reviewer edit (facts S4, T3c fix round, L1): the typed update moved to `_TrackingFactUpdates`; the run builds its
     # tracker with `_tracker_for`, which over the production adapter is the typed one.
+    # Reviewer edit (S4 T6b, T3c re-review L6): the run's tracker is `_TrackingFactUpdates(model port, typed port)`;
+    # production passes the adapter as both.
     seed(store)
-    tracker = _tracker_for(store.adapter)
+    tracker = _TrackingFactUpdates(store.adapter, store.adapter)
     assert isinstance(tracker, _TrackingFactUpdates)
 
     res = await tracker.apply_fact_update(
@@ -182,7 +185,7 @@ async def test_the_tracker_forwards_the_typed_update_and_records_the_history_fac
 
 async def test_the_tracker_records_a_typed_rewrite_under_the_version_written(store):
     seed(store)
-    tracker = _tracker_for(store.adapter)   # reviewer edit (T3c fix round, L1)
+    tracker = _TrackingFactUpdates(store.adapter, store.adapter)   # reviewer edits (T3c fix round, L1; S4 T6b)
 
     res = await tracker.apply_fact_update(
         "old", ParsedFactUpdate(content="works at Beta", expiry=Expiry(ExpiryKind.HORIZON, days=90)), ACC,
@@ -194,7 +197,7 @@ async def test_the_tracker_records_a_typed_rewrite_under_the_version_written(sto
 
 async def test_the_tracker_records_nothing_for_a_refused_typed_update(store):
     seed(store)
-    tracker = _tracker_for(store.adapter)   # reviewer edit (T3c fix round, L1)
+    tracker = _TrackingFactUpdates(store.adapter, store.adapter)   # reviewer edits (T3c fix round, L1; S4 T6b)
 
     await tracker.apply_fact_update("old", ARCHIVE_ONLY, ACC, context=ctx("review"))
 
@@ -218,9 +221,12 @@ class _ModelOnly(FactManagementPort):
 async def test_the_tracker_over_a_port_without_the_typed_path_says_so():
     # Reviewer edit (facts S4, T3c fix round, L1): the refusal moved from the call to the build of the typed tracker.
     # Over a model-only port the run gets the model-only tracker, which offers no typed update at all.
+    # Reviewer edit (S4 T6b, T3c re-review L6): the typed port is the agent's own dependency and the model-only
+    # downgrade is gone, so the refusal moved to where the port is handed over: building the agent. The model-only
+    # tracker class still offers no typed update.
     with pytest.raises(TypeError, match="FactUpdatePort"):
-        _TrackingFactUpdates(_ModelOnly())
-    model_only = _tracker_for(_ModelOnly())
+        build_consolidation_agent(fact_updates=_ModelOnly())
+    model_only = _TrackingFactManagement(_ModelOnly())
     assert type(model_only) is _TrackingFactManagement and not isinstance(model_only, FactUpdatePort)
     assert not hasattr(model_only, "apply_fact_update")
 

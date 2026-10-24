@@ -26,6 +26,7 @@ from src.ports.llm_port import (
 )
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from tests.support.fact_write import ctx
+from tests.support.typed_writes import typed_port_for
 
 _USER_ID = "user-test-01"
 _ACCOUNT_ID = "account-test-01"
@@ -69,6 +70,7 @@ def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexe
         embedding_service=embedding,
         fact_write_service=fact_write,
         fact_management_port=fact_management,
+        fact_updates=typed_port_for(fact_management),  # reviewer edit (S4 T6b): the typed port is required
         prompt_builder=pb,
         indexed_email_repo=indexed_email_repo,
     )

@@ -1,32 +1,16 @@
 """S3-D12: on a cleanup pass (stage2a, stage2b, cluster) a born-due refusal that no later success answers is abandoned
-(🚨, gate G2); on stage1 and email it is not (the candidate may be discarded)."""
+(🚨, gate G2); on stage1 and email it is not (the candidate may be discarded).
+
+Reviewer edit (Facts S4 T6b, S1–S3 review L2 and L6): typed `PassCall` input (`tests/support/pass_calls.py`) and the
+agent's renderer for the alert; the scenarios and counts are the old ones."""
 import pytest
 
-from src.domain.consolidation_pass_stats import OUTCOME_BORN_DUE, OUTCOME_OK, ConsolidationPassStats
+from src.agents.consolidation_agent import _abandoned_alert
+from src.domain.consolidation_pass_stats import OUTCOME_BORN_DUE, OUTCOME_OK
+from tests.support.pass_calls import create, merge, stats, turn, update
 
 USER = "abcdef1234567890-secret-tail"
 CLEANUP = ["stage2a", "stage2b", "cluster"]
-
-
-def stats(label):
-    return ConsolidationPassStats(label, "model-x", "medium", 15, USER)
-
-
-def turn(s, calls, outcomes):
-    s.record_turn(calls)
-    s.record_outcomes(calls, outcomes)
-
-
-def create(text):
-    return ("create_fact", {"content": text})
-
-
-def merge(text):
-    return ("merge_facts", {"merged_content": text, "fact_ids": ["a", "b"]})
-
-
-def update(fact_id, **updates):
-    return ("update_fact", {"fact_id": fact_id, "updates": updates})
 
 
 @pytest.mark.parametrize("label", CLEANUP)
@@ -37,7 +21,7 @@ def test_an_unanswered_born_due_refusal_on_a_cleanup_pass_is_abandoned(label, ca
     turn(s, [create("something else")], [OUTCOME_OK])
 
     assert (s.born_due, s.abandoned) == (1, 1)
-    assert f"pass `{label}`" in s.format_abandoned_alert()
+    assert f"pass `{label}`" in _abandoned_alert(s, "model-x", USER)
 
 
 @pytest.mark.parametrize("label", CLEANUP)
@@ -55,7 +39,7 @@ def test_a_born_due_refusal_answered_by_the_rewrite_is_not_abandoned(label):
 def test_closing_the_fact_does_not_answer_its_born_due_refusal(label):
     s = stats(label)
     turn(s, [update("f1", content="x")], [OUTCOME_BORN_DUE])
-    turn(s, [update("f1", state="superseded")], [OUTCOME_OK])
+    turn(s, [update("f1", closing=True, state="superseded")], [OUTCOME_OK])
 
     assert s.abandoned == 1
 

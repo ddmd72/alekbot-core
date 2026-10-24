@@ -22,6 +22,7 @@ from src.domain.pass_actor import PassActor
 from src.domain.refusal_wording import RefusalWording
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import horizon
+from tests.support.pass_calls import create
 
 UTC = timezone.utc
 NOW = datetime(2026, 10, 23, 9, 0, tzinfo=UTC)
@@ -147,13 +148,15 @@ def test_a_context_has_no_model_dates_to_pass_in():
 
 
 def stats(label):
-    return ConsolidationPassStats(PassActor(label), "model-x", "medium", 15, "abcdef1234567890")
+    # Reviewer edit (S4 T6b): the stats take the actor and the turn cap only (model, effort and user id are the
+    # renderer's), and typed `PassCall`s (`tests/support/pass_calls.py`).
+    return ConsolidationPassStats(PassActor(label), 15)
 
 
 @pytest.mark.parametrize("label", ROWS)
 def test_an_unanswered_born_due_refusal_is_abandoned_exactly_when_the_row_says_it_is_a_loss(label):
     s = stats(label)
-    calls = [("create_fact", {"content": "the trip on the 3rd"})]
+    calls = [create("the trip on the 3rd")]
     s.record_turn(calls)
     s.record_outcomes(calls, [OUTCOME_BORN_DUE])
     assert (s.born_due, s.abandoned) == (1, int(ROWS[label][3]))
@@ -162,19 +165,21 @@ def test_an_unanswered_born_due_refusal_is_abandoned_exactly_when_the_row_says_i
 @pytest.mark.parametrize("label", ["consolidation", "p", ""])
 def test_the_stats_of_a_label_that_is_no_pass_are_refused(label):
     with pytest.raises(ValueError):
-        ConsolidationPassStats(label, "model-x", "medium", 15, "abcdef1234567890")      # type: ignore[arg-type]
+        ConsolidationPassStats(label, 15)      # type: ignore[arg-type]  # reviewer edit (S4 T6b): new signature
 
 
 @pytest.mark.parametrize("label", ROWS)
 def test_the_stats_name_the_pass_by_its_actor(label):
+    # Reviewer edit (S4 T6b, plan T6b "there is no pass_label"): the label is the actor's value, read from the actor.
     s = stats(label)
-    assert (s.actor, s.pass_label) == (PassActor(label), label)
+    assert (s.actor, s.actor.value) == (PassActor(label), label)
+    assert not hasattr(s, "pass_label")
 
 
 @pytest.mark.parametrize("label", ROWS)
 def test_a_missing_expiry_refusal_is_abandoned_on_every_label_the_row_does_not_change(label):
     s = stats(label)
-    calls = [("create_fact", {"content": "x"})]
+    calls = [create("x")]
     s.record_turn(calls)
     s.record_outcomes(calls, ["expiry"])
     assert s.abandoned == 1
