@@ -10,7 +10,10 @@ from src.domain.fact_review_rules import (
 from src.domain.fact_tool_result import (
     REFUSED_ASK, REFUSED_BASIS, REFUSED_SCOPE, STATUS_ASKED, WRITTEN_STATUSES, outcome_of, refused_result,
 )
-from src.domain.consolidation_pass_stats import OUTCOME_ERROR, OUTCOME_OK
+from src.domain.consolidation_pass_stats import (
+    OUTCOME_ERROR, OUTCOME_OK, OUTCOME_REVIEW_REFUSAL, ConsolidationPassStats, PassCall, PassTool,
+)
+from src.domain.pass_actor import PassActor
 
 PLACED = [not_in_batch_refusal, asked_refusal, decided_refusal, changed_outside_refusal, not_under_review_refusal]
 
@@ -65,9 +68,16 @@ def test_the_held_ask_text_says_code_writes_the_question():
 
 @pytest.mark.parametrize("tag", [REFUSED_BASIS, REFUSED_SCOPE, REFUSED_ASK])
 def test_a_refusal_is_a_tagged_failed_result_counted_as_an_error(tag):
+    # Reviewer edit (S4 T6b, plan T6b `_outcome_of`): a review refusal is now its own outcome, which the stats count as a
+    # review refusal and still as a tool-error turn (no longer a plain `error`, never an expiry error).
     result = refused_result("f1", tag, "why")
     assert result == {"fact_id": "f1", "status": "failed", "refused": tag, "message": "why"}
-    assert outcome_of(result) == OUTCOME_ERROR
+    assert outcome_of(result) == OUTCOME_REVIEW_REFUSAL != OUTCOME_ERROR
+    stats = ConsolidationPassStats(PassActor.REVIEW, 15)
+    call = [PassCall(PassTool.UPDATE, "u", key="f1")]
+    stats.record_turn(call)
+    stats.record_outcomes(call, [outcome_of(result)])
+    assert (stats.error_turns, stats.review_refusals, stats.expiry_errors) == (1, 1, 0)
 
 
 def test_the_tags_and_the_ask_status_are_spelled_once():

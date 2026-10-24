@@ -21,6 +21,7 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 from tests.support.fact_kit import ACC, OTHER, USER
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx
+from tests.support.typed_writes import typed_port_for
 
 REPORT = LLMResponse(text='{"operations": []}')
 
@@ -71,6 +72,7 @@ def make_agent(port=None, *, repo=None):
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"),
         execution_context=execution_context, repository=repo, embedding_service=MagicMock(),
         fact_write_service=MagicMock(), fact_management_port=port, prompt_builder=pb,
+        fact_updates=typed_port_for(port),  # reviewer edit (S4 T6b): the typed port is required
     )
     agent.INLINE_CLUSTER_REVIEW = True
     return agent, repo, pb

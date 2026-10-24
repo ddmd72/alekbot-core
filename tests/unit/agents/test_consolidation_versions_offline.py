@@ -46,7 +46,8 @@ def build_agent(store):
     agent = ConsolidationAgent(
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"), execution_context=ctx,
         repository=store.repo, embedding_service=store.embedder, fact_write_service=MagicMock(),
-        fact_management_port=port, prompt_builder=pb,
+        fact_management_port=port, fact_updates=port,  # reviewer edit (S4 T6b): the adapter is both ports
+        prompt_builder=pb,
     )
     agent.INLINE_CLUSTER_REVIEW = True
     return agent, port

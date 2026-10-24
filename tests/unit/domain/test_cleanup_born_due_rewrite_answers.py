@@ -1,31 +1,29 @@
 """S3-D12 (T2b review H1): on a cleanup pass the rewrite a born-due refusal asks for has other text, so it must count
-as the answer: a merge of the same facts, a create from the same facts, or a create that keeps the refused words."""
+as the answer: a merge of the same facts, a create from the same facts, or a create that keeps the refused words.
+
+Reviewer edit (Facts S4 T6b, S1–S3 review L2 and L6): typed `PassCall` input (`tests/support/pass_calls.py`, the values
+the agent builds for these calls) and the agent's renderer for the alert; the scenarios and counts are the old ones."""
 import pytest
 
-from src.domain.consolidation_pass_stats import OUTCOME_BORN_DUE, OUTCOME_ERROR, OUTCOME_OK, ConsolidationPassStats
+from src.agents.consolidation_agent import _abandoned_alert
+from src.domain.consolidation_pass_stats import OUTCOME_BORN_DUE, OUTCOME_ERROR, OUTCOME_OK
+from tests.support import pass_calls
+from tests.support.pass_calls import stats
 
 USER = "abcdef1234567890-secret-tail"
 CLEANUP = ["stage2a", "stage2b", "cluster"]
 
 
-def stats(label):
-    return ConsolidationPassStats(label, "model-x", "medium", 15, USER)
-
-
 def turn(s, call, outcome):
-    s.record_turn([call])
-    s.record_outcomes([call], [outcome])
+    pass_calls.turn(s, [call], [outcome])
 
 
 def create(text, *, derived=None, domain="biographical"):
-    attrs = {"domain": domain}
-    if derived is not None:
-        attrs["derived_from"] = derived
-    return ("create_fact", {"content": text, "fact_attributes": attrs})
+    return pass_calls.create(text, derived=derived, domain=domain)
 
 
 def merge(text, ids, domain="biographical"):
-    return ("merge_facts", {"merged_content": text, "fact_ids": ids, "fact_attributes": {"domain": domain}})
+    return pass_calls.merge(text, ids, domain=domain)
 
 
 @pytest.mark.parametrize("label", CLEANUP)
@@ -153,7 +151,7 @@ def test_the_alert_never_carries_the_text():
     s = stats("stage2a")
     turn(s, create("Plans a trip to Lisbon on 2026-10-10"), OUTCOME_BORN_DUE)
 
-    assert "Lisbon" not in s.format_abandoned_alert()
+    assert "Lisbon" not in _abandoned_alert(s, "model-x", USER)
 
 
 # Ten realistic past-tense rewrites in the house style, each the answer the refusal asks for (T2b re-review 2, M2).

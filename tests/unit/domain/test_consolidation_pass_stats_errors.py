@@ -1,35 +1,28 @@
-"""Facts S3 · T8: tool-error turns, expiry errors and abandoned refusals in the pass stats (plan §3.12)."""
-from src.domain.consolidation_pass_stats import (
-    OUTCOME_BORN_DUE, OUTCOME_ERROR, OUTCOME_EXPIRY, OUTCOME_OK, ConsolidationPassStats,
-)
+"""Facts S3 · T8: tool-error turns, expiry errors and abandoned refusals in the pass stats (plan §3.12).
+
+Reviewer edit (Facts S4 T6b, S1–S3 review L2 and L6): the stats take typed `PassCall`s (`tests/support/pass_calls.py`
+builds what the agent's `_pass_call` builds for each old call) and the lines are rendered by the agent
+(`_summary_line`, `_limit_alert`, `_abandoned_alert`); every scenario and expected count is the old one."""
+from src.agents.consolidation_agent import _abandoned_alert, _limit_alert, _pass_call, _summary_line
+from src.domain.consolidation_pass_stats import OUTCOME_BORN_DUE, OUTCOME_ERROR, OUTCOME_EXPIRY, OUTCOME_OK
+from src.ports.llm_port import ToolCall
+from tests.support.pass_calls import create, merge, search, stats, turn, update
 
 USER = "abcdef1234567890-secret-tail"
 
 
-def stats() -> ConsolidationPassStats:
-    return ConsolidationPassStats("stage1", "model-x", "medium", 15, USER)
+def alert(s) -> str:
+    return _abandoned_alert(s, "model-x", USER)
 
 
-def turn(s: ConsolidationPassStats, calls, outcomes) -> None:
-    s.record_turn(calls)
-    s.record_outcomes(calls, outcomes)
-
-
-def create(text: str):
-    return ("create_fact", {"content": text})
-
-
-def merge(text: str):
-    return ("merge_facts", {"merged_content": text, "fact_ids": ["a", "b"]})
-
-
-def update(fact_id: str, **updates):
-    return ("update_fact", {"fact_id": fact_id, "updates": updates})
+def model_update(fact_id: str, **updates):
+    """An update as the agent types it from the model's call (the state is read as the update parser reads it)."""
+    return _pass_call(ToolCall(name="update_fact", args={"fact_id": fact_id, "updates": updates}), "UTC")
 
 
 def test_a_pass_without_errors_counts_nothing():
     s = stats()
-    turn(s, [("search_existing_facts", {}), create("x")], [OUTCOME_OK, OUTCOME_OK])
+    turn(s, [search(), create("x")], [OUTCOME_OK, OUTCOME_OK])
 
     assert (s.error_turns, s.expiry_errors, s.born_due, s.abandoned) == (0, 0, 0, 0)
 
@@ -103,7 +96,7 @@ def test_a_refused_update_is_answered_only_by_a_later_successful_update_of_the_s
     turn(s, [update("f1", content="x", expiry="none"), create("f2")], [OUTCOME_OK, OUTCOME_OK])
 
     assert s.abandoned == 1                                  # f2 got a create, not an update
-    assert "update fact f2" in s.format_abandoned_alert() and "update fact f1" not in s.format_abandoned_alert()
+    assert "update fact f2" in alert(s) and "update fact f1" not in alert(s)
 
 
 def test_a_born_due_refusal_is_never_abandoned():
@@ -125,22 +118,22 @@ def test_the_stats_line_and_the_limit_alert_show_the_counts():
     s = stats()
     turn(s, [create("a"), create("b")], [OUTCOME_EXPIRY, OUTCOME_BORN_DUE])
 
-    assert "tool-error turns 1 (expiry 2, born due 1, abandoned 1)" in s.format_summary(0, 1.0)
-    assert "tool-error turns 1 (expiry 2, born due 1, abandoned 1)" in s.format_limit_alert(1.0)
+    assert "tool-error turns 1 (expiry 2, born due 1, abandoned 1)" in _summary_line(s, "model-x", "medium", USER, 0, 1.0)
+    assert "tool-error turns 1 (expiry 2, born due 1, abandoned 1)" in _limit_alert(s, "model-x", "medium", USER, 1.0)
 
 
 def test_the_counts_without_born_due_follow_the_plan_shape():
     s = stats()
     turn(s, [create("a")], [OUTCOME_EXPIRY])
 
-    assert "tool-error turns 1 (expiry 1, abandoned 1)" in s.format_summary(0, 1.0)
+    assert "tool-error turns 1 (expiry 1, abandoned 1)" in _summary_line(s, "model-x", "medium", USER, 0, 1.0)
 
 
 def test_the_abandoned_alert_names_the_pass_and_lengths_and_never_the_text_or_the_full_user_id():
     s = stats()
     turn(s, [create("a very private fact"), update("1234567890abcdef", content="hidden")], [OUTCOME_EXPIRY, OUTCOME_EXPIRY])
 
-    text = s.format_abandoned_alert()
+    text = alert(s)
 
     assert text.startswith("🚨") and "`stage1`" in text and "abandoned 2" in text
     assert f"create (text {len('a very private fact')} chars)" in text and "update fact 12345678" in text
@@ -153,7 +146,7 @@ def test_the_abandoned_alert_lists_at_most_five_but_counts_all():
     for i in range(7):
         turn(s, [create(f"fact {i}")], [OUTCOME_EXPIRY])
 
-    text = s.format_abandoned_alert()
+    text = alert(s)
 
     assert "abandoned 7" in text and text.count("create (text") == 5
 
@@ -161,7 +154,7 @@ def test_the_abandoned_alert_lists_at_most_five_but_counts_all():
 def test_a_closing_update_after_a_refused_content_update_leaves_it_abandoned():
     s = stats()
     turn(s, [update("f1", content="new text")], [OUTCOME_EXPIRY])
-    turn(s, [update("f1", state="invalidated")], [OUTCOME_OK])         # retires the fact without its new text
+    turn(s, [update("f1", closing=True, state="invalidated")], [OUTCOME_OK])  # retires the fact without its new text
 
     assert s.abandoned == 1
 
@@ -170,13 +163,13 @@ def test_every_closing_state_in_any_case_leaves_it_abandoned():
     for state in ("invalidated", "ARCHIVED", " Superseded "):
         s = stats()
         turn(s, [update("f1", content="new text")], [OUTCOME_EXPIRY])
-        turn(s, [update("f1", state=state)], [OUTCOME_OK])
+        turn(s, [model_update("f1", state=state)], [OUTCOME_OK])
         assert s.abandoned == 1, state
 
 
 def test_a_non_closing_update_after_a_refused_content_update_answers_it():
-    for later in (update("f1", content="new text", expiry="none"), update("f1", state="current", content="t"),
-                  update("f1", tags=["a"])):
+    for later in (model_update("f1", content="new text", expiry="none"), model_update("f1", state="current", content="t"),
+                  model_update("f1", tags=["a"])):
         s = stats()
         turn(s, [update("f1", content="new text")], [OUTCOME_EXPIRY])
         turn(s, [later], [OUTCOME_OK])

@@ -17,6 +17,7 @@ from src.ports.fact_management_port import FactManagementPort
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
 from tests.support.fact_kit import ACC, USER, make_fact
+from tests.support.typed_writes import typed_port_for
 
 
 class RecordingPort(FactManagementPort):
@@ -53,6 +54,7 @@ def make_agent(port=None):
         config=AgentConfig(agent_id="consolidation_agent", agent_type="consolidation"),
         execution_context=execution_context, repository=repo, embedding_service=MagicMock(),
         fact_write_service=MagicMock(), fact_management_port=port, prompt_builder=MagicMock(),
+        fact_updates=typed_port_for(port),  # reviewer edit (S4 T6b): the typed port is required
     ), repo
 
 
