@@ -56,7 +56,7 @@ uploaded_by: local_script
             // HEALTH vs MEDICAL_RECORDS tiebreaker:
             // → Has a specific clinical procedure/test date? → MEDICAL_RECORDS
             // → Describes an ongoing state or condition? → HEALTH
-            // → Examples: "User has PPT" → HEALTH; "X-ray on Jan 12" → MEDICAL_RECORDS; "Blood test on March 28" → MEDICAL_RECORDS
+            // → Examples: "User has hay fever" → HEALTH; "X-ray on Jan 12" → MEDICAL_RECORDS; "Blood test on March 28" → MEDICAL_RECORDS
             LOCATION: "Addresses, residence, travel (home, office, city, country, trips)"
             WORK: "Occupation, career, employment (job title, company, salary, methodologies)"
             NETWORK: "Contacts, relationships (family, friends, colleagues, mentors)"
@@ -190,10 +190,10 @@ uploaded_by: local_script
             purpose: "Structured data for ANALYSIS (specific numeric/temporal values)"
             format: "Dict/object with typed fields"
             examples: {
-                weight_kg: 83.5,
-                measurement_date: "2025-03-15",
+                weight_kg: 75,
+                measurement_date: "2024-09-01",
                 measurement_method: "home_scale",
-                diet_phase: "post-fasting"
+                diet_phase: "maintenance"
             }
             usage: "Time series analysis, numeric queries, structured filtering"
         }
@@ -240,10 +240,10 @@ uploaded_by: local_script
 
             examples: [
                 {
-                    existing: "User's weight: 85 kg (Feb 5)",
-                    new: "User weighs 82 kg",
+                    existing: "User's weight: 74 kg (Mar 3)",
+                    new: "User weighs 72 kg",
                     action: "UPDATE",
-                    result: "User's weight: 82 kg (Feb 16), was 85 kg (Feb 5)"
+                    result: "User's weight: 72 kg (Mar 10), was 74 kg (Mar 3)"
                 },
                 {
                     existing: "User's savings: $10,000 (Jan 2026)",
@@ -308,8 +308,8 @@ uploaded_by: local_script
 
             examples: [
                 {
-                    input: "User prohibits partial answers followed by opt-in follow-up offers (Jun 25, 2026)",
-                    output: "Never give a partial answer with an opt-in follow-up; deliver complete information upfront in a single response."
+                    input: "User prohibits ending replies with a menu of optional follow-up questions (May 12, 2026)",
+                    output: "Never end a reply with a menu of optional follow-up questions; stop when the answer is complete."
                 },
                 {
                     input: "Agent policy Zero_Interpolation (Mar 29, 2026): agent must always search tools first for any factual variable",
@@ -416,7 +416,7 @@ uploaded_by: local_script
      * QUALITY RULES: Standards for fact formulation
      */
     quality_rules: [
-        "Be SPECIFIC: 'User's weight is 80.5 kg' not 'User is losing weight'",
+        "Be SPECIFIC: 'User's weight is 70 kg' not 'User is losing weight'",
         "Be ATOMIC: One subject entity per fact. Co-located attributes of the same entity are permitted only when always retrieved together (see Size_Triggers_Review co-location test). Parts that are independently queryable MUST be stored as separate facts.",
         "Be DATED: reported_date is when the owner said it: the timestamp of his message, as shown in the conversation, in ISO form with its offset, e.g. 2026-10-22T12:00:00+02:00 (an email's date for an email)",
         "Be CONTEXTUAL: Add temporal context for EPHEMERAL/DYNAMIC facts",

@@ -30,11 +30,11 @@ uploaded_by: local_script
  *   Facts are stored as text vector embeddings. Retrieval happens via semantic similarity search.
  *   This has a direct consequence on how you should write facts:
  *
- *   - A compound fact mixing two topics (e.g. "User has PPT. Protocol: sciatic flossing, glute bridges...")
- *     gets a blended embedding that represents BOTH topics weakly. A search for "PPT diagnosis"
- *     may miss it. A search for "rehabilitation protocol" may also miss it.
+ *   - A compound fact mixing two topics (e.g. "User plays bass in a band. Routine: chromatic scales, slap drills...")
+ *     gets a blended embedding that represents BOTH topics weakly. A search for "band membership"
+ *     may miss it. A search for "practice routine" may also miss it.
  *
- *   - An atomic fact about one topic (e.g. "User is diagnosed with Posterior Pelvic Tilt (PPT)")
+ *   - An atomic fact about one topic (e.g. "User plays bass guitar in a weekend jazz band")
  *     gets a sharp embedding. It will be found reliably whenever the topic is relevant.
  *
  *   Atomicity is not just a quality rule — it is what makes memory findable.
@@ -64,7 +64,7 @@ uploaded_by: local_script
             numbers:     "Do not lose numeric values, dates, or amounts."
         }
 
-        specific:   "Numbers, dates, names. 'User is losing weight' is invalid. 'User's weight: 80.5 kg (Feb 16)' is valid."
+        specific:   "Numbers, dates, names. 'User is losing weight' is invalid. 'User's weight: 70 kg (Mar 10)' is valid."
         timeless:   "Patterns, states, and traits — not one-off events. 30-day test: would this matter in a month?"
         dated:      "Always include reported_date (conversation timestamp) in fact_attributes."
         personal:   "Use 'User's X' or '{UserName}'s X'. Never 'my X'."
@@ -299,16 +299,16 @@ uploaded_by: local_script
 
             usage_example: '''
             result = create_fact(
-                content="User started morning yoga practice (30 min daily) in Q1 2026",
+                content="User started evening swimming practice (45 min daily) in Q1 2026",
                 fact_attributes={
                     "domain": "HEALTH",
                     "temporal_class": "DYNAMIC",
                     "state": "CURRENT",
                     "context_priority": "MEDIUM",
                     "ttl_days": 90,
-                    "tags": ["yoga", "habit", "health", "morning", "routine"],
-                    "metadata": {"duration_min": 30, "frequency": "daily", "time_of_day": "morning"},
-                    "reported_date": "2026-02-16T10:00:00"
+                    "tags": ["swimming", "habit", "health", "evening", "routine"],
+                    "metadata": {"duration_min": 45, "frequency": "daily", "time_of_day": "evening"},
+                    "reported_date": "2026-03-10T10:00:00"
                 }
             )
             '''
@@ -335,9 +335,9 @@ uploaded_by: local_script
             result = update_fact(
                 fact_id="weight-fact-123",
                 updates={
-                    "content": "User's weight: 80.5 kg (Feb 16)",
-                    "metadata": {"weight_kg": 80.5, "measurement_date": "2026-02-16", "trend": "decreasing"},
-                    "reported_date": "2026-02-16T10:00:00"
+                    "content": "User's weight: 70 kg (Mar 10)",
+                    "metadata": {"weight_kg": 70, "measurement_date": "2026-03-10", "trend": "decreasing"},
+                    "reported_date": "2026-03-10T10:00:00"
                 }
             )
             '''
@@ -365,7 +365,7 @@ uploaded_by: local_script
                     "context_priority": "MEDIUM",
                     "tags": ["car", "skoda", "springfield"],
                     "metadata": {"make": "Skoda", "model": "Fabia", "year": 2015, "plate": "SAMPLE-0000"},
-                    "reported_date": "2026-02-16T10:00:00"
+                    "reported_date": "2026-03-10T10:00:00"
                 }
             )
             '''
@@ -385,16 +385,16 @@ uploaded_by: local_script
 
         example_time_series_update: {
 
-            conversation: "USER: Вчера я важив 80.5 кг"
+            conversation: "USER: Вчера я весил 70 кг"
 
             reasoning: '''
             <thinking>
             STEP 1 — EXTRACT:
-            Candidate: "User's weight: 80.5 kg (Feb 16, 2026)"
+            Candidate: "User's weight: 70 kg (Mar 10, 2026)"
 
             STEP 2 — CLASSIFY:
             Domain: HEALTH | Temporal: DYNAMIC | State: CURRENT | Priority: MEDIUM | TTL: 90d
-            Tags: ["weight", "health", "biometrics"] | Metadata: {weight_kg: 80.5, measurement_date: "2026-02-16"}
+            Tags: ["weight", "health", "biometrics"] | Metadata: {weight_kg: 70, measurement_date: "2026-03-10"}
 
             STEP 3 — SEARCH:
             search_existing_facts(
@@ -402,12 +402,12 @@ uploaded_by: local_script
                 primary_query="user weight kg biometrics",
                 alternative_query="user body weight measurement"
             )
-            Result: [{"fact_id": "weight-123", "content": "User's weight: 81 kg (Feb 7)", "similarity": 0.95}]
+            Result: [{"fact_id": "weight-123", "content": "User's weight: 72 kg (Mar 3)", "similarity": 0.95}]
 
             STEP 4 — DECIDE:
             Existing subject (weight tracking). Candidate adds a new measurement to the same metric → UPDATE.
-            Count words in planned content: "User's weight: 80.5 kg (Feb 16)" → 7 words. ≤40 → proceed.
-            (If the existing fact already held accumulated history like "80.5 kg Feb 16, 81 kg Feb 7, 82.1 kg Feb 5..." and
+            Count words in planned content: "User's weight: 70 kg (Mar 10)" → 6 words. ≤40 → proceed.
+            (If the existing fact already held accumulated history like "70 kg Mar 10, 72 kg Mar 3, 74 kg Feb 24..." and
             the planned new content would exceed 40 words → STOP, switch to decomposition: SUPERSEDE the accumulation
             fact and CREATE separate atomic facts — one for current value, one for historical records if warranted.)
 
@@ -415,9 +415,9 @@ uploaded_by: local_script
             update_fact(
                 fact_id="weight-123",
                 updates={
-                    "content": "User's weight: 80.5 kg (Feb 16)",
-                    "metadata": {"weight_kg": 80.5, "measurement_date": "2026-02-16", "trend": "decreasing"},
-                    "reported_date": "2026-02-16T10:00:00"
+                    "content": "User's weight: 70 kg (Mar 10)",
+                    "metadata": {"weight_kg": 70, "measurement_date": "2026-03-10", "trend": "decreasing"},
+                    "reported_date": "2026-03-10T10:00:00"
                 }
             )
             ✓ Updated (version 2).
@@ -432,17 +432,17 @@ uploaded_by: local_script
         example_echo_trap: {
 
             conversation: '''
-            ASSISTANT: Based on our history, you weigh 82kg.
-            USER: Да, точно.
+            ASSISTANT: Based on our history, you weigh 75kg.
+            USER: Да, всё верно.
             '''
 
             reasoning: '''
             <thinking>
             STEP 1 — EXTRACT:
-            Candidate: "User's weight is 82 kg" (user confirmed ASSISTANT recall)
+            Candidate: "User's weight is 75 kg" (user confirmed ASSISTANT recall)
 
             STEP 3 — SEARCH:
-            Results: [{"fact_id": "weight-123", "content": "User's weight is 82kg", "similarity": 0.98}]
+            Results: [{"fact_id": "weight-123", "content": "User's weight is 75kg", "similarity": 0.98}]
 
             STEP 4 — DECIDE:
             The fact originated from ASSISTANT (retrieved from memory). USER only confirmed — added zero
@@ -528,7 +528,7 @@ uploaded_by: local_script
         {
             "operations": [
                 {"action": "UPDATE", "fact_id": "weight-123", "reason": "New data point in weight time series"},
-                {"action": "CREATE", "fact_id": "yoga-456", "reason": "New habit not previously recorded"},
+                {"action": "CREATE", "fact_id": "swim-456", "reason": "New habit not previously recorded"},
                 {"action": "DISCARD", "reason": "Too vague — no actionable detail"},
                 {"action": "MERGE", "new_fact_id": "car-789", "old_fact_ids": ["car-1", "car-2"], "reason": "Consolidated car details — all parts always retrieved together"}
             ]

@@ -28,7 +28,7 @@ uploaded_by: local_script
     usage_example: '''
     results = search_existing_facts(
         keywords=["weight", "kg", "biometrics"],
-        primary_query="user weight 81 kg biometrics",
+        primary_query="user weight 72 kg biometrics",
         limit=10
     )
     '''
@@ -57,19 +57,19 @@ uploaded_by: local_script
 
     usage_example: '''
     result = create_fact(
-        content="User's weight was 88 kg in June 2025 (6 kg loss post-diet)",
+        content="User's weight was 90 kg in May 2024 (5 kg loss post-diet)",
         fact_attributes={
             "domain": "HEALTH",
             "temporal_class": "DYNAMIC",
             "state": "CURRENT",
             "context_priority": "MEDIUM",
             "expiry": {"kind": "none"},
-            "tags": ["weight", "health", "biometrics", "2025", "diet"],
+            "tags": ["weight", "health", "biometrics", "2024", "diet"],
             "metadata": {
-                "weight_kg": 88,
-                "measurement_date": "2025-06",
-                "diet_context": "post-fasting",
-                "weight_change_kg": -6
+                "weight_kg": 90,
+                "measurement_date": "2024-05",
+                "diet_context": "post-diet",
+                "weight_change_kg": -5
             },
             "context": "Historical weight record",
             "reported_date": "2026-10-22T12:00+02:00"
@@ -101,11 +101,11 @@ uploaded_by: local_script
     result = update_fact(
         fact_id="weight-fact-123",
         updates={
-            "content": "User's weight: 80.5 kg (Oct 22), was 81 kg (Oct 13), 82.1 kg (Oct 11)",
+            "content": "User's weight: 70 kg (Oct 21), was 72 kg (Oct 14), 74 kg (Oct 7)",
             "tags": ["weight", "health", "biometrics", "tracking", "loss"],
             "metadata": {
-                "weight_kg": 80.5,
-                "measurement_date": "2026-10-22",
+                "weight_kg": 70,
+                "measurement_date": "2026-10-21",
                 "trend": "decreasing"
             },
             "expiry": {"kind": "horizon", "days": 90},

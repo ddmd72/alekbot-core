@@ -4,8 +4,8 @@ class: few_shot_examples
 metadata:
   description: 'Lelik''s few-shot cases (VOICE_COMPANION_RFC §4.15, copilot step 4):
     situation + good + bad reply. Service lines stay a few words; results and real
-    answers keep full depth; humor only where the moment fits. Bad replies are real
-    phrases from the 2026-09-29 calls.'
+    answers keep full depth; humor only where the moment fits. Bad replies are the
+    kind of lines that drift into narrating form.'
   override_by:
   - SYSTEM
   - AGENT

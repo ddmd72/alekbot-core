@@ -44,7 +44,7 @@ TEST_CASES = [
     },
     {
         "category": "MEDICAL",
-        "question": "My vitamin D is 41 ng/mL. What dietary adjustments should I consider? Be specific about food sources."
+        "question": "My ferritin is 20 ng/mL. What dietary adjustments should I consider? Be specific about food sources."
     },
     {
         "category": "TRAVEL",
@@ -72,7 +72,7 @@ TEST_CASES = [
     },
     {
         "category": "MIXED",
-        "question": "I'm stressed about my kidney stone diagnosis and my project deadline. Give me a stoic advice and a practical plan."
+        "question": "I'm stressed about my sprained ankle and my project deadline. Give me a stoic advice and a practical plan."
     }
 ]
 

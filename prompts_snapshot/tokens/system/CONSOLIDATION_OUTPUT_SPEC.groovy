@@ -33,10 +33,10 @@ decomposition_reporting: {
         "DISCARD for extracted parts that fail Trivial_Exclusions 30-day test"
     ]
     example: [
-        {"action": "CREATE", "fact_id": "ppt-diagnosis-new", "reason": "Decomposed from ppt-compound-old: diagnosis extracted as independent fact"},
-        {"action": "CREATE", "fact_id": "ppt-protocol-new", "reason": "Decomposed from ppt-compound-old: rehabilitation protocol extracted as independent fact"},
-        {"action": "UPDATE", "fact_id": "ppt-compound-old", "reason": "SUPERSEDED — decomposed into ppt-diagnosis-new, ppt-protocol-new"},
-        {"action": "DISCARD", "reason": "Decomposed from ppt-compound-old: yoga disclaimer fails 30-day relevance test"}
+        {"action": "CREATE", "fact_id": "bass-band-new", "reason": "Decomposed from bass-compound-old: band membership extracted as independent fact"},
+        {"action": "CREATE", "fact_id": "bass-routine-new", "reason": "Decomposed from bass-compound-old: practice routine extracted as independent fact"},
+        {"action": "UPDATE", "fact_id": "bass-compound-old", "reason": "SUPERSEDED — decomposed into bass-band-new, bass-routine-new"},
+        {"action": "DISCARD", "reason": "Decomposed from bass-compound-old: professional-musician disclaimer fails 30-day relevance test"}
     ]
 }
 
@@ -50,7 +50,7 @@ example_output: '''
         },
         {
             "action": "CREATE",
-            "fact_id": "yoga-456",
+            "fact_id": "swim-456",
             "reason": "New habit not previously recorded"
         },
         {

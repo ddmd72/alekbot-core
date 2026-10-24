@@ -12,12 +12,12 @@ uploaded_by: local_script
 ---
 
 example_1_update_weight: {
-    conversation: "USER: Вчера я важив 80.5 кг"
+    conversation: "USER: Вчера я весил 70 кг"
 
     reasoning: '''
     <thinking>
     STEP 1 - EXTRACT:
-    - Candidate: "User's weight is 80.5 kg (Oct 22, 2026)"
+    - Candidate: "User's weight is 70 kg (Oct 21, 2026)"
 
     STEP 2 - CLASSIFY:
     - Domain: HEALTH
@@ -25,7 +25,7 @@ example_1_update_weight: {
     - State: CURRENT
     - Expiry: {kind: horizon, days: 90} (weight keeps changing; review if not said again)
     - Tags: ["weight", "health", "biometrics", "tracking"]
-    - Metadata: {"weight_kg": 80.5, "measurement_date": "2026-10-22"}
+    - Metadata: {"weight_kg": 70, "measurement_date": "2026-10-21"}
 
     STEP 3 - SEARCH:
     Query: "user weight kg biometrics"
@@ -33,7 +33,7 @@ example_1_update_weight: {
     Results: [
         {
             fact_id: "weight-123",
-            content: "User's current weight is 81 kg (Oct 13)",
+            content: "User's current weight is 72 kg (Oct 14)",
             similarity: 0.95
         }
     ]
@@ -41,7 +41,7 @@ example_1_update_weight: {
     STEP 4 - ANALYZE:
     - Top result: 95% similarity
     - Same metric (weight in kg)
-    - Different data point (new measurement, 9 days later)
+    - Different data point (new measurement, 7 days later)
     - Match type: TIME SERIES UPDATE
 
     STEP 5 - DECIDE:
@@ -53,11 +53,11 @@ example_1_update_weight: {
     update_fact(
         fact_id="weight-123",
         updates={
-            "content": "User's weight: 80.5 kg (Oct 22), was 81 kg (Oct 13), 82.1 kg (Oct 11)",
+            "content": "User's weight: 70 kg (Oct 21), was 72 kg (Oct 14), 74 kg (Oct 7)",
             "tags": ["weight", "health", "biometrics", "tracking", "loss"],
             "metadata": {
-                "weight_kg": 80.5,
-                "measurement_date": "2026-10-22",
+                "weight_kg": 70,
+                "measurement_date": "2026-10-21",
                 "trend": "decreasing"
             },
             "expiry": {"kind": "horizon", "days": 90},
@@ -85,50 +85,50 @@ example_1_update_weight: {
 }
 
 example_2_create_new_habit: {
-    conversation: "USER: Я начал практиковать йогу по утрам, 30 минут каждый день"
+    conversation: "USER: Я начал плавать по вечерам, 45 минут каждый день"
 
     reasoning: '''
     <thinking>
     STEP 1 - EXTRACT:
-    - Candidate: "User started morning yoga practice (30 min daily)"
+    - Candidate: "User started evening swimming practice (45 min daily)"
 
     STEP 2 - CLASSIFY:
     - Domain: HEALTH
     - Temporal: DYNAMIC (new habit, may change)
     - State: CURRENT
     - Expiry: {kind: horizon, days: 90} (a new habit may change; review if not said again)
-    - Tags: ["yoga", "habit", "health", "morning", "routine"]
-    - Metadata: {"duration_min": 30, "frequency": "daily", "time_of_day": "morning"}
+    - Tags: ["swimming", "habit", "health", "evening", "routine"]
+    - Metadata: {"duration_min": 45, "frequency": "daily", "time_of_day": "evening"}
     - Context: "Q1 2026 habit formation"
 
     STEP 3 - SEARCH:
-    Query: "user yoga morning practice habit"
+    Query: "user swimming evening practice habit"
     Domain: HEALTH
     Results: [] (no matches)
 
     STEP 4 - ANALYZE:
-    - No existing facts about yoga
+    - No existing facts about swimming
     - Match type: NO MATCH
 
     STEP 5 - DECIDE:
     Operation: CREATE new fact
-    Reason: New entity (yoga habit not previously recorded)
+    Reason: New entity (swimming habit not previously recorded)
     Heuristic: "Candidate is new entity"
 
     STEP 6 - EXECUTE:
     create_fact(
-        content="User started morning yoga practice (30 min daily) in Q1 2026",
+        content="User started evening swimming practice (45 min daily) in Q1 2026",
         fact_attributes={
             "domain": "HEALTH",
             "temporal_class": "DYNAMIC",
             "state": "CURRENT",
             "context_priority": "MEDIUM",
             "expiry": {"kind": "horizon", "days": 90},
-            "tags": ["yoga", "habit", "health", "morning", "routine"],
+            "tags": ["swimming", "habit", "health", "evening", "routine"],
             "metadata": {
-                "duration_min": 30,
+                "duration_min": 45,
                 "frequency": "daily",
-                "time_of_day": "morning",
+                "time_of_day": "evening",
                 "start_quarter": "Q1_2026"
             },
             "context": "Q1 2026 habit formation",
@@ -137,10 +137,10 @@ example_2_create_new_habit: {
     )
 
     STEP 7 - VERIFY:
-    ✓ Fact created successfully (fact_id: yoga-habit-456)
+    ✓ Fact created successfully (fact_id: swim-habit-456)
 
     STEP 8 - REPORT:
-    Action: CREATE new yoga habit fact
+    Action: CREATE new swimming habit fact
     </thinking>
     '''
 
@@ -148,7 +148,7 @@ example_2_create_new_habit: {
         "operations": [
             {
                 "action": "CREATE",
-                "fact_id": "yoga-habit-456",
+                "fact_id": "swim-habit-456",
                 "reason": "New habit not previously recorded"
             }
         ]
@@ -157,14 +157,14 @@ example_2_create_new_habit: {
 
 example_3_discard_echo: {
     conversation: '''
-    ASSISTANT: Based on our history, you weigh 82kg.
-    USER: Да, точно.
+    ASSISTANT: Based on our history, you weigh 75kg.
+    USER: Да, всё верно.
     '''
 
     reasoning: '''
     <thinking>
     STEP 1 - EXTRACT:
-    - Candidate: "User confirms weight is 82kg"
+    - Candidate: "User confirms weight is 75kg"
 
     STEP 2 - CLASSIFY:
     - Domain: HEALTH
@@ -172,12 +172,12 @@ example_3_discard_echo: {
     - State: CURRENT
 
     STEP 3 - SEARCH:
-    Query: "user weight 82kg"
+    Query: "user weight 75kg"
     Domain: HEALTH
     Results: [
         {
             fact_id: "weight-123",
-            content: "User's weight is 82kg",
+            content: "User's weight is 75kg",
             similarity: 0.98
         }
     ]

@@ -10,7 +10,7 @@ Variants:
 
 Usage:
     python scripts/prompt/test_news_digest_poc.py --topics "AI,крипто,геополітика"
-    python scripts/prompt/test_news_digest_poc.py --topics "AI,Валенсія" --variant 2
+    python scripts/prompt/test_news_digest_poc.py --topics "AI,Барселона" --variant 2
     python scripts/prompt/test_news_digest_poc.py --prompt-file /tmp/prompt.txt --topics "AI"
     python scripts/prompt/test_news_digest_poc.py --topics "AI" --out /tmp/result.txt
 """

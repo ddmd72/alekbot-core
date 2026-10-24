@@ -42,7 +42,7 @@ USE rich_content FOR:
 
 EXAMPLES:
 
-Query: "Погода в Валенсии на неделю"
+Query: "Погода в Барселоне на неделю"
 {{
   "full_response": "*Weather forecast for Springfield:*\\n\\nMonday-Wednesday sunny 16-19°C. Thursday rain, 14°C. Weekend cooler with clouds.",
   "history_summary": "Springfield weather: Mon-Wed sunny 16-19°C, Thu rain 14°C, weekend cloudy 12-16°C",
