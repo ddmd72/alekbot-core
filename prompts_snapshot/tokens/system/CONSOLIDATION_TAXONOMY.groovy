@@ -216,7 +216,7 @@ uploaded_by: local_script
                 "Meta conversation: 'What can you do?', 'How does this work?', 'Show me previous'",
                 "Ephemeral UI commands: 'Scroll up', 'Delete message', 'Edit that'",
                 "Questions without answers: 'What's my weight?' (only store answer if provided)",
-                "ASSISTANT recalls that user only confirms: RAG echo trap (no new info)",
+                "ASSISTANT recalls that user only confirms: RAG echo trap (no new info); the owner's reply to a memory-review question follows Domain_Scope.memory_review_reply",
                 "Temporary debugging state: 'Testing feature X' (unless ongoing project)",
                 "File operations: saving, opening, moving, renaming, deleting files or folders on the user's drive or in chat — the drive is the record of what exists and where"
             ]
@@ -343,6 +343,8 @@ uploaded_by: local_script
                 "...is incorrect"
             ]
 
+            memory_review_scope: "When you consolidate a conversation (Stage 1), a USER message that begins [Reply to memory review q=<id>] is no negation of the fact its question quotes, even when it says stopped, no or never: the memory review applies it. Follow Domain_Scope.memory_review_reply."
+
             examples: [
                 {
                     existing: "User works at Google",
@@ -407,7 +409,7 @@ uploaded_by: local_script
             "Candidate adds zero new information"
         ]
 
-        extension_rule: "When you consolidate a conversation or emails (not in a cluster or rulebook review) and the owner says an existing fact again: if the conversation confirms it held all along, extend it with update_fact(fact_id, updates={reported_date: <the message's time>}) instead of discarding the candidate (no expiry needed); if the link is unclear (a break is possible), create a new fact and leave the old one as it is. A RAG echo (the assistant recalled the fact and the owner only agreed) stays DISCARD: the extension rule applies only when the owner says it himself. Cluster and rulebook reviews never extend a fact."
+        extension_rule: "When you consolidate a conversation or emails (not in a cluster or rulebook review) and the owner says an existing fact again: if the conversation confirms it held all along, extend it with update_fact(fact_id, updates={reported_date: <the message's time>}) instead of discarding the candidate (no expiry needed); if the link is unclear (a break is possible), create a new fact and leave the old one as it is. A RAG echo (the assistant recalled the fact and the owner only agreed) stays DISCARD: the extension rule applies only when the owner says it himself. A reply to a memory-review question never extends the fact it quotes: Domain_Scope.memory_review_reply. Cluster and rulebook reviews never extend a fact."
     }
 
     /**

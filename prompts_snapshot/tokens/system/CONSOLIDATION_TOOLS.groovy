@@ -21,9 +21,9 @@ uploaded_by: local_script
         limit: "Max results to return (default: 20)"
     }
 
-    returns: "List[Dict] with structure: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, domain: str, temporal_class: str, state: str, tags: List[str], reported_date: str, expiry: dict, due: str, similarity: float}"
+    returns: "List[Dict] with structure: {fact_id: UUID (REQUIRED for update_fact/merge_facts), content: str, domain: str, temporal_class: str, state: str, tags: List[str], reported_date: str, reported: str, expiry: dict, due: str, similarity: float}"
 
-    result_notes: "expiry is the fact's stored decision in the shape you send it: {kind: date, date}, {kind: horizon, days} or {kind: none}; null when none is recorded. due is the local day a horizon falls due. reported_date is when the owner last said the fact, with his offset. Copy an expiry back unchanged to keep it, unless its date is before Today (then the fact is history, {kind: none}) or is Today (then a short horizon)."
+    result_notes: "expiry is the fact's stored decision in the shape you send it: {kind: date, date}, {kind: horizon, days} or {kind: none}; null when none is recorded. due is the local day a horizon falls due. reported_date is when the owner last said the fact, with his offset; reported is its local day. Copy an expiry back unchanged to keep it, unless its date is before Today (then the fact is history, {kind: none}) or is Today (then a short horizon)."
 
     usage_example: '''
     results = search_existing_facts(
