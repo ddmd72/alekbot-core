@@ -21,6 +21,7 @@ from src.infrastructure.fact_review_scope import FactReviewScope
 from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
+from tests.support.fact_store import FACTS
 from tests.support.review_rule_builders import question as build_question
 
 TZ = "Europe/Paris"
@@ -112,6 +113,7 @@ async def test_a_write_to_the_queued_current_fact_of_a_batch_question_passes(wor
 async def test_an_ask_then_a_write_in_one_gathered_turn_keeps_the_ask(world):
     fact, ev = await stale(world, "a"), await evidence(world)
     scope = await scope_of(world, fact)
+    world.store.db.collection(FACTS).yield_on_get = True   # every read yields: without the lock the two calls interleave
 
     ask, write = await asyncio.gather(
         scope.ask_owner({"fact_id": fact, "fallback": "revive"}),
@@ -127,6 +129,7 @@ async def test_an_ask_then_a_write_in_one_gathered_turn_keeps_the_ask(world):
 async def test_a_write_then_an_ask_in_one_gathered_turn_keeps_the_write(world):
     fact, ev = await stale(world, "a"), await evidence(world)
     scope = await scope_of(world, fact)
+    world.store.db.collection(FACTS).yield_on_get = True   # every read yields: without the lock the two calls interleave
 
     write, ask = await asyncio.gather(
         scope.update_fact({"fact_id": fact, "updates": REVIVE, "basis": on(ev)}),
