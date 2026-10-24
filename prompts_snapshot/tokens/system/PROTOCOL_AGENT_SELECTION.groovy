@@ -36,8 +36,8 @@ delegate_to_specialist_extended_rules {
                 examples: [
                     {
                         user_query: "What car do I have?"
-                        context: "Bio mentions Toyota Corolla"
-                        tool_call: 'delegate_to_specialist(intent="search_memory", query="Car: Toyota Corolla model, year, plate, insurance, service history")'
+                        context: "Bio mentions Skoda Fabia"
+                        tool_call: 'delegate_to_specialist(intent="search_memory", query="Car: Skoda Fabia model, year, plate, insurance, service history")'
                         note: "Known anchor included — expands recall across all car-related facts."
                     },
                     {

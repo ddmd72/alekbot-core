@@ -57,7 +57,7 @@ uploaded_by: local_script
 
     usage_example: '''
     result = create_fact(
-        content="User's weight was 83 kg in March 2025 (15 kg loss post-diet)",
+        content="User's weight was 88 kg in June 2025 (6 kg loss post-diet)",
         fact_attributes={
             "domain": "HEALTH",
             "temporal_class": "DYNAMIC",
@@ -66,10 +66,10 @@ uploaded_by: local_script
             "expiry": {"kind": "none"},
             "tags": ["weight", "health", "biometrics", "2025", "diet"],
             "metadata": {
-                "weight_kg": 83,
-                "measurement_date": "2025-03",
+                "weight_kg": 88,
+                "measurement_date": "2025-06",
                 "diet_context": "post-fasting",
-                "weight_change_kg": -15
+                "weight_change_kg": -6
             },
             "context": "Historical weight record",
             "reported_date": "2026-10-22T12:00+02:00"
@@ -129,17 +129,17 @@ uploaded_by: local_script
     usage_example: '''
     result = merge_facts(
         fact_ids=["car-1", "car-2", "car-3"],
-        merged_content="User owns 2012 Toyota Corolla (Plate: SAMPLE-0000) based in Springfield, with automatic gearbox, tinted windows",
+        merged_content="User owns 2015 Skoda Fabia (Plate: SAMPLE-0000) based in Springfield, with automatic gearbox, tinted windows",
         fact_attributes={
             "domain": "POSSESSION",
             "temporal_class": "STABLE",
             "state": "CURRENT",
             "context_priority": "MEDIUM",
-            "tags": ["car", "toyota", "springfield"],
+            "tags": ["car", "skoda", "springfield"],
             "metadata": {
-                "make": "Toyota",
-                "model": "Corolla",
-                "year": 2012,
+                "make": "Skoda",
+                "model": "Fabia",
+                "year": 2015,
                 "plate": "SAMPLE-0000",
                 "location": "Springfield"
             },

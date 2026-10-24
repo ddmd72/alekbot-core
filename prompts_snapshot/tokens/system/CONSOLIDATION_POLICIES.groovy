@@ -85,7 +85,7 @@ rule Size_Triggers_Review() {
     examples: {
 
         good_co_location: {
-            fact: "User owns 2012 Toyota Corolla (Plate: SAMPLE-0000), based in Springfield, with automatic gearbox (serviced at 90,000 km), tinted windows, and comprehensive insurance."
+            fact: "User owns 2015 Skoda Fabia (Plate: SAMPLE-0000), based in Springfield, with automatic gearbox (serviced at 90,000 km), tinted windows, and comprehensive insurance."
             word_count: 35
             deliberation: "Can plate be useful without the car? No. Can insurance be useful without the car? No. All parts describe ONE physical entity — always retrieved together."
             verdict: "KEEP — co-location justified"

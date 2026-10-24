@@ -3,7 +3,7 @@ Offline place names from a bundled city table (docs/10_rfcs/USER_DRIVE_INDEXING_
 The nearest place within PLACE_MAX_DISTANCE_KM names a photo, unless a much heavier place lies within
 PLACE_PREFER_RADIUS_KM: weight at least PLACE_PREFER_WEIGHT_FACTOR times the nearest's, and either in the nearest
 place's country, or with the photo inside its own footprint (PLACE_FOOTPRINT_K * sqrt(weight) km) and outside the
-nearest place's. Then the heaviest such place wins: a photo in a Porto parish is "Porto", one in Torrent "Valencia",
+nearest place's. Then the heaviest such place wins: a photo in a Porto parish is "Porto", one in L'Hospitalet "Barcelona",
 one in Trastevere "Rome" although the Vatican City row is nearer; Monaco is never "Nice", Kehl never "Strasbourg",
 Brazzaville never "Kinshasa". Candidates come from a 1-degree grid: the three latitude rows around the point, and as many longitude
 cells as PLACE_MAX_DISTANCE_KM spans at that latitude.

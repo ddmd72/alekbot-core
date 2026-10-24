@@ -766,7 +766,7 @@ def index_tables_digest() -> str:
 _GOLDEN_TEXTS: Tuple[str, ...] = (
     "Договор аренды квартиры в Барселоне от 15.03.2024, сумма 1 250,00 EUR, депозит, подписи сторон.",
     "Квитки до Києва та Харкова: у Львові о 18:30, комп'ютер, сім'я, iPhone 15, Wi-Fi, ИП Иванов.",
-    "Houses, policies, invoices and receipts for the Valencia lease; PayPal; e-mail; ред3; March 2024.",
+    "Houses, policies, invoices and receipts for the Barcelona lease; PayPal; e-mail; ред3; March 2024.",
     "медицинские записи по холестерину, нові квартири, нової картки, ёлка, за́мок, квар-\nтира",
 )
 

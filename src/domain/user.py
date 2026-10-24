@@ -277,7 +277,7 @@ class UserBotConfig(BaseModel):
     # ========================================================================
     max_video_duration_s: Optional[int] = None  # video generation duration cap (default: 10)
 
-    # Timezone (IANA name, e.g. "Europe/Kyiv", "America/New_York")
+    # Timezone (IANA name, e.g. "Europe/Lisbon", "America/New_York")
     # Set via Cabinet UI. Used for: datetime injection in prompts, reminder due resolution, next_due computation.
     timezone: str = "UTC"
 

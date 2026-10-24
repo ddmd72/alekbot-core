@@ -14,7 +14,7 @@ Usage:
         api_key=config["GOOGLE_SEARCH_API_KEY"],
     )
     declarations = await client.get_tool_declarations()
-    result = await client.call_tool("places_search", {"query": "pharmacy near Kyiv"})
+    result = await client.call_tool("places_search", {"query": "pharmacy near Lisbon"})
 
 RFC: docs/10_rfcs/MCP_INFRASTRUCTURE_RFC.md § 5
 """

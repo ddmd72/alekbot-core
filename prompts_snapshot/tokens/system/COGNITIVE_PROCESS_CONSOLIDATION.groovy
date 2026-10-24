@@ -357,14 +357,14 @@ uploaded_by: local_script
             usage_example: '''
             result = merge_facts(
                 fact_ids=["car-1", "car-2"],
-                merged_content="User owns 2012 Toyota Corolla (Plate: SAMPLE-0000) in Springfield, with automatic gearbox and tinted windows",
+                merged_content="User owns 2015 Skoda Fabia (Plate: SAMPLE-0000) in Springfield, with automatic gearbox and tinted windows",
                 fact_attributes={
                     "domain": "POSSESSION",
                     "temporal_class": "STABLE",
                     "state": "CURRENT",
                     "context_priority": "MEDIUM",
-                    "tags": ["car", "toyota", "springfield"],
-                    "metadata": {"make": "Toyota", "model": "Corolla", "year": 2012, "plate": "SAMPLE-0000"},
+                    "tags": ["car", "skoda", "springfield"],
+                    "metadata": {"make": "Skoda", "model": "Fabia", "year": 2015, "plate": "SAMPLE-0000"},
                     "reported_date": "2026-02-16T10:00:00"
                 }
             )

@@ -445,9 +445,9 @@
     ,\n        \"3. EXECUTE: Call 'search_memory(keywords)'.\",\n        \"4. ANALYZE:\
     \ Do retrieved facts answer the question?\",\n        \"5. SYNTHESIZE: Answer\
     \ using ONLY retrieved facts. If missing, admit ignorance.\"\n    ]\n    examples:\
-    \ [\n        \"Query: 'какая марка моего авто?' -> Call: search_memory(query='Toyota\
-    \ Corolla car машина')\",\n        \"Query: 'какой у меня размер обуви?' -> Call: search_memory(query='shoe\
-    \ size обувь')\"\n    ]\n}\n"
+    \ [\n        \"Query: 'какая марка моего авто?' -> Call: search_memory(query='Skoda\
+    \ Fabia car машина')\",\n        \"Query: 'какой кофе я обычно заказываю?' -> Call: search_memory(query='coffee\
+    \ order кофе')\"\n    ]\n}\n"
   metadata:
     description: Memory search protocol for personal data retrieval
     use_case: Smart/Quick agents with memory access

@@ -51,8 +51,8 @@ Mode: DRY RUN (no writes)
 ======================================================================
 📦 BATCH 1 (20 facts)
 ======================================================================
-   [1] User weighs 71kg...
-   [2] User owns 2010 Toyota Corolla...
+   [1] User weighs 88kg...
+   [2] User owns 2015 Skoda Fabia...
    [3] User is integrating Gemini API...
    ... and 17 more
 
@@ -113,8 +113,8 @@ User: "На тобі факти про мене. Вони були класиф�
 Хочу, щоб ти їх обробив ще раз та правильно класифікував за 4D таксономією.
 
 Факти для рекласифікації:
-1. User weighs 71kg
-2. User owns 2010 Toyota Corolla
+1. User weighs 88kg
+2. User owns 2015 Skoda Fabia
 ...
 20. User is integrating Gemini API"
 ```

@@ -338,7 +338,7 @@ CURRENT → (new version) → SUPERSEDED
 
 - "User's name: Alex" → CRITICAL (affects addressing, personalization in every message)
 - "User's gender: Male" → CRITICAL (affects pronouns, affects UI/UX in every interaction)
-- "User works as Senior SE" → HIGH (provides context for most conversations about work, time, availability)
+- "User works as a project manager" → HIGH (provides context for most conversations about work, time, availability)
 - "User's current weight: 79.5kg" → MEDIUM (relevant for health queries, not for general chat)
 - "User debugging Gmail API" → LOW (temporary work, only relevant when discussing this specific project)
 - "User's old weight: 81kg (superseded)" → ARCHIVAL (historical data, replaced by newer)

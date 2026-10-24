@@ -185,9 +185,9 @@ MAPS_SEARCH = AgentDescriptor(
             "For place results, the agent delivers clickable Google Maps links "
             "(place card, directions, reviews, photos) — best practice for user convenience. "
             "Input: A natural language task. "
-            "Examples: 'pharmacy near Khreschatyk open now', "
-            "'route from Kyiv to Lviv by car', 'weather in Odesa today', "
-            "'best sushi in Kyiv city center'. "
+            "Examples: 'pharmacy near Rossio open now', "
+            "'route from Lisbon to Porto by car', 'weather in Odesa today', "
+            "'best sushi in Lisbon city center'. "
             "payload: {\"query\": \"<natural language task>\"}"
         ),
     },

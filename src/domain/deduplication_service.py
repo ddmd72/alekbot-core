@@ -91,24 +91,24 @@ class SmartDeduplication:
             
             # Different values
             >>> service.is_duplicate(
-            ...     "Weight 84 kg",
-            ...     "Weight 75 kg",
+            ...     "Weight 91 kg",
+            ...     "Weight 88 kg",
             ...     0.97
             ... )
-            (False, "numbers_differ: [83.0] != [84.0]")
+            (False, "numbers_differ: [88.0] != [91.0]")
             
             # More detail
             >>> service.is_duplicate(
-            ...     "Weight 75 kg in Example City",
-            ...     "Weight 75 kg",
+            ...     "Weight 88 kg in Example City",
+            ...     "Weight 88 kg",
             ...     0.96
             ... )
             (False, "new_more_detailed: existing 85% shorter")
             
             # True duplicate
             >>> service.is_duplicate(
-            ...     "Weight was 75 kg",
-            ...     "Weight 75 kg",
+            ...     "Weight was 88 kg",
+            ...     "Weight 88 kg",
             ...     0.99
             ... )
             (True, "strict_similarity: 0.99 >= 0.98")
@@ -149,7 +149,7 @@ class SmartDeduplication:
         Extract all numbers from text and return sorted list.
         
         Sorting allows order-independent comparison:
-        "75 kg, 185 cm" == "185 cm, 75 kg"
+        "88 kg, 176 cm" == "176 cm, 88 kg"
         
         Handles:
         - Integers: "83"
@@ -164,8 +164,8 @@ class SmartDeduplication:
             Sorted list of numbers found in text
             
         Examples:
-            >>> self._extract_and_sort_numbers("Weight 83.5 kg")
-            [83.5]
+            >>> self._extract_and_sort_numbers("Weight 88.5 kg")
+            [88.5]
             
             >>> self._extract_and_sort_numbers("2025-03-28")
             [3.0, 28.0, 2025.0]

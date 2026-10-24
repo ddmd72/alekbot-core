@@ -169,7 +169,7 @@ FRESH_GEO_QUERIES: List[str] = [
     "Sort them by customer rating (best first) and give for each: name, full address, "
     "rating and number of reviews, opening hours, and driving distance and time from Northgate.",
     # 2. place discovery + NON-CAR routing + opening hours
-    "List police stations that are sensible to reach by bicycle from Av. Font de Mora 3, "
+    "List police stations that are sensible to reach by bicycle from 12 Oak Street, "
     "Northgate, Springfield, USA. For each: name, full address, opening hours, phone, and the "
     "cycling distance and time from that address. Exclude any that are impractical by bike.",
     # 3. place discovery + ranking, needs 10 distinct results

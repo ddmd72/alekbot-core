@@ -44,7 +44,7 @@ TEST_CASES = [
     },
     {
         "category": "MEDICAL",
-        "question": "My vitamin D is 32 ng/mL. What dietary adjustments should I consider? Be specific about food sources."
+        "question": "My vitamin D is 41 ng/mL. What dietary adjustments should I consider? Be specific about food sources."
     },
     {
         "category": "TRAVEL",

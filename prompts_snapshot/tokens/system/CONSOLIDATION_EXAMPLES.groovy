@@ -347,17 +347,17 @@ example_4_merge_car_details: {
     - Tags: ["car", "features", "accessories"]
 
     STEP 3 - SEARCH:
-    Query: "user car toyota corolla features"
+    Query: "user car skoda fabia features"
     Domain: POSSESSION
     Results: [
         {
             fact_id: "car-1",
-            content: "User owns 2012 Toyota Corolla",
+            content: "User owns 2015 Skoda Fabia",
             similarity: 0.85
         },
         {
             fact_id: "car-2",
-            content: "Toyota Corolla has automatic gearbox",
+            content: "Skoda Fabia has automatic gearbox",
             similarity: 0.82
         },
         {
@@ -368,7 +368,7 @@ example_4_merge_car_details: {
     ]
 
     STEP 4 - ANALYZE:
-    - Multiple facts (3) about SAME entity (Toyota Corolla)
+    - Multiple facts (3) about SAME entity (Skoda Fabia)
     - All high similarity (>0.75)
     - Facts are complementary (different aspects)
     - Combined fact would be more useful
@@ -382,17 +382,17 @@ example_4_merge_car_details: {
     STEP 6 - EXECUTE:
     merge_facts(
         fact_ids=["car-1", "car-2", "car-3"],
-        merged_content="User owns 2012 Toyota Corolla (Plate: SAMPLE-0000) based in Springfield, with automatic gearbox, tinted windows",
+        merged_content="User owns 2015 Skoda Fabia (Plate: SAMPLE-0000) based in Springfield, with automatic gearbox, tinted windows",
         fact_attributes={
             "domain": "POSSESSION",
             "temporal_class": "STABLE",
             "state": "CURRENT",
             "context_priority": "MEDIUM",
-            "tags": ["car", "vehicle", "toyota", "springfield", "features"],
+            "tags": ["car", "vehicle", "skoda", "springfield", "features"],
             "metadata": {
-                "make": "Toyota",
-                "model": "Corolla",
-                "year": 2012,
+                "make": "Skoda",
+                "model": "Fabia",
+                "year": 2015,
                 "plate": "SAMPLE-0000",
                 "location": "Springfield",
                 "features": ["tinted windows"]

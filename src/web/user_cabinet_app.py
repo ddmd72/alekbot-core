@@ -462,7 +462,7 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/user/timezone", methods=["PUT"])
     @auth_required
     async def set_timezone():
-        """Update the user's timezone. Body: {\"timezone\": \"Europe/Kyiv\"}"""
+        """Update the user's timezone. Body: {\"timezone\": \"Europe/Lisbon\"}"""
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
         try:
             body = await request.get_json(force=True) or {}

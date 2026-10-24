@@ -84,8 +84,8 @@ agents_registry {
                 tool_call: 'delegate_to_specialist(intent="search_web", query="Claude 4 new features latest updates")'
             },
             {
-                user_query: "Weather in Kyiv tomorrow?"
-                tool_call: 'delegate_to_specialist(intent="search_web", query="weather in Kyiv tomorrow")'
+                user_query: "Weather in Lisbon tomorrow?"
+                tool_call: 'delegate_to_specialist(intent="search_web", query="weather in Lisbon tomorrow")'
             }
         ]
 

@@ -35,12 +35,12 @@ OUTPUT FORMAT (JSON only):
 
 EXAMPLES:
 
-Fact A: "Weight was 75 kg in March 2025"
-Fact B: "Weight was approximately 75 kg (Example City) in March 2025, representing a 15 kg loss"
+Fact A: "Weight was 88 kg in June 2025"
+Fact B: "Weight was approximately 88 kg (Example City) in June 2025, representing a 6 kg loss"
 → {"keep": "B", "reason": "Includes location and weight loss context"}
 
-Fact A: "The patient's Vitamin D was 32 ng/mL, within reference range"
-Fact B: "Vitamin D was 32 ng/mL"
+Fact A: "The patient's Vitamin D was 41 ng/mL, within reference range"
+Fact B: "Vitamin D was 41 ng/mL"
 → {"keep": "A", "reason": "Includes medical interpretation"}
 """
 

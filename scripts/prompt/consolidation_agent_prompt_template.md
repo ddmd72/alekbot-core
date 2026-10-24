@@ -38,7 +38,7 @@ class ConversationalUserProfiler extends Agent {
             
             // CRITICAL: Entity Scope Classification (for RAG retrieval)
             entity_scopes: {
-                SELF: "Direct USER attributes (I weigh 72kg, I practice yoga)",
+                SELF: "Direct USER attributes (I weigh 88kg, I practice yoga)",
                 RELATIONSHIP: "People in USER's network (My sister Anna, Friend John)",
                 POSSESSION: "USER's belongings (My car, My house in Madrid)",
                 SHARED_EVENT: "Events involving USER (Trip to Paris with family)",
@@ -147,7 +147,7 @@ class ConversationalUserProfiler extends Agent {
 
             pipeline_source_attribution_step_2 {
                 name: "New_Information_Check"
-                logic: "Does USER's statement ADD new information, or just acknowledge existing? \n✅ NEW: 'I weigh 72kg now' (user volunteers fact) \n✅ NEW: 'Yes, and now I'm 72kg' (confirmation + update) \n❌ ECHO: 'Yes' after ASSISTANT recalls (no new info) \n❌ ECHO: USER repeats what ASSISTANT just said"
+                logic: "Does USER's statement ADD new information, or just acknowledge existing? \n✅ NEW: 'I weigh 88kg now' (user volunteers fact) \n✅ NEW: 'Yes, and now I'm 88kg' (confirmation + update) \n❌ ECHO: 'Yes' after ASSISTANT recalls (no new info) \n❌ ECHO: USER repeats what ASSISTANT just said"
                 severity: "HIGH"
                 action_on_fail: "SKIP_FACT('USER acknowledgment without new information - likely RAG echo')"
             }
@@ -423,7 +423,7 @@ ASSISTANT: Ты весил 80кг в январе 2025.
             
             case_echo_confirmation_trap: {
                 input: """
-ASSISTANT: Based on our history, you weigh 72kg.
+ASSISTANT: Based on our history, you weigh 88kg.
 USER: Да, точно.
 """,
                 output: {
@@ -435,13 +435,13 @@ USER: Да, точно.
             
             case_confirmation_with_update_extract: {
                 input: """
-ASSISTANT: Last time you weighed 70kg. How is it now?
+ASSISTANT: Last time you weighed 85kg. How is it now?
 USER: Да, было 80. Сейчас 82кг.
 """,
                 output: {
                     "new_facts": [{
                         "id": "fact_weight_current_feb2026",
-                        "content": "User currently weighs 72kg",
+                        "content": "User currently weighs 88kg",
                         "tags": ["health", "weight", "biometrics"],
                         "type": "STATE",
                         "metadata": {
@@ -453,7 +453,7 @@ USER: Да, было 80. Сейчас 82кг.
                     }],
                     "new_anchors": []
                 },
-                reasoning: "USER confirmed old fact (70kg) BUT provided NEW information (current 72kg). Extract ONLY the new data."
+                reasoning: "USER confirmed old fact (85kg) BUT provided NEW information (current 88kg). Extract ONLY the new data."
             },
             
             case_user_volunteers_fact_extract: {
@@ -464,7 +464,7 @@ ASSISTANT: Хорошо, сохранил.
                 output: {
                     "new_facts": [{
                         "id": "fact_weight_feb2026",
-                        "content": "User weighs 72kg",
+                        "content": "User weighs 88kg",
                         "tags": ["health", "weight"],
                         "type": "STATE",
                         "metadata": {

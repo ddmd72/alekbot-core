@@ -25,9 +25,9 @@ DOWNLOADS_DIR = Path("firestore_utils/downloads")
 QUERIES = [
     "Найди хороший ресторан в Northgate",
     (
-        "Find the exact OEM Toyota part number for the fender-mounted side turn signal "
-        "repeater for a European 2012 Toyota Corolla 1.6, VIN 00000000000000000. "
-        "The previously suggested numbers D0816/D0817 and MN162980 appear incorrect. "
+        "Find the exact OEM Skoda part number for the fender-mounted side turn signal "
+        "repeater for a European 2015 Skoda Fabia 1.0, VIN 00000000000000000. "
+        "The previously suggested numbers AB-0000/AB-0001 and XY000000 appear incorrect. "
         "Search manufacturer parts catalogs, OEM databases, dealer EPC mirrors, and "
         "reliable parts sites. Need the exact OEM number, side applicability left/right, "
         "and fitment notes for this VIN/model. Do not provide generic advice; extract the "

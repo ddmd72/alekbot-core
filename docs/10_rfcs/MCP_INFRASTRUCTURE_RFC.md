@@ -158,8 +158,8 @@ class MCPMapsAdapter(MapsToolsPort):
         "Place search and discovery, route computation (distance and duration, "
         "not turn-by-turn directions), and current weather lookup via Google Maps "
         "AI Grounding Lite. Input: natural language task. "
-        "Examples: 'pharmacy near Khreschatyk open now', "
-        "'route from Kyiv to Lviv by car', 'weather in Odesa today'."
+        "Examples: 'pharmacy near Rossio open now', "
+        "'route from Lisbon to Porto by car', 'weather in Odesa today'."
     )
 
     def __init__(self, mcp_client: MCPClient) -> None: ...

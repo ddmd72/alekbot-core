@@ -22,7 +22,7 @@ SAMPLE_HTML = """
 
     <div style="background:#1a1a2e;border-radius:12px;padding:20px;border:1px solid #16213e;">
       <div style="color:#a0aec0;font-size:12px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">
-        Kyiv, Ukraine
+        Lisbon, Portugal
       </div>
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
         <div style="font-size:48px;">🌤</div>
