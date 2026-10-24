@@ -12,7 +12,7 @@ from ..domain.due_fact import DueFact
 from ..domain.entities import FactEntity, FactState
 from ..domain.exceptions import FactWriteConflict, InPlaceFieldRefused
 from ..domain.fact_expiry import as_expiry_kind
-from ..domain.fact_lifecycle import IN_PLACE_FIELDS, archive_fields, superseded_closure
+from ..domain.fact_lifecycle import IN_PLACE_FIELDS, REVIEW_CLOSED_STATES, archive_fields, superseded_closure
 from ..domain.fact_lifecycle_sweep import stale_fields
 from ..domain.fact_resolution import resolve_chain
 from ..domain.fact_review_rules import stale_order_key
@@ -39,7 +39,6 @@ _gcp_retry_logger.setLevel(_logging.DEBUG)
 
 _VECTOR_FIELDS = ("vector", "tags_vector", "metadata_vector")
 _PAGINATED_STATES = ("current", "stale")
-_CLOSED_STATES = ("archived", "invalidated")
 
 # Numeric rank for context_priority — stored in Firestore only (not in FactEntity).
 # Allows efficient ORDER BY queries without changing the domain model.
@@ -522,7 +521,7 @@ class FirestoreFactRepository(FactRepository):
         query = (
             self.facts_col
             .where(filter=FieldFilter("account_id", "==", account_id))
-            .where(filter=FieldFilter("state", "in", list(_CLOSED_STATES)))
+            .where(filter=FieldFilter("state", "in", sorted(state.value for state in REVIEW_CLOSED_STATES)))
             .where(filter=FieldFilter("valid_to", ">=", since))
             .order_by("valid_to", direction=firestore.Query.DESCENDING)
             .limit(limit)

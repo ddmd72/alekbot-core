@@ -17,6 +17,9 @@ STATUS_MERGED = "merged"
 STATUS_FAILED = "failed"
 STATUS_NOT_FOUND = "not_found"
 
+# Key of an `update_fact` result that archived its fact beside a new history fact: the id of that new fact.
+HISTORY_FACT_ID = "history_fact_id"
+
 # The statuses that mean a fact was written.
 WRITTEN_STATUSES: FrozenSet[str] = frozenset({STATUS_CREATED, STATUS_UPDATED, STATUS_MERGED})
 

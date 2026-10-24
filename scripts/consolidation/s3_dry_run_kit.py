@@ -42,7 +42,7 @@ from src.domain.due_fact import DueFact
 from src.domain.email import IndexedEmail, IndexingState
 from src.domain.entities import FactEntity, FactState
 from src.domain.exceptions import FactWriteConflict, InPlaceFieldRefused
-from src.domain.fact_lifecycle import IN_PLACE_FIELDS, archive_fields, superseded_closure
+from src.domain.fact_lifecycle import IN_PLACE_FIELDS, REVIEW_CLOSED_STATES, archive_fields, superseded_closure
 from src.domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot
 from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_resolution import resolve_chain
@@ -84,7 +84,6 @@ S3_TOKEN_IDS: Tuple[str, ...] = (
 _ALL_STATES: AbstractSet[FactState] = frozenset(FactState)
 _PRIORITY_RANK = {"critical": 1, "high": 2, "medium": 3, "low": 4, "archival": 5}
 _VECTORS = ("vector", "tags_vector", "metadata_vector")
-_CLOSED_FOR_REVIEW: AbstractSet[FactState] = frozenset({FactState.ARCHIVED, FactState.INVALIDATED})
 
 
 def _without_vectors(doc: FactEntity, *names: str) -> FactEntity:
@@ -241,6 +240,8 @@ class NoWriteFactRepository(FactRepository):
         missing = [name for name in _VECTORS if getattr(new_fact, name) is None]
         if missing:
             raise ValueError(f"fact {new_fact.id} has no {', '.join(missing)}; a fact without vectors leaves vector search")
+        # Before any read, as the repository: `archive_fields` refuses a fact that is not stale or current.
+        closed = archived.fact.model_copy(update=archive_fields(archived.fact, now, actor, reason))
         async with self._lock:
             current = await self._read(archived.fact.id, account_id)
             if current is None or current.update_time != archived.update_time:
@@ -249,7 +250,6 @@ class NoWriteFactRepository(FactRepository):
                 raise PermissionError("Not authorized to modify this fact")
             if new_fact.id in self._docs or await self._real.get_fact_by_id(new_fact.id) is not None:
                 raise ValueError(f"fact {new_fact.id} already exists")
-            closed = archived.fact.model_copy(update=archive_fields(archived.fact, now, actor, reason))
             self._put(new_fact)
             self._put(closed)
             self._record("archive_and_add", archived_id=archived.fact.id, new_id=new_fact.id, actor=actor)
@@ -365,7 +365,7 @@ class NoWriteFactRepository(FactRepository):
         floor = as_utc(since)
         for fact_id, doc in self._docs.items():
             if (
-                doc.account_id == account_id and doc.state in _CLOSED_FOR_REVIEW
+                doc.account_id == account_id and doc.state in REVIEW_CLOSED_STATES
                 and doc.valid_to is not None and as_utc(doc.valid_to) >= floor
             ):
                 out[fact_id] = _without_vectors(doc, *_VECTORS)
@@ -804,11 +804,21 @@ class WriteRecorder(FactManagementPort):
         )
 
     async def update_fact(
-        self, fact_id: str, updates: Dict[str, Any], account_id: str, *, context: FactWriteContext
+        self,
+        fact_id: str,
+        updates: Dict[str, Any],
+        account_id: str,
+        *,
+        context: FactWriteContext,
+        evidence_at: Optional[datetime] = None,
+        reason: Optional[str] = None,
+        history: Optional[str] = None,
     ) -> Dict[str, Any]:
         return await self._kit.logged(
             "update", context, updates.get("expiry"), updates.get("reported_date"), "fact_id",
-            self._inner.update_fact(fact_id, updates, account_id, context=context),
+            self._inner.update_fact(
+                fact_id, updates, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history,
+            ),
         )
 
     async def merge_facts(

@@ -49,6 +49,11 @@ def superseded_reason(successor_id: str) -> str:
     return f"superseded by {successor_id}"
 
 
+def history_reason(archived_id: str) -> str:
+    """A history fact born beside the archive of `archived_id` (the owner's "ended" on a standing fact, S4-D27)."""
+    return f"history of {archived_id}"
+
+
 def queued_reason(question_id: str) -> str:
     """The fact was made current while its question waits."""
     return f"queued for the owner q={question_id}"

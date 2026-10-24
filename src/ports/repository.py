@@ -221,9 +221,11 @@ class FactRepository(ABC):
             must be it too (as update_fact_fields).
         Atomicity: the archived document must still carry the `update_time` it was read with; otherwise FactWriteConflict,
             nothing written. A read-time abort, or a client that gave up after repeated aborts, is also FactWriteConflict.
-            An existing `new_fact.id` fails the commit.
-        Errors: ValueError, before any I/O, when the accounts differ or `new_fact` lacks one of its three vectors;
-            PermissionError when the stored `account_id` is not `archived.fact.account_id`.
+            An existing `new_fact.id` fails the commit with the Firestore client's AlreadyExists
+            (google.api_core.exceptions), raised as it is; nothing is archived.
+        Errors: ValueError, before any I/O, when the accounts differ, `new_fact` lacks one of its three vectors or
+            `archived.fact` is not stale or current (`archive_fields`); PermissionError when the stored `account_id` is
+            not `archived.fact.account_id`.
         """
         pass
 

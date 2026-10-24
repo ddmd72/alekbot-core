@@ -40,7 +40,7 @@ from ..ports.llm_port import AgentExecutionContext
 from ..ports.fact_write_port import FactWritePort
 from ..ports.alert_sink import AlertSinkPort
 from ..domain.consolidation_pass_stats import OUTCOME_ERROR, OUTCOME_OK, ConsolidationPassStats
-from ..domain.fact_tool_result import STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
+from ..domain.fact_tool_result import HISTORY_FACT_ID, STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..infrastructure.agent_config import CONSOLIDATION
 
@@ -139,7 +139,7 @@ class _TrackingFactManagement(FactManagementPort):
 
     Records only what the store reports as written:
     - `changed` holds (fact_id, content) for a create, a content update (the id of the version written,
-      from the result) and a merge. It seeds the content search of Stage 2a; it is not every id that changed:
+      from the result), a merge and a history fact created beside an archive. It seeds the content search of Stage 2a; it is not every id that changed:
       tags-only and metadata-only versions change the id and are not in it.
     - `wrote` is set by any successful write, a state-only update included. It decides whether a run that
       failed still refreshes the biographical cache.
@@ -179,16 +179,33 @@ class _TrackingFactManagement(FactManagementPort):
         return result
 
     async def update_fact(
-        self, fact_id: str, updates: Dict[str, Any], account_id: str, *, context: FactWriteContext
+        self,
+        fact_id: str,
+        updates: Dict[str, Any],
+        account_id: str,
+        *,
+        context: FactWriteContext,
+        evidence_at: Optional[datetime] = None,
+        reason: Optional[str] = None,
+        history: Optional[str] = None,
     ) -> Dict[str, Any]:
+        # Forwarded unchanged; only the ones the caller set, so a consolidation call (it sets none) reaches the port
+        # exactly as before.
+        review = {
+            name: value
+            for name, value in (("evidence_at", evidence_at), ("reason", reason), ("history", history))
+            if value is not None
+        }
         result = await self._real.update_fact(
-            fact_id=fact_id, updates=updates, account_id=account_id, context=context
+            fact_id=fact_id, updates=updates, account_id=account_id, context=context, **review
         )
         if result.get("status") == STATUS_UPDATED:
             self.wrote = True
             content = updates.get("content")
             if content and (written_id := result.get("fact_id")):
                 self.changed.append((written_id, content))
+            if history and (history_id := result.get(HISTORY_FACT_ID)):
+                self.changed.append((history_id, history))
         return result
 
     async def merge_facts(
