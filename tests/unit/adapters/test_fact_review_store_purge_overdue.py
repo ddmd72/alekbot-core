@@ -1,6 +1,6 @@
 """Facts S4 · T4b: `purge_overdue` counts what is past its expiry and still stored, in the questions and the message
 claims, to watch the store's TTL lag."""
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -37,11 +37,11 @@ async def test_it_counts_the_closed_questions_past_their_retention_and_no_open_o
 
 async def test_it_counts_the_digest_claims_too_and_adds_both_collections(world):
     await closed(world, "old", NOW - QUESTION_RETENTION - timedelta(days=1))
-    await world.review_store.claim_digest("u1", "2026-W43")
-    await world.review_store.claim_digest("u2", "2026-W43")
-    later = datetime.now(timezone.utc) + QUESTION_RETENTION + timedelta(days=1)
+    await world.review_store.claim_digest("u1", NOW.date(), NOW)
+    await world.review_store.claim_digest("u2", NOW.date(), NOW)
+    later = NOW + QUESTION_RETENTION + timedelta(days=1)
 
-    assert await world.review_store.purge_overdue(datetime.now(timezone.utc)) == 1
+    assert await world.review_store.purge_overdue(NOW) == 1
     assert await world.review_store.purge_overdue(later) == 3
 
 
