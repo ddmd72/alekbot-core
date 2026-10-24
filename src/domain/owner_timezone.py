@@ -1,7 +1,7 @@
-"""The account owner's IANA zone: the pure decisions both the consolidation run and the dry-run kit make.
+"""The account owner's IANA zone: the pure decisions over the two reads it takes.
 
-The reads (the account, then the first owner's profile) stay with the callers; each step below decides over what they
-read, so the service and the kit cannot drift apart on the rule.
+The reads (the account, then the first owner's profile) are I/O and happen outside; each step below decides over what was
+read, and `ResolvedOwnerZone` is the answer.
 """
 
 from dataclasses import dataclass
@@ -30,6 +30,15 @@ class OwnerZone:
 
     zone: str
     unresolved: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ResolvedOwnerZone:
+    """Whose zone it is and the zone. `owner_user_id` is the account's first owner, or None when the account or its owner
+    is unknown; `zone` is that owner's IANA zone, or `FALLBACK_TIMEZONE` whenever it could not be resolved."""
+
+    owner_user_id: Optional[str]
+    zone: str
 
 
 def owner_to_read(account: "Optional[BillingAccount]") -> OwnerToRead:

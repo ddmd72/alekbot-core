@@ -49,7 +49,6 @@ from src.domain.fact_review_rules import stale_order_key
 from src.domain.fact_update import ParsedFactUpdate
 from src.domain.fact_tool_result import NOTE_NO_READABLE_SOURCE, STATUS_CREATED, WRITTEN_STATUSES
 from src.domain.fact_write_context import FactWriteContext, as_utc
-from src.domain.owner_timezone import failure_reason, owner_to_read, owner_zone
 from src.domain.pass_actor import PassActor
 from src.domain.prompt_v3.slot import OwnerType
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
@@ -63,6 +62,7 @@ from src.ports.indexed_email_repository import IndexedEmailRepository
 from src.ports.prompt_v3.token_repository import TokenRepository
 from src.ports.repository import FactRepository
 from src.services.fact_write_service import FactWriteService
+from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.utils.logger import logger
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -713,29 +713,15 @@ class CostMeter:
 # ------------------------------------------------------------------------------------------------ owner zone
 
 async def owner_timezone(account_repo: Any, user_repo: Any, account_id: str, override: Optional[str] = None) -> str:
-    """The account owner's IANA zone, resolved by the rule `ConsolidationService` uses (`domain/owner_timezone.py`, same reads; any
-    missing step or failure gives UTC with one warning). `override` (`--timezone`) wins and must be a zone."""
+    """The account owner's IANA zone, resolved by production's `OwnerTimezoneResolver` over the kit's stores (any missing
+    step or failure gives UTC with one warning). `override` (`--timezone`) wins and must be a zone."""
     if override:
         try:
             ZoneInfo(override)
         except (KeyError, ValueError, OSError) as exc:
             raise ValueError(f"--timezone {override!r} is not an IANA zone") from exc
         return override
-    try:
-        step = owner_to_read(await account_repo.get_account(account_id))
-        if step.owner_id is None:
-            return _unresolved(account_id, step.unresolved or "")
-        resolved = owner_zone(await user_repo.get_user(step.owner_id))
-        if resolved.unresolved is not None:
-            return _unresolved(account_id, resolved.unresolved)
-        return resolved.zone
-    except Exception as exc:
-        return _unresolved(account_id, failure_reason(exc))
-
-
-def _unresolved(account_id: str, why: str) -> str:
-    logger.warning("[S3Kit] owner timezone unresolved for account %s: %s; using UTC", account_id[:8], why)
-    return "UTC"
+    return (await OwnerTimezoneResolver(account_repo, user_repo).resolve(account_id)).zone
 
 
 def reported_date_form(value: Any) -> Optional[str]:

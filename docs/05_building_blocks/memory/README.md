@@ -414,12 +414,12 @@ Each batch runs under the account's **memory-write lease** (`_consolidate_one`, 
   is no 5xx or retry loop (`_account_to_lease`, `:182-200`). The missing-profile case is real: the user's agents stay
   cached for about an hour, so `ensure_agents_for_user` can succeed after the profile is gone. The user repository is a
   required argument of `ConsolidationService`, so no wiring can leave it out;
-- resolves **the owner's timezone** once per run, after the account (`_owner_timezone`, deciding with `domain/owner_timezone.py`): the account's owner
+- resolves **the owner's timezone** once per run, after the account (`OwnerTimezoneResolver`, a required argument, deciding with `domain/owner_timezone.py`): the account's owner
   (`BillingAccount.owner_user_ids()`; the first when there are several, with a WARNING) → that profile's `timezone`,
   checked as an IANA zone. Any missing step, an invalid zone or a failing repository gives `UTC` and one WARNING
-  (`[Librarian] owner timezone unresolved for account <8>: …; using UTC`), never a failed batch. It rides in the agent
+  (`[OwnerZone] owner timezone unresolved for account <8>: …; using UTC`), never a failed batch. It rides in the agent
   message's context as `owner_timezone` and sets how every date, stamp and expiry of the run is read (§2.7). The
-  `account_repo` is a required argument of the service too.
+  resolver is built once in the composition root; the dry-run kit resolves through the same class.
 
 There is **no per-write fence**: nothing checks the lease before each fact write. The run is bounded by its timeout
 instead (the agent stops at `lease_until` − 60 s); a commit already on the wire at the moment of cancellation may land
@@ -1136,7 +1136,7 @@ Log lines, in pipeline order:
 - Cabinet: `Fact <id> not invalidated: FactResolutionError|FactWriteConflict: …` (WARNING, the 409 of §5.2), `[FactRepo] invalidate of <id> conflicted (attempt n)`, and, if the baseline rebuild after a delete fails, `❌ [FirestoreRepo] Failed to refresh biographical cache for <account>`
 - `[Worker] sweep_consolidation complete: swept=N` (each swept user's FAILED batches were revived first)
 - janitor (§5.5): startup `fact lifecycle sweep: log-only` / `: writes`; per account `[FactLifecycle] account=<8> due=… newly_due=… no_decision=… staled=… would_stale=… deferred=… conflicts=… backlog=… breaker=<ok|reason> review_enqueued=0 dry_run=<bool>`; `[FactLifecycle] breaker tripped for account <8>: …` (WARNING); `[FactLifecycle] the run failed (<Type>) at <stage>` (ERROR) and `[Worker] fact_lifecycle_sweep failed (<Type>)`; `an ops message was cut after 10s` / `was not delivered` (WARNING)
-- expiry: `[Librarian] owner timezone unresolved for account <8>: …; using UTC` (WARNING); `⚠️ [ConsolidationAgent] Pass close-out cut after 10s` / `failed: <Type>` and `Lifecycle counters not updated: <Type>` (WARNING); the INFO line for an ignored `expiry` on a closing state
+- expiry: `[OwnerZone] owner timezone unresolved for account <8>: …; using UTC` (WARNING); `⚠️ [ConsolidationAgent] Pass close-out cut after 10s` / `failed: <Type>` and `Lifecycle counters not updated: <Type>` (WARNING); the INFO line for an ignored `expiry` on a closing state
 - search: `🔍 [SearchEnrichment] Final: N facts (semantic_dedup: …, bio_dedup: …)`, `🔍 [find_nearest] START/DONE`
 
 ### 9.2 Why did the bot not remember X?
