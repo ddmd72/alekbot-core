@@ -1,4 +1,5 @@
-"""Facts S4 · T3a review fixes, through the real adapter on the evaluating Firestore fake.
+"""Facts S4 · T3a review fixes, through the real adapter on the evaluating Firestore fake (the typed entry
+`apply_fact_update` since T3c, reviewer edit; the archive is the old argument parsed).
 
 - M1: the consolidator rewrote A to B after the owner was asked about A; a history archive on A is refused and nothing
   is written. A later version with the same text (tags only) is still archived.
@@ -13,6 +14,7 @@ import pytest
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_reasons import answer_reason
 from src.domain.fact_tool_result import HISTORY_FACT_ID
+from src.domain.fact_update import parse_fact_update
 from tests.support.fact_kit import ACC, T0, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx
@@ -37,9 +39,9 @@ def seed_current(store):
 
 
 async def archive_with_history(store, actor="owner"):
-    return await store.adapter.update_fact(
-        "f-a", {"state": "archived"}, ACC, context=ctx(actor), evidence_at=datetime.now(UTC), reason=ENDED,
-        history=HISTORY,
+    return await store.adapter.apply_fact_update(
+        "f-a", parse_fact_update({"state": "archived"}), ACC, context=ctx(actor), evidence_at=datetime.now(UTC),
+        reason=ENDED, history=HISTORY,
     )
 
 

@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.domain.entities import ExpiryKind, FactState
-from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
+from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS, superseded_closure
 from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, T0, USER, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore
@@ -39,6 +39,11 @@ def version_of(stored, new_id):
                                     last_updated=NOW, superseded_by=None))
 
 
+def closed_by(new, replaced, actor):
+    """The closures a caller builds (`superseded_closure`), which the repository applies."""
+    return [(stored, superseded_closure(stored.fact, new, NOW, actor)) for stored in replaced]
+
+
 def closing_event(doc):
     return doc["lifecycle_events"][-1]
 
@@ -49,7 +54,8 @@ async def test_a_version_closes_the_old_document_with_a_replaced_by_entry(store)
     await seed(store, "old")
     stored = await read(store, "f-old")
 
-    await store.repo.write_superseding(version_of(stored, "f-new"), [stored], NOW, actor="stage1")
+    new = version_of(stored, "f-new")
+    await store.repo.write_superseding(new, closed_by(new, [stored], "stage1"))
 
     assert store.docs["f-old"]["lifecycle_events"] == [
         {"at": NOW, "from": "current", "to": "superseded", "actor": "stage1", "reason": "replaced by f-new"}
@@ -60,7 +66,8 @@ async def test_the_closure_entry_extends_the_trail_the_document_already_had(stor
     await seed(store, "old", lifecycle_events=[EARLIER])
     stored = await read(store, "f-old")
 
-    await store.repo.write_superseding(version_of(stored, "f-new"), [stored], NOW, actor="stage2a")
+    new = version_of(stored, "f-new")
+    await store.repo.write_superseding(new, closed_by(new, [stored], "stage2a"))
 
     trail = store.docs["f-old"]["lifecycle_events"]
     assert trail[0] == EARLIER and len(trail) == 2
@@ -73,7 +80,7 @@ async def test_the_new_version_is_stored_as_given_its_trail_is_the_callers(store
     own = {"at": NOW, "from": None, "to": "current", "actor": "stage1", "reason": "version 2 of f-old"}
     new = version_of(stored, "f-new").model_copy(update={"lifecycle_events": [EARLIER, own]})
 
-    await store.repo.write_superseding(new, [stored], NOW, actor="stage1")
+    await store.repo.write_superseding(new, closed_by(new, [stored], "stage1"))
 
     assert store.docs["f-new"]["lifecycle_events"] == [EARLIER, own]
 
@@ -84,7 +91,7 @@ async def test_a_merge_closes_each_source_with_a_merged_into_entry_on_its_own_tr
     sources = [await read(store, "f-a"), await read(store, "f-b", accepted=frozenset(FactState))]
     merged = make_fact("merged")
 
-    await store.repo.write_superseding(merged, sources, NOW, actor="stage2a")
+    await store.repo.write_superseding(merged, closed_by(merged, sources, "stage2a"))
 
     a, b = store.docs["f-a"]["lifecycle_events"], store.docs["f-b"]["lifecycle_events"]
     assert a[0] == EARLIER and len(a) == 2
@@ -98,7 +105,8 @@ async def test_the_closure_changes_the_old_document_in_its_lifecycle_fields_and_
     stored = await read(store, "f-old")
     before = copy.deepcopy(store.docs["f-old"])
 
-    await store.repo.write_superseding(version_of(stored, "f-new"), [stored], NOW, actor="stage1")
+    new = version_of(stored, "f-new")
+    await store.repo.write_superseding(new, closed_by(new, [stored], "stage1"))
 
     after = store.docs["f-old"]
     assert {k for k in after if after[k] != before[k]} == {
@@ -106,10 +114,11 @@ async def test_the_closure_changes_the_old_document_in_its_lifecycle_fields_and_
 
 
 async def test_the_actor_is_required(store):
+    # The closure is the caller's now (superseded_closure); the rule that it names its actor moved there with it.
     await seed(store, "old")
     stored = await read(store, "f-old")
     with pytest.raises(TypeError):
-        await store.repo.write_superseding(version_of(stored, "f-new"), [stored], NOW)
+        superseded_closure(stored.fact, version_of(stored, "f-new"), NOW)
 
 
 # ------------------------------------------------------------------------------------------- the Cabinet delete (CabinetFactService over this repository; facts S4 T2c, reviewer edit)
@@ -137,7 +146,8 @@ async def test_invalidating_a_stale_fact_records_stale_as_the_from_state(store):
 async def test_invalidating_through_a_superseded_id_writes_the_entry_on_the_current_version_only(store):
     await seed(store, "old")
     stored = await read(store, "f-old")
-    await store.repo.write_superseding(version_of(stored, "f-new"), [stored], NOW, actor="stage1")
+    new = version_of(stored, "f-new")
+    await store.repo.write_superseding(new, closed_by(new, [stored], "stage1"))
     old_trail = copy.deepcopy(store.docs["f-old"]["lifecycle_events"])
 
     await CabinetFactService(store.repo).invalidate("f-old", ACC)

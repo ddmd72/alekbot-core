@@ -6,11 +6,11 @@ import pytest
 
 from src.domain.entities import ExpiryKind, FactDomain, FactState, FactType
 from src.domain.fact_lifecycle import compute_expiry
-from src.domain.fact_update import parse_fact_update
+from src.domain.fact_update import ParsedFactUpdate
 from src.domain.fact_expiry import Expiry
 from src.domain.fact_review_answer_change import AnswerChange
 from src.domain.fact_review_answer_kind import AnswerKind
-from src.domain.fact_review_answers import answer_updates, digit_answer, ended_text
+from src.domain.fact_review_answers import ARCHIVE_ONLY, answer_updates, digit_answer, ended_text
 from src.domain.fact_review_reasons import answer_reason, is_revive_reason
 from src.domain.fact_review_rules import fallback_fields, fallback_window_days
 from src.domain.interactive_binding import InteractiveBinding
@@ -19,6 +19,14 @@ from src.domain.interactive_option import InteractiveOption
 from tests.support.review_rule_builders import NOW, fact, question
 
 DAY = timedelta(days=1)
+# Reviewer edit (facts S4, T3c): an answer carries a typed update (ParsedFactUpdate, an Expiry), not the model's argument
+# JSON; each old dict is asserted as the typed value it parsed to, compared whole.
+ARCHIVE = ParsedFactUpdate(state=FactState.ARCHIVED)
+INVALIDATE = ParsedFactUpdate(state=FactState.INVALIDATED)
+
+
+def confirm(expiry: Expiry) -> ParsedFactUpdate:
+    return ParsedFactUpdate(state=FactState.CURRENT, expiry=expiry)
 MADRID = "Europe/Madrid"
 # a plan whose last day is 28 Oct in Madrid: it is due at the start of the next local day
 ENDS_28_OCT = compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 28)), NOW, MADRID)["expires_at"]
@@ -116,8 +124,8 @@ def test_a_naive_moment_is_read_as_utc():
 def test_still_true_brings_the_fact_back_for_the_window_a_silence_would_give():
     stale = fact()  # reported 60 days ago with a 14-day horizon
     change = answer_updates(AnswerKind.STILL_TRUE, stale, question(), NOW, MADRID, "digit")
-    assert change.updates == {"state": "current", "expiry": {"kind": "horizon", "days": 28}}
-    assert change.updates["expiry"]["days"] == fallback_window_days(stale)
+    assert change.update == confirm(Expiry(ExpiryKind.HORIZON, days=28))
+    assert change.update.expiry.days == fallback_window_days(stale)
     assert (change.fields, change.history) == (None, None)
 
 
@@ -127,12 +135,12 @@ def test_still_true_asks_the_window_from_the_rule_not_from_a_copy_of_it():
     revived = stale.model_copy(update=first)
     assert fallback_window_days(revived) == 56
     change = answer_updates(AnswerKind.STILL_TRUE, revived, question(), NOW, MADRID, "digit")
-    assert change.updates["expiry"] == {"kind": "horizon", "days": 56}
+    assert change.update.expiry == Expiry(ExpiryKind.HORIZON, days=56)
 
 
 def test_still_true_is_the_horizon_the_revive_fallback_would_give():
     stale = fact()
-    days = answer_updates(AnswerKind.STILL_TRUE, stale, question(), NOW, MADRID, "digit").updates["expiry"]["days"]
+    days = answer_updates(AnswerKind.STILL_TRUE, stale, question(), NOW, MADRID, "digit").update.expiry.days
     due = fallback_fields(stale, question(), NOW, "owner")["expires_at"]
     assert days * DAY <= due - NOW < (days + 1) * DAY
 
@@ -146,16 +154,16 @@ def test_still_true_records_the_answer_as_the_owners_with_its_source_and_counts_
 
 def test_still_true_on_a_waiting_current_fact_is_the_same_write():
     waiting = fact(state=FactState.CURRENT, stale_since=None)
-    assert answer_updates(AnswerKind.STILL_TRUE, waiting, question(), NOW, MADRID, "digit").updates == {
-        "state": "current", "expiry": {"kind": "horizon", "days": 28},
-    }
+    assert answer_updates(AnswerKind.STILL_TRUE, waiting, question(), NOW, MADRID, "digit").update == confirm(
+        Expiry(ExpiryKind.HORIZON, days=28)
+    )
 
 
 # ------------------------------------------------------------------------------------------------ ended
 
 def test_ended_on_a_standing_fact_archives_it_and_leaves_a_history_fact():
     change = answer_updates(AnswerKind.ENDED, fact(), question(), NOW, MADRID, "digit")
-    assert change.updates == {"state": "archived"}
+    assert change.update == ARCHIVE == ARCHIVE_ONLY
     assert change.history == ended_text("Takes vitamin D", NOW, MADRID) == (
         "No longer true (the owner said so in Oct 2026): Takes vitamin D"
     )
@@ -182,13 +190,13 @@ def test_ended_on_a_horizon_none_or_unclassified_fact_is_a_standing_fact(standin
 def test_ended_on_a_dated_plan_archives_only():
     plan = fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=NOW - 3 * DAY)
     change = answer_updates(AnswerKind.ENDED, plan, question(), NOW, MADRID, "digit")
-    assert change.updates == {"state": "archived"}
+    assert change.update == ARCHIVE
     assert change.history is None
 
 
 def test_ended_on_a_fact_whose_question_falls_back_to_archive_archives_only():
     change = answer_updates(AnswerKind.ENDED, fact(), question(fallback="archive"), NOW, MADRID, "cabinet")
-    assert change.updates == {"state": "archived"}
+    assert change.update == ARCHIVE
     assert change.history is None
     assert change.reason == "ended q=q1 (cabinet)"
 
@@ -198,7 +206,7 @@ def test_ended_on_a_fact_whose_question_falls_back_to_archive_archives_only():
 @pytest.mark.parametrize("make", [fact, lambda: fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=NOW - DAY)])
 def test_never_invalidates_and_writes_nothing_new(make):
     change = answer_updates(AnswerKind.NEVER, make(), question(fallback="archive"), NOW, MADRID, "button")
-    assert change.updates == {"state": "invalidated"}
+    assert change.update == INVALIDATE
     assert change.history is None
     assert change.reason == "never q=q1 (button)"
     assert not is_revive_reason(change.reason)
@@ -210,7 +218,7 @@ def test_dont_know_is_the_questions_fallback_now_under_the_owner():
     stale, q = fact(), question()
     change = answer_updates(AnswerKind.DONT_KNOW, stale, q, NOW, MADRID, "digit")
     assert change.fields == fallback_fields(stale, q, NOW, "owner")
-    assert (change.updates, change.reason, change.evidence_at, change.history) == (None, None, None, None)
+    assert (change.update, change.reason, change.evidence_at, change.history) == (None, None, None, None)
     assert change.fields["state"] is FactState.CURRENT
     assert change.fields["lifecycle_events"][-1]["actor"] == "owner"
     assert change.fields["lifecycle_events"][-1]["reason"] == answer_reason(AnswerKind.DONT_KNOW, "q1") == "did not remember q=q1"
@@ -235,7 +243,8 @@ def test_an_update_carries_the_moment_of_the_answer_and_no_fallback_fields(kind)
     change = answer_updates(kind, fact(), question(), NOW, MADRID, "digit")
     assert change.evidence_at == NOW
     assert change.fields is None
-    assert set(change.updates) <= {"state", "expiry"}
+    # sets nothing but its state and expiry (the old dict's keys were a subset of those two)
+    assert change.update == ParsedFactUpdate(state=change.update.state, expiry=change.update.expiry)
 
 
 @pytest.mark.parametrize("kind", list(AnswerKind))
@@ -249,22 +258,22 @@ def test_an_answer_changes_neither_the_fact_nor_the_question(kind):
 # ------------------------------------------------------------------------------------------------ AnswerChange
 
 def test_an_update_change_needs_its_updates_its_reason_and_the_moment():
-    ok = AnswerChange(updates={"state": "archived"}, reason="r", evidence_at=NOW)
+    ok = AnswerChange(update=ARCHIVE, reason="r", evidence_at=NOW)
     assert ok.history is None
-    for missing in ("updates", "reason", "evidence_at"):
-        args = {"updates": {"state": "archived"}, "reason": "r", "evidence_at": NOW}
+    for missing in ("update", "reason", "evidence_at"):
+        args = {"update": ARCHIVE, "reason": "r", "evidence_at": NOW}
         args.pop(missing)
         with pytest.raises(ValueError):
             AnswerChange(**args)
     with pytest.raises(ValueError):
-        AnswerChange(updates={"state": "archived"}, reason="", evidence_at=NOW)
+        AnswerChange(update=ARCHIVE, reason="", evidence_at=NOW)
     with pytest.raises(ValueError):
         AnswerChange()
 
 
 def test_an_in_place_change_carries_nothing_else():
     assert AnswerChange(fields={"state": FactState.CURRENT}).fields == {"state": FactState.CURRENT}
-    for extra in ({"updates": {"state": "archived"}}, {"reason": "r"}, {"evidence_at": NOW}, {"history": "h"}):
+    for extra in ({"update": ARCHIVE}, {"reason": "r"}, {"evidence_at": NOW}, {"history": "h"}):
         with pytest.raises(ValueError):
             AnswerChange(fields={"state": FactState.CURRENT}, **extra)
 
@@ -284,9 +293,9 @@ def test_the_month_names_are_english_whatever_the_process_locale(monkeypatch):
 
 def test_still_true_on_a_permanent_fact_keeps_it_permanent():
     permanent = fact(state=FactState.CURRENT, stale_since=None, expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None)
-    assert answer_updates(AnswerKind.STILL_TRUE, permanent, question(), NOW, MADRID, "digit").updates == {
-        "state": "current", "expiry": {"kind": "none"},
-    }
+    assert answer_updates(AnswerKind.STILL_TRUE, permanent, question(), NOW, MADRID, "digit").update == confirm(
+        Expiry(ExpiryKind.NONE)
+    )
 
 
 @pytest.mark.parametrize("pinned", [
@@ -294,20 +303,20 @@ def test_still_true_on_a_permanent_fact_keeps_it_permanent():
 ])
 def test_still_true_on_a_pinned_fact_is_none_even_with_a_stale_horizon(pinned):
     change = answer_updates(AnswerKind.STILL_TRUE, fact(**pinned), question(), NOW, MADRID, "digit")
-    assert change.updates["expiry"] == {"kind": "none"}
+    assert change.update.expiry == Expiry(ExpiryKind.NONE)
 
 
 def test_still_true_on_a_date_that_is_still_ahead_keeps_that_date():
     ahead = fact(state=FactState.CURRENT, expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=ENDS_28_OCT)
-    expiry = answer_updates(AnswerKind.STILL_TRUE, ahead, question(), NOW, MADRID, "digit").updates["expiry"]
-    assert expiry == {"kind": "date", "date": "2026-10-28"}  # the last day of the plan, in the owner's zone
+    expiry = answer_updates(AnswerKind.STILL_TRUE, ahead, question(), NOW, MADRID, "digit").update.expiry
+    assert expiry == Expiry(ExpiryKind.DATE, on=date(2026, 10, 28))  # the last day of the plan, in the owner's zone
 
 
 def test_the_date_is_read_in_the_owners_zone():
     ahead = fact(state=FactState.CURRENT, expiry_kind=ExpiryKind.DATE, ttl_days=None,
                  expires_at=datetime(2026, 10, 29, 23, 30, tzinfo=timezone.utc))  # 00:30 on 30 Oct in Madrid
-    assert answer_updates(AnswerKind.STILL_TRUE, ahead, question(), NOW, MADRID, "digit").updates["expiry"]["date"] == "2026-10-30"
-    assert answer_updates(AnswerKind.STILL_TRUE, ahead, question(), NOW, "UTC", "digit").updates["expiry"]["date"] == "2026-10-29"
+    assert answer_updates(AnswerKind.STILL_TRUE, ahead, question(), NOW, MADRID, "digit").update.expiry.on == date(2026, 10, 30)
+    assert answer_updates(AnswerKind.STILL_TRUE, ahead, question(), NOW, "UTC", "digit").update.expiry.on == date(2026, 10, 29)
 
 
 @pytest.mark.parametrize("make", [
@@ -319,11 +328,13 @@ def test_the_date_is_read_in_the_owners_zone():
 ], ids=["date due now", "date past", "date without a moment", "due horizon", "legacy unclassified"])
 def test_still_true_on_anything_else_gets_the_doubled_window(make):
     stale = make()
-    days = answer_updates(AnswerKind.STILL_TRUE, stale, question(), NOW, MADRID, "digit").updates["expiry"]
-    assert days == {"kind": "horizon", "days": fallback_window_days(stale)}
+    days = answer_updates(AnswerKind.STILL_TRUE, stale, question(), NOW, MADRID, "digit").update.expiry
+    assert days == Expiry(ExpiryKind.HORIZON, days=fallback_window_days(stale))
 
 
 # ------------------------------------------------------------------------------------------------ the write path accepts them (L9)
+# Reviewer edit (facts S4, T3c): the answer is the typed update the write path takes, so there is no parse left; the
+# same values are asserted on it directly.
 
 @pytest.mark.parametrize("make, expected", [
     (fact, Expiry(ExpiryKind.HORIZON, days=28)),
@@ -333,11 +344,11 @@ def test_still_true_on_anything_else_gets_the_doubled_window(make):
      Expiry(ExpiryKind.DATE, on=date(2026, 10, 28))),
 ])
 def test_what_still_true_sends_parses_as_the_write_path_reads_it(make, expected):
-    parsed = parse_fact_update(answer_updates(AnswerKind.STILL_TRUE, make(), question(), NOW, MADRID, "digit").updates, MADRID)
+    parsed = answer_updates(AnswerKind.STILL_TRUE, make(), question(), NOW, MADRID, "digit").update
     assert (parsed.state, parsed.expiry) == (FactState.CURRENT, expected)
 
 
 @pytest.mark.parametrize("kind, state", [(AnswerKind.ENDED, FactState.ARCHIVED), (AnswerKind.NEVER, FactState.INVALIDATED)])
 def test_what_ended_and_never_send_parse_as_a_closing_state_with_nothing_else(kind, state):
-    parsed = parse_fact_update(answer_updates(kind, fact(), question(), NOW, MADRID, "digit").updates, MADRID)
+    parsed = answer_updates(kind, fact(), question(), NOW, MADRID, "digit").update
     assert (parsed.state, parsed.expiry, parsed.content, parsed.notes) == (state, None, None, ())

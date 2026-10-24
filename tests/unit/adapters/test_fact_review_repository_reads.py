@@ -11,7 +11,7 @@ import pytest
 
 from src.domain.entities import FactState
 from src.domain.exceptions import FactWriteConflict
-from src.domain.fact_lifecycle import REVIEW_ACCEPTS
+from src.domain.fact_lifecycle import REVIEW_ACCEPTS, archive_fields
 from src.domain.stored_fact import StoredFact
 from tests.support.fact_kit import ACC, DROP, OTHER, T0, make_fact, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore, embed
@@ -178,7 +178,7 @@ async def test_archive_and_add_writes_both_documents(store):
     stored = await stale_stored(store)
     new = replacement(stored)
 
-    await store.repo.archive_and_add(stored, new, NOW, actor="review", reason="rewritten as f-new")
+    await store.repo.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "rewritten as f-new"), new)
 
     old = store.docs["old"]
     assert old["state"] == "archived" and old["is_current"] is True and old["valid_to"] == NOW
@@ -191,7 +191,7 @@ async def test_archive_and_add_writes_both_documents(store):
 async def test_archive_and_add_stores_the_new_documents_vectors_as_vectors(store):
     stored = await stale_stored(store)
 
-    await store.repo.archive_and_add(stored, replacement(stored), NOW, actor="review", reason="r")
+    await store.repo.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "r"), replacement(stored))
 
     read = await store.repo.get_fact_by_id("f-new")
     assert read.vector == pytest.approx(embed("new"))
@@ -202,7 +202,7 @@ async def test_archive_and_add_writes_the_archived_trail_entry_and_keeps_the_new
     stored = await stale_stored(store)
     new = replacement(stored)
 
-    await store.repo.archive_and_add(stored, new, NOW, actor="review", reason="rewritten as f-new")
+    await store.repo.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "rewritten as f-new"), new)
 
     assert store.docs["old"]["lifecycle_events"] == [
         EARLIER, {"at": NOW, "from": "stale", "to": "archived", "actor": "review", "reason": "rewritten as f-new"}
@@ -215,7 +215,7 @@ async def test_archive_and_add_caps_the_archived_trail(store):
     seed(store, "old", state="stale", lifecycle_events=events)
     stored = await store.repo.resolve_current("old", ACC, REVIEW_ACCEPTS)
 
-    await store.repo.archive_and_add(stored, replacement(stored), NOW, actor="review", reason="r")
+    await store.repo.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "r"), replacement(stored))
 
     trail = store.docs["old"]["lifecycle_events"]
     assert len(trail) == 20 and trail[0]["reason"] == "e1" and trail[-1]["to"] == "archived"
@@ -227,7 +227,7 @@ async def test_a_changed_token_gives_a_conflict_and_nothing_is_written(store):
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(FactWriteConflict):
-        await store.repo.archive_and_add(stored, replacement(stored), NOW, actor="review", reason="r")
+        await store.repo.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "r"), replacement(stored))
 
     assert store.docs["old"] == {**before["old"], "tags": ["moved"]} and "f-new" not in store.docs
 
@@ -238,7 +238,7 @@ async def test_a_token_that_was_stale_before_the_call_gives_a_conflict_and_nothi
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(FactWriteConflict):
-        await store.repo.archive_and_add(stored, replacement(stored), NOW, actor="review", reason="r")
+        await store.repo.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "r"), replacement(stored))
 
     assert store.docs == before
 
@@ -248,7 +248,7 @@ async def test_a_vanished_archived_document_gives_a_conflict(store):
     del store.docs["old"]
 
     with pytest.raises(FactWriteConflict):
-        await store.repo.archive_and_add(stored, replacement(stored), NOW, actor="review", reason="r")
+        await store.repo.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "r"), replacement(stored))
 
     assert "f-new" not in store.docs
 
@@ -258,7 +258,10 @@ async def test_a_new_fact_of_another_account_is_refused_before_any_write(store):
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(ValueError):
-        await store.repo.archive_and_add(stored, replacement(stored, account=OTHER), NOW, actor="review", reason="r")
+        await store.repo.archive_and_add(
+            stored, archive_fields(stored.fact, NOW, "review", "r"),
+            replacement(stored, account=OTHER),
+        )
 
     assert store.docs == before
 
@@ -269,7 +272,10 @@ async def test_a_new_fact_without_its_three_vectors_is_refused(store, missing):
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(ValueError, match=missing):
-        await store.repo.archive_and_add(stored, replacement(stored, **{missing: None}), NOW, actor="review", reason="r")
+        await store.repo.archive_and_add(
+            stored, archive_fields(stored.fact, NOW, "review", "r"),
+            replacement(stored, **{missing: None}),
+        )
 
     assert store.docs == before
 
@@ -281,7 +287,7 @@ async def test_a_hybrid_stored_document_is_refused_with_permission_error_and_not
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(PermissionError, match="Not authorized to modify this fact"):
-        await store.repo.archive_and_add(stored, replacement(stored), NOW, actor="review", reason="r")
+        await store.repo.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "r"), replacement(stored))
 
     assert store.docs == before
 
@@ -292,7 +298,10 @@ async def test_a_stored_fact_read_as_another_account_is_refused(store):
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(PermissionError):
-        await store.repo.archive_and_add(as_other, replacement(as_other, account=OTHER), NOW, actor="review", reason="r")
+        await store.repo.archive_and_add(
+            as_other, archive_fields(as_other.fact, NOW, "review", "r"),
+            replacement(as_other, account=OTHER),
+        )
 
     assert store.docs == before
 
@@ -303,6 +312,6 @@ async def test_a_new_id_that_already_exists_fails_the_commit_and_archives_nothin
     before = copy.deepcopy(store.docs)
 
     with pytest.raises(Exception):
-        await store.repo.archive_and_add(stored, replacement(stored), NOW, actor="review", reason="r")
+        await store.repo.archive_and_add(stored, archive_fields(stored.fact, NOW, "review", "r"), replacement(stored))
 
     assert store.docs == before

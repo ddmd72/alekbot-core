@@ -15,7 +15,7 @@ from google.cloud.firestore_v1.vector import Vector
 from scripts.data_audit.facts import check_fact, check_lineages
 from src.domain.entities import FactEntity, FactState
 from src.domain.exceptions import FactResolutionError, FactWriteConflict, InPlaceFieldRefused
-from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS
+from src.domain.fact_lifecycle import CONSOLIDATION_ACCEPTS, superseded_closure
 from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, OTHER, T0, USER, make_fact
 from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, embed
@@ -51,6 +51,11 @@ def version_of(stored, new_id, text):
     ))
 
 
+def closed_by(new, replaced, actor):
+    """The closures a caller builds (`superseded_closure`), which the repository applies."""
+    return [(stored, superseded_closure(stored.fact, new, NOW, actor)) for stored in replaced]
+
+
 def stamp(store, doc_id):
     return store.db.collection(FACTS).versions[doc_id]
 
@@ -63,7 +68,7 @@ async def test_write_superseding_creates_the_new_doc_and_closes_every_replaced_d
     sources = [await resolve(store, "f-a"), await resolve(store, "f-b")]
     merged = make_fact("merged")
 
-    await store.repo.write_superseding(merged, sources, NOW, actor="stage2a")
+    await store.repo.write_superseding(merged, closed_by(merged, sources, "stage2a"))
 
     assert store.docs["f-merged"]["text"] == "merged"
     for source_id in ("f-a", "f-b"):
@@ -85,8 +90,9 @@ async def test_write_superseding_checks_each_source_token_against_its_own_snapsh
     before = {k: copy.deepcopy(v) for k, v in store.docs.items()}
     store.interfere("f-b", {"text": "changed elsewhere"})   # interleaving source: a commit lands on b at its transactional read
 
+    new = make_fact("merged")
     with pytest.raises(FactWriteConflict) as caught:
-        await store.repo.write_superseding(make_fact("merged"), sources, NOW, actor="stage2a")
+        await store.repo.write_superseding(new, closed_by(new, sources, "stage2a"))
 
     assert caught.value.fact_id == "f-b"
     assert store.docs["f-b"]["text"] == "changed elsewhere"     # the interference happened
@@ -101,8 +107,9 @@ async def test_write_superseding_on_a_changed_doc_raises_conflict_and_writes_not
     await store.repo.facts_col.document("f-old").update({"text": "edited since the read"})
     before = copy.deepcopy(store.docs)
 
+    new = version_of(stale, "f-new", "new")
     with pytest.raises(FactWriteConflict) as caught:
-        await store.repo.write_superseding(version_of(stale, "f-new", "new"), [stale], NOW, actor="stage1")
+        await store.repo.write_superseding(new, closed_by(new, [stale], "stage1"))
 
     assert caught.value.fact_id == "f-old"
     assert store.docs == before
@@ -113,8 +120,9 @@ async def test_write_superseding_on_a_deleted_doc_raises_conflict(store):
     stale = await resolve(store, "f-old")
     await store.repo.facts_col.document("f-old").delete()
 
+    new = version_of(stale, "f-new", "new")
     with pytest.raises(FactWriteConflict):
-        await store.repo.write_superseding(version_of(stale, "f-new", "new"), [stale], NOW, actor="stage1")
+        await store.repo.write_superseding(new, closed_by(new, [stale], "stage1"))
     assert "f-new" not in store.docs
 
 
@@ -124,8 +132,9 @@ async def test_write_superseding_with_an_existing_new_id_writes_nothing(store):
     old = await resolve(store, "f-old")
     before = copy.deepcopy(store.docs)
 
+    new = version_of(old, "f-taken", "new")
     with pytest.raises(AlreadyExists):
-        await store.repo.write_superseding(version_of(old, "f-taken", "new"), [old], NOW, actor="stage1")
+        await store.repo.write_superseding(new, closed_by(new, [old], "stage1"))
 
     assert store.docs == before
 
@@ -139,7 +148,7 @@ async def test_write_superseding_with_nothing_to_replace_is_refused_before_any_i
 
     monkeypatch.setattr(store.db, "transaction", no_transaction)
     with pytest.raises(ValueError, match="replaces no document"):
-        await store.repo.write_superseding(make_fact("new"), [], NOW, actor="stage1")
+        await store.repo.write_superseding(make_fact("new"), [])
 
     assert store.docs == before
 
@@ -156,7 +165,7 @@ async def test_write_superseding_refuses_a_new_fact_without_a_vector_before_any_
 
     monkeypatch.setattr(store.db, "transaction", no_transaction)
     with pytest.raises(ValueError, match=missing):
-        await store.repo.write_superseding(incomplete, [old], NOW, actor="stage1")
+        await store.repo.write_superseding(incomplete, closed_by(incomplete, [old], "stage1"))
 
     assert store.docs == before
 
@@ -164,7 +173,8 @@ async def test_write_superseding_refuses_a_new_fact_without_a_vector_before_any_
 async def test_written_version_doc_passes_check_fact_and_is_found_by_every_reader(store):
     await seed(store, "old", lineage_id="L")
     old = await resolve(store, "f-old")
-    await store.repo.write_superseding(version_of(old, "f-new", "new"), [old], NOW, actor="stage1")
+    new = version_of(old, "f-new", "new")
+    await store.repo.write_superseding(new, closed_by(new, [old], "stage1"))
 
     doc = store.docs["f-new"]
     assert check_fact("f-new", doc) == [] and check_fact("f-old", store.docs["f-old"]) == []

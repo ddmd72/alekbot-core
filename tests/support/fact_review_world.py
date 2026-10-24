@@ -19,6 +19,7 @@ from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.config.environment import EnvironmentConfig
 from src.domain.channel_binding import ChannelBinding
 from src.domain.choice_outcome import ChoiceOutcome
+from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_review_question import FactReviewQuestion, QuestionStatus
 from src.domain.fact_review_state import FactReviewState
 from src.domain.interactive_message import InteractiveMessage
@@ -262,12 +263,13 @@ class ReviewWorld:
         return await seed_fact(self.repo, text, **over)
 
     async def stale(self, fact_id: str) -> None:
-        """Stale a due fact at `now` the way the sweep does: the repository's own write, then the biographical cache refreshed.
+        """Stale a due fact at `now` the way the sweep does: `stale_fields` from the projected trail, applied by the
+        repository, then the biographical cache refreshed.
         Raises AssertionError when the fact is not due at `now`."""
         due = next((item for item in await self.repo.find_due_facts(self.now) if item.fact_id == fact_id), None)
         if due is None:
             raise AssertionError(f"fact {fact_id!r} is not due at {self.now.isoformat()}")
-        await self.repo.stale_due_fact(due, self.now)
+        await self.repo.stale_due_fact(due, stale_fields(due, self.now))
         await self.repo.refresh_biographical_context_cache(due.account_id)
 
     async def seed_stale(self, text: str, **over: Any) -> str:

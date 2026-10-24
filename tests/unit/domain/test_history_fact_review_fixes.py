@@ -3,7 +3,7 @@
 - M1: a history archive refuses a fact rewritten since the owner was asked (`history_moved_refusal`, the rule
   `walked_to_unseen_text` the Cabinet delete shares).
 - M2: a review archive's fields are `archive_fields`, the rule `archive_and_add` writes.
-- L1: `history_refusal` judges the state as `parse_enum` reads it.
+- L1: a state `parse_enum` does not read as archived never reaches `history_refusal` (T3c: refused by the parser).
 - L3/L4: a history fact is stable and archival (S4-D27, the arbiter's decision).
 """
 from datetime import datetime, timedelta, timezone
@@ -13,7 +13,7 @@ import pytest
 from src.domain.entities import ContextPriority, ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
 from src.domain.exceptions import FactResolutionError
 from src.domain.fact_lifecycle import archive_fields, cabinet_invalidation, walked_to_unseen_text
-from src.domain.fact_review_answers import history_fact, history_moved_refusal, history_refusal
+from src.domain.fact_review_answers import history_fact, history_moved_refusal
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_reasons import answer_reason
 from src.domain.fact_update import parse_fact_update
@@ -90,9 +90,11 @@ def test_a_review_archive_is_built_by_archive_fields(actor, state, updates):
 
 @pytest.mark.parametrize("state", [5, ["archived"], "archive", "superseded"])
 def test_a_state_parse_enum_does_not_read_as_archived_is_refused(state):
-    refusal = history_refusal("No longer true: x", {"state": state}, ctx("owner"), NOW)
-
-    assert refusal is not None and 'exactly {"state": "archived"}' in refusal
+    # Reviewer edit (facts S4, T3c): `history_refusal` takes a typed update, whose state is a FactState, so the value
+    # cannot reach it; what refuses it is the parser that reads the state (parse_enum), before any update exists. A
+    # parsed state other than archived is refused by history_refusal (test_history_fact.py).
+    with pytest.raises(ValueError):
+        parse_fact_update({"state": state})
 
 
 # ----------------------------------------------------------------------------------------------------- L3/L4

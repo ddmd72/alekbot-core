@@ -10,6 +10,7 @@ from google.cloud.firestore_v1.vector import Vector
 
 from src.domain.entities import ExpiryKind, FactState
 from src.domain.exceptions import FactWriteConflict
+from src.domain.fact_lifecycle_sweep import stale_fields
 from tests.support.fact_kit import ACC, DROP, OTHER, T0, make_fact, put_raw
 from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore
 
@@ -98,7 +99,7 @@ async def test_staling_changes_the_lifecycle_fields_and_the_trail_only(store):
     await seed(store, "x", expires_at=PAST, expiry_kind=ExpiryKind.HORIZON, ttl_days=30)
     (due,) = await store.repo.find_due_facts(NOW)
     before = copy.deepcopy(store.docs["f-x"])
-    await store.repo.stale_due_fact(due, NOW)
+    await store.repo.stale_due_fact(due, stale_fields(due, NOW))
     after = store.docs["f-x"]
     changed = {k for k in after if after[k] != before[k]}
     assert changed == {"state", "stale_since", "last_updated", "lifecycle_events"}
@@ -113,7 +114,7 @@ async def test_staling_appends_an_expired_event_to_the_existing_trail(store):
     earlier = {"at": T0, "from": None, "to": "current", "actor": "stage1", "reason": "version 2 of x"}
     await seed(store, "x", expires_at=PAST, expiry_kind=ExpiryKind.DATE, lifecycle_events=[earlier])
     (due,) = await store.repo.find_due_facts(NOW)
-    await store.repo.stale_due_fact(due, NOW)
+    await store.repo.stale_due_fact(due, stale_fields(due, NOW))
     assert store.docs["f-x"]["lifecycle_events"] == [
         earlier,
         {"at": NOW, "from": "current", "to": "stale", "actor": "janitor", "reason": f"expired {PAST.isoformat()}"},
@@ -123,7 +124,7 @@ async def test_staling_appends_an_expired_event_to_the_existing_trail(store):
 async def test_a_staled_fact_leaves_the_due_query_and_enters_the_backlog(store):
     await seed(store, "x", expires_at=PAST, expiry_kind=ExpiryKind.DATE)
     (due,) = await store.repo.find_due_facts(NOW)
-    await store.repo.stale_due_fact(due, NOW)
+    await store.repo.stale_due_fact(due, stale_fields(due, NOW))
     assert await due_ids(store) == []
     assert await store.repo.stale_backlog() == {ACC: (1, NOW)}
 
@@ -134,7 +135,7 @@ async def test_staling_a_fact_that_changed_since_it_was_read_conflicts_and_write
     await store.db.collection(FACTS).document("f-x").update({"expires_at": FUTURE})
     before = copy.deepcopy(store.docs)
     with pytest.raises(FactWriteConflict):
-        await store.repo.stale_due_fact(due, NOW)
+        await store.repo.stale_due_fact(due, stale_fields(due, NOW))
     assert store.docs == before
 
 
@@ -143,7 +144,7 @@ async def test_staling_a_deleted_fact_conflicts(store):
     (due,) = await store.repo.find_due_facts(NOW)
     await store.db.collection(FACTS).document("f-x").delete()
     with pytest.raises(FactWriteConflict):
-        await store.repo.stale_due_fact(due, NOW)
+        await store.repo.stale_due_fact(due, stale_fields(due, NOW))
 
 
 async def test_a_conflict_during_the_commit_is_a_write_conflict(store):
@@ -151,7 +152,7 @@ async def test_a_conflict_during_the_commit_is_a_write_conflict(store):
     (due,) = await store.repo.find_due_facts(NOW)
     store.interfere("f-x", {"tags": ["other"]})
     with pytest.raises(FactWriteConflict):
-        await store.repo.stale_due_fact(due, NOW)
+        await store.repo.stale_due_fact(due, stale_fields(due, NOW))
     assert store.docs["f-x"]["state"] == "current"
 
 
@@ -160,7 +161,7 @@ async def test_staling_one_fact_leaves_the_others_alone(store):
     await seed(store, "y", expires_at=PAST, expiry_kind=ExpiryKind.DATE)
     by_id = {d.fact_id: d for d in await store.repo.find_due_facts(NOW)}
     before = copy.deepcopy(store.docs["f-y"])
-    await store.repo.stale_due_fact(by_id["f-x"], NOW)
+    await store.repo.stale_due_fact(by_id["f-x"], stale_fields(by_id["f-x"], NOW))
     assert store.docs["f-y"] == before
 
 

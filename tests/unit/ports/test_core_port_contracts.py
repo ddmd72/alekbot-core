@@ -27,7 +27,9 @@ from src.ports.audio_transcription_port import AudioTranscriptionPort
 from src.ports.auth_port import AuthPort
 from src.ports.conversation_handler_port import ConversationHandlerPort
 from src.ports.embedding_service import EmbeddingService
+from src.domain.fact_update import ParsedFactUpdate
 from src.ports.fact_management_port import FactManagementPort
+from src.ports.fact_update_port import FactUpdatePort
 from src.ports.fact_write_port import FactWritePort
 from src.ports.file_service import FileService
 from src.ports.iam_port import IAMPort, ResourceType, Action, Role
@@ -414,12 +416,51 @@ class TestFactManagementPortMockImplementation:
         # Reviewer edit (facts S3, T4a; plan §3.2): as create_fact.
         # Reviewer edit (facts S4, T3a): the review and owner write path adds evidence_at, reason and history,
         # keyword-only and None by default, so a consolidation call is unchanged.
-        assert params == ["self", "fact_id", "updates", "account_id", "context", "evidence_at", "reason", "history"]
+        # Reviewer edit (facts S4, T3c; inward review L1): those three left the model's port for code's typed entry
+        # (FactUpdatePort.apply_fact_update, pinned below); the model's update is back to the S3 shape.
+        assert params == ["self", "fact_id", "updates", "account_id", "context"]
+        assert sig.parameters["context"].kind is inspect.Parameter.KEYWORD_ONLY
+        assert sig.parameters["context"].default is inspect.Parameter.empty
+
+
+# =============================================================================
+# FactUpdatePort (facts S4, T3c: code's typed update; reviewer-added pin)
+# =============================================================================
+
+class TestFactUpdatePortContract:
+    def test_is_abstract_class(self):
+        assert issubclass(FactUpdatePort, ABC)
+
+    def test_cannot_instantiate_directly(self):
+        with pytest.raises(TypeError):
+            FactUpdatePort()
+
+    def test_its_one_method_is_apply_fact_update(self):
+        abstract_methods = {
+            name for name, method in inspect.getmembers(FactUpdatePort)
+            if getattr(method, "__isabstractmethod__", False)
+        }
+        assert abstract_methods == {"apply_fact_update"}
+
+    def test_it_is_not_a_model_tool_port(self):
+        assert not issubclass(FactUpdatePort, FactManagementPort)
+        assert not issubclass(FactManagementPort, FactUpdatePort)
+
+    def test_apply_fact_update_signature(self):
+        sig = inspect.signature(FactUpdatePort.apply_fact_update)
+        assert list(sig.parameters) == [
+            "self", "fact_id", "update", "account_id", "context", "evidence_at", "reason", "history",
+        ]
+        for name in ("fact_id", "update", "account_id"):
+            assert sig.parameters[name].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+            assert sig.parameters[name].default is inspect.Parameter.empty
         assert sig.parameters["context"].kind is inspect.Parameter.KEYWORD_ONLY
         assert sig.parameters["context"].default is inspect.Parameter.empty
         for name in ("evidence_at", "reason", "history"):
             assert sig.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
             assert sig.parameters[name].default is None
+        hints = get_type_hints(FactUpdatePort.apply_fact_update)
+        assert hints["update"] is ParsedFactUpdate
 
 
 # =============================================================================
@@ -502,6 +543,18 @@ class TestFactRepositoryContract:
 
     def test_has_write_superseding(self):
         assert getattr(FactRepository.write_superseding, "__isabstractmethod__", False)
+
+    # Reviewer-added pins (facts S4, T3c; inward review S4 L2, S1-S3 L3): the three use-case writes take the fields the
+    # caller built with the domain's builders, never the ingredients (now, actor, reason) to rebuild them.
+    @pytest.mark.parametrize("method, params", [
+        ("write_superseding", ["self", "new_fact", "closures"]),
+        ("archive_and_add", ["self", "archived", "fields", "new_fact"]),
+        ("stale_due_fact", ["self", "due", "fields"]),
+    ])
+    def test_the_use_case_writes_take_ready_fields(self, method, params):
+        sig = inspect.signature(getattr(FactRepository, method))
+        assert list(sig.parameters) == params
+        assert not {"now", "actor", "reason"} & set(sig.parameters)
 
     def test_has_update_fact_fields(self):
         assert getattr(FactRepository.update_fact_fields, "__isabstractmethod__", False)

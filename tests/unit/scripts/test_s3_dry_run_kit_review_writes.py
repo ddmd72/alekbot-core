@@ -1,6 +1,7 @@
-"""Facts S4 · T3a: the kit's `WriteRecorder` forwards the review keywords of `update_fact` to the real adapter over the
-overlay, so an owner's "ended" archives the fact beside a history fact in the overlay, gets its report row, and leaves the
-live store byte-identical."""
+"""Facts S4 · T3a: the kit's `WriteRecorder` forwards the review keywords (since T3c, reviewer edit: of the typed
+`apply_fact_update`, the archive being the old argument parsed) to the real adapter over the overlay, so an owner's
+"ended" archives the fact beside a history fact in the overlay, gets its report row, and leaves the live store
+byte-identical."""
 import copy
 from datetime import datetime, timedelta, timezone
 
@@ -13,6 +14,7 @@ from src.domain.entities import ExpiryKind, FactState
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_reasons import answer_reason, history_reason
 from src.domain.fact_tool_result import HISTORY_FACT_ID
+from src.domain.fact_update import parse_fact_update
 from tests.support.fact_kit import ACC, T0, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import ctx
@@ -45,8 +47,9 @@ async def test_an_owner_archive_with_history_through_the_recorder_lands_in_the_o
         adapter = FactManagementAdapter(kit.repo, store.embedder, store.write, production_adapter(store)._search_enrichment)
         recorder = kit_module.WriteRecorder(adapter, kit)
 
-        result = await recorder.update_fact(
-            "old", {"state": "archived"}, ACC, context=ctx("owner"), evidence_at=said, reason=ENDED, history=HISTORY,
+        result = await recorder.apply_fact_update(
+            "old", parse_fact_update({"state": "archived"}), ACC, context=ctx("owner"), evidence_at=said, reason=ENDED,
+            history=HISTORY,
         )
 
         assert result["status"] == "updated" and result["fact_id"] == "old", result
