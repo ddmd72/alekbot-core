@@ -2,9 +2,13 @@
 FirestoreFactLifecycleCounters — FactLifecycleCountersPort on Firestore (FACT_LIFECYCLE_RFC D10).
 
 `{prefix}fact_lifecycle_daily`, doc id `<account_id>:<YYYY-MM-DD>` (UTC day): `account_id`, `day` (ISO string), the
-janitor's snapshot fields and the added counters. `{prefix}fact_lifecycle_lines`, doc id `<YYYY-MM-DD>`: the mark
-that the day's ops line was claimed (`day` as an ISO string, `claimed_at` aware UTC). Neither collection has a TTL policy and no field is named `expires_at`.
+janitor's snapshot fields and the counters, each under its domain name. A snapshot is written as its whole field set,
+merged, so every snapshot field is replaced and the counters stay; a counter is added with `Increment`. A missing or
+unreadable number reads as 0. `{prefix}fact_lifecycle_lines`, doc id `<YYYY-MM-DD>`: the mark that the day's ops line
+was claimed (`day` as an ISO string, `claimed_at` aware UTC). Neither collection has a TTL policy and no field is named
+`expires_at`.
 """
+from dataclasses import asdict, fields
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Mapping
 
@@ -13,9 +17,40 @@ from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 
 from ..config.environment import EnvironmentConfig
-from ..domain.fact_lifecycle_day import COUNTER_FIELDS, FactLifecycleDay, check_snapshot, day_doc_id
+from ..domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot, check_count
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..utils.logger import logger
+
+
+def _doc_id(account_id: str, day: date) -> str:
+    return f"{account_id}:{day.isoformat()}"
+
+
+def _count(value: Any) -> int:
+    """A stored number as an int: missing or not a number reads as 0."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return int(value)
+
+
+# The snapshot's numbers, as stored; with every counter, read the same way.
+_SNAPSHOT_COUNTS = tuple(
+    f.name for f in fields(SweepSnapshot) if f.name not in {"run_at", "breaker", "oldest_stale_days"}
+)
+
+
+def _day_from(data: Mapping[str, Any]) -> FactLifecycleDay:
+    """A day row from its stored document; a missing or unreadable number reads as 0 (a NaN raises ValueError)."""
+    numbers = {name: _count(data.get(name)) for name in _SNAPSHOT_COUNTS}
+    numbers.update({field.value: _count(data.get(field.value)) for field in CounterField})
+    return FactLifecycleDay(
+        account_id=str(data.get("account_id", "")),
+        day=date.fromisoformat(str(data["day"])),
+        run_at=data.get("run_at") if isinstance(data.get("run_at"), datetime) else None,
+        breaker=str(data.get("breaker") or ""),
+        oldest_stale_days=_count(data["oldest_stale_days"]) if data.get("oldest_stale_days") is not None else None,
+        **numbers,
+    )
 
 
 class FirestoreFactLifecycleCounters(FactLifecycleCountersPort):
@@ -30,32 +65,30 @@ class FirestoreFactLifecycleCounters(FactLifecycleCountersPort):
         if isinstance(day, datetime):
             raise ValueError("day must be a date, not a datetime")
 
-    async def record_sweep(self, account_id: str, day: date, values: Mapping[str, Any]) -> None:
+    async def record_sweep(self, account_id: str, day: date, snapshot: SweepSnapshot) -> None:
         self._check(account_id, day)
-        check_snapshot(values)
-        data: Dict[str, Any] = {"account_id": account_id, "day": day.isoformat(), **values}
-        await self._daily.document(day_doc_id(account_id, day)).set(data, merge=True)
+        data: Dict[str, Any] = {"account_id": account_id, "day": day.isoformat(), **asdict(snapshot)}
+        await self._daily.document(_doc_id(account_id, day)).set(data, merge=True)
 
-    async def add(self, account_id: str, day: date, counts: Mapping[str, int]) -> None:
+    async def add(self, account_id: str, day: date, counts: Mapping[CounterField, int]) -> None:
         self._check(account_id, day)
-        unknown = sorted(set(counts) - COUNTER_FIELDS)
-        if unknown:
-            raise ValueError(f"not counter fields: {unknown}")
+        added: Dict[str, int] = {}
         for name, value in counts.items():
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise ValueError(f"count {name} must be a non-negative integer")
-        added = {name: value for name, value in counts.items() if value}
+            field = CounterField(name)
+            check_count(field.value, value)
+            if value:
+                added[field.value] = value
         if not added:
             return
         data: Dict[str, Any] = {"account_id": account_id, "day": day.isoformat()}
         data.update({name: firestore.Increment(value) for name, value in added.items()})
-        await self._daily.document(day_doc_id(account_id, day)).set(data, merge=True)
+        await self._daily.document(_doc_id(account_id, day)).set(data, merge=True)
 
     async def for_day(self, day: date) -> List[FactLifecycleDay]:
         rows: List[FactLifecycleDay] = []
         async for snap in self._daily.where(filter=FieldFilter("day", "==", day.isoformat())).stream():
             try:
-                rows.append(FactLifecycleDay.from_document(snap.to_dict() or {}))
+                rows.append(_day_from(snap.to_dict() or {}))
             except (KeyError, ValueError):
                 logger.warning(f"⚠️ [FactLifecycleCounters] unreadable row {snap.id[:8]} skipped")
         return sorted(rows, key=lambda row: row.account_id)
