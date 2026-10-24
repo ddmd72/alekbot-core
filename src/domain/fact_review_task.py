@@ -79,7 +79,11 @@ class FactReviewTask(BaseModel):
 
 def encode_review_task(task: FactReviewTask) -> Dict[str, Any]:
     """The task as the agent task's payload fields: plain data (dicts, lists, times and enum members) under
-    `PAYLOAD_KEY`, read back to an equal task by `decode_review_task`."""
+    `PAYLOAD_KEY`, read back to an equal task by `decode_review_task`.
+
+    In process only: the times inside a fact's `lifecycle_events` stay datetimes here, but they are untyped, so through
+    JSON they would come back as text the review's rules cannot read. Do not send this through a JSON queue until the
+    event list has a type."""
     return {PAYLOAD_KEY: task.model_dump()}
 
 

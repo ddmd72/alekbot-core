@@ -237,8 +237,11 @@ def born_due(
     A decision that `resolves_too_soon` (at or before now + 1 day) is refused with FactBornDueError, worded by
     `rule.refusal_wording`. The one exception is a horizon on a pass whose row `floors_due_horizon` (stage 2a/2b,
     backstop, cluster), which cannot move `reported_date`: it is floored to now + 2 days, so the fact reaches review soon.
+    `expiry_kind` is an ExpiryKind or None (callers convert a stored value first); anything else raises ValueError.
     """
     kind, expires_at = fields.get("expiry_kind"), fields.get("expires_at")
+    if kind is not None and not isinstance(kind, ExpiryKind):
+        raise ValueError(f"expiry_kind must be an ExpiryKind or None, not {type(kind).__name__}")
     if kind not in (ExpiryKind.DATE, ExpiryKind.HORIZON) or expires_at is None:
         return dict(fields), None
     now = local_moment(now, "UTC")
