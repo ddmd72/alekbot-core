@@ -1,10 +1,5 @@
 # Hexagonal Architecture Patterns in Alek-Core
 
-
-
-
----
-
 ## Overview
 
 This document describes hexagonal architecture patterns used in Alek-Core, with practical examples from our codebase. It explains how we maintain clean separation between Domain, Application, and Infrastructure layers.
@@ -506,18 +501,14 @@ Centralize all feature flags as module-level constants in `src/infrastructure/ag
 # src/infrastructure/agent_config.py
 import os
 
-
-    
-
-
 ENABLE_GROUNDING_ATTRIBUTION: bool = os.getenv(
     "ENABLE_GROUNDING_ATTRIBUTION", "false"
 ).lower() == "true"
 
 # In agents — import the constant, never os.getenv()
+from ..infrastructure.agent_config import ENABLE_GROUNDING_ATTRIBUTION
 
-
-
+if rendered_content and ENABLE_GROUNDING_ATTRIBUTION:
     # append the grounding attribution
 ```
 
@@ -561,11 +552,10 @@ Both `FactManagementAdapter` and `FirestoreFactManagementAdapter` call this inst
 
 ## Pattern 11: Callback Injection for Cross-Handler Decoupling
 
-
-
 ### Problem
 
 `ConversationHandler` runs consolidation for the `$consolidate` command, but importing the consolidation code would
+couple the handler to another component.
 
 ### Solution
 
@@ -586,8 +576,6 @@ class ConversationHandler:
         self._overflow_callback = overflow_callback
 
 # src/composition/slack_adapter_factory.py (composition root — legal to import both)
-
-
 handler = ConversationHandler(
     ...,
     overflow_callback=consolidation_service.consolidate_now if consolidation_service else None,
@@ -810,17 +798,17 @@ present on the domain object (model name, provider name, capabilities).
 # ❌ WRONG — agent reads os.getenv() inline
 import os
 
-class QuickResponseAgent(BaseAgent):
+class WebSearchAgent(BaseAgent):
     def _render(self, rendered_content):
-        
+        if os.getenv("ENABLE_GROUNDING_ATTRIBUTION", "false").lower() == "true":
             # ...
 
 # ✅ CORRECT — feature flag centralized in agent_config
+from ..infrastructure.agent_config import ENABLE_GROUNDING_ATTRIBUTION
 
-
-class QuickResponseAgent(BaseAgent):
+class WebSearchAgent(BaseAgent):
     def _render(self, rendered_content):
-        
+        if ENABLE_GROUNDING_ATTRIBUTION:
             # ...
 ```
 
@@ -850,43 +838,8 @@ for backward compatibility.
 ## Testing
 
 Ports are what make a layer testable on its own: a test hands the class a fake of the port it depends on. How to write
-
-```python
-@pytest.mark.asyncio
-
-    
-    
-
-    
-    
-
-    service = FactWriteService(
-        repository=mock_repo,
-        embedding_service=mock_embedding
-    )
-
-    
-    
-
-    assert saved == 1
-    
-```
-
-
-
-
-
-
-```python
-async def test_authorized_user_processed(self, adapter):
-    
-    mock_handler = AsyncMock()
-    adapter.conversation_handler = mock_handler
-
-    
-
-    mock_handler.handle_message.assert_called_once()
-```
+those fakes (fakes with semantics over call assertions, mocks only for boundaries you do not own) is in
+`tests/CLAUDE.md`. Adapter tests mock at the SDK boundary, never at the port: `docs/how_to/ADAPTER_WIRE_TESTING.md`.
 
 ---
 
@@ -955,7 +908,6 @@ Bootstrap/wiring rules:
 | Domain Logic | `SmartDeduplication` in domain/ (stdlib only) | `src/domain/deduplication_service.py` |
 | Composition Factory | `SlackAdapterFactory` creates adapter with ports injected | `src/composition/slack_adapter_factory.py` |
 | Circular Resolution | `BiographicalContextService ↔ FirestoreFactRepository` | `src/composition/service_container.py` |
-
 | Protocol Decoupling | `MessageRouter` Protocol decouples services/ from infrastructure/ | `src/services/agent_fallback_service.py` |
 | Feature Flag Central | `ENABLE_GROUNDING_ATTRIBUTION` in `agent_config.py` | `src/infrastructure/agent_config.py` |
 | Domain Normalization | `normalize_fact_taxonomy()` eliminates adapter duplication | `src/domain/entities.py` |
@@ -973,8 +925,3 @@ Bootstrap/wiring rules:
 - **CLAUDE.md** — Import rules (authoritative, checked by `make check`)
 - **Building Block:** `docs/05_building_blocks/fact_write_service/README.md`
 - **RFC:** `docs/10_rfcs/EXECUTION_CONTEXT_HEXAGONAL_RFC.md`
-
----
-
-
-

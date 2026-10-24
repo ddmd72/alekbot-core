@@ -55,8 +55,6 @@ Cross-cutting deep dives:
 - **[Multi-Vector RRF Search](./08_concepts/multi_vector_rrf_search.md)** — retrieval philosophy.
 - **[Prompt Assembly Guide](./08_concepts/prompt_assembly_guide.md)** — token assembly (v4).
 
-
-
 ### [09 Decisions (ADRs)](./09_decisions/README.md)
 Architecture Decision Records.
 

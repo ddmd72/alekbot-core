@@ -3030,11 +3030,6 @@ USER: Yes, exactly.
 - [Firestore HNSW Documentation](https://cloud.google.com/firestore/docs/vector-search)
 - [Multi-Vector RRF Search](../08_concepts/multi_vector_rrf_search.md)
 
-
-
-
-
-
 **Architecture:**
 
 - [Hexagonal Architecture Patterns](../08_concepts/hexagonal_architecture_patterns.md)

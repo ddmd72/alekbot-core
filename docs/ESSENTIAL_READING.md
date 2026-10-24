@@ -64,9 +64,7 @@ Load only for specific tasks:
 
 ### Concepts & Philosophy
 
-
 - `docs/08_concepts/groovy_prompt_pattern.md` - Prompt engineering with Groovy DSL
-
 - `docs/_project/archive/concepts_legacy/BELIEF_SYSTEM_MANIFESTO.md` - Legacy memory philosophy
 - `docs/_project/archive/concepts_legacy/RAG_MANIFESTO.md` - Legacy RAG architecture
 

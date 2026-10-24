@@ -1,8 +1,5 @@
 # Groovy-Style Prompt Engineering Pattern
 
-
-
-
 ## 1. The Core Philosophy
 
 Modern LLMs are heavily trained on code. They understand **syntax, inheritance, strict typing, and logical flow** better than they understand loose natural language instructions.
@@ -158,21 +155,25 @@ knowledge_base {
     ...
   '''
 }
+
+available_skills { ... }      // ← Smart only, when the user has skills
+standing_directives { ... }   // ← the user's binding rules, last static block
 ```
 
 **Dynamic suffix** (sent fresh every request):
 ```groovy
 <!-- CACHE_BOUNDARY -->
-current_date_time {
-    
-    
-}
+active_reminders { ... }      // ← the orchestrator's own reminders, when any
 
 query_specific_context: '''   // ← only when router found relevant facts
     **Query-Specific Context:**
     - User mentioned travel plans last week
 '''
 ```
+
+The time is not in the prompt by default: it is stamped into the user messages. An agent that needs a
+`current_date_time {}` block asks for it with `include_datetime=True`. The exact order of the blocks is in
+`prompt_assembly_guide.md`.
 
 ---
 
@@ -202,53 +203,7 @@ When creating or modifying tokens:
 ## 8. Real-World Examples
 
 The tokens in `firestore_utils/uploads/` are the real thing: the `COGNITIVE_PROCESS_*`, `PROTOCOL_*` and
-
-
-```
-
-
-
-```
-
-
-
-```groovy
-cognitive_process {
-  steps: [
-    
-    
-    
-    
-  ]
-  
-    
-    
-    
-    
-  ]
-}
-```
-
-
-
-
-
-```groovy
-cognitive_process {
-  steps: [
-    
-    
-    
-    
-    
-  ]
-  
-    
-    
-    
-  }
-}
-```
+`OUTPUT_FORMAT_*` files are what the live agents run on. Read one before writing a new token.
 
 ---
 
@@ -364,12 +319,3 @@ cognitive_process {
 | `weather → widget` (domain rule) | You want consistent behavior for a specific data type |
 | `"Would a card make this better?"` (quality question) | You want the model to exercise judgment on novel cases |
 | Mixed: defaults + override | Most real cognitive processes — rules for known types, judgment for edge cases |
-
-
-
-
-
----
-
-**Last Updated:** 2026-02-26
-

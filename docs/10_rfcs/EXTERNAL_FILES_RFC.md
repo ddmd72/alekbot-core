@@ -644,7 +644,6 @@ look-alike check covers both words. Drive output, the `drive-search` skill and t
     - root `CLAUDE.md:181`, `:347`; `src/agents/CLAUDE.md:49`, `:463`, `:496`;
     - the building-block READMEs `agent_registry`, `quick_agent_delegation`, `multi_agent_system`,
       `gmail_email_indexing`; `docs/04_solution_strategy/current_implementation/STRUCTURE.md:511`.
-      
   - **Tests** that encode the removed intent, named for the reviewer, with this section as their spec:
     `tests/unit/agents/test_email_search_agent.py:312`, `:384-434`; `tests/unit/services/test_email_review_service.py:296`.
 - **The old in-process attachment path is removed in U4.** It loses its only caller, and leaving it would keep a
