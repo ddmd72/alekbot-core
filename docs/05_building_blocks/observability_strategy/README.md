@@ -87,8 +87,7 @@ Smart's primary model — are unaffected.
 
 **Gating:** the BigQuery store is wired iff `DEBUG_PROMPTS=true` AND
 `BIGQUERY_PROMPT_DATASET` is set — `DEBUG_PROMPTS` is a global write on/off switch, not an adapter
-selector. **Legacy:** `PromptDebugLogger` (the old GCS `…-debug-prompts/` dump) is fully superseded
-and no longer called from `_call_llm` — removal backlogged as TD-1 in the roadmap.
+selector. The old GCS `…-debug-prompts/` dump (`PromptDebugLogger`) was removed on 2026-06-29 (TD-1).
 
 See: `decisions/tracing_backend_both_interim.md`, `decisions/llm_observability_pending.md`; how to
 **read** the data in `CLAUDE.md` → "Debugging Cloud Run". Code: `src/utils/telemetry.py`,

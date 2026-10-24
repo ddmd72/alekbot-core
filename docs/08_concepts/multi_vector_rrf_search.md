@@ -108,7 +108,7 @@ Imagine looking at a fact through 3 different lenses:
 
 3. **Text Lens** (natural language)
    - Sees: Full narrative, context, relationships
-   - Best for: "my car is Toyota Corolla 2012"
+   - Best for: "my car is Skoda Fabia 2015"
    - Example: Text preserves complete story
 
 **Multi-Vector = Using all 3 lenses simultaneously**
@@ -147,7 +147,7 @@ Why tags_vector?
 **Example:**
 
 ```python
-Fact: "I have a Toyota Corolla 2012"
+Fact: "I have a Skoda Fabia 2015"
 Tags: [automotive, toyota, corolla, personal_asset]
 
 Query: "car"
