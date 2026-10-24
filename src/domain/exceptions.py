@@ -314,3 +314,9 @@ class InPlaceFieldRefused(Exception):
     def __init__(self, fields: Iterable[str]) -> None:
         self.fields = tuple(sorted(fields))
         super().__init__(f"fields not writable in place: {', '.join(self.fields)}")
+
+
+class QuestionTransitionError(Exception):
+    """A memory-review question cannot make that move from its present state (a closed question cannot be asked, a
+    question not yet posted cannot be completed as asked). The store applies a transition inside its transaction and
+    treats this as "not applied"; it decides conflicts, never whether a move is legal."""
