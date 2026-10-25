@@ -130,7 +130,7 @@ def test_the_cluster_message_line_is_byte_identical_from_an_entry_and_from_a_sea
 
 
 def test_the_reported_day_is_the_owners_calendar_day_not_the_utc_day():
-    fact = FACTS["horizon"]  # 23:30 UTC on 22 October is 01:30 on 23 October in Paris
+    fact = FACTS["horizon"]  # 23:30 UTC on 22 October is 01:30 on 23 October in Europe/Paris
     assert fact_view(fact, "UTC")["reported"] == "2026-10-22"
     assert fact_view(fact, PARIS)["reported"] == "2026-10-23"
 

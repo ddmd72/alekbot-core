@@ -305,7 +305,7 @@ def test_the_midnight_is_the_owners_not_utc():
     last, now = _at(23, 22, 30), _at(24, 1, 0)
     assert interval_elapsed(last, now, "UTC", 1)  # 23 Oct and 24 Oct
     assert not interval_elapsed(last, now, "America/New_York", 1)  # both on 23 Oct there
-    assert not interval_elapsed(last, now, "Europe/Madrid", 1)  # both on 24 Oct in Madrid
+    assert not interval_elapsed(last, now, "Europe/Madrid", 1)  # both on 24 Oct in Europe/Madrid
     assert interval_elapsed(_at(23, 21, 30), _at(23, 22, 30), "Europe/Madrid", 1)  # 23 Oct 23:30 and 24 Oct 00:30
 
 
@@ -491,14 +491,14 @@ def test_the_queue_reasons_today_is_the_owners_even_just_after_local_midnight():
     asked = datetime(2026, 10, 24, 10, 0, tzinfo=timezone.utc)
     out = question(Q.ASKED, question_id="out", fact_id="f9", asked_at=asked)
     st = state(current_question_id="out", sent_on=date(2026, 10, 24), sent=1, last_review_at=_at(24, 10, 0))
-    after_madrid_midnight = _at(24, 22, 30)  # 25 Oct 00:30 in Madrid, still the 24th in UTC
+    after_madrid_midnight = _at(24, 22, 30)  # 25 Oct 00:30 in Europe/Madrid, still the 24th in UTC
     assert due(questions=[question(Q.QUEUED), out], st=st, now=after_madrid_midnight, tz="Europe/Madrid") == "queue"
     assert due(questions=[question(Q.QUEUED), out], st=st, now=after_madrid_midnight, tz="UTC") is None
 
 
 def test_the_days_cap_is_the_owners_day_just_after_local_midnight():
     st = state(sent_on=date(2026, 10, 24), sent=5, last_review_at=_at(24, 10, 0))
-    after_madrid_midnight = _at(24, 22, 30)  # the 25th in Madrid: a new day, the 24th's five do not count
+    after_madrid_midnight = _at(24, 22, 30)  # the 25th in Europe/Madrid: a new day, the 24th's five do not count
     assert due(questions=[question(Q.QUEUED)], st=st, now=after_madrid_midnight, tz="Europe/Madrid") == "queue"
     assert due(questions=[question(Q.QUEUED)], st=st, now=after_madrid_midnight, tz="UTC") is None
 

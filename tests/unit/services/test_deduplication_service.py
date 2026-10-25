@@ -24,8 +24,8 @@ class TestSmartDeduplication:
     def test_low_similarity_not_duplicate(self, service):
         """Facts with similarity < 0.96 are NOT duplicates."""
         is_dup, reason = service.is_duplicate(
-            "User visited Paris",
-            "Weight was 80 kg",
+            "User visited Berlin",
+            "Weight was 64 kg",
             0.92
         )
         
@@ -40,8 +40,8 @@ class TestSmartDeduplication:
     def test_different_numbers_not_duplicate(self, service):
         """Facts with different numbers are NOT duplicates."""
         is_dup, reason = service.is_duplicate(
-            "Weight on 2024-01-11 was 90 kg",
-            "Weight on 2024-01-10 was 80 kg",
+            "Weight on 2024-01-11 was 66 kg",
+            "Weight on 2024-01-10 was 64 kg",
             0.99
         )
         
@@ -51,12 +51,12 @@ class TestSmartDeduplication:
     def test_sorted_numbers_same_values_different_order(self, service):
         """Numbers in different order but same values = duplicate."""
         is_dup, reason = service.is_duplicate(
-            "Patient: 180 cm height, 80 kg weight",
-            "Patient: 80 kg weight, 180 cm height",
+            "Patient: 168 cm height, 64 kg weight",
+            "Patient: 64 kg weight, 168 cm height",
             0.97
         )
         
-        # Numbers sorted: [80, 180] == [80, 180]
+        # Numbers sorted: [64, 168] == [64, 168]
         # similarity < 0.98, check length
         # Lengths similar → duplicate
         assert is_dup is True
@@ -107,8 +107,8 @@ class TestSmartDeduplication:
     def test_strict_threshold_boundary(self, service):
         """Test exact boundary at 0.98."""
         is_dup, reason = service.is_duplicate(
-            "Weight was 80 kg",
-            "Weight is 80 kg",
+            "Weight was 64 kg",
+            "Weight is 64 kg",
             0.98
         )
         
@@ -122,12 +122,12 @@ class TestSmartDeduplication:
     def test_new_more_detailed_not_duplicate(self, service):
         """New fact with more detail should NOT be duplicate."""
         is_dup, reason = service.is_duplicate(
-            "Weight was 80 kg in Example City, representing loss of weight",  # New: detailed
-            "Weight was 80 kg",  # Existing: short
+            "Weight was 64 kg in Springfield, representing loss of weight",  # New: detailed
+            "Weight was 64 kg",  # Existing: short
             0.96
         )
         
-        # Numbers same: [80] == [80]
+        # Numbers same: [64] == [64]
         # similarity 0.96 < 0.98
         # existing/new = 17/56 = 0.30 < 0.85
         # → NOT duplicate
@@ -137,12 +137,12 @@ class TestSmartDeduplication:
     def test_new_shorter_is_duplicate(self, service):
         """New fact that's shorter should be duplicate."""
         is_dup, reason = service.is_duplicate(
-            "Weight 80 kg",  # New: short
-            "Weight was 80 kg in Example City",  # Existing: detailed
+            "Weight 64 kg",  # New: short
+            "Weight was 64 kg in Springfield",  # Existing: detailed
             0.96
         )
         
-        # Numbers same: [80] == [80]
+        # Numbers same: [64] == [64]
         # similarity 0.96 < 0.98
         # existing/new = 33/13 = 2.54 > 0.85
         # → DUPLICATE
@@ -167,10 +167,10 @@ class TestSmartDeduplication:
     # ========================================================================
     
     def test_paris_london_addition(self, service):
-        """User example: Paris → Paris + London."""
+        """User example: Berlin → Berlin + London."""
         is_dup, reason = service.is_duplicate(
-            "Я в прошлом году был в Париже и в Лондоне",  # New: longer
-            "Я в прошлом году был в Париже",  # Existing: shorter
+            "Я в прошлом году был в Берлине и в Лондоне",  # New: longer
+            "Я в прошлом году был в Берлине",  # Existing: shorter
             0.96
         )
         
@@ -206,13 +206,13 @@ class TestSmartDeduplication:
     def test_weight_change_different_dates(self, service):
         """Weight measured on different dates → NOT duplicate."""
         is_dup, reason = service.is_duplicate(
-            "Weight on 2024-01-11 was 80 kg",
-            "Weight on 2024-01-10 was 80 kg",
+            "Weight on 2024-01-11 was 64 kg",
+            "Weight on 2024-01-10 was 64 kg",
             0.99
         )
         
-        # Numbers: [2024, 1, 11, 80] vs [2024, 1, 10, 80]
-        # Sorted: [1, 11, 80, 2024] vs [1, 10, 80, 2024]
+        # Numbers: [2024, 1, 11, 64] vs [2024, 1, 10, 64]
+        # Sorted: [1, 11, 64, 2024] vs [1, 10, 64, 2024]
         # Different → NOT duplicate
         assert is_dup is False
         assert "numbers_differ" in reason
@@ -220,12 +220,12 @@ class TestSmartDeduplication:
     def test_weight_change_different_values(self, service):
         """Weight change (different values) → NOT duplicate."""
         is_dup, reason = service.is_duplicate(
-            "Weight was 90 kg",
-            "Weight was 80 kg",
+            "Weight was 66 kg",
+            "Weight was 64 kg",
             0.98
         )
         
-        # Numbers differ: [90] != [80]
+        # Numbers differ: [66] != [64]
         # → NOT duplicate
         assert is_dup is False
         assert "numbers_differ" in reason
@@ -290,8 +290,8 @@ class TestSmartDeduplication:
     
     def test_extract_integers(self, service):
         """Extract integer numbers."""
-        numbers = service._extract_and_sort_numbers("Weight 80 kg")
-        assert numbers == [80.0]
+        numbers = service._extract_and_sort_numbers("Weight 64 kg")
+        assert numbers == [64.0]
     
     def test_extract_floats(self, service):
         """Extract float numbers."""
@@ -316,6 +316,6 @@ class TestSmartDeduplication:
     
     def test_extract_range(self, service):
         """Extract numbers from range."""
-        numbers = service._extract_and_sort_numbers("Weight 70-75 kg")
-        assert numbers == [70.0, 75.0]
+        numbers = service._extract_and_sort_numbers("Weight 62-65 kg")
+        assert numbers == [62.0, 65.0]
 

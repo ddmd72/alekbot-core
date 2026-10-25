@@ -144,7 +144,7 @@ class TestNextOccurrenceParity:
         assert result.tzinfo == timezone.utc
 
     def test_wall_clock_survives_a_dst_transition(self, adapter):
-        """Madrid springs forward on 2026-03-29. 09:00 local before the change must
+        """Europe/Madrid springs forward on 2026-03-29. 09:00 local before the change must
         stay 09:00 local after it — the whole reason recurrence is evaluated in the
         user's zone instead of UTC."""
         from zoneinfo import ZoneInfo

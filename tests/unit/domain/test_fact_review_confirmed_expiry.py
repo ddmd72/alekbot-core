@@ -123,7 +123,7 @@ def _write_accepts(sent, reported, now, tz):
     ("a plan ending today", NOW, compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 24)), NOW, MADRID)["expires_at"], MADRID),
     ("a plan ending tomorrow", NOW, compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 25)), NOW, MADRID)["expires_at"], MADRID),
     ("a plan ending the day after", NOW, compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 26)), NOW, MADRID)["expires_at"], MADRID),
-    # the 23-hour day of the spring change (29 Mar 2026 in Madrid) and the 25-hour day of the autumn one (25 Oct)
+    # the 23-hour day of the spring change (29 Mar 2026 in Europe/Madrid) and the 25-hour day of the autumn one (25 Oct)
     ("spring: plan ending the 23-hour day, asked at 01:30 before it",
      datetime(2026, 3, 29, 0, 30, tzinfo=timezone.utc),
      compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 3, 29)), NOW, MADRID)["expires_at"], MADRID),

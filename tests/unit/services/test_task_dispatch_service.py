@@ -37,7 +37,7 @@ class TestEnqueueAgentTask:
         result = await service.enqueue_agent_task(
             agent_id="agent-001",
             intent="search_memory",
-            query="find notes about Paris",
+            query="find notes about Berlin",
             context={"user_id": "u1"},
             deadline_seconds=30,
             dedup_key="deep_research_report:job9",
@@ -46,7 +46,7 @@ class TestEnqueueAgentTask:
         queue.enqueue_agent_task.assert_called_once_with(
             agent_id="agent-001",
             intent="search_memory",
-            query="find notes about Paris",
+            query="find notes about Berlin",
             context={"user_id": "u1"},
             deadline_seconds=30,
             dedup_key="deep_research_report:job9",

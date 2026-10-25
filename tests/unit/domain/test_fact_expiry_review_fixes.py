@@ -139,7 +139,7 @@ def test_an_expiry_built_with_a_string_kind_is_the_member():
 
 
 def test_a_date_after_today_refused_on_a_23_hour_dst_day_does_not_say_today():
-    now = utc(2026, 3, 28, 22, 30)  # 23:30 on the 28th in Paris; the 29th is only 23 hours long
+    now = utc(2026, 3, 28, 22, 30)  # 23:30 on the 28th in Europe/Paris; the 29th is only 23 hours long
     fields = compute_expiry(parse_expiry(on("2026-03-29")), now, PARIS)
     with pytest.raises(FactExpiryError) as refused:
         born_due(fields, now, now, PARIS, CONVERSATION)

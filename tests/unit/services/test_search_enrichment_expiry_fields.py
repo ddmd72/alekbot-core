@@ -21,7 +21,7 @@ from tests.support.fact_kit import ACC, T0, USER, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore
 
 PARIS = "Europe/Paris"
-# 2026-07-10 22:00 UTC is the end of 2026-07-10 in Paris (CEST).
+# 2026-07-10 22:00 UTC is the end of 2026-07-10 in Europe/Paris (CEST).
 DATE_DUE = datetime(2026, 7, 10, 22, 0, tzinfo=timezone.utc)
 HORIZON_DUE = T0 + timedelta(days=30)
 

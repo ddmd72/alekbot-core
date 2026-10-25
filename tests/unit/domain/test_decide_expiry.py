@@ -13,7 +13,7 @@ from src.domain.refusal_wording import RefusalWording
 from tests.support.fact_write import EXPIRY_NONE, horizon, on
 
 PARIS = "Europe/Paris"
-NOW = datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc)  # 11:00 in Paris
+NOW = datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc)  # 11:00 in Europe/Paris
 REPORTED = NOW - timedelta(hours=2)
 ALL_PASSES = list(PassActor)
 FLOORING = [actor for actor in PassActor if actor.floors_due_horizon]
@@ -33,7 +33,7 @@ def test_the_table_has_passes_on_both_sides_of_the_floor():
 def test_a_date_ahead_is_kept_to_the_end_of_that_day_in_the_owners_zone(actor):
     fields, note = decide(on("2026-10-30"), actor)
     assert fields["expiry_kind"] is ExpiryKind.DATE and fields["ttl_days"] is None
-    assert fields["expires_at"] == datetime(2026, 10, 30, 23, 0, tzinfo=timezone.utc)  # midnight on the 31st in Paris
+    assert fields["expires_at"] == datetime(2026, 10, 30, 23, 0, tzinfo=timezone.utc)  # midnight on the 31st in Europe/Paris
     assert note is None
 
 
