@@ -17,7 +17,7 @@ an amount with zero cents, the same value, arbiter R2 S-m2):
                                                           -> "2024-03-15" (a day, a month name in en/es/fr/uk/ru with its
                                                           case forms, a year; a month and year alone give no date term)
     ids       "INV-2024/0012"                             -> "inv20240012"; index also "20240012", "2024", "0012"
-    groups    "XX00 1234 5678 …" "+34 600 000 000"        -> "xx0012345678…", "34600000000" (_GROUP_MIN_DIGITS on)
+    groups    "XX00 1234 5678 …" "+1 202 555 0100"        -> "xx0012345678…", "12025550100" (_GROUP_MIN_DIGITS on)
 A token holding `.` or `,` never yields its digits joined, on either side: "1250.00" is not "125000".
 """
 from __future__ import annotations

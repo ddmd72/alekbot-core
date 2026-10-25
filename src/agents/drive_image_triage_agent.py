@@ -252,7 +252,7 @@ class DriveImageTriageAgent(BaseAgent):
 
 
 def image_label(image: TriageInput) -> str:
-    """`Image 3: camera metadata present; taken near Barcelona (Barcelona), Spain (41.403, 2.174)` (D39). The place
+    """`Image 3: camera metadata present; taken near Porto (Porto), Portugal (41.149, -8.611)` (D39). The place
     and the coordinates only when the record has them; the coordinates are rounded here too, whatever the caller sent."""
     label = f"Image {image.index}: camera metadata {'present' if image.camera_prior else 'absent'}"
     if image.location is None:

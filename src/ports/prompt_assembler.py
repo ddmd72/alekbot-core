@@ -40,7 +40,7 @@ class PromptAssembler(ABC):
             template: Template defining structure (TEMPLATE_LIGHT or TEMPLATE_FULL)
             components: List of components to assemble (defaults + user overrides merged)
             runtime_data: Dynamic data for {{PLACEHOLDER}} injection
-                         Example: {"BIOGRAPHICAL_CONTEXT": "- User born 1972\n- Lives in Berlin"}
+                         Example: {"BIOGRAPHICAL_CONTEXT": "- User born 1980\n- Lives in Springfield"}
             
         Returns:
             Assembled prompt string (valid Groovy code for current implementation)

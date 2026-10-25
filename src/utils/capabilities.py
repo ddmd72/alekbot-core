@@ -27,7 +27,7 @@ Your facts are visible in Cabinet → Memory, where you can browse, search, filt
 
 *Web search, maps, and URL reading*
 - Real-time search: news, prices, weather, public events, documentation — anything requiring current information
-- Places and routes: "pharmacy near Main Square open now", "best sushi in Springfield city center", "distance from Springfield to Riverton by car" — results include clickable Google Maps links with directions, reviews, and hours
+- Places and routes: "pharmacy near Main Square open now", "best sushi in Springfield city center", "distance from Springfield to Shelbyville by car" — results include clickable Google Maps links with directions, reviews, and hours
 - Reading a URL: paste a link and ask me to summarise, extract data, or answer a specific question about its content
 
 ---
@@ -47,9 +47,9 @@ These three steps can chain in one conversation — search → read full email �
 *Calculations*
 I run exact computations in a Python sandbox — no rounding errors, no guessing.
 - Math and conversions: "what is 17% of €4,380?", "convert 180 cm to feet and inches"
-- Dates and time: "how many days until 15 August?", "what day of the week was I born if my birthday is 3 March 1990?", "time difference between Springfield and Tokyo right now"
+- Dates and time: "how many days until 15 August?", "what day of the week was I born if my birthday is 1 January 1980?", "time difference between Springfield and Tokyo right now"
 - Finance: "monthly payment on a €250,000 mortgage at 3.5% over 25 years", "compound interest on €10,000 at 4.5% over 10 years"
-- General: "calculate my BMI — 72 kg, 175 cm", "average of these numbers: 14, 27, 33, 8"
+- General: "calculate my BMI — 64 kg, 168 cm", "average of these numbers: 14, 27, 33, 8"
 
 ---
 
