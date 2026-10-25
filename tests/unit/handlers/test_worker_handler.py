@@ -1614,7 +1614,7 @@ class TestHandleBillingDailySummary:
             _make_account(_ACC_A, _USER_A, prev_daily_tokens=1000, prev_daily_cost=0.05, prev_daily_date=yday),
             _make_account(_ACC_B, _USER_B, prev_daily_tokens=500,  prev_daily_cost=0.02, prev_daily_date=yday),
         ]
-        profile_a = UserProfile(user_id=_USER_A, display_name="Alice")
+        profile_a = UserProfile(user_id=_USER_A, display_name="Clara")
         ns.user_repo.get_user.side_effect = lambda uid: (
             profile_a if uid == _USER_A else None
         )
@@ -1625,7 +1625,7 @@ class TestHandleBillingDailySummary:
         assert result["reported"] == 2
         ns.billing_webhook.post.assert_called_once()
         posted_text = ns.billing_webhook.post.call_args[0][0]
-        assert "Alice" in posted_text
+        assert "Clara" in posted_text
         assert "1,000" in posted_text
         assert "Yesterday" in posted_text
 
@@ -1662,7 +1662,7 @@ class TestHandleBillingDailySummary:
         )
         ns.account_repo.list_all_accounts.return_value = [acc]
         ns.user_repo.get_user.side_effect = lambda uid: (
-            UserProfile(user_id=_USER_A, display_name="Bob") if uid == _USER_A else None
+            UserProfile(user_id=_USER_A, display_name="Robin") if uid == _USER_A else None
         )
 
         result, status = await worker._handle_billing_daily_summary()

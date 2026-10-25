@@ -115,10 +115,10 @@ async def test_a_form_the_file_does_not_print_never_puts_it_in_about():
     w = V2World()
     real = w.file("Паспорт скан.pdf")
     letter = w.file("letter.pdf", profile=DriveProfile("Letter", "A letter", "en", "letter", entities=(
-        ProfileEntity("паспорт", "person", "Smith", forms=("паспорт", "passport")),)))
+        ProfileEntity("паспорт", "person", "Doe", forms=("паспорт", "passport")),)))
     result = await w.search("паспорт")
     assert tier_of(result, real) == "about" and tier_of(result, letter) == "translated"
-    assert 'person "паспорт" (spelling by the index; named in the file as "Smith")' in card(result, letter).sources
+    assert 'person "паспорт" (spelling by the index; named in the file as "Doe")' in card(result, letter).sources
 
 
 async def test_the_card_shows_the_printed_spelling():

@@ -54,9 +54,9 @@ class TestOAuthUserInfo:
             sub="s",
             email="a@example.com",
             email_verified=True,
-            name="Alice",
-            given_name="Alice",
-            family_name="Smith",
+            name="Clara Moreira",
+            given_name="Clara Moreira",
+            family_name="Moreira",
             locale="en",
             provider_metadata={"key": "val"},
         )

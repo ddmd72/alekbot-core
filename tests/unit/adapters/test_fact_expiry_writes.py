@@ -107,7 +107,7 @@ async def test_the_generic_pin_text_never_reaches_a_tool_result(store):
     results = [
         await store.adapter.create_fact("a new fact", meta(), context=ctx()),
         await store.adapter.merge_facts([created, other], "merged", meta(), context=ctx()),
-        await store.adapter.update_fact(created, {"content": "mother is Mariya"}, ACC, context=ctx()),
+        await store.adapter.update_fact(created, {"content": "mother is Mariia"}, ACC, context=ctx()),
     ]
     assert [r["refused"] for r in results] == ["expiry"] * 3
     assert all(GENERIC_PIN_TEXT not in r["message"] for r in results)
@@ -236,7 +236,7 @@ async def test_merge_as_archived_needs_no_expiry(store):
 async def test_a_content_change_stores_the_decision_on_the_new_version(store):
     fid = await create(store, expiry=EXPIRY_NONE)
     day = days_ahead(15)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": on(day)}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": on(day)}, ACC, context=ctx())
     assert res["status"] == "updated" and res["fact_id"] != fid
     version = store.docs[res["fact_id"]]
     assert (version["expiry_kind"], version["expires_at"]) == ("date", end_of_day_utc(day))
@@ -244,7 +244,7 @@ async def test_a_content_change_stores_the_decision_on_the_new_version(store):
 
 
 @pytest.mark.parametrize("updates,field", [
-    ({"content": "mother is Mariya"}, "text"), ({"tags": ["family", "x"]}, "tags"),
+    ({"content": "mother is Mariia"}, "text"), ({"tags": ["family", "x"]}, "tags"),
     ({"temporal_class": "dynamic"}, "temporal_class"),
 ])
 async def test_a_content_change_without_expiry_is_refused_and_writes_nothing(store, monkeypatch, updates, field):
@@ -331,7 +331,7 @@ async def test_a_malformed_expiry_on_an_update_is_refused_before_the_embedding(s
     fid = await create(store, expiry=EXPIRY_NONE)
     before = copy.deepcopy(store.docs)
     embedder_refuses(store, monkeypatch)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": "soon"}, ACC,
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": "soon"}, ACC,
                                           context=ctx())
     assert (res["status"], res["refused"]) == ("failed", "expiry")
     assert store.docs == before

@@ -40,7 +40,7 @@ def trail(store, fact_id):
 @pytest.mark.parametrize("actor", ACTORS)
 async def test_a_version_close_and_the_versions_own_entry_carry_the_passes_actor(store, actor):
     old = await seeded(store)
-    res = await store.adapter.update_fact(old, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC,
+    res = await store.adapter.update_fact(old, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC,
                                           context=context(actor))
     assert res["status"] == "updated", res
     new = res["fact_id"]
@@ -79,7 +79,7 @@ async def test_no_closure_is_written_under_the_old_placeholder_actor(store):
     old = await seeded(store, "mother is Maria")
     other = await seeded(store, "mother lives in Springfield")
     third = await seeded(store, "mother likes tea")
-    await store.adapter.update_fact(old, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC,
+    await store.adapter.update_fact(old, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC,
                                     context=context("stage2a"))
     await store.adapter.merge_facts([other, third], "merged", meta(), context=context("stage2b"))
     actors = {event["actor"] for doc in store.docs.values() for event in doc["lifecycle_events"]}

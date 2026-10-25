@@ -58,16 +58,16 @@ async def test_create_fact_stores_vectors_for_the_embedding_texts_and_a_real_dat
 async def test_update_content_reembeds_and_bumps_version(store):
     # Reviewer edit (facts S2, D8): a content change is a new version document; it is read through the returned id.
     fid = await _create(store)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya Doe", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia Doe", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert res["status"] == "updated" and res["version"] == 2
     new_id = res["fact_id"]
     assert new_id != fid
     doc = store.docs[new_id]
-    assert doc["text"] == "mother is Mariya Doe"
-    assert stored_vector(doc["vector"]) == pytest.approx(embed("mother is Mariya Doe"))
+    assert doc["text"] == "mother is Mariia Doe"
+    assert stored_vector(doc["vector"]) == pytest.approx(embed("mother is Mariia Doe"))
     assert doc["version"] == 2
     read = await store.repo.get_fact_by_id(new_id)
-    assert read is not None and read.text == "mother is Mariya Doe" and read.version == 2
+    assert read is not None and read.text == "mother is Mariia Doe" and read.version == 2
     old = await store.repo.get_fact_by_id(fid)
     assert old is not None and old.text == "mother is Maria" and old.version == 1 and old.superseded_by == new_id
 
@@ -99,7 +99,7 @@ async def test_state_only_update_keeps_vectors_version_and_reported_date(store):
 async def test_superseded_update_closes_the_version(store):
     # Reviewer edit (facts S2, D8): SUPERSEDED alone is refused and writes nothing; with superseded_by it closes the fact.
     fid = await _create(store)
-    successor = await _create(store, "mother is Mariya")
+    successor = await _create(store, "mother is Mariia")
     before = copy.deepcopy(store.docs)
     refused = await store.adapter.update_fact(fid, {"state": "SUPERSEDED"}, ACC, context=ctx())
     assert refused["status"] == "failed" and store.docs == before
@@ -211,7 +211,7 @@ async def test_concurrent_content_and_state_updates_of_one_fact_archive_wins_and
     fid = await _create(store)
     emb = _slow(store)
     r1, r2 = await asyncio.gather(
-        store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
+        store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
         store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC, context=ctx()),
     )
     assert r2["status"] == "updated"

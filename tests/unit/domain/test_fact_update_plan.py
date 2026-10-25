@@ -40,7 +40,7 @@ def plan(updates, fact=None):
     {"tags": ["relatives"]},
     {"tags": ["family", "mother", "friend"]},
     {"tags": ["family", "mother", "consolidated", "anchor"]},
-    {"metadata": {"name": "Masha"}},
+    {"metadata": {"name": "Mia"}},
     {"metadata": {"city": "Springfield"}},
     {"temporal_class": "DYNAMIC"},
 ])
@@ -196,8 +196,8 @@ def test_a_text_change_marks_the_vectors_stale_and_lists_the_texts_to_embed():
 
 
 def test_metadata_is_merged_over_the_stored_keys():
-    version = plan({"metadata": {"name": "Masha", "city": "Springfield"}}).version_fact
-    assert version.metadata == {"name": "Masha", "city": "Springfield"}
+    version = plan({"metadata": {"name": "Mia", "city": "Springfield"}}).version_fact
+    assert version.metadata == {"name": "Mia", "city": "Springfield"}
 
 
 def test_a_temporal_class_only_update_is_a_version_that_keeps_the_vectors():

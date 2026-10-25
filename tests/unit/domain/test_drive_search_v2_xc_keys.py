@@ -42,10 +42,10 @@ def test_verification_records_which_model_spellings_the_file_prints():
 
 
 def test_a_hallucinated_form_is_never_an_exact_key():
-    """The reviewer's probe: a letter about a fence whose profile wrote "паспорт" as a form of "Smith"."""
-    entity = ProfileEntity(name="паспорт", type="person", printed="Smith", forms=("паспорт", "passport"))
+    """The reviewer's probe: a letter about a fence whose profile wrote "паспорт" as a form of "Doe"."""
+    entity = ProfileEntity(name="паспорт", type="person", printed="Doe", forms=("паспорт", "passport"))
     keys = set(about_keys_of(_record(entity)))
-    assert "e:smith" in keys
+    assert "e:doe" in keys
     assert not {k for k in keys if k.startswith("e:") and ("паспорт" in k or "passport" in k)}
     assert {"ef:паспорт", "ef:passport"} <= keys
     cover = record_cover(FileKeys("x", about_keys=frozenset(keys)), _concept("паспорт"))
