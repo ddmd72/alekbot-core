@@ -129,7 +129,7 @@ def test_m2_a_two_letter_word_has_its_exact_form_only():
 
 @pytest.mark.parametrize("canonical,query", [
     ("INV-2024/0012", "INV-2024/0012"), ("1.250,00", "1250.00"), ("XX00 1111 2222 3333", "xx00 1111 2222 3333"),
-    ("+34 600 123 456", "34 600 123 456"), ("XKJQPL", "xkjqpl"),
+    ("+447 700 900 456", "447 700 900 456"), ("XKJQPL", "xkjqpl"),
 ])
 def test_m3_a_verified_value_meets_its_query(canonical, query):
     rec = RecordKeyInputs(kind="pdf", profile=_profile(key_values=(KeyValue("reference", canonical, canonical),)))

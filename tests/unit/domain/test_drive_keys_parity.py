@@ -21,7 +21,7 @@ VOCABULARY = (
     "hoteles reserva reservas factura facturas entrada entradas viaje médico Résumé café naïve Zürich"
 ).split()
 NUMBERS = ("1 250,00", "1,250.00", "INV-2024/0012", "15.03.2024", "2024-03-15", "15 March 2024", "12345",
-           "+34 600 000 000", "2023", "7", "42")
+           "+447 700 900 456", "2023", "7", "42")
 
 
 def _sentence(rng: random.Random, n: int) -> str:
