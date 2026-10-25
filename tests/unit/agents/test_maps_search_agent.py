@@ -111,7 +111,7 @@ def mock_llm() -> AsyncMock:
 def mock_maps_port() -> AsyncMock:
     m = AsyncMock(spec=MapsToolsPort)
     m.get_tool_declarations.return_value = _TOOL_DECLS
-    m.call_tool.return_value = {"places": [{"name": "Кафе Центр", "address": "вул. Хрещатик 1"}]}
+    m.call_tool.return_value = {"places": [{"name": "Кафе Центр", "address": "вул. Вигадана 5"}]}
     return m
 
 
@@ -275,7 +275,7 @@ class TestToolLoop:
                 text=None,
                 tool_calls=[_make_tool_call("places_search", {"query": "кафе поблизу"})],
             ),
-            LLMResponse(text="Знайдено: Кафе Центр на Хрещатику.", tool_calls=[]),
+            LLMResponse(text="Знайдено: Кафе Центр на вулиці Вигаданій.", tool_calls=[]),
         ]
 
         response = await agent.execute(_make_message({"query": "знайди кафе поблизу"}))

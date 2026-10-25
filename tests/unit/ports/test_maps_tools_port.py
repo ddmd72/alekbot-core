@@ -96,7 +96,7 @@ class TestMapsToolsPortMockImplementation:
 
     async def test_call_tool_returns_dict(self, mock_port):
         mock_port.call_tool.return_value = {
-            "places": [{"name": "Кафе Центр", "address": "вул. Хрещатик 1", "rating": 4.5}]
+            "places": [{"name": "Кафе Центр", "address": "вул. Вигадана 5", "rating": 4.5}]
         }
         result = await mock_port.call_tool("places_search", {"query": "кафе поблизу"})
         assert isinstance(result, dict)
