@@ -33,7 +33,7 @@ def test_odf_formats_are_deterministic_and_readable():
 def test_rtf_escapes_cyrillic_and_reads_back():
     data = rtf_bytes(T.USTAV_PARAGRAPHS)
     assert data == rtf_bytes(T.USTAV_PARAGRAPHS) and data.isascii()
-    assert "Членский взнос составляет 1 500 рублей в год" in rtf_to_text(data.decode("ascii"))
+    assert "Членский взнос составляет 1 500 гривен в год" in rtf_to_text(data.decode("ascii"))
 
 
 def test_csv_is_semicolon_separated():

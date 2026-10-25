@@ -309,7 +309,7 @@ FIXTURES: Dict[str, Builder] = {
     "akt_52.odt": lambda r: odt_bytes(T.AKT_PARAGRAPHS),
     "budget_2026.ods": lambda r: ods_bytes([("Category", "EUR"), *T.BUDGET_2026]),
     "invoice_2026_03.xlsx": lambda r: xlsx_bytes("Invoice", [
-        ("Invoice", "INV-2026-0317"), ("Date", "2026-03-31"), ("Customer", "Sample Workshop SL"),
+        ("Invoice", "INV-2026-0317"), ("Date", "2026-03-31"), ("Customer", "Sample Workshop Lda."),
         ("Item", "Quantity", "Unit price", "Amount"),
         *[(item, qty, price, round(qty * price, 2)) for item, qty, price in T.INVOICE_2026_03_ROWS],
         ("Total", "", "", T.INVOICE_2026_03_TOTAL)]),

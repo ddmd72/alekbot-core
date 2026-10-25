@@ -157,7 +157,7 @@ def test_the_scan_card_carries_one_misread_value_so_its_accuracy_is_under_ninety
     printed = {d["printed"] for d in ENRICHMENT[SCAN]["profile"]["dates"]}
     text = ENRICHMENT[SCAN]["reader"]["text"]
     assert "07 05 2031" in printed and "07 05 2031" in text
-    assert "08 11 1990" in printed and "08 11 1990" not in text and "03 11 1990" in text   # the misread birth date
+    assert "07 01 1980" in printed and "07 01 1980" not in text and "01 01 1980" in text   # the misread birth date
 
 
 # -- G3 ----------------------------------------------------------------------------------------------------------------

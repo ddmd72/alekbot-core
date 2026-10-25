@@ -9,13 +9,13 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
 endobj
 4 0 obj
-<< /Length 502 >>
+<< /Length 505 >>
 stream
 BT /F1 11 Tf 15 TL 56 790 Td
 (EXAMPLE MUTUAL INSURANCE) Tj
 T* (Motor insurance policy no. MP-2026-118204) Tj
-T* (Policyholder: Alex Example) Tj
-T* (Insured vehicle: Example Motors Corsa, registration 0000-XYZ) Tj
+T* (Policyholder: Alex Doe) Tj
+T* (Insured vehicle: Skoda Fabia 1.0 \(2015\), registration SAMPLE-0000) Tj
 T* (Cover: comprehensive, including windscreen and roadside assistance) Tj
 T* (Period of cover: 01/04/2026 to 31/03/2027) Tj
 T* (This policy is valid until 31 March 2027.) Tj
@@ -34,9 +34,9 @@ xref
 0000000058 00000 n 
 0000000115 00000 n 
 0000000241 00000 n 
-0000000794 00000 n 
+0000000797 00000 n 
 trailer
 << /Size 6 /Root 1 0 R >>
 startxref
-891
+894
 %%EOF

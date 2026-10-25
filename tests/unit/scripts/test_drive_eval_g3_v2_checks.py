@@ -81,7 +81,7 @@ def test_no_case_run_crawls():
 
 
 @pytest.mark.parametrize("answer, groups, ok", [
-    ("I found your hotel booking (Бронь отеля.docx) and twelve photos.", [["booking", "бронь"], ["photo"]], True),
+    ("I found your hotel booking (Бронювання готелю.docx) and twelve photos.", [["booking", "бронь"], ["photo"]], True),
     ("I found twelve photos.", [["booking", "бронь"], ["photo"]], False),
     ("Нашёл БРОНЬ отеля", [["бронь"]], True),
     ("anything", [], True),

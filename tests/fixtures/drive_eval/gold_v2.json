@@ -43,7 +43,7 @@
   "query": "RM-55120",
   "filters": {},
   "expected_paths": [
-   "Travel/Бронь отеля.docx"
+   "Travel/Бронювання готелю.docx"
   ],
   "expect_tier": "exact"
  },
@@ -75,25 +75,25 @@
   "id": "ex-entity-body",
   "family": "exact",
   "sub": "entity",
-  "lang": "ru",
-  "query": "Иванов",
+  "lang": "uk",
+  "query": "Мельник",
   "filters": {},
   "expected_paths": [
-   "Notes/Мысли о поездке.md"
+   "Notes/Думки про поїздку.md"
   ],
   "expect_tier": "exact"
  },
  {
-  "id": "ex-place-article",
+  "id": "ex-place-name",
   "family": "exact",
-  "sub": "article",
+  "sub": "place",
   "lang": "en",
-  "query": "Le Havre",
+  "query": "Hamburg",
   "filters": {
    "kind": "photo"
   },
   "expected_paths": [
-   "Photos/Le Havre/IMG_7001.HEIC"
+   "Photos/Hamburg/IMG_7001.HEIC"
   ],
   "expect_tier": "about"
  },
@@ -101,11 +101,11 @@
   "id": "ex-place-cyrillic",
   "family": "exact",
   "sub": "place",
-  "lang": "ru",
-  "query": "Гавр",
+  "lang": "uk",
+  "query": "Гамбург",
   "filters": {},
   "expected_paths": [
-   "Photos/Le Havre/IMG_7001.HEIC"
+   "Photos/Hamburg/IMG_7001.HEIC"
   ],
   "expect_tier": "about"
  },
@@ -113,13 +113,13 @@
   "id": "ex-place-inflected",
   "family": "exact",
   "sub": "inflection",
-  "lang": "ru",
-  "query": "Барселону",
+  "lang": "uk",
+  "query": "Коїмбру",
   "filters": {},
   "expected_paths": [
-   "Photos/Barcelona 2024/IMG_7101.HEIC",
-   "Photos/Barcelona 2024/IMG_7102.HEIC",
-   "Notes/Мысли о поездке.md"
+   "Photos/Coimbra 2024/IMG_7101.HEIC",
+   "Photos/Coimbra 2024/IMG_7102.HEIC",
+   "Notes/Думки про поїздку.md"
   ],
   "expect_tier": "exact"
  },
@@ -128,11 +128,11 @@
   "family": "exact",
   "sub": "year_month",
   "lang": "en",
-  "query": "Barcelona 2024",
+  "query": "Coimbra 2024",
   "filters": {},
   "expected_paths": [
-   "Photos/Barcelona 2024/IMG_7101.HEIC",
-   "Photos/Barcelona 2024/IMG_7102.HEIC"
+   "Photos/Coimbra 2024/IMG_7101.HEIC",
+   "Photos/Coimbra 2024/IMG_7102.HEIC"
   ],
   "expect_tier": "about"
  },
@@ -159,16 +159,16 @@
   ],
   "expect_tier": "about",
   "acceptable_paths": [
-   "Travel/Бронь отеля.docx",
+   "Travel/Бронювання готелю.docx",
    "Notes/Plan de viaje Roma.md"
   ]
  },
  {
-  "id": "ex-inflect-kyiv",
+  "id": "ex-inflect-lviv",
   "family": "exact",
   "sub": "inflection",
   "lang": "uk",
-  "query": "Київ",
+  "query": "Львів",
   "filters": {},
   "expected_paths": [
    "Notes/Огляд квартири.md"
@@ -304,7 +304,7 @@
   "family": "exact",
   "sub": "value",
   "lang": "es",
-  "query": "1.031,40",
+  "query": "1.048,45",
   "filters": {},
   "expected_paths": [
    "Piso/Factura F-2026-0311.pdf"
@@ -345,7 +345,7 @@
   "filters": {},
   "expected_paths": [
    "Vehicle/Motor policy MP-2026-118204.pdf",
-   "Vehicle/ITV 2025.pdf"
+   "Vehicle/IPO 2025.pdf"
   ],
   "expect_tier": "labelled",
   "note": "neither file says 'car': the vehicle life-area words carry it"
@@ -392,20 +392,20 @@
   "family": "semantic",
   "sub": "translation",
   "lang": "en",
-  "query": "Ivanov",
+  "query": "Melnyk",
   "filters": {},
   "expected_paths": [
-   "Notes/Мысли о поездке.md"
+   "Notes/Думки про поїздку.md"
   ],
   "expect_tier": "translated",
   "note": "skeleton across scripts"
  },
  {
-  "id": "sem-kyiv-latin",
+  "id": "sem-lviv-latin",
   "family": "semantic",
   "sub": "translation",
   "lang": "en",
-  "query": "Kyiv",
+  "query": "Lviv",
   "filters": {},
   "expected_paths": [
    "Notes/Огляд квартири.md"
@@ -413,16 +413,16 @@
   "expect_tier": "translated"
  },
  {
-  "id": "sem-barcelona-latin",
+  "id": "sem-coimbra-latin",
   "family": "semantic",
   "sub": "translation",
   "lang": "en",
-  "query": "Barcelona",
+  "query": "Coimbra",
   "filters": {},
   "expected_paths": [
-   "Photos/Barcelona 2024/IMG_7101.HEIC",
-   "Photos/Barcelona 2024/IMG_7102.HEIC",
-   "Notes/Мысли о поездке.md"
+   "Photos/Coimbra 2024/IMG_7101.HEIC",
+   "Photos/Coimbra 2024/IMG_7102.HEIC",
+   "Notes/Думки про поїздку.md"
   ],
   "expect_tier": "any"
  },
@@ -469,7 +469,7 @@
   ],
   "requires_embeddings": "semantic",
   "expect_tier": "related",
-  "note": "German query, Russian screenshot: meaning only"
+  "note": "German query, Russian chat screenshot: meaning only"
  },
  {
   "id": "cls-receipts",
@@ -522,7 +522,7 @@
   ],
   "expect_tier": "labelled",
   "acceptable_paths": [
-   "Vehicle/ITV 2025.pdf",
+   "Vehicle/IPO 2025.pdf",
    "Contracts/Contrato de alquiler 2026.pdf",
    "Contracts/Lease agreement — Porto.pdf",
    "Inbox/Lease agreement — Porto.pdf",
@@ -544,7 +544,7 @@
   "acceptable_paths": [
    "Books/A Short History of Bridges.docx",
    "Notes/Огляд квартири.md",
-   "Travel/Бронь отеля.docx"
+   "Travel/Бронювання готелю.docx"
   ]
  },
  {
@@ -561,7 +561,7 @@
    "Piso/Factura F-2026-0311.pdf",
    "Piso/Factura 2026-078.pdf",
    "Finance/invoice_2026_03.xlsx",
-   "Finance/Счёт-фактура №1847.pdf"
+   "Finance/Рахунок-фактура №1847.pdf"
   ],
   "expect_tier": "labelled",
   "acceptable_paths": [
@@ -604,16 +604,16 @@
   ]
  },
  {
-  "id": "mis-barcelona",
+  "id": "mis-coimbra",
   "family": "misspelling",
   "sub": "absent",
   "lang": "en",
-  "query": "Barcleona",
+  "query": "Ciombra",
   "filters": {},
   "expected_paths": [],
   "expect_tier": "none",
   "expect_absent": [
-   "barcleona"
+   "ciombra"
   ]
  },
  {
@@ -707,11 +707,11 @@
   "expect_tier": "none"
  },
  {
-  "id": "neg-flight-barcelona",
+  "id": "neg-flight-coimbra",
   "family": "negative",
   "sub": "d29",
   "lang": "en",
-  "query": "flight tickets Barcelona",
+  "query": "flight tickets Coimbra",
   "filters": {},
   "expected_paths": [],
   "expect_tier": "none",
@@ -825,7 +825,7 @@
    "Photos/Rome 2025/IMG_5110.HEIC",
    "Photos/Rome 2025/IMG_5111.HEIC",
    "Photos/Rome 2025/IMG_5112.HEIC",
-   "Travel/Бронь отеля.docx",
+   "Travel/Бронювання готелю.docx",
    "Notes/Weekend ideas.md"
   ],
   "expect_tier": "any",
@@ -855,7 +855,7 @@
    "Photos/Rome 2025/IMG_5110.HEIC",
    "Photos/Rome 2025/IMG_5111.HEIC",
    "Photos/Rome 2025/IMG_5112.HEIC",
-   "Travel/Бронь отеля.docx"
+   "Travel/Бронювання готелю.docx"
   ],
   "expect_tier": "any",
   "acceptable_paths": [
@@ -1106,11 +1106,11 @@
   ]
  },
  {
-  "id": "ex-place-paris",
+  "id": "ex-place-berlin",
   "family": "exact",
   "sub": "place",
   "lang": "en",
-  "query": "Paris",
+  "query": "Berlin",
   "filters": {
    "kind": "photo"
   },
@@ -1120,11 +1120,11 @@
   "expect_tier": "about"
  },
  {
-  "id": "sem-landmark-eiffel",
+  "id": "sem-landmark-funkturm",
   "family": "semantic",
   "sub": "landmark",
   "lang": "en",
-  "query": "Eiffel Tower",
+  "query": "Funkturm",
   "filters": {},
   "expected_paths": [
    "Photos/Camera/IMG_20260905_172209.jpg"
@@ -1132,11 +1132,11 @@
   "expect_tier": "labelled"
  },
  {
-  "id": "sem-landmark-eiffel-ru",
+  "id": "sem-landmark-funkturm-uk",
   "family": "semantic",
   "sub": "landmark",
-  "lang": "ru",
-  "query": "Эйфелева башня",
+  "lang": "uk",
+  "query": "Берлінська радіовежа",
   "filters": {},
   "expected_paths": [
    "Photos/Camera/IMG_20260905_172209.jpg"

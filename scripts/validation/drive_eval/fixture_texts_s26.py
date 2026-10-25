@@ -25,8 +25,8 @@ from typing import Any, Dict, List
 ID_CARD_LINES: List[str] = [
     "IDENTITY CARD",
     "SAMPLE - NOT A REAL DOCUMENT",
-    "Name: SAMPLE PERSON EXAMPLE",
-    "Date of birth: 03 11 1990",
+    "Name: ALEX DOE",
+    "Date of birth: 01 01 1980",
     "Document no.: QX 4471902",
     "Issued: 07 05 2021",
     "Valid until: 07 05 2031",
@@ -81,18 +81,18 @@ def _forms(en: str, es: str, uk: str, ru: str) -> List[str]:
 ENRICHMENT: Dict[str, Dict[str, Any]] = {
     # path -> {"reader": outcome, "profile": profile (before verification), "photo": triage entry}
     "Documents/DOC_20260610_0042.pdf": {
-        "reader": _outcome(ID_CARD_LINES, "id_document", "Scanned identity card of Sample Person Example.",
-                           "2021-05-07T00:00:00+00:00", ["SAMPLE PERSON EXAMPLE"]),
+        "reader": _outcome(ID_CARD_LINES, "id_document", "Scanned identity card of Alex Doe.",
+                           "2021-05-07T00:00:00+00:00", ["ALEX DOE"]),
         "profile": {
             "title": "Identity card",
-            "what_it_is": "A scanned identity card of Sample Person Example, valid until 07 05 2031.",
+            "what_it_is": "A scanned identity card of Alex Doe, valid until 07 05 2031.",
             "language": "en", "doc_type": "id_document", "life_domains": ["legal_admin"],
             "dates": [{"label": "issued", "iso": "2021-05-07", "printed": "07 05 2021"},
                       {"label": "valid_until", "iso": "2031-05-07", "printed": "07 05 2031"},
-                      # a model's misreading on purpose: the card prints 03 11 1990. Verification grades it
+                      # a model's misreading on purpose: the card prints 01 01 1980. Verification grades it
                       # `not_in_text` (§26.4), so this card scores under 90 % (the G3 value case, D36)
-                      {"label": "other", "iso": "1990-11-08", "printed": "08 11 1990"}],
-            "entities": [{"name": "Sample Person Example", "type": "person", "printed": "SAMPLE PERSON EXAMPLE",
+                      {"label": "other", "iso": "1980-01-07", "printed": "07 01 1980"}],
+            "entities": [{"name": "Alex Doe", "type": "person", "printed": "ALEX DOE",
                           "forms": []}],
             "key_values": [{"label": "document_number", "printed": "QX 4471902", "canonical": "QX4471902"}],
             "topics": ["identity card", "personal identification"],
@@ -156,9 +156,10 @@ ENRICHMENT: Dict[str, Dict[str, Any]] = {
     },
     "Photos/Camera/IMG_20260905_172209.jpg": {
         "photo": {"verdict": "photo", "photo": {
-            "description": "A tall iron lattice tower rising above the roofs of a city, in Paris.",
-            "objects": [{"name": "Eiffel Tower",
-                         "forms": _forms("Eiffel Tower", "Torre Eiffel", "Ейфелева вежа", "Эйфелева башня")}],
+            "description": "A tall steel lattice radio tower rising above the roofs of a city, in Berlin.",
+            "objects": [{"name": "Funkturm",
+                         "forms": _forms("Berlin Radio Tower", "Torre de radio de Berlín", "Берлінська радіовежа",
+                                         "Funkturm Berlin")}],
             "scene": "city landmark", "visible_text": "",
             "scene_labels": ["architecture", "city_street", "travel"]}},
     },

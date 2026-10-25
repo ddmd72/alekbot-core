@@ -53,7 +53,7 @@ FIXTURES_V2: Dict[str, Callable[[], bytes]] = {
     "invoice_painting_es.pdf": lambda: text_pdf(T.INVOICE_PAINTING_ES),
     "hotel_booking_ru.docx": lambda: fixed_docx(T.HOTEL_BOOKING_RU),
     "weekend_ideas.md": lambda: text_bytes(T.WEEKEND_IDEAS_EN),
-    "trip_notes_ru.md": lambda: text_bytes(T.TRIP_NOTES_RU),
+    "trip_notes_uk.md": lambda: text_bytes(T.TRIP_NOTES_UK),
     "flat_viewing_uk.md": lambda: text_bytes(T.FLAT_VIEWING_UK),
     "house_hunting.md": lambda: text_bytes(T.HOUSE_HUNTING_EN),
     "history_of_bridges.docx": lambda: fixed_docx(T.book_paragraphs()),

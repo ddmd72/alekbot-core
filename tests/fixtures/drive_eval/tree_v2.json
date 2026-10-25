@@ -47,7 +47,7 @@
    "content": "files_v2/motor_policy_en.pdf"
   },
   {
-   "path": "Vehicle/ITV 2025.pdf",
+   "path": "Vehicle/IPO 2025.pdf",
    "folder": false,
    "mime": "application/pdf",
    "size": 0,
@@ -92,7 +92,7 @@
    "content": "files_v2/invoice_painting_es.pdf"
   },
   {
-   "path": "Travel/Бронь отеля.docx",
+   "path": "Travel/Бронювання готелю.docx",
    "folder": false,
    "mime": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
    "size": 0,
@@ -110,13 +110,13 @@
    "content": "files_v2/weekend_ideas.md"
   },
   {
-   "path": "Notes/Мысли о поездке.md",
+   "path": "Notes/Думки про поїздку.md",
    "folder": false,
    "mime": "text/markdown",
    "size": 0,
    "fs_modified": "2026-01-25T22:00:00Z",
    "facets": {},
-   "content": "files_v2/trip_notes_ru.md"
+   "content": "files_v2/trip_notes_uk.md"
   },
   {
    "path": "Notes/Огляд квартири.md",
@@ -146,7 +146,7 @@
    "content": "files_v2/history_of_bridges.docx"
   },
   {
-   "path": "Photos/Le Havre/IMG_7001.HEIC",
+   "path": "Photos/Hamburg/IMG_7001.HEIC",
    "folder": false,
    "mime": "image/heic",
    "size": 3000000,
@@ -158,8 +158,8 @@
      "cameraModel": "iPhone 15"
     },
     "location": {
-     "latitude": 49.4938,
-     "longitude": 0.1077
+     "latitude": 53.5511,
+     "longitude": 9.9937
     },
     "image": {
      "width": 4032,
@@ -169,7 +169,7 @@
    "thumbnail": "files/photo_porto.jpg"
   },
   {
-   "path": "Photos/Barcelona 2024/IMG_7101.HEIC",
+   "path": "Photos/Coimbra 2024/IMG_7101.HEIC",
    "folder": false,
    "mime": "image/heic",
    "size": 3000000,
@@ -181,8 +181,8 @@
      "cameraModel": "iPhone 15"
     },
     "location": {
-     "latitude": 41.387,
-     "longitude": 2.17
+     "latitude": 40.2085,
+     "longitude": -8.4265
     },
     "image": {
      "width": 4032,
@@ -192,7 +192,7 @@
    "thumbnail": "files/photo_porto.jpg"
   },
   {
-   "path": "Photos/Barcelona 2024/IMG_7102.HEIC",
+   "path": "Photos/Coimbra 2024/IMG_7102.HEIC",
    "folder": false,
    "mime": "image/heic",
    "size": 3000000,
@@ -204,8 +204,8 @@
      "cameraModel": "iPhone 15"
     },
     "location": {
-     "latitude": 41.379,
-     "longitude": 2.176
+     "latitude": 40.2056,
+     "longitude": -8.4196
     },
     "image": {
      "width": 4032,
@@ -321,8 +321,8 @@
      "height": 480
     },
     "location": {
-     "latitude": 48.8584,
-     "longitude": 2.2945
+     "latitude": 52.505,
+     "longitude": 13.2783
     }
    },
    "content": "files_v2/photo_landmark.jpg"
