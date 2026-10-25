@@ -1,9 +1,11 @@
 name: Personal-data gate
 
 # The repository is public. Every PR's added lines and commit messages are checked against the owner's private
-# denylist (regex) and read by a cheap model against his private profile. Both live only in repository secrets.
-# Fail closed: a missing secret, an API error or an unreadable verdict fails the job. The PR label `pii-ok` overrides
-# a false positive. Nothing here prints a secret or a diff line. Setup: docs/07_deployment/README.md.
+# denylist (regex), which lives only in a repository secret. CI runs only this deterministic check and prints COUNTS
+# only. The semantic model check (scripts/pii_gate/semantic_check.py) is local-only and never runs in CI: its findings
+# say which lines hold real facts, and Actions logs on a public repo are public.
+# Fail closed: a missing secret or an unreadable denylist fails the job. The PR label `pii-ok` overrides a false
+# positive. Nothing here prints a secret or a diff line. Setup: docs/07_deployment/README.md.
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
@@ -17,7 +19,7 @@ permissions:
 
 jobs:
   gate:
-    name: personal-data gate (denylist + semantic)
+    name: personal-data gate (denylist)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -27,7 +29,7 @@ jobs:
     steps:
       - name: Overridden by the pii-ok label
         if: env.OVERRIDE == 'true'
-        run: echo "::notice title=Personal-data gate overridden::The pii-ok label is set on this PR; both checks were skipped."
+        run: echo "::notice title=Personal-data gate overridden::The pii-ok label is set on this PR; the check was skipped."
 
       - uses: actions/checkout@v4
         if: env.OVERRIDE != 'true'
@@ -46,11 +48,9 @@ jobs:
         if: env.OVERRIDE != 'true'
         env:
           PII_DENYLIST: ${{ secrets.PII_DENYLIST }}
-          PII_PROFILE: ${{ secrets.PII_PROFILE }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           missing=0
-          for name in PII_DENYLIST PII_PROFILE ANTHROPIC_API_KEY; do
+          for name in PII_DENYLIST; do
             if [ -z "$(printenv "$name")" ]; then
               echo "::error title=Personal-data gate::Repository secret $name is not set (or not available to this PR). The gate fails closed; see docs/07_deployment/README.md."
               missing=1
@@ -64,7 +64,7 @@ jobs:
         run: |
           gate="$RUNNER_TEMP/gate"
           mkdir -p "$gate"
-          if git cat-file -e "$BASE_SHA:scripts/pii_gate/semantic_check.py" 2>/dev/null; then
+          if git cat-file -e "$BASE_SHA:scripts/pii_gate/denylist_check.py" 2>/dev/null; then
             git archive "$BASE_SHA" scripts/pii_gate | tar -x -C "$gate"
           else
             echo "::warning title=Personal-data gate::The base commit has no gate yet; this PR's own gate code runs."
@@ -76,16 +76,7 @@ jobs:
         if: env.OVERRIDE != 'true' && steps.secrets.outcome == 'success'
         env:
           PII_DENYLIST: ${{ secrets.PII_DENYLIST }}
-        run: python3 -I "$GATE/denylist_check.py" --require --range "$BASE_SHA...$HEAD_SHA"
-
-      - name: Semantic check
-        # Runs after a denylist failure too, so one run reports everything.
-        if: "!cancelled() && env.OVERRIDE != 'true' && steps.secrets.outcome == 'success'"
-        env:
-          PII_PROFILE: ${{ secrets.PII_PROFILE }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          PII_GATE_MODEL: ${{ vars.PII_GATE_MODEL }}
-        run: python3 -I "$GATE/semantic_check.py" --range "$BASE_SHA...$HEAD_SHA"
+        run: python3 -I "$GATE/denylist_check.py" --require --summary-only --range "$BASE_SHA...$HEAD_SHA"
 
       - name: Notify Slack (failure only)
         # The PR title is not sent: it is author text and could itself carry what the gate caught.

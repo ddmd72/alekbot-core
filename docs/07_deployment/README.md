@@ -289,11 +289,16 @@ limit) it samples every second.
 
 ### Personal-data gate (GitHub)
 
-`.github/workflows/pii_gate.yml` checks every PR (CLAUDE.md, "PERSONAL DATA RULE") and fails closed until three
-repository secrets exist (Settings → Secrets and variables → Actions):
-- `PII_DENYLIST` — the private denylist's content (`hard|soft <regex>` per line);
-- `PII_PROFILE` — the private profile the model reads;
-- `ANTHROPIC_API_KEY` — for the semantic check (`claude-haiku-5-5`; a repository variable `PII_GATE_MODEL` overrides it).
+`.github/workflows/pii_gate.yml` checks every PR (CLAUDE.md, "PERSONAL DATA RULE") against the private denylist and
+fails closed until one repository secret exists (Settings → Secrets and variables → Actions):
+- `PII_DENYLIST` — the private denylist's content (`hard|soft <regex>` per line).
+
+CI prints counts only (the repository is public, so is the Actions log). To see which lines hit, run the check locally:
+`PII_DENYLIST_FILE=<path to the private denylist> python3 -m scripts.pii_gate.denylist_check --range origin/main...HEAD`.
+
+The semantic model check is local-only and never runs in CI: put `PII_PROFILE` and `ANTHROPIC_API_KEY` in the local
+environment and run `python3 -m scripts.pii_gate.semantic_check --range origin/main...HEAD`. Its findings are leads for
+a stronger-model review, not verdicts.
 
 A false positive is overridden with the PR label `pii-ok` (create it once). PRs from forks get no secrets and fail.
 

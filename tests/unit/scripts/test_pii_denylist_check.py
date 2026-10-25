@@ -212,3 +212,46 @@ class TestParseUnifiedDiff:
         change = added_lines.parse_unified_diff(diff)
         assert change.lines == [added_lines.AddedLine("odd\tname.md", 1, "hello")]
         assert change.paths == ["odd\tname.md", "new.md"]
+
+
+class TestSummaryOnly:
+    """`--summary-only` (CI, public log): counts only, no file, line or rule per hit."""
+
+    def test_a_hard_hit_prints_the_counts_and_no_location(self, repo, denylist, capsys):
+        (repo / "notes.md").write_text("first line\nsecond line\nmy cousin Zorblax visits\n")
+        git(repo, "add", "notes.md")
+        code, out, err = run(capsys, "--staged", "--denylist", denylist, "--summary-only")
+        assert code == 1
+        assert out.splitlines() == [
+            "PII denylist: 1 hard, 0 soft over 1 lines "
+            "(details withheld; run the check locally without --summary-only)."]
+        everything = (out + err).lower()
+        for leaked in ("notes.md", ":3", "zorblax", f"hard {HARD_LINE}"):
+            assert leaked not in everything
+
+    def test_a_soft_hit_passes_with_the_counts_and_no_location(self, repo, denylist, capsys):
+        (repo / "notes.md").write_text("first line\nsecond line\nmoved to quuxville\n")
+        git(repo, "add", "notes.md")
+        code, out, err = run(capsys, "--staged", "--denylist", denylist, "--summary-only")
+        assert code == 0
+        assert "0 hard, 1 soft over 1 lines" in out
+        assert "notes.md" not in out + err and "quuxville" not in (out + err).lower()
+        assert f"soft {SOFT_LINE}" not in out
+
+    def test_a_clean_change_prints_no_counts_line(self, repo, denylist, capsys):
+        (repo / "notes.md").write_text("first line\nsecond line\nnothing private\n")
+        git(repo, "add", "notes.md")
+        code, out, _ = run(capsys, "--staged", "--denylist", denylist, "--summary-only")
+        assert code == 0
+        assert "PII denylist:" not in out
+
+    def test_a_range_with_a_marker_in_a_commit_message_prints_no_commit_location(self, repo, denylist, capsys):
+        base = git(repo, "rev-parse", "HEAD").strip()
+        (repo / "notes.md").write_text("first line\nsecond line\nthird line\n")
+        git(repo, "commit", "-qam", "tidy notes\n\nmentions quuxville in the body")
+        code, out, err = run(capsys, "--range", f"{base}...HEAD", "--denylist", denylist, "--summary-only")
+        assert code == 0
+        assert "0 hard, 1 soft over" in out
+        assert "commit" not in out.lower()
+        assert "quuxville" not in (out + err).lower()
+        assert len(out.splitlines()) == 1

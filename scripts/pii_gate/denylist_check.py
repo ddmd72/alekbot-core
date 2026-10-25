@@ -6,6 +6,7 @@ else `PII_DENYLIST` (the content). Format: one rule per line, `hard <regex>` or 
 
 Output is `file:line tier rule`, where rule is the rule's line number in the denylist. The matched text is never
 printed (CI logs are public); a file whose path itself matches is shown as `(file path #N in the change)`.
+With `--summary-only` (CI) the per-hit lines are not printed at all: one line gives the counts, no file, line or rule.
 
 Exit: 0 clean or soft hits only, 1 a hard hit, 2 a configuration or git error. With no denylist configured it prints
 one notice and exits 0, unless `--require` is given (CI), which makes that exit 2.
@@ -105,6 +106,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     source.add_argument("--files", nargs="+", metavar="FILE", help="every line of these files")
     source.add_argument("--message", metavar="FILE", help="a commit message file (commit-msg hook)")
     parser.add_argument("--denylist", metavar="PATH", help="denylist file (else PII_DENYLIST_FILE / PII_DENYLIST)")
+    parser.add_argument("--summary-only", action="store_true",
+                        help="print the counts only, no file, line or rule per hit (CI: the log is public)")
     parser.add_argument("--require", action="store_true", help="a missing or empty denylist is an error (CI)")
     return parser.parse_args(argv)
 
@@ -146,11 +149,16 @@ def main(argv: list[str] | None = None) -> int:
     hits = scan(lines, paths, rules)
     hard = [h for h in hits if h.tier == "hard"]
     soft = [h for h in hits if h.tier == "soft"]
-    for hit in hard + soft:
-        print(f"{hit.where} {hit.tier} {hit.rule}")
-    if hits:
-        print(f"PII denylist: {len(hard)} hard, {len(soft)} soft over {len(lines)} lines "
-              "(rule = line number in the denylist; the matched text is not shown).")
+    if args.summary_only:
+        if hits:
+            print(f"PII denylist: {len(hard)} hard, {len(soft)} soft over {len(lines)} lines "
+                  "(details withheld; run the check locally without --summary-only).")
+    else:
+        for hit in hard + soft:
+            print(f"{hit.where} {hit.tier} {hit.rule}")
+        if hits:
+            print(f"PII denylist: {len(hard)} hard, {len(soft)} soft over {len(lines)} lines "
+                  "(rule = line number in the denylist; the matched text is not shown).")
     if hard:
         print("PII denylist: BLOCKED. Replace the private detail with one from the invented cast "
               "(tests/CLAUDE.md), or rewrite it.", file=sys.stderr)
