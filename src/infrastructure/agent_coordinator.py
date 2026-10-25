@@ -638,6 +638,17 @@ class AgentCoordinator:
             return []
         return self._registry.get_available_intents_for(descriptor)
 
+    def get_execution_mode(self, intent: str) -> Optional[ExecutionMode]:
+        """
+        Return the registry's execution mode for an intent (SYNC/ASYNC), or None.
+
+        Used by the DelegationEngine for logging only. None when no registry is
+        configured or the intent is unknown.
+        """
+        if self._registry is None:
+            return None
+        return self._registry.get_execution_mode(intent)
+
     # ------------------------------------------------------------------ #
     # Monitoring                                                           #
     # ------------------------------------------------------------------ #

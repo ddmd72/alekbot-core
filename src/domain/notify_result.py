@@ -20,6 +20,10 @@ from typing import Optional
 from .agent import AgentStatus
 
 
+# Error string an orchestrator/formatter agent returns when its turn ended with no answer at all.
+EMPTY_ANSWER_ERROR = "empty_answer"
+
+
 @dataclass(frozen=True)
 class NotifyResult:
     """Result of a notify() call.
@@ -49,3 +53,12 @@ class NotifyResult:
     agent_status: AgentStatus
     error: Optional[str] = None
     sent: bool = False
+
+
+def is_empty_answer(result: NotifyResult) -> bool:
+    """The agent ended its turn with no answer and nothing was sent (``empty_answer``).
+
+    In a background path this is final, not transient: the turn may already have run SYNC actions
+    (a task, a reminder, a drive save, a workspace write) that a retry would repeat, and a
+    conditional job may legitimately end empty every time."""
+    return not result.delivered and not result.sent and result.error == EMPTY_ANSWER_ERROR

@@ -944,7 +944,9 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   [`src/adapters/CLAUDE.md`](src/adapters/CLAUDE.md) (loads when working in `adapters/`).
 - **Agent-orchestration patterns** — AgentDescriptor, Intent, specialist delegation (commissioning
   model, `query` vs `context`), DelegationEngine (multi-turn loop, context passthrough, `deliver_response`
-  terminal tool — **live on Grok, cold elsewhere**; co-emitted siblings are dispatched before the
+  terminal tool — live on Grok (the response schema as the tool's parameters) and on Claude (one `response`
+  string, schema from the prompt, for schema + client-tool requests); Smart, Quick and Tutor pass it; cold on
+  Gemini/OpenAI; co-emitted siblings are dispatched before the
   terminal return; TD-3 closed as invalid, do not delete it — intent fan-out),
   BaseAgent lifecycle hooks, `build_tool_turn`, LLM-content capture,
   CircuitBreaker, transcript integrity, AgentConfig → moved to
@@ -974,8 +976,8 @@ lives in [`src/adapters/CLAUDE.md`](src/adapters/CLAUDE.md) → Agent Output For
 next to the adapter code that enforces it and loads when working in `adapters/`. It covers: mandatory
 `OUTPUT_FORMAT_{AGENT}` token; `_parse_response()` → `json.loads` with **no regex fallback**;
 retry-on-invalid (not silent degradation); the three provider-specific JSON-enforcement mechanisms
-(`response_mime_type`, `response_schema`, OUTPUT_FORMAT token) incl. the Claude synthesized **`respond`
-tool**; `_RESPONSE_SCHEMA` on Quick/Smart; and the `rich_content.data.rows` `[{cells:[…]}]` shape.
+(`response_mime_type`, `response_schema`, OUTPUT_FORMAT token) incl. the two Claude paths
+(`output_config.format` without tools; a string `deliver_response` with tools); `_RESPONSE_SCHEMA` on Quick/Smart; and the `rich_content.data.rows` `[{cells:[…]}]` shape.
 
 ## Tests
 

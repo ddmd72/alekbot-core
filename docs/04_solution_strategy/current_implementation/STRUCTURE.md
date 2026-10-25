@@ -145,7 +145,8 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │       │                           #   Two differences: (1) single-pass (no refinement loop);
 │       │                           #   (2) descriptor.intent_remap substitutes search_web→search_web_light.
 │       │                           #   Class-level _descriptor = QUICK_RESPONSE (from agent_manifest.py).
-│       │                           #   MAX_DELEGATION_TURNS=5. Delegates loop to DelegationEngine.
+│       │                           #   MAX_DELEGATION_TURNS=5. Delegates loop to DelegationEngine
+│       │                           #   with terminal_tool="deliver_response".
 │       └── smart_response_agent.py # Complex reasoning + specialist delegation via ACP v2 registry.
 │                                   #   Class-level _descriptor = SMART_RESPONSE (from agent_manifest.py).
 │                                   #   Delegates loop to DelegationEngine (terminal_tool="deliver_response").

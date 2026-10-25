@@ -102,12 +102,11 @@ class SmartResponseAgent(BaseAgent):
     RETRY_BACKOFF_SECONDS = SMART.retry_backoff_seconds
     MAX_TOKENS = SMART.max_tokens
 
-    # Structured output envelope. Enforced by Gemini via response_json_schema and by Claude
-    # via a synthesized `respond` tool whose input_schema IS this envelope (the adapter
-    # intercepts the call and returns its input as JSON text — the output_config.format path
-    # was removed 2026-07-01). OpenAI reacts via json_schema; Grok via json_object mode without
-    # forwarding the inner schema — its envelope shape leans on the OUTPUT_FORMAT token.
-    # See CLAUDE.md "Agent Output Format Standards" for the per-provider matrix.
+    # Structured output envelope. Per provider: Gemini/OpenAI enforce it natively as JSON
+    # schema; Claude uses output_config.format when there are no tools, and with tools a
+    # string-argument `deliver_response` (the schema comes from the OUTPUT_FORMAT prompt
+    # token); Grok uses `deliver_response` whose parameters ARE this schema.
+    # See src/adapters/CLAUDE.md and CLAUDE.md "Agent Output Format Standards".
     # Fully describes the response envelope so Gemini's constrained decoding populates
     # every field. Gemini will NOT generate content for an under-specified field: an
     # `{"type": "object"}` with no `properties` comes back as `{}` and a bare
@@ -589,6 +588,21 @@ class SmartResponseAgent(BaseAgent):
                 )
 
             smart_response, history_summary = self._build_smart_response(delegation_result)
+            if (not smart_response.text.strip() and delegation_result.async_dispatches):
+                logger.info("empty_text_after_async agent=%s intents=%s",
+                            self.agent_id, delegation_result.async_dispatches)
+            if (not smart_response.text.strip() and smart_response.structured_data is None
+                    and not delegation_result.delivery_items
+                    and not delegation_result.async_dispatches):
+                logger.error(
+                    "empty_answer agent=%s model=%s terminal=%s",
+                    self.agent_id, eff.ctx.model_name, delegation_result.terminal_tool_args is not None,
+                    extra={"event": "empty_answer", "agent_id": self.agent_id,
+                           "via_terminal_tool": delegation_result.terminal_tool_args is not None},
+                )
+                return AgentResponse.failure(
+                    task_id=message.task_id, agent_id=self.agent_id, error="empty_answer",
+                )
             total_tokens = delegation_result.total_tokens
             delivery_items = delegation_result.delivery_items
 
