@@ -284,7 +284,7 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   [residuals](../../04_solution_strategy/decisions/drive_place_name_residuals.md)). Geo table v2 (`GEO_TABLE_VERSION`
   2, RFC §25.4.3): `PlaceIndex.place()` also returns the place forms — the place's names in en, es, fr, uk, ru, its
   country's names and the nearest place of 100 000+ people within 50 km — written as `place_forms` beside
-  `place_name`, so "Коїмбра", "Coimbra" and "Portugal" all key a photo taken there. A card is re-embedded only when
+  `place_name`, so "Берлін", "Berlin" and "Germany" all key a photo taken there. A card is re-embedded only when
   its hash changes.
 - **Name keys** (`name_keys_v2` in `drive_keys.py`, `NAME_KEYS_VERSION` 2): the native `w:` forms of each name token
   (with case parts and hyphen compounds), the `x:`/`xl:` skeleton of each word, the `n:`/`y:` forms of digit tokens
@@ -1587,7 +1587,7 @@ a file's tier is the **weakest class it needs** (`drive_tiers.classify`):
 
 | Tier | Exact? | The file is in it when | Example |
 |---|---|---|---|
-| **About** | exact | every concept is covered by verified-record keys, or the name covers every word | a photo whose `place_forms` hold "Коїмбра"; an invoice whose verified number is `F-2026-0311` |
+| **About** | exact | every concept is covered by verified-record keys, or the name covers every word | a photo whose `place_forms` hold "Берлін"; an invoice whose verified number is `F-2026-0311` |
 | **Mentioned in** | exact | every concept is covered by the record or by **one chunk's** words, at least one by the chunk; two or more chunk-covered words sit within a 400-character window (`PROXIMITY_CHARS`) | a note saying "в Коїмбрі" |
 | **By translation** | automatic | as above, but at least one concept is covered only by a translation key | a Spanish passage naming "Coimbra" for the query "Коїмбру"; a grounded passage keyword "холестерин" over "colesterol" |
 | **Labelled** | automatic | at least one concept is covered only by an automatic key | a lab report whose profile wrote the topic word "cholesterol" and whose type is `medical_record` |
@@ -1712,59 +1712,62 @@ In the live check (2026-10-14) a place-name query took one skill load and two se
 ### 6.4 Two queries, end to end
 
 Both are real runs of the search on the synthetic eval fixture (`tree.json` + `tree_v2.json`, the recorded
-enrichment, offline lexical vectors; 2026-10-14), cards shortened with "…".
+enrichment, offline lexical vectors; 2026-10-25), cards shortened with "…".
 
-**"найди всё про Коїмбру"** (Smart puts the user's words in `drive_query`; the place was renamed after the run, the
-keys below are the keyer's own output).
+**"найди всё про Коїмбру"** (Smart puts the user's words in `drive_query`).
 1. *Concepts.* "найди", "всё" (folded to "все") and "про" are generic and function words: removed and named. One
    concept is left, *коїмбру*. Its keys: word keys `w:коїмбру`, `w:коїмбр` and the skeletons `x:koimbr`,
    `xl:koimbr` (and the variants `x:koimbru`, `xl:koimbru`); hint keys `w:коїмбру`, `w:коїмбр`; about keys
    `e:`/`ef:`/`k:`/`lw:`/`tw:`/`dw:`/`lv:`/`pw:`/`pe:` of the same forms, `ex:`/`exl:` skeletons, phrase runs such as
    `e:про_коїмбр`, and `v:коїмбру`.
-2. *Streams.* The about stream finds the two photos taken in Coimbra (geo table v2 wrote `place_forms` "Coimbra,
-   Коїмбра, …, Portugal", so they hold `e:коїмбр`) and a note whose profile verified the entity "Коїмбру" printed in
-   it. The name stream finds the folder "Coimbra 2024" through `xl:koimbr` (its name's skeleton). A Spanish or
-   English passage saying "Coimbra" would be found by the word stream through `xl:koimbr`; a Ukrainian passage
-   saying "в Коїмбрі" through `w:коїмбр`.
+2. *Streams.* The about stream finds a note whose profile verified the entity "Коїмбру" printed in it (`e:коїмбр`),
+   and the two photos taken in Coimbra: geo table v2 wrote their `place_forms` "Coimbra, Coímbra, Коимбра, Portugal,
+   …", so they hold `e:коимбр` and the skeleton `ex:koimbr`, and only the skeleton meets the Ukrainian query (the
+   table has the Russian Cyrillic form of the city, not the Ukrainian one). The name stream finds the folder
+   "Coimbra 2024" through `xl:koimbr` (its name's skeleton). A Spanish or English passage saying "Coimbra" would be
+   found by the word stream through `xl:koimbr`; a Ukrainian passage saying "в Коїмбрі" through `w:коїмбр`.
 3. *Allowances.* One concept, present: strict AND is just "must cover *коїмбру*".
-4. *Tiers.* The photos and the note are **About** (verified record: the photo place and a printed entity); the folder
-   is **By translation** (a skeleton crosses scripts). Related holds three files the offline vectors happened to rank
-   high — exactly the noise the uncalibrated `Z_RELATED` lets through (RFC §25.7.1); they are labelled unverified.
+4. *Tiers.* The note is **About** (a printed entity of a verified record); the photos and the folder are **By
+   translation** (a skeleton crosses scripts). Related holds three files the offline vectors happened to rank high —
+   exactly the noise the uncalibrated `Z_RELATED` lets through (RFC §25.7.1); they are labelled unverified.
 
 ```
 Searched names (several spellings and word forms), file descriptions, document text and passage keywords for:
 "коїмбру"; ignored: "найди", "все", "про".
 Coverage: complete.
-About "коїмбру" (3):
+About "коїмбру" (1):
 <drive_document … path="Notes/Думки про поїздку.md">
-Думки про поїздку.md | note (Markdown) | notes | Ukrainian-language travel notes about a planned weekend trip to
-Coimbra, … | Коїмбру, університет, Мондегу, … | …
+Думки про поїздку.md | note (Markdown) | notes | A Ukrainian note about a planned spring weekend trip to Coimbra, … |
+Думки про поїздку навесні | Коїмбру, Мондегу, Тарас Мельник | spring weekend trip, Coimbra accommodation, … | …
 matched: place "Коїмбру" (named in the file)
 date: 2026-01-25 (file date)
+capture: digital (detected)
+card accuracy: 100%
 index: indexed
 </drive_document …>
-<drive_document … path="Photos/Coimbra 2024/IMG_7102.HEIC">
-IMG_7102.HEIC | image | <photo description> | … | taken 2024-05-05 | camera Apple iPhone 15 | place Coimbra, Portugal | …
-matched: place "Коїмбра" (photo location)
-date: 2024-05-05 (taken)
-index: metadata_only (photograph)
-</drive_document …>
-<drive_document … path="Photos/Coimbra 2024/IMG_7101.HEIC"> … </drive_document …>
-By translation (automatic) (1):
+By translation (automatic) (3):
 <drive_document … path="Photos/Coimbra 2024">
 Coimbra 2024 | folder
 matched: name "coimbra", by spelling in another script (automatic)
 …
 </drive_document …>
+<drive_document … path="Photos/Coimbra 2024/IMG_7102.HEIC">
+IMG_7102.HEIC | image | <photo description> | … | taken 2024-05-05 | camera Apple iPhone 15 | place Coimbra, Portugal | …
+matched: place "Коимбра" (photo location), by spelling in another script (automatic)
+date: 2024-05-05 (taken)
+index: metadata_only (photograph)
+</drive_document …>
+<drive_document … path="Photos/Coimbra 2024/IMG_7101.HEIC"> … </drive_document …>
 Related by meaning only, unverified (3):
-<drive_document … path="Finance/expenses-2025.csv"> … </drive_document …>
-<drive_document … path="Archive/Invoices 2024/invoice-240.pdf"> … </drive_document …>
-<drive_document … path="Archive/Invoices 2024/invoice-526.pdf"> … </drive_document …>
+<drive_document … path="Notes/Огляд квартири.md"> … </drive_document …>
+<drive_document … path="Archive/Invoices 2024/invoice-511.pdf"> … </drive_document …>
+<drive_document … path="Archive/Invoices 2024/invoice-599.pdf"> … </drive_document …>
 No other file is about or mentions all of these words.
 ```
 
-Smart reads: three exact matches, one automatic (a folder to list), three guesses; the coverage is complete, so the
-footer may say "no other file". It answers from the About cards and can list the folder; it has no reason to crawl.
+Smart reads: one exact match and three automatic ones (two photos and a folder to list), three guesses; the coverage is
+complete, so the footer may say "no other file". It answers from the About and By translation cards and can list the
+folder; it has no reason to crawl.
 
 **"медицинские записи по холестерину"** over a Spanish lab report ("colesterol"; the RFC §25.5.1 walk-through).
 1. *Concepts.* "по" removed; three concepts *медицинские*, *записи*, *холестерину*, with native forms `медицинск`,
@@ -1772,10 +1775,9 @@ footer may say "no other file". It answers from the About cards and can list the
 2. *Covers in the lab report.* Its profile has `doc_type = medical_record`, so by **D31** its `lw:` keys hold the fixed
    names of that type — "medical records", "historia clínica", "медичні записи", "медицинские записи", … — and so
    `lw:медицинск` and `lw:запис`: *медицинские* and *записи* are covered by automatic keys. *холестерину* is covered by
-   a grounded passage keyword "холестерин" (its hint document quotes the report's "Colesterol total" line) — a translation —
-   and by the profile's topic words. No key from the file's own Spanish text covers any of the three words.
-3. *Tier.* The weakest class the file needs is automatic: **Labelled**. Its card names each source and carries the
-   passage around the keyword's evidence.
+   the profile's topic words ("холестерин", a translation of the report's "Colesterol total"). No key from the file's
+   own Spanish text covers any of the three words.
+3. *Tier.* The weakest class the file needs is automatic: **Labelled**. Its card names each source.
 4. *Coverage.* Nothing the search could not see: sheets and data files have no passage keywords by policy, which is
    not a gap (their own words were searched), so the line reads complete.
 
@@ -1785,13 +1787,13 @@ Searched names (several spellings and word forms), file descriptions, document t
 Coverage: complete.
 Labelled (automatic) (1):
 <drive_document … path="Health/Informe laboratorio 2025-03.pdf">
-Informe laboratorio 2025-03.pdf | PDF document | medical_record | Spanish clinical laboratory report of … blood test,
-including lipid profile, … | Informe de análisis de sangre | … | blood test, lipid profile, total cholesterol, … |
-análisis de sangre, perfil lipídico, colesterol total, …
-matched: type label "медицинские" (automatic); type label "записи" (automatic); passage keyword "colesterol;
-cholesterol; cholestérol; холестерин", from "Colesterol total … mg/dL < … mg/dL"
-passage: … Perfil lipídico Resultado Valores de referencia Colesterol total … mg/dL < … mg/dL Colesterol HDL …
+Informe laboratorio 2025-03.pdf | PDF document | medical_record | Spanish-language blood test report with lipid profile
+and fasting glucose results for Alex Doe. | Informe de análisis de sangre | … | blood test, lipid profile, cholesterol,
+… | análisis de sangre, perfil lipídico, colesterol, …
+matched: type label "медицинские" (automatic); type label "записи" (automatic); topic "холестерин" (automatic)
 date: 2025-03-15 (file date)
+capture: digital (detected)
+card accuracy: 100%
 index: indexed
 </drive_document …>
 Related by meaning only, unverified (3): …

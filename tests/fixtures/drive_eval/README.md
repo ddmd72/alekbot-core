@@ -22,7 +22,7 @@ The `translit-accent-*` cases reach accented names (`Résumé`, `Cœur`, `año`)
 `misspelled-trigram-only` reaches its target through trigrams alone. Any case that hit when the bars were recorded
 and misses now fails the run.
 
-The `Договор_ред1..3` dates contradict their version names on purpose: ред2 is the newest, so a "latest version"
+The `Договір_ред1..3` dates contradict their version names on purpose: ред2 is the newest, so a "latest version"
 answer cannot be read off the name alone (§10.4). The bulk folders are the scale cases: 1 000 `IMG_NNNN.HEIC` next
 to an exact `IMG_4912.jpg`, 600 invoices next to `invoice_2026_03.xlsx`, an 800-note vault that must stay normal,
 and a 700-file dump that must become a dense tree. The eval is a regression guard, not a decision tool (§17.8): its
@@ -39,7 +39,7 @@ file the indexer would read has bytes (`test_drive_eval_fixture_files.py`).
 `files/` is made by `scripts/validation/drive_eval/make_fixtures.py` and **committed**, not generated per run: Chromium
 renders differently across machines and versions, and `bars.json` pins every served byte (`files_sha256`) and the
 reader's provider (`reader_provider`: bars recorded with Claude cannot judge a GPT run). Regenerating
-is a deliberate fixture change, followed by `--record`. The set: DOCX (the `Договор_ред1..3` family, now with differing
+is a deliberate fixture change, followed by `--record`. The set: DOCX (the `Договір_ред1..3` family, now with differing
 amounts and notice periods), PDFs with a text layer (one two-column, one table-heavy), a broken-font Cyrillic PDF
 (fonts with no Unicode map, so text extraction yields `(cid:N)`), two scans with no text layer (UA, ES), a photographed
 receipt (RU), three phone screenshots (EN, UA, ES) and a chat screenshot (RU), XLSX, ODS, ODT, ODP, PPTX, CSV, RTF,
@@ -48,7 +48,7 @@ EML, VTT, HTML, JSON and Markdown, and three wordless pictures as photo thumbnai
 `gold_g2.json` holds the answer-from-content cases: each has an `expected_substring` (or a `{path: substring}` map for
 a version family) that must be in the window of the card holding its path, compared after NFKC, casefold and
 whitespace collapsing. Cases cover clauses, amounts, invoice numbers written differently from the document, dates,
-tables, a two-column PDF and the `Договор` family; `g2-date-written-out` finds a date written out in words
+tables, a two-column PDF and the `Договір` family; `g2-date-written-out` finds a date written out in words
 ("3 June 2024") from a numeric query (written-out dates are exact terms, `EXTRACTION_VERSION` 3). `"ocr": true` marks a case only the model reader can answer (scans,
 screenshots, the broken-font PDF); G1 has OCR cases too, found by subject only. Recall is reported per case type and
 per `G1`, `G2` and `ocr`.
@@ -79,8 +79,9 @@ says what a right answer looks like for the owner's review.
 `make_fixtures_v2.py`, words in `fixture_texts_v2.py`): a Spanish lab report, receipts in three languages, documents
 with a validity date, English and Spanish car papers that never say "car", Spanish flat-repair invoices, a Russian
 hotel booking and an English note naming Rome beside the twelve Rome photos, notes holding inflected forms of the
-pinned normaliser groups, photos in Le Havre and Barcelona, and a long book that mentions Rome, tickets, a car,
-insurance, repairs and receipts once each, far apart. G1/G2 keep their pinned tree and bytes.
+pinned normaliser groups (Ukrainian trip notes about Coimbra, a flat viewing in Lviv), photos in Hamburg and Coimbra,
+and a long book that mentions Rome, tickets, a car, insurance, repairs and receipts once each, far apart. G1/G2 keep
+their pinned tree and bytes.
 
 `gold_v2.json` holds the v2 cases by family (`exact`, `semantic`, `class`, `incident`, `misspelling`, `negative`;
 `v2_metrics.py` states each pass rule), each with `expect_tier`, optional `acceptable_paths` (true matches that are
@@ -91,6 +92,13 @@ run; no run writes it.
 transcriptions one live run of `dump_enrichment.py --fixture` returned (gpt-6-luna), keyed by their inputs, so
 `search_v2_eval.py` indexes the fixture with no model call. The 600 bulk invoices are profiled from a hand-written
 template (`fixture_texts_v2.BULK_PROFILES`), never recorded. A snapshot that misses an input gives no verdict.
+When the fixture's texts moved to the invented universe (2026-10-25), only the inputs of the files whose bytes or
+path changed were recorded again (`meta.partial_rerecord`); every unchanged file kept its 2026-10-13 answers. Two
+full re-records were tried first and moved the eval by model variance alone (a lease hinted as a home address, the
+Rome picture labelled a sunset, a lost passage keyword), so the partial record keeps the eval's movement the
+fixture's own. The Hamburg and Coimbra photos have pictures of their own (`photo_harbour.jpg`,
+`photo_riverside.jpg`): a triage answer is keyed by thumbnail bytes, and with D39's location prior a shared picture
+carried one place's name into photos taken elsewhere.
 `baseline_v1.json` is the tag `drive-search-v1` run on the same drive, enrichment and vectors (`v1_baseline.py`):
 the v1 column of the report and the "every v1-passing case" guard.
 
@@ -130,8 +138,8 @@ includes a digest of `src/adapters/drive_parser/capture.py`, so a capture edit m
 
 **The enrichment of these files is synthetic** (`enrichment.json`, entries marked `"synthetic": true`, written by
 `python -m scripts.validation.drive_eval.synthetic_s26` through the same recording ports a live record uses, so the keys
-come from the real indexer). The scan's profile misreads the birth date on purpose (the card prints `03 11 1990`, the
-profile says `08 11 1990`): verification grades it `not_in_text`, which puts the card's accuracy under 90 % and makes
+come from the real indexer). The scan's profile misreads the birth date on purpose (the card prints `01 01 1980`, the
+profile says `07 01 1980`): verification grades it `not_in_text`, which puts the card's accuracy under 90 % and makes
 the G3 value case deterministic. A live `dump_enrichment.py --fixture` re-record replaces every entry with real model
 answers (the reader then reads the drawn text itself); after it, check the two G3 cases' premise, that the scan's card
 is below 90 %.

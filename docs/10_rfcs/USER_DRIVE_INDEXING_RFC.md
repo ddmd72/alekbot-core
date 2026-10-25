@@ -201,7 +201,7 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
 
 Step 1 gives the bot a long-term file area it can list, open, save, move and delete. It cannot find anything by
 meaning or content: Graph search inside the App Folder returned 401 (spike A6, Step 1 §7), and listing does not scale
-past a few folders. Files with uninformative names (`Договор_ред3.docx`, `notes (2).md`) are lost to the
+past a few folders. Files with uninformative names (`Договір_ред3.docx`, `notes (2).md`) are lost to the
 conversation.
 
 **Goals**
@@ -1402,12 +1402,12 @@ port) and the Smart protocol token change with its backup reference.
 8. **Eval** (`scripts/validation/drive_eval/`, run as `python -m scripts.validation.drive_eval`; Slice 1 calls
    `DriveSearchService` directly, the Smart dry-run scaffolding of `ab_agent_models.py` joins with G3 in Slice 2, RFC
    Δ13): a committed, PII-free, multilingual fixture folder (RU/UK/ES/EN/FR; names like `Scan_0012.pdf`,
-   `Договор_ред1..3.docx`; a nested folder; a repository) behind an in-memory `UserDrivePort` fake, and a gold file
+   `Договір_ред1..3.docx`; a nested folder; a repository) behind an in-memory `UserDrivePort` fake, and a gold file
    (Slice 1: `tests/fixtures/drive_eval/gold_g1.json`, cases `{id, case, query, filters, lang, goal, expected_paths,
    k?, min_hits?, known_hard?}`; Slice 2 adds `expected_substring`). Metrics: G1 and G2 recall@K, a substring hit for G2, the
    G3 search-initiated rate on positives and on a negative set (chit-chat, memory and web questions). Cases also cover
    a draft family whose dates disagree with its version names, and memory-vs-document conflicts in both directions.
-   Name cases: exact, partial, transliterated (`dogovor` → `Договор`) and misspelled names. G2 cases include
+   Name cases: exact, partial, transliterated (`dohovir` → `Договір`) and misspelled names. G2 cases include
    table-heavy and two-column PDFs and numeric questions (amounts, invoice numbers). Expected and recorded, not a
    surprise: recall on long documents stays below what contextual chunk headers would give.
    **The eval is a regression guard, not a decision tool.** Every quality choice is decided in this RFC with a default;
@@ -4065,8 +4065,8 @@ the standing rule (CLAUDE.md). Slices, in build order:
   opens the file) and a find question on one (Smart does not).
   *As built:* `gold_v2.json` gains the cases `cls-scans-{en,uk,es}`, `cls-screenshot-ru`, `cls-screenshots-en`,
   `ex-date-expiry-{dotted,spaced}`, `ex-date-valid-until`, `ex-value-id-number{,-spaced}`, `ex-inaccessible-name`
-  (`expect_inaccessible`), and S6's `cls-sunsets-{en,ru,es}`, `cls-sunset-photos`, `cls-beach-{ru,en}`, `ex-place-paris`,
-  `sem-landmark-eiffel{,-ru}`; a case may carry `known_hard` (run and reported, guarding nothing). `gold_g3_v2.json` gains
+  (`expect_inaccessible`), and S6's `cls-sunsets-{en,ru,es}`, `cls-sunset-photos`, `cls-beach-{ru,en}`, `ex-place-berlin`,
+  `sem-landmark-funkturm{,-uk}`; a case may carry `known_hard` (run and reported, guarding nothing). `gold_g3_v2.json` gains
   `v2-card-value-opens{,-ru}` (`must_open`: the file is opened at least once) and `v2-card-find-no-open{,-uk}`
   (`must_not_open`: none is); both are hard checks of `smart_dry_run.py`, the scan's card being under 90 % by the
   recorded profile's misread date. New fixtures: `fixture_texts_s26.py`, `fixture_images_s26.py`, `synthetic_s26.py`; the
