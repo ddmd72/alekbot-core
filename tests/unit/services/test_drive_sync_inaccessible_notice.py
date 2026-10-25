@@ -111,15 +111,15 @@ async def test_no_notice_before_a_later_complete_round(env):
 
 async def test_one_notice_for_the_batch_text_without_names_and_the_list_as_a_file(env):
     folder = closed("d1", "Shared docs", folder=True)
-    await seed(env, folder, closed("f1", "id-scan.pdf", parent="d1"), closed("f2", "residence card.pdf"))
+    await seed(env, folder, closed("f1", "id-scan.pdf", parent="d1"), closed("f2", "citizen card.pdf"))
     await state(env, waiting=2)
     summary = await env.svc.fan_out()
     assert summary["notices"] == 1 and env.notifier.order == ["file", "text"]
     text = env.notifier.texts[0]["text"]
     assert text == "2 closed; copy each file in the same folder"
-    assert "scan" not in text and "residence" not in text and "Shared" not in text
+    assert "scan" not in text and "citizen" not in text and "Shared" not in text
     listing = env.notifier.files[0]["bytes"].decode("utf-8").splitlines()
-    assert sorted(listing) == ["Shared docs/id-scan.pdf", "residence card.pdf"]   # files only, never the folder
+    assert sorted(listing) == ["Shared docs/id-scan.pdf", "citizen card.pdf"]   # files only, never the folder
     assert env.notifier.files[0]["title"] == "Closed files" and env.notifier.files[0]["filename"].endswith(".txt")
     recs = env.repo.records
     assert recs[("u", "f1")].inaccessible_notified_since == MARKED == recs[("u", "f2")].inaccessible_notified_since

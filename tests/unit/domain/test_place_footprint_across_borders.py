@@ -1,6 +1,6 @@
 """Across a border, a heavier place names a photo only when the photo lies within that place's own footprint,
 k * sqrt(weight) km capped at PLACE_PREFER_RADIUS_KM (USER_DRIVE_INDEXING_RFC §5.3): a photo in Trastevere is
-Rome although the Vatican City row is nearer, while Monaco is never Nice and Kehl never Strasbourg."""
+Rome although the Vatican City row is nearer, while Weil am Rhein is never Basel across the Rhine."""
 from src.domain.place_lookup import PlaceIndex, PlaceRow
 
 _VATICAN = PlaceRow(41.9027, 12.4541, "Vatican City", "Vatican City", "Vatican", weight=2_487)

@@ -13,7 +13,7 @@ from src.domain.drive_tier_explain import explain
 from src.domain.drive_tier_render import card_body
 from src.domain.drive_tiers import Allowance, FileKeys, classify
 
-PROFILE = DriveProfile(title="Residence card", what_it_is="A residence card", language="es", doc_type="id_document",
+PROFILE = DriveProfile(title="Citizen card", what_it_is="A citizen card", language="pt", doc_type="id_document",
                        dates=(ProfileDate("valid_until", date(2031, 5, 7)),))
 
 
@@ -37,7 +37,7 @@ class TestCardText:
 
     def test_a_profiled_scan_carries_the_segment_after_its_kind(self):
         assert card_text(rec(profile=PROFILE, capture="scan", capture_source="detected")) == (
-            "scan_0001.pdf | PDF document | scan | id_document | A residence card | Residence card")
+            "scan_0001.pdf | PDF document | scan | id_document | A citizen card | Citizen card")
 
     def test_a_brief_only_screenshot(self):
         text = card_text(rec(name="IMG_2.png", kind="image", capture="screenshot", capture_source="automatic",
