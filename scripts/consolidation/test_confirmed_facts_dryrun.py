@@ -85,9 +85,9 @@ def patch_prompt(prompt: str) -> Tuple[str, bool]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 FACTS = [
-    ("User's car insurance policy number ends in 4471 and renews on 2031-03-04.", "4471", "car-insurance.pdf"),
+    ("User's car insurance policy number ends in 8204 and renews on 2027-04-01.", "8204", "car-insurance.pdf"),
     ("User's bicycle frame number is WTU-0915-K.", "WTU-0915", "bike-invoice.pdf"),
-    ("User's dentist is Dr. Marta Quillen at Clínica Ribera.", "Quillen", "dental-card.pdf"),
+    ("User's dentist is Dr. Marta Quillen at Clínica Ribeira.", "Quillen", "dental-card.pdf"),
 ]
 FACT_NAMES = ["insurance", "bike", "dentist"]
 FRAMES = ("sources", "plain")
@@ -120,9 +120,9 @@ def scenario(name: str, frame: str) -> List[Dict[str, Any]]:
                 _m("model", "Прочитал документы и подготовил факты для подтверждения.")] + pair
     if name == "B":
         return [_m("user", f"Что в этих документах? {_FILES}"),
-                _m("model", "В документах: страховка авто — номер полиса заканчивается на 4471, "
-                            "продление 2031-03-04; счёт на велосипед — номер рамы WTU-0915-K; "
-                            "карта стоматолога — врач Marta Quillen, клиника Clínica Ribera."),
+                _m("model", "В документах: страховка авто — номер полиса заканчивается на 8204, "
+                            "продление 2027-04-01; счёт на велосипед — номер рамы WTU-0915-K; "
+                            "карта стоматолога — врач Marta Quillen, клиника Clínica Ribeira."),
                 _m("user", "запомни это"),
                 _m("model", "Подготовил эти факты для подтверждения.")] + pair
     return [_m("user", "Привет, как дела?"),

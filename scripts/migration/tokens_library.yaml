@@ -471,7 +471,7 @@
     \ NOT collapse into single option.\"\n    ]\n    examples: [\n        \"User:\
     \ 'Direct flights Springfield to Krakow this week' -> Tool Query: 'Object: flights\
     \ Springfield to Krakow | Criteria: direct only, current week'\",\n        \"User:\
-    \ 'Best budget hotels in Barcelona' -> Tool Query: 'Object: hotels in Barcelona\
+    \ 'Best budget hotels in Lisbon' -> Tool Query: 'Object: hotels in Lisbon\
     \ | Criteria: budget-friendly, high ratings'\"\n    ]\n}\n"
   metadata:
     description: Web search protocol for external information

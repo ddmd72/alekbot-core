@@ -25,11 +25,11 @@ TEST_CASES = [
     {"id": 2, "query": "Ок", "expected": "quick_response_agent", "category": "acknowledgment"},
     {"id": 3, "query": "Какой номер моего авто?", "expected": "quick_response_agent", "category": "single_memory"},
     {"id": 4, "query": "Покажи все мои документы", "expected": "smart_response_agent", "category": "multi_memory"},
-    {"id": 5, "query": "Что ты думаешь о Раневской?", "expected": "quick_response_agent", "category": "knowledge"},
-    {"id": 6, "query": "Столица Франции?", "expected": "quick_response_agent", "category": "knowledge"},
+    {"id": 5, "query": "Что ты думаешь о Пессоа?", "expected": "quick_response_agent", "category": "knowledge"},
+    {"id": 6, "query": "Столица Германии?", "expected": "quick_response_agent", "category": "knowledge"},
     {"id": 7, "query": "Погода завтра", "expected": "smart_response_agent", "category": "web_simple"},
     {"id": 8, "query": "Які ресторани поруч?", "expected": "quick_response_agent", "category": "web_simple_implicit"},
-    {"id": 9, "query": "Посоветуй концерты на выходных в Барселоне", "expected": "smart_response_agent", "category": "web_complex"},
+    {"id": 9, "query": "Посоветуй концерты на выходных в Лиссабоне", "expected": "smart_response_agent", "category": "web_complex"},
     {"id": 10, "query": "У меня проблема с проектом", "expected": "smart_response_agent", "category": "ambiguous"},
 ]
 

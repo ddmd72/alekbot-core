@@ -147,7 +147,7 @@ GEO_SELECTORS: List[str] = [
     "Find current bicycle shops and bike repair services",         # place discovery
     "worth seeing in Springfield",                                 # places + route + dinner
     "retrieve current live weather and today's forecast",           # weather lookup
-    "verify current weather in Northgate and Springfield",                 # weather lookup
+    "verify current weather in Springfield and Shelbyville",              # weather lookup
 ]
 
 
@@ -165,22 +165,22 @@ GEO_SELECTORS: List[str] = [
 # route alternatives. Whether a model states that limit or invents past it is the point.
 FRESH_GEO_QUERIES: List[str] = [
     # 1. place discovery + driving radius + ranking by rating
-    "Find Carrefour stores within a 15 km drive of Northgate, Springfield, USA. "
+    "Find Lidl stores within a 15 km drive of Porto city centre, Portugal. "
     "Sort them by customer rating (best first) and give for each: name, full address, "
-    "rating and number of reviews, opening hours, and driving distance and time from Northgate.",
+    "rating and number of reviews, opening hours, and driving distance and time from Porto city centre.",
     # 2. place discovery + NON-CAR routing + opening hours
-    "List police stations that are sensible to reach by bicycle from 12 Oak Street, "
-    "Northgate, Springfield, USA. For each: name, full address, opening hours, phone, and the "
-    "cycling distance and time from that address. Exclude any that are impractical by bike.",
+    "List police stations that are sensible to reach by bicycle from Praça da Liberdade, "
+    "Porto, Portugal. For each: name, full address, opening hours, phone, and the "
+    "cycling distance and time from that square. Exclude any that are impractical by bike.",
     # 3. place discovery + ranking, needs 10 distinct results
-    "Top 10 museums in Springfield, USA, ranked by rating. For each give name, address, "
+    "Top 10 museums in Lisbon, Portugal, ranked by rating. For each give name, address, "
     "rating with review count, and opening hours for today.",
-    # 4. BOUNDARY: cinema listings are place data, today's VOSE showtimes are not
-    "List cinemas in Springfield, USA that are showing films in VOSE (original version with "
-    "Spanish subtitles) today. For each: cinema name, address, and which VOSE films are "
-    "screening today with their times.",
+    # 4. BOUNDARY: cinema listings are place data, today's original-version showtimes are not
+    "List cinemas in Lisbon, Portugal that are showing films in original version with "
+    "Portuguese subtitles today. For each: cinema name, address, and which original-version films "
+    "are screening today with their times.",
     # 5. BOUNDARY: long international route with THREE alternatives
-    "Driving distance from Northgate, Springfield, USA to Toulouse, France. Give three "
+    "Driving distance from Porto city centre, Portugal to Munich, Germany. Give three "
     "alternative routes with details for each: total distance, driving time, the main "
     "roads and countries crossed, and any tolls.",
 ]

@@ -36,7 +36,7 @@ OUTPUT FORMAT (JSON only):
 EXAMPLES:
 
 Fact A: "Monthly rent was 900 EUR in June 2025"
-Fact B: "Monthly rent was approximately 900 EUR (Example City) in June 2025, after a 60 EUR increase"
+Fact B: "Monthly rent was approximately 900 EUR (Springfield) in June 2025, after a 60 EUR increase"
 → {"keep": "B", "reason": "Includes location and rent change context"}
 
 Fact A: "The car's tyre pressure was 2.4 bar, within the recommended range"
