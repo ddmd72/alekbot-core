@@ -10,7 +10,7 @@ from src.domain.user_drive import DriveItemNotFoundError, DriveNameConflictError
 
 from tests.unit.adapters.test_onedrive_mirror_writes_wire import _PLAIN_400, _TOO_LONG, _adapter, _resp, _session
 
-NAME = "Secret Interview Жанна.mp4.md"
+NAME = "Secret Interview Ганна.mp4.md"
 
 
 def _logged(log) -> str:

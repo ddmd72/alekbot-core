@@ -2954,7 +2954,7 @@ passage words, translation, automatic record. A file's tier is decided by the we
 
    A skeleton match crosses scripts or spellings ("Coimbra" in a Ukrainian note, "hotel" against "хотел"). It is never
    exact: it is shown with the window around the matched word, labelled "by spelling in another script (automatic)",
-   or "by another spelling (automatic)" when both words are Cyrillic ("Киев" / "Київ"). Two Latin words never meet
+   or "by another spelling (automatic)" when both words are Cyrillic ("Харьков" / "Харків"). Two Latin words never meet
    through a skeleton (`xl:`/`exl:` are read only by a Cyrillic query word, xc F3). A native-script match and a
    spelling the file prints (an entity's verified spelling or a place's own form, `e:`) stay exact; an entity
    spelling only the profiler wrote (`ef:`) is a translation (xc F1), shown as 'person "<spelling>" (spelling by the

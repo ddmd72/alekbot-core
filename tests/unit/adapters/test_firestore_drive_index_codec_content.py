@@ -14,7 +14,7 @@ from src.domain.drive_index import (
 
 T = datetime(2026, 10, 12, 9, 15, 30, 250000, tzinfo=timezone.utc)
 BRIEF = DocumentBrief(doc_type="invoice", description="Рахунок № 5",
-                      doc_date=datetime(2024, 3, 15, tzinfo=timezone.utc), parties=("ТОВ Ромашка", "Acme S.L."),
+                      doc_date=datetime(2024, 3, 15, tzinfo=timezone.utc), parties=("ТОВ Приклад", "Acme S.L."),
                       amount="1 250.00 EUR")
 
 
@@ -44,7 +44,7 @@ class TestRecordCodec:
         doc = record_to_doc(content_record())
         assert doc["brief"] == {"doc_type": "invoice", "description": "Рахунок № 5",
                                 "doc_date": datetime(2024, 3, 15, tzinfo=timezone.utc),
-                                "parties": ["ТОВ Ромашка", "Acme S.L."], "amount": "1 250.00 EUR",
+                                "parties": ["ТОВ Приклад", "Acme S.L."], "amount": "1 250.00 EUR",
                                 "date_grade": ""}   # §26.4 (Δ60): the date's grade, "" while ungraded
         assert doc["triage_verdict"] == "text" and doc["lead_text"] == "Договір оренди"
         assert (doc["triage_version"], doc["triaged_content_version"], doc["caption"]) == (1, "c1",
@@ -99,7 +99,7 @@ def test_the_sdk_encodes_the_content_fields():
     from google.cloud.firestore_v1 import _helpers
     encoded = _helpers.encode_dict(record_to_doc(content_record()))
     brief = encoded["brief"].map_value.fields
-    assert brief["parties"].array_value.values[0].string_value == "ТОВ Ромашка"
+    assert brief["parties"].array_value.values[0].string_value == "ТОВ Приклад"
     assert brief["doc_date"].timestamp_value == BRIEF.doc_date
     assert encoded["triage_verdict"].string_value == "text"
     assert _helpers.encode_dict(state_to_doc(DriveSyncState(user_id="u", model_backoff_until=T)))

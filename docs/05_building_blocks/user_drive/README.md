@@ -1595,7 +1595,7 @@ a file's tier is the **weakest class it needs** (`drive_tiers.classify`):
 
 Each file is shown once, in its best tier. Within a tier: files missing no word first, then the meaning score, then
 newest, then item id. A skeleton match is labelled "by spelling in another script (automatic)", or "by another spelling
-(automatic)" when both words are Cyrillic ("Киев" / "Київ"); an `ef:` match shows the file's own spelling beside the
+(automatic)" when both words are Cyrillic ("Харьков" / "Харків"); an `ef:` match shows the file's own spelling beside the
 index's ('person "…" (spelling by the index; named in the file as "…")').
 
 **Strict AND (D28), with allowances.** Within a concept its keys are OR; across concepts, AND. A concept's weight is

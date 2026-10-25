@@ -131,9 +131,9 @@ def test_a_query_of_removed_words_only_still_finds_the_name(name, query):
 # -- from test_drive_name_key_ukrainian_initial_yi.py / _ukrainian_initials.py -------------------------------------
 
 @pytest.mark.parametrize("name,national,russian_style", [
-    ("Їжакевич.jpg", "yizhakevych", "yizhakevich"),
+    ("Їздити.jpg", "yizdyty", "yizditi"),
     ("Яготин.jpg", "yahotyn", "yagotin"),
-    ("Юрій.jpg", "yurii", "yuriy"),
+    ("Ювілей.jpg", "yuvilei", "yuviley"),
     ("Йосипівка.jpg", "yosypivka", "yosipivka"),
     ("Євпаторія.jpg", "yevpatoriia", "yevpatoriya"),
 ])

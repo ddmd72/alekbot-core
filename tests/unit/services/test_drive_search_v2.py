@@ -33,7 +33,7 @@ def lab_report():
 
 # -- §25.5.1 walk-throughs ------------------------------------------------------------------------------------------
 
-class TestBarcelona:
+class TestCoimbra:
     async def test_about_mentioned_and_by_translation(self, w):
         photo = w.file("IMG_0001.jpg", kind="image", taken="2025-05-03",
                        place_forms=("Coimbra", "Коїмбра", "Coïmbre", "Portugal", "Португалія"))
@@ -54,7 +54,7 @@ class TestBarcelona:
         assert '"коїмбру"; ignored: "про".' in text and FOOTER_EXACT in text
 
 
-class TestBarcelonaTrip:
+class TestCoimbraTrip:
     async def test_a_note_holding_both_words_is_mentioned(self, w):
         note = w.file("plan.md", kind="markdown", chunks=["Coimbra trip: book the hotel near the university."])
         other = w.file("photo.jpg", kind="image", place_forms=("Coimbra", "Коїмбра"), taken="2025-05-01")
@@ -70,7 +70,7 @@ class TestBarcelonaTrip:
         assert 'No file matches all of: "coimbra" (2 files), "trip" (1 file).' in render_results(result)
 
 
-class TestParis2023:
+class TestBerlin2023:
     async def test_photo_by_place_and_year_in_two_scripts(self, w):
         berlin = w.file("IMG_2210.jpg", kind="image", taken="2023-06-01", place_forms=("Berlin", "Берлін", "Germany"))
         w.file("IMG_9.jpg", kind="image", taken="2024-06-01", place_forms=("Berlin", "Берлін", "Germany"))
