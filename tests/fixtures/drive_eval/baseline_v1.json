@@ -1,15 +1,16 @@
 {
- "generated_at": "2026-10-13T21:37:58+00:00",
- "commit": "21eeffa4ea8545e9f436c992a8435cd1377831bf",
+ "generated_at": "2026-10-25T15:51:02+00:00",
+ "commit": "adb32ebf5ac87b393a4da3c97046e2c5ed1c54de",
  "embedding_space": "lexical-trigram/256",
  "records": {
-  "metadata_only": 1083,
-  "indexed": 1451,
-  "carded": 2521
+  "metadata_only": 1090,
+  "indexed": 1454,
+  "failed": 1,
+  "carded": 2532
  },
  "ticks": 50,
  "snapshot_misses": {
-  "reader": 0,
+  "reader": 3,
   "triage": 0
  },
  "rows": {
@@ -25,7 +26,7 @@
     "Vault/note-480.md": "v1",
     "Vault/note-716.md": "v1"
    },
-   "chars": 5828,
+   "chars": 5896,
    "cards": 8
   },
   "ex-value-invoice-number": {
@@ -33,59 +34,59 @@
    "tiers": {
     "Piso/Factura F-2026-0311.pdf": "v1",
     "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1",
+    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1",
     "Piso/Factura 2026-078.pdf": "v1",
     "Vehicle/Motor policy MP-2026-118204.pdf": "v1",
-    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1",
     "Receipts/Example Hardware 2026-05-03.pdf": "v1",
     "Finance/invoice_2026_03.xlsx": "v1",
     "Спорт/Абонемент 2026.md": "v1"
    },
-   "chars": 7689,
+   "chars": 7736,
    "cards": 8
   },
   "ex-value-inside": {
    "status": "ok",
    "tiers": {
     "Receipts/Example Hardware 2026-05-03.pdf": "v1",
-    "Notes/Plan de viaje Roma.md": "v1",
-    "Travel/Бронь отеля.docx": "v1",
     "Inbox/Rent for November.eml": "v1",
+    "Notes/Plan de viaje Roma.md": "v1",
     "Finance/invoice_2026_03.xlsx": "v1",
     "Покупки/Аптека 21.04.txt": "v1",
     "Notes/notes (2).md": "v1",
+    "Travel/Бронювання готелю.docx": "v1",
     "Inbox/sales_regions_2026.xlsx": "v1"
    },
-   "chars": 7454,
+   "chars": 7550,
    "cards": 8
   },
   "ex-value-booking-ref": {
    "status": "ok",
    "tiers": {
-    "Travel/Бронь отеля.docx": "v1",
+    "Travel/Бронювання готелю.docx": "v1",
+    "Documents/DOC_20260610_0042.pdf": "v1",
     "Screenshots/Знімок екрана 2026-06-01 093512.png": "v1",
-    "Archive/Invoices 2024/invoice-505.pdf": "v1",
     "Inbox/Rent for November.eml": "v1",
+    "Archive/Invoices 2024/invoice-505.pdf": "v1",
     "Finance/budget-2026.ods": "v1",
-    "Покупки/Аптека 21.04.txt": "v1",
     "Archive/Invoices 2024/invoice-061.pdf": "v1",
-    "Archive/Invoices 2024/invoice-408.pdf": "v1"
+    "Vehicle/Motor policy MP-2026-118204.pdf": "v1"
    },
-   "chars": 7332,
+   "chars": 7506,
    "cards": 8
   },
   "ex-content-only": {
    "status": "ok",
    "tiers": {
     "Vault/note-417.md": "v1",
-    "Vault/note-237.md": "v1",
+    "Shared/Chimney inspection certificate.pdf": "v1",
     "Archive/Invoices 2024/invoice-417.pdf": "v1",
-    "Contracts/Contrato de alquiler 2026.pdf": "v1",
-    "Vehicle/ITV 2025.pdf": "v1",
-    "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1",
+    "Vault/note-237.md": "v1",
+    "Piso/Factura F-2026-0311.pdf": "v1",
     "Vault/note-593.md": "v1",
-    "Archive/Invoices 2024/invoice-237.pdf": "v1"
+    "Archive/Invoices 2024/invoice-237.pdf": "v1",
+    "Archive/Invoices 2024/invoice-435.pdf": "v1"
    },
-   "chars": 8319,
+   "chars": 6775,
    "cards": 8
   },
   "ex-content-two-words": {
@@ -100,82 +101,82 @@
     "Notes/Cœur.pdf": "v1",
     "Piso/Factura 2026-078.pdf": "v1"
    },
-   "chars": 7059,
+   "chars": 7107,
    "cards": 8
   },
   "ex-entity-body": {
    "status": "ok",
    "tiers": {
-    "Vault/note-336.md": "v1",
-    "Vault/note-523.md": "v1",
-    "Notes/Мысли о поездке.md": "v1",
-    "Vault/note-098.md": "v1",
-    "Vehicle/Motor policy MP-2026-118204.pdf": "v1",
-    "Archive/Camera roll/IMG_0779.HEIC": "v1",
-    "Archive/Camera roll/IMG_0009.HEIC": "v1",
-    "Scans/Scan_0012.pdf": "v1"
+    "Notes/Думки про поїздку.md": "v1",
+    "Archive/Invoices 2024/invoice-278.pdf": "v1",
+    "Travel/Бронювання готелю.docx": "v1",
+    "Finance/expenses-2025.csv": "v1",
+    "Archive/Invoices 2024/invoice-565.pdf": "v1",
+    "Спорт/Абонемент 2026.md": "v1",
+    "Vault/note-278.md": "v1",
+    "Contracts/Акт приймання № 52.odt": "v1"
    },
-   "chars": 5868,
+   "chars": 8123,
    "cards": 8
   },
-  "ex-place-article": {
+  "ex-place-name": {
    "status": "ok",
    "tiers": {
-    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1",
-    "Scans/IMG_4912.jpg": "v1",
-    "Photos/Le Havre/IMG_7001.HEIC": "v1",
-    "Photos/Rome 2025/IMG_5103.HEIC": "v1",
+    "Screenshots/Знімок екрана 2026-06-01 093512.png": "v1",
     "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1",
-    "Photos/Rome 2025/IMG_5104.HEIC": "v1",
-    "Photos/Rome 2025/IMG_5111.HEIC": "v1",
-    "Screenshots/Знімок екрана 2026-06-01 093512.png": "v1"
+    "Photos/Hamburg/IMG_7001.HEIC": "v1",
+    "Photos/WhatsApp/IMG-20251120-WA0005.jpg": "v1",
+    "Photos/Rome 2025/IMG_5103.HEIC": "v1",
+    "Photos/Porto/IMG_6201.HEIC": "v1",
+    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1",
+    "Photos/Rome 2025/IMG_5108.HEIC": "v1"
    },
-   "chars": 5176,
+   "chars": 5261,
    "cards": 8
   },
   "ex-place-cyrillic": {
    "status": "ok",
    "tiers": {
-    "Archive/Invoices 2024/invoice-598.pdf": "v1",
-    "Vault/note-612.md": "v1",
-    "Archive/Invoices 2024/invoice-176.pdf": "v1",
-    "Vault/note-598.md": "v1",
-    "Vault/note-723.md": "v1",
-    "Archive/Invoices 2024/invoice-178.pdf": "v1",
-    "Archive/Invoices 2024/invoice-267.pdf": "v1",
-    "Спорт/Абонемент 2026.md": "v1"
+    "Inbox/Rent for November.eml": "v1",
+    "Notes/Огляд квартири.md": "v1",
+    "Notes/Статут клубу.rtf": "v1",
+    "Archive/Invoices 2024/invoice-253.pdf": "v1",
+    "Finance/budget-2026.ods": "v1",
+    "Notes/Roadmap 2027.odp": "v1",
+    "Archive/Invoices 2024/invoice-383.pdf": "v1",
+    "Archive/Invoices 2024/invoice-080.pdf": "v1"
    },
-   "chars": 6804,
+   "chars": 7472,
    "cards": 8
   },
   "ex-place-inflected": {
    "status": "ok",
    "tiers": {
-    "Notes/Мысли о поездке.md": "v1",
-    "Vault/note-526.md": "v1",
-    "Vault/note-600.md": "v1",
-    "Vault/note-390.md": "v1",
-    "Vault/note-066.md": "v1",
-    "Vault/note-423.md": "v1",
-    "Vault/note-023.md": "v1",
-    "Vault/note-356.md": "v1"
+    "Notes/Огляд квартири.md": "v1",
+    "Notes/Думки про поїздку.md": "v1",
+    "Archive/Invoices 2024/invoice-253.pdf": "v1",
+    "Piso/Factura 2026-078.pdf": "v1",
+    "Archive/Invoices 2024/invoice-128.pdf": "v1",
+    "Home/Garantía lavadora.pdf": "v1",
+    "Vehicle/IPO 2025.pdf": "v1",
+    "Archive/Invoices 2024/invoice-053.pdf": "v1"
    },
-   "chars": 5539,
+   "chars": 7431,
    "cards": 8
   },
   "ex-year-place": {
    "status": "ok",
    "tiers": {
-    "Photos/Barcelona 2024": "v1",
+    "Photos/Coimbra 2024": "v1",
+    "Home/Garantía lavadora.pdf": "v1",
     "Archive/Invoices 2024": "v1",
-    "Archive/Invoices 2024/invoice-428.pdf": "v1",
-    "Archive/Invoices 2024/invoice-397.pdf": "v1",
-    "Archive/Invoices 2024/invoice-582.pdf": "v1",
-    "Archive/Invoices 2024/invoice-355.pdf": "v1",
-    "Archive/Invoices 2024/invoice-486.pdf": "v1",
-    "Archive/Invoices 2024/invoice-200.pdf": "v1"
+    "Archive/Camera roll/IMG_0916.HEIC": "v1",
+    "Спорт/Абонемент 2026.md": "v1",
+    "Archive/Camera roll/IMG_0248.HEIC": "v1",
+    "Contracts/Contrato de alquiler 2026.pdf": "v1",
+    "Photos/Coimbra 2024/IMG_7101.HEIC": "v1"
    },
-   "chars": 6617,
+   "chars": 6307,
    "cards": 8
   },
   "ex-month-place": {
@@ -183,29 +184,29 @@
    "tiers": {
     "Finance/expenses-2025.csv": "v1",
     "Finance/Tax summary 2025.pdf": "v1",
-    "Travel/Бронь отеля.docx": "v1",
-    "Notes/notes (2).md": "v1",
     "Health/Informe laboratorio 2025-03.pdf": "v1",
-    "Vehicle/ITV 2025.pdf": "v1",
-    "Photos/Rome 2025": "v1",
-    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1"
+    "Travel/Бронювання готелю.docx": "v1",
+    "Notes/notes (2).md": "v1",
+    "Vehicle/IPO 2025.pdf": "v1",
+    "Scans/IMG_4912.jpg": "v1",
+    "Photos/Rome 2025": "v1"
    },
-   "chars": 8627,
+   "chars": 8650,
    "cards": 8
   },
-  "ex-inflect-kyiv": {
+  "ex-inflect-lviv": {
    "status": "ok",
    "tiers": {
-    "Vault/note-635.md": "v1",
-    "Archive/Invoices 2024/invoice-018.pdf": "v1",
-    "Vault/note-018.md": "v1",
-    "Notes/Ідеї для проєкту.md": "v1",
-    "Vault/note-766.md": "v1",
-    "Archive/Invoices 2024/invoice-238.pdf": "v1",
-    "Archive/Camera roll/IMG_0404.HEIC": "v1",
-    "Archive/Camera roll/IMG_0138.HEIC": "v1"
+    "Notes/Plan de viaje Roma.md": "v1",
+    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1",
+    "Vault/note-184.md": "v1",
+    "Contracts/Акт приймання № 52.odt": "v1",
+    "Projects/site-export/package.json": "v1",
+    "Archive/Invoices 2024/invoice-252.pdf": "v1",
+    "Archive/Invoices 2024/invoice-184.pdf": "v1",
+    "Archive/Camera roll/IMG_0189.HEIC": "v1"
    },
-   "chars": 5748,
+   "chars": 6772,
    "cards": 8
   },
   "ex-inflect-kharkiv": {
@@ -213,14 +214,14 @@
    "tiers": {
     "Vault/note-312.md": "v1",
     "Piso/Factura F-2026-0311.pdf": "v1",
-    "Piso/Factura 2026-078.pdf": "v1",
+    "Finance/Рахунок-фактура №1847.pdf": "v1",
     "Vault/note-053.md": "v1",
     "Receipts/Ticket supermercado 2026-02-14.pdf": "v1",
     "Finance/expenses-2025.csv": "v1",
     "Scans/Scan_0013.pdf": "v1",
     "Receipts/Example Hardware 2026-05-03.pdf": "v1"
    },
-   "chars": 8322,
+   "chars": 8979,
    "cards": 8
   },
   "ex-inflect-ticket-uk": {
@@ -235,7 +236,7 @@
     "Vault/note-474.md": "v1",
     "Archive/Invoices 2024/invoice-391.pdf": "v1"
    },
-   "chars": 6634,
+   "chars": 6700,
    "cards": 8
   },
   "ex-inflect-house": {
@@ -247,10 +248,10 @@
     "Vault/note-364.md": "v1",
     "Finance/Tax summary 2025.pdf": "v1",
     "Notes/Огляд квартири.md": "v1",
-    "Vehicle/ITV 2025.pdf": "v1",
-    "Contracts/Договор_ред1.docx": "v1"
+    "Contracts/Договір_ред1.docx": "v1",
+    "Vault/note-516.md": "v1"
    },
-   "chars": 8167,
+   "chars": 7951,
    "cards": 8
   },
   "ex-inflect-lease": {
@@ -259,14 +260,14 @@
     "Contracts/Lease agreement — Porto.pdf": "v1",
     "Inbox/Lease agreement — Porto.pdf": "v1",
     "Contracts/Contrato de alquiler 2026.pdf": "v1",
+    "Notes/Fiestas del año.md": "v1",
     "Piso/Factura 2026-078.pdf": "v1",
     "Vault/note-524.md": "v1",
     "Screenshots/Знімок екрана 2026-06-01 093512.png": "v1",
     "Спорт/Абонемент 2026.md": "v1",
-    "Inbox/Quarterly Planning Review.docx": "v1",
-    "Finance/Счёт-фактура №1847.pdf": "v1"
+    "Inbox/Quarterly Planning Review.docx": "v1"
    },
-   "chars": 11160,
+   "chars": 10697,
    "cards": 8
   },
   "ex-inflect-policy": {
@@ -281,7 +282,7 @@
     "Vault/note-553.md": "v1",
     "Vault/note-193.md": "v1"
    },
-   "chars": 5826,
+   "chars": 5894,
    "cards": 8
   },
   "ex-name-cyrillic": {
@@ -289,14 +290,14 @@
    "tiers": {
     "Спорт/Абонемент 2026.md": "v1",
     "Vault/note-338.md": "v1",
-    "Piso/Factura F-2026-0311.pdf": "v1",
-    "Contracts/Договор_ред1.docx": "v1",
+    "Contracts/Договір_ред1.docx": "v1",
     "Archive/Invoices 2024/invoice-338.pdf": "v1",
     "Vault/note-134.md": "v1",
-    "Health/Informe laboratorio 2025-03.pdf": "v1",
-    "Contracts/Договор_ред2.docx": "v1"
+    "Contracts/Договір_ред2.docx": "v1",
+    "Contracts/Договір_ред3.docx": "v1",
+    "Piso/Factura F-2026-0311.pdf": "v1"
    },
-   "chars": 10312,
+   "chars": 10245,
    "cards": 8
   },
   "ex-folder-scope": {
@@ -305,7 +306,7 @@
     "Piso/Factura F-2026-0311.pdf": "v1",
     "Piso/Factura 2026-078.pdf": "v1"
    },
-   "chars": 2461,
+   "chars": 2519,
    "cards": 2
   },
   "ex-kind-word": {
@@ -317,10 +318,10 @@
     "Archive/Invoices 2024/invoice-106.pdf": "v1",
     "Receipts/Example Hardware 2026-05-03.pdf": "v1",
     "Receipts": "v1",
-    "Scans/IMG_4912.jpg": "v1",
-    "Finance/Счёт-фактура №1847.pdf": "v1"
+    "Archive/Invoices 2024/invoice-313.pdf": "v1",
+    "Finance/Рахунок-фактура №1847.pdf": "v1"
    },
-   "chars": 7663,
+   "chars": 7898,
    "cards": 8
   },
   "ex-date-written": {
@@ -331,41 +332,41 @@
     "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1",
     "Receipts/Example Hardware 2026-05-03.pdf": "v1",
     "Finance/invoice_2026_03.xlsx": "v1",
-    "Travel/Бронь отеля.docx": "v1",
+    "Travel/Бронювання готелю.docx": "v1",
     "Photos/Rome 2025": "v1",
-    "Scans/Scan_0012.pdf": "v1"
+    "Scans/Scan_0013.pdf": "v1"
    },
-   "chars": 8546,
+   "chars": 8655,
    "cards": 8
   },
   "ex-amount": {
    "status": "ok",
    "tiers": {
+    "Archive/Invoices 2024/invoice-048.pdf": "v1",
     "Piso/Factura F-2026-0311.pdf": "v1",
-    "Vault/note-031.md": "v1",
-    "Archive/Invoices 2024/invoice-031.pdf": "v1",
-    "Contracts/Договор_ред1.docx": "v1",
-    "Notes/Ідеї для проєкту.md": "v1",
-    "Receipts/Ticket supermercado 2026-02-14.pdf": "v1",
-    "Vault/note-648.md": "v1",
-    "Vault/note-134.md": "v1"
+    "Vault/note-048.md": "v1",
+    "Scans/IMG_4912.jpg": "v1",
+    "Finance/Рахунок-фактура №1847.pdf": "v1",
+    "Finance/Tax summary 2025.pdf": "v1",
+    "Archive/Invoices 2024/invoice-000.pdf": "v1",
+    "Notes/Статут клубу.rtf": "v1"
    },
-   "chars": 8240,
+   "chars": 8502,
    "cards": 8
   },
   "sem-cholesterol-ru": {
    "status": "ok",
    "tiers": {
-    "Photos/WhatsApp/IMG-20251120-WA0005.jpg": "v1",
     "Vault/note-730.md": "v1",
     "Vault/note-511.md": "v1",
     "Notes/Roadmap 2027.odp": "v1",
     "Vault/note-248.md": "v1",
     "Vault/note-240.md": "v1",
     "Vault/note-724.md": "v1",
-    "Vault/note-184.md": "v1"
+    "Vault/note-184.md": "v1",
+    "Vault/note-459.md": "v1"
    },
-   "chars": 5674,
+   "chars": 5534,
    "cards": 8
   },
   "sem-cholesterol-en": {
@@ -374,13 +375,13 @@
     "Vault/note-641.md": "v1",
     "Vault/note-770.md": "v1",
     "Vault/note-304.md": "v1",
+    "Contracts/Акт приймання № 52.odt": "v1",
     "Vault/note-077.md": "v1",
     "Vault/note-155.md": "v1",
     "Vault/note-151.md": "v1",
-    "Contracts/Акт приймання № 52.odt": "v1",
     "Vault/note-365.md": "v1"
    },
-   "chars": 5665,
+   "chars": 5705,
    "cards": 8
   },
   "sem-car-documents": {
@@ -388,45 +389,45 @@
    "tiers": {
     "Contracts/Lease agreement — Porto.pdf": "v1",
     "Inbox/Lease agreement — Porto.pdf": "v1",
+    "Documents": "v1",
     "Books/A Short History of Bridges.docx": "v1",
     "Archive/Invoices 2024/invoice-507.pdf": "v1",
     "Vault/note-507.md": "v1",
     "Archive/Invoices 2024/invoice-448.pdf": "v1",
     "Спорт/Абонемент 2026.md": "v1",
-    "Vault/note-666.md": "v1",
-    "Archive/Invoices 2024/invoice-035.pdf": "v1"
+    "Vault/note-666.md": "v1"
    },
-   "chars": 14436,
+   "chars": 14125,
    "cards": 8
   },
   "sem-flat-repair": {
    "status": "ok",
    "tiers": {
     "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1",
+    "Screenshots/IMG_0412.png": "v1",
     "Receipts/Example Hardware 2026-05-03.pdf": "v1",
     "Archive/Invoices 2024/invoice-126.pdf": "v1",
     "Archive/Invoices 2024/invoice-142.pdf": "v1",
-    "Спорт/Абонемент 2026.md": "v1",
     "Archive/Invoices 2024/invoice-491.pdf": "v1",
-    "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1",
-    "Archive/Invoices 2024/invoice-381.pdf": "v1"
+    "Archive/Invoices 2024/invoice-381.pdf": "v1",
+    "Vault/note-715.md": "v1"
    },
-   "chars": 7445,
+   "chars": 7155,
    "cards": 8
   },
   "sem-blood-test": {
    "status": "ok",
    "tiers": {
+    "Screenshots/IMG_0412.png": "v1",
     "Inbox/Quarterly review.pptx": "v1",
-    "Vehicle/ITV 2025.pdf": "v1",
+    "Vehicle/IPO 2025.pdf": "v1",
+    "Vehicle/Motor policy MP-2026-118204.pdf": "v1",
     "Vault/note-520.md": "v1",
     "Vault/note-754.md": "v1",
     "Photos/Porto/IMG_6205.HEIC": "v1",
-    "Photos/Porto/IMG_6204.HEIC": "v1",
-    "Inbox/Super important agreement.pdf": "v1",
-    "Photos/Porto/IMG_6203.HEIC": "v1"
+    "Photos/Porto/IMG_6204.HEIC": "v1"
    },
-   "chars": 6553,
+   "chars": 6024,
    "cards": 8
   },
   "sem-washing-machine": {
@@ -435,77 +436,90 @@
     "Inbox/Super important agreement.pdf": "v1",
     "Inbox/Quarterly Planning Review.docx": "v1",
     "Books/A Short History of Bridges.docx": "v1",
-    "Home/Garantía lavadora.pdf": "v1",
     "Notes/Meeting 2026-09-14.vtt": "v1",
+    "Home/Garantía lavadora.pdf": "v1",
     "Vault/note-372.md": "v1",
     "Contracts/Lease agreement — Porto.pdf": "v1",
     "Inbox/Lease agreement — Porto.pdf": "v1",
     "Notes/Fiestas del año.md": "v1"
    },
-   "chars": 15106,
+   "chars": 15270,
    "cards": 8
   },
   "sem-entity-latin": {
    "status": "ok",
    "tiers": {
-    "Vault/note-481.md": "v1",
-    "Contracts/Lease agreement — Porto.pdf": "v1",
-    "Inbox/Lease agreement — Porto.pdf": "v1",
-    "Books/A Short History of Bridges.docx": "v1",
-    "Archive/Invoices 2024/invoice-481.pdf": "v1",
-    "Vault/note-334.md": "v1",
-    "Vault/note-661.md": "v1",
-    "Vault/note-459.md": "v1",
-    "Vault/note-728.md": "v1"
+    "Vault/note-449.md": "v1",
+    "Archive/Invoices 2024/invoice-449.pdf": "v1",
+    "Archive/Invoices 2024/invoice-542.pdf": "v1",
+    "Vault/note-499.md": "v1",
+    "Archive/Invoices 2024/invoice-042.pdf": "v1",
+    "Vault/note-542.md": "v1",
+    "Archive/Invoices 2024/invoice-499.pdf": "v1",
+    "Archive/Invoices 2024/invoice-240.pdf": "v1"
    },
-   "chars": 14074,
+   "chars": 7035,
    "cards": 8
   },
-  "sem-kyiv-latin": {
+  "sem-lviv-latin": {
    "status": "ok",
    "tiers": {
-    "Finance/Tax summary 2025.pdf": "v1",
-    "Finance/invoice_2026_03.xlsx": "v1",
-    "Scans/IMG_4912.jpg": "v1",
-    "Vault/note-648.md": "v1",
-    "Vault/note-349.md": "v1",
-    "Finance/Счёт-фактура №1847.pdf": "v1",
-    "Contracts/Lease agreement — Porto.pdf": "v1",
-    "Inbox/Lease agreement — Porto.pdf": "v1",
-    "Receipts/Ticket supermercado 2026-02-14.pdf": "v1"
+    "Archive/Invoices 2024/invoice-131.pdf": "v1",
+    "Archive/Invoices 2024/invoice-141.pdf": "v1",
+    "Archive/Invoices 2024/invoice-462.pdf": "v1",
+    "Archive/Invoices 2024/invoice-261.pdf": "v1",
+    "Archive/Invoices 2024/invoice-239.pdf": "v1",
+    "Archive/Invoices 2024/invoice-172.pdf": "v1",
+    "Archive/Invoices 2024/invoice-309.pdf": "v1",
+    "Archive/Invoices 2024/invoice-416.pdf": "v1"
    },
-   "chars": 9718,
+   "chars": 8040,
    "cards": 8
   },
-  "sem-barcelona-latin": {
+  "sem-coimbra-latin": {
    "status": "ok",
    "tiers": {
-    "Photos/Barcelona 2024": "v1",
-    "Vault/note-582.md": "v1",
-    "Archive/Invoices 2024/invoice-397.pdf": "v1",
-    "Archive/Invoices 2024/invoice-582.pdf": "v1",
-    "Vault/note-397.md": "v1",
-    "Archive/Invoices 2024/invoice-355.pdf": "v1",
-    "Contracts/Contrato de alquiler 2026.pdf": "v1",
-    "Archive/Invoices 2024/invoice-486.pdf": "v1"
+    "Photos/Coimbra 2024": "v1",
+    "Home/Garantía lavadora.pdf": "v1",
+    "Спорт/Абонемент 2026.md": "v1",
+    "Photos/WhatsApp/IMG-20251120-WA0005.jpg": "v1",
+    "Receipts/Ticket supermercado 2026-02-14.pdf": "v1",
+    "Notes/Ідеї для проєкту.md": "v1",
+    "Travel/Бронювання готелю.docx": "v1",
+    "Notes/Roadmap 2027.odp": "v1"
    },
-   "chars": 8246,
+   "chars": 6746,
+   "cards": 8
+  },
+  "sem-place-uk-skeleton": {
+   "status": "ok",
+   "tiers": {
+    "Notes/Огляд квартири.md": "v1",
+    "Notes/Думки про поїздку.md": "v1",
+    "Archive/Invoices 2024/invoice-253.pdf": "v1",
+    "Piso/Factura 2026-078.pdf": "v1",
+    "Archive/Invoices 2024/invoice-128.pdf": "v1",
+    "Home/Garantía lavadora.pdf": "v1",
+    "Vehicle/IPO 2025.pdf": "v1",
+    "Archive/Invoices 2024/invoice-053.pdf": "v1"
+   },
+   "chars": 7431,
    "cards": 8
   },
   "sem-rental-agreement": {
    "status": "ok",
    "tiers": {
     "Inbox/Super important agreement.pdf": "v1",
+    "Inbox/Rent for November.eml": "v1",
     "Contracts/Lease agreement — Porto.pdf": "v1",
     "Inbox/Lease agreement — Porto.pdf": "v1",
-    "Inbox/Rent for November.eml": "v1",
     "Finance/Tax summary 2025.pdf": "v1",
     "Receipts/Ticket supermercado 2026-02-14.pdf": "v1",
+    "Documents": "v1",
     "Inbox/Résumé.pdf": "v1",
-    "Finance/budget-2026.ods": "v1",
-    "Piso/Factura F-2026-0311.pdf": "v1"
+    "Documents/Phone photos/IMG_20260702_091503.jpg": "v1"
    },
-   "chars": 11336,
+   "chars": 10459,
    "cards": 8
   },
   "sem-related-german": {
@@ -520,7 +534,7 @@
     "Archive/Invoices 2024/invoice-336.pdf": "v1",
     "Archive/Invoices 2024/invoice-180.pdf": "v1"
    },
-   "chars": 7974,
+   "chars": 8040,
    "cards": 8
   },
   "sem-related-dentist": {
@@ -528,14 +542,14 @@
    "tiers": {
     "Home/Garantía lavadora.pdf": "v1",
     "Contracts/Contrato de alquiler 2026.pdf": "v1",
-    "Notes/Fiestas del año.md": "v1",
-    "Vault/note-326.md": "v1",
-    "Piso/Factura F-2026-0311.pdf": "v1",
-    "Vault/note-778.md": "v1",
     "Health/Informe laboratorio 2025-03.pdf": "v1",
-    "Vault/note-471.md": "v1"
+    "Vault/note-326.md": "v1",
+    "Vault/note-778.md": "v1",
+    "Piso/Factura F-2026-0311.pdf": "v1",
+    "Vault/note-471.md": "v1",
+    "Vault/note-032.md": "v1"
    },
-   "chars": 9647,
+   "chars": 9534,
    "cards": 8
   },
   "cls-receipts": {
@@ -550,7 +564,7 @@
     "Archive/Invoices 2024/invoice-359.pdf": "v1",
     "Archive/Invoices 2024/invoice-238.pdf": "v1"
    },
-   "chars": 7521,
+   "chars": 7587,
    "cards": 8
   },
   "cls-receipts-ru": {
@@ -561,11 +575,11 @@
     "Vault/note-221.md": "v1",
     "Archive/Invoices 2024/invoice-073.pdf": "v1",
     "Archive/Invoices 2024/invoice-020.pdf": "v1",
-    "Notes/Устав клуба.rtf": "v1",
-    "Vault/note-101.md": "v1",
-    "Vault/note-105.md": "v1"
+    "Contracts/Договір_ред1.docx": "v1",
+    "Notes/Статут клубу.rtf": "v1",
+    "Contracts/Договір_ред3.docx": "v1"
    },
-   "chars": 6637,
+   "chars": 9182,
    "cards": 8
   },
   "cls-expires": {
@@ -580,22 +594,22 @@
     "Vault/note-102.md": "v1",
     "Vault/note-522.md": "v1"
    },
-   "chars": 10536,
+   "chars": 10602,
    "cards": 8
   },
   "cls-tickets": {
    "status": "ok",
    "tiers": {
     "Receipts/Ticket supermercado 2026-02-14.pdf": "v1",
-    "Travel/Бронь отеля.docx": "v1",
+    "Travel/Бронювання готелю.docx": "v1",
     "Archive/Invoices 2024/invoice-585.pdf": "v1",
+    "Finance/Рахунок-фактура №1847.pdf": "v1",
     "Archive/Invoices 2024/invoice-308.pdf": "v1",
-    "Finance/Счёт-фактура №1847.pdf": "v1",
     "Archive/Invoices 2024/invoice-200.pdf": "v1",
     "Finance/expenses-2025.csv": "v1",
     "Vault/note-585.md": "v1"
    },
-   "chars": 8721,
+   "chars": 8842,
    "cards": 8
   },
   "cls-invoices-2026": {
@@ -605,59 +619,59 @@
     "Media/voice memo.m4a": "v1",
     "Finance/Tax summary 2025.pdf": "v1",
     "Inbox/sales_regions_2026.xlsx": "v1",
-    "Scans/Scan_0013.pdf": "v1",
     "Screenshots/Знімок екрана 2026-06-01 093512.png": "v1",
-    "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1",
-    "Contracts/Lease agreement — Porto.pdf": "v1",
-    "Inbox/Lease agreement — Porto.pdf": "v1"
+    "Scans/Scan_0013.pdf": "v1",
+    "Shared": "v1",
+    "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1"
    },
-   "chars": 7606,
+   "chars": 6346,
    "cards": 8
   },
   "cls-medical": {
    "status": "ok",
    "tiers": {
+    "Screenshots/IMG_0412.png": "v1",
     "Archive/Invoices 2024/invoice-433.pdf": "v1",
     "Archive/Invoices 2024/invoice-281.pdf": "v1",
     "Contracts/Lease agreement — Porto.pdf": "v1",
     "Inbox/Lease agreement — Porto.pdf": "v1",
-    "Archive/Invoices 2024/invoice-555.pdf": "v1",
     "Media/Recording 2026-10-14 09-41-27.webm": "v1",
     "Archive/Invoices 2024/invoice-070.pdf": "v1",
-    "Archive/Invoices 2024/invoice-075.pdf": "v1",
-    "Health/Informe laboratorio 2025-03.pdf": "v1"
+    "Archive/Invoices 2024/invoice-555.pdf": "v1",
+    "Documents/Phone photos/IMG_20260702_091503.jpg": "v1"
    },
-   "chars": 10190,
+   "chars": 8624,
    "cards": 8
   },
   "cls-insurance": {
    "status": "ok",
    "tiers": {
+    "Documents": "v1",
     "Archive/Invoices 2024/invoice-273.pdf": "v1",
     "Archive/Invoices 2024/invoice-555.pdf": "v1",
     "Archive/Invoices 2024/invoice-508.pdf": "v1",
     "Archive/Invoices 2024/invoice-169.pdf": "v1",
     "Archive/Invoices 2024/invoice-562.pdf": "v1",
     "Archive/Invoices 2024/invoice-144.pdf": "v1",
-    "Archive/Invoices 2024/invoice-139.pdf": "v1",
-    "Archive/Invoices 2024/invoice-373.pdf": "v1"
+    "Archive/Invoices 2024/invoice-139.pdf": "v1"
    },
-   "chars": 7974,
+   "chars": 7333,
    "cards": 8
   },
-  "mis-barcelona": {
+  "mis-coimbra": {
    "status": "ok",
    "tiers": {
-    "Archive/Invoices 2024/invoice-293.pdf": "v1",
-    "Photos/Barcelona 2024": "v1",
-    "Archive/Invoices 2024/invoice-070.pdf": "v1",
-    "Archive/Invoices 2024/invoice-423.pdf": "v1",
-    "Archive/Invoices 2024/invoice-486.pdf": "v1",
-    "Archive/Invoices 2024/invoice-249.pdf": "v1",
-    "Archive/Invoices 2024/invoice-437.pdf": "v1",
-    "Archive/Invoices 2024/invoice-372.pdf": "v1"
+    "Photos/Coimbra 2024": "v1",
+    "Notes/Roadmap 2027.odp": "v1",
+    "Inbox/sales_regions_2026.xlsx": "v1",
+    "Receipts/Ticket supermercado 2026-02-14.pdf": "v1",
+    "Home/Garantía lavadora.pdf": "v1",
+    "Contracts/Договір_ред1.docx": "v1",
+    "Contracts/Lease agreement — Porto.pdf": "v1",
+    "Inbox/Lease agreement — Porto.pdf": "v1",
+    "Contracts/Договір_ред3.docx": "v1"
    },
-   "chars": 7296,
+   "chars": 10693,
    "cards": 8
   },
   "mis-garantia": {
@@ -672,22 +686,22 @@
     "Vault/note-307.md": "v1",
     "Vault/note-593.md": "v1"
    },
-   "chars": 5524,
+   "chars": 5590,
    "cards": 8
   },
   "mis-abonement": {
    "status": "ok",
    "tiers": {
-    "Notes/Устав клуба.rtf": "v1",
+    "Notes/Статут клубу.rtf": "v1",
     "Vault/note-551.md": "v1",
     "Vault/note-518.md": "v1",
     "Vault/note-296.md": "v1",
     "Inbox/Super important agreement.pdf": "v1",
     "Vault/note-485.md": "v1",
-    "Vault/note-182.md": "v1",
-    "Notes/Plan de viaje Roma.md": "v1"
+    "Notes/Plan de viaje Roma.md": "v1",
+    "Vault/note-182.md": "v1"
    },
-   "chars": 7133,
+   "chars": 7202,
    "cards": 8
   },
   "mis-cholesterol": {
@@ -700,40 +714,39 @@
     "Notes/House hunting.md": "v1",
     "Notes/Weekend ideas.md": "v1",
     "Inbox/Super important agreement.pdf": "v1",
-    "Contracts/Lease agreement — Porto.pdf": "v1",
-    "Inbox/Lease agreement — Porto.pdf": "v1"
+    "Scans/IMG_4912.jpg": "v1"
    },
-   "chars": 10731,
+   "chars": 8808,
    "cards": 8
   },
   "neg-vaccination": {
    "status": "ok",
    "tiers": {
-    "Inbox/Résumé.pdf": "v1",
+    "Shared/Chimney inspection certificate.pdf": "v1",
     "Finance/Tax summary 2025.pdf": "v1",
     "Home/Garantía lavadora.pdf": "v1",
-    "Notes/Fiestas del año.md": "v1",
     "Vault/note-426.md": "v1",
-    "Inbox/Quarterly review.pptx": "v1",
-    "Projects/site-export/package.json": "v1",
-    "Vault/note-225.md": "v1"
+    "Inbox/Résumé.pdf": "v1",
+    "Notes/Fiestas del año.md": "v1",
+    "Contracts/Договір_ред1.docx": "v1",
+    "Inbox/Quarterly review.pptx": "v1"
    },
-   "chars": 7286,
+   "chars": 8224,
    "cards": 8
   },
   "neg-dog": {
    "status": "ok",
    "tiers": {
     "Projects/site-export/package.json": "v1",
-    "Inbox/Résumé.pdf": "v1",
-    "Inbox/Quarterly review.pptx": "v1",
     "Notes/Ідеї для проєкту.md": "v1",
+    "Inbox/Quarterly review.pptx": "v1",
     "Finance/Tax summary 2025.pdf": "v1",
-    "Vehicle/ITV 2025.pdf": "v1",
-    "Contracts/Договор_ред1.docx": "v1",
-    "Contracts/Contrato de alquiler 2026.pdf": "v1"
+    "Inbox/Résumé.pdf": "v1",
+    "Scans/IMG_4912.jpg": "v1",
+    "Shared/Chimney inspection certificate.pdf": "v1",
+    "Finance/Рахунок-фактура №1847.pdf": "v1"
    },
-   "chars": 10671,
+   "chars": 7868,
    "cards": 8
   },
   "neg-mortgage": {
@@ -742,14 +755,13 @@
     "Inbox/Super important agreement.pdf": "v1",
     "Archive/Invoices 2024/invoice-265.pdf": "v1",
     "Archive/Invoices 2024/invoice-277.pdf": "v1",
-    "Archive/Invoices 2024/invoice-555.pdf": "v1",
+    "Documents/DOC_20260610_0042.pdf": "v1",
     "Archive/Invoices 2024/invoice-110.pdf": "v1",
+    "Archive/Invoices 2024/invoice-555.pdf": "v1",
     "Archive/Invoices 2024/invoice-579.pdf": "v1",
-    "Contracts/Lease agreement — Porto.pdf": "v1",
-    "Inbox/Lease agreement — Porto.pdf": "v1",
     "Archive/Invoices 2024/invoice-405.pdf": "v1"
    },
-   "chars": 10646,
+   "chars": 8713,
    "cards": 8
   },
   "neg-parking-fine": {
@@ -759,27 +771,27 @@
     "Archive/Invoices 2024/invoice-559.pdf": "v1",
     "Archive/Invoices 2024/invoice-083.pdf": "v1",
     "Archive/Invoices 2024/invoice-560.pdf": "v1",
-    "Inbox/Résumé.pdf": "v1",
     "Archive/Invoices 2024/invoice-483.pdf": "v1",
     "Archive/Invoices 2024/invoice-181.pdf": "v1",
-    "Archive/Invoices 2024/invoice-448.pdf": "v1"
+    "Archive/Invoices 2024/invoice-448.pdf": "v1",
+    "Archive/Invoices 2024/invoice-096.pdf": "v1"
    },
-   "chars": 8211,
+   "chars": 8040,
    "cards": 8
   },
-  "neg-flight-barcelona": {
+  "neg-flight-coimbra": {
    "status": "ok",
    "tiers": {
     "Receipts/Ticket supermercado 2026-02-14.pdf": "v1",
-    "Photos/Barcelona 2024": "v1",
+    "Photos/Coimbra 2024": "v1",
+    "Home/Garantía lavadora.pdf": "v1",
+    "Travel/Бронювання готелю.docx": "v1",
+    "Notes/Ідеї для проєкту.md": "v1",
+    "Contracts/Договір_ред1.docx": "v1",
     "Projects/site-export/package.json": "v1",
-    "Vault/note-200.md": "v1",
-    "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1",
-    "Vault/note-385.md": "v1",
-    "Contracts/Contrato de alquiler 2026.pdf": "v1",
-    "Vault/note-308.md": "v1"
+    "Piso/Factura F-2026-0311.pdf": "v1"
    },
-   "chars": 7650,
+   "chars": 8306,
    "cards": 8
   },
   "neg-ipoteka": {
@@ -794,7 +806,7 @@
     "Vault/note-662.md": "v1",
     "Vault/note-273.md": "v1"
    },
-   "chars": 5887,
+   "chars": 5943,
    "cards": 8
   },
   "neg-home-address": {
@@ -804,12 +816,12 @@
     "Notes/Roadmap 2027.odp": "v1",
     "Vault/note-722.md": "v1",
     "Vault/note-775.md": "v1",
-    "Photos/WhatsApp/IMG-20251120-WA0005.jpg": "v1",
     "Vault/note-673.md": "v1",
+    "Photos/WhatsApp/IMG-20251120-WA0005.jpg": "v1",
     "Notes/Ідеї для проєкту.md": "v1",
     "Vault/note-493.md": "v1"
    },
-   "chars": 5565,
+   "chars": 5622,
    "cards": 8
   },
   "neg-wedding-plan": {
@@ -818,13 +830,13 @@
     "Notes/Plan de viaje Roma.md": "v1",
     "Inbox/Quarterly Planning Review.docx": "v1",
     "Media/Recording 2026-10-14 09-41-27.webm": "v1",
-    "Scans/Scan_0013.pdf": "v1",
     "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1",
+    "Scans/Scan_0013.pdf": "v1",
     "Vault/note-793.md": "v1",
-    "Vault/note-620.md": "v1",
-    "Notes/notes (2).md": "v1"
+    "Documents/Phone photos/IMG_20260702_091503.jpg": "v1",
+    "Vault/note-620.md": "v1"
    },
-   "chars": 6501,
+   "chars": 6540,
    "cards": 8
   },
   "neg-car-claim": {
@@ -833,13 +845,13 @@
     "Archive/Invoices 2024/invoice-273.pdf": "v1",
     "Archive/Invoices 2024/invoice-448.pdf": "v1",
     "Archive/Invoices 2024/invoice-555.pdf": "v1",
+    "Vehicle/Motor policy MP-2026-118204.pdf": "v1",
     "Archive/Invoices 2024/invoice-508.pdf": "v1",
     "Archive/Invoices 2024/invoice-562.pdf": "v1",
     "Archive/Invoices 2024/invoice-573.pdf": "v1",
-    "Archive/Invoices 2024/invoice-150.pdf": "v1",
-    "Archive/Invoices 2024/invoice-173.pdf": "v1"
+    "Archive/Invoices 2024/invoice-150.pdf": "v1"
    },
-   "chars": 7974,
+   "chars": 8262,
    "cards": 8
   },
   "neg-dentist-invoice": {
@@ -854,23 +866,23 @@
     "Archive/Invoices 2024/invoice-164.pdf": "v1",
     "Archive/Invoices 2024/invoice-133.pdf": "v1"
    },
-   "chars": 7860,
+   "chars": 7926,
    "cards": 8
   },
   "neg-colosseum-tickets": {
    "status": "ok",
    "tiers": {
     "Receipts/Ticket supermercado 2026-02-14.pdf": "v1",
+    "Travel/Бронювання готелю.docx": "v1",
     "Vehicle/Motor policy MP-2026-118204.pdf": "v1",
-    "Travel/Бронь отеля.docx": "v1",
-    "Contracts/Lease agreement — Porto.pdf": "v1",
-    "Inbox/Lease agreement — Porto.pdf": "v1",
-    "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1",
+    "Documents/DOC_20260610_0042.pdf": "v1",
     "Inbox/Quarterly Planning Review.docx": "v1",
+    "Home/Garantía lavadora.pdf": "v1",
     "Notes/Meeting 2026-09-14.vtt": "v1",
-    "Archive/Invoices 2024/invoice-585.pdf": "v1"
+    "Contracts/Lease agreement — Porto.pdf": "v1",
+    "Inbox/Lease agreement — Porto.pdf": "v1"
    },
-   "chars": 10052,
+   "chars": 10075,
    "cards": 8
   },
   "neg-pool-booking": {
@@ -882,16 +894,16 @@
     "Vault/note-196.md": "v1",
     "Vault/note-124.md": "v1",
     "Vault/note-490.md": "v1",
-    "Vault/note-570.md": "v1",
-    "Vault/note-784.md": "v1"
+    "Receipts/Example Hardware 2026-05-03.pdf": "v1",
+    "Vault/note-570.md": "v1"
    },
-   "chars": 5405,
+   "chars": 5806,
    "cards": 8
   },
   "neg-electricity-2024": {
    "status": "ok",
    "tiers": {
-    "Photos/Barcelona 2024": "v1",
+    "Photos/Coimbra 2024": "v1",
     "Archive/Invoices 2024": "v1",
     "Archive/Invoices 2024/invoice-221.pdf": "v1",
     "Archive/Invoices 2024/invoice-447.pdf": "v1",
@@ -900,7 +912,7 @@
     "Archive/Camera roll/IMG_0693.HEIC": "v1",
     "Archive/Invoices 2024/invoice-474.pdf": "v1"
    },
-   "chars": 6008,
+   "chars": 6068,
    "cards": 8
   },
   "inc-rome": {
@@ -911,11 +923,11 @@
     "Receipts/Example Hardware 2026-05-03.pdf": "v1",
     "Vault/note-507.md": "v1",
     "Vault/note-505.md": "v1",
-    "Notes/Weekend ideas.md": "v1",
     "Vault/note-181.md": "v1",
+    "Notes/Weekend ideas.md": "v1",
     "Vault/note-743.md": "v1"
    },
-   "chars": 5552,
+   "chars": 5618,
    "cards": 8
   },
   "inc-rome-ru": {
@@ -927,10 +939,310 @@
     "Archive/Invoices 2024/invoice-213.pdf": "v1",
     "Archive/Invoices 2024/invoice-542.pdf": "v1",
     "Archive/Invoices 2024/invoice-100.pdf": "v1",
-    "Travel/Бронь отеля.docx": "v1",
-    "Vault/note-625.md": "v1"
+    "Vault/note-625.md": "v1",
+    "Vault/note-100.md": "v1"
    },
-   "chars": 7489,
+   "chars": 7370,
+   "cards": 8
+  },
+  "cls-scans-en": {
+   "status": "ok",
+   "tiers": {
+    "Scans": "v1",
+    "Archive/Invoices 2024/invoice-412.pdf": "v1",
+    "Archive/Invoices 2024/invoice-266.pdf": "v1",
+    "Archive/Invoices 2024/invoice-221.pdf": "v1",
+    "Contracts/Акт приймання № 52.odt": "v1",
+    "Archive/Invoices 2024/invoice-397.pdf": "v1",
+    "Archive/Invoices 2024/invoice-582.pdf": "v1",
+    "Archive/Invoices 2024/invoice-570.pdf": "v1"
+   },
+   "chars": 7333,
+   "cards": 8
+  },
+  "cls-scans-uk": {
+   "status": "ok",
+   "tiers": {
+    "Vault/note-112.md": "v1",
+    "Vault/note-700.md": "v1",
+    "Vault/note-441.md": "v1",
+    "Vault/note-743.md": "v1",
+    "Vault/note-318.md": "v1",
+    "Vault/note-221.md": "v1",
+    "Vault/note-685.md": "v1",
+    "Vault/note-170.md": "v1"
+   },
+   "chars": 5360,
+   "cards": 8
+  },
+  "cls-scans-es": {
+   "status": "ok",
+   "tiers": {
+    "Scans/Scan_0012.pdf": "v1",
+    "Vault/note-746.md": "v1",
+    "Vault/note-539.md": "v1",
+    "Notes/Ідеї для проєкту.md": "v1",
+    "Scans": "v1",
+    "Vault/note-434.md": "v1",
+    "Vault/note-435.md": "v1",
+    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1"
+   },
+   "chars": 5709,
+   "cards": 8
+  },
+  "cls-screenshot-ru": {
+   "status": "ok",
+   "tiers": {
+    "Receipts/Ticket supermercado 2026-02-14.pdf": "v1",
+    "Archive/Invoices 2024/invoice-147.pdf": "v1",
+    "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1",
+    "Contracts/Договір_ред3.docx": "v1",
+    "Archive/Invoices 2024/invoice-173.pdf": "v1",
+    "Contracts/Договір_ред1.docx": "v1",
+    "Scans/Scan_0013.pdf": "v1",
+    "Archive/Invoices 2024/invoice-445.pdf": "v1"
+   },
+   "chars": 9722,
+   "cards": 8
+  },
+  "cls-screenshots-en": {
+   "status": "ok",
+   "tiers": {
+    "Screenshots": "v1",
+    "Archive/Invoices 2024/invoice-347.pdf": "v1",
+    "Media/voice memo.m4a": "v1",
+    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1",
+    "Finance/expenses-2025.csv": "v1",
+    "Archive/Camera roll/IMG_0443.HEIC": "v1",
+    "Archive/Invoices 2024/invoice-498.pdf": "v1",
+    "Archive/Camera roll/IMG_0165.HEIC": "v1"
+   },
+   "chars": 5862,
+   "cards": 8
+  },
+  "ex-date-expiry-dotted": {
+   "status": "ok",
+   "tiers": {
+    "Receipts/Example Hardware 2026-05-03.pdf": "v1",
+    "Documents/DOC_20260610_0042.pdf": "v1",
+    "Vault/note-707.md": "v1",
+    "Vault/note-564.md": "v1",
+    "Vault/note-284.md": "v1",
+    "Vault/note-640.md": "v1",
+    "Vault/note-127.md": "v1",
+    "Vault/note-235.md": "v1"
+   },
+   "chars": 5803,
+   "cards": 8
+  },
+  "ex-date-expiry-spaced": {
+   "status": "ok",
+   "tiers": {
+    "Documents/DOC_20260610_0042.pdf": "v1",
+    "Receipts/Example Hardware 2026-05-03.pdf": "v1",
+    "Vault/note-707.md": "v1",
+    "Vault/note-564.md": "v1",
+    "Vault/note-284.md": "v1",
+    "Vault/note-640.md": "v1",
+    "Vault/note-127.md": "v1",
+    "Vault/note-235.md": "v1"
+   },
+   "chars": 5804,
+   "cards": 8
+  },
+  "ex-date-valid-until": {
+   "status": "ok",
+   "tiers": {
+    "Receipts/Example Hardware 2026-05-03.pdf": "v1",
+    "Documents/DOC_20260610_0042.pdf": "v1",
+    "Vault/note-564.md": "v1",
+    "Vault/note-707.md": "v1",
+    "Vault/note-192.md": "v1",
+    "Notes/House hunting.md": "v1",
+    "Archive/Camera roll/IMG_0792.HEIC": "v1",
+    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1"
+   },
+   "chars": 5462,
+   "cards": 8
+  },
+  "ex-value-id-number": {
+   "status": "ok",
+   "tiers": {
+    "Vault/note-755.md": "v1",
+    "Vault/note-139.md": "v1",
+    "Contracts/Договір_ред2.docx": "v1",
+    "Contracts/Договір_ред1.docx": "v1",
+    "Receipts/Ticket supermercado 2026-02-14.pdf": "v1",
+    "Contracts/Договір_ред3.docx": "v1",
+    "Receipts/Example Hardware 2026-05-03.pdf": "v1",
+    "Vault/note-558.md": "v1"
+   },
+   "chars": 9855,
+   "cards": 8
+  },
+  "ex-value-id-number-spaced": {
+   "status": "ok",
+   "tiers": {
+    "Documents/DOC_20260610_0042.pdf": "v1",
+    "Vault/note-516.md": "v1",
+    "Vault/note-665.md": "v1",
+    "Vault/note-452.md": "v1",
+    "Vault/note-419.md": "v1",
+    "Finance/budget-2026.ods": "v1",
+    "Vault/note-292.md": "v1",
+    "Receipts/Ticket supermercado 2026-02-14.pdf": "v1"
+   },
+   "chars": 5916,
+   "cards": 8
+  },
+  "ex-inaccessible-name": {
+   "status": "ok",
+   "tiers": {
+    "Shared/Chimney inspection certificate.pdf": "v1",
+    "Vehicle/IPO 2025.pdf": "v1",
+    "Inbox/Résumé.pdf": "v1",
+    "Notes/Fiestas del año.md": "v1",
+    "Inbox/sales_regions_2026.xlsx": "v1",
+    "Finance/budget-2026.ods": "v1",
+    "Спорт/Абонемент 2026.md": "v1",
+    "Notes/Статут клубу.rtf": "v1"
+   },
+   "chars": 6819,
+   "cards": 8
+  },
+  "cls-sunsets-en": {
+   "status": "ok",
+   "tiers": {
+    "Archive/Invoices 2024/invoice-102.pdf": "v1",
+    "Archive/Invoices 2024/invoice-594.pdf": "v1",
+    "Archive/Invoices 2024/invoice-410.pdf": "v1",
+    "Archive/Invoices 2024/invoice-529.pdf": "v1",
+    "Archive/Invoices 2024/invoice-085.pdf": "v1",
+    "Archive/Invoices 2024/invoice-044.pdf": "v1",
+    "Archive/Invoices 2024/invoice-104.pdf": "v1",
+    "Archive/Invoices 2024/invoice-103.pdf": "v1"
+   },
+   "chars": 8040,
+   "cards": 8
+  },
+  "cls-sunsets-ru": {
+   "status": "ok",
+   "tiers": {
+    "Vault/note-499.md": "v1",
+    "Vault/note-449.md": "v1",
+    "Archive/Invoices 2024/invoice-499.pdf": "v1",
+    "Vault/note-237.md": "v1",
+    "Archive/Invoices 2024/invoice-237.pdf": "v1",
+    "Archive/Invoices 2024/invoice-566.pdf": "v1",
+    "Scans/Scan_0012.pdf": "v1",
+    "Vault/note-458.md": "v1"
+   },
+   "chars": 6657,
+   "cards": 8
+  },
+  "cls-sunsets-es": {
+   "status": "ok",
+   "tiers": {
+    "Contracts/Contrato de alquiler 2026.pdf": "v1",
+    "Notes/Plan de viaje Roma.md": "v1",
+    "Notes/Fiestas del año.md": "v1",
+    "Home/Garantía lavadora.pdf": "v1",
+    "Vehicle/IPO 2025.pdf": "v1",
+    "Inbox/Résumé.pdf": "v1",
+    "Piso/Factura F-2026-0311.pdf": "v1",
+    "Piso/Factura 2026-078.pdf": "v1"
+   },
+   "chars": 9619,
+   "cards": 8
+  },
+  "cls-sunset-photos": {
+   "status": "ok",
+   "tiers": {
+    "Photos/WhatsApp/IMG-20251120-WA0005.jpg": "v1",
+    "Scans/IMG_4912.jpg": "v1",
+    "Screenshots/Знімок екрана 2026-06-01 093512.png": "v1",
+    "Documents/Phone photos/IMG_20260702_091503.jpg": "v1",
+    "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1",
+    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png": "v1",
+    "Archive/Camera roll/IMG_0990.HEIC": "v1",
+    "Archive/Camera roll/IMG_0514.HEIC": "v1"
+   },
+   "chars": 5748,
+   "cards": 8
+  },
+  "cls-beach-ru": {
+   "status": "ok",
+   "tiers": {
+    "Archive/Invoices 2024/invoice-016.pdf": "v1",
+    "Archive/Invoices 2024/invoice-047.pdf": "v1",
+    "Archive/Invoices 2024/invoice-591.pdf": "v1",
+    "Archive/Invoices 2024/invoice-389.pdf": "v1",
+    "Archive/Invoices 2024/invoice-596.pdf": "v1",
+    "Archive/Invoices 2024/invoice-074.pdf": "v1",
+    "Archive/Invoices 2024/invoice-337.pdf": "v1",
+    "Archive/Invoices 2024/invoice-045.pdf": "v1"
+   },
+   "chars": 8040,
+   "cards": 8
+  },
+  "cls-beach-en": {
+   "status": "ok",
+   "tiers": {
+    "Projects/site-export/package.json": "v1",
+    "Vault/note-175.md": "v1",
+    "Vault/note-660.md": "v1",
+    "Documents/Phone photos/IMG_20260702_091503.jpg": "v1",
+    "Inbox/Quarterly Planning Review.docx": "v1",
+    "Inbox/Rent for November.eml": "v1",
+    "Screenshots/IMG_0412.png": "v1",
+    "Archive/Invoices 2024/invoice-175.pdf": "v1"
+   },
+   "chars": 6961,
+   "cards": 8
+  },
+  "ex-place-berlin": {
+   "status": "ok",
+   "tiers": {
+    "Documents/Phone photos/IMG_20260702_091503.jpg": "v1",
+    "Photos/Camera/IMG_20260905_172209.jpg": "v1",
+    "Archive/Camera roll/IMG_0640.HEIC": "v1",
+    "Screenshots/Знімок екрана 2026-06-01 093512.png": "v1",
+    "Photos/Rome 2025/IMG_5106.HEIC": "v1",
+    "Screenshots/Captura de pantalla 2026-03-09 184410.png": "v1",
+    "Archive/Camera roll/IMG_0822.HEIC": "v1",
+    "Photos/WhatsApp/IMG-20251120-WA0005.jpg": "v1"
+   },
+   "chars": 5016,
+   "cards": 8
+  },
+  "sem-landmark-funkturm": {
+   "status": "ok",
+   "tiers": {
+    "Vault/note-236.md": "v1",
+    "Vault/note-566.md": "v1",
+    "Vault/note-526.md": "v1",
+    "Vault/note-523.md": "v1",
+    "Покупки/Аптека 21.04.txt": "v1",
+    "Notes/Roadmap 2027.odp": "v1",
+    "Vault/note-365.md": "v1",
+    "Vault/note-550.md": "v1"
+   },
+   "chars": 5801,
+   "cards": 8
+  },
+  "sem-landmark-funkturm-uk": {
+   "status": "ok",
+   "tiers": {
+    "Vault/note-729.md": "v1",
+    "Vault/note-667.md": "v1",
+    "Vault/note-274.md": "v1",
+    "Vault/note-164.md": "v1",
+    "Notes/Weekend ideas.md": "v1",
+    "Vault/note-321.md": "v1",
+    "Vault/note-755.md": "v1",
+    "Vault/note-647.md": "v1"
+   },
+   "chars": 5641,
    "cards": 8
   }
  },
@@ -966,7 +1278,7 @@
   "date-rome-august-photos-word": false,
   "date-invoice-march": true,
   "date-recording-october": true,
-  "place-rome": false,
+  "place-rome": true,
   "place-rome-type-word": false,
   "place-porto-ru": false,
   "place-porto-ru-type-word": false,
@@ -1017,7 +1329,7 @@
   "g2-date-written-out": false,
   "g2-ocr-electricity-date": true,
   "g2-ocr-hardware": true,
-  "g2-ocr-cafe": true,
+  "g2-ocr-cafe": false,
   "g2-ocr-bank": false,
   "g2-ocr-parcel": true,
   "g2-ocr-train-seat": true,
