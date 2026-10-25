@@ -42,7 +42,7 @@ async def test_no_companion_releases_ticket_and_marker_and_alerts():
         answer_url="https://app.example/voice/answer", signature_verifier=twilio))
     with eval_transactions():
         await store.set("voice_pending_callback:CAin", {"ticket": "t1", "user_id": "u1", "account_id": "a1",
-                                                        "to_number": "+34600000000"}, ttl_s=300)
+                                                        "to_number": "+12025550100"}, ttl_s=300)
         await store.set("voice_ticket:t1", {"user_id": "u1", "account_id": "a1"}, ttl_s=300)
         await store.set("voice_one_call:u1", {"in_flight": True}, ttl_s=300)
         signature = RequestValidator(TOKEN).compute_signature("http://localhost/voice/inbound-status", FORM)

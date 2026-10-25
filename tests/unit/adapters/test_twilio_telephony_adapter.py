@@ -13,16 +13,16 @@ async def test_originate_call_uses_answer_url_not_auth_webhook():
     adapter = TwilioTelephonyAdapter(account_sid="AC1", auth_token="tok", client_factory=lambda *a, **k: fake_client)
 
     sid = await adapter.originate_call(
-        to="+346001",
-        from_="+346002",
+        to="+15550101",
+        from_="+15550102",
         answer_url="https://main.example.com/voice/answer",
         status_callback_url="https://main.example.com/voice/status",
     )
 
     assert sid == "CA123"
     fake_client.calls.create.assert_called_once_with(
-        to="+346001",
-        from_="+346002",
+        to="+15550101",
+        from_="+15550102",
         url="https://main.example.com/voice/answer",
         machine_detection="DetectMessageEnd",
         async_amd=True,

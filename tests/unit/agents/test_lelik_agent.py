@@ -10,7 +10,7 @@ def _build_agent(telephony):
     return LelikAgent(
         config=MagicMock(agent_id="lelik_agent_u1"),
         telephony=telephony,
-        from_number="+346002",
+        from_number="+15550102",
         status_callback_url="https://main.example.com/voice/status",
         prompt_builder=AsyncMock(),
         persona=AsyncMock(),
@@ -28,14 +28,14 @@ async def test_execute_originates_call_with_answer_url_carrying_ticket():
 
     response = await agent.execute(
         purpose="user asked to talk", ticket="t1", answer_url="https://main.example.com/voice/answer",
-        to_number="+346001",
+        to_number="+15550101",
     )
 
     assert response.status == AgentStatus.SUCCESS
     telephony.originate_call.assert_awaited_once()
     call = telephony.originate_call.await_args
-    assert call.kwargs["from_"] == "+346002"
-    assert call.kwargs["to"] == "+346001"
+    assert call.kwargs["from_"] == "+15550102"
+    assert call.kwargs["to"] == "+15550101"
     assert "ticket=t1" in call.kwargs["answer_url"]
     assert call.kwargs["answer_url"].startswith("https://main.example.com/voice/answer?")
     # FIX I1(b), final whole-branch review: the status callback carries the
@@ -61,7 +61,7 @@ async def test_execute_propagates_origination_failure():
     with pytest.raises(RuntimeError, match="origination boom"):
         await agent.execute(
             purpose="user asked to talk", ticket="t1", answer_url="https://main.example.com/voice/answer",
-            to_number="+346001",
+            to_number="+15550101",
         )
 
 

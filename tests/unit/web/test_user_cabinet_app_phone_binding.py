@@ -6,13 +6,9 @@ binder owns the platform ID; inheriting that trust model for a phone number woul
 permit squatting. These two routes add a one-time OTP step (Twilio Verify) before
 `add_platform_id(..., "phone", ...)` is allowed to run.
 
-Phone fixtures use short, non-realistic placeholders (e.g. "+3460012") per the
-Slice 1 plan ruling — the repo's pre-commit PII hook has no tests/ allowlist for
-realistic 9-digit phone-shaped literals. "+3460012" is deliberately 7 digits
-(minimum length the E.164 regex `^\\+[1-9]\\d{6,14}$` accepts) — short enough to
-stay under the hook's own `\\+[1-9][0-9]{7,14}` trigger (needs 8+ digits after
-the '+'), while still exercising real validation rather than a magic-length
-special case.
+Phone fixtures use the fictional +1 555 01xx range (e.g. "+15550112"): no real
+subscriber can hold them, and they still pass the real E.164 validation
+(`^\\+[1-9]\\d{6,14}$`) rather than a magic-length special case.
 """
 from unittest.mock import AsyncMock, MagicMock
 
@@ -22,7 +18,7 @@ from src.web.user_cabinet_app import create_user_cabinet_blueprint
 
 _USER_ID = "user-1"
 _ACCOUNT_ID = "account-1"
-_PHONE = "+3460012"
+_PHONE = "+15550112"
 
 
 def _app(*, twilio_verify_client, user_repo=None):
@@ -113,7 +109,7 @@ class TestRequestPhoneOtp:
                 "/api/user/request-phone-otp",
                 headers={"Authorization": "Bearer token"},
                 # 6 digits after '+' — below the E.164 regex's 7-digit minimum.
-                json={"phone_number": "+346001"},
+                json={"phone_number": "+155501"},
             )
 
         assert resp.status_code == 400
@@ -194,7 +190,7 @@ class TestVerifyPhoneOtp:
             resp = await client.post(
                 "/api/user/verify-phone-otp",
                 headers={"Authorization": "Bearer token"},
-                json={"phone_number": "+346001", "code": "123456"},
+                json={"phone_number": "+155501", "code": "123456"},
             )
 
         assert resp.status_code == 400

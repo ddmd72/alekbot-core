@@ -58,11 +58,11 @@ async def test_unbound_number_rejected_and_alerted_before_any_callback(deps):
 
     app = _app(deps)
     client = app.test_client()
-    response = await client.post("/voice/auth", form={"From": "+346001"})
+    response = await client.post("/voice/auth", form={"From": "+15550101"})
 
     body = (await response.get_data()).decode()
     assert "<Reject" in body
-    user_repository.get_user_by_platform_id.assert_awaited_once_with("phone", "+346001")
+    user_repository.get_user_by_platform_id.assert_awaited_once_with("phone", "+15550101")
     alert_sink.post.assert_awaited_once()
     ephemeral_store.set.assert_not_called()
     lelik_agent.execute.assert_not_called()
@@ -80,7 +80,7 @@ async def test_bound_number_mints_ticket_and_parks_callback_without_originating(
 
     app = _app(deps)
     client = app.test_client()
-    response = await client.post("/voice/auth", form={"From": "+346001", "CallSid": "CAin"})
+    response = await client.post("/voice/auth", form={"From": "+15550101", "CallSid": "CAin"})
 
     body = (await response.get_data()).decode()
     assert "<Say>" in body and "<Hangup" in body
@@ -93,7 +93,7 @@ async def test_bound_number_mints_ticket_and_parks_callback_without_originating(
     assert set_calls["voice_one_call:u1"][1] == 300
     pending, _ = set_calls["voice_pending_callback:CAin"]
     assert pending == {
-        "ticket": ticket_key.split(":", 1)[1], "user_id": "u1", "account_id": "a1", "to_number": "+346001",
+        "ticket": ticket_key.split(":", 1)[1], "user_id": "u1", "account_id": "a1", "to_number": "+15550101",
     }
 
     lelik_agent_factory.assert_not_called()
@@ -108,13 +108,13 @@ async def test_dial_without_call_sid_is_rejected(deps):
     user_repository.get_user_by_platform_id.return_value = MagicMock(user_id="u1", account_id="a1")
     ephemeral_store.get.return_value = None
 
-    response = await _app(deps).test_client().post("/voice/auth", form={"From": "+346001"})
+    response = await _app(deps).test_client().post("/voice/auth", form={"From": "+15550101"})
 
     assert "<Reject" in (await response.get_data()).decode()
     ephemeral_store.set.assert_not_called()
 
 
-_PENDING = {"ticket": "t1", "user_id": "u1", "account_id": "a1", "to_number": "+346001"}
+_PENDING = {"ticket": "t1", "user_id": "u1", "account_id": "a1", "to_number": "+15550101"}
 
 
 @pytest.mark.asyncio
@@ -135,7 +135,7 @@ async def test_inbound_completed_originates_the_parked_callback(deps):
     lelik_agent.execute.assert_awaited_once()
     assert lelik_agent.execute.await_args.kwargs["ticket"] == "t1"
     assert lelik_agent.execute.await_args.kwargs["answer_url"] == "https://main.example.com/voice/answer"
-    assert lelik_agent.execute.await_args.kwargs["to_number"] == "+346001"
+    assert lelik_agent.execute.await_args.kwargs["to_number"] == "+15550101"
     notification_service.notify_raw.assert_awaited_once()
     assert notification_service.notify_raw.await_args.kwargs["user_id"] == "u1"
     alert_sink.post.assert_not_called()
@@ -213,7 +213,7 @@ async def test_second_call_refused_while_one_already_in_flight(deps):
 
     app = _app(deps)
     client = app.test_client()
-    response = await client.post("/voice/auth", form={"From": "+346001"})
+    response = await client.post("/voice/auth", form={"From": "+15550101"})
 
     body = (await response.get_data()).decode()
     assert "<Reject" in body
@@ -349,7 +349,7 @@ async def test_answer_reads_ticket_from_query_string_as_lelik_agent_actually_sen
     client = _signed_app(ephemeral_store=ephemeral_store).test_client()
     response = await client.post(
         "/voice/answer?ticket=real-ticket",
-        form={"CallSid": "CA1", "AnsweredBy": "human", "From": "+346001"},
+        form={"CallSid": "CA1", "AnsweredBy": "human", "From": "+15550101"},
     )
 
     body = (await response.get_data()).decode()
@@ -465,7 +465,7 @@ async def test_status_callback_is_idempotent_when_ticket_already_released():
 @pytest.mark.parametrize(
     "path,form",
     [
-        ("/voice/auth", {"From": "+346001"}),
+        ("/voice/auth", {"From": "+15550101"}),
         ("/voice/answer?ticket=t1", {"CallSid": "CA1", "AnsweredBy": "human"}),
         ("/voice/status?ticket=t1", {"CallSid": "CA1", "CallStatus": "completed"}),
         ("/voice/inbound-status", {"CallSid": "CA1", "CallStatus": "completed"}),
