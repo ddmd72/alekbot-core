@@ -151,7 +151,7 @@ the next free id and says what is wrong, where (file and function, not line numb
 | TD-1 | Legacy GCS prompt dump (`PromptDebugLogger`) | removed 2026-06-29 | BigQuery `prompt_content` is the only capture path |
 | TD-2 | Cross-provider failover mid delegation loop mixed transcripts | 2026-06-29 | `decisions/transcript_integrity_one_provider.md` |
 | TD-2b | `TranscriptLockedError` dropped Smart straight to Quick | 2026-07-13 | `decisions/cross_provider_execution_retry.md` (follow-up: TD-13) |
-| TD-3 | "Dead `deliver_response` machinery" | **invalid, 2026-08-17 — do not delete it**: it is Smart's only reply path on Grok | `decisions/terminal_tool_co_emitted_calls.md` |
+| TD-3 | "Dead `deliver_response` machinery" | **invalid, 2026-08-17 — do not delete it**: it is Smart's only reply path on Grok; since 2026-10-23 Claude also synthesizes it (one string parameter) for schema + client-tool requests, and Quick and Tutor pass it too | `decisions/terminal_tool_co_emitted_calls.md` |
 | TD-4 | `update_fact` overwrote fact text in place | Facts S2, 2026-10-23 (history starts at the S2 deploy) | `decisions/fact_versions_one_writer.md` |
 | TD-7 | Cost priced by the agent's default model, not the model that ran | 2026-07-30 | `decisions/billing_per_model_pricing.md` |
 | TD-8 | `anthropic` unpinned | pinned 2026-08-11 (the wider sweep is R-5) | `requirements.txt` |

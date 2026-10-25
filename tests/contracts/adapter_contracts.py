@@ -662,6 +662,87 @@ NOTE_AFTER_TOOL_RESULT_SURVIVES_CONVERSION = ContractRule(
 )
 
 
+# ---- Structured output next to client tools (decisions/claude_deliver_response_string_tool.md) -------------------
+
+def _schema_keys(schema) -> set:
+    """Every property name a JSON schema declares, at any depth."""
+    keys: set = set()
+    if isinstance(schema, dict):
+        for name, sub in (schema.get("properties") or {}).items():
+            keys.add(name)
+            keys |= _schema_keys(sub)
+        for value in schema.values():
+            if isinstance(value, (dict, list)):
+                keys |= _schema_keys(value)
+    elif isinstance(schema, list):
+        for item in schema:
+            keys |= _schema_keys(item)
+    return keys
+
+
+def _claude_deliver_tool(kw: dict) -> dict:
+    tools = kw.get("tools") or []
+    _true(tools, "Claude: no tools were sent")
+    last = tools[-1]
+    _eq(last.get("name"), "deliver_response", "Claude: the last tool must be the synthesized deliver_response")
+    return last
+
+
+def _check_claude_deliver_tool(kw: dict) -> None:
+    _not_in("format", kw.get("output_config") or {}, "Claude: output_config.format must not be sent with client tools")
+    last = _claude_deliver_tool(kw)
+    schema = last.get("input_schema") or {}
+    _eq(schema.get("required"), ["response"], "Claude: deliver_response must require exactly `response`")
+    props = schema.get("properties") or {}
+    _eq(sorted(props), ["response"], "Claude: deliver_response must have exactly one property")
+    _eq(props["response"].get("type"), "string", "Claude: deliver_response.response must be a string")
+    # `response` is the tool's own property; a schema key of the same name is not a leak.
+    leaked = (_schema_keys(kw["expected_schema"]) - {"response"}) & (_schema_keys(schema) - {"response"})
+    _true(not leaked, f"Claude: the answer schema's keys leaked into deliver_response.input_schema: {sorted(leaked)}")
+
+
+def _check_grok_deliver_tool(kw: dict) -> None:
+    tools = kw.get("tools") or []
+    delivers = [t for t in tools if t.get("type") == "function" and t.get("name") == "deliver_response"]
+    _eq(len(delivers), 1, "Grok: exactly one deliver_response function tool must be sent")
+    _eq(delivers[0].get("parameters"), kw["expected_parameters"],
+        "Grok: deliver_response.parameters must be the response schema")
+    _not_in("text", kw, "Grok: no text format may be sent next to the deliver_response tool")
+    _eq(kw.get("tool_choice"), "required", "Grok: tool_choice must be 'required' with deliver_response")
+
+
+SCHEMA_WITH_CLIENT_TOOLS_USES_DELIVER_TOOL = ContractRule(
+    name="SCHEMA_WITH_CLIENT_TOOLS_USES_DELIVER_TOOL",
+    description=(
+        "A dict response_schema together with client tools (and no grounding): the structured answer moves off "
+        "the text channel onto a synthesized deliver_response tool. "
+        "Claude: no output_config.format; the LAST tool is deliver_response with exactly one required string "
+        "property `response` (the schema's keys appear nowhere in its input_schema). "
+        "Grok: a function tool deliver_response whose parameters are the schema, no text format, "
+        "tool_choice='required'. Input: the captured kwargs plus `expected_schema` (Claude) / "
+        "`expected_parameters` (Grok: GrokAdapter._to_json_schema of the schema)."
+    ),
+    validators={"claude": _check_claude_deliver_tool, "grok": _check_grok_deliver_tool},
+)
+
+
+def _check_claude_native_format(kw: dict) -> None:
+    fmt = (kw.get("output_config") or {}).get("format") or {}
+    _eq(fmt.get("type"), "json_schema", "Claude: output_config.format.type must be json_schema")
+    _true(all(t.get("name") != "deliver_response" for t in kw.get("tools") or []),
+          "Claude: a request without client tools must not carry a deliver_response tool")
+
+
+SCHEMA_WITHOUT_TOOLS_USES_NATIVE_FORMAT = ContractRule(
+    name="SCHEMA_WITHOUT_TOOLS_USES_NATIVE_FORMAT",
+    description=(
+        "A dict response_schema without client tools keeps the native path. "
+        "Claude: output_config.format.type == 'json_schema' and no deliver_response tool."
+    ),
+    validators={"claude": _check_claude_native_format},
+)
+
+
 # ---- Drive document reader (USER_DRIVE_INDEXING_RFC §24.2) -------------------------------------------------------
 
 def _claude_document_blocks(kw: dict) -> list:
