@@ -22,7 +22,7 @@ UPLOADS_DIR = Path("firestore_utils/uploads")
 DOWNLOADS_DIR = Path("firestore_utils/downloads")
 
 QUERIES = [
-    "Найди хороший ресторан в Northgate",
+    "Найди хороший ресторан в Порту",
     (
         "Find the exact OEM Skoda part number for the fender-mounted side turn signal "
         "repeater for a European 2015 Skoda Fabia 1.0, VIN 00000000000000000. "

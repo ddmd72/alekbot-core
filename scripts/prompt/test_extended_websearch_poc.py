@@ -366,7 +366,7 @@ def main() -> None:
     _load_env(Path(".env"))
 
     parser = argparse.ArgumentParser(description="Extended web search POC")
-    parser.add_argument("--query", default="Розкажи про скандали та проблеми навколо Ла Мерсе 2026")
+    parser.add_argument("--query", default="Розкажи про скандали та проблеми навколо свята Сан-Жуан у Порту 2026")
     parser.add_argument("--model", default="gemini-3-flash-preview")
     parser.add_argument("--variant", default="1", choices=["1", "2", "3", "4", "5"],
                         help="1=preset angles, 2=LLM-derived orthogonal vectors")

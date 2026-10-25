@@ -104,7 +104,7 @@ CONSTRAINTS for history_summary:
 1. MAXIMUM 100 CHARACTERS.
 2. Focus on FACTS and DECISIONS.
 3. Drop narrative, politeness, and filler words.
-4. Use abbreviations if clear (e.g., 'Auth0 > Firebase', 'Vitamin D: diet tips').
+4. Use abbreviations if clear (e.g., 'Auth0 > Firebase', 'Vitamin C: diet tips').
 """
 
 # ============================================================================
