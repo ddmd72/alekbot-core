@@ -2417,7 +2417,7 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
   `-i`, `-es` dropped after `x`, `z`, `ch`, `sh`, else a final `-s` unless the token ends in `-ss`, `-us` or `-is`; then,
   on 4 letters or more, a final `-e` dropped and a final `-y` turned into `-i`. "house"/"houses" → `hous`;
   "lease"/"leases" → `leas`; "movie"/"movies" → `movi`; "policy"/"policies" → `polici`; "receipt"/"receipts" →
-  `receipt`; "Paris" and "analysis" stay. Residual: "taxis", "menus" are kept by the `-is`/`-us` exception.
+  `receipt`; "tennis" and "analysis" stay. Residual: "taxis", "menus" are kept by the `-is`/`-us` exception.
 - **Two-letter words** ("ИП", "ЖК", "TV", "CV", "X5") are keyed by their exact form (a) only: no stripping, no skeleton.
   The explicit 1–2-letter function words per language (`SHORT_FUNCTION_WORDS`: "на", "по", "in", "de", "et", …) are
   never keyed. A 1-letter word is never keyed.
@@ -2433,19 +2433,19 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
   - for a Latin word, its Cyrillic spellings by the Russian-style table and by the Ukrainian national scheme in reverse
     ("kyiv" → "киів", "kharkiv" → "харків"), and those spellings' forms (a)–(e) and stems.
 
-  "Kyiv" reaches "у Києві", "Kharkiv" reaches "в Харкові", "Лиссабона" reaches "Lissabon". "Lviv" does not reach
+  "Kyiv" reaches "у Києві", "Kharkiv" reaches "в Харкові", "Коїмбру" reaches "Coimbra". "Lviv" does not reach
   "Львові" (the soft sign); accepted. A match through a skeleton crosses scripts or spellings: it is a translation,
   never exact (§25.5.4).
 - **Measured** (review round 2, on a targeted list of 27 inflection groups — surnames, `-ей` names, nouns ending in a
   listed ending, soft sign, fleeting vowels, Ukrainian locatives — and a 1 216-word Russian/Ukrainian corpus): the
   rev 3.19 rule (one ending, then 5 letters) keyed 12 of 27 groups together and linked 177 pairs of different words
-  ("ганна" with "Ганновер", a given name with a city name); the form set keys 26 of 27 (the last fixed by the
+  (different words sharing their first five letters, a given name with a city name among them); the form set keys 26 of 27 (the last fixed by the
   extended endings) and links 47 pairs, most of them true inflections. P1 review, on a synthetic table of 172 words
   with their inflections (551 forms):
   - native forms link 664 of 702 same-word pairs (95 %), and 16 different-word pairs share a native form, all of
     them translations (договор/договір, hotels/hoteles);
   - skeletons link 7 more same-word pairs, and 47 different-word pairs only by skeleton (translation tier): all are
-    translations (Киев/Київ, Одесса/Одеса, Lissabon/Лиссабон, bank/банк) except one pair, an English common noun and a Russian given name;
+    translations (Киев/Київ, Одесса/Одеса, Coimbra/Коїмбра, bank/банк) except one pair, an English common noun and a Russian given name;
   - a ru/uk contract or UI chunk of 2 400 characters holds 650–715 keys.
 
 **Families**
@@ -2453,7 +2453,7 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
 - `x:` **skeletons** — one per word (chunks, names): a translation (§25.5.4). The family records the script the word
   came from (xc F3): `x:` for a Cyrillic word, `xl:` for a Latin one. A Latin query word reads only `x:` (it meets a
   Latin word through its `w:` forms: the Cyrillic stem of a Latin word would join "Mario" and "Maria", "casa" and
-  "caso"); a Cyrillic query word reads both, so "Лиссабоне" still meets "Lissabon" and "kyiv" "Київ".
+  "caso"); a Cyrillic query word reads both, so "Коїмбрі" still meets "Coimbra" and "kyiv" "Київ".
 - `n:` **number terms** — today's normaliser (`drive_content_terms`: amounts, numeric and written-out dates in five
   languages, ids, digit groups): index-side forms per chunk (the 256-term cap applies per chunk), maximal forms on the
   query side. Its rules now belong to `KEYS_VERSION` (§25.4.8).
@@ -2465,11 +2465,11 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
 - `e:` **entity phrases** — a named thing's spelling the file prints (an entity's `printed`, and those of its `name`
   and `forms` verification found in the text or the name, kept as the entity's `found`; the photo place's
   `place_forms`). An entity spelling the profiler wrote that the file does not print is `ef:` (xc F1): the index's
-  own spelling, a translation, never exact, and its match line names what the file prints ('place "Лиссабон"
-  (spelling by the index; named in the file as "BARCELONA")'). The card text shows the printed spellings. Rules for
+  own spelling, a translation, never exact, and its match line names what the file prints ('place "Коїмбра"
+  (spelling by the index; named in the file as "COIMBRA")'). The card text shows the printed spellings. Rules for
   both families:
   - a single-token name gets its native form set;
-  - a multi-token phrase joins each token's form (b) with `_`, articles kept: "Viana do Castelo" → `e:viana_do_castelo`,
+  - a multi-token phrase joins each token's form (b) with `_`, articles kept: "The Hague" → `e:the_hagu`,
     "Нью-Йорке" → `e:нью_йорк`. A hyphen compound also gets its joined form ("Нью-Йорк" → `e:ньюйорк`);
   - a person or place of several words also keys its last word alone (the surname: "Тарас Мельник" is about
     "Мельнику").
@@ -2877,14 +2877,14 @@ duplicate collapse, the nonce wrapper and the refusal of an empty request.
 The delegate's `query` sentence is not read (D19).
 
 **Walk-throughs** (synthetic):
-- **"про Лиссабон"** → "про" is a function word (after the runs). *лиссабон*: form `лиссабон`, skeleton
-  `lisabon`.
-  - A photo with `place_forms` "Lisbon, Лиссабон, …, Portugal, Португалия" holds `e:лиссабон` → covers →
+- **"про Коїмбру"** → "про" is a function word (after the runs). *коїмбру*: forms `коїмбру`, `коїмбр`, skeleton
+  `koimbr`.
+  - A photo with `place_forms` "Coimbra, Коїмбра, …, Portugal, Португалія" holds `e:коїмбра`, `e:коїмбр` → covers →
     **About** ("place (photo location)").
-  - A document whose entity has the form "Лиссабон" → About ("named in the file").
-  - A note saying "в Лиссабоне" → `w:лиссабон` → **Mentioned in**.
-  - A Latin passage naming the city ("Lissabon") → `x:lisabon` → **By translation**, as is a passage with a grounded
-    keyword "Лиссабон".
+  - A document whose entity has the form "Коїмбра" → About ("named in the file").
+  - A note saying "в Коїмбрі" → `w:коїмбр` → **Mentioned in**.
+  - A Latin passage naming the city ("Coimbra") → `xl:koimbr` → **By translation**, as is a passage with a grounded
+    keyword "Коїмбра".
 - **"медицинские записи по холестерину"** over a Spanish lab report ("colesterol"). Concepts *медицинские*, *записи*,
   *холестерину* ("по" removed). The profile wrote `topic_words` ("cholesterol", "colesterol", "холестерин", …) and
   `label_words` for `medical_record` ("medical record", "historia clínica", "медична картка", "медицинская запись",
@@ -2952,7 +2952,7 @@ passage words, translation, automatic record. A file's tier is decided by the we
    - or a **skeleton** (P1 review M8): `x:` in the chunk's `word_keys` or in the name keys, `ex:` in the record's
      `about_keys`.
 
-   A skeleton match crosses scripts or spellings ("Lissabon" in a Russian note, "hotel" against "хотел"). It is never
+   A skeleton match crosses scripts or spellings ("Coimbra" in a Ukrainian note, "hotel" against "хотел"). It is never
    exact: it is shown with the window around the matched word, labelled "by spelling in another script (automatic)",
    or "by another spelling (automatic)" when both words are Cyrillic ("Киев" / "Київ"). Two Latin words never meet
    through a skeleton (`xl:`/`exl:` are read only by a Cyrillic query word, xc F3). A native-script match and a
@@ -3453,12 +3453,12 @@ Records for streams: the `DriveRecordLean` fields. Chunks for streams: `user_id`
 items by id.
 
 #### 25.13.4 Pinned normaliser groups (unit tests, index/query parity)
-Cyrillic: Лиссабон/Лиссабона/Лиссабоне/Лиссабоном; Берлин/Берлине; Рим/Риме; Киев/Киеве; Київ/Києві; Львів/Львові;
-Харків/Харкові; Мельник/Мельника/Мельником; Бондар/Бондаря; Тарас/Тараса; Ірина/Ірини; музей/музея; альбом/альбома;
-диплом/диплома; герой/героя; Гамбург/Гамбурге; Вебер/Вебера; отель/отеля; кровь/крови; квиток/квитки;
+Cyrillic: Коїмбра/Коїмбру/Коїмбрі/Коїмброю; Берлін/Берліні; Рим/Риме; клев/клеве; Київ/Києві; Львів/Львові;
+Харків/Харкові; Мельник/Мельника/Мельником; Тарас/Тараса; трофей/трофея; юбилей/юбилея; музей/музея; альбом/альбома;
+диплом/диплома; герой/героя; Ростов/Ростове; Бондар/Бондаря; отель/отеля; кровь/крови; Казань/Казани; квиток/квитки;
 чек/чеки; Нью-Йорк/Нью-Йорке; холестерин/холестерину. Latin: house/houses; lease/leases; bus/buses; glass/glasses;
-cache/caches; movie/movies; policy/policies; box/boxes; receipt/receipts; invoice/invoices; Paris; analysis. Digits:
-"ред3" → `w:ред`, `w:3`. Negative pins (must not share a form): ганна/Ганновер.
+cache/caches; movie/movies; policy/policies; box/boxes; receipt/receipts; invoice/invoices; tennis; analysis. Digits:
+"ред3" → `w:ред`, `w:3`. Negative pins (must not share a form): берлога/Берлін; Ганна/Ганновер.
 
 P1 review (`KEYS_VERSION` 2) adds:
 - **Adjectives (exact):** новые/новая; нової/нова; медичної/медична; медицинские/медицинская; здание/здания;
@@ -3468,7 +3468,7 @@ P1 review (`KEYS_VERSION` 2) adds:
 - **Compounds and artefacts (exact):** email/e-mail; Wi-Fi/WiFi; квартира/"квар-\ntира"/"квар\u00adтира";
   замок/за́мок; ёлка/елка.
 - **Two-letter words (exact):** ИП, ЖК, TV, CV, X5.
-- **Across scripts (translation only):** Kyiv/Києві; Kharkiv/Харкові; Лиссабона/Lissabon.
+- **Across scripts (translation only):** Odesa/Одесі; Kharkiv/Харкові; Coimbra/Коїмбрі.
 - **Translation only, never exact:** hotel/хотел; cost/кости; net/нет; list/лист; data/дата.
 - **Negative pins:** сім'я/сім; iphone/phone (as a query); ип/ипотека; квиток/квитанция.
 - **Known stemming links, pinned so a widening shows:** почта/почти; банка/банк.

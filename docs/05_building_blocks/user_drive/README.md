@@ -36,7 +36,7 @@ the switches are §7.2, `docs/07_deployment/README.md` → "Transcripts switch a
 | How a search decides which files to show and in which tier (About, Mentioned in, By translation, Labelled, Related) | §6, §6.2 |
 | Why a file with only some of the words is not shown; "No file holds …"; "Without …: N files match"; "ignored as common" | §6.2 |
 | What the coverage line means ("Coverage: incomplete — …"); why a search says the index is being rebuilt | §6.3, §6 (gate) |
-| One query followed end to end ("найди всё про Лиссабон"; "медицинские записи по холестерину") | §6.4 |
+| One query followed end to end ("найди всё про Коїмбру"; "медицинские записи по холестерину") | §6.4 |
 | What Smart reads and how it is told to use it; dates in queries vs date filters; which date a filter uses for a scan, a DOCX, a photo | §6.3, §6.5 |
 | What v1 search did (RRF, always 8, `content_terms`) and why it was replaced | §6.6 |
 | How quality is measured (G1, G2, OCR, G3), the live checks, logs, indexes | §7 |
@@ -284,7 +284,7 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   [residuals](../../04_solution_strategy/decisions/drive_place_name_residuals.md)). Geo table v2 (`GEO_TABLE_VERSION`
   2, RFC §25.4.3): `PlaceIndex.place()` also returns the place forms — the place's names in en, es, fr, uk, ru, its
   country's names and the nearest place of 100 000+ people within 50 km — written as `place_forms` beside
-  `place_name`, so "Лиссабон", "Lisbon" and "Portugal" all key a photo taken there. A card is re-embedded only when
+  `place_name`, so "Коїмбра", "Coimbra" and "Portugal" all key a photo taken there. A card is re-embedded only when
   its hash changes.
 - **Name keys** (`name_keys_v2` in `drive_keys.py`, `NAME_KEYS_VERSION` 2): the native `w:` forms of each name token
   (with case parts and hyphen compounds), the `x:`/`xl:` skeleton of each word, the `n:`/`y:` forms of digit tokens
@@ -315,12 +315,13 @@ query word ORs it. Cyrillic: the token, the token less its longest and second-lo
 `й`/`ь`, a fleeting-vowel form ("квиток" → "квитк"), and the Ukrainian alternation `і` → `о`/`е`, `ї` → `є` ("Київ"
 → "києв"). Latin: accents stripped, then a singular (`-ies` → `-i`, `-es` after x/z/ch/sh, a final `-s` except
 `-ss`/`-us`/`-is`), then a final `-e` dropped or `-y` → `-i` ("houses" → `hous`, "policies" → `polici`). A 2-letter
-word ("ИП", "TV") is keyed exactly; short function words and 1-letter words never. So "Лиссабон", "Лиссабоне" and"Лиссабона" share `лиссабон`; "медицинские" and "медицинская" share `медицинск`.
+word ("ИП", "TV") is keyed exactly; short function words and 1-letter words never. So "Коїмбра", "Коїмбру",
+"Коїмбрі" and "Коїмброю" share `коїмбр`; "медицинские" and "медицинская" share `медицинск`.
 
 **Transliteration.** The index stores one *skeleton* per word: its Cyrillic stem written in a sound-class Latin
 alphabet (г/х → h, и/і/ы/й → i, ь dropped, doubled letters collapsed), a Latin word first spelled in Cyrillic. The
-query generates every variant (both Cyrillic schemes, the alternation both ways), so "Лиссабон" meets "Lisbon"
-(`lisabon`), "Kyiv" meets "у Києві", "Киев" meets "Київ". A skeleton match is always a **translation**, never
+query generates every variant (both Cyrillic schemes, the alternation both ways), so "Коїмбру" meets "Coimbra"
+(`koimbr`), "Kyiv" meets "у Києві", "Киев" meets "Київ". A skeleton match is always a **translation**, never
 exact. The family records the script the word came from: `x:` / `ex:` for a Cyrillic word, `xl:` / `exl:` for a Latin
 one. A Latin query word never reads `xl:`/`exl:` (two Latin words meeting through a Cyrillic stem, "Mario" and
 "Maria", are not a translation; Latin spellings meet through their `w:` forms); a Cyrillic query word reads both.
@@ -1545,7 +1546,7 @@ drive is not part of `SearchEnrichmentService`
 **Concepts** (§3.1 builds every key; RFC §25.5.1):
 1. Clip the query to 1 000 characters at a word boundary and tokenise it as the index does.
 2. **Phrase runs** of 2–3 consecutive tokens (function words included) give `e:`, `ex:`/`exl:`, `ef:`, `k:` and `pe:`
-   phrase keys to the words they hold: "Viana do Castelo", "Нью-Йорке", "hoja de cálculo".
+   phrase keys to the words they hold: "The Hague", "Нью-Йорке", "hoja de cálculo".
 3. **Numbers first**: the maximal form of each number-like span — an amount, an ISO date, a joined id, a digit group
    (`n:`, `v:`, `pn:`); a 1900–2099 number also `y:`; a month name with a year ("в марте 2023") is one month concept,
    `m:2023-03` only.
@@ -1586,9 +1587,9 @@ a file's tier is the **weakest class it needs** (`drive_tiers.classify`):
 
 | Tier | Exact? | The file is in it when | Example |
 |---|---|---|---|
-| **About** | exact | every concept is covered by verified-record keys, or the name covers every word | a photo whose `place_forms` hold "Лиссабон"; an invoice whose verified number is `F-2026-0311` |
-| **Mentioned in** | exact | every concept is covered by the record or by **one chunk's** words, at least one by the chunk; two or more chunk-covered words sit within a 400-character window (`PROXIMITY_CHARS`) | a note saying "в Лиссабоне" |
-| **By translation** | automatic | as above, but at least one concept is covered only by a translation key | a Spanish passage naming "Lisboa" for the query "Лиссабон"; a grounded passage keyword "холестерин" over "colesterol" |
+| **About** | exact | every concept is covered by verified-record keys, or the name covers every word | a photo whose `place_forms` hold "Коїмбра"; an invoice whose verified number is `F-2026-0311` |
+| **Mentioned in** | exact | every concept is covered by the record or by **one chunk's** words, at least one by the chunk; two or more chunk-covered words sit within a 400-character window (`PROXIMITY_CHARS`) | a note saying "в Коїмбрі" |
+| **By translation** | automatic | as above, but at least one concept is covered only by a translation key | a Spanish passage naming "Coimbra" for the query "Коїмбру"; a grounded passage keyword "холестерин" over "colesterol" |
 | **Labelled** | automatic | at least one concept is covered only by an automatic key | a lab report whose profile wrote the topic word "cholesterol" and whose type is `medical_record` |
 | **Related by meaning only** | unverified | no tier above, and `meaning ≥ Z_RELATED`, or a similar name | at most 3 lines, never counted, never called a match |
 
@@ -1663,7 +1664,7 @@ by meaning; the drive is too small to tell related from unrelated" (never under 
    searched file holds …", "No other searched file is about or mentions all of these words." None says "final".
 
 **A card** is one nonce-tagged `<drive_document>` wrapper holding at most 700 characters of the card text, then:
-`matched:` with its sources in query order (`place "Rome" (named in the file)`, `place "Lisbon" (photo location)`,
+`matched:` with its sources in query order (`place "Rome" (named in the file)`, `place "Coimbra" (photo location)`,
 `name "tickets"`, `words "Rome", "tickets" in one passage`, `passage keyword "Rome", from "reserva en Roma"`,
 `type label "ticket" (automatic)`, `topic "cholesterol" (automatic)`, `life area …`, `validity …`, `kind …`, a value or
 a date with its label); `not matched (common)` for a word it was allowed to miss; `date: <day> (<source>)` — `taken`,
@@ -1713,44 +1714,46 @@ In the live check (2026-10-14) a place-name query took one skill load and two se
 Both are real runs of the search on the synthetic eval fixture (`tree.json` + `tree_v2.json`, the recorded
 enrichment, offline lexical vectors; 2026-10-14), cards shortened with "…".
 
-**"найди всё про Лиссабон"** (Smart puts the user's words in `drive_query`).
-1. *Concepts.* "найди", "всё" (folded to "все") and "про" are generic and function words: removed and named. One   concept is left, *лиссабон*. Its keys: word keys `w:лиссабон` and the skeletons `x:lisabon`,
-   `xl:lisabon` (and the variants from the other Cyrillic scheme); hint keys `w:лиссабон`,
-   `w:лиссабон`; about keys `e:`/`ef:`/`k:`/`lw:`/`tw:`/`dw:`/`lv:`/`pw:`/`pe:` of the same forms, `ex:`/`exl:`
-   skeletons, phrase runs such as `e:про_лиссабон`, and `v:лиссабон`.
-2. *Streams.* The about stream finds the two photos taken in Lisbon (geo table v2 wrote `place_forms` "Lisbon,
-   Лиссабон, …, Portugal", so they hold `e:лиссабон`) and a note whose profile verified the entity "Лиссабон" printed in
-   it. The name stream finds the folder "Lisbon 2024" through `xl:lisabon` (its name's skeleton). A Spanish or
-   English passage saying "Lisbon" would be found by the word stream through `xl:lisabon`; a Russian passage
-   saying "в Лиссабоне" through `w:лиссабон`.
-3. *Allowances.* One concept, present: strict AND is just "must cover *лиссабон*".
+**"найди всё про Коїмбру"** (Smart puts the user's words in `drive_query`; the place was renamed after the run, the
+keys below are the keyer's own output).
+1. *Concepts.* "найди", "всё" (folded to "все") and "про" are generic and function words: removed and named. One
+   concept is left, *коїмбру*. Its keys: word keys `w:коїмбру`, `w:коїмбр` and the skeletons `x:koimbr`,
+   `xl:koimbr` (and the variants `x:koimbru`, `xl:koimbru`); hint keys `w:коїмбру`, `w:коїмбр`; about keys
+   `e:`/`ef:`/`k:`/`lw:`/`tw:`/`dw:`/`lv:`/`pw:`/`pe:` of the same forms, `ex:`/`exl:` skeletons, phrase runs such as
+   `e:про_коїмбр`, and `v:коїмбру`.
+2. *Streams.* The about stream finds the two photos taken in Coimbra (geo table v2 wrote `place_forms` "Coimbra,
+   Коїмбра, …, Portugal", so they hold `e:коїмбр`) and a note whose profile verified the entity "Коїмбру" printed in
+   it. The name stream finds the folder "Coimbra 2024" through `xl:koimbr` (its name's skeleton). A Spanish or
+   English passage saying "Coimbra" would be found by the word stream through `xl:koimbr`; a Ukrainian passage
+   saying "в Коїмбрі" through `w:коїмбр`.
+3. *Allowances.* One concept, present: strict AND is just "must cover *коїмбру*".
 4. *Tiers.* The photos and the note are **About** (verified record: the photo place and a printed entity); the folder
    is **By translation** (a skeleton crosses scripts). Related holds three files the offline vectors happened to rank
    high — exactly the noise the uncalibrated `Z_RELATED` lets through (RFC §25.7.1); they are labelled unverified.
 
 ```
 Searched names (several spellings and word forms), file descriptions, document text and passage keywords for:
-"барселону"; ignored: "найди", "все", "про".
+"коїмбру"; ignored: "найди", "все", "про".
 Coverage: complete.
-About "лиссабон" (3):
-<drive_document … path="Notes/Мысли о поездке.md">
-Мысли о поездке.md | note (Markdown) | notes | Russian-language travel notes about a planned five-day spring trip to
-Lisbon, … | Лиссабон, музей азулежу, рынок Рибейра, … | …
-matched: place "Лиссабон" (named in the file)
+About "коїмбру" (3):
+<drive_document … path="Notes/Думки про поїздку.md">
+Думки про поїздку.md | note (Markdown) | notes | Ukrainian-language travel notes about a planned weekend trip to
+Coimbra, … | Коїмбру, університет, Мондегу, … | …
+matched: place "Коїмбру" (named in the file)
 date: 2026-01-25 (file date)
 index: indexed
 </drive_document …>
-<drive_document … path="Photos/Lisbon 2024/IMG_7102.HEIC">
-IMG_7102.HEIC | image | <photo description> | … | taken 2024-05-05 | camera Apple iPhone 15 | place Lisbon, Portugal | …
-matched: place "Лиссабон" (photo location)
+<drive_document … path="Photos/Coimbra 2024/IMG_7102.HEIC">
+IMG_7102.HEIC | image | <photo description> | … | taken 2024-05-05 | camera Apple iPhone 15 | place Coimbra, Portugal | …
+matched: place "Коїмбра" (photo location)
 date: 2024-05-05 (taken)
 index: metadata_only (photograph)
 </drive_document …>
-<drive_document … path="Photos/Lisbon 2024/IMG_7101.HEIC"> … </drive_document …>
+<drive_document … path="Photos/Coimbra 2024/IMG_7101.HEIC"> … </drive_document …>
 By translation (automatic) (1):
-<drive_document … path="Photos/Lisbon 2024">
-Lisbon 2024 | folder
-matched: name "barcelona", by spelling in another script (automatic)
+<drive_document … path="Photos/Coimbra 2024">
+Coimbra 2024 | folder
+matched: name "coimbra", by spelling in another script (automatic)
 …
 </drive_document …>
 Related by meaning only, unverified (3):
@@ -1797,7 +1800,7 @@ Related by meaning only, unverified (3): …
 Had no file held *записи* at all (`df = 0`), every tier but Related would be empty and the result would end with
 `No file holds "записи". Without "записи": 1 file matches the other words.` (under an incomplete coverage line: "No
 searched file holds …"), and Smart would search again with the subject alone. The same fixture shows that case for
-"Лиссабон билеты на самолёт": no file holds *самолет*, and `Without "самолет": 0 files match the other words.`
+"Коїмбра билеты на самолёт": no file holds *самолет*, and `Without "самолет": 0 files match the other words.`
 
 ### 6.5 Dates in queries and filters
 
