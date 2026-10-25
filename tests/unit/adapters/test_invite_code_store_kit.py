@@ -136,9 +136,9 @@ async def test_create_never_replaces_another_invite(store):
 # ----------------------------------------------------------------------------------------------- get_by_code
 
 async def test_get_returns_the_invite_as_saved_with_utc_datetimes(store):
-    kyiv = timezone(timedelta(hours=3))
+    plus3 = timezone(timedelta(hours=3))
     saved = invite(type=InviteType.SELF_LINK, platform="telegram", role="VIEWER",
-                   expires_at=datetime(2030, 5, 6, 10, 0, tzinfo=kyiv), created_at=datetime(2030, 5, 1, 10, 0, tzinfo=kyiv))
+                   expires_at=datetime(2030, 5, 6, 10, 0, tzinfo=plus3), created_at=datetime(2030, 5, 1, 10, 0, tzinfo=plus3))
     await store.repo.create(saved)
     got = await store.repo.get_by_code("ABC-DEF-123")
     assert got == saved

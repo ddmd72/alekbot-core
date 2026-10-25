@@ -59,9 +59,9 @@ def test_the_history_facts_tags_are_a_copy_the_builder_may_extend():
 
 
 def test_the_reported_date_is_stored_in_utc():
-    madrid = SAID.astimezone(timezone(timedelta(hours=2)))
+    plus2 = SAID.astimezone(timezone(timedelta(hours=2)))
 
-    attrs = history_fact(old_fact(), "No longer true: works at Acme", madrid, "Europe/Madrid")
+    attrs = history_fact(old_fact(), "No longer true: works at Acme", plus2, "Europe/Madrid")
 
     assert attrs.reported_date == SAID and attrs.reported_date.utcoffset() == timedelta(0)
 

@@ -121,9 +121,9 @@ def test_a_word_absent_only_in_scope():
 
 
 def test_empty_conjunction_footer():
-    tiered = TieredResult(concepts=("barcelona", "trip"), conjunction=(("barcelona", 41), ("trip", 2)))
+    tiered = TieredResult(concepts=("coimbra", "trip"), conjunction=(("coimbra", 41), ("trip", 2)))
     assert render_results(replace(example(), cards=(), tiered=tiered)).endswith(
-        'No file matches all of: "barcelona" (41 files), "trip" (2 files).')
+        'No file matches all of: "coimbra" (41 files), "trip" (2 files).')
 
 
 def test_coverage_complete_and_never_says_final():
@@ -190,5 +190,5 @@ def test_one_file_is_singular():
     tiered = TieredResult(concepts=("vaccination", "dog"), absent=("vaccination",), without=1)
     assert render_results(replace(example(), cards=(), tiered=tiered)).endswith(
         'Without "vaccination": 1 file matches the other words.')
-    tiered = TieredResult(concepts=("barcelona", "trip"), conjunction=(("barcelona", 1), ("trip", 2)))
-    assert '"barcelona" (1 file), "trip" (2 files)' in render_results(replace(example(), cards=(), tiered=tiered))
+    tiered = TieredResult(concepts=("coimbra", "trip"), conjunction=(("coimbra", 1), ("trip", 2)))
+    assert '"coimbra" (1 file), "trip" (2 files)' in render_results(replace(example(), cards=(), tiered=tiered))

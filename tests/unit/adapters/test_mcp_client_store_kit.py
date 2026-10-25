@@ -204,8 +204,8 @@ async def test_save_auth_code_stores_every_field_under_the_code(store):
 
 
 async def test_get_auth_code_returns_it_as_saved_without_consuming_it(store):
-    kyiv = timezone(timedelta(hours=3))
-    saved = auth_code(scopes=["a", "b"], resource=None, expires_at=datetime(2030, 1, 1, 13, 0, tzinfo=kyiv))
+    plus3 = timezone(timedelta(hours=3))
+    saved = auth_code(scopes=["a", "b"], resource=None, expires_at=datetime(2030, 1, 1, 13, 0, tzinfo=plus3))
     await store.repo.save_auth_code(saved)
     first, second = await store.repo.get_auth_code("code-a"), await store.repo.get_auth_code("code-a")
     assert first == second == saved
