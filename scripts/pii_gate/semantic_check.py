@@ -2,6 +2,9 @@
 
 Catches what a regex cannot (a paraphrase, a value without its name). Stdlib only (urllib, json).
 
+Local only, never run in CI: its findings name which lines hold real facts, and CI logs on a public repo are public.
+It does not know the invented cast, so its findings are leads for a stronger-model review, not a verdict.
+
 Inputs: the added lines of `--range A...B` (plus that range's commit messages) or of a unified diff (`--diff-file`,
 `-` for stdin); the profile from `PII_PROFILE`; the key from `ANTHROPIC_API_KEY`; the model from `PII_GATE_MODEL`
 (default `claude-haiku-5-5`); the endpoint from `--api-url` / `PII_GATE_API_URL` (default the Anthropic Messages API).
