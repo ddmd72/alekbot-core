@@ -110,7 +110,7 @@ Cursor-based paginated retrieval ordered by `created_at DESC`.
   "facts": [
     {
       "id": "doc_id",
-      "text": "User lives in Springfield, USA.",
+      "text": "User lives in Springfield.",
       "domain": "location",
       "type": "fact",
       "created_at": "2026-02-17T10:32:00"

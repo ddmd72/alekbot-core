@@ -380,7 +380,7 @@ channel; every refused dial from an unknown number goes to `AlertSinkPort`.
   a voiceprint is **GDPR Art. 9 special-category biometric data** — heavier compliance than the PIN it
   replaces. Possible later as a *passive risk signal* behind this seam; not as a gate.
 - **STIR/SHAKEN** — the right mechanism (carrier attestation, free, zero friction) but a US/Canada
-  framework, not deployed in Spain. Recorded because it plugs in behind the same seam if it lands.
+  framework, not deployed in Portugal. Recorded because it plugs in behind the same seam if it lands.
 
 **Kept on the shelf — DTMF on the inbound leg.** A keypad code collected by `<Gather>` before any
 media stream exists never reaches the model, the transcript, BigQuery or Logfire, which is what made
@@ -399,7 +399,7 @@ intolerable in practice — a better-shaped PIN than the rejected one, not a rev
   start, not an architectural change.
 
 **Triggers to revisit:** the first non-owner user (both risks at once); any alert on a refused dial;
-STIR/SHAKEN in Spain.
+STIR/SHAKEN in Portugal.
 
 ### 4.7 Lelik delegates like every agent; Alek is one of his specialists
 
@@ -840,7 +840,7 @@ delivered later by `UserNotificationService`. Same mechanism, opposite verdict b
 and nothing else: the callee is not a user, so §4.6's identity model does not apply; the persona
 speaks *as the user's representative* rather than serving him; the failure mode is committing the
 user to something; and there is a legal surface this RFC does not have — AI-disclosure obligations
-under the EU AI Act and recording-consent rules in Spain. A hard gate on outbound destinations and
+under the EU AI Act and recording-consent rules in Portugal. A hard gate on outbound destinations and
 rate is a prerequisite of that RFC, because the decision to place a call would be made by an LLM.
 
 ### 4.14 The relay is its own Cloud Run service

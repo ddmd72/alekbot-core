@@ -49,7 +49,7 @@ Post-backfill audit: 0 violations of the flag and vector invariants. Backup: `sc
 - **`ttl_days` is whatever the model writes, and nothing reads it.** The tool schema says "auto-calculated from
   temporal_class" (`consolidation_agent.py:1318`); nothing calculates it. Ephemeral: 14 (44 facts), 30–120 (25), none
   (22). Dynamic: none on 96. Stable: 180–730 on 20, although the old RFC says stable facts never expire.
-- **A class is not an expiry.** Class-based TTL would archive "the user and Sam took a weekend trip, Mar 6–8"
+- **A class is not an expiry.** Class-based TTL would archive "the user and Clara took a weekend trip, Mar 6–8"
   (`dynamic`, 90 d) and "the user works as a project manager" (`dynamic`, 90 d): one is history and never stops
   being true, the other is true until the user changes jobs. Only the content says when a fact stops being true.
 - **The old RFC contradicts itself.** §2.2/§4.4 tie expiry to the class; §4.5 stales every fact after 30 days without

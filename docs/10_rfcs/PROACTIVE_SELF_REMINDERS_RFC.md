@@ -45,7 +45,7 @@ context available when the reminder fires (no conversation history, no user mess
 Example:
 ```
 text:        "Send Springfield morning news briefing"
-instruction: "The user asked to receive a daily morning news briefing about Springfield, USA.
+instruction: "The user asked to receive a daily morning news briefing about Springfield.
               Search for today's news: events, weather, cultural highlights. Format as a
               concise morning briefing. Send it to the user directly."
 ```
@@ -427,7 +427,7 @@ manage_self_reminders_agent {
         {
             user: "remind me every morning about Springfield news"
             text: "Send Springfield morning news briefing"
-            instruction: "The user asked for a daily news briefing about Springfield, USA.
+            instruction: "The user asked for a daily news briefing about Springfield.
                           Search for today's news (events, weather, cultural highlights, local
                           news). Format as a short morning briefing and send to the user."
             due: "tomorrow 08:00 (user's local time)"

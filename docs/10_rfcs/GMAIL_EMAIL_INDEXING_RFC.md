@@ -723,7 +723,7 @@ access_token: "ya29.xxx"        # Encrypted at rest (Firestore default)
 refresh_token: "1//xxx"         # Long-lived, used for token refresh
 token_expiry: 2026-03-01T12:00Z
 scopes: ["gmail.readonly"]
-email_address: "user@gmail.com" # Provider account email (for display)
+email_address: "user@example.com" # Provider account email (for display)
 created_at: 2026-02-22T10:00Z
 updated_at: 2026-02-22T10:00Z
 ```
@@ -759,18 +759,18 @@ valuable_type: "confirmed_event"  # "confirmed_event" | "biographical_signal"
 # Structured metadata (for display + metadata_vector embedding)
 metadata:
   subject: "Your flight AAA-BBB is confirmed"
-  from_address: "noreply@ryanair.com"
+  from_address: "noreply@airline.example"
   snippet: "Booking confirmed. Flight FR8421..."  # kept in metadata only
   flight_number: "FR8421"
-  departure_city: "Berlin"
-  arrival_city: "Barcelona"
+  departure_city: "Hamburg"
+  arrival_city: "Lisbon"
   departure_date: "2025-03-15"
   airline: "Ryanair"
   confirmation_code: "ABC123"
 
 # Email-specific fields
 subject: "Your flight AAA-BBB is confirmed"  # top-level for display
-from_address: "noreply@ryanair.com"
+from_address: "noreply@airline.example"
 email_date: 2025-03-10T14:30:00Z              # original email date
 attachments: ["booking_confirmation.pdf"]     # attachment filenames (top-level, not just metadata)
 
@@ -952,7 +952,7 @@ Two-test selection model (email passes if EITHER test is satisfied):
 
 ```json
 {
-  "email_id": "msg_ecole456",
+  "email_id": "msg_school456",
   "valuable": true,
   "category": "personal",
   "fact": "User received notification from Example School regarding a parents' meeting on March 3, 2026",
@@ -1032,12 +1032,12 @@ Input: EMAIL_SEARCH_REQUEST "family and travel information from the last two mon
 Output:
 {
   "primary_query": "family members visiting location dates",
-  "alternative_query": "Jane Bob Alice Riverton visit",
+  "alternative_query": "Clara Jamie Ana Hamburg visit",
   "tags": ["Family Travel", "Family Base", "Visits"]
 }
 ```
 
-The biographical context (facts about Jane, Bob, Alice Smith in Riverton) allows the LLM
+The biographical context (facts about Clara, Jamie and Ana Doe in Springfield) allows the LLM
 to expand the vague "family" reference into concrete person names, improving vector search recall.
 
 ---
@@ -1520,7 +1520,7 @@ The Gmail section in Cabinet has two states depending on whether the user has co
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  📧 Gmail — user@gmail.com ✓                     │
+│  📧 Gmail — user@example.com ✓                     │
 │                                                  │
 │  Not yet indexed                                 │
 │                                                  │
@@ -1532,7 +1532,7 @@ The Gmail section in Cabinet has two states depending on whether the user has co
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  📧 Gmail — user@gmail.com ✓                     │
+│  📧 Gmail — user@example.com ✓                     │
 │                                                  │
 │  Coverage: 11 Nov 2023 – 28 Feb 2026             │
 │                                                  │
@@ -1694,17 +1694,17 @@ SmartAgent → delegate_to_specialist(intent="get_email_details", email_id="msg_
 Bot: "March 28 — Example Lab. ..." (full body text formatted by SmartAgent)
 ```
 
-**Production example** (2026-03-01, ~5.9s, query: "family and travel last two months"):
+**Illustrative example** (query: "family and travel last two months"):
 ```json
 {
   "primary_query": "family members visiting location dates",
-  "alternative_query": "Jane Bob Alice Riverton visit",
+  "alternative_query": "Clara Jamie Ana Hamburg visit",
   "tags": ["Family Travel", "Family Base", "Visits"]
 }
 → 10 emails returned:
-  Ryanair flight (for a Fairview/Riverton trip, May 2026),
-  a booking confirmation for a family member, Location Sharing with Jane+Bob,
-  school notification from Example School (Riverton)
+  Ryanair flight (for a Hamburg trip, May 2026),
+  a booking confirmation for a family member, Location Sharing with Clara+Jamie,
+  school notification from Example School (Springfield)
 ```
 
 ---
@@ -1744,7 +1744,7 @@ ConsolidationAgent prompt (system_alert):
    1. {"email_id": "msg_xyz123", "fact": "User booked flight AAA→BBB March 15 2025 ref RYR0000",
        "category": "travel", "tags": ["flight", "ryanair", "booking"],
        "date": "2025-03-10", "attachments": ["booking_confirmation.pdf"],
-       "metadata": {"subject": "Your flight confirmed", "from": "noreply@ryanair.com"}}
+       "metadata": {"subject": "Your flight confirmed", "from": "noreply@airline.example"}}
    ..."
 
 Note: all fields from `IndexedEmail` included — `email_id` for traceability,
@@ -1813,7 +1813,7 @@ Bot:    (calls EmailSearchAgent.search_deep(email_id="msg_nov3") → Mode B)
         (markitdown.parse(binary) → invoice text)
         (LLM extracts structured facts from text)
         "Amazon invoice from November 3: AirPods Pro (Gen 2) — 249 EUR.
-         Delivered November 7 to Example City.
+         Delivered November 7 to Springfield.
          Order: 789-012-3456789."
 ```
 

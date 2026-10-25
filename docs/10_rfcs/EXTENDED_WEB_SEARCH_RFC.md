@@ -34,10 +34,10 @@ For research tasks (event analysis, product comparison, controversy investigatio
 ### 2.1 Single-Shot Search Limitation
 
 ```
-User: "Tell me about the scandals around Las Fallas 2026"
+User: "Tell me about the scandals around Santos Populares 2026"
 
 Current WebSearchAgent:
-  → one Gemini grounding call: "Las Fallas 2026 scandals"
+  → one Gemini grounding call: "Santos Populares 2026 scandals"
   → returns first-page results
   → SmartAgent formats and responds
 
@@ -366,12 +366,12 @@ def _create_extended_web_search_agent(self, user_id: str) -> ExtendedWebSearchAg
 ## 5. ASYNC Flow: End-to-End
 
 ```
-User: "Research all the scandals and problems around Las Fallas 2026"
+User: "Research all the scandals and problems around Santos Populares 2026"
 
 1. SmartAgent LLM:
    delegate_to_specialist(
      intent="search_web_extended",
-     query="Las Fallas 2026 scandals and problems",
+     query="Santos Populares 2026 scandals and problems",
      context={
        "research_focus": "scandals, problems, criticism, incidents",
        "output_intent": "analysis"
@@ -386,7 +386,7 @@ User: "Research all the scandals and problems around Las Fallas 2026"
    → returns {status: "started", message: "..."}
 
 3. SmartAgent formats ACK to user:
-   "🔍 Starting a deep research on Las Fallas 2026.
+   "🔍 Starting a deep research on Santos Populares 2026.
     This will take a minute or two — I'll send the result separately."
 
 4. [~60-90 seconds later, Cloud Tasks worker]
@@ -594,7 +594,7 @@ single Gemini grounding call with a cognitive process prompt instructing 5-vecto
 |---|---|---|---|
 | News (city events) | 35s | 6 queries / 15 sources | 5 topic sections |
 | Weather (Springfield week) | 16-31s | 6-15 queries | Daily table 22-28.02 |
-| Local search (wine near Example City) | 18-23s | 6-18 queries | Tiered by shop type + hours |
+| Local search (wine near Springfield) | 18-23s | 6-18 queries | Tiered by shop type + hours |
 
 ### Why the RFC architecture is not needed
 

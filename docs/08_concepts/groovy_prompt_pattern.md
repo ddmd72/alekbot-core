@@ -61,7 +61,7 @@ Use:
   knowledge_base {
     biographical_context: '''
       **Biographical**
-      - Born in Springfield (Jan 01, 2000)
+      - Born in Springfield (Jan 01, 1980)
       - Software engineer (Feb 10, 2025)
     '''
   }

@@ -107,9 +107,9 @@ This RFC proposes a comprehensive overhaul of the Consolidation Agent to transfo
 
 ```python
 # 3 separate facts for same information:
-"User's current weight is 95 kg"
-"User weighs 95kg as of Jun 3"
-"User's weight: 95 kg (June 2026)"
+"User's current weight is 65 kg"
+"User weighs 65kg as of Jun 3"
+"User's weight: 65 kg (June 2026)"
 ```
 
 **Root Cause:**
@@ -129,7 +129,7 @@ This RFC proposes a comprehensive overhaul of the Consolidation Agent to transfo
 **Example:**
 
 ```python
-"User's current weight is 95 kg"  # When? Still current after 6 months?
+"User's current weight is 65 kg"  # When? Still current after 6 months?
 "User is working on Gmail API"    # Completed? Still active? Abandoned?
 ```
 
@@ -164,7 +164,7 @@ Recorded fact: "User is asking about car brand"  # ❌ Not a biographical fact!
 
 ```python
 # Existing fact:
-"User owns 2015 Honda Civic"
+"User owns 2015 Skoda Fabia"
 
 # User says: "My car has tinted windows"
 
@@ -172,7 +172,7 @@ Recorded fact: "User is asking about car brand"  # ❌ Not a biographical fact!
 Creates: "User's car has tinted windows"  # Separate fact
 
 # Desired behavior (GOOD):
-Updates existing: "User owns 2015 Honda Civic with tinted windows"
+Updates existing: "User owns 2015 Skoda Fabia with tinted windows"
 ```
 
 **Impact:** Fragmented information, poor retrieval relevance.
@@ -337,11 +337,11 @@ CURRENT → (new version) → SUPERSEDED
 **Examples:**
 
 - "User's name: Alex" → CRITICAL (affects addressing, personalization in every message)
-- "User's gender: Male" → CRITICAL (affects pronouns, affects UI/UX in every interaction)
+- "User's preferred name: Alex" → CRITICAL (affects how every reply addresses the user, in every interaction)
 - "User works as a project manager" → HIGH (provides context for most conversations about work, time, availability)
-- "User's current weight: 90kg" → MEDIUM (relevant for health queries, not for general chat)
+- "User's current weight: 64kg" → MEDIUM (relevant for health queries, not for general chat)
 - "User debugging Gmail API" → LOW (temporary work, only relevant when discussing this specific project)
-- "User's old weight: 95kg (superseded)" → ARCHIVAL (historical data, replaced by newer)
+- "User's old weight: 65kg (superseded)" → ARCHIVAL (historical data, replaced by newer)
 
 **LLM Classification Framework:**
 
@@ -411,12 +411,12 @@ ARCHIVAL test: "Is this OBSOLETE or SUPERSEDED?"
 
 ```python
 # Existing facts:
-"User owns 2015 Honda Civic"
-"Honda Civic has automatic gearbox"
-"Car is in Example City"
+"User owns 2015 Skoda Fabia"
+"Skoda Fabia has automatic gearbox"
+"Car is in Springfield"
 
 # MERGE →
-"User owns 2015 Honda Civic with automatic gearbox, based in Example City"
+"User owns 2015 Skoda Fabia with automatic gearbox, based in Springfield"
 ```
 
 ---
@@ -953,7 +953,7 @@ async def search_existing_facts(
 [
     {
         "fact_id": "uuid-123",
-        "content": "User's current weight is 95 kg",
+        "content": "User's current weight is 65 kg",
         "domain": "HEALTH",
         "temporal": "DYNAMIC",
         "state": "CURRENT",
@@ -1138,7 +1138,7 @@ This tool supports **two update modes** depending on the use case:
 - Behavior: Modifies `content` field directly on the same document
 - Version: Increments `version` counter
 - SCD Type 2: Does NOT create new document, `is_current` remains `True`
-- Example: "User's weight: 90 kg (Jun 12), was 95 kg (Jun 3)" → appends to same fact
+- Example: "User's weight: 64 kg (Jun 12), was 65 kg (Jun 3)" → appends to same fact
 
 **Mode 2: SCD Type 2 Correction (for Identity Changes)**
 
@@ -1161,13 +1161,13 @@ This tool supports **two update modes** depending on the use case:
 **Example (In-Place):**
 
 ```python
-# Existing: "User's current weight is 95 kg (Jun 3)"
+# Existing: "User's current weight is 65 kg (Jun 3)"
 # Update with new measurement:
 
 result = await update_fact(
     fact_id="weight-fact-123",
     updates={
-        "content": "User's weight: 90 kg (Jun 12), was 95 kg (Jun 3), 100 kg (Jun 1)",
+        "content": "User's weight: 64 kg (Jun 12), was 65 kg (Jun 3), 66 kg (Jun 1)",
         "tags": ["weight", "health", "biometrics", "tracking", "loss"],
         "reported_date": datetime.now()
     }
@@ -1178,7 +1178,7 @@ result = await update_fact(
 **Example (SCD Type 2 Correction):**
 
 ```python
-# Existing: "User works as Software Engineer at Google"
+# Existing: "User works as Data Engineer at Acme"
 # Correction: User changed job
 
 result = await update_fact(
@@ -1229,7 +1229,7 @@ async def merge_facts(
 ```python
 result = await merge_facts(
     fact_ids=["car-fact-1", "car-fact-2", "car-fact-3"],
-    merged_content="User owns 2015 Honda Civic (Plate: XX0000YY) based in Example City, with automatic gearbox, tinted windows",
+    merged_content="User owns 2015 Skoda Fabia (Plate: SAMPLE-0000) based in Springfield, with automatic gearbox, tinted windows",
     metadata={
         "domain": "POSSESSION",
         "temporal_class": "STABLE",
@@ -1556,10 +1556,10 @@ class DeliberateFactCurator extends Agent {
 
                 examples: [
                     {
-                        existing: "User's weight: 105 kg (Jun 1)",
-                        new: "User weighs 100 kg",
+                        existing: "User's weight: 67 kg (Jun 1)",
+                        new: "User weighs 66 kg",
                         action: "UPDATE",
-                        result: "User's weight: 100 kg (Jun 12), was 105 kg (Jun 1)"
+                        result: "User's weight: 66 kg (Jun 12), was 67 kg (Jun 1)"
                     },
                     {
                         existing: "User's savings: $10,000 (Jan 2026)",
@@ -1613,8 +1613,8 @@ class DeliberateFactCurator extends Agent {
 
                 examples: [
                     {
-                        existing: "User works at Google",
-                        new: "User: I no longer work at Google",
+                        existing: "User works at Acme",
+                        new: "User: I no longer work at Acme",
                         action: "UPDATE state=INVALIDATED on existing, optionally CREATE new fact if replacement mentioned",
                         reasoning: "Explicit negation detected"
                     },
@@ -1677,7 +1677,7 @@ class DeliberateFactCurator extends Agent {
          * QUALITY RULES: Standards for fact formulation
          */
         quality_rules: [
-            "Be SPECIFIC: 'User's weight is 90 kg' not 'User is losing weight'",
+            "Be SPECIFIC: 'User's weight is 64 kg' not 'User is losing weight'",
             "Be ATOMIC: One fact per entity/metric/statement",
             "Be DATED: Always include reported_date (conversation timestamp)",
             "Be CONTEXTUAL: Add temporal context for EPHEMERAL/DYNAMIC facts",
@@ -1788,7 +1788,7 @@ class DeliberateFactCurator extends Agent {
             usage_example: '''
             # Search for weight-related facts
             results = search_existing_facts(
-                query="user weight 95 kg biometrics",
+                query="user weight 65 kg biometrics",
                 domain="HEALTH",
                 limit=10
             )
@@ -1851,7 +1851,7 @@ class DeliberateFactCurator extends Agent {
             result = update_fact(
                 fact_id="weight-fact-123",
                 updates={
-                    "content": "User's weight: 90 kg (Jun 12), was 95 kg (Jun 3), 100 kg (Jun 1)",
+                    "content": "User's weight: 64 kg (Jun 12), was 65 kg (Jun 3), 66 kg (Jun 1)",
                     "tags": ["weight", "health", "biometrics", "tracking", "loss"],
                     "reported_date": "2026-06-12T10:00:00"
                 }
@@ -1873,7 +1873,7 @@ class DeliberateFactCurator extends Agent {
             usage_example: '''
             result = merge_facts(
                 fact_ids=["car-1", "car-2", "car-3"],
-                merged_content="User owns 2015 Honda Civic (Plate: XX0000YY) based in Example City, with automatic gearbox, tinted windows",
+                merged_content="User owns 2015 Skoda Fabia (Plate: SAMPLE-0000) based in Springfield, with automatic gearbox, tinted windows",
                 metadata={
                     "domain": "POSSESSION",
                     "temporal_class": "STABLE",
@@ -1910,12 +1910,12 @@ class DeliberateFactCurator extends Agent {
     examples {
 
         example_1_update_weight: {
-            conversation: "USER: Yesterday I weighed 90 kg"
+            conversation: "USER: Yesterday I weighed 64 kg"
 
             reasoning: '''
             <thinking>
             STEP 1 - EXTRACT:
-            - Candidate: "User's weight is 90 kg (Jun 12, 2026)"
+            - Candidate: "User's weight is 64 kg (Jun 12, 2026)"
 
             STEP 2 - CLASSIFY:
             - Domain: HEALTH
@@ -1930,7 +1930,7 @@ class DeliberateFactCurator extends Agent {
             Results: [
                 {
                     fact_id: "weight-123",
-                    content: "User's current weight is 95 kg (Jun 3)",
+                    content: "User's current weight is 65 kg (Jun 3)",
                     similarity: 0.95
                 }
             ]
@@ -1950,7 +1950,7 @@ class DeliberateFactCurator extends Agent {
             update_fact(
                 fact_id="weight-123",
                 updates={
-                    "content": "User's weight: 90 kg (Jun 12), was 95 kg (Jun 3), 100 kg (Jun 1)",
+                    "content": "User's weight: 64 kg (Jun 12), was 65 kg (Jun 3), 66 kg (Jun 1)",
                     "tags": ["weight", "health", "biometrics", "tracking", "loss"],
                     "reported_date": "2026-06-12T10:00:00"
                 }
@@ -2040,14 +2040,14 @@ class DeliberateFactCurator extends Agent {
 
         example_3_discard_echo: {
             conversation: '''
-            ASSISTANT: Based on our history, you weigh 95kg.
+            ASSISTANT: Based on our history, you weigh 65kg.
             USER: Yes, exactly.
             '''
 
             reasoning: '''
             <thinking>
             STEP 1 - EXTRACT:
-            - Candidate: "User confirms weight is 95kg"
+            - Candidate: "User confirms weight is 65kg"
 
             STEP 2 - CLASSIFY:
             - Domain: HEALTH
@@ -2055,12 +2055,12 @@ class DeliberateFactCurator extends Agent {
             - State: CURRENT
 
             STEP 3 - SEARCH:
-            Query: "user weight 95kg"
+            Query: "user weight 65kg"
             Domain: HEALTH
             Results: [
                 {
                     fact_id: "weight-123",
-                    content: "User's weight is 95kg",
+                    content: "User's weight is 65kg",
                     similarity: 0.98  # Almost exact match
                 }
             ]
@@ -2119,23 +2119,23 @@ class DeliberateFactCurator extends Agent {
             Results: [
                 {
                     fact_id: "car-1",
-                    content: "User owns 2015 Honda Civic",
+                    content: "User owns 2015 Skoda Fabia",
                     similarity: 0.85
                 },
                 {
                     fact_id: "car-2",
-                    content: "Honda Civic has automatic gearbox",
+                    content: "Skoda Fabia has automatic gearbox",
                     similarity: 0.82
                 },
                 {
                     fact_id: "car-3",
-                    content: "Car is in Example City",
+                    content: "Car is in Springfield",
                     similarity: 0.78
                 }
             ]
 
             STEP 4 - ANALYZE:
-            - Multiple facts (3) about SAME entity (Honda Civic)
+            - Multiple facts (3) about SAME entity (Skoda Fabia)
             - All high similarity (>0.75)
             - Facts are complementary (different aspects)
             - Combined fact would be more useful
@@ -2149,7 +2149,7 @@ class DeliberateFactCurator extends Agent {
             STEP 6 - EXECUTE:
             merge_facts(
                 fact_ids=["car-1", "car-2", "car-3"],
-                merged_content="User owns 2015 Honda Civic (Plate: XX0000YY) based in Example City, with automatic gearbox, tinted windows",
+                merged_content="User owns 2015 Skoda Fabia (Plate: SAMPLE-0000) based in Springfield, with automatic gearbox, tinted windows",
                 metadata={
                     "domain": "POSSESSION",
                     "temporal_class": "STABLE",
@@ -2712,7 +2712,7 @@ asyncio.create_task(fact_lifecycle_service.start())
 def test_fact_entity_with_taxonomy():
     fact = FactEntity(
         id="test-1",
-        text="User weighs 95kg",
+        text="User weighs 65kg",
         domain=FactDomain.HEALTH,
         temporal_class=TemporalClass.DYNAMIC,
         state=FactState.CURRENT,
@@ -2746,7 +2746,7 @@ async def test_search_existing_facts():
     adapter = FirestoreFactManagementAdapter(...)
 
     results = await adapter.search_existing_facts(
-        query="user weight 95kg",
+        query="user weight 65kg",
         domain="HEALTH",
         limit=10
     )
@@ -2787,7 +2787,7 @@ async def test_consolidation_agent_updates_existing_fact():
     existing_fact = await fact_repo.add_fact(
         account_id="test-account",
         user_id="test-user",
-        text="User's current weight is 95 kg",
+        text="User's current weight is 65 kg",
         tags=["weight", "health"],
         domain="HEALTH",
         temporal_class="DYNAMIC"
@@ -2800,7 +2800,7 @@ async def test_consolidation_agent_updates_existing_fact():
         payload={
             "task": "consolidate",
             "messages": [
-                {"role": "user", "content": "Yesterday I weighed 90 kg", "timestamp": "2026-06-12T10:00:00"}
+                {"role": "user", "content": "Yesterday I weighed 64 kg", "timestamp": "2026-06-12T10:00:00"}
             ]
         },
         context={"user_id": "test-user", "account_id": "test-account"}
@@ -2818,8 +2818,8 @@ async def test_consolidation_agent_updates_existing_fact():
 
     # Verify: Fact content enriched
     updated_fact = await fact_repo.get_fact_by_id(existing_fact.id)
-    assert "90 kg" in updated_fact.text
-    assert "95 kg" in updated_fact.text  # History preserved
+    assert "64 kg" in updated_fact.text
+    assert "65 kg" in updated_fact.text  # History preserved
 ```
 
 ---
@@ -2920,14 +2920,14 @@ async def test_ephemeral_facts_auto_archived():
 **Input:**
 
 ```
-USER: Yesterday I weighed 90 kg
+USER: Yesterday I weighed 64 kg
 ```
 
 **Expected:**
 
-- SEARCH finds: "User's current weight is 95 kg (Jun 3)"
+- SEARCH finds: "User's current weight is 65 kg (Jun 3)"
 - DECISION: UPDATE (time series)
-- RESULT: "User's weight: 90 kg (Jun 12), was 95 kg (Jun 3)"
+- RESULT: "User's weight: 64 kg (Jun 12), was 65 kg (Jun 3)"
 
 ---
 
@@ -2970,17 +2970,17 @@ USER: I am integrating Gemini API into the project
 **Input:**
 
 ```
-USER: My Honda has tinted windows
+USER: My Skoda has tinted windows
 ```
 
 **Expected:**
 
 - SEARCH finds:
-  - "User owns 2015 Honda Civic"
-  - "Civic has automatic gearbox"
-  - "Car in Example City"
+  - "User owns 2015 Skoda Fabia"
+  - "Fabia has automatic gearbox"
+  - "Car in Springfield"
 - DECISION: MERGE (3 facts)
-- RESULT: "User owns 2015 Honda Civic with automatic gearbox, tinted windows, based in Example City"
+- RESULT: "User owns 2015 Skoda Fabia with automatic gearbox, tinted windows, based in Springfield"
 
 ---
 
@@ -2989,7 +2989,7 @@ USER: My Honda has tinted windows
 **Input:**
 
 ```
-ASSISTANT: You weighed 95 kg.
+ASSISTANT: You weighed 65 kg.
 USER: Yes, exactly.
 ```
 

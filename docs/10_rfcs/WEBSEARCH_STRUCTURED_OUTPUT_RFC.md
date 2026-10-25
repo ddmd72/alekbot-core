@@ -112,22 +112,22 @@ Query: "Weather in Springfield for the week"
   }
 }
 
-Query: "Who is president of France?"
+Query: "Who is president of Germany?"
 {
-  "full_response": "The President of France is Emmanuel Macron. He has held this position since May 2017.",
-  "history_summary": "President of France: Emmanuel Macron (since May 2017)"
+  "full_response": "The President of Germany is Frank-Walter Steinmeier. He has held this position since March 2017.",
+  "history_summary": "President of Germany: Frank-Walter Steinmeier (since March 2017)"
 }
 
-Query: "Concerts in Barcelona February"
+Query: "Concerts in Lisbon February"
 {
-  "full_response": "*Concerts in Barcelona - February 2026:*\n\n*Coldplay* — Feb 10, Palau Sant Jordi\n*Billie Eilish* — Feb 15, Primavera Sound\n*Rosalía* — Feb 22, Sala Apolo\n*The Weeknd* — Feb 28, Estadi Olímpic",
-  "history_summary": "Barcelona Feb 2026: Coldplay (10th), Billie Eilish (15th), Rosalía (22nd), The Weeknd (28th)",
+  "full_response": "*Concerts in Lisbon - February 2026:*\n\n*Coldplay* — Feb 10, Altice Arena\n*Billie Eilish* — Feb 15, Coliseu dos Recreios\n*Rosalía* — Feb 22, LAV\n*The Weeknd* — Feb 28, Estádio da Luz",
+  "history_summary": "Lisbon Feb 2026: Coldplay (10th), Billie Eilish (15th), Rosalía (22nd), The Weeknd (28th)",
   "rich_content": {
     "type": "table",
     "columns": ["Artist", "Date", "Venue"],
     "rows": [
-      ["Coldplay", "Feb 10", "Palau Sant Jordi"],
-      ["Billie Eilish", "Feb 15", "Primavera Sound"]
+      ["Coldplay", "Feb 10", "Altice Arena"],
+      ["Billie Eilish", "Feb 15", "Coliseu dos Recreios"]
     ]
   }
 }

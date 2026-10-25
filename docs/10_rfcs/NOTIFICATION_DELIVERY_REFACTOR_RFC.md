@@ -20,7 +20,7 @@ distinct defects in the notification path that interact and cascade:
 | 6 | `BaseAgent` warning log on timeout omits `task_id` and the actual timeout value | Three concurrent `process()` calls under one `agent_id` produce indistinguishable warnings; debugging requires correlation by timestamp arithmetic |
 
 Triggering incident: email review's Smart run (`1ab5cf67`, 08:00–08:05
-Madrid) hit defect #1, holding `_execute_lock` for the full 5 minutes;
+local time) hit defect #1, holding `_execute_lock` for the full 5 minutes;
 reminder cron fire (`d277145e`, 08:05) hit defect #2 and spent the next
 5 minutes blocked on the lock; concurrent cron tick at 08:10 hit
 defect #3 and produced duplicate fire `b828dcd4`; that duplicate
