@@ -31,7 +31,7 @@ def _make_email(email_id: str, text: str = "fact") -> IndexedEmail:
         category="travel",
         metadata={},
         subject="Test",
-        from_address="a@b.com",
+        from_address="a@example.com",
         email_date=datetime(2026, 1, 15),
         indexed_at=datetime(2026, 1, 15),
     )
@@ -46,7 +46,7 @@ def _make_creds(expired: bool = False) -> OAuthCredentials:
         refresh_token="ref",
         token_expiry=expiry,
         scopes=["gmail.readonly"],
-        email_address="user@test.com",
+        email_address="user@example.test",
     )
 
 

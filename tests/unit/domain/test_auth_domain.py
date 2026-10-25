@@ -52,7 +52,7 @@ class TestOAuthUserInfo:
     def test_all_fields(self):
         u = OAuthUserInfo(
             sub="s",
-            email="a@b.com",
+            email="a@example.com",
             email_verified=True,
             name="Alice",
             given_name="Alice",
@@ -60,7 +60,7 @@ class TestOAuthUserInfo:
             locale="en",
             provider_metadata={"key": "val"},
         )
-        assert u.email == "a@b.com"
+        assert u.email == "a@example.com"
         assert u.provider_metadata == {"key": "val"}
 
 

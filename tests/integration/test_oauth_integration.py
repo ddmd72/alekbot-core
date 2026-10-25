@@ -71,7 +71,7 @@ def auth_service(mock_user_repo, mock_account_repo, mock_auth_provider):
     # Whitelist gate admits the identities these flows sign in with.
     mock_whitelist_repo = AsyncMock()
     mock_whitelist_repo.get_whitelist = AsyncMock(return_value=WhitelistEntry(
-        allowed_emails=set(), allowed_domains={"example.com", "family.com"},
+        allowed_emails=set(), allowed_domains={"example.com", "family.example"},
     ))
     return AuthenticationService(
         user_repo=mock_user_repo,
@@ -516,13 +516,13 @@ async def test_complete_oauth_to_config_flow(
     )
     verify_claims = MagicMock()
     verify_claims.sub = "parent123"
-    verify_claims.email = "parent@family.com"
+    verify_claims.email = "clara@example.com"
     verify_claims.email_verified = True
     verify_claims.name = "Parent User"
     mock_auth_provider.verify_token.return_value = verify_claims
 
     user_info = MagicMock()
-    user_info.email = "parent@family.com"
+    user_info.email = "clara@example.com"
     user_info.name = "Parent User"
     user_info.picture = None
     user_info.locale = None
@@ -555,7 +555,7 @@ async def test_complete_oauth_to_config_flow(
     # Step 3: Parent invites child (simulated - just add to IAM)
     child_user = UserProfile(
         user_id="child-user",
-        email="child@family.com",
+        email="jamie@example.com",
         display_name="Child User",
         account_id=parent_account.account_id,
         config=UserBotConfig(),  # Default config (no overrides)

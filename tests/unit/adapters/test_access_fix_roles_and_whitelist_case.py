@@ -52,31 +52,31 @@ async def test_an_invite_with_an_unknown_role_is_refused_before_anything_is_writ
 
 async def test_a_mixed_case_stored_email_matches_the_lowercased_email():
     store = WhitelistStore()
-    seed(store, emails=["Ann@Example.COM"], domains=[])
+    seed(store, emails=["Clara@Example.COM"], domains=[])
     entry = await store.repo.get_whitelist()
-    assert entry.allowed_emails == {"ann@example.com"}
-    assert entry.is_allowed("ann@example.com")
+    assert entry.allowed_emails == {"clara@example.com"}
+    assert entry.is_allowed("clara@example.com")
 
 
 async def test_a_mixed_case_stored_domain_matches_the_lowercased_email():
     store = WhitelistStore()
-    seed(store, emails=[], domains=["Company.COM"])
+    seed(store, emails=[], domains=["Example.ORG"])
     entry = await store.repo.get_whitelist()
-    assert entry.allowed_domains == {"company.com"}
-    assert entry.is_allowed("zoe@company.com") and not entry.is_allowed("zoe@other.com")
+    assert entry.allowed_domains == {"example.org"}
+    assert entry.is_allowed("hanna@example.org") and not entry.is_allowed("hanna@example.net")
 
 
 async def test_whitespace_around_entries_is_stripped_and_blank_ones_are_dropped():
     store = WhitelistStore()
-    seed(store, emails=["  ann@example.com\n", "   "], domains=["\tcompany.com ", ""])
+    seed(store, emails=["  clara@example.com\n", "   "], domains=["\texample.org ", ""])
     entry = await store.repo.get_whitelist()
-    assert entry.allowed_emails == {"ann@example.com"}
-    assert entry.allowed_domains == {"company.com"}
-    assert not entry.is_allowed("zoe@")                               # a blank domain entry would have let this in
+    assert entry.allowed_emails == {"clara@example.com"}
+    assert entry.allowed_domains == {"example.org"}
+    assert not entry.is_allowed("hanna@")                               # a blank domain entry would have let this in
 
 
 async def test_the_stored_document_is_not_rewritten_by_a_read():
     store = WhitelistStore()
-    seed(store, emails=["Ann@Example.com "], domains=[" Company.COM"])
+    seed(store, emails=["Clara@Example.com "], domains=[" Example.ORG"])
     await store.repo.get_whitelist()
-    assert store.docs["config"] == {"allowed_emails": ["Ann@Example.com "], "allowed_domains": [" Company.COM"]}
+    assert store.docs["config"] == {"allowed_emails": ["Clara@Example.com "], "allowed_domains": [" Example.ORG"]}

@@ -1515,7 +1515,7 @@ class TestHandleDailyEmailReview:
 
     async def test_success_calls_ensure_agents_then_notify(self):
         worker, ns = _make_full_worker()
-        emails = [{"email_id": "e1", "subject": "Hello", "from": "a@b.com"}]
+        emails = [{"email_id": "e1", "subject": "Hello", "from": "a@example.com"}]
         ns.email_review.fetch_review_payload.return_value = emails
         call_order = []
         ns.agent_factory.ensure_agents_for_user.side_effect = lambda uid: call_order.append("ensure")

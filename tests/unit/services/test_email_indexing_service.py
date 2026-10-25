@@ -120,7 +120,7 @@ def _make_meta(email_id: str) -> EmailMetadata:
         email_id=email_id,
         provider="gmail",
         subject="Booking confirmed",
-        from_address="noreply@ryanair.com",
+        from_address="noreply@airline.example",
         date=datetime.now(timezone.utc),
         labels=["INBOX"],
         snippet="Your flight booking is confirmed",
@@ -133,7 +133,7 @@ def _make_classification(email_id: str, valuable: bool = True) -> EmailClassific
         valuable=valuable,
         category="travel" if valuable else None,
         fact="User booked flight AAA-BBB" if valuable else None,
-        tags=["flight", "ryanair"] if valuable else [],
+        tags=["flight", "airline"] if valuable else [],
     )
 
 
@@ -152,13 +152,13 @@ class TestEmailIndexingServiceApplyExclusions:
         emails = [_make_meta("e1")]
         emails[0] = EmailMetadata(
             email_id="e1", provider="gmail", subject="Sale!",
-            from_address="promo@marketing.com", date=datetime.now(timezone.utc),
+            from_address="promo@marketing.example", date=datetime.now(timezone.utc),
             labels=[], snippet=""
         )
         exclusion = EmailExclusion(
             user_id="u",
             pattern_type="sender_email",
-            pattern="marketing.com",
+            pattern="marketing.example",
             reason="spam",
             created_at=datetime.now(timezone.utc),
         )
@@ -169,14 +169,14 @@ class TestEmailIndexingServiceApplyExclusions:
         emails = [
             EmailMetadata(
                 email_id="e1", provider="gmail", subject="News",
-                from_address="noreply@linkedin.com", date=datetime.now(timezone.utc),
+                from_address="noreply@network.example", date=datetime.now(timezone.utc),
                 labels=[], snippet=""
             )
         ]
         exclusion = EmailExclusion(
             user_id="u",
             pattern_type="sender_domain",
-            pattern="linkedin.com",
+            pattern="network.example",
             reason="social",
             created_at=datetime.now(timezone.utc),
         )
@@ -187,7 +187,7 @@ class TestEmailIndexingServiceApplyExclusions:
         emails = [
             EmailMetadata(
                 email_id="e1", provider="gmail", subject="Flash Sale - 50% off!",
-                from_address="shop@store.com", date=datetime.now(timezone.utc),
+                from_address="shop@example.com", date=datetime.now(timezone.utc),
                 labels=[], snippet=""
             )
         ]
@@ -206,7 +206,7 @@ class TestEmailIndexingServiceApplyExclusions:
         exclusion = EmailExclusion(
             user_id="u",
             pattern_type="sender_email",
-            pattern="spam@spam.com",
+            pattern="spam@example.invalid",
             reason="spam",
             created_at=datetime.now(timezone.utc),
         )

@@ -39,7 +39,7 @@ def _email(user_id="user1", email_id="em1") -> IndexedEmail:
         category="receipt",
         metadata={"subject": "x"},
         subject="x",
-        from_address="a@b.com",
+        from_address="a@example.com",
         email_date=datetime(2026, 1, 15, tzinfo=timezone.utc),
         indexed_at=datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc),
     )

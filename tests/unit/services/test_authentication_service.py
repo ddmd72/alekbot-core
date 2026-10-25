@@ -381,7 +381,7 @@ async def test_register_new_user_exception_raises_value_error(
 ):
     mock_account_repo.create_account = AsyncMock(side_effect=RuntimeError("db full"))
     from src.ports.auth_port import TokenClaims, OAuthUserInfo
-    user_info = OAuthUserInfo(sub="s", email="e@x.com", name="E")
+    user_info = OAuthUserInfo(sub="s", email="e@example.net", name="E")
     claims = TokenClaims(sub="s", iss="i", aud="a", exp=datetime.now(), iat=datetime.now())
     with pytest.raises(ValueError, match="User registration failed"):
         await auth_service.register_new_user("p|s", user_info, claims)
@@ -422,7 +422,7 @@ async def test_link_oauth_identity_already_linked_raises(
 ):
     _, mock_provider = mock_auth_registry
     _base_provider_setup(mock_provider, sub="s99")
-    conflict_user = UserProfile(user_id="u-other", email="x@x.com", account_id="acc2")
+    conflict_user = UserProfile(user_id="u-other", email="x@example.org", account_id="acc2")
     mock_user_repo.get_user_by_external_id = AsyncMock(return_value=conflict_user)
 
     svc = _make_auth_svc(mock_auth_registry, mock_user_repo, mock_account_repo)

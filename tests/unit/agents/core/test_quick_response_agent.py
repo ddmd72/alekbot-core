@@ -828,10 +828,10 @@ class TestFormatEmailSearchCompact:
 
     def test_single_email_no_attachments_no_text(self):
         import json
-        data = json.dumps({"emails": [{"email_id": "abc", "from": "a@b.com", "date": "2026-03-01"}]})
+        data = json.dumps({"emails": [{"email_id": "abc", "from": "a@example.com", "date": "2026-03-01"}]})
         result = _format_email_search_compact(data)
         assert "abc" in result
-        assert "a@b.com" in result
+        assert "a@example.com" in result
         assert "Found 1 email(s):" in result
 
     def test_email_with_text_snippet(self):
@@ -1106,7 +1106,7 @@ class TestDelegateQuickSearchEmails:
     async def test_search_emails_result_formatted_compact(self):
         """search_emails intent → _format_email_search_compact used."""
         import json
-        email_json = json.dumps({"emails": [{"email_id": "abc123", "from": "a@b.com", "date": "2026-03-01"}]})
+        email_json = json.dumps({"emails": [{"email_id": "abc123", "from": "a@example.com", "date": "2026-03-01"}]})
         success_response = AgentResponse.success(task_id="t", agent_id="a", result=email_json)
         coordinator = MagicMock()
         coordinator.handle_delegation = AsyncMock(return_value=success_response)
