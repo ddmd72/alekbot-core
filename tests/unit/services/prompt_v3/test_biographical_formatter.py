@@ -59,10 +59,10 @@ class TestFormat:
         assert fmt.format([]) == ""
 
     def test_biographical_facts_grouped_under_biographical_header(self, fmt):
-        facts = [_fact("Born in Spain", domain="biographical")]
+        facts = [_fact("Born in Portugal", domain="biographical")]
         result = fmt.format(facts)
         assert "**Biographical**" in result
-        assert "Born in Spain" in result
+        assert "Born in Portugal" in result
 
     def test_biographical_section_comes_first(self, fmt):
         facts = [
@@ -183,7 +183,7 @@ class TestRenderSection:
         assert "[MINDSET]" not in result
 
     def test_date_suffix_appended(self, fmt):
-        facts = [_fact("Born in Spain", created_at="2026-01-15T00:00:00Z")]
+        facts = [_fact("Born in Portugal", created_at="2026-01-15T00:00:00Z")]
         result = fmt._render_section("Biographical", facts, "biographical")
         assert "Jan 15, 2026" in result
 

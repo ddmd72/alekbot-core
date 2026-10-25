@@ -220,6 +220,6 @@ def test_a_naive_stored_date_is_read_as_utc():
 
 
 def test_the_note_names_the_date_in_the_owners_calendar():
-    late = datetime(2026, 10, 21, 22, 30, tzinfo=UTC)  # 00:30 on the 22nd in Paris
+    late = datetime(2026, 10, 21, 22, 30, tzinfo=UTC)  # 00:30 on the 22nd in Europe/Paris
     assert "(2026-10-22)" in kept_reported_date_note(late, "Europe/Paris")
     assert "(2026-10-21)" in kept_reported_date_note(late, "UTC")

@@ -205,13 +205,13 @@ async def test_convert_plain_text_file(tmp_path):
 @pytest.mark.asyncio
 async def test_convert_csv_file(tmp_path):
     csv_file = tmp_path / "data.csv"
-    csv_file.write_text("name,age\nAlice,30\nBob,25", encoding="utf-8")
+    csv_file.write_text("name,age\nClara,30\nRobin,25", encoding="utf-8")
 
     with patch("os.path.getsize", return_value=50):
         result = await convert_file_to_text(str(csv_file), "data.csv", "text/csv")
 
     assert "[File: data.csv]" in result
-    assert "Alice,30" in result
+    assert "Clara,30" in result
 
 
 @pytest.mark.asyncio

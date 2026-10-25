@@ -19,7 +19,7 @@ from src.domain.drive_tiers import name_query_keys
 
 NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
 ROOT = "root"
-MADRID = {"latitude": 40.4168, "longitude": -3.7038}
+LISBON = {"latitude": 38.7223, "longitude": -9.1393}
 PORTO = {"latitude": 41.1496, "longitude": -8.6109}
 
 
@@ -50,7 +50,7 @@ class TestVersionUpgrades:
         """stale_versions_geo_off — §8.5, §12.3: a new place table re-resolves place names."""
         photo = DriveIndexRecord(user_id="u", item_id="p", name="IMG_1.jpg", kind="image", scope=Scope.NORMAL,
                                  state=RecordState.METADATA_ONLY, policy_version=POLICY_VERSION,
-                                 name_keys_version=NAME_KEYS_VERSION, facets={"location": MADRID}, place_name="Madrid",
+                                 name_keys_version=NAME_KEYS_VERSION, facets={"location": LISBON}, place_name="Lisbon",
                                  geo_table_version=GEO_TABLE_VERSION - 1)
         assert stale_versions(photo) is True
         assert stale_versions(replace(photo, geo_table_version=GEO_TABLE_VERSION)) is False
@@ -58,12 +58,12 @@ class TestVersionUpgrades:
     def test_changed_location_at_the_same_table_version_resolves_the_place_again(self):
         """place_cache_loc_off: the cached place name is reused only for the same coordinates."""
         def place_of(lat, lon):
-            return "Porto" if round(lat) == 41 else "Madrid"
+            return "Porto" if round(lat) == 41 else "Lisbon"
 
         first = DriveChange(item_id="p", name="IMG_1.jpg", parent_id=ROOT, size_bytes=10,
-                            facets={"location": MADRID})
+                            facets={"location": LISBON})
         stored = plan_observation(first, None, None, None, ctx(place_of)).upsert
-        assert stored.place_name == "Madrid" and stored.geo_table_version == GEO_TABLE_VERSION
+        assert stored.place_name == "Lisbon" and stored.geo_table_version == GEO_TABLE_VERSION
         moved = replace(first, facets={"location": PORTO})
         assert plan_observation(moved, stored, None, None, ctx(place_of)).upsert.place_name == "Porto"
 

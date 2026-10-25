@@ -28,7 +28,7 @@ INVALIDATE = ParsedFactUpdate(state=FactState.INVALIDATED)
 def confirm(expiry: Expiry) -> ParsedFactUpdate:
     return ParsedFactUpdate(state=FactState.CURRENT, expiry=expiry)
 MADRID = "Europe/Madrid"
-# a plan whose last day is 28 Oct in Madrid: it is due at the start of the next local day
+# a plan whose last day is 28 Oct in Europe/Madrid: it is due at the start of the next local day
 ENDS_28_OCT = compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 28)), NOW, MADRID)["expires_at"]
 
 
@@ -98,7 +98,7 @@ def test_ended_text_says_who_said_it_when_and_what_it_was():
 
 
 def test_the_month_is_the_owners_not_utcs():
-    late = datetime(2026, 10, 31, 23, 30, tzinfo=timezone.utc)  # already 1 Nov in Madrid
+    late = datetime(2026, 10, 31, 23, 30, tzinfo=timezone.utc)  # already 1 Nov in Europe/Madrid
     assert ended_text("x", late, MADRID).startswith("No longer true (the owner said so in Nov 2026)")
     assert ended_text("x", late, "UTC").startswith("No longer true (the owner said so in Oct 2026)")
     assert ended_text("x", late, "America/Los_Angeles").startswith("No longer true (the owner said so in Oct 2026)")
@@ -314,7 +314,7 @@ def test_still_true_on_a_date_that_is_still_ahead_keeps_that_date():
 
 def test_the_date_is_read_in_the_owners_zone():
     ahead = fact(state=FactState.CURRENT, expiry_kind=ExpiryKind.DATE, ttl_days=None,
-                 expires_at=datetime(2026, 10, 29, 23, 30, tzinfo=timezone.utc))  # 00:30 on 30 Oct in Madrid
+                 expires_at=datetime(2026, 10, 29, 23, 30, tzinfo=timezone.utc))  # 00:30 on 30 Oct in Europe/Madrid
     assert answer_updates(AnswerKind.STILL_TRUE, ahead, question(), NOW, MADRID, "digit").update.expiry.on == date(2026, 10, 30)
     assert answer_updates(AnswerKind.STILL_TRUE, ahead, question(), NOW, "UTC", "digit").update.expiry.on == date(2026, 10, 29)
 

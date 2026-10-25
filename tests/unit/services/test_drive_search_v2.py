@@ -36,47 +36,47 @@ def lab_report():
 class TestBarcelona:
     async def test_about_mentioned_and_by_translation(self, w):
         photo = w.file("IMG_0001.jpg", kind="image", taken="2025-05-03",
-                       place_forms=("Barcelona", "Барселона", "Barcelone", "Spain", "Испания"))
-        doc = w.file("Договор.pdf", profile=DriveProfile("Договор аренды", "Lease", "ru", "contract", entities=(
-            ProfileEntity("Барселона", "place", "Барселона"),)))
-        note = w.file("заметки.md", kind="markdown", chunks=["Летом мы были в Барселоне и много гуляли."])
-        latin = w.file("notes.md", kind="markdown", chunks=["Notes from the Barcelona trip, day two."])
-        grounded = w.file("viaje.pdf", chunks=["Llegamos a la ciudad condal el martes por la tarde."],
-                          hints={0: [("Барселона", "la ciudad condal")]})
-        result = await w.search("про Барселону")
+                       place_forms=("Coimbra", "Коїмбра", "Coïmbre", "Portugal", "Португалія"))
+        doc = w.file("Договір.pdf", profile=DriveProfile("Договір оренди", "Lease", "uk", "contract", entities=(
+            ProfileEntity("Коїмбра", "place", "Коїмбра"),)))
+        note = w.file("нотатки.md", kind="markdown", chunks=["Влітку ми були в Коїмбрі й багато гуляли."])
+        latin = w.file("notes.md", kind="markdown", chunks=["Notes from the Coimbra trip, day two."])
+        grounded = w.file("viaje.pdf", chunks=["Llegamos a la ciudad de los estudiantes el martes por la tarde."],
+                          hints={0: [("Коїмбра", "la ciudad de los estudiantes")]})
+        result = await w.search("про Коїмбру")
         assert [tier_of(result, i) for i in (photo, doc, note, latin, grounded)] == [
             "about", "about", "mentioned", "translated", "translated"]
-        assert card(result, photo).sources == ('place "Барселона" (photo location)',)
-        assert card(result, doc).sources == ('place "Барселона" (named in the file)',)
-        assert card(result, grounded).sources == ('passage keyword "Барселона", from "la ciudad condal"',)
-        assert "la ciudad condal" in card(result, grounded).passage
+        assert card(result, photo).sources == ('place "Коїмбра" (photo location)',)
+        assert card(result, doc).sources == ('place "Коїмбра" (named in the file)',)
+        assert card(result, grounded).sources == ('passage keyword "Коїмбра", from "la ciudad de los estudiantes"',)
+        assert "la ciudad de los estudiantes" in card(result, grounded).passage
         text = render_results(result)
-        assert '"барселону"; ignored: "про".' in text and FOOTER_EXACT in text
+        assert '"коїмбру"; ignored: "про".' in text and FOOTER_EXACT in text
 
 
 class TestBarcelonaTrip:
     async def test_a_note_holding_both_words_is_mentioned(self, w):
-        note = w.file("plan.md", kind="markdown", chunks=["Barcelona trip: book the hotel near the beach."])
-        other = w.file("photo.jpg", kind="image", place_forms=("Barcelona", "Барселона"), taken="2025-05-01")
-        result = await w.search("Barcelona trip")
+        note = w.file("plan.md", kind="markdown", chunks=["Coimbra trip: book the hotel near the university."])
+        other = w.file("photo.jpg", kind="image", place_forms=("Coimbra", "Коїмбра"), taken="2025-05-01")
+        result = await w.search("Coimbra trip")
         assert tier_of(result, note) == "mentioned" and tier_of(result, other) is None
 
     async def test_an_empty_conjunction_names_each_words_files(self, w):
-        w.file("photo.jpg", kind="image", place_forms=("Barcelona",), taken="2025-05-01")
-        w.file("photo2.jpg", kind="image", place_forms=("Barcelona",), taken="2025-05-02")
+        w.file("photo.jpg", kind="image", place_forms=("Coimbra",), taken="2025-05-01")
+        w.file("photo2.jpg", kind="image", place_forms=("Coimbra",), taken="2025-05-02")
         w.file("trip.md", kind="markdown", chunks=["A trip to the mountains."])
-        result = await w.search("Barcelona trip")
+        result = await w.search("Coimbra trip")
         assert [c.tier for c in result.cards if c.tier != "related"] == []
-        assert 'No file matches all of: "barcelona" (2 files), "trip" (1 file).' in render_results(result)
+        assert 'No file matches all of: "coimbra" (2 files), "trip" (1 file).' in render_results(result)
 
 
 class TestParis2023:
     async def test_photo_by_place_and_year_in_two_scripts(self, w):
-        paris = w.file("IMG_2210.jpg", kind="image", taken="2023-06-01", place_forms=("Paris", "Париж", "France"))
-        w.file("IMG_9.jpg", kind="image", taken="2024-06-01", place_forms=("Paris", "Париж", "France"))
-        for query in ("Paris 2023", "Париж 2023"):
+        berlin = w.file("IMG_2210.jpg", kind="image", taken="2023-06-01", place_forms=("Berlin", "Берлін", "Germany"))
+        w.file("IMG_9.jpg", kind="image", taken="2024-06-01", place_forms=("Berlin", "Берлін", "Germany"))
+        for query in ("Berlin 2023", "Берлін 2023"):
             result = await w.search(query)
-            assert [c.item_id for c in result.cards if c.tier == "about"] == [paris], query
+            assert [c.item_id for c in result.cards if c.tier == "about"] == [berlin], query
 
 
 class TestAllMyReceipts:
@@ -98,8 +98,8 @@ class TestAllMyReceipts:
 class TestCholesterol:
     async def test_spanish_lab_report_via_label_topic_and_a_grounded_hint(self, w):
         report = w.file("analitica_2025.pdf", profile=lab_report(),
-                        chunks=["Perfil lipídico. Colesterol total: 245 mg/dL (alto). HDL: 52 mg/dL."],
-                        hints={0: [("холестерин", "Colesterol total: 245 mg/dL")]})
+                        chunks=["Perfil lipídico. Colesterol total: 182 mg/dL (normal). HDL: 58 mg/dL."],
+                        hints={0: [("холестерин", "Colesterol total: 182 mg/dL")]})
         w.file("recipe.md", kind="markdown", chunks=["A lentil soup with carrots."])
         result = await w.search("медицинские записи по холестерину")
         assert tier_of(result, report) == "labelled"
@@ -218,11 +218,11 @@ class TestFolderScope:
 class TestShownCounts:
     async def test_about_shows_ten_and_counts_the_rest(self, w):
         for i in range(ABOUT_SHOWN + 3):
-            w.file(f"IMG_{i:04d}.jpg", kind="image", taken=f"2025-05-{i + 1:02d}", place_forms=("Barcelona",))
-        result = await w.search("Barcelona")
+            w.file(f"IMG_{i:04d}.jpg", kind="image", taken=f"2025-05-{i + 1:02d}", place_forms=("Coimbra",))
+        result = await w.search("Coimbra")
         assert sum(1 for c in result.cards if c.tier == "about") == ABOUT_SHOWN
         text = render_results(result)
-        assert f'About "barcelona" (showing {ABOUT_SHOWN} of {ABOUT_SHOWN + 3}):' in text
+        assert f'About "coimbra" (showing {ABOUT_SHOWN} of {ABOUT_SHOWN + 3}):' in text
         assert "/: 3 more matching files (image, 2025-05)" in text
 
 
@@ -247,16 +247,16 @@ class TestRelated:
         assert 'No file holds "zebra".' in text
 
     async def test_similar_name(self, w):
-        item = w.file("Barcelona.pdf")
-        result = await w.search("Barcleona")   # misspelled: no file holds it
+        item = w.file("Coimbra.pdf")
+        result = await w.search("Coimrba")   # misspelled: no file holds it
         assert card(result, item).similar_name and card(result, item).tier == "related"
-        assert 'No file holds "barcleona".' in render_results(result)
+        assert 'No file holds "coimrba".' in render_results(result)
 
 
 class TestKeysAndLog:
     async def test_every_fetch_takes_at_most_thirty_keys(self, w):
         w.file("x.md", kind="markdown", chunks=["Медицинские записи по холестерину."])
-        await w.search("медицинские записи по холестерину Barcelona receipts tickets 2023")
+        await w.search("медицинские записи по холестерину Coimbra receipts tickets 2023")
         assert w.repo.key_lists and max(n for _, n in w.repo.key_lists) <= CONCEPT_KEYS_MAX
 
     async def test_log_line_has_the_v2_stats(self, w, caplog):

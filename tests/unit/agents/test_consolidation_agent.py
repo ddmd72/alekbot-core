@@ -1108,7 +1108,7 @@ class TestFormatEmailCandidates:
         email.category = "PURCHASE"
         email.tags = ["purchase", "tech"]
         email.email_date = datetime(2026, 3, 1, 9, 0)                  # naive = UTC
-        email.from_address = "shop@store.com"
+        email.from_address = "shop@example.com"
         email.subject = "Your order #123"
         email.attachments = []
         email.metadata = {}
@@ -1119,7 +1119,7 @@ class TestFormatEmailCandidates:
         assert "user bought a laptop" in result
         assert "2026-03-01" in result
         assert '"date": "2026-03-01T10:00:00+01:00"' in result          # 09:00 UTC in the owner's zone, with its offset
-        assert "shop@store.com" in result
+        assert "shop@example.com" in result
         assert "Your order #123" in result
         assert result.startswith("1. ")
 
@@ -1130,7 +1130,7 @@ class TestFormatEmailCandidates:
         email.category = "INVOICE"
         email.tags = []
         email.email_date = datetime(2026, 1, 15, 9, 0)
-        email.from_address = "billing@acme.com"
+        email.from_address = "billing@acme.example"
         email.subject = "Invoice Q1"
         email.attachments = ["invoice.pdf"]
         email.metadata = {}
@@ -1147,7 +1147,7 @@ class TestFormatEmailCandidates:
             e.category = "INFO"
             e.tags = []
             e.email_date = datetime(2026, 1, 1, 9, 0)
-            e.from_address = "x@y.com"
+            e.from_address = "x@example.net"
             e.subject = f"Subject {i}"
             e.attachments = []
             e.metadata = {}
@@ -1355,7 +1355,7 @@ class TestBuildReviewCluster:
         ]
         fm.search_existing_facts = AsyncMock(return_value=facts_result)
 
-        changed = [("new-1", "user moved to Springfield from Barcelona")]
+        changed = [("new-1", "user moved to Springfield from Lisbon")]
         result = await agent._build_review_cluster(changed, _ACCOUNT_ID, timezone="UTC")
 
         assert len(result) == 2
@@ -1527,7 +1527,7 @@ class TestFormatEmailCandidatesMetadata:
         email.category = "SUBSCRIPTION"
         email.tags = ["subscription"]
         email.email_date = datetime(2026, 3, 15, 9, 0)
-        email.from_address = "billing@service.com"
+        email.from_address = "billing@service.example"
         email.subject = "Renewal notice"
         email.attachments = []
         email.metadata = {"amount": 9.99, "currency": "USD"}

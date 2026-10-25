@@ -7,7 +7,7 @@ translation, P1 review M8). A name that does not cover the query but passes `nam
 keys and trigrams (service line 436) is a "similar name" (Related).
 
 Deliberate v1 -> v2 changes, ported as the v2 property (not a loss):
-- a name matched through another script or the other transliteration scheme ("kyiv" -> "Київ.jpg") is found, but as a
+- a name matched through another script or the other transliteration scheme ("odessa" -> "Одеса.jpg") is found, but as a
   translation, not exact (B2/M8);
 - a Cyrillic stress mark is dropped from the token ("ко́т" is "кот"), v1 kept it;
 - the Ukrainian apostrophe joins its word ("Пам'ять" is one word, P1 M4): the name is found typed with any apostrophe
@@ -209,14 +209,14 @@ def test_short_i_and_yi_keep_their_letter_in_exact_keys():
     """й and ї are letters, not accented и and і: a misspelling with и/і meets the name only as a translation (the
     skeleton), never exactly."""
     assert "w:мои" not in name_keys_v2("Мой отчёт.pdf")
-    assert "w:киів" not in name_keys_v2("Київ.jpg")
-    assert name_cover("Київ.jpg", "киів") is TRANSLATION
+    assert "w:іжак" not in name_keys_v2("Їжак.jpg")
+    assert name_cover("Їжак.jpg", "іжак") is TRANSLATION
 
 
 @pytest.mark.parametrize("name,query", [
-    ("Київ.jpg", "kyiv"), ("Київ.jpg", "kiyiv"), ("Харків 2024.jpg", "kharkiv"), ("Гуляйполе.pdf", "huliaipole"),
+    ("Одеса.jpg", "odesa"), ("Одеса.jpg", "odessa"), ("Харків 2024.jpg", "kharkiv"), ("Гуляйполе.pdf", "huliaipole"),
     ("Запоріжжя.png", "zaporizhzhia"), ("Їжак.txt", "yizhak"), ("Згорани.doc", "zghorany"),
-    ("Олексій звіт.docx", "oleksii zvit"), ("Kyiv 2023.jpg", "Київ"),
+    ("Марія звіт.docx", "mariia zvit"), ("Odesa 2023.jpg", "Одеса"),
 ])
 def test_ukrainian_national_and_russian_style_transliterations_find_the_name(name, query):
     assert name_cover(name, query) is TRANSLATION
@@ -276,7 +276,7 @@ def test_the_accented_original_spelling_finds_the_name(name, query):
 
 
 def test_a_cyrillic_name_gets_no_latin_spelling_under_w():
-    for name in ("Мой отчёт", "Київ", "Ёжик йод їжа"):
+    for name in ("Мой отчёт", "Одеса", "Ёжик йод їжа"):
         latin = {k for k in name_keys_v2(name) if k.startswith("w:") and k[2:].isascii()}
         assert latin == set()
 

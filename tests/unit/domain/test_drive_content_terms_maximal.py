@@ -77,7 +77,7 @@ class TestBothSidesMeet:
     @pytest.mark.parametrize("text", [
         "invoice INV-2024/0012", "ref 2024/0012", "paid on 15.03.2024", "05/03/2024", "2024-03-15",
         "invoice for 1250.00", "1 250,00 €", "1250 euro", "Паспорт АВ-123456", "€1,250.00", "Fee 12,50",
-        "IBAN " + IBAN, "tel +34 600 000 000", "06 12 34 56 78",
+        "IBAN " + IBAN, "tel +1 202 555 0100", "+44 77 00 90 00 12",
     ])
     def test_every_query_term_is_a_term_the_same_text_indexes(self, text):
         # one normaliser: a query term is always one of the forms the index stores for the same text
@@ -95,13 +95,13 @@ class TestWhitespaceSeparatedDigitGroups:
         assert set(query_terms("".join(IBAN_GROUPS))) & set(content_terms(IBAN))
 
     def test_a_phone_indexes_its_joined_digits(self):
-        assert "34600000000" in content_terms("Tel. +34 600 000 000")
+        assert "12025550100" in content_terms("Tel. +1 202 555 0100")
 
     def test_a_french_phone_in_pairs_indexes_its_joined_digits(self):
-        assert "0612345678" in content_terms("Portable : 06 12 34 56 78")
+        assert "447700900012" in content_terms("Portable : +44 77 00 90 00 12")
 
     def test_a_phone_typed_without_spaces_meets_the_grouped_one(self):
-        assert set(query_terms("0612345678")) & set(content_terms("Portable : 06 12 34 56 78"))
+        assert set(query_terms("447700900012")) & set(content_terms("Portable : +44 77 00 90 00 12"))
 
     def test_short_groups_are_not_joined(self):
         # 8 digits in all: below the joined minimum

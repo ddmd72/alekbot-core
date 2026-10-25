@@ -206,7 +206,7 @@ class TestTemplates:
         assert (p.doc_type, p.what_it_is) == ("other", "machine-generated text")
 
 
-TEXT = ("Factura nº FA-2024/0137. Fecha: 15/03/2024. Cliente: Juan García, Springfield. Total: 1.250,00 €. "
+TEXT = ("Factura nº FA-2024/0137. Fecha: 15/03/2024. Cliente: João Exemplo, Springfield. Total: 1.250,00 €. "
         "Válido hasta el 30 de abril de 2024. Cuenta XX12 3456 7890.")
 
 
@@ -230,14 +230,14 @@ class TestVerify:
 
     def test_entities_printed_in_the_text_or_the_name_stay(self):
         p, counts = self._verify(_profile(entities=(
-            ProfileEntity("Springfield", "place", "Springfield", ("Спрингфилд",)),
-            ProfileEntity("Juan Garcia", "person", "JUAN GARCÍA"),
+            ProfileEntity("Springfield", "place", "Springfield", ("Спрінгфілд",)),
+            ProfileEntity("Joao Exemplo", "person", "JOÃO EXEMPLO"),
             ProfileEntity("Factura", "other", "factura.pdf"),
-            ProfileEntity("Madrid", "place", "Madrid"))))
-        assert [e.name for e in p.entities] == ["Springfield", "Juan Garcia", "Factura", "Madrid"]   # kept (Δ59)
-        assert _grades(p, "entity") == [("Springfield", "in_text"), ("JUAN GARCÍA", "in_text"),
-                                        ("factura.pdf", "in_text"), ("Madrid", "not_in_text")]
-        assert p.entities[0].forms == ("Спрингфилд",) and counts.not_in_text == {"entity": 1}
+            ProfileEntity("Hamburg", "place", "Hamburg"))))
+        assert [e.name for e in p.entities] == ["Springfield", "Joao Exemplo", "Factura", "Hamburg"]   # kept (Δ59)
+        assert _grades(p, "entity") == [("Springfield", "in_text"), ("JOÃO EXEMPLO", "in_text"),
+                                        ("factura.pdf", "in_text"), ("Hamburg", "not_in_text")]
+        assert p.entities[0].forms == ("Спрінгфілд",) and counts.not_in_text == {"entity": 1}
 
     def test_key_values_by_number_terms_or_verbatim_and_canonical_rewritten(self):
         p, counts = self._verify(_profile(key_values=(

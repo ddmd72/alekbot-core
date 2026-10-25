@@ -28,7 +28,7 @@ def ctx(
     timezone: str = "Europe/Paris",
     span: Optional[Tuple[datetime, datetime]] = None,
 ) -> FactWriteContext:
-    """A `FactWriteContext`; the defaults are a Stage 1 pass in the owner's Paris calendar with no message span. The
+    """A `FactWriteContext`; the defaults are a Stage 1 pass in the owner's Europe/Paris calendar with no message span. The
     pass's rules (`model_dates` and the rest) come from its `PassActor` row."""
     return FactWriteContext(actor=PassActor(actor), timezone=timezone, span=span)
 

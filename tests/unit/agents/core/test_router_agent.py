@@ -268,9 +268,9 @@ class TestRouterAgentComplexClassification:
         "What's my car model?",
         "Скажи моє ім'я",
         # External search queries  
-        "Яка погода в Барселоні?",
+        "Яка погода в Лісабоні?",
         "Покажи новости про Ukraine",
-        "Find flights to Barcelona",
+        "Find flights to Lisbon",
         "Який курс долара?",
         # Complex questions
         "Порівняй ці два варіанти та скажи, який краще",
@@ -356,8 +356,8 @@ class TestRouterAgentExternalSearchDetection:
         ("Bitcoin price", True),
         # Travel
         ("Find flights", True),
-        ("Рейс до Парижа", True),
-        ("Hotel in Barcelona", True),
+        ("Рейс до Берліна", True),
+        ("Hotel in Lisbon", True),
         # Commands
         ("Погугли це", True),
         ("Search for restaurants", True),

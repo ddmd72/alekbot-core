@@ -19,7 +19,7 @@ from src.infrastructure.agent_config import DRIVE_READER
 from tests.unit.agents.drive_model_fakes import PROMPT, ScriptedLLM, context, prompt_builder, reply
 
 BRIEF = {"doc_type": "invoice", "description": "Рахунок за електроенергію за вересень",
-         "doc_date": "2026-09-30", "parties": ["ТОВ Енерго", "Alex Doe"], "amount": {"value": "1 250,00",
+         "doc_date": "2026-09-30", "parties": ["ТОВ Приклад", "Alex Doe"], "amount": {"value": "1 250,00",
                                                                                    "currency": "UAH"}}
 
 
@@ -86,7 +86,7 @@ class TestParse:
         # Δ64: a doc type the model still sends is not read
         assert out.brief.doc_type == "" and out.brief.description == BRIEF["description"]
         assert out.brief.doc_date == datetime(2026, 9, 30, tzinfo=timezone.utc)
-        assert out.brief.parties == ("ТОВ Енерго", "Alex Doe") and out.brief.amount == "1 250,00 UAH"
+        assert out.brief.parties == ("ТОВ Приклад", "Alex Doe") and out.brief.amount == "1 250,00 UAH"
         assert out.output_limited is False
 
     async def test_a_brief_on_a_later_window_is_ignored(self):

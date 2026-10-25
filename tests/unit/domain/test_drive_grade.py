@@ -13,7 +13,7 @@ from src.domain.drive_index_params import PROFILE_DATES_MAX, PROFILE_ENTITIES_MA
 
 IN, AS, NOT = Grade.IN_TEXT.value, Grade.IN_TEXT_AS.value, Grade.NOT_IN_TEXT.value
 
-TEXT = ("Residence card of Maria Gonzalez.\nCard number X 1234567 A.\nIssued 12.03.2024 by the Oslo office.\n"
+TEXT = ("Identity card of Maria Doe.\nCard number X 1234567 A.\nIssued 12.03.2024 by the Oslo office.\n"
         "Valid until 07 05 2031. Total 1 250,00 EUR. Seen on March 3, 2022. Contrato de alquiler de vivienda.")
 
 
@@ -119,9 +119,9 @@ class TestKeyValues:
 
 class TestEntities:
     def test_printed_in_text_is_in_text_and_found_spellings_are_listed(self):
-        e = ProfileEntity("Maria Gonzalez", "person", "Maria Gonzalez", forms=("Мария Гонсалес",))
+        e = ProfileEntity("Maria Doe", "person", "Maria Doe", forms=("Марія Доу",))
         p, _ = _grade(_profile(entities=(e,)))
-        assert _by(p, GradedField.ENTITY)["Maria Gonzalez"].grade == IN
+        assert _by(p, GradedField.ENTITY)["Maria Doe"].grade == IN
 
     def test_printed_in_the_file_name_counts(self):
         e = ProfileEntity("Acme", "organization", "Acme")
@@ -135,10 +135,10 @@ class TestEntities:
         assert g.grade == AS and g.seen_as == "Oslo" and p.entities[0].found == ("Oslo",)
 
     def test_only_the_transliteration_skeleton_in_the_text_is_in_text_as(self):
-        e = ProfileEntity("Barcelona", "place", "Barcelona")
-        p, _ = _grade(_profile(entities=(e,)), text="Адреса: Барселона, вулиця Мільйонів.")
-        g = _by(p, GradedField.ENTITY)["Barcelona"]
-        assert g.grade == AS and g.seen_as == "Барселона"
+        e = ProfileEntity("Coimbra", "place", "Coimbra")
+        p, _ = _grade(_profile(entities=(e,)), text="Адреса: Коїмбра, вулиця Мільйонів.")
+        g = _by(p, GradedField.ENTITY)["Coimbra"]
+        assert g.grade == AS and g.seen_as == "Коїмбра"
 
     def test_absent_from_the_text_is_not_in_text_and_kept(self):
         e = ProfileEntity("Stockholm", "place", "Stockholm", forms=("Estocolmo",))
@@ -245,11 +245,11 @@ class TestBrief:
         from src.domain.drive_index import DocumentBrief
         from datetime import datetime, timezone
         brief = DocumentBrief(description="d", doc_date=datetime(2024, 3, 12, tzinfo=timezone.utc),
-                              parties=("Maria Gonzalez", "Nobody Corp"), amount="1 250,00 EUR")
+                              parties=("Maria Doe", "Nobody Corp"), amount="1 250,00 EUR")
         graded = {(g.field, g.value): g.grade for g in dp.grade_brief(brief, _chunks(TEXT), "scan.pdf")}
         assert graded[("date", "2024-03-12")] == IN
         assert graded[("value", "1 250,00 EUR")] == IN
-        assert graded[("entity", "Maria Gonzalez")] == IN and graded[("entity", "Nobody Corp")] == NOT
+        assert graded[("entity", "Maria Doe")] == IN and graded[("entity", "Nobody Corp")] == NOT
 
     def test_a_date_the_text_prints_another_way_is_in_text_as(self):
         from src.domain.drive_index import DocumentBrief

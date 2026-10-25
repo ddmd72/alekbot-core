@@ -115,19 +115,19 @@ async def test_a_form_the_file_does_not_print_never_puts_it_in_about():
     w = V2World()
     real = w.file("Паспорт скан.pdf")
     letter = w.file("letter.pdf", profile=DriveProfile("Letter", "A letter", "en", "letter", entities=(
-        ProfileEntity("паспорт", "person", "Smith", forms=("паспорт", "passport")),)))
+        ProfileEntity("паспорт", "person", "Doe", forms=("паспорт", "passport")),)))
     result = await w.search("паспорт")
     assert tier_of(result, real) == "about" and tier_of(result, letter) == "translated"
-    assert 'person "паспорт" (spelling by the index; named in the file as "Smith")' in card(result, letter).sources
+    assert 'person "паспорт" (spelling by the index; named in the file as "Doe")' in card(result, letter).sources
 
 
 async def test_the_card_shows_the_printed_spelling():
     w = V2World()
     item = w.file("pass.pdf", profile=DriveProfile("Boarding pass", "A boarding pass", "en", "ticket", entities=(
-        ProfileEntity("Барселона", "place", "BARCELONA", forms=("Barcelona",), found=("Barcelona",)),)))
-    result = await w.search("barcelona")
+        ProfileEntity("Коїмбра", "place", "COIMBRA", forms=("Coimbra",), found=("Coimbra",)),)))
+    result = await w.search("coimbra")
     assert tier_of(result, item) == "about"
-    assert "BARCELONA" in card(result, item).summary and "Барселона" not in card(result, item).summary
+    assert "COIMBRA" in card(result, item).summary and "Коїмбра" not in card(result, item).summary
 
 
 # -- F2 end to end ---------------------------------------------------------------------------------------------------
@@ -179,7 +179,7 @@ async def test_medical_records_about_cholesterol_reach_the_labelled_tier_from_th
     w = V2World()
     report = w.file("analisis.pdf", profile=DriveProfile(
         "Análisis de sangre", "Blood test results", "es", "medical_record", life_domains=("health",),
-        topic_words=("cholesterol", "colesterol", "холестерин")), chunks=["Colesterol total 210 mg/dL."])
+        topic_words=("cholesterol", "colesterol", "холестерин")), chunks=["Colesterol total 182 mg/dL."])
     for i in range(3):
         w.file(f"other{i}.pdf")
     result = await w.search("медицинские записи по холестерину")

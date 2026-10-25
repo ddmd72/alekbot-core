@@ -10,7 +10,7 @@ from src.domain.user import PerformanceTier
 from src.ports.llm_port import AgentExecutionContext, LLMPort, ProviderCapabilities
 from src.ports.prompt_builder_port import PromptBuilderPort
 
-_SUMMARY_TEXT = "Discussed the Q3 budget with Ivan."
+_SUMMARY_TEXT = "Discussed the Q3 budget with Lukas Weber."
 
 
 @pytest.fixture

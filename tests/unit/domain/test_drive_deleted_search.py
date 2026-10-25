@@ -16,8 +16,8 @@ def _stored(segments):
 
 
 def test_strict_and():
-    keys = {"w:budget", "w:madrid", "w:meeting"}
-    assert matches(_concepts("budget madrid"), keys) is True
+    keys = {"w:budget", "w:hamburg", "w:meeting"}
+    assert matches(_concepts("budget hamburg"), keys) is True
     assert matches(_concepts("budget lisbon"), keys) is False
     assert matches(_concepts("lisbon"), keys) is False
     assert matches((), keys) is True

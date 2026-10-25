@@ -141,11 +141,11 @@ class TestWhoCarriesAScore:
         assert acc.card_graded(rec(profile=self.PROFILE, profile_source="template"), []) is None
 
     def test_a_brief_only_file_carries_its_briefs_grades(self):
-        text = "Invoice dated 12.03.2024 total 1 250,00 EUR for Maria Gonzalez."
+        text = "Invoice dated 12.03.2024 total 1 250,00 EUR for Maria Doe."
         chunk = DriveChunk(user_id="u", item_id="i", generation=1, index=0, text=text, char_start=0,
                            char_end=len(text), kind="pdf")
         brief = DocumentBrief(doc_date=datetime(2024, 3, 12, tzinfo=timezone.utc), amount="1 250,00 EUR",
-                              parties=("Maria Gonzalez", "Nobody Corp"))
+                              parties=("Maria Doe", "Nobody Corp"))
         r = rec(brief=brief, extracted_by="reader@2", capture="scan", capture_source="detected")
         graded = acc.card_graded(r, [chunk])
         assert {(g.field, g.grade) for g in graded} == {("date", IN), ("value", IN), ("entity", IN), ("entity", NOT)}

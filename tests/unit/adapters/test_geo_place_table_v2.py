@@ -12,20 +12,20 @@ _HEADER = "geonameid\tlat\tlon\tname_en\tname_local\tcountry\tweight\tpopulation
 def _tables(tmp_path):
     places = tmp_path / "places.tsv"
     places.write_text(_HEADER
-                      + "10\t41.3888\t2.1590\tBarcelona\tBarcelona\tSpain\t5500000\t1600000\tBarcelone|Барселона\t\n"
-                      + "11\t41.4500\t2.2474\tBadalona\tBadalona\tSpain\t220000\t220000\tБадалона\t10\n"
+                      + "10\t41.1496\t-8.6109\tPorto\tPorto\tPortugal\t5500000\t1600000\tOporto|Порту\t\n"
+                      + "11\t41.1844\t-8.6963\tMatosinhos\tMatosinhos\tPortugal\t220000\t220000\tМатозіньюш\t10\n"
                       + "12\t48.5\t7.8\tKehl\tKehl\tGermany\t40000\t40000\t\t99\n", encoding="utf-8")
     countries = tmp_path / "countries.tsv"
-    countries.write_text("country\tnames\nSpain\tEspaña|Испания\n", encoding="utf-8")
+    countries.write_text("country\tnames\nPortugal\tPortugalia|Португалия\n", encoding="utf-8")
     return places, countries
 
 
 def test_v2_columns_are_loaded(tmp_path):
     rows = {r.name_en: r for r in load_place_rows(*_tables(tmp_path))}
-    assert rows["Barcelona"].alt_names == ("Barcelone", "Барселона") and rows["Barcelona"].large is None
-    assert rows["Badalona"].large is rows["Barcelona"]
-    assert rows["Badalona"].country_names == ("España", "Испания")
-    assert rows["Badalona"].country_names is rows["Barcelona"].country_names        # one tuple per country
+    assert rows["Porto"].alt_names == ("Oporto", "Порту") and rows["Porto"].large is None
+    assert rows["Matosinhos"].large is rows["Porto"]
+    assert rows["Matosinhos"].country_names == ("Portugalia", "Португалия")
+    assert rows["Matosinhos"].country_names is rows["Porto"].country_names        # one tuple per country
     assert rows["Kehl"].country_names == () and rows["Kehl"].large is None         # unknown id: no large place
 
 
@@ -47,11 +47,11 @@ def index():
 
 @pytest.mark.slow
 @pytest.mark.parametrize("lat,lon,expected", [
-    (41.3888, 2.1590, {"Barcelona", "Barcelone", "Барселона", "Spain", "España", "Испания", "Іспанія"}),
-    (48.8534, 2.3488, {"Paris", "Париж", "France", "Francia", "Франция"}),
+    (41.1496, -8.6109, {"Porto", "Oporto", "Порту", "Portugal", "Португалія", "Португалия"}),
+    (52.5244, 13.4105, {"Berlin", "Берлін", "Берлин", "Germany", "Alemania", "Германия"}),
     (41.8919, 12.5113, {"Rome", "Roma", "Рим", "Italy", "Italia"}),
-    (50.4547, 30.5238, {"Kyiv", "Київ", "Киев", "Ukraine", "Україна", "Украина"}),
-    (49.8383, 24.0232, {"Lviv", "Львів", "Львов"}),
+    (53.5507, 9.9930, {"Hamburg", "Hambourg", "Гамбург", "Germany", "Allemagne", "Німеччина"}),
+    (49.8383, 24.0232, {"Lviv", "Львів", "Львов", "Ukraine", "Україна", "Украина"}),
 ])
 def test_bundled_place_forms(index, lat, lon, expected):
     place = index.place(lat, lon)
@@ -61,8 +61,8 @@ def test_bundled_place_forms(index, lat, lon, expected):
 
 @pytest.mark.slow
 def test_a_small_place_names_its_large_neighbour(index):
-    place = index.place(41.2351, 1.8119)             # Sitges, ~30 000 people, 35 km from Barcelona's suburbs
-    assert place is not None and place.name.startswith("Sitges")
-    assert place.forms[0] == "Sitges" and len(place.forms) > 3
-    row = index.resolve(41.2351, 1.8119)
+    place = index.place(38.6979, -9.4215)            # Cascais, a coastal town 25 km west of Lisbon
+    assert place is not None and place.name.startswith("Cascais")
+    assert place.forms[0] == "Cascais" and len(place.forms) > 3
+    row = index.resolve(38.6979, -9.4215)
     assert row is not None and row.large is not None and row.large.large is None

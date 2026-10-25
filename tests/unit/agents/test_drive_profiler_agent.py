@@ -26,7 +26,7 @@ ANSWER = {
     "title": "Factura FA-0137", "what_it_is": "An electricity invoice for March 2024", "language": "es",
     "doc_type": "invoice", "life_domains": ["home", "finance"],
     "dates": [{"label": "issued", "date": "2024-03-15"}, {"label": "due", "date": "not a date"}],
-    "entities": [{"name": "Barcelona", "type": "place", "printed": "Barcelona", "forms": ["Барселона", "Barcelone"]}],
+    "entities": [{"name": "Lisbon", "type": "place", "printed": "Lisboa", "forms": ["Лісабон", "Lisbonne"]}],
     "key_values": [{"label": "amount_total", "printed": "1.250,00 €", "canonical": "1250.00"}],
     "topics": ["electricity"], "topics_native": ["electricidad"],
     "topic_words": ["electricity", "electricidad", "електроенергія", "электроэнергия"],
@@ -115,7 +115,7 @@ class TestParse:
             title="Factura FA-0137", what_it_is="An electricity invoice for March 2024", language="es",
             doc_type="invoice", life_domains=("home", "finance"),
             dates=(ProfileDate("issued", date(2024, 3, 15)),),
-            entities=(ProfileEntity("Barcelona", "place", "Barcelona", ("Барселона", "Barcelone")),),
+            entities=(ProfileEntity("Lisbon", "place", "Lisboa", ("Лісабон", "Lisbonne")),),
             key_values=(KeyValue("amount_total", "1.250,00 €", "1250.00"),),
             topics=("electricity",), topics_native=("electricidad",), topic_words=tuple(ANSWER["topic_words"]),
             label_words=tuple(ANSWER["label_words"]), domain_words=("home", "casa"), validity_words=())

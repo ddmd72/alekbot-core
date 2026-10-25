@@ -45,14 +45,14 @@ def full_record() -> DriveIndexRecord:
         chunk_count=3, chunk_space="old-space/768", chunk_reembed_pending=True, truncated=True,
         lead_text="Договор поставки",
         brief=DocumentBrief(doc_type="contract", description="Supply contract", doc_date=T - timedelta(days=30),
-                            parties=("ACME", "Иванов"), amount="1 250.00 EUR"),
+                            parties=("ACME", "Мельник"), amount="1 250.00 EUR"),
         triage_verdict=TriageVerdict.PHOTO, triage_version=1, triaged_content_version="c1",
         caption="a beach at sunset", defer_until=T + timedelta(hours=2), defer_priority=3, seen_epoch=7,
         readme_pending=True, readme_item_id="RM1", readme_version="c7", chunks_refused_space="new-space/3072",
         model_outages=2, model_read_at=T - timedelta(hours=3),
         # Search v2 (§25.2.1): every field, the nested profile with every one of its own fields set
         profile=DriveProfile(
-            title="Boarding pass Barcelona–Rome", what_it_is="An airline boarding pass", language="es",
+            title="Boarding pass Lisbon–Rome", what_it_is="An airline boarding pass", language="es",
             doc_type="ticket", life_domains=("travel",), dates=(ProfileDate("valid_until", date(2026, 5, 12), "12 05 2026"),),
             entities=(ProfileEntity("Roma", "place", "ROMA FCO", ("rome", "рим")),),
             key_values=(KeyValue("reference", "AB 12-34", "ab1234"),), topics=("flight",), topics_native=("vuelo",),

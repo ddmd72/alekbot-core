@@ -306,13 +306,13 @@ def test_a_question_asked_today_stays_current():
 def test_the_day_is_the_owners_not_utc():
     asked = question(Q.ASKED, asked_at=datetime(2026, 10, 23, 22, 30, tzinfo=timezone.utc))
     assert becomes_unanswered(asked, NOW, "UTC")  # 23 Oct in UTC
-    assert not becomes_unanswered(asked, NOW, "Europe/Madrid")  # 00:30 on 24 Oct in Madrid
+    assert not becomes_unanswered(asked, NOW, "Europe/Madrid")  # 00:30 on 24 Oct in Europe/Madrid
     assert becomes_unanswered(asked, NOW, "America/New_York")  # 23 Oct there too
 
 
 def test_now_is_read_in_the_owners_zone_too():
     asked = question(Q.ASKED, asked_at=datetime(2026, 10, 24, 10, 0, tzinfo=timezone.utc))
-    just_after_madrid_midnight = datetime(2026, 10, 24, 22, 30, tzinfo=timezone.utc)  # 25 Oct 00:30 in Madrid
+    just_after_madrid_midnight = datetime(2026, 10, 24, 22, 30, tzinfo=timezone.utc)  # 25 Oct 00:30 in Europe/Madrid
     assert becomes_unanswered(asked, just_after_madrid_midnight, "Europe/Madrid")
     assert not becomes_unanswered(asked, just_after_madrid_midnight, "UTC")
 
@@ -357,7 +357,7 @@ def test_a_pending_question_with_no_claim_day_on_record_is_stuck():
 
 def test_the_claim_day_is_compared_in_the_owners_zone():
     st = state(current_question_id="out", sent_on=date(2026, 10, 24), sent=1)
-    after_madrid_midnight = datetime(2026, 10, 24, 22, 30, tzinfo=timezone.utc)  # 25 Oct in Madrid
+    after_madrid_midnight = datetime(2026, 10, 24, 22, 30, tzinfo=timezone.utc)  # 25 Oct in Europe/Madrid
     assert stuck_pending(pending(), st, after_madrid_midnight, "Europe/Madrid")
     assert not stuck_pending(pending(), st, after_madrid_midnight, "UTC")
 

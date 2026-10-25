@@ -31,9 +31,9 @@ def test_about_card_names_the_place_and_the_name_word():
 
 
 def test_photo_location():
-    rec = RecordKeyInputs(kind="image", place_forms=("Barcelona", "Барселона", "Spain"))
-    m, ex = _match(rec, "IMG_1.jpg", "про Барселону")
-    assert m.tier.value == "about" and ex.sources == ('place "Барселона" (photo location)',)
+    rec = RecordKeyInputs(kind="image", place_forms=("Coimbra", "Коїмбра", "Portugal"))
+    m, ex = _match(rec, "IMG_1.jpg", "про Коїмбру")
+    assert m.tier.value == "about" and ex.sources == ('place "Коїмбра" (photo location)',)
 
 
 def test_type_label_is_automatic():
@@ -51,9 +51,9 @@ def test_passage_words_join_into_one_source_and_the_window_spans_them():
 
 
 def test_one_passage_word_is_singular():
-    text = "Мы гуляли в Барселоне весь день."
-    _, ex = _match(RecordKeyInputs(kind="markdown"), "note.md", "про Барселону", chunk_text=text)
-    assert ex.sources == ('word "Барселоне" in one passage',)
+    text = "Ми гуляли в Коїмбрі весь день."
+    _, ex = _match(RecordKeyInputs(kind="markdown"), "note.md", "про Коїмбру", chunk_text=text)
+    assert ex.sources == ('word "Коїмбрі" in one passage',)
 
 
 def test_passage_keyword_with_its_evidence():
@@ -65,10 +65,10 @@ def test_passage_keyword_with_its_evidence():
 
 
 def test_a_skeleton_says_by_spelling_in_another_script():
-    text = "Notes from the Barcelona trip."
-    m, ex = _match(RecordKeyInputs(kind="markdown"), "n.md", "про Барселону", chunk_text=text)
+    text = "Notes from the Coimbra trip."
+    m, ex = _match(RecordKeyInputs(kind="markdown"), "n.md", "про Коїмбру", chunk_text=text)
     assert m.tier.value == "translated"
-    assert ex.sources == ('word "Barcelona" in one passage, by spelling in another script (automatic)',)
+    assert ex.sources == ('word "Coimbra" in one passage, by spelling in another script (automatic)',)
 
 
 def test_not_matched_names_the_missed_words():

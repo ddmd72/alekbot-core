@@ -43,7 +43,7 @@ def test_prose_passes(seed):
 def test_meeting_transcript_passes(seed):
     rng = random.Random(seed)
     lex = Lexicon(rng)
-    speakers = ["Alice", "Bob", "Dr. Smith", "Олена"]
+    speakers = ["Clara", "Jamie", "Dr. Quillen", "Ганна"]
     lines = []
     for i in range(rng.randint(60, 400)):
         said = lex.sentence() if rng.random() > 0.25 else rng.choice(["ok", "yes", "right", "mm-hm", "agreed"])
@@ -70,7 +70,7 @@ def test_chat_export_passes(seed):
     rng = random.Random(seed)
     lex = Lexicon(rng)
     lines = [f"[{rng.randint(1, 28):02d}.10.26, {rng.randint(0, 23):02d}:{rng.randint(0, 59):02d}:11] "
-             f"{rng.choice(['Bob', 'Мама', 'Ana'])}: {lex.sentence()}" for _ in range(rng.randint(50, 300))]
+             f"{rng.choice(['Jamie', 'Мама', 'Ana'])}: {lex.sentence()}" for _ in range(rng.randint(50, 300))]
     assert not is_machine_text("\n".join(lines))
 
 

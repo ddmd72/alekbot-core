@@ -108,7 +108,7 @@ def _assert_no_user_access(user_repo, account_repo):
 async def test_new_user_not_in_whitelist_is_rejected_before_any_user_access(
     service, provider, user_repo, account_repo
 ):
-    provider.verify_token = AsyncMock(return_value=_claims("stranger@gmail.com", True))
+    provider.verify_token = AsyncMock(return_value=_claims("stranger@example.com", True))
 
     with pytest.raises(AccessDeniedError):
         await service.handle_oauth_callback(code="c", redirect_uri="https://x/cb")
@@ -150,10 +150,10 @@ async def test_existing_user_removed_from_whitelist_is_rejected(
     user_repo.get_user_by_external_id = AsyncMock(
         return_value=UserProfile(
             user_id="u1", external_user_id="firebase|sub-1",
-            email="revoked@gmail.com", account_id="a1",
+            email="revoked@example.com", account_id="a1",
         )
     )
-    provider.verify_token = AsyncMock(return_value=_claims("revoked@gmail.com", True))
+    provider.verify_token = AsyncMock(return_value=_claims("revoked@example.com", True))
 
     with pytest.raises(AccessDeniedError):
         await service.handle_oauth_callback(code="c", redirect_uri="https://x/cb")
@@ -198,7 +198,7 @@ async def test_missing_email_is_rejected(service, provider, user_repo, account_r
 
 async def test_gate_reads_id_token_not_userinfo(service, provider, user_repo, account_repo):
     """userinfo claiming a whitelisted email cannot override the signed ID token."""
-    provider.verify_token = AsyncMock(return_value=_claims("stranger@gmail.com", True))
+    provider.verify_token = AsyncMock(return_value=_claims("stranger@example.com", True))
     provider.get_user_info = AsyncMock(
         return_value=OAuthUserInfo(sub="sub-1", email=ALLOWED, email_verified=True)
     )
@@ -235,7 +235,7 @@ async def test_access_denied_is_not_a_value_error():
 async def test_link_oauth_rejects_non_whitelisted_google_identity(
     service, provider, user_repo, account_repo
 ):
-    provider.verify_token = AsyncMock(return_value=_claims("stranger@gmail.com", True))
+    provider.verify_token = AsyncMock(return_value=_claims("stranger@example.com", True))
 
     with pytest.raises(AccessDeniedError):
         await service.link_oauth_identity(user_id="u1", code="c", redirect_uri="https://x/cb")

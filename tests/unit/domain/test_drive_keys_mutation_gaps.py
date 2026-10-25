@@ -71,15 +71,15 @@ def test_a_compound_inside_a_longer_spelling_keys_no_joined_word():
 
 @pytest.mark.parametrize("query,word,run", [
     ("notes from New York", "york", "e:new_york"),
-    ("photos of the trip to Le Havre", "havre", "e:le_havr"),
+    ("photos of the trip to The Hague", "hague", "e:the_hagu"),
 ])
 def test_a_run_holding_a_later_word_is_keyed(query, word, run):
     assert run in _concept(query, word).about_keys
 
 
 def test_a_run_ending_in_a_function_word_is_skipped():
-    keys = _concept("Havre de Grace", "havre").about_keys
-    assert "e:havr_de" not in keys and "e:havr_de_grac" in keys
+    keys = _concept("Foz do Douro", "foz").about_keys
+    assert "e:foz_do" not in keys and "e:foz_do_douro" in keys
 
 
 @pytest.mark.parametrize("query,words", [
@@ -120,7 +120,7 @@ def test_trigrams_alone_pass_the_floor_only_at_its_size():
 def test_one_whole_key_passes_the_floor_and_counts_every_shared_key():
     assert name_match_v2(["w:rome"], ["w:rome"]) == 1
     assert name_match_v2(["w:rome", "t:rom"], ["w:rome", "t:rom", "t:xyz"]) == 2
-    assert name_match_v2(["w:rome"], ["w:paris"]) is None
+    assert name_match_v2(["w:rome"], ["w:berlin"]) is None
 
 
 @pytest.mark.parametrize("query,words", [("15.03.2024март", ["15.03.2024", "март"]),

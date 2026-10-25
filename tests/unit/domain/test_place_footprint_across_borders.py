@@ -1,6 +1,6 @@
 """Across a border, a heavier place names a photo only when the photo lies within that place's own footprint,
 k * sqrt(weight) km capped at PLACE_PREFER_RADIUS_KM (USER_DRIVE_INDEXING_RFC §5.3): a photo in Trastevere is
-Rome although the Vatican City row is nearer, while Monaco is never Nice and Kehl never Strasbourg."""
+Rome although the Vatican City row is nearer, while Weil am Rhein is never Basel across the Rhine."""
 from src.domain.place_lookup import PlaceIndex, PlaceRow
 
 _VATICAN = PlaceRow(41.9027, 12.4541, "Vatican City", "Vatican City", "Vatican", weight=2_487)
@@ -18,9 +18,9 @@ def test_a_photo_outside_the_footprint_keeps_the_nearest_foreign_place():
 
 
 def test_a_border_town_is_not_named_after_the_city_across_the_river():
-    rows = [PlaceRow(48.5730, 7.8152, "Kehl", "Kehl", "Germany", weight=39_584),
-            PlaceRow(48.5839, 7.7455, "Strasbourg", "Strasbourg", "France", weight=824_535)]
-    assert PlaceIndex(rows).lookup(48.5730, 7.8152) == "Kehl, Germany"
+    rows = [PlaceRow(47.5934, 7.6205, "Weil am Rhein", "Weil am Rhein", "Germany", weight=39_584),
+            PlaceRow(47.5584, 7.5733, "Basel", "Basel", "Switzerland", weight=824_535)]
+    assert PlaceIndex(rows).lookup(47.5934, 7.6205) == "Weil am Rhein, Germany"
 
 
 def test_the_footprint_branch_still_needs_the_weight_factor():

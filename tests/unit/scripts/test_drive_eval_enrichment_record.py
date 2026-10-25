@@ -23,7 +23,7 @@ PROFILE = DriveProfile(title="Lab report", what_it_is="Blood test", language="es
                        dates=(ProfileDate(label="issued", iso=date(2025, 3, 14)),))
 
 
-def _req(item="i1", head="Colesterol total 212"):
+def _req(item="i1", head="Colesterol total 182"):
     return ProfileRequest(user_id="u", account_id="a", item_id=item, kind="pdf", name="lab.pdf",
                           input=ProfileInput(head=head))
 

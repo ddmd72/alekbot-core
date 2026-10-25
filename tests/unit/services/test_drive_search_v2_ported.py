@@ -171,9 +171,9 @@ async def test_a_date_filtered_query_reads_the_filtered_about_page_past_a_full_p
     monkeypatch.setattr(search_mod, "GROUP_READ_MAX", 3)
     w = world()
     for i in range(8):
-        w.file(f"IMG_{i:04d}.jpg", kind="image", taken=f"2025-05-{i + 1:02d}", place_forms=("Barcelona",))
-    old = w.file("IMG_9999.jpg", kind="image", taken="2020-05-05", place_forms=("Barcelona",))
-    result = await w.search("barcelona", date_from=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        w.file(f"IMG_{i:04d}.jpg", kind="image", taken=f"2025-05-{i + 1:02d}", place_forms=("Coimbra",))
+    old = w.file("IMG_9999.jpg", kind="image", taken="2020-05-05", place_forms=("Coimbra",))
+    result = await w.search("coimbra", date_from=datetime(2020, 1, 1, tzinfo=timezone.utc),
                             date_to=datetime(2020, 12, 31, tzinfo=timezone.utc))
     assert tiers(result) == [old]
 
@@ -186,12 +186,12 @@ async def test_reads_through_full_about_pages_are_bounded(monkeypatch):
     monkeypatch.setattr(search_mod, "GROUP_READ_MAX", 4)
     w = world()
     for i in range(20):
-        w.file(f"IMG_{i:04d}.jpg", kind="image", taken=f"2025-05-{i + 1:02d}", place_forms=("Barcelona",))
-    result = await w.search("barcelona", **MARCH)
+        w.file(f"IMG_{i:04d}.jpg", kind="image", taken=f"2025-05-{i + 1:02d}", place_forms=("Coimbra",))
+    result = await w.search("coimbra", **MARCH)
     about_reads = [n for stream, n in w.repo.key_lists if stream == "about"]
     assert len(about_reads) == 4 // 2 + 1 and tiers(result) == []
     # the one filtered read past the full pages came back short: the scope's absence is read, not guessed
-    assert 'No file in this scope holds "barcelona".' in render_results(result)
+    assert 'No file in this scope holds "coimbra".' in render_results(result)
 
 
 # -- from test_drive_search_capped_filters.py -----------------------------------------------------------------------

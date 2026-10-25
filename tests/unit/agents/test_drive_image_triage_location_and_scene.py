@@ -41,8 +41,8 @@ class TestLocationPrior:
         assert image_label(_input(camera_prior=False)) == "Image 3: camera metadata absent"
 
     def test_with_a_place_and_coordinates(self):
-        label = image_label(_input(place_name="Barcelona, Spain", location=(41.403, 2.174)))
-        assert label == "Image 3: camera metadata present; taken near Barcelona, Spain (41.403, 2.174)"
+        label = image_label(_input(place_name="Porto, Portugal", location=(41.141, -8.611)))
+        assert label == "Image 3: camera metadata present; taken near Porto, Portugal (41.141, -8.611)"
 
     def test_coordinates_without_a_place_name(self):
         assert image_label(_input(location=(41.403, -2.174))) == (
@@ -61,9 +61,9 @@ class TestLocationPrior:
 
     async def test_the_label_reaches_the_request_before_its_thumbnail(self):
         agent, llm = _agent([reply({"images": [_entry(3)]})])
-        await agent.classify([_input(place_name="Barcelona, Spain", location=(41.403, 2.174))], account_id="a")
+        await agent.classify([_input(place_name="Porto, Portugal", location=(41.141, -8.611))], account_id="a")
         parts = llm.requests[0].messages[0].parts
-        assert parts[0].text == "Image 3: camera metadata present; taken near Barcelona, Spain (41.403, 2.174)"
+        assert parts[0].text == "Image 3: camera metadata present; taken near Porto, Portugal (41.141, -8.611)"
         assert parts[1].file_data is not None
 
 

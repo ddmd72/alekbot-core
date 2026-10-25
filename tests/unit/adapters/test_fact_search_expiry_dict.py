@@ -146,7 +146,7 @@ async def test_a_missing_reported_date_stays_missing():
 
 
 async def test_the_date_shown_follows_the_zone_it_is_asked_in():
-    """The same moment is a different calendar day east of Paris: the owner's zone, not the host's, decides."""
+    """The same moment is a different calendar day in Europe/Paris than in UTC: the owner's zone, not the host's, decides."""
     midnight_paris = datetime.combine(datetime(2026, 12, 25).date() + timedelta(days=1), time.min, tzinfo=PARIS)
     # Reviewer edit (Facts S4 T6c, L4): the hit holds the kind as the enum and `expires_at` as an aware datetime.
     fact = EnrichedFact(fact_id="f", content="c", source="keyword", expiry_kind=ExpiryKind.DATE,

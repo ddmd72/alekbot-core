@@ -75,7 +75,7 @@ def test_audit_due_every_week_from_creation_then_from_the_last_cycle():
 def test_root_names_recognised():
     assert all(is_root_name(n) for n in ("_Transcripts", "_transcripts (alek)", "_Transcripts (Alek 2)",
                                          "_Transcripts (Alek 12)"))
-    assert not any(is_root_name(n) for n in ("Transcripts", "_Transcripts copy", "_Transcripts (Bob)", "x"))
+    assert not any(is_root_name(n) for n in ("Transcripts", "_Transcripts copy", "_Transcripts (Robin)", "x"))
 
 
 def test_lost_root_reset_drops_the_archive_and_clears_the_rest():

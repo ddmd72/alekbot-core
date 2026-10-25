@@ -79,8 +79,8 @@ def test_a_hint_beats_a_skeleton_in_the_same_chunk():
 def test_evidence_spans_need_a_stored_span_and_the_keyword():
     cover = Cover("rome", SourceClass.TRANSLATION, WHERE_HINT, tuple(word_form_keys("Rome")))
     items = [HintItem("Rome", "keyword", "en Roma", 0, 7), HintItem("Rome", "keyword", "x", -1, -1),
-             HintItem("Paris", "keyword", "a Paris", 10, 17)]
-    assert cover_spans(cover, "en Roma y a Paris", items) == ((0, 7),)
+             HintItem("Porto", "keyword", "a Porto", 10, 17)]
+    assert cover_spans(cover, "en Roma y a Porto", items) == ((0, 7),)
 
 
 def test_a_tie_between_record_and_chunk_needs_no_chunk():

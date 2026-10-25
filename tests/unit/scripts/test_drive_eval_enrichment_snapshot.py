@@ -23,8 +23,8 @@ from ..services.drive_content_fakes import FakeExtractor
 PROFILE = DriveProfile(
     title="Factura", what_it_is="Invoice for a bathroom repair", language="es", doc_type="invoice",
     life_domains=("home", "finance"), dates=(ProfileDate(label="issued", iso=date(2026, 3, 11)),),
-    entities=(ProfileEntity(name="Reformas Ejemplo", type="organization", printed="REFORMAS EJEMPLO S.L.",
-                            forms=("Reformas Ejemplo",)),),
+    entities=(ProfileEntity(name="Reformas Exemplo", type="organization", printed="REFORMAS EXEMPLO LDA.",
+                            forms=("Reformas Exemplo",)),),
     key_values=(KeyValue(label="invoice_number", printed="F-2026-0311", canonical="F-2026-0311"),),
     topics=("bathroom repair",), topics_native=("reparación del baño",), topic_words=("ремонт ванної",),
     label_words=("invoice", "factura"), domain_words=("home",), validity_words=())

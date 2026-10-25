@@ -79,7 +79,7 @@ async def test_single_fact_saved(service, mock_repo):
 
 @pytest.mark.asyncio
 async def test_type_mapping_state(service, mock_repo):
-    facts = [{"text": "User weighs 80kg", "tags": [], "type": "state"}]
+    facts = [{"text": "User weighs 64kg", "tags": [], "type": "state"}]
 
     await service.add_facts_batch("acc-1", "usr-1", facts)
 
@@ -171,7 +171,7 @@ async def test_anchor_tag_added_for_principles(service, mock_repo):
 
 @pytest.mark.asyncio
 async def test_anchor_tag_not_added_for_events(service, mock_repo):
-    facts = [{"text": "User went to Paris", "tags": [], "type": "event"}]
+    facts = [{"text": "User went to Berlin", "tags": [], "type": "event"}]
 
     await service.add_facts_batch("acc-1", "usr-1", facts)
 

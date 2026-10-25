@@ -141,7 +141,7 @@ async def test_content_update_writes_a_new_version_and_closes_the_old_in_one_com
     fid = await create(store, reported_date="2026-03-04T10:00:00Z")
     old = copy.deepcopy(store.docs[fid])
 
-    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx())
 
     new_id = res["fact_id"]
     assert new_id != fid and res["status"] == "updated" and res["version"] == 2
@@ -149,8 +149,8 @@ async def test_content_update_writes_a_new_version_and_closes_the_old_in_one_com
     assert (new["lineage_id"], new["version"], new["replaces_fact_id"]) == (old["lineage_id"], 2, fid)
     assert new["created_at"] == old["created_at"] and new["valid_from"] > old["valid_from"]
     assert (new["state"], new["is_current"], new["valid_to"], new["superseded_by"]) == ("current", True, None, None)
-    assert new["text"] == "mother is Mariya" and new["account_id"] == ACC
-    for field, text in zip(VECTORS, fact_embedding_texts("mother is Mariya", new["tags"], new["metadata"])):
+    assert new["text"] == "mother is Mariia" and new["account_id"] == ACC
+    for field, text in zip(VECTORS, fact_embedding_texts("mother is Mariia", new["tags"], new["metadata"])):
         assert stored_vector(new[field]) == pytest.approx(embed(text))
     closed = store.docs[fid]
     assert (closed["state"], closed["is_current"], closed["superseded_by"]) == ("superseded", False, new_id)
@@ -160,13 +160,13 @@ async def test_content_update_writes_a_new_version_and_closes_the_old_in_one_com
 
 async def test_version_is_found_by_every_reader_after_content_and_after_temporal_class_only_update(store):
     fid = await create(store)
-    first = (await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx()))["fact_id"]
+    first = (await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx()))["fact_id"]
     second = (await store.adapter.update_fact(first, {"temporal_class": "DYNAMIC", "expiry": EXPIRY_NONE}, ACC, context=ctx()))["fact_id"]
     assert len({fid, first, second}) == 3
 
     active = await store.repo.get_active_facts_ordered(ACC)
     assert [f.id for f in active] == [second]
-    texts = fact_embedding_texts("mother is Mariya", ["family", "mother", "consolidated"], {"name": "Maria"})
+    texts = fact_embedding_texts("mother is Mariia", ["family", "mother", "consolidated"], {"name": "Maria"})
     for field, text in zip(VECTORS, texts):
         found = await store.repo.search_facts(embed(text), field, 5, user_id=USER, account_id=ACC)
         assert [f.id for f in found] == [second], field
@@ -220,9 +220,9 @@ async def test_state_only_reported_date_only_and_empty_updates_stay_in_place_wit
 
 async def test_second_update_on_a_superseded_id_lands_on_the_current_version(store):
     fid = await create(store)
-    v2 = (await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx()))["fact_id"]
+    v2 = (await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx()))["fact_id"]
 
-    v3 = await store.adapter.update_fact(fid, {"content": "mother is Mariya Doe", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    v3 = await store.adapter.update_fact(fid, {"content": "mother is Mariia Doe", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert v3["status"] == "updated" and v3["version"] == 3 and v3["fact_id"] not in (fid, v2)
     assert store.docs[v3["fact_id"]]["replaces_fact_id"] == v2 and store.docs[v2]["superseded_by"] == v3["fact_id"]
     assert store.docs[fid]["superseded_by"] == v2
@@ -234,10 +234,10 @@ async def test_second_update_on_a_superseded_id_lands_on_the_current_version(sto
 
 
 # Reviewer edit (facts S3, T2): the in-place case is ARCHIVED; the model may no longer send STALE (D1).
-@pytest.mark.parametrize("updates", [{"content": "mother is Mariya Doe", "expiry": EXPIRY_NONE}, {"state": "ARCHIVED"}])
+@pytest.mark.parametrize("updates", [{"content": "mother is Mariia Doe", "expiry": EXPIRY_NONE}, {"state": "ARCHIVED"}])
 async def test_an_update_forwarded_to_the_current_version_says_so(store, updates):
     fid = await create(store)
-    v2 = (await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx()))["fact_id"]
+    v2 = (await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx()))["fact_id"]
 
     res = await store.adapter.update_fact(fid, updates, ACC, context=ctx())
 
@@ -250,7 +250,7 @@ async def test_an_update_forwarded_to_the_current_version_says_so(store, updates
 async def test_an_update_on_the_current_id_carries_no_resolved_from(store):
     fid = await create(store)
 
-    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx())
 
     assert set(res) == {"fact_id", "status", "version", "message"} and res["message"] == "Fact updated successfully"
 
@@ -375,7 +375,7 @@ async def test_precondition_conflict_reresolves_once_and_succeeds(store):
     resolutions = count_resolutions(store.repo)
     store.interfere(fid, {"reported_date": STALE_DATE})    # interleaving source: a commit lands at the transactional read
 
-    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx())
 
     assert res["status"] == "updated" and res["version"] == 2
     assert store.docs[fid]["reported_date"] == STALE_DATE and store.docs[fid]["superseded_by"] == res["fact_id"]
@@ -389,7 +389,7 @@ async def test_second_conflict_is_a_failed_result_and_writes_nothing(store):
     store.interfere(fid, {"reported_date": STALE_DATE})
     store.interfere(fid, {"context": "second interference"})
 
-    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx())
 
     assert res["status"] == "failed" and res["fact_id"] == fid and "changed concurrently" in res["message"]
     assert writes.outcomes == ["conflict", "conflict"]
@@ -422,7 +422,7 @@ async def test_gathered_content_and_archive_on_one_fact_archive_wins_content_fai
     in_place = WriteOutcomes(store.repo, "update_fact_fields", on_ok=archived)
 
     content, archive = await asyncio.gather(
-        store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
+        store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
         store.adapter.update_fact(fid, {"state": "ARCHIVED"}, ACC, context=ctx()),
     )
 
@@ -443,15 +443,15 @@ async def test_gathered_content_updates_the_later_one_is_refused_when_a_version_
     writes = WriteOutcomes(store.repo, "write_superseding")
 
     first, second = await asyncio.gather(
-        store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
-        store.adapter.update_fact(fid, {"content": "mother is Masha", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
+        store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
+        store.adapter.update_fact(fid, {"content": "mother is Mia", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
     )
 
     assert (first["status"], first["version"]) == ("updated", 2)
     assert second == {"fact_id": fid, "status": "failed", "message": f"fact {fid} changed concurrently; search again"}
     assert writes.outcomes == ["ok", "conflict"] and embedder.calls == 2    # both embedded, the second lost the race
     assert sorted(store.docs) == sorted([fid, first["fact_id"]])
-    assert store.docs[first["fact_id"]]["text"] == "mother is Mariya"
+    assert store.docs[first["fact_id"]]["text"] == "mother is Mariia"
     assert [d["id"] for d in currents(store, store.docs[fid]["lineage_id"])] == [first["fact_id"]]
 
 
@@ -475,13 +475,13 @@ async def test_a_metadata_update_still_reresolves_onto_a_version_that_landed_bet
     store.adapter._embedding = SlowEmbedder(store.embedder, 0.02)
 
     content, metadata = await asyncio.gather(
-        store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
+        store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
         store.adapter.update_fact(fid, {"metadata": {"city": "Springfield"}, "expiry": EXPIRY_NONE}, ACC, context=ctx()),
     )
 
     assert content["status"] == "updated" and metadata["status"] == "updated" and metadata["version"] == 3
     head = store.docs[metadata["fact_id"]]
-    assert head["text"] == "mother is Mariya" and head["metadata"] == {"name": "Maria", "city": "Springfield"}
+    assert head["text"] == "mother is Mariia" and head["metadata"] == {"name": "Maria", "city": "Springfield"}
     assert head["replaces_fact_id"] == content["fact_id"]
 
 
@@ -509,8 +509,8 @@ async def test_negative_control_without_token_check_forks_the_lineage(store):
     store.adapter._embedding = SlowEmbedder(store.embedder, 0.02)
 
     first, second = await asyncio.gather(
-        store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
-        store.adapter.update_fact(fid, {"content": "mother is Masha", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
+        store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
+        store.adapter.update_fact(fid, {"content": "mother is Mia", "expiry": EXPIRY_NONE}, ACC, context=ctx()),
     )
 
     assert first["version"] == second["version"] == 2 and first["fact_id"] != second["fact_id"]
@@ -556,7 +556,7 @@ async def test_update_with_an_embedder_that_returns_no_vector_fails_and_writes_n
     before = snapshot(store)
     store.adapter._embedding = FixedEmbedder([embed("a"), None, embed("c")])
 
-    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx())
 
     assert res["status"] == "failed" and "no vector" in res["message"] and store.docs == before
 

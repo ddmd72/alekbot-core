@@ -31,7 +31,7 @@ def _make_execution_context(mock_llm, model_name: str = "gemini-test") -> AgentE
     )
 
 
-def _make_meta(email_id: str, subject: str = "Test", from_addr: str = "a@b.com") -> EmailMetadata:
+def _make_meta(email_id: str, subject: str = "Test", from_addr: str = "a@example.com") -> EmailMetadata:
     return EmailMetadata(
         email_id=email_id,
         provider="gmail",
@@ -245,7 +245,7 @@ class TestEmailClassificationAgent:
             refresh_token="ref",
             token_expiry=datetime(2099, 1, 1),
             scopes=["gmail.readonly"],
-            email_address="user@test.com",
+            email_address="user@example.test",
         )
         config = AgentConfig(agent_id="test_email_classifier", agent_type="email_classifier")
         agent_with_tools = EmailClassificationAgent(

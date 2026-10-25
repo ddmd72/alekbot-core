@@ -305,7 +305,7 @@ def test_a_fallback_date_of_today_or_later_is_refused_even_on_a_dated_plan(given
 
 
 def test_today_is_the_owners_day():
-    late = datetime(2026, 10, 23, 23, 30, tzinfo=timezone.utc)  # 23 Oct in UTC, 24 Oct 01:30 in Madrid
+    late = datetime(2026, 10, 23, 23, 30, tzinfo=timezone.utc)  # 23 Oct in UTC, 24 Oct 01:30 in Europe/Madrid
     assert "must be before today (2026-10-23)" in ask("archive", fallback_date=date(2026, 10, 23), now=late, tz="UTC")
     assert ask("archive", fallback_date=date(2026, 10, 22), now=late, tz="UTC") is None
     assert ask("archive", fallback_date=date(2026, 10, 23), now=late, tz="Europe/Madrid") is None

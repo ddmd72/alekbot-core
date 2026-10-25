@@ -157,7 +157,7 @@ class TestSkeletonsCrossScriptsOnly:
         assert [g.grade for g in p.graded if g.field == "entity"] == [NOT]
 
     def test_a_cyrillic_spelling_of_a_latin_name_still_is(self):
-        p, _ = dp.grade(profile(entities=(ProfileEntity("Maria", "person", "Maria"),)), chunks("Підпис: Марія Росі."),
+        p, _ = dp.grade(profile(entities=(ProfileEntity("Maria", "person", "Maria"),)), chunks("Підпис: Марія Доу."),
                         "f.pdf")
         assert [g.grade for g in p.graded if g.field == "entity"] == [AS]
 
