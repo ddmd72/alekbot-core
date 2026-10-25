@@ -34,11 +34,11 @@ def _record(entity: ProfileEntity, **profile) -> RecordKeyInputs:
 
 def test_verification_records_which_model_spellings_the_file_prints():
     # Δ59: `grade` replaced `verify`; it records the printed spellings the same way
-    text = [_Chunk("Boarding pass. Destination: BARCELONA (BCN). Gate 12.")]
-    entity = ProfileEntity(name="Барселона", type="place", printed="BARCELONA", forms=("Barcelona", "Барселоне"))
+    text = [_Chunk("Boarding pass. Destination: BERLIN (BER). Gate 12.")]
+    entity = ProfileEntity(name="Берлін", type="place", printed="BERLIN", forms=("Berlin", "Берліні"))
     profile, _ = grade(DriveProfile("t", "w", "en", "ticket", entities=(entity,)), text, "pass.pdf")
     (kept,) = profile.entities
-    assert kept.found == ("Barcelona",)          # case-insensitive occurrence; the Cyrillic spellings are not printed
+    assert kept.found == ("Berlin",)             # case-insensitive occurrence; the Cyrillic spellings are not printed
 
 
 def test_a_hallucinated_form_is_never_an_exact_key():
@@ -53,24 +53,24 @@ def test_a_hallucinated_form_is_never_an_exact_key():
 
 
 def test_a_found_spelling_stays_exact():
-    entity = ProfileEntity(name="Barcelona", type="place", printed="BARCELONA", forms=("Барселона",),
-                           found=("Barcelona",))
+    entity = ProfileEntity(name="Coimbra", type="place", printed="COIMBRA", forms=("Коїмбра",),
+                           found=("Coimbra",))
     keys = frozenset(about_keys_of(_record(entity)))
-    latin = record_cover(FileKeys("x", about_keys=keys), _concept("barcelona"))
-    cyrillic = record_cover(FileKeys("x", about_keys=keys), _concept("барселону"))
+    latin = record_cover(FileKeys("x", about_keys=keys), _concept("coimbra"))
+    cyrillic = record_cover(FileKeys("x", about_keys=keys), _concept("коїмбру"))
     assert latin is not None and latin.source_class is SourceClass.VERIFIED_RECORD
     assert cyrillic is not None and cyrillic.source_class is SourceClass.TRANSLATION   # ef: or the skeleton
 
 
 def test_the_match_line_of_an_index_spelling_names_what_the_file_prints():
-    entity = ProfileEntity(name="Барселона", type="place", printed="BARCELONA")
+    entity = ProfileEntity(name="Коїмбра", type="place", printed="COIMBRA")
     rec = _record(entity)
-    concept = _concept("барселона")
+    concept = _concept("коїмбра")
     match = classify(FileKeys("x", about_keys=frozenset(about_keys_of(rec))), [concept], allowances([concept],
                      {concept.word: 1}, 10), {}, {})
     assert match is not None
     (source,) = explain(match, rec, "pass.pdf", None, ()).sources
-    assert source == 'place "Барселона" (spelling by the index; named in the file as "BARCELONA")'
+    assert source == 'place "Коїмбра" (spelling by the index; named in the file as "COIMBRA")'
 
 
 def test_keys_version_is_bumped_for_the_review_fixes():
@@ -80,11 +80,11 @@ def test_keys_version_is_bumped_for_the_review_fixes():
 # -- F3: two Latin words never meet through a skeleton --------------------------------------------------------------
 
 def test_a_latin_words_skeleton_is_its_own_family_in_chunks_names_and_records():
-    assert any(k.startswith("xl:") for k in word_keys("A week in Barcelona."))
-    assert not any(k.startswith("x:") for k in word_keys("A week in Barcelona."))
-    assert any(k.startswith("x:") for k in word_keys("Неделя в Барселоне."))
+    assert any(k.startswith("xl:") for k in word_keys("A week in Coimbra."))
+    assert not any(k.startswith("x:") for k in word_keys("A week in Coimbra."))
+    assert any(k.startswith("x:") for k in word_keys("Тиждень у Коїмбрі."))
     assert any(k.startswith("xl:") for k in name_keys_v2("Maria.jpg"))
-    rec = _record(ProfileEntity(name="Le Havre", type="place", printed="Le Havre"))
+    rec = _record(ProfileEntity(name="The Hague", type="place", printed="The Hague"))
     assert any(k.startswith("exl:") for k in about_keys_of(rec))
     assert not any(k.startswith("ex:") for k in about_keys_of(rec))
 
@@ -96,7 +96,7 @@ def test_a_latin_query_word_reads_only_cyrillic_skeletons():
 
 
 def test_a_cyrillic_query_word_reads_both_skeleton_families():
-    c = _concept("Барселоне")
+    c = _concept("Коїмбрі")
     assert any(k.startswith("x:") for k in c.word_keys) and any(k.startswith("xl:") for k in c.word_keys)
     assert any(k.startswith("exl:") for k in c.about_keys)
 
@@ -107,26 +107,26 @@ def test_two_latin_words_never_meet_in_a_chunk(text, query):
     assert not keys & set(_concept(query).word_keys)
 
 
-@pytest.mark.parametrize("text,query", [("Неделя в Барселоне.", "Barcelona"), ("A week in Barcelona.", "Барселону")])
+@pytest.mark.parametrize("text,query", [("Тиждень у Коїмбрі.", "Coimbra"), ("A week in Coimbra.", "Коїмбру")])
 def test_the_cross_script_skeleton_still_meets(text, query):
     assert set(word_keys(text)) & set(_concept(query).word_keys)
 
 
 def test_a_cyrillic_spelling_match_within_one_script_is_labelled_as_another_spelling():
-    file = FileKeys("x", name_keys=frozenset(name_keys_v2("Київ.jpg")))
-    concept = _concept("киев")
+    file = FileKeys("x", name_keys=frozenset(name_keys_v2("Одеса.jpg")))
+    concept = _concept("одесса")
     match = classify(file, [concept], allowances([concept], {concept.word: 1}, 10), {}, {})
     assert match is not None
-    (source,) = explain(match, RecordKeyInputs(kind="image"), "Київ.jpg", None, ()).sources
-    assert source == 'name "київ", by another spelling (automatic)'
+    (source,) = explain(match, RecordKeyInputs(kind="image"), "Одеса.jpg", None, ()).sources
+    assert source == 'name "одеса", by another spelling (automatic)'
 
 
 def test_a_latin_query_over_a_cyrillic_name_is_labelled_across_scripts():
-    file = FileKeys("x", name_keys=frozenset(name_keys_v2("Київ.jpg")))
-    concept = _concept("kyiv")
+    file = FileKeys("x", name_keys=frozenset(name_keys_v2("Одеса.jpg")))
+    concept = _concept("odesa")
     match = classify(file, [concept], allowances([concept], {concept.word: 1}, 10), {}, {})
     assert match is not None
-    (source,) = explain(match, RecordKeyInputs(kind="image"), "Київ.jpg", None, ()).sources
+    (source,) = explain(match, RecordKeyInputs(kind="image"), "Одеса.jpg", None, ()).sources
     assert source.endswith(", by spelling in another script (automatic)")
 
 
