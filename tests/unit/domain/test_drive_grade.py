@@ -135,10 +135,10 @@ class TestEntities:
         assert g.grade == AS and g.seen_as == "Oslo" and p.entities[0].found == ("Oslo",)
 
     def test_only_the_transliteration_skeleton_in_the_text_is_in_text_as(self):
-        e = ProfileEntity("Barcelona", "place", "Barcelona")
-        p, _ = _grade(_profile(entities=(e,)), text="Адреса: Барселона, вулиця Мільйонів.")
-        g = _by(p, GradedField.ENTITY)["Barcelona"]
-        assert g.grade == AS and g.seen_as == "Барселона"
+        e = ProfileEntity("Coimbra", "place", "Coimbra")
+        p, _ = _grade(_profile(entities=(e,)), text="Адреса: Коїмбра, вулиця Мільйонів.")
+        g = _by(p, GradedField.ENTITY)["Coimbra"]
+        assert g.grade == AS and g.seen_as == "Коїмбра"
 
     def test_absent_from_the_text_is_not_in_text_and_kept(self):
         e = ProfileEntity("Stockholm", "place", "Stockholm", forms=("Estocolmo",))

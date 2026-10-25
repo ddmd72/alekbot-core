@@ -117,8 +117,8 @@ def test_match_spans_finds_each_occurrence_of_a_concepts_forms():
     text = "Hotel in Coimbra. The tickets: two tickets for Coimbra, total 1 250,00 EUR, March 2024."
     tickets = query_concepts("ticket").concepts[0]
     assert [text[s:e] for s, e in match_spans(text, tickets.word_keys)] == ["tickets", "tickets"]
-    barcelona = query_concepts("Коїмбра").concepts[0]                       # meets the Latin text by transliteration
-    assert [text[s:e] for s, e in match_spans(text, barcelona.word_keys)] == ["Coimbra", "Coimbra"]
+    coimbra = query_concepts("Коїмбра").concepts[0]                       # meets the Latin text by transliteration
+    assert [text[s:e] for s, e in match_spans(text, coimbra.word_keys)] == ["Coimbra", "Coimbra"]
     amount = query_concepts("1250.00").concepts[0]
     assert [text[s:e] for s, e in match_spans(text, amount.word_keys)] == ["1 250,00"]
     month = query_concepts("march 2024").concepts[0]

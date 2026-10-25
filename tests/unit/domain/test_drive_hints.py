@@ -41,17 +41,17 @@ class TestEvidence:
         assert CHUNK[item.evidence_start:item.evidence_end] == "Importe   total: 1.250,00 €"
 
     def test_nfc_equivalent_forms_match(self):
-        chunk = unicodedata.normalize("NFD", "Café de la Plaça, Barcelona")
-        g = dh.ground(chunk, [kw("Barcelona", unicodedata.normalize("NFC", "Café de la Plaça"))])
+        chunk = unicodedata.normalize("NFD", "Café da Praça, Lisboa")
+        g = dh.ground(chunk, [kw("Lisbon", unicodedata.normalize("NFC", "Café da Praça"))])
         assert len(g.items) == 1
         assert unicodedata.normalize("NFC", chunk[g.items[0].evidence_start:g.items[0].evidence_end]) == \
-            "Café de la Plaça"
+            "Café da Praça"
 
     def test_surrounding_quotes_and_ellipses_are_not_part_of_the_quote(self):
         g = dh.ground(CHUNK, [kw("Rome", '"…reserva en Roma…"')])
         assert len(g.items) == 1 and CHUNK[g.items[0].evidence_start:g.items[0].evidence_end] == "reserva en Roma"
 
-    @pytest.mark.parametrize("evidence", ["reserva en Paris", "", "   ", "reserva  en  Roma, 4 noches"])
+    @pytest.mark.parametrize("evidence", ["reserva en Oporto", "", "   ", "reserva  en  Roma, 4 noches"])
     def test_a_quote_not_in_the_chunk_drops_the_item(self, evidence):
         g = dh.ground(CHUNK, [kw("Rome", evidence)])
         assert g.items == () and g.drops.evidence == 1

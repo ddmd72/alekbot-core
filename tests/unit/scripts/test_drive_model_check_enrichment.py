@@ -11,7 +11,7 @@ from src.services.provider_registry import ProviderRegistry
 from tests.unit.agents.drive_model_fakes import RoutedLLM, reply
 from tests.unit.agents.test_drive_profiler_agent import ANSWER
 
-TEXT = ("Factura nº FA-0137. Fecha: 15/03/2024. Cliente: Alex Doe, Barcelona. Total: 1.250,00 €. "
+TEXT = ("Factura nº FA-0137. Fecha: 15/03/2024. Cliente: Alex Doe, Lisboa. Total: 1.250,00 €. "
         "Electricidad del mes de marzo. ") * 6
 
 
@@ -58,7 +58,7 @@ async def test_profile_writes_the_verified_profile_and_cost(tmp_path):
     assert rows["factura.txt"]["status"] == "ok" and rows["factura.txt"]["cost"] > 0
     assert rows["factura.txt"]["graded"]["not_in_text"].get("date", 0) == 0   # Δ59: grades, not drops
     saved = json.loads((out / "profile" / "openai" / "factura.profile.json").read_text())
-    assert saved["verified"]["entities"][0]["printed"] == "Barcelona"
+    assert saved["verified"]["entities"][0]["printed"] == "Lisboa"
     assert summary["openai"]["calls"] == 1 and summary["openai"]["timing"]["calls"] == 1
 
 
@@ -67,7 +67,7 @@ async def test_passages_ground_the_items(tmp_path):
         labels = [int(n) for n in re.findall(r'<passage n="(\d+)">', request.messages[0].parts[0].text)]
         return reply({"passages": [{"index": i, "items": [
             {"type": "keyword", "text": "electricity", "evidence": "Electricidad del mes de marzo"},
-            {"type": "keyword", "text": "Paris", "evidence": "not in the text"}]} for i in labels]})
+            {"type": "keyword", "text": "Berlin", "evidence": "not in the text"}]} for i in labels]})
 
     out = await check.run(["passages", str(_folder(tmp_path)), "--providers", "openai", "--max-chunks", "2"],
                           registry=_registry(handler), assembly=check.local_assembly_service(_uploads(tmp_path)),

@@ -118,23 +118,23 @@ def test_lists_hold_only_their_streams_families():
 def test_barcelona_trip_walk_through():
     q = query_concepts("Coimbra trip")
     assert _words(q) == ["coimbra", "trip"] and q.ignored == ()
-    barcelona, trip = q.concepts
-    assert "e:coimbra_trip" in barcelona.about_keys and "e:coimbra_trip" in trip.about_keys
-    assert "x:koimbr" in barcelona.word_keys and "ex:koimbr" in barcelona.about_keys       # the c rule
+    coimbra, trip = q.concepts
+    assert "e:coimbra_trip" in coimbra.about_keys and "e:coimbra_trip" in trip.about_keys
+    assert "x:koimbr" in coimbra.word_keys and "ex:koimbr" in coimbra.about_keys       # the c rule
     assert {"k:trip", "lw:trip", "tw:trip"} <= set(trip.about_keys)
 
 
 def test_phrase_runs_are_built_before_function_words_are_removed():
     q = query_concepts("The Hague port")
     assert _words(q) == ["hague", "port"] and q.ignored == ("the",)
-    havre = q.concepts[0]
-    assert "e:the_hagu" in havre.about_keys
+    hague = q.concepts[0]
+    assert "e:the_hagu" in hague.about_keys
     assert "e:нью_йорк" in query_concepts("Нью-Йорке").concepts[0].about_keys
 
 
 def test_a_run_ending_in_a_function_word_gives_no_phrase_key():
-    havre = query_concepts("Foz do").concepts[0]
-    assert not any(k.startswith("e:foz_") for k in havre.about_keys)
+    foz = query_concepts("Foz do").concepts[0]
+    assert not any(k.startswith("e:foz_") for k in foz.about_keys)
 
 
 def test_a_repeated_word_is_one_concept():

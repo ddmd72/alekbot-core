@@ -1,4 +1,4 @@
-"""Files without doc2query BY POLICY (books, sheets, data) are not a coverage gap (UAT 2026-10-14, the Barcelona query).
+"""Files without doc2query BY POLICY (books, sheets, data) are not a coverage gap (UAT 2026-10-14, a place query).
 
 They were searched by their own words; only translated and synonym keywords are missing, by design (§25.3). Counting
 them made every result read "Coverage: incomplete", so Smart hedged ("not a guarantee") and re-checked found files.

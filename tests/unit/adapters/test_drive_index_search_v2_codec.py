@@ -115,7 +115,7 @@ class TestStateField:
 
 class TestChunkKeys:
     def test_round_trip_with_keys(self):
-        c = DriveChunk("u", "i", 3, 7, "в Барселоне", 0, 11, "pdf", ("1250",), ("w:барселон", "m:2023-03"), 1)
+        c = DriveChunk("u", "i", 3, 7, "у Коїмбрі", 0, 9, "pdf", ("1250",), ("w:коїмбр", "m:2023-03"), 1)
         assert chunk_from_doc(chunk_to_doc(c)) == c
 
     def test_missing_keys_read_as_empty(self):

@@ -59,8 +59,8 @@ class TestPlaceForms:
 
 class TestNameKeys:
     def test_names_are_keyed_by_name_keys_v2(self):
-        rec = plan_observation(change(name="Квиток Київ 2026.pdf"), None, None, None, ctx()).upsert
-        assert rec.name_tokens == name_keys_v2("Квиток Київ 2026.pdf") and rec.name_keys_version == NAME_KEYS_VERSION
+        rec = plan_observation(change(name="Квиток Львів 2026.pdf"), None, None, None, ctx()).upsert
+        assert rec.name_tokens == name_keys_v2("Квиток Львів 2026.pdf") and rec.name_keys_version == NAME_KEYS_VERSION
 
 
 class TestEffectiveDate:
