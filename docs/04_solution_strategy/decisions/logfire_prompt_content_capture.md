@@ -62,7 +62,7 @@ Fixing all three plus writing a tree viewer is building a UI that already exists
 5. **Subprocessors.** Logfire's published list includes **OpenAI ("AI model inference, non-EU
    users")** and Vertex AI for EU users. On the US region, Logfire's own AI features can feed
    captured content to another LLM.
-6. **Jurisdiction.** US region → US legal process, while the owner is EU-resident.
+6. **Jurisdiction.** US region → US legal process, while users may live under another jurisdiction (e.g. GDPR).
 
 **No public breach of Logfire was found.** Treated as a weak signal, not a strong one: young
 product, small vendor, low researcher attention. What is verifiable: SOC 2 Type II with no

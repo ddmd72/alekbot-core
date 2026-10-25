@@ -7,7 +7,7 @@ schema and thinking — resolved for a task complexity the way production resolv
 case, nothing executed. Cases are personal → gitignored JSON:
 
     [{"prompt": "is IB3122 on time?", "expect": "flight-status"},
-     {"prompt": "find me cheap flights to Kyiv", "expect": null}, ...]
+     {"prompt": "find me cheap flights to Lisbon", "expect": null}, ...]
 
     python scripts/skills/skill_trigger_eval.py --cases scripts/memory/skills/eval_cases.json \
         [--complexity info_search]          # small_talk | info_search | simple_analytics | deep_reasoning

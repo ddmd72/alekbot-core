@@ -39,10 +39,10 @@ async def _call(caller_opening):
 
 @pytest.mark.asyncio
 async def test_caller_opening_is_the_first_item_as_a_user_turn_before_the_pickup_reply():
-    session = await _call("Talk faster, greet me by name.")
+    session = await _call("Keep it short, start with the weather.")
 
     messages = [c.args for c in session.submit_message.await_args_list]
-    assert messages[0] == ("user", "Talk faster, greet me by name.")
+    assert messages[0] == ("user", "Keep it short, start with the weather.")
     assert messages[1][0] == "system" and "picked up" in messages[1][1]
     assert session.request_response.await_count == 1  # one reply: the greeting answers it
 

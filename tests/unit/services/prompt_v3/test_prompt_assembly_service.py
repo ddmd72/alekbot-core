@@ -339,18 +339,18 @@ async def test_non_overridable_blocks_replacement(mock_repos):
 async def test_biographical_facts_injected_before_cache_boundary(service):
     """Biographical facts appear before the cache boundary marker."""
     from src.ports.llm_port import PROMPT_CACHE_BOUNDARY
-    service.bio_formatter.format.return_value = "- Born in Kyiv\n- Software engineer"
+    service.bio_formatter.format.return_value = "- Born in Springfield\n- Software engineer"
 
     prompt = await service.assemble(
         agent_type="quick",
         user_id="u",
         account_id=None,
-        biographical_facts=[{"text": "Born in Kyiv", "tags": []}],
+        biographical_facts=[{"text": "Born in Springfield", "tags": []}],
     )
 
     boundary_pos = prompt.index(PROMPT_CACHE_BOUNDARY)
     static_part = prompt[:boundary_pos]
-    assert "Born in Kyiv" in static_part
+    assert "Born in Springfield" in static_part
 
 
 @pytest.mark.asyncio

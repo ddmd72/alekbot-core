@@ -12,8 +12,8 @@ _HEADER = "geonameid\tlat\tlon\tname_en\tname_local\tcountry\tweight\tpopulation
 def _tables(tmp_path):
     places = tmp_path / "places.tsv"
     places.write_text(_HEADER
-                      + "10\t39.4697\t-0.3774\tValencia\tValencia\tSpain\t2400000\t800000\tValence|Валенсия\t\n"
-                      + "11\t39.6799\t-0.2784\tSagunto\tSagunto\tSpain\t65000\t65000\tSagunt\t10\n"
+                      + "10\t41.3888\t2.1590\tBarcelona\tBarcelona\tSpain\t5500000\t1600000\tBarcelone|Барселона\t\n"
+                      + "11\t41.4500\t2.2474\tBadalona\tBadalona\tSpain\t220000\t220000\tБадалона\t10\n"
                       + "12\t48.5\t7.8\tKehl\tKehl\tGermany\t40000\t40000\t\t99\n", encoding="utf-8")
     countries = tmp_path / "countries.tsv"
     countries.write_text("country\tnames\nSpain\tEspaña|Испания\n", encoding="utf-8")
@@ -22,10 +22,10 @@ def _tables(tmp_path):
 
 def test_v2_columns_are_loaded(tmp_path):
     rows = {r.name_en: r for r in load_place_rows(*_tables(tmp_path))}
-    assert rows["Valencia"].alt_names == ("Valence", "Валенсия") and rows["Valencia"].large is None
-    assert rows["Sagunto"].large is rows["Valencia"]
-    assert rows["Sagunto"].country_names == ("España", "Испания")
-    assert rows["Sagunto"].country_names is rows["Valencia"].country_names        # one tuple per country
+    assert rows["Barcelona"].alt_names == ("Barcelone", "Барселона") and rows["Barcelona"].large is None
+    assert rows["Badalona"].large is rows["Barcelona"]
+    assert rows["Badalona"].country_names == ("España", "Испания")
+    assert rows["Badalona"].country_names is rows["Barcelona"].country_names        # one tuple per country
     assert rows["Kehl"].country_names == () and rows["Kehl"].large is None         # unknown id: no large place
 
 

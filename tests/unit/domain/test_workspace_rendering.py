@@ -174,12 +174,12 @@ class TestSameFire:
 class TestListing:
     def test_folder(self):
         entries = [
-            _e(path="projects/flat-sale.md", generation=110, size=4300, origin="chat",
+            _e(path="projects/garden-shed.md", generation=110, size=4300, origin="chat",
                updated=datetime(2026, 10, 18, 8, tzinfo=UTC)),
-            _e(path="projects/flat-sale.md", generation=105, size=10, live=False),
+            _e(path="projects/garden-shed.md", generation=105, size=10, live=False),
             _e(path=P, generation=111, size=2150, origin="background:execute_reminder",
                updated=datetime(2026, 10, 20, 6, tzinfo=UTC)),
-            _e(path="projects/school-choice.md", generation=104, size=1024, origin="voice:tell_alek",
+            _e(path="projects/summer-trip.md", generation=104, size=1024, origin="voice:tell_alek",
                updated=datetime(2026, 10, 2, 8, tzinfo=UTC)),
             _e(path="projects/old.md", generation=102, live=False),
             _e(path="projects/gone.md", generation=103, live=False),
@@ -187,8 +187,8 @@ class TestListing:
         assert render_listing("projects/", entries) == (
             "workspace:projects/ — 3 files\n"
             "  projects/morning-briefing.md · 2.1 KB · 2026-10-20 · background:execute_reminder\n"
-            "  projects/flat-sale.md · 4.2 KB · 2026-10-18 · chat\n"
-            "  projects/school-choice.md · 1.0 KB · 2026-10-02 · voice:tell_alek\n"
+            "  projects/garden-shed.md · 4.2 KB · 2026-10-18 · chat\n"
+            "  projects/summer-trip.md · 1.0 KB · 2026-10-02 · voice:tell_alek\n"
             "(2 deleted files in this folder — history projects/ lists them)"
         )
 
@@ -266,14 +266,14 @@ class TestHistory:
 
 class TestReferences:
     refs = WorkspaceReferences(
-        skills=(("morning-newspaper", f"At the start, view `workspace:{P}`."), ("other", "nothing here")),
+        skills=(("morning-briefing", f"At the start, view `workspace:{P}`."), ("other", "nothing here")),
         notes=({"note_id": "1729401234567", "text": "Morning briefing", "workspace_file": P},
                {"note_id": "1", "text": "x", "workspace_file": None}),
     )
 
     def test_delete_warnings(self):
         assert find_references(P, self.refs) == [
-            'Warning: skill "morning-newspaper" names this path',
+            'Warning: skill "morning-briefing" names this path',
             'Warning: reminder "Morning briefing" [1729401234567] uses this workspace file; update it '
             '(manage_self_reminders, context={"workspace_file": "<new path>"}) or restore the file.',
         ]

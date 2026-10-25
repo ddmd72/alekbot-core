@@ -170,7 +170,7 @@ class TestTranscriptBecomesTheUserTurn:
 
 
 class TestSpokenLanguagesComeFromUserSettings:
-    """A multilingual household is the normal case, so the codes are a user setting —
+    """A speaker who uses several languages is the normal case, so the codes are a user setting —
     not the UI language, whose closed enum cannot even express "ru"."""
 
     def _handler_with_config(self, coord, svc, voice_languages):

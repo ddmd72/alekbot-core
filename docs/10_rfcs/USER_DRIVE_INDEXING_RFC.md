@@ -1640,9 +1640,9 @@ studies on the live index (private, `scripts/memory/`). Designed in §25.
   files; a file is opened only for its contents; many results are counted and grouped, never opened one by one.
   *Reason:* drive searches are rare, yet the block rode in Smart's prompt on every request; and in the UAT Smart
   re-opened found photos to confirm them. Cost: one `use_skill` turn on the first drive search of a conversation.
-  The live check after the change (a Valencia query): one skill load, two searches, no file opened, 58 s.
+  The live check after the change (a place-name query): one skill load, two searches, no file opened, 58 s.
 
-**Owner decisions (2026-10-14, card accuracy, capture and inaccessible files)** — after a live session on the owner's
+**Owner decisions (2026-10-14, card accuracy, capture and inaccessible files)** — after a live session on a set of
 identity-document scans (observations in §26.1, described generically). Designed in §26; **proposed, not built**.
 - **D33 Files the bot cannot open are shown honestly, not deleted.** Existence is decided by delta only: a 404 by id
   while indexing means "no access", not "deleted". The record goes to an `inaccessible` state, keeps its metadata card,
@@ -2439,13 +2439,13 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
 - **Measured** (review round 2, on a targeted list of 27 inflection groups — surnames, `-ей` names, nouns ending in a
   listed ending, soft sign, fleeting vowels, Ukrainian locatives — and a 1 216-word Russian/Ukrainian corpus): the
   rev 3.19 rule (one ending, then 5 letters) keyed 12 of 27 groups together and linked 177 pairs of different words
-  ("барсетка" with "Барселона", "Валентина" with "Валенсия"); the form set keys 26 of 27 (the last fixed by the
+  ("барсетка" with "Барселона", a given name with a city name); the form set keys 26 of 27 (the last fixed by the
   extended endings) and links 47 pairs, most of them true inflections. P1 review, on a synthetic table of 172 words
   with their inflections (551 forms):
   - native forms link 664 of 702 same-word pairs (95 %), and 16 different-word pairs share a native form, all of
     them translations (договор/договір, hotels/hoteles);
   - skeletons link 7 more same-word pairs, and 47 different-word pairs only by skeleton (translation tier): all are
-    translations (Киев/Київ, Одесса/Одеса, Barcelona/Барселона, bank/банк) except valentine/Валентина;
+    translations (Киев/Київ, Одесса/Одеса, Barcelona/Барселона, bank/банк) except one pair, an English common noun and a Russian given name;
   - a ru/uk contract or UI chunk of 2 400 characters holds 650–715 keys.
 
 **Families**
@@ -3200,7 +3200,7 @@ upgrade pass in an emergency; the indexer's deploy sets it from `DRIVE_UPGRADE_P
 `_DRIVE_UPGRADE_PASS` substitution, default on), because its `--set-env-vars` replaces every variable: a switch set
 with `gcloud run services update` alone turns back on at the next deploy (XC-7).
 
-**Rollout** (the commands: `docs/07_deployment/README.md` § Search v2 — rollout and rollback; the order below was
+**Rollout** (the commands: the rollout notes, ops; the order below was
 fixed by the cross-cutting operations review, XC-2)
 1. Code on `asm/drive-search-v2`; the eval meets the bars (`search_v2_eval.py`, `bars_v2.json`); G3 has no hard
    failure; the caption-shift fix passes (§25.4.3).
@@ -3632,7 +3632,7 @@ S4 the small fixes (§26.5), S5 the two scripts (§26.6), S6 the photo location 
 cross-cutting round of fixes (Δ89–Δ91, A4–A6). Where this section and §3.4, §7.6, §8.2,
 §10.2, §10.4, §24.4 or §25.2–§25.5 disagree, this section wins for what is built; for the rest the text above describes
 the code. Every example below is synthetic: the observations were
-made on the owner's identity documents, and none of their content, names or numbers appears here.
+made on a live index, and none of their content, names or numbers appears here.
 
 ### 26.1 What was observed (2026-10-14)
 1. **Files the bot cannot open were deleted from the index as "gone".** The bot's OneDrive access is an ordinary ACL
@@ -3663,7 +3663,7 @@ made on the owner's identity documents, and none of their content, names or numb
    GPS. The OneDrive created time is in effect the scan time. A phone photo of a document, by contrast, carries EXIF
    Make and Model (often GPS). Nothing in the index says "scan" today unless the file name does: the `k:` table has no
    such word (`src/domain/drive_labels.py:51-76`) and no field records how a file was captured.
-3. **Dates printed with spaces are lost.** A residence-permit-like card scan printing its expiry date with spaces
+3. **Dates printed with spaces are lost.** An ID-card scan printing its expiry date with spaces
    (the form `DD MM YYYY`, as in the synthetic `07 05 2031`) had `dates: []`, while the profile's own `what_it_is`
    said "valid until" that date. `verify` keeps a date only when
    its ISO form is among the stored text's number terms (`src/domain/drive_profile.py:304-307`), and the normaliser
@@ -3671,7 +3671,7 @@ made on the owner's identity documents, and none of their content, names or numb
    never a space: `src/domain/drive_content_terms.py:37`; checked by running `content_terms` on both forms). A live
    tick logged `verify_dropped_dates: 12` for 9 files. Meanwhile `what_it_is` enters the card text and its embedding
    unverified (`src/domain/drive_card.py:163-169`).
-4. **Value labels.** A card number, a foreign-resident ID number and another number of an ID card all became
+4. **Value labels.** A card number, a personal ID number and another number of an ID card all became
    `other_id`: `VALUE_LABELS` has no label for a document's own number or a person's ID number
    (`src/domain/drive_labels.py:34-38`), and the profiler's schema offers only those labels
    (`src/agents/drive_profiler_agent.py:100`; anything else becomes `other_id`, `drive_profile.py:298`).
@@ -4073,7 +4073,7 @@ the standing rule (CLAUDE.md). Slices, in build order:
   parser's capture PDFs come from `scripts/validation/drive_capture_fixtures.py`. G3 stays owner-run.
 
 ### 26.9 Owner steps and the rollout
-The commands: `docs/07_deployment/README.md` § Card accuracy (§26) — rollout and rollback.
+The commands: the rollout notes (ops).
 1. Code on a feature branch; `make check` green; the eval meets its bars; G3 hard checks pass.
 2. The owner **backs up the six tokens** about to change (the prompt layer), and the rollout makes no initial-build
    reset (owner rule, §21).
@@ -4145,7 +4145,7 @@ the first; no reset reopens them.
 | Δ89 | Native topics weight 1 | Graded and reported, weight 0 in `V` | Interpretation in the user's language; with weight 1 most fully confirmed cards fell under 90 % and Smart would open almost every file |
 | Δ90 | A word's df for the strict-AND allowances counts every key | Counted without `sl:` keys | Scene labels must not make document words ("travel", "квартира") missable |
 | Δ91 | An in-text ID or digit-group value is keyed as printed | Also keyed by its separator-free casefolded form, both sides (not amounts or dates) | "QX4471902" finds a card printing "QX 4471902" |
-| Δ92 | The lenient date reader knew spaced/dotted day-month-year forms and full month names | Also bilingual abbreviated months with a 2- or 4-digit year (`27 ЛИП/JUL 22`), compact `13JUN2024`, ISO basic `20261009T180724Z`, and day + month without a year when the year is elsewhere in the text; `ACCURACY_VERSION` 2 (re-grade from stored text, no model call) | The first revision report on the live index (2026-10-19, D37) listed these shapes recurring across files; identity documents averaged 76 % |
+| Δ92 | The lenient date reader knew spaced/dotted day-month-year forms and full month names | Also bilingual abbreviated months with a 2- or 4-digit year (`27 ЛИП/JUL 22`), compact `13JUN2024`, ISO basic `20261009T180724Z`, and day + month without a year when the year is elsewhere in the text; `ACCURACY_VERSION` 2 (re-grade from stored text, no model call) | The first revision report on the live index (2026-10-19, D37) listed these shapes recurring across files; one document class averaged 76 % |
 | Δ93 | The coverage line (and a filter listing's envelope) always said "N files cannot be opened by the bot" when the scope held closed files | Said only when the search found nothing (any scope), where it explains why a not-found may be incomplete; with results it is omitted (a matching closed file keeps the access line on its card), and the folder-scoped closed-file read is skipped | The owner, live 2026-10-19: noise on every found result |
 | Δ94 | The offline Search v2 eval exited 1 on three lost v1-passing cases and on two meaning-only cases under lexical vectors; the G2 integration test read `card.window` (removed by the v2 card) | Gold flag `accepted_loss` (reason) on `family-latest-dogovor`, `g2-amount-deposit-porto`, `g2-clause-nda-term`: listed under "accepted losses", out of the "v1-passing cases lost" bar. Gold flag `requires_embeddings: "semantic"` on `sem-related-german` and `sem-related-dentist`: skipped under `--embeddings lexical`, counted under `gemini`. The harness (`runner._windows`, `metrics.py`) reads `card.passage`. `bars_v2.json` and `Z_RELATED` unchanged (related lines per negative stays a known miss until calibrated) | D29 strict AND blocks a conversational query word no file holds (owner accepted v2, 2026-10-19); lexical vectors cannot represent meaning; the window field was renamed in 6e1a4dc0 |
 | Δ127 | The manifest `drive_query` text (§25.13.6) said "the subject in the user's words (any language)" and never that every word must match | Appends "All words must match: use the user's few key words in one language."; the `drive-search` skill gains the same discipline (one language, no synonyms or translations, at most one re-search after a "no file holds" line, "all" is still a find, a value question opens the file) | G3 2026-10-19: Smart wrote synonym and translation bags under strict AND, each "No file holds" line started another bag, and 26 of 147 runs hit the 15-turn cap; the Protocol `tiers` line (§25.5.7) lost its clause ", so a search in another language can still find more", which contradicted the one-language rule |
@@ -4284,7 +4284,7 @@ and JSONL); a response schema works in batch (with the trap of Δ131); batch acc
 re-upload path of Δ104); job expiry (`EXPIRED`) and its resubmit; **unique** (not repeated) audio longer than 22 min — the silent `STOP` at
 87 min may depend on repetition; the short-clip early-timestamp effect on real audio.
 
-Measured earlier (spike, one 21:47 Russian-language recording, 93.7 MB webm; REPORT §1–§2):
+Measured earlier (spike, one 21:47 recording, 93.7 MB webm; REPORT §1–§2):
 - **Extraction.** `ffmpeg` straight on the Graph pre-authenticated download URL, `-vn -ac 1 -ar 16000 -c:a libopus
   -b:a 24k`: 18.3 s wall, 23.2 CPU-s (≈ 1.07 CPU-s per audio minute), 18.8 MB RSS, 3.9 MB out, **0 seeks** — a
   webm is read sequentially and in full (all 93.7 MB) even with `-vn`, because audio and video are interleaved.
@@ -5424,7 +5424,7 @@ unmeasured language.
 | Δ234 | §27.14: tests | The mirror's tests run against `ScriptedDrive` (the S1 Graph semantics of Δ216: a taken name fails a write, a PATCH onto a taken name answers 409, a missing item answers 404; scriptable faults and `Crash` before or after any call) and the in-memory repositories only: property tests (every write ends under the current root; the audit touches no item it did not create, with ledger invariants after a root loss), mutation checks recorded in the task reports, and the contract test that runs one case list on both ledger adapters. No test calls Graph or Firestore | Tests are the specification; a property over random owner behaviour surfaced cases a hand-written case list had not (the reviews' fix rounds record them) |
 | Δ235 | Δ225: `_ensure_inside` checks a move's destination | **Final review I1:** a **rename-only PATCH** (no new parent: the item stays where it is) also checks the ITEM: `_patch` calls `_ensure_inside(item)` first, for the subject's own renames and the siblings' (`_place`, `_settle_after`). The owner may have moved our file or folder out of `_Transcripts` into a folder of his (`Docs/`); the ledger's parent does not show it, so without the check the bot renamed the file inside `Docs/`. Now the item is read and moved back first (the audit's move-back), or the rename waits (`_Outside`: nothing written, nothing charged) when the way back is blocked. The strict test helper `writes_outside` also counts a move with one chain (a rename in place) by where the item is | A rename in place wrote outside the root, against §27.12's tested invariant; the property helper counted only moves with a destination |
 | Δ236 | Δ204, Δ205: DriveThrottled and DriveIndexStoreUnavailable from the step end the tick | **Final review I3, controller ruling (the owner's invariant "the index never stalls because of the mirror" outranks the text of Δ204 and Δ205):** `_mirror_step` **contains** DriveThrottled and DriveIndexStoreUnavailable raised by the step. They are counted as `mirror_systemic` (on the tick line) and logged by type and digest (WARNING, ERROR), and the tick goes on: its work-off state is saved, `last_success_at` moves, and `systemic_failures` and the backoff are untouched. The fan-out's next tick tries the mirror again (the mirror never asks for a continuation). `_mirror_ready`'s three queries (`mirror_queue`, `mirror_wakeups`, `ready_marks`) read a DriveIndexStoreUnavailable (an index missing or building) as **no reserve**, logged at ERROR, and the work-off runs. LeaseLost, the host's stop (`_OptedOut`) and DriveNotConnectedError (DriveReauthRequired included) still end the tick. A step whose UI language or strings cannot be had is held off the reserve too (`_note_step_unavailable`: the ladder of Δ227, 10 min doubling to 6 h, process memory) and is still tried every tick (deploy review Minor 2) | A throttled mirror write dropped the work-off's unsaved state and raised the backoff, and repeated throttling of mirror writes alone would trip the staleness alert; a building mirror index skipped the owner's whole work-off every tick |
-| Δ237 | Δ186, Δ217, Δ230: `pinned_keys` pages on `content_key` (two composites) | **Final review I4 (the T-R14 precedent: the privacy path must not depend on a transcript-only index):** `pinned_keys` sends **equality filters only** (`user_id`, and `state in (archived, detached)` or `gone_pending == true`), paged by the **document id** (a range on `__name__`, the implicit order), with no range and no ordering on any other field. The single-field indexes serve it, as they serve `transcript_records`. Every purge of every user reads it, so a missing or building ledger index no longer stalls an opt-out. The two composites it used (`user_id, state, content_key` and `user_id, gone_pending, content_key`) are **removed** from `config/firestore.indexes.json` (reviewer, a8656b4f): the ledger declares 10, `pinned`'s two (`user_id, content_key, state` and `user_id, content_key, gone_pending`) among them. The pages read every pinning document, not one per distinct key (a duplicate key costs a read) | One user's purge could not finish while a mirror-only index was building, the son's included |
+| Δ237 | Δ186, Δ217, Δ230: `pinned_keys` pages on `content_key` (two composites) | **Final review I4 (the T-R14 precedent: the privacy path must not depend on a transcript-only index):** `pinned_keys` sends **equality filters only** (`user_id`, and `state in (archived, detached)` or `gone_pending == true`), paged by the **document id** (a range on `__name__`, the implicit order), with no range and no ordering on any other field. The single-field indexes serve it, as they serve `transcript_records`. Every purge of every user reads it, so a missing or building ledger index no longer stalls an opt-out. The two composites it used (`user_id, state, content_key` and `user_id, gone_pending, content_key`) are **removed** from `config/firestore.indexes.json` (reviewer, a8656b4f): the ledger declares 10, `pinned`'s two (`user_id, content_key, state` and `user_id, content_key, gone_pending`) among them. The pages read every pinning document, not one per distinct key (a duplicate key costs a read) | A purge of any user, even one with no transcripts, could not finish while a mirror-only index was building |
 | Δ238 | Δ210: an intent is adopted at "the rendered size" | **Final review M1:** an intent is judged by **the size it uploaded** (`pending_size`); the fresh render's size counts only for an intent without one (`want = pending_size or size`). A crash between the upload and the save, then any byte change before the re-run (the UI language, the header, a new transcript version), used to judge the bot's own file foreign: it stayed in `_Transcripts` for good, never pruned, and every audit counted it as foreign | The size of what was uploaded is the fact; the next render's size is not |
 | Δ239 | Δ217: a root-loss mark never takes the reserve | **Final review M2:** a root-loss mark **past its grace** (`root_gone_at + MIRROR_ROOT_GRACE <= now`; the work-off runs only after a complete round) is work the step can do now, so its one confirming read gets the reserved tail. Inside the grace the step only waits and takes none. Residual: a confirming read that keeps failing takes the reserve on every tick until it answers | Under a sustained T1 backlog the confirming read could wait a long time for leftover time |
 | Δ240 | §27.9.5 step 3: a gone folder with documents beneath it waits `ANCESTOR_HOLD` (10 min) | **Deploy review Important 1:** the gone folder's mark is held until the **earliest time one of its waiting children can move** (`_children_wait`: each child's own `mark_ready_at`, which a back-off, a park or the foreign-item hold also sets; else `gone_at` plus the grace), never sooner than `ANCESTOR_HOLD`. A child without a mark of its own (step 4 is placing it) keeps the short hold; detached children never move and do not count. Also (deploy review Minor 3): a record whose ledger document cannot be read or written (undecodable, or another drive's) climbs the charged ladder (back-off, then parked for `MIRROR_FAILED_RETRY` at `MIRROR_MAX_ATTEMPTS`), counted in process memory (`_held_attempts`; a restart starts the ladder again), instead of getting the first back-off every time | The owner's own file in `_Transcripts/Videos/2024/`, with the source `Videos/` deleted, kept `2024` for a week and made `Videos` ready on every tick (45 s of the content classes lost per tick): the pattern Δ228 removed. An unreadable document re-armed at the first back-off for good |

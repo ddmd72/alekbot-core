@@ -91,7 +91,7 @@ async def test_vector_search(query: str, account_id: str, target_fact_id: str = 
 async def main():
     # Test parameters - Search for facts about car
     queries = [
-        "Toyota Corolla car",
+        "Skoda Fabia car",
         "vehicle VIN number",
         "license plate XX0000YY"
     ]

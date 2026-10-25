@@ -121,7 +121,7 @@ class TestWhatExpires:
             return DriveProfile("Póliza", "Car insurance policy", "es", "insurance_policy",
                                 validity_words=("expires", "valid until", "caduca", "истекает"))
         late = w.file("insurance.pdf", profile=policy(None), valid_until="2027-03-01")
-        soon = w.file("passport.pdf", profile=policy(None), valid_until="2026-11-15")
+        soon = w.file("passport.pdf", profile=policy(None), valid_until="2026-12-09")
         gone = w.file("old.pdf", profile=policy(None), valid_until="2025-01-01")
         result = await w.search("what expires")
         labelled = [c.item_id for c in result.cards if c.tier == "labelled"]

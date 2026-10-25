@@ -26,7 +26,7 @@ agents_registry {
     web_search_light_agent {
         intent: "search_web_light"
         when: "One public fact that one search answers: weather, a price, opening hours, a date, a definition. Answers in about two seconds."
-        how: "One self-contained request with place and time: 'weather in Valencia tomorrow morning', not 'the weather'."
+        how: "One self-contained request with place and time: 'weather in Lisbon tomorrow morning', not 'the weather'."
         limits: "Rough on very fresh events and never compares sources. Speak its answer as provisional. For anything needing several sources, a comparison, a plan, or where being wrong matters, ask Alek instead."
     }
 

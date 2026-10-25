@@ -61,8 +61,8 @@ class PromptPreferences(BaseModel):
     vibe: str = "friendly"  # friendly, professional, witty
 
 # Fact domains Lelik's call-start prompt carries by default (owner decision 2026-10-21):
-# who the owner is and how he wants to be spoken to. Preference stays because it holds the
-# conversational rules ("no jokes about death while mourning", "address informally").
+# who the user is and how they want to be spoken to. Preference stays because it holds the
+# user's conversational rules (tone, form of address, topics to avoid).
 DEFAULT_VOICE_FACT_DOMAINS = (FactDomain.BIOGRAPHICAL.value, FactDomain.PREFERENCE.value)
 
 # Default per-agent tiers used as a fallback in get_tier_for_agent.
@@ -242,6 +242,9 @@ class UserBotConfig(BaseModel):
     consolidation_threshold: Optional[int] = None
     consolidation_batch_size: Optional[int] = None
 
+    # Memory review (FACT_LIFECYCLE_RFC D6): days between reviews; None = the account default, then the system default.
+    fact_review_interval_days: Optional[int] = None
+
     # ========================================================================
     # NEW Multi-Vector Search Session (2026-02-07): Search context limits
     # Plan: docs/SESSION_2026_02_07_MULTI_VECTOR_SEMANTIC_SEARCH.md
@@ -274,7 +277,7 @@ class UserBotConfig(BaseModel):
     # ========================================================================
     max_video_duration_s: Optional[int] = None  # video generation duration cap (default: 10)
 
-    # Timezone (IANA name, e.g. "Europe/Kyiv", "America/New_York")
+    # Timezone (IANA name, e.g. "Europe/Lisbon", "America/New_York")
     # Set via Cabinet UI. Used for: datetime injection in prompts, reminder due resolution, next_due computation.
     timezone: str = "UTC"
 

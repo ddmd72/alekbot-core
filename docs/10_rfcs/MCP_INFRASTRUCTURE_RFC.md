@@ -158,8 +158,8 @@ class MCPMapsAdapter(MapsToolsPort):
         "Place search and discovery, route computation (distance and duration, "
         "not turn-by-turn directions), and current weather lookup via Google Maps "
         "AI Grounding Lite. Input: natural language task. "
-        "Examples: 'pharmacy near Khreschatyk open now', "
-        "'route from Kyiv to Lviv by car', 'weather in Odesa today'."
+        "Examples: 'pharmacy near Rossio open now', "
+        "'route from Lisbon to Porto by car', 'weather in Odesa today'."
     )
 
     def __init__(self, mcp_client: MCPClient) -> None: ...
@@ -385,6 +385,6 @@ raw JSON responses. Implementation details of `MCPClient` finalized after seeing
 1. `scripts/debug/test_mcp_maps.py` — raw MCP responses (prerequisite)
 2. `make test-unit` — all tests pass
 3. `make test-e2e-all` — `maps_query` intent works end-to-end
-4. Manual Slack: "find a route from Khreshchatyk to Bessarabka" → routes table
-5. Manual Slack: "what's the weather in Kyiv right now" → weather response
-6. Manual Slack: "where to eat sushi in central Kyiv" → places response
+4. Manual Slack: "find a route from Rossio to Belém" → routes table
+5. Manual Slack: "what's the weather in Lisbon right now" → weather response
+6. Manual Slack: "where to eat sushi in central Lisbon" → places response

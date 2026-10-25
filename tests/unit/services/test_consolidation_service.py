@@ -5,14 +5,20 @@ Critical invariant: the intent string sent to the coordinator must equal
 "consolidate_full" — a string constant that mirrors Intent.CONSOLIDATE_FULL.
 If this constant drifts, consolidation silently fails (agent not found).
 """
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
+from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.consolidation import BatchStatus, ConsolidationBatch
 from src.ports.consolidation_queue import ConsolidationQueue
 from src.services.consolidation_service import ConsolidationService, _INTENT_CONSOLIDATE_FULL
+from src.services.owner_timezone_resolver import OwnerTimezoneResolver
+from tests.support.account_owners import OwnedAccounts
+from tests.support.firestore_eval import EvalDb
 
 
 # ---------------------------------------------------------------------------
@@ -78,17 +84,35 @@ def user_repo():
     r = MagicMock()
     profile = MagicMock()
     profile.account_id = "acc-abc"
+    profile.config.timezone = "UTC"
     r.get_user = AsyncMock(return_value=profile)
     return r
 
 
 @pytest.fixture
-def service(queue, coordinator, agent_factory, user_repo):
+def account_repo():
+    return OwnedAccounts({"acc-abc": _USER_ID})
+
+
+@pytest.fixture
+def lease():
+    """The real memory-write lease on the evaluating fake (FACT_LIFECYCLE_RFC D9): every run takes and releases it."""
+    return FirestoreMemoryWriteLease(EvalDb(), EnvironmentConfig())
+
+
+_RUN_TIMEOUT_S = 900.0   # CONSOLIDATION.timeout_ms / 1000, as composition injects it
+
+
+@pytest.fixture
+def service(queue, coordinator, agent_factory, user_repo, account_repo, lease):
     return ConsolidationService(
         queue=queue,
         coordinator=coordinator,
         agent_factory=agent_factory,
+        lease=lease,
+        run_timeout_s=_RUN_TIMEOUT_S,
         user_repo=user_repo,
+        owner_zones=OwnerTimezoneResolver(account_repo, user_repo),
     )
 
 
@@ -134,7 +158,7 @@ class TestNoBatches:
     async def test_resets_processing_before_fetching(self, service, queue):
         queue.get_pending_batches.return_value = []
         call_order = []
-        queue.reset_recoverable_batches.side_effect = lambda uid: call_order.append("reset")
+        queue.reset_recoverable_batches.side_effect = lambda uid, **kw: call_order.append("reset")
         queue.get_pending_batches.side_effect = lambda **kw: call_order.append("fetch") or []
 
         await service.process_user_batches(user_id=_USER_ID)
@@ -150,7 +174,10 @@ class TestSingleBatchSuccess:
 
     async def test_batch_deleted_on_success(self, service, queue, coordinator):
         batch = _make_batch()
-        queue.get_pending_batches.side_effect = [[batch], []]
+        # Reads: the batch, the loop's next fetch (empty), then the final has-more read (empty). That last read
+        # used to exhaust the mock and was swallowed into False; a failing has-more read now answers True
+        # (a spare continuation beats a lost one), so the empty queue is stated explicitly.
+        queue.get_pending_batches.side_effect = [[batch], [], []]
         coordinator.route_message.return_value = _success_response()
 
         has_more = await service.process_user_batches(user_id=_USER_ID)
@@ -185,7 +212,7 @@ class TestSingleBatchSuccess:
         queue.get_pending_batches.return_value = []
         call_order = []
         agent_factory.ensure_agents_for_user.side_effect = lambda uid: call_order.append("ensure")
-        queue.reset_recoverable_batches.side_effect = lambda uid: call_order.append("reset")
+        queue.reset_recoverable_batches.side_effect = lambda uid, **kw: call_order.append("reset")
 
         await service.process_user_batches(user_id=_USER_ID)
 
@@ -293,19 +320,30 @@ class TestExceptionHandling:
 
         assert result is False
 
-    async def test_no_user_repo_uses_user_id_as_account_id(self, queue, coordinator, agent_factory):
+    async def test_no_user_repo_never_uses_user_id_as_account_id(self, queue, coordinator, agent_factory, lease):
+        """The account comes from the profile only (owner, 2026-10-23): with no user repository the run stops before
+        any batch, lease or account read, and nothing runs under the user id."""
+        accounts = OwnedAccounts({_USER_ID: _USER_ID})
         service = ConsolidationService(
             queue=queue,
             coordinator=coordinator,
             agent_factory=agent_factory,
+            lease=lease,
+            run_timeout_s=_RUN_TIMEOUT_S,
             user_repo=None,
+            owner_zones=OwnerTimezoneResolver(accounts, None),
         )
-        queue.get_pending_batches.return_value = []
+        queue.get_pending_batches.return_value = [_make_batch()]
 
-        # Should not raise — uses user_id as account_id fallback
+        # Should not raise, and must not fall back to the user id as the account
         result = await service.process_user_batches(user_id=_USER_ID)
 
         assert result is False
+        coordinator.route_message.assert_not_awaited()
+        queue.get_pending_batches.assert_not_awaited()
+        assert accounts.asked == []
+        assert await lease.acquire(_USER_ID, "probe", datetime(2026, 10, 23, tzinfo=timezone.utc),
+                                   datetime(2026, 10, 23, 1, tzinfo=timezone.utc)), "no lease was taken under the user id"
 
 
 # ---------------------------------------------------------------------------

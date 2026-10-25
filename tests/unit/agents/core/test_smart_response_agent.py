@@ -262,7 +262,7 @@ class TestSmartResponseAgentExecute:
             AgentResponse.success(
                 task_id="t1",
                 agent_id="memory_search_agent",
-                result=["User car is Toyota Corolla"]
+                result=["User car is Skoda Fabia 2015"]
             ),
             AgentResponse.success(
                 task_id="t2",

@@ -41,8 +41,8 @@ class TestFilename:
         assert deep_research_drive_filename(DAY, "Quantum computing", "q") == "2026-10-14 Quantum computing.html"
 
     def test_cyrillic_title_is_kept(self):
-        name = deep_research_drive_filename(DAY, "Ринок оренди у Валенсії", "q")
-        assert name == "2026-10-14 Ринок оренди у Валенсії.html"
+        name = deep_research_drive_filename(DAY, "Ринок оренди у Львові", "q")
+        assert name == "2026-10-14 Ринок оренди у Львові.html"
 
     def test_forbidden_characters_are_replaced(self):
         name = deep_research_drive_filename(DAY, 'A/B: "why"? <x> * y | z\\w', "q")
@@ -57,7 +57,7 @@ class TestFilename:
             "2026-10-14 Best e-bikes under 2000 EUR.html"
 
     def test_a_long_query_is_shortened_at_a_word(self):
-        query = "Compare the long term total cost of ownership of heat pumps versus gas boilers in Valencia apartments"
+        query = "Compare the long term total cost of ownership of heat pumps versus gas boilers in Springfield apartments"
         name = deep_research_drive_filename(DAY, "", query)
         stem = name[len("2026-10-14 "):-len(".html")]
         assert stem.endswith("…")

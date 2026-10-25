@@ -72,19 +72,19 @@ def test_the_empty_conjunction_under_incomplete_coverage():
 # -- F5 --------------------------------------------------------------------------------------------------------------
 
 def test_a_card_with_a_validity_date_shows_it():
-    card = _card(effective_date=datetime(2016, 11, 15, tzinfo=timezone.utc), date_source="file date",
-                 valid_until=datetime(2026, 11, 15, tzinfo=timezone.utc))
+    card = _card(effective_date=datetime(2016, 12, 9, tzinfo=timezone.utc), date_source="file date",
+                 valid_until=datetime(2026, 12, 9, tzinfo=timezone.utc))
     text = render_results(_result(TieredResult(concepts=("passport",), blocks=(TierBlock(MatchTier.ABOUT, 1),)),
                                   [card]))
-    assert "date: 2016-11-15 (file date)\nvalid until: 2026-11-15" in text
+    assert "date: 2016-12-09 (file date)\nvalid until: 2026-12-09" in text
 
 
 def test_a_validity_match_dates_the_card_by_its_expiry():
-    card = _card(tier=MatchTier.LABELLED, effective_date=datetime(2016, 11, 15, tzinfo=timezone.utc),
-                 date_source="file date", valid_until=datetime(2026, 11, 15, tzinfo=timezone.utc), expiry_match=True)
+    card = _card(tier=MatchTier.LABELLED, effective_date=datetime(2016, 12, 9, tzinfo=timezone.utc),
+                 date_source="file date", valid_until=datetime(2026, 12, 9, tzinfo=timezone.utc), expiry_match=True)
     text = render_results(_result(TieredResult(concepts=("истекает",), blocks=(TierBlock(MatchTier.LABELLED, 1),)),
                                   [card]))
-    assert "date: 2026-11-15 (expires)" in text and "2016-11-15" not in text and "valid until" not in text
+    assert "date: 2026-12-09 (expires)" in text and "2016-12-09" not in text and "valid until" not in text
 
 
 def test_a_card_without_a_validity_date_has_no_line():

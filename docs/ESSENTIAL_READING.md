@@ -33,10 +33,10 @@ These 6 documents provide **80% of necessary context** in **20% of the time**:
 **File:** `ai/AI_DEVELOPMENT_CULTURE.md`
 **Purpose:** Development rules, security, AI collaboration protocols
 
-### 6. 🛣️ Implementation Roadmap
+### 6. ⚠️ Risks and Technical Debt
 
 **File:** `12_risks/IMPLEMENTATION_ROADMAP.md`
-**Purpose:** Current status, Milestones, and change history (Session Context)
+**Purpose:** Open risks and open technical-debt items
 
 ---
 
@@ -64,9 +64,7 @@ Load only for specific tasks:
 
 ### Concepts & Philosophy
 
-- `docs/08_concepts/agent_best_practices.md` - Production-ready agent patterns
 - `docs/08_concepts/groovy_prompt_pattern.md` - Prompt engineering with Groovy DSL
-- `docs/08_concepts/agent_business_logic.md` - Multi-agent workflows
 - `docs/_project/archive/concepts_legacy/BELIEF_SYSTEM_MANIFESTO.md` - Legacy memory philosophy
 - `docs/_project/archive/concepts_legacy/RAG_MANIFESTO.md` - Legacy RAG architecture
 
@@ -88,7 +86,7 @@ Load only for specific tasks:
 1. Read docs/ESSENTIAL_READING.md (this file)
 2. Load all Tier 1 documents (6 files)
 3. Skim STRUCTURE.md to understand the project
-4. Read SESSION CONTEXT in IMPLEMENTATION_ROADMAP.md
+4. Skim the open risks and technical debt in IMPLEMENTATION_ROADMAP.md
 5. Confirm readiness
 ```
 

@@ -16,12 +16,12 @@ API sequence, adapter shapes, protobuf framing, PCM format, pacing).
 
 The Twilio path works but has two costs the owner no longer accepts:
 
-- **Money.** Identity is proven by a callback, so every call is an outbound PSTN call to a Spanish
-  mobile: $0.0486–0.18/min + Media Streams $0.0044/min + AMD $0.0075/call (Twilio ES price list,
-  2026-09-27) — roughly $0.05–0.19 per minute before the realtime model.
+- **Money.** Identity is proven by a callback, so every call is an outbound PSTN call to a mobile
+  number: $0.0486–0.18/min + Media Streams $0.0044/min + AMD $0.0075/call (Twilio price list for
+  the destination, 2026-09-27) — roughly $0.05–0.19 per minute before the realtime model.
 - **Audio.** G.711 μ-law at 8 kHz both ways. The model *speaks* narrowband and *hears* narrowband.
-  On the spike (§6) the same model over wideband PCM was judged by the owner "an order of magnitude
-  better — the voice and intonation we could not get over Twilio".
+  On the spike (§6) the same model over wideband PCM was judged by the owner far better, with the
+  voice and intonation Twilio could not carry.
 
 ## 2. Goals
 
@@ -236,8 +236,7 @@ stay green. Live: §10.
 
 ## 12. UAT round 1 (2026-09-28)
 
-The owner's first live web calls (2026-09-27) surfaced five gaps. Plan:
-`docs/superpowers/plans/2026-09-28-voice-web-uat-round1.md`.
+The owner's first live web calls (2026-09-27) surfaced five gaps. Plan: the UAT round 1 plan (archived).
 
 **Bluetooth HFP.** A headset paired over Bluetooth exposes its microphone through the HFP
 profile, which forces the *entire* Bluetooth link — including the speaker leg — down to
@@ -344,9 +343,7 @@ that:
   `test_delegate_flush_failure_does_not_change_the_response`, `test_delegate_500_when_dispatch_raises`.
 
 Every edit above was applied by the implementer only after an explicit per-test reviewer ruling
-("intended change", never "code wrong"); see the two plans' progress ledgers
-(`.superpowers/sdd/2026-09-27-voice-web-transport/progress.md`,
-`.superpowers/sdd/2026-09-28-voice-web-uat-round1/progress.md`) for the full rulings.
+("intended change", never "code wrong").
 
 ## 13. Pre-merge closeout (2026-09-28)
 

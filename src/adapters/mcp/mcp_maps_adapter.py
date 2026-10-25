@@ -37,8 +37,8 @@ class MCPMapsAdapter(MapsToolsPort):
         "not turn-by-turn directions or real-time traffic), and current weather "
         "lookup via Google Maps AI Grounding Lite. "
         "Input: natural language task. "
-        "Examples: 'pharmacy near Khreschatyk open now', "
-        "'route from Kyiv to Lviv by car', 'weather in Odesa today'."
+        "Examples: 'pharmacy near Rossio open now', "
+        "'route from Lisbon to Porto by car', 'weather in Odesa today'."
     )
 
     # Tools whose Google schema encodes a protobuf `oneof` / "zero = unspecified"

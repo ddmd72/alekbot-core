@@ -19,16 +19,16 @@
 
 ## Context
 
-A user question — "measure the distance from the blue dot to the cross in the sea", with an iPhone
-screenshot of Google Maps attached — burned Smart's entire 300s `INTERACTIVE` budget and fell back to
+A user question — "how far is it from the red pin to the lighthouse on the pier", with a phone
+screenshot of a map attached — burned Smart's entire 300s `INTERACTIVE` budget and fell back to
 Quick (trace `01a00eb17f…`, 2026-08-17 07:48–07:53 UTC).
 
 The initial reading was a vision failure: the model had missed the map's scale bar. The telemetry
 says the opposite. Grok's own output on the turn where it first saw the image:
 
-> «На скріні є масштаб 50 м — звірю його з орієнтирами на карті й порахую пряму дистанцію до хреста.»
-> *(There is a 50 m scale on the screenshot — I'll cross-check it against landmarks on the map and
-> compute the straight-line distance to the cross.)*
+> «На знімку є шкала 100 м — перевірю її за будівлями на карті й виміряю відстань до маяка по прямій.»
+> *(There is a 100 m scale on the image — I'll check it against the buildings on the map and
+> measure the straight-line distance to the lighthouse.)*
 
 It saw the scale bar and read it correctly. Verified alongside: the image reached the model intact
 (1179×2556 PNG, RGBA, ~1.85 MB, no resizing in our pipeline — `MAX_FILE_BYTES` rejects above 5 MB and
@@ -43,7 +43,7 @@ and the budget died. The binding standing directive:
 > parsing**, never force conclusions to fit facts, and flag conflicting search results explicitly
 > instead of presenting one source as definitive.
 
-Reading "50 m" off a screenshot *is* surface-level text parsing. The directive was written about code
+Reading "100 m" off a screenshot *is* surface-level text parsing. The directive was written about code
 and logs; it carries no scope, and the rulebook is injected verbatim on every request under
 "Apply, don't weigh". Reinforced by a second directive: *"Require deep, evidence-based argumentation
 with actual data; challenge abstract claims…"*.
@@ -60,7 +60,7 @@ Applying "does this rule change behavior on EVERY request?" to the live rulebook
   formatting, information-sourcing policy, argumentation standard.
 - **5 fail, needing a trigger** — real-time data staleness, bookings-as-proof, PDF/DOCX formatting,
   background-task reporting, car-as-transport.
-- **2 are not behavioral rules at all** — "Run Valencia event radar Tuesday and Friday at 18:30" and
+- **2 are not behavioral rules at all** — "Run the book-club digest Tuesday and Friday at 18:30" and
   "Run the slow-burn enrichment sweep every 3 days at 19:00" **exactly duplicate existing
   self-reminders** (`FREQ=WEEKLY;BYDAY=TU,FR` and `FREQ=DAILY;INTERVAL=3`, matching times). As
   directives they change nothing on a normal request and consume 2 of 15 cap slots.

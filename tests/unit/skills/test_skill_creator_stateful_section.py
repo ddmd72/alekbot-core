@@ -39,5 +39,5 @@ def test_the_bundle_still_loads():
 
 def test_the_user_help_names_both():
     assert "*Working files*" in CAPABILITIES_TEXT
-    assert "keep a file for the flat sale" in CAPABILITIES_TEXT
+    assert "keep a file for the garden shed" in CAPABILITIES_TEXT
     assert "can also carry a workspace file" in CAPABILITIES_TEXT

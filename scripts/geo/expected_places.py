@@ -15,7 +15,7 @@ EXPECTED_PLACES: Sequence[Tuple[str, float, float, Optional[str]]] = (
     ("Porto, Ribeira", 41.1406, -8.6131, "Porto, Portugal"),            # not Vila Nova de Gaia
     ("Brooklyn", 40.6782, -73.9442, "New York, United States"),
     ("Brooklyn, Williamsburg", 40.7081, -73.9571, "New York, United States"),
-    ("Torrent", 39.4373, -0.4654, "Valencia, Spain"),
+    ("L'Hospitalet de Llobregat", 41.3597, 2.1003, "Barcelona, Spain"),
     ("Monaco", 43.7384, 7.4246, "Monaco, Monaco"),                      # not Nice
     ("Vaduz", 47.1410, 9.5215, "Vaduz, Liechtenstein"),                 # not Feldkirch or Buchs
     ("San Marino (city)", 43.9356, 12.4473, "San Marino, San Marino"),  # not Serravalle

@@ -5,6 +5,7 @@ GCP Cloud Tasks Adapter
 Concrete TaskQueue implementation for Google Cloud Tasks.
 """
 import asyncio
+import enum
 import json
 import hashlib
 import datetime
@@ -20,11 +21,17 @@ from ..utils.logger import logger
 
 
 class _DomainEncoder(json.JSONEncoder):
-    """JSON encoder that handles Pydantic models and other domain objects."""
+    """The task payloads' one JSON encoder: Pydantic models as their dump, datetimes and dates as ISO-8601, enums as
+    their value. A payload carries domain values in their own types (the agent context's search hits hold datetimes);
+    the receiver reads the ISO text back."""
 
     def default(self, obj):
         if isinstance(obj, BaseModel):
             return obj.model_dump()
+        if isinstance(obj, (datetime.datetime, datetime.date)):
+            return obj.isoformat()
+        if isinstance(obj, enum.Enum):
+            return obj.value
         return super().default(obj)
 
 

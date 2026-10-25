@@ -18,11 +18,13 @@ rule Domain_Scope() {
     constraints: [
         "EXTRACT all facts relevant to USER's life context",
         "NEVER extract external world facts unless USER-specific",
-        "NEVER process ASSISTANT statements as facts unless USER confirms with NEW info",
+        "NEVER process ASSISTANT statements as facts unless USER confirms with NEW info (the echo trap; its one exception is memory_review_reply below)",
         "NEVER create facts from questions (extract only answers)"
     ]
 
-    fallback: "When in doubt, DISCARD with explanation"
+    memory_review_reply: "The one exception to the echo trap; every other echo rule refers to it. A USER message that begins [Reply to memory review q=<id>] is the owner answering Alek's memory-review question q=<id> (the earlier pair: the USER part [System: memory review q=<id> — Alek asked the owner about a fact he could not confirm], then the ASSISTANT question quoting the fact). The quoted fact belongs to the memory review, which applies the answer: do not update, extend, invalidate or re-create it from this reply. Record only what the answer adds: a correction naming the true value -> a fact about that value; any other new information in the message -> the ordinary rules. A digit 1-4, yes, no, stopped, 'don't remember' add nothing. The ASSISTANT part of the pair (the question, the quote, the options) stays an echo: DISCARD. A USER part [System: memory review q=<id> not delivered — the owner did not see the question above] withdraws that question: the owner never saw it, so nothing about it is his."
+
+    fallback: "When in doubt, DISCARD with explanation; a memory-review reply follows memory_review_reply, not this fallback"
 }
 
 @critical
@@ -45,7 +47,7 @@ rule Taxonomy_Enforcement() {
     constraints: [
         "Domain: MUST be from predefined list (BIOGRAPHICAL, POSSESSION, HEALTH, MEDICAL_RECORDS, LOCATION, WORK, NETWORK, PREFERENCE, AGENT_DIRECTIVE, SKILL, PROJECT, FINANCE, EDUCATION, LEGAL, ENTERTAINMENT, COMMUNICATION)",
         "Temporal Class: MUST be PERMANENT/STABLE/DYNAMIC/EPHEMERAL (NOT ARCHIVAL!)",
-        "State: MUST be CURRENT/STALE/ARCHIVED/SUPERSEDED/INVALIDATED",
+        "State: MUST be CURRENT/STALE/ARCHIVED/SUPERSEDED/INVALIDATED (STALE is set by the system only; SUPERSEDED only through update_fact with superseded_by; a fact closed by its state carries no expiry)",
         "Context Priority: MUST be CRITICAL/HIGH/MEDIUM/LOW/ARCHIVAL (NOT ARCHIVED!)"
     ]
 
@@ -83,21 +85,21 @@ rule Size_Triggers_Review() {
     examples: {
 
         good_co_location: {
-            fact: "User owns 2012 Toyota Corolla (Plate: SAMPLE-0000), based in Springfield, with automatic gearbox (serviced at 90,000 km), tinted windows, and comprehensive insurance."
+            fact: "User owns 2015 Skoda Fabia (Plate: SAMPLE-0000), based in Springfield, with automatic gearbox (serviced at 90,000 km), tinted windows, and comprehensive insurance."
             word_count: 35
             deliberation: "Can plate be useful without the car? No. Can insurance be useful without the car? No. All parts describe ONE physical entity — always retrieved together."
             verdict: "KEEP — co-location justified"
         }
 
         bad_compound: {
-            fact: "User practices daily physical therapy for PPT. Protocol includes: Sciatic Nerve Flossing (10-15 reps/leg), hamstring stretches (1 min/leg), Glute Bridges (3s hold), cat-cow, Jefferson curls (0kg), legs up the wall. IMPORTANT CLARIFICATION: User does NOT identify as yoga practitioner."
-            word_count: 52
-            deliberation: "word_count > 40 → enter deliberation. Is the diagnosis useful without the protocol? YES. Is the protocol useful without the diagnosis? YES. Is the yoga disclaimer independently useful in 30 days? NO — ephemeral clarification."
+            fact: "User plays bass guitar in a weekend jazz band. Daily practice routine includes: chromatic scales (10 min), slap drills (5 sets), walking bass lines (2 songs), metronome work (90 bpm), sight-reading (1 page), ear training. IMPORTANT CLARIFICATION: User does NOT identify as professional musician."
+            word_count: 44
+            deliberation: "word_count > 40 → enter deliberation. Is the band membership useful without the routine? YES. Is the routine useful without the band membership? YES. Is the professional-musician disclaimer independently useful in 30 days? NO — ephemeral clarification."
             verdict: "SPLIT + DISCARD"
             result: [
-                "CREATE: 'User is diagnosed with Posterior Pelvic Tilt (PPT), complicating musculoskeletal rehabilitation due to his long torso.'",
-                "CREATE: 'User's PPT morning rehabilitation protocol: Sciatic Nerve Flossing (10-15 reps/leg), hamstring stretches (1 min/leg), Glute Bridges (3s hold at peak), cat-cow (Cow phase focus), Jefferson curls (0kg), legs up the wall (venous return).'",
-                "DISCARD: 'User does not identify as yoga practitioner' — one-time clarification, fails 30-day relevance test."
+                "CREATE: 'User plays bass guitar in a weekend jazz band, which rehearses on Saturday mornings.'",
+                "CREATE: 'User's daily bass practice routine: chromatic scales (10 min), slap drills (5 sets), walking bass lines (2 songs), metronome work (90 bpm), sight-reading (1 page), ear training (interval focus).'",
+                "DISCARD: 'User does not identify as professional musician' — one-time clarification, fails 30-day relevance test."
             ]
         }
     }

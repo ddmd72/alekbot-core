@@ -237,7 +237,7 @@ async def diagnose_fact_search(fact_id: str, query: str, account_id: str):
 async def main():
     # Test parameters
     fact_id = os.getenv("FACT_ID") or "<fact-uuid>"
-    query = "Toyota Corolla car"
+    query = "Skoda Fabia car"
     user_id = os.getenv("USER_ID") or "DEMO_USER"
     account_id = f"account-{user_id}"
     

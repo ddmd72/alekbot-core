@@ -13,8 +13,8 @@ agents_registry {
         examples: [
             {
                 user_query: "What car do I have?"
-                context: "Bio mentions Mitsubishi Colt"
-                tool_call: 'delegate_to_specialist(intent="search_memory", query="Car details: Mitsubishi Colt model, year, plate, insurance, service history")'
+                context: "Bio mentions Skoda Fabia"
+                tool_call: 'delegate_to_specialist(intent="search_memory", query="Car details: Skoda Fabia model, year, plate, insurance, service history")'
                 note: "Known brand included — anchors recall across all car-related facts."
             },
             {
@@ -61,8 +61,8 @@ agents_registry {
                 tool_call: 'delegate_to_specialist(intent="search_web", query="Claude 4 new features latest updates")'
             },
             {
-                user_query: "Weather in Kyiv tomorrow?"
-                tool_call: 'delegate_to_specialist(intent="search_web", query="weather in Kyiv tomorrow")'
+                user_query: "Weather in Lisbon tomorrow?"
+                tool_call: 'delegate_to_specialist(intent="search_web", query="weather in Lisbon tomorrow")'
             }
         ]
 

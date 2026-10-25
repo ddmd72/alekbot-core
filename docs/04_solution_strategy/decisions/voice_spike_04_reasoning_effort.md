@@ -49,7 +49,7 @@ turns, waiting for `response.done` before the next turn:
 ```
 1. "My colleague Ivan Petrov handles the Q3 budget — remember that."
 2. "What's the weather like today?"        (filler)
-3. "Tell me a fact about Valencia."         (filler)
+3. "Tell me a fact about Lisbon."           (filler)
 4. "What time is it in Tokyo right now?"    (filler)
 5. "Can you count from one to five?"        (filler)
 6. "Who handles the Q3 budget?"             (retention check — correct answer: Ivan Petrov)

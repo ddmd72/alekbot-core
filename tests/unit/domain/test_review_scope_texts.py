@@ -1,0 +1,89 @@
+"""The texts the review model reads from `FactReviewScope` (Facts S4 · T6a1, plan §3.5): each names the argument's place,
+none tells a pass with no search tool to search, and a refusal is one tagged failed result."""
+import pytest
+
+from src.domain.fact_review_basis import parse_history
+from src.domain.fact_review_rules import (
+    ASK_HELD, ASK_OWNER_PLACE, UPDATE_FACT_PLACE, CHANGED_OUTSIDE, UPDATES_SHAPE_REFUSAL, asked_refusal, changed_outside_refusal, decided_refusal,
+    not_in_batch_refusal, not_under_review_refusal,
+)
+from src.domain.fact_tool_result import (
+    REFUSED_ASK, REFUSED_BASIS, REFUSED_SCOPE, STATUS_ASKED, WRITTEN_STATUSES, outcome_of, refused_result,
+)
+from src.domain.consolidation_pass_stats import (
+    OUTCOME_ERROR, OUTCOME_OK, OUTCOME_REVIEW_REFUSAL, OUTCOME_SCOPE_REFUSAL, ConsolidationPassStats, PassCall, PassTool,
+)
+from src.domain.pass_actor import PassActor
+
+PLACED = [not_in_batch_refusal, asked_refusal, decided_refusal, changed_outside_refusal, not_under_review_refusal]
+
+
+@pytest.mark.parametrize("text", PLACED)
+@pytest.mark.parametrize("place", [UPDATE_FACT_PLACE, ASK_OWNER_PLACE])
+def test_every_scope_refusal_names_its_place_and_never_says_search(text, place):
+    message = text(place)
+    assert message.startswith(place) and "search" not in message.lower()
+
+
+def test_the_scope_texts_say_what_each_rule_is():
+    place = UPDATE_FACT_PLACE
+    assert not_in_batch_refusal(place) == (
+        "update_fact.fact_id names no fact of this batch: use the fact_id of a fact listed for this review"
+    )
+    assert asked_refusal(place) == (
+        "update_fact.fact_id: you asked the owner about this fact in this pass; it stays as it is until he answers"
+    )
+    assert decided_refusal(place) == "update_fact.fact_id: this fact was already decided in this pass; leave it"
+    assert not_under_review_refusal(place) == (
+        "update_fact.fact_id names a current fact with no question in this batch; leave it, it stays as it is"
+    )
+
+
+def test_the_places_are_the_review_tools_fact_id_arguments():
+    assert (UPDATE_FACT_PLACE, ASK_OWNER_PLACE) == ("update_fact.fact_id", "ask_owner.fact_id")
+
+
+def test_the_changed_outside_text_is_the_plans_and_leaves_the_fact():
+    assert CHANGED_OUTSIDE == "this fact changed outside the review; leave it, it stays as it is"
+    assert changed_outside_refusal("update_fact.fact_id") == f"update_fact.fact_id: {CHANGED_OUTSIDE}"
+
+
+def test_the_updates_shape_text_names_the_place_and_every_field():
+    assert UPDATES_SHAPE_REFUSAL.startswith("update_fact.updates must be an object")
+    for name in ("content", "tags", "metadata", "temporal_class", "state", "superseded_by", "expiry"):
+        assert name in UPDATES_SHAPE_REFUSAL
+    assert "reported_date" not in UPDATES_SHAPE_REFUSAL and "search" not in UPDATES_SHAPE_REFUSAL
+
+
+def test_a_history_that_is_not_text_names_its_place_and_shape():
+    with pytest.raises(ValueError) as caught:
+        parse_history(["ended"])
+    assert str(caught.value) == "history must be text: one sentence in the past tense saying it ended, got list"
+    assert parse_history(None) is None and parse_history("Worked at Acme.") == "Worked at Acme."
+
+
+def test_the_held_ask_text_says_code_writes_the_question():
+    assert ASK_HELD.startswith("held: code writes the question") and "search" not in ASK_HELD
+
+
+@pytest.mark.parametrize("tag", [REFUSED_BASIS, REFUSED_SCOPE, REFUSED_ASK])
+def test_a_refusal_is_a_tagged_failed_result_counted_as_an_error(tag):
+    # Reviewer edit (S4 T6b, plan T6b `_outcome_of`): a review refusal is now its own outcome, which the stats count as a
+    # review refusal and still as a tool-error turn (no longer a plain `error`, never an expiry error).
+    # Fix-round edit (S4 T6b review M1, plan §3.6): a scope refusal is told apart from basis and ask, because only scope
+    # (with born-due) can be abandoned; it is still a review refusal and a tool-error turn.
+    result = refused_result("f1", tag, "why")
+    assert result == {"fact_id": "f1", "status": "failed", "refused": tag, "message": "why"}
+    expected = OUTCOME_SCOPE_REFUSAL if tag == REFUSED_SCOPE else OUTCOME_REVIEW_REFUSAL
+    assert outcome_of(result) == expected != OUTCOME_ERROR
+    stats = ConsolidationPassStats(PassActor.REVIEW, 15)
+    call = [PassCall(PassTool.UPDATE, "u", key="f1")]
+    stats.record_turn(call)
+    stats.record_outcomes(call, [outcome_of(result)])
+    assert (stats.error_turns, stats.review_refusals, stats.expiry_errors) == (1, 1, 0)
+
+
+def test_the_tags_and_the_ask_status_are_spelled_once():
+    assert (REFUSED_BASIS, REFUSED_SCOPE, REFUSED_ASK) == ("basis", "scope", "ask")
+    assert STATUS_ASKED == "asked" and STATUS_ASKED not in WRITTEN_STATUSES
+    assert outcome_of({"fact_id": "f1", "status": STATUS_ASKED, "message": ASK_HELD}) == OUTCOME_OK

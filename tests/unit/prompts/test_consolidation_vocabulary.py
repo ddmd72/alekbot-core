@@ -116,7 +116,8 @@ async def test_search_results_carry_the_keys_the_prompt_says_they_do():
             return EnrichedContext(facts=[EnrichedFact(fact_id="f", content="c", source="keyword")], total_sources=1,
                                    dedup_count=0, biographical_dedup_count=0)
     adapter = FactManagementAdapter(None, None, None, Stub())   # the other ports are not touched by a search
-    [result] = await adapter.search_existing_facts(["k"], "q")
+    # Reviewer edit (facts S3, T4a; plan §6 E): the search takes the owner's zone, a required keyword from T4a on.
+    [result] = await adapter.search_existing_facts(["k"], "q", timezone="UTC")
     named = pv.returns_keys(TOKENS[TOOLS][1])["search_existing_facts"]
     assert named and named <= set(result), f"returns: names {sorted(named - set(result))}; the result has {sorted(result)}"
 

@@ -418,7 +418,7 @@ async def test_late_answer_note_names_the_request_it_answers():
     async def events():
         for e in _opening():
             yield e
-        yield _tool_call(intent="search_web", query="amazon whey protein links")
+        yield _tool_call(intent="search_web", query="amazon bike helmet links")
         yield E(type="speech_started", payload={})
         yield E(type="speech_stopped", payload={})
         await _hold()
@@ -427,7 +427,7 @@ async def test_late_answer_note_names_the_request_it_answers():
     session, _ = await _call(events, slow)
     notes = [c.args[1] for c in session.submit_message.await_args_list if "just arrived" in c.args[1]]
     assert len(notes) == 1
-    assert "search_web: amazon whey protein links" in notes[0] and "sunny" in notes[0]
+    assert "search_web: amazon bike helmet links" in notes[0] and "sunny" in notes[0]
 
 
 def _info_lines(fake_logger):

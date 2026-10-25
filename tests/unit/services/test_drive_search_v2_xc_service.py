@@ -157,18 +157,18 @@ async def test_mario_does_not_find_maria():
 async def test_what_expires_shows_the_expiry_date():
     w = V2World()
     profile = DriveProfile("Passport", "A passport", "en", "id_document", validity_words=("expires", "истекает"))
-    item = w.file("passport scan.pdf", profile=profile, valid_until="2026-11-15", effective="2016-11-15")
+    item = w.file("passport scan.pdf", profile=profile, valid_until="2026-12-09", effective="2016-12-09")
     result = await w.search("истекает")
     c = card(result, item)
-    assert c.expiry_match and "date: 2026-11-15 (expires)" in render_results(result)
+    assert c.expiry_match and "date: 2026-12-09 (expires)" in render_results(result)
 
 
 async def test_a_name_match_on_a_valid_file_shows_its_validity_line():
     w = V2World()
     profile = DriveProfile("Passport", "A passport", "en", "id_document", validity_words=("expires",))
-    item = w.file("passport scan.pdf", profile=profile, valid_until="2026-11-15", effective="2016-11-15")
+    item = w.file("passport scan.pdf", profile=profile, valid_until="2026-12-09", effective="2016-12-09")
     result = await w.search("scan")
-    assert not card(result, item).expiry_match and "valid until: 2026-11-15" in render_results(result)
+    assert not card(result, item).expiry_match and "valid until: 2026-12-09" in render_results(result)
 
 
 # -- D31 end to end --------------------------------------------------------------------------------------------------

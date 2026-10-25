@@ -28,7 +28,7 @@ from src.services.localization_service import LocalizationService
 from src.services.user_drive_service import UserDriveService
 
 USER = "user-1"
-HTML = b"<!DOCTYPE html><html><head><title>Heat pumps in Valencia</title></head><body>x</body></html>"
+HTML = b"<!DOCTYPE html><html><head><title>Heat pumps in Springfield</title></head><body>x</body></html>"
 NOW = datetime(2026, 10, 14, 9, 30, tzinfo=timezone.utc)
 L10N = LocalizationService(FileLocalizationAdapter())
 
@@ -41,7 +41,7 @@ def _users(enabled=True, tz="UTC", missing=False):
     return users
 
 
-def _drive(path="Deep research/2026-10-14 Heat pumps in Valencia.html"):
+def _drive(path="Deep research/2026-10-14 Heat pumps in Springfield.html"):
     drive = AsyncMock(spec=UserDriveService)
     item = DriveItem(item_id="i1", name=path.rsplit("/", 1)[-1], path=path, is_folder=False)
     drive.save.return_value = SaveOutcome(item=item, created=[])
@@ -85,13 +85,13 @@ class TestCopy:
         drive = _drive()
         line = await _service(drive=drive).copy_report(USER, HTML, "heat pumps?")
         drive.save.assert_awaited_once_with(
-            USER, HTML, "2026-10-14 Heat pumps in Valencia.html", "text/html; charset=utf-8", "Deep research")
-        assert line == "📁 Copied to your drive: Deep research/2026-10-14 Heat pumps in Valencia.html"
+            USER, HTML, "2026-10-14 Heat pumps in Springfield.html", "text/html; charset=utf-8", "Deep research")
+        assert line == "📁 Copied to your drive: Deep research/2026-10-14 Heat pumps in Springfield.html"
 
     async def test_the_line_shows_the_name_the_drive_actually_gave(self):
-        drive = _drive(path="Deep research/2026-10-14 Heat pumps in Valencia 1.html")
+        drive = _drive(path="Deep research/2026-10-14 Heat pumps in Springfield 1.html")
         line = await _service(drive=drive).copy_report(USER, HTML, "q")
-        assert line.endswith("Deep research/2026-10-14 Heat pumps in Valencia 1.html")
+        assert line.endswith("Deep research/2026-10-14 Heat pumps in Springfield 1.html")
 
     async def test_no_title_names_the_file_after_the_question(self):
         drive = _drive()
@@ -100,9 +100,9 @@ class TestCopy:
 
     async def test_cyrillic_title(self):
         drive = _drive()
-        html = "<title>Ринок оренди у Валенсії</title>".encode("utf-8")
+        html = "<title>Ринок оренди у Спрінгфілді</title>".encode("utf-8")
         await _service(drive=drive).copy_report(USER, html, "q")
-        assert drive.save.call_args.args[2] == "2026-10-14 Ринок оренди у Валенсії.html"
+        assert drive.save.call_args.args[2] == "2026-10-14 Ринок оренди у Спрінгфілді.html"
 
     async def test_the_date_is_the_users_local_day(self):
         drive = _drive()

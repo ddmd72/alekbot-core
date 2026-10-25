@@ -54,8 +54,6 @@ Cross-cutting deep dives:
 - **[Database Schema](./08_concepts/DATABASE_SCHEMA.md)** — Firestore collections & indexes.
 - **[Multi-Vector RRF Search](./08_concepts/multi_vector_rrf_search.md)** — retrieval philosophy.
 - **[Prompt Assembly Guide](./08_concepts/prompt_assembly_guide.md)** — token assembly (v4).
-- **[Provider Resolution](./08_concepts/provider_resolution_guide.md)** — LLM tier management.
-- **[User Management](./08_concepts/user_management_complete_guide.md)** — onboarding & linking.
 
 ### [09 Decisions (ADRs)](./09_decisions/README.md)
 Architecture Decision Records.
@@ -64,10 +62,10 @@ Architecture Decision Records.
 Feature and refactoring proposals.
 
 ### [11 Quality](./11_quality/README.md)
-Quality goals, testing strategy, use cases.
+Quality gates and where the test rules live.
 
 ### [12 Risks](./12_risks/README.md)
-Risk management and [Implementation Roadmap](./12_risks/IMPLEMENTATION_ROADMAP.md).
+Open risks and technical debt ([register](./12_risks/IMPLEMENTATION_ROADMAP.md)).
 
 ---
 

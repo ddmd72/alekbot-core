@@ -23,10 +23,12 @@ src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-de
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
 src.adapters.firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter 1  # by-design single instance
 src.adapters.firestore_email_job_repo.FirestoreEmailJobRepository 1  # by-design single instance
+src.adapters.firestore_fact_lifecycle_counters.FirestoreFactLifecycleCounters 1  # by-design single instance, held by the ServiceContainer (Facts S3, FACT_LIFECYCLE_RFC D10); the consolidator adds to it, the janitor shares it (application_graph.py FactLifecycleSweepService)
 src.adapters.firestore_indexed_email_repo.FirestoreIndexedEmailRepository 1  # by-design single instance
 src.adapters.firestore_invite_code_repo.FirestoreInviteCodeRepository 1  # by-design single instance
 src.adapters.firestore_long_turn_registry.FirestoreLongTurnRegistry 1  # by-design single instance
 src.adapters.firestore_memory_fact_draft_repository.FirestoreMemoryFactDraftRepository 1  # by-design single instance
+src.adapters.firestore_memory_write_lease.FirestoreMemoryWriteLease 1  # by-design single instance, held by the one ConsolidationService (Facts S2, decisions/fact_versions_one_writer.md)
 src.adapters.firestore_notification_state_adapter.FirestoreNotificationStateAdapter 1  # by-design single instance
 src.adapters.firestore_oauth_credentials_adapter.FirestoreOAuthCredentialsAdapter 1  # by-design single instance
 src.adapters.firestore_prompt_repository.FirestorePromptComponentRepository 1  # by-design single instance
@@ -90,6 +92,7 @@ src.services.alerting_llm_proxy.AlertingLLMProxy 1  # by-design single instance
 src.services.auth_provider_registry.AuthProviderRegistry 1  # by-design single instance
 src.services.authentication_service.AuthenticationService 1  # by-design single instance
 src.services.biographical_context_service.BiographicalContextService 1  # by-design single instance
+src.services.cabinet_fact_service.CabinetFactService 1  # by-design single instance, the Cabinet's fact writes over the one fact repository (facts S4 T2c, application_graph.py)
 src.services.channel_binding_service.ChannelBindingService 1  # by-design single instance
 src.services.companion_context_assembler_service.CompanionContextAssemblerService 1  # by-design single instance
 src.services.companion_extraction_service.CompanionExtractionService 1  # by-design single instance
@@ -104,6 +107,7 @@ src.services.email_embedding_repair_service.EmailEmbeddingRepairService 1  # by-
 src.services.email_indexing_service.EmailIndexingService 1  # by-design single instance
 src.services.email_review_service.EmailReviewService 1  # by-design single instance
 src.services.email_search_service.EmailSearchService 1  # by-design single instance
+src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-design one janitor: application_graph.py build_application_graph builds it once and hands it to WorkerHandler for the daily fact_lifecycle_sweep Scheduler job (FACT_LIFECYCLE_RFC D4); it holds the container's repository and counters
 src.services.fact_write_service.FactWriteService 1  # by-design single instance
 src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance
@@ -118,6 +122,7 @@ src.services.localization_service.LocalizationService 1  # by-design single inst
 src.services.long_turn_service.LongTurnService 1  # by-design single instance
 src.services.memory_fact_service.MemoryFactService 1  # by-design single instance
 src.services.overflow_routing_service.OverflowRoutingService 1  # by-design single instance
+src.services.owner_timezone_resolver.OwnerTimezoneResolver 1  # by-design single instance, built once as _owner_zones in application_graph.py and held by the one ConsolidationService; FactReviewService and FactAnswerService take the same one (Facts S4 T7c, T8a, T8e)
 src.services.prompt_builder.PromptBuilder 1  # by-design single instance
 src.services.prompt_builder.UserPromptBuilder 1  # by-design single instance
 src.services.prompt_cache_strategy.PromptCacheStrategy 1  # by-design single instance

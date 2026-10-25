@@ -56,8 +56,8 @@ def _near(similarity):
 
 async def test_each_fact_gets_a_new_id_a_new_lineage_the_account_the_user_and_three_vectors(store):
     saved, skipped, ids = await add(store, [
-        {"text": "mother is Valentina", "tags": ["family"], "metadata": {"name": "Valentina"}},
-        {"content": "owns a Toyota", "tags": [], "type": "state"},
+        {"text": "mother is Maria", "tags": ["family"], "metadata": {"name": "Maria"}},
+        {"content": "owns a Skoda", "tags": [], "type": "state"},
     ])
     assert (saved, skipped) == (2, 0) and len(ids) == 2 and len(store.docs) == 2
     first, second = (store.docs[i] for i in ids)
@@ -66,7 +66,7 @@ async def test_each_fact_gets_a_new_id_a_new_lineage_the_account_the_user_and_th
         assert (doc["account_id"], doc["created_by_user_id"], doc["is_current"], doc["version"]) == (ACC, USER, True, 1)
         assert all(isinstance(doc[k], Vector) for k in ("vector", "tags_vector", "metadata_vector"))
     for field, text in zip(("vector", "tags_vector", "metadata_vector"),
-                           fact_embedding_texts("mother is Valentina", ["family"], {"name": "Valentina"})):
+                           fact_embedding_texts("mother is Maria", ["family"], {"name": "Maria"})):
         assert stored_vector(first[field]) == pytest.approx(embed(text))
     assert second["metadata"] == {}
 
@@ -106,14 +106,15 @@ async def test_defaults_are_type_event_state_current_priority_medium_and_reporte
 
 async def test_given_attributes_are_stored(store):
     _, _, ids = await add(store, [
-        {"text": "a fact", "domain": "health", "temporal_class": "dynamic", "state": "stale", "context_priority": "high",
+        # Reviewer edit (facts S3, T2): ARCHIVED replaces STALE (S3-D3); the sent ttl_days is not stored (D1, S3-D4).
+        {"text": "a fact", "domain": "health", "temporal_class": "dynamic", "state": "archived", "context_priority": "high",
          "ttl_days": 30, "context": "said at lunch", "reported_date": "2026-03-04T10:00:00+00:00"},
         {"text": "another", "reported_date": datetime(2025, 1, 2, tzinfo=timezone.utc)},
     ])
     doc = store.docs[ids[0]]
     assert (doc["domain"], doc["temporal_class"], doc["state"], doc["context_priority"]) == (
-        "health", "dynamic", "stale", "high")
-    assert (doc["ttl_days"], doc["context"], doc["context_priority_rank"]) == (30, "said at lunch", 2)
+        "health", "dynamic", "archived", "high")
+    assert (doc["ttl_days"], doc["context"], doc["context_priority_rank"]) == (None, "said at lunch", 2)
     assert doc["reported_date"] == datetime(2026, 3, 4, 10, 0, tzinfo=timezone.utc)
     assert store.docs[ids[1]]["reported_date"] == datetime(2025, 1, 2, tzinfo=timezone.utc)
 
@@ -197,9 +198,23 @@ async def test_an_embedding_failure_stores_nothing(store):
     assert store.docs == {}
 
 
-async def test_a_later_failure_keeps_the_facts_already_stored(store):
+async def test_a_later_failure_keeps_the_facts_already_stored(store, monkeypatch):
+    # Reviewer edit (facts S2, D3/D-13): a bad value anywhere is now refused before any write, so the write failure that
+    # keeps the facts already stored is a backend failure on a later fact; the bad-value case stores nothing.
     with pytest.raises(ValueError):
         await add(store, [{"text": "first fact"}, {"text": "second fact", "domain": "astrology"}, {"text": "third fact"}])
+    assert store.docs == {}
+
+    real_add = store.repo.add_fact
+
+    async def fail_on_second(fact):
+        if fact.text == "second fact":
+            raise RuntimeError("backend down")
+        return await real_add(fact)
+
+    monkeypatch.setattr(store.repo, "add_fact", fail_on_second)
+    with pytest.raises(RuntimeError):
+        await add(store, [{"text": "first fact"}, {"text": "second fact"}, {"text": "third fact"}])
     assert [d["text"] for d in store.docs.values()] == ["first fact"]
 
 

@@ -80,6 +80,6 @@ goes wrong. (See `scripts/memory/prompt_tokens_firestore_backup_*.json` if one w
 
 ## Note on PII
 
-Token few-shot examples can carry indirect personal data (this mirror's first pull surfaced a real
-car and medical specifics). The pull has a guard that skips any account/user-keyed document, but
+Token few-shot examples can carry indirect personal data (this mirror's first pull surfaced real
+personal details in examples). The pull has a guard that skips any account/user-keyed document, but
 content-level PII inside system tokens is a human review concern — scan new diffs before committing.

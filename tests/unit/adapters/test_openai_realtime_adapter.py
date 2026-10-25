@@ -254,7 +254,7 @@ async def test_receive_events_normalizes_user_transcript():
 @pytest.mark.asyncio
 async def test_receive_events_normalizes_model_transcript():
     incoming = [
-        {"type": "response.output_audio_transcript.done", "transcript": "hi Dmytro"},
+        {"type": "response.output_audio_transcript.done", "transcript": "hi Alex"},
     ]
     ws = FakeWebSocket(incoming=incoming)
     adapter = OpenAIRealtimeAdapter(api_key="sk-test", ws_connect=AsyncMock(return_value=ws))
@@ -263,7 +263,7 @@ async def test_receive_events_normalizes_model_transcript():
     events = [event async for event in adapter.receive_events()]
 
     assert events[0].type == "model_transcript"
-    assert events[0].payload == {"text": "hi Dmytro"}
+    assert events[0].payload == {"text": "hi Alex"}
 
 
 @pytest.mark.asyncio

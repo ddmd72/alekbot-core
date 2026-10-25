@@ -206,7 +206,7 @@ class TestTemplates:
         assert (p.doc_type, p.what_it_is) == ("other", "machine-generated text")
 
 
-TEXT = ("Factura nº FA-2024/0137. Fecha: 15/03/2024. Cliente: Juan García, Valencia. Total: 1.250,00 €. "
+TEXT = ("Factura nº FA-2024/0137. Fecha: 15/03/2024. Cliente: Juan García, Springfield. Total: 1.250,00 €. "
         "Válido hasta el 30 de abril de 2024. Cuenta XX12 3456 7890.")
 
 
@@ -230,14 +230,14 @@ class TestVerify:
 
     def test_entities_printed_in_the_text_or_the_name_stay(self):
         p, counts = self._verify(_profile(entities=(
-            ProfileEntity("Valencia", "place", "Valencia", ("Валенсия",)),
+            ProfileEntity("Springfield", "place", "Springfield", ("Спрингфилд",)),
             ProfileEntity("Juan Garcia", "person", "JUAN GARCÍA"),
             ProfileEntity("Factura", "other", "factura.pdf"),
             ProfileEntity("Madrid", "place", "Madrid"))))
-        assert [e.name for e in p.entities] == ["Valencia", "Juan Garcia", "Factura", "Madrid"]   # kept (Δ59)
-        assert _grades(p, "entity") == [("Valencia", "in_text"), ("JUAN GARCÍA", "in_text"),
+        assert [e.name for e in p.entities] == ["Springfield", "Juan Garcia", "Factura", "Madrid"]   # kept (Δ59)
+        assert _grades(p, "entity") == [("Springfield", "in_text"), ("JUAN GARCÍA", "in_text"),
                                         ("factura.pdf", "in_text"), ("Madrid", "not_in_text")]
-        assert p.entities[0].forms == ("Валенсия",) and counts.not_in_text == {"entity": 1}
+        assert p.entities[0].forms == ("Спрингфилд",) and counts.not_in_text == {"entity": 1}
 
     def test_key_values_by_number_terms_or_verbatim_and_canonical_rewritten(self):
         p, counts = self._verify(_profile(key_values=(
@@ -278,7 +278,7 @@ class TestVerify:
     def test_labels_outside_the_fixed_set(self):
         p, counts = self._verify(_profile(doc_type="spaceship", life_domains=("finance", "space", "finance", "home"),
                                          dates=(ProfileDate("printed", date(2024, 3, 15)),),
-                                         entities=(ProfileEntity("Valencia", "city", "Valencia"),),
+                                         entities=(ProfileEntity("Springfield", "city", "Springfield"),),
                                          key_values=(KeyValue("vat", "1.250,00", "1250.00"),)))
         assert p.doc_type == "other" and p.life_domains == ("finance", "home")
         assert p.dates[0].label == "other" and p.entities[0].type == "other"
@@ -293,7 +293,7 @@ class TestVerify:
         assert p.key_values == () and _grades(p, "value") == [] and counts.not_in_text == {}
 
     def test_caps(self):
-        many = tuple(ProfileEntity("Valencia", "place", "Valencia", tuple(f"f{i}" for i in range(20)))
+        many = tuple(ProfileEntity("Springfield", "place", "Springfield", tuple(f"f{i}" for i in range(20)))
                      for _ in range(30))
         words = tuple(f"w{i}" for i in range(50))
         p, _ = self._verify(_profile(entities=many, topic_words=words, label_words=("a", " a ", "", "b")))

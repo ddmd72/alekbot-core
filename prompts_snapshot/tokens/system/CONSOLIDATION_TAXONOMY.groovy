@@ -56,7 +56,7 @@ uploaded_by: local_script
             // HEALTH vs MEDICAL_RECORDS tiebreaker:
             // → Has a specific clinical procedure/test date? → MEDICAL_RECORDS
             // → Describes an ongoing state or condition? → HEALTH
-            // → Examples: "User has PPT" → HEALTH; "X-ray on Jan 12" → MEDICAL_RECORDS; "Blood test on March 28" → MEDICAL_RECORDS
+            // → Examples: "User has hay fever" → HEALTH; "X-ray on Jan 12" → MEDICAL_RECORDS; "Blood test on March 28" → MEDICAL_RECORDS
             LOCATION: "Addresses, residence, travel (home, office, city, country, trips)"
             WORK: "Occupation, career, employment (job title, company, salary, methodologies)"
             NETWORK: "Contacts, relationships (family, friends, colleagues, mentors)"
@@ -71,36 +71,66 @@ uploaded_by: local_script
             COMMUNICATION: "Contact info, social media (phone, email, social accounts, handles)"
         }
 
-        // AXIS 2: Temporal Class (Lifecycle)
+        // AXIS 2: Temporal Class (how fast the fact changes; the expiry below is decided separately)
         temporal_classes: {
             PERMANENT: {
                 description: "Cannot change by nature"
-                ttl: "None (forever)"
+                default_expiry: "none"
                 examples: ["birthdate", "blood type", "origin city"]
             }
             STABLE: {
                 description: "Rarely changes, versioned when updated"
-                ttl: "None (but versioned via SCD Type 2)"
+                default_expiry: "none (but versioned via SCD Type 2)"
                 examples: ["address", "occupation", "car ownership"]
             }
             DYNAMIC: {
                 description: "Changes regularly, short lifecycle"
-                ttl: "90 days"
+                default_expiry: "horizon, about 90 days"
                 examples: ["weight", "active projects", "reading list"]
             }
             EPHEMERAL: {
-                description: "Temporary state, very short lifecycle"
-                ttl: "14 days"
+                description: "Temporary condition, very short lifecycle"
+                default_expiry: "horizon, about 14 days"
                 examples: ["evaluating tool X", "debugging API Y"]
             }
+        }
+
+        // EXPIRY: when a fact stops being current. Decide it from the CONTENT on every create, merge and content update.
+        expiry: {
+            answers: {
+                date: "{kind: date, date: YYYY-MM-DD} - the last day the fact holds; after it the claim is false or the event is over"
+                horizon: "{kind: horizon, days: N} - nothing ends it on a date; if the owner has not said it again within N days it needs review. N counts from reported_date"
+                none: "{kind: none} - history, stable or permanent; it changes only by an explicit update"
+            }
+
+            precedence: "The kinds table decides; the class line is only a default when no row applies."
+
+            kinds_table: [
+                "Past event (an appointment that took place, a trip already made) -> none",
+                "Planned event (a checkup on Sep 25, a visit Sep 30 - Oct 3, a festival) -> date: the event's last day",
+                "Validity or deadline (a service deletes videos around Apr 27, a renewal due Oct 1, a passport valid to 2028) -> date",
+                "Current activity (refactoring a pipeline, exploring an API) -> horizon",
+                "Changing value (weight, a balance, a subscription, hours worked per day) -> horizon",
+                "Stable or permanent (job, address, birthdate, marriage) -> none",
+                "Noise that passed the filter (a transfer ready for pickup, testing token rotation) -> horizon, a few days",
+                "Standing directive, principle or mindset fact -> none"
+            ]
+
+            date_rules: [
+                "Compare every date with Today, not with the message time. A plan or validity whose date is before Today is past: DISCARD it if it no longer matters, or rewrite it as history (past tense, the outcome if known) with {kind: none}. A plan for today is not over yet: give a short horizon",
+                "A horizon counts from reported_date, not from Today: reported_date + N days must end at least two days after Today. If it would not: a larger N when the fact may still hold, else history ({kind: none}) or noise (DISCARD)",
+                "A range -> its last day. Only a month -> its last day. Only a year -> none, unless a deadline or validity end in that year is stated: then Dec 31 of that year",
+                "A content update decides expiry again from the new text: a rewrite can turn a plan into history ({kind: none})",
+                "The system marks a fact stale when its expiry has passed; you never do. A fact closed by its state (ARCHIVED, INVALIDATED, or SUPERSEDED with superseded_by) carries no expiry"
+            ]
         }
 
         // AXIS 3: State (Actuality)
         states: {
             CURRENT: "Active, used now (default for new facts)"
-            STALE: "Outdated, grace period (after TTL)"
+            STALE: "Past its expiry, waiting for review (set by the system only - never send it)"
             ARCHIVED: "Cold storage (extended inactivity)"
-            SUPERSEDED: "Replaced by newer version"
+            SUPERSEDED: "Replaced by newer version (only through update_fact with superseded_by = the id of the replacing fact)"
             INVALIDATED: "Correction, no longer true"
         }
 
@@ -160,10 +190,10 @@ uploaded_by: local_script
             purpose: "Structured data for ANALYSIS (specific numeric/temporal values)"
             format: "Dict/object with typed fields"
             examples: {
-                weight_kg: 83.5,
-                measurement_date: "2025-03-15",
+                weight_kg: 75,
+                measurement_date: "2024-09-01",
                 measurement_method: "home_scale",
-                diet_phase: "post-fasting"
+                diet_phase: "maintenance"
             }
             usage: "Time series analysis, numeric queries, structured filtering"
         }
@@ -186,7 +216,7 @@ uploaded_by: local_script
                 "Meta conversation: 'What can you do?', 'How does this work?', 'Show me previous'",
                 "Ephemeral UI commands: 'Scroll up', 'Delete message', 'Edit that'",
                 "Questions without answers: 'What's my weight?' (only store answer if provided)",
-                "ASSISTANT recalls that user only confirms: RAG echo trap (no new info)",
+                "ASSISTANT recalls that user only confirms: RAG echo trap (no new info); the owner's reply to a memory-review question follows Domain_Scope.memory_review_reply",
                 "Temporary debugging state: 'Testing feature X' (unless ongoing project)",
                 "File operations: saving, opening, moving, renaming, deleting files or folders on the user's drive or in chat — the drive is the record of what exists and where"
             ]
@@ -210,10 +240,10 @@ uploaded_by: local_script
 
             examples: [
                 {
-                    existing: "User's weight: 85 kg (Feb 5)",
-                    new: "User weighs 82 kg",
+                    existing: "User's weight: 74 kg (Mar 3)",
+                    new: "User weighs 72 kg",
                     action: "UPDATE",
-                    result: "User's weight: 82 kg (Feb 16), was 85 kg (Feb 5)"
+                    result: "User's weight: 72 kg (Mar 10), was 74 kg (Mar 3)"
                 },
                 {
                     existing: "User's savings: $10,000 (Jan 2026)",
@@ -243,7 +273,7 @@ uploaded_by: local_script
                     existing: "User is vegetarian",
                     new: "User: I'm no longer vegetarian, I eat meat now",
                     action: "UPDATE (explicit correction)",
-                    result: "Mark old as SUPERSEDED, create new fact"
+                    result: "Create the new fact, then mark the old one SUPERSEDED with update_fact(state=SUPERSEDED, superseded_by=<the new fact's id>)"
                 }
             ]
 
@@ -278,8 +308,8 @@ uploaded_by: local_script
 
             examples: [
                 {
-                    input: "User prohibits partial answers followed by opt-in follow-up offers (Jun 25, 2026)",
-                    output: "Never give a partial answer with an opt-in follow-up; deliver complete information upfront in a single response."
+                    input: "User prohibits ending replies with a menu of optional follow-up questions (May 12, 2026)",
+                    output: "Never end a reply with a menu of optional follow-up questions; stop when the answer is complete."
                 },
                 {
                     input: "Agent policy Zero_Interpolation (Mar 29, 2026): agent must always search tools first for any factual variable",
@@ -313,6 +343,8 @@ uploaded_by: local_script
                 "...is incorrect"
             ]
 
+            memory_review_scope: "When you consolidate a conversation (Stage 1), a USER message that begins [Reply to memory review q=<id>] is no negation of the fact its question quotes, even when it says stopped, no or never: the memory review applies it. Follow Domain_Scope.memory_review_reply."
+
             examples: [
                 {
                     existing: "User works at Google",
@@ -337,7 +369,7 @@ uploaded_by: local_script
             decision_logic: {
                 INVALIDATED: "Use when fact was NEVER true or recorded incorrectly"
                 ARCHIVED: "Use when fact WAS true but is no longer current"
-                SUPERSEDED: "Use when fact is replaced by updated version (e.g., new job)"
+                SUPERSEDED: "Use when fact is replaced by updated version (e.g., new job); always send superseded_by = the replacing fact's id"
             }
 
             rationale: "Explicit handling prevents accumulation of contradictory facts"
@@ -355,7 +387,7 @@ uploaded_by: local_script
             "Candidate adds data points to time series (e.g., new weight measurement)",
             "Candidate provides missing details to existing fact",
             "Candidate provides missing metadata (numeric values, structured data)",
-            "Candidate corrects existing fact (mark old as SUPERSEDED)"
+            "Candidate corrects existing fact (mark old as SUPERSEDED with superseded_by = the new fact's id)"
         ]
 
         create_conditions: [
@@ -371,20 +403,22 @@ uploaded_by: local_script
         ]
 
         discard_conditions: [
-            "Candidate is EXACT duplicate",
+            "Candidate is EXACT duplicate (an existing fact said again: see extension_rule)",
             "Candidate is too vague (no actionable detail)",
             "Candidate is ephemeral question, not a fact",
             "Candidate adds zero new information"
         ]
+
+        extension_rule: "When you consolidate a conversation or emails (not in a cluster or rulebook review) and the owner says an existing fact again: if the conversation confirms it held all along, extend it with update_fact(fact_id, updates={reported_date: <the message's time>}) instead of discarding the candidate (no expiry needed); if the link is unclear (a break is possible), create a new fact and leave the old one as it is. A RAG echo (the assistant recalled the fact and the owner only agreed) stays DISCARD: the extension rule applies only when the owner says it himself. A reply to a memory-review question never extends the fact it quotes: Domain_Scope.memory_review_reply. Cluster and rulebook reviews never extend a fact."
     }
 
     /**
      * QUALITY RULES: Standards for fact formulation
      */
     quality_rules: [
-        "Be SPECIFIC: 'User's weight is 80.5 kg' not 'User is losing weight'",
+        "Be SPECIFIC: 'User's weight is 70 kg' not 'User is losing weight'",
         "Be ATOMIC: One subject entity per fact. Co-located attributes of the same entity are permitted only when always retrieved together (see Size_Triggers_Review co-location test). Parts that are independently queryable MUST be stored as separate facts.",
-        "Be DATED: Always include reported_date (conversation timestamp)",
+        "Be DATED: reported_date is when the owner said it: the timestamp of his message, as shown in the conversation, in ISO form with its offset, e.g. 2026-10-22T12:00:00+02:00 (an email's date for an email)",
         "Be CONTEXTUAL: Add temporal context for EPHEMERAL/DYNAMIC facts",
         "Be CONSERVATIVE: When unsure, CREATE (not UPDATE). Better separate than corrupted.",
         "Be RUTHLESS: Discard vague/redundant facts without hesitation",

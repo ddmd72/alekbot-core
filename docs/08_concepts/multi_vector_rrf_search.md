@@ -66,7 +66,7 @@ Fact A: 1/(60+1) + 1/(60+3) = 0.0323
 #### Stage 1: Single Text Vector (v1.0)
 
 ```
-User Query → RouterAgent → Semantic Lens: ["car", "toyota"]
+User Query → RouterAgent → Semantic Lens: ["car", "skoda"]
                         ↓
                    Single embedding
                         ↓
@@ -84,7 +84,7 @@ User Query → RouterAgent → Semantic Lens: ["car", "toyota"]
 #### Stage 2: Multi-Vector with Adaptive Routing (v2.0)
 
 ```
-Semantic Lens: ["car", "toyota"] → 3 different embeddings:
+Semantic Lens: ["car", "skoda"] → 3 different embeddings:
     1. tags_vector (domain knowledge)
     2. metadata_vector (structured data)
     3. vector (natural language)
@@ -98,8 +98,8 @@ Imagine looking at a fact through 3 different lenses:
 
 1. **Tags Lens** (compressed knowledge)
    - Sees: Domain categories, entity types
-   - Best for: "Show me car", "What toyota"
-   - Example: Tags [automotive, toyota, corolla] compress knowledge
+   - Best for: "Show me car", "What skoda"
+   - Example: Tags [automotive, skoda, fabia] compress knowledge
 
 2. **Metadata Lens** (structured view)
    - Sees: Dates, numbers, IDs, schemas
@@ -108,7 +108,7 @@ Imagine looking at a fact through 3 different lenses:
 
 3. **Text Lens** (natural language)
    - Sees: Full narrative, context, relationships
-   - Best for: "my car is Toyota Corolla 2012"
+   - Best for: "my car is Skoda Fabia 2015"
    - Example: Text preserves complete story
 
 **Multi-Vector = Using all 3 lenses simultaneously**
@@ -135,7 +135,7 @@ Imagine looking at a fact through 3 different lenses:
 **Rationale:** Domain nouns = compressed knowledge
 
 ```
-Keywords: ["car", "toyota", "corolla"]
+Keywords: ["car", "skoda", "fabia"]
 
 Why tags_vector?
 - Tags are compressed representations of domain knowledge
@@ -147,8 +147,8 @@ Why tags_vector?
 **Example:**
 
 ```python
-Fact: "I have a Toyota Corolla 2012"
-Tags: [automotive, toyota, corolla, personal_asset]
+Fact: "I have a Skoda Fabia 2015"
+Tags: [automotive, skoda, fabia, personal_asset]
 
 Query: "car"
 tags_vector match: 0.79 ✅ (high precision)
@@ -171,7 +171,7 @@ Why vector (text)?
 **Example:**
 
 ```python
-Fact: "Changed oil in Toyota 01.01.2020, mileage 10000 km"
+Fact: "Changed oil in Skoda 01.01.2020, mileage 10000 km"
 
 Query: "oil change history"
 text_vector match: 0.75 ✅ (captures narrative)
@@ -406,7 +406,7 @@ Semantic Lens extracts keywords → 3 different embeddings:
 
 1. **Category Queries**
    - "Show me car facts"
-   - "What do I know about toyota"
+   - "What do I know about skoda"
    - Tags vector excels here
 
 2. **Mixed-Type Queries**
@@ -433,7 +433,7 @@ Semantic Lens extracts keywords → 3 different embeddings:
 
 2. **Cost-Constrained Applications**
    - Need to minimize reads
-   - +69% cost may be prohibitive
+   - Every extra vector channel is another vector query
    - Consider single-vector with higher limit
 
 3. **Homogeneous Data**
@@ -443,7 +443,7 @@ Semantic Lens extracts keywords → 3 different embeddings:
 
 4. **Real-Time Constraints**
    - If latency critical (<100ms)
-   - 6 queries may be too slow
+   - Several parallel vector queries may be too slow
    - Consider caching or single-vector
 
 ---
@@ -482,255 +482,62 @@ Existing code works unchanged, automatically gets better results.
 
 ---
 
-## 🚀 The Future: Adaptive Search
+## 🧭 In Alek-Core
 
-### Vision: Self-Optimizing Search
-
-Imagine search that **learns** optimal routing:
-
-```python
-# System tracks which vector fields work best per query type
-if query_type == "category":
-    use_only("tags_vector")  # Learned from feedback
-elif query_type == "narrative":
-    use_only("vector")
-else:
-    use_multi_vector()  # Fallback
-```
-
-### Dynamic k-Constant
-
-```python
-# Easy queries → emphasize top ranks (lower k)
-if query_confidence > 0.9:
-    k = 30  # More aggressive top-rank bias
-else:
-    k = 60  # Standard
-```
-
-### Query-Type Detection
-
-```python
-def detect_query_type(semantic_lens, phrases):
-    if all(is_noun(w) for w in semantic_lens):
-        return "category"  # Pure keywords
-    elif has_structured_pattern(phrases):
-        return "structured"  # Dates, IDs
-    else:
-        return "narrative"  # Natural language
-```
+- **Facts carry three vectors:** `vector` (the text), `tags_vector` and `metadata_vector`. Indexed emails add a fourth,
+  `attachments_vector`.
+- **Where it runs:** `SearchEnrichmentService` (`src/services/search_enrichment_service.py`) runs the channels in
+  parallel and fuses them with RRF, k = 60.
+  - The Router prefetches once per message, with up to 4 vector channels plus the domain channel. The orchestrator
+    turn shares that result.
+  - `search_memory` searches again with up to 7 channels.
+- **Limits** resolve USER > ACCOUNT > SYSTEM (`UserBotConfig.semantic_search_limit` and the account defaults).
 
 ---
 
-## 📚 Related Concepts
+## 🔄 Deduplication: Number-Aware, Detail-Preserving
 
-### Semantic Lens (Foundation)
+Similar is not the same: two facts can embed almost identically and still say different things. The rule is
+**"better to keep a near-duplicate than to lose information."**
 
-Multi-vector search is the **retrieval counterpart** to semantic lens extraction.
+### The Algorithm
 
-- Semantic Lens: Intent → Keywords
-- Multi-Vector: Keywords → Facts (via multiple representations)
+`SmartDeduplication` (`src/domain/deduplication_service.py`, pure logic, stdlib only) decides in this order:
 
-### Provider Resolution (Pattern)
+```python
+1. similarity < 0.96                    → NOT duplicate (quick exit)
+2. the numbers differ (sorted)          → NOT duplicate
+3. similarity >= strict (default 0.98)  → DUPLICATE
+4. the new fact is 15%+ longer          → NOT duplicate (more detail)
+5. otherwise                            → DUPLICATE
+```
 
-Multi-vector tiers follow same pattern as provider tiers:
+**Numbers outrank similarity.** `"Rent 900 EUR"` and `"Rent 950 EUR"` embed at about 0.97. A plain threshold calls
+them duplicates; the number check keeps both. The same holds for dates (`2025-03-28` vs `2025-03-29`), measurements
+and ranges.
 
-- ECO / BALANCED / PERFORMANCE (providers)
-- FREE / FAMILY / PRO / ENTERPRISE (search limits)
+**Length keeps detail.** `"Rent 900 EUR, paid by transfer"` is longer than `"Rent 900 EUR"` by more than 15%, so at a
+moderate similarity the new fact is kept rather than dropped.
 
-**Same philosophy:** Configurable quality/cost tradeoff.
+### Where Each Mode Applies
 
-### Configuration Inheritance (Mechanism)
+| Path | Dedup | Why |
+| --- | --- | --- |
+| **Search results** (`enrich_context`) | `dedup_threshold` 0.98 | the reader gets clean results |
+| **Consolidation search** (`skip_semantic_dedup=True`) | off | the agent must see every candidate to decide a MERGE |
+| **Consolidation writes** (`skip_deduplication=True`) | off | the model decides duplicates after searching |
+| **Non-live v2 write path** (`add_fact_if_unique`) | 0.96 / 0.98 | rejects a duplicate before it is stored |
 
-Multi-tenant configuration uses same 3-level resolution:
-
-- User override > Account default > System default
-
-**Same mechanism:** Flexibility with sensible defaults.
-
----
-
-## 🎓 Key Takeaways
-
-### For Engineers
-
-1. **RRF is simple but powerful** - Don't overthink, use k=60
-2. **Ranks > Scores** - Always use ranks for multi-query fusion
-3. **Route queries intelligently** - Match representation to query type
-4. **Test with real queries** - Precision gains are query-dependent
-
-### For Architects
-
-1. **Multi-vector is future-proof** - Easy to add 4th, 5th vector
-2. **RRF scales well** - Works with 2 queries or 20 queries
-3. **Configuration flexibility critical** - One size doesn't fit all
-4. **Industry-standard = less risk** - Elasticsearch/Pinecone use RRF
+**Why consolidation turns it off:** the consolidator searches before it writes, and it needs the scattered,
+overlapping facts side by side to merge them into one. A filtered result would hide exactly the facts it is meant to
+merge.
 
 ---
 
 ## 📖 Further Reading
 
-### Papers
-
-- **Reciprocal Rank Fusion:** Cormack et al., 2009 ([PDF](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf))
-- **Multi-Vector Retrieval:** Advances in Information Retrieval (2021)
-
-### Industry References
-
+- **Reciprocal Rank Fusion:** Cormack, Clarke and Büttcher, SIGIR 2009.
 - **Elasticsearch RRF:** [Official Docs](https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html)
-- **Pinecone Multi-Query:** [Blog Post](https://www.pinecone.io/learn/multi-query-retrieval/)
-- **Weaviate Hybrid Search:** [Docs](https://weaviate.io/developers/weaviate/search/hybrid)
-
-### Internal Documentation
-
-- **Building Block:** [../05_building_blocks/search_enrichment/README.md](../05_building_blocks/search_enrichment/README.md) - Technical implementation
-
----
-
-## 🔄 Evolution: Smart Deduplication (2026-02-08, 2026-02-16)
-
-### The Problem: Losing Valuable Facts
-
-**Before (exact text matching):**
-
-```python
-Existing: "Weight 75 kg"
-New: "Weight 75 kg in Example City"
-
-Result: DUPLICATE (rejected) ❌
-Problem: Lost location detail!
-```
-
-### The Solution: Smart Deduplication
-
-**Philosophy:** "Better to add a duplicate than to lose important information"
-
-**Algorithm (5 levels):**
-
-```python
-1. similarity < 0.96 → NOT duplicate (quick exit)
-2. Numbers differ (sorted) → NOT duplicate (83 ≠ 84)
-3. similarity >= 0.98 → DUPLICATE (very similar)
-4. New fact longer by 15%+ → NOT duplicate (more detail)
-5. Otherwise → DUPLICATE (moderate + similar length)
-```
-
-**Session 2026-02-08:** Unified READ and WRITE paths
-
-- Both use `SmartDeduplicationService`
-- Identical duplicate detection logic
-- Eliminates inconsistencies between search and write
-
-**Session 2026-02-16:** Configurable thresholds for special modes
-
-```python
-# Normal mode (READ/WRITE)
-dedup_threshold=0.98  # Balanced filtering
-
-# Consolidation mode (MERGE decisions)
-dedup_threshold=1.0  # Only exact duplicates
-skip_semantic_dedup=True  # Keep ALL facts with different IDs
-```
-
-### Consolidation Mode: Special Case
-
-**Why skip semantic dedup for consolidation?**
-
-ConsolidationAgent needs to see ALL candidate duplicates to make MERGE decisions:
-
-```python
-# Consolidation search
-results = await search_enrichment.enrich_context(
-    keywords=["car", "toyota"],
-    search_phrase_1="User car toyota details",
-    skip_semantic_dedup=True  # ← Keep ALL facts
-)
-
-# Result: Agent sees ALL similar facts:
-# - "Toyota Corolla 2012"
-# - "Toyota has automatic gearbox"
-# - "Car in Example City"
-
-# Agent decides: MERGE all 3 → comprehensive fact
-```
-
-**Without skip_semantic_dedup:**
-
-```python
-# Normal search would filter to top 1-2 facts
-# Agent can't make informed MERGE decision
-# Loses scattered details across multiple facts
-```
-
-### Number-Aware Comparison
-
-**Key Insight:** Numbers are special - small differences matter!
-
-```python
-"Weight 75 kg" vs "Weight 84 kg"
-similarity = 0.97  # Very high!
-
-Old logic: DUPLICATE (0.97 > 0.96) ❌
-Smart logic: NOT duplicate (numbers differ: 83 ≠ 84) ✅
-```
-
-**Handles:**
-
-- Time series: "Weight 83kg (Feb 5)" vs "Weight 84kg (Feb 16)"
-- Measurements: "185 cm" vs "186 cm"
-- Dates: "2025-03-28" vs "2025-03-29"
-- Ranges: "95-98 kg" vs "98-100 kg"
-
-### READ vs WRITE vs CONSOLIDATION
-
-| Mode            | Threshold | Skip Semantic | Purpose                     |
-| --------------- | --------- | ------------- | --------------------------- |
-| **READ**        | 0.98      | False         | Remove duplicates for users |
-| **WRITE**       | 0.98      | N/A           | Prevent duplicate storage   |
-| **CONSOLIDATE** | 1.0       | True          | Keep ALL for MERGE          |
-
-**Philosophy:**
-
-- **READ:** User wants clean results (filter duplicates)
-- **WRITE:** Prevent pollution (reject duplicates)
-- **CONSOLIDATE:** Agent needs complete picture (keep everything)
-
----
-
-## 🎯 Decision Tree: When to Use What
-
-### Configuration Decision
-
-```
-Question: What's your use case?
-
-├─ Normal search (user query)
-│  └─ Use: dedup_threshold=0.98, skip_semantic_dedup=False
-│
-├─ Consolidation (MERGE decision)
-│  └─ Use: dedup_threshold=1.0, skip_semantic_dedup=True
-│
-└─ Write path (fact storage)
-   └─ Use: SmartDeduplicationService directly (threshold=0.98)
-```
-
-### Threshold Tuning
-
-```
-Question: How aggressive should deduplication be?
-
-├─ Conservative (keep more facts)
-│  └─ threshold=1.0 (only exact duplicates)
-│
-├─ Balanced (recommended)
-│  └─ threshold=0.98 (filter very similar)
-│
-└─ Aggressive (filter more)
-   └─ threshold=0.96 (filter moderately similar)
-```
-
----
-
-**Last Updated:** 2026-02-16  
-**Status:** ✅ Complete  
-**Version:** 1.2 (added smart deduplication + consolidation mode)
+- **Building Block:** [../05_building_blocks/search_enrichment/README.md](../05_building_blocks/search_enrichment/README.md)
+- **Memory map:** [../05_building_blocks/memory/README.md](../05_building_blocks/memory/README.md) — how facts are
+  written, versioned and searched.

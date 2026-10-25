@@ -11,7 +11,7 @@ For each PLACE_PREFER_WEIGHT_FACTOR candidate (at the current PLACE_FOOTPRINT_K)
                       the current rule: a centre is inside its own footprint, so no border is crossed there)
   off-centre crossed  lookups 2 km north of each centre where the preference crossed a border (the chosen place's
                       country is not the nearest place's)
-  expected            the cases in scripts/geo/expected_places.py (Trastevere is Rome, Torrent is Valencia, ...)
+  expected            the cases in scripts/geo/expected_places.py (Trastevere is Rome, L'Hospitalet is Barcelona, ...)
 and lists the border crossings left at the current factor and k, to be judged by eye.
 
 The baseline row is the rule before the same-country and weight-factor conditions: the heaviest place within

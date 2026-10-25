@@ -22,6 +22,6 @@ def test_the_nearest_places_footprint_decides_between_two_foreign_places():
 
 
 def test_the_same_country_rule_ignores_the_nearest_places_footprint():
-    rows = [PlaceRow(39.4370, -0.4655, "Torrent", "Torrente", "Spain", weight=78_543),
-            PlaceRow(39.4739, -0.3797, "Valencia", "Valencia", "Spain", weight=2_473_020)]
-    assert PlaceIndex(rows).lookup(39.4370, -0.4655) == "Valencia, Spain"
+    rows = [PlaceRow(41.3768, 2.0886, "Esplugues de Llobregat", "Esplugues", "Spain", weight=46_000),
+            PlaceRow(41.3874, 2.1686, "Barcelona", "Barcelona", "Spain", weight=1_620_343)]
+    assert PlaceIndex(rows).lookup(41.3768, 2.0886) == "Barcelona, Spain"

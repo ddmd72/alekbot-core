@@ -58,6 +58,8 @@ class Intent:
     CONSOLIDATE_CLUSTER  = "consolidate_cluster"
     CONSOLIDATE_EMAIL    = "consolidate_email"
     CONSOLIDATE_FULL     = "consolidate_full"
+    # The memory review's pass over stale facts (Facts S4 §3.3): a task of the consolidation agent, sent by the review service
+    REVIEW_STALE_FACTS   = "review_stale_facts"
     # Claude deep research runner (internal=True — invoked via agent_execution Cloud Task only)
     EXECUTE_DEEP_RESEARCH_CLAUDE = "execute_deep_research_claude"
     # Tasks management — single entry point; agent selects CRUD tool internally
@@ -183,9 +185,9 @@ MAPS_SEARCH = AgentDescriptor(
             "For place results, the agent delivers clickable Google Maps links "
             "(place card, directions, reviews, photos) — best practice for user convenience. "
             "Input: A natural language task. "
-            "Examples: 'pharmacy near Khreschatyk open now', "
-            "'route from Kyiv to Lviv by car', 'weather in Odesa today', "
-            "'best sushi in Kyiv city center'. "
+            "Examples: 'pharmacy near Rossio open now', "
+            "'route from Lisbon to Porto by car', 'weather in Odesa today', "
+            "'best sushi in Lisbon city center'. "
             "payload: {\"query\": \"<natural language task>\"}"
         ),
     },

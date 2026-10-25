@@ -247,6 +247,41 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     `--stage1`, `--runs N` over identical input). **Run-to-run spread is large** — 0 vs 6 demotions
     on identical production input; measure with `--runs 3`, never 1. See
     `decisions/directive_applicability_gate.md`.
+  - **The tools take `expiry` (Facts S3).** `create_fact` / `merge_facts` (`fact_attributes.expiry`, required unless the fact
+    is pinned or closing) and a version-making `update_fact` (`updates.expiry`) carry `{kind: date|horizon|none, …}`; the
+    schema is the module constant `_EXPIRY_SCHEMA` (never read through `self`: tests call `_get_tool_declarations` unbound),
+    `merge_facts` reuses create's property set (`_FACT_ATTRIBUTE_PROPERTIES`), `ttl_days` is gone, and `STALE` and `SUPERSEDED` are
+    not offered on create or merge. `_execute_one` moves a top-level `expiry` into place. Every pass builds a
+    `FactWriteContext` (`_write_context(label, zone, span)`: `model_dates` only for `stage1` and `email`) that rides into every
+    port write; an `expiry` refusal comes back `status: failed, refused: "expiry"` before any embedding. Rules and the
+    cleanup-pass floor: map §2.7. A new field or example in a token must land in the token and the code schema together
+    (`tests/unit/prompts/test_consolidation_vocabulary.py`, `test_consolidation_expiry_prompt.py`).
+  - **One timestamp format.** The conversation lines, the span and the `Today: …` line of every pass use `domain/local_time.py`
+    in the owner's zone (`message.context["owner_timezone"]`, UTC when absent), the same `local_stamp` Smart's
+    `_inject_timestamps` calls; `_message_time` is the one reader for a line's stamp and the span. Never format a time inline.
+  - **Stats lines.** `ConsolidationPassStats` records each turn's tool outcomes (`ok` / `error` / `expiry` / `born_due`): the 📊
+    line and the turn-limit 🚨 carry `tool-error turns N (expiry N[, born due N], abandoned M)`. An abandoned refusal (an `expiry` refusal
+    no later success answers) posts a 🚨 **also with `CONSOLIDATION_STATS_ALERTS` off**, and the pass's expiry errors are added to
+    the account's day, both in a `finally` capped at 10 s (`CLOSE_OUT_TIMEOUT_S`, best effort, never raises). `_enforce_directive_cap`
+    reports no op and posts a 🚨 when the backstop's update is not `updated`. The agent builds a typed `PassCall` per call
+    (`_pass_call`, through the write path's parsers) and renders the lines itself (`_summary_line`, `_limit_alert`,
+    `_abandoned_alert`); the stats never see a tool argument.
+  - **The review pass's loop (Facts S4 T6b).** `_get_tool_declarations("review")` gives `update_fact` (basis, history, no
+    `reported_date`), `ask_owner` and `count_words`; `_run_consolidation_loop(pass_kind="review", max_turns=…, review_scope=…)`
+    sends the first two to `FactReviewScope` (`infrastructure/fact_review_scope.py`); the pass kind must match the write
+    context's actor. All review refusals go to `review_refusals`; only born-due and `scope` refusals can be abandoned (a
+    basis or ask refusal leaves the fact kept), and any success of the same fact in the pass answers them. The typed write
+    port is the agent's own required `fact_updates` dependency (a `FactUpdatePort`, refused otherwise when the agent is
+    built; composition passes the adapter twice); every run's tracker is `_TrackingFactUpdates(model port, typed port)`.
+  - **The review task (Facts S4 T6c).** `payload["task"] == Intent.REVIEW_STALE_FACTS` → `_handle_review_stale_facts`. The
+    payload is a `FactReviewTask` (`domain/fact_review_task.py`: items with versions and neighbours, open questions,
+    `mirror`, `owner_messages`) in its one plain-data form (`encode_review_task` / `decode_review_task`). Prompt
+    `consolidation_review` (no fallback: a build failure is `AgentResponse.failure`); the scope is built over the run's
+    tracker from `self._fact_updates` read at run time; one loop capped at `CONSOLIDATION.review_max_turns`. The message
+    (`_build_review_message`) is code-built from `fact_view` (`domain/search.py`, the one view Stage 2a and the search hits
+    use too); in mirror mode it carries `owner_messages` and the language request. The result is the scope's outcomes,
+    asks and kept ids plus `message_language` / `labels` read from the final report through `parse_message_language` /
+    `check_labels` (None when malformed). The agent writes no question and posts or appends nothing.
 - DeepResearch (async, provider-agnostic, intent `deep_research`) — `create_interaction()` returns
   ACK (job_id); result delivered by adapter. **Default Claude** (`ClaudeDeepResearchRunnerAgent`,
   `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+

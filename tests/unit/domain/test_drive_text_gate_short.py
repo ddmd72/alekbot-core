@@ -38,7 +38,7 @@ def test_short_app_log_with_levels_is_machine_text(seed):
 def test_short_receipt_passes(seed):
     rng = random.Random(seed)
     items = ["Leche entera 1L", "Pan de molde", "Huevos L docena", "Tomate rama", "Aceite de oliva 1L", "Queso curado"]
-    lines = ["MERCADONA S.A.", "C/ Colón 12, Valencia"]
+    lines = ["MERCADONA S.A.", "12 Oak Street, Springfield"]
     lines += [f"{rng.randint(1, 3)} {rng.choice(items)}          {rng.uniform(0.5, 9.0):.2f}" for _ in range(12)]
     lines += ["TOTAL (€)   34,17", "TARJETA BANCARIA   34,17", "Gracias por su visita"]
     assert not is_machine_text("\n".join(lines))

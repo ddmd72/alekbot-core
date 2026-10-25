@@ -1,8 +1,7 @@
 """Unit tests for `build_persona_anchor`.
 
-The block it replaces hardcoded ONE account's persona into adapter code
-("Ranevskaya-filtered", "intellectual equal and co-conspirator"). That is shared
-code: a second account — the user's wife, their son — running through the same
+The block it replaces hardcoded ONE account's persona into adapter code. That is
+shared code: any other account running through the same
 adapter received a high-priority instruction to be someone else's character.
 
 The fix is to NAME the persona sections rather than quote them. Section names come

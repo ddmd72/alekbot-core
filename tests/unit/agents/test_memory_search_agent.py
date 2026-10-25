@@ -130,22 +130,22 @@ class TestFormatFactRich:
 
     def test_text_only(self):
         agent, *_ = _make_agent()
-        fact = _make_enriched_fact("User weighs 82 kg.")
-        assert agent._format_fact_rich(fact) == "User weighs 82 kg."
+        fact = _make_enriched_fact("User weighs 80 kg.")
+        assert agent._format_fact_rich(fact) == "User weighs 80 kg."
 
     def test_all_fields_included(self):
         agent, *_ = _make_agent()
         fact = _make_enriched_fact(
-            content="User weighs 82 kg.",
+            content="User weighs 80 kg.",
             context="weight tracking",
             reported_date="2026-01-21T10:00:00+00:00",
-            metadata={"value": 82, "unit": "kg"},
+            metadata={"value": 69, "unit": "kg"},
         )
         result = agent._format_fact_rich(fact)
-        assert "User weighs 82 kg." in result
+        assert "User weighs 80 kg." in result
         assert "context: weight tracking" in result
         assert "reported: 2026-01-21" in result
-        assert '"value": 82' in result
+        assert '"value": 69' in result
 
     def test_null_fields_omitted(self):
         agent, *_ = _make_agent()

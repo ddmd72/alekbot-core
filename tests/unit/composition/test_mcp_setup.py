@@ -335,7 +335,7 @@ class TestResultRendering:
             facts=[
                 EnrichedFact(
                     fact_id="1",
-                    content="Lives in Valencia",
+                    content="Lives in Springfield",
                     source="phrase1_text",
                     relevance_score=0.9,
                     domain="biography",
@@ -358,5 +358,5 @@ class TestResultRendering:
 
         assert "## agent_directive" in result
         assert "## biography" in result
-        assert "- Lives in Valencia (score=0.900)" in result
+        assert "- Lives in Springfield (score=0.900)" in result
         assert "- Prefers direct feedback" in result

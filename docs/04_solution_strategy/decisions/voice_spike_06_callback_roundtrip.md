@@ -32,7 +32,7 @@ callback normally each time:
 | 2 | human | 9.73s |
 | 3 | human | 9.89s |
 
-Mean ≈ 10.3s, tight spread (9.7–11.4s). Owner's own subjective read: "мгновенный" (instant) —
+Mean ≈ 10.3s, tight spread (9.7–11.4s). Owner's own subjective read: instant —
 the measured gap and the felt experience agree.
 
 **2 genuine voicemail trials** (both required the owner to manually force the phone to redirect to
@@ -43,7 +43,7 @@ voicemail — see the note below on why):
 | 1 | machine_end_beep | 16.73s | correctly hung up, no session opened |
 | 2 | machine_end_beep | 16.74s | correctly hung up, no session opened |
 
-**4 additional attempts produced `status: no-answer` with no `AnsweredBy` at all** — the owner's
+**4 additional attempts produced `status: no-answer` with no `AnsweredBy` at all** — the test
 phone line has voicemail disabled by default, so simply not answering the callback just times out
 unanswered; there is nothing for AMD to detect because the call never actually connects to
 anything. This is not a failed test of AMD — it's a real, useful finding in its own right (see

@@ -38,7 +38,7 @@ class ConversationalUserProfiler extends Agent {
             
             // CRITICAL: Entity Scope Classification (for RAG retrieval)
             entity_scopes: {
-                SELF: "Direct USER attributes (I weigh 72kg, I practice yoga)",
+                SELF: "Direct USER attributes (I weigh 70kg, I swim every evening)",
                 RELATIONSHIP: "People in USER's network (My sister Anna, Friend John)",
                 POSSESSION: "USER's belongings (My car, My house in Madrid)",
                 SHARED_EVENT: "Events involving USER (Trip to Paris with family)",
@@ -147,7 +147,7 @@ class ConversationalUserProfiler extends Agent {
 
             pipeline_source_attribution_step_2 {
                 name: "New_Information_Check"
-                logic: "Does USER's statement ADD new information, or just acknowledge existing? \n✅ NEW: 'I weigh 72kg now' (user volunteers fact) \n✅ NEW: 'Yes, and now I'm 72kg' (confirmation + update) \n❌ ECHO: 'Yes' after ASSISTANT recalls (no new info) \n❌ ECHO: USER repeats what ASSISTANT just said"
+                logic: "Does USER's statement ADD new information, or just acknowledge existing? \n✅ NEW: 'I weigh 70kg now' (user volunteers fact) \n✅ NEW: 'Yes, and now I'm 70kg' (confirmation + update) \n❌ ECHO: 'Yes' after ASSISTANT recalls (no new info) \n❌ ECHO: USER repeats what ASSISTANT just said"
                 severity: "HIGH"
                 action_on_fail: "SKIP_FACT('USER acknowledgment without new information - likely RAG echo')"
             }
@@ -284,7 +284,7 @@ class ConversationalUserProfiler extends Agent {
             }
             
             Fact {
-                id: "String - Unique identifier (e.g., 'fact_yoga_habit_jan2026')"
+                id: "String - Unique identifier (e.g., 'fact_swimming_habit_jan2026')"
                 content: "String - Self-contained sentence in English"
                 tags: "Array<String> - Descriptive keywords (e.g., ['health', 'habit', 'wellness'])"
                 type: "Enum - 'STATE' or 'EVENT'"
@@ -412,7 +412,7 @@ class ConversationalUserProfiler extends Agent {
             case_assistant_recall_skip: {
                 input: """
 USER: Напомни, сколько я весил в прошлом году?
-ASSISTANT: Ты весил 80кг в январе 2025.
+ASSISTANT: Ты весил 76кг в январе 2025.
 """,
                 output: {
                     "new_facts": [],
@@ -423,8 +423,8 @@ ASSISTANT: Ты весил 80кг в январе 2025.
             
             case_echo_confirmation_trap: {
                 input: """
-ASSISTANT: Based on our history, you weigh 72kg.
-USER: Да, точно.
+ASSISTANT: Based on our history, you weigh 75kg.
+USER: Да, всё верно.
 """,
                 output: {
                     "new_facts": [],
@@ -435,42 +435,42 @@ USER: Да, точно.
             
             case_confirmation_with_update_extract: {
                 input: """
-ASSISTANT: Last time you weighed 70kg. How is it now?
-USER: Да, было 80. Сейчас 82кг.
+ASSISTANT: Last time you weighed 74kg. How is it now?
+USER: Да, было 74. Сейчас 72кг.
 """,
                 output: {
                     "new_facts": [{
-                        "id": "fact_weight_current_feb2026",
+                        "id": "fact_weight_current_mar2026",
                         "content": "User currently weighs 72kg",
                         "tags": ["health", "weight", "biometrics"],
                         "type": "STATE",
                         "metadata": {
                             "entity_scope": "SELF",
-                            "weight_kg": 82,
-                            "date": "2026-02",
-                            "previous_weight_kg": 80
+                            "weight_kg": 72,
+                            "date": "2026-03",
+                            "previous_weight_kg": 74
                         }
                     }],
                     "new_anchors": []
                 },
-                reasoning: "USER confirmed old fact (70kg) BUT provided NEW information (current 72kg). Extract ONLY the new data."
+                reasoning: "USER confirmed old fact (74kg) BUT provided NEW information (current 72kg). Extract ONLY the new data."
             },
             
             case_user_volunteers_fact_extract: {
                 input: """
-USER: Кстати, я вчера взвесился - 82 кило.
+USER: Кстати, я вчера взвесился - 70 кило.
 ASSISTANT: Хорошо, сохранил.
 """,
                 output: {
                     "new_facts": [{
-                        "id": "fact_weight_feb2026",
-                        "content": "User weighs 72kg",
+                        "id": "fact_weight_mar2026",
+                        "content": "User weighs 70kg",
                         "tags": ["health", "weight"],
                         "type": "STATE",
                         "metadata": {
                             "entity_scope": "SELF",
-                            "weight_kg": 82,
-                            "date": "2026-02"
+                            "weight_kg": 70,
+                            "date": "2026-03"
                         }
                     }],
                     "new_anchors": []

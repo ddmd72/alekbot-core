@@ -50,12 +50,32 @@ tests/
   Arrange-Act-Assert.
 
 ```python
-async def test_update_content_reembeds_and_bumps_version(store):   # store = FactStore(): real adapter, repo and service on a fake Firestore
+async def test_content_update_writes_a_new_version(store):        # store = FactStore(): real adapter, repo and service on a fake Firestore
     fid = await _create(store)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Valentyna Ivanivna"}, ACC)
-    doc = store.docs[fid]                                           # assert on the raw stored document, not on a mock call
-    assert doc["text"] == "mother is Valentyna Ivanivna" and doc["version"] == 2
+    res = await store.adapter.update_fact(fid, {"content": "lives in Springfield, Ohio"}, ACC)
+    new = store.docs[res["fact_id"]]                                # assert on the raw stored documents, not on a mock call
+    assert new["text"] == "lives in Springfield, Ohio" and new["version"] == 2
+    assert store.docs[fid]["superseded_by"] == res["fact_id"]       # the old document is closed in the same commit
 ```
+
+## Invented cast
+
+The repository is public (root `CLAUDE.md` -> "PERSONAL DATA RULE"). Every person, place and contact in a test,
+fixture, doc, prompt, comment or commit message comes from this cast, never from the owner's memory, chats or journals:
+
+| Role | Value |
+|---|---|
+| user | Alex Doe |
+| mother | Maria Doe |
+| partner | Sam |
+| child | Jamie |
+| city, street | Springfield, 12 Oak Street |
+| car | Skoda Fabia 2015 |
+| phone | +1 555 0100 |
+| email | alex@example.com |
+| a real city, when geography matters | Kharkiv, Lviv or Barcelona |
+
+Tests of the personal-data gate use invented markers of their own (`tests/unit/scripts/test_pii_*.py`).
 
 ## The network guard and the gRPC tripwire (H3)
 

@@ -39,7 +39,7 @@ def normalize_voice_languages(raw: object) -> list[str]:
 
     Deliberately NOT validated against LanguageCode: that enum is the closed set of
     translated UI languages, while a speaker may use any language the recogniser knows
-    (it has no "ru", and a multilingual household is the normal case). Only the shape is
+    (it has no "ru", and a speaker who uses several languages is the normal case). Only the shape is
     checked — which codes actually work is the provider's business.
 
     Order is preserved but carries no known meaning: the provider documents these as

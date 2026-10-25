@@ -7,7 +7,7 @@ Specialist agent for location-aware queries via Google Maps AI Grounding Lite (M
 Single intent — natural language passthrough:
 
   maps_query  — any location-based request in natural language.
-                payload: {"query": "Find a pharmacy near Khreschatyk open now"}
+                payload: {"query": "Find a pharmacy near Rossio open now"}
 
 The orchestrating LLM (Quick/Smart) passes the full natural language task directly.
 The agent runs a multi-turn tool loop: LLM selects which MCP tool(s) to call,

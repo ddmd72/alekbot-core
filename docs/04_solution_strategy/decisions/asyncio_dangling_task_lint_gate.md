@@ -26,7 +26,7 @@ outside the CI-enforced lint scope. The branch dated back to a pre-2026-08-16 `i
 that gated the task queue on Socket Mode vs HTTP mode; once Socket Mode was removed entirely, the
 queue is created for any `GOOGLE_CLOUD_PROJECT` (`main.py:158`), which is always set in Cloud Run —
 so the fallback was unreachable in production. Owner decision: delete the branch outright rather
-than fix its task tracking ("мы локально не дебажим") — `overflow_callback` now awaits
+than fix its task tracking (local debugging is not part of the workflow) — `overflow_callback` now awaits
 `agent_task_queue.enqueue_consolidation_task()` unconditionally inside the `consolidation_queue`
 branch. `ruff check --select RUF006 src/ main.py` now finds zero hits.
 

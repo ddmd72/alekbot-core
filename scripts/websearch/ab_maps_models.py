@@ -144,8 +144,8 @@ class _RecordedPromptBuilder:
 # venues"; the cheap models declined for a quarter of the price). Only 4 genuinely
 # geographic queries exist in ~430 recorded calls — that scarcity is itself a finding.
 GEO_SELECTORS: List[str] = [
-    "Find current jewellers and gold jewellery repair services",   # place discovery
-    "worth seeing in Serra",                                       # places + route + dinner
+    "Find current bicycle shops and bike repair services",         # place discovery
+    "worth seeing in Springfield",                                 # places + route + dinner
     "retrieve current live weather and today's forecast",           # weather lookup
     "verify current weather in Northgate and Springfield",                 # weather lookup
 ]
@@ -169,7 +169,7 @@ FRESH_GEO_QUERIES: List[str] = [
     "Sort them by customer rating (best first) and give for each: name, full address, "
     "rating and number of reviews, opening hours, and driving distance and time from Northgate.",
     # 2. place discovery + NON-CAR routing + opening hours
-    "List police stations that are sensible to reach by bicycle from Av. Font de Mora 3, "
+    "List police stations that are sensible to reach by bicycle from 12 Oak Street, "
     "Northgate, Springfield, USA. For each: name, full address, opening hours, phone, and the "
     "cycling distance and time from that address. Exclude any that are impractical by bike.",
     # 3. place discovery + ranking, needs 10 distinct results

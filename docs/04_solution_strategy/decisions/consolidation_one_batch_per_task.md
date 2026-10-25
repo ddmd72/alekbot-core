@@ -41,6 +41,13 @@ debugging window: the abandoned `asyncio.create_task` approach (real zombie) and
 the surviving Cloud Tasks dispatch (real fix). The latter has been the production
 shape since 2026-02-24 and is documented at the call-site.
 
+## Update 2026-10-23 (Facts S2)
+
+Manual `$consolidate` no longer processes all pending batches in its request: `ConsolidationService.consolidate_now`
+runs one batch and enqueues the continuation, so a chat request (a Cloud Task with the same 1800 s deadline) never
+holds two 16-minute leased runs. Every batch also runs under the account's memory-write lease
+(`fact_versions_one_writer.md`).
+
 ## Rejected alternatives
 
 - **Remove `max_batches` parameter, always process all pending in one task.**

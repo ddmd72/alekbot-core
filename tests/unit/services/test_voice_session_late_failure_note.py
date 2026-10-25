@@ -12,7 +12,7 @@ from src.services.voice_session_service import VoiceSessionService
 _TOOLS = [{"name": "delegate_to_specialist", "description": "d", "parameters": {"type": "object"}}]
 
 
-def _tool_call(call_id="c1", intent="search_web", query="amazon whey protein links"):
+def _tool_call(call_id="c1", intent="search_web", query="amazon bike helmet links"):
     return E(type="tool_call", payload={"call_id": call_id, "name": "delegate_to_specialist",
                                         "arguments": json.dumps({"intent": intent, "query": query})})
 
@@ -56,5 +56,5 @@ async def test_late_failure_reads_as_did_not_go_through_not_as_one_that_arrived(
 
     notes = [c.args[1] for c in session.submit_message.await_args_list if "did not go through" in c.args[1]]
     assert len(notes) == 1
-    assert "search_web: amazon whey protein links" in notes[0]
+    assert "search_web: amazon bike helmet links" in notes[0]
     assert "just arrived" not in notes[0]

@@ -25,8 +25,8 @@ from src.domain.workspace import (
 
 class TestPathRule:
     @pytest.mark.parametrize("raw,expected", [
-        ("projects/flat-sale.md", "projects/flat-sale.md"),
-        ("workspace:projects/flat-sale.md", "projects/flat-sale.md"),
+        ("projects/garden-shed.md", "projects/garden-shed.md"),
+        ("workspace:projects/garden-shed.md", "projects/garden-shed.md"),
         ("  references/where_things_live.txt ", "references/where_things_live.txt"),
         ("scratch/a/b/draft.v2.md", "scratch/a/b/draft.v2.md"),
         ("files/lease.pdf", "files/lease.pdf"),
@@ -72,9 +72,9 @@ class TestPathRule:
         ("workspace:", ""),
         ("projects", "projects/"),
         ("projects/", "projects/"),
-        ("workspace:projects/flat/", "projects/flat/"),
-        ("projects/flat", "projects/flat/"),
-        ("projects/flat-sale.md", "projects/flat-sale.md"),
+        ("workspace:projects/garden/", "projects/garden/"),
+        ("projects/garden", "projects/garden/"),
+        ("projects/garden-shed.md", "projects/garden-shed.md"),
     ])
     def test_folders_for_view_and_history(self, raw, expected):
         assert parse_workspace_path(raw, allow_folder=True) == expected

@@ -11,9 +11,11 @@ from ..services.session_service import SessionService
 from ..services.google_oauth_service import GoogleOAuthService
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.drive_search_service import DriveSearchService
+from ..services.cabinet_fact_service import CabinetFactService
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
+from ..domain.exceptions import FactResolutionError, FactWriteConflict
 from ..ports.user_repository import UserRepository
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
@@ -61,6 +63,7 @@ def create_user_cabinet_blueprint(
     drive_search_service: Optional[DriveSearchService] = None,
     drive_task_queue: Optional[TaskQueue] = None,
     drive_transcribe_switch_on: bool = False,
+    cabinet_facts: Optional[CabinetFactService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -459,7 +462,7 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/user/timezone", methods=["PUT"])
     @auth_required
     async def set_timezone():
-        """Update the user's timezone. Body: {\"timezone\": \"Europe/Kyiv\"}"""
+        """Update the user's timezone. Body: {\"timezone\": \"Europe/Lisbon\"}"""
         from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
         try:
             body = await request.get_json(force=True) or {}
@@ -850,21 +853,20 @@ def create_user_cabinet_blueprint(
     @auth_required
     async def invalidate_fact(fact_id: str):
         """Mark a specific fact as invalidated. User Cabinet write path."""
+        if cabinet_facts is None:
+            return jsonify({"error": "unavailable"}), 503
         try:
-            await fact_repo.invalidate_fact(fact_id=fact_id, account_id=g.account_id)
+            # The service also refreshes the baseline (user_context cache, read on every request, otherwise rebuilt
+            # only by consolidation) so the fact leaves the prompt; the repository logs and swallows a refresh failure.
+            await cabinet_facts.invalidate(fact_id=fact_id, account_id=g.account_id)
             logger.info(f"🗑️ Fact {fact_id} invalidated by user {g.user_id}")
-            # The baseline (user_context cache, read on every request) is rebuilt only by consolidation;
-            # refresh it now so the fact leaves the prompt. A failure must not undo the invalidation.
-            try:
-                await fact_repo.refresh_biographical_context_cache(owner_id=g.account_id)
-            except Exception as e:
-                logger.error(
-                    f"Fact {fact_id} invalidated but the biographical cache refresh failed: {e}",
-                    exc_info=True,
-                )
             return jsonify({"status": "invalidated"}), 200
         except PermissionError:
             return jsonify({"error": "Not authorized"}), 403
+        except (FactResolutionError, FactWriteConflict) as e:
+            # before ValueError -> 404: neither is a ValueError, but the order is what keeps a 409 from turning into one
+            logger.warning(f"Fact {fact_id} not invalidated: {type(e).__name__}: {e}")
+            return jsonify({"error": str(e)}), 409
         except ValueError as e:
             return jsonify({"error": str(e)}), 404
         except Exception as e:

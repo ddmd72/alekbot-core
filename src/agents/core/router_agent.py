@@ -66,7 +66,7 @@ class RouterAgent(BaseAgent):
     - Simple questions with quick answers
 
     Example complex requests:
-    - Personal data queries: "What shoe size do I wear?"
+    - Personal data queries: "What coffee do I usually order?"
     - External data queries: "What's the weather in Springfield?"
     - Multi-step reasoning: "Compare these two options..."
     """
@@ -581,7 +581,7 @@ class RouterAgent(BaseAgent):
         Personal requests need memory search to retrieve facts.
         
         Examples:
-        - "What's my shoe size?"
+        - "What's my usual coffee order?"
         - "Remind me about the meeting"
         - "What's my car model?"
         

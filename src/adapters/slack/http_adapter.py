@@ -65,6 +65,15 @@ def _retry_count(headers: Dict[str, Any]) -> int:
     return 0
 
 
+def _reply_to_metadata(event: Dict[str, Any]) -> Dict[str, str]:
+    """`reply_to_message_id` for an event inside a thread: the thread's parent (`thread_ts`). A top-level message has no
+    `thread_ts`, and a parent's own `ts` is not a reply to anything; both give no key."""
+    parent = event.get("thread_ts")
+    if parent and parent != event.get("ts"):
+        return {"reply_to_message_id": str(parent)}
+    return {}
+
+
 class HTTPModeAdapter(SlackAdapter):
     """
     HTTP Events API adapter for Slack integration.
@@ -494,6 +503,7 @@ class HTTPModeAdapter(SlackAdapter):
                     "turn_id": turn_id,
                     "origin_message_id": event.get("ts"),
                     "event_time": float(event["ts"]) if event.get("ts") else None,
+                    **_reply_to_metadata(event),
                 }
             )
 
@@ -562,6 +572,7 @@ class HTTPModeAdapter(SlackAdapter):
                     "turn_id": turn_id,
                     "origin_message_id": event.get("ts"),
                     "event_time": float(event["ts"]) if event.get("ts") else None,
+                    **_reply_to_metadata(event),
                 }
             )
 

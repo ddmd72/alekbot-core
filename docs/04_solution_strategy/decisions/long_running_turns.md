@@ -103,5 +103,6 @@ timeouts. Clocking them is part of the same follow-up.
 - Both platform adapter factories and `UserAgentFactory` take an extra, optional
   dependency (`long_turn_service` / `long_turn_registry`) — `None` is a safe default
   everywhere these are wired for tests or a deployment without the token uploaded yet.
-- Deployment has two manual owner steps (Firestore TTL policy on `long_turns`, and
-  uploading + enabling `PROTOCOL_LONG_TURNS`) — see `docs/07_deployment/README.md`.
+- Deployment has two manual owner steps: the Firestore TTL policy on `long_turns`
+  (`docs/07_deployment/README.md` § Firestore TTL policies), and uploading + enabling
+  `PROTOCOL_LONG_TURNS` (rollout notes, ops).

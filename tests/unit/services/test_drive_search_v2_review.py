@@ -44,7 +44,7 @@ async def test_m1_a_full_word_page_under_a_folder_filter_never_claims_absence(mo
 
 async def test_m2_a_validity_query_bounds_the_expiry_date_not_the_document_date():
     w = V2World()
-    passport = w.file("passport.pdf", profile=policy(), valid_until="2026-11-15", effective="2016-04-01")
+    passport = w.file("passport.pdf", profile=policy(), valid_until="2026-12-09", effective="2016-04-01")
     w.file("insurance.pdf", profile=policy(), valid_until="2027-03-01", effective="2026-02-01")
     result = await w.search("истекает", **YEAR_2026)
     assert [c.item_id for c in result.cards if c.tier == "labelled"] == [passport]
@@ -52,7 +52,7 @@ async def test_m2_a_validity_query_bounds_the_expiry_date_not_the_document_date(
 
 async def test_m2_the_span_left_in_the_words_is_ignored_and_named():
     w = V2World()
-    passport = w.file("passport.pdf", profile=policy(), valid_until="2026-11-15", effective="2016-04-01")
+    passport = w.file("passport.pdf", profile=policy(), valid_until="2026-12-09", effective="2016-04-01")
     result = await w.search("что истекает в этом году")
     assert tier_of(result, passport) == "labelled"
     text = render_results(result)

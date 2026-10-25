@@ -1,6 +1,6 @@
 """scripts/data_audit/facts.py: each fact invariant on raw stored documents, one violating document per class."""
 import copy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from google.cloud.firestore_v1.vector import Vector
@@ -8,7 +8,9 @@ from google.cloud.firestore_v1.vector import Vector
 from scripts.data_audit.facts import check_fact, check_lineages
 from src.domain.entities import FactState
 from src.domain.fact_lifecycle import _LIFECYCLE
+from src.domain.fact_lifecycle_sweep import stale_fields
 from tests.support.fact_store import FactStore
+from tests.support.fact_write import EXPIRY_NONE, ctx, horizon
 
 ACC = "acc-1"
 NOW = datetime(2026, 3, 4, 10, 0, tzinfo=timezone.utc)
@@ -19,7 +21,7 @@ def raw(**over):
     """A stored fact as a plain dict (not built through FactEntity)."""
     doc = {
         "id": "f1", "account_id": ACC, "created_by_user_id": "usr-1", "lineage_id": "L1",
-        "text": "mother is Valentina", "type": "event", "state": "current", "is_current": True, "valid_to": None,
+        "text": "mother is Maria", "type": "event", "state": "current", "is_current": True, "valid_to": None,
         "vector": Vector([0.1, 0.2]), "tags_vector": Vector([0.3]), "metadata_vector": Vector([0.4]),
         "created_at": NOW, "reported_date": NOW, "valid_from": NOW, "last_updated": NOW,
     }
@@ -45,17 +47,40 @@ def test_each_state_with_its_lifecycle_flags_is_clean(state):
     assert check_fact("f1", doc) == []
 
 
-async def test_documents_written_by_the_real_writer_are_clean_in_every_state():
-    store = FactStore()
-    res = await store.adapter.create_fact("mother is Valentina", {
+async def _created(store, expiry):
+    res = await store.adapter.create_fact("mother is Maria", {
         "account_id": ACC, "user_id": "usr-1", "domain": "biographical", "temporal_class": "stable",
-        "context_priority": "medium", "tags": ["family"], "metadata": {"name": "Valentina"}, "type": "event",
-    })
-    fid = res["fact_id"]
-    assert check_fact(fid, store.docs[fid]) == []
-    for state in ("ARCHIVED", "INVALIDATED", "STALE", "CURRENT"):
-        await store.adapter.update_fact(fid, {"state": state}, ACC)
+        "context_priority": "medium", "tags": ["family"], "metadata": {"name": "Maria"}, "type": "event",
+        "expiry": expiry,
+    }, context=ctx())
+    assert res["status"] == "created", res
+    return res["fact_id"]
+
+
+async def test_documents_written_by_the_real_writer_are_clean_in_every_state():
+    # Reviewer edit (facts S3, T4a): one fact per state, each written by the writer that owns that transition, and every
+    # write checked to have happened. The old loop moved one fact through every state, but since S2 the consolidator only
+    # updates a current fact, so after ARCHIVED the other updates failed unseen and only `current` and `archived` were
+    # ever audited. STALE is the janitor's alone since S3 (D1, S3-D3): its writer is the repository's stale_due_fact,
+    # applying the janitor's `stale_fields` (facts S4 T3c, reviewer edit).
+    store = FactStore()
+    fid = await _created(store, EXPIRY_NONE)
+    assert check_fact(fid, store.docs[fid]) == [], "current"
+    for state in ("ARCHIVED", "INVALIDATED"):
+        fid = await _created(store, EXPIRY_NONE)
+        res = await store.adapter.update_fact(fid, {"state": state}, ACC, context=ctx())
+        assert res["status"] == "updated" and store.docs[fid]["state"] == state.lower(), res
         assert check_fact(fid, store.docs[fid]) == [], state
+    fid = await _created(store, EXPIRY_NONE)
+    res = await store.adapter.update_fact(fid, {"content": "mother is Maria Doe", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    assert res["status"] == "updated" and store.docs[fid]["state"] == "superseded", res
+    assert check_fact(fid, store.docs[fid]) == [] and check_fact(res["fact_id"], store.docs[res["fact_id"]]) == []
+    fid = await _created(store, horizon(30))
+    later = datetime.now(timezone.utc) + timedelta(days=31)
+    [due] = [d for d in await store.repo.find_due_facts(later) if d.fact_id == fid]
+    await store.repo.stale_due_fact(due, stale_fields(due, later))
+    assert store.docs[fid]["state"] == "stale"
+    assert check_fact(fid, store.docs[fid]) == [], "stale"
 
 
 def test_the_document_is_not_modified():

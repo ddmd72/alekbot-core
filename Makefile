@@ -337,7 +337,7 @@ deploy: ## Build + deploy to Cloud Run (the single live environment)
 		echo "   (docs/07_deployment/README.md § Indexer URL)."; \
 		exit 1; fi
 	@if [ "$(DRIVE_TRANSCRIBE_ENABLED_DEV)" != "on" ] && [ "$(DRIVE_TRANSCRIBE_ENABLED_DEV)" != "off" ]; then \
-		echo "❌ DRIVE_TRANSCRIBE_ENABLED_DEV must be exactly on or off in .env (a missing key would silently freeze in-flight transcription batches): docs/07_deployment/README.md § Transcripts"; \
+		echo "❌ DRIVE_TRANSCRIBE_ENABLED_DEV must be exactly on or off in .env (a missing key would silently freeze in-flight transcription batches): docs/07_deployment/README.md § Transcripts switch and cap"; \
 		exit 1; fi
 	@echo "🎙  Transcription switch: _DRIVE_TRANSCRIBE_ENABLED=$(_DRIVE_TRANSCRIBE_ENABLED), cap: _DRIVE_TRANSCRIBE_USD_CAP=$(if $(_DRIVE_TRANSCRIBE_USD_CAP),$(_DRIVE_TRANSCRIBE_USD_CAP),(empty = the \$$20 maximum))"
 	@echo "🚀 Build + deploy to Cloud Run ($(SERVICE_NAME))..."

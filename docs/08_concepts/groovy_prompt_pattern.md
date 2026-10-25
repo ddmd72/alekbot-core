@@ -1,11 +1,8 @@
 # Groovy-Style Prompt Engineering Pattern
 
-**Status:** Adopted Standard | **Last Updated:** 2026-02-25
-**Target Audience:** AI Developers & Future AI Sessions
-
 ## 1. The Core Philosophy
 
-Modern LLMs (Gemini 2.0, GPT-4, Claude) are heavily trained on code. They understand **syntax, inheritance, strict typing, and logical flow** better than they understand loose natural language instructions.
+Modern LLMs are heavily trained on code. They understand **syntax, inheritance, strict typing, and logical flow** better than they understand loose natural language instructions.
 
 The **Groovy-Style Pattern** exploits this by treating the System Prompt not as a "story" but as a **Class Definition**.
 
@@ -141,8 +138,8 @@ class Alek extends Agent {
     {{FEW_SHOT_EXAMPLES_DEFAULT}}  // ← resolved at assembly time
   }
 
-  policies { ... }        // ← 6 policy tokens
-  protocols { ... }       // ← 2 protocol tokens
+  policies { ... }        // ← policy tokens
+  protocols { ... }       // ← protocol tokens
   cognitive_process { ... }
   output_format { ... }
 
@@ -158,21 +155,25 @@ knowledge_base {
     ...
   '''
 }
+
+available_skills { ... }      // ← Smart only, when the user has skills
+standing_directives { ... }   // ← the user's binding rules, last static block
 ```
 
 **Dynamic suffix** (sent fresh every request):
 ```groovy
 <!-- CACHE_BOUNDARY -->
-current_date_time {
-    2026-02-25 14:32 Tuesday (UTC)
-    System time is UTC. ...
-}
+active_reminders { ... }      // ← the orchestrator's own reminders, when any
 
 query_specific_context: '''   // ← only when router found relevant facts
     **Query-Specific Context:**
     - User mentioned travel plans last week
 '''
 ```
+
+The time is not in the prompt by default: it is stamped into the user messages. An agent that needs a
+`current_date_time {}` block asks for it with `include_datetime=True`. The exact order of the blocks is in
+`prompt_assembly_guide.md`.
 
 ---
 
@@ -201,54 +202,8 @@ When creating or modifying tokens:
 
 ## 8. Real-World Examples
 
-### Example 1: Router Agent Triage
-
-**Before (Natural Language):**
-```
-You are a router that classifies user queries. Look at the query and decide
-if it's simple or complex. Simple queries go to quick_response, complex go
-to smart_response.
-```
-
-**After (Groovy DSL token `COGNITIVE_PROCESS_ROUTER`):**
-
-```groovy
-cognitive_process {
-  steps: [
-    "1. ANALYZE complexity (scale 1-10)",
-    "2. ANALYZE tone (casual/professional/technical/urgent)",
-    "3. CLASSIFY query type (simple/personal/external)",
-    "4. DECIDE routing target based on complexity threshold (≤5 → quick, >5 → smart)"
-  ]
-  complexity_factors: [
-    "Query length and structure",
-    "Ambiguity and context requirements",
-    "Need for external data or tools",
-    "Multi-step reasoning required"
-  ]
-}
-```
-
-### Example 2: Consolidation Agent
-
-**After (Groovy DSL token `COGNITIVE_PROCESS_CONSOLIDATION`):**
-
-```groovy
-cognitive_process {
-  steps: [
-    "1. LOAD biographical context for deduplication",
-    "2. ANALYZE messages for factual content",
-    "3. EXTRACT facts (objective) and anchors (subjective principles)",
-    "4. DEDUPLICATE via vector similarity check",
-    "5. STRUCTURE output as JSON with embeddings"
-  ]
-  fact_criteria: {
-    objective: "Verifiable statements about reality",
-    temporal: "Include explicit timestamps when available",
-    atomic: "One fact per entity, no compound statements"
-  }
-}
-```
+The tokens in `firestore_utils/uploads/` are the real thing: the `COGNITIVE_PROCESS_*`, `PROTOCOL_*` and
+`OUTPUT_FORMAT_*` files are what the live agents run on. Read one before writing a new token.
 
 ---
 
@@ -364,12 +319,3 @@ cognitive_process {
 | `weather → widget` (domain rule) | You want consistent behavior for a specific data type |
 | `"Would a card make this better?"` (quality question) | You want the model to exercise judgment on novel cases |
 | Mixed: defaults + override | Most real cognitive processes — rules for known types, judgment for edge cases |
-
-**Implemented in:**
-- `firestore_utils/uploads/COGNITIVE_PROCESS_SMART.groovy` — step 4 FORMAT
-- `firestore_utils/uploads/COGNITIVE_PROCESS_QUICK.groovy` — step 3 FORMAT (no tools step)
-
----
-
-**Last Updated:** 2026-02-26
-**Status:** ✅ Current (v3 Token System + FORMAT-before-DRAFT pattern)

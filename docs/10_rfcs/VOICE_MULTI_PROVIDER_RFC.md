@@ -21,10 +21,10 @@ tuned to how that model reads a prompt. Four owner calls on xAI `grok-voice-thin
 
 | Call | Setup | Owner's verdict |
 |---|---|---|
-| 1 | Full Lelik prompt, relay-owned turns (anchor, notes, own barge-in) | "ужас": no emotion, few-shot lines recited verbatim |
+| 1 | Full Lelik prompt, relay-owned turns (anchor, notes, own barge-in) | poor: no emotion, few-shot lines recited verbatim |
 | 2 | Bare: Grok owns its turns, no anchor/notes, role + plain tool list | natural and brief, **no character at all** |
 | 3 | Bare + character as a third-person prose portrait | balanced character; a familiar address became a refrain |
-| 4 | Bare + second-person portrait in xAI's prompting-guide format | **"бомба"**; opened the briefing file from history on its own initiative |
+| 4 | Bare + second-person portrait in xAI's prompting-guide format | **excellent**; opened the briefing file from history on its own initiative |
 
 Two things differ per provider, and neither is a detail an adapter can hide:
 - **Who owns the turn.** On OpenAI, the relay adds a persona anchor and starts every reply itself.
@@ -59,7 +59,7 @@ bare mode.
 - Making one character text work on every provider. §6 gives this up on purpose.
 - Tuning Alek's latency for voice: owner decision 2026-09-30, Alek is expected to take its time.
 - The topic-generating character trait and `idle_timeout_ms`. Those belong to a separate test
-  session (plan `docs/superpowers/plans/2026-09-30-lelik-on-grok.md`).
+  session (archived plan).
 
 ## 4. Design
 

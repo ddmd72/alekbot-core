@@ -1,0 +1,7 @@
+blueprint_id: consolidation_review_v1
+class_order:
+- taxonomy
+- lifecycle
+outer_class: ConsolidationReviewAgent extends Agent
+source_file: prompts_snapshot/blueprints/consolidation_review_v1.yaml
+uploaded_by: local_script

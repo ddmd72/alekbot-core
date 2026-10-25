@@ -61,15 +61,16 @@ LUNA = "gpt-5.6-luna"
 
 # Curated from 331 distinct recorded user-driven search_web queries. Chosen for spread of
 # difficulty and kind, not for flattering either model:
-#   legal/regulatory in Spanish (highest damage if confidently wrong), local commerce,
+#   legal/regulatory (highest damage if confidently wrong), local commerce,
 #   live current events, official procedural rules, and one trivial lookup as a floor.
+# The committed needles are neutral stand-ins; a rerun sets needles that match its own recorded queries.
 SELECTORS: Dict[str, str] = {
     "wizz":      "Wizz Air official rules",
-    "wildfire":  "La Vall d'Uixó wildfire",
-    "jeweller":  "jewellery repair services in Pu",
-    "repair_biz": "jewellery repair broken gold bracelet clasp",
-    "sem_instr": "SEM 2/2026 instrucci",
-    "visa":      "highly qualified worker visa Ley 14/2013",
+    "wildfire":  "Springfield wildfire",
+    "bike_shop": "bike repair services in Springfield",
+    "repair_biz": "bike repair broken chain link",
+    "law_instr": "EU AI Act Article 50 instructi",
+    "roaming":   "EU mobile roaming rules",
     "weather":   "Weather today",
 }
 

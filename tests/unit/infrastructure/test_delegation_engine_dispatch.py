@@ -26,7 +26,7 @@ async def test_public_dispatch_fans_search_web_out_to_maps():
     engine = DelegationEngine(coordinator)
 
     result = await engine.dispatch(
-        ToolCall(name="delegate_to_specialist", args={"intent": "search_web", "query": "weather Valencia"}),
+        ToolCall(name="delegate_to_specialist", args={"intent": "search_web", "query": "weather Springfield"}),
         {"user_id": "u1"},
         intent_remap={},
         intent_fanout={Intent.SEARCH_WEB: SEARCH_WEB_MAPS_FANOUT},

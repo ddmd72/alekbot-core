@@ -166,6 +166,7 @@ class WebSearchAgentConfig:
 @dataclass
 class ConsolidationAgentConfig:
     max_turns: int = 15          # max deliberation iterations; Stage 2 on large clusters (25+ facts) needs ~12 turns
+    review_max_turns: int = 15   # the review pass's turn cap (Facts S4 §3.3); gate G5 wants every review pass within 13
     facts_limit: int = 50        # biographical cache limit passed at construction
     principles_limit: int = 15   # principles cache limit passed at construction
     # Output token limit. On Gemini 3 Pro, thinking_tokens count against

@@ -10,9 +10,10 @@ from quart import Quart
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.domain.entities import FactDomain
 from src.services.biographical_context_service import BiographicalContextService
+from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import make_fact
-from tests.support.fact_store import FactStore, make_env_config
+from tests.support.fact_store import FACTS, FactStore, make_env_config
 
 _USER_ID = "user-1"
 _ACCOUNT_ID = "account-1"
@@ -31,9 +32,10 @@ def _app(fact_repo):
     session_service = MagicMock()
     session_service.verify_access_token = MagicMock(
         return_value={"sub": _USER_ID, "account_id": _ACCOUNT_ID, "role": "owner"})
+    # Reviewer edit (facts S4, T2c): the route delegates to CabinetFactService, which the blueprint now takes.
     bp = create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=fact_repo, embedding_service=MagicMock(),
+        fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo),
     )
     app = Quart("test_app")
     app.register_blueprint(bp)
@@ -68,20 +70,21 @@ async def test_invalidated_fact_leaves_the_cached_baseline_immediately():
 
 
 async def test_refresh_failure_is_logged_and_does_not_fail_the_invalidate(caplog):
+    # The port promises that the refresh never raises (FactRepository.refresh_biographical_context_cache, "Errors").
+    # So the failure is driven inside the real repository (its facts read fails during the rebuild), not by replacing
+    # the method with one that breaks the contract: the invalidation stands, the error is logged, the old cache stays.
     store = FactStore()
     repo = _repo(store)
     await _seed(store, repo)
+    store.db.collection(FACTS).fail = RuntimeError("facts read down")
 
-    async def boom(**_kw):
-        raise RuntimeError("cache write down")
-
-    repo.refresh_biographical_context_cache = boom
     with caplog.at_level(logging.ERROR):
         resp = await _invalidate(_app(repo), "f-drop me")
 
     assert resp.status_code == 200
     assert store.docs["f-drop me"]["state"] == "invalidated"
-    assert any("cache refresh failed" in r.getMessage() for r in caplog.records)
+    assert any("Failed to refresh biographical cache" in r.getMessage() for r in caplog.records)
+    assert sorted(_cached_texts(store)) == ["drop me", "keep me"]
 
 
 async def test_failed_invalidate_does_not_touch_the_cache():

@@ -921,7 +921,7 @@ truncated content, unknown senders), calls the tool for those, then classifies e
 
 **Tool:** `get_email_details(email_ids: List[str])` → returns `{body_text, attachments: List[str]}`
 per email via `format=full` Gmail API. Attachment filenames are first-class signals
-(e.g., `contract_rigert.pdf` confirms legal value even if subject is vague).
+(e.g., `contract_smith.pdf` confirms legal value even if subject is vague).
 
 **Prompt design:** Groovy DSL cognitive process framework (`EMAIL_CLASSIFIER_COGNITIVE_PROCESS` token in Firestore).
 Two-test selection model (email passes if EITHER test is satisfied):
@@ -1031,7 +1031,7 @@ Input: EMAIL_SEARCH_REQUEST "family and travel information from the last two mon
 
 Output:
 {
-  "primary_query": "family members visiting abroad location dates",
+  "primary_query": "family members visiting location dates",
   "alternative_query": "Jane Bob Alice Riverton visit",
   "tags": ["Family Travel", "Family Base", "Visits"]
 }
@@ -1671,7 +1671,7 @@ Router → SmartAgent
 SmartAgent → delegate_to_specialist(intent="search_emails", query="...")
   → EmailSearchAgent: ECO LLM extracts keys (~0.5s)
        primary_query:   "medical test results lab report 2025"
-       alternative_query: "Example Lab cholesterol vitamin panel"
+       alternative_query: "Example Lab blood panel results"
        tags: ["healthcare", "medical", "lab results"]
   → EmailSearchService.vector_search() 7-stream RRF (~1.5s)
   → returns JSON { "count": 5, "emails": [...fact sentences + email_ids...] }
@@ -1679,7 +1679,7 @@ SmartAgent synthesizes response from JSON (~1s)
 
 Bot: (~4–6s total)
 "Found 5 medical emails from 2025:
-  📋 March 28 — Cholesterol 4.8 mmol/L (Normal). Vitamin D 32 ng/mL.
+  📋 March 28 — Example Lab blood panel: results attached, flagged normal.
      📎 lab_report_march.pdf
   📋 January 15 — Blood panel: all values within reference range.
   ..."
@@ -1697,13 +1697,13 @@ Bot: "March 28 — Example Lab. ..." (full body text formatted by SmartAgent)
 **Production example** (2026-03-01, ~5.9s, query: "family and travel last two months"):
 ```json
 {
-  "primary_query": "family members visiting abroad location dates",
+  "primary_query": "family members visiting location dates",
   "alternative_query": "Jane Bob Alice Riverton visit",
   "tags": ["Family Travel", "Family Base", "Visits"]
 }
 → 10 emails returned:
   Ryanair flight (for a Fairview/Riverton trip, May 2026),
-  travel consent form for a family member, Location Sharing with Jane+Bob,
+  a booking confirmation for a family member, Location Sharing with Jane+Bob,
   school notification from Example School (Riverton)
 ```
 
@@ -1722,7 +1722,7 @@ Bot: "March 28 — Example Lab. ..." (full body text formatted by SmartAgent)
 - Quality: correct domain/temporal_class/context_priority on all 19; rich structured metadata
   (card_last_4, dates, costs, institutions); cross-email merging (Example Bank: multiple
   receipts → one fact with card_last_4 and account_last_4); biographical context used
-  correctly (ISP service + school location tied to the family base abroad)
+  correctly (ISP service + school location tied to the family's home city)
 - Batch size note: 150-fact batch produced _more accurate_ results than smaller batches —
   ConsolidationAgent detects patterns across items (e.g., recurring subscriptions, related accounts)
 
@@ -1813,7 +1813,7 @@ Bot:    (calls EmailSearchAgent.search_deep(email_id="msg_nov3") → Mode B)
         (markitdown.parse(binary) → invoice text)
         (LLM extracts structured facts from text)
         "Amazon invoice from November 3: AirPods Pro (Gen 2) — 249 EUR.
-         Delivered November 7 to Example City, Spain.
+         Delivered November 7 to Example City.
          Order: 789-012-3456789."
 ```
 
@@ -1869,7 +1869,7 @@ attachment content. Bot never fetches attachment binaries without a direct user 
 
 ```
 Bot: "You have 3 unpaid invoices in your inbox (total €1,234). Want reminders?"
-Bot: "Your PZU insurance renewal is in 2 weeks based on your email."
+Bot: "Your car insurance renewal is in 2 weeks based on your email."
 ```
 
 ---
@@ -2350,8 +2350,8 @@ Cloud Run at 300s before this fix. Next occurrence will have a clear `TimeoutErr
 
 - 19 biographical facts (CREATE), 132 discarded, 0 noise written. Elapsed: 183s.
 - Pattern detection across batch: multiple bank receipts → one consolidated fact with
-  card/account last_4; recurring subscriptions merged; biographical context (family
-  base abroad) correctly applied to ISP service + school entries.
+  card/account last_4; recurring subscriptions merged; biographical context (the
+  family's home city) correctly applied to ISP service + school entries.
 - Larger batches (150) outperform smaller ones — cross-item patterns visible.
 - Pending: add `email` tag instruction to consolidation prompt before production.
 - `test_consolidation_dryrun.py` script added to §17 POC Scripts table.

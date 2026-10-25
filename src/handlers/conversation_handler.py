@@ -15,6 +15,7 @@ from typing import Callable, Coroutine, List, Optional, Any, TYPE_CHECKING
 
 from ..domain.messaging import MessageContext, ResponseChannel, SmartResponse, RichContent
 from ..domain.ui_messages import StatusType, UIMessage
+from ..domain.consolidation_run import ConsolidationRun
 from ..domain.language import LanguageCode
 from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus, DeliveryItem
 from ..domain.long_turn import LongTurnStatus, RetryVerdict
@@ -143,12 +144,8 @@ class ConversationHandler(ConversationHandlerPort):
         rich_content_service: Optional[RichContentService] = None,
         notification_service: Optional[UserNotificationService] = None,
         doc_delivery_service: Optional[DocumentDeliveryService] = None,
-        indexed_email_repo: Optional[Any] = None,
-        user_repo: Optional[Any] = None,
-        # ARCHITECTURE FIX: Injected callback replaces direct import of consolidation_handler.
-        # Previously: `from src.handlers.consolidation_handler import process_user_batches_on_overflow`
-        # That was a horizontal coupling between two handlers. Now wired in composition/.
-        overflow_callback: Optional[Callable[..., Coroutine]] = None,
+        # `$consolidate` runner: ConsolidationService.consolidate_now, wired in composition/.
+        overflow_callback: Optional[Callable[..., Coroutine[Any, Any, ConsolidationRun]]] = None,
         localization: Optional[LocalizationService] = None,
         file_conversion_service: Optional["FileConversionService"] = None,
         channel_binding_service: Optional[ChannelBindingService] = None,
@@ -170,8 +167,6 @@ class ConversationHandler(ConversationHandlerPort):
         self._rich_content_service = rich_content_service
         self._notification_service = notification_service
         self._doc_delivery_service = doc_delivery_service
-        self._indexed_email_repo = indexed_email_repo
-        self._user_repo = user_repo
         self._overflow_callback = overflow_callback
         self._localization = localization
         self._fallback_service = fallback_service
@@ -1470,6 +1465,31 @@ class ConversationHandler(ConversationHandlerPort):
             label="History save", max_attempts=max_attempts,
         )
 
+    @staticmethod
+    def _consolidate_outcome(run: Optional[ConsolidationRun]) -> str:
+        """What `$consolidate` honestly achieved. It runs the oldest pending batch, which after a backlog is not
+        this command's, so it reports batches and never "this command's messages were processed"."""
+        queued = "the command's messages were queued for memory"
+        if run is None:
+            return f"{queued}; consolidation runs in the background."
+        if run.deferred:
+            if run.unattended:
+                return (f"{queued}; another memory run is in progress and no background queue is running here, "
+                        "so send $consolidate again later.")
+            return f"{queued}; queued behind another memory run in progress, it continues in the background."
+        if run.processed:
+            outcome = f"{queued}; {run.processed} batch(es) consolidated now."
+        elif not run.failed:
+            outcome = f"{queued}; no batch was consolidated in this request."
+        else:
+            outcome = f"{queued}."
+        if run.failed:
+            outcome += " A batch failed and stays queued; it will be retried later."
+        if run.has_more:
+            outcome += (" More batches are waiting and no background queue is running here, so send $consolidate "
+                        "again to continue." if run.unattended else " The rest continues in the background.")
+        return outcome
+
     async def handle_command(
         self,
         command: str,
@@ -1566,20 +1586,18 @@ class ConversationHandler(ConversationHandlerPort):
                 await session_store.save_session(session.session_id, session)
                 
                 # Process — await keeps HTTP request alive → full CPU on Cloud Run
-                if self._overflow_callback:
-                    await self._overflow_callback(
-                        user_id=context.user_id,
-                        coordinator=self.coordinator,
-                        agent_factory=self.agent_factory,
-                        queue=self.consolidation_queue,
-                        indexed_email_repo=self._indexed_email_repo,
-                        user_repo=self._user_repo,
+                try:
+                    run = await self._overflow_callback(user_id=context.user_id) if self._overflow_callback else None
+                except Exception as exc:
+                    logger.error(f"[Librarian] $consolidate failed for user {context.user_id[:8]}: {exc}", exc_info=True)
+                    await response_channel.send_message(
+                        "❌ Memory consolidation stopped with an error. The command's messages are queued; "
+                        "a later run picks up whatever is left.",
+                        thread_id=context.thread_id,
                     )
+                    return
+                outcome = self._consolidate_outcome(run)
 
-                system_alert = (
-                    f"Consolidation of conversation history is complete. "
-                    f"{len(serialized)} messages were processed and new facts extracted into memory."
-                )
                 if self._notification_service:
                     # $consolidate is synchronous — deliver back to the channel it was
                     # initiated from (both override args required), NOT the background
@@ -1588,13 +1606,13 @@ class ConversationHandler(ConversationHandlerPort):
                         kind=NotificationKind.INTERACTIVE,
                         user_id=context.user_id,
                         account_id=context.account_id,
-                        system_alert=system_alert,
+                        system_alert=f"Consolidation of conversation history: {outcome}",
                         channel_id_override=context.metadata.get("channel"),
                         platform_override=context.metadata.get("platform"),
                     )
                 else:
                     await response_channel.send_message(
-                        f"✅ Consolidation complete: {len(serialized)} messages processed.",
+                        f"✅ Consolidation: {outcome}",
                         thread_id=context.thread_id
                     )
             elif command.startswith("agent"):

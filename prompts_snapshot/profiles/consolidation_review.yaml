@@ -1,0 +1,11 @@
+agent_id: consolidation_review
+blueprint_id: consolidation_review_v1
+source_file: prompts_snapshot/profiles/consolidation_review.yaml
+tokens:
+  CONSOLIDATION_LIFECYCLE:
+    non_overridable: true
+    order: 20
+  CONSOLIDATION_TAXONOMY:
+    non_overridable: true
+    order: 10
+uploaded_by: local_script

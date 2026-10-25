@@ -109,7 +109,7 @@ Proactive setting from chat is a deferred feature.
 
 `UserBotConfig` gains a new field:
 ```python
-timezone: str = "UTC"   # IANA timezone name, e.g. "Europe/Kyiv", "America/New_York"
+timezone: str = "UTC"   # IANA timezone name, e.g. "Europe/Lisbon", "America/New_York"
 ```
 
 Cabinet UI: timezone selector (IANA tz list, searchable dropdown).

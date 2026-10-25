@@ -10,7 +10,7 @@ agents_registry {
     web_search_agent {
         intent: "search_web"
         when: "Anything current or public: weather, news, opening hours, places, routes, prices. Maps answers come with it automatically."
-        how: "One self-contained request with place and time: 'weather in Valencia tomorrow morning', not 'the weather'."
+        how: "One self-contained request with place and time: 'weather in Lisbon tomorrow morning', not 'the weather'."
     }
 
     alek {

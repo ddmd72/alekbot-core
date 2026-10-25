@@ -156,6 +156,8 @@ index` (full); `codegraph status` shows index health.
   empty key in that dict is chased into Secret Manager on each boot.
   The sandbox knobs are of this kind: `SANDBOX_RENDER`, `SANDBOX_RENDER_URL` (main service); `SANDBOX_URL`,
   `SANDBOX_CALLERS_RENDER`, `SANDBOX_RECYCLE`, `SANDBOX_WORK_ROOT`, `SANDBOX_OUTPUT_ROOT`, `SANDBOX_ENGINE_USER` (render service).
+  So is `FACT_LIFECYCLE_SWEEP_DRY_RUN` (main service): the fact janitor is log-only unless it is an explicit off value
+  (`0`, `false`, `no`, `off`); the deploy never sets it, S5 does, only on the owner's word.
 
 ## What and Why
 
@@ -282,7 +284,7 @@ stale `running` jobs.
   `deep_research_failed`, `deep_research_webhook_event`, `fire_due_reminders`,
   `execute_reminder`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
   `renew_all_task_subscriptions`, `start_daily_email_review`, `daily_email_review`,
-  `billing_daily_summary`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
+  `billing_daily_summary`, `fact_lifecycle_sweep`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
   `docs/07_deployment/SCHEDULERS.md`.
   `WorkerHandler` is the only dispatcher: `telegram_update` and a queued Slack event (no `task_type`; `event` +
   `session_id`) go to the adapters attached by the builder (`build_application_graph`);
@@ -523,12 +525,16 @@ ConsolidationAgent ("Life Chronicler") extracts facts/principles from raw messag
 Thresholds are global: threshold=70/batch=50 live (`domain/settings.py`; the `is_production` branch in `config/settings.py` sets 50/30);
 `UserBotConfig.consolidation_threshold` has no effect anywhere, `consolidation_batch_size` only sizes the `$consolidate`
 cut. Consolidation writes skip the number-aware 0.96 dedup (`skip_deduplication=True`): the model decides duplicates
-after searching; the 0.96 check runs only on the non-live v2 path. 3 vectors/fact + SCD2 (`update_fact` re-embeds on content change; `is_current` = latest of lineage, false only when superseded — `decisions/fact_s1_defects.md`); biographical cache updated for next conversation.
+after searching; the 0.96 check runs only on the non-live v2 path. 3 vectors/fact + versions: a content change of `update_fact` writes a new document (same `lineage_id`, `version`+1, the old one closed with `superseded_by`) in one preconditioned transaction, a lifecycle change stays in place; a stale id is followed forward (`decisions/fact_versions_one_writer.md`). One writer per account: every consolidation batch runs under a Firestore memory-write lease, a loser defers itself with a named task (`decisions/fact_versions_one_writer.md`, memory map §3); biographical cache updated for next conversation.
 **Serialization:** model parts use `p.text` (summary), NOT `p.full_text` (verbose + web_search_context);
 user parts `p.consolidation_text or p.text` (`consolidation_text` is legacy, see below).
 **Loop alerts:** a pass that hits the turn cap without a final report posts a 🚨 ops alert (`AlertSinkPort`);
 while `CONSOLIDATION_STATS_ALERTS` (`os.getenv`, default on, temporary since 2026-10-20) is on, every pass
 posts a 📊 stats line. See `decisions/sonnet55_adaptive_thinking_stall.md`.
+**Expiry and the janitor (Facts S3, built, ships with S4–S5):** the consolidator's writes carry an `expiry` (`date` / `horizon` /
+`none`) that code turns into `expires_at` in the owner's timezone (map §2.7); a daily zero-LLM janitor (`fact_lifecycle_sweep`)
+stales due facts behind a breaker and is **log-only until S5**; never a TTL policy on the facts collection (a test scans the
+tree). See `decisions/fact_expiry_and_janitor.md`, map §5.5.
 
 **Memory facts the owner confirms** — the bot never writes to memory itself. The consolidator reads
 every user message as the owner's own words, so the removed `save_to_memory` intent let bot-written
@@ -748,8 +754,8 @@ the indexer's kill switch `DRIVE_TRANSCRIBE_ENABLED` (a Cloud Build substitution
 (`transcribe` class, `TRANSCRIBE_USD_PER_MONTH` $20, no initial-build share): a whole file's estimate is **reserved** before its first window and settled at
 collection in the reservation's month; a file that does not fit is parked whole until next month; an optional `DRIVE_TRANSCRIBE_USD_CAP_DEV` can only lower the
 cap. Billing keeps the held `gemini-3.8-flash` price (≈ $0.16/audio hour, ≈ 125 h/month until 2027). No `prompt_content`/Logfire row per window (a batch is not a
-call). `open_file_from_drive` on a transcribed recording returns the transcript (`original: true` → a link). Rollout and levers: `docs/07_deployment/README.md` →
-"Transcripts of recordings (§27)"; the owner's map `docs/05_building_blocks/user_drive/README.md` §4.23; decision `decisions/drive_transcripts_t1.md`.
+call). `open_file_from_drive` on a transcribed recording returns the transcript (`original: true` → a link). Rollout: the rollout notes (ops); levers: `docs/07_deployment/README.md` →
+"Standing levers"; the owner's map `docs/05_building_blocks/user_drive/README.md` §4.23; decision `decisions/drive_transcripts_t1.md`.
 **Mirror folder T2 (RFC §27.9, Δ183–Δ244; built on `feat/drive-transcripts-t2`, not deployed).** The indexer writes each transcript as `<name>.md` into a bot-owned
 **`_Transcripts`** folder at the App Folder root (D49: the same name in every language; fixed `_README.md`, `Archive`, `Long paths`), reconciled by `DriveTranscriptMirror`
 (ports only) as the **last step of `_work_off`**, with its own op/read/stamp budgets and a 45 s reserved tail. State lives in two collections **no purge deletes**:
@@ -776,7 +782,7 @@ tiers About / Mentioned in (exact), By translation / Labelled (automatic), Relat
 z-floor `Z_RELATED` 2.5, uncalibrated); a coverage line names what was not searched or described; results in a
 nonce-tagged `<drive_document>` wrapper; reads only `drive_query` (a time span goes in the date fields). A sync state
 built by v1 (no `keys` in `applied_versions`) is gated (D30): no tick work, search answers "being rebuilt"; the rollout
-rebuilds every user (`docs/07_deployment/README.md` § Search v2). Smart's drive guidance (incl. the `tiers` line and
+rebuilds every user (rollout notes, ops). Smart's drive guidance (incl. the `tiers` line and
 "find is answered from the results; open a file only for its contents") is the system skill `drive-search`
 (`src/skills/smart/drive-search/SKILL.md`, D32), loaded before the first drive search; the `drive_specialist` block of
 `PROTOCOL_AGENT_SELECTION` keeps only when to search the drive, the pointer and the untrusted-text line. Not in
@@ -802,7 +808,7 @@ default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run
 C.../D..., Telegram chat_id) has its own session/history/consolidation stream (a DM is just channel D...).
 Adapters resolve session_id synchronously. Async delivery uses `origin_channel_id` from message context
 (propagated via DelegationEngine passthrough); system notifications go to primary channel. `GcpTaskQueue`
-uses `_DomainEncoder` for transparent Pydantic serialization in Cloud Task payloads.
+uses `_DomainEncoder` for transparent Pydantic, datetime and enum serialization in Cloud Task payloads.
 
 **Multilingual Support** — two independent axes: (1) **response language** via prompt tokens
 (`LANG_MIRROR` default = mirror input; `LANG_FIXED_{UK,EN,FR,ES}` = fixed); `LanguagePreferenceService`
@@ -855,8 +861,7 @@ src/
   agents/       — Multi-agent system (inherit BaseAgent). core/ — orchestrators; rest — specialists (roster + patterns in src/agents/CLAUDE.md).
   handlers/     — Entry points: ConversationHandler, WorkerHandler (dispatches /worker Cloud Tasks
                   by task_type), AgentWorkerHandler (task_type="agent_execution" — async agent runs
-                  + deep-research delivery). consolidation_handler.py is a shim over
-                  ConsolidationService (kept for composition-layer compatibility).
+                  + deep-research delivery).
   infrastructure/ — AgentCoordinator, queues, agent_config.py, agent_registry.py (AgentDescriptor + registry),
                   agent_manifest.py (Intent constants + all agent declarations — single source of truth),
                   delegation_engine.py (reusable multi-turn tool loop).
@@ -946,7 +951,7 @@ agents/   → Inherit BaseAgent. Receive dependencies via constructor.
   BaseAgent lifecycle hooks, `build_tool_turn`, LLM-content capture,
   CircuitBreaker, transcript integrity, AgentConfig → moved to
   [`src/agents/CLAUDE.md`](src/agents/CLAUDE.md) → Orchestration Patterns (loads when working in `agents/`).
-- **SCD2 versioning** — FactEntity uses valid_from/valid_to/is_current.
+- **SCD2 versioning** — a content change is a new `FactEntity` document linked by `lineage_id`, `version`, `replaces_fact_id` and `superseded_by` (`domain/fact_lifecycle.py`: forward resolution, in-place fields); `is_current` = latest of its lineage, `state` is the only visibility switch.
 - **Multi-tenant** — always pass account_id. Collections with env prefix.
 
 ## Adding a New Specialist Agent
@@ -1045,12 +1050,12 @@ Detailed docs in `docs/` (arc42). Read as needed:
 - Architecture: `docs/04_solution_strategy/target_architecture/TARGET_ARCHITECTURE.md`
 - Structure: `docs/04_solution_strategy/current_implementation/STRUCTURE.md`
 - RFCs: `docs/10_rfcs/`
-- Roadmap: `docs/12_risks/IMPLEMENTATION_ROADMAP.md`
+- Risks and technical debt: `docs/12_risks/IMPLEMENTATION_ROADMAP.md`
 
 **Where to write records:** multi-step refactors with a migration plan → `docs/10_rfcs/`;
 single backward-looking decision records (50–150 lines: decision + alternatives + why) →
-`docs/04_solution_strategy/decisions/`. Do NOT write to `docs/09_decisions/` (arc42 §9 canonical
-home) until its planned cleanup — only ADR-001 lives there now.
+`docs/04_solution_strategy/decisions/`. Do NOT add records to `docs/09_decisions/` (arc42 §9): it
+keeps only the older ADR-004–ADR-008, whose decisions still shape the code.
 
 ## Language
 
@@ -1074,6 +1079,14 @@ If a Makefile target, script, or config needs a URL or ID — define it as a var
 loaded from `.env`, never hardcoded in the tracked file itself.
 
 When in doubt: if it identifies or grants access to infrastructure, it goes in `.env`.
+
+## ⛔ PERSONAL DATA RULE
+
+**The repo is public. Every example in docs, tests, fixtures, prompts, comments and commit messages is invented**,
+taken from the invented cast in [`tests/CLAUDE.md`](tests/CLAUDE.md) § Invented cast. Never take an example from the
+owner's memory, `get_user_context`, journals or chat history: no real names, relatives, health values, home, legal
+status, documents or contact data. A gate checks every commit and PR (`scripts/pii_gate/`, `.githooks/`,
+`.github/workflows/pii_gate.yml`); its private denylist and profile never enter this repo. CI runs the denylist only and prints counts; the model check is local-only.
 
 ---
 

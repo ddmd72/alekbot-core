@@ -3,7 +3,7 @@
 All Cloud Scheduler jobs for Alek-Core. Managed via `cloudbuild-dev.yaml` using the `describe && update || create` pattern (idempotent on every deploy).
 
 Region: `us-central1`. Attempt deadline: `60s` for most `/worker` jobs; `start_daily_email_review` and
-`start_drive_sync` use `180s` and `repair_email_embeddings` uses `300s` (`cloudbuild-dev.yaml`).
+`start_drive_sync` use `180s`, `fact_lifecycle_sweep` uses `180s` and `repair_email_embeddings` uses `300s` (`cloudbuild-dev.yaml`).
 
 ## Two deadlines, do not confuse them
 
@@ -246,6 +246,35 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 
 ---
 
+### Fact Lifecycle Sweep (the fact janitor)
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `alek-bot-dev-fact-lifecycle-sweep` |
+| **Schedule** | `30 9 * * *` (daily at 09:30 Europe/Madrid, DST-aware; after the 09:00 billing summary) |
+| **HTTP** | `POST /worker` |
+| **Payload** | `{"task_type": "fact_lifecycle_sweep"}` |
+| **Attempt deadline** | `180s`; **no retry on purpose** (the job sets no `--max-retry-attempts`) |
+| **Purpose** | The fact janitor (`docs/10_rfcs/FACT_LIFECYCLE_RFC.md` D4, owner's map `docs/05_building_blocks/memory/README.md` §5.5): moves every current fact whose `expires_at` has passed to `stale`, unless the account's breaker is tripped, at most `50 − backlog` per account per run (oldest expiry first, the rest `deferred`). Zero LLM calls. Rebuilds the baseline cache of every account it changed. Stores one snapshot per account per day and posts one 🧹 ops line a day. The line's backlog age counts from `stale_since`, so the two legacy stale facts that step 6a of the S3 rollout stamps show `oldest 0d` on the stamp day and count up from there, although they have been stale for months by `last_updated`. |
+| **Handler** | `WorkerHandler._handle_fact_lifecycle_sweep()` → `FactLifecycleSweepService.sweep()`; the totals are the 200 body (`accounts`, `due`, `staled`, `would_stale`, `deferred`, `conflicts`, `no_decision`, `breaker_tripped`, `dry_run`) |
+| **Log-only** | The deploy creates the job in log-only mode: unless the main service has `FACT_LIFECYCLE_SWEEP_DRY_RUN` set to an explicit off value (`0`, `false`, `no`, `off`) the run writes nothing to facts or the cache and counts `would_stale` instead. Nothing in the deploy sets it; S5 does, only on the owner's word. |
+| **Index** | needs the composite `(state ASC, expires_at ASC)` on the facts collection (`config/firestore.indexes.json`), `READY` before the code ships; without it the due query fails and the run answers 500. |
+| **Env** | active on the single live service |
+
+Failure handling: a failure other than a write conflict stops the run, is logged with its type and the stage reached, posts one
+"🚨 Fact lifecycle run failed" to the ops sink (every ops post is capped at 10 s) and answers 500. Scheduler does not retry it:
+a retry after the 180 s deadline could overlap a run still going, and each run computes its headroom from the backlog before
+it, so two overlapping runs can stale up to twice the cap. For the same reason **do not trigger the job by hand while the 09:30
+run is going** (the manual triggers in the root `CLAUDE.md` are for other times of day); a hand run at another time is safe: the
+last run of the day replaces the day's snapshot, and the 🧹 line is posted once per **UTC day**, so a hand run before 09:30
+Madrid on the same UTC day takes the day's line and the scheduled run then posts none (its numbers are in the snapshot). Unlike
+the fan-out jobs under "Two deadlines", the sweep does its work inside the Scheduler's own request: a run past 180 s shows as a
+failed attempt in Scheduler while it goes on, which is the overlap the no-retry rule guards against. The next day's run
+catches up after a failure. The job takes no lease and is not a Cloud Task, so there is no task-claim record. The collections it writes
+(`{prefix}fact_lifecycle_daily`, `{prefix}fact_lifecycle_lines`) carry no field named `expires_at` and **no TTL policy**.
+
+---
+
 ### Email Embedding Repair
 
 | Field | Value |
@@ -275,6 +304,14 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 | **Fan-out** | One distinct query (`FirestoreConsolidationQueue.get_stuck_batch_user_ids`, `user_id` projection) → one `consolidation` Cloud Task per stuck user. No-op when the queue is empty. |
 | **Env** | dev + prod |
 
+**The `consolidation` task may defer itself (Facts S2).** Every batch runs under the account's memory-write lease. A task
+that finds the lease taken, while the user has an open batch (`pending`, `retry_pending` or `processing`), enqueues one
+more `consolidation` task with a 120 s delay and a 1800 s deadline through `enqueue_worker_task`, named from the key
+`consolidation-defer:<user>:<120 s bucket>` (Cloud Tasks name `consolidation-<sha256(key)[:32]>`), and answers 200
+without enqueueing the next batch itself. Tasks that lose in the same bucket collapse into one task. The name is never
+fixed, because Cloud Tasks keeps a name for about an hour. The sweep takes no lease: it revives `failed` batches and
+zombies older than 1800 s (under the lease the zombie threshold is 60 s). A zombie reset counts the lost run on both paths (`attempts` + 1, `failed` at 3, then the sweep's bounded revivals), so a batch that kills its worker ends `failed` instead of looping. See memory map §3 step 3.
+
 ---
 
 ### Companion Extraction (RFC `docs/10_rfcs/COMPANION_AGENTS_RFC.md` §6)
@@ -302,4 +339,4 @@ an hour. It can also be triggered manually (`POST /worker {"task_type": "sweep_c
 
 ---
 
-**Last Updated:** 2026-10-11
+**Last Updated:** 2026-10-23

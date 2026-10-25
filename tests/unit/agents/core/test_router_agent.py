@@ -268,7 +268,7 @@ class TestRouterAgentComplexClassification:
         "What's my car model?",
         "Скажи моє ім'я",
         # External search queries  
-        "Яка погода в Валенсії?",
+        "Яка погода в Барселоні?",
         "Покажи новости про Ukraine",
         "Find flights to Barcelona",
         "Який курс долара?",
@@ -410,7 +410,7 @@ class TestRouterAgentRouting:
     @pytest.mark.asyncio
     async def test_routes_to_smart_agent(self, router_with_coordinator, mock_coordinator):
         """Rule-based path: external queries go to quick_agent (LLM routing needed for smart)."""
-        message = create_query_message("Яка погода в Київі?")
+        message = create_query_message("Яка погода у Львові?")
         
         await router_with_coordinator.execute(message)
         
@@ -660,7 +660,7 @@ class TestRouterAgentIntegration:
     @pytest.mark.asyncio
     async def test_full_classification_flow_complex_external(self, router_agent):
         """Test full flow for external search query."""
-        message = create_query_message("Яка погода завтра в Києві?")
+        message = create_query_message("Яка погода завтра у Львові?")
 
         response = await router_agent.execute(message)
 

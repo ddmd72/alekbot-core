@@ -79,7 +79,7 @@ async def test_single_fact_saved(service, mock_repo):
 
 @pytest.mark.asyncio
 async def test_type_mapping_state(service, mock_repo):
-    facts = [{"text": "User weighs 75kg", "tags": [], "type": "state"}]
+    facts = [{"text": "User weighs 80kg", "tags": [], "type": "state"}]
 
     await service.add_facts_batch("acc-1", "usr-1", facts)
 
@@ -112,7 +112,7 @@ async def test_type_mapping_unknown_defaults_to_event(service, mock_repo):
 
 @pytest.mark.asyncio
 async def test_type_mapping_alert(service, mock_repo):
-    facts = [{"text": "User has peanut allergy", "tags": [], "type": "alert"}]
+    facts = [{"text": "User has a pollen allergy", "tags": [], "type": "alert"}]
 
     await service.add_facts_batch("acc-1", "usr-1", facts)
 
@@ -123,7 +123,7 @@ async def test_type_mapping_alert(service, mock_repo):
 
 @pytest.mark.asyncio
 async def test_type_mapping_system(service, mock_repo):
-    facts = [{"text": "Always respond in Ukrainian", "tags": [], "type": "system"}]
+    facts = [{"text": "Always respond in French", "tags": [], "type": "system"}]
 
     await service.add_facts_batch("acc-1", "usr-1", facts)
 

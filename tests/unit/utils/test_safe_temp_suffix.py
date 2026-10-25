@@ -1,7 +1,7 @@
 """Unit tests for `safe_temp_suffix` (src/utils/file_conversion.py).
 
 Regression origin: 2026-07-31, a page saved from a browser arrived on Slack as
-`view-source_https___www.correosaduanas.es_...ide.html` (255 chars). Both response channels
+`view-source_https___shop.example.com_...ide.html` (255 chars). Both response channels
 fed that straight into `tempfile.NamedTemporaryFile(suffix=f"_{filename}")`, which produced a
 267-byte name and `[Errno 36] File name too long` — NAME_MAX is 255 BYTES on ext4/overlayfs.
 The download returned None and the attachment was silently dropped.
@@ -26,10 +26,10 @@ class TestFitsWithinNameMax:
 
     def test_the_incident_filename_now_fits(self):
         filename = (
-            "view-source_https___www.correosaduanas.es_webauth_correosAduanas_private_"
-            "tramitacionEnvioListado_tipoTramitacion=TRAMITACION_CORREOS&numEnvio=LT000000000GB"
-            "&idEnvio=00000000&numEnvioDom=LT000000000GB&descEstadoTram=PENDIENTE+INSPECCION"
-            "+PARADUANERA&ide.html"
+            "view-source_https___shop.example.com_webshop_customerAccount_orders_private_"
+            "orderStatusList_statusType=ORDER_TRACKING_STANDARD&orderNo=AB000000000XY"
+            "&orderId=0000000000&parcelNo=AB000000000XY&statusText=AWAITING+WAREHOUSE"
+            "+INSPECTION+PENDING+REVIEW&ide.html"
         )
         # 255 chars on its own — it is tempfile's own 12-byte prefix that tips it over, which
         # is why the naive `suffix=f"_{filename}"` produced a 267-byte name.

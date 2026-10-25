@@ -327,7 +327,8 @@ async def test_stream_and_get_all_accept_a_transaction(db):
     tx = db.transaction()
     assert _ids([s async for s in col.where("g", "==", 1).stream(transaction=tx)]) == ["a", "b"]
     snaps = [s async for s in db.get_all([col.document("c"), col.document("nope")], field_paths=["g"], transaction=tx)]
-    assert [(s.id, s.exists) for s in snaps] == [("c", True), ("nope", False)]
+    # one snapshot per ref, a missing one reported; real Firestore promises no order, so neither does the fake (Facts S2)
+    assert sorted((s.id, s.exists) for s in snaps) == [("c", True), ("nope", False)]
     assert _ids(await col.where("g", "==", 2).get(transaction=tx)) == ["c"]
 
 

@@ -31,7 +31,7 @@ only extended with new type handlers alongside it.
 | U2 | "Create a plan and export as Word" | Downloadable .docx file |
 | U3 | "Give me this data as Excel" | Downloadable .xlsx spreadsheet |
 | U4 | "Create an HTML report" | Downloadable .html file |
-| U5 | "What's the weather in Kyiv?" | Text response (no image — weather_image removed, see §6) |
+| U5 | "What's the weather in Lisbon?" | Text response (no image — weather_image removed, see §6) |
 | U6 | "What did we decide about X?" | *Future: RAG search in file memory (M4+)* |
 
 U1–U4 delivered in V1. U5 text-only. U6 future branch.

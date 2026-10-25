@@ -406,7 +406,7 @@ shielded, and the transport rules (§4.2) are what keep their timeouts rare.
   - **Owner's need:** (1) a text file with the content of a meeting from an audio or video recording — the priority;
     (2) later, real video understanding (what is on screen: slides, shared documents).
   - **Sources:** Nextcloud, Zoom, phone recordings. Step 3 starts with files the owner can download and drop into
-    the drive; length and language per meeting are not known in advance (multilingual audio is normal here).
+    the drive; length and language per meeting are not known in advance (multilingual audio must be expected).
   - **Why today's path cannot do it** (checked in code): chat attachments cap at 5 MB (`MAX_FILE_BYTES`) and
     converted text is truncated at 30k characters (`MAX_CONVERTED_CHARS`, `src/utils/file_conversion.py`);
     `video/*` has no conversion path (only a fallback prompt); transcription runs inline in the chat turn; OpenAI
@@ -480,7 +480,7 @@ instead of the browser + localhost redirect (the spike ran from a remote session
 cannot reach); the registration has "Allow public client flows" enabled for this. Checks A1–A8 are unchanged.
 
 - **App Folder:** created as `Alek-bot` under the account's apps folder. On this account that folder is
-  localised and had been moved by the owner (`/drive/root:/ARCHIVE/Приложения/Alek-bot`; moved back to the
+  localised and had been moved by the owner (`/drive/root:/<folder>/<localised Apps>/Alek-bot`; moved back to the
   drive root after the spike). The adapter must take the root's absolute path from `special/approot`, never
   assume `/Apps/…`.
 - **A1 `parentReference.path`:** present on GET item, `/children`, and the PATCH / PUT / POST responses. Search

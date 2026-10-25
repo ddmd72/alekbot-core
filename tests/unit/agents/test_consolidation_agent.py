@@ -5,6 +5,7 @@ Mock boundary: LLMPort, FactRepository, FactWritePort, FactManagementPort, Promp
 """
 
 import json
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,6 +25,8 @@ from src.ports.llm_port import (
     ToolCall,
 )
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
+from tests.support.fact_write import ctx
+from tests.support.typed_writes import typed_port_for
 
 _USER_ID = "user-test-01"
 _ACCOUNT_ID = "account-test-01"
@@ -67,6 +70,7 @@ def _make_agent(mock_llm=None, fact_management=None, prompt_builder=None, indexe
         embedding_service=embedding,
         fact_write_service=fact_write,
         fact_management_port=fact_management,
+        fact_updates=typed_port_for(fact_management),  # reviewer edit (S4 T6b): the typed port is required
         prompt_builder=pb,
         indexed_email_repo=indexed_email_repo,
     )
@@ -104,54 +108,67 @@ class TestTrackingFactManagement:
         tracker, real = self._make_tracking()
         real.search_existing_facts = AsyncMock(return_value=[{"fact_id": "f1"}])
         result = await tracker.search_existing_facts(
-            keywords=["kw"], primary_query="q", alternative_query="alt", limit=5
+            keywords=["kw"], primary_query="q", alternative_query="alt", limit=5, timezone="UTC"
         )
         assert result == [{"fact_id": "f1"}]
         real.search_existing_facts.assert_awaited_once_with(
-            keywords=["kw"], primary_query="q", alternative_query="alt", limit=5
+            keywords=["kw"], primary_query="q", alternative_query="alt", limit=5, timezone="UTC"
         )
         assert tracker.changed == []
 
     async def test_create_fact_with_fact_id(self):
         tracker, real = self._make_tracking()
         real.create_fact = AsyncMock(return_value={"fact_id": "new-id", "status": "created"})
-        result = await tracker.create_fact(content="some content", metadata={})
+        result = await tracker.create_fact(content="some content", metadata={}, context=ctx())
         assert result["fact_id"] == "new-id"
         assert tracker.changed == [("new-id", "some content")]
 
     async def test_create_fact_without_fact_id(self):
         tracker, real = self._make_tracking()
         real.create_fact = AsyncMock(return_value={"status": "error"})
-        await tracker.create_fact(content="content", metadata={})
+        await tracker.create_fact(content="content", metadata={}, context=ctx())
         assert tracker.changed == []
 
     async def test_update_fact_with_content(self):
+        # Reviewer edit (facts S2 T5, RFC D8 "Tracker"): a content update writes a new version, so the tracker
+        # records the id the result reports (the document written), not the id the model sent.
         tracker, real = self._make_tracking()
-        real.update_fact = AsyncMock(return_value={"status": "updated"})
-        await tracker.update_fact(fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1")
+        real.update_fact = AsyncMock(return_value={"fact_id": "fid-2", "status": "updated", "version": 2})
+        context = ctx()
+        await tracker.update_fact(
+            fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1", context=context)
         real.update_fact.assert_awaited_once_with(
-            fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1"
+            fact_id="fid-1", updates={"content": "updated text"}, account_id="acc-1", context=context
         )
-        assert tracker.changed == [("fid-1", "updated text")]
+        assert tracker.changed == [("fid-2", "updated text")] and tracker.wrote is True
 
     async def test_update_fact_without_content(self):
         tracker, real = self._make_tracking()
         real.update_fact = AsyncMock(return_value={"status": "updated"})
-        await tracker.update_fact(fact_id="fid-1", updates={"state": "SUPERSEDED"}, account_id="acc-1")
+        await tracker.update_fact(
+            fact_id="fid-1", updates={"state": "SUPERSEDED"}, account_id="acc-1", context=ctx())
         assert tracker.changed == []
 
     async def test_merge_facts_with_new_fact_id(self):
+        # Reviewer edit (facts S2 T5, RFC D8 "Tracker": only on success): the merge counts when the result says
+        # "merged"; a result that carries an id but no success status records nothing.
         tracker, real = self._make_tracking()
-        real.merge_facts = AsyncMock(return_value={"new_fact_id": "merged-id"})
+        real.merge_facts = AsyncMock(return_value={"new_fact_id": "merged-id", "status": "merged"})
         await tracker.merge_facts(
-            fact_ids=["a", "b"], merged_content="merged", metadata={}
+            fact_ids=["a", "b"], merged_content="merged", metadata={}, context=ctx()
         )
-        assert tracker.changed == [("merged-id", "merged")]
+        assert tracker.changed == [("merged-id", "merged")] and tracker.wrote is True
+
+        unconfirmed, real2 = self._make_tracking()
+        real2.merge_facts = AsyncMock(return_value={"new_fact_id": "merged-id"})
+        await unconfirmed.merge_facts(
+            fact_ids=["a", "b"], merged_content="merged", metadata={}, context=ctx())
+        assert unconfirmed.changed == [] and unconfirmed.wrote is False
 
     async def test_merge_facts_without_new_fact_id(self):
         tracker, real = self._make_tracking()
         real.merge_facts = AsyncMock(return_value={"status": "error"})
-        await tracker.merge_facts(fact_ids=["a"], merged_content="m", metadata={})
+        await tracker.merge_facts(fact_ids=["a"], merged_content="m", metadata={}, context=ctx())
         assert tracker.changed == []
 
 
@@ -392,6 +409,7 @@ class TestRunConsolidationLoop:
             system_prompt="SYS",
             user_id=_USER_ID,
             account_id=_ACCOUNT_ID,
+            write_context=agent._write_context("stage1"),
         )
         assert result == ops
 
@@ -415,6 +433,7 @@ class TestRunConsolidationLoop:
             system_prompt="SYS",
             user_id=_USER_ID,
             account_id=_ACCOUNT_ID,
+            write_context=agent._write_context("stage1"),
         )
         assert result == [{"action": "CREATE"}]
         assert call_count == 2
@@ -435,6 +454,7 @@ class TestRunConsolidationLoop:
                 system_prompt="SYS",
                 user_id=_USER_ID,
                 account_id=_ACCOUNT_ID,
+                write_context=agent._write_context("stage1"),
             )
         finally:
             agent.__class__.MAX_CONSOLIDATION_TURNS = original_max
@@ -460,7 +480,8 @@ class TestExecuteFactManagementTools:
         tc = ToolCall(name="search_existing_facts", args={
             "keywords": ["kw"], "primary_query": "pq", "alternative_query": "aq", "limit": 5
         })
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         assert len(results) == 1
         assert results[0].name == "search_existing_facts"
@@ -474,7 +495,8 @@ class TestExecuteFactManagementTools:
             "content": "new fact text",
             "fact_attributes": {"domain": "professional"}
         })
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         assert results[0].name == "create_fact"
         data = json.loads(results[0].result_str)
@@ -492,11 +514,12 @@ class TestExecuteFactManagementTools:
             "fact_id": "existing-f",
             "updates": {"content": "revised"}
         })
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        context = agent._write_context("stage1")
+        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID, context)
 
         assert results[0].name == "update_fact"
         fm.update_fact.assert_awaited_once_with(
-            fact_id="existing-f", updates={"content": "revised"}, account_id=_ACCOUNT_ID
+            fact_id="existing-f", updates={"content": "revised"}, account_id=_ACCOUNT_ID, context=context
         )
 
     async def test_merge_facts(self):
@@ -508,7 +531,8 @@ class TestExecuteFactManagementTools:
             "merged_content": "merged text",
             "fact_attributes": {"domain": "personal"}
         })
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         assert results[0].name == "merge_facts"
         called_metadata = fm.merge_facts.call_args.kwargs["metadata"]
@@ -518,7 +542,8 @@ class TestExecuteFactManagementTools:
         agent, _ = self._make_agent_with_fm()
 
         tc = ToolCall(name="count_words", args={"text": "one two three"})
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         data = json.loads(results[0].result_str)
         assert data["word_count"] == 3
@@ -529,7 +554,8 @@ class TestExecuteFactManagementTools:
         agent, _ = self._make_agent_with_fm()
 
         tc = ToolCall(name="nonexistent_tool", args={})
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         data = json.loads(results[0].result_str)
         assert "error" in data
@@ -540,7 +566,8 @@ class TestExecuteFactManagementTools:
         fm.create_fact = AsyncMock(side_effect=RuntimeError("db down"))
 
         tc = ToolCall(name="create_fact", args={"content": "x", "fact_attributes": {}})
-        results = await agent._execute_fact_management_tools([tc], _USER_ID, _ACCOUNT_ID)
+        results = await agent._execute_fact_management_tools(
+            [tc], _USER_ID, _ACCOUNT_ID, agent._write_context("stage1"))
 
         data = json.loads(results[0].result_str)
         assert "error" in data
@@ -606,6 +633,10 @@ class TestBuildConversationText:
 # ==============================================================================
 
 class TestPrepareStructuredConversation:
+    # Reviewer edit (facts S3, T6; plan §3.9, §6 I; owner's widened S3-D6): `_prepare_structured_conversation` takes the
+    # owner's zone, and a line's time is Smart's own stamp (`local_stamp`) in that zone instead of "Mar 15, 12:00 UTC".
+    # Every call gains the zone; the two time tests pin the new rendering exactly; the role, parts and unreadable-time
+    # assertions are unchanged.
 
     def _agent(self):
         agent, _, _, _ = _make_agent()
@@ -617,7 +648,7 @@ class TestPrepareStructuredConversation:
             {"role": "user", "text": "hello"},
             {"role": "assistant", "text": "world"},
         ]
-        result = agent._prepare_structured_conversation(msgs)
+        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
         assert result[0]["role"] == "user"
         assert result[1]["role"] == "assistant"
         assert result[0]["content"] == "hello"
@@ -625,25 +656,26 @@ class TestPrepareStructuredConversation:
     def test_parts_text_extraction(self):
         agent = self._agent()
         msgs = [{"role": "user", "parts": [{"text": "a"}, {"text": "b"}]}]
-        result = agent._prepare_structured_conversation(msgs)
+        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
         assert result[0]["content"] == "a b"
 
     def test_numeric_timestamp(self):
         agent = self._agent()
         msgs = [{"role": "user", "text": "hi", "timestamp": 1700000000.0}]
-        result = agent._prepare_structured_conversation(msgs)
+        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
         assert result[0]["timestamp"] != ""
+        assert result[0]["timestamp"] == "2023-11-14 Tue 23:13 CET"     # 22:13:20 UTC, in the owner's zone
 
     def test_iso_timestamp(self):
         agent = self._agent()
         msgs = [{"role": "user", "text": "hi", "created_at": "2026-03-15T12:00:00Z"}]
-        result = agent._prepare_structured_conversation(msgs)
-        assert "Mar 15" in result[0]["timestamp"]
+        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
+        assert result[0]["timestamp"] == "2026-03-15 Sun 13:00 CET"     # was: "Mar 15" in "Mar 15, 12:00 UTC"
 
     def test_bad_timestamp_gives_empty_string(self):
         agent = self._agent()
         msgs = [{"role": "user", "text": "hi", "timestamp": "INVALID"}]
-        result = agent._prepare_structured_conversation(msgs)
+        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
         assert result[0]["timestamp"] == ""
 
 
@@ -852,7 +884,7 @@ class TestHandleConsolidateClusterDirect:
         fm = AsyncMock(spec=FactManagementPort)
         agent, repo, fact_write, pb = _make_agent(fact_management=fm)
 
-        cluster = [{"fact_id": "f1", "content": "user lives in Spain", "similarity": 0.9}]
+        cluster = [{"fact_id": "f1", "content": "user lives in Springfield", "similarity": 0.9}]
         ops = [{"action": "UPDATE", "fact_id": "f1", "reason": "enriched"}]
         agent._run_consolidation_loop = AsyncMock(return_value=ops)
 
@@ -952,8 +984,8 @@ class TestHandleConsolidateEmailDirect:
         email.text = "user subscribed to newsletter"
         email.category = "NEWSLETTER"
         email.tags = ["newsletter"]
-        email.email_date = MagicMock()
-        email.email_date.strftime = MagicMock(return_value="2026-01-01")
+        # Reviewer edit (Facts S4 T6c, L4): `as_utc` takes a datetime only; IndexedEmail.email_date is one.
+        email.email_date = datetime(2026, 1, 1)  # naive = UTC, as email dates are stored
         email.from_address = "news@example.com"
         email.subject = "Weekly digest"
         email.attachments = []
@@ -1064,6 +1096,10 @@ class TestHandleConsolidateFullDirect:
 
 class TestFormatEmailCandidates:
     """_format_email_candidates static method."""
+    # Reviewer edit (facts S3, T6 re-review; plan §3.9 one calendar, review F1 as arbitrated): the candidate's `date` is
+    # the email's moment in the owner's zone with its offset, so the formatter takes the zone and reads a real datetime
+    # (a naive stored date is UTC). The stubbed `strftime` dates become real naive-UTC datetimes; the date form is
+    # pinned exactly in test_basic_formatting; every other assertion is unchanged.
 
     def test_basic_formatting(self):
         email = MagicMock()
@@ -1071,18 +1107,18 @@ class TestFormatEmailCandidates:
         email.text = "user bought a laptop"
         email.category = "PURCHASE"
         email.tags = ["purchase", "tech"]
-        email.email_date = MagicMock()
-        email.email_date.strftime = MagicMock(return_value="2026-03-01")
+        email.email_date = datetime(2026, 3, 1, 9, 0)                  # naive = UTC
         email.from_address = "shop@store.com"
         email.subject = "Your order #123"
         email.attachments = []
         email.metadata = {}
 
-        result = ConsolidationAgent._format_email_candidates([email])
+        result = ConsolidationAgent._format_email_candidates([email], "Europe/Paris")
 
         assert "em-abc" in result
         assert "user bought a laptop" in result
         assert "2026-03-01" in result
+        assert '"date": "2026-03-01T10:00:00+01:00"' in result          # 09:00 UTC in the owner's zone, with its offset
         assert "shop@store.com" in result
         assert "Your order #123" in result
         assert result.startswith("1. ")
@@ -1093,14 +1129,13 @@ class TestFormatEmailCandidates:
         email.text = "invoice attached"
         email.category = "INVOICE"
         email.tags = []
-        email.email_date = MagicMock()
-        email.email_date.strftime = MagicMock(return_value="2026-01-15")
+        email.email_date = datetime(2026, 1, 15, 9, 0)
         email.from_address = "billing@acme.com"
         email.subject = "Invoice Q1"
         email.attachments = ["invoice.pdf"]
         email.metadata = {}
 
-        result = ConsolidationAgent._format_email_candidates([email])
+        result = ConsolidationAgent._format_email_candidates([email], "Europe/Paris")
         assert "invoice.pdf" in result
 
     def test_multiple_emails_numbered(self):
@@ -1111,15 +1146,14 @@ class TestFormatEmailCandidates:
             e.text = f"fact {i}"
             e.category = "INFO"
             e.tags = []
-            e.email_date = MagicMock()
-            e.email_date.strftime = MagicMock(return_value="2026-01-01")
+            e.email_date = datetime(2026, 1, 1, 9, 0)
             e.from_address = "x@y.com"
             e.subject = f"Subject {i}"
             e.attachments = []
             e.metadata = {}
             emails.append(e)
 
-        result = ConsolidationAgent._format_email_candidates(emails)
+        result = ConsolidationAgent._format_email_candidates(emails, "Europe/Paris")
         assert "1. " in result
         assert "2. " in result
         assert "3. " in result
@@ -1141,7 +1175,7 @@ class TestExecuteDeliberateProcessV3:
         ops1 = [{"action": "CREATE", "fact_id": "new-1"}]
         agent._run_consolidation_loop = AsyncMock(return_value=ops1)
 
-        messages = [{"role": "user", "text": "I moved to Spain"}]
+        messages = [{"role": "user", "text": "I moved to Springfield"}]
         with RequestContext(user_id=_USER_ID, account_id=_ACCOUNT_ID):
             result = await agent._execute_deliberate_process_v3(
                 messages, _USER_ID, _ACCOUNT_ID, []
@@ -1272,6 +1306,7 @@ class TestRunConsolidationLoopRawContent:
                 system_prompt="SYSTEM",
                 user_id=_USER_ID,
                 account_id=_ACCOUNT_ID,
+                write_context=agent._write_context("stage1"),
             )
 
         assert ops == []
@@ -1298,7 +1333,7 @@ class TestBuildReviewCluster:
         fm = AsyncMock(spec=FactManagementPort)
         agent, repo, fact_write, pb = _make_agent(fact_management=fm)
 
-        result = await agent._build_review_cluster([], _ACCOUNT_ID)
+        result = await agent._build_review_cluster([], _ACCOUNT_ID, timezone="UTC")
         assert result == []
 
     async def test_changed_with_empty_content_returns_empty_list(self):
@@ -1307,7 +1342,7 @@ class TestBuildReviewCluster:
 
         # All contents are empty strings / None
         changed = [("f1", ""), ("f2", None)]
-        result = await agent._build_review_cluster(changed, _ACCOUNT_ID)
+        result = await agent._build_review_cluster(changed, _ACCOUNT_ID, timezone="UTC")
         assert result == []
 
     async def test_basic_search_and_dedup(self):
@@ -1315,13 +1350,13 @@ class TestBuildReviewCluster:
         agent, repo, fact_write, pb = _make_agent(fact_management=fm)
 
         facts_result = [
-            {"fact_id": "f1", "content": "user lives in Spain", "similarity": 0.9},
+            {"fact_id": "f1", "content": "user lives in Springfield", "similarity": 0.9},
             {"fact_id": "f2", "content": "user is a developer", "similarity": 0.7},
         ]
         fm.search_existing_facts = AsyncMock(return_value=facts_result)
 
-        changed = [("new-1", "user moved to Spain from Ukraine")]
-        result = await agent._build_review_cluster(changed, _ACCOUNT_ID)
+        changed = [("new-1", "user moved to Springfield from Barcelona")]
+        result = await agent._build_review_cluster(changed, _ACCOUNT_ID, timezone="UTC")
 
         assert len(result) == 2
         fm.search_existing_facts.assert_called_once()
@@ -1336,7 +1371,7 @@ class TestBuildReviewCluster:
         fm.search_existing_facts = AsyncMock(side_effect=[search1, search2])
 
         changed = [("new-1", "first change content here"), ("new-2", "second change content here")]
-        result = await agent._build_review_cluster(changed, _ACCOUNT_ID)
+        result = await agent._build_review_cluster(changed, _ACCOUNT_ID, timezone="UTC")
 
         # f1 should appear once, with the higher similarity
         assert len(result) == 1
@@ -1363,6 +1398,7 @@ class TestExecuteFactManagementToolsParallel:
                 tool_calls=[tc1, tc2],
                 user_id=_USER_ID,
                 account_id=_ACCOUNT_ID,
+                write_context=agent._write_context("stage1"),
             )
 
         assert len(responses) == 2
@@ -1406,12 +1442,12 @@ class TestLegacyMethods:
         repo.get_biographical_context_cached = AsyncMock(return_value=[
             {"text": "I am a developer", "tags": ["anchor", "profession"]},
             {"text": "I like coffee", "tags": ["preference"]},
-            {"text": "I live in Spain", "tags": ["anchor", "location"]},
+            {"text": "I live in Springfield", "tags": ["anchor", "location"]},
         ])
 
         result = await agent._get_existing_anchors_list(_ACCOUNT_ID)
 
-        assert result == ["I am a developer", "I live in Spain"]
+        assert result == ["I am a developer", "I live in Springfield"]
         repo.get_biographical_context_cached.assert_called_once_with(owner_id=_ACCOUNT_ID, limit=100)
 
     async def test_get_existing_anchors_list_empty_cache(self):
@@ -1481,6 +1517,8 @@ class TestGetAlternativeAgents:
 
 class TestFormatEmailCandidatesMetadata:
     """_format_email_candidates includes metadata when truthy."""
+    # Reviewer edit (facts S3, T6 re-review, review F1): the formatter takes the owner's zone and a real datetime; the
+    # metadata assertions are unchanged.
 
     def test_metadata_included_when_present(self):
         email = MagicMock()
@@ -1488,14 +1526,13 @@ class TestFormatEmailCandidatesMetadata:
         email.text = "subscription renewed"
         email.category = "SUBSCRIPTION"
         email.tags = ["subscription"]
-        email.email_date = MagicMock()
-        email.email_date.strftime = MagicMock(return_value="2026-03-15")
+        email.email_date = datetime(2026, 3, 15, 9, 0)
         email.from_address = "billing@service.com"
         email.subject = "Renewal notice"
         email.attachments = []
         email.metadata = {"amount": 9.99, "currency": "USD"}
 
-        result = ConsolidationAgent._format_email_candidates([email])
+        result = ConsolidationAgent._format_email_candidates([email], "Europe/Paris")
 
         assert "amount" in result
         assert "9.99" in result
@@ -1519,7 +1556,7 @@ class TestBuildReviewClusterNoFactId:
         ])
 
         changed = [("new-1", "some long enough content here")]
-        result = await agent._build_review_cluster(changed, _ACCOUNT_ID)
+        result = await agent._build_review_cluster(changed, _ACCOUNT_ID, timezone="UTC")
 
         assert len(result) == 1
         assert result[0]["fact_id"] == "f1"
@@ -1540,7 +1577,7 @@ class TestReviewDirectives:
         repo.get_active_facts_ordered = AsyncMock(return_value=[])
         agent._run_consolidation_loop = AsyncMock(return_value=[{"action": "CREATE"}])
 
-        ops = await agent._review_directives(_USER_ID, _ACCOUNT_ID, [])
+        ops = await agent._review_directives(_USER_ID, _ACCOUNT_ID, [], agent._write_context("stage2b"))
 
         assert ops == []
         agent._run_consolidation_loop.assert_not_awaited()
@@ -1554,7 +1591,7 @@ class TestReviewDirectives:
         ])
         agent._run_consolidation_loop = AsyncMock(return_value=[{"action": "MERGE"}])
 
-        ops = await agent._review_directives(_USER_ID, _ACCOUNT_ID, [])
+        ops = await agent._review_directives(_USER_ID, _ACCOUNT_ID, [], agent._write_context("stage2b"))
 
         assert ops == [{"action": "MERGE"}]
         # fetched by directive domain
@@ -1571,7 +1608,7 @@ class TestReviewDirectives:
         repo.get_active_facts_ordered = AsyncMock(return_value=[self._directive("d1", "Rule.")])
         agent._run_consolidation_loop = AsyncMock(return_value=[])
 
-        await agent._review_directives(_USER_ID, _ACCOUNT_ID, [])
+        await agent._review_directives(_USER_ID, _ACCOUNT_ID, [], agent._write_context("stage2b"))
 
         assert pb.build_for_agent.call_args.kwargs["include_directives"] is False
 
@@ -1584,7 +1621,7 @@ class TestReviewDirectives:
             return_value=[self._directive(f"d{i}", f"rule {i}") for i in range(agent.DIRECTIVE_HARD_CAP)]
         )
 
-        ops = await agent._enforce_directive_cap(_ACCOUNT_ID)
+        ops = await agent._enforce_directive_cap(_ACCOUNT_ID, agent._write_context("backstop"))
 
         assert ops == []
         fm.update_fact.assert_not_awaited()
@@ -1593,12 +1630,14 @@ class TestReviewDirectives:
     async def test_backstop_invalidates_lowest_priority_tail(self):
         """Backstop invalidates the tail beyond the cap (ordered priority ASC → tail = least essential)."""
         fm = AsyncMock(spec=FactManagementPort)
+        # The port's success shape: since Facts S3 (plan §3.20) an op is reported only for status "updated".
+        fm.update_fact.side_effect = lambda fact_id, updates, **_: {"fact_id": fact_id, "status": "updated"}
         agent, repo, _, _ = _make_agent(fact_management=fm)
         cap = agent.DIRECTIVE_HARD_CAP
         ordered = [self._directive(f"d{i}", f"rule {i}") for i in range(cap + 2)]  # 2 over cap
         repo.get_active_facts_ordered = AsyncMock(return_value=ordered)
 
-        ops = await agent._enforce_directive_cap(_ACCOUNT_ID)
+        ops = await agent._enforce_directive_cap(_ACCOUNT_ID, agent._write_context("backstop"))
 
         assert [o["action"] for o in ops] == ["INVALIDATE", "INVALIDATE"]
         assert {o["fact_id"] for o in ops} == {f"d{cap}", f"d{cap + 1}"}  # the tail two

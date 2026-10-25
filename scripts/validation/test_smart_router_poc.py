@@ -29,7 +29,7 @@ TEST_CASES = [
     {"id": 6, "query": "Столица Франции?", "expected": "quick_response_agent", "category": "knowledge"},
     {"id": 7, "query": "Погода завтра", "expected": "smart_response_agent", "category": "web_simple"},
     {"id": 8, "query": "Які ресторани поруч?", "expected": "quick_response_agent", "category": "web_simple_implicit"},
-    {"id": 9, "query": "Посоветуй концерты на выходных в Валенсии", "expected": "smart_response_agent", "category": "web_complex"},
+    {"id": 9, "query": "Посоветуй концерты на выходных в Барселоне", "expected": "smart_response_agent", "category": "web_complex"},
     {"id": 10, "query": "У меня проблема с проектом", "expected": "smart_response_agent", "category": "ambiguous"},
 ]
 

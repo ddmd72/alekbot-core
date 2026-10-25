@@ -1,10 +1,5 @@
 # Hexagonal Architecture Patterns in Alek-Core
 
-**Last Updated:** 2026-03-05
-**Status:** Active Guide
-
----
-
 ## Overview
 
 This document describes hexagonal architecture patterns used in Alek-Core, with practical examples from our codebase. It explains how we maintain clean separation between Domain, Application, and Infrastructure layers.
@@ -123,7 +118,7 @@ Infrastructure layer (Repository) needs Application layer services, but creating
 
 Inject Application services into Infrastructure adapters via constructor (DI).
 
-### Example: SmartDeduplicationService in Repository
+### Example: SmartDeduplication in Repository
 
 **BEFORE (❌ Violation — lazy service import):**
 
@@ -133,8 +128,8 @@ class FirestoreFactRepository:
     async def add_fact_if_unique(self, fact):
         # ...
         # Infrastructure CREATES Application service lazily!
-        from ..services.deduplication_service import SmartDeduplicationService
-        dedup_service = SmartDeduplicationService()
+        from ..services.deduplication_service import SmartDeduplication
+        dedup_service = SmartDeduplication()
         is_duplicate, reason = dedup_service.is_duplicate(...)
 ```
 
@@ -147,7 +142,7 @@ class FirestoreFactRepository:
 **AFTER (✅ Hexagonal):**
 
 ```python
-# SmartDeduplicationService lives in domain/ — zero external deps, pure logic
+# SmartDeduplication lives in domain/ — zero external deps, pure logic
 # src/domain/deduplication_service.py
 
 # FirestoreFactRepository (Infrastructure Layer)
@@ -158,9 +153,9 @@ class FirestoreFactRepository:
         env_config: EnvironmentConfig,
         embedding_service: Optional[EmbeddingService] = None,
         biographical_context_service: Optional[BiographicalContextService] = None,
-        dedup_service: Optional[SmartDeduplicationService] = None,  # Injected!
+        dedup_service: Optional[SmartDeduplication] = None,  # Injected!
     ):
-        self._dedup_service = dedup_service or SmartDeduplicationService()
+        self._dedup_service = dedup_service or SmartDeduplication()
 
     async def add_fact_if_unique(self, fact):
         # ...
@@ -169,7 +164,7 @@ class FirestoreFactRepository:
         )
 ```
 
-**Where does SmartDeduplicationService live?** In `domain/` — because it has zero external
+**Where does SmartDeduplication live?** In `domain/` — because it has zero external
 dependencies (only `re` + `typing` from stdlib). Pure algorithmic logic belongs in Domain,
 not Services. Compare: `domain/vector_math.py` (same reasoning).
 
@@ -202,7 +197,7 @@ class ServiceContainer:
         self.repository = FirestoreFactRepository(
             db_client, env_config,
             embedding_service=self.embedding_service,
-            dedup_service=SmartDeduplicationService(),  # injected
+            dedup_service=SmartDeduplication(),  # injected
         )
 
         # 2. Create shared Application services
@@ -432,8 +427,8 @@ class ConversationHandlerPort(ABC):
     @abstractmethod
     async def handle_command(self, command: str, context: MessageContext, response_channel) -> Optional[bool]: ...
 
-# src/adapters/platform/base_adapter.py — depends on port, not handler
-class PlatformAdapter(ABC):
+# src/adapters/slack/base.py — depends on port, not handler
+class SlackAdapter(PlatformPort):
     def __init__(self, conversation_handler: ConversationHandlerPort,
                  platform_auth: PlatformAuthPort, ...):
         self.conversation_handler = conversation_handler  # Port!
@@ -441,7 +436,7 @@ class PlatformAdapter(ABC):
 
 # src/composition/slack_adapter_factory.py — creates and injects
 class SlackAdapterFactory:
-    def create(self) -> SlackAdapter:
+    def create_adapter(self, ...) -> SlackAdapter:
         handler = ConversationHandler(...)       # Concrete — legal in composition/
         auth = IAMService(...)                   # Concrete — legal in composition/
         return HTTPModeAdapter(
@@ -506,19 +501,15 @@ Centralize all feature flags as module-level constants in `src/infrastructure/ag
 # src/infrastructure/agent_config.py
 import os
 
-ENABLE_HISTORY_OPTIMIZATION: bool = os.getenv(
-    "ENABLE_HISTORY_OPTIMIZATION", "false"
-).lower() in ("true", "1", "yes")
-
 ENABLE_GROUNDING_ATTRIBUTION: bool = os.getenv(
     "ENABLE_GROUNDING_ATTRIBUTION", "false"
 ).lower() == "true"
 
 # In agents — import the constant, never os.getenv()
-from ..infrastructure.agent_config import ENABLE_HISTORY_OPTIMIZATION
+from ..infrastructure.agent_config import ENABLE_GROUNDING_ATTRIBUTION
 
-if ENABLE_HISTORY_OPTIMIZATION:
-    # use compressed history
+if rendered_content and ENABLE_GROUNDING_ATTRIBUTION:
+    # append the grounding attribution
 ```
 
 **Benefits:**
@@ -563,7 +554,8 @@ Both `FactManagementAdapter` and `FirestoreFactManagementAdapter` call this inst
 
 ### Problem
 
-`ConversationHandler` directly imported `process_user_batches_on_overflow` from `consolidation_handler.py`. This creates horizontal coupling between handlers that should be independent.
+`ConversationHandler` runs consolidation for the `$consolidate` command, but importing the consolidation code would
+couple the handler to another component.
 
 ### Solution
 
@@ -578,17 +570,15 @@ class ConversationHandler:
         self,
         coordinator,
         agent_factory,
-        overflow_callback: Optional[Callable[..., Coroutine]] = None,  # injected
+        overflow_callback: Optional[Callable[..., Coroutine[Any, Any, ConsolidationRun]]] = None,  # injected
         ...
     ):
         self._overflow_callback = overflow_callback
 
 # src/composition/slack_adapter_factory.py (composition root — legal to import both)
-from ..handlers.consolidation_handler import process_user_batches_on_overflow
-
 handler = ConversationHandler(
     ...,
-    overflow_callback=process_user_batches_on_overflow,
+    overflow_callback=consolidation_service.consolidate_now if consolidation_service else None,
 )
 ```
 
@@ -779,7 +769,7 @@ handles transient errors centrally — individual agents never need to catch the
 
 ---
 
-### Violation 5 (original): isinstance() Type Check in Services Layer
+### Violation 5d: isinstance() Type Check in Services Layer
 
 ```python
 # ❌ WRONG — services/ imports adapter just to do isinstance check
@@ -808,17 +798,17 @@ present on the domain object (model name, provider name, capabilities).
 # ❌ WRONG — agent reads os.getenv() inline
 import os
 
-class QuickResponseAgent(BaseAgent):
-    def _apply_history_tier(self, history):
-        if os.getenv("ENABLE_HISTORY_OPTIMIZATION", "false").lower() == "true":
+class WebSearchAgent(BaseAgent):
+    def _render(self, rendered_content):
+        if os.getenv("ENABLE_GROUNDING_ATTRIBUTION", "false").lower() == "true":
             # ...
 
 # ✅ CORRECT — feature flag centralized in agent_config
-from ..infrastructure.agent_config import ENABLE_HISTORY_OPTIMIZATION
+from ..infrastructure.agent_config import ENABLE_GROUNDING_ATTRIBUTION
 
-class QuickResponseAgent(BaseAgent):
-    def _apply_history_tier(self, history):
-        if ENABLE_HISTORY_OPTIMIZATION:
+class WebSearchAgent(BaseAgent):
+    def _render(self, rendered_content):
+        if ENABLE_GROUNDING_ATTRIBUTION:
             # ...
 ```
 
@@ -845,46 +835,11 @@ for backward compatibility.
 
 ---
 
-## Testing Strategies
+## Testing
 
-### Unit Testing with Mocks
-
-```python
-@pytest.mark.asyncio
-async def test_fact_write_service():
-    mock_repo = Mock(FactRepository)
-    mock_embedding = Mock(EmbeddingService)
-
-    mock_embedding.get_embedding = AsyncMock(return_value=[0.1] * 768)
-    mock_repo.add_fact_if_unique = AsyncMock(return_value=(True, None))
-
-    service = FactWriteService(
-        repository=mock_repo,
-        embedding_service=mock_embedding
-    )
-
-    facts_data = [{"text": "Test", "tags": ["test"], "type": "event"}]
-    saved, skipped = await service.add_facts_batch("acc-1", "user-1", facts_data)
-
-    assert saved == 1
-    mock_embedding.get_embedding.assert_called()
-```
-
-### Testing Platform Adapters
-
-Since `ConversationHandler` is now a shared instance on `self.conversation_handler`,
-replace the instance attribute directly in tests instead of patching the class:
-
-```python
-async def test_authorized_user_processed(self, adapter):
-    # Replace shared handler instance with mock
-    mock_handler = AsyncMock()
-    adapter.conversation_handler = mock_handler
-
-    # ... trigger the adapter ...
-
-    mock_handler.handle_message.assert_called_once()
-```
+Ports are what make a layer testable on its own: a test hands the class a fake of the port it depends on. How to write
+those fakes (fakes with semantics over call assertions, mocks only for boundaries you do not own) is in
+`tests/CLAUDE.md`. Adapter tests mock at the SDK boundary, never at the port: `docs/how_to/ADAPTER_WIRE_TESTING.md`.
 
 ---
 
@@ -893,7 +848,7 @@ async def test_authorized_user_processed(self, adapter):
 ```
 Is this BUSINESS LOGIC (domain rules)?
 ├─ YES → Is it pure algorithmic (stdlib only, no I/O)?
-│   ├─ YES → domain/ (e.g., SmartDeduplicationService, cosine_similarity)
+│   ├─ YES → domain/ (e.g., SmartDeduplication, cosine_similarity)
 │   └─ NO  → agents/ (e.g., ConsolidationAgent, RouterAgent)
 └─ NO → Is this ORCHESTRATION (coordinating multiple concerns)?
     ├─ YES → services/ (e.g., FactWriteService, SearchEnrichmentService)
@@ -938,7 +893,7 @@ Bootstrap/wiring rules:
 | Pattern | Example | Files |
 |---------|---------|-------|
 | Service Layer | FactWriteService extracts embedding generation | `src/services/fact_write_service.py` |
-| DI into Adapter | SmartDeduplicationService injected into Repository | `src/adapters/firestore_repo.py` |
+| DI into Adapter | SmartDeduplication injected into Repository | `src/adapters/firestore_repo.py` |
 | DI into Adapter | BiographicalContextService injected into Repository | `src/adapters/firestore_repo.py` |
 | Composition Root Split | ServiceContainer (shared) + UserAgentFactory (per-user) | `src/composition/service_container.py`, `src/composition/user_agent_factory.py` |
 | Factory Callable | `create_fact_management_adapter()` for per-user adapter | `src/composition/service_container.py` |
@@ -946,16 +901,15 @@ Bootstrap/wiring rules:
 | Port/Adapter | `EmbeddingService` port, Gemini adapter | `src/ports/embedding_service.py`, `src/adapters/gemini_embedding_adapter.py` |
 | Platform Port | `ConversationHandlerPort` decouples adapters from handlers | `src/ports/conversation_handler_port.py` |
 | Platform Port | `PlatformAuthPort` + `IAMDecision` for platform authorization | `src/ports/platform_auth_port.py` |
-| Agent Port | `PromptBuilderPort` injected into all 5 agents | `src/ports/prompt_builder_port.py` |
+| Agent Port | `PromptBuilderPort` injected into every prompt-building agent | `src/ports/prompt_builder_port.py` |
 | Agent Port | `FactWritePort` injected into ConsolidationAgent + adapters | `src/ports/fact_write_port.py` |
 | Agent Port | `SearchEnrichmentPort` injected into Router + Memory agents | `src/ports/search_enrichment_port.py` |
 | Domain Types | `Message`, `MessagePart`, `ToolCall` in domain/ | `src/domain/llm.py` |
-| Domain Logic | `SmartDeduplicationService` in domain/ (stdlib only) | `src/domain/deduplication_service.py` |
+| Domain Logic | `SmartDeduplication` in domain/ (stdlib only) | `src/domain/deduplication_service.py` |
 | Composition Factory | `SlackAdapterFactory` creates adapter with ports injected | `src/composition/slack_adapter_factory.py` |
 | Circular Resolution | `BiographicalContextService ↔ FirestoreFactRepository` | `src/composition/service_container.py` |
-| Adapter Rename | `FactManagementAdapter` (dropped "Firestore" prefix) | `src/adapters/fact_management_adapter.py` |
 | Protocol Decoupling | `MessageRouter` Protocol decouples services/ from infrastructure/ | `src/services/agent_fallback_service.py` |
-| Feature Flag Central | `ENABLE_HISTORY_OPTIMIZATION` in `agent_config.py` | `src/infrastructure/agent_config.py` |
+| Feature Flag Central | `ENABLE_GROUNDING_ATTRIBUTION` in `agent_config.py` | `src/infrastructure/agent_config.py` |
 | Domain Normalization | `normalize_fact_taxonomy()` eliminates adapter duplication | `src/domain/entities.py` |
 | Callback Injection | `overflow_callback` decouples ConversationHandler from consolidation | `src/handlers/conversation_handler.py` |
 | Domain Settings | `SearchConfig` moved from config/ to domain/ | `src/domain/settings.py` |
@@ -971,8 +925,3 @@ Bootstrap/wiring rules:
 - **CLAUDE.md** — Import rules (authoritative, checked by `make check`)
 - **Building Block:** `docs/05_building_blocks/fact_write_service/README.md`
 - **RFC:** `docs/10_rfcs/EXECUTION_CONTEXT_HEXAGONAL_RFC.md`
-
----
-
-**Last Review:** 2026-03-08 (updated: REQ-ARCH-12/13 model-name/provider-name violations, domain exceptions pattern, SDK error boundary rule)
-**Status:** Active Reference ✅

@@ -529,8 +529,8 @@ async def open_openai(call: Call, http: aiohttp.ClientSession) -> None:
     await ws.send_str(json.dumps({"type": "session.update", "session": {
         "type": "realtime",
         "output_modalities": ["audio"],
-        "instructions": ("Ты Лелик, живой и остроумный собеседник. Говори по-русски, коротко, "
-                         "естественно, как в телефонном разговоре с другом."),
+        "instructions": ("You are Lelik, a lively and witty companion. Speak English, briefly, "
+                         "naturally, as in a phone call with a friend."),
         "audio": {
             "input": {
                 "format": {"type": "audio/pcm", "rate": 24000},

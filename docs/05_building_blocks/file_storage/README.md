@@ -394,7 +394,7 @@ from GCS to the drive (Inbox by default). The coordinator never pre-fetches a dr
 (`prefetch_file_ref=False`); the agent opens it itself. Finding a drive file by name, kind, date, folder or
 place is an eighth intent, `search_files_in_drive`, served from an opt-in index (Step 2):
 [../user_drive/README.md](../user_drive/README.md). Deployment prerequisites: `docs/07_deployment/README.md` →
-User Drive and Drive Indexer Service.
+One-time project setup (OneDrive App Folder) and Deploy units (Drive indexer).
 
 **A third store: the agent workspace** (`docs/10_rfcs/AGENT_WORKSPACE_RFC.md`). Smart's own working files live in a
 dedicated versioned bucket, reached through the `workspace` tool. `copy` puts byte-exact copies of chat uploads and

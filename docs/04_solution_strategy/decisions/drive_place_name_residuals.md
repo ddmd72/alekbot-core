@@ -9,7 +9,7 @@
 in the same country, or holds the photo inside its own footprint (`0.0015 · √weight` km) while the nearest place's
 footprint does not. At these settings every expected case of `scripts/geo/expected_places.py` holds (Trastevere →
 Rome, St. Peter's Square → Vatican City, Monaco, Vaduz, Kehl, Brazzaville, central Porto, Brooklyn → New York,
-Torrent → Valencia, …), self-naming at a place's own centre is 62.7 %, and no centre is named across a border. Four
+…), self-naming at a place's own centre is 62.7 %, and no centre is named across a border. Four
 lookups 2 km off a centre still cross a border: Aflao (Ghana) → Lomé (Togo), Sheung Shui (Hong Kong) → Shenzhen
 (China), Şūr Bāhir and Wadi al-Joz (Palestinian Territory) → Jerusalem (Israel), country codes as in GeoNames. They are
 accepted: the place name is a search aid on a card, not an authoritative location.
