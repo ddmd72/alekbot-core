@@ -94,21 +94,21 @@ def test_validity_words_only_when_valid_until_is_set():
 
 def test_entities_single_token_full_form_set_and_phrases_per_script():
     rec = RecordKeyInputs(kind="pdf", profile=_profile(entities=(
-        ProfileEntity("Le Havre", "place", "Le Havre"),
+        ProfileEntity("The Hague", "place", "The Hague"),
         ProfileEntity("Нью-Йорк", "place", "Нью-Йорке"),
-        ProfileEntity("Barcelona", "place", "Barcelona", ("Барселона",)),
+        ProfileEntity("Coimbra", "place", "Coimbra", ("Коїмбра",)),
     )))
     keys = set(about_keys_of(rec))
-    # xc F1: "Барселона" is a form the file does not print (`found` empty), so it is the index's own `ef:`, not `e:`
-    assert {"e:le_havr", "e:нью_йорк", "e:barcelona", "ef:барселона", "ef:барселон"} <= keys
-    assert not {"e:барселона", "e:барселон"} & keys
+    # xc F1: "Коїмбра" is a form the file does not print (`found` empty), so it is the index's own `ef:`, not `e:`
+    assert {"e:the_hagu", "e:нью_йорк", "e:coimbra", "ef:коїмбра", "ef:коїмбр"} <= keys
+    assert not {"e:коїмбра", "e:коїмбр"} & keys
     # xc F3: the Latin entities' skeletons are `exl:`, the Cyrillic form's is `ex:`; the compound joined
-    assert {"exl:le_havr", "exl:barselon", "ex:barselon", "e:ньюйорк"} <= keys
+    assert {"exl:the_hah", "exl:koimbr", "ex:koimbr", "e:ньюйорк"} <= keys
     # a spelling the verifier found in the text stays exact
     found = set(about_keys_of(RecordKeyInputs(kind="pdf", profile=_profile(entities=(
-        ProfileEntity("Barcelona", "place", "Barcelona", ("Барселона",), ("Барселона",)),)))))
-    assert {"e:барселона", "e:барселон"} <= found and not {"ef:барселона", "ef:барселон"} & found
-    assert _covers("Le Havre", rec) and _covers("Нью-Йорке", rec) and _covers("Барселоне", rec)
+        ProfileEntity("Coimbra", "place", "Coimbra", ("Коїмбра",), ("Коїмбра",)),)))))
+    assert {"e:коїмбра", "e:коїмбр"} <= found and not {"ef:коїмбра", "ef:коїмбр"} & found
+    assert _covers("The Hague", rec) and _covers("Нью-Йорке", rec) and _covers("Коїмбрі", rec)
 
 
 def test_entity_and_list_caps_keep_the_earliest_entries():
@@ -132,13 +132,13 @@ def test_the_record_cap_counts_capped_keys():
 
 def test_photo_objects_and_visible_text_numbers_have_their_own_automatic_prefixes():
     rec = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO,
-                          photo_objects=(PhotoObject("Sagrada Familia", ("Саграда Фамилия",)),),
+                          photo_objects=(PhotoObject("Brandenburger Tor", ("Бранденбурзькі ворота",)),),
                           visible_text="Gate 12345")
     keys = set(about_keys_of(rec))
-    assert {"pe:sagrada_familia", "pe:саград_фамили"} <= keys
+    assert {"pe:brandenburger_tor", "pe:бранденбурзьк_ворот"} <= keys
     assert not any(k.startswith(("e:", "ex:")) for k in keys)
     assert "pn:12345" in keys and "pw:gate" in keys and not any(k.startswith("n:") for k in keys)
-    assert _covers("Sagrada Familia", rec) and _covers("12345", rec)
+    assert _covers("Brandenburger Tor", rec) and _covers("12345", rec)
 
 
 @pytest.mark.parametrize("prefix,cls", [
@@ -160,12 +160,12 @@ def test_label_keys_have_no_source_class():
 def test_every_about_key_has_a_source_of_its_prefixs_class():
     rec = RecordKeyInputs(
         kind="image", triage_verdict=TriageVerdict.PHOTO, effective_date=datetime(2023, 5, 1, tzinfo=UTC),
-        place_forms=("Paris", "Париж", "France"), photo_description="A cafe at night",
-        photo_objects=(PhotoObject("Eiffel Tower"),), photo_scene="street", visible_text="Rue 75001",
+        place_forms=("Berlin", "Берлін", "Germany"), photo_description="A cafe at night",
+        photo_objects=(PhotoObject("TV Tower"),), photo_scene="street", visible_text="Straße 10115",
         valid_until=datetime(2027, 1, 1, tzinfo=UTC),
         profile=_profile(doc_type="ticket", life_domains=("travel",), topic_words=("trip",),
                          label_words=("ticket",), domain_words=("travel",), validity_words=("expires",),
-                         entities=(ProfileEntity("Louvre", "place", "Louvre"),),
+                         entities=(ProfileEntity("Pergamonmuseum", "place", "Pergamonmuseum"),),
                          key_values=(KeyValue("ticket_number", "T-555", "t555"),),
                          dates=(ProfileDate("event", date(2023, 5, 1)),)))
     sources = about_sources(rec)
@@ -179,12 +179,12 @@ def test_every_about_key_has_a_source_of_its_prefixs_class():
 # -- the walk-throughs of §25.5.1, record side ---------------------------------------------------------------------
 
 def test_walk_through_pro_barselonu_record_side():
-    concept = query_concepts("про Барселону").concepts[0]
+    concept = query_concepts("про Коїмбру").concepts[0]
     photo = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO,
-                            place_forms=("Barcelona", "Барселона", "Spain", "Испания"))
+                            place_forms=("Coimbra", "Коїмбра", "Portugal", "Португалія"))
     all_hits = set(concept.about_keys) & set(about_keys_of(photo))
     hits = {k for k in all_hits if k.startswith("e:")}
-    assert {"e:барселона", "e:барселон"} & hits
+    assert {"e:коїмбра", "e:коїмбр"} & hits
     sources = about_sources(photo)
     # Every hit, native or skeleton, comes from the place (test reviewer: the field check covers all hits again).
     assert {s.field for k in all_hits for s in sources[k]} == {AboutField.PLACE}
@@ -194,16 +194,16 @@ def test_walk_through_pro_barselonu_record_side():
     assert all(s.source_class is SourceClass.TRANSLATION for k in skeletons for s in sources[k])
 
     doc = RecordKeyInputs(kind="pdf", profile=_profile(entities=(
-        ProfileEntity("Barcelona", "place", "Барселона", ("Барселона",)),)))
+        ProfileEntity("Coimbra", "place", "Коїмбра", ("Коїмбра",)),)))
     hits = set(concept.about_keys) & set(about_keys_of(doc))
-    assert "e:барселон" in hits                                       # the printed form: exact
+    assert "e:коїмбр" in hits                                       # the printed form: exact
     doc_sources = about_sources(doc)
     assert {s.field for k in hits if k.startswith("e:") for s in doc_sources[k]} == {AboutField.ENTITY}
-    # xc F1: the unprinted name "Barcelona" adds only its skeletons, as the index's own entity form
+    # xc F1: the unprinted name "Coimbra" adds only its skeletons, as the index's own entity form
     assert {s.field for k in hits for s in doc_sources[k]} == {AboutField.ENTITY, AboutField.ENTITY_FORM}
 
-    assert set(concept.word_keys) & set(word_keys("Неделя в Барселоне, жара."))           # mentioned in
-    assert set(concept.hint_keys) & set(word_form_keys("Барселона"))                      # by translation
+    assert set(concept.word_keys) & set(word_keys("Тиждень у Коїмбрі, спека."))            # mentioned in
+    assert set(concept.hint_keys) & set(word_form_keys("Коїмбра"))                        # by translation
 
 
 def test_walk_through_medical_records_record_side():
@@ -223,9 +223,9 @@ def test_walk_through_medical_records_record_side():
 
 def test_walk_through_paris_2023_record_side():
     photo = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO,
-                            effective_date=datetime(2023, 6, 3, tzinfo=UTC), place_forms=("Paris", "Париж", "France"))
-    assert _covers("Paris 2023", photo) and _covers("Париж 2023", photo)
-    assert not _covers("Paris 2022", photo)
+                            effective_date=datetime(2023, 6, 3, tzinfo=UTC), place_forms=("Berlin", "Берлін", "Germany"))
+    assert _covers("Berlin 2023", photo) and _covers("Берлін 2023", photo)
+    assert not _covers("Berlin 2022", photo)
 
 
 def test_walk_through_receipts_record_side():

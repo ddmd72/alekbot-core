@@ -20,8 +20,8 @@ def test_every_remaining_word_is_its_own_concept_with_keys():
 def test_function_and_generic_words_are_removed_and_reported():
     q = query_concepts("all my receipts")
     assert _words(q) == ["receipts"] and q.ignored == ("all", "my") and q.cut == ()
-    q = query_concepts("найди все документы про Барселону")
-    assert _words(q) == ["барселону"]
+    q = query_concepts("найди все документы про Коїмбру")
+    assert _words(q) == ["коїмбру"]
     assert q.ignored == ("найди", "все", "документы", "про")
 
 
@@ -94,7 +94,7 @@ def test_numbers_are_kept_before_words_under_the_cap():
 def test_every_list_is_unique_and_fetched_in_batches_of_at_most_thirty():
     """Review B1: the lists are uncut (coverage); the fetch cuts them into batches of at most 30."""
     from src.domain.drive_keys import fetch_batches
-    q = query_concepts("медицинские записи по холестерину у доктора Иванова в Киеве")
+    q = query_concepts("медицинские записи по холестерину у доктора Квіллен в Спрінгфілді")
     assert any(len(c.about_keys) > CONCEPT_KEYS_MAX for c in q.concepts)
     for c in q.concepts:
         for keys in (c.about_keys, c.word_keys, c.hint_keys):
@@ -105,7 +105,7 @@ def test_every_list_is_unique_and_fetched_in_batches_of_at_most_thirty():
 
 
 def test_lists_hold_only_their_streams_families():
-    for c in query_concepts("Barcelona trip").concepts:
+    for c in query_concepts("Coimbra trip").concepts:
         assert all(k[:2] in ("w:", "x:") for k in c.word_keys) and all(k.startswith("w:") for k in c.hint_keys)
         # xc F1 adds `ef:`; xc F3: a Latin query word never reads `xl:`/`exl:` skeletons (so none appear here);
         # §26.3 (Δ58): a query word emits both capture families, `cp:` and `cpa:`, as it emits `k:`; D40 `sl:` for a
@@ -116,25 +116,25 @@ def test_lists_hold_only_their_streams_families():
 
 
 def test_barcelona_trip_walk_through():
-    q = query_concepts("Barcelona trip")
-    assert _words(q) == ["barcelona", "trip"] and q.ignored == ()
+    q = query_concepts("Coimbra trip")
+    assert _words(q) == ["coimbra", "trip"] and q.ignored == ()
     barcelona, trip = q.concepts
-    assert "e:barcelona_trip" in barcelona.about_keys and "e:barcelona_trip" in trip.about_keys
-    assert "x:barselon" in barcelona.word_keys and "ex:barselon" in barcelona.about_keys   # the c rule
+    assert "e:coimbra_trip" in barcelona.about_keys and "e:coimbra_trip" in trip.about_keys
+    assert "x:koimbr" in barcelona.word_keys and "ex:koimbr" in barcelona.about_keys       # the c rule
     assert {"k:trip", "lw:trip", "tw:trip"} <= set(trip.about_keys)
 
 
 def test_phrase_runs_are_built_before_function_words_are_removed():
-    q = query_concepts("Le Havre port")
-    assert _words(q) == ["havre", "port"] and q.ignored == ("le",)
+    q = query_concepts("The Hague port")
+    assert _words(q) == ["hague", "port"] and q.ignored == ("the",)
     havre = q.concepts[0]
-    assert "e:le_havr" in havre.about_keys
+    assert "e:the_hagu" in havre.about_keys
     assert "e:нью_йорк" in query_concepts("Нью-Йорке").concepts[0].about_keys
 
 
 def test_a_run_ending_in_a_function_word_gives_no_phrase_key():
-    havre = query_concepts("Havre de").concepts[0]
-    assert not any(k.startswith("e:havr_") for k in havre.about_keys)
+    havre = query_concepts("Foz do").concepts[0]
+    assert not any(k.startswith("e:foz_") for k in havre.about_keys)
 
 
 def test_a_repeated_word_is_one_concept():
@@ -162,11 +162,11 @@ def test_an_empty_query_has_no_concepts():
 # -- the walk-throughs of §25.5.1, key side ------------------------------------------------------------------------
 
 def test_walk_through_pro_barselonu_concepts():
-    q = query_concepts("про Барселону")
-    assert _words(q) == ["барселону"] and q.ignored == ("про",)
+    q = query_concepts("про Коїмбру")
+    assert _words(q) == ["коїмбру"] and q.ignored == ("про",)
     c = q.concepts[0]
-    assert {"w:барселону", "w:барселон", "x:barselon"} <= set(c.word_keys)
-    assert {"e:барселону", "e:барселон"} <= set(c.about_keys)
+    assert {"w:коїмбру", "w:коїмбр", "x:koimbr"} <= set(c.word_keys)
+    assert {"e:коїмбру", "e:коїмбр"} <= set(c.about_keys)
 
 
 def test_walk_through_medical_records_concepts():
@@ -178,10 +178,10 @@ def test_walk_through_medical_records_concepts():
 
 
 def test_walk_through_paris_2023_concepts():
-    q = query_concepts("Paris 2023")
-    assert _words(q) == ["2023", "paris"]
+    q = query_concepts("Berlin 2023")
+    assert _words(q) == ["2023", "berlin"]
     assert {"n:2023", "v:2023", "y:2023"} <= set(q.concepts[0].about_keys)
-    assert "e:paris" in q.concepts[1].about_keys
+    assert "e:berlin" in q.concepts[1].about_keys
 
 
 def test_walk_through_receipts_and_expires_concepts():
