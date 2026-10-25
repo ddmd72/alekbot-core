@@ -121,8 +121,8 @@ def test_m2_two_letter_words_are_concepts(query, words):
 def test_m2_a_two_letter_word_has_its_exact_form_only():
     (c,) = query_concepts("ИП").concepts
     assert c.word_keys == ("w:ип",) and c.hint_keys == ("w:ип",)
-    assert _exact("ИП", "Договор с ИП Петров") and not _shared("ИП", "Договор с ООО Петров")["ип"]
-    assert "w:на" not in word_keys("на столе") and "w:ип" in word_keys("ИП Петров")
+    assert _exact("ИП", "Договор с ИП Мельник") and not _shared("ИП", "Договор с ООО Мельник")["ип"]
+    assert "w:на" not in word_keys("на столе") and "w:ип" in word_keys("ИП Мельник")
 
 
 # -- M3: values meet in the form the query produces ---------------------------------------------------------------
@@ -165,9 +165,9 @@ def test_m5_adjective_and_plural_endings_link(query, text):
 
 # -- M6: Latin names reach Ukrainian locatives ---------------------------------------------------------------------
 
-@pytest.mark.parametrize("query,text", [("Kyiv", "Квартира у Києві"), ("Kharkiv", "Поїздка в Харкові"),
-                                        ("Києві", "Apartment in Kyiv"), ("Харкові", "Office in Kharkiv"),
-                                        ("Kyiv", "з Києва"), ("Barcelona", "в Барселоне")])
+@pytest.mark.parametrize("query,text", [("Odesa", "Квартира в Одесі"), ("Kharkiv", "Поїздка в Харкові"),
+                                        ("Одесі", "Apartment in Odesa"), ("Харкові", "Office in Kharkiv"),
+                                        ("Odesa", "з Одеси"), ("Coimbra", "в Коїмбрі")])
 def test_m6_latin_and_cyrillic_spellings_meet_through_the_skeleton(query, text):
     hits = list(_shared(query, text).values())[0]
     assert hits and all(source_class_of_word_key(k) is SourceClass.TRANSLATION for k in hits)
@@ -184,7 +184,7 @@ def test_m7_photo_words_cover_a_photo(word):
 
 # -- M8: a match across scripts is a translation, never exact ------------------------------------------------------
 
-@pytest.mark.parametrize("query,text", [("hotel Barcelona", "Я хотел поехать в Барселону"), ("cost", "Перелом кости"),
+@pytest.mark.parametrize("query,text", [("hotel Porto", "Я хотел поехать в Порту"), ("cost", "Перелом кости"),
                                         ("net", "нет дохода"), ("list", "больничный лист"), ("data", "дата подписи")])
 def test_m8_transliteration_false_links_are_translations_only(query, text):
     for word, hits in _shared(query, text).items():
@@ -193,11 +193,11 @@ def test_m8_transliteration_false_links_are_translations_only(query, text):
 
 
 def test_m8_a_cross_script_entity_is_a_translation_and_a_stored_spelling_exact():
-    rec = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO, place_forms=("Barcelona",))
-    (c,) = query_concepts("Барселоне").concepts
+    rec = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO, place_forms=("Coimbra",))
+    (c,) = query_concepts("Коїмбрі").concepts
     hits = set(c.about_keys) & set(about_keys_of(rec))
     assert hits and {source_class_of_about_key(k) for k in hits} == {SourceClass.TRANSLATION}
-    rec2 = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO, place_forms=("Barcelona", "Барселона"))
+    rec2 = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO, place_forms=("Coimbra", "Коїмбра"))
     hits = set(c.about_keys) & set(about_keys_of(rec2))
     assert SourceClass.VERIFIED_RECORD in {source_class_of_about_key(k) for k in hits}
 
@@ -206,8 +206,8 @@ def test_m8_a_cross_script_entity_is_a_translation_and_a_stored_spelling_exact()
 
 def test_a_drive_index_record_is_keyed_directly():
     rec = DriveIndexRecord(user_id="u", item_id="i", kind="image", triage_verdict=TriageVerdict.PHOTO,
-                           effective_date=datetime(2023, 5, 1, tzinfo=timezone.utc), place_forms=("Paris",))
-    assert {"e:paris", "y:2023", "k:photo"} <= set(about_keys_of(rec))
+                           effective_date=datetime(2023, 5, 1, tzinfo=timezone.utc), place_forms=("Berlin",))
+    assert {"e:berlin", "y:2023", "k:photo"} <= set(about_keys_of(rec))
 
 
 # -- minors ---------------------------------------------------------------------------------------------------------
@@ -254,16 +254,16 @@ def test_m7_minor_yo_folds_to_ye():
 
 
 def test_m8_minor_a_person_is_about_their_surname():
-    rec = RecordKeyInputs(kind="pdf", profile=_profile(entities=(ProfileEntity("Сергей Иванов", "person",
-                                                                              "Сергей Иванов"),)))
-    (c,) = query_concepts("Иванову").concepts
+    rec = RecordKeyInputs(kind="pdf", profile=_profile(entities=(ProfileEntity("Тарас Мельник", "person",
+                                                                              "Тарас Мельник"),)))
+    (c,) = query_concepts("Мельнику").concepts
     hits = set(c.about_keys) & set(about_keys_of(rec))
     assert any(source_class_of_about_key(k) is SourceClass.VERIFIED_RECORD for k in hits)
 
 
 # m10: ordinary stemming links that are known and accepted (pinned so a table change that widens them shows)
 KNOWN_FALSE_LINKS = [("почта", "почти"), ("банка", "банк")]
-MUST_NOT_LINK = [("барсетка", "барселона"), ("валентина", "валенсия"), ("сім'я", "сім"), ("iphone", "phone"),
+MUST_NOT_LINK = [("берлога", "берлін"), ("ганна", "ганновер"), ("сім'я", "сім"), ("iphone", "phone"),
                  ("ип", "ипотека"), ("квиток", "квитанция")]
 
 

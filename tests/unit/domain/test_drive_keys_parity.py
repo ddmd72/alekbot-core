@@ -13,11 +13,11 @@ from src.domain.drive_keys import (
 )
 
 VOCABULARY = (
-    "Барселона Барселону Барселоне Париж Париже Київ Києві Львів Харкові Иванов Ивановым Сергей Сергея музей музея "
+    "Коїмбра Коїмбру Коїмбрі Берлін Берліні Одеса Одесі Львів Харкові Мельник Мельником Тарас Тараса музей музея "
     "отель отеля кровь крови Казань Казани квиток квитки чек чеки холестерин холестерину договор договора аренда "
     "аренды страховка страховки квартира квартиры паспорт паспорта лікарня лікарні рахунок рахунку подорож подорожі "
     "house houses lease leases bus buses glass glasses movie movies policy policies box boxes receipt receipts "
-    "invoice invoices Paris analysis Barcelona Valencia contract contracts warranty insurance cholesterol hotel "
+    "invoice invoices Berlin analysis Coimbra Porto contract contracts warranty insurance cholesterol hotel "
     "hoteles reserva reservas factura facturas entrada entradas viaje médico Résumé café naïve Zürich"
 ).split()
 NUMBERS = ("1 250,00", "1,250.00", "INV-2024/0012", "15.03.2024", "2024-03-15", "15 March 2024", "12345",
@@ -30,8 +30,8 @@ def _sentence(rng: random.Random, n: int) -> str:
 
 ADVERSARIAL = (
     "iPhone PayPal McDonalds OneDrive YouTube WiFi Wi-Fi e-mail E-Mail ИП ЖК ТВ CV TV EU HR X5 A4 ред3 "
-    "комп'ютер комп’ютера сім'я сімʼї п'ять м'ясо ёлка елка счёт счет Пётр Петр за́мок квар­тира "
-    "Нью-Йорк Нью-Йорке Санкт-Петербурге Kyiv Києві Kharkiv Харкові Lviv Львові São Zürich Œuvre straße"
+    "комп'ютер комп’ютера сім'я сімʼї п'ять м'ясо ёлка елка счёт счет Лёд Лед за́мок квар­тира "
+    "Нью-Йорк Нью-Йорке Санкт-Петербурге Odesa Одесі Kharkiv Харкові Lviv Львові São Zürich Œuvre straße"
 ).split()
 
 
@@ -100,8 +100,8 @@ def test_a_named_thing_is_found_by_a_query_typing_it(seed):
 @pytest.mark.parametrize("seed", range(20))
 def test_an_inflected_query_finds_a_text_holding_another_form(seed):
     """The pinned groups both ways, in random synthetic sentences."""
-    groups = [("Барселона", "Барселоной"), ("Київ", "Києві"), ("Харків", "Харкові"), ("квиток", "квитки"),
-              ("policy", "policies"), ("house", "houses"), ("cache", "caches"), ("Сергей", "Сергея")]
+    groups = [("Коїмбра", "Коїмброю"), ("Київ", "Києві"), ("Харків", "Харкові"), ("квиток", "квитки"),
+              ("policy", "policies"), ("house", "houses"), ("cache", "caches"), ("трофей", "трофея")]
     rng = random.Random(2000 + seed)
     a, b = rng.choice(groups)
     if rng.random() < 0.5:
@@ -114,11 +114,11 @@ def test_an_inflected_query_finds_a_text_holding_another_form(seed):
 # -- match_spans ----------------------------------------------------------------------------------------------------
 
 def test_match_spans_finds_each_occurrence_of_a_concepts_forms():
-    text = "Hotel in Barcelona. The tickets: two tickets for Barcelona, total 1 250,00 EUR, March 2024."
+    text = "Hotel in Coimbra. The tickets: two tickets for Coimbra, total 1 250,00 EUR, March 2024."
     tickets = query_concepts("ticket").concepts[0]
     assert [text[s:e] for s, e in match_spans(text, tickets.word_keys)] == ["tickets", "tickets"]
-    barcelona = query_concepts("Барселона").concepts[0]                     # meets the Latin text by transliteration
-    assert [text[s:e] for s, e in match_spans(text, barcelona.word_keys)] == ["Barcelona", "Barcelona"]
+    barcelona = query_concepts("Коїмбра").concepts[0]                       # meets the Latin text by transliteration
+    assert [text[s:e] for s, e in match_spans(text, barcelona.word_keys)] == ["Coimbra", "Coimbra"]
     amount = query_concepts("1250.00").concepts[0]
     assert [text[s:e] for s, e in match_spans(text, amount.word_keys)] == ["1 250,00"]
     month = query_concepts("march 2024").concepts[0]
@@ -126,7 +126,7 @@ def test_match_spans_finds_each_occurrence_of_a_concepts_forms():
 
 
 def test_match_spans_of_a_key_the_text_lacks_is_empty():
-    assert match_spans("nothing here", ("w:barcelona", "n:1250")) == ()
+    assert match_spans("nothing here", ("w:coimbra", "n:1250")) == ()
 
 
 def test_match_spans_handles_decomposed_text():
