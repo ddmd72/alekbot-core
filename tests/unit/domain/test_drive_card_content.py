@@ -52,7 +52,7 @@ class TestSliceOneCardsUnchanged:
 
 
 BRIEF = DocumentBrief(doc_type="invoice", description="Рахунок за оренду офісу",
-                      doc_date=datetime(2024, 3, 15, tzinfo=timezone.utc), parties=("ТОВ Ромашка", "ФОП Іваненко"),
+                      doc_date=datetime(2024, 3, 15, tzinfo=timezone.utc), parties=("ТОВ Приклад", "ФОП Мельник Т."),
                       amount="1 250.00 EUR")
 
 
@@ -61,7 +61,7 @@ class TestContentSegments:
         text = card_text(rec("scan.pdf", brief=BRIEF))
         # CARD_VERSION 4 (Δ64): a stored v1 brief's doc type is never on the card (the profile's is the only one)
         assert text == ("scan.pdf | PDF document | Рахунок за оренду офісу | 2024-03-15 | "
-                        "parties: ТОВ Ромашка, ФОП Іваненко | 1 250.00 EUR")
+                        "parties: ТОВ Приклад, ФОП Мельник Т. | 1 250.00 EUR")
 
     def test_empty_brief_fields_are_left_out(self):
         assert card_text(rec("scan.pdf", brief=DocumentBrief(doc_type="receipt"))) == \

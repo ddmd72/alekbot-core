@@ -42,7 +42,7 @@ def _exact(query: str, text: str) -> bool:
 # -- B1: coverage never depends on the neighbouring words ---------------------------------------------------------
 
 @pytest.mark.parametrize("query", ["автомобиля", "страховка автомобиля Skoda Fabia",
-                                   "страховка автомобиля Skoda Fabia полис осаго 2024 Харьков"])
+                                   "страховка автомобиля Skoda Fabia полис каско 2024 Порту"])
 def test_b1_a_word_is_covered_whatever_its_neighbours(query):
     rec = RecordKeyInputs(kind="pdf", profile=_profile(topic_words=("автомобиль", "car")))
     assert _covered(query, rec)["автомобиля"]
