@@ -18,9 +18,9 @@ def test_a_photo_outside_the_footprint_keeps_the_nearest_foreign_place():
 
 
 def test_a_border_town_is_not_named_after_the_city_across_the_river():
-    rows = [PlaceRow(48.5730, 7.8152, "Kehl", "Kehl", "Germany", weight=39_584),
-            PlaceRow(48.5839, 7.7455, "Strasbourg", "Strasbourg", "France", weight=824_535)]
-    assert PlaceIndex(rows).lookup(48.5730, 7.8152) == "Kehl, Germany"
+    rows = [PlaceRow(47.5934, 7.6205, "Weil am Rhein", "Weil am Rhein", "Germany", weight=39_584),
+            PlaceRow(47.5584, 7.5733, "Basel", "Basel", "Switzerland", weight=824_535)]
+    assert PlaceIndex(rows).lookup(47.5934, 7.6205) == "Weil am Rhein, Germany"
 
 
 def test_the_footprint_branch_still_needs_the_weight_factor():

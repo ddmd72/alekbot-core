@@ -20,8 +20,8 @@ def test_a_same_country_place_below_the_factor_does_not_take_over():
 
 
 def test_a_same_country_place_at_the_factor_takes_over():
-    rows = [_row("Esplugues", 41.3768, 2.0886, "Spain", 46_000), _row("Barcelona", 41.3874, 2.1686, "Spain", 1_620_343)]
-    assert PlaceIndex(rows, prefer_weight_factor=3.0).lookup(41.3771, 2.0889) == "Barcelona, Spain"
+    rows = [_row("Matosinhos", 41.1844, -8.6963, "Portugal", 46_000), _row("Porto", 41.1496, -8.6109, "Portugal", 1_620_343)]
+    assert PlaceIndex(rows, prefer_weight_factor=3.0).lookup(41.1847, -8.6960) == "Porto, Portugal"
     rows = [_row("Near", 42.0, 12.0, "X", 100_000), _row("Triple", 42.05, 12.05, "X", 300_000)]
     assert PlaceIndex(rows, prefer_weight_factor=3.0).lookup(42.0, 12.0) == "Triple, X"
 
