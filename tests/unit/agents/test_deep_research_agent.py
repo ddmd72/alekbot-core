@@ -172,10 +172,10 @@ async def test_execute_appends_language_instruction(mock_job_port):
     mock_job_port.create_interaction.return_value = "job_lang"
     agent = _make_agent(mock_job_port)
 
-    await agent.execute(_make_message(query="Spain housing market", language="Ukrainian"))
+    await agent.execute(_make_message(query="Portugal housing market", language="Ukrainian"))
 
     sent = mock_job_port.create_interaction.call_args.kwargs["query"]
-    assert sent == "Spain housing market\n\nPlease write the entire response in Ukrainian."
+    assert sent == "Portugal housing market\n\nPlease write the entire response in Ukrainian."
 
 
 async def test_execute_language_defaults_to_english(mock_job_port):

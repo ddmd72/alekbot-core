@@ -109,11 +109,11 @@ class TestMapsToolsPortMockImplementation:
 
     async def test_route_tool_returns_distance_duration(self, mock_port):
         mock_port.call_tool.return_value = {
-            "distance": "540 km",
-            "duration": "5 hours 30 min",
+            "distance": "313 km",
+            "duration": "3 hours 10 min",
         }
         result = await mock_port.call_tool(
-            "route_computation", {"origin": "Kyiv", "destination": "Lviv"}
+            "route_computation", {"origin": "Porto", "destination": "Lisbon"}
         )
         assert "distance" in result
         assert "duration" in result
@@ -122,5 +122,5 @@ class TestMapsToolsPortMockImplementation:
         mock_port.call_tool.return_value = {
             "current": {"temperature": "12°C", "condition": "partly cloudy"}
         }
-        result = await mock_port.call_tool("weather_lookup", {"location": "Kyiv"})
+        result = await mock_port.call_tool("weather_lookup", {"location": "Porto"})
         assert "current" in result

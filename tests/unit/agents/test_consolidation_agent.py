@@ -1355,7 +1355,7 @@ class TestBuildReviewCluster:
         ]
         fm.search_existing_facts = AsyncMock(return_value=facts_result)
 
-        changed = [("new-1", "user moved to Springfield from Barcelona")]
+        changed = [("new-1", "user moved to Springfield from Lisbon")]
         result = await agent._build_review_cluster(changed, _ACCOUNT_ID, timezone="UTC")
 
         assert len(result) == 2
