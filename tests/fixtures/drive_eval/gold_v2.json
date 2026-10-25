@@ -81,7 +81,16 @@
   "expected_paths": [
    "Notes/Думки про поїздку.md"
   ],
-  "expect_tier": "exact"
+  "expect_tier": "exact",
+  "acceptable_paths": [
+   "Contracts/Договір_ред1.docx",
+   "Contracts/Договір_ред2.docx",
+   "Contracts/Договір_ред3.docx",
+   "Finance/Рахунок-фактура №1847.pdf",
+   "Contracts/Акт приймання № 52.odt",
+   "Спорт/Абонемент 2026.md"
+  ],
+  "note": "the fixture's other files that name Taras Melnyk (the contracts, the invoice, the act, the gym pass) are true matches"
  },
  {
   "id": "ex-place-name",
@@ -117,11 +126,15 @@
   "query": "Коїмбру",
   "filters": {},
   "expected_paths": [
-   "Photos/Coimbra 2024/IMG_7101.HEIC",
-   "Photos/Coimbra 2024/IMG_7102.HEIC",
    "Notes/Думки про поїздку.md"
   ],
-  "expect_tier": "exact"
+  "expect_tier": "exact",
+  "acceptable_paths": [
+   "Photos/Coimbra 2024/IMG_7101.HEIC",
+   "Photos/Coimbra 2024/IMG_7102.HEIC",
+   "Photos/Coimbra 2024"
+  ],
+  "note": "the Ukrainian inflected form meets the note's own word forms exactly; the photos are found by the place's skeleton (the place table holds Coimbra's Russian Cyrillic form, not the Ukrainian one), a translation: sem-place-uk-skeleton"
  },
  {
   "id": "ex-year-place",
@@ -173,7 +186,13 @@
   "expected_paths": [
    "Notes/Огляд квартири.md"
   ],
-  "expect_tier": "mentioned"
+  "expect_tier": "mentioned",
+  "acceptable_paths": [
+   "Contracts/Договір_ред1.docx",
+   "Contracts/Договір_ред2.docx",
+   "Contracts/Договір_ред3.docx",
+   "Contracts/Акт приймання № 52.odt"
+  ]
  },
  {
   "id": "ex-inflect-kharkiv",
@@ -398,7 +417,15 @@
    "Notes/Думки про поїздку.md"
   ],
   "expect_tier": "translated",
-  "note": "skeleton across scripts"
+  "note": "the fixture's other files that name Taras Melnyk (the contracts, the invoice, the act, the gym pass) are true matches",
+  "acceptable_paths": [
+   "Contracts/Договір_ред1.docx",
+   "Contracts/Договір_ред2.docx",
+   "Contracts/Договір_ред3.docx",
+   "Finance/Рахунок-фактура №1847.pdf",
+   "Contracts/Акт приймання № 52.odt",
+   "Спорт/Абонемент 2026.md"
+  ]
  },
  {
   "id": "sem-lviv-latin",
@@ -410,7 +437,14 @@
   "expected_paths": [
    "Notes/Огляд квартири.md"
   ],
-  "expect_tier": "translated"
+  "expect_tier": "translated",
+  "acceptable_paths": [
+   "Contracts/Договір_ред1.docx",
+   "Contracts/Договір_ред2.docx",
+   "Contracts/Договір_ред3.docx",
+   "Contracts/Акт приймання № 52.odt"
+  ],
+  "note": "\"Lviv\" reaches the genitive \"зі Львова\" in the note; the locative \"у Львові\" it does not (soft sign, accepted in RFC §25.5); the contracts and the act are dated in Lviv"
  },
  {
   "id": "sem-coimbra-latin",
@@ -425,6 +459,24 @@
    "Notes/Думки про поїздку.md"
   ],
   "expect_tier": "any"
+ },
+ {
+  "id": "sem-place-uk-skeleton",
+  "family": "semantic",
+  "sub": "translation",
+  "lang": "uk",
+  "query": "Коїмбру",
+  "filters": {},
+  "expected_paths": [
+   "Photos/Coimbra 2024/IMG_7101.HEIC",
+   "Photos/Coimbra 2024/IMG_7102.HEIC"
+  ],
+  "expect_tier": "translated",
+  "acceptable_paths": [
+   "Notes/Думки про поїздку.md",
+   "Photos/Coimbra 2024"
+  ],
+  "note": "the photos' place forms hold Coimbra in Latin and Russian Cyrillic only; the Ukrainian query meets them by skeleton (koimbr)"
  },
  {
   "id": "sem-rental-agreement",
@@ -487,7 +539,8 @@
   "expect_tier": "labelled",
   "acceptable_paths": [
    "Scans/Scan_0013.pdf",
-   "Books/A Short History of Bridges.docx"
+   "Books/A Short History of Bridges.docx",
+   "Inbox/Rent for November.eml"
   ]
  },
  {
@@ -929,9 +982,10 @@
   "acceptable_paths": [
    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png",
    "Screenshots/Знімок екрана 2026-06-01 093512.png",
-   "Screenshots/Captura de pantalla 2026-03-09 184410.png"
+   "Screenshots/Captura de pantalla 2026-03-09 184410.png",
+   "Photos/WhatsApp/IMG-20251120-WA0005.jpg"
   ],
-  "note": "The v1 fixture's three phone screenshots are screenshots too: `acceptable_paths` (they get `cpa:` after a live re-record; the synthetic enrichment names only the overlay's one)."
+  "note": "The v1 fixture's three phone screenshots are screenshots too: `acceptable_paths` (they get `cpa:` after a live re-record; the synthetic enrichment names only the overlay's one). The WhatsApp chat image is a screenshot too."
  },
  {
   "id": "cls-screenshots-en",
@@ -947,9 +1001,10 @@
   "acceptable_paths": [
    "Screenshots/Screenshot 2026-05-12 at 10.14.03.png",
    "Screenshots/Знімок екрана 2026-06-01 093512.png",
-   "Screenshots/Captura de pantalla 2026-03-09 184410.png"
+   "Screenshots/Captura de pantalla 2026-03-09 184410.png",
+   "Photos/WhatsApp/IMG-20251120-WA0005.jpg"
   ],
-  "note": "The v1 fixture's three phone screenshots are screenshots too: `acceptable_paths` (they get `cpa:` after a live re-record; the synthetic enrichment names only the overlay's one)."
+  "note": "The v1 fixture's three phone screenshots are screenshots too: `acceptable_paths` (they get `cpa:` after a live re-record; the synthetic enrichment names only the overlay's one). The WhatsApp chat image is a screenshot too."
  },
  {
   "id": "ex-date-expiry-dotted",

@@ -65,6 +65,9 @@ FIXTURES_V2: Dict[str, Callable[[], bytes]] = {
     "photo_sunset.jpg": IMG.sunset_jpeg,
     "photo_beach.jpg": IMG.beach_jpeg,
     "photo_landmark.jpg": IMG.landmark_jpeg,
+    # the Hamburg and Coimbra photos (tree_v2.json): pictures of their own, so no recorded triage answer crosses places
+    "photo_harbour.jpg": IMG.harbour_jpeg,
+    "photo_riverside.jpg": IMG.riverside_jpeg,
 }
 
 
