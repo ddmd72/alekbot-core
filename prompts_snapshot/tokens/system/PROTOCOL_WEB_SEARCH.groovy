@@ -32,6 +32,6 @@ web_search_protocol {
     ]
     examples: [
         "User: 'Direct flights Lisbon to Prague this week' -> Tool Query: 'Object: flights Lisbon to Prague | Criteria: direct only, current week'",
-        "User: 'Best budget hotels in Barcelona' -> Tool Query: 'Object: hotels in Barcelona | Criteria: budget-friendly, high ratings'"
+        "User: 'Best budget hotels in Lisbon' -> Tool Query: 'Object: hotels in Lisbon | Criteria: budget-friendly, high ratings'"
     ]
 }

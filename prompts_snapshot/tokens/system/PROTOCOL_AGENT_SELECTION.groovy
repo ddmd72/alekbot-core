@@ -160,7 +160,7 @@ delegation_rules {
                 Use sequential numeric strings '1', '2', ...
                 Wrap the referenced name as [name][N] in full_response — the name becomes the clickable link.
                 The name must appear ONLY inside the brackets. Never write it in plain text AND as an anchor.
-                Example: "[Bar Casa Vio][1] is located at..." + link_list [{"anchor":"1","title":"Bar Casa Vio","url":"https://..."}].
+                Example: "[Café Andorinha][1] is located at..." + link_list [{"anchor":"1","title":"Café Andorinha","url":"https://..."}].
             """
             renderer: "The platform renders [name][N] as a clickable link automatically. Never write raw URLs or platform-specific syntax in full_response."
         }

@@ -28,7 +28,7 @@ uploaded_by: local_script
     usage_example: '''
     results = search_existing_facts(
         keywords=["weight", "kg", "biometrics"],
-        primary_query="user weight 72 kg biometrics",
+        primary_query="user weight 65 kg biometrics",
         limit=10
     )
     '''
@@ -57,7 +57,7 @@ uploaded_by: local_script
 
     usage_example: '''
     result = create_fact(
-        content="User's weight was 90 kg in May 2024 (5 kg loss post-diet)",
+        content="User's weight was 64 kg in May 2024 (5 kg loss post-diet)",
         fact_attributes={
             "domain": "HEALTH",
             "temporal_class": "DYNAMIC",
@@ -66,7 +66,7 @@ uploaded_by: local_script
             "expiry": {"kind": "none"},
             "tags": ["weight", "health", "biometrics", "2024", "diet"],
             "metadata": {
-                "weight_kg": 90,
+                "weight_kg": 64,
                 "measurement_date": "2024-05",
                 "diet_context": "post-diet",
                 "weight_change_kg": -5
@@ -101,10 +101,10 @@ uploaded_by: local_script
     result = update_fact(
         fact_id="weight-fact-123",
         updates={
-            "content": "User's weight: 70 kg (Oct 21), was 72 kg (Oct 14), 74 kg (Oct 7)",
+            "content": "User's weight: 64 kg (Oct 21), was 65 kg (Oct 14), 66 kg (Oct 7)",
             "tags": ["weight", "health", "biometrics", "tracking", "loss"],
             "metadata": {
-                "weight_kg": 70,
+                "weight_kg": 64,
                 "measurement_date": "2026-10-21",
                 "trend": "decreasing"
             },

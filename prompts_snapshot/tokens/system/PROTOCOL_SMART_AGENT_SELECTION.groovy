@@ -169,8 +169,8 @@ agents_registry {
 
         examples: [
             {
-                user_query: "Find my flight booking confirmation for the Paris trip"
-                tool_call: 'delegate_to_specialist(intent="search_emails", query="find my flight booking confirmation for Paris")'
+                user_query: "Find my flight booking confirmation for the Berlin trip"
+                tool_call: 'delegate_to_specialist(intent="search_emails", query="find my flight booking confirmation for Berlin")'
             },
             {
                 user_query: "Any emails about the lease agreement from last year?"

@@ -64,7 +64,7 @@ uploaded_by: local_script
             numbers:     "Do not lose numeric values, dates, or amounts."
         }
 
-        specific:   "Numbers, dates, names. 'User is losing weight' is invalid. 'User's weight: 70 kg (Mar 10)' is valid."
+        specific:   "Numbers, dates, names. 'User is losing weight' is invalid. 'User's weight: 64 kg (Mar 10)' is valid."
         timeless:   "Patterns, states, and traits — not one-off events. 30-day test: would this matter in a month?"
         dated:      "Always include reported_date (conversation timestamp) in fact_attributes."
         personal:   "Use 'User's X' or '{UserName}'s X'. Never 'my X'."
@@ -335,8 +335,8 @@ uploaded_by: local_script
             result = update_fact(
                 fact_id="weight-fact-123",
                 updates={
-                    "content": "User's weight: 70 kg (Mar 10)",
-                    "metadata": {"weight_kg": 70, "measurement_date": "2026-03-10", "trend": "decreasing"},
+                    "content": "User's weight: 64 kg (Mar 10)",
+                    "metadata": {"weight_kg": 64, "measurement_date": "2026-03-10", "trend": "decreasing"},
                     "reported_date": "2026-03-10T10:00:00"
                 }
             )
@@ -385,16 +385,16 @@ uploaded_by: local_script
 
         example_time_series_update: {
 
-            conversation: "USER: Вчера я весил 70 кг"
+            conversation: "USER: Вчера я весил 64 кг"
 
             reasoning: '''
             <thinking>
             STEP 1 — EXTRACT:
-            Candidate: "User's weight: 70 kg (Mar 10, 2026)"
+            Candidate: "User's weight: 64 kg (Mar 10, 2026)"
 
             STEP 2 — CLASSIFY:
             Domain: HEALTH | Temporal: DYNAMIC | State: CURRENT | Priority: MEDIUM | TTL: 90d
-            Tags: ["weight", "health", "biometrics"] | Metadata: {weight_kg: 70, measurement_date: "2026-03-10"}
+            Tags: ["weight", "health", "biometrics"] | Metadata: {weight_kg: 64, measurement_date: "2026-03-10"}
 
             STEP 3 — SEARCH:
             search_existing_facts(
@@ -402,12 +402,12 @@ uploaded_by: local_script
                 primary_query="user weight kg biometrics",
                 alternative_query="user body weight measurement"
             )
-            Result: [{"fact_id": "weight-123", "content": "User's weight: 72 kg (Mar 3)", "similarity": 0.95}]
+            Result: [{"fact_id": "weight-123", "content": "User's weight: 65 kg (Mar 3)", "similarity": 0.95}]
 
             STEP 4 — DECIDE:
             Existing subject (weight tracking). Candidate adds a new measurement to the same metric → UPDATE.
-            Count words in planned content: "User's weight: 70 kg (Mar 10)" → 6 words. ≤40 → proceed.
-            (If the existing fact already held accumulated history like "70 kg Mar 10, 72 kg Mar 3, 74 kg Feb 24..." and
+            Count words in planned content: "User's weight: 64 kg (Mar 10)" → 6 words. ≤40 → proceed.
+            (If the existing fact already held accumulated history like "64 kg Mar 10, 65 kg Mar 3, 66 kg Feb 24..." and
             the planned new content would exceed 40 words → STOP, switch to decomposition: SUPERSEDE the accumulation
             fact and CREATE separate atomic facts — one for current value, one for historical records if warranted.)
 
@@ -415,8 +415,8 @@ uploaded_by: local_script
             update_fact(
                 fact_id="weight-123",
                 updates={
-                    "content": "User's weight: 70 kg (Mar 10)",
-                    "metadata": {"weight_kg": 70, "measurement_date": "2026-03-10", "trend": "decreasing"},
+                    "content": "User's weight: 64 kg (Mar 10)",
+                    "metadata": {"weight_kg": 64, "measurement_date": "2026-03-10", "trend": "decreasing"},
                     "reported_date": "2026-03-10T10:00:00"
                 }
             )
@@ -432,17 +432,17 @@ uploaded_by: local_script
         example_echo_trap: {
 
             conversation: '''
-            ASSISTANT: Based on our history, you weigh 75kg.
+            ASSISTANT: Based on our history, you weigh 67kg.
             USER: Да, всё верно.
             '''
 
             reasoning: '''
             <thinking>
             STEP 1 — EXTRACT:
-            Candidate: "User's weight is 75 kg" (user confirmed ASSISTANT recall)
+            Candidate: "User's weight is 67 kg" (user confirmed ASSISTANT recall)
 
             STEP 3 — SEARCH:
-            Results: [{"fact_id": "weight-123", "content": "User's weight is 75kg", "similarity": 0.98}]
+            Results: [{"fact_id": "weight-123", "content": "User's weight is 67kg", "similarity": 0.98}]
 
             STEP 4 — DECIDE:
             The fact originated from ASSISTANT (retrieved from memory). USER only confirmed — added zero

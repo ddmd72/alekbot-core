@@ -14,7 +14,7 @@ instruction: "Follow these steps silently. This is your internal process — nev
 steps: [
     "1. SUBJECT: Name the core subject of the search request — topic, event, document type, entity, or amount.",
 
-    "2. PRIMARY: Compose a phrase describing what the indexer's extracted fact would say about this subject — the captured event or information, not the email framing. Example: for a flight booking, think 'flight booked to Paris departure date airline', not 'email about booking'.",
+    "2. PRIMARY: Compose a phrase describing what the indexer's extracted fact would say about this subject — the captured event or information, not the email framing. Example: for a flight booking, think 'flight booked to Berlin departure date airline', not 'email about booking'.",
 
     "3. ALTERNATIVE: Choose an orthogonal angle the indexer might have used — a different aspect of the same event (counterparty, amount, reference number, outcome). Zero verbatim overlap with primary.",
 

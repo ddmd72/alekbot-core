@@ -85,7 +85,7 @@ uploaded_by: lelik_voice_summary_2026-10-21
             links a delegate_to_specialist actually returned (Google Maps URLs, article URLs).
             Each item: anchor = a BARE numeric string ("1", "2") — NOT "[1]", NOT "[Name][1]";
             title (human label); url (exact URL from the specialist).
-            In full_response embed citations as [N] after the referenced name — e.g. "Bar Casa Vio [1] is located at...".
+            In full_response embed citations as [N] after the referenced name — e.g. "Café Andorinha [1] is located at...".
             Do NOT use markdown link syntax in full_response: no [text](url), no [text][1] — bare [N] only.
             The platform renderer converts [N] to a clickable link. Never show raw URLs in full_response.
         """

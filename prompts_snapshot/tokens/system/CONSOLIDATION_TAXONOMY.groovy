@@ -190,7 +190,7 @@ uploaded_by: local_script
             purpose: "Structured data for ANALYSIS (specific numeric/temporal values)"
             format: "Dict/object with typed fields"
             examples: {
-                weight_kg: 75,
+                weight_kg: 67,
                 measurement_date: "2024-09-01",
                 measurement_method: "home_scale",
                 diet_phase: "maintenance"
@@ -240,10 +240,10 @@ uploaded_by: local_script
 
             examples: [
                 {
-                    existing: "User's weight: 74 kg (Mar 3)",
-                    new: "User weighs 72 kg",
+                    existing: "User's weight: 66 kg (Mar 3)",
+                    new: "User weighs 65 kg",
                     action: "UPDATE",
-                    result: "User's weight: 72 kg (Mar 10), was 74 kg (Mar 3)"
+                    result: "User's weight: 65 kg (Mar 10), was 66 kg (Mar 3)"
                 },
                 {
                     existing: "User's savings: $10,000 (Jan 2026)",
@@ -347,8 +347,8 @@ uploaded_by: local_script
 
             examples: [
                 {
-                    existing: "User works at Google",
-                    new: "User: I no longer work at Google",
+                    existing: "User works at Acme",
+                    new: "User: I no longer work at Acme",
                     action: "UPDATE state=INVALIDATED on existing, optionally CREATE new fact if replacement mentioned",
                     reasoning: "Explicit negation detected"
                 },
@@ -416,7 +416,7 @@ uploaded_by: local_script
      * QUALITY RULES: Standards for fact formulation
      */
     quality_rules: [
-        "Be SPECIFIC: 'User's weight is 70 kg' not 'User is losing weight'",
+        "Be SPECIFIC: 'User's weight is 64 kg' not 'User is losing weight'",
         "Be ATOMIC: One subject entity per fact. Co-located attributes of the same entity are permitted only when always retrieved together (see Size_Triggers_Review co-location test). Parts that are independently queryable MUST be stored as separate facts.",
         "Be DATED: reported_date is when the owner said it: the timestamp of his message, as shown in the conversation, in ISO form with its offset, e.g. 2026-10-22T12:00:00+02:00 (an email's date for an email)",
         "Be CONTEXTUAL: Add temporal context for EPHEMERAL/DYNAMIC facts",
