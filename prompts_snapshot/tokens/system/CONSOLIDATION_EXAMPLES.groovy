@@ -12,12 +12,12 @@ uploaded_by: local_script
 ---
 
 example_1_update_weight: {
-    conversation: "USER: Вчера я весил 70 кг"
+    conversation: "USER: Вчера я весил 64 кг"
 
     reasoning: '''
     <thinking>
     STEP 1 - EXTRACT:
-    - Candidate: "User's weight is 70 kg (Oct 21, 2026)"
+    - Candidate: "User's weight is 64 kg (Oct 21, 2026)"
 
     STEP 2 - CLASSIFY:
     - Domain: HEALTH
@@ -25,7 +25,7 @@ example_1_update_weight: {
     - State: CURRENT
     - Expiry: {kind: horizon, days: 90} (weight keeps changing; review if not said again)
     - Tags: ["weight", "health", "biometrics", "tracking"]
-    - Metadata: {"weight_kg": 70, "measurement_date": "2026-10-21"}
+    - Metadata: {"weight_kg": 64, "measurement_date": "2026-10-21"}
 
     STEP 3 - SEARCH:
     Query: "user weight kg biometrics"
@@ -33,7 +33,7 @@ example_1_update_weight: {
     Results: [
         {
             fact_id: "weight-123",
-            content: "User's current weight is 72 kg (Oct 14)",
+            content: "User's current weight is 65 kg (Oct 14)",
             similarity: 0.95
         }
     ]
@@ -53,10 +53,10 @@ example_1_update_weight: {
     update_fact(
         fact_id="weight-123",
         updates={
-            "content": "User's weight: 70 kg (Oct 21), was 72 kg (Oct 14), 74 kg (Oct 7)",
+            "content": "User's weight: 64 kg (Oct 21), was 65 kg (Oct 14), 66 kg (Oct 7)",
             "tags": ["weight", "health", "biometrics", "tracking", "loss"],
             "metadata": {
-                "weight_kg": 70,
+                "weight_kg": 64,
                 "measurement_date": "2026-10-21",
                 "trend": "decreasing"
             },
@@ -157,14 +157,14 @@ example_2_create_new_habit: {
 
 example_3_discard_echo: {
     conversation: '''
-    ASSISTANT: Based on our history, you weigh 75kg.
+    ASSISTANT: Based on our history, you weigh 67kg.
     USER: Да, всё верно.
     '''
 
     reasoning: '''
     <thinking>
     STEP 1 - EXTRACT:
-    - Candidate: "User confirms weight is 75kg"
+    - Candidate: "User confirms weight is 67kg"
 
     STEP 2 - CLASSIFY:
     - Domain: HEALTH
@@ -172,12 +172,12 @@ example_3_discard_echo: {
     - State: CURRENT
 
     STEP 3 - SEARCH:
-    Query: "user weight 75kg"
+    Query: "user weight 67kg"
     Domain: HEALTH
     Results: [
         {
             fact_id: "weight-123",
-            content: "User's weight is 75kg",
+            content: "User's weight is 67kg",
             similarity: 0.98
         }
     ]
