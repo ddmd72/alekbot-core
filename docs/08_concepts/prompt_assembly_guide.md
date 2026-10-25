@@ -1,8 +1,5 @@
 # Prompt Assembly Guide
 
-
-
-
 ## Overview
 
 Explains how prompts are assembled in Alek Core using the **class-collection assembly model (v4)**. The central service is `PromptAssemblyService`. Agents never touch prompt construction directly — they call `PromptBuilderPort.build_for_agent()`.
@@ -35,8 +32,12 @@ PromptBuilderPort (port interface)
   └─ UserPromptBuilder (service implementation, src/services/prompt_builder.py)
        └─ build_for_agent(agent_type, user_id, routing_metadata, ...)
             ├─ BiographicalContextService.get_biographical_context_cached(account_id)
+            ├─ Split the cached facts into three channels:
+            │    directives (agent_directive domain) → standing_directives
+            │    query-specific (tagged semantic_lens) → query_specific_context
+            │    everything else                      → static biographical context
             └─ PromptAssemblyService.assemble(agent_type, user_id, account_id,
-                                               biographical_facts, conversation_history)
+                                               biographical_facts, conversation_history, ...)
                  ├─ PHASE 1: _assemble_static_template()  ← cached 24h
                  │    │
                  │    │  ── sequential (profile must be fetched first to get blueprint_id) ──
@@ -61,6 +62,8 @@ PromptBuilderPort (port interface)
                       ├─ Add knowledge_base {} (location, bio, history; only if non-empty)
                       │  and any extra_static_blocks
                       ├─ Append the skills catalog, then standing_directives {}
+                      └─ Append <!-- CACHE_BOUNDARY --> + active_reminders
+                         + current_date_time (only with include_datetime) + Q-S context
 ```
 
 ---
@@ -110,17 +113,20 @@ The section names and their order come from `blueprint.class_order`. Empty secti
 
 Takes the cached static template and appends runtime content. Runs on every request — never cached.
 
-Steps:
+Steps (the three fact channels arrive already split by `UserPromptBuilder`, §6):
 1. Format static facts with `BiographicalFactsFormatter` (domain-grouped Markdown) and directives with its
-`format_directives`
+   `format_directives`
 2. Validate bio, directives and the Q-S context via `SecurityPort` (UNTRUSTED zone)
 3. Format and validate `conversation_history` via `SecurityPort`
 4. Build `knowledge_base {}` if any of `user_location`, biographical context or conversation history is non-empty;
+   `extra_static_blocks` go right after it:
    - `kb_preamble=True` → placed **before** the blueprint template (conversational agents)
    - `kb_preamble=False` (default) → placed **after** the blueprint template (consolidation)
+5. Append the skills catalog (Smart), then `standing_directives {}`, the last static block
 6. Append `<!-- CACHE_BOUNDARY -->`
 7. Append `active_reminders {}` (only when the orchestrator has reminders)
 8. Append `current_date_time {}` (only with `include_datetime=True`; by default the time is stamped into user messages)
+9. Append `query_specific_context` block (only if Q-S facts present)
 
 ---
 
@@ -145,6 +151,9 @@ class Alek extends Agent {
   protocols { ... }
   output_format { ... }
 }
+
+available_skills { ... }               ← Smart, when the user has skills
+standing_directives { ... }            ← binding user rules, last static block
 
 [DYNAMIC SUFFIX — sent fresh every request]
 ```
@@ -171,9 +180,10 @@ knowledge_base {                       ← AFTER blueprint (postamble)
 [DYNAMIC SUFFIX — sent fresh every request]
 
 <!-- CACHE_BOUNDARY -->
-current_date_time {
-    
-    current_date_time {           ← only with include_datetime=True
+active_reminders { ... }      ← only when the orchestrator has reminders
+
+current_date_time {           ← only with include_datetime=True
+    2026-02-25 14:32 Wednesday (CET)
 }
 
 query_specific_context: '''   ← only when router found semantic facts
@@ -234,15 +244,26 @@ request = LLMRequest(
 async def build_for_agent(
     self,
     agent_type: str,
-    user_id: str,
+    user_id: Optional[str] = None,
     account_id: Optional[str] = None,
     routing_metadata: Optional[RoutingMetadata] = None,
     capabilities: Optional[ProviderCapabilities] = None,
-    include_biographical: bool = True,
+    biographical_facts: Optional[List[Dict]] = None,
     conversation_history: Optional[List[dict]] = None,
+    include_biographical: bool = True,
+    include_directives: bool = True,
     kb_preamble: bool = False,
+    agent_notes: Optional[List[dict]] = None,
+    extra_static_blocks: Optional[List[str]] = None,
+    include_datetime: bool = False,
+    skills_catalog: Optional[str] = None,
 ) -> str
 ```
+
+The flags not covered below: `include_directives=False` keeps `standing_directives {}` out (the consolidator curates
+directives as records and never obeys them); `agent_notes` fills `active_reminders {}`; `extra_static_blocks` carries a
+large static payload (an email triage batch) into the cached prefix instead of the user message; `include_datetime`
+adds `current_date_time {}`; `skills_catalog` is Smart's `available_skills {}`.
 
 ### `kb_preamble` Flag
 
@@ -275,9 +296,11 @@ Facts come from two sources:
 2. **Query-specific (Q-S) context** — semantic search results from the router, tagged `semantic_lens` by `merge_enriched_context_with_biographical()`. These go in the **dynamic** section after the boundary.
 
 The split happens in `UserPromptBuilder.build_for_agent()`, which also takes the standing directives (the
+`agent_directive` domain) out into their own channel. In outline:
 ```python
 directives  = [f for f in facts if domain(f) == "agent_directive"] if include_directives else []
 static_bio  = [f for f in facts if not directive(f) and "semantic_lens" not in tags(f)]
+qs_facts    = [f for f in facts if "semantic_lens" in tags(f)]
 ```
 
 **Why this split:** Long-term biographical facts rarely change (the cache is refreshed by consolidation). Placing them before the boundary means they are cached with the static template content. Q-S context changes every request (different query → different semantic search results), so it must be in the dynamic suffix.
@@ -287,6 +310,7 @@ static_bio  = [f for f in facts if not directive(f) and "semantic_lens" not in t
 ## 7. Cache Boundary and Anthropic Prompt Caching
 
 `PROMPT_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"` is defined in `src/domain/llm.py` (re-exported by
+`src/ports/llm_port.py`).
 
 When `ClaudeAdapter` receives a request with `cache_config.enabled=True` and the boundary marker is present in `system_instruction`, it splits the instruction into two `system_parts` blocks:
 

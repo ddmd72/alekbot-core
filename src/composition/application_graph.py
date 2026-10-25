@@ -25,6 +25,7 @@ from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQue
 from src.adapters.firestore_dedup_store import FirestoreDedupStore
 from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
 from src.adapters.firestore_long_turn_registry import FirestoreLongTurnRegistry
+from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.adapters.firestore_notification_state_adapter import FirestoreNotificationStateAdapter
 from src.adapters.firestore_quota_service import FirestoreQuotaService
 from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepository
@@ -59,11 +60,13 @@ from src.composition.user_agent_factory import UserAgentFactory
 from src.config.auth import AuthConfig
 from src.config.environment import validate_telegram_config
 from src.domain.agent import AgentConfig
+from src.domain.fact_lifecycle_sweep import sweep_dry_run
 from src.domain.language import LanguageCode
 from src.domain.notification_kind import NotificationKind as _NotificationKind
 from src.domain.settings import SearchConfig
 from src.handlers.agent_worker_handler import AgentWorkerHandler
 from src.handlers.worker_handler import WorkerHandler
+from src.infrastructure.agent_config import CONSOLIDATION as CONSOLIDATION_CFG
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
 from src.infrastructure.agent_registry import AgentRegistry
@@ -71,6 +74,7 @@ from src.infrastructure.notification_sla import NOTIFICATION_SLA, dispatch_deadl
 from src.services.agent_fallback_service import AgentFallbackService
 from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
+from src.services.cabinet_fact_service import CabinetFactService
 from src.services.channel_binding_service import ChannelBindingService
 from src.services.companion_context_assembler_service import CompanionContextAssemblerService
 from src.services.companion_extraction_service import CompanionExtractionService
@@ -79,6 +83,7 @@ from src.services.consolidation_service import ConsolidationService
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
 from src.services.document_delivery_service import DocumentDeliveryService
 from src.services.email_embedding_repair_service import EmailEmbeddingRepairService
+from src.services.fact_lifecycle_sweep_service import FactLifecycleSweepService
 from src.services.file_access_token_service import FileAccessTokenService
 from src.services.file_link_service import FileLinkService
 from src.services.file_upload_service import FileUploadService
@@ -89,6 +94,7 @@ from src.services.language_preference_service import LanguagePreferenceService
 from src.services.localization_service import LocalizationService as _LocalizationService
 from src.services.long_turn_service import LongTurnService
 from src.services.overflow_routing_service import OverflowRoutingService
+from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.services.prompt_builder import PromptBuilder
 from src.services.provider_registry import ProviderRegistry
 from src.services.reminders_service import RemindersService
@@ -117,6 +123,7 @@ class ApplicationGraph:
     user_repo: FirestoreUserRepository
     account_repo: FirestoreAccountRepository
     invite_service: InviteCodeService
+    cabinet_facts: CabinetFactService
     quota_service: FirestoreQuotaService
     alert_sink: Optional[SlackWebhookAdapter]
     session_service: SessionService
@@ -635,13 +642,21 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         else None
     )
 
-    # Services for WorkerHandler — wrap ports so the handler never imports ports directly
+    # The one owner-zone resolver: the consolidation run here, the memory review and the owner's answers later (Facts S4).
+    _owner_zones = OwnerTimezoneResolver(account_repo=account_repo, user_repo=user_repo)
+
+    # Services for WorkerHandler — wrap ports so the handler never imports ports directly.
+    # The one ConsolidationService also serves `$consolidate` on both chat adapters (Facts S2).
     _consolidation_service = ConsolidationService(
         queue=consolidation_queue,
         coordinator=coordinator,
         agent_factory=agent_factory,
+        lease=FirestoreMemoryWriteLease(db_client, env_config),
+        run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
+        task_queue=agent_task_queue,
         indexed_email_repo=indexed_email_repo,
         user_repo=user_repo,
+        owner_zones=_owner_zones,
     ) if consolidation_queue else None
     _task_dispatch_service = TaskDispatchService(agent_task_queue) if agent_task_queue else None
     _reminders_service = RemindersService(
@@ -684,6 +699,20 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             localization=_localization,
             language=_language_service,
         )
+
+    # The fact janitor (FACT_LIFECYCLE_RFC D4). Log-only unless FACT_LIFECYCLE_SWEEP_DRY_RUN is an explicit off value:
+    # an optional rollout knob, read here with os.getenv (not load_settings).
+    _fact_sweep_dry_run = sweep_dry_run(os.getenv("FACT_LIFECYCLE_SWEEP_DRY_RUN"))
+    logger.info("fact lifecycle sweep: log-only" if _fact_sweep_dry_run else "fact lifecycle sweep: writes")
+    _fact_lifecycle_sweep = FactLifecycleSweepService(
+        repo=container.repository,
+        counters=container.fact_lifecycle_counters,
+        alert_sink=_alert_webhook,
+        dry_run=_fact_sweep_dry_run,
+    )
+
+    # The Cabinet's fact writes (the owner's delete), over the same fact repository the agents use.
+    cabinet_facts = CabinetFactService(container.repository)
 
     # Worker handler — dispatches Cloud Tasks to appropriate handlers
     # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
@@ -728,6 +757,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         drive_sync_scheduler=_drive_sync_scheduler,
         deep_research_fetch=_openai_dr_fetch,
         prompt_content_store=container.prompt_content_store,
+        fact_lifecycle_sweep=_fact_lifecycle_sweep,
     )
 
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
@@ -777,11 +807,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         db_client=db_client,
         consolidation_queue=consolidation_queue,
         consolidation_config=config.get("CONSOLIDATION"),
+        consolidation_service=_consolidation_service,
         audio_service=audio_service,
         html_renderer=html_renderer,
         notification_service=notification_service,
-        indexed_email_repo=container.indexed_email_repo,
-        user_repo=user_repo,
         language_service=_language_service,
         localization=_localization,
         file_conversion_service=container.file_conversion_service,
@@ -840,11 +869,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                 file_service=file_service,
                 consolidation_queue=consolidation_queue,
                 consolidation_config=config.get("CONSOLIDATION"),
+                consolidation_service=_consolidation_service,
                 audio_service=audio_service,
                 html_renderer=html_renderer,
                 notification_service=notification_service,
-                indexed_email_repo=container.indexed_email_repo,
-                user_repo=user_repo,
                 language_service=_language_service,
                 localization=_localization,
                 file_conversion_service=container.file_conversion_service,
@@ -889,6 +917,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         user_repo=user_repo,
         account_repo=account_repo,
         invite_service=invite_service,
+        cabinet_facts=cabinet_facts,
         quota_service=quota_service,
         alert_sink=_alert_webhook,
         session_service=session_service,

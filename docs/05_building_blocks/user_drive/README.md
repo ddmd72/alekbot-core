@@ -12,7 +12,7 @@ the owner's index rebuilt, gate key `accuracy` applied).** S1 files the bot cann
 marked "(branch)" below is now deployed code (2026-10-19).
 RFC §27 (transcripts of audio and video; decisions D41–D47, deltas Δ95–Δ175): **slice T1 is live since 2026-10-21 (the owner only, $10 monthly cap; other users have transcription off);
 the mirror folder (T2: built on `feat/drive-transcripts-t2`, not deployed) and the summary (T3, not built).** How it works end to end, in plain English, is §4.23; the rollout and
-the switches are §7.2 and `docs/07_deployment/README.md` → "Transcripts of recordings (§27)".
+the switches are §7.2, `docs/07_deployment/README.md` → "Transcripts switch and cap" and "Standing levers", and the rollout notes (ops).
 
 | Question | Read |
 |---|---|
@@ -157,7 +157,7 @@ seconds (live: 2–5 s per user), billed per request. Push stays an extension: o
 `drive_sync` (RFC §14).
 
 Deploy units, queue, scheduler job and the two-pass first deploy: [docs/07_deployment/README.md](../../07_deployment/README.md)
-→ Drive Indexer Service and [SCHEDULERS.md](../../07_deployment/SCHEDULERS.md).
+→ Deploy units and Indexer URL, and [SCHEDULERS.md](../../07_deployment/SCHEDULERS.md).
 
 ### 2.1 Ports and adapters
 
@@ -1400,7 +1400,7 @@ is instead of moving to the Archive) is no exception: it keeps its stored copy u
 
 **Opt-out, rollback and the owner's levers.** An indexing opt-out deletes nothing on the drive; a re-enable re-identifies the root and re-buys the transcripts of the
 recordings that still exist (about $0.16 per audio hour, newest first, under the monthly cap; live $10 through `DRIVE_TRANSCRIBE_USD_CAP_DEV`). Rollback to an image that predates T2: pause the queue and the fan-out,
-move `_Transcripts` out of the App Folder, deploy, resume; the reverse for the roll-forward (§7 and `docs/07_deployment/README.md`). `drive_transcript_sweep.py` removes
+move `_Transcripts` out of the App Folder, deploy, resume; the reverse for the roll-forward (§7 and the rollout notes, ops). `drive_transcript_sweep.py` removes
 the orphan documents after a rollback and **keeps** the mirror's ledger, root documents and pinned transcripts unless `--mirror`. `drive_mirror_status.py` shows the
 state of the mirror per user (§7).
 
@@ -2034,8 +2034,7 @@ failed and why.
 
 ### 7.2 Deploy order, owner steps, rollback
 
-**Search v2** has its own runbook: [docs/07_deployment/README.md](../../07_deployment/README.md) → "Search v2 —
-rollout and rollback (D30)". In short: the gates (the v2 eval, G3 with no hard failure, the caption-shift check and the
+**Search v2** has its own runbook in the rollout notes (ops). In short: the gates (the v2 eval, G3 with no hard failure, the caption-shift check and the
 live model check of the new agents); back up the prompt layer; every new composite and the `hint_vector` indexes
 `READY` and the usage TTL on; pause the drive queue and the fan-out job; upload the profiler, passages and triage-v2
 prompts; deploy main and the indexer; upload Smart's protocol token; **resume the queue before any rebuild** (the purge
@@ -2046,8 +2045,7 @@ tag `drive-search-v1` after marking every user `purging` and deleting every hint
 (default on) stops every upgrade pass in an emergency; set it through `.env` (`DRIVE_UPGRADE_PASS_DEV`), since a value
 set with `gcloud run services update` is lost at the next deploy.
 
-**The §26 rollout (done 2026-10-19)** has its own runbook: [docs/07_deployment/README.md](../../07_deployment/README.md)
-→ "Card accuracy (§26) — rollout and rollback". In short: back up the prompt layer; composites `READY` and the smoke;
+**The §26 rollout (done 2026-10-19)** has its own runbook in the rollout notes (ops). In short: back up the prompt layer; composites `READY` and the smoke;
 pause; **upload the six changed tokens inside the paused window** (`OUTPUT_FORMAT_` and `COGNITIVE_PROCESS_` for the
 profiler, the reader and triage); deploy main and the indexer; **verify both serve the new image**; resume; rebuild per
 user, the owner first, with **no initial-build reset** (owner rule 2026-10-19: the rebuild runs under the monthly caps —
@@ -2056,8 +2054,7 @@ already read, then run the revision script. Rollback: restore the six-token back
 the previous tip; the purge is mandatory and the second re-index runs under the caps the first spent. The paragraph that
 follows is slice S1 alone; it is part of the same rollout.
 
-**Transcripts (RFC §27; T1 live since 2026-10-21, owner only)** have their own runbook: [docs/07_deployment/README.md](../../07_deployment/README.md)
-→ "Transcripts of recordings (§27)". In short: the composite and collection-group indexes `READY` plus the smoke; back up and upload the four
+**Transcripts (RFC §27; T1 live since 2026-10-21, owner only)** have their own runbook in the rollout notes (ops). In short: the composite and collection-group indexes `READY` plus the smoke; back up and upload the four
 `drive_transcriber` prompt documents (owner); pause; deploy main and the indexer with the switch **off**; verify both serve the new image; resume;
 then, to try it, set `DRIVE_TRANSCRIBE_ENABLED_DEV=on` and a low `DRIVE_TRANSCRIBE_USD_CAP_DEV` in `.env`, redeploy, and set the owner's flag with
 `scripts/infrastructure/drive_transcribe_flag.py` (dry run, then `--apply`). **Levers, fastest first:** the user's flag off (stops new work for him, keeps
@@ -2066,7 +2063,7 @@ switched on again or the user opts out of indexing); the previous image (every n
 gate, no initial-build reset. The money: open reservations are released or booked at a purge, never lost (§4.23).
 
 **The T2 mirror (RFC §27.9; live since 2026-10-21)** is an upgrade on top of T1 with no prompt upload, no rebuild and no migration gate: the mirror calls no model. Owner steps
-(RFC §27.15 step 8, plan S3–S6): the Δ217 composite indexes `READY` (a hard gate, Δ230: `docs/07_deployment/README.md` → "T2 mirror folder"); deploy main and the indexer together
+(RFC §27.15 step 8, plan S3–S6): the Δ217 composite indexes `READY` (a hard gate, Δ230: the indexes must be `READY` before the T2 revision serves); deploy main and the indexer together
 in the paused window; the live check on the phone (`_Transcripts` with the right tree and its read-me, a deleted test recording under `_Transcripts/Archive/<today>/`, "search in
 deleted files" finds it and a plain search does not, a restored recording's file moves back, a chat save into `_Transcripts` is refused); review the Cabinet texts in four languages.
 Rollback and levers: §7 (mirror operations).
@@ -2079,8 +2076,7 @@ the skill, the locales and the manifest text ship with the code). Records delete
 come back only when delta lists them again or on the §26 rebuild (D38). Rollback: the previous revision parses the new
 records (plain new fields, no enum value, §25.8); it would treat a marked file's next 404 as a deletion again.
 
-The Slice 2+4 deploy, for reference (full commands: [docs/07_deployment/README.md](../../07_deployment/README.md) →
-Slice 2+4). In order:
+The Slice 2+4 deploy, for reference (full commands: the rollout notes, ops). In order:
 1. the first image build of this branch, which must create the `driveparser` user and pass the world-writable
    check — built and pushed, not deployed, because S1 runs from it (`make deploy` builds and deploys in one go);
 2. the spikes: S1 from that image (with its reader-shaped run, as the `driveparser` user), S0g, S3;

@@ -423,7 +423,7 @@ ASSISTANT: Ты весил 76кг в январе 2025.
             
             case_echo_confirmation_trap: {
                 input: """
-ASSISTANT: Based on our history, you weigh 95kg.
+ASSISTANT: Based on our history, you weigh 75kg.
 USER: Да, всё верно.
 """,
                 output: {
@@ -447,7 +447,7 @@ USER: Да, было 74. Сейчас 72кг.
                         "metadata": {
                             "entity_scope": "SELF",
                             "weight_kg": 72,
-                            "date": "2026-02",
+                            "date": "2026-03",
                             "previous_weight_kg": 74
                         }
                     }],
@@ -469,8 +469,8 @@ ASSISTANT: Хорошо, сохранил.
                         "type": "STATE",
                         "metadata": {
                             "entity_scope": "SELF",
-                            "weight_kg": 72,
-                            "date": "2026-02"
+                            "weight_kg": 70,
+                            "date": "2026-03"
                         }
                     }],
                     "new_anchors": []

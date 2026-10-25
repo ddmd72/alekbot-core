@@ -63,6 +63,7 @@ LUNA = "gpt-5.6-luna"
 # difficulty and kind, not for flattering either model:
 #   legal/regulatory (highest damage if confidently wrong), local commerce,
 #   live current events, official procedural rules, and one trivial lookup as a floor.
+# The committed needles are neutral stand-ins; a rerun sets needles that match its own recorded queries.
 SELECTORS: Dict[str, str] = {
     "wizz":      "Wizz Air official rules",
     "wildfire":  "Springfield wildfire",

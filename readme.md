@@ -283,7 +283,7 @@ Architecture and design docs follow the [arc42](https://arc42.org) template:
 - **Building blocks:** [`docs/05_building_blocks/`](docs/05_building_blocks/)
 - **Concepts:** [`docs/08_concepts/`](docs/08_concepts/)
 - **RFCs:** [`docs/10_rfcs/`](docs/10_rfcs/)
-- **Roadmap:** [`docs/12_risks/IMPLEMENTATION_ROADMAP.md`](docs/12_risks/IMPLEMENTATION_ROADMAP.md)
+- **Risks and technical debt:** [`docs/12_risks/IMPLEMENTATION_ROADMAP.md`](docs/12_risks/IMPLEMENTATION_ROADMAP.md)
 
 ---
 

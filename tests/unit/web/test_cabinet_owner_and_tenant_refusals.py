@@ -16,9 +16,11 @@ from src.adapters.firestore_email_job_repo import FirestoreEmailJobRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.domain.agent_note import NoteCreate
 from src.domain.email import IndexingJob
+from src.services.cabinet_fact_service import CabinetFactService
 from src.web import user_cabinet_app
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_store import FactStore
+from tests.support.fact_write import EXPIRY_NONE, ctx
 from tests.support.firestore_eval import EvalDb
 from tests.unit.web.gate_fakes import Tripwire, access_token, forged_token, session_service
 
@@ -48,6 +50,7 @@ class World:
             embedding_service=self.facts.embedder,
             email_job_repo=self.jobs,
             agent_note_port=self.notes,
+            cabinet_facts=CabinetFactService(self.facts.repo),   # reviewer edit, facts S4 T2c: the route delegates to it
         ))
         self.client = app.test_client()
 
@@ -163,7 +166,8 @@ class TestForeignReminder:
 async def _stranger_fact(w: World) -> str:
     res = await w.facts.adapter.create_fact("mother is Maria", {
         "account_id": STRANGER[1], "user_id": STRANGER[0], "domain": "biographical", "temporal_class": "stable",
-        "context_priority": "medium", "tags": ["family"], "metadata": {}, "type": "event"})
+        "context_priority": "medium", "tags": ["family"], "metadata": {}, "type": "event", "expiry": EXPIRY_NONE},
+        context=ctx())
     assert res["status"] == "created", res
     return res["fact_id"]
 

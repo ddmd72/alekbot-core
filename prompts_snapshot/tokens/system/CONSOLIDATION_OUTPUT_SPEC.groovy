@@ -50,7 +50,7 @@ example_output: '''
         },
         {
             "action": "CREATE",
-            "fact_id": "yoga-456",
+            "fact_id": "swim-456",
             "reason": "New habit not previously recorded"
         },
         {

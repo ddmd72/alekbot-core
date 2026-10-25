@@ -20,6 +20,15 @@ from ...utils.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
 from ...utils.logger import logger
 
 
+def _reply_to_metadata(message) -> dict:
+    """`reply_to_message_id` when the message replies to another one; nothing otherwise. Only a real integer id counts."""
+    replied = getattr(message, "reply_to_message", None)
+    message_id = getattr(replied, "message_id", None)
+    if isinstance(message_id, int) and not isinstance(message_id, bool):
+        return {"reply_to_message_id": str(message_id)}
+    return {}
+
+
 class TelegramWebhookAdapter(PlatformPort):
     """
     Telegram webhook adapter (production mode).
@@ -291,6 +300,7 @@ class TelegramWebhookAdapter(PlatformPort):
                     "turn_id": f"telegram:{update_id}" if update_id is not None else None,
                     "origin_message_id": str(message.message_id),
                     "event_time": message.date.timestamp() if message.date else None,
+                    **_reply_to_metadata(message),
                 }
             )
 

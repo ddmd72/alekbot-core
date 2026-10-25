@@ -1,6 +1,9 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional, Dict, Any, Tuple
-from ..domain.entities import FactEntity
+from datetime import datetime
+from typing import AbstractSet, List, Optional, Dict, Any, Mapping, Sequence, Tuple
+from ..domain.due_fact import DueFact
+from ..domain.entities import FactEntity, FactState
+from ..domain.stored_fact import StoredFact
 
 class FactRepository(ABC):
     """
@@ -13,22 +16,25 @@ class FactRepository(ABC):
     - Current: a read of "current" facts filters on `state == "current"`, never on `is_current`
       (`is_current` means latest document of its lineage).
     - Identity: `id` is the document id. get_fact_by_id, get_paginated_facts,
-      search_facts_by_domain, get_lineage, get_latest_fact_by_lineage and get_legacy_facts read it
-      from the stored `id` field, which every writer sets equal to the document id; a document
-      written outside this port with a different or missing `id` reads back with that value (or a
-      fresh uuid).
+      search_facts_by_domain and get_legacy_facts read it from the stored `id` field, which every
+      writer sets equal to the document id; a document written outside this port with a different or
+      missing `id` reads back with that value (or a fresh uuid). resolve_current, get_lineage and
+      get_latest_fact_by_lineage take it from the document id.
     - Legacy documents: a document with `owner_id` and no `account_id` is absent from every
       account-scoped read (they filter the stored `account_id`). Where one is returned (by-id reads,
-      the legacy fallback in get_latest_fact_by_lineage), `owner_id` reads as `account_id` and
-      `created_by_user_id`. invalidate_fact refuses it with PermissionError. A missing `visibility`
+      resolve_current), `owner_id` reads as `account_id` and
+      `created_by_user_id`; an in-place write (update_fact_fields) refuses it with PermissionError, since tenancy of
+      a write is the stored `account_id`. A missing `visibility`
       reads as account_shared, "private" as user_private. A document without `state` matches no
       state-filtered read. A document missing a field a read orders by is absent from that read
       (observed). A stored document that does not validate as FactEntity fails the whole call
       (observed).
     - Vectors are returned as lists of floats. A read with a projection leaves the omitted fields at
       the model default (named per method).
-    - Atomicity: nothing is transactional; add_fact and update_fact replace whole documents,
-      invalidate_fact updates fields; last writer wins.
+    - Atomicity: add_fact is an unconditional whole-document write, last writer wins. The
+      version and in-place writes (write_superseding, update_fact_fields) are transactions
+      under an `update_time` precondition: a document changed since it was read raises FactWriteConflict and
+      nothing is written. A StoredFact carries the token it was read with; compare it for equality only.
     - Errors: backend errors propagate unless the method says it never raises.
     """
 
@@ -45,8 +51,8 @@ class FactRepository(ABC):
     async def get_fact_by_id(self, fact_id: str) -> Optional[FactEntity]:
         """Return the fact stored under `fact_id` in any state.
 
-        Returns every FactEntity field as stored, vectors as lists, so get_fact_by_id → update_fact
-        preserves every FactEntity field.
+        Returns every FactEntity field as stored, vectors as lists, so a read-modify-write
+        loses no FactEntity field.
         Tenancy: none; the caller compares account_id.
         Errors: a missing id returns None.
         """
@@ -62,8 +68,8 @@ class FactRepository(ABC):
 
         Order: none; callers sort.
         Limit: none.
-        Projection: no vectors; temporal_class, context, ttl_days, expires_at and replaces_fact_id
-            keep the model default (observed).
+        Projection: no vectors; temporal_class, context and replaces_fact_id keep the model default;
+            expiry_kind, ttl_days and expires_at are returned (observed).
         """
         pass
 
@@ -104,13 +110,15 @@ class FactRepository(ABC):
         limit: int = 100,
         cursor_doc_id: Optional[str] = None,
         domain: Optional[str] = None,
+        state: str = "current",
     ) -> Tuple[List[FactEntity], Optional[str]]:
-        """Return one page of `state == "current"` facts of account `owner_id` and the next cursor.
+        """Return one page of `state` facts of account `owner_id` (default `"current"`) and the next cursor.
 
         Args:
             limit: page size.
             cursor_doc_id: document id of the last fact of the previous page.
             domain: when set, only facts of that domain.
+            state: `"current"` or `"stale"`; anything else raises ValueError before any I/O.
 
         Order: newest first by created_at; pages do not overlap and together hold every matching fact.
         Returns: (facts, next_cursor); next_cursor is None exactly when no fact follows this page.
@@ -137,8 +145,8 @@ class FactRepository(ABC):
 
         Tenancy: account_id, else the RequestContext account, else the user id (observed).
         Order: nearest first (callers rank by position, RRF).
-        Projection: `vector` and `context` are returned; tags_vector, metadata_vector, ttl_days,
-            expires_at and replaces_fact_id are None, is_current is True and last_updated is now
+        Projection: `vector`, `context` and the expiry decision (expiry_kind, ttl_days, expires_at) are returned;
+            tags_vector, metadata_vector and replaces_fact_id are None, is_current is True and last_updated is now
             (model defaults, observed).
         Errors: no user id (argument or RequestContext) raises ValueError.
         """
@@ -164,33 +172,112 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
-    async def update_fact(self, fact: FactEntity) -> None:
-        """Replace document `fact.id` with `fact`, every field including the three vectors.
+    async def resolve_current(
+        self, fact_id: str, account_id: str, accepted: AbstractSet[FactState]
+    ) -> Optional[StoredFact]:
+        """Follow `fact_id` through `superseded_by`, within its lineage, to the document a caller may write.
 
-        Tenancy: none; the caller compares account_id before writing.
-        Atomicity: unconditional write, last writer wins; stored fields FactEntity lacks are dropped (observed).
-        Idempotency: writing the same entity twice leaves one identical document.
-        Errors: a missing id is created, not refused (observed).
+        Args:
+            accepted: the states the walk may end in (domain/fact_lifecycle.py: CONSOLIDATION_ACCEPTS, REVIEW_ACCEPTS, CABINET_ACCEPTS).
+
+        Returns: the end document, whole (vectors included, as lists), with the `update_time` it was read with;
+            None when the start document is missing or belongs to another account (decided before any hop).
+        Errors: FactResolutionError when the chain cannot end in `accepted` (merged into another lineage, no
+            successor stored, successor document missing, an end state not accepted, a cycle or more than
+            MAX_FORWARD_HOPS hops). Reads are not transactional; the token is what the write is checked against.
         """
         pass
 
     @abstractmethod
-    async def get_lineage(self, lineage_id: str) -> List[FactEntity]:
-        """Return every document of `lineage_id`, newest first by created_at.
+    async def write_superseding(
+        self, new_fact: FactEntity, closures: Sequence[Tuple[StoredFact, Mapping[str, Any]]]
+    ) -> None:
+        """Create `new_fact` and close every replaced document with its fields, in one transaction.
 
-        Contract (observed; no caller in src/).
-        Tenancy: none; any account, any state.
-        Legacy: `owner_id` is not migrated, so a legacy document fails the call.
+        `closures` pairs each replaced document with the in-place write that closes it, built by the caller
+        (domain.fact_lifecycle.superseded_closure: state superseded, `superseded_by=new_fact.id`, its trail entry). Used
+        for a version (one replaced document, same lineage) and a merge. `new_fact` is stored as given: its own trail is
+        the caller's, and it is stored as add_fact stores a fact. The store decides nothing about either: it applies them.
+        Atomicity: each replaced document must still carry the `update_time` it was read with; otherwise
+            FactWriteConflict naming it, nothing written. A read-time abort, or a client that gave up after
+            repeated aborts, is also FactWriteConflict (a read-time abort does not say which document was contended,
+            so its conflict names the first replaced id). An existing `new_fact.id` is a bug (ids are fresh uuid4s): the
+            commit fails with the backend's error, nothing written.
+        Errors, before any I/O: InPlaceFieldRefused when a closure names a field outside IN_PLACE_FIELDS
+            (domain/fact_lifecycle.py); ValueError when `closures` is empty or `new_fact` lacks one of its three vectors.
+        """
+        pass
+
+    @abstractmethod
+    async def archive_and_add(
+        self, archived: StoredFact, fields: Mapping[str, Any], new_fact: FactEntity
+    ) -> None:
+        """Write `fields` onto the document `archived` in place and create `new_fact`, in one transaction.
+
+        `fields` is the archive, built by the caller (domain.fact_lifecycle.archive_fields: state archived, valid_to, one
+        `lifecycle_events` entry); `new_fact` is stored as given, as add_fact stores a fact: its own trail is the caller's.
+        The store decides nothing about either: it applies them.
+        Tenancy: `new_fact.account_id` must be `archived.fact.account_id`; inside the transaction the stored `account_id`
+            must be it too (as update_fact_fields).
+        Atomicity: the archived document must still carry the `update_time` it was read with; otherwise FactWriteConflict,
+            nothing written. A read-time abort, or a client that gave up after repeated aborts, is also FactWriteConflict.
+            An existing `new_fact.id` is a bug (ids are fresh uuid4s): the commit fails with the backend's error, raised
+            as it is; nothing is archived.
+        Errors: before any I/O, InPlaceFieldRefused when `fields` names a field outside IN_PLACE_FIELDS, ValueError when
+            the accounts differ or `new_fact` lacks one of its three vectors; PermissionError when the stored
+            `account_id` is not `archived.fact.account_id`.
+        """
+        pass
+
+    @abstractmethod
+    async def update_fact_fields(self, stored: StoredFact, fields: Mapping[str, Any]) -> None:
+        """Update `fields` of document `stored.fact.id` in place, only those fields, under its precondition.
+
+        Allowed keys: IN_PLACE_FIELDS (domain/fact_lifecycle.py); any other raises InPlaceFieldRefused before any I/O.
+        Enum values are stored as their value.
+        Errors: FactWriteConflict when the document changed since `stored` was read, or no longer exists;
+            PermissionError when the stored `account_id` is not `stored.fact.account_id` (a legacy document, whose
+            `owner_id` reads as its account, or a stray `owner_id` beside another account's `account_id`). Nothing is
+            written in either case; both are checked inside the transaction.
+        """
+        pass
+
+    @abstractmethod
+    async def get_stale_facts(self, account_id: str) -> List[FactEntity]:
+        """Return every `state == "stale"` fact of account `account_id`, longest stale first.
+
+        Order: `stale_since` ascending, a fact without it first, then the id.
+        Projection: every field except `tags_vector` and `metadata_vector` (they read as None); `vector` is a list of
+            floats (the review's neighbour query); `id` is the document id.
+        Tenancy: only that account's documents (the stored `account_id`).
+        """
+        pass
+
+    @abstractmethod
+    async def get_recently_closed(self, account_id: str, since: datetime, limit: int) -> List[FactEntity]:
+        """Return at most `limit` facts of account `account_id` that are `archived` or `invalidated` with `valid_to >= since`.
+
+        Order: `valid_to` descending (the newest closure first).
+        Projection: no vectors (they read as None); `id` is the document id.
+        Tenancy: only that account's documents (the stored `account_id`).
+        """
+        pass
+
+    @abstractmethod
+    async def get_lineage(self, account_id: str, lineage_id: str) -> List[FactEntity]:
+        """Return every document of `lineage_id` in account `account_id`, oldest version first, any state.
+
+        Tenancy: only that account's documents.
+        Projection: no vectors (they read as None); `id` is the document id.
         """
         pass
 
     @abstractmethod
     async def get_latest_fact_by_lineage(self, owner_id: str, lineage_id: str) -> Optional[FactEntity]:
-        """Return the `is_current` document of `lineage_id` in account `owner_id`, any state, or None.
+        """Return the highest-version document of `lineage_id` in account `owner_id` whose state is not
+        superseded, or None. No caller in src/.
 
-        Contract (observed; no caller in src/; FACT_LIFECYCLE_RFC S2 reworks it (filter on state)).
-        Legacy: when no account_id matches, the legacy `owner_id` field is tried.
-        Order: with several `is_current` documents, which one is returned is unspecified.
+        Returns the whole document (vectors as lists). Equal versions: which one is returned is unspecified.
         """
         pass
 
@@ -250,15 +337,36 @@ class FactRepository(ABC):
         pass
 
     @abstractmethod
-    async def invalidate_fact(self, fact_id: str, account_id: str) -> None:
-        """Mark fact `fact_id` invalidated (Cabinet write path).
+    async def find_due_facts(self, now: datetime) -> List[DueFact]:
+        """Return every `state == "current"` fact of every account whose `expires_at` is at or before `now`.
 
-        Tenancy: the stored account_id must equal `account_id`.
-        Effect: state invalidated, is_current True, valid_to and last_updated now; version unchanged.
-        Errors: a missing id raises ValueError; a fact of another account raises PermissionError;
-            nothing is written in either case.
-        Atomicity: read, check, then update; not transactional (observed).
-        Idempotency: a repeated call succeeds and moves valid_to and last_updated (observed).
+        Projection: account id, expires_at, expiry_kind, lifecycle_events and the change token; no text, no vectors.
+        Tenancy: none (the janitor sweeps all accounts); each result names its account.
+        Legacy: a document without `expires_at` (or with a null one) is not returned; one without `expiry_kind` is,
+            with `expiry_kind=None`; one without `account_id` is skipped (logged).
+        Order: none.
+        """
+        pass
+
+    @abstractmethod
+    async def stale_due_fact(self, due: DueFact, fields: Mapping[str, Any]) -> None:
+        """Write `fields` onto the document of `due` in place, only those fields: the janitor's stale write, built by
+        the caller (domain.fact_lifecycle_sweep.stale_fields from the trail `due` was read with). The store decides
+        nothing about it: it applies it.
+
+        Atomicity: a transaction under `due.update_time`; a document still carrying it has the trail `due` holds.
+        Errors: InPlaceFieldRefused, before any I/O, when `fields` names a field outside IN_PLACE_FIELDS
+            (domain/fact_lifecycle.py); FactWriteConflict when the document changed since it was read, or no longer
+            exists; nothing is written.
+        """
+        pass
+
+    @abstractmethod
+    async def stale_backlog(self) -> Dict[str, Tuple[int, Optional[datetime]]]:
+        """Return, per account id, how many facts are `state == "stale"` and the oldest `stale_since` among them.
+
+        A stale fact without `stale_since` counts but has no age; an account whose stale facts all lack it maps to
+        (count, None). An account with no stale fact is absent; a document without `account_id` is skipped (logged).
         """
         pass
 

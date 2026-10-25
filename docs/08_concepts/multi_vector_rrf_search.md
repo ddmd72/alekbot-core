@@ -485,252 +485,59 @@ Existing code works unchanged, automatically gets better results.
 ## 🧭 In Alek-Core
 
 - **Facts carry three vectors:** `vector` (the text), `tags_vector` and `metadata_vector`. Indexed emails add a fourth,
+  `attachments_vector`.
+- **Where it runs:** `SearchEnrichmentService` (`src/services/search_enrichment_service.py`) runs the channels in
+  parallel and fuses them with RRF, k = 60.
+  - The Router prefetches once per message, with up to 4 vector channels plus the domain channel. The orchestrator
+    turn shares that result.
+  - `search_memory` searches again with up to 7 channels.
+- **Limits** resolve USER > ACCOUNT > SYSTEM (`UserBotConfig.semantic_search_limit` and the account defaults).
 
 ---
 
-```python
-
-
-    
-
-    
-else:
-    
-```
+## 🔄 Deduplication: Number-Aware, Detail-Preserving
 
 Similar is not the same: two facts can embed almost identically and still say different things. The rule is
+**"better to keep a near-duplicate than to lose information."**
 
-```python
-
-
-    
-else:
-    
-```
+### The Algorithm
 
 `SmartDeduplication` (`src/domain/deduplication_service.py`, pure logic, stdlib only) decides in this order:
 
 ```python
 1. similarity < 0.96                    → NOT duplicate (quick exit)
-    2. the numbers differ (sorted)          → NOT duplicate
-        3. similarity >= strict (default 0.98)  → DUPLICATE
-    4. the new fact is 15%+ longer          → NOT duplicate (more detail)
-        5. otherwise                            → DUPLICATE
-    else:
-        
+2. the numbers differ (sorted)          → NOT duplicate
+3. similarity >= strict (default 0.98)  → DUPLICATE
+4. the new fact is 15%+ longer          → NOT duplicate (more detail)
+5. otherwise                            → DUPLICATE
 ```
 
----
-
+**Numbers outrank similarity.** `"Rent 900 EUR"` and `"Rent 950 EUR"` embed at about 0.97. A plain threshold calls
 them duplicates; the number check keeps both. The same holds for dates (`2025-03-28` vs `2025-03-29`), measurements
-
-
-
-
-
-
-
-
-
+and ranges.
 
 **Length keeps detail.** `"Rent 900 EUR, paid by transfer"` is longer than `"Rent 900 EUR"` by more than 15%, so at a
+moderate similarity the new fact is kept rather than dropped.
 
 ### Where Each Mode Applies
 
-
 | Path | Dedup | Why |
+| --- | --- | --- |
+| **Search results** (`enrich_context`) | `dedup_threshold` 0.98 | the reader gets clean results |
+| **Consolidation search** (`skip_semantic_dedup=True`) | off | the agent must see every candidate to decide a MERGE |
+| **Consolidation writes** (`skip_deduplication=True`) | off | the model decides duplicates after searching |
+| **Non-live v2 write path** (`add_fact_if_unique`) | 0.96 / 0.98 | rejects a duplicate before it is stored |
 
 **Why consolidation turns it off:** the consolidator searches before it writes, and it needs the scattered,
-
+overlapping facts side by side to merge them into one. A filtered result would hide exactly the facts it is meant to
 merge.
-
-
-
-
-
----
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 ---
 
 ## 📖 Further Reading
 
-### Papers
-
-
-
-
-
-
+- **Reciprocal Rank Fusion:** Cormack, Clarke and Büttcher, SIGIR 2009.
 - **Elasticsearch RRF:** [Official Docs](https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html)
 - **Building Block:** [../05_building_blocks/search_enrichment/README.md](../05_building_blocks/search_enrichment/README.md)
 - **Memory map:** [../05_building_blocks/memory/README.md](../05_building_blocks/memory/README.md) — how facts are
-
-
-
-
-
----
-
-
-
-
-
-
-
-```python
-
-
-
-
-
-```
-
-
-
-
-
-
-
-```python
-
-
-
-
-
-```
-
-
-
-
-
-
-
-
-
-```python
-
-
-
-
-
-
-```
-
-
-
-
-
-
-
-```python
-
-
-    
-    
-    
-)
-
-
-
-
-
-
-
-```
-
-
-
-```python
-
-
-
-```
-
-
-
-
-
-```python
-
-
-
-
-
-```
-
-
-
-
-
-
-
-
-
-
-
-| --------------- | --------- | ------------- | --------------------------- |
-
-
-
-
-
-
-
-
-
-
----
-
-
-
-
-
-```
-
-
-
-
-│
-
-
-│
-
-   
-```
-
-
-
-```
-
-
-
-
-│
-
-
-│
-
-   
-```
-
----
-
-**Last Updated:** 2026-02-16  
-**Status:** ✅ Complete  
-
+  written, versioned and searched.

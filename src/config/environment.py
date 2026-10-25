@@ -505,6 +505,55 @@ class EnvironmentConfig:
         return f"{prefix}worker_task_dedup"
 
     @property
+    def memory_write_leases_collection(self) -> str:
+        """
+        Per-account memory-write lease, doc id = account id (FACT_LIFECYCLE_RFC D9). No TTL policy:
+        the field is `lease_until`, never `expires_at`. Dev: development_memory_write_leases
+        """
+        return f"{self.firestore_collection_prefix}memory_write_leases"
+
+    @property
+    def fact_lifecycle_daily_collection(self) -> str:
+        """
+        Per-account, per-UTC-day fact lifecycle numbers, doc id `<account_id>:<YYYY-MM-DD>` (FACT_LIFECYCLE_RFC D10).
+        No TTL policy: no field is named `expires_at`. Dev: development_fact_lifecycle_daily
+        """
+        return f"{self.firestore_collection_prefix}fact_lifecycle_daily"
+
+    @property
+    def fact_lifecycle_lines_collection(self) -> str:
+        """
+        One mark per UTC day, doc id `<YYYY-MM-DD>`: the daily ops line was claimed. Kept apart from the daily
+        collection so a mark is never read as an account row. No TTL policy. Dev: development_fact_lifecycle_lines
+        """
+        return f"{self.firestore_collection_prefix}fact_lifecycle_lines"
+
+    @property
+    def fact_review_questions_collection(self) -> str:
+        """
+        The memory review's questions, one per fact, doc id = question id (Facts S4 plan §2.2). A closed question expires
+        (`FirestoreFactReviewStore` says how); no field is named `expires_at`. Dev: development_fact_review_questions
+        """
+        return f"{self.firestore_collection_prefix}fact_review_questions"
+
+    @property
+    def fact_review_messages_collection(self) -> str:
+        """
+        The memory review's message claims, doc id `<user_id>:digest:<iso_week>` (Facts S4 plan §2.2): the weekly digest
+        is claimed once per ISO week. A claim expires (`FirestoreFactReviewStore` says how); no field is named
+        `expires_at`. Dev: development_fact_review_messages
+        """
+        return f"{self.firestore_collection_prefix}fact_review_messages"
+
+    @property
+    def fact_review_state_collection(self) -> str:
+        """
+        The memory review's state, one per account, doc id = account id (Facts S4 plan §2.2). No TTL policy and no field
+        named `expires_at`. Dev: development_fact_review_state
+        """
+        return f"{self.firestore_collection_prefix}fact_review_state"
+
+    @property
     def long_turns_collection(self) -> str:
         """
         Long chat turns (LONG_RUNNING_TURNS_RFC §5.4). Dev: development_long_turns

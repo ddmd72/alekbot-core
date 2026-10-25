@@ -1383,11 +1383,14 @@ class TestHandleCommandConsolidateExtra:
 
         await handler.handle_command("consolidate", ctx, channel)
 
-        # Two messages: the start ack, then the "Consolidation complete" fallback
-        # (no notification_service → raw send_message result path).
+        # Two messages: the start ack, then the outcome fallback (no notification_service → raw
+        # send_message result path). No overflow runner is wired here, so nothing ran in the request:
+        # the outcome says the messages were queued and claims no completion (Facts S2 decision 15, N10).
         sent_texts = [c.args[0] for c in channel.send_message.call_args_list]
         assert len(sent_texts) == 2
-        assert any("Consolidation complete" in t for t in sent_texts)
+        outcome = sent_texts[1]
+        assert "queued for memory" in outcome and "background" in outcome
+        assert "complete" not in outcome.lower() and "processed" not in outcome.lower()
 
 
 # ---------------------------------------------------------------------------

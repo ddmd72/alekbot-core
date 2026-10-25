@@ -90,6 +90,7 @@ def _cabinet(p: Probe):
         recurrence_port=w("recurrence_port"), twilio_verify_client=w("twilio_verify_client"),
         user_drive=w("user_drive"), drive_search_service=w("drive_search_service"),
         drive_task_queue=w("drive_task_queue"), drive_transcribe_switch_on=True,
+        cabinet_facts=w("cabinet_facts"),   # reviewer edit, facts S4 T2c: main.py passes it (the route delegates to it)
     ), {}
 
 

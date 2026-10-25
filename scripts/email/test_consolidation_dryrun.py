@@ -13,6 +13,13 @@ Usage:
     python scripts/email/test_consolidation_dryrun.py --limit 50 --category healthcare
     python scripts/email/test_consolidation_dryrun.py --facts-file scripts/memory/email_facts_OTHER.json
     python scripts/email/test_consolidation_dryrun.py --user-id <user_id>
+    python scripts/email/test_consolidation_dryrun.py --s3-kit --limit 30
+
+`--s3-kit` (Facts S3, plan T12b) does not use the POC facts file: it runs a real `consolidate_email` pass (pass label and
+actor `email`) over the user's unconsolidated indexed emails, read from the live repository through a no-write wrapper (no
+email is marked consolidated), on the dry-run kit; a report lands in `scripts/memory/`. With no unconsolidated email it says
+so and stops. `--limit` is the batch size; `--facts-file` and `--category` do not apply. Without the flag the bench behaves
+as it always did.
 
 Pre-conditions:
     .env must have: DEV_USER_ID, DEV_ACCOUNT_ID, FIRESTORE_DATABASE, GEMINI_API_KEY
@@ -33,12 +40,9 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 from google.cloud import firestore
 
+from scripts.consolidation.legacy_dry_run_ports import install_dry_run
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.composition.service_container import ServiceContainer
@@ -46,8 +50,20 @@ from src.config.settings import load_settings
 from src.domain.agent import AgentIntent, AgentMessage
 from src.domain.request_context import RequestContext
 from src.infrastructure.agent_coordinator import AgentCoordinator
+from src.domain.fact_write_context import FactWriteContext
 from src.ports.fact_management_port import FactManagementPort
 from src.composition.user_agent_factory import UserAgentFactory
+
+from scripts.consolidation.s3_bench_support import (
+    add_s3_arguments,
+    biographical_facts,
+    build_agent,
+    execute,
+    kit_message,
+    kit_session,
+    load_env,
+    print_rows,
+)
 
 # Default facts file — most recent POC output
 DEFAULT_FACTS_FILE = Path("scripts/memory/email_facts_20260228_002314.json")
@@ -82,15 +98,17 @@ class DryRunFactManagementAdapter(FactManagementPort):
         primary_query: str,
         alternative_query: str = "",
         limit: int = 20,
+        *,
+        timezone: str,
     ) -> List[Dict[str, Any]]:
         results = await self._real.search_existing_facts(
-            keywords, primary_query, alternative_query, limit
+            keywords, primary_query, alternative_query, limit, timezone=timezone
         )
         print(f"    🔍 search({primary_query!r}) → {len(results)} existing facts")
         return results
 
     async def create_fact(
-        self, content: str, metadata: Dict[str, Any]
+        self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext
     ) -> Dict[str, Any]:
         fake_id = f"dryrun_{uuid.uuid4().hex[:8]}"
         self.operations.append(
@@ -102,7 +120,7 @@ class DryRunFactManagementAdapter(FactManagementPort):
         return {"fact_id": fake_id, "status": "created", "message": "[DRY-RUN] not written"}
 
     async def update_fact(
-        self, fact_id: str, updates: Dict[str, Any], account_id: str
+        self, fact_id: str, updates: Dict[str, Any], account_id: str, *, context: FactWriteContext
     ) -> Dict[str, Any]:
         self.operations.append(
             {"action": "UPDATE", "fact_id": fact_id, "updates": updates}
@@ -117,6 +135,8 @@ class DryRunFactManagementAdapter(FactManagementPort):
         fact_ids: List[str],
         merged_content: str,
         metadata: Dict[str, Any],
+        *,
+        context: FactWriteContext,
     ) -> Dict[str, Any]:
         fake_id = f"dryrun_{uuid.uuid4().hex[:8]}"
         self.operations.append(
@@ -234,6 +254,52 @@ def save_results(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# S3 kit mode: a real `consolidate_email` pass over the unconsolidated indexed emails
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_email_message(kit, bio_facts: List[Dict], user_id: str, account_id: str, limit: int):
+    """The S3 bench's message: a `consolidate_email` pass of one batch (pass label and actor `email`)."""
+    return kit_message(
+        kit, sender="email_dryrun_script", user_id=user_id, account_id=account_id, task="consolidate_email",
+        payload={"number_of_batches": 1, "batch_size": limit, "biographical_context": bio_facts},
+        session_id="email_dryrun",
+    )
+
+
+async def has_unconsolidated_emails(email_repo, user_id: str) -> bool:
+    return bool(await email_repo.get_unconsolidated_batch(user_id, limit=1))
+
+
+async def run_s3_kit(handles, limit: int, args) -> None:
+    print(f"\n{'='*65}\nEMAIL CONSOLIDATION ON THE S3 KIT (consolidate_email pass, no email marked)\n{'='*65}")
+    user_id, account_id = args.user_id, args.account_id
+    if handles.agent._indexed_email_repo is None:
+        print("ERROR: the agent has no indexed-email repository: nothing to run.")
+        return
+    if not await has_unconsolidated_emails(handles.agent._indexed_email_repo, user_id):
+        print("No unconsolidated emails: bench 5 is skipped (nothing was run, nothing was spent).")
+        return
+    bio_facts = await biographical_facts(handles, account_id)
+
+    async with kit_session(handles, args, user_id, account_id, "email") as (kit, extra):
+        extra.update({"model": handles.agent.model_name, "batch_size": limit})
+        first_row = len(kit.rows)
+        response = await execute(
+            handles.agent, build_email_message(kit, bio_facts, user_id, account_id, limit),
+            user_id, account_id, "consolidate_email",
+        )
+        extra["result"] = response.result
+        print(f"\n  result: {response.result}")
+        print_rows(kit.rows[first_row:])
+        print(f"  emails the kit would have marked consolidated: "
+              f"{sum(len(w['email_ids']) for w in (kit.emails.writes if kit.emails else []))} (none marked live)")
+
+
+async def main_s3_kit(limit: int, args) -> None:
+    await run_s3_kit(await build_agent(args.user_id), limit, args)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -304,7 +370,7 @@ async def main(
         return
 
     dry_run = DryRunFactManagementAdapter(real_fm)
-    consolidation_agent._fact_management = dry_run
+    install_dry_run(consolidation_agent, dry_run)
     print(f"DryRunFactManagementAdapter injected (real reads, intercepted writes).")
 
     # ── Load biographical context (real Firestore) ────────────────────
@@ -375,6 +441,7 @@ async def main(
 
 
 if __name__ == "__main__":
+    load_env()
     parser = argparse.ArgumentParser(
         description="ConsolidationAgent dry-run on classified email facts"
     )
@@ -403,6 +470,7 @@ if __name__ == "__main__":
         default=os.getenv("DEV_ACCOUNT_ID") or os.getenv("TEST_ACCOUNT_ID"),
         help="Account ID (defaults to DEV_ACCOUNT_ID from .env)",
     )
+    add_s3_arguments(parser)
     args = parser.parse_args()
 
     if not args.user_id:
@@ -412,12 +480,17 @@ if __name__ == "__main__":
         print("ERROR: account_id required. Set DEV_ACCOUNT_ID in .env or pass --account-id")
         sys.exit(1)
 
-    asyncio.run(
-        main(
-            facts_file=Path(args.facts_file),
-            limit=args.limit,
-            category=args.category,
-            user_id=args.user_id,
-            account_id=args.account_id,
+    if args.s3_kit:
+        if args.category:
+            parser.error("--category does not apply with --s3-kit (the pass reads the indexed emails, not the facts file)")
+        asyncio.run(main_s3_kit(args.limit, args))
+    else:
+        asyncio.run(
+            main(
+                facts_file=Path(args.facts_file),
+                limit=args.limit,
+                category=args.category,
+                user_id=args.user_id,
+                account_id=args.account_id,
+            )
         )
-    )

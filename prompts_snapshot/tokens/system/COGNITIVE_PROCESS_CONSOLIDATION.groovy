@@ -299,16 +299,16 @@ uploaded_by: local_script
 
             usage_example: '''
             result = create_fact(
-                content="User started morning yoga practice (30 min daily) in Q1 2026",
+                content="User started evening swimming practice (45 min daily) in Q1 2026",
                 fact_attributes={
                     "domain": "HEALTH",
                     "temporal_class": "DYNAMIC",
                     "state": "CURRENT",
                     "context_priority": "MEDIUM",
                     "ttl_days": 90,
-                    "tags": ["yoga", "habit", "health", "morning", "routine"],
+                    "tags": ["swimming", "habit", "health", "evening", "routine"],
                     "metadata": {"duration_min": 45, "frequency": "daily", "time_of_day": "evening"},
-                    "reported_date": "2026-02-16T10:00:00"
+                    "reported_date": "2026-03-10T10:00:00"
                 }
             )
             '''
@@ -337,7 +337,7 @@ uploaded_by: local_script
                 updates={
                     "content": "User's weight: 70 kg (Mar 10)",
                     "metadata": {"weight_kg": 70, "measurement_date": "2026-03-10", "trend": "decreasing"},
-                    "reported_date": "2026-02-16T10:00:00"
+                    "reported_date": "2026-03-10T10:00:00"
                 }
             )
             '''
@@ -365,7 +365,7 @@ uploaded_by: local_script
                     "context_priority": "MEDIUM",
                     "tags": ["car", "skoda", "springfield"],
                     "metadata": {"make": "Skoda", "model": "Fabia", "year": 2015, "plate": "SAMPLE-0000"},
-                    "reported_date": "2026-02-16T10:00:00"
+                    "reported_date": "2026-03-10T10:00:00"
                 }
             )
             '''
@@ -417,7 +417,7 @@ uploaded_by: local_script
                 updates={
                     "content": "User's weight: 70 kg (Mar 10)",
                     "metadata": {"weight_kg": 70, "measurement_date": "2026-03-10", "trend": "decreasing"},
-                    "reported_date": "2026-02-16T10:00:00"
+                    "reported_date": "2026-03-10T10:00:00"
                 }
             )
             ✓ Updated (version 2).

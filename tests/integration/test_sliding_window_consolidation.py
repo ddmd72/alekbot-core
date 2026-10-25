@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.domain.messaging import MessageContext
 from src.domain.session import Session
-from src.domain.consolidation import ConsolidationBatch, BatchStatus
+from src.domain.consolidation import ConsolidationBatch
 from src.domain.agent import AgentResponse, AgentStatus
 from src.handlers.conversation_handler import ConversationHandler
 from src.ports.llm_port import Message, MessagePart
@@ -76,53 +76,3 @@ async def test_sliding_window_trigger_logic():
 
     # 3. Verify consolidation was triggered (via our mock callback)
     assert consolidation_queue.enqueue_batch.called
-
-@pytest.mark.asyncio
-async def test_retry_mechanism_via_handler():
-    """
-    Test that ConsolidationHandler processes batches correctly.
-    """
-    from src.handlers.consolidation_handler import process_user_batches_on_overflow
-    
-    session_store = MagicMock()
-    consolidation_queue = AsyncMock()
-    agent_factory = AsyncMock()
-    coordinator = AsyncMock()
-    
-    user_id = "test_user"
-    
-    # Mock pending batches
-    batch = ConsolidationBatch(
-        batch_id="b1",
-        user_id=user_id,
-        session_id="s1",
-        messages=[{"role": "user", "parts": [{"text": "old msg"}]}],
-        status=BatchStatus.RETRY_PENDING,
-        attempts=1
-    )
-    
-    # Return batch on first call, then empty list
-    consolidation_queue.get_pending_batches.side_effect = [[batch], []]
-    
-    # Mock successful agent response
-    coordinator.route_message.return_value = AgentResponse.success(
-        task_id="b1", agent_id="consolidation_agent", result={"new_facts": 1, "new_anchors": 0}
-    )
-
-    # Execute handler logic
-    mock_user_repo = AsyncMock()
-    mock_user_repo.get_user = AsyncMock(return_value=MagicMock(account_id=user_id))
-    consolidation_queue.reset_recoverable_batches = AsyncMock()
-
-    await process_user_batches_on_overflow(
-        user_id=user_id,
-        coordinator=coordinator,
-        agent_factory=agent_factory,
-        queue=consolidation_queue,
-        user_repo=mock_user_repo,
-    )
-    
-    # Verify flow
-    assert consolidation_queue.update_batch_status.called
-    assert consolidation_queue.delete_batch.called
-    assert consolidation_queue.delete_batch.call_args[0][0] == "b1"

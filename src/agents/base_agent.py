@@ -10,7 +10,6 @@ import random
 import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Dict, Iterator, Optional, List, TYPE_CHECKING
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig
@@ -32,6 +31,7 @@ from ..domain.exceptions import (
 from ..domain.retry_policy import DEFAULT_RETRY_POLICY, NO_RETRY_POLICY, RetryPolicy
 from ..domain.turn_clock import CURRENT_TURN_CLOCK
 from ..domain.llm import LLMResponse as _LLMResponse
+from ..domain.local_time import local_stamp
 from ..ports.llm_port import Message, MessagePart
 from ..ports.session_store import SessionStore
 from ..utils.logger import logger
@@ -338,20 +338,10 @@ class BaseAgent(ABC):
         Uses self._user_timezone (IANA, e.g. "Europe/Madrid") set by subclass constructors.
         Falls back to UTC when timezone is unavailable or invalid.
         """
-        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-        try:
-            tz = ZoneInfo(self._user_timezone or "UTC")
-        except (ZoneInfoNotFoundError, KeyError):
-            tz = ZoneInfo("UTC")
-
         result = []
         for msg in history:
             if msg.role == "user" and msg.created_at:
-                local_dt = datetime.fromtimestamp(msg.created_at, tz=tz)
-                # Abbreviation of the message's own date: a November message must say CET even
-                # when it is read in July (CEST).
-                tz_abbr = local_dt.strftime("%Z") or self._user_timezone or "UTC"
-                ts = local_dt.strftime(f"[%Y-%m-%d %a %H:%M {tz_abbr}]")
+                ts = f"[{local_stamp(msg.created_at, self._user_timezone or 'UTC')}]"
                 new_parts = []
                 for i, part in enumerate(msg.parts):
                     if i == 0 and part.text and not part.tool_call and not part.file_data:

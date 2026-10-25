@@ -20,6 +20,14 @@ class FileAttachment:
     is_voice_message: bool = False
 
 
+@dataclass(frozen=True)
+class MessageRef:
+    """Where a posted message lives, as the platform names it: enough to find it again (to edit it, or to match a reply to it)."""
+    platform: str
+    channel_id: str
+    message_id: str
+
+
 @dataclass
 class MessageContext:
     """
@@ -101,6 +109,14 @@ class ResponseChannel(Protocol):
             Platform-specific message object
         """
         ...
+
+    async def send_message_ref(self, text: str) -> MessageRef:
+        """
+        Send a text message and return where it landed (platform, channel, message id).
+
+        Not abstract: only a channel whose platform can later match a reply to the message implements it.
+        """
+        raise NotImplementedError(f"{self.platform} cannot return a message reference")
 
     @abstractmethod
     async def update_message(self, message_id: str, text: str, link_list: Optional[List[Any]] = None) -> None:

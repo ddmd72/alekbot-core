@@ -686,7 +686,7 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   test run `main()` and the builder), handlers 91.6 → 92.7, adapters 82.8 → 83.5, src (other) 70.1 → 74.4.
 - **The tests that build the graph or boot `main()` are `slow`,** so they run in `make ci` (or with `RUN_SLOW_TESTS=1`), not in `make check`;
   the source-reading guards and the checker self-tests are not (`tests/CLAUDE.md` -> "The production graph").
-- **The owner's check after the first deploy,** the rollback command and the `:latest` rule: `docs/07_deployment/README.md` -> "After deploying P9".
+- **The owner's check after the first deploy:** the rollout notes (ops). The rollback command and the `:latest` rule: `docs/07_deployment/README.md` -> "Standing levers".
 - **Declared behaviour deltas of the move** (all harmless; the T2 snapshot diff shows nothing else): a malformed Telegram secret now exits 1 with a
   traceback (was exit 0, nothing listening either way); construction order (the coordinator after the container, Telegram before voice, queue
   creation and the loops after the whole build) changes the order of the startup lines; `exc_info` on infrastructure errors; the blueprint factories

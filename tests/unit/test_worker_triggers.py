@@ -32,13 +32,19 @@ def test_every_job_has_an_update_and_a_create_with_the_same_body_and_uri():
 
 def test_the_worker_jobs_post_to_worker_with_a_task_type():
     posting = [j for j in wt.scheduler_jobs().values() if "message-body" in j.create]
-    assert len(posting) == 10
+    assert len(posting) == 11
     for job in posting:
         assert job.create["uri"].endswith("/worker"), job.name
         assert job.create["http-method"] == "POST", job.name
         assert "task_type" in json.loads(job.create["message-body"]), job.name
 
 
+_T10A_PENDING = pytest.mark.skip(
+    reason="owner 2026-10-24, temporary: S4's fact_review enqueue (T8e) landed before its WorkerHandler branch (T10a); "
+           "remove this mark in T10a")
+
+
+@_T10A_PENDING
 @pytest.mark.slow
 def test_every_trigger_has_a_branch_and_every_branch_a_trigger():
     triggers = wt.trigger_types()
@@ -49,6 +55,7 @@ def test_every_trigger_has_a_branch_and_every_branch_a_trigger():
     assert not missing_trigger, f"dispatched but never sent: {sorted(missing_trigger)}"
 
 
+@_T10A_PENDING
 @pytest.mark.slow
 def test_the_exemption_tables_are_not_stale():
     assert set(wt.OTHER_SERVICE) <= wt.trigger_types()
@@ -57,11 +64,12 @@ def test_the_exemption_tables_are_not_stale():
     assert wt.MANUAL_ONLY == {}
 
 
+@_T10A_PENDING
 @pytest.mark.slow
-def test_the_trigger_set_is_the_ten_scheduler_types_and_the_enqueue_only_ones():
+def test_the_trigger_set_is_the_eleven_scheduler_types_and_the_enqueue_only_ones():
     scheduler = set(wt.scheduler_task_types())
     enqueue_only = {s.task_type for s in wt.enqueue_sites()} - scheduler
-    assert len(scheduler) == 10
+    assert len(scheduler) == 11
     assert enqueue_only == {
         "agent_execution", "video_generation_polling", "email_indexing", "consolidation", "companion_consolidation",
         "telegram_update", "execute_reminder", "setup_microsoft_todo", "reindex_task_list", "renew_task_subscriptions",

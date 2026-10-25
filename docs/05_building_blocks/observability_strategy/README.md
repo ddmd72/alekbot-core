@@ -89,7 +89,6 @@ Smart's primary model — are unaffected.
 `BIGQUERY_PROMPT_DATASET` is set — `DEBUG_PROMPTS` is a global write on/off switch, not an adapter
 selector. The old GCS `…-debug-prompts/` dump (`PromptDebugLogger`) was removed on 2026-06-29 (TD-1).
 
-
 See: `decisions/tracing_backend_both_interim.md`, `decisions/llm_observability_pending.md`; how to
 **read** the data in `CLAUDE.md` → "Debugging Cloud Run". Code: `src/utils/telemetry.py`,
 `src/adapters/bigquery_prompt_content_adapter.py`, `src/agents/base_agent.py::_call_llm`.

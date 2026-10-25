@@ -36,6 +36,9 @@ tokens:
   PROTOCOL_LONG_TURNS:
     non_overridable: true
     order: 260
+  PROTOCOL_MEMORY_REVIEW:
+    non_overridable: true
+    order: 270
   PROTOCOL_VIDEO_GEN_PREP:
     non_overridable: true
     order: 240

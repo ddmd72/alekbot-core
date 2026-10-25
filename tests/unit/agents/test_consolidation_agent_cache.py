@@ -11,6 +11,7 @@ from src.ports.repository import FactRepository
 from src.ports.embedding_service import EmbeddingService
 from src.services.prompt_builder import PromptBuilder
 from src.adapters.in_memory_provider_resilience import InMemoryProviderResilience
+from tests.support.typed_writes import NoTypedWrites
 
 
 @pytest.fixture
@@ -68,7 +69,8 @@ async def test_consolidation_agent_invalidates_cache_on_success(mock_deps):
         repository=repo,
         embedding_service=embedding,
         fact_write_service=fact_write_service,
-        prompt_builder=prompt_builder
+        prompt_builder=prompt_builder,
+        fact_updates=NoTypedWrites(),  # reviewer edit (S4 T6b): the typed port is required; the v2 path makes no typed write
     )
 
     # Use messages (v2 path) — observation-based flow is deprecated and skips refresh

@@ -5,14 +5,19 @@ agent coordinator (the LLM boundary) is scripted.
 Decision: docs/04_solution_strategy/decisions/consolidation_failed_batch_bounded.md
 """
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.adapters.firestore_consolidation_queue import FirestoreConsolidationQueue
+from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
+from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentResponse
 from src.domain.consolidation import MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch
+from src.domain.user import UserBotConfig
 from src.services.consolidation_service import ConsolidationService
+from tests.support.account_owners import owner_zones
 from tests.support.firestore_eval import EvalDb
 
 USER = "user-abcdef123"
@@ -48,7 +53,17 @@ def coordinator():
 def service(queue, coordinator):
     factory = MagicMock()
     factory.ensure_agents_for_user = AsyncMock()
-    return ConsolidationService(queue=queue, coordinator=coordinator, agent_factory=factory)
+    # The real memory-write lease on the evaluating fake (FACT_LIFECYCLE_RFC D9): each task takes and releases it.
+    lease = FirestoreMemoryWriteLease(EvalDb(), EnvironmentConfig())
+    profiles = _Profiles()
+    return ConsolidationService(queue=queue, coordinator=coordinator, agent_factory=factory,
+                                lease=lease, run_timeout_s=900.0, user_repo=profiles,
+                                owner_zones=owner_zones({"acc-1": USER}, profiles))
+
+
+class _Profiles:
+    async def get_user(self, user_id):
+        return SimpleNamespace(account_id="acc-1", config=UserBotConfig())
 
 
 async def _put(queue, batch_id, created_at, status=BatchStatus.PENDING, **extra):

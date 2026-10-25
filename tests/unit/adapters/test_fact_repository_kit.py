@@ -1,7 +1,8 @@
 """FactRepository kit (P4 · T3): the docstrings of `src/ports/repository.py` checked against `FirestoreFactRepository` on the
 evaluating Firestore fake, with the index refusal ON (`config/firestore.indexes.json`): a query no declared index serves fails
-here. Assertions are on the raw stored documents and on what readers return. get_lineage (no caller in `src/`) is not
-tested; get_legacy_facts has its own file (test_fact_repository_legacy_facts.py).
+here. Assertions are on the raw stored documents and on what readers return. get_lineage, resolve_current,
+write_superseding and update_fact_fields are tested in test_fact_repository_versions_kit.py; get_legacy_facts has its own
+file (test_fact_repository_legacy_facts.py).
 
 `store` is the one fixture that selects the backend.
 """
@@ -17,10 +18,11 @@ from pydantic import ValidationError
 
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.domain.entities import (
-    ContextPriority, FactDomain, FactState, FactVisibility, TemporalClass,
+    ContextPriority, ExpiryKind, FactDomain, FactState, FactVisibility, TemporalClass,
 )
 from src.domain.request_context import RequestContext
 from src.services.biographical_context_service import BiographicalContextService
+from src.services.cabinet_fact_service import CabinetFactService
 from tests.support.fact_kit import ACC, DROP, OTHER, T0, USER, as_legacy, make_fact, put_raw
 from tests.support.fact_store import FACTS, INDEXES_FILE, FactStore, embed, make_env_config
 from tests.support.firestore_eval import stored_vector
@@ -167,14 +169,16 @@ async def test_get_fact_by_id_returns_every_field_as_stored_with_vectors_as_list
     assert all(type(v) is list for v in (read.vector, read.tags_vector, read.metadata_vector))
 
 
-async def test_get_then_update_preserves_every_field_of_the_document(store):
+async def test_get_then_rewrite_preserves_every_field_of_the_document(store):
+    # FactRepository.update_fact is gone (RFC delta D-4); add_fact is the remaining whole-document writer and shares
+    # its stored form (`_to_document`) with write_superseding, so read -> write back must still lose nothing.
     fact = make_fact("full", tags=["a"], metadata={"k": "v"}, ttl_days=30, context="said at lunch", version=3,
                      replaces_fact_id="old-1", expires_at=T0 + timedelta(days=30), temporal_class=TemporalClass.STABLE,
                      context_priority=ContextPriority.LOW, visibility=FactVisibility.USER_PRIVATE,
-                     state=FactState.STALE)
+                     state=FactState.STALE, superseded_by="next-1")
     await store.repo.add_fact(fact)
     before = plain(store.docs[fact.id])
-    await store.repo.update_fact(await store.repo.get_fact_by_id(fact.id))
+    await store.repo.add_fact(await store.repo.get_fact_by_id(fact.id))
     assert plain(store.docs[fact.id]) == before
 
 
@@ -212,17 +216,21 @@ async def test_get_active_facts_with_tags_returns_facts_carrying_at_least_one(st
 
 @PROJECTION_READERS
 async def test_projection_reads_return_no_vectors_and_leave_the_omitted_fields_at_the_default(store, reader):
-    fact = make_fact("full", tags=["a"], metadata={"k": "v"}, ttl_days=30, context="said at lunch", version=3,
+    fact = make_fact("full", tags=["a"], metadata={"k": "v"}, ttl_days=30, expiry_kind="horizon", context="said at lunch", version=3,
                      replaces_fact_id="old-1", expires_at=T0 + timedelta(days=30), temporal_class=TemporalClass.STABLE,
                      context_priority=ContextPriority.HIGH, visibility=FactVisibility.USER_PRIVATE,
                      reported_date=T0 - timedelta(days=1), valid_to=T0 + timedelta(days=2), is_current=False,
                      age_days=3)
     await store.repo.add_fact(fact)
     (got,) = await reader(store)
+    expiry_fields = {"ttl_days", "expires_at", "expiry_kind"}
+    shown = set() if reader is _ordered else expiry_fields        # the list readers show the stored decision (Facts S3, T6 item 15)
     assert (got.vector, got.tags_vector, got.metadata_vector) == (None, None, None)
-    assert (got.temporal_class, got.context, got.ttl_days, got.expires_at, got.replaces_fact_id) == (None,) * 5
-    omitted = {"vector", "tags_vector", "metadata_vector", "temporal_class", "context", "ttl_days", "expires_at",
-               "replaces_fact_id"}
+    assert (got.temporal_class, got.context, got.replaces_fact_id) == (None,) * 3
+    assert {name: getattr(got, name) for name in shown} == {name: getattr(fact, name) for name in shown}
+    assert all(getattr(got, name) is None for name in expiry_fields - shown)
+    omitted = {"vector", "tags_vector", "metadata_vector", "temporal_class", "context", "replaces_fact_id"} | (
+        expiry_fields - shown)
     assert got.model_dump(exclude=omitted) == fact.model_dump(exclude=omitted)
 
 
@@ -387,20 +395,26 @@ async def test_search_without_any_user_id_raises(store):
 
 
 async def test_search_projection_returns_vector_and_context_and_defaults_the_rest(store):
+    # Reviewer edit (facts S3, T3; plan §1.1 / D1 "search results carry the current decision"): the select now carries
+    # the stored expiry decision (expiry_kind, ttl_days, expires_at), so those three are returned, no longer defaulted.
+    # The trail and stale_since stay out of the projection and must come back at their defaults.
     fact = make_fact("full", tags=["a"], metadata={"k": "v"}, context="said at lunch", ttl_days=30,
                      replaces_fact_id="old-1", expires_at=T0 + timedelta(days=30), temporal_class=TemporalClass.STABLE,
                      is_current=False, version=3, last_updated=T0, context_priority=ContextPriority.HIGH,
                      visibility=FactVisibility.USER_PRIVATE, reported_date=T0 - timedelta(days=1),
-                     valid_to=T0 + timedelta(days=2), age_days=3)
+                     valid_to=T0 + timedelta(days=2), age_days=3, expiry_kind=ExpiryKind.HORIZON,
+                     stale_since=T0, lifecycle_events=[{"at": T0, "from": None, "to": "current", "actor": "stage1",
+                                                        "reason": "version 3 of old-1"}])
     await store.repo.add_fact(fact)
     (got,) = await store.repo.search_facts(fact.vector, "vector", user_id=USER, account_id=ACC)
     assert got.vector == fact.vector and got.context == "said at lunch"
+    assert (got.expiry_kind, got.ttl_days, got.expires_at) == (ExpiryKind.HORIZON, 30, T0 + timedelta(days=30))
     assert (got.tags_vector, got.metadata_vector) == (None, None)
-    assert (got.ttl_days, got.expires_at, got.replaces_fact_id) == (None, None, None)
+    assert (got.replaces_fact_id, got.stale_since, got.lifecycle_events) == (None, None, [])
     assert got.is_current is True
     assert datetime.now(timezone.utc) - got.last_updated < timedelta(minutes=1)
-    defaulted = {"tags_vector", "metadata_vector", "ttl_days", "expires_at", "replaces_fact_id", "is_current",
-                 "last_updated"}
+    defaulted = {"tags_vector", "metadata_vector", "replaces_fact_id", "is_current", "last_updated", "stale_since",
+                 "lifecycle_events"}
     assert got.model_dump(exclude=defaulted) == fact.model_dump(exclude=defaulted)
 
 
@@ -449,42 +463,6 @@ async def test_by_domain_errors_and_empty_domains(store):
     with pytest.raises(InvalidArgument):
         await store.repo.search_facts_by_domain([f"d{i}" for i in range(31)], account_id=ACC)
     assert ids(await store.repo.search_facts_by_domain([f"d{i}" for i in range(29)] + ["health"], account_id=ACC)) == ["own"]
-
-
-# ---------------------------------------------------------------------------------------------- update_fact
-
-async def test_update_fact_replaces_the_document_with_every_field_and_drops_stored_extras(store):
-    put_raw(store, "f-x", "old", legacy_note="left over")
-    fact = make_fact("x", id="f-x", text="new text", version=2, context_priority=ContextPriority.LOW,
-                     vector=embed("v"), tags_vector=embed("t"), metadata_vector=embed("m"))
-    await store.repo.update_fact(fact)
-    expected = plain(fact.model_dump())
-    expected["context_priority_rank"] = 4
-    assert plain(store.docs["f-x"]) == expected
-    assert all(isinstance(store.docs["f-x"][k], Vector) for k in ("vector", "tags_vector", "metadata_vector"))
-
-
-async def test_update_fact_twice_leaves_one_identical_document(store):
-    fact = make_fact("x")
-    await store.repo.update_fact(fact)
-    first = plain(store.docs[fact.id])
-    await store.repo.update_fact(fact)
-    assert list(store.docs) == [fact.id] and plain(store.docs[fact.id]) == first
-
-
-async def test_update_fact_creates_a_missing_id_and_does_not_check_the_account(store):
-    put_raw(store, "foreign", "foreign", account_id=OTHER)
-    await store.repo.update_fact(make_fact("new"))
-    assert store.docs["f-new"]["text"] == "new"
-    await store.repo.update_fact(make_fact("foreign", id="foreign"))
-    assert store.docs["foreign"]["account_id"] == ACC
-
-
-async def test_update_fact_last_writer_wins(store):
-    await store.repo.add_fact(make_fact("x", version=1))
-    await store.repo.update_fact(make_fact("x", text="second", version=2))
-    await store.repo.update_fact(make_fact("x", text="third", version=3))
-    assert (store.docs["f-x"]["text"], store.docs["f-x"]["version"]) == ("third", 3)
 
 
 # ------------------------------------------------------------------------------------------ add_fact_if_unique
@@ -554,7 +532,9 @@ async def test_unique_compares_only_current_facts_of_the_facts_account(store, kw
 
 # ----------------------------------------------------------------------------- get_latest_fact_by_lineage
 
-async def test_latest_by_lineage_returns_the_is_current_document_in_any_state(store):
+async def test_latest_by_lineage_returns_the_non_superseded_document_in_any_state(store):
+    # S2 (decision 17, D-7): the latest document is the highest version whose state is not superseded, any other state
+    # included; `is_current` is no longer read. Highest-version selection is pinned in test_fact_repository_versions_kit.py.
     put_raw(store, "a-elsewhere", "other lineage", entity={"lineage_id": "M"})
     put_raw(store, "b-old", "v1", entity={"lineage_id": "L"}, is_current=False, state="superseded")
     put_raw(store, "c-new", "v2", entity={"lineage_id": "L"}, is_current=True, state="archived")
@@ -564,12 +544,13 @@ async def test_latest_by_lineage_returns_the_is_current_document_in_any_state(st
     assert (await store.repo.get_latest_fact_by_lineage(OTHER, "L")).id == "d-foreign"
 
 
-async def test_latest_by_lineage_falls_back_to_the_legacy_owner_id_field(store):
+async def test_latest_by_lineage_ignores_a_legacy_owner_id_document(store):
+    # The owner_id fallback is dropped (RFC delta D-7, R3-M5: no live owner_id document, no caller): a legacy document
+    # is absent from this account-scoped read, as from every other one (port docstring, "Legacy documents").
     put_raw(store, "a-elsewhere", "other lineage", entity={"lineage_id": "M"}, **as_legacy())
     put_raw(store, "b-old", "v1", entity={"lineage_id": "L"}, **as_legacy(is_current=False, state="superseded"))
     put_raw(store, "c-new", "v2", entity={"lineage_id": "L"}, **as_legacy())
-    got = await store.repo.get_latest_fact_by_lineage(ACC, "L")
-    assert got.id == "c-new" and got.account_id == ACC and got.created_by_user_id == ACC
+    assert await store.repo.get_latest_fact_by_lineage(ACC, "L") is None
     assert await store.repo.get_latest_fact_by_lineage(OTHER, "L") is None
 
 
@@ -579,7 +560,7 @@ async def test_latest_by_lineage_returns_vectors_as_lists(store):
     assert all(type(v) is list for v in (got.vector, got.tags_vector, got.metadata_vector))
 
 
-# ------------------------------------------------------------------------------------------- invalidate_fact
+# ------------------------------------------------------------------------------------------- the Cabinet delete (CabinetFactService over this repository; facts S4 T2c, reviewer edit)
 
 async def test_invalidate_changes_state_valid_to_and_last_updated_only(store):
     await store.repo.add_fact(make_fact("x"))
@@ -587,9 +568,13 @@ async def test_invalidate_changes_state_valid_to_and_last_updated_only(store):
     foreign_before = copy.deepcopy(store.docs["f-foreign"])
     before = plain(store.docs["f-x"])
     started = datetime.now(timezone.utc)
-    await store.repo.invalidate_fact("f-x", ACC)
+    await CabinetFactService(store.repo).invalidate("f-x", ACC)
     after = plain(store.docs["f-x"])
-    assert {k for k in after if after[k] != before[k]} == {"state", "valid_to", "last_updated"}
+    # Reviewer edit (facts S3, T3; plan §3.8): the Cabinet invalidate writes its trail entry in the same write, so the
+    # changed set gains lifecycle_events, and the entry itself is pinned.
+    assert {k for k in after if after[k] != before[k]} == {"state", "valid_to", "last_updated", "lifecycle_events"}
+    assert after["lifecycle_events"] == [{"at": after["valid_to"], "from": "current", "to": "invalidated",
+                                          "actor": "cabinet", "reason": "deleted in the Cabinet"}]
     assert after["state"] == "invalidated" and type(after["state"]) is str
     assert started <= after["valid_to"] <= datetime.now(timezone.utc) and after["last_updated"] == after["valid_to"]
     assert after["is_current"] is True and after["version"] == before["version"]
@@ -600,25 +585,27 @@ async def test_invalidate_a_missing_id_raises_value_error_and_writes_nothing(sto
     put_raw(store, "other", "other")
     before = copy.deepcopy(store.docs)
     with pytest.raises(ValueError):
-        await store.repo.invalidate_fact("missing", ACC)
+        await CabinetFactService(store.repo).invalidate("missing", ACC)
     assert store.docs == before
 
 
 async def test_invalidate_a_fact_of_another_account_or_a_legacy_one_raises_permission_error_and_writes_nothing(store):
+    # Reviewer ruling (facts S4, T2c): re-pointed at CabinetFactService, the refusal is unchanged. Tenancy of a write is
+    # the stored account_id, not the owner_id compatibility view of get_fact_by_id; the legacy refusal stays.
     put_raw(store, "foreign", "foreign", account_id=OTHER)
     put_raw(store, "legacy", "legacy", **as_legacy())
     before = copy.deepcopy(store.docs)
     for fact_id in ("foreign", "legacy"):
         with pytest.raises(PermissionError):
-            await store.repo.invalidate_fact(fact_id, ACC)
+            await CabinetFactService(store.repo).invalidate(fact_id, ACC)
     assert store.docs == before
 
 
 async def test_invalidate_twice_succeeds_and_moves_valid_to_and_last_updated(store):
     await store.repo.add_fact(make_fact("x"))
-    await store.repo.invalidate_fact("f-x", ACC)
+    await CabinetFactService(store.repo).invalidate("f-x", ACC)
     first = copy.deepcopy(store.docs["f-x"])
-    await store.repo.invalidate_fact("f-x", ACC)
+    await CabinetFactService(store.repo).invalidate("f-x", ACC)
     second = store.docs["f-x"]
     assert second["valid_to"] > first["valid_to"] and second["last_updated"] > first["last_updated"]
     assert second["state"] == "invalidated"

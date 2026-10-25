@@ -1,4 +1,4 @@
-from typing import Dict, FrozenSet, Optional, Type
+from typing import Dict, FrozenSet, Iterable, Optional, Type
 
 
 class LLMError(Exception):
@@ -216,6 +216,16 @@ _ERROR_TYPE_LOG_LABEL: Dict[Type[LLMError], str] = {
 }
 
 
+class FactExpiryError(ValueError):
+    """An `expiry` a fact tool received is missing, malformed, pinned wrongly or born due. The message is the fix the
+    model reads; a ValueError, so every tool-error path already maps it to a failed call."""
+
+
+class FactBornDueError(FactExpiryError):
+    """A well-formed `expiry` that resolves already due at write time. The model is told to retire the candidate
+    (DISCARD) or rewrite the fact as history, so a refusal of this kind that is never resent is not a loss."""
+
+
 class SkillValidationError(ValueError):
     """A skill's text does not satisfy the format rules."""
 
@@ -277,3 +287,36 @@ class WorkspaceRefused(Exception):
 
 class WorkspaceConflict(Exception):
     """A generation precondition failed (HTTP 412): another run wrote or deleted the object since it was read."""
+
+
+class FactResolutionError(Exception):
+    """A fact id could not be followed to a fact the caller may write. The message is the fix the model reads;
+    `current_id` names the document the walk stopped at, when there is one; it may itself have successors. Not a
+    ValueError: a resolution failure is not invalid input; the caller searches again."""
+
+    def __init__(self, message: str, *, current_id: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.current_id = current_id
+
+
+class FactWriteConflict(Exception):
+    """A fact document changed between the read and the write (precondition failed, or the transaction aborted)."""
+
+    def __init__(self, fact_id: str) -> None:
+        super().__init__(f"fact {fact_id} changed concurrently")
+        self.fact_id = fact_id
+
+
+class InPlaceFieldRefused(Exception):
+    """An in-place fact write named a field outside IN_PLACE_FIELDS. A programming error, not invalid input, so not a
+    ValueError."""
+
+    def __init__(self, fields: Iterable[str]) -> None:
+        self.fields = tuple(sorted(fields))
+        super().__init__(f"fields not writable in place: {', '.join(self.fields)}")
+
+
+class QuestionTransitionError(Exception):
+    """A memory-review question cannot make that move from its present state (a closed question cannot be asked, a
+    question not yet posted cannot be completed as asked). The store applies a transition inside its transaction and
+    treats this as "not applied"; it decides conflicts, never whether a move is legal."""

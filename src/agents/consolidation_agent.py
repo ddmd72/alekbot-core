@@ -12,48 +12,577 @@ Session 2026-02-16: Phase 3 - Multi-turn tool use integration
 """
 
 import re
+import copy
+import hashlib
 import json
 import time
 import asyncio
-from typing import List, Dict, Any, Optional, Tuple
+from collections import Counter
+from typing import List, Dict, Any, FrozenSet, Literal, Mapping, Optional, Tuple
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent, AgentStatus
 from ..ports.indexed_email_repository import IndexedEmailRepository
-from ..domain.entities import FactDomain
+from ..domain.entities import FactDomain, FactEntity, FactState, normalize_fact_taxonomy
+from ..domain.fact_lifecycle import CLOSING_STATES
+from ..domain.fact_argument_parsing import parse_enum
+from ..domain.fact_update import ParsedFactUpdate
+from ..domain.fact_update_outcome import FactUpdateOutcome
+from ..domain.fact_write_context import FactWriteContext, as_utc, span_of
+from ..domain.local_time import local_date, local_day, local_moment, local_stamp
+from ..domain.new_fact_attributes import parse_derived_from, parse_new_fact
+from ..domain.pass_actor import PassActor
 from ..domain.request_context import get_effective_account_id
+from ..domain.search import fact_view
 from ..ports.repository import FactRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.fact_management_port import FactManagementPort
+from ..ports.fact_update_port import FactUpdatePort
 from ..ports.llm_port import LLMResponse, ToolCall, Message, MessagePart, LLMRequest
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..utils.logger import logger
 from ..ports.llm_port import AgentExecutionContext
 from ..ports.fact_write_port import FactWritePort
 from ..ports.alert_sink import AlertSinkPort
-from ..domain.consolidation_pass_stats import ConsolidationPassStats
+from ..domain.consolidation_pass_stats import (
+    OUTCOME_ERROR, OUTCOME_OK, OUTCOME_SCOPE_REFUSAL, ConsolidationPassStats, PassCall, PassTool,
+)
+from ..domain.fact_review_ask import parse_ask_owner
+from ..domain.fact_review_language import (
+    CANONICAL_LABELS, MAX_LABEL_CHARS, MAX_OPTION_WORDS, MAX_TEXT_CHARS, check_labels, parse_message_language,
+)
+from ..domain.fact_review_question import FactReviewQuestion
+from ..domain.fact_review_task import FactReviewTask, ReviewItem, decode_review_task
+from ..domain.fact_tool_result import STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
+from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..infrastructure.agent_config import CONSOLIDATION
+from ..infrastructure.agent_manifest import Intent
+from ..infrastructure.fact_review_scope import FactReviewScope
 
 
 @dataclass
 class ToolResponse:
-    """Internal container for fact management tool results."""
+    """Internal container for fact management tool results. `outcome` is one of the `OUTCOME_*` values of
+    `domain.consolidation_pass_stats`, read from the result by `domain.fact_tool_result.outcome_of`."""
     name: str
     result_str: str
+    outcome: str = OUTCOME_OK
+
+
+_EXPIRY_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "When this fact stops being current, decided from its content (see the kinds table): "
+        "{kind: date, date: YYYY-MM-DD} the last day it holds; {kind: horizon, days: N} review if the owner "
+        "has not said it again within N days; {kind: none} history, stable or permanent. "
+        "Directives, principles and mindset facts: none."
+    ),
+    "properties": {
+        "kind": {"type": "string", "enum": ["date", "horizon", "none"], "description": "date, horizon or none"},
+        "date": {"type": "string", "description": "with kind date: YYYY-MM-DD, the last day the fact holds"},
+        "days": {"type": "integer", "description": "with kind horizon: days counted from when the owner said it"},
+    },
+    "required": ["kind"],
+}
+
+_STATE_NOTE = "stale is set by the system; superseded only through update_fact"
+
+_REPORTED_DATE_DESCRIPTION = (
+    "the timestamp of the owner's message, as shown in the conversation, in ISO form with its offset, "
+    "e.g. 2026-10-22T12:00+02:00"
+)
+
+_FACT_ATTRIBUTE_PROPERTIES: Dict[str, Any] = {
+    "domain": {"type": "string", "description": "BIOGRAPHICAL/POSSESSION/HEALTH/MEDICAL_RECORDS/LOCATION/WORK/NETWORK/PREFERENCE/AGENT_DIRECTIVE/SKILL/PROJECT/FINANCE/EDUCATION/LEGAL/ENTERTAINMENT/COMMUNICATION"},
+    "temporal_class": {"type": "string", "description": "PERMANENT/STABLE/DYNAMIC/EPHEMERAL"},
+    "state": {"type": "string", "description": "CURRENT/ARCHIVED/INVALIDATED"},
+    "context_priority": {"type": "string", "description": "CRITICAL/HIGH/MEDIUM/LOW/ARCHIVAL"},
+    "tags": {"type": "array", "items": {"type": "string"}, "description": "General classifications (domain keywords, dates)"},
+    "metadata": {"type": "object", "description": "Structured data (numeric values, specific dates, details)"},
+    "context": {"type": "string", "description": "Temporal context (e.g., 'Q1 2026 project')"},
+    "reported_date": {"type": "string", "description": _REPORTED_DATE_DESCRIPTION},
+    "expiry": _EXPIRY_SCHEMA,
+}
+
+_FACT_ATTRIBUTES_REQUIRED = ["domain", "temporal_class", "context_priority", "tags", "expiry"]
+
+_DERIVED_FROM_SCHEMA: Dict[str, Any] = {
+    "type": "array",
+    "items": {"type": "string"},
+    "description": (
+        "only in a cluster or rulebook review: the ids of the fact(s) this one is split or demoted from; "
+        "their date is kept"
+    ),
+}
+
+
+# The review pass's tools (Facts S4 §3.5). Every property is described, and no constraint the parsers refuse is
+# advertised (no enum, bound or pattern): the rules are in the descriptions and enforced by the scope, so a wrong value
+# comes back as a refusal the model can act on.
+_REVIEW_EXPIRY_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "When the fact stops being current again, decided from its content: {kind: date, date: YYYY-MM-DD} the last day "
+        "it holds; a horizon counts from now: `{kind: horizon, days: N}` means review again in N days (N ≥ 2); "
+        "{kind: none} history, stable or permanent. Not used when the state closes the fact."
+    ),
+    "properties": {
+        "kind": {"type": "string", "description": "date, horizon or none"},
+        "date": {"type": "string", "description": "with kind date: YYYY-MM-DD, the last day the fact holds"},
+        "days": {"type": "integer", "description": "with kind horizon: N ≥ 2, the days from now until the next review"},
+    },
+    "required": ["kind"],
+}
+
+_BASIS_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "description": (
+        "Why the change is right, one of three kinds: {kind: evidence, evidence_fact_id} another current fact shows it; "
+        "{kind: reply, question_id, quote} the owner's reply to this fact's question; {kind: date_passed, date?} the "
+        "plan's date is over. A revive, a rewrite and an invalidation need evidence or reply; an archive needs evidence, "
+        "reply or date_passed."
+    ),
+    "properties": {
+        "kind": {"type": "string", "description": "evidence, reply or date_passed"},
+        "evidence_fact_id": {
+            "type": "string",
+            "description": "with kind evidence: the id of a current fact that shows it, not a version of this fact",
+        },
+        "question_id": {"type": "string", "description": "with kind reply: the id of the question the owner answered"},
+        "quote": {"type": "string", "description": "with kind reply: the owner's words, copied from his reply"},
+        "date": {
+            "type": "string",
+            "description": (
+                "with kind date_passed: YYYY-MM-DD, the day of the plan, before today; leave it out for a fact of "
+                "expiry kind date (its own date is used)"
+            ),
+        },
+    },
+    "required": ["kind"],
+}
+
+_REVIEW_UPDATE_SCHEMA: Dict[str, Any] = {
+    "name": "update_fact",
+    "description": (
+        "Decide one fact of the batch: revive it (state CURRENT with an expiry), rewrite its text, archive, invalidate "
+        "or supersede it, with the basis for the change. One result per fact in this pass."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "fact_id": {
+                "type": "string",
+                "description": "id of the batch fact, or of the version this pass wrote for it",
+            },
+            "updates": {
+                "type": "object",
+                "description": (
+                    "Fields to change; the call changes the fact's state or its text. reported_date is kept by the "
+                    "system; review horizons count from now."
+                ),
+                "properties": {
+                    "content": {"type": "string", "description": "the new text; leave it out to keep the text"},
+                    "tags": {
+                        "type": "array", "items": {"type": "string"}, "description": "full list; system tags are kept",
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "description": "Structured data to add or update; merged key by key into the fact's metadata",
+                    },
+                    "temporal_class": {"type": "string", "description": "PERMANENT/STABLE/DYNAMIC/EPHEMERAL"},
+                    "state": {
+                        "type": "string",
+                        "description": "CURRENT (revive), ARCHIVED, INVALIDATED or SUPERSEDED; leave it out to keep it",
+                    },
+                    "superseded_by": {
+                        "type": "string",
+                        "description": "with state SUPERSEDED: id of the current fact that replaces this one; required then",
+                    },
+                    "expiry": _REVIEW_EXPIRY_SCHEMA,
+                },
+            },
+            "basis": _BASIS_SCHEMA,
+            "history": {
+                "type": "string",
+                "description": (
+                    "with an archive whose basis is the owner's reply that it ended: one sentence in the past tense "
+                    "saying it ended, kept as a new fact beside the archived one; not for a dated plan"
+                ),
+            },
+        },
+        "required": ["fact_id", "updates"],
+    },
+}
+
+_ASK_OWNER_SCHEMA: Dict[str, Any] = {
+    "name": "ask_owner",
+    "description": (
+        "Ask the owner about one fact of the batch when nothing here decides it. Code writes the question and sends it "
+        "later; you say only what happens if he does not answer. An asked fact takes no other result in this pass."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "fact_id": {"type": "string", "description": "id of the batch fact to ask about"},
+            "fallback": {
+                "type": "string",
+                "description": (
+                    "what happens when the owner does not answer: revive or archive; archive only for a fact of expiry "
+                    "kind date, with a past fallback_date, or with noise"
+                ),
+            },
+            "fallback_date": {
+                "type": "string",
+                "description": "with fallback archive: YYYY-MM-DD, the day of the plan, before today",
+            },
+            "noise": {
+                "type": "boolean",
+                "description": "with fallback archive: true when the fact reads as noise, not as something the owner said",
+            },
+        },
+        "required": ["fact_id", "fallback"],
+    },
+}
+
+
+_COUNT_WORDS_DESCRIPTION = "Count words in a text string. Call this BEFORE create_fact or update_fact to verify content is ≤40 words. Returns exact word_count, within_limit flag, and excess words if any."
+_REVIEW_COUNT_WORDS_DESCRIPTION = (
+    "Count words in a text string. Call this BEFORE an update_fact that rewrites a fact's content to verify the new "
+    "content is ≤40 words. Returns exact word_count, within_limit flag, and excess words if any."
+)
+
+
+def _count_words_tool(description: str) -> Dict[str, Any]:
+    return {
+        "name": "count_words",
+        "description": description,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to count words in (e.g. the planned content field value)"
+                }
+            },
+            "required": ["text"]
+        }
+    }
+
+
+def _expiry_property(extra: str = "") -> Dict[str, Any]:
+    """A copy of `_EXPIRY_SCHEMA` (an adapter may rewrite a schema in place), its description extended by `extra`."""
+    schema = copy.deepcopy(_EXPIRY_SCHEMA)
+    if extra:
+        schema["description"] = f"{schema['description']} {extra}"
+    return schema
+
+
+def _fact_attributes_schema(description: str, with_derived_from: bool) -> Dict[str, Any]:
+    """The `fact_attributes` object of create_fact and merge_facts: one property set, `derived_from` on create only."""
+    properties = copy.deepcopy(_FACT_ATTRIBUTE_PROPERTIES)
+    if with_derived_from:
+        properties["derived_from"] = copy.deepcopy(_DERIVED_FROM_SCHEMA)
+    return {
+        "type": "object",
+        "description": f"{description} state: {_STATE_NOTE}. expiry is not used when state closes the fact.",
+        "properties": properties,
+        "required": list(_FACT_ATTRIBUTES_REQUIRED),
+    }
+
+
+def _with_top_level_expiry(args: Dict[str, Any], container: str) -> Any:
+    """`args[container]` with a top-level `expiry` moved in when the nested one is absent (a nested one wins).
+
+    A container that is not a dict is returned as it came, so the write refuses it as before.
+    """
+    inner = args.get(container, {})
+    if "expiry" not in args or not isinstance(inner, dict) or "expiry" in inner:
+        return inner
+    return {**inner, "expiry": args["expiry"]}
+
+
+_PASS_TOOLS: Dict[str, PassTool] = {
+    "search_existing_facts": PassTool.SEARCH,
+    "create_fact": PassTool.CREATE,
+    "update_fact": PassTool.UPDATE,
+    "merge_facts": PassTool.MERGE,
+    "count_words": PassTool.COUNT,
+    "ask_owner": PassTool.ASK,
+}
+
+# Which tools a pass offers: the consolidation passes', or the review's three (Facts S4 §3.5).
+PassKind = Literal["consolidation", "review"]
+
+
+def _pass_call(tool_call: ToolCall, timezone_name: str) -> PassCall:
+    """One tool call as the pass stats read it, normalised by the parsers the write path uses (so `" id"` and `"id"`
+    are one source). An argument the parsers refuse leaves its field empty: such a call is never a success, and a
+    refusal is matched by its text or its fact id only."""
+    args = tool_call.args or {}
+    tool = _PASS_TOOLS.get(tool_call.name, PassTool.OTHER)
+    identity = json.dumps(args, sort_keys=True, default=str, ensure_ascii=False)
+    fingerprint = hashlib.sha256(f"{tool_call.name}:{identity}".encode("utf-8")).hexdigest()
+    if tool in (PassTool.CREATE, PassTool.MERGE):
+        text = args.get("content" if tool is PassTool.CREATE else "merged_content")
+        text = text if isinstance(text, str) else ""
+        attributes = _with_top_level_expiry(args, "fact_attributes")
+        attributes = attributes if isinstance(attributes, dict) else {}
+        try:
+            domain = parse_new_fact({**normalize_fact_taxonomy(attributes), "content": text}, timezone_name).domain
+        except ValueError:
+            domain = None
+        sources = _fact_ids(attributes.get("derived_from") if tool is PassTool.CREATE else args.get("fact_ids"))
+        return PassCall.with_text(tool, fingerprint, text, sources=sources, domain=domain)
+    if tool is PassTool.UPDATE:
+        fact_id = args.get("fact_id")
+        updates = args.get("updates")
+        closing = isinstance(updates, dict) and _closes(updates.get("state"))
+        return PassCall(tool, fingerprint, key=fact_id if isinstance(fact_id, str) else "", closing=closing)
+    if tool is PassTool.ASK:
+        return PassCall(tool, fingerprint, key=_asked_fact(args))
+    return PassCall(tool, fingerprint)
+
+
+def _session_time(value: Any) -> datetime:
+    """A message time as the session store keeps it (epoch seconds, an ISO string or a datetime; a naive one is UTC), as
+    aware UTC. Raises ValueError, TypeError, OverflowError or OSError for one that cannot be read."""
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    elif not isinstance(value, datetime):
+        value = datetime.fromtimestamp(value, tz=timezone.utc)
+    return as_utc(value)
+
+
+def _asked_fact(args: Dict[str, Any]) -> str:
+    """The fact an `ask_owner` call names, as its parser reads it; the raw id when the parser refuses the call."""
+    try:
+        return parse_ask_owner(args).fact_id
+    except ValueError:
+        fact_id = args.get("fact_id")
+        return fact_id if isinstance(fact_id, str) else ""
+
+
+def _closes(state: Any) -> bool:
+    """Whether an update's `state` closes its fact, read as the update parser reads it (the state alone: the rest of a
+    closing call may be refused)."""
+    if not state:
+        return False
+    try:
+        return parse_enum(FactState, "state", state) in CLOSING_STATES
+    except ValueError:
+        return False
+
+
+def _fact_ids(raw: Any) -> FrozenSet[str]:
+    """The ids a create names in `derived_from` or a merge in `fact_ids`; empty when the parser refuses them."""
+    try:
+        return frozenset(parse_derived_from(raw))
+    except ValueError:
+        return frozenset()
+
+
+# The ops lines of a pass (`AlertSinkPort`). Privacy: only the first 8 characters of the user id, tool kinds, counts,
+# text lengths and the first 8 characters of a fact id; never an argument's text or a fact's content.
+
+
+def _errors_text(stats: ConsolidationPassStats) -> str:
+    born = f", born due {stats.born_due}" if stats.born_due else ""
+    review = f", review refusals {stats.review_refusals}" if stats.review_refusals else ""
+    return (
+        f"tool-error turns {stats.error_turns} (expiry {stats.expiry_errors}{born}{review}, abandoned {stats.abandoned})"
+    )
+
+
+def _counts_text(stats: ConsolidationPassStats) -> str:
+    return " ".join(f"{tool.value}×{n}" for tool, n in stats.counts.items()) or "none"
+
+
+def _sequence_text(stats: ConsolidationPassStats) -> str:
+    """Compact per-turn tool sequence, e.g. `t1 search×3 · t2 create×3`."""
+    parts = []
+    for i, tools in enumerate(stats.turns, start=1):
+        body = " ".join(f"{tool.value}×{n}" for tool, n in Counter(tools).items()) or "-"
+        parts.append(f"t{i} {body}")
+    return " · ".join(parts)
+
+
+def _summary_line(
+    stats: ConsolidationPassStats, model: str, effort: Any, user_id: str, report_ops: int, seconds: float
+) -> str:
+    """The temporary per-pass stats line (pass ended with a final report). Turns count every LLM call, the final
+    report included, because that is what the turn cap caps."""
+    return (
+        f"📊 Consolidation pass `{stats.actor.value}` | model {model} | effort {effort} | "
+        f"turns {stats.turns_used + 1}/{stats.max_turns} | tools: {_counts_text(stats)} | "
+        f"repeats {stats.repeats} | writes {stats.writes} | {_errors_text(stats)} | report ops {report_ops} | "
+        f"{seconds:.0f}s | user {(user_id or '')[:8]}\n{_sequence_text(stats)}"
+    )
+
+
+def _limit_alert(stats: ConsolidationPassStats, model: str, effort: Any, user_id: str, seconds: float) -> str:
+    """The permanent alert: turn cap reached, no final report."""
+    return (
+        f"🚨 Consolidation hit the turn limit without a final report | pass `{stats.actor.value}` | "
+        f"model {model} | effort {effort} | turns {stats.turns_used}/{stats.max_turns} | "
+        f"writes so far {stats.writes} | repeats {stats.repeats} | {_errors_text(stats)} | {seconds:.0f}s | "
+        f"user {(user_id or '')[:8]}\n{_sequence_text(stats)}"
+    )
+
+
+def _abandoned_alert(stats: ConsolidationPassStats, model: str, user_id: str) -> str:
+    """The permanent alert for refusals that were never answered: the pass, tool kinds and text lengths (or the fact
+    id's first 8 characters), never the text."""
+    outcomes = stats.abandoned_outcomes()
+    parts = [
+        f"{o.call.tool.value} fact {o.call.key[:8]}" if o.call.tool in (PassTool.UPDATE, PassTool.ASK)
+        else f"{o.call.tool.value} (text {o.call.size} chars)"
+        for o in outcomes[:5]
+    ]
+    what = "refusals" if any(o.outcome == OUTCOME_SCOPE_REFUSAL for o in outcomes) else "expiry refusals"
+    return (
+        f"🚨 Consolidation left {what} unanswered | pass `{stats.actor.value}` | model {model} | "
+        f"abandoned {len(outcomes)}: {', '.join(parts)} | user {(user_id or '')[:8]}\n"
+        "A refused write that is never resent saves nothing; check what the pass retired next to it."
+    )
+
+
+_REVIEW_HEADER = (
+    "SYSTEM MAINTENANCE — STALE FACT REVIEW\n\n"
+    "The facts below are stale: their expiry passed and the owner has not said them again. Decide each one by the first "
+    "of these that applies:\n"
+    "(1) a current fact states the same thing: supersede it by that fact;\n"
+    "(2) the reply or evidence says it still holds: revive it with that basis (rewrite its text if the text changed);\n"
+    "(3) it is over: archive it (basis reply, evidence or date_passed); it was never true: invalidate it;\n"
+    "(4) anything else: ask_owner.\n"
+    "A fact whose question is open or timed out is not asked again; when nothing decides it, its outcome is leave.\n"
+    "Code writes and sends any question later; ask_owner only says what happens if he does not answer.\n"
+    "Every listed fact gets exactly one outcome.\n"
+    "Before any call, write one line per listed fact, in the order listed: "
+    "<fact_id> | neighbour_says=<id|none> | reply=<yes|no|over|never|unclear|none> | dated_plan_passed=<bool> | "
+    "outcome=<…>.\n\n"
+    "Each fact shows `expiry` (the decision it carries, null when none is recorded), `due` (the day a horizon fell due), "
+    "`reported` (the day the owner last said it), `stale_since`, its earlier `versions`, its `neighbours` (the current "
+    "facts nearest to it) and, when the owner was asked about it, its `question` with any `reply`.\n\n"
+    "Facts under review:"
+)
+
+
+def _review_language_instruction() -> str:
+    """The review's language request (mirror mode only, Facts S4 §3.17): the language of `owner_messages`, and for a
+    language without UI strings the labels translated from `CANONICAL_LABELS`."""
+    return (
+        "LANGUAGE — in your final report (its JSON object), give `message_language`: the ISO 639-1 code (two letters) of "
+        "the language the owner writes in, read from owner_messages. If it is not uk, en, fr or es, also give `labels`: "
+        "these English texts translated into it, under the same keys; every text one line, without digits, `[` or links, "
+        f"at most {MAX_TEXT_CHARS} characters; each of the four option labels at most {MAX_OPTION_WORDS} words and "
+        f"{MAX_LABEL_CHARS} characters, all four different.\n"
+        f"{json.dumps(dict(CANONICAL_LABELS), ensure_ascii=False)}"
+    )
+
+
+def _review_line(item: ReviewItem, question: Optional[FactReviewQuestion], tz: str, now: datetime) -> Dict[str, Any]:
+    """One batch fact as the review sees it: its `fact_view` with the review's own fields."""
+    fact = item.fact
+    view = fact_view(fact, tz)
+    line: Dict[str, Any] = {
+        "fact_id": view["fact_id"],
+        "content": view["content"],
+        "domain": fact.domain.value if fact.domain else None,
+        "type": fact.type.value,
+        "expiry": view["expiry"],
+    }
+    if view["due"]:
+        line["due"] = view["due"]
+    line["reported"] = view["reported"]
+    line["stale_since"] = local_date(fact.stale_since, tz).isoformat() if fact.stale_since else None
+    line["versions"] = [
+        {"version": v.version, "content": v.text, "valid_from": local_date(v.valid_from, tz).isoformat()}
+        for v in item.versions
+    ]
+    line["neighbours"] = [
+        {"fact_id": n.id, "content": n.text, "created": local_date(n.created_at, tz).isoformat(),
+         "reported": fact_view(n, tz)["reported"]}
+        for n in item.neighbours
+    ]
+    if question is not None:
+        line["question"] = {
+            "question_id": question.question_id,
+            "asked_on": local_date(question.asked_at, tz).isoformat() if question.asked_at else None,
+            "fallback": question.fallback,
+            "timed_out": question.is_timed_out(now),
+            "reply": question.reply_text,
+            "reply_at": local_moment(question.reply_at, tz).isoformat(timespec="seconds") if question.reply_at else None,
+        }
+    return line
+
+
+def _report_object(text: str) -> Optional[Dict[str, Any]]:
+    """The final report's JSON object, or None when it has none: a ```json block in the text, else the whole text, else
+    an object embedded in prose.
+
+    Documented exception to the "no regex fallbacks" rule (CLAUDE.md, Agent Output Format Standards): every write is
+    done through the tools by this point, so the report's operations are cosmetic, and a parse retry would re-bill a whole
+    turn; an unread review report only leaves `message_language` and `labels` unset."""
+    fenced = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if fenced:
+        return _json_object(fenced.group(1))
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        embedded = re.search(r"\{.*\}", text, re.DOTALL)
+        return _json_object(embedded.group(0)) if embedded else None
+    return data if isinstance(data, dict) else None
+
+
+def _json_object(text: str) -> Optional[Dict[str, Any]]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _operations_of(report: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The `operations` of a final report's object; a report with no object has none."""
+    return report.get("operations", []) if report is not None else []
+
+
+def _reported_language(report: Mapping[str, Any]) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """`message_language` and `labels` of a review's final report, read by the domain's rules
+    (`parse_message_language`, `check_labels`); either is None when absent or refused."""
+    language = parse_message_language(report.get("message_language"))
+    raw = report.get("labels")
+    if raw is None:
+        return language, None
+    refusal = check_labels(raw)
+    if refusal is not None:
+        logger.warning(f"⚠️ [ConsolidationAgent] Review labels refused: {refusal}")
+        return language, None
+    return language, dict(raw)
 
 
 class _TrackingFactManagement(FactManagementPort):
     """
-    Pass-through wrapper over FactManagementPort.
-    Records (fact_id, content) for every written fact (CREATE / UPDATE / MERGE).
-    Used by Stage 1 to seed the Stage 2 cluster review.
+    Pass-through wrapper over FactManagementPort, one per run, passed to every stage of that run
+    (`_TrackingFactUpdates` adds the typed update, over the agent's own typed port).
+
+    Records only what the store reports as written:
+    - `changed` holds (fact_id, content) for a create, a content update (the id of the version written,
+      from the result), a merge and a history fact created beside an archive. It seeds the content search
+      of Stage 2a; it is not every id that changed: tags-only and metadata-only versions change the id and
+      are not in it.
+    - `wrote` is set by any successful write, a state-only update included. It decides whether a run that
+      failed still refreshes the biographical cache.
+    A not_found, failed or refused result records nothing.
     """
 
     def __init__(self, real: FactManagementPort) -> None:
         self._real = real
         self.changed: List[Tuple[str, str]] = []  # (fact_id, content)
+        self.wrote = False
 
     async def search_existing_facts(
         self,
@@ -61,39 +590,92 @@ class _TrackingFactManagement(FactManagementPort):
         primary_query: str,
         alternative_query: str = "",
         limit: int = 20,
+        *,
+        timezone: str,
     ) -> List[Dict[str, Any]]:
         return await self._real.search_existing_facts(
             keywords=keywords,
             primary_query=primary_query,
             alternative_query=alternative_query,
             limit=limit,
+            timezone=timezone,
         )
 
-    async def create_fact(self, content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
-        result = await self._real.create_fact(content=content, metadata=metadata)
-        if fid := result.get("fact_id"):
-            self.changed.append((fid, content))
+    async def create_fact(
+        self, content: str, metadata: Dict[str, Any], *, context: FactWriteContext
+    ) -> Dict[str, Any]:
+        result = await self._real.create_fact(content=content, metadata=metadata, context=context)
+        if result.get("status") == STATUS_CREATED:
+            self.wrote = True
+            if fid := result.get("fact_id"):
+                self.changed.append((fid, content))
         return result
 
     async def update_fact(
-        self, fact_id: str, updates: Dict[str, Any], account_id: str
+        self,
+        fact_id: str,
+        updates: Dict[str, Any],
+        account_id: str,
+        *,
+        context: FactWriteContext,
     ) -> Dict[str, Any]:
         result = await self._real.update_fact(
-            fact_id=fact_id, updates=updates, account_id=account_id
+            fact_id=fact_id, updates=updates, account_id=account_id, context=context
         )
-        if content := updates.get("content"):
-            self.changed.append((fact_id, content))
+        if result.get("status") == STATUS_UPDATED:
+            self._record_update(result.get("fact_id"), updates.get("content"), None, None)
         return result
 
+    def _record_update(
+        self, written_id: Optional[str], content: Optional[str], history_id: Optional[str], history: Optional[str]
+    ) -> None:
+        """One rule for both update paths, called for an update that wrote: it is a write; a content change records the
+        version written, a history fact records itself."""
+        self.wrote = True
+        if content and written_id:
+            self.changed.append((written_id, content))
+        if history and history_id:
+            self.changed.append((history_id, history))
+
     async def merge_facts(
-        self, fact_ids: List[str], merged_content: str, metadata: Dict[str, Any]
+        self, fact_ids: List[str], merged_content: str, metadata: Dict[str, Any], *, context: FactWriteContext
     ) -> Dict[str, Any]:
         result = await self._real.merge_facts(
-            fact_ids=fact_ids, merged_content=merged_content, metadata=metadata
+            fact_ids=fact_ids, merged_content=merged_content, metadata=metadata, context=context
         )
-        if fid := result.get("new_fact_id"):
-            self.changed.append((fid, merged_content))
+        if result.get("status") == STATUS_MERGED:
+            self.wrote = True
+            if fid := result.get("new_fact_id"):
+                self.changed.append((fid, merged_content))
         return result
+
+
+class _TrackingFactUpdates(_TrackingFactManagement, FactUpdatePort):
+    """The run's tracker: the model's writes go to `real`, the typed update to `typed` (production passes the one
+    adapter as both); both update paths are recorded alike."""
+
+    def __init__(self, real: FactManagementPort, typed: FactUpdatePort) -> None:
+        super().__init__(real)
+        self._typed = typed
+
+    async def apply_fact_update(
+        self,
+        fact_id: str,
+        update: ParsedFactUpdate,
+        account_id: str,
+        *,
+        context: FactWriteContext,
+        evidence_at: Optional[datetime] = None,
+        reason: Optional[str] = None,
+        history: Optional[str] = None,
+    ) -> FactUpdateOutcome:
+        outcome = await self._typed.apply_fact_update(
+            fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history
+        )
+        if outcome.written:
+            self._record_update(outcome.written_id, update.content, outcome.history_fact_id, history)
+        return outcome
+
 
 
 # Stage 3 (email) runs under what is left of the agent's budget minus this margin, so the agent's own
@@ -125,6 +707,7 @@ class ConsolidationAgent(BaseAgent):
     # the LLM ever leaves more than CAP. A higher fetch bound lets the review see any overflow.
     DIRECTIVE_HARD_CAP = 15
     DIRECTIVE_REVIEW_FETCH_LIMIT = 40
+    CLOSE_OUT_TIMEOUT_S = 10.0  # the end-of-pass alert and counter write may not hold a pass (or its cancellation) longer
 
     def __init__(
         self,
@@ -141,6 +724,9 @@ class ConsolidationAgent(BaseAgent):
         indexed_email_repo: Optional[IndexedEmailRepository] = None,
         alert_sink: Optional[AlertSinkPort] = None,
         stats_alerts: bool = False,
+        lifecycle_counters: Optional[FactLifecycleCountersPort] = None,
+        *,
+        fact_updates: FactUpdatePort,
     ):
         """
         Initialize Consolidation Agent v3.
@@ -159,7 +745,14 @@ class ConsolidationAgent(BaseAgent):
             prompt_builder: Prompt builder for cache invalidation
             facts_limit: Biographical cache limit
             principles_limit: Principles cache limit
+            lifecycle_counters: Per-day lifecycle numbers; the refused calls of each pass are added to it
+            fact_updates: The typed write path (code-built updates, the review's writes); required
         """
+        if not isinstance(fact_updates, FactUpdatePort):
+            raise TypeError(
+                f"ConsolidationAgent needs the typed write port: fact_updates must be a FactUpdatePort, "
+                f"got {type(fact_updates).__name__}"
+            )
         super().__init__(config)
         self.execution_context = execution_context
         self._llm = execution_context.provider
@@ -168,6 +761,7 @@ class ConsolidationAgent(BaseAgent):
         self._embedding = embedding_service
         self._fact_write_service = fact_write_service
         self._fact_management = fact_management_port  # NEW
+        self._fact_updates = fact_updates
         self.prompt_version = prompt_version  # NEW
         self.prompt_builder = prompt_builder
         self.user_id = None  # Consolidation is system-level, no user context
@@ -178,6 +772,7 @@ class ConsolidationAgent(BaseAgent):
         # TEMPORARY per-pass 📊 stats (Sonnet 5.5 stall monitoring, 2026-10-20); the factory reads
         # CONSOLIDATION_STATS_ALERTS (REQ-ARCH-01 forbids env access in agents/).
         self._stats_alerts = stats_alerts
+        self._lifecycle_counters = lifecycle_counters
 
         logger.info(
             f"👨‍🏫 ConsolidationAgent initialized "
@@ -191,6 +786,7 @@ class ConsolidationAgent(BaseAgent):
         task = message.payload.get("task", "").lower()
         return task in [
             "consolidate", "consolidate_cluster", "consolidate_email", "consolidate_full",
+            Intent.REVIEW_STALE_FACTS,
             "synthesize", "librarian",  # legacy aliases → consolidate
         ]
     
@@ -203,6 +799,7 @@ class ConsolidationAgent(BaseAgent):
           consolidate_cluster  → Stage 2 cluster review only
           consolidate_email    → Stage 3 email triage only
           consolidate_full     → Stage 1 + Stage 2 + Stage 3 email
+          review_stale_facts   → the memory review's pass over a batch of stale facts (Facts S4 §3.3)
           synthesize/librarian → legacy aliases for consolidate
         """
         user_id = message.context.get("user_id")
@@ -256,6 +853,10 @@ class ConsolidationAgent(BaseAgent):
                 return await self._handle_consolidate_full(
                     message, user_id, account_id, bio_context_raw, start_time
                 )
+            if task == Intent.REVIEW_STALE_FACTS:
+                return await self._handle_review_stale_facts(
+                    message, user_id, account_id, bio_context_raw, start_time
+                )
 
             return AgentResponse.failure(
                 task_id=message.task_id,
@@ -294,13 +895,14 @@ class ConsolidationAgent(BaseAgent):
                     messages=messages,
                     user_id=user_id,
                     account_id=account_id,
-                    bio_context_raw=bio_context_raw
+                    bio_context_raw=bio_context_raw,
+                    owner_timezone=self._owner_timezone(message),
                 )
             else:
                 logger.info("🧠 [ConsolidationAgent] Using v2 legacy process")
                 if messages:
                     results = await self._synthesize_session_facts_v2(
-                        messages, user_id, account_id, bio_context_raw
+                        messages, user_id, account_id, bio_context_raw, self._owner_timezone(message)
                     )
                 else:
                     logger.info("ℹ️  [ConsolidationAgent] No data to process")
@@ -429,14 +1031,12 @@ class ConsolidationAgent(BaseAgent):
               OR {"limit": int}      — auto-fetch top-K by word count [not yet implemented]
         """
         try:
+            owner_timezone = self._owner_timezone(message)
             cluster = message.payload.get("cluster")
             if cluster is None:
                 limit = message.payload.get("limit", 10)
                 facts = await self._repo.get_longest_facts(account_id, limit=limit)
-                cluster = [
-                    {"fact_id": f.id, "content": f.text, "similarity": 0.0}
-                    for f in facts
-                ]
+                cluster = [self._cluster_entry(f, owner_timezone) for f in facts]
                 logger.info(
                     f"👨‍🏫 [ConsolidationAgent] consolidate_cluster auto-fetch: "
                     f"{len(cluster)} facts (limit={limit})"
@@ -466,7 +1066,7 @@ class ConsolidationAgent(BaseAgent):
                 system_prompt=system_prompt,
                 user_id=user_id,
                 account_id=account_id,
-                pass_label="cluster",
+                write_context=self._write_context("cluster", owner_timezone),
             )
 
             facts_affected = sum(1 for op in ops if op.get("action") in ("CREATE", "UPDATE", "MERGE"))
@@ -513,7 +1113,7 @@ class ConsolidationAgent(BaseAgent):
 
         Fetches unconsolidated email facts from IndexedEmailRepository, formats them as
         candidates, runs ConsolidationAgent LLM loop (Stage 1 only), marks as consolidated.
-        Mirrors the old _run_email_triage_pass logic from consolidation_handler.py.
+        Mirrors the old _run_email_triage_pass logic of the retired consolidation handler.
         """
         if self._indexed_email_repo is None:
             logger.info("📧 [ConsolidationAgent] No indexed_email_repo — email triage skipped")
@@ -542,63 +1142,69 @@ class ConsolidationAgent(BaseAgent):
 
         total_facts_affected = 0
         batches_processed = 0
+        tracker = _TrackingFactUpdates(self._fact_management, self._fact_updates)
+        refreshed = False
+        owner_timezone = self._owner_timezone(message)
 
-        for pass_num in range(1, n_passes + 1):
-            emails = await self._indexed_email_repo.get_unconsolidated_batch(
-                user_id, limit=batch_size
-            )
-            if not emails:
-                logger.info(
-                    f"📧 [ConsolidationAgent] Email triage pass {pass_num}: no unconsolidated emails"
+        try:
+            for pass_num in range(1, n_passes + 1):
+                emails = await self._indexed_email_repo.get_unconsolidated_batch(
+                    user_id, limit=batch_size
                 )
-                break
+                if not emails:
+                    logger.info(
+                        f"📧 [ConsolidationAgent] Email triage pass {pass_num}: no unconsolidated emails"
+                    )
+                    break
 
-            logger.info(
-                f"📧 [ConsolidationAgent] Email triage pass {pass_num}/{n_passes}: "
-                f"{len(emails)} candidates"
-            )
+                logger.info(
+                    f"📧 [ConsolidationAgent] Email triage pass {pass_num}/{n_passes}: "
+                    f"{len(emails)} candidates"
+                )
 
-            candidates_text = self._format_email_candidates(emails)
-            system_alert = (
-                "[system_alert] The system has scanned the user's email inbox on their behalf "
-                "and selected candidates for inclusion in the fact database. "
-                "The selection contains noise. Evaluate the incoming data and process it "
-                "according to your algorithm.\n\n"
-                f"Candidates:\n{candidates_text}"
-            )
+                candidates_text = self._format_email_candidates(emails, owner_timezone)
+                system_alert = (
+                    "[system_alert] The system has scanned the user's email inbox on their behalf "
+                    "and selected candidates for inclusion in the fact database. "
+                    "The selection contains noise. Evaluate the incoming data and process it "
+                    "according to your algorithm. Copy the candidate's `date`, as given, into reported_date. "
+                    "Information whose date or horizon has already passed is history or noise.\n\n"
+                    f"Candidates:\n{candidates_text}"
+                )
 
-            ops = await self._run_consolidation_loop(
-                user_message_text=system_alert,
-                system_prompt=system_prompt,
-                user_id=user_id,
-                account_id=account_id,
-                pass_label="email",
-            )
+                ops = await self._run_consolidation_loop(
+                    user_message_text=system_alert,
+                    system_prompt=system_prompt,
+                    user_id=user_id,
+                    account_id=account_id,
+                    fact_management=tracker,
+                    write_context=self._write_context(
+                        "email", owner_timezone, self._times_span([e.email_date for e in emails], "email dates")
+                    ),
+                )
 
-            now = datetime.now(timezone.utc)
-            email_ids = [e.email_id for e in emails]
-            await self._indexed_email_repo.mark_consolidated(user_id, email_ids, now)
+                now = datetime.now(timezone.utc)
+                email_ids = [e.email_id for e in emails]
+                await self._indexed_email_repo.mark_consolidated(user_id, email_ids, now)
 
-            facts_affected = sum(1 for op in ops if op.get("action") in ("CREATE", "UPDATE", "MERGE"))
-            total_facts_affected += facts_affected
-            batches_processed += 1
+                facts_affected = sum(1 for op in ops if op.get("action") in ("CREATE", "UPDATE", "MERGE"))
+                total_facts_affected += facts_affected
+                batches_processed += 1
 
-            logger.info(
-                f"✅ [ConsolidationAgent] Email triage pass {pass_num} done: "
-                f"{len(ops)} ops, {facts_affected} facts affected"
-            )
+                logger.info(
+                    f"✅ [ConsolidationAgent] Email triage pass {pass_num} done: "
+                    f"{len(ops)} ops, {facts_affected} facts affected"
+                )
 
-            if len(emails) < batch_size:
-                break  # no more unconsolidated emails
+                if len(emails) < batch_size:
+                    break  # no more unconsolidated emails
 
-        if batches_processed > 0:
-            await self._repo.refresh_biographical_context_cache(
-                owner_id=account_id,
-                facts_limit=self.facts_limit,
-                principles_limit=self.principles_limit,
-            )
-            if self.prompt_builder:
-                self.prompt_builder.invalidate_biographical_cache(account_id)
+            if batches_processed > 0:
+                await self._refresh_biographical_cache(account_id)
+                refreshed = True
+        finally:
+            if tracker.wrote and not refreshed:
+                await self._refresh_biographical_cache(account_id)
 
         total_duration = time.time() - start_time
         return AgentResponse.success(
@@ -608,6 +1214,16 @@ class ConsolidationAgent(BaseAgent):
             confidence=1.0,
             metadata={"total_duration_ms": int(total_duration * 1000)},
         )
+
+    async def _refresh_biographical_cache(self, account_id: str) -> None:
+        """Rebuild the account's biographical cache and drop the PromptBuilder's copy; the repo never raises."""
+        await self._repo.refresh_biographical_context_cache(
+            owner_id=account_id,
+            facts_limit=self.facts_limit,
+            principles_limit=self.principles_limit,
+        )
+        if self.prompt_builder:
+            self.prompt_builder.invalidate_biographical_cache(account_id)
 
     async def _handle_consolidate_full(
         self,
@@ -685,6 +1301,106 @@ class ConsolidationAgent(BaseAgent):
             metadata={"total_duration_ms": int(total_duration * 1000)},
         )
 
+    async def _handle_review_stale_facts(
+        self,
+        message: AgentMessage,
+        user_id: str,
+        account_id: str,
+        bio_context_raw: List[Dict],
+        start_time: float,
+    ) -> AgentResponse:
+        """
+        Intent: review_stale_facts — the memory review's pass over one batch of stale facts (Facts S4 §3.3, §3.4).
+        Payload: the `FactReviewTask` as `encode_review_task` writes it (built by the review service).
+
+        One review loop under the `consolidation_review` prompt; its `update_fact` and `ask_owner` go to a
+        `FactReviewScope` over the run's tracker (the typed port read now, so a port installed after construction is
+        the one that writes). Result: the scope's outcomes, asks and kept facts, and the `message_language` and `labels`
+        of the final report (None when absent or malformed). The agent writes no question, and posts and appends nothing.
+        """
+        try:
+            task = decode_review_task(message.payload)
+        except ValueError as e:
+            logger.error(f"❌ [ConsolidationAgent] review_stale_facts: {e}")
+            return AgentResponse.failure(task_id=message.task_id, agent_id=self.agent_id, error=str(e))
+
+        zone = self._owner_timezone(message)
+        try:
+            system_prompt = await self.prompt_builder.build_for_agent(
+                agent_type="consolidation_review",
+                user_id=user_id,
+                account_id=account_id,
+                routing_metadata=None,
+                include_directives=False,  # directives are curated as records, never obeyed
+                biographical_facts=bio_context_raw or [],
+                conversation_history=[],
+            )
+        except Exception as e:
+            self._on_agent_error(e)
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error=f"review prompt failed: {type(e).__name__}: {e}",
+            )
+        if not system_prompt:
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error="review prompt is empty",
+            )
+
+        now = self._now()
+        tracker = _TrackingFactUpdates(self._fact_management, self._fact_updates)
+        scope = FactReviewScope(task.batch, account_id, zone, now, self._repo, tracker)
+        language_instruction = _review_language_instruction() if task.mirror else None
+        report: Dict[str, Any] = {}
+        try:
+            await self._run_consolidation_loop(
+                user_message_text=self._build_review_message(
+                    task, language_instruction, task.owner_messages, timezone=zone, now=now,
+                ),
+                system_prompt=system_prompt,
+                user_id=user_id,
+                account_id=account_id,
+                fact_management=tracker,
+                write_context=self._write_context("review", zone),
+                pass_kind="review",
+                max_turns=CONSOLIDATION.review_max_turns,
+                review_scope=scope,
+                report=report,
+            )
+        except Exception as e:
+            self._on_agent_error(e)
+            return AgentResponse.failure(
+                task_id=message.task_id, agent_id=self.agent_id, error=f"review_stale_facts failed: {str(e)}",
+            )
+        finally:
+            if tracker.wrote:
+                await self._refresh_biographical_cache(account_id)
+
+        # The language is asked for in mirror mode only (§3.17); a fixed-mode report's language is not read.
+        language, labels = _reported_language(report) if task.mirror else (None, None)
+        outcomes = [asdict(d) for d in scope.decisions()]
+        total_duration = time.time() - start_time
+        logger.info(
+            f"✅ [ConsolidationAgent] review_stale_facts done: {len(task.items)} facts, {len(outcomes)} decided, "
+            f"{len(scope.asks())} asked in {total_duration:.1f}s"
+        )
+        return AgentResponse.success(
+            task_id=message.task_id,
+            agent_id=self.agent_id,
+            result={
+                "outcomes": outcomes,
+                "asks": [asdict(a) for a in scope.asks()],
+                "kept": [f.id for f in scope.kept()],
+                "message_language": language,
+                "labels": labels,
+            },
+            confidence=1.0,
+            metadata={"total_duration_ms": int(total_duration * 1000)},
+        )
+
+    @staticmethod
+    def _now() -> datetime:
+        """The review pass's clock (its scope's `now`, the questions' timeout)."""
+        return datetime.now(timezone.utc)
+
     def _stage3_budget_s(self, message: AgentMessage, start_time: float) -> Optional[float]:
         """Seconds Stage 3 may run: what is left of this execution's budget minus a margin.
 
@@ -697,8 +1413,12 @@ class ConsolidationAgent(BaseAgent):
         return timeout_ms / 1000 - (time.time() - start_time) - _STAGE3_MARGIN_S
 
     @staticmethod
-    def _format_email_candidates(emails) -> str:
-        """Format indexed email facts as numbered JSON candidates for the LLM."""
+    def _format_email_candidates(emails, timezone: str) -> str:
+        """Format indexed email facts as numbered JSON candidates for the LLM.
+
+        A candidate's `date` is the email's moment in the owner's zone with its offset (a naive stored date is UTC):
+        the model copies it into `reported_date`, and it is on the same calendar as the Today line.
+        """
         import json as _json
         lines = []
         for i, email in enumerate(emails, 1):
@@ -707,7 +1427,7 @@ class ConsolidationAgent(BaseAgent):
                 "fact": email.text,
                 "category": email.category,
                 "tags": email.tags,
-                "date": email.email_date.strftime("%Y-%m-%d"),
+                "date": local_moment(as_utc(email.email_date), timezone).isoformat(timespec="seconds"),
                 "from": email.from_address,
                 "subject": email.subject,
             }
@@ -723,7 +1443,8 @@ class ConsolidationAgent(BaseAgent):
         messages: List[Dict],
         user_id: str,
         account_id: str,
-        bio_context_raw: List[Dict]
+        bio_context_raw: List[Dict],
+        owner_timezone: str = "UTC",
     ) -> Dict[str, Any]:
         """
         Two-stage deliberate fact management process (v3).
@@ -732,10 +1453,13 @@ class ConsolidationAgent(BaseAgent):
         Stage 2: cluster review — for each written fact, semantic search → merge cluster
                  → second LLM pass with RFC cluster prompt (no co-location exception).
 
+        `owner_timezone` and the span of the batch's message times make the write context of every pass.
+
         Returns:
             Dict with "operations" list (Stage 1 ops + Stage 2 ops combined)
         """
-        structured_conversation = self._prepare_structured_conversation(messages)
+        span = self._times_span([t for t in (self._message_time(m) for m in messages) if t is not None], "message times")
+        structured_conversation = self._prepare_structured_conversation(messages, owner_timezone)
         conversation_history = [
             {
                 "role": item.get("role", "user"),
@@ -760,62 +1484,72 @@ class ConsolidationAgent(BaseAgent):
         )
 
 
-        # Install tracker to capture written (fact_id, content) pairs
-        tracker = _TrackingFactManagement(self._fact_management)
-        self._fact_management = tracker
+        tracker = _TrackingFactUpdates(self._fact_management, self._fact_updates)
+        finished = False
         try:
             ops1 = await self._run_consolidation_loop(
                 user_message_text="Begin deliberate consolidation.",
                 system_prompt=system_prompt,
                 user_id=user_id,
                 account_id=account_id,
-                pass_label="stage1",
+                fact_management=tracker,
+                write_context=self._write_context("stage1", owner_timezone, span),
             )
+            stage1_changed = list(tracker.changed)
+
+            logger.info(
+                f"👨‍🏫 [ConsolidationAgent] Stage 1 done: {len(ops1)} ops, "
+                f"{len(stage1_changed)} facts written"
+            )
+
+            # Stage 2a: inline fact-cluster review (skip if disabled or nothing was written)
+            ops2: List[Dict[str, Any]] = []
+            if self.INLINE_CLUSTER_REVIEW and stage1_changed:
+                context_2a = self._write_context("stage2a", owner_timezone, span)
+                cluster = await self._build_review_cluster(stage1_changed, account_id, timezone=context_2a.timezone)
+                if cluster:
+                    logger.info(
+                        f"👨‍🏫 [ConsolidationAgent] Stage 2a: reviewing cluster of {len(cluster)} facts"
+                    )
+                    system_prompt_2 = await self.prompt_builder.build_for_agent(
+                        agent_type="consolidation",
+                        user_id=user_id,
+                        account_id=account_id,
+                        routing_metadata=None,
+                        include_directives=False,  # directives are curated as records (Stage 2b), never obeyed
+                        biographical_facts=biographical_facts,
+                        conversation_history=[],
+                    )
+                    ops2 = await self._run_consolidation_loop(
+                        user_message_text=self._build_cluster_message(cluster),
+                        system_prompt=system_prompt_2,
+                        user_id=user_id,
+                        account_id=account_id,
+                        fact_management=tracker,
+                        write_context=context_2a,
+                    )
+                    logger.info(f"👨‍🏫 [ConsolidationAgent] Stage 2a done: {len(ops2)} ops")
+
+            # Stage 2b: directive rulebook review — UNCONDITIONAL (living-organism curation).
+            # Runs every consolidation regardless of Stage 1 changes; sees the FULL rulebook.
+            ops_dir = await self._review_directives(
+                user_id, account_id, biographical_facts, self._write_context("stage2b", owner_timezone, span),
+                fact_management=tracker
+            )
+            finished = True
+            return {"operations": ops1 + ops2 + ops_dir}
         finally:
-            self._fact_management = tracker._real
-
-        logger.info(
-            f"👨‍🏫 [ConsolidationAgent] Stage 1 done: {len(ops1)} ops, "
-            f"{len(tracker.changed)} facts written"
-        )
-
-        # Stage 2a: inline fact-cluster review (skip if disabled or nothing was written)
-        ops2: List[Dict[str, Any]] = []
-        if self.INLINE_CLUSTER_REVIEW and tracker.changed:
-            cluster = await self._build_review_cluster(tracker.changed, account_id)
-            if cluster:
-                logger.info(
-                    f"👨‍🏫 [ConsolidationAgent] Stage 2a: reviewing cluster of {len(cluster)} facts"
-                )
-                system_prompt_2 = await self.prompt_builder.build_for_agent(
-                    agent_type="consolidation",
-                    user_id=user_id,
-                    account_id=account_id,
-                    routing_metadata=None,
-                    include_directives=False,  # directives are curated as records (Stage 2b), never obeyed
-                    biographical_facts=biographical_facts,
-                    conversation_history=[],
-                )
-                ops2 = await self._run_consolidation_loop(
-                    user_message_text=self._build_cluster_message(cluster),
-                    system_prompt=system_prompt_2,
-                    user_id=user_id,
-                    account_id=account_id,
-                    pass_label="stage2a",
-                )
-                logger.info(f"👨‍🏫 [ConsolidationAgent] Stage 2a done: {len(ops2)} ops")
-
-        # Stage 2b: directive rulebook review — UNCONDITIONAL (living-organism curation).
-        # Runs every consolidation regardless of Stage 1 changes; sees the FULL rulebook.
-        ops_dir = await self._review_directives(user_id, account_id, biographical_facts)
-
-        return {"operations": ops1 + ops2 + ops_dir}
+            # A failed run that wrote must not leave the cache holding the replaced version's text.
+            if not finished and tracker.wrote:
+                await self._refresh_biographical_cache(account_id)
 
     async def _review_directives(
         self,
         user_id: str,
         account_id: str,
         biographical_facts: List[Dict],
+        write_context: FactWriteContext,
+        fact_management: Optional[FactManagementPort] = None,
     ) -> List[Dict[str, Any]]:
         """Stage 2b: curate the entire agent-directive rulebook (STANDING_DIRECTIVES_RFC).
 
@@ -852,16 +1586,21 @@ class ConsolidationAgent(BaseAgent):
             system_prompt=system_prompt,
             user_id=user_id,
             account_id=account_id,
-            pass_label="stage2b",
+            fact_management=fact_management,
+            write_context=write_context,
         )
-        ops += await self._enforce_directive_cap(account_id)
+        backstop = self._write_context("backstop", write_context.timezone, write_context.span)
+        ops += await self._enforce_directive_cap(account_id, backstop, fact_management=fact_management)
         logger.info(f"👨‍🏫 [ConsolidationAgent] Stage 2b done: {len(ops)} ops")
         return ops
 
-    async def _enforce_directive_cap(self, account_id: str) -> List[Dict[str, Any]]:
+    async def _enforce_directive_cap(
+        self, account_id: str, write_context: FactWriteContext, fact_management: Optional[FactManagementPort] = None
+    ) -> List[Dict[str, Any]]:
         """Deterministic hard-cap backstop: if the LLM left more than DIRECTIVE_HARD_CAP current
         directives, invalidate the lowest-priority tail. Fires only when curation under-trimmed —
         merge (the LLM's job) preserves content; this only guarantees the ceiling."""
+        port = fact_management if fact_management is not None else self._fact_management
         directives = await self._repo.get_active_facts_ordered(
             account_id, domain=FactDomain.AGENT_DIRECTIVE.value, limit=None
         )
@@ -873,12 +1612,74 @@ class ConsolidationAgent(BaseAgent):
             f"{self.DIRECTIVE_HARD_CAP}, invalidating {len(overflow)} lowest-priority"
         )
         ops: List[Dict[str, Any]] = []
+        not_applied = 0
         for fact in overflow:
-            await self._fact_management.update_fact(
-                fact.id, {"state": "invalidated"}, account_id=account_id
+            result = await port.update_fact(
+                fact.id, {"state": "invalidated"}, account_id=account_id, context=write_context
             )
+            status = result.get("status") if isinstance(result, dict) else None
+            if status != STATUS_UPDATED:
+                not_applied += 1
+                logger.error(
+                    f"❌ [ConsolidationAgent] Directive cap backstop: invalidating {fact.id[:8]} was not applied "
+                    f"(status={status})"
+                )
+                continue
             ops.append({"action": "INVALIDATE", "fact_id": fact.id, "reason": "directive cap backstop"})
+        if not_applied:
+            await self._post_alert(
+                f"🚨 Directive cap backstop could not invalidate {not_applied} of {len(overflow)} directives over the "
+                f"cap of {self.DIRECTIVE_HARD_CAP} | account {account_id[:8]}"
+            )
         return ops
+
+    @staticmethod
+    def _write_context(
+        pass_label: str, timezone: str = "UTC", span: Optional[Tuple[datetime, datetime]] = None
+    ) -> FactWriteContext:
+        """The write context of a pass (`PassActor` row); ValueError for a label that is no pass."""
+        return FactWriteContext.for_pass(PassActor(pass_label), timezone, span)
+
+    @staticmethod
+    def _owner_timezone(message: AgentMessage) -> str:
+        """The owner's zone the service resolved (`message.context["owner_timezone"]`); UTC when absent or not a zone."""
+        zone = message.context.get("owner_timezone") or "UTC"
+        try:
+            ZoneInfo(zone)
+        except (ZoneInfoNotFoundError, KeyError, ValueError, OSError, TypeError):
+            logger.warning("⚠️ [ConsolidationAgent] owner_timezone is not a zone (%s); using UTC", type(zone).__name__)
+            return "UTC"
+        return zone
+
+    @staticmethod
+    def _message_time(message: Dict[str, Any]) -> Any:
+        """The one time a batch message carries, for its stamp and for the batch span alike.
+
+        `created_at`, else `timestamp` (also when `created_at` is empty or unreadable). When neither is readable, the
+        first one present, so the caller counts it unreadable; None when there is none.
+        """
+        present = [v for v in (message.get("created_at"), message.get("timestamp")) if v is not None and v != ""]
+        for value in present:
+            try:
+                _session_time(value)
+            except (ValueError, TypeError, OverflowError, OSError):
+                continue
+            return value
+        return present[0] if present else None
+
+    @staticmethod
+    def _times_span(values: List[Any], what: str) -> Optional[Tuple[datetime, datetime]]:
+        """(earliest, latest) of the readable times among `values`; an unreadable one is left out and counted in a log line."""
+        readable: List[datetime] = []
+        unreadable = 0
+        for value in values:
+            try:
+                readable.append(_session_time(value))
+            except (ValueError, TypeError, OverflowError, OSError):
+                unreadable += 1
+        if unreadable:
+            logger.warning(f"⚠️ [ConsolidationAgent] {unreadable} of {len(values)} {what} unreadable; left out of the span")
+        return span_of(readable)
 
     async def _run_consolidation_loop(
         self,
@@ -886,98 +1687,149 @@ class ConsolidationAgent(BaseAgent):
         system_prompt: str,
         user_id: str,
         account_id: str,
-        pass_label: str = "consolidation",
+        fact_management: Optional[FactManagementPort] = None,
+        *,
+        write_context: FactWriteContext,
+        pass_kind: PassKind = "consolidation",
+        max_turns: Optional[int] = None,
+        review_scope: Optional[FactReviewScope] = None,
+        report: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Single multi-turn LLM loop for one consolidation pass.
+        Single multi-turn LLM loop for one consolidation or review pass.
         Returns parsed operations list from the final report.
+
+        `fact_management` is the port this pass's tools run on (a run's tracker); None means the agent's own.
+        `write_context` goes with every write the pass's tools make; its actor names the pass in the ops alerts and
+        the stats. `pass_kind` picks the tools (`_get_tool_declarations`) and must match the actor (`review` with
+        PassActor.REVIEW only); a review pass needs its `review_scope`, which serves its `update_fact` and `ask_owner`,
+        and no other pass takes one. `max_turns` caps the loop and is the cap
+        the stats report (None = MAX_CONSOLIDATION_TURNS). `report`, when given, receives the final report's JSON object
+        (left empty when there is none or it is not one).
 
         Ops alerts (best-effort, never change the result): a pass that exhausts its turns without
         a final report always posts a 🚨; a pass that ends with a report posts a 📊 stats line
         while CONSOLIDATION_STATS_ALERTS is on.
         """
-        stats = ConsolidationPassStats(
-            pass_label=pass_label,
-            model=self.model_name,
-            effort=self.THINKING_EFFORT,
-            max_turns=self.MAX_CONSOLIDATION_TURNS,
-            user_id=user_id,
-        )
+        review = pass_kind == "review"
+        if review != (write_context.actor is PassActor.REVIEW):
+            raise ValueError(f"a {pass_kind} pass cannot run under the {write_context.actor.value} actor")
+        if review != (review_scope is not None):
+            raise ValueError(f"a {pass_kind} pass {'needs' if review else 'takes no'} review scope")
+        max_turns = self.MAX_CONSOLIDATION_TURNS if max_turns is None else max_turns
+        tools = self._get_tool_declarations(pass_kind)
+        stats = ConsolidationPassStats(write_context.actor, max_turns)
         started = time.monotonic()
+        today = local_day(datetime.now(timezone.utc), write_context.timezone)
         history: List[Message] = [
-            Message(role="user", parts=[MessagePart(text=user_message_text)])
+            Message(role="user", parts=[MessagePart(
+                text=f"{user_message_text}\n\nToday: {today} ({write_context.timezone}, the owner's timezone)."
+            )])
         ]
 
-        for turn in range(self.MAX_CONSOLIDATION_TURNS):
-            logger.info(
-                f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1}/{self.MAX_CONSOLIDATION_TURNS}"
-            )
+        try:
+            for turn in range(max_turns):
+                logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1}/{max_turns}")
 
-            request = LLMRequest(
-                model_name=self.model_name,
-                system_instruction=system_prompt,
-                messages=history,
-                tools=self._get_tool_declarations(),
-                max_tokens=self.MAX_TOKENS,
-                timeout=500,
-                thinking=self.THINKING_EFFORT or None,
-            )
+                request = LLMRequest(
+                    model_name=self.model_name,
+                    system_instruction=system_prompt,
+                    messages=history,
+                    tools=tools,
+                    max_tokens=self.MAX_TOKENS,
+                    timeout=500,
+                    thinking=self.THINKING_EFFORT or None,
+                )
 
-            response: LLMResponse = await self._call_llm(request, turn=turn + 1)
+                response: LLMResponse = await self._call_llm(request, turn=turn + 1)
 
-            if not response.tool_calls:
-                logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — final report received")
-                ops = self._parse_operations_report(response.text or "")
-                # TEMPORARY monitoring for the Sonnet 5.5 stall (2026-10-20); remove once
-                # consolidation's model is settled.
-                if self._stats_alerts:
-                    await self._post_alert(
-                        stats.format_summary(len(ops), time.monotonic() - started)
-                    )
-                return ops
+                if not response.tool_calls:
+                    logger.info(f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — final report received")
+                    ops = self._parse_operations_report(response.text or "")
+                    if report is not None:
+                        report.update(_report_object(response.text or "") or {})
+                    # TEMPORARY monitoring for the Sonnet 5.5 stall (2026-10-20); remove once
+                    # consolidation's model is settled.
+                    if self._stats_alerts:
+                        await self._post_alert(_summary_line(
+                            stats, self.model_name, self.THINKING_EFFORT, user_id, len(ops), time.monotonic() - started
+                        ))
+                    return ops
 
-            logger.info(
-                f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — executing {len(response.tool_calls)} tools"
-            )
+                logger.info(
+                    f"👨‍🏫 [ConsolidationAgent] Turn {turn + 1} — executing {len(response.tool_calls)} tools"
+                )
 
-            stats.record_turn([(tc.name, tc.args or {}) for tc in response.tool_calls])
+                calls = [_pass_call(tc, write_context.timezone) for tc in response.tool_calls]
+                stats.record_turn(calls)
 
-            if response.raw_content:
-                history.append(Message(role="model", parts=[], raw_content=response.raw_content))
-            else:
+                if response.raw_content:
+                    history.append(Message(role="model", parts=[], raw_content=response.raw_content))
+                else:
+                    history.append(Message(
+                        role="model",
+                        parts=[MessagePart(tool_call=tc) for tc in response.tool_calls]
+                    ))
+
+                # Mirror RouterAgent pattern: touch Firestore between LLM and find_nearest
+                # to keep Cloud Run CPU active and unblock gRPC calls.
+                try:
+                    await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
+                except Exception as e:
+                    logger.warning(f"⚠️ Keep-alive biographical cache read failed (ignored): {e}")
+
+                tool_responses = await self._execute_fact_management_tools(
+                    tool_calls=response.tool_calls,
+                    user_id=user_id,
+                    account_id=account_id,
+                    write_context=write_context,
+                    fact_management=fact_management,
+                    review_scope=review_scope,
+                )
+
+                stats.record_outcomes(calls, [tr.outcome for tr in tool_responses])
+
                 history.append(Message(
-                    role="model",
-                    parts=[MessagePart(tool_call=tc) for tc in response.tool_calls]
+                    role="user",
+                    parts=[
+                        MessagePart(tool_response={
+                            "name": tr.name,
+                            "response": {"result": tr.result_str}
+                        })
+                        for tr in tool_responses
+                    ]
                 ))
 
-            # Mirror RouterAgent pattern: touch Firestore between LLM and find_nearest
-            # to keep Cloud Run CPU active and unblock gRPC calls.
-            try:
-                await self._repo.get_biographical_context_cached(owner_id=account_id, limit=100)
-            except Exception as e:
-                logger.warning(f"⚠️ Keep-alive biographical cache read failed (ignored): {e}")
-
-            tool_responses = await self._execute_fact_management_tools(
-                tool_calls=response.tool_calls,
-                user_id=user_id,
-                account_id=account_id,
+            alert_text = _limit_alert(
+                stats, self.model_name, self.THINKING_EFFORT, user_id, time.monotonic() - started
             )
+            logger.error(f"⚠️ [ConsolidationAgent] Max turns reached without final report: {alert_text}")
+            await self._post_alert(alert_text)
+            return []
+        finally:
+            await self._close_pass(stats, account_id, user_id)
 
-            history.append(Message(
-                role="user",
-                parts=[
-                    MessagePart(tool_response={
-                        "name": tr.name,
-                        "response": {"result": tr.result_str}
-                    })
-                    for tr in tool_responses
-                ]
-            ))
+    async def _close_pass(self, stats: ConsolidationPassStats, account_id: str, user_id: str) -> None:
+        """End of every pass, also one that raises: a refusal that was never answered is always a 🚨 (also with the
+        stats line off), and the pass's refused calls are added to the account's day. Best effort, capped
+        at CLOSE_OUT_TIMEOUT_S: it never raises (a cancellation excepted) and never changes the pass."""
+        try:
+            await asyncio.wait_for(self._report_pass(stats, account_id, user_id), timeout=self.CLOSE_OUT_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            logger.warning(f"⚠️ [ConsolidationAgent] Pass close-out cut after {self.CLOSE_OUT_TIMEOUT_S:.0f}s")
+        except Exception as e:  # a cancellation is not an Exception: it propagates
+            logger.warning(f"⚠️ [ConsolidationAgent] Pass close-out failed: {type(e).__name__}")
 
-        alert_text = stats.format_limit_alert(time.monotonic() - started)
-        logger.error(f"⚠️ [ConsolidationAgent] Max turns reached without final report: {alert_text}")
-        await self._post_alert(alert_text)
-        return []
+    async def _report_pass(self, stats: ConsolidationPassStats, account_id: str, user_id: str) -> None:
+        if stats.abandoned:
+            await self._post_alert(_abandoned_alert(stats, self.model_name, user_id))
+        counts = stats.day_counts()
+        if not counts or self._lifecycle_counters is None:
+            return
+        try:
+            await self._lifecycle_counters.add(account_id, datetime.now(timezone.utc).date(), counts)
+        except Exception as e:
+            logger.warning(f"⚠️ [ConsolidationAgent] Lifecycle counters not updated: {type(e).__name__}")
 
     async def _post_alert(self, text: str) -> None:
         """Best-effort ops alert: a missing sink or a failing post never affects the pass."""
@@ -992,6 +1844,8 @@ class ConsolidationAgent(BaseAgent):
         self,
         changed: List[Tuple[str, str]],
         account_id: str,
+        *,
+        timezone: str,
     ) -> List[Dict[str, Any]]:
         """
         For each written (fact_id, content) from Stage 1 → semantic search → merge,
@@ -1005,6 +1859,7 @@ class ConsolidationAgent(BaseAgent):
                 primary_query=content,
                 alternative_query="",
                 limit=20,
+                timezone=timezone,
             )
 
         contents = [c for _, c in changed if c]
@@ -1062,8 +1917,10 @@ class ConsolidationAgent(BaseAgent):
             "  The content is worth keeping; the rulebook is the wrong place for it. Two calls,\n"
             "  in order:\n"
             "    create_fact(content=<the rule, rewritten to state the condition it applies\n"
-            "                under>, metadata={domain: \"PREFERENCE\", plus the temporal_class,\n"
-            "                context_priority and tags your schema requires})\n"
+            "                under>, fact_attributes={domain: \"PREFERENCE\", plus the temporal_class,\n"
+            "                context_priority, tags and expiry your schema requires (decide the\n"
+            "                expiry from the rewritten preference, with the kinds table), and\n"
+            "                derived_from: [\"<this directive's fact_id>\"]})\n"
             "    update_fact(<fact_id>, {state: \"invalidated\"})\n"
             "  `domain` cannot be changed in place, so create-then-invalidate is the only route.\n"
             "  Nothing is lost: preference facts reach the agent by relevance, on the requests\n"
@@ -1077,9 +1934,9 @@ class ConsolidationAgent(BaseAgent):
             "    update_fact(<fact_id>, {state: \"invalidated\"})\n\n"
             "  MERGE — two or more records state one rule twice, wholly or in part.\n"
             "    merge_facts(<fact_ids>, merged_content=<the single rule that replaces them,\n"
-            "                carrying every behavior the originals required>, metadata={the\n"
+            "                carrying every behavior the originals required>, fact_attributes={the\n"
             "                domain, temporal_class, context_priority and tags your schema\n"
-            "                requires})\n\n"
+            "                requires, and expiry: {kind: \"none\"} - directives are pinned to none})\n\n"
             "A clean rulebook is the goal, not a full one: removing a record is a normal outcome\n"
             "of this review, not a failure to preserve it.\n\n"
             "Optimisation objectives (apply every pass):\n"
@@ -1144,7 +2001,17 @@ class ConsolidationAgent(BaseAgent):
             "decomposed into atomic facts each under 40 words. Co-location is not a\n"
             "valid justification for exceeding this limit.\n\n"
             "Important: do not lose specific numeric values, dates, or amounts —\n"
-            "they are critical for long-term memory accuracy."
+            "they are critical for long-term memory accuracy.\n\n"
+            "Each fact shows `expiry`: the decision it carries in the shape you send it (null when none is\n"
+            "recorded), `due`: the day a horizon falls due, and `reported`: the day the owner last said it.\n"
+            "A past `date` is refused if you send it back: rewrite that fact as what happened with `{kind: none}`,\n"
+            "or give a future date if the plan still holds; do not drop it because its date passed. A `date` of\n"
+            "today asks for a short horizon.\n"
+            "A horizon counts from `reported`; this pass cannot change `reported`. Give `expiry` only on a\n"
+            "create, a merge or a rewrite you make in this pass; do not send `expiry` for a fact you do not\n"
+            "otherwise change: facts with `expiry: null` are classified separately.\n"
+            "When you split a fact into parts, give each create_fact `derived_from: [\"<the split fact's id>\"]`;\n"
+            "a merge takes its date from its sources by itself."
         )
         lines = [alert, "", ""]
         for i, fact in enumerate(cluster, 1):
@@ -1152,17 +2019,53 @@ class ConsolidationAgent(BaseAgent):
                 "fact_id": fact.get("fact_id"),
                 "content": fact.get("content"),
                 "similarity": round(fact["similarity"], 3) if fact.get("similarity") is not None else None,
+                "expiry": fact.get("expiry"),
             }
+            if fact.get("due"):
+                obj["due"] = fact["due"]
+            obj["reported"] = fact.get("reported")
             lines.append(f"{i}. {json.dumps(obj, ensure_ascii=False)}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _cluster_entry(fact: FactEntity, timezone: str) -> Dict[str, Any]:
+        """A stored fact as Stage 2a sees a search hit: its `fact_view`, with no similarity."""
+        view = fact_view(fact, timezone)
+        return {"fact_id": view.pop("fact_id"), "content": view.pop("content"), "similarity": 0.0, **view}
+
+    @staticmethod
+    def _build_review_message(
+        batch: FactReviewTask,
+        language_instruction: Optional[str],
+        owner_messages: Tuple[str, ...],
+        *,
+        timezone: str,
+        now: datetime,
+    ) -> str:
+        """The review pass's user message (Facts S4 §3.4): the header, one JSON line per batch fact (its `fact_view`, its
+        earlier versions, its nearest current facts and its open question), then, in mirror mode, the owner's messages
+        and the language instruction. No question budget and no question text: code writes and sends the questions."""
+        lines = [_REVIEW_HEADER, ""]
+        for i, item in enumerate(batch.items, 1):
+            lines.append(f"{i}. {json.dumps(_review_line(item, batch.question_for(item.fact.id), timezone, now), ensure_ascii=False)}")
+        if language_instruction is not None:
+            lines += ["", f"owner_messages (his latest messages, oldest first, verbatim): "
+                          f"{json.dumps(list(owner_messages), ensure_ascii=False)}", "", language_instruction]
         return "\n".join(lines)
     
     async def _execute_fact_management_tools(
         self,
         tool_calls: List[ToolCall],
         user_id: str,
-        account_id: str
+        account_id: str,
+        write_context: FactWriteContext,
+        fact_management: Optional[FactManagementPort] = None,
+        review_scope: Optional[FactReviewScope] = None,
     ) -> List[ToolResponse]:
-        """Execute fact management tools via FactManagementPort.
+        """Execute fact management tools via FactManagementPort (`fact_management`, else the agent's own).
+
+        With a `review_scope` (the review pass) only the review's tools run: `update_fact` and `ask_owner` go to the
+        scope, `count_words` stays the agent's own, and any other tool is unknown.
 
         All tool calls within a single LLM turn are dispatched concurrently via
         asyncio.gather. search_existing_facts calls are always independent (each
@@ -1171,9 +2074,33 @@ class ConsolidationAgent(BaseAgent):
         asyncio.gather preserves order — tool_responses[i] matches tool_calls[i].
         """
 
+        port = fact_management if fact_management is not None else self._fact_management
+
         async def _execute_one(tool_call: ToolCall) -> ToolResponse:
             logger.info(f"🔧 [ConsolidationAgent] Executing tool: {tool_call.name}")
             try:
+                if review_scope is not None and tool_call.name in ("update_fact", "ask_owner"):
+                    if tool_call.name == "update_fact":
+                        args = tool_call.args
+                        if "updates" in args:  # a top-level expiry moves into updates, as on the other passes
+                            args = {**args, "updates": _with_top_level_expiry(args, "updates")}
+                        result = await review_scope.update_fact(args)
+                    else:
+                        result = await review_scope.ask_owner(tool_call.args)
+                    return ToolResponse(
+                        name=tool_call.name,
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=outcome_of(result),
+                    )
+
+                if review_scope is not None and tool_call.name != "count_words":
+                    logger.warning(f"⚠️ Unknown review tool: {tool_call.name}")
+                    return ToolResponse(
+                        name=tool_call.name,
+                        result_str=json.dumps({"error": f"Unknown tool: {tool_call.name}"}),
+                        outcome=OUTCOME_ERROR,
+                    )
+
                 if tool_call.name == "search_existing_facts":
                     keywords = tool_call.args.get("keywords", [])
                     primary_query = tool_call.args.get("primary_query", "")
@@ -1188,55 +2115,63 @@ class ConsolidationAgent(BaseAgent):
                         f"limit={limit})"
                     )
 
-                    result = await self._fact_management.search_existing_facts(
+                    result = await port.search_existing_facts(
                         keywords=keywords,
                         primary_query=primary_query,
                         alternative_query=alternative_query,
-                        limit=limit
+                        limit=limit,
+                        timezone=write_context.timezone,
                     )
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps(result, ensure_ascii=False)
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=outcome_of(result),
                     )
 
                 elif tool_call.name == "create_fact":
-                    fact_attributes = tool_call.args.get("fact_attributes", {})
+                    fact_attributes = _with_top_level_expiry(tool_call.args, "fact_attributes")
                     fact_attributes["account_id"] = account_id
                     fact_attributes["user_id"] = user_id
 
-                    result = await self._fact_management.create_fact(
+                    result = await port.create_fact(
                         content=tool_call.args.get("content", ""),
-                        metadata=fact_attributes
+                        metadata=fact_attributes,
+                        context=write_context,
                     )
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps(result, ensure_ascii=False)
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=outcome_of(result),
                     )
 
                 elif tool_call.name == "update_fact":
-                    result = await self._fact_management.update_fact(
+                    result = await port.update_fact(
                         fact_id=tool_call.args.get("fact_id", ""),
-                        updates=tool_call.args.get("updates", {}),
-                        account_id=account_id
+                        updates=_with_top_level_expiry(tool_call.args, "updates"),
+                        account_id=account_id,
+                        context=write_context,
                     )
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps(result, ensure_ascii=False)
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=outcome_of(result),
                     )
 
                 elif tool_call.name == "merge_facts":
-                    fact_attributes = tool_call.args.get("fact_attributes", {})
+                    fact_attributes = _with_top_level_expiry(tool_call.args, "fact_attributes")
                     fact_attributes["account_id"] = account_id
                     fact_attributes["user_id"] = user_id
 
-                    result = await self._fact_management.merge_facts(
+                    result = await port.merge_facts(
                         fact_ids=tool_call.args.get("fact_ids", []),
                         merged_content=tool_call.args.get("merged_content", ""),
-                        metadata=fact_attributes
+                        metadata=fact_attributes,
+                        context=write_context,
                     )
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps(result, ensure_ascii=False)
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=outcome_of(result),
                     )
 
                 elif tool_call.name == "count_words":
@@ -1250,21 +2185,24 @@ class ConsolidationAgent(BaseAgent):
                     }
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps(result, ensure_ascii=False)
+                        result_str=json.dumps(result, ensure_ascii=False),
+                        outcome=outcome_of(result),
                     )
 
                 else:
                     logger.warning(f"⚠️ Unknown tool: {tool_call.name}")
                     return ToolResponse(
                         name=tool_call.name,
-                        result_str=json.dumps({"error": f"Unknown tool: {tool_call.name}"})
+                        result_str=json.dumps({"error": f"Unknown tool: {tool_call.name}"}),
+                        outcome=OUTCOME_ERROR,
                     )
 
             except Exception as e:
                 logger.error(f"❌ Tool {tool_call.name} failed: {e}", exc_info=True)
                 return ToolResponse(
                     name=tool_call.name,
-                    result_str=json.dumps({"error": str(e)}, ensure_ascii=False)
+                    result_str=json.dumps({"error": str(e)}, ensure_ascii=False),
+                    outcome=OUTCOME_ERROR,
                 )
 
         if len(tool_calls) > 1:
@@ -1275,10 +2213,13 @@ class ConsolidationAgent(BaseAgent):
 
         return [await _execute_one(tool_calls[0])]
     
-    def _get_tool_declarations(self) -> List[Dict[str, Any]]:
+    def _get_tool_declarations(self, pass_kind: PassKind = "consolidation") -> List[Dict[str, Any]]:
         """
-        Build tool declarations for ConsolidationAgent v3.
-        
+        Build tool declarations for ConsolidationAgent v3, from module constants only.
+
+        `pass_kind="review"`: the review's three tools (Facts S4 §3.5): `update_fact` (with `basis` and `history`, no
+        `reported_date`), `ask_owner` and `count_words`, as fresh copies (an adapter may rewrite a schema in place).
+
         4 tools from CONSOLIDATION_V3_PROMPT.txt:
         - search_existing_facts
         - create_fact
@@ -1288,6 +2229,13 @@ class ConsolidationAgent(BaseAgent):
         Note: discard_candidate removed - DISCARD is an LLM decision (not a tool call).
         LLM simply doesn't call create/update/merge for discarded candidates.
         """
+        if pass_kind == "review":
+            return [
+                copy.deepcopy(_REVIEW_UPDATE_SCHEMA), copy.deepcopy(_ASK_OWNER_SCHEMA),
+                _count_words_tool(_REVIEW_COUNT_WORDS_DESCRIPTION),
+            ]
+        if pass_kind != "consolidation":
+            raise ValueError(f"no tools for pass kind {pass_kind!r}")
         return [
             {
                 "name": "search_existing_facts",
@@ -1326,22 +2274,11 @@ class ConsolidationAgent(BaseAgent):
                             "type": "string",
                             "description": "Fact text (self-contained sentence)"
                         },
-                        "fact_attributes": {
-                            "type": "object",
-                            "description": "Fact attributes (MUST include: domain, temporal_class, state, context_priority, tags). Separate: tags (general keywords) vs metadata (structured data)",
-                            "properties": {
-                                "domain": {"type": "string", "description": "BIOGRAPHICAL/POSSESSION/HEALTH/MEDICAL_RECORDS/LOCATION/WORK/NETWORK/PREFERENCE/AGENT_DIRECTIVE/SKILL/PROJECT/FINANCE/EDUCATION/LEGAL/ENTERTAINMENT/COMMUNICATION"},
-                                "temporal_class": {"type": "string", "description": "PERMANENT/STABLE/DYNAMIC/EPHEMERAL"},
-                                "state": {"type": "string", "description": "CURRENT/STALE/ARCHIVED/SUPERSEDED/INVALIDATED"},
-                                "context_priority": {"type": "string", "description": "CRITICAL/HIGH/MEDIUM/LOW/ARCHIVAL"},
-                                "ttl_days": {"type": "integer", "description": "Lifecycle TTL (auto-calculated from temporal_class)"},
-                                "tags": {"type": "array", "items": {"type": "string"}, "description": "General classifications (domain keywords, dates)"},
-                                "metadata": {"type": "object", "description": "Structured data (numeric values, specific dates, details)"},
-                                "context": {"type": "string", "description": "Temporal context (e.g., 'Q1 2026 project')"},
-                                "reported_date": {"type": "string", "description": "ISO timestamp when recorded"}
-                            },
-                            "required": ["domain", "temporal_class", "context_priority", "tags"]
-                        }
+                        "fact_attributes": _fact_attributes_schema(
+                            "Fact attributes (MUST include: domain, temporal_class, state, context_priority, tags, expiry). "
+                            "Separate: tags (general keywords) vs metadata (structured data).",
+                            with_derived_from=True,
+                        )
                     },
                     "required": ["content", "fact_attributes"]
                 }
@@ -1358,34 +2295,29 @@ class ConsolidationAgent(BaseAgent):
                         },
                         "updates": {
                             "type": "object",
-                            "description": "Fields to update (content, tags, metadata, state, reported_date)",
+                            "description": (
+                                "Fields to update (content, tags, metadata, temporal_class, state, reported_date, superseded_by, expiry). "
+                                f"state: {_STATE_NOTE}. A state change carries no expiry."
+                            ),
                             "properties": {
                                 "content": {"type": "string"},
-                                "tags": {"type": "array", "items": {"type": "string"}},
+                                "tags": {"type": "array", "items": {"type": "string"}, "description": "full list; system tags are kept"},
                                 "metadata": {"type": "object", "description": "Structured data to add or update; merged key by key into the fact's metadata"},
                                 "temporal_class": {"type": "string"},
-                                "state": {"type": "string"},
-                                "reported_date": {"type": "string"}
+                                "state": {"type": "string", "description": "ARCHIVED/INVALIDATED/SUPERSEDED"},
+                                "reported_date": {"type": "string", "description": _REPORTED_DATE_DESCRIPTION},
+                                "superseded_by": {"type": "string", "description": "with state SUPERSEDED: id of the fact that replaces this one; required then"},
+                                "expiry": _expiry_property(
+                                    "Required when the update changes the text, tags, metadata or temporal class "
+                                    "(decide again from the new text); alone it only changes the decision."
+                                ),
                             }
                         }
                     },
                     "required": ["fact_id", "updates"]
                 }
             },
-            {
-                "name": "count_words",
-                "description": "Count words in a text string. Call this BEFORE create_fact or update_fact to verify content is ≤40 words. Returns exact word_count, within_limit flag, and excess words if any.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "text": {
-                            "type": "string",
-                            "description": "The text to count words in (e.g. the planned content field value)"
-                        }
-                    },
-                    "required": ["text"]
-                }
-            },
+            _count_words_tool(_COUNT_WORDS_DESCRIPTION),
             {
                 "name": "merge_facts",
                 "description": "Consolidate multiple facts into one enriched fact",
@@ -1401,10 +2333,10 @@ class ConsolidationAgent(BaseAgent):
                             "type": "string",
                             "description": "New combined text"
                         },
-                        "fact_attributes": {
-                            "type": "object",
-                            "description": "Attributes for new merged fact (MUST include: domain, temporal_class, state, context_priority, tags)"
-                        }
+                        "fact_attributes": _fact_attributes_schema(
+                            "Attributes for new merged fact (MUST include: domain, temporal_class, state, context_priority, tags, expiry).",
+                            with_derived_from=False,
+                        )
                     },
                     "required": ["fact_ids", "merged_content", "fact_attributes"]
                 }
@@ -1413,8 +2345,8 @@ class ConsolidationAgent(BaseAgent):
     
     def _parse_operations_report(self, response_text: str) -> List[Dict[str, Any]]:
         """
-        Parse final operations report from LLM (Step 8).
-        
+        Parse final operations report from LLM (Step 8), read by `_report_object` (the one reader of a final report).
+
         Expected JSON format:
         {
             "operations": [
@@ -1424,45 +2356,15 @@ class ConsolidationAgent(BaseAgent):
             ]
         }
         """
-        try:
-            # Documented exception to the "no regex fallbacks" rule (CLAUDE.md, Agent Output
-            # Format Standards): all DB operations are already executed via tool calls by this
-            # point — the report is cosmetic, and a parse-retry would re-bill a full
-            # consolidation turn for zero data value.
-            json_match = re.search(
-                r"```json\s*(\{.*?\})\s*```",
-                response_text,
-                re.DOTALL
-            )
-            if json_match:
-                data = json.loads(json_match.group(1))
-                return data.get("operations", [])
-
-            # Try direct JSON parsing
-            try:
-                data = json.loads(response_text)
-                return data.get("operations", [])
-            except json.JSONDecodeError:
-                logger.debug("Direct JSON parse failed, trying embedded JSON fallback")
-
-            # LLM returned plain text (e.g. narrative explanation) — extract
-            # any embedded JSON object as fallback
-            embedded = re.search(r"\{.*\"operations\".*\}", response_text, re.DOTALL)
-            if embedded:
-                data = json.loads(embedded.group(0))
-                return data.get("operations", [])
-
-            # Plain text response — tools already executed, report is cosmetic
+        report = _report_object(response_text)
+        if report is None:
+            # Plain text or JSON that is no object — tools already executed, the report is cosmetic
             logger.warning(
-                "⚠️ [ConsolidationAgent] Final report was plain text (not JSON). "
+                "⚠️ [ConsolidationAgent] Final report held no JSON object. "
                 "DB operations completed normally via tool calls."
             )
-            return []
+        return _operations_of(report)
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"⚠️ [ConsolidationAgent] Could not parse operations report: {e}")
-            return []
-    
     # ========================================================================
     # Legacy v2 methods (backward compatibility)
     # ========================================================================
@@ -1496,14 +2398,15 @@ class ConsolidationAgent(BaseAgent):
                 conv_text += f"{normalized_role}: {text}\n"
         return conv_text
 
-    def _prepare_structured_conversation(self, messages: List[Dict]) -> List[Dict]:
+    def _prepare_structured_conversation(self, messages: List[Dict], timezone: str) -> List[Dict]:
         """
         Prepare structured conversation for VariableFormatter.
 
-        Returns list of dicts with normalized structure:
+        Returns list of dicts with normalized structure; the stamp is Smart's (`local_stamp`) in the owner's zone,
+        read from the same time the batch span uses, and "" when that time is unreadable:
         [
-            {"role": "user", "content": "text", "timestamp": "2026-01-31 11:44:16"},
-            {"role": "assistant", "content": "text", "timestamp": "2026-01-31 11:44:16"}
+            {"role": "user", "content": "text", "timestamp": "2026-01-31 Sat 11:44 CET"},
+            {"role": "assistant", "content": "text", "timestamp": "2026-01-31 Sat 11:44 CET"}
         ]
         """
         structured = []
@@ -1521,18 +2424,12 @@ class ConsolidationAgent(BaseAgent):
             if not text and "parts" in msg:
                 text = " ".join([p.get("text", "") for p in msg["parts"]])
 
-            # Timestamp handling
-            timestamp = msg.get('timestamp') or msg.get('created_at')
             time_str = ""
-            if timestamp:
+            moment = self._message_time(msg)
+            if moment is not None:
                 try:
-                    if isinstance(timestamp, (int, float)):
-                        dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
-                    else:
-                        dt = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
-                        dt = dt.astimezone(timezone.utc)
-                    time_str = dt.strftime("%b %d, %H:%M UTC")
-                except Exception:
+                    time_str = local_stamp(_session_time(moment), timezone)
+                except (ValueError, TypeError, OverflowError, OSError):
                     time_str = ""
 
             structured.append({
@@ -1562,11 +2459,12 @@ class ConsolidationAgent(BaseAgent):
         messages: List[Dict],
         user_id: str,
         account_id: str,
-        biographical_context: List[Dict] = None
+        biographical_context: List[Dict] = None,
+        owner_timezone: str = "UTC",
     ) -> Dict[str, Any]:
-        """Synthesize facts from raw messages using v2 prompt (legacy)."""
+        """Synthesize facts from raw messages using v2 prompt (legacy). Message times are shown in the owner's zone."""
         # 1. Prepare conversation history
-        structured_conversation = self._prepare_structured_conversation(messages)
+        structured_conversation = self._prepare_structured_conversation(messages, owner_timezone)
         conversation_history = [
             {
                 "role": item.get("role", "user"),

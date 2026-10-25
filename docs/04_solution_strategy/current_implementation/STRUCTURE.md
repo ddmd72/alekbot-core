@@ -179,7 +179,6 @@ The project is organized into a `src` directory to maintain a clean root. All ap
 │   └── user.py         # User domain entities + PerformanceTier
 ├── handlers/           # Application Layer (Orchestrators)
 │   ├── agent_worker_handler.py  # 🆕 ASYNC agent execution from Cloud Tasks (ACP v2)
-│   ├── consolidation_handler.py # 🆕 Batch processing orchestrator
 │   ├── conversation_handler.py # Platform-agnostic main orchestrator. Graceful degradation delegated to AgentFallbackService.
 │   ├── deep_research_delivery.py # 🆕 Shared deep research delivery helpers:
 │   │                     #    upload_html_report()    — wrap markdown in HTML, upload to GCS (debug only)
@@ -321,7 +320,8 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`gcp_task_queue.py`**: GCP Cloud Tasks adapter implementing `TaskQueue`.
 -   **`firestore_account_repo.py`**: Firestore implementation of `AccountRepository`.
 -   **`firestore_consolidation_queue.py`**: 🆕 Manages batches of messages for cold-storage processing.
--   **`fact_management_adapter.py`**: 🆕 `FactManagementAdapter` — implements `FactManagementPort`. Orchestrates `FactRepository`, `EmbeddingService`, `FactWriteService`, `SearchEnrichmentService` for deliberate fact management (search/create/update/merge/discard). Per-user — created via `ServiceContainer.create_fact_management_adapter()`.
+-   **`firestore_memory_write_lease.py`**: 🆕 `FirestoreMemoryWriteLease` — the per-account memory-write lease (`{prefix}memory_write_leases`); `ConsolidationService` takes it once per batch.
+-   **`fact_management_adapter.py`**: 🆕 `FactManagementAdapter` — implements `FactManagementPort`. Orchestrates `FactRepository`, `EmbeddingService`, `FactWriteService`, `SearchEnrichmentService` for deliberate fact management (search/create/update/merge/discard). A content change writes a new fact version and a merge is one transaction (Facts S2). Per-user — created via `ServiceContainer.create_fact_management_adapter()`.
 -   **`firestore_dedup_store.py`**: 🆕 Deduplication store for external events (e.g., Slack retry attempts).
 -   **`firestore_quota_service.py`**: Firestore implementation of `QuotaService`. Takes `AccountRepository` via DI; calls `increment_account_usage(account_id, tokens, cost)` directly — no user→account lookup.
 -   **`firestore_repo.py`**: Firestore implementation of `FactRepository`. Supports SCD Type 2 and native vector search. Receives `SmartDeduplicationService` via DI (no lazy imports).
@@ -377,8 +377,8 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 
 ### `handlers/` - Application Layer (Orchestrators)
 -   **`agent_worker_handler.py`**: 🆕 Handles ASYNC agent execution payloads from Cloud Tasks (`task_type="agent_execution"`). Routes via `coordinator.route_message()`.
--   **`conversation_handler.py`**: **Primary platform-agnostic orchestrator**. Coordinates agent flow, session persistence, and UI updates. Receives `overflow_callback` via constructor injection (not direct import of `consolidation_handler`) to avoid horizontal coupling between handlers. Delegates graceful degradation to `AgentFallbackService` — any `TIMEOUT`/`FAILED` response triggers the three-level fallback chain (QuickAgent → synthetic apology). Raw error text is never exposed to the user.
--   **`consolidation_handler.py`**: 🆕 Orchestrates the sliding window batch processing (Cold Storage). Overflow trigger enqueues `task_type="consolidation"` via Cloud Tasks (own HTTP request = full CPU); manual `$consolidate` awaits directly in the worker request. Both patterns keep the HTTP request alive to prevent Cloud Run CPU throttling.
+-   **`conversation_handler.py`**: **Primary platform-agnostic orchestrator**. Coordinates agent flow, session persistence, and UI updates. Receives `overflow_callback` via constructor injection (`ConsolidationService.consolidate_now`, wired in `composition/`) to avoid horizontal coupling; `$consolidate` uses it. Delegates graceful degradation to `AgentFallbackService` — any `TIMEOUT`/`FAILED` response triggers the three-level fallback chain (QuickAgent → synthetic apology). Raw error text is never exposed to the user.
+-   **Consolidation batches** are processed by `services/consolidation_service.py` (`ConsolidationService`), not by a handler (the `consolidation_handler.py` shim was deleted in Facts S2). The overflow trigger enqueues `task_type="consolidation"` via Cloud Tasks (own HTTP request = full CPU); `$consolidate` runs one batch inside the chat request through `consolidate_now`. Each batch runs under the account's memory-write lease.
 -   **`worker_handler.py`**: 🆕 `WorkerHandler` — central dispatcher for all `/worker` Cloud Tasks payloads. Dispatches by `task_type`: `agent_execution` → `AgentWorkerHandler`; `email_indexing` → paginated email indexing, re-enqueues on `next_page_token`, sends user notification on completion; `email_indexing_watchdog` → marks stale `running` jobs as `failed`; `consolidation` → one batch, re-enqueues if more remain. Unknown `task_type` → 400; every Cloud Tasks delivery is claimed by task name (duplicates acked 200).
 -   **`media_stream_handler.py`**: 🆕 `MediaStreamHandler` — one Twilio Media Streams WebSocket connection, **relay-side**. Extracts the call ticket from the `start` event's `customParameters` and drives `VoiceSessionService.handle_call` for the stream's lifetime. Per REQ-ARCH-25 it imports no ports — only `AudioFrame` (domain) and the service. Carries Twilio's already-base64 μ-law payloads through untouched (no decode/re-encode). Supplies two closures over `stream_sid`/`ws`: `send_outbound` (a media frame followed by a Twilio `mark` named by the running byte total) and `clear_outbound_audio` (the `{"event": "clear"}` half of barge-in). It owns the call's `PlaybackTracker`: sent chunks and echoed `mark`s feed it, and the session loop reads it. Cleanup lives in a single `finally`, not the `stop` branch — `websockets` swallows `ConnectionClosedOK` inside `__aiter__`, so a clean close ends the loop with no exception and no `stop` event at all.
 -   **`learning_loop.py`**: ⚠️ LEGACY.
@@ -417,7 +417,8 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`fact_write_port.py`**: `FactWritePort` ABC — injected into `ConsolidationAgent`, `FactManagementAdapter`, and `UserAgentFactory`. Implemented by `FactWriteService`.
 -   **`search_enrichment_port.py`**: `SearchEnrichmentPort` ABC — injected into `RouterAgent`, `MemorySearchAgent`, and `FactManagementAdapter`. Implemented by `SearchEnrichmentService`.
 -   **`fact_management_port.py`**: `FactManagementPort` ABC. Deliberate fact management (search, create, merge, discard). Adapter: `FactManagementAdapter`.
--   **`consolidation_queue.py`**: `ConsolidationQueue` ABC. Batch queue management (enqueue, get pending, update status, cleanup). Adapter: `FirestoreConsolidationQueue`.
+-   **`consolidation_queue.py`**: `ConsolidationQueue` ABC. Batch queue management (enqueue, get pending, update status, cleanup, `has_open_batches`). Adapter: `FirestoreConsolidationQueue`.
+-   **`memory_write_lease.py`**: `MemoryWriteLeasePort` ABC — acquire and release the per-account lease. Adapter: `FirestoreMemoryWriteLease`.
 
 **Infrastructure Ports:**
 -   **`log_sink.py`**: Port for structured logging sinks. Adapter: `GcpLogSink`.

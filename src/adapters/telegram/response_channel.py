@@ -7,7 +7,7 @@ import tempfile
 import aiohttp
 from typing import Any, Dict, Optional, List
 from telegram import Bot
-from ...domain.messaging import ResponseChannel, RichContent
+from ...domain.messaging import MessageRef, ResponseChannel, RichContent
 from ...domain.ui_messages import StatusType, UIMessage
 from ...domain.language import LanguageCode
 from ...ports.localization_port import LocalizationPort
@@ -287,6 +287,16 @@ class TelegramResponseChannel(ResponseChannel):
             
             logger.error(f"❌ [TelegramResponseChannel] Failed to send message: {e}")
             raise
+
+    async def send_message_ref(self, text: str) -> MessageRef:
+        """Send `text` literally (no parse mode, so `*`, `_` and backticks in it stay as written) and return where it
+        landed. A failure is raised: the caller decides what it means."""
+        try:
+            message = await self.bot.send_message(chat_id=self.chat_id, text=text, parse_mode=None)
+        except Exception as e:
+            logger.error(f"❌ [TelegramResponseChannel] Failed to send message with ref: {e}")
+            raise
+        return MessageRef(platform=self.platform, channel_id=self.channel_id, message_id=str(message.message_id))
 
     async def update_message(self, message_id: str, text: str, link_list: Optional[List] = None) -> None:
         """

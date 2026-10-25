@@ -253,7 +253,6 @@
 - Code pushed with documentation updates (same commit)
 - Building block docs updated in same session as code
 - `mkdocs build --strict` must pass before merge
-- Session context logged in IMPLEMENTATION_ROADMAP.md
 
 ---
 
@@ -386,7 +385,6 @@ See [ADR-006](../09_decisions/adr-006-semantic-collection-naming/README.md) for 
 **Rules:**
 
 - ✅ Building block docs updated with code changes
-- ✅ Session context logged in IMPLEMENTATION_ROADMAP.md
 - ✅ `mkdocs build --strict` passes before merge
 - ✅ Cross-references between docs maintained
 - ❌ No "TODO" docs (create skeleton with dates)

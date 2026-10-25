@@ -107,7 +107,7 @@ class SmartDeduplication:
             
             # True duplicate
             >>> service.is_duplicate(
-            ...     "Weight was 80 kg",
+            ...     "Bike ride was 42 km",
             ...     "Bike ride 42 km",
             ...     0.99
             ... )
@@ -165,7 +165,7 @@ class SmartDeduplication:
             
         Examples:
             >>> self._extract_and_sort_numbers("Bike ride 42.5 km")
-            [83.5]
+            [42.5]
             
             >>> self._extract_and_sort_numbers("2025-03-28")
             [3.0, 28.0, 2025.0]

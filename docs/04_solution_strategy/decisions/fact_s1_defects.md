@@ -30,16 +30,18 @@
   flag is read as lineage-latest; S2 decides what lineage reads mean.
 - Expiry fields/janitor and a HISTORICAL vs ARCHIVAL prompt vocabulary - S3 (0 of 87 `context_priority`
   values in 30 days were historical; S3 rewrites those tokens anyway).
-- Changing `get_latest_fact_by_lineage` - no memory caller uses it; its meaning belongs to S2.
+- Changing `get_latest_fact_by_lineage` - no memory caller uses it; its meaning belongs to S2 (done there: highest version that is not superseded).
 
-**Known, not in S1.**
+**Known, not in S1** (all four closed by Facts S2, 2026-10-23; see `fact_versions_one_writer.md`, memory map §2.4):
 - `merge_facts` supersedes the sources before creating the merged fact; a failed create leaves them without a
-  successor (S2 batch).
-- `updates.tags` replaces tags wholesale (an explicit null writes None); the `anchor` tag can be dropped
-  although anchors are looked up by it (`consolidation_agent.py` ~L1529).
-- `_TrackingFactManagement.update_fact` records content even for not-found or failed updates.
-- The per-fact lock in the adapter is process-local; S2 replaces it with a precondition batch.
+  successor. **Closed:** the merged fact and the closing of every source are one transaction; a failure writes nothing.
+- `updates.tags` replaces tags wholesale (an explicit null writes None); the `anchor` tag can be dropped although
+  anchors are looked up by it. **Closed:** `null`, `[]` and a non-list are refused; `consolidated` and `anchor` are kept.
+- `_TrackingFactManagement.update_fact` records content even for not-found or failed updates. **Closed:** the tracker
+  records the result id, and only a successful write.
+- The per-fact lock in the adapter is process-local; S2 replaces it with a precondition batch. **Closed:** the lock is
+  deleted; writes carry the `update_time` precondition, and a per-account lease serialises consolidation runs.
 
-**Revise when.** S2 lands (versions become documents, so `update_fact` and the flag mapping change), a
-second embedding writer appears (it must use the shared recipe), or `is_current` gains a reader that
-needs per-state meaning.
+**Revise when.** A second embedding writer appears (it must use the shared recipe), or `is_current` gains a reader that
+needs per-state meaning. S2 has landed (2026-10-23): versions are documents and `update_fact` writes a new one on a
+content change; the flag mapping above is unchanged.

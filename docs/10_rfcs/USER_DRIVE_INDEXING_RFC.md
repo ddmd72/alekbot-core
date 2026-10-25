@@ -3200,7 +3200,7 @@ upgrade pass in an emergency; the indexer's deploy sets it from `DRIVE_UPGRADE_P
 `_DRIVE_UPGRADE_PASS` substitution, default on), because its `--set-env-vars` replaces every variable: a switch set
 with `gcloud run services update` alone turns back on at the next deploy (XC-7).
 
-**Rollout** (the commands: `docs/07_deployment/README.md` § Search v2 — rollout and rollback; the order below was
+**Rollout** (the commands: the rollout notes, ops; the order below was
 fixed by the cross-cutting operations review, XC-2)
 1. Code on `asm/drive-search-v2`; the eval meets the bars (`search_v2_eval.py`, `bars_v2.json`); G3 has no hard
    failure; the caption-shift fix passes (§25.4.3).
@@ -4073,7 +4073,7 @@ the standing rule (CLAUDE.md). Slices, in build order:
   parser's capture PDFs come from `scripts/validation/drive_capture_fixtures.py`. G3 stays owner-run.
 
 ### 26.9 Owner steps and the rollout
-The commands: `docs/07_deployment/README.md` § Card accuracy (§26) — rollout and rollback.
+The commands: the rollout notes (ops).
 1. Code on a feature branch; `make check` green; the eval meets its bars; G3 hard checks pass.
 2. The owner **backs up the six tokens** about to change (the prompt layer), and the rollout makes no initial-build
    reset (owner rule, §21).

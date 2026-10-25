@@ -7,6 +7,7 @@ from google.cloud import firestore
 
 from src.adapters.firestore_repo import FirestoreFactRepository
 from src.config.environment import EnvironmentConfig
+from src.services.cabinet_fact_service import CabinetFactService
 
 
 @pytest.fixture
@@ -77,13 +78,18 @@ def _doc_ref(exists=True, account="acc"):
 
 
 @pytest.mark.asyncio
-async def test_invalidate_fact_writes_lifecycle_fields(repo, col):
-    ref = _doc_ref()
-    col.document.return_value = ref
+async def test_invalidate_fact_writes_lifecycle_fields():
+    # S2 (RFC D8/D9): invalidate resolves forward and writes in a preconditioned transaction, which a MagicMock
+    # database cannot run, so the same written fields are checked on the evaluating fake (stored document).
+    from tests.support.fact_kit import ACC, make_fact
+    from tests.support.fact_store import FactStore
 
-    await repo.invalidate_fact("f1", "acc")
+    store = FactStore()
+    await store.repo.add_fact(make_fact("f1"))
 
-    written = ref.update.call_args.args[0]
+    await CabinetFactService(store.repo).invalidate("f-f1", ACC)
+
+    written = store.docs["f-f1"]
     assert written["state"] == "invalidated"
     assert type(written["state"]) is str
     assert written["is_current"] is True
@@ -93,18 +99,28 @@ async def test_invalidate_fact_writes_lifecycle_fields(repo, col):
 
 @pytest.mark.asyncio
 async def test_invalidate_fact_missing_doc(repo, col):
+    # Reviewer edit (facts S4, T2c): the Cabinet delete is CabinetFactService over this repository.
     col.document.return_value = _doc_ref(exists=False)
     with pytest.raises(ValueError):
-        await repo.invalidate_fact("f1", "acc")
+        await CabinetFactService(repo).invalidate("f1", "acc")
 
 
 @pytest.mark.asyncio
-async def test_invalidate_fact_other_account(repo, col):
-    ref = _doc_ref(account="other")
-    col.document.return_value = ref
+async def test_invalidate_fact_other_account():
+    # Reviewer edit (facts S4, T2c): the Cabinet delete is CabinetFactService over this repository, which reads the shown
+    # document as a FactEntity; a MagicMock snapshot holding only account_id does not validate, so the foreign document is
+    # a real one on the evaluating fake, and "no update call" is "the stored document is unchanged".
+    import copy
+
+    from tests.support.fact_kit import make_fact
+    from tests.support.fact_store import FactStore
+
+    store = FactStore()
+    await store.repo.add_fact(make_fact("f1", account="other"))
+    before = copy.deepcopy(store.docs)
     with pytest.raises(PermissionError):
-        await repo.invalidate_fact("f1", "acc")
-    ref.update.assert_not_called()
+        await CabinetFactService(store.repo).invalidate("f-f1", "acc")
+    assert store.docs == before
 
 
 @pytest.mark.asyncio

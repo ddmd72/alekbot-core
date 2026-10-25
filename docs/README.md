@@ -55,8 +55,6 @@ Cross-cutting deep dives:
 - **[Multi-Vector RRF Search](./08_concepts/multi_vector_rrf_search.md)** — retrieval philosophy.
 - **[Prompt Assembly Guide](./08_concepts/prompt_assembly_guide.md)** — token assembly (v4).
 
-
-
 ### [09 Decisions (ADRs)](./09_decisions/README.md)
 Architecture Decision Records.
 
@@ -67,7 +65,7 @@ Feature and refactoring proposals.
 Quality gates and where the test rules live.
 
 ### [12 Risks](./12_risks/README.md)
-Risk management and [Implementation Roadmap](./12_risks/IMPLEMENTATION_ROADMAP.md).
+Open risks and technical debt ([register](./12_risks/IMPLEMENTATION_ROADMAP.md)).
 
 ---
 

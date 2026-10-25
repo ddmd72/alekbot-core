@@ -1557,7 +1557,7 @@ class DeliberateFactCurator extends Agent {
                 examples: [
                     {
                         existing: "User's weight: 105 kg (Jun 1)",
-                        new: "User weighs 72 kg",
+                        new: "User weighs 100 kg",
                         action: "UPDATE",
                         result: "User's weight: 100 kg (Jun 12), was 105 kg (Jun 1)"
                     },
@@ -1853,7 +1853,7 @@ class DeliberateFactCurator extends Agent {
                 updates={
                     "content": "User's weight: 90 kg (Jun 12), was 95 kg (Jun 3), 100 kg (Jun 1)",
                     "tags": ["weight", "health", "biometrics", "tracking", "loss"],
-                    "reported_date": "2026-02-16T10:00:00"
+                    "reported_date": "2026-06-12T10:00:00"
                 }
             )
             '''
@@ -1952,7 +1952,7 @@ class DeliberateFactCurator extends Agent {
                 updates={
                     "content": "User's weight: 90 kg (Jun 12), was 95 kg (Jun 3), 100 kg (Jun 1)",
                     "tags": ["weight", "health", "biometrics", "tracking", "loss"],
-                    "reported_date": "2026-02-16T10:00:00"
+                    "reported_date": "2026-06-12T10:00:00"
                 }
             )
 
@@ -3029,11 +3029,6 @@ USER: Yes, exactly.
 
 - [Firestore HNSW Documentation](https://cloud.google.com/firestore/docs/vector-search)
 - [Multi-Vector RRF Search](../08_concepts/multi_vector_rrf_search.md)
-
-
-
-
-
 
 **Architecture:**
 

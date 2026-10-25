@@ -42,6 +42,15 @@
     "queryScope": "COLLECTION",
     "fields": [
       { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "lineage_id", "order": "ASCENDING" },
+      { "fieldPath": "version", "order": "ASCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
       { "fieldPath": "state", "order": "ASCENDING" },
       { "fieldPath": "__name__", "order": "ASCENDING" }
     ]
@@ -132,6 +141,15 @@
       { "fieldPath": "domain", "order": "ASCENDING" },
       { "fieldPath": "created_at", "order": "DESCENDING" },
       { "fieldPath": "__name__", "order": "DESCENDING" }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      { "fieldPath": "account_id", "order": "ASCENDING" },
+      { "fieldPath": "state", "order": "ASCENDING" },
+      { "fieldPath": "valid_to", "order": "DESCENDING" }
     ]
   },
   {
@@ -1249,6 +1267,20 @@
           "dimension": 768,
           "flat": {}
         }
+      }
+    ]
+  },
+  {
+    "collectionGroup": "development_domain_facts_v2",
+    "queryScope": "COLLECTION",
+    "fields": [
+      {
+        "fieldPath": "state",
+        "order": "ASCENDING"
+      },
+      {
+        "fieldPath": "expires_at",
+        "order": "ASCENDING"
       }
     ]
   },
