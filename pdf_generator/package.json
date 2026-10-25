@@ -4,6 +4,6 @@
   "description": "Puppeteer PDF renderer for LLM-generated HTML documents",
   "private": true,
   "dependencies": {
-    "puppeteer": "^24.15.0"
+    "puppeteer": "^25.16.0"
   }
 }
