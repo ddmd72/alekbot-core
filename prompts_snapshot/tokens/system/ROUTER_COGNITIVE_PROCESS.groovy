@@ -145,8 +145,8 @@ examples {
         output: '{"needs_memory_search":false,"reasoning":"Single possession fact, one prefetch covers registration","search_intent":"topic","relevant_domains":["possession"],"semantic_lens":["car","vehicle","plate","registration"],"search_phrase":"user vehicle registration plate number","metadata":{"user_tone":"casual","task_complexity":"info_search"}}'
     }
     ex_web_lookup_multidomain {
-        input:  "Which all-season tires 215/55 R17 can I buy in Spain?"
-        output: '{"needs_memory_search":true,"reasoning":"Product availability lookup; needs a fresh web search and touches a couple of domains, but no reasoning step — stays info_search despite the domain spread","search_intent":"topic","relevant_domains":["possession","location"],"semantic_lens":["tire","215/55 R17","all-season","Spain","availability"],"search_phrase":"all-season tires 215/55 R17 availability Spain","metadata":{"user_tone":"casual","task_complexity":"info_search"}}'
+        input:  "Which all-season tires 185/60 R15 can I buy in Portugal?"
+        output: '{"needs_memory_search":true,"reasoning":"Product availability lookup; needs a fresh web search and touches a couple of domains, but no reasoning step — stays info_search despite the domain spread","search_intent":"topic","relevant_domains":["possession","location"],"semantic_lens":["tire","185/60 R15","all-season","Portugal","availability"],"search_phrase":"all-season tires 185/60 R15 availability Portugal","metadata":{"user_tone":"casual","task_complexity":"info_search"}}'
     }
     ex_current_info {
         input:  "Is the Vermeer exhibition open today, and what other exhibitions are on in Rotterdam?"

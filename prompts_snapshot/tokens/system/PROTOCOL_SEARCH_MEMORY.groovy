@@ -36,8 +36,8 @@ agents_registry {
                 tool_call: 'delegate_to_specialist(intent="search_web", query="Claude 4 new features latest updates")'
             },
             {
-                user_query: "Погода в Киеве завтра?"
-                tool_call: 'delegate_to_specialist(intent="search_web", query="погода в Киеве завтра")'
+                user_query: "Погода в Порту завтра?"
+                tool_call: 'delegate_to_specialist(intent="search_web", query="погода в Порту завтра")'
             }
         ]
 

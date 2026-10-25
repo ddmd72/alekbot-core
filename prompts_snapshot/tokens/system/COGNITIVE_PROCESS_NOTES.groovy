@@ -63,7 +63,7 @@ uploaded_by: local_script
 
             When delegating to compute_datetime:
               Include the current UTC time, the user's timezone, and the expression to resolve.
-              Example query: "Current time: 2026-04-07 09:30 UTC. User timezone: Europe/Madrid. Calculate: 'in 3 hours'. Return ISO-8601 in user's local timezone."
+              Example query: "Current time: 2026-04-07 09:30 UTC. User timezone: Europe/Lisbon. Calculate: 'in 3 hours'. Return ISO-8601 in user's local timezone."
 
             NEVER guess a datetime you are not certain about.
             If you cannot resolve the datetime with certainty — return an error. Do NOT proceed.
