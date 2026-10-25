@@ -33,7 +33,7 @@ from .drive_tiers import MISSED_COMMON, WHERE_CHUNK, WHERE_HINT, WHERE_NAME, Cov
 
 Span = Tuple[int, int]
 _ACROSS = ", by spelling in another script (automatic)"
-_OTHER_SPELLING = ", by another spelling (automatic)"     # a skeleton match within one script (Киев / Київ)
+_OTHER_SPELLING = ", by another spelling (automatic)"     # a skeleton match within one script (Харьков / Харків)
 _LATIN_SKELETONS = ("xl:", "exl:")
 _SPACES = re.compile(r"\s+")
 _ELLIPSIS = "…"
@@ -144,7 +144,7 @@ def _record_source(cover: Cover, record: KeyedRecord) -> str:
 
 def _script_note(cover: Cover) -> str:
     """A skeleton match's label: across scripts when the query word and the key's word are in different scripts
-    ("Barcelona" / "Барселоне"), another spelling within one ("Киев" / "Київ"). A Latin query word never reads a
+    ("Berlin" / "Берлине"), another spelling within one ("Харьков" / "Харків"). A Latin query word never reads a
     Latin word's skeleton (xc F3), so a Latin query always crosses."""
     latin_query = not _is_cyrillic(cover.word)
     latin_key = any(k.startswith(_LATIN_SKELETONS) for k in cover.keys)

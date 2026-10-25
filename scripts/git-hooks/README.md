@@ -39,7 +39,7 @@ Detects keywords that reveal a data leak/privacy incident:
 
 ### 2. Real Bank Names
 Blocks 40+ real bank names (across Europe, USA, fintech):
-- Spain: Santander, BBVA, CaixaBank, Sabadell, etc.
+- Iberia: Millennium BCP, Banco BPI, Santander, BBVA, etc.
 - UK: HSBC, Barclays, Lloyds, etc.
 - USA: JPMorgan Chase, Bank of America, Wells Fargo, etc.
 - Fintech: Revolut, Wise, N26, etc.
@@ -47,7 +47,7 @@ Blocks 40+ real bank names (across Europe, USA, fintech):
 **Exception:** Bank names are allowed in:
 - Documentation files (`docs/`)
 - Test files (`tests/`)
-- Generic example phrases: `"User works at Google"`, `"Example Bank"`
+- Generic example phrases: `"Mock Google client"`, `"Example Bank"`
 
 See `lists/allowed-phrases.txt` and `lists/allowed-files.txt`.
 
@@ -65,7 +65,7 @@ Detects real-world identifiers:
 
 | Pattern | Example | Blocks |
 |---------|---------|--------|
-| IBAN | `ES91 21** **** **** **** ****` | International bank account numbers |
+| IBAN | `PT50 0000 **** **** **** ****` | International bank account numbers |
 | Credit card | `4532 1111 **** ****` | 16-digit card patterns |
 | VIN | `17-character vehicle ID` | Vehicle ID numbers |
 | Tracking number | `UPU S10 format (LT + 9 digits + country)` | Postal/customs tracking |
@@ -131,7 +131,7 @@ List of 40+ bank names (one per line). Add new banks here if needed.
 List of 100+ company names (one per line). Add new companies here if needed.
 
 ### `lists/allowed-phrases.txt`
-Regex patterns where company/bank names are allowed (e.g., `"User works at Google"`).
+Regex patterns where company/bank names are allowed (e.g., `"Mock Google client"`).
 Used to whitelist generic examples in documentation.
 
 ### `lists/allowed-files.txt`

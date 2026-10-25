@@ -110,14 +110,14 @@ _DEFAULT_AGENT_TIERS: Dict[str, "PerformanceTier"] = {
     # Keep luna. The cheap models are cheap because they skip the work, and they fail
     # SILENTLY — the answer looks well-formed:
     #   • gemini-3.5-flash-lite ($0.30/$2.50, 2x faster) matches luna on small lookups
-    #     (3 Carrefour stores, 2 police stations — identical grounded facts), but on
+    #     (3 Lidl stores, 2 police stations — identical grounded facts), but on
     #     "top 10 museums by rating" it spent 3 tool calls where luna spent 13 and
     #     invented the numbers: review counts rounded as "27,000+"/"800+" where Maps
     #     returns 57,563/3,917, ratings off by 0.1-0.3, wrong street numbers — all under
     #     REAL place links. It also ignored "ranked by rating" and padded the list with a
     #     non-museum. Fabrication under a valid citation is the worst failure mode here.
     #   • gemini-3.6-flash is 5x DEARER than luna ($1.50/$7.50 plus more turns) and
-    #     fabricated three alternative Northgate→Toulouse routes with road names and tolls from
+    #     fabricated three alternative Porto→Munich routes with road names and tolls from
     #     memory, all sharing the single distance the route tool actually returned.
     #   • gpt-5.4-nano made ZERO tool calls across 6 queries while still emitting text —
     #     it does not register that it has tools. Confirms the original ECO rejection.
@@ -281,7 +281,7 @@ class UserBotConfig(BaseModel):
     # Set via Cabinet UI. Used for: datetime injection in prompts, reminder due resolution, next_due computation.
     timezone: str = "UTC"
 
-    # Location (free text, e.g. "Springfield, USA"). Set via Cabinet UI.
+    # Location (free text, e.g. "Springfield"). Set via Cabinet UI.
     # Injected into knowledge_base {} for agent context (maps, weather, local awareness).
     location: Optional[str] = None
 

@@ -38,7 +38,7 @@ async def test_e2e_context_integration():
     # Mock biographical context response
     mock_repo.get_biographical_context.return_value = [
         MagicMock(text="User's name is Alex", tags=["identity"], type=MagicMock(value="STATE")),
-        MagicMock(text="User has a wife named Jane", tags=["family"], type=MagicMock(value="STATE"))
+        MagicMock(text="User has a partner named Clara", tags=["family"], type=MagicMock(value="STATE"))
     ]
     # Mock anchors
     mock_repo.get_active_facts.return_value = []
@@ -85,7 +85,7 @@ async def test_e2e_context_integration():
     # Create payload
     payload = {
         "messages": [
-            {"role": "user", "text": "My wife bought a car."}
+            {"role": "user", "text": "My partner bought a car."}
         ],
         "biographical_context": bio_context_serialized
     }

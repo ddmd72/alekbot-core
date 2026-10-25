@@ -299,7 +299,7 @@ def create_user_cabinet_blueprint(
         `link_telegram` never had (RFC §4.6 — inheriting that trust model for a
         phone number would permit squatting).
         Body:
-            phone_number: E.164, e.g. "+3460012"
+            phone_number: E.164, digits only (e.g. +1 555 0112 written without the spaces)
         """
         if not twilio_verify_client:
             return jsonify({"error": "Phone verification not configured"}), 501
@@ -307,7 +307,7 @@ def create_user_cabinet_blueprint(
             body = await request.get_json(force=True) or {}
             phone_number = (body.get("phone_number") or "").strip()
             if not _E164_PATTERN.match(phone_number):
-                return jsonify({"error": "phone_number must be E.164 (e.g. +3460012)"}), 400
+                return jsonify({"error": "phone_number must be E.164: a plus sign, the country code and the number, digits only"}), 400
 
             # twilio.rest.Client is synchronous (requests under the hood) — offload
             # to a thread so it doesn't stall the event loop (see
@@ -328,7 +328,7 @@ def create_user_cabinet_blueprint(
         Check the Twilio Verify OTP code and, on approval, link the phone number
         to the authenticated user account.
         Body:
-            phone_number: E.164, e.g. "+3460012"
+            phone_number: E.164, digits only (e.g. +1 555 0112 written without the spaces)
             code: the code the user received via SMS
         """
         if not twilio_verify_client:
@@ -338,7 +338,7 @@ def create_user_cabinet_blueprint(
             phone_number = (body.get("phone_number") or "").strip()
             code = (body.get("code") or "").strip()
             if not _E164_PATTERN.match(phone_number):
-                return jsonify({"error": "phone_number must be E.164 (e.g. +3460012)"}), 400
+                return jsonify({"error": "phone_number must be E.164: a plus sign, the country code and the number, digits only"}), 400
             if not code:
                 return jsonify({"error": "code is required"}), 400
 
@@ -499,7 +499,7 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/user/location", methods=["PUT"])
     @auth_required
     async def set_location():
-        """Update the user's location. Body: {"location": "Springfield, USA"}"""
+        """Update the user's location. Body: {"location": "Springfield"}"""
         try:
             body = await request.get_json(force=True) or {}
             location = body.get("location", "").strip()

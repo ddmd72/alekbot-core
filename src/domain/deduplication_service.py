@@ -99,7 +99,7 @@ class SmartDeduplication:
             
             # More detail
             >>> service.is_duplicate(
-            ...     "Bike ride 42 km in Example City",
+            ...     "Bike ride 42 km in Springfield",
             ...     "Bike ride 42 km",
             ...     0.96
             ... )

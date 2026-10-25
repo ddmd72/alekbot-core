@@ -54,9 +54,9 @@ _PREFIX = re.compile(
     rf"[\[(<]\s*{_STAMP}\s*[\])>]"                 # [00:01:23] (12:03) [2026-10-01 12:00:00]
     rf"|{_STAMP}"                                   # 2026-10-01 12:00:00,123 / 00:01:23.456
     rf"|{_IP}"                                      # 192.168.0.1
-    rf"|<v\s+[^>]{{1,40}}>"                         # <v Alice> (WebVTT voice)
-    rf"|\[[^\]\n]{{1,40}}\]\s*:?"                   # [Alice]
-    rf"|[^\W\d_][\w.'’-]*(?:\s+[^\W\d_][\w.'’-]*){{0,2}}\s*:(?!//)"   # Alice: / Dr. Bob Smith:
+    rf"|<v\s+[^>]{{1,40}}>"                         # <v Clara> (WebVTT voice)
+    rf"|\[[^\]\n]{{1,40}}\]\s*:?"                   # [Clara]
+    rf"|[^\W\d_][\w.'’-]*(?:\s+[^\W\d_][\w.'’-]*){{0,2}}\s*:(?!//)"   # Clara: / Dr. Marta Quillen:
     rf")\s*[-–—|:,]*\s*"
 )
 _PREFIX_MARKS = frozenset(":[(<")   # every prefix holds a digit or one of these: a head with neither never matches
@@ -82,7 +82,7 @@ class GateMetrics:
 
 def _residue(line: str) -> str:
     rest = line
-    for _ in range(4):   # "[12:00] 10.0.0.1 Alice: hi": several prefixes in a row
+    for _ in range(4):   # "[12:00] 10.0.0.1 Clara: hi": several prefixes in a row
         head = rest[:PREFIX_CHARS]
         if not any(ch.isdigit() or ch in _PREFIX_MARKS for ch in head):
             break
