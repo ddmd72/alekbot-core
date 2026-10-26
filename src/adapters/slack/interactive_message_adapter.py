@@ -66,7 +66,7 @@ def _subject_blocks(message: InteractiveMessage) -> List[Dict[str, Any]]:
 def _fallback_text(message: InteractiveMessage) -> str:
     """What a notification or a client without blocks shows: the prompt, the quoted subject, the numbered options and the
     reply hint. A long quote is cut to fit `MAX_TEXT_CHARS` so that the options and the hint always stay."""
-    options = "  ".join(f"{number} — {option.label}" for number, option in message.numbered_options())
+    options = message.options_line()
     head = _mrkdwn(message.prompt.strip())
     tail = _mrkdwn("\n".join([options, message.reply_hint.strip()] if message.reply_hint.strip() else [options]))
     quote = message.quote.strip()

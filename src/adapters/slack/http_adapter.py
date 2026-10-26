@@ -18,6 +18,7 @@ from .request_body import BodyTooLarge, read_capped_body
 from .response_channel import SlackResponseChannel
 from .signature import verify_slack_signature
 from ...domain.cloud_task_delivery import RETRY_COUNT_HEADER
+from ...domain.chat_text import unwrapped
 from ...domain.messaging import MessageContext, FileAttachment
 from ...domain.ui_messages import UIMessage
 from ...domain.prompt import ANONYMOUS_ACCOUNT_ID  # SESSION_26
@@ -492,12 +493,8 @@ class HTTPModeAdapter(SlackAdapter):
                 on_long_turn=release_lock,
             )
 
-            # A copied `` `$skill save CODE` `` (any number of wrapping backticks, e.g. a
-            # triple-backtick code block) must still dispatch as a command — strip backticks
-            # only when they wrap the ENTIRE trimmed text, so a normal sentence like
-            # "`$HOME` is wrong" (backticks around a substring, not the whole text) is untouched.
-            t = text.strip()
-            stripped = t.strip("`").strip() if t.startswith("`") and t.endswith("`") else t
+            # A copied `` `$skill save CODE` `` must still dispatch as a command (`unwrapped`).
+            stripped = unwrapped(text)
 
             if stripped.startswith("$"):
                 command = stripped.lstrip("$").strip().lower()

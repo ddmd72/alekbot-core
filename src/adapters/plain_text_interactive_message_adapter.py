@@ -17,7 +17,7 @@ def _layout(message: InteractiveMessage, max_length: int) -> str:
     because on a platform without controls only a reply to the message counts. The text fits `max_length`: a quote that
     would overflow it is cut with an ellipsis, and the prompt, the options and the hint are never touched (the digits
     must survive)."""
-    options = "  ".join(f"{number} — {option.label}" for number, option in message.numbered_options())
+    options = message.options_line()
     head = [message.prompt.strip()]
     tail = [options]
     if message.reply_hint.strip():

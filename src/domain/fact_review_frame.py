@@ -25,10 +25,9 @@ def review_frame(question_id: str) -> str:
 
 def question_text(message: InteractiveMessage) -> str:
     """The model part after `review_frame`: the question message as Alek "said" it, in three lines: the question line,
-    the fact in «», and the options with their digits (`numbered_options`, the one digit rule). The reply hint is the
+    the fact in «», and the options with their digits (`options_line`, over the one digit rule `numbered_options`). The reply hint is the
     owner's, not the history's."""
-    options = "  ".join(f"{number} — {option.label}" for number, option in message.numbered_options())
-    return f"{message.prompt}\n«{message.quote}»\n{options}"
+    return f"{message.prompt}\n«{message.quote}»\n{message.options_line()}"
 
 
 def not_delivered_frame(question_id: str) -> str:

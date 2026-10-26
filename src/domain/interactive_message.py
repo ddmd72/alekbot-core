@@ -3,6 +3,7 @@ from typing import Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+from .chat_text import unwrapped
 from .interactive_binding import InteractiveBinding
 from .interactive_option import InteractiveOption
 
@@ -50,15 +51,18 @@ class InteractiveMessage(BaseModel):
         `option_for_reply`."""
         return tuple(enumerate(self.options, start=1))
 
+    def options_line(self) -> str:
+        """The numbered options on one line, `1 — label  2 — label`: how a reader without controls sees them, and the
+        history text the model reads, one string for both (the digit comes from `numbered_options`)."""
+        return "  ".join(f"{number} — {option.label}" for number, option in self.numbered_options())
+
     def option_for_reply(self, text: str) -> Optional[str]:
         """The id of the option whose digit is the whole of `text`; None otherwise.
 
         Around the digit a chat client's punctuation is not words: surrounding whitespace, backticks that wrap the whole
-        text (the chat adapters' own rule for a copied command, any number of them) and one full stop after the digit
+        text (`unwrapped`, the rule the chat adapters use for a copied command, any number of them) and one full stop after the digit
         (`3`, `2.`)."""
-        reply = text.strip()
-        if reply.startswith("`") and reply.endswith("`"):
-            reply = reply.strip("`").strip()
+        reply = unwrapped(text)
         if reply.endswith("."):
             reply = reply[:-1].rstrip()
         for number, option in self.numbered_options():
