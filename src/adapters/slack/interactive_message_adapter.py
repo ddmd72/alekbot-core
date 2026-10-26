@@ -79,6 +79,25 @@ def _fallback_text(message: InteractiveMessage) -> str:
     return f"{head}\n«{shown}»\n{tail}"
 
 
+def _controls(message: InteractiveMessage) -> List[Dict[str, Any]]:
+    """The reply hint and the actions block (one button per option, the binding as its `block_id`): what a posted message
+    ends with, and what a refused pick leaves in place."""
+    buttons = [
+        {
+            "type": "button",
+            "action_id": option.id,
+            "value": option.id,
+            "text": {"type": "plain_text", "text": option.label, "emoji": False},
+        }
+        for _number, option in message.numbered_options()
+    ]
+    blocks: List[Dict[str, Any]] = []
+    if message.reply_hint.strip():
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _mrkdwn(message.reply_hint.strip())}]})
+    blocks.append({"type": "actions", "block_id": encode(message.binding), "elements": buttons})
+    return blocks
+
+
 class SlackInteractiveMessageAdapter(InteractiveMessagePort):
 
     def __init__(self, client):
@@ -88,19 +107,8 @@ class SlackInteractiveMessageAdapter(InteractiveMessagePort):
     async def post(self, platform: str, channel_id: str, message: InteractiveMessage) -> MessageRef:
         if platform != PLATFORM:
             raise ValueError(f"the Slack adapter cannot post to platform {platform}")
-        buttons = [
-            {
-                "type": "button",
-                "action_id": option.id,
-                "value": option.id,
-                "text": {"type": "plain_text", "text": option.label, "emoji": False},
-            }
-            for _number, option in message.numbered_options()
-        ]
         blocks = _subject_blocks(message)
-        if message.reply_hint.strip():
-            blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": _mrkdwn(message.reply_hint.strip())}]})
-        blocks.append({"type": "actions", "block_id": encode(message.binding), "elements": buttons})
+        blocks.extend(_controls(message))
         try:
             response = await self._client.chat_postMessage(
                 channel=channel_id, blocks=blocks, text=_fallback_text(message),
@@ -114,18 +122,20 @@ class SlackInteractiveMessageAdapter(InteractiveMessagePort):
             raise
 
     async def show_choice(self, ref: MessageRef, outcome: ChoiceOutcome) -> None:
-        """Replace the message with its prompt and quote and, in place of the buttons, the option chosen or the note."""
+        """Replace the message with its prompt and quote and, in place of the buttons, the option chosen or the note. With
+        `keep_options` the note goes under the quote and the hint and the same actions block follow, so the buttons stay."""
         if ref.platform != PLATFORM:
             raise ValueError(f"the Slack adapter cannot update a message on platform {ref.platform}")
         chosen = outcome.chosen_option
         shown = f"✓ {chosen.label}" if chosen is not None else outcome.note.strip()
         blocks = _subject_blocks(outcome.message)
         blocks.append({"type": "context", "elements": [{"type": "plain_text", "text": _plain(shown), "emoji": False}]})
+        text = _mrkdwn(f"{outcome.message.prompt.strip()}\n{shown}")
+        if outcome.keep_options:
+            blocks.extend(_controls(outcome.message))
+            text = _mrkdwn(shown) + "\n" + _fallback_text(outcome.message)
         try:
-            await self._client.chat_update(
-                channel=ref.channel_id, ts=ref.message_id, blocks=blocks,
-                text=_mrkdwn(f"{outcome.message.prompt.strip()}\n{shown}"),
-            )
+            await self._client.chat_update(channel=ref.channel_id, ts=ref.message_id, blocks=blocks, text=text)
         except Exception as exc:
             logger.error(
                 f"[SlackInteractive] update failed channel={ref.channel_id} "

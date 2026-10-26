@@ -15,5 +15,6 @@ class InteractiveMessagePort(ABC):
 
     @abstractmethod
     async def show_choice(self, ref: MessageRef, outcome: ChoiceOutcome) -> None:
-        """Re-render the message at `ref` as `outcome` says, without controls. Nothing to do on a platform that never
-        had any. Raises when a platform that had controls could not update the message."""
+        """Re-render the message at `ref` as `outcome` says. Without `outcome.keep_options` the message loses its controls;
+        with it the note is shown and the options stay. Nothing to do on a platform that never had any controls. Raises
+        when a platform that had controls could not update the message."""

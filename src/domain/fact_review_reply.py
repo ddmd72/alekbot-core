@@ -35,6 +35,14 @@ def needs_completing(question: FactReviewQuestion) -> bool:
     return question.status is QuestionStatus.PENDING and question.delivered
 
 
+def fact_changed_note(result: AnswerResult) -> Optional[UIMessage]:
+    """The text that tells the owner his answer was not applied because the fact changed meanwhile (`changed`) or another
+    writer won (`conflict`): in both the question stays open and nothing was written. None for any other result."""
+    if result in (AnswerResult.CHANGED, AnswerResult.CONFLICT):
+        return UIMessage.MEMORY_FACT_CHANGED
+    return None
+
+
 def acknowledgement(path: ReplyPath, result: Optional[AnswerResult] = None) -> Optional[UIMessage]:
     """The text that answers a reply on `path`, or None when the reply is not answered here (the message then goes on as
     ordinary conversation). A digit's text depends on what applying it came to (`result`): applied; the question closed
@@ -48,6 +56,4 @@ def acknowledgement(path: ReplyPath, result: Optional[AnswerResult] = None) -> O
         return UIMessage.MEMORY_ANSWER_NOTED
     if result is AnswerResult.NOT_OPEN:
         return UIMessage.MEMORY_ALREADY_ANSWERED
-    if result in (AnswerResult.CHANGED, AnswerResult.CONFLICT):
-        return UIMessage.MEMORY_FACT_CHANGED
-    return None
+    return None if result is None else fact_changed_note(result)

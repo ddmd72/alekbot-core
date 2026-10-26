@@ -24,7 +24,7 @@ from ..domain.fact_review_language import LABEL_KEYS, fact_question_message
 from ..domain.fact_review_question import FACT_QUESTION_KIND, AnswerSource, ClosedBy, FactReviewQuestion
 from ..domain.fact_review_frame import reply_part
 from ..domain.fact_review_question_close import QuestionClose
-from ..domain.fact_review_reply import ReplyPath, acknowledgement, needs_completing, reply_path
+from ..domain.fact_review_reply import ReplyPath, acknowledgement, fact_changed_note, needs_completing, reply_path
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, next_key, review_payload
 from ..domain.fact_update_outcome import UpdateRefusal
 from ..domain.fact_write_context import FactWriteContext, as_utc
@@ -233,9 +233,10 @@ class FactAnswerService(ChoiceHandlerPort):
         (else None, nothing written). An **open** question must be the one posted at the clicked message
         (`message_ref` equal; a question not delivered, or another message, is None); a delivered `pending` one is
         completed first (`completed()`, as at a reply), then the answer is applied through `apply` with source `button`,
-        at the time of the click, and the outcome shows the chosen option. A refused apply (`changed`, `conflict`,
-        `not_applied`) is None: the question stays open with its buttons, and `apply` has logged why. A question that
-        closes while the click is applied is treated as closed. A **closed** question shows its existing answer (its
+        at the time of the click, and the outcome shows the chosen option. A `changed` or `conflict` apply shows
+        `MEMORY_FACT_CHANGED` as the note with the options kept (`keep_options`): the question stays open, nothing was
+        written, and the owner may click again. A `not_applied` one is None: the question stays open with its buttons
+        untouched, and `apply` has logged why. A question that closes while the click is applied is treated as closed. A **closed** question shows its existing answer (its
         note when it has none) and writes nothing; one with no stored ref (closed during its own post) is shown on the
         clicked message, which heals it on its first click, while a stored ref that is not the clicked message gives
         None. Store errors raise."""
@@ -256,6 +257,9 @@ class FactAnswerService(ChoiceHandlerPort):
             result = await self.apply(account_id, user_id, question.question_id, answer, "button", choice.at)
             if result is AnswerResult.APPLIED:
                 return await self._closed_outcome(question, answer, None)
+            changed = fact_changed_note(result)
+            if changed is not None:
+                return await self._kept_outcome(question, changed)
             if result is not AnswerResult.NOT_OPEN:
                 return None
             question = await self._question(question.question_id)
@@ -347,6 +351,11 @@ class FactAnswerService(ChoiceHandlerPort):
         if answer is not None:
             return ChoiceOutcome(message=message, chosen_option_id=answer.value)
         return ChoiceOutcome(message=message, note=labels[(note or UIMessage.MEMORY_QUESTION_CLOSED).value])
+
+    async def _kept_outcome(self, question: FactReviewQuestion, note: UIMessage) -> ChoiceOutcome:
+        """The open question's message with `note` shown and its options kept, texts from one `labels_for`."""
+        labels = await self._texts.labels_for(question.user_id, question.account_id)
+        return ChoiceOutcome(message=fact_question_message(question, labels), note=labels[note.value], keep_options=True)
 
     async def _question(self, question_id: str) -> Optional[FactReviewQuestion]:
         return next(iter(await self._review_store.get_questions([question_id])), None)
