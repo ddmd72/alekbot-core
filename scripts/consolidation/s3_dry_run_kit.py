@@ -44,6 +44,7 @@ from src.domain.entities import FactEntity, FactState
 from src.domain.exceptions import FactWriteConflict
 from src.domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
 from src.domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot, check_count
+from src.domain.fact_lifecycle_run_guard import run_guard_held
 from src.domain.fact_resolution import resolve_chain
 from src.domain.fact_review_rules import stale_order_key
 from src.domain.fact_update import ParsedFactUpdate
@@ -470,6 +471,8 @@ class RecordingCounters(FactLifecycleCountersPort):
         self.adds: List[Tuple[str, date, Dict[CounterField, int]]] = []
         self.sweeps: List[Tuple[str, date, SweepSnapshot]] = []
         self._claimed: set = set()
+        self._run_owner: Optional[str] = None
+        self._run_until: Optional[datetime] = None
 
     @staticmethod
     def _check(account_id: str, day: date) -> None:
@@ -512,6 +515,22 @@ class RecordingCounters(FactLifecycleCountersPort):
         first = day not in self._claimed
         self._claimed.add(day)
         return first
+
+    async def acquire_run(self, owner: str, now: datetime, until: datetime) -> bool:
+        if not owner:
+            raise ValueError("owner is required to take the janitor's run guard")
+        if now.tzinfo is None or until.tzinfo is None:
+            raise ValueError("now and until must be timezone-aware")
+        if until <= now:
+            raise ValueError("until must be later than now")
+        if run_guard_held(self._run_until, now):
+            return False
+        self._run_owner, self._run_until = owner, until
+        return True
+
+    async def release_run(self, owner: str) -> None:
+        if self._run_owner == owner:
+            self._run_owner = self._run_until = None
 
 
 class StatsSink(AlertSinkPort):

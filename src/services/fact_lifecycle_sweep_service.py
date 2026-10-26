@@ -7,12 +7,14 @@ what it would stale and reports the breaker. The numbers of each account are sto
 line per day is posted after the run. No review is enqueued in S3 (`review_enqueued=0`).
 """
 import asyncio
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..domain.due_fact import DueFact
 from ..domain.exceptions import FactWriteConflict
 from ..domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot
+from ..domain.fact_lifecycle_run_guard import run_guard_until
 from ..domain.fact_lifecycle_sweep import BREAKER_OK, breaker_label, daily_line, plan_sweep, stale_fields
 from ..domain.fact_write_context import as_utc
 from ..ports.alert_sink import AlertSinkPort
@@ -48,6 +50,7 @@ class FactLifecycleSweepService:
         Any failure other than a write conflict (a query, a counters read or write, a stale write) stops the run: it is
         logged with its type and the stage reached, one 🚨 goes to the sink (best effort), and the error is re-raised.
         `breaker_tripped` counts `would trip` accounts in log-only mode too; `dry_run` is in the same dict.
+        A run that finds the run guard held by another run does nothing and returns `{"status": "busy"}`.
         """
         progress: Dict[str, str] = {"stage": "start", "account": ""}
         try:
@@ -61,7 +64,26 @@ class FactLifecycleSweepService:
             raise
 
     async def _run(self, progress: Dict[str, str]) -> Dict[str, Any]:
+        """Take the run guard before anything is read; hold it for the run and free it after, whatever happens."""
         now = as_utc(self._clock())
+        owner = uuid.uuid4().hex
+        progress["stage"] = "the run guard"
+        if not await self._counters.acquire_run(owner, now, run_guard_until(now)):
+            logger.info("[FactLifecycle] another run holds the run guard; this run does nothing")
+            return {"status": "busy"}
+        try:
+            return await self._sweep_all(progress, now)
+        finally:
+            await self._release_guard(owner)
+
+    async def _release_guard(self, owner: str) -> None:
+        """A release error is logged, never raised: it must not hide the run's own result or error."""
+        try:
+            await self._counters.release_run(owner)
+        except Exception as error:
+            logger.warning(f"[FactLifecycle] the run guard was not released ({type(error).__name__}); it expires on its own")
+
+    async def _sweep_all(self, progress: Dict[str, str], now: datetime) -> Dict[str, Any]:
         day = now.date()
         progress["stage"] = "the due query"
         due_by_account = _group(await self._repo.find_due_facts(now))
