@@ -8,12 +8,13 @@ import hashlib
 import json
 import time
 import weakref
-from typing import Optional, Dict, Any, Callable, Tuple, cast
+from typing import Optional, Dict, Any, Callable, Tuple
 from slack_bolt.async_app import AsyncApp
 from quart import Blueprint, request, jsonify
 
 from .base import SlackAdapter
 from .interactivity_route import SlackInteractivityRoute
+from .request_body import BodyTooLarge, read_capped_body
 from .response_channel import SlackResponseChannel
 from .signature import verify_slack_signature
 from ...domain.cloud_task_delivery import RETRY_COUNT_HEADER
@@ -165,7 +166,11 @@ class HTTPModeAdapter(SlackAdapter):
 
         @self.blueprint.route("/interactivity", methods=["POST"])
         async def slack_interactivity():
-            body = cast(bytes, await request.get_data())  # raw body: the signature is checked on these bytes
+            try:
+                body = await read_capped_body(request)  # raw body: the signature is checked on these bytes
+            except BodyTooLarge as exc:
+                logger.warning(f"⚠️ Slack interactivity body refused: {exc}")
+                return jsonify({"error": "Payload too large"}), 413
             result, status = await self._interactivity.handle(body, dict(request.headers))
             return jsonify(result), status
 
@@ -174,20 +179,32 @@ class HTTPModeAdapter(SlackAdapter):
         return self.blueprint
 
     async def _handle_slack_event(self):
+        """The order is the security: read the raw bytes (capped), verify the signature on them for EVERY request (Slack
+        signs `url_verification` too), and only then parse. An unsigned body is never parsed, and a forged
+        `url_verification` never gets its challenge echoed."""
         try:
-            body = cast(bytes, await request.get_data())  # raw body: signature check needs bytes
+            try:
+                body = await read_capped_body(request)  # raw body: signature check needs bytes
+            except BodyTooLarge as exc:
+                logger.warning(f"⚠️ Slack event body refused: {exc}")
+                return jsonify({"error": "Payload too large"}), 413
             headers = dict(request.headers)
 
-            event_data = json.loads(body)
+            if not self._verify_signature(body, headers):
+                logger.warning("⚠️ Invalid Slack signature")
+                return jsonify({"error": "Invalid signature"}), 401
 
-            if event_data.get("type") != "url_verification":
-                if not self._verify_signature(body, headers):
-                    logger.warning("⚠️ Invalid Slack signature")
-                    return jsonify({"error": "Invalid signature"}), 401
+            try:
+                event_data = json.loads(body)
+            except ValueError:  # JSONDecodeError and UnicodeDecodeError
+                event_data = None
+            if not isinstance(event_data, dict):
+                logger.warning("⚠️ Signed Slack event body is not a JSON object")
+                return jsonify({"error": "Invalid payload"}), 400
 
             if event_data.get("type") == "url_verification":
                 challenge = event_data.get("challenge", "")
-                logger.info(f"✅ URL verification received, challenge: {challenge[:16]}...")
+                logger.info(f"✅ URL verification received, challenge: {str(challenge)[:16]}...")
                 return challenge, 200, {"Content-Type": "text/plain"}
 
             event = event_data.get("event", {})
