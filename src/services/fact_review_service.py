@@ -444,8 +444,8 @@ class FactReviewService:
         writes: _FactWrites,
     ) -> _Timeouts:
         """Step 6 (§3.8), over every question `due_timeouts` names. Its fact rewritten, closed or gone meanwhile
-        (`asked_fact_unchanged`): the question closes `resolved_elsewhere`. Else the neighbour check (S4-D19,
-        `timeout_candidate`, zero LLM): a candidate joins this run's batch (`candidates`; the pass sees its question as
+        (`asked_fact_unchanged`): the question closes `resolved_elsewhere`. Else the check of S4-D19 (`timeout_candidate`,
+        zero LLM: a reply in words not yet shown, or a newer neighbour): a candidate joins this run's batch (`candidates`; the pass sees its question as
         timed out, and `after_pass` gives it the fallback if it stays undecided); every other one gets its fallback now
         (`_fallbacks`, the one fallback path). So no timed-out question that is not a candidate is left open for the
         batch, except one whose fallback write conflicted (the next run's)."""
@@ -458,7 +458,7 @@ class FactReviewService:
                     logger.info(f"[FactReview] question {question.question_id} timed out; its fact was settled elsewhere")
                 continue
             if timeout_candidate(stored.fact, question, await self._nearest(user_id, account_id, stored.fact)):
-                logger.info(f"[FactReview] question {question.question_id} timed out; a newer neighbour sends it to the review")
+                logger.info(f"[FactReview] question {question.question_id} timed out; an unread reply or a newer neighbour sends it to the review")
                 candidates.append(stored.fact)
             else:
                 due.append(question)

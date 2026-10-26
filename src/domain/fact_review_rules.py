@@ -188,11 +188,14 @@ def asked_fact_unchanged(question: FactReviewQuestion, fact: Optional[FactEntity
 
 
 def timeout_candidate(fact: FactEntity, question: FactReviewQuestion, nearest: Sequence[FactEntity]) -> bool:
-    """S4-D19: a timed-out question's fact goes to the model once before any fallback when one of its neighbours
-    (`neighbours_of` over `nearest`, the current facts nearest to it by its vector, nearest first) was created after the
-    question was asked: what the owner said meanwhile may decide it. Otherwise silence decides (`fallback_fields`)."""
+    """S4-D19: a timed-out question's fact goes to the model once before any fallback when the owner answered meanwhile.
+    First his own reply in words on the question, not yet read (`reply_not_shown`): an answer is not silence. Else one of
+    its neighbours (`neighbours_of` over `nearest`, the current facts nearest to it by its vector, nearest first) created
+    after the question was asked: what he said elsewhere may decide it. Otherwise silence decides (`fallback_fields`)."""
     if question.asked_at is None:
         return False
+    if question.reply_not_shown:
+        return True
     return any(as_utc(n.created_at) > question.asked_at for n in neighbours_of(fact, nearest))
 
 

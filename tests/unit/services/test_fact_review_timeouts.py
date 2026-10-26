@@ -211,7 +211,7 @@ class TestTheNeighbourCheck:
         assert r.agent.routed == []
         assert (await stored_question(world, "qt")).closed_by is ClosedBy.TIMEOUT
 
-    async def test_a_question_settled_by_step_six_is_not_in_the_routed_batch(self):
+    async def test_a_reply_not_yet_shown_when_the_question_times_out_is_shown_once_then_the_fallback(self):
         world = ReviewWorld()
         fact = await current(world, SUBJECT)
         await timing_out(world, "qt", fact, reply_text="hm", reply_at=NOW - timedelta(days=1))   # a reply not yet shown
@@ -219,13 +219,39 @@ class TestTheNeighbourCheck:
         await world.seed_state(account_id=ACC)
         r = Rig(world)
 
-        assert await r.run() == {"status": "completed"}
+        assert await r.run() == {"status": "completed"}                           # the pass decides nothing
 
         (task,) = r.agent.tasks
-        assert batch_ids(task) == [other] and task.questions == ()
+        assert set(batch_ids(task)) == {fact, other}
+        (shown,) = task.questions
+        assert shown.question_id == "qt" and shown.is_timed_out(NOW) and shown.reply_text == "hm"
         question = await stored_question(world, "qt")
-        assert question.closed_by is ClosedBy.TIMEOUT and question.offered_at is None
-        assert len(fallback_events(world, fact)) == 1
+        assert question.closed_by is ClosedBy.TIMEOUT and question.offered_at == NOW
+        assert len(fallback_events(world, fact)) == 1                             # once, after the pass
+        assert (await day_row(world)).timed_out == 1
+
+    async def test_a_reply_not_yet_shown_at_the_timeout_that_the_pass_decides_on_gets_no_fallback(self):
+        world = ReviewWorld()
+        fact = await current(world, SUBJECT)
+        await timing_out(world, "qt", fact, reply_text="no, I stopped going there in the summer",
+                         reply_at=NOW - timedelta(days=1))
+        await world.seed_state(account_id=ACC)
+        r = Rig(world)
+
+        async def play(task: FactReviewTask, scope: FactReviewScope) -> None:
+            basis = {"kind": "reply", "question_id": "qt", "quote": "I stopped going there"}
+            result = await scope.update_fact({"fact_id": fact, "updates": {"state": "archived"}, "basis": basis})
+            assert result["status"] == "updated", result
+
+        r.agent.play = play
+        assert await r.run() == {"status": "completed"}
+
+        question = await stored_question(world, "qt")
+        assert question.closed_by is ClosedBy.REVIEW and question.answer_source == "review"
+        assert question.offered_at == NOW
+        assert world.docs[fact]["state"] == "archived" and fallback_events(world, fact) == []
+        row = await day_row(world)
+        assert (row.timed_out, row.archived_by_review, row.closed_by_reply) == (0, 1, 1)
 
 
 # ------------------------------------------------------------------------------------------------ resolved elsewhere

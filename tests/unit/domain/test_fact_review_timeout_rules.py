@@ -87,6 +87,20 @@ def test_no_neighbours_make_no_candidate():
     assert timeout_candidate(subject(), asked(), []) is False
 
 
+def test_a_reply_in_words_not_yet_shown_makes_a_candidate_with_no_neighbours():
+    replied = asked(reply_text="I go there on Saturdays now", reply_at=NOW - timedelta(days=1))
+
+    assert replied.reply_not_shown
+    assert timeout_candidate(subject(), replied, []) is True
+
+
+def test_a_reply_already_shown_with_only_older_neighbours_makes_no_candidate():
+    shown = asked(reply_text="I go there on Saturdays now", reply_at=NOW - timedelta(days=5),
+                  offered_at=NOW - timedelta(days=4))
+
+    assert timeout_candidate(subject(), shown, [subject(), neighbour("old", 100)]) is False
+
+
 def test_a_question_never_asked_has_no_candidate():
     queued = question(QuestionStatus.QUEUED, fact_id="f1")
 

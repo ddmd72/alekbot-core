@@ -233,7 +233,11 @@ class TestSelection:
         assert [q.question_id for q in task.questions] == ["qr"]
         assert task.questions[0].reply_text == "yes, still there every Tuesday"
         state = await world.review_store.get_state(ACC)
-        assert dict(state.offers) == {old: 1, newer: 1, undated: 1, offered_once: 2, kept_twice: 2}  # the reply fact is no offer
+        # the reply fact is no offer; step 7 queued the kept-twice fact and removed its entry (S4-D20)
+        assert dict(state.offers) == {old: 1, newer: 1, undated: 1, offered_once: 2}
+        assert world.docs[kept_twice]["state"] == "current"
+        assert [(q.fact_id, q.status) for q in await open_questions(world) if q.fact_id == kept_twice] == \
+            [(kept_twice, QuestionStatus.QUEUED)]
         assert (await stored_question(world, "qr")).offered_at == NOW                # shown once, before routing
         assert (await stored_question(world, "qh")).status is QuestionStatus.UNANSWERED
         assert world.docs[held]["state"] == "stale"
