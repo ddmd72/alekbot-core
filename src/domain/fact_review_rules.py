@@ -75,7 +75,7 @@ def select_batch(
     candidates; they are current, are not filtered, and keep the order given. Then the stale facts by (offers, longest
     stale first, id): a fact with an open question is the question's business, and one offered MAX_OFFERS times is asked
     instead (`kept_twice`)."""
-    held = _open_fact_ids(questions)
+    held = open_fact_ids(questions)
     waiting = sorted(
         (f for f in stale if f.id not in held and offers.get(f.id, 0) < MAX_OFFERS),
         key=lambda f: (offers.get(f.id, 0), queue_key(f), f.id),
@@ -105,13 +105,14 @@ def offered(offers: Mapping[str, int], batch: Sequence[FactEntity]) -> Dict[str,
 def kept_twice(stale: Sequence[FactEntity], offers: Mapping[str, int], questions: Iterable[FactReviewQuestion]) -> List[FactEntity]:
     """The stale facts the model has left undecided MAX_OFFERS times and that have no open question: they are asked
     (never revived by code), the longest stale first."""
-    held = _open_fact_ids(questions)
+    held = open_fact_ids(questions)
     return sorted(
         (f for f in stale if offers.get(f.id, 0) >= MAX_OFFERS and f.id not in held), key=lambda f: (queue_key(f), f.id)
     )
 
 
-def _open_fact_ids(questions: Iterable[FactReviewQuestion]) -> frozenset[str]:
+def open_fact_ids(questions: Iterable[FactReviewQuestion]) -> frozenset[str]:
+    """The facts of the open questions (queued, pending, asked, unanswered): the review holds them, the janitor skips them."""
     return frozenset(q.fact_id for q in questions if q.is_open)
 
 
@@ -406,7 +407,7 @@ def _queue_may_go(state: FactReviewState, questions: Sequence[FactReviewQuestion
 
 def pool(stale_count: int, questions: Iterable[FactReviewQuestion]) -> int:
     """Facts in the review's hands: the stale ones plus the facts of open questions."""
-    return stale_count + len(_open_fact_ids(questions))
+    return stale_count + len(open_fact_ids(questions))
 
 
 def queue_alert(state: FactReviewState, questions: Iterable[FactReviewQuestion]) -> Optional[QueueAlertAction]:

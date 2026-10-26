@@ -8,6 +8,7 @@ a retried close never sends twice.
 from datetime import datetime
 from typing import Any, Dict, Final, Literal
 
+from .local_time import local_date
 from .memory_write_lease import defer_bucket
 
 FACT_REVIEW_TASK: Final[str] = "fact_review"
@@ -29,3 +30,9 @@ def defer_key(account_id: str, now: datetime) -> str:
 def next_key(question_id: str) -> str:
     """The dedup key of the send released by closing the current question `question_id`."""
     return f"fact-review-next:{question_id}"
+
+
+def daily_key(account_id: str, now: datetime, tz: str) -> str:
+    """The dedup key of the janitor's daily review for `account_id`: one per owner-local calendar day (`tz` is the owner's
+    zone), so a second run the same local day names the same task and a run after local midnight a new one."""
+    return f"fact-review:{account_id}:{local_date(now, tz).isoformat()}"

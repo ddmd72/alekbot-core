@@ -721,6 +721,11 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         counters=container.fact_lifecycle_counters,
         alert_sink=_alert_webhook,
         dry_run=_fact_sweep_dry_run,
+        review_store=container.fact_review_store,
+        task_queue=agent_task_queue,
+        owner_zones=_owner_zones,
+        account_repo=account_repo,
+        user_repo=user_repo,
     )
 
     # The Cabinet's fact writes (the owner's delete), over the same fact repository the agents use.

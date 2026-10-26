@@ -2,7 +2,7 @@
 from dataclasses import dataclass, fields
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Final, Mapping, Optional, Tuple
 
 
 class CounterField(StrEnum):
@@ -31,6 +31,10 @@ class CounterField(StrEnum):
     ALREADY_ANSWERED = "already_answered"
     REPLY_INTAKE_FAILED = "reply_intake_failed"
     LABELS_FALLBACK = "labels_fallback"
+
+
+# The counters of the memory review and its answers: every counter but the expiry tool errors, which the expiry path counts.
+REVIEW_FIGURES: Final[Tuple[CounterField, ...]] = tuple(f for f in CounterField if f is not CounterField.EXPIRY_TOOL_ERRORS)
 
 
 def check_count(name: str, value: Any) -> None:
@@ -116,6 +120,10 @@ class FactLifecycleDay:
     already_answered: int = 0
     reply_intake_failed: int = 0
     labels_fallback: int = 0
+
+    def has_review_figures(self) -> bool:
+        """Any counter of the memory review or its answers is above zero (`REVIEW_FIGURES`)."""
+        return any(getattr(self, figure.value) for figure in REVIEW_FIGURES)
 
     @classmethod
     def of(
