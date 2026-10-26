@@ -199,7 +199,7 @@ def review_script(*extra: ToolCall):
 
 async def seed_live(world: ReviewWorld) -> None:
     """The owner's live memory: two current facts with a horizon, and one fact the janitor staled before S4."""
-    for text in ("takes the bus to work", "reads at night"):
+    for text in ("walks daily", "reads at night"):
         await world.seed(text, expires_at=NOW + timedelta(days=20))
     await world.seed_stale("old legacy note")
 
@@ -384,6 +384,33 @@ def test_each_case_went_stale_after_its_horizon_ran_out_and_a_fake_clock_before_
     assert len({c.fact_id for c in (*cases.stale_cases(NOW), *cases.reply_cases(NOW))}) == 8
 
 
+@pytest.mark.parametrize("days_later", [0, 3, 30, 365, 5 * 365])
+def test_a_run_on_any_later_day_stages_every_case_without_raising(days_later):
+    # The plan's date is fixed in the text; the owner may run the bench any day after the build.
+    later = NOW + timedelta(days=days_later)
+
+    for case in (*cases.stale_cases(later), *cases.reply_cases(later)):
+        assert cases.stale_moment(case, later) >= case.expires_at
+        assert cases.stale_moment(case, later) < later
+
+
+async def test_the_review_bench_prints_counts_and_no_fact_text(tmp_path, monkeypatch, capsys):
+    world = ReviewWorld()
+    tripwires(monkeypatch)
+    await seed_live(world)
+
+    kit, run, out = await whole_run(world, tmp_path, monkeypatch, capsys)
+
+    assert "G5" in out                                                        # the summary did print
+    for case in (*cases.stale_cases(NOW), *cases.reply_cases(NOW)):
+        assert case.text not in out
+        assert case.reply is None or case.reply not in out
+    for text in ("walks daily", "reads at night", "old legacy note"):
+        assert text not in out
+    for question in run["question_texts"]:
+        assert question not in out
+
+
 async def test_the_owners_channel_and_language_are_read_live_and_mirror_forces_the_fixed_language_off(tmp_path, monkeypatch):
     world = ReviewWorld()
     handles, _, live = await review_rig(world, tmp_path, monkeypatch, answered())
@@ -427,9 +454,10 @@ def test_a_review_that_names_no_basis_for_a_revive_is_counted():
 
 
 def test_the_estimate_follows_plan_8s_two_reference_batches():
-    assert support.estimate_usd(2, 1) == {"sonnet": 0.09, "opus": 0.17}
-    assert support.estimate_usd(20, 1) == {"sonnet": 0.26, "opus": 0.52}
-    assert support.estimate_usd(20, 2)["opus"] == 1.05
+    # Reviewer ruling (T12b, F1): the banner gives the upper figure of plan section 8's ranges.
+    assert support.estimate_usd(2, 1) == {"sonnet": 0.10, "opus": 0.20}
+    assert support.estimate_usd(20, 1) == {"sonnet": 0.40, "opus": 0.80}
+    assert support.estimate_usd(20, 2)["opus"] == 1.60
 
 
 def test_the_review_gate_lines_flag_a_long_pass_an_abandoned_refusal_and_a_stopped_run():
@@ -531,7 +559,8 @@ async def test_the_answer_bench_runs_a_case_through_the_real_stage_1_and_judges_
 
 
 async def test_a_write_where_none_belongs_fails_the_case_and_the_summary_names_it(store, tmp_path):
-    agent, kit = await kit_agent(store, tmp_path, metered(calls(create("Alex is a pilot"))), answered(), answered(), answered())
+    # The failure the case exists for: the quoted fact re-created from a digit reply.
+    agent, kit = await kit_agent(store, tmp_path, metered(calls(create(cases.QUOTED))), answered(), answered(), answered())
     handles = SimpleNamespace(agent=agent)
     args = SimpleNamespace(user_id=USER, account_id=ACC)
     case = next(c for c in cases.answer_cases() if c.name == "digit_reply")
@@ -554,3 +583,26 @@ async def test_an_answer_bench_run_writes_nothing_live(store, tmp_path):
         await answers_bench.run_case(kit, handles, case, [], args)
 
     assert {name: (col.docs, dict(col.versions)) for name, col in store.db.cols.items() if col.docs} == before
+
+
+def test_the_duplicate_cases_are_recorded_after_the_surgery_they_describe():
+    by_key = {c.key: c for c in cases.stale_cases(NOW)}
+    surgery = datetime(2026, 10, 5, tzinfo=timezone.utc)
+
+    assert by_key["duplicate_a"].reported > surgery and by_key["duplicate_b"].reported > surgery
+    assert by_key["duplicate_a"].reported < by_key["duplicate_b"].reported
+    assert by_key["duplicate_a"].ttl_days == by_key["duplicate_b"].ttl_days == 10
+
+
+async def test_a_failed_answer_run_shows_fixed_words_and_not_the_agents_error(store, tmp_path, monkeypatch):
+    agent, kit = await kit_agent(store, tmp_path, answered())
+    handles = SimpleNamespace(agent=agent)
+    args = SimpleNamespace(user_id=USER, account_id=ACC)
+
+    async def failing(*a: Any, **k: Any):
+        raise s3_bench_support.KitRunFailed("Alex trains at the FitLife gym")
+
+    monkeypatch.setattr(answers_bench, "execute", failing)
+    result = await answers_bench.run_case(kit, handles, cases.answer_cases()[0], [], args)
+
+    assert result["ok"] is False and result["why"] == "the run failed"

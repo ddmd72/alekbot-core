@@ -89,8 +89,8 @@ async def run_case(
     message = build_message(kit, case, bio_facts, args.user_id, args.account_id, datetime.now(timezone.utc))
     try:
         await execute(handles.agent, message, args.user_id, args.account_id, f"Stage 1 of {case.name}")
-    except KitRunFailed as exc:
-        return {"case": case.name, "rule": case.rule, "ok": False, "why": f"the run failed: {exc}", "writes": []}
+    except KitRunFailed:     # the error text may hold fact text: the terminal gets fixed words, the log has the rest
+        return {"case": case.name, "rule": case.rule, "ok": False, "why": "the run failed", "writes": []}
     writes = await stage1_writes(kit, first_row)
     ok, why = judge(case, writes)
     return {

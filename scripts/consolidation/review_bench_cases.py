@@ -76,12 +76,12 @@ def stale_cases(now: datetime) -> Tuple[FactCase, ...]:
         ),
         FactCase(
             "duplicate_a", "Alex is recovering from knee surgery.",
-            FactDomain.HEALTH, FactType.STATE, now - timedelta(days=46), 30,
+            FactDomain.HEALTH, FactType.STATE, _utc(2026, 10, 6), 10,
             "the two say one thing: decided together (one closed in favour of the other) or both asked; never both revived",
         ),
         FactCase(
             "duplicate_b", "The user had knee surgery on 2026-10-05 and is recovering.",
-            FactDomain.HEALTH, FactType.STATE, now - timedelta(days=45), 30,
+            FactDomain.HEALTH, FactType.STATE, _utc(2026, 10, 7), 10,
             "the same case as duplicate_a",
         ),
         FactCase(

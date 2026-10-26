@@ -37,9 +37,9 @@ REVIEW_TASK = Intent.REVIEW_STALE_FACTS     # the payload task the service route
 REVIEW_PASS = "review"                      # the pass label in the kit's report (the actor of the pass)
 G5_MAX_TURNS = 13                           # of the review's 15
 
-# Plan §8's two reference points (a batch of 2 facts, a batch of 20), as dollars: the review's cost is near-linear in the
-# batch. Sonnet / Opus, per run.
-_COST_PER_RUN = {"sonnet": (0.071, 0.0094), "opus": (0.136, 0.0194)}
+# Plan §8's two reference points (a batch of 2 facts, a batch of 20), at the upper figure of each range, as dollars: the
+# review's cost is near-linear in the batch. Sonnet / Opus, per run.
+_COST_PER_RUN = {"sonnet": (0.0667, 0.01667), "opus": (0.1333, 0.03333)}
 
 
 def utc_now() -> datetime:
