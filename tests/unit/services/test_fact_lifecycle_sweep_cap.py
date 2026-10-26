@@ -9,7 +9,7 @@ from datetime import timedelta
 
 import pytest
 
-from src.services import fact_lifecycle_sweep_service as service_module
+from src.domain import fact_lifecycle_sweep as sweep_rules
 from tests.support.fact_kit import ACC, OTHER
 from tests.support.fact_lifecycle_world import NOW, PAST, JanitorWorld
 
@@ -18,8 +18,8 @@ DAY = NOW.date()
 
 @pytest.fixture
 def recent_review(monkeypatch):
-    real = service_module.breaker_reason
-    monkeypatch.setattr(service_module, "breaker_reason", lambda count, last, now: real(count, now - timedelta(hours=1), now))
+    real = sweep_rules.breaker_reason      # T9p: `plan_sweep` calls the breaker, so the seam is the domain module
+    monkeypatch.setattr(sweep_rules, "breaker_reason", lambda count, last, now: real(count, now - timedelta(hours=1), now))
 
 
 def daily(world, account=ACC):
