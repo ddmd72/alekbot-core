@@ -28,7 +28,7 @@ this module imports nothing from it). Documents are nested dicts. Evaluated, not
   decorator that runs the fake's loop for an `EvalTransaction` and the original decorator, captured at install time, for
   any other transaction; code that decorates inside its method therefore works on `EvalDb` in every test. Interference
   hooks for tests: `EvalDb.interfere_on_txn_read` (another transaction commits to a document at the moment a transaction
-  reads it) and `EvalDb.raise_on_txn_read` (the read raises once, as a read-time `Aborted` does on real Firestore).
+  reads it), `EvalDb.interfere_on_txn_query` (the same, right after a transactional query returned the document) and `EvalDb.raise_on_txn_read` (the read raises once, as a read-time `Aborted` does on real Firestore).
   `EvalDb.get_all` yields in the reverse of the input order: real Firestore promises no order, so a caller must pair by
   `snap.id`;
 - opt-in index refusal: `EvalDb(indexes=..., groups=...)` raises `FailedPrecondition` for a query that needs a
@@ -487,6 +487,11 @@ class EvalQuery:
             for snap in result:
                 if isinstance(snap, EvalSnap):
                     transaction._note_read(snap.reference)
+            for snap in result:
+                if isinstance(snap, EvalSnap):
+                    queued = self.db._query_interference.get((snap.reference.col.name, snap.reference.id))
+                    if queued:
+                        self.db._interfere(snap.reference, queued.pop(0))
         return result
 
     async def stream(self, transaction: Any = None):   # type: ignore[no-untyped-def]
@@ -804,6 +809,7 @@ class EvalDb:
         self.commits: List[List[tuple]] = []
         self._clock = 0
         self._interference: Dict[Tuple[str, str], List[Tuple[Dict[str, Any], bool]]] = {}
+        self._query_interference: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         self._raises: Dict[Tuple[str, str], List[BaseException]] = {}
         self.declared = _load_indexes(indexes)
         self.groups = dict(groups or {})
@@ -858,10 +864,17 @@ class EvalDb:
     def interfere_on_txn_read(self, collection: str, doc_id: str, fields: Dict[str, Any], after_read: bool = False) -> None:
         """Queue one update of `fields` (an `update`: dotted keys are paths) that another transaction commits when the
         next transactional `get` of the document happens (`EvalDocRef.get(transaction=)` and `get_all`; a query is not
-        hooked). On a missing document the update raises `NotFound` from the reader's `get`. By default it lands before the snapshot is taken, so the
+        hooked: see `interfere_on_txn_query`). On a missing document the update raises `NotFound` from the reader's `get`. By default it lands before the snapshot is taken, so the
         reader sees the new data and `update_time`; with `after_read=True` it lands after, so the reader holds the old
         snapshot and its commit aborts and re-runs the body. Each call queues one conflict, consumed by one read."""
         self._interference.setdefault((collection, doc_id), []).append((fields, after_read))
+
+    def interfere_on_txn_query(self, collection: str, doc_id: str, fields: Dict[str, Any]) -> None:
+        """Queue one update of `fields` (an `update`: dotted keys are paths) that another transaction commits right after a
+        transactional query returned the document, its read already noted: the reader holds the old snapshot, so its commit
+        aborts and re-runs the body. A non-transactional query, or one that does not return the document, does not consume
+        it. Each call queues one conflict, consumed by one query."""
+        self._query_interference.setdefault((collection, doc_id), []).append(fields)
 
     def raise_on_txn_read(self, collection: str, doc_id: str, exc: BaseException) -> None:
         """Queue one error for the next transactional `get` of the document (a read-time `Aborted`, for instance)."""

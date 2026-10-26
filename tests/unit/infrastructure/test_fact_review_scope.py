@@ -230,6 +230,19 @@ async def test_updates_that_are_not_an_object_are_refused_with_their_shape(world
     assert state_of(world, fact) == "stale"
 
 
+async def test_updates_the_parser_refuses_are_a_scope_refusal_with_the_parsers_text(world):
+    fact = await stale(world, "plays tennis on Sundays")
+    scope = await scope_of(world, fact)
+    before = dict(world.docs[fact])
+
+    result = await scope.update_fact({"fact_id": fact, "updates": {"state": "flying"}})
+
+    assert {k: result[k] for k in ("fact_id", "status", "refused")} == {"fact_id": fact, "status": "failed", "refused": "scope"}
+    assert result["message"].startswith("Invalid state 'flying'")
+    assert world.docs[fact] == before
+    assert scope.decisions() == [] and [f.id for f in scope.kept()] == [fact]
+
+
 async def test_a_malformed_basis_is_a_basis_refusal(world):
     fact = await stale(world, "a")
     scope = await scope_of(world, fact)

@@ -1,4 +1,5 @@
 """The janitor's run guard in FirestoreFactLifecycleCounters on the evaluating fake: the stored document and the transactions (S4-D10)."""
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -121,3 +122,20 @@ async def test_acquire_refuses_naive_datetimes_and_an_empty_span(counters):
         await counters.acquire_run("o1", T0, (T0 + SPAN).replace(tzinfo=None))
     with pytest.raises(ValueError):
         await counters.acquire_run("o1", T0, T0)
+
+
+async def test_runs_that_all_read_the_free_guard_before_any_commits_still_get_one_winner(counters, db, env):
+    _collection(db, env).yield_on_get = True     # every run reads the free guard before any of them commits
+    results = await asyncio.gather(*(counters.acquire_run(f"o{i}", T0, T0 + SPAN) for i in range(4)))
+    assert sorted(results) == [False, False, False, True]
+    assert _collection(db, env).docs["sweep"]["run_owner"] == f"o{results.index(True)}"
+
+
+async def test_a_release_racing_a_takeover_leaves_the_new_holders_guard(counters, db, env):
+    await counters.acquire_run("o1", T0, T0 + SPAN)
+    _collection(db, env).yield_on_get = True      # both read o1's guard before either commits
+    later = T0 + SPAN                              # o1's guard has expired
+    taken, _ = await asyncio.gather(counters.acquire_run("o2", later, later + SPAN), counters.release_run("o1"))
+    assert taken is True
+    assert _collection(db, env).docs["sweep"]["run_owner"] == "o2"
+    assert await counters.acquire_run("o3", later, later + SPAN) is False
