@@ -10,8 +10,7 @@ budget at routing time (as `ConsolidationService`): the agent's timeout is what 
 pass ends before the lease does however long the steps before it took. Every question close goes through
 `FactAnswerService.close_question`; nothing here closes one itself.
 
-Built: steps 1-11 and 13-15 and the failure rule (T8a, T8b, T8c). The send (T8d1) and the digest (T8d2) are stubs that
-return an empty result.
+Built: steps 1-13 and 15 and the failure rule (T8a, T8b, T8c, T8d1). The digest (T8d2) is a stub that does nothing.
 """
 import uuid
 from dataclasses import dataclass, field
@@ -25,7 +24,7 @@ from ..domain.fact_lifecycle import REVIEW_ACCEPTS
 from ..domain.fact_lifecycle_day import CounterField
 from ..domain.fact_review_after_pass import after_pass
 from ..domain.fact_review_ask import AskRequest
-from ..domain.fact_review_frame import NOT_DELIVERED_REPLY, not_delivered_frame
+from ..domain.fact_review_frame import NOT_DELIVERED_REPLY, not_delivered_frame, question_text, review_frame
 from ..domain.fact_review_language import language_to_store
 from ..domain.fact_review_question import ClosedBy, FactReviewQuestion
 from ..domain.fact_review_result import decode_review_result
@@ -33,6 +32,7 @@ from ..domain.fact_review_rules import (
     QUEUE_ACCEPTS,
     asked_fact_unchanged,
     becomes_unanswered,
+    channel_refusal,
     due_timeouts,
     fallback_fields,
     fallback_revives,
@@ -69,7 +69,9 @@ from ..domain.fact_review_task_keys import (
     review_payload,
 )
 from ..domain.llm import Message, MessagePart
+from ..domain.local_time import local_date
 from ..domain.memory_write_lease import LEASE_BUSY_RETRY_DELAY_S, LEASE_MARGIN, agent_timeout_s, lease_until
+from ..domain.notification import NotificationChannel
 from ..domain.owner_timezone import not_owner_reason
 from ..domain.request_context import RequestContext
 from ..domain.stored_fact import StoredFact
@@ -158,7 +160,7 @@ class FactReviewService:
     Dependencies, by the step that reads them:
     - `account_repo`, `user_repo`: the owner check (step 1);
     - `agent_factory`, `owner_zones`: the setup (step 3);
-    - `texts`: whether the language mirrors the owner (step 10), the send's message (T8d1), the digest's lines (T8d2);
+    - `texts`: whether the language mirrors the owner (step 10), the send's message (step 12), the digest's lines (T8d2);
     - `lease`, `task_queue`, `run_timeout_s`: the lease and the deferral (step 4, and step 10 when no lease time is
       left); `task_queue` also takes the next question's release through `answer_service`;
     - `review_store`, `session_store`: housekeeping (step 5) and every question and state write; `session_store` also
@@ -167,7 +169,7 @@ class FactReviewService:
       writes (steps 6-8, 10, 11), the biographical cache (step 13), the revive alert's read (step 15);
     - `answer_service`: every question close (steps 6, 11);
     - `coordinator`: the review pass (step 10);
-    - `notification_state`, `channel_bindings`, `interactive`: the send's channel and post (T8d1);
+    - `notification_state`, `channel_bindings`, `interactive`: the send's channel and post (step 12);
     - `notifications`: the owner's channel for his recent messages (step 10), the digest (T8d2);
     - `alert_sink`: the revive alert (step 15);
     - `counters`: the day's counters (step 15);
@@ -368,13 +370,23 @@ class FactReviewService:
                 logger.info(f"[FactReview] question {question.question_id} was delivered: completed as asked")
                 return question.completed()
         else:
-            if question.retraction_due:
-                await self._append_pair(question, not_delivered_frame(question.question_id), NOT_DELIVERED_REPLY)
+            await self._retract(question)
             if await self._review_store.requeue_front(question.question_id, failed_today=False):
                 logger.info(f"[FactReview] question {question.question_id} was never posted: back at the queue's front")
                 return question.requeued()
         logger.warning(f"[FactReview] stuck question {question.question_id} not settled: it changed meanwhile")
         return question
+
+    async def _retract(self, question: FactReviewQuestion) -> None:
+        """The not-delivered pair after a question whose frame was appended and whose post never succeeded
+        (`retraction_due`), once per attempt: the question is marked retracted right after the pair lands, so a retry
+        that finds it still pending (its requeue failed) appends no second pair. A crash between the pair and the mark
+        can still repeat it. A question not due for one gets nothing."""
+        if not question.retraction_due:
+            return
+        await self._append_pair(question, not_delivered_frame(question.question_id), NOT_DELIVERED_REPLY)
+        if not await self._review_store.mark_retracted(question.question_id):
+            logger.warning(f"[FactReview] question {question.question_id}: not marked retracted (it changed meanwhile)")
 
     async def _append_pair(self, question: FactReviewQuestion, user_text: str, model_text: str) -> None:
         """A user/model pair in the question's session, raising when it was not stored."""
@@ -517,14 +529,81 @@ class FactReviewService:
             return None
         return stored
 
-    # ------------------------------------------------------------------------------------------------ stubs (T8d1-T8d2)
+    # ------------------------------------------------------------------------------------------------ step 12: send
 
     async def _send_next(
         self, user_id: str, account_id: str, now: datetime, zone: str, writes: _FactWrites,
     ) -> _StepResult:
-        """T8d1, step 12 (§3.7): claim, pair, post, asked; not delivered → the second pair and the queue's front.
-        Mark every fact write at once through `writes.wrote()`, right after it lands."""
-        return _StepResult()
+        """Step 12 and `mode="next"` (§3.7): one question to the owner's primary channel, when one may go.
+
+        The channel (`channel_refusal`): none usable → nothing sent, INFO. The claim (`claim_next`, deciding with the
+        domain's `may_send` in its transaction) for the owner-local day of `now`: none → nothing. The message in the
+        message language (`texts.message_for`), then the pair (`review_frame` + `question_text`, raising when not
+        stored): a failure puts the question back at the queue's front (`sent` kept, no failed day). The post: the
+        returned ref is stored (`set_message_ref`) before the question is asked (`mark_asked`), so a crash in between is
+        completed by housekeeping, never resent. A post that raises is not delivered: the not-delivered pair
+        (`_retract`), the question back at the front with today as the failed day, `not_delivered` counted. A question
+        closed meanwhile (the Cabinet, the review) stays closed; its close released the next one, so nothing is
+        released here. Writes no fact (`writes` is not marked); store errors raise."""
+        today = local_date(now, zone)
+        channel = await self._question_channel(user_id, account_id)
+        if channel is None:
+            return _StepResult()
+        claimed = await self._review_store.claim_next(account_id, today, f"{user_id}:{channel.channel_id}")
+        if claimed is None:
+            return _StepResult()
+        qid = claimed.question_id
+        try:
+            message = await self._texts.message_for(claimed, user_id, account_id)
+        except Exception:
+            await self._requeue(claimed, failed_today=False, why="its message could not be built")
+            raise
+        try:
+            await self._append_pair(claimed, review_frame(qid), question_text(message))
+        except Exception:
+            await self._requeue(claimed, failed_today=False, why="its pair was not appended")
+            return _StepResult()
+        if not await self._review_store.mark_appended(qid, now):
+            # Closed between the claim and here: the owner is not sent it, and the history says so.
+            logger.info(f"[FactReview] question {qid} was closed before it was posted; not sent")
+            await self._append_pair(claimed, not_delivered_frame(qid), NOT_DELIVERED_REPLY)
+            return _StepResult()
+        appended = claimed.appended(now)
+        try:
+            ref = await self._interactive.post(channel.platform, channel.channel_id, message)
+        except Exception as exc:
+            logger.warning(f"[FactReview] question {qid} not delivered on {channel.platform}: {type(exc).__name__}: {exc}")
+            await self._retract(appended)
+            await self._requeue(appended, failed_today=True, why="it was not delivered")
+            return _StepResult(counts={CounterField.NOT_DELIVERED: 1})
+        if not await self._review_store.set_message_ref(qid, ref):
+            logger.warning(f"[FactReview] question {qid} was posted at {ref.message_id} but closed meanwhile; ref not kept")
+            return _StepResult(counts={CounterField.QUESTIONS_SENT: 1})
+        if await self._review_store.mark_asked(qid, now):
+            logger.info(f"📨 [FactReview] question {qid} sent to account {account_id[:8]} on {channel.platform}")
+        else:
+            logger.info(f"[FactReview] question {qid} was posted and closed meanwhile; it stays closed")
+        return _StepResult(counts={CounterField.QUESTIONS_SENT: 1})
+
+    async def _question_channel(self, user_id: str, account_id: str) -> Optional[NotificationChannel]:
+        """The owner's primary channel when a question may go there (`channel_refusal`), else None (INFO, every run:
+        without a usable channel no question becomes current, so no close releases a `next` run and only the daily run
+        gets here)."""
+        primary = await self._notification_state.get_primary(user_id)
+        binding = await self._channel_bindings.get(primary.channel_id) if primary is not None else None
+        refusal = channel_refusal(primary, binding)
+        if refusal is not None:
+            logger.info(f"[FactReview] no question sent to account {account_id[:8]}: {refusal}; the queue waits")
+            return None
+        return primary
+
+    async def _requeue(self, question: FactReviewQuestion, failed_today: bool, why: str) -> None:
+        if await self._review_store.requeue_front(question.question_id, failed_today=failed_today):
+            logger.info(f"[FactReview] question {question.question_id} back at the queue's front: {why}")
+        else:
+            logger.warning(f"[FactReview] question {question.question_id} not requeued ({why}): it changed meanwhile")
+
+    # ------------------------------------------------------------------------------------------------ stub (T8d2)
 
     async def _digest(self, user_id: str, account_id: str, now: datetime, zone: str) -> None:
         """T8d2, step 14 (§3.11): the weekly digest when due."""

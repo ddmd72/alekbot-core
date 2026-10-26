@@ -6,6 +6,7 @@ Statuses of a question move only through the methods of `FactReviewQuestion`; no
 from datetime import date, datetime, timedelta, timezone
 from typing import AbstractSet, Any, Callable, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence
 
+from .channel_binding import ChannelBinding
 from .entities import ExpiryKind, FactEntity, FactState
 from .fact_expiry import EXPIRY_NONE, Expiry, stored_expiry
 from .fact_update import ParsedFactUpdate
@@ -23,6 +24,7 @@ from .fact_review_state import FactReviewState
 from .fact_review_task import neighbours_of
 from .fact_write_context import as_utc
 from .local_time import local_date
+from .notification import NotificationChannel
 from .pass_actor import PassActor
 from .settings import DEFAULT_FACT_REVIEW_INTERVAL_DAYS
 from .user import UserBotConfig
@@ -44,6 +46,8 @@ _DAY = timedelta(days=1)
 # Why the janitor starts a review, in the order they are tried.
 ReviewReason = Literal["stale", "reply", "timeout", "pending", "digest", "queue"]
 QueueAlertAction = Literal["raise", "rearm"]
+# Why no question may go to the owner's chat (S4-D21).
+ChannelRefusal = Literal["no_primary_channel", "companion_channel"]
 
 
 # ------------------------------------------------------------------------------------------------ selection
@@ -149,6 +153,20 @@ def may_send(state: FactReviewState, today: date, current: Optional[FactReviewQu
     if sent_today(state, today) >= MAX_QUESTIONS_PER_DAY:
         return False
     return state.delivery_failed_on != today
+
+
+def channel_refusal(
+    primary: Optional[NotificationChannel], binding: Optional[ChannelBinding],
+) -> Optional[ChannelRefusal]:
+    """Why no question may be sent now, or None (S4-D21): questions go only to the owner's primary channel (`primary`;
+    no fallback to the last active one), and never to one whose binding has a companion's memory (`binding`, that
+    channel's), whose session is the companion's, not Alek's. Without a channel the queue waits; the Cabinet can
+    answer it."""
+    if primary is None:
+        return "no_primary_channel"
+    if binding is not None and binding.companion_config is not None:
+        return "companion_channel"
+    return None
 
 
 def becomes_unanswered(question: FactReviewQuestion, now: datetime, tz: str) -> bool:

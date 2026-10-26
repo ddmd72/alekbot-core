@@ -168,7 +168,8 @@ class FactReviewQuestion(BaseModel):
 
     @property
     def retraction_due(self) -> bool:
-        """The not-delivered frame must follow: the question's frame was appended but the post never succeeded."""
+        """The not-delivered frame must follow: the question's frame was appended but the post never succeeded. False
+        again once `retracted`, so a retry that finds the question still pending appends no second retraction."""
         return self.status is QuestionStatus.PENDING and not self.delivered and self.appended_at is not None
 
     @property
@@ -195,6 +196,13 @@ class FactReviewQuestion(BaseModel):
         """The post succeeded and landed at `ref` (once, and only after the frame was appended)."""
         self._require(self.status is QuestionStatus.PENDING and self.appended_at is not None and not self.delivered, "posted")
         return self._moved(message_ref=ref)
+
+    def retracted(self) -> Self:
+        """The not-delivered frame now follows the question's frame in history: the frame no longer stands, so
+        `appended_at` is cleared (once; only while `retraction_due`). The question stays pending until it is requeued,
+        and it can no longer be posted (`posted` needs an appended frame)."""
+        self._require(self.retraction_due, "retracted")
+        return self._moved(appended_at=None)
 
     def asked(self, at: datetime) -> Self:
         """pending, posted -> asked."""

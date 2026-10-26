@@ -239,6 +239,9 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def mark_appended(self, question_id: str, at: datetime) -> bool:
         return await self._move(question_id, lambda q: q.appended(at))
 
+    async def mark_retracted(self, question_id: str) -> bool:
+        return await self._move(question_id, lambda q: q.retracted())
+
     async def mark_asked(self, question_id: str, at: datetime) -> bool:
         return await self._move(question_id, lambda q: q.asked(at))
 

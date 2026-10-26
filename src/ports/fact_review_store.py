@@ -116,6 +116,11 @@ class FactReviewStore(ABC):
         is still to be appended."""
 
     @abstractmethod
+    async def mark_retracted(self, question_id: str) -> bool:
+        """`retracted()`, in a transaction over the question: the not-delivered frame was appended after its frame.
+        False: no such question, or not a pending, appended, never posted one."""
+
+    @abstractmethod
     async def mark_asked(self, question_id: str, at: datetime) -> bool:
         """`asked(at)`, in a transaction over the question. False: no such question, or not pending and posted (one the
         owner closed meanwhile stays closed)."""
