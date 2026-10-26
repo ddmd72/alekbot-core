@@ -61,12 +61,17 @@ def review_item(fact: FactEntity, lineage: Sequence[FactEntity], nearest: Sequen
     ones before it (a lower version) are its versions. `nearest`: current facts by its vector, nearest first; the first
     MAX_NEIGHBOURS outside its lineage are its neighbours. No vector is kept: the pass reads text."""
     versions = sorted((f for f in lineage if f.version < fact.version and f.id != fact.id), key=lambda f: f.version)
-    neighbours = [f for f in nearest if f.lineage_id != fact.lineage_id][:MAX_NEIGHBOURS]
     return ReviewItem(
         fact=_text_only(fact),
         versions=tuple(_text_only(f) for f in versions),
-        neighbours=tuple(_text_only(f) for f in neighbours),
+        neighbours=tuple(_text_only(f) for f in neighbours_of(fact, nearest)),
     )
+
+
+def neighbours_of(fact: FactEntity, nearest: Sequence[FactEntity]) -> List[FactEntity]:
+    """The fact's neighbours: of the current facts nearest to it by its vector (`nearest`, nearest first), the first
+    MAX_NEIGHBOURS outside its own lineage."""
+    return [f for f in nearest if f.lineage_id != fact.lineage_id][:MAX_NEIGHBOURS]
 
 
 def questions_about(facts: Iterable[FactEntity], questions: Iterable[FactReviewQuestion]) -> Tuple[FactReviewQuestion, ...]:
