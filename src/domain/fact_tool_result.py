@@ -6,13 +6,12 @@ backstop checks one status, and the dry-run kit counts them. One spelling lives 
 a write into "not a write". The words are `domain.fact_tool_result`; the port's docstrings point here.
 """
 
-from typing import Any, Dict, FrozenSet, List, Sequence
+from typing import Any, Dict, FrozenSet, Sequence
 
 from .consolidation_pass_stats import (
     OUTCOME_BORN_DUE, OUTCOME_ERROR, OUTCOME_EXPIRY, OUTCOME_OK, OUTCOME_REVIEW_REFUSAL, OUTCOME_SCOPE_REFUSAL,
 )
 from .fact_update_outcome import EXPIRY_REFUSALS, FactUpdateOutcome, UpdateRefusal
-from .fact_write_context import NO_READABLE_SOURCE_NOTE
 
 # `status` of a tool result.
 STATUS_CREATED = "created"
@@ -38,14 +37,6 @@ REFUSED_SCOPE = "scope"
 REFUSED_ASK = "ask"
 _REVIEW_OUTCOMES: Dict[str, str] = {
     REFUSED_BASIS: OUTCOME_REVIEW_REFUSAL, REFUSED_ASK: OUTCOME_REVIEW_REFUSAL, REFUSED_SCOPE: OUTCOME_SCOPE_REFUSAL,
-}
-
-# Codes of the notes a reader needs to recognise. The text stays in the domain beside the rule that writes it; the
-# result carries the code in `note_codes`, so no reader matches prose.
-NOTE_NO_READABLE_SOURCE = "no_readable_source"
-
-_NOTE_CODES: Dict[str, str] = {
-    NO_READABLE_SOURCE_NOTE: NOTE_NO_READABLE_SOURCE,
 }
 
 
@@ -107,18 +98,9 @@ def outcome_of(result: Any) -> str:
     return OUTCOME_OK
 
 
-def note_codes_of(notes: Sequence[str]) -> List[str]:
-    """The codes of the known notes among `notes`, in order, matched by equality."""
-    return [_NOTE_CODES[note] for note in notes if note in _NOTE_CODES]
-
-
 def with_notes(result: Dict[str, Any], notes: Sequence[str]) -> Dict[str, Any]:
-    """Put the notes into the tool result (in place, and returned): `note` joins them with "; ", and `note_codes`
-    lists the codes of the known ones, present only when there is at least one. Each element of `notes` is one whole
-    note, so a code is found by equality; never pass several notes glued into one string."""
+    """Put the notes into the tool result (in place, and returned): `note` joins them with "; ". Only the model reads it;
+    a reader of the typed outcome compares `FactUpdateOutcome.notes` with the domain's note constants."""
     if notes:
         result["note"] = "; ".join(notes)
-        codes = note_codes_of(notes)
-        if codes:
-            result["note_codes"] = codes
     return result

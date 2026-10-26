@@ -15,7 +15,7 @@ from src.domain.entities import FactState
 from src.domain.exceptions import FactWriteConflict
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_reasons import answer_reason
-from src.domain.fact_tool_result import NOTE_NO_READABLE_SOURCE, note_codes_of, update_result
+from src.domain.fact_tool_result import update_result
 from src.domain.fact_update import ParsedFactUpdate, parse_fact_update
 from src.domain.fact_update_outcome import EXPIRY_REFUSALS, FactUpdateOutcome, UpdateRefusal
 from src.domain.fact_write_context import NO_READABLE_SOURCE_NOTE
@@ -233,15 +233,15 @@ async def test_a_conflict_twice_is_its_own_refusal(monkeypatch):
 
 # ------------------------------------------------------------------------------------------------ the renderer
 
-def test_the_renderer_writes_the_notes_with_their_codes():
+def test_the_renderer_writes_the_notes_joined():
     outcome = FactUpdateOutcome(fact_id="a", written_id="a", version=1, current_id="a",
                                 notes=(NO_READABLE_SOURCE_NOTE, "another note"))
 
     assert json.dumps(update_result(outcome)) == json.dumps({
         "fact_id": "a", "status": "updated", "version": 1, "message": "Fact updated successfully",
-        "note": f"{NO_READABLE_SOURCE_NOTE}; another note", "note_codes": [NOTE_NO_READABLE_SOURCE],
+        "note": f"{NO_READABLE_SOURCE_NOTE}; another note",
     })
-    assert note_codes_of(outcome.notes) == [NOTE_NO_READABLE_SOURCE]
+    assert NO_READABLE_SOURCE_NOTE in outcome.notes
 
 
 def test_the_renderer_puts_history_notes_and_the_forwarded_id_in_their_order():

@@ -44,9 +44,12 @@ RU_LABELS = {
     "memory_answer_noted": "Спасибо, записал.",
     "memory_reply_noted": "Понял, учту.",
     "memory_already_answered": "Уже отвечено, спасибо.",
+    "memory_fact_changed": "Этот факт тем временем изменился, поэтому я не применил ответ; я к нему ещё вернусь.",
     "memory_question_closed": "Этот вопрос закрыт.",
     "memory_digest_header": "Факты, которые я отложил на этой неделе:",
     "memory_digest_footer": "Чтобы вернуть один, скажите в чате, что это всё ещё так.",
+    "memory_digest_archived": "это уже не так",
+    "memory_digest_invalidated": "этого никогда не было",
 }
 
 
@@ -232,6 +235,18 @@ async def test_a_prompt_failure_is_a_failure_response_and_no_model_call(world):
 
     assert response.status == AgentStatus.FAILED and "review prompt failed" in response.error
     assert agent._llm.generate_content.await_count == 0
+
+
+async def test_a_model_failure_in_the_loop_is_a_failure_response_and_the_fact_is_left(world):
+    fact = await _stale(world, "plays tennis on Sundays")
+    agent = _agent(world, [])
+    agent._llm.generate_content = AsyncMock(side_effect=RuntimeError("provider down"))
+
+    response = await _run(agent, await _task(world, fact))
+
+    assert response is not None and response.status == AgentStatus.FAILED
+    assert response.error == "review_stale_facts failed: provider down"
+    assert world.docs[fact]["state"] == "stale"
 
 
 async def test_a_payload_without_a_review_task_is_a_failure(world):

@@ -39,6 +39,7 @@ from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.delegation_timestamp import strip_delegation_timestamp
 from ..domain.llm import Message, MessagePart
 from ..domain.messaging import SmartResponse
+from ..domain.notify_result import EMPTY_ANSWER_ERROR, is_empty_turn
 from ..infrastructure.agent_config import TUTOR
 from ..infrastructure.agent_manifest import TUTOR as TUTOR_DESCRIPTOR
 from ..infrastructure.delegation_engine import DelegationEngine
@@ -217,7 +218,9 @@ class TutorAgent(BaseAgent):
             )
             if not (full_response or "").strip() and async_dispatches:
                 logger.info("empty_text_after_async agent=%s intents=%s", self.agent_id, async_dispatches)
-            if not (full_response or "").strip() and not async_dispatches:
+            # Tutor delivers text only (`structured_data=None` below, no delivery items), so only the text and an
+            # async dispatch can make its turn non-empty.
+            if is_empty_turn(full_response, None, (), async_dispatches):
                 logger.error(
                     "empty_answer agent=%s model=%s terminal=%s",
                     self.agent_id, self.model_name, terminal_tool_args is not None,
@@ -225,7 +228,7 @@ class TutorAgent(BaseAgent):
                            "via_terminal_tool": terminal_tool_args is not None},
                 )
                 return AgentResponse.failure(
-                    task_id=message.task_id, agent_id=self.agent_id, error="empty_answer",
+                    task_id=message.task_id, agent_id=self.agent_id, error=EMPTY_ANSWER_ERROR,
                 )
 
             summary_task = None

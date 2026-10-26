@@ -1,25 +1,55 @@
 """Facts S3 · F1 (owner, 2026-10-23): one run stales at most `BREAKER_BACKLOG - backlog` facts per account, oldest expiry
 first; the rest are `deferred`. Log-only counts `would_stale` for all and reports what the cap would hold back.
 
-In S3 no review exists (`last_review_at=None`), so any backlog trips the breaker. The tests that need a backlog without a
-tripped breaker give the service the S4 condition, a review one hour old, by wrapping `breaker_reason`.
+Without the memory review (`JanitorWorld`'s S3 janitor) there is no successful review, so any backlog trips the breaker.
+The tests that need a backlog without a tripped breaker use the S4 condition through the real seam (plan §6 B): the
+janitor wired to the real review store, whose state records a review that succeeded an hour ago.
 """
 import logging
 from datetime import timedelta
+from typing import Optional
 
 import pytest
 
-from src.services import fact_lifecycle_sweep_service as service_module
+from src.adapters.firestore_fact_review_store import FirestoreFactReviewStore
+from src.domain.billing import BillingAccount
+from src.domain.user import UserProfile
+from src.services.fact_lifecycle_sweep_service import FactLifecycleSweepService
+from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from tests.support.fact_kit import ACC, OTHER
 from tests.support.fact_lifecycle_world import NOW, PAST, JanitorWorld
 
 DAY = NOW.date()
+OWNER = "usr-1"
+
+
+class _Accounts:
+    async def get_account(self, account_id: str) -> Optional[BillingAccount]:
+        return BillingAccount(account_id=account_id, iam_policy={OWNER: "owner"})
+
+
+class _Users:
+    async def get_user(self, user_id: str) -> Optional[UserProfile]:
+        return UserProfile(user_id=user_id, account_id=ACC) if user_id == OWNER else None
 
 
 @pytest.fixture
-def recent_review(monkeypatch):
-    real = service_module.breaker_reason
-    monkeypatch.setattr(service_module, "breaker_reason", lambda count, last, now: real(count, now - timedelta(hours=1), now))
+def recent_review():
+    """Wire the world's janitor to the real review store and record, through that store, a review of ACC enqueued two
+    hours ago that succeeded an hour ago: the breaker's review age is fine and the review interval has not elapsed."""
+
+    async def reviewed_an_hour_ago(world: JanitorWorld, *, dry_run: bool = False) -> None:
+        store = FirestoreFactReviewStore(world.store.db, world.env)
+        await store.mark_enqueued(ACC, NOW - timedelta(hours=2))
+        await store.mark_succeeded(ACC, NOW - timedelta(hours=1))
+        accounts, users = _Accounts(), _Users()
+        world.service = FactLifecycleSweepService(
+            world.repo, world.counters, world.sink, dry_run, clock=lambda: world.now,
+            review_store=store, task_queue=None, owner_zones=OwnerTimezoneResolver(accounts, users),
+            account_repo=accounts, user_repo=users,
+        )
+
+    return reviewed_an_hour_ago
 
 
 def daily(world, account=ACC):
@@ -92,6 +122,7 @@ async def test_equal_expiry_is_cut_by_fact_id():
 
 async def test_a_backlog_of_45_with_a_recent_review_leaves_headroom_for_five(recent_review):
     world = JanitorWorld()
+    await recent_review(world)
     await seed_backlog(world, 45)
     ids = await seed_ordered(world, 10)
 
@@ -104,6 +135,7 @@ async def test_a_backlog_of_45_with_a_recent_review_leaves_headroom_for_five(rec
 
 async def test_a_conflict_inside_the_cap_does_not_use_headroom(recent_review):
     world = JanitorWorld()
+    await recent_review(world)
     await seed_backlog(world, 45)
     ids = await seed_ordered(world, 8)
     world.store.interfere(ids[0], {"last_updated": NOW})                      # the oldest conflicts
@@ -116,6 +148,7 @@ async def test_a_conflict_inside_the_cap_does_not_use_headroom(recent_review):
 
 async def test_exactly_fifty_in_the_backlog_does_not_trip_but_leaves_no_headroom(recent_review):
     world = JanitorWorld()
+    await recent_review(world)
     await seed_backlog(world, 50)
     ids = await seed_ordered(world, 3)
     await world.seed("old-writer", expires_at=PAST, expiry_kind=None)
@@ -129,6 +162,7 @@ async def test_exactly_fifty_in_the_backlog_does_not_trip_but_leaves_no_headroom
 
 async def test_fifty_one_in_the_backlog_trips_and_defers_nothing(recent_review):
     world = JanitorWorld()
+    await recent_review(world)
     await seed_backlog(world, 51)
     ids = await seed_ordered(world, 3)
 
@@ -168,6 +202,7 @@ async def test_log_only_counts_would_stale_for_all_and_reports_what_the_cap_woul
 
 async def test_log_only_with_a_backlog_of_45_reports_five_of_ten_held_back(recent_review):
     world = JanitorWorld(dry_run=True)
+    await recent_review(world, dry_run=True)
     await seed_backlog(world, 45)
     await seed_ordered(world, 10)
 

@@ -146,11 +146,11 @@ def cabinet_invalidation(shown_text: str, stored_fact: FactEntity, requested_id:
 
     A version is closed with its own text kept, so `shown_text` (the text of `requested_id`) is what the owner's page
     displayed. When the walk moved to a newer document with another text, that text was never seen: FactResolutionError
-    (the page reloads) instead of deleting it (owner, 2026-10-23).
+    instead of deleting it (owner, 2026-10-23).
     """
     if walked_to_unseen_text(shown_text, stored_fact, requested_id):
         raise FactResolutionError(
-            f"fact {requested_id} was rewritten after the page loaded; reload", current_id=stored_fact.id,
+            f"fact {requested_id} was rewritten after it was shown", current_id=stored_fact.id,
         )
     event = lifecycle_event(now, stored_fact.state, FactState.INVALIDATED, "cabinet", "deleted in the Cabinet")
     return {

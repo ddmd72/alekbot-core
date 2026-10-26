@@ -62,18 +62,27 @@ class ReviewSessionStore(FirestoreSessionStore):
 
 
 class RecordingChannel:
-    """A platform channel as `UserNotificationService.notify_raw` uses it: `send_long_text` records, or raises while `fail`."""
+    """A platform channel as `UserNotificationService.notify_raw` uses it: `send_long_text` (the bot's own markdown) and
+    `send_literal` (text shown exactly as written) record, or raise while `fail`. `texts` holds every delivered text in
+    order; `literal` holds the ones that went through `send_literal`."""
 
     def __init__(self, platform: str, channel_id: str, fail: bool = False) -> None:
         self.platform = platform
         self.channel_id = channel_id
         self.fail = fail
         self.texts: List[str] = []
+        self.literal: List[str] = []
 
     async def send_long_text(self, text: str) -> None:
         if self.fail:
             raise RuntimeError("send failed")
         self.texts.append(text)
+
+    async def send_literal(self, text: str, to_message_id: Optional[str] = None) -> None:
+        if self.fail:
+            raise RuntimeError("send failed")
+        self.texts.append(text)
+        self.literal.append(text)
 
 
 class RecordingChannelFactory(NotificationChannelFactoryPort):
@@ -96,10 +105,15 @@ class RecordingChannelFactory(NotificationChannelFactoryPort):
         """(platform, channel_id, text) of every delivered text, per channel in order."""
         return [(c.platform, c.channel_id, text) for c in self.channels.values() for text in c.texts]
 
+    @property
+    def sent_literal(self) -> List[Tuple[str, str, str]]:
+        """(platform, channel_id, text) of every text delivered through `send_literal`, per channel in order."""
+        return [(c.platform, c.channel_id, text) for c in self.channels.values() for text in c.literal]
+
 
 class RecordingInteractiveMessagePort(InteractiveMessagePort):
     """A platform that keeps what it was given. `post` numbers messages per channel and answers the ref; `show_choice`
-    records the outcome (the message then has no controls), and fails for a message that was never posted, as a
+    records the outcome (the message then has no controls, unless the outcome keeps them), and fails for a message that was never posted, as a
     platform does. `fail` / `fail_show` make the next calls raise; `unreachable` lists platforms that refuse every post.
     `plain_platforms` have no controls (as a platform served by the plain-text adapter): `show_choice` there does
     nothing and `has_controls` is False. `normalise` maps a requested channel to the one the platform returns in the ref
@@ -138,8 +152,12 @@ class RecordingInteractiveMessagePort(InteractiveMessagePort):
         return next(message for posted_ref, message in self.posted if posted_ref == ref)
 
     def has_controls(self, ref: MessageRef) -> bool:
-        """True while the message at `ref` still offers its options (no outcome has been shown for it)."""
-        return ref.platform not in self.plain_platforms and ref not in self.shown
+        """True while the message at `ref` still offers its options: no outcome has been shown for it, or the last one
+        kept them (`keep_options`, a refused pick)."""
+        if ref.platform in self.plain_platforms:
+            return False
+        shown = self.shown.get(ref)
+        return shown is None or shown.keep_options
 
 
 class FakeNotificationState(NotificationStatePort):

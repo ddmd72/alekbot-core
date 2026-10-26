@@ -100,7 +100,7 @@ class UIMessage(Enum):
     DRIVE_INACCESSIBLE_LIST_TITLE = "drive_inaccessible_list_title"
     # Slack message dropped after the session stayed busy through every re-queue (s1b AB2).
     MESSAGE_NOT_PROCESSED_BUSY = "message_not_processed_busy"
-    # The memory review's question and its replies (Facts S4 plan §3.17). These twelve are also the label set of
+    # The memory review's question and its replies (Facts S4 plan §3.17). These fifteen are also the label set of
     # `fact_review_language`: a language without UI strings gets a checked model-written copy under the same keys.
     MEMORY_REVIEW_QUESTION = "memory_review_question"
     MEMORY_OPTION_STILL_TRUE = "memory_option_still_true"
@@ -111,6 +111,9 @@ class UIMessage(Enum):
     MEMORY_ANSWER_NOTED = "memory_answer_noted"
     MEMORY_REPLY_NOTED = "memory_reply_noted"
     MEMORY_ALREADY_ANSWERED = "memory_already_answered"
+    MEMORY_FACT_CHANGED = "memory_fact_changed"
     MEMORY_QUESTION_CLOSED = "memory_question_closed"
     MEMORY_DIGEST_HEADER = "memory_digest_header"
     MEMORY_DIGEST_FOOTER = "memory_digest_footer"
+    MEMORY_DIGEST_ARCHIVED = "memory_digest_archived"
+    MEMORY_DIGEST_INVALIDATED = "memory_digest_invalidated"

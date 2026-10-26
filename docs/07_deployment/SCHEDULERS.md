@@ -24,6 +24,7 @@ Task types whose `NotificationSLA` can exceed 10 minutes must therefore pass
 | `execute_reminder` | 1500s (REMINDER × PERFORMANCE) | 1620s |
 | `daily_email_review` | 1500s (DAILY_DIGEST) | 1620s |
 | `drive_sync` | no new work after 8 min (`TICK_START_BUDGET`) | 1800s (`TICK_DEADLINE_S`) |
+| `fact_review` (the janitor's enqueue and the review's own deferral) | one review pass (a model loop under the memory-write lease) | 1800s (`REVIEW_DEADLINE_S`); the `next` send released by an answer sets none (no model call) |
 | everything else | ≤ 600s | Cloud Tasks default |
 
 The value is derived, not hardcoded: `dispatch_deadline_s(kind)` in
@@ -255,23 +256,36 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 | **HTTP** | `POST /worker` |
 | **Payload** | `{"task_type": "fact_lifecycle_sweep"}` |
 | **Attempt deadline** | `180s`; **no retry on purpose** (the job sets no `--max-retry-attempts`) |
-| **Purpose** | The fact janitor (`docs/10_rfcs/FACT_LIFECYCLE_RFC.md` D4, owner's map `docs/05_building_blocks/memory/README.md` §5.5): moves every current fact whose `expires_at` has passed to `stale`, unless the account's breaker is tripped, at most `50 − backlog` per account per run (oldest expiry first, the rest `deferred`). Zero LLM calls. Rebuilds the baseline cache of every account it changed. Stores one snapshot per account per day and posts one 🧹 ops line a day. The line's backlog age counts from `stale_since`, so the two legacy stale facts that step 6a of the S3 rollout stamps show `oldest 0d` on the stamp day and count up from there, although they have been stale for months by `last_updated`. |
-| **Handler** | `WorkerHandler._handle_fact_lifecycle_sweep()` → `FactLifecycleSweepService.sweep()`; the totals are the 200 body (`accounts`, `due`, `staled`, `would_stale`, `deferred`, `conflicts`, `no_decision`, `breaker_tripped`, `dry_run`) |
+| **Purpose** | The fact janitor (`docs/10_rfcs/FACT_LIFECYCLE_RFC.md` D4, owner's map `docs/05_building_blocks/memory/README.md` §5.5): moves every current fact whose `expires_at` has passed to `stale`, unless the account's breaker is tripped, at most `50 − backlog` per account per run (oldest expiry first, the rest `deferred`). Zero LLM calls. Rebuilds the baseline cache of every account it changed. Stores one snapshot per account per day and posts one 🧹 ops line a day. The line's backlog age counts from `stale_since`, so the two legacy stale facts that step 6a of the S3 rollout stamps show `oldest 0d` on the stamp day and count up from there, although they have been stale for months by `last_updated`. **Since S4** it also: takes a run guard first; visits every account the memory review has something to do with; leaves the due facts of open review questions alone; counts the *pool* (stale facts plus the facts of open questions) for the cap `50 − pool` and the breaker (the review interval + 72 h without a successful review, or a pool over 50); enqueues the account's `fact_review` task (below); raises the review's alerts; and adds the review's figures to the 🧹 line (owner's map §5.5, §5.6). |
+| **Handler** | `WorkerHandler._handle_fact_lifecycle_sweep()` → `FactLifecycleSweepService.sweep()`; the totals are the 200 body (`accounts`, `due`, `staled`, `would_stale`, `deferred`, `conflicts`, `no_decision`, `breaker_tripped`, `review_enqueued`, `purge_overdue`, `dry_run`), or `{"status": "busy"}` when another run holds the guard |
 | **Log-only** | The deploy creates the job in log-only mode: unless the main service has `FACT_LIFECYCLE_SWEEP_DRY_RUN` set to an explicit off value (`0`, `false`, `no`, `off`) the run writes nothing to facts or the cache and counts `would_stale` instead. Nothing in the deploy sets it; S5 does, only on the owner's word. |
-| **Index** | needs the composite `(state ASC, expires_at ASC)` on the facts collection (`config/firestore.indexes.json`), `READY` before the code ships; without it the due query fails and the run answers 500. |
+| **Index** | needs the composite `(state ASC, expires_at ASC)` on the facts collection (`config/firestore.indexes.json`), `READY` before the code ships; without it the due query fails and the run answers 500. The review's "set aside lately" read needs `(account_id ASC, state ASC, valid_to DESC)` on the same collection; the review store's own queries need no composite. |
 | **Env** | active on the single live service |
 
 Failure handling: a failure other than a write conflict stops the run, is logged with its type and the stage reached, posts one
 "🚨 Fact lifecycle run failed" to the ops sink (every ops post is capped at 10 s) and answers 500. Scheduler does not retry it:
-a retry after the 180 s deadline could overlap a run still going, and each run computes its headroom from the backlog before
-it, so two overlapping runs can stale up to twice the cap. For the same reason **do not trigger the job by hand while the 09:30
-run is going** (the manual triggers in the root `CLAUDE.md` are for other times of day); a hand run at another time is safe: the
-last run of the day replaces the day's snapshot, and the 🧹 line is posted once per **UTC day**, so a hand run before 09:30
+a retry after the 180 s deadline would run beside a run still going. Since S4 a **run guard** (`{prefix}fact_lifecycle_run`, one
+document held for 5 minutes, taken in a transaction before anything is read) makes an overlapping run harmless: it answers 200
+`busy` and does nothing, so a hand run during the scheduled one is safe. A hand run at another time is safe too: the last run of
+the day replaces the day's snapshot, and the 🧹 line is posted once per **UTC day**, so a hand run before 09:30
 Europe/Madrid on the same UTC day takes the day's line and the scheduled run then posts none (its numbers are in the snapshot). Unlike
 the fan-out jobs under "Two deadlines", the sweep does its work inside the Scheduler's own request: a run past 180 s shows as a
-failed attempt in Scheduler while it goes on, which is the overlap the no-retry rule guards against. The next day's run
-catches up after a failure. The job takes no lease and is not a Cloud Task, so there is no task-claim record. The collections it writes
-(`{prefix}fact_lifecycle_daily`, `{prefix}fact_lifecycle_lines`) carry no field named `expires_at` and **no TTL policy**.
+failed attempt in Scheduler while it goes on. The next day's run catches up after a failure. The job takes no memory-write lease and
+is not a Cloud Task, so there is no task-claim record. The collections it writes
+(`{prefix}fact_lifecycle_daily`, `{prefix}fact_lifecycle_lines`, `{prefix}fact_lifecycle_run`) carry no field named `expires_at` and **no TTL policy**.
+
+#### Enqueue-only task types of the memory review (Facts S4)
+
+Neither has a Scheduler job; both are Cloud Tasks on the main queue, delivered to `/worker` like any task and claimed by task name
+(`decisions/worker_task_dedup.md`). Cloud Tasks keeps a task name only while the task is queued or running and for about an hour
+after it ran, so a name merges tasks created close together; it does not make anything happen once a day.
+
+| Task type | Enqueued by | Payload | Name (dedup key) | Handler |
+|-----------|-------------|---------|------------------|---------|
+| `fact_review` | the janitor, when `review_due` names a reason (stale facts and the interval elapsed, a reply in words waiting, a question past its timeout, an unfinished send, the digest due, or a queued question that may go out); the review itself, to defer when the memory-write lease is taken (120 s later); `FactAnswerService`, to send the next question after the current one closes | `{user_id, account_id, mode}`; `mode` is `daily` (a whole run) or `next` (only the send of the next question; no lease, no model) | `fact-review:<account>:<owner's local date>` (janitor); `fact-review-defer:<account>:<120 s bucket>` (deferral); `fact-review-next:<question id>` (release) | `WorkerHandler._handle_fact_review()` → `FactReviewService.run(user_id, account_id, mode)`; every answer is 200 (`completed`, `deferred`, `failed`, `not_owner`); a lease, store or queue error raises (5xx, Cloud Tasks retries); a mode that is neither is 400 |
+| `interactive_choice` | the Slack interactivity route (`POST /slack/interactivity`), after it has verified the Slack signature on the raw body; one task per button press | the choice: `{binding {kind, id}, option_id, platform, platform_user_id, message_ref, at}` | `interactive_choice-` + a hash of `action_ts:user:block` (a repeated press of the same action is one task) | `WorkerHandler._handle_interactive_choice()` → `InteractiveChoiceService.handle(choice)`: the user is resolved through IAM (an unknown one is `unknown_user`), the handler is picked by the binding's kind (only `fact_question`), then the message is re-rendered; a payload that is not a choice is 400 |
+
+Without the service wired, `/worker` answers `fact_review` or `interactive_choice` with 501.
 
 ---
 
@@ -339,4 +353,4 @@ an hour. It can also be triggered manually (`POST /worker {"task_type": "sweep_c
 
 ---
 
-**Last Updated:** 2026-10-23
+**Last Updated:** 2026-10-26

@@ -55,6 +55,7 @@ from src.domain.entities import FactState
 from src.composition.service_container import ServiceContainer
 from src.config.settings import load_settings
 from src.domain.agent import AgentIntent, AgentMessage
+from src.domain.consolidation import consolidation_agent_id
 from src.domain.request_context import RequestContext
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.domain.fact_write_context import FactWriteContext
@@ -382,7 +383,7 @@ async def run_batch(
     user_message = build_user_message(batch)
     message = AgentMessage.create(
         sender="cluster_audit_script",
-        recipient=f"consolidation_agent_{user_id}",
+        recipient=consolidation_agent_id(user_id),
         intent=AgentIntent.DELEGATE,
         payload={
             "messages": [{"role": "user", "text": user_message, "timestamp": time.time()}],

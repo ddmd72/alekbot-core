@@ -67,8 +67,10 @@ class SlackAdapterFactory:
         short_link_service=None,
         skill_service=None,
         memory_fact_service=None,
+        fact_answers=None,
         long_turn_service=None,
         doc_delivery_service=None,
+        worker_queue=None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -87,6 +89,7 @@ class SlackAdapterFactory:
             consolidation_config: Optional consolidation config
             consolidation_service: Optional shared ConsolidationService; its consolidate_now serves `$consolidate`
             audio_service: Optional audio transcription service
+            worker_queue: The main task queue; a button press on an interactive message is queued on it as a `/worker` task
 
         Returns:
             HTTPModeAdapter instance
@@ -130,6 +133,7 @@ class SlackAdapterFactory:
             short_link_service=short_link_service,
             skill_service=skill_service,
             memory_fact_service=memory_fact_service,
+            fact_answers=fact_answers,
             long_turn_service=long_turn_service,
             doc_delivery_service=doc_delivery_service,
         )
@@ -162,4 +166,5 @@ class SlackAdapterFactory:
             audio_service=audio_service,
             language_service=language_service,
             localization=localization,
+            worker_queue=worker_queue,
         )

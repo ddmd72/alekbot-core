@@ -546,6 +546,7 @@ class NotesAgent(BaseAgent):
                 f"📌 Reminder set: \"{note.text}\" — {self._fmt_due(note.due)}"
                 + self._fmt_recurrence(note.recurrence)
                 + self._fmt_binding(binding, creating=True),
+                literal=True,
             )
             return result
 
@@ -592,6 +593,7 @@ class NotesAgent(BaseAgent):
                 f"📝 Reminder updated: \"{note.text}\" — {self._fmt_due(note.due)}"
                 + self._fmt_recurrence(note.recurrence)
                 + self._fmt_binding(binding, creating=False),
+                literal=True,
             )
             return {"note_id": note.note_id, "status": "updated"}
 
@@ -654,15 +656,18 @@ class NotesAgent(BaseAgent):
             return summary
         return f"{summary}\n({BINDING_NOT_APPLIED}: no reminder was created or updated in this request.)"
 
-    async def _notify(self, user_id: str, account_id: str, text: str) -> None:
-        """Best-effort transparency notification — failure is logged and swallowed."""
+    async def _notify(self, user_id: str, account_id: str, text: str, *, literal: bool = False) -> None:
+        """Best-effort transparency notification — failure is logged and swallowed. `literal`: the text carries the
+        reminder's words, which the model wrote; the platform shows them and obeys nothing in them."""
         if not self._notification_service:
             return
         try:
+            extra = {"literal": True} if literal else {}
             await self._notification_service.notify_raw(
                 user_id=user_id,
                 account_id=account_id,
                 text=text,
+                **extra,
             )
         except Exception as exc:
             logger.warning("⚠️ [NotesAgent] notify_raw failed: %s", exc)

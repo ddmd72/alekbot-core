@@ -3,10 +3,11 @@ FactLifecycleCountersPort — the per-account, per-day numbers of the fact lifec
 
 The janitor writes a snapshot of its run (`record_sweep`); whoever meets a counted event adds to its counter (`add`).
 Days are UTC days. The daily ops line is posted at most once a day (`claim_line`). The numbers are kept until deleted:
-they expire by no rule of the store.
+they expire by no rule of the store. The janitor's run guard (`acquire_run`, `release_run`) is the one exception: one
+holder at a time, with an expiry; timing lives in `domain/fact_lifecycle_run_guard.py`.
 """
 from abc import ABC, abstractmethod
-from datetime import date
+from datetime import date, datetime
 from typing import List, Mapping
 
 from ..domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot
@@ -32,3 +33,15 @@ class FactLifecycleCountersPort(ABC):
     @abstractmethod
     async def claim_line(self, day: date) -> bool:
         """True for the first caller of the day, False afterwards: the right to post the day's ops line."""
+
+    @abstractmethod
+    async def acquire_run(self, owner: str, now: datetime, until: datetime) -> bool:
+        """Take the janitor's run guard until `until` (aware datetimes): True when taken, False while an unexpired guard
+        exists, whoever holds it (the same owner included). An absent or expired guard is taken. `owner` is a fresh token
+        per run, made by the caller. Raises ValueError for a falsy `owner`, a naive datetime, or `until <= now`; store
+        errors raise."""
+
+    @abstractmethod
+    async def release_run(self, owner: str) -> None:
+        """Free the guard only while `owner` still holds it. An absent guard is left alone silently; one held by another
+        owner (taken over after expiry) is left alone and logged as a WARNING. Store errors raise."""

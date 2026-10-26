@@ -11,7 +11,7 @@ from tests.support.prod_graph import ProdGraph, prod_graph  # noqa: F401  (the f
 pytestmark = pytest.mark.slow
 
 EMPTY_RUN = {"accounts": 0, "due": 0, "staled": 0, "would_stale": 0, "deferred": 0, "conflicts": 0,
-             "no_decision": 0, "breaker_tripped": 0, "dry_run": True}
+             "no_decision": 0, "breaker_tripped": 0, "review_enqueued": 0, "purge_overdue": 0, "dry_run": True}
 
 
 async def test_the_sweep_holds_the_containers_repository_counters_and_the_ops_sink(prod_graph: ProdGraph):

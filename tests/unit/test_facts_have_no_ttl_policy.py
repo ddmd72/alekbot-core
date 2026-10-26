@@ -3,8 +3,8 @@
 Firestore deletes a document whose TTL field has passed. The facts collection's `expires_at` is a decision (the janitor
 stales the fact, never deletes it), and the janitor's own counters carry no such field. The tree is scanned in Python:
 every `ttls update` command in the docs, scripts and config is read with its line continuations joined (a quoted or
-backticked value is read too), and none may name the facts collection, the counters collection or the posted-line
-collection. A collection held in a shell variable (`--collection-group=$FACTS`) is out of reach of a text scan and is not resolved.
+backticked value is read too), and none may name the facts collection, the counters collection, the posted-line
+collection or the run-guard collection. A collection held in a shell variable (`--collection-group=$FACTS`) is out of reach of a text scan and is not resolved.
 """
 import os
 import re
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SUFFIXES = {".md", ".yaml", ".yml", ".sh"}
 SKIP_DIRS = {".git", "node_modules", "archive", "__pycache__", ".venv", "venv", ".tox", ".codegraph"}
 FACTS_MARK = "domain_facts"
-LIFECYCLE_NAMES = ("fact_lifecycle_daily", "fact_lifecycle_lines")
+LIFECYCLE_NAMES = ("fact_lifecycle_daily", "fact_lifecycle_lines", "fact_lifecycle_run")
 _COMMAND = re.compile(r"\bttls\s+update\b")
 _GROUP = re.compile(r"--collection-group(?:=|\s+)[\"'`]?([^\s\\'\"`]+)")
 
@@ -112,6 +112,7 @@ def test_the_facts_collection_is_still_named_domain_facts_and_the_counters_are_t
     assert FACTS_MARK in env.domain_facts_collection
     assert env.fact_lifecycle_daily_collection.endswith(LIFECYCLE_NAMES[0])
     assert env.fact_lifecycle_lines_collection.endswith(LIFECYCLE_NAMES[1])
+    assert env.fact_lifecycle_run_collection.endswith(LIFECYCLE_NAMES[2])
 
 
 async def test_the_due_query_filters_the_stored_field_expires_at_and_the_counters_store_no_such_field():

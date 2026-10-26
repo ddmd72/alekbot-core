@@ -12,7 +12,7 @@ from src.domain.fact_review_rules import (
     asked_fact_unchanged,
     kept_twice_fields,
     queued_fields,
-    revives_in_30_days,
+    revives_in_window,
     timeout_candidate,
 )
 from src.domain.fact_review_task import MAX_NEIGHBOURS, neighbours_of
@@ -120,7 +120,7 @@ def test_a_kept_twice_fact_is_made_current_under_the_fallback_actor_and_is_no_re
     assert event == {"at": NOW, "from": "stale", "to": "current", "actor": KEPT_TWICE_ACTOR,
                      "reason": kept_twice_reason("qk")}
     assert KEPT_TWICE_ACTOR == "review_fallback"
-    assert not is_revive_reason(event["reason"]) and revives_in_30_days(fields["lifecycle_events"], NOW) == 0
+    assert not is_revive_reason(event["reason"]) and revives_in_window(fields["lifecycle_events"], NOW) == 0
 
 
 def test_a_kept_twice_write_differs_from_an_asks_only_in_its_trail_entry():

@@ -4,6 +4,15 @@ from pydantic import BaseModel, Field
 import time
 import uuid
 
+# The review pass's agent profile (prompt profile id and the `agent_type` its prompt is built for).
+REVIEW_PROFILE_ID = "consolidation_review"
+
+
+def consolidation_agent_id(user_id: str) -> str:
+    """The id of a user's consolidation agent: the recipient of every consolidation and review message."""
+    return f"consolidation_agent_{user_id}"
+
+
 # Paid attempts per round: a batch whose runs fail (or are lost as zombies) this many times is FAILED.
 MAX_BATCH_ATTEMPTS = 3
 

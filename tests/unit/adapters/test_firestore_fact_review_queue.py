@@ -11,6 +11,7 @@ from datetime import date, timedelta
 import pytest
 from pydantic import ValidationError
 
+from src.adapters.firestore_fact_review_store import question_document
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_question import ClosedBy, QuestionStatus
 from src.domain.fact_review_question_close import QuestionClose
@@ -173,6 +174,20 @@ async def test_after_a_failed_delivery_no_claim_today_and_the_same_question_tomo
     assert again is not None and again.question_id == "q1"
 
 
+async def test_a_queued_question_closed_while_the_claim_reads_the_queue_is_not_sent(world):
+    first = await queued(world, "q1", days_stale=40)
+    await queued(world, "q2", days_stale=10)
+    closed = first.closed(ClosedBy.RESOLVED_ELSEWHERE, AT)      # any close of a queued question: it writes no state
+    world.store.db.interfere_on_txn_query(world.env.fact_review_questions_collection, "q1", question_document(closed))
+
+    claimed = await world.review_store.claim_next("acc", TODAY, SESSION)
+
+    assert claimed is not None and claimed.question_id == "q2"       # the retry saw q1 closed and took the next one
+    assert doc(world, "q1")["status"] == "closed" and doc(world, "q1")["closed_by"] == "resolved_elsewhere"
+    state = await world.review_store.get_state("acc")
+    assert (state.current_question_id, state.sent) == ("q2", 1)
+
+
 # ------------------------------------------------------------------------------------------------ the send
 
 async def test_the_send_moves_pending_to_asked_and_keeps_the_pointer(world):
@@ -212,6 +227,24 @@ async def test_a_question_the_owner_closed_while_pending_stays_closed_after_mark
 
     assert await store.mark_asked("q1", AT + timedelta(seconds=1)) is False
 
+    stored = doc(world, "q1")
+    assert (stored["status"], stored["closed_by"], stored["answer"], stored["asked_at"]) == ("closed", "owner", "ended", None)
+    assert (await store.get_state("acc")).current_question_id is None
+
+
+async def test_an_owner_close_racing_mark_asked_stays_closed(world):
+    await queued(world, "q1")
+    store = world.review_store
+    await store.claim_next("acc", TODAY, SESSION)
+    await deliver(world, "q1")
+    world.store.db.collection(world.env.fact_review_questions_collection).yield_on_get = True   # both read q1 first
+
+    closed, asked = await asyncio.gather(
+        store.close_and_release("q1", ClosedBy.OWNER, AnswerKind.ENDED, "button", AT),
+        store.mark_asked("q1", AT + timedelta(seconds=1)),
+    )
+
+    assert closed is QuestionClose.RELEASED and asked is False
     stored = doc(world, "q1")
     assert (stored["status"], stored["closed_by"], stored["answer"], stored["asked_at"]) == ("closed", "owner", "ended", None)
     assert (await store.get_state("acc")).current_question_id is None
@@ -339,6 +372,24 @@ async def test_every_queue_write_on_a_missing_question_is_false(world):
     assert await store.mark_unanswered("nope") is False
     assert await store.close_and_release("nope", ClosedBy.REVIEW, None, None, AT) is QuestionClose.REFUSED
     assert world.question_docs == {} and world.state_doc() is None
+
+
+async def test_a_close_racing_a_claim_does_not_clear_the_new_pointer(world):
+    await world.seed_question(QuestionStatus.UNANSWERED, question_id="q1")
+    await queued(world, "q2", days_stale=10)
+    await world.seed_state(current_question_id="q1", sent=1, sent_on=TODAY)   # a pointer to an unanswered question holds nothing
+    world.store.db.collection(world.env.fact_review_state_collection).yield_on_get = True   # both read the state first
+    store = world.review_store
+
+    claimed, closed = await asyncio.gather(
+        store.claim_next("acc", TODAY, SESSION),
+        store.close_and_release("q1", ClosedBy.TIMEOUT, None, None, AT),
+    )
+
+    assert claimed is not None and claimed.question_id == "q2"
+    assert closed is QuestionClose.CLOSED                      # the retry saw the pointer on q2: nothing to release
+    assert (await store.get_state("acc")).current_question_id == "q2"
+    assert doc(world, "q1")["status"] == "closed" and doc(world, "q2")["status"] == "pending"
 
 
 # ------------------------------------------------------------------------------------------------ unreadable documents

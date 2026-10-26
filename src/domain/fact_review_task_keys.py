@@ -8,9 +8,13 @@ a retried close never sends twice.
 from datetime import datetime
 from typing import Any, Dict, Final, Literal
 
+from .local_time import local_date
 from .memory_write_lease import defer_bucket
 
 FACT_REVIEW_TASK: Final[str] = "fact_review"
+# The Cloud Tasks dispatch deadline of a `daily` `fact_review` task: set by its two enqueuers, the janitor and the review's own
+# lease deferral (a pass may run for most of it). The `next` send released by an answer has no model call and sets none.
+REVIEW_DEADLINE_S: Final[int] = 1800
 
 ReviewMode = Literal["daily", "next"]
 REVIEW_MODES: Final[frozenset[str]] = frozenset({"daily", "next"})
@@ -29,3 +33,11 @@ def defer_key(account_id: str, now: datetime) -> str:
 def next_key(question_id: str) -> str:
     """The dedup key of the send released by closing the current question `question_id`."""
     return f"fact-review-next:{question_id}"
+
+
+def daily_key(account_id: str, now: datetime, tz: str) -> str:
+    """The dedup key of the daily review the janitor (`FactLifecycleSweepService`, its only caller) enqueues for `account_id`:
+    it carries the owner-local calendar day (`tz` is the owner's zone), so runs that start close together name the same task.
+    Cloud Tasks keeps a name only while its task is queued or running and for about an hour after, so this is not a once-a-day
+    guarantee: the daily rhythm is `review_due`'s interval rule."""
+    return f"fact-review:{account_id}:{local_date(now, tz).isoformat()}"

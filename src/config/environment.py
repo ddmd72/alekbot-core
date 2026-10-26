@@ -529,6 +529,15 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}fact_lifecycle_lines"
 
     @property
+    def fact_lifecycle_run_collection(self) -> str:
+        """
+        The janitor's run guard: one document, doc id `sweep`, fields `run_owner`, `run_until`, `acquired_at`. No TTL
+        policy: no field is named `expires_at`; an expired guard stays until the next run takes it over.
+        Dev: development_fact_lifecycle_run
+        """
+        return f"{self.firestore_collection_prefix}fact_lifecycle_run"
+
+    @property
     def fact_review_questions_collection(self) -> str:
         """
         The memory review's questions, one per fact, doc id = question id (Facts S4 plan §2.2). A closed question expires

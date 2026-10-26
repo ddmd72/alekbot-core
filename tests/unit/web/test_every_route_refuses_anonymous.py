@@ -11,6 +11,7 @@ The MCP SDK sub-app main.py dispatches to is probed the same way over ASGI; its 
 literals in main.py's `_is_mcp_path`.
 """
 import ast
+import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -91,6 +92,9 @@ def _cabinet(p: Probe):
         user_drive=w("user_drive"), drive_search_service=w("drive_search_service"),
         drive_task_queue=w("drive_task_queue"), drive_transcribe_switch_on=True,
         cabinet_facts=w("cabinet_facts"),   # reviewer edit, facts S4 T2c: main.py passes it (the route delegates to it)
+        # reviewer edit, facts S4 T11a/T11b: main.py passes all three (the review queue, the answers, the button labels)
+        fact_review_store=w("fact_review_store"), fact_answer_service=w("fact_answer_service"),
+        localization=w("localization"),
     ), {}
 
 
@@ -174,7 +178,8 @@ def _slack(p: Probe):
     w = p.wire
     adapter = HTTPModeAdapter(app=w("bolt_app"), config={"SLACK_SIGNING_SECRET": "p7-signing", "SLACK_BOT_TOKEN": "x"},
                               task_service=w("task_queue"), session_store=w("session_store"),
-                              conversation_handler=w("conversation_handler"), iam_service=w("iam_service"))
+                              conversation_handler=w("conversation_handler"), iam_service=w("iam_service"),
+                              worker_queue=w("worker_queue"))
     return adapter.get_blueprint(), {"url_prefix": "/slack"}
 
 
@@ -250,6 +255,9 @@ _GRAPH_NOTIFICATION = {"value": [{"subscriptionId": "sub-1", "changeType": "upda
 _SVIX_EVENT = {"type": "response.completed", "data": {"id": "resp_1", "metadata": {"user_id": "u1"}}}
 _SLACK_EVENT = {"type": "event_callback", "event_id": "Ev1",
                 "event": {"type": "message", "channel": "C1", "user": "U1", "text": "hi", "ts": "1.1"}}
+# A well-formed button press (Facts S4 T5d), so an unsigned one is refused by the signature, not by a missing field.
+_SLACK_PRESS = {"type": "block_actions", "user": {"id": "U1"}, "channel": {"id": "C1"}, "message": {"ts": "1.1"},
+                "actions": [{"block_id": "fact_question:q1", "action_id": "still_true", "action_ts": "1.2"}]}
 _TELEGRAM_UPDATE = {"update_id": 1, "message": {"message_id": 1, "date": 0, "text": "hi",
                                                 "chat": {"id": 7, "type": "private"},
                                                 "from": {"id": 7, "is_bot": False, "first_name": "x"}}}
@@ -260,6 +268,7 @@ INPUT: Dict[Tuple[str, str], dict] = {
     ("POST", "/webhook/microsoft-tasks/<user_id>"): {"json": _GRAPH_NOTIFICATION},
     ("POST", "/webhooks/openai/deep-research"): {"json": _SVIX_EVENT},
     ("POST", "/slack/events"): {"json": _SLACK_EVENT},
+    ("POST", "/slack/interactivity"): {"form": {"payload": json.dumps(_SLACK_PRESS)}},
     ("POST", "/telegram/webhook"): {"json": _TELEGRAM_UPDATE},
     ("GET", "/mcp/consent"): {"query": {"req": "consent-jwt"}},
     ("POST", "/mcp/consent"): {"form": {"req": "consent-jwt", "action": "approve"}},
@@ -271,6 +280,8 @@ INPUT: Dict[Tuple[str, str], dict] = {
     ("GET", "/join"): {"query": {"code": "INV-123"}},
     ("POST", "/v1/<op>"): {"path": {"op": "render.docx"}, "data": b"payload"},
     ("GET", "/s/<code>"): {"path": {"code": "abcdefghij"}},
+    # A well-formed batch (Facts S4 T11b), so an anonymous one is refused by the gate, not by the body check.
+    ("POST", "/api/user/facts/review-answers"): {"json": {"answers": [{"question_id": "q1", "answer": "still_true"}]}},
 }
 
 

@@ -58,7 +58,7 @@ async def test_an_owned_fact_is_invalidated_and_answered_200(store):
 @pytest.mark.parametrize("fact_id, want", [
     ("f-foreign", (403, {"error": "Not authorized"})),
     ("f-missing", (404, {"error": "Fact not found: f-missing"})),
-    ("f-v1", (409, {"error": "fact f-v1 was rewritten after the page loaded; reload"})),
+    ("f-v1", (409, {"error": "fact f-v1 was rewritten after it was shown; reload"})),
 ])
 async def test_each_refusal_keeps_its_code_and_body_and_writes_nothing(store, fact_id, want):
     before = copy.deepcopy(store.docs)

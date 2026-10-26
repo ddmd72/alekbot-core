@@ -68,6 +68,9 @@ ENQUEUE_PAYLOADS: Dict[str, dict] = {
     "setup_microsoft_todo": {"user_id": "u1"},
     "reindex_task_list": {"user_id": "u1", "list_id": "l1"},
     "fact_review": {"user_id": "u1", "account_id": "a1", "mode": "daily"},
+    "interactive_choice": {"binding": {"kind": "fact_question", "id": "q1"}, "option_id": "still_true", "platform": "slack",
+                           "platform_user_id": "U1", "message_ref": {"platform": "slack", "channel_id": "C1", "message_id": "1.1"},
+                           "at": "2026-10-24T09:00:00+00:00"},
 }
 
 # The pinned answer of every task type, from the boot with the deploy's environment and an empty database (P9).
@@ -78,7 +81,8 @@ MATRIX: Dict[str, Expect] = {
     "email_indexing_watchdog": Expect(200, {"marked_failed": 0, "status": "ok"}),
     # The janitor under the deploy's environment: log-only (no FACT_LIFECYCLE_SWEEP_DRY_RUN), an empty store.
     "fact_lifecycle_sweep": Expect(200, {"accounts": 0, "due": 0, "staled": 0, "would_stale": 0, "deferred": 0,
-                                         "conflicts": 0, "no_decision": 0, "breaker_tripped": 0, "dry_run": True}),
+                                         "conflicts": 0, "no_decision": 0, "breaker_tripped": 0, "review_enqueued": 0,
+                                         "purge_overdue": 0, "dry_run": True}),
     "fire_due_reminders": Expect(200, {"claim_lost": 0, "enqueued": 0, "skipped": 0}),
     "renew_all_task_subscriptions": Expect(200, {"enqueued": 0, "status": "ok"}),
     "repair_email_embeddings": Expect(200, {"has_more": False, "repaired": 0, "status": "ok"}),
@@ -114,6 +118,9 @@ MATRIX: Dict[str, Expect] = {
     # The seeded account has no owner: the review stops at its owner check.
     "fact_review": Expect(200, {"status": "not_owner"},
                           log="[FactReview] user u1 is not the owner of account a1 (account has no owner); nothing done"),
+    # No platform user is seeded: the click is refused at the identity check, before any handler (never a 501).
+    "interactive_choice": Expect(200, {"status": "unknown_user"},
+                                 log="[InteractiveChoice] a choice from an unknown slack user; ignored"),
 }
 
 

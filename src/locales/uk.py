@@ -207,7 +207,10 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.MEMORY_ANSWER_NOTED.value: "Дякую, записано.",
     UIMessage.MEMORY_REPLY_NOTED.value: "Прийнято — я це врахую.",
     UIMessage.MEMORY_ALREADY_ANSWERED.value: "На це питання вже є відповідь, дякую.",
+    UIMessage.MEMORY_FACT_CHANGED.value: "Цей факт тим часом змінився, тому відповідь не застосовано; я до нього ще повернуся.",
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Це питання закрите.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Факти, які я відклав цього тижня:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Щоб повернути один із них, напиши мені в чаті, що це досі так.",
+    UIMessage.MEMORY_DIGEST_ARCHIVED.value: "більше не так",
+    UIMessage.MEMORY_DIGEST_INVALIDATED.value: "ніколи не було так",
 }

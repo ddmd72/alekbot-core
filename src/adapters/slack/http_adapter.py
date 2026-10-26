@@ -5,18 +5,21 @@ Implements Slack Events API with async queue processing via Cloud Tasks
 """
 import asyncio
 import hashlib
-import hmac
 import json
 import time
 import weakref
-from typing import Optional, Dict, Any, Callable, Tuple, cast
+from typing import Optional, Dict, Any, Callable, Tuple
 from slack_bolt.async_app import AsyncApp
 from quart import Blueprint, request, jsonify
 
 from .base import SlackAdapter
+from .interactivity_route import SlackInteractivityRoute
+from .request_body import BodyTooLarge, read_capped_body
 from .response_channel import SlackResponseChannel
+from .signature import verify_slack_signature
 from ...domain.cloud_task_delivery import RETRY_COUNT_HEADER
-from ...domain.messaging import MessageContext, FileAttachment
+from ...domain.chat_text import unwrapped
+from ...domain.messaging import MessageContext, FileAttachment, session_id_for
 from ...domain.ui_messages import UIMessage
 from ...domain.prompt import ANONYMOUS_ACCOUNT_ID  # SESSION_26
 from ...ports.task_queue import TaskQueue
@@ -94,6 +97,7 @@ class HTTPModeAdapter(SlackAdapter):
         audio_service: Optional[Any] = None,
         language_service: Optional[LanguageServicePort] = None,
         localization: Optional[LocalizationPort] = None,
+        worker_queue: Optional[TaskQueue] = None,
     ):
         super().__init__(
             app,
@@ -113,6 +117,8 @@ class HTTPModeAdapter(SlackAdapter):
         self._language_service = language_service
         self._localization = localization
         self._session_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+        # Button presses are queued as `/worker` tasks on the main task queue (not the Slack events queue).
+        self._interactivity = SlackInteractivityRoute(self.slack_signing_secret, worker_queue)
 
         # ✅ Create Blueprint instead of Quart app
         self.blueprint = Blueprint('slack', __name__)
@@ -159,25 +165,47 @@ class HTTPModeAdapter(SlackAdapter):
         async def slack_events():
             return await self._handle_slack_event()
 
+        @self.blueprint.route("/interactivity", methods=["POST"])
+        async def slack_interactivity():
+            try:
+                body = await read_capped_body(request)  # raw body: the signature is checked on these bytes
+            except BodyTooLarge as exc:
+                logger.warning(f"⚠️ Slack interactivity body refused: {exc}")
+                return jsonify({"error": "Payload too large"}), 413
+            result, status = await self._interactivity.handle(body, dict(request.headers))
+            return jsonify(result), status
+
     def get_blueprint(self):
         """Return blueprint for registration in main app."""
         return self.blueprint
 
     async def _handle_slack_event(self):
+        """The order is the security: read the raw bytes (capped), verify the signature on them for EVERY request (Slack
+        signs `url_verification` too), and only then parse. An unsigned body is never parsed, and a forged
+        `url_verification` never gets its challenge echoed."""
         try:
-            body = cast(bytes, await request.get_data())  # raw body: signature check needs bytes
+            try:
+                body = await read_capped_body(request)  # raw body: signature check needs bytes
+            except BodyTooLarge as exc:
+                logger.warning(f"⚠️ Slack event body refused: {exc}")
+                return jsonify({"error": "Payload too large"}), 413
             headers = dict(request.headers)
 
-            event_data = json.loads(body)
+            if not self._verify_signature(body, headers):
+                logger.warning("⚠️ Invalid Slack signature")
+                return jsonify({"error": "Invalid signature"}), 401
 
-            if event_data.get("type") != "url_verification":
-                if not self._verify_signature(body, headers):
-                    logger.warning("⚠️ Invalid Slack signature")
-                    return jsonify({"error": "Invalid signature"}), 401
+            try:
+                event_data = json.loads(body)
+            except ValueError:  # JSONDecodeError and UnicodeDecodeError
+                event_data = None
+            if not isinstance(event_data, dict):
+                logger.warning("⚠️ Signed Slack event body is not a JSON object")
+                return jsonify({"error": "Invalid payload"}), 400
 
             if event_data.get("type") == "url_verification":
                 challenge = event_data.get("challenge", "")
-                logger.info(f"✅ URL verification received, challenge: {challenge[:16]}...")
+                logger.info(f"✅ URL verification received, challenge: {str(challenge)[:16]}...")
                 return challenge, 200, {"Content-Type": "text/plain"}
 
             event = event_data.get("event", {})
@@ -395,7 +423,7 @@ class HTTPModeAdapter(SlackAdapter):
         return jsonify(body), status
 
     def _resolve_session_id(self, user_id: str, channel_id: str) -> str:
-        return f"{user_id}:{channel_id}"
+        return session_id_for(user_id, channel_id)
 
     async def _process_message_event(
         self,
@@ -465,12 +493,8 @@ class HTTPModeAdapter(SlackAdapter):
                 on_long_turn=release_lock,
             )
 
-            # A copied `` `$skill save CODE` `` (any number of wrapping backticks, e.g. a
-            # triple-backtick code block) must still dispatch as a command — strip backticks
-            # only when they wrap the ENTIRE trimmed text, so a normal sentence like
-            # "`$HOME` is wrong" (backticks around a substring, not the whole text) is untouched.
-            t = text.strip()
-            stripped = t.strip("`").strip() if t.startswith("`") and t.endswith("`") else t
+            # A copied `` `$skill save CODE` `` must still dispatch as a command (`unwrapped`).
+            stripped = unwrapped(text)
 
             if stripped.startswith("$"):
                 command = stripped.lstrip("$").strip().lower()
@@ -591,47 +615,7 @@ class HTTPModeAdapter(SlackAdapter):
             logger.error(f"❌ Error processing mention: {e}", exc_info=True)
 
     def _verify_signature(self, body: bytes, headers: Dict[str, str]) -> bool:
-        try:
-            logger.debug(f"🔍 [Signature] Headers: {list(headers.keys())}")
-
-            timestamp = headers.get("X-Slack-Request-Timestamp", "")
-            slack_signature = headers.get("X-Slack-Signature", "")
-
-            if not timestamp or not slack_signature:
-                logger.error(f"⚠️ Missing Slack signature headers. Timestamp: {bool(timestamp)}, Signature: {bool(slack_signature)}")
-                logger.error(f"⚠️ Available headers: {list(headers.keys())}")
-                return False
-
-            try:
-                time_diff = abs(time.time() - int(timestamp))
-                if time_diff > 300:
-                    logger.warning(f"⚠️ Slack request timestamp too old: {time_diff}s")
-                    return False
-            except ValueError as e:
-                logger.error(f"⚠️ Invalid timestamp format: {timestamp}, error: {e}")
-                return False
-
-            sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
-            expected_signature = "v0=" + hmac.new(
-                self.slack_signing_secret.encode(),
-                sig_basestring.encode(),
-                hashlib.sha256
-            ).hexdigest()
-
-            is_valid = hmac.compare_digest(expected_signature, slack_signature)
-
-            if not is_valid:
-                logger.error("⚠️ Signature mismatch!")
-                logger.error(f"   Expected: {expected_signature[:20]}...")
-                logger.error(f"   Received: {slack_signature[:20]}...")
-            else:
-                logger.debug("✅ Signature verified successfully")
-
-            return is_valid
-
-        except Exception as e:
-            logger.error(f"❌ Signature verification error: {e}", exc_info=True)
-            return False
+        return verify_slack_signature(body, headers, self.slack_signing_secret, time.time())
 
     def register_handlers(self) -> None:
         logger.info("✅ HTTP Mode handlers ready (implicit via routes)")

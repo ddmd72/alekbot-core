@@ -87,7 +87,7 @@ async def test_two_questions_on_one_message_answer_none_and_log(world, caplog):
     await world.seed_question(QuestionStatus.ASKED, question_id="a", message_ref=REF)
     await world.seed_question(QuestionStatus.ASKED, question_id="b", message_ref=REF, fact_id="f2")
 
-    assert await world.review_store.by_message("u1", REF.platform, REF.channel_id, REF.message_id) is None
+    assert await world.review_store.by_message("u1", REF) is None
     assert any("share one message" in r.getMessage() for r in caplog.records if r.levelno == logging.ERROR)
 
 

@@ -14,6 +14,7 @@ from ...domain.language import LanguageCode
 from ...ports.localization_port import LocalizationPort
 from ...utils.file_conversion import safe_temp_suffix
 from ...utils.logger import logger
+from .mrkdwn_text import escape_literal
 
 
 # Slack-specific constraints
@@ -183,6 +184,34 @@ class SlackResponseChannel(ResponseChannel):
             logger.error(f"❌ [SlackResponseChannel] Failed to send message: {e}")
             raise
     
+    async def send_reply(self, text: str, to_message_id: str) -> Any:
+        """Post `text` literally (see `send_literal`) in the thread of the message `to_message_id` (its `ts` is the
+        thread parent)."""
+        return await self.send_literal(text, to_message_id)
+
+    async def send_literal(self, text: str, to_message_id: Optional[str] = None) -> Any:
+        """Post `text` exactly as written: `&`, `<` and `>` escaped (Slack's rule, so `<!channel>` or `<@U1>` is shown, not
+        obeyed), `mrkdwn` off (so `*` and `_` stay as written), no markdown conversion, no link anchors, no `\\n` rewrite.
+        Text over `SLACK_CHUNK_SIZE` is split before escaping and posted as several messages, the first in the thread of
+        `to_message_id` when given and the rest in the same thread (or top level). Returns the first message's response."""
+        chunks = self._split_into_chunks(text, SLACK_CHUNK_SIZE) if text else []
+        if not chunks:
+            raise ValueError("a literal message needs text")
+        first = None
+        try:
+            for chunk in chunks:
+                response = await self.client.chat_postMessage(
+                    channel=self.channel_id, text=escape_literal(chunk), thread_ts=to_message_id, mrkdwn=False,
+                )
+                if response.get("channel"):
+                    self.channel_id = response["channel"]  # a user id opened a DM: later calls need the real channel id
+                if first is None:
+                    first = response
+        except Exception as e:
+            logger.error(f"❌ [SlackResponseChannel] Failed to send literal message: {e}")
+            raise
+        return first
+
     async def update_message(self, message_id: str, text: str, link_list: Optional[list] = None) -> None:
         """
         Update an existing Slack message with length limit.

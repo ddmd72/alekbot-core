@@ -3,7 +3,6 @@ import pytest
 
 from src.domain.consolidation_pass_stats import OUTCOME_BORN_DUE, OUTCOME_ERROR, OUTCOME_EXPIRY, OUTCOME_OK
 from src.domain.fact_tool_result import (
-    NOTE_NO_READABLE_SOURCE,
     REFUSED_EXPIRY,
     STATUS_CREATED,
     STATUS_FAILED,
@@ -12,7 +11,6 @@ from src.domain.fact_tool_result import (
     STATUS_UPDATED,
     WRITTEN_STATUSES,
     expiry_refusal_tags,
-    note_codes_of,
     outcome_of,
     with_notes,
 )
@@ -23,7 +21,7 @@ def test_the_words_are_the_strings_the_results_carry():
     assert (STATUS_CREATED, STATUS_UPDATED, STATUS_MERGED, STATUS_FAILED, STATUS_NOT_FOUND) == (
         "created", "updated", "merged", "failed", "not_found")
     assert WRITTEN_STATUSES == {"created", "updated", "merged"}
-    assert REFUSED_EXPIRY == "expiry" and NOTE_NO_READABLE_SOURCE == "no_readable_source"
+    assert REFUSED_EXPIRY == "expiry"
 
 
 @pytest.mark.parametrize("result, expected", [
@@ -63,16 +61,11 @@ def test_an_uncoded_note_is_joined_without_a_code():
     assert with_notes({"status": STATUS_CREATED}, ["expiry ignored"]) == {"status": "created", "note": "expiry ignored"}
 
 
-def test_the_no_readable_source_note_carries_its_code():
+def test_the_no_readable_source_note_is_joined_and_carries_no_code_for_the_model_to_read():
     result = with_notes({"status": STATUS_CREATED}, [NO_READABLE_SOURCE_NOTE])
-    assert result == {"status": "created", "note": NO_READABLE_SOURCE_NOTE, "note_codes": ["no_readable_source"]}
+    assert result == {"status": "created", "note": NO_READABLE_SOURCE_NOTE}
 
 
-def test_several_notes_are_joined_and_only_the_known_ones_coded():
+def test_several_notes_are_joined_in_order():
     result = with_notes({}, ["first", NO_READABLE_SOURCE_NOTE, "last"])
-    assert result["note"] == f"first; {NO_READABLE_SOURCE_NOTE}; last"
-    assert result["note_codes"] == ["no_readable_source"]
-
-
-def test_note_codes_match_by_equality_not_by_substring():
-    assert note_codes_of([NO_READABLE_SOURCE_NOTE + " (extended)", "a " + NO_READABLE_SOURCE_NOTE]) == []
+    assert result == {"note": f"first; {NO_READABLE_SOURCE_NOTE}; last"}

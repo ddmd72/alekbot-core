@@ -24,7 +24,8 @@ OTHER_SERVICE: Dict[str, str] = {"drive_sync": "indexer_main.py /worker, deliver
 # A branch nothing sends. Empty: every handler has a trigger.
 MANUAL_ONLY: Dict[str, str] = {}
 # Names that stand for a task type: the module attribute they are read from, checked against its runtime value.
-CONSTANTS: Dict[str, str] = {"DRIVE_SYNC_TASK": "src.domain.drive_task_keys", "FACT_REVIEW_TASK": "src.domain.fact_review_task_keys"}
+CONSTANTS: Dict[str, str] = {"DRIVE_SYNC_TASK": "src.domain.drive_task_keys", "FACT_REVIEW_TASK": "src.domain.fact_review_task_keys",
+                            "INTERACTIVE_CHOICE_TASK": "src.domain.interactive_choice"}
 # The `task_type is None` branch of `_dispatch`: a queued Slack event has no task type by design.
 SLACK_EVENT_BRANCH = "<queued slack event>"
 

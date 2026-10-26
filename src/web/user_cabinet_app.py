@@ -12,12 +12,20 @@ from ..services.google_oauth_service import GoogleOAuthService
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.drive_search_service import DriveSearchService
 from ..services.cabinet_fact_service import CabinetFactService
+from ..services.fact_answer_service import FactAnswerService
+from ..services.localization_service import LocalizationService
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
+from ..domain.fact_review_answers import deciding_answer
+from ..domain.fact_review_digest import last_actor
+from ..domain.fact_review_overview import (
+    SET_ASIDE_LIMIT, SET_ASIDE_WINDOW, holds_other_users_question, listable_state, set_aside_since,
+)
 from ..ports.user_repository import UserRepository
 from ..ports.repository import FactRepository
+from ..ports.fact_review_store import FactReviewStore
 from ..ports.embedding_service import EmbeddingService
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
@@ -38,6 +46,9 @@ DOCS_OWNER_USER_ID = os.getenv('DOCS_OWNER_USER_ID')
 # gate ahead of add_platform_id — mirrors the shape of the pre-commit hook's own
 # phone-number regex (scripts/git-hooks/pre-commit: `\+[1-9][0-9]{7,14}`).
 _E164_PATTERN = re.compile(r"^\+[1-9]\d{6,14}$")
+
+# How many questions one request of answers may name.
+MAX_BULK_ANSWERS = 50
 
 
 def create_user_cabinet_blueprint(
@@ -64,6 +75,9 @@ def create_user_cabinet_blueprint(
     drive_task_queue: Optional[TaskQueue] = None,
     drive_transcribe_switch_on: bool = False,
     cabinet_facts: Optional[CabinetFactService] = None,
+    fact_review_store: Optional[FactReviewStore] = None,
+    fact_answer_service: Optional[FactAnswerService] = None,
+    localization: Optional[LocalizationService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -790,7 +804,10 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/user/facts/browse", methods=["GET"])
     @auth_required
     async def browse_facts():
-        """Paginated facts for the Cabinet browser. Supports domain filter + cursor."""
+        """Paginated facts for the Cabinet browser. Supports domain filter, state filter (current | stale) + cursor."""
+        state = listable_state(request.args.get("state"))
+        if state is None:
+            return jsonify({"error": "state must be current or stale"}), 400
         try:
             limit = min(int(request.args.get("limit", 100)), 500)
             cursor = request.args.get("cursor") or None
@@ -801,6 +818,7 @@ def create_user_cabinet_blueprint(
                 limit=limit,
                 cursor_doc_id=cursor,
                 domain=domain,
+                state=state,
             )
             items = [
                 {
@@ -808,13 +826,106 @@ def create_user_cabinet_blueprint(
                     "text": f.text,
                     "domain": f.domain.value if f.domain else None,
                     "type": f.type.value if f.type else None,
+                    "state": f.state.value,
                     "created_at": f.created_at.isoformat() if f.created_at else None,
+                    "stale_since": f.stale_since.isoformat() if f.stale_since else None,
                 }
                 for f in facts
             ]
             return jsonify({"facts": items, "next_cursor": next_cursor}), 200
         except Exception as e:
             logger.error(f"Error browsing facts: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/facts/recently-closed", methods=["GET"])
+    @auth_required
+    async def recently_closed_facts():
+        """Everything closed (archived or invalidated) in the last 30 days, newest closure first, each with the actor of
+        its last trail entry. Read-only."""
+        try:
+            closed = await fact_repo.get_recently_closed(
+                g.account_id, since=set_aside_since(datetime.now(timezone.utc)), limit=SET_ASIDE_LIMIT,
+            )
+            items = [
+                {
+                    "id": f.id,
+                    "text": f.text,
+                    "domain": f.domain.value if f.domain else None,
+                    "state": f.state.value,
+                    "closed_at": f.valid_to.isoformat() if f.valid_to else None,
+                    "actor": last_actor(f),
+                }
+                for f in closed
+            ]
+            return jsonify({"facts": items, "window_days": SET_ASIDE_WINDOW.days}), 200
+        except Exception as e:
+            logger.error(f"Error listing recently closed facts: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/facts/review-queue", methods=["GET"])
+    @auth_required
+    async def review_queue():
+        """The user's open memory-review questions: the one out now, those sent and unanswered, then the queue."""
+        if fact_answer_service is None:
+            return jsonify({"error": "Memory review not configured"}), 501
+        try:
+            entries = await fact_answer_service.review_queue(g.account_id, g.user_id)
+            options = await fact_answer_service.answer_options(g.user_id)
+            return jsonify({
+                "questions": [
+                    {
+                        "question_id": e.question_id,
+                        "text": e.text,
+                        "domain": e.domain,
+                        "reported_date": e.reported_date.isoformat() if e.reported_date else None,
+                        "waiting_since": e.waiting_since.isoformat(),
+                        "asked_at": e.asked_at.isoformat() if e.asked_at else None,
+                        "status": e.place,
+                    }
+                    for e in entries
+                ],
+                "options": [{"answer": kind.value, "label": label} for kind, label in options],
+            }), 200
+        except Exception as e:
+            logger.error(f"Error listing review questions: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/facts/review-answers", methods=["POST"])
+    @auth_required
+    async def review_answers():
+        """Answer 1-50 open memory-review questions at once: {"answers": [{"question_id", "answer"}]}."""
+        if fact_answer_service is None or fact_review_store is None:
+            return jsonify({"error": "Memory review not configured"}), 501
+        body = await request.get_json(silent=True)
+        raw_items = body.get("answers") if isinstance(body, dict) else None
+        if not isinstance(raw_items, list) or not 1 <= len(raw_items) <= MAX_BULK_ANSWERS:
+            return jsonify({"error": f"answers must be a list of 1 to {MAX_BULK_ANSWERS} items"}), 400
+        items = []
+        for raw in raw_items:
+            question_id = raw.get("question_id") if isinstance(raw, dict) else None
+            kind = deciding_answer(raw.get("answer")) if isinstance(raw, dict) else None
+            if not isinstance(question_id, str) or not question_id or kind is None:
+                return jsonify({"error": "each answer needs a question_id and an answer of still_true, ended or never"}), 400
+            items.append((question_id, kind))
+        if len({question_id for question_id, _ in items}) != len(items):
+            return jsonify({"error": "a question may be answered once per request"}), 400
+        try:
+            named = await fact_review_store.get_questions([question_id for question_id, _ in items])
+            if holds_other_users_question(named, g.account_id, g.user_id):
+                return jsonify({"error": "Not authorized"}), 403
+            results = []
+            for question_id, kind in items:
+                try:
+                    outcome = (await fact_answer_service.apply(
+                        g.account_id, g.user_id, question_id, kind, "cabinet", datetime.now(timezone.utc),
+                    )).value
+                except Exception as e:
+                    logger.error(f"Answer to question {question_id} failed: {e}", exc_info=True)
+                    outcome = "error"
+                results.append({"question_id": question_id, "result": outcome})
+            return jsonify({"results": results}), 200
+        except Exception as e:
+            logger.error(f"Error answering review questions: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
     @bp.route("/api/user/facts/search", methods=["POST"])
@@ -866,7 +977,7 @@ def create_user_cabinet_blueprint(
         except (FactResolutionError, FactWriteConflict) as e:
             # before ValueError -> 404: neither is a ValueError, but the order is what keeps a 409 from turning into one
             logger.warning(f"Fact {fact_id} not invalidated: {type(e).__name__}: {e}")
-            return jsonify({"error": str(e)}), 409
+            return jsonify({"error": f"{e}; reload"}), 409
         except ValueError as e:
             return jsonify({"error": str(e)}), 404
         except Exception as e:

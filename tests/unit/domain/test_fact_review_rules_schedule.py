@@ -17,7 +17,7 @@ from src.domain.fact_review_rules import (
     review_due,
     review_interval,
     revive_alert_due,
-    revives_in_30_days,
+    revives_in_window,
 )
 from src.domain.settings import DEFAULT_FACT_REVIEW_INTERVAL_DAYS
 from src.domain.user import UserBotConfig
@@ -186,7 +186,7 @@ def test_a_fallback_refuses_a_fact_that_is_already_closed(bad):
         fallback_fields(fact(state=bad), question(), NOW, "timeout")
 
 
-# ------------------------------------------------------------------------------------------------ revives_in_30_days
+# ------------------------------------------------------------------------------------------------ revives_in_window
 
 def _event(reason, at=None, to="current", frm="stale"):
     return {"at": at if at is not None else NOW - 5 * DAY, "from": frm, "to": to, "actor": "review", "reason": reason}
@@ -197,7 +197,7 @@ def _event(reason, at=None, to="current", frm="stale"):
     ["revived on abcd1234", "revived on reply q=q1", "confirmed q=q1 (digit)", "no answer to q=q1: revive", "did not remember q=q1"],
 )
 def test_each_kind_of_revive_counts(reason):
-    assert revives_in_30_days([_event(reason)], NOW) == 1
+    assert revives_in_window([_event(reason)], NOW) == 1
 
 
 @pytest.mark.parametrize(
@@ -213,17 +213,17 @@ def test_each_kind_of_revive_counts(reason):
     ],
 )
 def test_other_trail_entries_do_not_count(event):
-    assert revives_in_30_days([event], NOW) == 0
+    assert revives_in_window([event], NOW) == 0
 
 
 def test_the_window_is_thirty_days_inclusive():
     on_the_edge = _event("revived on a", at=NOW - timedelta(days=30))
     just_outside = _event("revived on b", at=NOW - timedelta(days=30, seconds=1))
-    assert revives_in_30_days([on_the_edge, just_outside], NOW) == 1
+    assert revives_in_window([on_the_edge, just_outside], NOW) == 1
 
 
 def test_an_entry_in_the_future_counts():
-    assert revives_in_30_days([_event("revived on a", at=NOW + DAY)], NOW) == 1
+    assert revives_in_window([_event("revived on a", at=NOW + DAY)], NOW) == 1
 
 
 def test_a_naive_time_is_read_as_utc_and_an_iso_string_is_not_a_time():
@@ -231,8 +231,8 @@ def test_a_naive_time_is_read_as_utc_and_an_iso_string_is_not_a_time():
     # and counts for nothing, like "not a time" below. The store returns datetimes; text there would be a transport form.
     naive = _event("revived on a", at=datetime(2026, 10, 20, 12, 0))
     text = _event("revived on b", at="2026-10-20T12:00:00Z")
-    assert revives_in_30_days([naive], NOW) == 1
-    assert revives_in_30_days([naive, text], NOW) == 1
+    assert revives_in_window([naive], NOW) == 1
+    assert revives_in_window([naive, text], NOW) == 1
 
 
 @pytest.mark.parametrize(
@@ -241,7 +241,7 @@ def test_a_naive_time_is_read_as_utc_and_an_iso_string_is_not_a_time():
      _event("revived on a", at=None) | {"at": object()}, {"at": NOW, "to": "current", "reason": 7}],
 )
 def test_an_entry_that_cannot_be_read_counts_for_nothing(broken):
-    assert revives_in_30_days([broken], NOW) == 0
+    assert revives_in_window([broken], NOW) == 0
 
 
 def test_the_alert_is_due_at_three_revives_in_the_window_not_two():

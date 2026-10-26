@@ -47,6 +47,7 @@ from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.composition.service_container import ServiceContainer
 from src.config.settings import load_settings
 from src.domain.agent import AgentIntent, AgentMessage
+from src.domain.consolidation import consolidation_agent_id
 from src.domain.request_context import RequestContext
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.domain.fact_write_context import FactWriteContext
@@ -599,7 +600,7 @@ async def main(
     def _make_message(text: str, sid: str) -> AgentMessage:
         return AgentMessage.create(
             sender="decomposition_dryrun_script",
-            recipient=f"consolidation_agent_{user_id}",
+            recipient=consolidation_agent_id(user_id),
             intent=AgentIntent.DELEGATE,
             payload={
                 "messages": [{"role": "user", "text": text, "timestamp": time.time()}],

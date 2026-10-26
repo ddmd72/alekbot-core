@@ -36,8 +36,10 @@ from ..config.environment import EnvironmentConfig
 from ..domain.exceptions import QuestionTransitionError
 from ..domain.fact_review_answer_kind import AnswerKind
 from ..domain.fact_review_question_close import QuestionClose
-from ..domain.fact_review_question import QUESTION_RETENTION, AnswerSource, ClosedBy, FactReviewQuestion, QuestionStatus
-from ..domain.fact_review_rules import current_question, iso_week_of, may_send, next_in_queue, sent_today
+from ..domain.fact_review_question import (
+    OPEN_STATUSES, QUESTION_RETENTION, AnswerSource, ClosedBy, FactReviewQuestion, QuestionStatus,
+)
+from ..domain.fact_review_rules import current_question, iso_week_of, may_send, next_in_queue
 from ..domain.fact_review_state import FactReviewState
 from ..domain.messaging import MessageRef
 from ..ports.fact_review_store import FactReviewStore
@@ -45,9 +47,7 @@ from ..utils.logger import logger
 
 T = TypeVar("T")
 
-OPEN_STATUSES = [
-    s.value for s in (QuestionStatus.QUEUED, QuestionStatus.PENDING, QuestionStatus.ASKED, QuestionStatus.UNANSWERED)
-]
+_OPEN_VALUES = [status.value for status in QuestionStatus if status in OPEN_STATUSES]
 _REF_FIELDS = ("message_platform", "message_channel", "message_id")
 # The field the collections' TTL policies are on; storage only, never a model field.
 _TTL_FIELD = "purge_after"
@@ -140,19 +140,17 @@ class FirestoreFactReviewStore(FactReviewStore):
         return self._valid(await self._open_of_account(account_id).get())
 
     async def all_open(self) -> List[FactReviewQuestion]:
-        return self._valid(await self._questions.where(filter=FieldFilter("status", "in", OPEN_STATUSES)).get())
+        return self._valid(await self._questions.where(filter=FieldFilter("status", "in", _OPEN_VALUES)).get())
 
-    async def by_message(
-        self, user_id: str, platform: str, channel_id: str, message_id: str,
-    ) -> Optional[FactReviewQuestion]:
+    async def by_message(self, user_id: str, ref: MessageRef) -> Optional[FactReviewQuestion]:
         """Equalities on the stored fields `user_id`, `message_platform`, `message_channel` and `message_id`."""
-        if not (user_id and platform and channel_id and message_id):
+        if not (user_id and ref.platform and ref.channel_id and ref.message_id):
             return None
         query = (
             self._questions.where(filter=FieldFilter("user_id", "==", user_id))
-            .where(filter=FieldFilter("message_platform", "==", platform))
-            .where(filter=FieldFilter("message_channel", "==", channel_id))
-            .where(filter=FieldFilter("message_id", "==", message_id))
+            .where(filter=FieldFilter("message_platform", "==", ref.platform))
+            .where(filter=FieldFilter("message_channel", "==", ref.channel_id))
+            .where(filter=FieldFilter("message_id", "==", ref.message_id))
         )
         found = self._valid(await query.get())
         if len(found) > 1:
@@ -226,10 +224,7 @@ class FirestoreFactReviewStore(FactReviewStore):
             except QuestionTransitionError as exc:
                 logger.info(f"[FactReviewStore] question {chosen.question_id[:12]} not claimed: {exc}")
                 return None
-            changes = {
-                "current_question_id": claimed.question_id, "sent": sent_today(state, today) + 1, "sent_on": today,
-            }
-            state_write = self._state_write(state, changes)
+            state_write = self._state_write(state, state.claimed(claimed.question_id, today))
             transaction.set(self._questions.document(claimed.question_id), question_document(claimed))
             transaction.set(state_ref, state_write, merge=list(state_write))
             return claimed
@@ -239,6 +234,9 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def mark_appended(self, question_id: str, at: datetime) -> bool:
         return await self._move(question_id, lambda q: q.appended(at))
 
+    async def mark_retracted(self, question_id: str) -> bool:
+        return await self._move(question_id, lambda q: q.retracted())
+
     async def mark_asked(self, question_id: str, at: datetime) -> bool:
         return await self._move(question_id, lambda q: q.asked(at))
 
@@ -247,23 +245,19 @@ class FirestoreFactReviewStore(FactReviewStore):
 
     async def requeue_front(self, question_id: str, failed_today: bool) -> bool:
         def change(state: FactReviewState) -> Dict[str, Any]:
-            changes = _released(state, question_id)
+            changes = state.released(question_id)
             if failed_today:
-                # `sent_on` is the day of the latest claim: this question's day only while the pointer names it.
-                if state.current_question_id != question_id:
-                    logger.warning(f"⚠️ [FactReviewStore] failed delivery of {question_id[:12]}, which is not the "
-                                   f"current question; delivery_failed_on not set")
-                elif state.sent_on is None:
-                    logger.warning(f"⚠️ [FactReviewStore] failed delivery of {question_id[:12]} with no claim day; "
+                unrecorded = state.unrecorded_delivery_failure(question_id)
+                if unrecorded is not None:
+                    logger.warning(f"⚠️ [FactReviewStore] failed delivery of {question_id[:12]}, {unrecorded}; "
                                    f"delivery_failed_on not set")
-                else:
-                    changes["delivery_failed_on"] = state.sent_on
+                changes.update(state.delivery_failed(question_id))
             return changes
 
         return await self._move(question_id, lambda q: q.requeued(), change)
 
     async def mark_unanswered(self, question_id: str) -> bool:
-        return await self._move(question_id, lambda q: q.unanswered(), lambda state: _released(state, question_id))
+        return await self._move(question_id, lambda q: q.unanswered(), lambda state: state.released(question_id))
 
     async def close_and_release(
         self,
@@ -274,7 +268,7 @@ class FirestoreFactReviewStore(FactReviewStore):
         at: datetime,
     ) -> QuestionClose:
         moved, state_written = await self._move_with_state(
-            question_id, lambda q: q.closed(closed_by, at, answer, source), lambda state: _released(state, question_id),
+            question_id, lambda q: q.closed(closed_by, at, answer, source), lambda state: state.released(question_id),
         )
         if not moved:
             return QuestionClose.REFUSED
@@ -295,7 +289,7 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def mark_enqueued(self, account_id: str, at: datetime) -> bool:
         return await self._mark(
             account_id,
-            lambda state: {"enqueued_at": at, "unsuccessful_since": state.unsuccessful_since or at},
+            lambda state: state.enqueued(at),
             create=True,
         )
 
@@ -303,41 +297,31 @@ class FirestoreFactReviewStore(FactReviewStore):
         return await self._mark(account_id, lambda state: {"started_at": at})
 
     async def mark_succeeded(self, account_id: str, at: datetime) -> bool:
-        return await self._mark(account_id, lambda state: {"last_review_at": at, "unsuccessful_since": None})
+        return await self._mark(account_id, lambda state: state.succeeded(at))
 
     async def mark_failed(self, account_id: str, at: datetime) -> bool:
-        return await self._mark(
-            account_id,
-            lambda state: {"last_failed_at": at, "unsuccessful_since": state.unsuccessful_since or at},
-        )
+        return await self._mark(account_id, lambda state: state.failed(at))
 
     async def set_offers(self, account_id: str, offers: Mapping[str, int]) -> bool:
         return await self._mark(account_id, lambda state: {"offers": dict(offers)})
 
     async def mark_removed(self, account_id: str, fact_ids: Sequence[str]) -> bool:
-        removed = set(fact_ids)
-        return await self._mark(
-            account_id, lambda state: {"offers": {k: v for k, v in state.offers.items() if k not in removed}},
-        )
+        return await self._mark(account_id, lambda state: state.without_offers(fact_ids))
 
     async def mark_digest(self, account_id: str, at: datetime) -> bool:
-        return await self._mark(account_id, lambda state: {"last_digest_at": at, "undigested_since": None})
+        return await self._mark(account_id, lambda state: state.digested(at))
 
-    async def mark_oldest_alert(self, account_id: str, at: datetime) -> bool:
+    async def mark_undigested(self, account_id: str, at: datetime) -> bool:
+        return await self._mark(account_id, lambda state: state.undigested(at))
+
+    async def mark_oldest_alert(self, account_id: str, at: Optional[datetime]) -> bool:
         return await self._mark(account_id, lambda state: {"oldest_alert_at": at})
 
     async def mark_queue_alert(self, account_id: str, at: Optional[datetime]) -> bool:
         return await self._mark(account_id, lambda state: {"queue_alert_at": at})
 
     async def set_language(self, account_id: str, lang: str, labels: Mapping[str, str], labels_digest: str) -> bool:
-        return await self._mark(
-            account_id,
-            lambda state: {
-                "message_language": lang,
-                "labels": {**state.labels, lang: dict(labels)},
-                "label_digests": {**state.label_digests, lang: labels_digest},
-            },
-        )
+        return await self._mark(account_id, lambda state: state.with_language(lang, labels, labels_digest))
 
     # ------------------------------------------------------------------------------------------------ digest claim
 
@@ -372,7 +356,7 @@ class FirestoreFactReviewStore(FactReviewStore):
     def _open_of_account(self, account_id: str) -> Any:
         return (
             self._questions.where(filter=FieldFilter("account_id", "==", account_id))
-            .where(filter=FieldFilter("status", "in", OPEN_STATUSES))
+            .where(filter=FieldFilter("status", "in", _OPEN_VALUES))
         )
 
     def _readable(self, snap: Any) -> Optional[FactReviewQuestion]:
@@ -500,7 +484,3 @@ class FirestoreFactReviewStore(FactReviewStore):
             logger.error(f"❌ [FactReviewStore] transaction on {what} failed: {type(exc).__name__}: {exc}")
             raise
 
-
-def _released(state: FactReviewState, question_id: str) -> Dict[str, Any]:
-    """The pointer cleared when, and only when, it names this question."""
-    return {"current_question_id": None} if state.current_question_id == question_id else {}

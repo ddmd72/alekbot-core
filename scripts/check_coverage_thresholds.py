@@ -91,6 +91,9 @@ THRESHOLDS: Dict[str, float] = {
     "src/web/mcp_consent_app.py":                   100.0,
     "src/web/file_access_app.py":                   100.0,
     "src/web/short_link_app.py":                    100.0,
+    # Facts S4 (T5d): the Slack signature check and the route that takes a button press.
+    "src/adapters/slack/signature.py":              100.0,
+    "src/adapters/slack/interactivity_route.py":    100.0,
 }
 
 

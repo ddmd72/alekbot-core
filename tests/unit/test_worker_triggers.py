@@ -66,6 +66,7 @@ def test_the_trigger_set_is_the_eleven_scheduler_types_and_the_enqueue_only_ones
         "agent_execution", "video_generation_polling", "email_indexing", "consolidation", "companion_consolidation",
         "telegram_update", "execute_reminder", "setup_microsoft_todo", "reindex_task_list", "renew_task_subscriptions",
         "daily_email_review", "deep_research_failed", "deep_research_webhook_event", "drive_sync", "fact_review",
+        "interactive_choice",
     }
 
 

@@ -14,7 +14,7 @@ from src.ports.task_claim_store import TaskClaimStore
 from tests.support.fact_lifecycle_world import NOW, JanitorWorld
 
 EMPTY_RUN = {"accounts": 0, "due": 0, "staled": 0, "would_stale": 0, "deferred": 0, "conflicts": 0,
-             "no_decision": 0, "breaker_tripped": 0, "dry_run": True}
+             "no_decision": 0, "breaker_tripped": 0, "review_enqueued": 0, "purge_overdue": 0, "dry_run": True}
 PAYLOAD = {"task_type": "fact_lifecycle_sweep"}
 
 

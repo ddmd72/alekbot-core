@@ -1,5 +1,6 @@
 """Facts S4 · T4b: the review state's marks. Each writes exactly its fields, each replaced whole, validated as the whole
 new state; only `mark_enqueued` creates a state document. The real adapter on the review world's evaluating fake."""
+import asyncio
 from datetime import date, datetime, timedelta
 
 import pytest
@@ -226,3 +227,13 @@ async def test_an_empty_account_id_is_refused(world, mark):
     with pytest.raises(ValueError):
         await mark(world.review_store)
     assert world.store.db.collection(world.env.fact_review_state_collection).docs == {}
+
+
+async def test_two_concurrent_removals_each_drop_their_own_facts_offer(world):
+    await world.seed_state(offers={"f1": 1, "f2": 2, "f3": 1})
+    world.store.db.collection(world.env.fact_review_state_collection).yield_on_get = True   # both read before either commits
+
+    results = await asyncio.gather(world.review_store.mark_removed("acc", ["f1"]), world.review_store.mark_removed("acc", ["f2"]))
+
+    assert results == [True, True]
+    assert dict((await read_state(world)).offers) == {"f3": 1}

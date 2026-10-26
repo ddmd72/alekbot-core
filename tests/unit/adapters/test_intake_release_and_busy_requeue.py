@@ -43,9 +43,25 @@ EVENT = {"event_id": "Ev1", "type": "event_callback",
          "event": {"type": "message", "text": "hi", "channel": "D1", "user": "U1", "ts": "1.5"}}
 
 
+class _Body:
+    """`request.body`: an async iterable of the raw chunks (the route reads it through `read_capped_body`)."""
+
+    def __init__(self, data: bytes):
+        self._chunks = [data]
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._chunks:
+            raise StopAsyncIteration
+        return self._chunks.pop(0)
+
+
 def _slack_request():
     req = MagicMock()
-    req.get_data = AsyncMock(return_value=json.dumps(EVENT).encode())
+    req.content_length = None
+    req.body = _Body(json.dumps(EVENT).encode())
     req.headers = {}
     return req
 

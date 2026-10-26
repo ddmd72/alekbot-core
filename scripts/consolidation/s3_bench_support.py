@@ -15,11 +15,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Sequence, Tuple
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from scripts.consolidation import s3_dry_run_kit as kit_module
 from scripts.consolidation.s3_dry_run_kit import DryRunKit, add_kit_arguments, check_budget_flag, inside_memory_dir
 from src.domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStatus
+from src.domain.consolidation import consolidation_agent_id
 from src.domain.entities import FactState
 from src.domain.fact_tool_result import WRITTEN_STATUSES
 
@@ -64,7 +65,7 @@ def kit_message(
 ) -> AgentMessage:
     """The message a bench sends the agent: the task the gate reads, the payload, and the owner's zone in the context."""
     return AgentMessage.create(
-        sender=sender, recipient=f"consolidation_agent_{user_id}", intent=AgentIntent.DELEGATE,
+        sender=sender, recipient=consolidation_agent_id(user_id), intent=AgentIntent.DELEGATE,
         payload={"task": task, **payload}, context=kit.message_context(user_id, account_id, session_id=session_id),
     )
 
@@ -136,14 +137,17 @@ async def biographical_facts(handles: BenchHandles, account_id: str) -> List[Dic
 
 @asynccontextmanager
 async def kit_session(
-    handles: BenchHandles, args: Any, user_id: str, account_id: str, bench: str
+    handles: BenchHandles, args: Any, user_id: str, account_id: str, bench: str, *, with_review: bool = False,
+    summary: Optional[Callable[[Dict[str, Any], Dict[str, Any]], List[str]]] = None,
 ) -> AsyncIterator[Tuple[DryRunKit, Dict[str, Any]]]:
     """The kit installed, prepared and, whatever happens in the body, reported and closed.
 
     One kit per process: the spend ledger is locked for the kit's life. The body adds what is bench-specific to the
-    `extra` dict; the report goes to `scripts/memory/` even when the run stopped on a failed response or the cap."""
+    `extra` dict; the report goes to `scripts/memory/` even when the run stopped on a failed response or the cap.
+    `with_review` makes the kit serve and check the memory review's token, profile and blueprint too; `summary(report,
+    extra)` gives the gate lines printed at the end (default: the S3 gates)."""
     budget = check_budget_flag(args.budget_usd, getattr(args, "allow_over_owner_cap", False))
-    kit = DryRunKit(ledger_path=kit_module.SPEND_LEDGER, budget_usd=budget)
+    kit = DryRunKit(ledger_path=kit_module.SPEND_LEDGER, budget_usd=budget, with_review=with_review)
     try:
         await kit.resolve_timezone(handles.account_repo, handles.user_repo, account_id, args.timezone)
         kit.install(handles.agent)
@@ -156,7 +160,7 @@ async def kit_session(
         finally:
             path = write_bench_report(kit, bench, extra)
             print(f"\n  kit report -> {path}")
-            for line in gate_summary(kit.report()):
+            for line in (summary(kit.report(), extra) if summary is not None else gate_summary(kit.report())):
                 print(f"  {line}")
     finally:
         kit.close()

@@ -32,6 +32,7 @@ from ..domain.voice_provider_profile import (
 )
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
+from ..domain.consolidation import consolidation_agent_id
 from ..domain.consolidation_pass_stats import stats_alerts_enabled
 from ..ports.user_repository import UserRepository
 from ..ports.account_repository import AccountRepository
@@ -566,7 +567,7 @@ class UserAgentFactory(AgentFactoryPort):
 
         consolidation_agent = ConsolidationAgent(
             config=AgentConfig(
-                agent_id=f"consolidation_agent_{user_id}",
+                agent_id=consolidation_agent_id(user_id),
                 agent_type="consolidation",
                 timeout_ms=CONSOLIDATION_CFG.timeout_ms,
                 capabilities=["fact_consolidation", "synthesis", "deduplication"],

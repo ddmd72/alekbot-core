@@ -3,7 +3,7 @@ and 11's fallback; §3.8; S4-D13, S4-D19, S4-D20).
 
 The plain service on the review world, with the scripted consolidation agent of the T8b tests: the real review store,
 lease, counters, repository, `FactAnswerService`, texts and owner zone over one evaluating Firestore fake. Assertions are on
-the stored facts, questions, state, counters and tasks. NOW is 2026-10-23 07:30 UTC, 08:30 in the owner's Lisbon."""
+the stored facts, questions, state, counters and tasks. NOW is 2026-10-23 07:30 UTC, 08:30 in the owner's zone."""
 from datetime import timedelta
 from typing import Any, List
 
@@ -15,7 +15,7 @@ from src.domain.fact_lifecycle import REVIEW_ACCEPTS
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_question import QUESTION_TIMEOUT, ClosedBy, QuestionStatus
 from src.domain.fact_review_reasons import kept_twice_reason
-from src.domain.fact_review_rules import revives_in_30_days
+from src.domain.fact_review_rules import revives_in_window
 from src.domain.fact_review_task import FactReviewTask
 from src.infrastructure.fact_review_scope import FactReviewScope
 from tests.support.fact_kit import ACC
@@ -365,7 +365,7 @@ class TestKeptTwice:
         event = last_event(world, fact)
         assert (event["from"], event["to"], event["actor"]) == ("stale", "current", "review_fallback")
         assert event["reason"] == kept_twice_reason(question.question_id)
-        assert revives_in_30_days(doc["lifecycle_events"], NOW) == 0
+        assert revives_in_window(doc["lifecycle_events"], NOW) == 0
         assert dict((await world.review_store.get_state(ACC)).offers) == {}
         assert r.agent.routed == []                                               # queued by code, not offered again
         row = await day_row(world)

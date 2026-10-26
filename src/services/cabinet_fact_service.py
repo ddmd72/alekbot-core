@@ -19,7 +19,7 @@ class CabinetFactService:
         Tenancy: the stored account_id of `fact_id` must equal `account_id`.
         Resolution: resolve_current with CABINET_ACCEPTS (every state but superseded). The document the walk ends on is
             invalidated, so a stale id from an open page still reaches the fact, but only when its text equals the text
-            of `fact_id` (what the page showed); a newer text raises FactResolutionError (the page reloads).
+            of `fact_id` (what the page showed); a newer text raises FactResolutionError.
         Effect: state invalidated, is_current True, valid_to and last_updated now; version unchanged; one
             `lifecycle_events` entry (actor "cabinet", reason "deleted in the Cabinet"). Then the biographical cache of
             the account is refreshed (the repository logs and swallows a refresh failure), so the fact leaves the prompt.

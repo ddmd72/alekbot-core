@@ -135,17 +135,17 @@ async def test_by_message_finds_only_the_same_user_platform_channel_and_id(world
                               message_ref=MessageRef("slack", REF.channel_id, "1729760000.000999"))
 
     store = world.review_store
-    assert await store.by_message("u1", "slack", REF.channel_id, ts) == target
-    assert await store.by_message("u2", "slack", REF.channel_id, ts) == other_user
-    assert await store.by_message("u1", "slack", "D9", ts) is None              # another channel's same Slack ts
-    assert await store.by_message("u3", "slack", REF.channel_id, ts) is None
-    assert await store.by_message("u1", "slack", REF.channel_id, "") is None
+    assert await store.by_message("u1", MessageRef("slack", REF.channel_id, ts)) == target
+    assert await store.by_message("u2", MessageRef("slack", REF.channel_id, ts)) == other_user
+    assert await store.by_message("u1", MessageRef("slack", "D9", ts)) is None              # another channel's same Slack ts
+    assert await store.by_message("u3", MessageRef("slack", REF.channel_id, ts)) is None
+    assert await store.by_message("u1", MessageRef("slack", REF.channel_id, "")) is None
 
 
 async def test_by_message_also_finds_a_closed_question(world):
     closed = await world.seed_question(QuestionStatus.CLOSED, question_id="done")
 
-    assert await world.review_store.by_message("u1", REF.platform, REF.channel_id, REF.message_id) == closed
+    assert await world.review_store.by_message("u1", REF) == closed
 
 
 # ------------------------------------------------------------------------------------------------ indexes
@@ -160,7 +160,7 @@ async def test_each_query_is_served_without_a_composite_index(world):
 
     await store.questions_for_account("acc")
     await store.all_open()
-    await store.by_message("u1", REF.platform, REF.channel_id, REF.message_id)
+    await store.by_message("u1", REF)
 
     open_values = ["queued", "pending", "asked", "unanswered"]
     assert col.executed == [

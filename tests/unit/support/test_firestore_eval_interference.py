@@ -78,6 +78,46 @@ async def test_a_plain_read_does_not_consume_an_interference(db, col):
     assert seen[0][0] == 2
 
 
+def _query_reader(col, seen, op=">="):
+    threshold = 0 if op == ">=" else 5
+
+    @firestore.async_transactional
+    async def body(tx):
+        snaps = await col.where("v", op, threshold).get(transaction=tx)
+        seen.append([s.to_dict()["v"] for s in snaps])
+        if snaps:
+            tx.update(col.document("a"), {"v": snaps[0].to_dict()["v"] + 10})
+
+    return body
+
+
+async def test_interference_after_a_transactional_query_aborts_and_reruns_the_body(db, col):
+    db.interfere_on_txn_query("c", "a", {"v": 2})
+    seen = []
+    await _query_reader(col, seen)(db.transaction())
+    assert seen == [[1], [2]]                               # the first attempt held the old snapshot, the re-run the new one
+    assert col.docs["a"] == {"v": 12}
+
+
+async def test_a_plain_query_does_not_consume_a_query_interference(db, col):
+    db.interfere_on_txn_query("c", "a", {"v": 2})
+    assert [s.to_dict() for s in await col.where("v", ">=", 0).get()] == [{"v": 1}]
+    assert col.docs["a"] == {"v": 1}
+    seen = []
+    await _query_reader(col, seen)(db.transaction())
+    assert seen == [[1], [2]] and col.docs["a"] == {"v": 12}
+
+
+async def test_a_transactional_query_that_misses_the_document_does_not_consume_a_query_interference(db, col):
+    db.interfere_on_txn_query("c", "a", {"v": 2})
+    seen = []
+    await _query_reader(col, seen, op=">")(db.transaction())
+    assert seen == [[]] and col.docs["a"] == {"v": 1}
+    later = []
+    await _query_reader(col, later)(db.transaction())
+    assert later == [[1], [2]] and col.docs["a"] == {"v": 12}
+
+
 async def test_raise_on_txn_read_raises_once(db, col):
     db.raise_on_txn_read("c", "a", Aborted("read aborted"))
     seen = []

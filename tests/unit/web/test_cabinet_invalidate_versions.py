@@ -98,7 +98,7 @@ async def test_both_errors_are_a_409_carrying_their_message(error):
 
     status, body = await _invalidate(fact_repo, "x")
 
-    assert (status, body) == (409, {"error": str(error)})
+    assert (status, body) == (409, {"error": f"{error}; reload"})
     fact_repo.refresh_biographical_context_cache.assert_not_awaited()
 
 

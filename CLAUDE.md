@@ -284,7 +284,7 @@ stale `running` jobs.
   `deep_research_failed`, `deep_research_webhook_event`, `fire_due_reminders`,
   `execute_reminder`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
   `renew_all_task_subscriptions`, `start_daily_email_review`, `daily_email_review`,
-  `billing_daily_summary`, `fact_lifecycle_sweep`, `fact_review`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
+  `billing_daily_summary`, `fact_lifecycle_sweep`, `fact_review`, `interactive_choice`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
   `docs/07_deployment/SCHEDULERS.md`.
   `WorkerHandler` is the only dispatcher: `telegram_update` and a queued Slack event (no `task_type`; `event` +
   `session_id`) go to the adapters attached by the builder (`build_application_graph`);
@@ -531,10 +531,28 @@ user parts `p.consolidation_text or p.text` (`consolidation_text` is legacy, see
 **Loop alerts:** a pass that hits the turn cap without a final report posts a 🚨 ops alert (`AlertSinkPort`);
 while `CONSOLIDATION_STATS_ALERTS` (`os.getenv`, default on, temporary since 2026-10-20) is on, every pass
 posts a 📊 stats line. See `decisions/sonnet55_adaptive_thinking_stall.md`.
-**Expiry and the janitor (Facts S3, built, ships with S4–S5):** the consolidator's writes carry an `expiry` (`date` / `horizon` /
+**Expiry and the janitor (Facts S3, built, ships with S5):** the consolidator's writes carry an `expiry` (`date` / `horizon` /
 `none`) that code turns into `expires_at` in the owner's timezone (map §2.7); a daily zero-LLM janitor (`fact_lifecycle_sweep`)
 stales due facts behind a breaker and is **log-only until S5**; never a TTL policy on the facts collection (a test scans the
 tree). See `decisions/fact_expiry_and_janitor.md`, map §5.5.
+
+**Memory review (Facts S4, built, ships with S5)** — what a stale fact becomes. The janitor (above) enqueues a `fact_review`
+task per account (daily by default, `fact_review_interval_days`, log-only mode too). `FactReviewService` runs it under the
+memory-write lease: housekeeping, timeouts in code, selection of up to 20 stale facts, one pass of the consolidation agent
+with its own profile (`consolidation_review`; tools `update_fact`, `ask_owner`, `count_words` only; `FactReviewScope` refuses
+a revive, rewrite or invalidation without evidence or the owner's reply), then the send of the next question and the weekly
+digest. What the pass cannot decide becomes a **question**, one fact per message, written by code (never a model), one at a
+time, at most 5 a day, to the primary chat only. The fact is **current while its question waits**; the janitor skips it and
+counts it in the *pool* (stale + waiting facts, capped at 50). An answer is only a reply to the question message, a Slack
+button (`POST /slack/interactivity`: signature checked on the raw bytes first, the work done by the `interactive_choice` task)
+or a Cabinet click, applied by `FactAnswerService` (no model, no lease, same preconditions); words are read by the review once.
+Silence for 14 days applies the question's fallback (a revive gets twice the last window, 14 to 365 days). Closed
+questions and digest claims carry `purge_after` for a Firestore TTL policy; never `expires_at`. The 15 message texts are UI
+strings (uk, en, fr, es) or model-written under code checks. Text the bot did not write (a stored fact, a translated
+acknowledgement) is sent literally (`send_literal`, `notify_raw(literal=True)`). **Cloud Tasks names dedupe only while a task is
+queued or running and for about an hour after**: a name like `fact-review:<account>:<local date>` merges runs that start close
+together; "once per local day" for close runs only. The daily rhythm comes from `review_due`, not from the name. See
+`decisions/fact_review_and_owner_questions.md`, map §5.6.
 
 **Memory facts the owner confirms** — the bot never writes to memory itself. The consolidator reads
 every user message as the owner's own words, so the removed `save_to_memory` intent let bot-written

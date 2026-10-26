@@ -886,7 +886,8 @@ class FileManagementAgent(BaseAgent):
         return self._ok(message, f"Deleted {out.item.path}.", [])
 
     async def _receipt(self, message: AgentMessage, user_id: str, ui: UIMessage, **fmt: str) -> None:
-        """Deterministic chat receipt of a destructive action (§4.10). Best effort, logged on failure."""
+        """Deterministic chat receipt of a destructive action (§4.10). Best effort, logged on failure. The path is the
+        user's or the model's text, so the receipt is sent literally."""
         if not (self._notification and self._localization):
             logger.warning("FileManagementAgent: drive receipt not wired (%s)", ui.value)
             return
@@ -901,6 +902,7 @@ class FileManagementAgent(BaseAgent):
                 user_id, message.context.get("account_id") or "", text,
                 channel_id_override=message.context.get("origin_channel_id"),
                 platform_override=message.context.get("origin_platform"),
+                literal=True,
             )
         except Exception:
             logger.warning("FileManagementAgent: drive receipt failed (%s)", ui.value, exc_info=True)

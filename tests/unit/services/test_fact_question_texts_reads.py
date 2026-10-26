@@ -56,6 +56,18 @@ async def test_a_raising_language_service_is_logged_naming_the_read_and_raised(c
     assert named in found and ACC[:8] in found and "RuntimeError" in found and why in found
 
 
+async def test_a_raising_language_setting_read_in_mirrors_is_logged_and_raised(caplog):
+    world = ReviewWorld()
+    resolver = FactQuestionTexts(FailingLanguage("get_preference"), world.localization, world.review_store, world.counters,
+                                 system_default=LanguageCode.EN, clock=world.clock)
+
+    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError, match="user store unavailable"):
+        await resolver.mirrors(USER)
+
+    (found,) = errors(caplog)
+    assert "the language setting" in found and USER[:8] in found and "RuntimeError" in found
+
+
 async def test_a_raising_state_read_is_named_as_the_review_state(caplog):
     world = ReviewWorld()
     world.language.preferences[USER] = (LanguageCode.UK, True)

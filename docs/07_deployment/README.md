@@ -232,6 +232,21 @@ gcloud firestore fields ttls update expires_at --collection-group=<collection-gr
   --enable-ttl --database=us-production --project=<PROJECT_ID>
 ```
 
+Two collections expire on a different field, **`purge_after`**, which exists only in storage:
+
+| Collection group | What expires |
+|---|---|
+| `<prefix>fact_review_questions` | closed memory-review questions (90 days after closing; an open question has no `purge_after`) |
+| `<prefix>fact_review_messages` | weekly-digest claims (90 days after the claim) |
+
+```bash
+gcloud firestore fields ttls update purge_after --collection-group=<collection-group> \
+  --enable-ttl --database=us-production --project=<PROJECT_ID>
+```
+
+Without these policies nothing breaks, but the janitor posts a 🚨 alert on each run while a closed record is 3 days past
+its `purge_after`.
+
 - **A policy is keyed by collection-group ID across the whole database, not by path.** That is why a draft's file
   subcollection is `draft_files` and never `files`: a saved skill's own files live in a `files` subcollection, which a
   policy on a draft subcollection of the same name would also cover.
@@ -239,7 +254,8 @@ gcloud firestore fields ttls update expires_at --collection-group=<collection-gr
   `<prefix>fact_lifecycle_daily` / `<prefix>fact_lifecycle_lines`: a fact's `expires_at` is a decision (the janitor stales,
   never deletes), so a policy would erase facts on the day they expire. `tests/unit/test_facts_have_no_ttl_policy.py`
   fails on such a command anywhere in the tree. `<prefix>memory_write_leases` has no policy either (its expiry field is
-  `lease_until`).
+  `lease_until`), nor do `<prefix>fact_lifecycle_run` and `<prefix>fact_review_state` (their expiry fields are
+  decisions, not deletions).
 
 ### Memory telemetry sink
 

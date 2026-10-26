@@ -6,15 +6,18 @@ Statuses of a question move only through the methods of `FactReviewQuestion`; no
 from datetime import date, datetime, timedelta, timezone
 from typing import AbstractSet, Any, Callable, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence
 
+from .channel_binding import ChannelBinding
 from .entities import ExpiryKind, FactEntity, FactState
 from .fact_expiry import EXPIRY_NONE, Expiry, stored_expiry
 from .fact_update import ParsedFactUpdate
+from .fact_update_outcome import EXPIRY_REFUSALS, UpdateRefusal
 from .fact_update_plan import content_changed
 from .fact_lifecycle import (
     compute_expiry, expiry_pinned, horizon_from_now, lifecycle_event, lifecycle_fields, resolves_too_soon, revival_fields,
     with_event,
 )
 from .fact_review_basis import ReviewAction, ReviewBasis
+from .fact_review_outcome import MADE_CURRENT, ReviewDecision
 from .fact_review_question import AnswerSource, FactReviewQuestion, QuestionFallback, QuestionStatus
 from .fact_review_reasons import (
     FallbackActor, fallback_reason, gives_window_reason, is_revive_reason, kept_twice_reason, queued_reason,
@@ -23,6 +26,7 @@ from .fact_review_state import FactReviewState
 from .fact_review_task import neighbours_of
 from .fact_write_context import as_utc
 from .local_time import local_date
+from .notification import NotificationChannel
 from .pass_actor import PassActor
 from .settings import DEFAULT_FACT_REVIEW_INTERVAL_DAYS
 from .user import UserBotConfig
@@ -44,6 +48,8 @@ _DAY = timedelta(days=1)
 # Why the janitor starts a review, in the order they are tried.
 ReviewReason = Literal["stale", "reply", "timeout", "pending", "digest", "queue"]
 QueueAlertAction = Literal["raise", "rearm"]
+# Why no question may go to the owner's chat (S4-D21).
+ChannelRefusal = Literal["no_primary_channel", "companion_channel"]
 
 
 # ------------------------------------------------------------------------------------------------ selection
@@ -71,7 +77,7 @@ def select_batch(
     candidates; they are current, are not filtered, and keep the order given. Then the stale facts by (offers, longest
     stale first, id): a fact with an open question is the question's business, and one offered MAX_OFFERS times is asked
     instead (`kept_twice`)."""
-    held = _open_fact_ids(questions)
+    held = open_fact_ids(questions)
     waiting = sorted(
         (f for f in stale if f.id not in held and offers.get(f.id, 0) < MAX_OFFERS),
         key=lambda f: (offers.get(f.id, 0), queue_key(f), f.id),
@@ -101,13 +107,14 @@ def offered(offers: Mapping[str, int], batch: Sequence[FactEntity]) -> Dict[str,
 def kept_twice(stale: Sequence[FactEntity], offers: Mapping[str, int], questions: Iterable[FactReviewQuestion]) -> List[FactEntity]:
     """The stale facts the model has left undecided MAX_OFFERS times and that have no open question: they are asked
     (never revived by code), the longest stale first."""
-    held = _open_fact_ids(questions)
+    held = open_fact_ids(questions)
     return sorted(
         (f for f in stale if offers.get(f.id, 0) >= MAX_OFFERS and f.id not in held), key=lambda f: (queue_key(f), f.id)
     )
 
 
-def _open_fact_ids(questions: Iterable[FactReviewQuestion]) -> frozenset[str]:
+def open_fact_ids(questions: Iterable[FactReviewQuestion]) -> frozenset[str]:
+    """The facts of the open questions (queued, pending, asked, unanswered): the review holds them, the janitor skips them."""
     return frozenset(q.fact_id for q in questions if q.is_open)
 
 
@@ -125,7 +132,7 @@ def next_in_queue(questions: Iterable[FactReviewQuestion]) -> Optional[FactRevie
 
 def sent_today(state: FactReviewState, today: date) -> int:
     """Questions sent on the owner's local day `today`; the count of an earlier day is not today's."""
-    return state.sent if state.sent_on == today else 0
+    return state.sent_today(today)
 
 
 def current_question(state: FactReviewState, questions: Iterable[FactReviewQuestion]) -> Optional[FactReviewQuestion]:
@@ -149,6 +156,20 @@ def may_send(state: FactReviewState, today: date, current: Optional[FactReviewQu
     if sent_today(state, today) >= MAX_QUESTIONS_PER_DAY:
         return False
     return state.delivery_failed_on != today
+
+
+def channel_refusal(
+    primary: Optional[NotificationChannel], binding: Optional[ChannelBinding],
+) -> Optional[ChannelRefusal]:
+    """Why no question may be sent now, or None (S4-D21): questions go only to the owner's primary channel (`primary`;
+    no fallback to the last active one), and never to one whose binding has a companion's memory (`binding`, that
+    channel's), whose session is the companion's, not Alek's. Without a channel the queue waits; the Cabinet can
+    answer it."""
+    if primary is None:
+        return "no_primary_channel"
+    if binding is not None and binding.companion_config is not None:
+        return "companion_channel"
+    return None
 
 
 def becomes_unanswered(question: FactReviewQuestion, now: datetime, tz: str) -> bool:
@@ -257,6 +278,11 @@ def fallback_revives(question: FactReviewQuestion) -> bool:
     return question.fallback != "archive"
 
 
+def fallback_sets_aside(question: FactReviewQuestion) -> bool:
+    """Whether the question's fallback sets its fact aside (archives it) rather than bringing it back."""
+    return not fallback_revives(question)
+
+
 def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetime, actor: FallbackActor) -> Dict[str, Any]:
     """The in-place write of a question's fallback, applied when nobody answered or the owner does not remember.
 
@@ -283,7 +309,7 @@ def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetim
 
 # ------------------------------------------------------------------------------------------------ revive alert
 
-def revives_in_30_days(events: Sequence[Mapping[str, Any]], now: datetime) -> int:
+def revives_in_window(events: Sequence[Mapping[str, Any]], now: datetime) -> int:
     """How many times a fact came back to current within REVIVE_WINDOW of `now`, read from its `lifecycle_events`.
 
     A revive is an entry into `current` whose code-built reason names one (a review revive, an owner's yes, a
@@ -293,7 +319,7 @@ def revives_in_30_days(events: Sequence[Mapping[str, Any]], now: datetime) -> in
 
 def revive_alert_due(events: Sequence[Mapping[str, Any]], now: datetime) -> bool:
     """A fact revived REVIVE_ALERT times or more in the window: its horizon is probably wrong."""
-    return revives_in_30_days(events, now) >= REVIVE_ALERT
+    return revives_in_window(events, now) >= REVIVE_ALERT
 
 
 def _leads_to_current(event: Mapping[str, Any], reason_test: Callable[[object], bool]) -> bool:
@@ -388,7 +414,7 @@ def _queue_may_go(state: FactReviewState, questions: Sequence[FactReviewQuestion
 
 def pool(stale_count: int, questions: Iterable[FactReviewQuestion]) -> int:
     """Facts in the review's hands: the stale ones plus the facts of open questions."""
-    return stale_count + len(_open_fact_ids(questions))
+    return stale_count + len(open_fact_ids(questions))
 
 
 def queue_alert(state: FactReviewState, questions: Iterable[FactReviewQuestion]) -> Optional[QueueAlertAction]:
@@ -522,6 +548,39 @@ def changed_outside_refusal(place: str) -> str:
 
 def not_under_review_refusal(place: str) -> str:
     return f"{place} names a current fact with no question in this batch; leave it, it stays as it is"
+
+
+def result_refusal(place: str, *, asked: bool, decision: Optional[ReviewDecision], write: bool) -> Optional[str]:
+    """One result per fact: an ask holds it; a write decides it, except that a write may follow one that left the lineage
+    current (R3-13). `asked` and `decision` are the pass's result so far for the fact's lineage."""
+    if asked:
+        return asked_refusal(place)
+    if decision is not None and not (write and decision.outcome in MADE_CURRENT):
+        return decided_refusal(place)
+    return None
+
+
+def may_write_current(decision: Optional[ReviewDecision], has_open_question: bool) -> bool:
+    """A current document of a batch lineage is the pass's to write when its fact has an open question or this pass made it
+    current."""
+    return (decision is not None and decision.outcome in MADE_CURRENT) or has_open_question
+
+
+def made_current_documents(decisions: Mapping[str, ReviewDecision], left: Mapping[str, FactEntity]) -> AbstractSet[str]:
+    """The documents this pass made current (they count as current evidence and successors, R3-13): per lineage in
+    `decisions`, the document `left` holds."""
+    return {left[lineage].id for lineage, decision in decisions.items() if decision.outcome in MADE_CURRENT}
+
+
+def reason_plan_date(fact: FactEntity, basis: Optional[ReviewBasis], tz: str) -> Optional[date]:
+    """The plan's date for the trail reason: only a `date_passed` basis has one."""
+    return plan_date(fact, basis, tz) if basis is not None and basis.kind == "date_passed" else None
+
+
+def needs_change_check(refusal: Optional[UpdateRefusal]) -> bool:
+    """Whether a refused write is checked for the fact having changed outside the review (then it reads as that): an
+    expiry refusal is about the update itself and is not."""
+    return refusal not in EXPIRY_REFUSALS
 
 
 def review_action(current: FactEntity, update: ParsedFactUpdate) -> Optional[ReviewAction]:

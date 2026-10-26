@@ -15,6 +15,7 @@ from enum import StrEnum
 from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from .entities import FactDomain
+from .env_switch import is_off_value
 from .fact_lifecycle_day import CounterField
 from .pass_actor import PassActor
 
@@ -47,7 +48,7 @@ _FILLER_WORDS = frozenset({
 
 def stats_alerts_enabled(raw: str) -> bool:
     """Parse the CONSOLIDATION_STATS_ALERTS value: "0", "false", "no", "off" (any case) are off."""
-    return raw.strip().lower() not in ("0", "false", "no", "off")
+    return not is_off_value(raw)
 
 
 class PassTool(StrEnum):

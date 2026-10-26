@@ -63,6 +63,7 @@ from src.composition.service_container import ServiceContainer
 from src.composition.user_agent_factory import UserAgentFactory
 from src.config.settings import load_settings
 from src.domain.agent import AgentIntent, AgentMessage
+from src.domain.consolidation import consolidation_agent_id
 from src.domain.complexity_settings import ComplexitySettings
 from src.domain.request_context import RequestContext
 from src.domain.user import PerformanceTier
@@ -192,7 +193,7 @@ async def run_chat(
 
     message = AgentMessage.create(
         sender="ab_chat_script",
-        recipient=f"consolidation_agent_{user_id}",
+        recipient=consolidation_agent_id(user_id),
         intent=AgentIntent.DELEGATE,
         payload={"task": "consolidate", "messages": messages, "biographical_context": bio_facts},
         context={"user_id": user_id, "account_id": account_id, "session_id": "ab_chat"},

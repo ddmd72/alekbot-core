@@ -1,0 +1,1 @@
+2c71b790  # kwarg-drop deep=deep in FactReviewQuestion.model_copy: the copy is rebuilt from model_dump() by model_validate, so it shares no object with the original either way; the model is frozen and every field immutable (str, date, aware datetime, enums, frozen MessageRef)

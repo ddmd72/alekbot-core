@@ -11,6 +11,7 @@ import json
 import asyncio
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Callable, Coroutine, List, Optional, Any, TYPE_CHECKING
 
 from ..domain.messaging import MessageContext, ResponseChannel, SmartResponse, RichContent
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
     from ..services.skill_service import SkillService
     from ..services.long_turn_service import LongTurnService
     from ..services.memory_fact_service import MemoryFactService
+    from ..services.fact_answer_service import FactAnswerService
 from ..utils.memory_scope import memory_scope
 from ..utils.file_conversion import (
     convert_file_to_text, download_alert, is_native_binary, make_history_stub,
@@ -155,6 +157,7 @@ class ConversationHandler(ConversationHandlerPort):
         skill_service: Optional["SkillService"] = None,
         long_turn_service: Optional["LongTurnService"] = None,
         memory_fact_service: Optional["MemoryFactService"] = None,
+        fact_answers: Optional["FactAnswerService"] = None,
     ):
         self.coordinator = coordinator
         self.agent_factory = agent_factory
@@ -176,6 +179,7 @@ class ConversationHandler(ConversationHandlerPort):
         self._skill_service = skill_service
         self._long_turns = long_turn_service
         self._memory_facts = memory_fact_service
+        self._fact_answers = fact_answers
         # turn_ids whose long-turn flow runs in this process (final review C1). With one
         # instance, a RUNNING record not in here belongs to an attempt that died. Plain
         # set ops with no await between test and change, so no lock is needed.
@@ -700,6 +704,10 @@ class ConversationHandler(ConversationHandlerPort):
             self._background_tasks.add(task)
             task.add_done_callback(self._background_tasks.discard)
 
+        # A reply to a memory-review question is taken here, before any LLM call (like a `$` command).
+        if await self._post_review_reply_answer(context, response_channel, mode):
+            return
+
         message_parts: List[MessagePart] = []
         temp_files = []
         file_part_stubs: dict[int, str] = {}  # id(part) → history stub for converted files
@@ -1098,6 +1106,35 @@ class ConversationHandler(ConversationHandlerPort):
                     os.remove(path)
                 except Exception:
                     logger.debug("Failed to remove temp file %s", path)
+
+    async def _post_review_reply_answer(
+        self, context: MessageContext, response_channel: ResponseChannel, mode: SessionMode,
+    ) -> bool:
+        """Offer a reply (a thread reply on Slack, a Telegram reply) to the memory review's `answer_reply` and, when it
+        answers, post that text where the owner replied; True then, and the turn ends (no status, no LLM call, no session
+        write here: the service appended the pair). The text goes out as a reply to the question's message. Only a
+        text-only message of an unbound channel is offered. The handler decides nothing about questions: None from the
+        service leaves the message to the ordinary flow."""
+        replied_to = context.metadata.get("reply_to_message_id")
+        if self._fact_answers is None or not replied_to or mode.is_bound or context.attachments or not context.text:
+            return False
+        channel_id = context.metadata.get("channel") or getattr(response_channel, "channel_id", None)
+        platform = getattr(response_channel, "platform", None)
+        if not channel_id or not platform:
+            return False
+        answer = await self._fact_answers.answer_reply(
+            context.user_id, context.account_id, platform, str(channel_id), str(replied_to), context.text,
+            datetime.now(timezone.utc),
+        )
+        if answer is None:
+            return False
+        try:
+            await response_channel.send_reply(answer, str(replied_to))
+        except Exception as e:
+            # The reply is taken and stored; falling through to the LLM would answer it a second time.
+            logger.error("❌ [ConversationHandler] Memory review acknowledgement not posted for user %s: %s",
+                         context.user_id[:8], e, exc_info=True)
+        return True
 
     async def _route_with_fallback(self, message, context, message_parts, origin_platform):
         """Route the turn; Quick fallback only before the 90 s mark (RFC §5.7, §5.9)."""

@@ -10,22 +10,26 @@ budget at routing time (as `ConsolidationService`): the agent's timeout is what 
 pass ends before the lease does however long the steps before it took. Every question close goes through
 `FactAnswerService.close_question`; nothing here closes one itself.
 
-Built: steps 1-11 and 13-15 and the failure rule (T8a, T8b, T8c). The send (T8d1) and the digest (T8d2) are stubs that
-return an empty result.
+Built: steps 1-15 and the failure rule (T8a, T8b, T8c, T8d1, T8d2).
 """
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStatus
+from ..domain.consolidation import consolidation_agent_id
 from ..domain.entities import FactEntity
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
 from ..domain.fact_lifecycle import REVIEW_ACCEPTS
-from ..domain.fact_lifecycle_day import CounterField
+from ..domain.fact_lifecycle_alerts import revive_alert
+from ..domain.fact_lifecycle_day import CounterField, counter_day
 from ..domain.fact_review_after_pass import after_pass
 from ..domain.fact_review_ask import AskRequest
-from ..domain.fact_review_frame import NOT_DELIVERED_REPLY, not_delivered_frame
+from ..domain.fact_review_digest import (
+    DIGEST_LIMIT, digest_day, digest_facts, digest_message, digest_since, pass_set_aside,
+)
+from ..domain.fact_review_frame import NOT_DELIVERED_REPLY, not_delivered_frame, question_text, review_frame
 from ..domain.fact_review_language import language_to_store
 from ..domain.fact_review_question import ClosedBy, FactReviewQuestion
 from ..domain.fact_review_result import decode_review_result
@@ -33,9 +37,11 @@ from ..domain.fact_review_rules import (
     QUEUE_ACCEPTS,
     asked_fact_unchanged,
     becomes_unanswered,
+    channel_refusal,
+    digest_due,
     due_timeouts,
     fallback_fields,
-    fallback_revives,
+    fallback_sets_aside,
     kept_twice,
     kept_twice_fallback,
     kept_twice_fields,
@@ -43,7 +49,7 @@ from ..domain.fact_review_rules import (
     queued_fields,
     queued_question,
     revive_alert_due,
-    revives_in_30_days,
+    revives_in_window,
     review_close_source,
     select_batch,
     stuck_pending,
@@ -63,13 +69,17 @@ from ..domain.fact_review_task import (
 )
 from ..domain.fact_review_task_keys import (
     FACT_REVIEW_TASK,
+    REVIEW_DEADLINE_S,
     REVIEW_MODES,
     ReviewMode,
     defer_key,
     review_payload,
 )
 from ..domain.llm import Message, MessagePart
+from ..domain.local_time import local_date
+from ..domain.messaging import session_id_for
 from ..domain.memory_write_lease import LEASE_BUSY_RETRY_DELAY_S, LEASE_MARGIN, agent_timeout_s, lease_until
+from ..domain.notification import NotificationChannel
 from ..domain.owner_timezone import not_owner_reason
 from ..domain.request_context import RequestContext
 from ..domain.stored_fact import StoredFact
@@ -93,7 +103,6 @@ if TYPE_CHECKING:
     from .owner_timezone_resolver import OwnerTimezoneResolver
     from .user_notification_service import UserNotificationService
 
-_DEFERRAL_DEADLINE_S = 1800  # the Cloud Tasks dispatch deadline of a deferred run, as ConsolidationService's
 _MARGIN_S = LEASE_MARGIN.total_seconds()
 _SENDER = "fact_review_service"
 # The consolidation agent's task name (`Intent.REVIEW_STALE_FACTS`; a literal, as ConsolidationService's own task names,
@@ -158,7 +167,7 @@ class FactReviewService:
     Dependencies, by the step that reads them:
     - `account_repo`, `user_repo`: the owner check (step 1);
     - `agent_factory`, `owner_zones`: the setup (step 3);
-    - `texts`: whether the language mirrors the owner (step 10), the send's message (T8d1), the digest's lines (T8d2);
+    - `texts`: whether the language mirrors the owner (step 10), the send's message (step 12), the digest's lines (T8d2);
     - `lease`, `task_queue`, `run_timeout_s`: the lease and the deferral (step 4, and step 10 when no lease time is
       left); `task_queue` also takes the next question's release through `answer_service`;
     - `review_store`, `session_store`: housekeeping (step 5) and every question and state write; `session_store` also
@@ -167,7 +176,7 @@ class FactReviewService:
       writes (steps 6-8, 10, 11), the biographical cache (step 13), the revive alert's read (step 15);
     - `answer_service`: every question close (steps 6, 11);
     - `coordinator`: the review pass (step 10);
-    - `notification_state`, `channel_bindings`, `interactive`: the send's channel and post (T8d1);
+    - `notification_state`, `channel_bindings`, `interactive`: the send's channel and post (step 12);
     - `notifications`: the owner's channel for his recent messages (step 10), the digest (T8d2);
     - `alert_sink`: the revive alert (step 15);
     - `counters`: the day's counters (step 15);
@@ -282,7 +291,7 @@ class FactReviewService:
             FACT_REVIEW_TASK,
             review_payload(user_id, account_id, "daily"),
             delay_seconds=LEASE_BUSY_RETRY_DELAY_S,
-            deadline_seconds=_DEFERRAL_DEADLINE_S,
+            deadline_seconds=REVIEW_DEADLINE_S,
             dedup_key=defer_key(account_id, now),
         )
         logger.info(f"⏳ [FactReview] memory-write lease busy: deferred the review of account {account_id[:8]}")
@@ -368,13 +377,23 @@ class FactReviewService:
                 logger.info(f"[FactReview] question {question.question_id} was delivered: completed as asked")
                 return question.completed()
         else:
-            if question.retraction_due:
-                await self._append_pair(question, not_delivered_frame(question.question_id), NOT_DELIVERED_REPLY)
+            await self._retract(question)
             if await self._review_store.requeue_front(question.question_id, failed_today=False):
                 logger.info(f"[FactReview] question {question.question_id} was never posted: back at the queue's front")
                 return question.requeued()
         logger.warning(f"[FactReview] stuck question {question.question_id} not settled: it changed meanwhile")
         return question
+
+    async def _retract(self, question: FactReviewQuestion) -> None:
+        """The not-delivered pair after a question whose frame was appended and whose post never succeeded
+        (`retraction_due`), once per attempt: the question is marked retracted right after the pair lands, so a retry
+        that finds it still pending (its requeue failed) appends no second pair. A crash between the pair and the mark
+        can still repeat it. A question not due for one gets nothing."""
+        if not question.retraction_due:
+            return
+        await self._append_pair(question, not_delivered_frame(question.question_id), NOT_DELIVERED_REPLY)
+        if not await self._review_store.mark_retracted(question.question_id):
+            logger.warning(f"[FactReview] question {question.question_id}: not marked retracted (it changed meanwhile)")
 
     async def _append_pair(self, question: FactReviewQuestion, user_text: str, model_text: str) -> None:
         """A user/model pair in the question's session, raising when it was not stored."""
@@ -425,7 +444,7 @@ class FactReviewService:
         if not counts:
             return
         try:
-            await self._counters.add(account_id, now.astimezone(timezone.utc).date(), counts)
+            await self._counters.add(account_id, counter_day(now), counts)
         except Exception as exc:
             logger.warning(
                 f"[FactReview] {', '.join(c.value for c in counts)} not counted for account {account_id[:8]}: "
@@ -517,18 +536,143 @@ class FactReviewService:
             return None
         return stored
 
-    # ------------------------------------------------------------------------------------------------ stubs (T8d1-T8d2)
+    # ------------------------------------------------------------------------------------------------ step 12: send
 
     async def _send_next(
         self, user_id: str, account_id: str, now: datetime, zone: str, writes: _FactWrites,
     ) -> _StepResult:
-        """T8d1, step 12 (§3.7): claim, pair, post, asked; not delivered → the second pair and the queue's front.
-        Mark every fact write at once through `writes.wrote()`, right after it lands."""
-        return _StepResult()
+        """Step 12 and `mode="next"` (§3.7): one question to the owner's primary channel, when one may go.
+
+        The channel (`channel_refusal`): none usable → nothing sent, INFO. The claim (`claim_next`, deciding with the
+        domain's `may_send` in its transaction) for the owner-local day of `now`: none → nothing. The message in the
+        message language (`texts.message_for`), then the pair (`review_frame` + `question_text`, raising when not
+        stored): a failure puts the question back at the queue's front (`sent` kept, no failed day). The post: the
+        returned ref is stored (`set_message_ref`) before the question is asked (`mark_asked`), so a crash in between is
+        completed by housekeeping, never resent. A post that raises is not delivered: the not-delivered pair
+        (`_retract`), the question back at the front with today as the failed day, `not_delivered` counted. A question
+        closed meanwhile (the Cabinet, the review) stays closed; its close released the next one, so nothing is
+        released here. Writes no fact (`writes` is not marked); store errors raise."""
+        today = local_date(now, zone)
+        channel = await self._question_channel(user_id, account_id)
+        if channel is None:
+            return _StepResult()
+        claimed = await self._review_store.claim_next(account_id, today, session_id_for(user_id, channel.channel_id))
+        if claimed is None:
+            return _StepResult()
+        qid = claimed.question_id
+        try:
+            message = await self._texts.message_for(claimed, user_id, account_id)
+        except Exception:
+            await self._requeue(claimed, failed_today=False, why="its message could not be built")
+            raise
+        try:
+            await self._append_pair(claimed, review_frame(qid), question_text(message))
+        except Exception:
+            await self._requeue(claimed, failed_today=False, why="its pair was not appended")
+            return _StepResult()
+        if not await self._review_store.mark_appended(qid, now):
+            # Closed between the claim and here: the owner is not sent it, and the history says so.
+            logger.info(f"[FactReview] question {qid} was closed before it was posted; not sent")
+            await self._append_pair(claimed, not_delivered_frame(qid), NOT_DELIVERED_REPLY)
+            return _StepResult()
+        appended = claimed.appended(now)
+        try:
+            ref = await self._interactive.post(channel.platform, channel.channel_id, message)
+        except Exception as exc:
+            logger.warning(f"[FactReview] question {qid} not delivered on {channel.platform}: {type(exc).__name__}: {exc}")
+            await self._retract(appended)
+            await self._requeue(appended, failed_today=True, why="it was not delivered")
+            return _StepResult(counts={CounterField.NOT_DELIVERED: 1})
+        if not await self._review_store.set_message_ref(qid, ref):
+            logger.warning(f"[FactReview] question {qid} was posted at {ref.message_id} but closed meanwhile; ref not kept")
+            return _StepResult(counts={CounterField.QUESTIONS_SENT: 1})
+        if await self._review_store.mark_asked(qid, now):
+            logger.info(f"📨 [FactReview] question {qid} sent to account {account_id[:8]} on {channel.platform}")
+        else:
+            logger.info(f"[FactReview] question {qid} was posted and closed meanwhile; it stays closed")
+        return _StepResult(counts={CounterField.QUESTIONS_SENT: 1})
+
+    async def _question_channel(self, user_id: str, account_id: str) -> Optional[NotificationChannel]:
+        """The owner's primary channel when a question may go there (`channel_refusal`), else None (INFO, every run:
+        without a usable channel no question becomes current, so no close releases a `next` run and only the daily run
+        gets here)."""
+        primary = await self._notification_state.get_primary(user_id)
+        binding = await self._channel_bindings.get(primary.channel_id) if primary is not None else None
+        refusal = channel_refusal(primary, binding)
+        if refusal is not None:
+            logger.info(f"[FactReview] no question sent to account {account_id[:8]}: {refusal}; the queue waits")
+            return None
+        return primary
+
+    async def _requeue(self, question: FactReviewQuestion, failed_today: bool, why: str) -> None:
+        if await self._review_store.requeue_front(question.question_id, failed_today=failed_today):
+            logger.info(f"[FactReview] question {question.question_id} back at the queue's front: {why}")
+        else:
+            logger.warning(f"[FactReview] question {question.question_id} not requeued ({why}): it changed meanwhile")
+
+    # ------------------------------------------------------------------------------------------------ step 14: digest
 
     async def _digest(self, user_id: str, account_id: str, now: datetime, zone: str) -> None:
-        """T8d2, step 14 (§3.11): the weekly digest when due."""
-        return None
+        """Step 14 (§3.11): the weekly digest when `digest_due`. The owner's local week is claimed first (one digest per
+        ISO week); then the facts closed since the last digest (`digest_since`, `DIGEST_LIMIT`) that the digest lists
+        (`digest_facts`) are sent as one message in the message language, `notify_raw`, which writes no history. Then
+        `last_digest_at = now` and `undigested_since` cleared. Nothing to list: the week is still claimed and the marks
+        still move, and no message is sent (the account is not asked again until something else is set aside).
+
+        Best effort, like the revive alert: it runs after the pass's own work, so an error is logged at ERROR and ends the
+        digest, never the run. A digest that was not delivered (no usable channel, or the post failed) or whose read
+        failed releases its claim and leaves the marks, so the next run tries again; one that was sent but could not be
+        marked keeps the claim, so the owner is not sent it twice."""
+        try:
+            state = await self._review_store.get_state(account_id)
+            if state is None or not digest_due(state, now):
+                return
+            day = digest_day(now, zone)
+            if not await self._review_store.claim_digest(user_id, day, now):
+                logger.info(f"[FactReview] the digest of account {account_id[:8]} was already claimed this week")
+                return
+            try:
+                listed = await self._send_digest(user_id, account_id, state, now)
+            except Exception:
+                await self._release_digest(user_id, day)
+                raise
+            if listed is None:
+                await self._release_digest(user_id, day)
+                logger.warning(f"[FactReview] the digest of account {account_id[:8]} was not delivered; tried again next run")
+                return
+            if not await self._review_store.mark_digest(account_id, now):
+                logger.warning(f"[FactReview] account {account_id[:8]} has no review state; digest not marked")
+            logger.info(f"📬 [FactReview] digest of account {account_id[:8]}: {listed} facts")
+        except Exception as exc:
+            logger.error(
+                f"❌ [FactReview] the digest of account {account_id[:8]} failed: {type(exc).__name__}: {exc}", exc_info=True,
+            )
+
+    async def _send_digest(
+        self, user_id: str, account_id: str, state: FactReviewState, now: datetime,
+    ) -> Optional[int]:
+        """The digest's read and post: how many facts it listed (0: nothing to list, nothing sent), or None when its
+        message was not delivered."""
+        closed = await self._repo.get_recently_closed(account_id, since=digest_since(state, now), limit=DIGEST_LIMIT)
+        listed = digest_facts(closed)
+        if not listed:
+            return 0
+        labels = await self._texts.labels_for(user_id, account_id)
+        if not await self._notifications.notify_raw(user_id, account_id, digest_message(labels, listed), literal=True):
+            return None
+        return len(listed)
+
+    async def _release_digest(self, user_id: str, day: date) -> None:
+        try:
+            await self._review_store.release_digest(user_id, day)
+        except Exception as exc:
+            logger.warning(f"[FactReview] the digest claim of user {user_id[:8]} not released: {type(exc).__name__}: {exc}")
+
+    async def _note_set_aside(self, account_id: str, now: datetime) -> None:
+        """A fact was archived or invalidated in this run: the next digest has something to tell (`undigested_since`, the
+        first instant kept)."""
+        if not await self._review_store.mark_undigested(account_id, now):
+            logger.warning(f"[FactReview] account {account_id[:8]} has no review state; undigested_since not set")
 
     # ------------------------------------------------------------------------------------------------ step 8: select
 
@@ -570,7 +714,7 @@ class FactReviewService:
         coordinator exception is the pass's failure (logged, a failed response): the failure rule, not a 5xx. The pass
         is told whether the language mirrors the owner (`mirror`); the agent words its own request."""
         async with RequestContext(user_id=user_id, account_id=account_id):
-            task = await self._task(user_id, account_id, batch, questions)
+            task = await self._task(user_id, account_id, batch, questions, now)
             budget = agent_timeout_s(until, self._clock())  # F2: the lease left now, not at the run's start
             if budget < _MARGIN_S:
                 logger.warning(
@@ -582,7 +726,7 @@ class FactReviewService:
             message = AgentMessage(
                 task_id=uuid.uuid4().hex,
                 sender=_SENDER,
-                recipient=f"consolidation_agent_{user_id}",
+                recipient=consolidation_agent_id(user_id),
                 intent=AgentIntent.DELEGATE,
                 payload={"task": _REVIEW_TASK, **encode_review_task(task)},
                 context={
@@ -603,9 +747,10 @@ class FactReviewService:
 
     async def _task(
         self, user_id: str, account_id: str, batch: Sequence[FactEntity], questions: Sequence[FactReviewQuestion],
+        now: datetime,
     ) -> FactReviewTask:
         """The prefetch: per fact its lineage and nearest current facts, the open questions about the batch, and in
-        mirror mode the owner's recent messages."""
+        mirror mode the owner's recent messages. `now` is the run's instant, which the pass then uses too."""
         items: List[ReviewItem] = []
         for fact in batch:
             lineage = await self._repo.get_lineage(account_id, fact.lineage_id)
@@ -616,6 +761,7 @@ class FactReviewService:
             questions=questions_about(batch, questions),
             mirror=mirror,
             owner_messages=await self._owner_messages(user_id) if mirror else (),
+            now=now,
         )
 
     async def _owner_messages(self, user_id: str) -> Tuple[str, ...]:
@@ -623,7 +769,7 @@ class FactReviewService:
         channel = await self._notifications.resolve_channel(user_id)
         if channel is None:
             return ()
-        session = await self._session_store.load_session(f"{user_id}:{channel.channel_id}")
+        session = await self._session_store.load_session(session_id_for(user_id, channel.channel_id))
         return owner_messages_block(owner_message_texts(session.history))
 
     async def _offer(
@@ -669,6 +815,8 @@ class FactReviewService:
             if await self._queue(account_id, fact.id, self._ask_builder(user_id, ask, now), writes):
                 queued.append(fact.id)
                 counts[CounterField.QUEUED] = counts.get(CounterField.QUEUED, 0) + 1
+        if pass_set_aside(counts):
+            await self._note_set_aside(account_id, now)
         removed = plan.offers_removed(queued)
         if removed and not await self._review_store.mark_removed(account_id, removed):
             logger.warning(f"[FactReview] account {account_id[:8]} has no review state; offers not cleared")
@@ -684,15 +832,20 @@ class FactReviewService:
         self, account_id: str, questions: Sequence[FactReviewQuestion], now: datetime, writes: _FactWrites,
     ) -> _StepResult:
         """The fallback of each timed-out question (`_fallback`), counted as it lands: `timed_out`, and the facts it
-        revived (`fallback_revives`) for the revive alert. Steps 6 and 11 both go through here."""
+        revived (the ones whose fallback does not set the fact aside) for the revive alert. Steps 6 and 11 both go through here."""
         timed_out = 0
+        archived = False
         revived: List[str] = []
         for question in questions:
             written = await self._fallback(account_id, question, now, writes)
             if written is not None:
                 timed_out += 1
-                if fallback_revives(question):
+                if fallback_sets_aside(question):
+                    archived = True
+                else:
                     revived.append(written)
+        if archived:
+            await self._note_set_aside(account_id, now)
         return _StepResult(counts={CounterField.TIMED_OUT: timed_out} if timed_out else {}, revived=tuple(revived))
 
     async def _fallback(
@@ -764,20 +917,17 @@ class FactReviewService:
     # ------------------------------------------------------------------------------------------------ step 15: alert
 
     async def _revive_alert(self, account_id: str, revived: Sequence[str], now: datetime) -> None:
-        """One 🚨 naming the facts this run revived whose revives within 30 days reached the alert (`revive_alert_due`):
+        """One 🚨 naming the facts this run revived whose revives within the window reached the alert (`revive_alert_due`):
         their horizon is probably wrong. Best effort: a failed read or post is a WARNING."""
         if not revived:
             return
         try:
-            due: List[str] = []
+            due: List[Tuple[str, int]] = []
             for fact_id in revived:
                 fact = await self._repo.get_fact_by_id(fact_id)
                 if fact is not None and revive_alert_due(fact.lifecycle_events, now):
-                    due.append(f"{fact_id[:8]} ({revives_in_30_days(fact.lifecycle_events, now)}×)")
+                    due.append((fact_id, revives_in_window(fact.lifecycle_events, now)))
             if due:
-                await self._alert_sink.post(
-                    f"🚨 [FactReview] account {account_id[:8]}: revived again within 30 days, the horizon is probably "
-                    f"wrong: {', '.join(due)}"
-                )
+                await self._alert_sink.post(revive_alert(account_id, due))
         except Exception as exc:
             logger.warning(f"[FactReview] revive alert of account {account_id[:8]} not posted: {type(exc).__name__}: {exc}")

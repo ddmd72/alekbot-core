@@ -61,7 +61,7 @@ def test_the_cabinet_delete_and_the_history_archive_share_one_rule():
     rewritten = fact(id="f-b", text="works at Beta")
 
     assert walked_to_unseen_text("works at Acme", rewritten, "f-a") is True
-    with pytest.raises(FactResolutionError, match="rewritten after the page loaded"):
+    with pytest.raises(FactResolutionError, match="rewritten after it was shown"):
         cabinet_invalidation("works at Acme", rewritten, "f-a", NOW)
     assert walked_to_unseen_text("works at Acme", fact(id="f-b"), "f-a") is False
 

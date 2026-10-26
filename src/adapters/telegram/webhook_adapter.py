@@ -11,7 +11,8 @@ from telegram import Bot, Update
 from ...ports.platform_port import PlatformPort
 from .response_channel import TelegramResponseChannel
 from ...domain.prompt import ANONYMOUS_ACCOUNT_ID  # SESSION_26
-from ...domain.messaging import MessageContext, FileAttachment
+from ...domain.chat_text import unwrapped
+from ...domain.messaging import MessageContext, FileAttachment, session_id_for
 from ...ports.conversation_handler_port import ConversationHandlerPort
 from ...ports.platform_auth_port import PlatformAuthPort
 from ...ports.language_service_port import LanguageServicePort
@@ -104,7 +105,7 @@ class TelegramWebhookAdapter(PlatformPort):
 
     def _resolve_session_id(self, user_id: str, chat_id: str) -> str:
         """Deterministic session ID from user + channel (chat)."""
-        return f"{user_id}:{chat_id}"
+        return session_id_for(user_id, chat_id)
 
     async def _verify_webhook_signature(self, request_obj) -> bool:
         """
@@ -231,12 +232,8 @@ class TelegramWebhookAdapter(PlatformPort):
             # Without this, "$consolidate" & co. fall through to the agent stack as
             # normal messages and the LLM roleplays a fake result. "channel" carries
             # chat_id so channel-binding commands ($agent) resolve like on Slack.
-            # A copied `` `$skill save CODE` `` (any number of wrapping backticks, e.g. a
-            # triple-backtick code block) must still dispatch as a command — strip backticks
-            # only when they wrap the ENTIRE trimmed text, so a normal sentence like
-            # "`$HOME` is wrong" (backticks around a substring, not the whole text) is untouched.
-            t = text.strip()
-            stripped = t.strip("`").strip() if t.startswith("`") and t.endswith("`") else t
+            # A copied `` `$skill save CODE` `` must still dispatch as a command (`unwrapped`).
+            stripped = unwrapped(text)
 
             # A forwarded message is someone else's text, never the owner's command.
             if stripped.startswith("$") and not getattr(message, "forward_origin", None):

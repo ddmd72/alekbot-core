@@ -6,7 +6,7 @@ messages when it is.
 form the agent task's payload carries."""
 from typing import Any, Dict, Final, Iterable, List, Mapping, Optional, Sequence, Self, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .entities import FactEntity
 from .fact_review_batch import ReviewBatch
@@ -88,7 +88,8 @@ class FactReviewTask(BaseModel):
     """`items`: the batch, as read when the pass began. `questions`: the open questions about its facts. `mirror`: the
     owner's response language mirrors his messages, so the pass reports their language (and, for a language without UI
     strings, the labels); `owner_messages` (oldest first) belong to that mode only and are held to
-    `owner_messages_block`."""
+    `owner_messages_block`. `now` is the run's one instant, which the pass uses for every decision it makes (none: the
+    pass reads its own clock)."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -96,6 +97,7 @@ class FactReviewTask(BaseModel):
     questions: Tuple[FactReviewQuestion, ...] = ()
     mirror: bool
     owner_messages: Tuple[str, ...] = ()
+    now: Optional[AwareDatetime] = None
 
     @field_validator("owner_messages", mode="after")
     @classmethod

@@ -6,11 +6,13 @@ applies the result in its transaction. A `pending` question that has a message r
 happened to the process after the post: it is completed as `asked`, never sent again."""
 from datetime import date, datetime, timedelta
 from enum import Enum
+from types import MappingProxyType
 from typing import Any, Literal, Mapping, Optional, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .exceptions import QuestionTransitionError
+from .fact_lifecycle_day import CounterField
 from .fact_review_answer_kind import AnswerKind
 from .messaging import MessageRef
 
@@ -29,7 +31,13 @@ QuestionFallback = Literal["revive", "archive"]
 # Where an answer came from. `review` is the review applying the owner's words.
 AnswerSource = Literal["digit", "button", "cabinet", "review"]
 
-_OWNER_SOURCES = ("digit", "button", "cabinet")
+# The owner's answer sources, each with the day counter its answer adds to. A source outside this map is not the owner's.
+ANSWER_COUNTERS: Mapping[str, CounterField] = MappingProxyType({
+    "digit": CounterField.ANSWERED_BY_DIGIT,
+    "button": CounterField.ANSWERED_BY_BUTTON,
+    "cabinet": CounterField.ANSWERED_IN_CABINET,
+})
+
 
 
 class QuestionStatus(str, Enum):
@@ -47,8 +55,9 @@ class ClosedBy(str, Enum):
     RESOLVED_ELSEWHERE = "resolved_elsewhere"
 
 
-_OPEN = frozenset({QuestionStatus.QUEUED, QuestionStatus.PENDING, QuestionStatus.ASKED, QuestionStatus.UNANSWERED})
-_SENT = frozenset({QuestionStatus.ASKED, QuestionStatus.UNANSWERED})
+# The statuses of a question the review still holds, and of one the owner has been shown.
+OPEN_STATUSES = frozenset({QuestionStatus.QUEUED, QuestionStatus.PENDING, QuestionStatus.ASKED, QuestionStatus.UNANSWERED})
+SENT_STATUSES = frozenset({QuestionStatus.ASKED, QuestionStatus.UNANSWERED})
 _ATTEMPT_FIELDS = (
     "session_id", "appended_at", "message_ref", "asked_at", "reply_text", "reply_at", "offered_at",
 )
@@ -114,7 +123,7 @@ class FactReviewQuestion(BaseModel):
                 raise ValueError("a pending question has not been asked yet")
             if self.message_ref is not None and self.appended_at is None:
                 raise ValueError("a posted question was appended first")
-        elif self.status in _SENT:
+        elif self.status in SENT_STATUSES:
             if any(getattr(self, name) is None for name in _SENT_FIELDS):
                 raise ValueError("an asked or unanswered question has asked_at, session_id, appended_at and a message_ref")
 
@@ -130,7 +139,7 @@ class FactReviewQuestion(BaseModel):
         if self.closed_at is None or self.closed_by is None:
             raise ValueError("a closed question has closed_at and closed_by")
         if self.closed_by is ClosedBy.OWNER:
-            if self.answer is None or self.answer_source not in _OWNER_SOURCES:
+            if self.answer is None or self.answer_source not in ANSWER_COUNTERS:
                 raise ValueError("an owner close has an answer and a source of digit, button or cabinet")
             if self.answer_source != "cabinet" and self.message_ref is None:
                 raise ValueError("a digit or button answer needs the question's message_ref")
@@ -154,7 +163,11 @@ class FactReviewQuestion(BaseModel):
     @property
     def is_open(self) -> bool:
         """Its fact is in the review's hands: queued, being sent, sent, or sent and unanswered."""
-        return self.status in _OPEN
+        return self.status in OPEN_STATUSES
+
+    def asked_of(self, account_id: str, user_id: str) -> bool:
+        """The question belongs to this user in this account: the only one who may answer it."""
+        return self.account_id == account_id and self.user_id == user_id
 
     @property
     def delivered(self) -> bool:
@@ -168,7 +181,8 @@ class FactReviewQuestion(BaseModel):
 
     @property
     def retraction_due(self) -> bool:
-        """The not-delivered frame must follow: the question's frame was appended but the post never succeeded."""
+        """The not-delivered frame must follow: the question's frame was appended but the post never succeeded. False
+        again once `retracted`, so a retry that finds the question still pending appends no second retraction."""
         return self.status is QuestionStatus.PENDING and not self.delivered and self.appended_at is not None
 
     @property
@@ -177,7 +191,7 @@ class FactReviewQuestion(BaseModel):
         return self.is_open and bool(self.reply_text) and self.offered_at is None
 
     def is_timed_out(self, now: datetime) -> bool:
-        return self.status in _SENT and self.asked_at is not None and self.asked_at + QUESTION_TIMEOUT <= now
+        return self.status in SENT_STATUSES and self.asked_at is not None and self.asked_at + QUESTION_TIMEOUT <= now
 
     # ------------------------------------------------------------------------------------------------ moves
 
@@ -195,6 +209,13 @@ class FactReviewQuestion(BaseModel):
         """The post succeeded and landed at `ref` (once, and only after the frame was appended)."""
         self._require(self.status is QuestionStatus.PENDING and self.appended_at is not None and not self.delivered, "posted")
         return self._moved(message_ref=ref)
+
+    def retracted(self) -> Self:
+        """The not-delivered frame now follows the question's frame in history: the frame no longer stands, so
+        `appended_at` is cleared (once; only while `retraction_due`). The question stays pending until it is requeued,
+        and it can no longer be posted (`posted` needs an appended frame)."""
+        self._require(self.retraction_due, "retracted")
+        return self._moved(appended_at=None)
 
     def asked(self, at: datetime) -> Self:
         """pending, posted -> asked."""
@@ -221,7 +242,7 @@ class FactReviewQuestion(BaseModel):
     def with_reply(self, text: str, at: datetime) -> Self:
         """The owner's words, added to those already recorded (joined by a new line) up to `MAX_REPLY_CHARS`; what does
         not fit is dropped, and words that add nothing leave the question as it is."""
-        self._require(self.status in _SENT and self.offered_at is None, "with_reply")
+        self._require(self.status in SENT_STATUSES and self.offered_at is None, "with_reply")
         words = text.strip()
         if not words:
             raise QuestionTransitionError("a reply with no words is not recorded")
@@ -233,7 +254,7 @@ class FactReviewQuestion(BaseModel):
 
     def offered(self, at: datetime) -> Self:
         """The review has been shown the recorded reply (once)."""
-        self._require(self.status in _SENT and self.reply_not_shown, "offered")
+        self._require(self.status in SENT_STATUSES and self.reply_not_shown, "offered")
         return self._moved(offered_at=at)
 
     def closed(

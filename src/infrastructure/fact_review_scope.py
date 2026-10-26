@@ -16,7 +16,7 @@ from ..domain.exceptions import FactBornDueError, FactExpiryError, FactResolutio
 from ..domain.fact_review_ask import AskRequest, parse_ask_owner
 from ..domain.fact_review_basis import ReviewBasis, parse_history, parse_review_basis
 from ..domain.fact_review_batch import ReviewBatch
-from ..domain.fact_review_outcome import MADE_CURRENT, ReviewDecision, review_outcome
+from ..domain.fact_review_outcome import ReviewDecision, review_outcome
 from ..domain.fact_review_reasons import evidence_moment, review_reason
 from ..domain.fact_review_rules import (
     ASK_HELD,
@@ -25,13 +25,15 @@ from ..domain.fact_review_rules import (
     UPDATE_FACT_PLACE,
     UPDATES_SHAPE_REFUSAL,
     ask_refusal,
-    asked_refusal,
     basis_refusal,
     changed_outside_refusal,
-    decided_refusal,
+    made_current_documents,
+    may_write_current,
+    needs_change_check,
     not_in_batch_refusal,
     not_under_review_refusal,
-    plan_date,
+    reason_plan_date,
+    result_refusal,
     review_action,
 )
 from ..domain.fact_tool_result import (
@@ -45,7 +47,6 @@ from ..domain.fact_tool_result import (
     update_result,
 )
 from ..domain.fact_update import parse_fact_update
-from ..domain.fact_update_outcome import EXPIRY_REFUSALS
 from ..domain.fact_write_context import FactWriteContext
 from ..domain.local_time import local_date
 from ..domain.pass_actor import PassActor
@@ -159,13 +160,13 @@ class FactReviewScope:
             evidence_at=evidence_moment(basis, named, question),
             reason=review_reason(
                 action, basis, named, update.superseded_by,
-                plan_date(current, basis, self._tz) if basis is not None and basis.kind == "date_passed" else None,
+                reason_plan_date(current, basis, self._tz),
             ),
             history=history,
         )
         if not outcome.written:
             # An expiry refusal is about the update itself; any other may be the fact having changed outside the review.
-            if outcome.refusal not in EXPIRY_REFUSALS and not await self._unchanged(stored, lineage):
+            if needs_change_check(outcome.refusal) and not await self._unchanged(stored, lineage):
                 return refused_result(fact_id, REFUSED_SCOPE, changed_outside_refusal(UPDATE_FACT_PLACE))
             return update_result(outcome)
         written = await self._facts.get_fact_by_id(outcome.written_id or "")
@@ -237,24 +238,13 @@ class FactReviewScope:
         return lineage
 
     def _result_refusal(self, lineage: str, place: str, *, write: bool) -> Optional[str]:
-        """One result per fact: an ask holds it; a write decides it, except that a write may follow one that left the
-        lineage current (R3-13)."""
-        if lineage in self._asks:
-            return asked_refusal(place)
-        decision = self._decisions.get(lineage)
-        if decision is not None and not (write and decision.outcome in MADE_CURRENT):
-            return decided_refusal(place)
-        return None
+        return result_refusal(place, asked=lineage in self._asks, decision=self._decisions.get(lineage), write=write)
 
     def _may_write_current(self, lineage: str) -> bool:
-        """A current document of a batch lineage is the pass's to write when its fact has an open question or this pass
-        made it current."""
-        decision = self._decisions.get(lineage)
-        return (decision is not None and decision.outcome in MADE_CURRENT) or self._by_lineage[lineage].id in self._open_by_fact
+        return may_write_current(self._decisions.get(lineage), self._by_lineage[lineage].id in self._open_by_fact)
 
     def _made_current(self) -> Set[str]:
-        """The documents this pass made current: they count as current evidence and successors (R3-13)."""
-        return {self._left[lineage].id for lineage, d in self._decisions.items() if d.outcome in MADE_CURRENT}
+        return set(made_current_documents(self._decisions, self._left))
 
     async def _named(self, fact_id: Optional[str]) -> Optional[FactEntity]:
         """The fact an evidence or successor id names: the document this pass's write left, for a lineage it wrote, else

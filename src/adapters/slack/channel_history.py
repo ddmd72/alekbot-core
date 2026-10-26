@@ -8,6 +8,7 @@ bound channel sessions where Slack IS the session store.
 
 from typing import List
 
+from ...domain.chat_text import unwrapped
 from ...domain.llm import Message, MessagePart
 from ...domain.ui_messages import UIMessage
 from ...locales import uk, en, fr, es
@@ -76,11 +77,9 @@ class SlackChannelHistorySource:
             text = (m.get("text") or "").strip()
             if not text:
                 continue
-            # A backtick-wrapped command (the bot's own echo of a copied
-            # `` `$skill save CODE` ``) is still a command — strip backticks only when
-            # they wrap the ENTIRE text, same rule as the adapters' command dispatch.
-            stripped = text.strip("`").strip() if text.startswith("`") and text.endswith("`") else text
-            if stripped.startswith("$"):
+            # A backtick-wrapped command (the bot's own echo of a copied `` `$skill save CODE` ``) is still a command:
+            # the same rule as the adapters' command dispatch.
+            if unwrapped(text).startswith("$"):
                 continue
             # Skip status/placeholder messages from bot
             if text in _RESPONSE_READY_VARIANTS or text.startswith("🤔"):

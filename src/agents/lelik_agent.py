@@ -20,6 +20,7 @@ from uuid import uuid4
 
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.llm import ToolCall
+from ..domain.messaging import session_id_for
 from ..domain.voice_delegation_outcome import VoiceDelegationOutcome
 from ..domain.voice_provider_profile import VoiceProviderProfile
 from ..infrastructure.agent_manifest import LELIK
@@ -129,7 +130,7 @@ class LelikAgent(BaseAgent):
         channel = await self._persona.primary_channel(user_id)
         if channel is not None:
             context.update(
-                session_id=f"{user_id}:{channel.channel_id}",
+                session_id=session_id_for(user_id, channel.channel_id),
                 origin_channel_id=channel.channel_id,
                 origin_platform=channel.platform,
             )

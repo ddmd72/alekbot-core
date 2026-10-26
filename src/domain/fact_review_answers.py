@@ -11,7 +11,7 @@ from .fact_review_answer_change import AnswerChange
 from .fact_review_answer_kind import AnswerKind
 from .fact_review_question import AnswerSource, FactReviewQuestion
 from .fact_review_reasons import answer_reason, history_reason
-from .fact_review_rules import confirmed_expiry, fallback_fields, is_dated_plan
+from .fact_review_rules import confirmed_expiry, fallback_fields, fallback_sets_aside, is_dated_plan
 from .fact_update import ParsedFactUpdate
 from .fact_write_context import FactWriteContext, as_utc, reviews_stored_memory
 from .interactive_message import InteractiveMessage
@@ -19,12 +19,15 @@ from .local_time import local_moment
 from .new_fact_attributes import NewFactAttributes
 
 __all__ = [
-    "ARCHIVE_ONLY", "answer_updates", "digit_answer", "ended_text", "history_fact", "history_moved_refusal",
-    "history_refusal", "history_trail",
+    "ARCHIVE_ONLY", "DECIDING_ANSWERS", "answer_closes_fact", "answer_updates", "deciding_answer", "digit_answer", "ended_text", "history_fact", "history_moved_refusal",
+    "history_refusal", "history_trail", "option_answer",
 ]
 
 # The one update a history fact goes with: the fact archived, nothing else changed.
 ARCHIVE_ONLY: Final[ParsedFactUpdate] = ParsedFactUpdate(state=FactState.ARCHIVED)
+
+# The answers that say what is true of the fact; `dont_know` only hands it to the question's fallback.
+DECIDING_ANSWERS: Final[tuple[AnswerKind, ...]] = (AnswerKind.STILL_TRUE, AnswerKind.ENDED, AnswerKind.NEVER)
 
 # English whatever the process locale: the text is written into a stored fact.
 _MONTHS: Final[tuple[str, ...]] = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -37,6 +40,31 @@ def digit_answer(message: InteractiveMessage, text: str) -> Optional[AnswerKind]
     digit; the option's id is the answer of the same name. A message with an option that is no answer is a bug."""
     option_id = message.option_for_reply(text)
     return None if option_id is None else AnswerKind(option_id)
+
+
+def deciding_answer(raw: object) -> Optional[AnswerKind]:
+    """The deciding answer `raw` names (`still_true`, `ended` or `never`, exactly), or None for anything else."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        kind = AnswerKind(raw)
+    except ValueError:
+        return None
+    return kind if kind in DECIDING_ANSWERS else None
+
+
+def option_id(kind: AnswerKind) -> str:
+    """The id of the option that stands for the answer `kind` (what `option_answer` reads back)."""
+    return kind.value
+
+
+def option_answer(option_id: str) -> Optional[AnswerKind]:
+    """The answer an option of the question's message stands for (the option's id is the answer of the same name), or None
+    for an id the message does not offer: a callback from a message of another version, or a damaged one."""
+    try:
+        return AnswerKind(option_id)
+    except ValueError:
+        return None
 
 
 def ended_text(content: str, at: datetime, tz: str) -> str:
@@ -108,6 +136,14 @@ def history_moved_refusal(shown_text: str, stored: FactEntity, requested_id: str
             "nothing was written"
         )
     return None
+
+
+def answer_closes_fact(kind: AnswerKind, question: FactReviewQuestion) -> bool:
+    """Whether the owner's answer `kind` sets the question's fact aside (archived or invalidated): `ended` and `never`
+    do; `still_true` does not; `dont_know` does when the question's fallback is to archive. What the digest tells him."""
+    if kind is AnswerKind.DONT_KNOW:
+        return fallback_sets_aside(question)
+    return kind is not AnswerKind.STILL_TRUE
 
 
 def answer_updates(

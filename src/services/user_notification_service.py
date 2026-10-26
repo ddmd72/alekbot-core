@@ -19,7 +19,7 @@ from typing import Dict, Mapping, Optional, Protocol, TYPE_CHECKING
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus
 from ..domain.llm import Message, MessagePart
-from ..domain.messaging import SmartResponse
+from ..domain.messaging import SmartResponse, session_id_for
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import NotifyResult
 from ..domain.request_context import RequestContext
@@ -146,9 +146,14 @@ class UserNotificationService:
         text: str,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
+        literal: bool = False,
     ) -> bool:
         """
         Deliver text directly to user's channel. No agent reformatting.
+
+        `literal=True` is for text the bot did not write (a stored fact quoted in a digest): it goes through
+        `ResponseChannel.send_literal`, so nothing in it is formatted, linked or obeyed by the platform (`<!channel>`
+        is shown). The default sends the text as the bot's own markdown.
 
         Uses fallback chain: override → primary → last active. Returns whether the text was sent; delivery
         errors are logged and swallowed (USER_DRIVE_INDEXING_RFC §26.2: the drive notice posts its text only
@@ -172,9 +177,12 @@ class UserNotificationService:
             return False
 
         try:
-            # send_long_text so a long raw body threads instead of being truncated;
-            # no link_list here (notify_raw delivers verbatim text, no anchor resolution).
-            await response_channel.send_long_text(text)
+            if literal:
+                await response_channel.send_literal(text)
+            else:
+                # send_long_text so a long raw body threads instead of being truncated;
+                # no link_list here (notify_raw delivers verbatim text, no anchor resolution).
+                await response_channel.send_long_text(text)
             logger.info(
                 f"📬 [Notification] Raw delivery to {channel_info.platform} "
                 f"channel={channel_info.channel_id} user={user_id[:8]}"
@@ -232,7 +240,7 @@ class UserNotificationService:
                 f"channel={channel_info.channel_id} user={user_id[:8]}"
             )
             if self._session_store:
-                session_id = f"{user_id}:{channel_info.channel_id}"
+                session_id = session_id_for(user_id, channel_info.channel_id)
                 await self._session_store.append_messages_batch(
                     session_id=session_id,
                     owner_id=user_id,
@@ -365,7 +373,7 @@ class UserNotificationService:
             )
 
         recipient = agent_id_override or f"quick_response_agent_{user_id}"
-        effective_session_id = session_id if session_id is not None else f"{user_id}:{channel_info.channel_id}"
+        effective_session_id = session_id if session_id is not None else session_id_for(user_id, channel_info.channel_id)
         framed = MessagePart(text=f"[System: {system_alert}{framing_suffix}]")
         message = AgentMessage.create(
             sender="notification_service",
@@ -539,7 +547,7 @@ class UserNotificationService:
                         f"[Document delivered to user: {label} — {url}\n"
                         f"If the user asks about it, you can read the full content using the fetch_url intent.]"
                     )
-                doc_session_id = f"{user_id}:{channel_info.channel_id}"
+                doc_session_id = session_id_for(user_id, channel_info.channel_id)
                 await self._session_store.append_messages_batch(
                     session_id=doc_session_id,
                     owner_id=user_id,

@@ -38,7 +38,7 @@ async def test_a_stale_row_whose_text_was_rewritten_is_refused_and_nothing_is_wr
     await _seed_chain(store, "mother is Maria", "mother is Maria Doe")
     before = copy.deepcopy(store.docs)
 
-    with pytest.raises(FactResolutionError, match="rewritten after the page loaded") as caught:
+    with pytest.raises(FactResolutionError, match="rewritten after it was shown") as caught:
         await CabinetFactService(store.repo).invalidate("f-v1", ACC)
 
     assert caught.value.current_id == "f-v2" and not isinstance(caught.value, ValueError)
@@ -60,7 +60,7 @@ async def test_a_version_written_between_resolve_and_write_with_another_text_is_
     store.interfere("f-v1", closure)    # a version write closes f-v1 between invalidate's resolve and its write
     v2_before = copy.deepcopy(store.docs["f-v2"])
 
-    with pytest.raises(FactResolutionError, match="rewritten after the page loaded"):
+    with pytest.raises(FactResolutionError, match="rewritten after it was shown"):
         await CabinetFactService(store.repo).invalidate("f-v1", ACC)
 
     assert store.docs["f-v2"] == v2_before

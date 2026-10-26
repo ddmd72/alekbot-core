@@ -20,7 +20,7 @@ from src.domain.fact_review_language import labels_digest
 from src.domain.fact_review_question import ClosedBy, FactReviewQuestion, QuestionStatus
 from src.domain.fact_review_reasons import queued_reason
 from src.domain.fact_review_result import FactReviewResult, encode_review_result
-from src.domain.fact_review_rules import revives_in_30_days
+from src.domain.fact_review_rules import revives_in_window
 from src.domain.fact_review_task import FactReviewTask, decode_review_task
 from src.domain.fact_review_task_keys import defer_key
 from src.domain.language import LanguageCode
@@ -58,9 +58,12 @@ PT_LABELS = {
     UIMessage.MEMORY_ANSWER_NOTED.value: "Obrigado, registado.",
     UIMessage.MEMORY_REPLY_NOTED.value: "Anotado, vou ter isso em conta.",
     UIMessage.MEMORY_ALREADY_ANSWERED.value: "Já respondido, obrigado.",
+    UIMessage.MEMORY_FACT_CHANGED.value: "Esse facto mudou entretanto, por isso não apliquei a resposta; voltarei a ele.",
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Esta pergunta está fechada.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Factos que pus de lado esta semana:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Para recuperar um, diga-me no chat que ainda é verdade.",
+    UIMessage.MEMORY_DIGEST_ARCHIVED.value: "já não é verdade",
+    UIMessage.MEMORY_DIGEST_INVALIDATED.value: "nunca foi verdade",
 }
 
 
@@ -283,6 +286,17 @@ class TestRouting:
         assert r.agent.seen == [(USER, ACC)]
         assert batch_ids(r.agent.tasks[0]) == [fact]
 
+    async def test_the_task_carries_the_runs_instant(self):
+        world = ReviewWorld()
+        await world.seed_state(account_id=ACC)
+        await stale(world, "Alex plans a weekend in Coimbra", NOW - timedelta(days=9))
+        r = Rig(world)
+
+        await r.run()
+
+        (task,) = r.agent.tasks
+        assert task.now == NOW
+
     async def test_each_fact_carries_its_earlier_versions_and_five_neighbours_outside_its_lineage_and_no_vector(self):
         world = ReviewWorld()
         first = await world.seed("Alex is a data engineer", lineage_id="lin-job", version=1, state=FactState.SUPERSEDED,
@@ -499,6 +513,25 @@ class TestAfterThePass:
         (question,) = await open_questions(world)
         assert question.queue_key == datetime(1970, 1, 1, tzinfo=timezone.utc)
 
+    async def test_an_ask_whose_fact_was_closed_meanwhile_creates_no_question_and_counts_none(self):
+        world = ReviewWorld()
+        await world.seed_state(account_id=ACC)
+        fact = await stale(world, "Alex plans a weekend in Coimbra", NOW - timedelta(days=9))
+        r = Rig(world)
+
+        async def play(task, scope):
+            await ask_all(task, scope)
+            world.docs[fact]["state"] = "archived"         # another writer closes the fact while the pass runs
+
+        r.agent.play = play
+
+        assert await r.run() == {"status": "completed"}
+
+        assert await open_questions(world) == []
+        row = await day_row(world)
+        assert row is None or row.queued == 0
+        assert dict((await world.review_store.get_state(ACC)).offers) == {fact: 1}    # not queued: still an offer
+
     async def test_a_conflicting_fact_write_leaves_the_fact_stale_and_creates_no_question(self):
         world = ReviewWorld()
         await world.seed_state(account_id=ACC)
@@ -540,7 +573,7 @@ class TestAfterThePass:
         for fact_id in ids:
             doc = world.docs[fact_id]
             assert doc["state"] == "current"
-            assert revives_in_30_days(doc["lifecycle_events"], NOW) == 0
+            assert revives_in_window(doc["lifecycle_events"], NOW) == 0
         row = await day_row(world)
         assert (row.queued, row.revived, row.reviewed) == (20, 0, 20)
         assert world.sink.texts == []
@@ -671,7 +704,7 @@ class TestReviveAlert:
     async def test_a_third_revive_within_thirty_days_raises_one_alert_naming_the_fact(self):
         world, fact = await self._revive([revived_on(20), revived_on(10)])
 
-        assert revives_in_30_days(world.docs[fact]["lifecycle_events"], NOW) == 3
+        assert revives_in_window(world.docs[fact]["lifecycle_events"], NOW) == 3
         assert len(world.sink.texts) == 1
         assert world.sink.texts[0].startswith("🚨") and f"{fact[:8]} (3×)" in world.sink.texts[0]
 
