@@ -3,7 +3,7 @@ and 11's fallback; §3.8; S4-D13, S4-D19, S4-D20).
 
 The plain service on the review world, with the scripted consolidation agent of the T8b tests: the real review store,
 lease, counters, repository, `FactAnswerService`, texts and owner zone over one evaluating Firestore fake. Assertions are on
-the stored facts, questions, state, counters and tasks. NOW is 2026-10-23 07:30 UTC, 08:30 in the owner's Lisbon."""
+the stored facts, questions, state, counters and tasks. NOW is 2026-10-23 07:30 UTC, 08:30 in the owner's zone."""
 from datetime import timedelta
 from typing import Any, List
 
