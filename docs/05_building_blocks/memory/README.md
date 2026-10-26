@@ -802,7 +802,7 @@ let procedures and file notes become facts and directives (`decisions/memory_fac
 
 `POST /api/user/facts/<id>/invalidate` (`user_cabinet_app.py`) → `CabinetFactService.invalidate`
 (`services/cabinet_fact_service.py`; the rule itself is `cabinet_invalidation` in `domain/fact_lifecycle.py`, the walk is
-`domain/fact_resolution.py::resolve_chain`): the id must exist (else 404) and its stored account must be the caller's
+`domain/fact_resolution.py::ForwardWalk`): the id must exist (else 404) and its stored account must be the caller's
 (else 403; the write itself refuses with 403 when the stored `account_id` is not the caller's, so a legacy `owner_id`
 document is refused too). Then the service **follows the id forward** through the repository's `resolve_current` to the fact that is live now (`CABINET_ACCEPTS`: every state except `superseded`, so the owner
 can still delete a fact the consolidator archived meanwhile) and sets `state=invalidated`, `valid_to`, `last_updated` and a `lifecycle_events` entry (actor `cabinet`, reason `deleted in
@@ -821,8 +821,8 @@ page sent, not the version that was invalidated.
 
 **When the fact was rewritten meanwhile (owner decision 2026-10-23).** If the consolidator rewrote the fact after the
 page loaded (a content change, so the id moved on) and the new version's text differs from the row the owner saw, the
-delete is **refused** with a 409 (`FactResolutionError` "fact X was rewritten after the page loaded; reload",
-`firestore_repo.py:327-333`) and nothing is written; the page reloads and the owner sees the new text before deciding
+delete is **refused** with a 409 (`FactResolutionError` "fact X was rewritten after it was shown"; the route adds
+"; reload" to every 409 body, the page shows its own text) and nothing is written; the page reloads and the owner sees the new text before deciding
 again. This covers the row that was the subject of the owner's own correction (the Cabinet's "Edit" button, modal
 "Correct Fact", which drafts a correction request for the chat) that has just been applied: the correction is not
 deleted unseen. A newer version with the **same** text (tags, metadata or temporal class changed) is deleted at once.

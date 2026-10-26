@@ -12,9 +12,10 @@ existing answer for a closed one.
 """
 from datetime import datetime, timezone
 import asyncio
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, AbstractSet, Callable, Dict, List, Optional, Tuple
 
 from ..domain.choice_outcome import ChoiceOutcome
+from ..domain.entities import FactState
 from ..domain.exceptions import FactExpiryError, FactResolutionError, FactWriteConflict
 from ..domain.fact_answer_result import AnswerResult
 from ..domain.fact_lifecycle import walked_to_unseen_text
@@ -36,6 +37,7 @@ from ..domain.fact_update_outcome import UpdateRefusal
 from ..domain.fact_write_context import FactWriteContext, as_utc
 from ..domain.interactive_choice import InteractiveChoice
 from ..domain.llm import Message, MessagePart
+from ..domain.messaging import MessageRef
 from ..domain.pass_actor import PassActor
 from ..domain.stored_fact import StoredFact
 from ..domain.ui_messages import UIMessage
@@ -187,7 +189,7 @@ class FactAnswerService(ChoiceHandlerPort):
     async def _answer_reply(
         self, user_id: str, account_id: str, platform: str, channel_id: str, message_id: str, text: str, now: datetime,
     ) -> Optional[str]:
-        question = await self._review_store.by_message(user_id, platform, channel_id, message_id)
+        question = await self._review_store.by_message(user_id, MessageRef(platform, channel_id, message_id))
         if question is None or not text.strip():
             return None
         labels = await self._texts.labels_for(user_id, account_id)
@@ -373,7 +375,7 @@ class FactAnswerService(ChoiceHandlerPort):
         return ChoiceOutcome(message=fact_question_message(question, labels), note=labels[note.value], keep_options=True)
 
     async def _asked_fact(
-        self, question: FactReviewQuestion, accepts: Callable[[object], bool],
+        self, question: FactReviewQuestion, accepts: AbstractSet[FactState],
     ) -> Optional[StoredFact]:
         """The fact the question is about as it stands now, followed forward as `accepts` allows: None when it is gone,
         its chain ends elsewhere, or a newer document has a text the owner never saw (`walked_to_unseen_text`)."""

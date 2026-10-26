@@ -50,10 +50,8 @@ class FactReviewStore(ABC):
         transaction."""
 
     @abstractmethod
-    async def by_message(
-        self, user_id: str, platform: str, channel_id: str, message_id: str,
-    ) -> Optional[FactReviewQuestion]:
-        """The question posted at that message, in any status: its user and its message ref's platform, channel and
+    async def by_message(self, user_id: str, ref: MessageRef) -> Optional[FactReviewQuestion]:
+        """The question posted at the message `ref`, in any status: its user and its message ref's platform, channel and
         message id all equal. The same message id in another channel, platform or user's question is not it (None).
         Two questions on one message is a bug, not a case to serve: logged as ERROR, and None. No transaction."""
 

@@ -10,12 +10,14 @@ from .channel_binding import ChannelBinding
 from .entities import ExpiryKind, FactEntity, FactState
 from .fact_expiry import EXPIRY_NONE, Expiry, stored_expiry
 from .fact_update import ParsedFactUpdate
+from .fact_update_outcome import EXPIRY_REFUSALS, UpdateRefusal
 from .fact_update_plan import content_changed
 from .fact_lifecycle import (
     compute_expiry, expiry_pinned, horizon_from_now, lifecycle_event, lifecycle_fields, resolves_too_soon, revival_fields,
     with_event,
 )
 from .fact_review_basis import ReviewAction, ReviewBasis
+from .fact_review_outcome import MADE_CURRENT, ReviewDecision
 from .fact_review_question import AnswerSource, FactReviewQuestion, QuestionFallback, QuestionStatus
 from .fact_review_reasons import (
     FallbackActor, fallback_reason, gives_window_reason, is_revive_reason, kept_twice_reason, queued_reason,
@@ -546,6 +548,39 @@ def changed_outside_refusal(place: str) -> str:
 
 def not_under_review_refusal(place: str) -> str:
     return f"{place} names a current fact with no question in this batch; leave it, it stays as it is"
+
+
+def result_refusal(place: str, *, asked: bool, decision: Optional[ReviewDecision], write: bool) -> Optional[str]:
+    """One result per fact: an ask holds it; a write decides it, except that a write may follow one that left the lineage
+    current (R3-13). `asked` and `decision` are the pass's result so far for the fact's lineage."""
+    if asked:
+        return asked_refusal(place)
+    if decision is not None and not (write and decision.outcome in MADE_CURRENT):
+        return decided_refusal(place)
+    return None
+
+
+def may_write_current(decision: Optional[ReviewDecision], has_open_question: bool) -> bool:
+    """A current document of a batch lineage is the pass's to write when its fact has an open question or this pass made it
+    current."""
+    return (decision is not None and decision.outcome in MADE_CURRENT) or has_open_question
+
+
+def made_current_documents(decisions: Mapping[str, ReviewDecision], left: Mapping[str, FactEntity]) -> AbstractSet[str]:
+    """The documents this pass made current (they count as current evidence and successors, R3-13): per lineage in
+    `decisions`, the document `left` holds."""
+    return {left[lineage].id for lineage, decision in decisions.items() if decision.outcome in MADE_CURRENT}
+
+
+def reason_plan_date(fact: FactEntity, basis: Optional[ReviewBasis], tz: str) -> Optional[date]:
+    """The plan's date for the trail reason: only a `date_passed` basis has one."""
+    return plan_date(fact, basis, tz) if basis is not None and basis.kind == "date_passed" else None
+
+
+def needs_change_check(refusal: Optional[UpdateRefusal]) -> bool:
+    """Whether a refused write is checked for the fact having changed outside the review (then it reads as that): an
+    expiry refusal is about the update itself and is not."""
+    return refusal not in EXPIRY_REFUSALS
 
 
 def review_action(current: FactEntity, update: ParsedFactUpdate) -> Optional[ReviewAction]:

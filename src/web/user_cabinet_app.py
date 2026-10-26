@@ -977,7 +977,7 @@ def create_user_cabinet_blueprint(
         except (FactResolutionError, FactWriteConflict) as e:
             # before ValueError -> 404: neither is a ValueError, but the order is what keeps a 409 from turning into one
             logger.warning(f"Fact {fact_id} not invalidated: {type(e).__name__}: {e}")
-            return jsonify({"error": str(e)}), 409
+            return jsonify({"error": f"{e}; reload"}), 409
         except ValueError as e:
             return jsonify({"error": str(e)}), 404
         except Exception as e:

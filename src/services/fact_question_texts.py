@@ -14,6 +14,7 @@ from ..domain.fact_lifecycle_day import CounterField, counter_day
 from ..domain.fact_review_language import (
     LABEL_KEYS,
     fact_question_message,
+    is_review_text,
     message_language,
     review_labels,
 )
@@ -108,7 +109,7 @@ class FactQuestionTexts:
         `labels_for`, so it is in the language of the question it answers. One call is one message the owner sees,
         counted once: a fallback here adds one `labels_fallback`, so a message built from several texts takes them from
         one `labels_for` instead. Raises ValueError for a message that is not one of the review's texts."""
-        if message.value not in LABEL_KEYS:
+        if not is_review_text(message):
             raise ValueError(f"{message.value} is not a memory review text")
         return (await self.labels_for(user_id, account_id))[message.value]
 

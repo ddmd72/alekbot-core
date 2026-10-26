@@ -45,15 +45,13 @@ from src.domain.exceptions import FactResolutionError, FactWriteConflict
 from src.domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
 from src.domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot, check_count
 from src.domain.fact_lifecycle_run_guard import run_guard_held
-from src.domain.fact_resolution import resolve_chain
+from src.domain.fact_resolution import ForwardWalk
 from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_review_rules import stale_order_key
 from src.domain.fact_update import ParsedFactUpdate
-from src.domain.fact_tool_result import (
-    NOTE_NO_READABLE_SOURCE, STATUS_CREATED, WRITTEN_STATUSES, note_codes_of, update_result,
-)
+from src.domain.fact_tool_result import STATUS_CREATED, WRITTEN_STATUSES, update_result
 from src.domain.fact_update_outcome import FactUpdateOutcome
-from src.domain.fact_write_context import FactWriteContext, as_utc
+from src.domain.fact_write_context import NO_READABLE_SOURCE_NOTE, FactWriteContext, as_utc
 from src.domain.pass_actor import PassActor
 from src.domain.prompt_v3.agent_profile import AgentProfile
 from src.domain.prompt_v3.blueprint import Blueprint
@@ -101,6 +99,11 @@ REVIEW_PROFILE_TOKEN_IDS: Tuple[str, ...] = ("CONSOLIDATION_TAXONOMY", *REVIEW_T
 _ALL_STATES: AbstractSet[FactState] = frozenset(FactState)
 _PRIORITY_RANK = {"critical": 1, "high": 2, "medium": 3, "low": 4, "archival": 5}
 _VECTORS = ("vector", "tags_vector", "metadata_vector")
+
+
+def _holds_note(joined: Any, note: str) -> bool:
+    """Whether `note` is one whole note of a result's `note` (the notes joined with "; "): a note may itself hold "; "."""
+    return isinstance(joined, str) and f"; {note}; " in f"; {joined}; "
 
 
 def _without_vectors(doc: FactEntity, *names: str) -> FactEntity:
@@ -224,10 +227,10 @@ class NoWriteFactRepository(FactRepository):
     async def resolve_current(
         self, fact_id: str, account_id: str, accepted: AbstractSet[FactState]
     ) -> Optional[StoredFact]:
-        async def read(next_id: str) -> Optional[StoredFact]:
-            return await self._read(next_id, account_id)
-
-        return await resolve_chain(read, fact_id, account_id, accepted)
+        walk = ForwardWalk(fact_id, account_id, accepted)
+        while walk.wanted is not None:
+            walk.feed(await self._read(walk.wanted, account_id))
+        return walk.result
 
     async def write_superseding(
         self, new_fact: FactEntity, closures: Sequence[Tuple[StoredFact, Mapping[str, Any]]]
@@ -1310,7 +1313,7 @@ class DryRunKit:
         written = result.get("status") in WRITTEN_STATUSES
         await self._close_row(
             row, result.get("status"), result.get("refused"), written_id, written, result.get("note"),
-            NOTE_NO_READABLE_SOURCE in (result.get("note_codes") or []),
+            _holds_note(result.get("note"), NO_READABLE_SOURCE_NOTE),
         )
         return result
 
@@ -1325,7 +1328,7 @@ class DryRunKit:
         shown = update_result(outcome)
         await self._close_row(
             row, shown["status"], shown.get("refused"), outcome.written_id if outcome.written else outcome.fact_id,
-            outcome.written, shown.get("note"), NOTE_NO_READABLE_SOURCE in note_codes_of(outcome.notes),
+            outcome.written, shown.get("note"), NO_READABLE_SOURCE_NOTE in outcome.notes,
         )
         return outcome
 

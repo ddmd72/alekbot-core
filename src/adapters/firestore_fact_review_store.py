@@ -142,17 +142,15 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def all_open(self) -> List[FactReviewQuestion]:
         return self._valid(await self._questions.where(filter=FieldFilter("status", "in", _OPEN_VALUES)).get())
 
-    async def by_message(
-        self, user_id: str, platform: str, channel_id: str, message_id: str,
-    ) -> Optional[FactReviewQuestion]:
+    async def by_message(self, user_id: str, ref: MessageRef) -> Optional[FactReviewQuestion]:
         """Equalities on the stored fields `user_id`, `message_platform`, `message_channel` and `message_id`."""
-        if not (user_id and platform and channel_id and message_id):
+        if not (user_id and ref.platform and ref.channel_id and ref.message_id):
             return None
         query = (
             self._questions.where(filter=FieldFilter("user_id", "==", user_id))
-            .where(filter=FieldFilter("message_platform", "==", platform))
-            .where(filter=FieldFilter("message_channel", "==", channel_id))
-            .where(filter=FieldFilter("message_id", "==", message_id))
+            .where(filter=FieldFilter("message_platform", "==", ref.platform))
+            .where(filter=FieldFilter("message_channel", "==", ref.channel_id))
+            .where(filter=FieldFilter("message_id", "==", ref.message_id))
         )
         found = self._valid(await query.get())
         if len(found) > 1:

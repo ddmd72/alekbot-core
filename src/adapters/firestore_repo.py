@@ -11,7 +11,7 @@ from ..domain.due_fact import DueFact
 from ..domain.entities import ExpiryKind, FactEntity, FactState
 from ..domain.exceptions import FactWriteConflict
 from ..domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
-from ..domain.fact_resolution import resolve_chain
+from ..domain.fact_resolution import ForwardWalk
 from ..domain.fact_review_overview import LISTABLE_STATES
 from ..domain.fact_review_rules import stale_order_key
 from ..domain.stored_fact import StoredFact
@@ -566,7 +566,10 @@ class FirestoreFactRepository(FactRepository):
     async def resolve_current(
         self, fact_id: str, account_id: str, accepted: AbstractSet[FactState]
     ) -> Optional[StoredFact]:
-        return await resolve_chain(self._read_stored, fact_id, account_id, accepted)
+        walk = ForwardWalk(fact_id, account_id, accepted)
+        while walk.wanted is not None:
+            walk.feed(await self._read_stored(walk.wanted))
+        return walk.result
 
     async def _read_stored(self, fact_id: str) -> Optional[StoredFact]:
         """The whole document with its change token, or None when there is none."""
