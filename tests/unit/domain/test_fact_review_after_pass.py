@@ -58,6 +58,18 @@ def test_after_pass_decides_closes_fallbacks_asks_revives_and_counts():
     }
 
 
+def test_the_offers_entries_removed_are_the_decided_facts_and_the_queued_asks():
+    batch = [fact("f1"), fact("f2"), fact("f3"), fact("f4")]
+    result = FactReviewResult(outcomes=(decision("f1"),), asks=(AskRequest("f2", "revive"), AskRequest("f3", "revive")),
+                              kept=("f4",))
+
+    plan = after_pass(batch, [], result, NOW)
+
+    assert plan.offers_removed(["f2"]) == ("f1", "f2")                 # f3's queue write did not land
+    assert plan.offers_removed(["f4", "f2", "f2"]) == ("f1", "f2")     # only an ask of the pass is queued
+    assert plan.offers_removed([]) == ("f1",)
+
+
 def test_a_decided_or_asked_candidate_gets_no_fallback():
     batch = [fact("f1", state=FactState.CURRENT)]
     timed_out = question(QuestionStatus.UNANSWERED, fact_id="f1", asked_at=NOW - timedelta(days=15))

@@ -1,7 +1,7 @@
 """What follows a review pass (Facts S4 plan §3.2 step 11), decided from the batch, the account's open questions and the
 pass's result: which `offers` entries go, which questions the review closes, which timed-out candidates get their
 fallback, what is queued for the owner, which facts may have reached the revive alert, and the pass's counts.
-Pure: the service writes, this decides."""
+Pure: it decides and writes nothing."""
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import MappingProxyType
@@ -26,7 +26,7 @@ _OUTCOME_COUNTERS: Mapping[ReviewOutcome, CounterField] = MappingProxyType({
 
 @dataclass(frozen=True)
 class AfterPass:
-    """`decided`: the batch facts with an outcome (their `offers` entries go). `closes`: the open questions about them,
+    """`decided`: the batch facts with an outcome (their `offers` entries go, `offers_removed`). `closes`: the open questions about them,
     closed by the review. `fallbacks`: the timed-out candidates the pass left undecided, each with its timed-out
     question. `asks`: each held ask with its batch fact as the pass was given it. `revived`: the documents the pass
     revived (the revive alert reads them). `counts`: the pass's numbers (`reviewed` is the batch; `closed_by_reply` the
@@ -38,6 +38,12 @@ class AfterPass:
     asks: Tuple[Tuple[FactEntity, AskRequest], ...] = ()
     revived: Tuple[str, ...] = ()
     counts: Mapping[CounterField, int] = field(default_factory=dict)
+
+    def offers_removed(self, queued: Iterable[str]) -> Tuple[str, ...]:
+        """The facts whose `offers` entry goes: the decided ones, and those of the asks whose queue write landed
+        (`queued`: their fact ids); an ask that was not queued keeps its fact's entry."""
+        asked = {fact.id for fact, _ in self.asks}
+        return tuple(dict.fromkeys([*self.decided, *(fact_id for fact_id in queued if fact_id in asked)]))
 
 
 def after_pass(

@@ -481,6 +481,7 @@ class TestAfterThePass:
         assert (event["from"], event["to"], event["actor"]) == ("stale", "current", "review")
         assert event["reason"] == queued_reason(question.question_id)
         assert (await day_row(world)).queued == 1
+        assert dict((await world.review_store.get_state(ACC)).offers) == {}      # queued: no longer an offer
 
     async def test_a_fact_with_no_stale_since_queues_at_the_front(self):
         world = ReviewWorld()
@@ -518,6 +519,7 @@ class TestAfterThePass:
         assert await open_questions(world) == []
         row = await day_row(world)
         assert row is not None and row.queued == 0
+        assert dict((await world.review_store.get_state(ACC)).offers) == {fact: 1}   # not queued: still an offer
 
     async def test_twenty_undecidable_facts_are_twenty_queued_questions_and_none_is_revived(self):
         world = ReviewWorld()
@@ -538,6 +540,7 @@ class TestAfterThePass:
         row = await day_row(world)
         assert (row.queued, row.revived, row.reviewed) == (20, 0, 20)
         assert world.sink.texts == []
+        assert dict((await world.review_store.get_state(ACC)).offers) == {}
 
     async def test_a_reply_in_words_is_shown_once_and_the_reviews_outcome_closes_it_and_releases_the_next(self):
         world = ReviewWorld()
@@ -674,6 +677,24 @@ class TestReviveAlert:
 
         assert world.docs[fact]["state"] == "current"
         assert world.sink.texts == []
+
+    async def test_a_fallback_revive_that_reaches_the_limit_raises_the_alert(self):
+        world = ReviewWorld()
+        fact = await world.seed("Alex reads at the Example Library", expiry_kind=ExpiryKind.HORIZON, ttl_days=60,
+                                reported_date=NOW - timedelta(days=40), expires_at=NOW + timedelta(days=20),
+                                lifecycle_events=[revived_on(20), revived_on(10)])
+        await world.seed_question(QuestionStatus.UNANSWERED, question_id="qt", account_id=ACC, user_id=USER,
+                                  fact_id=fact, quoted_text="Alex reads at the Example Library",
+                                  asked_at=NOW - timedelta(days=15))
+        await world.seed_state(account_id=ACC)
+        r = Rig(world, service_class=WithCandidates)                  # the pass leaves the candidate undecided
+
+        assert await r.run() == {"status": "completed"}
+
+        assert world.docs[fact]["lifecycle_events"][-1]["reason"] == "no answer to q=qt: revive"
+        assert (await day_row(world)).timed_out == 1
+        assert len(world.sink.texts) == 1
+        assert world.sink.texts[0].startswith("🚨") and f"{fact[:8]} (3×)" in world.sink.texts[0]
 
     async def test_a_failed_alert_post_does_not_fail_the_run(self):
         world = ReviewWorld()

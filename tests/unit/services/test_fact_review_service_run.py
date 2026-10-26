@@ -67,7 +67,8 @@ class Agents:
 
 
 class Coordinator:
-    """A model call would be a routed message; none is expected in this task."""
+    """Records the routed message and raises. A run that routes runs the real `_route` under a scripted `route`, so
+    the raise becomes a failed response that the script's answer then replaces; no test here reads that failure."""
 
     def __init__(self) -> None:
         self.routed: List[Any] = []
@@ -107,8 +108,8 @@ class Recording(FactReviewService):
         return await self._answer("select", now, await super()._select(account_id, state, questions, candidates, now),
                                   now)
 
-    async def _route(self, user_id, account_id, batch, questions, now, zone, language, until):
-        built = await super()._route(user_id, account_id, batch, questions, now, zone, language, until)
+    async def _route(self, user_id, account_id, batch, questions, now, zone, until):
+        built = await super()._route(user_id, account_id, batch, questions, now, zone, until)
         return await self._answer("route", now, built)
 
     async def _after_pass(self, user_id, account_id, batch, response, now, zone, writes):
@@ -572,7 +573,10 @@ class TestFactReviewServiceRun:
 
         await r.run()
 
-        assert len(ticks) == 1
+        # One read for the run; the only other is the lease budget at routing (T8a review F2): ticks[1] reaches the
+        # agent's timeout alone, (ticks[0] + 600 s + 60 s margin) - 60 s margin - (ticks[0] + 1 s).
+        assert len(ticks) == 2
+        assert r.coordinator.routed[0].timeout_ms == 599_000
         assert {now for _, now in r.service.calls} == {ticks[0]}
         assert r.service.stubs == ["timeouts", "kept_twice", "select", "route", "after_pass", "send", "digest"]
         stored = await state(world)

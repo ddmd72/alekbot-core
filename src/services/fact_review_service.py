@@ -148,8 +148,8 @@ class FactReviewService:
 
     Dependencies, by the step that reads them:
     - `account_repo`, `user_repo`: the owner check (step 1);
-    - `agent_factory`, `owner_zones`, `texts`: the setup (step 3); `texts` also says whether the language mirrors the
-      owner (step 10), gives the send its message (T8d1) and the digest its lines (T8d2);
+    - `agent_factory`, `owner_zones`: the setup (step 3);
+    - `texts`: whether the language mirrors the owner (step 10), the send's message (T8d1), the digest's lines (T8d2);
     - `lease`, `task_queue`, `run_timeout_s`: the lease and the deferral (step 4, and step 10 when no lease time is
       left); `task_queue` also takes the next question's release through `answer_service`;
     - `review_store`, `session_store`: housekeeping (step 5) and every question and state write; `session_store` also
@@ -257,7 +257,6 @@ class FactReviewService:
     async def _daily(self, user_id: str, account_id: str, now: datetime) -> Dict[str, Any]:
         await self._agent_factory.ensure_agents_for_user(user_id)
         zone = (await self._owner_zones.resolve(account_id)).zone
-        language = await self._texts.language_for(user_id, account_id)
         owner = uuid.uuid4().hex
         until = lease_until(now, self._run_timeout_s)
         if not await self._lease.acquire(account_id, owner, now, until):
@@ -265,7 +264,7 @@ class FactReviewService:
             return {"status": "deferred"}
         try:
             await self._mark("started", self._review_store.mark_started, account_id, now)
-            return await self._leased(user_id, account_id, now, zone, language, until)
+            return await self._leased(user_id, account_id, now, zone, until)
         finally:
             await self._release(account_id, owner)
 
@@ -291,7 +290,7 @@ class FactReviewService:
     # ------------------------------------------------------------------------------------------------ the leased run
 
     async def _leased(
-        self, user_id: str, account_id: str, now: datetime, zone: str, language: str, until: datetime,
+        self, user_id: str, account_id: str, now: datetime, zone: str, until: datetime,
     ) -> Dict[str, Any]:
         tally = _Tally()
         writes = _FactWrites()
@@ -305,7 +304,7 @@ class FactReviewService:
             batch = await self._select(account_id, state, questions, timeouts.candidates, now)
             failed = deferred = False
             if batch:  # step 9: nothing selected, no model call
-                response = await self._route(user_id, account_id, batch, questions, now, zone, language, until)
+                response = await self._route(user_id, account_id, batch, questions, now, zone, until)
                 if response is None:  # no lease time was left: the run is deferred, nothing was routed
                     deferred = True
                 elif response.status is not AgentStatus.SUCCESS:
@@ -501,14 +500,13 @@ class FactReviewService:
         questions: Sequence[FactReviewQuestion],
         now: datetime,
         zone: str,
-        language: str,
         until: datetime,
     ) -> Optional[AgentResponse]:
         """Step 10: the prefetch (§3.4), then the lease budget read now; less than the margin left defers the run (as
         `ConsolidationService`) and routes nothing (None). Else `offers` (+1 per stale batch fact) and `offered_at` (each
         reply shown) are written and the agent task is routed inside `RequestContext`, its timeout the budget. A
-        coordinator exception is the pass's failure (logged, a failed response): the failure rule, not a 5xx. `language`
-        is not read here: the pass is told whether the language mirrors the owner, and the agent words its request."""
+        coordinator exception is the pass's failure (logged, a failed response): the failure rule, not a 5xx. The pass
+        is told whether the language mirrors the owner (`mirror`); the agent words its own request."""
         async with RequestContext(user_id=user_id, account_id=account_id):
             task = await self._task(user_id, account_id, batch, questions)
             budget = agent_timeout_s(until, self._clock())  # F2: the lease left now, not at the run's start
@@ -593,9 +591,9 @@ class FactReviewService:
         zone: str,
         writes: _FactWrites,
     ) -> _StepResult:
-        """Step 11, over what `after_pass` decides: the decided facts' `offers` entries go; their questions close
-        `review` (`answer_service`, which releases the next when one was current); the undecided timed-out candidates
-        get their fallback; every ask is queued; the reported language and labels go to the state (`language_to_store`).
+        """Step 11, over what `after_pass` decides: the decided facts' questions close `review` (`answer_service`,
+        which releases the next when one was current); the undecided timed-out candidates get their fallback; every ask
+        is queued; then the `offers` entries of the decided and the queued facts go (`offers_removed`); the reported language and labels go to the state (`language_to_store`).
         Each fact write is marked through `writes.wrote()` as it lands. None (nothing routed) does nothing."""
         if response is None:
             return _StepResult()
@@ -603,8 +601,6 @@ class FactReviewService:
         plan = after_pass(batch, await self._review_store.questions_for_account(account_id), result, now)
         counts = dict(plan.counts)
         revived = list(plan.revived)
-        if plan.decided and not await self._review_store.mark_removed(account_id, plan.decided):
-            logger.warning(f"[FactReview] account {account_id[:8]} has no review state; offers not cleared")
         for question in plan.closes:
             await self._answer_service.close_question(question, ClosedBy.REVIEW, source=review_close_source(question))
         for _, question in plan.fallbacks:
@@ -613,9 +609,14 @@ class FactReviewService:
                 counts[CounterField.TIMED_OUT] = counts.get(CounterField.TIMED_OUT, 0) + 1
                 if fallback_revives(question):
                     revived.append(written)
+        queued: List[str] = []
         for fact, ask in plan.asks:
             if await self._queue(user_id, account_id, fact, ask, now, writes):
+                queued.append(fact.id)
                 counts[CounterField.QUEUED] = counts.get(CounterField.QUEUED, 0) + 1
+        removed = plan.offers_removed(queued)
+        if removed and not await self._review_store.mark_removed(account_id, removed):
+            logger.warning(f"[FactReview] account {account_id[:8]} has no review state; offers not cleared")
         await self._store_language(account_id, result.message_language, result.labels)
         logger.info(
             f"[FactReview] after the pass of account {account_id[:8]}: {len(plan.decided)} decided, "
