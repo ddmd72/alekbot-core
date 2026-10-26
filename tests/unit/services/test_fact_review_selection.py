@@ -286,6 +286,17 @@ class TestRouting:
         assert r.agent.seen == [(USER, ACC)]
         assert batch_ids(r.agent.tasks[0]) == [fact]
 
+    async def test_the_task_carries_the_runs_instant(self):
+        world = ReviewWorld()
+        await world.seed_state(account_id=ACC)
+        await stale(world, "Alex plans a weekend in Coimbra", NOW - timedelta(days=9))
+        r = Rig(world)
+
+        await r.run()
+
+        (task,) = r.agent.tasks
+        assert task.now == NOW
+
     async def test_each_fact_carries_its_earlier_versions_and_five_neighbours_outside_its_lineage_and_no_vector(self):
         world = ReviewWorld()
         first = await world.seed("Alex is a data engineer", lineage_id="lin-job", version=1, state=FactState.SUPERSEDED,
@@ -501,6 +512,25 @@ class TestAfterThePass:
 
         (question,) = await open_questions(world)
         assert question.queue_key == datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    async def test_an_ask_whose_fact_was_closed_meanwhile_creates_no_question_and_counts_none(self):
+        world = ReviewWorld()
+        await world.seed_state(account_id=ACC)
+        fact = await stale(world, "Alex plans a weekend in Coimbra", NOW - timedelta(days=9))
+        r = Rig(world)
+
+        async def play(task, scope):
+            await ask_all(task, scope)
+            world.docs[fact]["state"] = "archived"         # another writer closes the fact while the pass runs
+
+        r.agent.play = play
+
+        assert await r.run() == {"status": "completed"}
+
+        assert await open_questions(world) == []
+        row = await day_row(world)
+        assert row is None or row.queued == 0
+        assert dict((await world.review_store.get_state(ACC)).offers) == {fact: 1}    # not queued: still an offer
 
     async def test_a_conflicting_fact_write_leaves_the_fact_stale_and_creates_no_question(self):
         world = ReviewWorld()

@@ -1,0 +1,6 @@
+3c476131  # except-success (3rd `except Exception` returning None in file order) _refresh_after_error: log-only handler falling off a -> None function, the class the driver skips as equivalent (tests/CLAUDE.md); the key is an ordinal, re-check it when a None-returning `except Exception` is added above
+d2e961bb  # except-success (4th `except Exception` returning None in file order) _count: log-only handler, implicit None; same class; re-check the ordinal as above
+b6fecf68  # except-success (1st `except FactResolutionError` returning None in file order) _asked_fact: the real path sets stored=None and asked_fact_unchanged(question, None) is False for every question, so it returns None too; only one INFO line differs
+ced6b3cb  # except-success (9th `except Exception` returning None in file order) _digest's outer handler: logs at ERROR only, implicit None; same class; re-check the ordinal as above
+c8e8b9ac  # except-success (10th `except Exception` returning None in file order) _release_digest: log-only handler, implicit None; same class; re-check the ordinal as above
+d4f569fd  # except-success (12th `except Exception` returning None in file order) _revive_alert: log-only handler, implicit None; same class; re-check the ordinal as above
