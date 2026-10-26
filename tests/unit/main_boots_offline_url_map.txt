@@ -79,6 +79,7 @@ POST /auth/logout
 POST /auth/refresh
 POST /mcp/consent
 POST /slack/events
+POST /slack/interactivity
 POST /telegram/webhook
 POST /voice/answer
 POST /voice/auth

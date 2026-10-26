@@ -73,6 +73,7 @@ src.adapters.security.regex_adapter.RegexSecurityAdapter 3  # by-design one insi
 src.adapters.slack.channel_history.SlackChannelHistorySource 1  # by-design single instance
 src.adapters.slack.http_adapter.HTTPModeAdapter 1  # by-design single instance
 src.adapters.slack.interactive_message_adapter.SlackInteractiveMessageAdapter 1  # by-design the slack entry of the one InteractiveMessageRouter, over the Slack app's client (application_graph.py, Facts S4 T10a)
+src.adapters.slack.interactivity_route.SlackInteractivityRoute 1  # by-design the one POST /slack/interactivity, built by the one HTTPModeAdapter over the main task queue (http_adapter.py, Facts S4 T5d)
 src.adapters.slack.media_adapter.SlackMediaAdapter 2  # by-design the Slack factory's for rich content and the graph's for notification media (application_graph.py), stateless clients
 src.adapters.slack.webhook_adapter.SlackWebhookAdapter 1  # by-design single instance
 src.adapters.telegram.media_adapter.TelegramMediaAdapter 2  # by-design the Telegram factory's for rich content and the graph's for notification media (application_graph.py), stateless clients
@@ -111,7 +112,7 @@ src.services.email_embedding_repair_service.EmailEmbeddingRepairService 1  # by-
 src.services.email_indexing_service.EmailIndexingService 1  # by-design single instance
 src.services.email_review_service.EmailReviewService 1  # by-design single instance
 src.services.email_search_service.EmailSearchService 1  # by-design single instance
-src.services.fact_answer_service.FactAnswerService 1  # by-design the one answer path: FactReviewService holds it (application_graph.py, Facts S4 T8e, T10a)
+src.services.fact_answer_service.FactAnswerService 1  # by-design the one answer path: FactReviewService holds it, and InteractiveChoiceService holds the same one as its fact_question handler (application_graph.py, Facts S4 T8e, T10a, T8g)
 src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-design one janitor: application_graph.py build_application_graph builds it once and hands it to WorkerHandler for the daily fact_lifecycle_sweep Scheduler job (FACT_LIFECYCLE_RFC D4); it holds the container's repository and counters
 src.services.fact_question_texts.FactQuestionTexts 1  # by-design single instance, shared by FactReviewService and FactAnswerService (application_graph.py, Facts S4 T7b, T10a)
 src.services.fact_review_service.FactReviewService 1  # by-design the one memory review, held by WorkerHandler for the fact_review task (application_graph.py, Facts S4 T8a, T10a)
@@ -123,6 +124,7 @@ src.services.file_upload_service.FileUploadService 1  # by-design single instanc
 src.services.google_oauth_service.GoogleOAuthService 2  # by-design Gmail scopes and Google Tasks scope, two flows (application_graph.py)
 src.services.history_summary_service.HistorySummaryService 1  # by-design single instance
 src.services.iam_service.IAMService 1  # by-design single instance
+src.services.interactive_choice_service.InteractiveChoiceService 1  # by-design the one click path, held by WorkerHandler for the interactive_choice task over IAMService, the one InteractiveMessageRouter and FactAnswerService (application_graph.py, Facts S4 T8g)
 src.services.invite_code_service.InviteCodeService 1  # by-design single instance
 src.services.language_preference_service.LanguagePreferenceService 1  # by-design single instance
 src.services.localization_service.LocalizationService 1  # by-design single instance
