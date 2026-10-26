@@ -113,7 +113,7 @@ def test_a_horizon_after_a_later_reported_date_counts_from_that_date(actor):
 @pytest.mark.parametrize("actor", REVIEW_ACTORS)
 def test_a_future_date_and_none_are_stored_as_s3_stores_them(actor):
     context = ctx(str(actor))
-    future = Expiry(ExpiryKind.DATE, on=date(2026, 12, 31))
+    future = Expiry(ExpiryKind.DATE, on=date(2027, 7, 31))  # summer: in winter Lisbon's end of day is UTC midnight
     assert review_horizon(future, STORED, NOW, context) == (compute_expiry(future, STORED, "Europe/Lisbon"), None)
     assert review_horizon(EXPIRY_NONE, STORED, NOW, context) == (
         {"expiry_kind": ExpiryKind.NONE, "ttl_days": None, "expires_at": None}, None)

@@ -31,9 +31,11 @@ def stored(fact_id, text, fact_type, reported, **over):
 
 
 FACTS = {
+    # Reported and due both before the end of Lisbon's summer time (25 October): in winter Lisbon is UTC, and the
+    # zone would not show in `due`.
     "horizon": stored(
-        "f1", "takes the pills daily", FactType.EVENT, datetime(2026, 10, 22, 23, 30, tzinfo=UTC),
-        expiry_kind=ExpiryKind.HORIZON, ttl_days=30, expires_at=datetime(2026, 11, 21, 23, 30, tzinfo=UTC),
+        "f1", "takes the pills daily", FactType.EVENT, datetime(2026, 9, 22, 23, 30, tzinfo=UTC),
+        expiry_kind=ExpiryKind.HORIZON, ttl_days=30, expires_at=datetime(2026, 10, 22, 23, 30, tzinfo=UTC),
     ),
     "date, naive reported": stored(
         "f2", "trip to Rome", FactType.STATE, datetime(2026, 10, 22, 10, 0),
@@ -45,8 +47,8 @@ FACTS = {
 # The old outputs, in the owner's zone (Europe/Lisbon).
 OLD_CLUSTER_ENTRY = {
     "horizon": {"fact_id": "f1", "content": "takes the pills daily", "similarity": 0.0,
-                "expiry": {"kind": "horizon", "days": 30}, "due": "2026-11-21",
-                "reported_date": "2026-10-23T00:30:00+01:00"},
+                "expiry": {"kind": "horizon", "days": 30}, "due": "2026-10-23",
+                "reported_date": "2026-09-23T00:30:00+01:00"},
     "date, naive reported": {"fact_id": "f2", "content": "trip to Rome", "similarity": 0.0,
                              "expiry": {"kind": "date", "date": "2027-01-15"}, "due": None,
                              "reported_date": "2026-10-22T11:00:00+01:00"},
@@ -57,8 +59,8 @@ OLD_SEARCH_HIT = {
     "horizon": {"fact_id": "f1", "content": "takes the pills daily", "similarity": 0.8, "source": "keyword",
                 "type": "event", "domain": None, "temporal_class": None, "state": "current",
                 "context_priority": "medium", "tags": [], "metadata": {},
-                "reported_date": "2026-10-23T00:30:00+01:00", "expiry": {"kind": "horizon", "days": 30},
-                "due": "2026-11-21", "version": 1},
+                "reported_date": "2026-09-23T00:30:00+01:00", "expiry": {"kind": "horizon", "days": 30},
+                "due": "2026-10-23", "version": 1},
     "date, naive reported": {"fact_id": "f2", "content": "trip to Rome", "similarity": 0.8, "source": "keyword",
                              "type": "state", "domain": None, "temporal_class": None, "state": "current",
                              "context_priority": "medium", "tags": [], "metadata": {},
@@ -71,13 +73,13 @@ OLD_SEARCH_HIT = {
 }
 OLD_CLUSTER_LINE = {
     "horizon": '1. {"fact_id": "f1", "content": "takes the pills daily", "similarity": 0.0, '
-               '"expiry": {"kind": "horizon", "days": 30}, "due": "2026-11-21", "reported": "2026-10-23"}',
+               '"expiry": {"kind": "horizon", "days": 30}, "due": "2026-10-23", "reported": "2026-09-23"}',
     "date, naive reported": '1. {"fact_id": "f2", "content": "trip to Rome", "similarity": 0.0, '
                             '"expiry": {"kind": "date", "date": "2027-01-15"}, "reported": "2026-10-22"}',
     "no decision": '1. {"fact_id": "f3", "content": "legacy", "similarity": 0.0, "expiry": null, '
                    '"reported": "2026-03-01"}',
 }
-OLD_REPORTED_DAY = {"horizon": "2026-10-23", "date, naive reported": "2026-10-22", "no decision": "2026-03-01"}
+OLD_REPORTED_DAY = {"horizon": "2026-09-23", "date, naive reported": "2026-10-22", "no decision": "2026-03-01"}
 
 
 def hit(fact):
@@ -130,9 +132,9 @@ def test_the_cluster_message_line_is_byte_identical_from_an_entry_and_from_a_sea
 
 
 def test_the_reported_day_is_the_owners_calendar_day_not_the_utc_day():
-    fact = FACTS["horizon"]  # 23:30 UTC on 22 October is 00:30 on 23 October in Europe/Lisbon
-    assert fact_view(fact, "UTC")["reported"] == "2026-10-22"
-    assert fact_view(fact, LISBON)["reported"] == "2026-10-23"
+    fact = FACTS["horizon"]  # 23:30 UTC on 22 September is 00:30 on 23 September in Europe/Lisbon
+    assert fact_view(fact, "UTC")["reported"] == "2026-09-22"
+    assert fact_view(fact, LISBON)["reported"] == "2026-09-23"
 
 
 def test_a_search_hit_without_a_reported_date_shows_none():
@@ -154,8 +156,8 @@ def test_the_enriched_context_crosses_the_task_payload_encoder():
     context = EnrichedContext(facts=[hit(FACTS["horizon"])], total_sources=1, dedup_count=0, biographical_dedup_count=0)
     wire = json.loads(json.dumps({"enriched_context": asdict(context)}, cls=_DomainEncoder))
     (fact,) = wire["enriched_context"]["facts"]
-    assert fact["reported_date"] == "2026-10-22T23:30:00+00:00"
-    assert fact["expires_at"] == "2026-11-21T23:30:00+00:00"
+    assert fact["reported_date"] == "2026-09-22T23:30:00+00:00"
+    assert fact["expires_at"] == "2026-10-22T23:30:00+00:00"
     assert fact["expiry_kind"] == "horizon" and fact["ttl_days"] == 30
 
 
