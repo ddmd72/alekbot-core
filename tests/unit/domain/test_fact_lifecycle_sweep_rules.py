@@ -26,30 +26,33 @@ def test_the_constants_are_72_hours_and_50_facts():
     assert BREAKER_REVIEW_AGE == timedelta(hours=72) and BREAKER_BACKLOG == 50
 
 
+# S4 (plan §3.12): breaker_reason(stale, pool, last_review_at, now, interval). These rows keep the S3 cases with no question
+# open (pool = stale) at the default interval of 1 day, so the review-age edge is interval + 72 h = 96 h.
+
 def test_no_stale_facts_never_trips_whatever_the_review_age():
-    assert breaker_reason(0, None, NOW) is None
-    assert breaker_reason(0, NOW - timedelta(days=30), NOW) is None
+    assert breaker_reason(0, 0, None, NOW, 1) is None
+    assert breaker_reason(0, 0, NOW - timedelta(days=30), NOW, 1) is None
 
 
 def test_stale_facts_and_no_review_ever_trips():
-    assert breaker_reason(1, None, NOW) is not None
+    assert breaker_reason(1, 1, None, NOW, 1) is not None
 
 
 def test_the_review_age_edge_is_exclusive():
-    assert breaker_reason(3, NOW - timedelta(hours=72), NOW) is None
-    assert breaker_reason(3, NOW - timedelta(hours=72, seconds=1), NOW) is not None
-    assert breaker_reason(3, NOW - timedelta(hours=1), NOW) is None
+    assert breaker_reason(3, 3, NOW - timedelta(hours=96), NOW, 1) is None
+    assert breaker_reason(3, 3, NOW - timedelta(hours=96, seconds=1), NOW, 1) is not None
+    assert breaker_reason(3, 3, NOW - timedelta(hours=1), NOW, 1) is None
 
 
 def test_the_backlog_edge_is_exclusive_and_a_fresh_review_does_not_lift_it():
     fresh = NOW - timedelta(hours=1)
-    assert breaker_reason(50, fresh, NOW) is None
-    reason = breaker_reason(51, fresh, NOW)
+    assert breaker_reason(50, 50, fresh, NOW, 1) is None
+    reason = breaker_reason(51, 51, fresh, NOW, 1)
     assert reason is not None and "51" in reason and "50" in reason
 
 
 def test_a_reason_is_text_without_fact_content():
-    assert isinstance(breaker_reason(2, None, NOW), str)
+    assert isinstance(breaker_reason(2, 2, None, NOW, 1), str)
 
 
 # ------------------------------------------------------------------------------------------------ stale_fields

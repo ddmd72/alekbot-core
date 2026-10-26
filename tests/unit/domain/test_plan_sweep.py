@@ -35,7 +35,7 @@ def test_every_field_of_a_plain_plan():
         newly_due=1,                        # only b expired after the previous run (3 d ago); w is waiting, a and n are older
         due_waiting=1,
         headroom=BREAKER_BACKLOG - 3,
-        breaker_reason="3 stale facts and no successful review in the last 72 h",
+        breaker_reason="3 stale facts and no successful review in the last 96 h",      # interval 1 d + 72 h (§3.12)
         deferred=0,                         # the breaker holds the run, so nothing is "left to the next one"
     )
 

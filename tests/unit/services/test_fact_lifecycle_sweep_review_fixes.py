@@ -145,7 +145,7 @@ async def test_the_per_account_log_line_in_log_only_mode_with_a_tripped_breaker(
 
     assert lifecycle_lines(caplog) == [
         "[FactLifecycle] account=acc-1 due=1 newly_due=1 no_decision=0 staled=0 would_stale=1 deferred=0 conflicts=0 backlog=1 "
-        f"breaker={breaker_reason(1, None, NOW)} review_enqueued=0 dry_run=True"
+        f"breaker={breaker_reason(1, 1, None, NOW, 1)} review_enqueued=0 dry_run=True"
     ]
 
 

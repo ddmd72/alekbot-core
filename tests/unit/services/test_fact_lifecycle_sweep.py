@@ -14,7 +14,7 @@ from tests.support.fact_lifecycle_world import FUTURE, NOW, PAST, JanitorWorld
 DAY = NOW.date()
 YESTERDAY = DAY - timedelta(days=1)
 EMPTY_RUN = {"accounts": 0, "due": 0, "staled": 0, "would_stale": 0, "deferred": 0, "conflicts": 0,
-             "no_decision": 0, "breaker_tripped": 0, "dry_run": True}
+             "no_decision": 0, "breaker_tripped": 0, "review_enqueued": 0, "purge_overdue": 0, "dry_run": True}
 
 
 def snapshot_of(world, account=ACC):
@@ -45,7 +45,7 @@ async def test_it_stales_every_due_current_fact_of_every_account_and_nothing_els
     result = await world.service.sweep()
 
     assert result == {"accounts": 2, "due": 2, "staled": 2, "would_stale": 0, "deferred": 0, "conflicts": 0,
-                      "no_decision": 0, "breaker_tripped": 0, "dry_run": False}
+                      "no_decision": 0, "breaker_tripped": 0, "review_enqueued": 0, "purge_overdue": 0, "dry_run": False}
     for fact_id in (due_a, due_b):
         doc = world.docs[fact_id]
         assert doc["state"] == "stale" and doc["stale_since"] == NOW and doc["last_updated"] == NOW
