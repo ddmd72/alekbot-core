@@ -69,7 +69,7 @@ def test_only_the_conversation_passes_let_the_models_dates_count(label, model_da
 async def test_the_tool_executor_gives_every_write_and_search_the_passes_context():
     port = RecordingPort()
     agent, _ = make_agent(port)
-    context = agent._write_context("stage2a", "Europe/Paris")
+    context = agent._write_context("stage2a", "Europe/Lisbon")
     calls = [
         ToolCall(name="search_existing_facts", args={"keywords": [], "primary_query": "q"}),
         ToolCall(name="create_fact", args={"content": "c", "fact_attributes": {}}),
@@ -77,18 +77,18 @@ async def test_the_tool_executor_gives_every_write_and_search_the_passes_context
         ToolCall(name="merge_facts", args={"fact_ids": ["a", "b"], "merged_content": "m", "fact_attributes": {}}),
     ]
     await agent._execute_fact_management_tools(calls, USER, ACC, write_context=context)
-    assert port.calls == [("search", "Europe/Paris"), ("create", context), ("update", context), ("merge", context)]
+    assert port.calls == [("search", "Europe/Lisbon"), ("create", context), ("update", context), ("merge", context)]
 
 
 async def test_the_tracker_forwards_the_context_and_the_zone():
     real = RecordingPort()
     tracker = _TrackingFactManagement(real)
-    context = ConsolidationAgent._write_context("email", "Europe/Paris")
-    await tracker.search_existing_facts(["k"], "q", timezone="Europe/Paris")
+    context = ConsolidationAgent._write_context("email", "Europe/Lisbon")
+    await tracker.search_existing_facts(["k"], "q", timezone="Europe/Lisbon")
     await tracker.create_fact("c", {}, context=context)
     await tracker.update_fact("f", {"content": "x"}, ACC, context=context)
     await tracker.merge_facts(["a"], "m", {}, context=context)
-    assert real.calls == [("search", "Europe/Paris"), ("create", context), ("update", context), ("merge", context)]
+    assert real.calls == [("search", "Europe/Lisbon"), ("create", context), ("update", context), ("merge", context)]
     assert tracker.wrote and tracker.changed == [("new", "c"), ("f", "x"), ("m", "m")]
 
 
@@ -97,11 +97,11 @@ async def test_the_directive_backstop_writes_under_its_own_actor_and_the_passes_
     agent, repo = make_agent(real)
     directives = [make_fact(f"rule {i}", domain=FactDomain.AGENT_DIRECTIVE) for i in range(agent.DIRECTIVE_HARD_CAP + 2)]
     repo.get_active_facts_ordered = AsyncMock(return_value=directives)
-    stage2b = agent._write_context("stage2b", "Europe/Paris")
+    stage2b = agent._write_context("stage2b", "Europe/Lisbon")
     ops = await agent._enforce_directive_cap(ACC, agent._write_context("backstop", stage2b.timezone, stage2b.span))
     assert len(ops) == 2
     assert [(name, c.actor, c.timezone, c.model_dates) for name, c in real.calls] == [
-        ("update", "backstop", "Europe/Paris", False)] * 2
+        ("update", "backstop", "Europe/Lisbon", False)] * 2
 
 
 async def test_stage_2b_derives_the_backstop_context_from_its_own():
@@ -111,6 +111,6 @@ async def test_stage_2b_derives_the_backstop_context_from_its_own():
     repo.get_active_facts_ordered = AsyncMock(return_value=directives)
     agent.prompt_builder.build_for_agent = AsyncMock(return_value="SYS")
     agent._call_llm = AsyncMock(return_value=LLMResponse(text='{"operations": []}'))
-    ops = await agent._review_directives(USER, ACC, [], agent._write_context("stage2b", "Europe/Paris"))
+    ops = await agent._review_directives(USER, ACC, [], agent._write_context("stage2b", "Europe/Lisbon"))
     assert [op["action"] for op in ops] == ["INVALIDATE"]
-    assert [(name, c.actor, c.timezone) for name, c in real.calls] == [("update", "backstop", "Europe/Paris")]
+    assert [(name, c.actor, c.timezone) for name, c in real.calls] == [("update", "backstop", "Europe/Lisbon")]

@@ -340,8 +340,8 @@ async def test_the_owner_zone_is_resolved_like_the_service_and_lands_in_the_cont
     assert kit.write_context("stage2a").timezone == "Asia/Tokyo" and kit.write_context("stage2a").model_dates is False
     assert kit.write_context("email").model_dates is True
 
-    assert await kit.resolve_timezone(accounts, users, ACCOUNT, override="Europe/Paris") == "Europe/Paris"
-    assert kit.message_context(USER, ACC)["owner_timezone"] == "Europe/Paris"
+    assert await kit.resolve_timezone(accounts, users, ACCOUNT, override="Europe/Lisbon") == "Europe/Lisbon"
+    assert kit.message_context(USER, ACC)["owner_timezone"] == "Europe/Lisbon"
 
 
 async def test_an_unresolvable_owner_gives_utc_and_a_bad_override_is_refused():

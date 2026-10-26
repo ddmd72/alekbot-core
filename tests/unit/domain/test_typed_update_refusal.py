@@ -97,7 +97,7 @@ def test_an_update_within_the_rules_passes(update):
     {"reported_date": "2026-01-05T10:00:00+00:00"},
 ])
 def test_whatever_the_parser_accepts_the_typed_check_accepts(updates):
-    assert typed_update_refusal(parse_fact_update(updates, "Europe/Paris")) is None
+    assert typed_update_refusal(parse_fact_update(updates, "Europe/Lisbon")) is None
 
 
 def test_expiry_itself_still_holds_a_stored_legacy_value_out_of_bounds():

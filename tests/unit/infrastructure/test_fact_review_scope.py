@@ -24,7 +24,7 @@ from tests.support.fact_review_world import ReviewWorld
 from tests.support.fact_store import FACTS
 from tests.support.review_rule_builders import question as build_question
 
-TZ = "Europe/Paris"
+TZ = "Europe/Lisbon"
 HORIZON = {"kind": "horizon", "days": 30}
 REVIVE = {"state": "current", "expiry": HORIZON}
 UPDATE, ASK = UPDATE_FACT_PLACE, ASK_OWNER_PLACE

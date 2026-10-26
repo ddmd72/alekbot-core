@@ -15,12 +15,12 @@ from src.domain.pass_actor import PassActor
 from src.domain.refusal_wording import RefusalWording
 
 UTC = timezone.utc
-PARIS = "Europe/Paris"
-NOW = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)  # 11:00 in Europe/Paris
-REPORTED = NOW - timedelta(days=90)  # 2026-07-26 in Europe/Paris
-PAST_DATE = compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 20)), REPORTED, PARIS)
-TODAY_DATE = compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 24)), REPORTED, PARIS)
-DUE_HORIZON = compute_expiry(Expiry(ExpiryKind.HORIZON, days=14), REPORTED, PARIS)  # ended 2026-08-09
+LISBON = "Europe/Lisbon"
+NOW = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)  # 10:00 in Europe/Lisbon
+REPORTED = NOW - timedelta(days=90)  # 2026-07-26 in Europe/Lisbon
+PAST_DATE = compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 20)), REPORTED, LISBON)
+TODAY_DATE = compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 24)), REPORTED, LISBON)
+DUE_HORIZON = compute_expiry(Expiry(ExpiryKind.HORIZON, days=14), REPORTED, LISBON)  # ended 2026-08-09
 
 REVIEW_WAY_OUT = (
     "this pass reviews stored memory: give a horizon (counted from now), or archive with basis date_passed when its date "
@@ -29,17 +29,17 @@ REVIEW_WAY_OUT = (
 
 EXPECTED_PAST_DATE = {
     RefusalWording.STAGE1: (
-        "the date 2026-10-20 is past (today is 2026-10-24 in Europe/Paris): DISCARD the candidate if it no longer "
+        "the date 2026-10-20 is past (today is 2026-10-24 in Europe/Lisbon): DISCARD the candidate if it no longer "
         "matters, or rewrite the fact as what happened (past tense, the outcome if known) with {kind: none}. "
         f"{NOTHING_WRITTEN}"
     ),
     RefusalWording.CLEANUP: (
-        "the date 2026-10-20 is past (today is 2026-10-24 in Europe/Paris): this pass reviews stored memory: do not "
+        "the date 2026-10-20 is past (today is 2026-10-24 in Europe/Lisbon): this pass reviews stored memory: do not "
         "drop the fact because its date passed. Rewrite it as what happened (past tense, the outcome if known) with "
         f"{{kind: none}}, or give a future date if the plan still holds. {NOTHING_WRITTEN}"
     ),
     RefusalWording.REVIEW: (
-        f"the date 2026-10-20 is past (today is 2026-10-24 in Europe/Paris): {REVIEW_WAY_OUT}. {NOTHING_WRITTEN}"
+        f"the date 2026-10-20 is past (today is 2026-10-24 in Europe/Lisbon): {REVIEW_WAY_OUT}. {NOTHING_WRITTEN}"
     ),
 }
 EXPECTED_DUE_HORIZON = {
@@ -77,7 +77,7 @@ class Rule:
 
 def refusal(fields, rule) -> str:
     with pytest.raises(FactBornDueError) as refused:
-        born_due(fields, REPORTED, NOW, PARIS, rule)
+        born_due(fields, REPORTED, NOW, LISBON, rule)
     return str(refused.value)
 
 
@@ -102,7 +102,7 @@ def test_the_date_today_text_of_each_wording(wording):
 
 @pytest.mark.parametrize("wording", list(RefusalWording))
 def test_a_flooring_row_floors_a_due_horizon_whatever_its_wording(wording):
-    got, note = born_due(DUE_HORIZON, REPORTED, NOW, PARIS, Rule(wording, floors_due_horizon=True))
+    got, note = born_due(DUE_HORIZON, REPORTED, NOW, LISBON, Rule(wording, floors_due_horizon=True))
     assert got["expires_at"] == NOW + timedelta(days=2)
     assert note == "counted from 2026-07-26 this horizon had already passed; the fact goes to review on 2026-10-26"
 

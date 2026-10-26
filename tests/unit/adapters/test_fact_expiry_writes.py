@@ -16,7 +16,7 @@ from tests.support.fact_kit import ACC, USER, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx, horizon, on
 
-PARIS = ZoneInfo("Europe/Paris")
+LISBON = ZoneInfo("Europe/Lisbon")
 GENERIC_PIN_TEXT = "expiry is required for this fact"
 CLEANUP = {"actor": "stage2a"}
 
@@ -36,11 +36,11 @@ def meta(**over):
 
 
 def days_ahead(days):
-    return (datetime.now(timezone.utc) + timedelta(days=days)).astimezone(PARIS).date()
+    return (datetime.now(timezone.utc) + timedelta(days=days)).astimezone(LISBON).date()
 
 
 def end_of_day_utc(day):
-    return datetime.combine(day + timedelta(days=1), time.min, tzinfo=PARIS).astimezone(timezone.utc)
+    return datetime.combine(day + timedelta(days=1), time.min, tzinfo=LISBON).astimezone(timezone.utc)
 
 
 def seed(store, doc_id, text="seeded", **entity):

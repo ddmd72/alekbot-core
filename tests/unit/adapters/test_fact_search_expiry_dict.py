@@ -22,7 +22,7 @@ from tests.support.fact_kit import ACC, USER, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx, horizon, on
 
-PARIS = ZoneInfo("Europe/Paris")
+LISBON = ZoneInfo("Europe/Lisbon")
 TOKYO = "Asia/Tokyo"
 
 
@@ -46,7 +46,7 @@ async def create(store, text="mother is Maria", **over):
     return res["fact_id"]
 
 
-async def search(store, zone="Europe/Paris"):
+async def search(store, zone="Europe/Lisbon"):
     adapter = FactManagementAdapter(store.repo, store.embedder, store.write,
                                     SearchEnrichmentService(store.repo, store.embedder, 7, 10, 10, 20))
     with RequestContext(user_id=USER, account_id=ACC):
@@ -54,7 +54,7 @@ async def search(store, zone="Europe/Paris"):
 
 
 def in_days(days):
-    return (datetime.now(timezone.utc) + timedelta(days=days)).astimezone(PARIS).date()
+    return (datetime.now(timezone.utc) + timedelta(days=days)).astimezone(LISBON).date()
 
 
 async def test_a_date_decision_is_shown_as_the_last_day_it_holds_in_the_owners_calendar(store):
@@ -77,7 +77,7 @@ async def test_a_horizon_is_shown_with_its_days_and_the_local_day_it_falls_due(s
     reported = datetime.now(timezone.utc) - timedelta(days=10)
     fid = await create(store, expiry=horizon(90), reported_date=reported.isoformat())
     (got,) = await search(store)
-    due = store.docs[fid]["expires_at"].astimezone(PARIS).date().isoformat()
+    due = store.docs[fid]["expires_at"].astimezone(LISBON).date().isoformat()
     assert got["expiry"] == {"kind": "horizon", "days": 90} and got["due"] == due
 
 
@@ -104,10 +104,10 @@ async def test_the_model_never_sees_ttl_days_or_expires_at(store):
 
 async def test_reported_date_carries_the_owners_offset(store):
     await create(store, expiry=EXPIRY_NONE, reported_date="2026-10-22T10:00:00+00:00")
-    (paris,) = await search(store, "Europe/Paris")
+    (lisbon,) = await search(store, "Europe/Lisbon")
     (tokyo,) = await search(store, TOKYO)
     (utc,) = await search(store, "UTC")
-    assert paris["reported_date"] == "2026-10-22T12:00:00+02:00"
+    assert lisbon["reported_date"] == "2026-10-22T11:00:00+01:00"
     assert tokyo["reported_date"] == "2026-10-22T19:00:00+09:00"
     assert utc["reported_date"] == "2026-10-22T10:00:00+00:00"
 
@@ -132,27 +132,27 @@ async def test_a_reported_date_that_is_not_a_time_never_reaches_the_hit_and_the_
     with pytest.raises(ValidationError):
         FactEntity(id="f", account_id=ACC, created_by_user_id=USER, lineage_id="f", text="c", type=FactType.STATE,
                    reported_date="last spring")  # type: ignore[arg-type]
-    fact = EnrichedFact(fact_id="f", content="c", source="keyword", reported_date=datetime(2026, 3, 1, 9, 0, tzinfo=timezone.utc))
+    fact = EnrichedFact(fact_id="f", content="c", source="keyword", reported_date=datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc))
     adapter = FactManagementAdapter(SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), _Enrichment(fact))
-    (got,) = await adapter.search_existing_facts(["k"], "q", timezone="Europe/Paris")
-    assert got["reported_date"] == "2026-03-01T10:00:00+01:00" and got["expiry"] is None
+    (got,) = await adapter.search_existing_facts(["k"], "q", timezone="Europe/Lisbon")
+    assert got["reported_date"] == "2026-07-01T10:00:00+01:00" and got["expiry"] is None
 
 
 async def test_a_missing_reported_date_stays_missing():
     fact = EnrichedFact(fact_id="f", content="c", source="keyword")
     adapter = FactManagementAdapter(SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), _Enrichment(fact))
-    (got,) = await adapter.search_existing_facts(["k"], "q", timezone="Europe/Paris")
+    (got,) = await adapter.search_existing_facts(["k"], "q", timezone="Europe/Lisbon")
     assert got["reported_date"] is None
 
 
 async def test_the_date_shown_follows_the_zone_it_is_asked_in():
-    """The same moment is a different calendar day in Europe/Paris than in UTC: the owner's zone, not the host's, decides."""
-    midnight_paris = datetime.combine(datetime(2026, 12, 25).date() + timedelta(days=1), time.min, tzinfo=PARIS)
+    """The same moment is a different calendar day in Europe/Lisbon than in UTC: the owner's zone, not the host's, decides."""
+    midnight_lisbon = datetime.combine(datetime(2026, 7, 25).date() + timedelta(days=1), time.min, tzinfo=LISBON)
     # Reviewer edit (Facts S4 T6c, L4): the hit holds the kind as the enum and `expires_at` as an aware datetime.
     fact = EnrichedFact(fact_id="f", content="c", source="keyword", expiry_kind=ExpiryKind.DATE,
-                        expires_at=midnight_paris.astimezone(timezone.utc))
+                        expires_at=midnight_lisbon.astimezone(timezone.utc))
     adapter = FactManagementAdapter(SimpleNamespace(), SimpleNamespace(), SimpleNamespace(), _Enrichment(fact))
-    (paris,) = await adapter.search_existing_facts(["k"], "q", timezone="Europe/Paris")
+    (lisbon,) = await adapter.search_existing_facts(["k"], "q", timezone="Europe/Lisbon")
     (tokyo,) = await adapter.search_existing_facts(["k"], "q", timezone=TOKYO)
-    assert paris["expiry"] == {"kind": "date", "date": "2026-12-25"}
-    assert tokyo["expiry"] == {"kind": "date", "date": "2026-12-26"}
+    assert lisbon["expiry"] == {"kind": "date", "date": "2026-07-25"}
+    assert tokyo["expiry"] == {"kind": "date", "date": "2026-07-26"}

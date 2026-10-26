@@ -36,7 +36,7 @@ from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
 
-TZ = "Europe/Paris"
+TZ = "Europe/Lisbon"
 USER = "abcdef1234567890-tail"
 HORIZON = {"kind": "horizon", "days": 30}
 _REPORT = LLMResponse(text=json.dumps({"operations": []}), tool_calls=[])

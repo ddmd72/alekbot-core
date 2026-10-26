@@ -15,7 +15,7 @@ from src.domain.fact_update_plan import plan_fact_update
 from tests.support.fact_write import EXPIRY_NONE, ctx, horizon, on
 
 UTC = timezone.utc
-NOW = datetime(2026, 10, 23, 9, 0, tzinfo=UTC)  # 11:00 in Europe/Paris
+NOW = datetime(2026, 10, 23, 9, 0, tzinfo=UTC)  # 10:00 in Europe/Lisbon
 STORED_REPORTED = NOW - timedelta(days=3)
 SPAN = (NOW - timedelta(days=1), NOW - timedelta(hours=2))
 STAGE1 = ctx("stage1", span=SPAN)
@@ -59,9 +59,9 @@ def test_a_version_without_a_model_date_counts_the_horizon_from_the_span_end():
 
 
 def test_a_version_with_a_date_decision_ends_with_that_day_in_the_owners_calendar():
-    version = finish({"content": "meeting with Ana is on Friday", "expiry": on("2026-10-30")}).plan.version_fact
+    version = finish({"content": "meeting with Ana is on Saturday", "expiry": on("2026-10-24")}).plan.version_fact
     assert version.expiry_kind is ExpiryKind.DATE and version.ttl_days is None
-    assert version.expires_at == datetime(2026, 10, 30, 23, 0, tzinfo=UTC)  # midnight on the 31st in Europe/Paris (CET)
+    assert version.expires_at == datetime(2026, 10, 24, 23, 0, tzinfo=UTC)  # midnight on the 25th in Europe/Lisbon (WEST)
 
 
 def test_a_version_with_expiry_none_clears_the_old_decision():

@@ -30,7 +30,7 @@ from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx, horizon, on
 
 REPORT = LLMResponse(text='{"operations": []}')
-PARIS = "Europe/Paris"
+LISBON = "Europe/Lisbon"
 STAGE1 = "Begin deliberate consolidation."
 CLUSTER = "FACT CLUSTER REVIEW"
 RULEBOOK = "STANDING DIRECTIVES REVIEW"
@@ -131,15 +131,15 @@ MESSAGES = [
 
 async def test_stage1_create_gets_the_span_end_and_expires_in_the_owner_zone(store):
     agent = make_agent(store, once({STAGE1: calls(
-        create("trip to Rome", expiry=on("2027-01-15")),
+        create("trip to Rome", expiry=on("2027-07-15")),
         create("takes the pills", expiry=horizon(30)),
     )}))
     with RequestContext(user_id=USER, account_id=ACC):
-        await agent._execute_deliberate_process_v3(MESSAGES, USER, ACC, [], owner_timezone=PARIS)
+        await agent._execute_deliberate_process_v3(MESSAGES, USER, ACC, [], owner_timezone=LISBON)
 
     trip, pills = by_text(store, "trip to Rome"), by_text(store, "takes the pills")
     assert at(trip["reported_date"]) == utc(20, 11) == at(pills["reported_date"])      # the last readable time
-    assert at(trip["expires_at"]) == datetime(2027, 1, 15, 23, tzinfo=timezone.utc)    # the end of 15 Jan, Europe/Paris
+    assert at(trip["expires_at"]) == datetime(2027, 7, 15, 23, tzinfo=timezone.utc)    # the end of 15 Jul, Europe/Lisbon
     assert at(pills["expires_at"]) == utc(20, 11) + timedelta(days=30)                  # a horizon counts from the span end
 
 
@@ -157,7 +157,7 @@ async def test_stage1_clamps_a_model_date_into_the_batch_and_keeps_one_inside_it
         create("too early", reported_date=utc(1, 9).isoformat()),
     )}))
     with RequestContext(user_id=USER, account_id=ACC):
-        await agent._execute_deliberate_process_v3(MESSAGES, USER, ACC, [], owner_timezone=PARIS)
+        await agent._execute_deliberate_process_v3(MESSAGES, USER, ACC, [], owner_timezone=LISBON)
     assert [at(by_text(store, t)["reported_date"]) for t in ("inside", "too late", "too early")] == [
         utc(20, 9, 30), utc(20, 11), utc(20, 8)]
 
@@ -171,16 +171,16 @@ async def test_a_batch_without_readable_times_has_no_span_and_the_write_is_dated
 
 
 async def test_the_zone_reaches_the_pass_from_the_messages_context(store):
-    agent = make_agent(store, once({STAGE1: calls(create("trip to Rome", expiry=on("2027-01-15")))}))
+    agent = make_agent(store, once({STAGE1: calls(create("trip to Rome", expiry=on("2027-07-15")))}))
     store.repo.refresh_biographical_context_cache = AsyncMock()
     message = AgentMessage(
         task_id="t", sender="s", recipient="r", intent=AgentIntent.DELEGATE,
-        payload={"task": "consolidate", "messages": MESSAGES}, context={"user_id": USER, "owner_timezone": PARIS},
+        payload={"task": "consolidate", "messages": MESSAGES}, context={"user_id": USER, "owner_timezone": LISBON},
     )
     with RequestContext(user_id=USER, account_id=ACC):
         response = await agent._handle_consolidate(message, USER, ACC, [], 0.0)
     assert response.status.value == "success", response
-    assert at(by_text(store, "trip to Rome")["expires_at"]) == datetime(2027, 1, 15, 23, tzinfo=timezone.utc)
+    assert at(by_text(store, "trip to Rome")["expires_at"]) == datetime(2027, 7, 15, 23, tzinfo=timezone.utc)
 
 
 # ----------------------------------------------------------------------------------------------- cleanup passes
@@ -209,7 +209,7 @@ async def test_stage2a_ignores_a_model_date_and_honours_derived_from(store):
     agent = make_agent(store, script)
     agent.INLINE_CLUSTER_REVIEW = True
     with RequestContext(user_id=USER, account_id=ACC):
-        await agent._execute_deliberate_process_v3(MESSAGES, USER, ACC, [], owner_timezone=PARIS)
+        await agent._execute_deliberate_process_v3(MESSAGES, USER, ACC, [], owner_timezone=LISBON)
 
     assert at(by_text(store, "one big fact about Rome and pills")["reported_date"]) == utc(20, 9)   # Stage 1 keeps the model's date
     assert at(by_text(store, "Rome part")["reported_date"]) == utc(20, 9)       # derived_from wins over the model's date
@@ -240,7 +240,7 @@ async def test_every_pass_writes_under_its_own_actor_and_the_backstop_says_why(s
     agent = make_agent(store, script)
     agent.INLINE_CLUSTER_REVIEW = True
     with RequestContext(user_id=USER, account_id=ACC):
-        result = await agent._execute_deliberate_process_v3(MESSAGES, USER, ACC, [], owner_timezone=PARIS)
+        result = await agent._execute_deliberate_process_v3(MESSAGES, USER, ACC, [], owner_timezone=LISBON)
 
     last = {fid: d["lifecycle_events"][-1] for fid, d in store.docs.items() if d["lifecycle_events"]}
     assert (last["plain"]["actor"], last["d-00"]["actor"], last["d-01"]["actor"]) == ("stage1", "stage2a", "stage2b")
@@ -251,12 +251,12 @@ async def test_every_pass_writes_under_its_own_actor_and_the_backstop_says_why(s
 
 async def test_the_cluster_pass_builds_its_own_context_without_a_span(store):
     agent = make_agent(store, once({CLUSTER: calls(
-        create("merged view", reported_date=utc(20, 9).isoformat(), expiry=on("2027-01-15")),
+        create("merged view", reported_date=utc(20, 9).isoformat(), expiry=on("2027-07-15")),
     )}))
     message = AgentMessage(
         task_id="t", sender="s", recipient="r", intent=AgentIntent.DELEGATE,
         payload={"task": "consolidate_cluster", "cluster": [{"fact_id": "x", "content": "c", "similarity": 0.5}]},
-        context={"user_id": USER, "owner_timezone": PARIS},
+        context={"user_id": USER, "owner_timezone": LISBON},
     )
     store.repo.refresh_biographical_context_cache = AsyncMock()
     before = datetime.now(timezone.utc)
@@ -265,7 +265,7 @@ async def test_the_cluster_pass_builds_its_own_context_without_a_span(store):
     assert response.status.value == "success", response
     doc = by_text(store, "merged view")
     assert before <= at(doc["reported_date"]) <= datetime.now(timezone.utc)             # cleanup pass, no span: now, the model's date ignored
-    assert at(doc["expires_at"]) == datetime(2027, 1, 15, 23, tzinfo=timezone.utc)      # the owner's zone reached the pass
+    assert at(doc["expires_at"]) == datetime(2027, 7, 15, 23, tzinfo=timezone.utc)      # the owner's zone reached the pass
 
 
 # ----------------------------------------------------------------------------------------------- email pass
@@ -288,14 +288,14 @@ async def test_an_email_pass_with_naive_candidate_dates_writes_its_facts_and_mar
     assert all(e.email_date.tzinfo is None for e in await emails.get_unconsolidated_batch(USER))
 
     agent = make_agent(store, once({"system_alert": calls(
-        create("flight booked", reported_date="2026-10-11T00:00:00+00:00", expiry=on("2027-01-15")),
+        create("flight booked", reported_date="2026-10-11T00:00:00+00:00", expiry=on("2027-07-15")),
         create("no date sent"),
         create("date from the future", reported_date="2026-10-30T00:00:00+00:00"),
     )}), email_repo=emails)
     message = AgentMessage(
         task_id="t", sender="s", recipient="r", intent=AgentIntent.DELEGATE,
         payload={"task": "consolidate_email", "number_of_batches": 1, "batch_size": 10},
-        context={"user_id": USER, "owner_timezone": PARIS},
+        context={"user_id": USER, "owner_timezone": LISBON},
     )
     store.repo.refresh_biographical_context_cache = AsyncMock()
     response = await agent._handle_consolidate_email(message, USER, ACC, [], 0.0)
@@ -304,7 +304,7 @@ async def test_an_email_pass_with_naive_candidate_dates_writes_its_facts_and_mar
     assert at(by_text(store, "flight booked")["reported_date"]) == utc(11, 0)             # inside the span: kept
     assert at(by_text(store, "no date sent")["reported_date"]) == utc(12, 15)             # span end, read as UTC
     assert at(by_text(store, "date from the future")["reported_date"]) == utc(12, 15)     # clamped into the span
-    assert at(by_text(store, "flight booked")["expires_at"]) == datetime(2027, 1, 15, 23, tzinfo=timezone.utc)
+    assert at(by_text(store, "flight booked")["expires_at"]) == datetime(2027, 7, 15, 23, tzinfo=timezone.utc)
     assert await emails.get_unconsolidated_batch(USER) == []                              # marked consolidated
 
 
@@ -380,7 +380,7 @@ def test_a_naive_time_in_the_span_is_utc_whatever_the_host_zone():
 
 
 @pytest.mark.parametrize("context,expected", [
-    ({}, "UTC"), ({"owner_timezone": ""}, "UTC"), ({"owner_timezone": PARIS}, PARIS),
+    ({}, "UTC"), ({"owner_timezone": ""}, "UTC"), ({"owner_timezone": LISBON}, LISBON),
     ({"owner_timezone": "Mars/Olympus"}, "UTC"), ({"owner_timezone": 5}, "UTC"),
 ])
 def test_the_owner_zone_is_read_from_the_message_and_defaults_to_utc(context, expected):

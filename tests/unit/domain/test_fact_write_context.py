@@ -139,7 +139,7 @@ def test_create_in_a_cleanup_pass_takes_the_latest_derived_source_date():
     older, newer = datetime(2026, 3, 1, tzinfo=UTC), datetime(2026, 6, 1, 12, tzinfo=UTC)
     assert reported_date_for_new(STAGE2A, None, [older, newer], NOW, derived_named=2) == (newer, [])
     got, note = reported_date_for_new(STAGE2A, NOW, [older], NOW, derived_named=1)
-    assert got == older and note == [kept_reported_date_note(older, "Europe/Paris")]
+    assert got == older and note == [kept_reported_date_note(older, "Europe/Lisbon")]
 
 
 def test_derived_dates_may_be_naive_and_are_read_as_utc():
@@ -173,8 +173,8 @@ def test_merge_in_a_conversation_pass_follows_the_create_rule():
 
 def test_merge_in_a_cleanup_pass_takes_the_latest_source_date_and_ignores_the_model():
     a, b = datetime(2026, 2, 1, tzinfo=UTC), datetime(2026, 5, 1, tzinfo=UTC)
-    assert reported_date_for_merge(STAGE2A, NOW, [a, b], NOW) == (b, [kept_reported_date_note(b, "Europe/Paris")])
-    assert reported_date_for_merge(STAGE2A, NOW, [], NOW) == (LAST, [kept_reported_date_note(LAST, "Europe/Paris")])
+    assert reported_date_for_merge(STAGE2A, NOW, [a, b], NOW) == (b, [kept_reported_date_note(b, "Europe/Lisbon")])
+    assert reported_date_for_merge(STAGE2A, NOW, [], NOW) == (LAST, [kept_reported_date_note(LAST, "Europe/Lisbon")])
 
 
 # --- update ----------------------------------------------------------------------------------------------------------
@@ -220,6 +220,6 @@ def test_a_naive_stored_date_is_read_as_utc():
 
 
 def test_the_note_names_the_date_in_the_owners_calendar():
-    late = datetime(2026, 10, 21, 22, 30, tzinfo=UTC)  # 00:30 on the 22nd in Europe/Paris
-    assert "(2026-10-22)" in kept_reported_date_note(late, "Europe/Paris")
+    late = datetime(2026, 10, 21, 23, 30, tzinfo=UTC)  # 00:30 on the 22nd in Europe/Lisbon
+    assert "(2026-10-22)" in kept_reported_date_note(late, "Europe/Lisbon")
     assert "(2026-10-21)" in kept_reported_date_note(late, "UTC")

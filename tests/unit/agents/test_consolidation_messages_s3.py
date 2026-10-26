@@ -29,7 +29,7 @@ from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import ctx, horizon, on
 
 REPORT = LLMResponse(text='{"operations": []}')
-PARIS = "Europe/Paris"
+LISBON = "Europe/Lisbon"
 STAGE1 = "Begin deliberate consolidation."
 CLUSTER = "FACT CLUSTER REVIEW"
 RULEBOOK = "STANDING DIRECTIVES REVIEW"
@@ -105,7 +105,7 @@ def once(per_pass: Dict[str, LLMResponse]) -> Callable[[str], LLMResponse]:
     return script
 
 
-def message(task: str, payload: Dict[str, Any], zone: Optional[str] = PARIS) -> AgentMessage:
+def message(task: str, payload: Dict[str, Any], zone: Optional[str] = LISBON) -> AgentMessage:
     context: Dict[str, Any] = {"user_id": USER}
     if zone is not None:
         context["owner_timezone"] = zone
@@ -155,18 +155,18 @@ async def test_every_pass_message_ends_with_the_today_line_in_the_owner_zone(sto
     agent.INLINE_CLUSTER_REVIEW = True
     batch = [{"role": "user", "text": "hello", "created_at": utc(20, 8).timestamp()}]
     with RequestContext(user_id=USER, account_id=ACC):
-        await agent._execute_deliberate_process_v3(batch, USER, ACC, [], owner_timezone=PARIS)
+        await agent._execute_deliberate_process_v3(batch, USER, ACC, [], owner_timezone=LISBON)
         await agent._handle_consolidate_cluster(
             message("consolidate_cluster", {"cluster": [{"fact_id": "x", "content": "c", "similarity": 0.5}]}), USER, ACC, [], 0.0)
         await agent._handle_consolidate_email(message("consolidate_email", {"number_of_batches": 1}), USER, ACC, [], 0.0)
 
     markers = {"stage1": STAGE1, "stage2a": CLUSTER, "stage2b": RULEBOOK, "email": "[system_alert]"}
     assert len(agent.firsts) == 5       # stage 1, 2a, 2b, the cluster pass, the email pass
-    pattern = re.compile(r"\n\nToday: (\d{4}-\d{2}-\d{2} \w{3}) \(Europe/Paris, the owner's timezone\)\.$")
+    pattern = re.compile(r"\n\nToday: (\d{4}-\d{2}-\d{2} \w{3}) \(Europe/Lisbon, the owner's timezone\)\.$")
     for text in agent.firsts:
         found = pattern.search(text)
         assert found, text[-120:]
-        assert found.group(1) in days_around_now(PARIS)
+        assert found.group(1) in days_around_now(LISBON)
     assert all(any(marker in t for t in agent.firsts) for marker in markers.values())
 
 
@@ -196,7 +196,7 @@ def conversation(msgs: List[Dict[str, Any]], zone: str) -> List[Dict[str, Any]]:
     return agent._prepare_structured_conversation(msgs, zone)
 
 
-@pytest.mark.parametrize("zone", [PARIS, "UTC", "America/New_York", "Asia/Kolkata", "not a zone"])
+@pytest.mark.parametrize("zone", [LISBON, "UTC", "America/New_York", "Asia/Kolkata", "not a zone"])
 @pytest.mark.parametrize("moment", [utc(22, 10), utc(1, 0, 30, month=11), utc(25, 0, 59, month=3), utc(1, 23, 59, month=1)])
 def test_the_conversation_stamp_is_smarts_stamp_for_the_same_message_and_zone(zone, moment):
     (line,) = conversation([{"role": "user", "text": "hi", "created_at": moment.timestamp()}], zone)
@@ -205,8 +205,8 @@ def test_the_conversation_stamp_is_smarts_stamp_for_the_same_message_and_zone(zo
 
 
 def test_the_stamp_has_the_owners_year_weekday_and_zone():
-    (line,) = conversation([{"role": "user", "text": "hi", "created_at": "2026-10-22T10:00:00Z"}], PARIS)
-    assert line["timestamp"] == "2026-10-22 Thu 12:00 CEST"
+    (line,) = conversation([{"role": "user", "text": "hi", "created_at": "2026-10-22T10:00:00Z"}], LISBON)
+    assert line["timestamp"] == "2026-10-22 Thu 11:00 WEST"
 
 
 @pytest.mark.parametrize("value", [
@@ -217,8 +217,8 @@ def test_the_stamp_has_the_owners_year_weekday_and_zone():
     utc(22, 10),
 ])
 def test_every_readable_time_form_renders_the_same_moment(value):
-    (line,) = conversation([{"role": "user", "text": "hi", "created_at": value}], PARIS)
-    assert line["timestamp"] == "2026-10-22 Thu 12:00 CEST"
+    (line,) = conversation([{"role": "user", "text": "hi", "created_at": value}], LISBON)
+    assert line["timestamp"] == "2026-10-22 Thu 11:00 WEST"
 
 
 @pytest.mark.parametrize("msg", [
@@ -229,7 +229,7 @@ def test_every_readable_time_form_renders_the_same_moment(value):
     {"role": "user", "text": "hi"},
 ])
 def test_an_unreadable_or_missing_time_renders_empty_and_never_raises(msg):
-    (line,) = conversation([msg], PARIS)
+    (line,) = conversation([msg], LISBON)
     assert line["timestamp"] == ""
 
 
@@ -252,9 +252,9 @@ async def test_the_deliberate_process_shows_the_model_the_owners_stamps(store):
     agent = make_agent(store, lambda first: REPORT)
     batch = [{"role": "user", "text": "I fly on Friday", "created_at": "2026-10-22T10:00:00Z"}]
     with RequestContext(user_id=USER, account_id=ACC):
-        await agent._execute_deliberate_process_v3(batch, USER, ACC, [], owner_timezone=PARIS)
+        await agent._execute_deliberate_process_v3(batch, USER, ACC, [], owner_timezone=LISBON)
     history = agent.pb.build_for_agent.call_args_list[0].kwargs["conversation_history"]
-    assert history == [{"role": "user", "content": "I fly on Friday", "timestamp": "2026-10-22 Thu 12:00 CEST"}]
+    assert history == [{"role": "user", "content": "I fly on Friday", "timestamp": "2026-10-22 Thu 11:00 WEST"}]
 
 
 async def test_the_legacy_v2_path_gets_the_owners_zone_too(store):
@@ -265,7 +265,7 @@ async def test_the_legacy_v2_path_gets_the_owners_zone_too(store):
         response = await agent._handle_consolidate(message("consolidate", {"messages": batch}), USER, ACC, [], 0.0)
     assert response.status.value == "success", response
     history = agent.pb.build_for_agent.call_args_list[0].kwargs["conversation_history"]
-    assert history[0]["timestamp"] == "2026-10-22 Thu 12:00 CEST"
+    assert history[0]["timestamp"] == "2026-10-22 Thu 11:00 WEST"
 
 
 async def test_the_legacy_v2_path_without_a_zone_in_the_message_shows_utc(store):
@@ -282,7 +282,7 @@ async def test_the_legacy_v2_path_without_a_zone_in_the_message_shows_utc(store)
 
 async def seed_and_search(store: FactStore, agent: ConsolidationAgent) -> List[Dict[str, Any]]:
     """Three facts written through the real tool (a date, a horizon, a history fact) plus a legacy document with no decision."""
-    reported = "2026-10-22T23:30:00+00:00"                       # 23 October 01:30 in Europe/Paris
+    reported = "2026-10-22T23:30:00+00:00"                       # 23 October 00:30 in Europe/Lisbon
     with RequestContext(user_id=USER, account_id=ACC):
         responses = await agent._execute_fact_management_tools(
             [create("trip to Rome in January", expiry=on("2027-01-15"), reported_date=reported),
@@ -293,7 +293,7 @@ async def seed_and_search(store: FactStore, agent: ConsolidationAgent) -> List[D
     put_raw(store, "legacy", "an old note without a decision")
     with RequestContext(user_id=USER, account_id=ACC):
         return await agent._fact_management.search_existing_facts(
-            keywords=["trip", "pills", "weight", "note"], primary_query="trip to Rome pills 64 kg old note", limit=20, timezone=PARIS)
+            keywords=["trip", "pills", "weight", "note"], primary_query="trip to Rome pills 64 kg old note", limit=20, timezone=LISBON)
 
 
 async def test_stage2a_entries_carry_expiry_due_and_the_owners_reported_day(store):
@@ -304,7 +304,7 @@ async def test_stage2a_entries_carry_expiry_due_and_the_owners_reported_day(stor
     trip, pills = shown["trip to Rome in January"], shown["takes the pills daily"]
     assert trip["expiry"] == {"kind": "date", "date": "2027-01-15"} and "due" not in trip
     assert pills["expiry"] == {"kind": "horizon", "days": 30}
-    assert pills["due"] == local_stamp(utc(22, 23, 30) + timedelta(days=30), PARIS)[:10]
+    assert pills["due"] == local_stamp(utc(22, 23, 30) + timedelta(days=30), LISBON)[:10]
     assert trip["reported"] == pills["reported"] == "2026-10-23"                 # the owner's calendar day, not the UTC day
     assert shown["was 64 kg in March 2024"]["expiry"] == {"kind": "none"}
     legacy = shown["an old note without a decision"]
@@ -321,8 +321,8 @@ def test_the_builder_still_accepts_entries_without_the_new_keys():
 # whatever its `reported_date` text says.
 @pytest.mark.parametrize("entry_fields,shown", [
     ({"reported_date": "not a date"}, None), ({"reported_date": ""}, None), ({"reported_date": None}, None),
-    ({"reported_date": "2026-10-23T01:30:00+02:00"}, None),
-    ({"reported_date": "2026-10-23T01:30:00+02:00", "reported": "2026-10-23"}, "2026-10-23"),
+    ({"reported_date": "2026-10-23T00:30:00+01:00"}, None),
+    ({"reported_date": "2026-10-23T00:30:00+01:00", "reported": "2026-10-23"}, "2026-10-23"),
     ({"reported": None}, None),
 ])
 def test_an_unreadable_reported_date_is_shown_as_null(entry_fields, shown):
@@ -415,31 +415,31 @@ async def test_the_email_alert_dates_by_the_candidate_and_calls_a_passed_date_hi
 
 
 async def test_a_stage1_create_may_send_the_stamp_the_conversation_showed(store):
-    stamp = "2026-10-20 Tue 13:00 CEST"
+    stamp = "2026-10-20 Tue 12:00 WEST"
     batch = [{"role": "user", "text": "x", "created_at": utc(20, 8).timestamp()},
              {"role": "user", "text": "y", "created_at": utc(20, 11, 30).timestamp()}]
     agent = make_agent(store, once({STAGE1: calls(
         create("said at one", reported_date=stamp),
-        create("wrong zone name", reported_date="2026-10-20 Tue 13:00 EST"),
+        create("wrong zone name", reported_date="2026-10-20 Tue 12:00 EST"),
     )}))
     with RequestContext(user_id=USER, account_id=ACC):
-        await agent._execute_deliberate_process_v3(batch, USER, ACC, [], owner_timezone=PARIS)
-    assert as_utc(by_text(store, "said at one")["reported_date"]) == utc(20, 11)       # 13:00 CEST
+        await agent._execute_deliberate_process_v3(batch, USER, ACC, [], owner_timezone=LISBON)
+    assert as_utc(by_text(store, "said at one")["reported_date"]) == utc(20, 11)       # 12:00 WEST
     assert "wrong zone name" not in {d["text"] for d in store.docs.values()}          # refused as before: not the zone's stamp
 
 
 async def test_the_stamp_is_refused_where_the_zone_is_not_known(store):
     from src.domain.fact_argument_parsing import parse_reported_date
     with pytest.raises(ValueError, match="reported_date"):
-        parse_reported_date("2026-10-20 Tue 13:00 CEST")
-    assert parse_reported_date("2026-10-20 Tue 13:00 CEST", PARIS) == utc(20, 11)
+        parse_reported_date("2026-10-20 Tue 12:00 WEST")
+    assert parse_reported_date("2026-10-20 Tue 12:00 WEST", LISBON) == utc(20, 11)
 
 
 # ----------------------------------------------------------------------------------------------- email dates, update and merge
 
 
 async def test_an_email_candidates_date_is_the_owners_moment_and_copying_it_dates_the_fact_exactly(store):
-    sent = [datetime(2026, 10, 22, 10, 0), datetime(2026, 10, 22, 23, 30)]         # naive = UTC; the second is 23 Oct 01:30 in Europe/Paris
+    sent = [datetime(2026, 10, 22, 10, 0), datetime(2026, 10, 22, 23, 30)]         # naive = UTC; the second is 23 Oct 00:30 in Europe/Lisbon
 
     def script(first: str) -> LLMResponse:
         if "[system_alert]" not in first or "Copy the candidate" not in first or script.done:
@@ -456,7 +456,7 @@ async def test_an_email_candidates_date_is_the_owners_moment_and_copying_it_date
 
     shown = [json.loads(line.split(". ", 1)[1])["date"] for line in agent.firsts[0].split("Candidates:\n", 1)[1].splitlines()
              if re.match(r"^\d+\. \{", line)]
-    assert shown == ["2026-10-22T12:00:00+02:00", "2026-10-23T01:30:00+02:00"]      # the owner's calendar day, not the UTC day
+    assert shown == ["2026-10-22T11:00:00+01:00", "2026-10-23T00:30:00+01:00"]      # the owner's calendar day, not the UTC day
     assert as_utc(by_text(store, "fact from e1")["reported_date"]) == utc(22, 10)
     assert as_utc(by_text(store, "fact from e2")["reported_date"]) == utc(22, 23, 30)    # the exact moment, not midnight clamped
 
@@ -467,7 +467,7 @@ def test_the_candidate_date_is_utc_without_an_owner_zone_and_a_naive_date_is_utc
     assert json.loads(line.split(". ", 1)[1])["date"] == "2026-10-22T23:30:00+00:00"
 
 
-STAMP = "2026-10-20 Tue 13:00 CEST"                     # 11:00 UTC
+STAMP = "2026-10-20 Tue 12:00 WEST"                     # 11:00 UTC
 STAGE1_BATCH = [{"role": "user", "text": "x", "created_at": utc(20, 8).timestamp()},
                 {"role": "user", "text": "y", "created_at": utc(20, 11, 30).timestamp()}]
 
@@ -486,7 +486,7 @@ async def test_a_stage1_update_may_send_the_stamp_the_conversation_showed(store)
     agent._call_llm = make_agent(store, once({STAGE1: calls(
         ToolCall(name="update_fact", args={"fact_id": walks, "updates": {"reported_date": STAMP}}))}))._call_llm
     with RequestContext(user_id=USER, account_id=ACC):
-        await agent._execute_deliberate_process_v3(STAGE1_BATCH, USER, ACC, [], owner_timezone=PARIS)
+        await agent._execute_deliberate_process_v3(STAGE1_BATCH, USER, ACC, [], owner_timezone=LISBON)
     assert as_utc(store.docs[walks]["reported_date"]) == utc(20, 11)
 
 
@@ -497,5 +497,5 @@ async def test_a_stage1_merge_may_send_the_stamp_the_conversation_showed(store):
         "fact_ids": [walks, far], "merged_content": "walks a lot",
         "fact_attributes": {**ATTRS, "reported_date": STAMP}}))}))._call_llm
     with RequestContext(user_id=USER, account_id=ACC):
-        await agent._execute_deliberate_process_v3(STAGE1_BATCH, USER, ACC, [], owner_timezone=PARIS)
+        await agent._execute_deliberate_process_v3(STAGE1_BATCH, USER, ACC, [], owner_timezone=LISBON)
     assert as_utc(by_text(store, "walks a lot")["reported_date"]) == utc(20, 11)

@@ -18,7 +18,7 @@ from tests.support.fact_lifecycle_world import FUTURE, NOW
 from tests.support.fact_review_world import ReviewWorld
 from tests.support.review_rule_builders import question as build_question
 
-TZ = "Europe/Paris"
+TZ = "Europe/Lisbon"
 HORIZON = {"kind": "horizon", "days": 30}
 ARCHIVE = {"state": "archived"}
 REPLY_AT = NOW - timedelta(hours=2)

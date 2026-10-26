@@ -38,7 +38,7 @@ ACCOUNT = "account-abcdef123456"
 OWNER = "owner-user-1"
 MEMBER = "member-user-2"
 VIEWER = "viewer-user-3"
-PARIS = "Europe/Paris"
+LISBON = "Europe/Lisbon"
 TOKYO = "Asia/Tokyo"
 UNRESOLVED = "owner timezone unresolved for account"
 
@@ -140,31 +140,31 @@ def unresolved(caplog) -> List[str]:
 
 
 async def test_the_owners_zone_reaches_the_message(queue, db, coordinator, caplog):
-    users = Users(profile(OWNER, PARIS))
+    users = Users(profile(OWNER, LISBON))
     service = build(queue, db, coordinator, users, Accounts(account(**{OWNER: "owner"})))
     await put(queue, "b1", OWNER)
 
     with caplog.at_level(logging.WARNING):
         await service.process_user_batches(OWNER)
 
-    assert coordinator.zones == [PARIS]
+    assert coordinator.zones == [LISBON]
     assert warnings(caplog) == []
 
 
 async def test_a_members_batch_gets_the_owners_zone_not_the_members(queue, db, coordinator):
-    users = Users(profile(OWNER, PARIS), profile(MEMBER, TOKYO))
+    users = Users(profile(OWNER, LISBON), profile(MEMBER, TOKYO))
     accounts = Accounts(account(**{OWNER: "owner", MEMBER: "member", VIEWER: "viewer"}))
     service = build(queue, db, coordinator, users, accounts)
     await put(queue, "b1", MEMBER)
 
     await service.process_user_batches(MEMBER)
 
-    assert coordinator.zones == [PARIS]
+    assert coordinator.zones == [LISBON]
     assert MEMBER in users.asked and OWNER in users.asked
 
 
 async def test_the_zone_is_resolved_once_per_run_not_per_batch(queue, db, coordinator):
-    users = Users(profile(OWNER, PARIS))
+    users = Users(profile(OWNER, LISBON))
     accounts = Accounts(account(**{OWNER: "owner"}))
     service = build(queue, db, coordinator, users, accounts)
     await put(queue, "b1", OWNER, created_at=1.0)
@@ -173,14 +173,14 @@ async def test_the_zone_is_resolved_once_per_run_not_per_batch(queue, db, coordi
 
     await service.process_user_batches(OWNER)
 
-    assert coordinator.zones == [PARIS, PARIS, PARIS]
+    assert coordinator.zones == [LISBON, LISBON, LISBON]
     assert accounts.asked == [ACCOUNT]
     assert users.asked.count(OWNER) == 2          # the batch user's own profile read, and the resolution: both the owner here
 
 
 async def test_several_owners_use_the_first_in_sorted_order_and_warn_once(queue, db, coordinator, caplog):
     first, second = "aaa-owner", "zzz-owner"
-    users = Users(profile(OWNER, PARIS, ), profile(first, TOKYO), profile(second, "America/New_York"))
+    users = Users(profile(OWNER, LISBON, ), profile(first, TOKYO), profile(second, "America/New_York"))
     accounts = Accounts(account(**{second: "owner", first: "owner", OWNER: "member"}))
     service = build(queue, db, coordinator, users, accounts)
     await put(queue, "b1", OWNER)
@@ -202,14 +202,14 @@ def _case(name, accounts, users):
 
 
 @pytest.mark.parametrize("accounts,users", [
-    _case("no-account", Accounts(), Users(profile(OWNER, PARIS))),
-    _case("no-owner-in-the-policy", Accounts(account(**{OWNER: "member"})), Users(profile(OWNER, PARIS))),
-    _case("empty-policy", Accounts(account()), Users(profile(OWNER, PARIS))),
+    _case("no-account", Accounts(), Users(profile(OWNER, LISBON))),
+    _case("no-owner-in-the-policy", Accounts(account(**{OWNER: "member"})), Users(profile(OWNER, LISBON))),
+    _case("empty-policy", Accounts(account()), Users(profile(OWNER, LISBON))),
     _case("owner-without-a-profile", Accounts(account(**{OWNER: "owner", MEMBER: "member"})), Users(profile(MEMBER, TOKYO))),
     _case("unknown-zone", Accounts(account(**{OWNER: "owner"})), Users(profile(OWNER, "Mars/Olympus"))),
     _case("blank-zone", Accounts(account(**{OWNER: "owner"})), Users(profile(OWNER, ""))),
     _case("account-store-raises", Accounts(account(**{OWNER: "owner"}), raises=RuntimeError("firestore unavailable")),
-          Users(profile(OWNER, PARIS))),
+          Users(profile(OWNER, LISBON))),
     _case("owner-read-raises", Accounts(account(**{OWNER: "owner", MEMBER: "member"})),
           Users(profile(MEMBER, TOKYO), raises_for={OWNER: TimeoutError("deadline")})),
 ])
@@ -232,7 +232,7 @@ async def test_anything_unresolved_gives_utc_one_warning_and_the_batch_still_run
 
 async def test_a_raising_store_names_the_exception_in_the_warning(queue, db, coordinator, caplog):
     accounts = Accounts(raises=RuntimeError("firestore unavailable"))
-    service = build(queue, db, coordinator, Users(profile(OWNER, PARIS)), accounts)
+    service = build(queue, db, coordinator, Users(profile(OWNER, LISBON)), accounts)
     await put(queue, "b1", OWNER)
 
     with caplog.at_level(logging.WARNING):
@@ -242,7 +242,7 @@ async def test_a_raising_store_names_the_exception_in_the_warning(queue, db, coo
 
 
 async def test_the_user_id_is_never_read_as_an_account(queue, db, coordinator):
-    users = Users(profile(OWNER, PARIS))
+    users = Users(profile(OWNER, LISBON))
     accounts = Accounts()                                    # the account is missing
     service = build(queue, db, coordinator, users, accounts)
     await put(queue, "b1", OWNER)
@@ -254,7 +254,7 @@ async def test_the_user_id_is_never_read_as_an_account(queue, db, coordinator):
 
 
 async def test_a_user_without_an_account_still_fails_the_batch_and_reads_no_account(queue, db, coordinator):
-    users = Users(profile(OWNER, PARIS, account_id=""))
+    users = Users(profile(OWNER, LISBON, account_id=""))
     accounts = Accounts(account(**{OWNER: "owner"}))
     service = build(queue, db, coordinator, users, accounts)
     await put(queue, "b1", OWNER)
@@ -304,13 +304,13 @@ def _real_agent(store: FactStore, email_repo=None):
         if "Begin deliberate consolidation." in first and "stage1" not in spent:
             spent.add("stage1")
             attributes = {"domain": "biographical", "temporal_class": "stable", "context_priority": "medium",
-                          "tags": ["t"], "metadata": {}, "type": "event", "expiry": on("2027-01-15")}
+                          "tags": ["t"], "metadata": {}, "type": "event", "expiry": on("2027-07-15")}
             return LLMResponse(text=None, tool_calls=[
                 ToolCall(name="create_fact", args={"content": "trip to Rome", "fact_attributes": attributes})])
         if "system_alert" in first and "email" not in spent:
             spent.add("email")
             attributes = {"domain": "biographical", "temporal_class": "stable", "context_priority": "medium",
-                          "tags": ["t"], "metadata": {}, "type": "event", "expiry": on("2027-01-15")}
+                          "tags": ["t"], "metadata": {}, "type": "event", "expiry": on("2027-07-15")}
             return LLMResponse(text=None, tool_calls=[
                 ToolCall(name="create_fact", args={"content": "flight booked", "fact_attributes": attributes})])
         return LLMResponse(text='{"operations": []}')
@@ -332,8 +332,8 @@ class AgentCoordinator:
 
 
 @pytest.mark.parametrize("owner_zone,expected_expiry", [
-    (PARIS, datetime(2027, 1, 15, 23, tzinfo=timezone.utc)),         # the end of 15 Jan in Europe/Paris
-    (TOKYO, datetime(2027, 1, 15, 15, tzinfo=timezone.utc)),         # the end of 15 Jan in Tokyo
+    (LISBON, datetime(2027, 7, 15, 23, tzinfo=timezone.utc)),         # the end of 15 Jul in Europe/Lisbon
+    (TOKYO, datetime(2027, 7, 15, 15, tzinfo=timezone.utc)),         # the end of 15 Jul in Tokyo
 ])
 async def test_the_production_path_writes_the_expiry_in_the_owners_zone_not_in_utc(queue, db, owner_zone, expected_expiry):
     from tests.support.fact_kit import ACC as FACT_ACC, USER as FACT_USER
@@ -353,8 +353,8 @@ async def test_the_production_path_writes_the_expiry_in_the_owners_zone_not_in_u
 
 
 @pytest.mark.parametrize("owner_zone,expected_expiry", [
-    (PARIS, datetime(2027, 1, 15, 23, tzinfo=timezone.utc)),
-    (TOKYO, datetime(2027, 1, 15, 15, tzinfo=timezone.utc)),
+    (LISBON, datetime(2027, 7, 15, 23, tzinfo=timezone.utc)),
+    (TOKYO, datetime(2027, 7, 15, 15, tzinfo=timezone.utc)),
 ])
 async def test_consolidate_full_carries_the_owners_zone_into_the_email_pass_too(queue, db, owner_zone, expected_expiry):
     from tests.support.fact_kit import ACC as FACT_ACC, USER as FACT_USER

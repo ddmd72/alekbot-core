@@ -11,7 +11,7 @@ from src.domain.fact_lifecycle import compute_expiry
 from tests.support.fact_write import horizon, on
 from tests.support.fact_write import EXPIRY_NONE as NONE_LITERAL
 
-PARIS = "Europe/Paris"
+LISBON = "Europe/Lisbon"
 REPORTED = datetime(2026, 10, 22, 10, 0, tzinfo=timezone.utc)
 
 
@@ -95,22 +95,22 @@ def test_a_fact_expiry_error_is_a_value_error_so_tool_errors_already_map_it():
 
 
 def test_a_date_is_due_at_the_end_of_that_day_in_the_owners_zone_summer():
-    got = compute_expiry(parse_expiry(on("2026-07-10")), REPORTED, PARIS)
-    assert got == {"expiry_kind": ExpiryKind.DATE, "ttl_days": None, "expires_at": utc(2026, 7, 10, 22, 0)}
+    got = compute_expiry(parse_expiry(on("2026-07-10")), REPORTED, LISBON)
+    assert got == {"expiry_kind": ExpiryKind.DATE, "ttl_days": None, "expires_at": utc(2026, 7, 10, 23, 0)}
 
 
 def test_a_date_is_due_at_the_end_of_that_day_in_the_owners_zone_winter():
-    got = compute_expiry(parse_expiry(on("2026-01-10")), REPORTED, PARIS)
-    assert got["expires_at"] == utc(2026, 1, 10, 23, 0)
+    got = compute_expiry(parse_expiry(on("2026-01-10")), REPORTED, LISBON)
+    assert got["expires_at"] == utc(2026, 1, 11, 0, 0)
 
 
 def test_a_date_across_the_dst_nights_is_the_next_local_midnight():
-    spring_day = compute_expiry(parse_expiry(on("2026-03-29")), REPORTED, PARIS)["expires_at"]  # a 23 h day
-    day_before = compute_expiry(parse_expiry(on("2026-03-28")), REPORTED, PARIS)["expires_at"]
-    autumn_day = compute_expiry(parse_expiry(on("2026-10-25")), REPORTED, PARIS)["expires_at"]  # a 25 h day
-    assert day_before == utc(2026, 3, 28, 23, 0)
-    assert spring_day == utc(2026, 3, 29, 22, 0)
-    assert autumn_day == utc(2026, 10, 25, 23, 0)
+    spring_day = compute_expiry(parse_expiry(on("2026-03-29")), REPORTED, LISBON)["expires_at"]  # a 23 h day
+    day_before = compute_expiry(parse_expiry(on("2026-03-28")), REPORTED, LISBON)["expires_at"]
+    autumn_day = compute_expiry(parse_expiry(on("2026-10-25")), REPORTED, LISBON)["expires_at"]  # a 25 h day
+    assert day_before == utc(2026, 3, 29, 0, 0)
+    assert spring_day == utc(2026, 3, 29, 23, 0)
+    assert autumn_day == utc(2026, 10, 26, 0, 0)
 
 
 def test_the_zone_decides_which_instant_ends_the_day():
@@ -119,67 +119,67 @@ def test_the_zone_decides_which_instant_ends_the_day():
 
 
 def test_a_horizon_counts_days_from_the_reported_date():
-    got = compute_expiry(parse_expiry(horizon(14)), REPORTED, PARIS)
+    got = compute_expiry(parse_expiry(horizon(14)), REPORTED, LISBON)
     assert got == {"expiry_kind": ExpiryKind.HORIZON, "ttl_days": 14, "expires_at": REPORTED + timedelta(days=14)}
 
 
 def test_a_horizon_from_a_naive_reported_date_reads_it_as_utc():
-    got = compute_expiry(parse_expiry(horizon(1)), datetime(2026, 10, 22, 10, 0), PARIS)
+    got = compute_expiry(parse_expiry(horizon(1)), datetime(2026, 10, 22, 10, 0), LISBON)
     assert got["expires_at"] == utc(2026, 10, 23, 10, 0)
 
 
 def test_none_stores_nulls():
-    assert compute_expiry(EXPIRY_NONE, REPORTED, PARIS) == {"expiry_kind": ExpiryKind.NONE, "ttl_days": None, "expires_at": None}
+    assert compute_expiry(EXPIRY_NONE, REPORTED, LISBON) == {"expiry_kind": ExpiryKind.NONE, "ttl_days": None, "expires_at": None}
 
 
 # --- expiry_view --------------------------------------------------------------------------------------------------
 
 
 def test_none_is_shown_as_none_without_due():
-    assert expiry_view(ExpiryKind.NONE, None, None, PARIS) == ({"kind": "none"}, None)
+    assert expiry_view(ExpiryKind.NONE, None, None, LISBON) == ({"kind": "none"}, None)
 
 
 def test_a_horizon_is_shown_with_its_days_and_a_read_only_due_date():
-    stored = compute_expiry(parse_expiry(horizon(14)), REPORTED, PARIS)
-    view, due = expiry_view(stored["expiry_kind"], stored["ttl_days"], stored["expires_at"], PARIS)
+    stored = compute_expiry(parse_expiry(horizon(14)), REPORTED, LISBON)
+    view, due = expiry_view(stored["expiry_kind"], stored["ttl_days"], stored["expires_at"], LISBON)
     assert view == {"kind": "horizon", "days": 14} and due == "2026-11-05"
 
 
 def test_due_is_the_local_date_not_the_utc_date():
-    expires = utc(2026, 11, 5, 23, 30)  # 00:30 on the 6th in Europe/Paris
-    assert expiry_view(ExpiryKind.HORIZON, 5, expires, PARIS)[1] == "2026-11-06"
+    expires = utc(2026, 7, 5, 23, 30)  # 00:30 on the 6th in Europe/Lisbon
+    assert expiry_view(ExpiryKind.HORIZON, 5, expires, LISBON)[1] == "2026-07-06"
 
 
 @pytest.mark.parametrize("day", ["2026-07-10", "2026-01-10", "2026-03-29", "2026-10-25", "2026-12-31"])
 def test_a_date_fact_rendered_and_parsed_back_gives_the_same_expires_at(day):
-    stored = compute_expiry(parse_expiry(on(day)), REPORTED, PARIS)
-    view, due = expiry_view(stored["expiry_kind"], stored["ttl_days"], stored["expires_at"], PARIS)
+    stored = compute_expiry(parse_expiry(on(day)), REPORTED, LISBON)
+    view, due = expiry_view(stored["expiry_kind"], stored["ttl_days"], stored["expires_at"], LISBON)
     assert view == {"kind": "date", "date": day} and due is None
-    assert compute_expiry(parse_expiry(view), REPORTED, PARIS) == stored
+    assert compute_expiry(parse_expiry(view), REPORTED, LISBON) == stored
 
 
 def test_a_horizon_view_sent_back_keeps_its_expires_at():
-    stored = compute_expiry(parse_expiry(horizon(30)), REPORTED, PARIS)
-    view, _ = expiry_view(stored["expiry_kind"], stored["ttl_days"], stored["expires_at"], PARIS)
-    assert compute_expiry(parse_expiry(view), REPORTED, PARIS) == stored
+    stored = compute_expiry(parse_expiry(horizon(30)), REPORTED, LISBON)
+    view, _ = expiry_view(stored["expiry_kind"], stored["ttl_days"], stored["expires_at"], LISBON)
+    assert compute_expiry(parse_expiry(view), REPORTED, LISBON) == stored
 
 
 def test_no_kind_is_no_view_and_ttl_days_alone_is_never_shown():
-    assert expiry_view(None, 90, utc(2027, 1, 1), PARIS) == (None, None)
-    assert expiry_view(None, None, None, PARIS) == (None, None)
+    assert expiry_view(None, 90, utc(2027, 1, 1), LISBON) == (None, None)
+    assert expiry_view(None, None, None, LISBON) == (None, None)
 
 
 def test_due_only_for_horizons():
-    assert expiry_view(ExpiryKind.DATE, None, utc(2026, 7, 10, 22, 0), PARIS)[1] is None
-    assert expiry_view(ExpiryKind.NONE, None, None, PARIS)[1] is None
-    assert expiry_view(ExpiryKind.HORIZON, 7, utc(2026, 7, 10, 22, 0), PARIS)[1] == "2026-07-11"
+    assert expiry_view(ExpiryKind.DATE, None, utc(2026, 7, 10, 23, 0), LISBON)[1] is None
+    assert expiry_view(ExpiryKind.NONE, None, None, LISBON)[1] is None
+    assert expiry_view(ExpiryKind.HORIZON, 7, utc(2026, 7, 10, 23, 0), LISBON)[1] == "2026-07-11"
 
 
 def test_a_kind_without_its_data_is_not_shown_as_a_decision_the_model_could_not_resend():
-    assert expiry_view(ExpiryKind.DATE, None, None, PARIS) == (None, None)
-    assert expiry_view(ExpiryKind.HORIZON, None, utc(2026, 7, 10), PARIS) == (None, None)
+    assert expiry_view(ExpiryKind.DATE, None, None, LISBON) == (None, None)
+    assert expiry_view(ExpiryKind.HORIZON, None, utc(2026, 7, 10), LISBON) == (None, None)
 
 
 def test_a_naive_expires_at_is_read_as_utc_and_an_unknown_zone_as_utc():
-    assert expiry_view(ExpiryKind.HORIZON, 5, datetime(2026, 11, 5, 23, 30), PARIS)[1] == "2026-11-06"
-    assert expiry_view(ExpiryKind.HORIZON, 5, utc(2026, 11, 5, 23, 30), "Not/AZone")[1] == "2026-11-05"
+    assert expiry_view(ExpiryKind.HORIZON, 5, datetime(2026, 7, 5, 23, 30), LISBON)[1] == "2026-07-06"
+    assert expiry_view(ExpiryKind.HORIZON, 5, utc(2026, 7, 5, 23, 30), "Not/AZone")[1] == "2026-07-05"

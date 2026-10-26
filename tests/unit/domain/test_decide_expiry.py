@@ -12,8 +12,8 @@ from src.domain.pass_actor import PassActor
 from src.domain.refusal_wording import RefusalWording
 from tests.support.fact_write import EXPIRY_NONE, horizon, on
 
-PARIS = "Europe/Paris"
-NOW = datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc)  # 11:00 in Europe/Paris
+LISBON = "Europe/Lisbon"
+NOW = datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc)  # 10:00 in Europe/Lisbon
 REPORTED = NOW - timedelta(hours=2)
 ALL_PASSES = list(PassActor)
 FLOORING = [actor for actor in PassActor if actor.floors_due_horizon]
@@ -21,7 +21,7 @@ NOT_FLOORING = [actor for actor in PassActor if not actor.floors_due_horizon]
 
 
 def decide(expiry, actor, reported=REPORTED):
-    context = FactWriteContext.for_pass(actor, PARIS)
+    context = FactWriteContext.for_pass(actor, LISBON)
     return decide_expiry(parse_expiry(expiry), reported, NOW, context)
 
 
@@ -31,9 +31,9 @@ def test_the_table_has_passes_on_both_sides_of_the_floor():
 
 @pytest.mark.parametrize("actor", ALL_PASSES)
 def test_a_date_ahead_is_kept_to_the_end_of_that_day_in_the_owners_zone(actor):
-    fields, note = decide(on("2026-10-30"), actor)
+    fields, note = decide(on("2026-10-24"), actor)
     assert fields["expiry_kind"] is ExpiryKind.DATE and fields["ttl_days"] is None
-    assert fields["expires_at"] == datetime(2026, 10, 30, 23, 0, tzinfo=timezone.utc)  # midnight on the 31st in Europe/Paris
+    assert fields["expires_at"] == datetime(2026, 10, 24, 23, 0, tzinfo=timezone.utc)  # midnight on the 25th in Europe/Lisbon
     assert note is None
 
 

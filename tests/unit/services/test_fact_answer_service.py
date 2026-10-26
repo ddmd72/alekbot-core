@@ -34,7 +34,7 @@ from tests.support.fact_kit import ACC, USER, put_raw
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
 
-TZ = "Europe/Paris"
+TZ = "Europe/Lisbon"
 TEXT = "drinks green tea every morning"
 KINDS = list(AnswerKind)
 OWNER_SOURCES = {QuestionStatus.QUEUED: "cabinet", QuestionStatus.ASKED: "digit", QuestionStatus.UNANSWERED: "button"}

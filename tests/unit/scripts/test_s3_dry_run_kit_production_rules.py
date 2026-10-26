@@ -49,7 +49,7 @@ def memory_dir(tmp_path, monkeypatch):
 
 SCENARIOS = {
     "an owner in Tokyo": lambda: (Accounts(account(ann="owner")), Users(profile("ann", "Asia/Tokyo"))),
-    "two owners": lambda: (Accounts(account(zed="owner", ann="owner")), Users(profile("ann", "Europe/Paris"), profile("zed", "Asia/Tokyo"))),
+    "two owners": lambda: (Accounts(account(zed="owner", ann="owner")), Users(profile("ann", "Europe/Lisbon"), profile("zed", "Asia/Tokyo"))),
     "no account": lambda: (Accounts(), Users()),
     "no owner": lambda: (Accounts(account(bob="member")), Users(profile("bob", "Asia/Tokyo"))),
     "no profile": lambda: (Accounts(account(ann="owner")), Users()),
@@ -69,7 +69,7 @@ async def test_the_kit_resolves_the_owner_zone_as_the_consolidation_service_does
 async def test_a_zone_override_still_wins_in_the_kit_and_must_be_a_zone():
     accounts, users = SCENARIOS["an owner in Tokyo"]()
 
-    assert await owner_timezone(accounts, users, ACCOUNT, override="Europe/Paris") == "Europe/Paris"
+    assert await owner_timezone(accounts, users, ACCOUNT, override="Europe/Lisbon") == "Europe/Lisbon"
     assert accounts.asked == []
     with pytest.raises(ValueError):
         await owner_timezone(accounts, users, ACCOUNT, override="Mars/Olympus")

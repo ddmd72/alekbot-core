@@ -123,7 +123,7 @@ async def test_update_fact_is_parse_plus_the_typed_apply_and_returns_what_it_did
 
     by_model = await model.adapter.update_fact(fact_id, updates, ACC, context=ctx("stage1"))
     by_code = rendered(await typed.adapter.apply_fact_update(
-        fact_id, parse_fact_update(updates, "Europe/Paris"), ACC, context=ctx("stage1"),
+        fact_id, parse_fact_update(updates, "Europe/Lisbon"), ACC, context=ctx("stage1"),
     ))
 
     assert normalised(by_model, fact_id) == pinned

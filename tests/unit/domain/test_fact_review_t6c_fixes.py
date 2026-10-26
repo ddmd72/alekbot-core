@@ -43,8 +43,8 @@ STORED = FactEntity(
 
 
 def test_a_search_hit_shows_the_same_view_as_its_stored_fact():
-    hit = consolidation_hit(EnrichedFact.from_fact(STORED, "keyword", 0.8), "Europe/Paris")
-    view = fact_view(STORED, "Europe/Paris")
+    hit = consolidation_hit(EnrichedFact.from_fact(STORED, "keyword", 0.8), "Europe/Lisbon")
+    view = fact_view(STORED, "Europe/Lisbon")
     assert {k: hit[k] for k in view} == view
 
 
@@ -52,7 +52,7 @@ def test_the_view_reads_a_stored_fact_by_its_fields():
     """Anything with the stored fact's fields (a test double for a FactEntity) gives the same view."""
     double = SimpleNamespace(**{name: getattr(STORED, name) for name in
                                 ("id", "text", "expiry_kind", "ttl_days", "expires_at", "reported_date")})
-    assert fact_view(double, "Europe/Paris") == fact_view(STORED, "Europe/Paris")  # type: ignore[arg-type]
+    assert fact_view(double, "Europe/Lisbon") == fact_view(STORED, "Europe/Lisbon")  # type: ignore[arg-type]
 
 
 # ------------------------------------------------------------------------------------------------ S7

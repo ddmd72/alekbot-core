@@ -59,7 +59,7 @@ async def router_enrichment(world):
 async def consolidator_search(world):
     adapter = FactManagementAdapter(world.repo, world.store.embedder, world.store.write, enrichment(world))
     with RequestContext(user_id=USER, account_id=ACC):
-        found = await adapter.search_existing_facts(["x"], GONE, KEPT, timezone="Europe/Paris")
+        found = await adapter.search_existing_facts(["x"], GONE, KEPT, timezone="Europe/Lisbon")
     return {item["content"] for item in found}
 
 

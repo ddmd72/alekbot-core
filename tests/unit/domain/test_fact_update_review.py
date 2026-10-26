@@ -118,7 +118,7 @@ def test_a_pinned_revive_gets_none(actor, updates):
 @pytest.mark.parametrize("actor", REVIEW_ACTORS)
 def test_a_pinned_still_true_arrives_as_none_and_stays_none(actor):
     current = pinned_fact(FactState.CURRENT)
-    sent = confirmed_expiry(current, NOW, "Europe/Paris")
+    sent = confirmed_expiry(current, NOW, "Europe/Lisbon")
     # Reviewer edit (facts S4, T3c): the decision is an Expiry, sent as the typed update, so no parse in front.
     assert sent == Expiry(ExpiryKind.NONE)
     update = ParsedFactUpdate(expiry=sent)
@@ -147,9 +147,9 @@ def test_a_revive_is_strictly_not_born_due_with_review_wording(actor, expiry):
 
 @pytest.mark.parametrize("actor", REVIEW_ACTORS)
 def test_a_revive_with_a_future_date_stores_the_date(actor):
-    fields = finish({"state": "current", "expiry": on("2026-11-30")}, fact(), actor).plan.fields
+    fields = finish({"state": "current", "expiry": on("2027-06-30")}, fact(), actor).plan.fields
     assert fields["expiry_kind"] is ExpiryKind.DATE
-    assert fields["expires_at"] == datetime(2026, 11, 30, 23, 0, tzinfo=UTC)  # end of the day in Europe/Paris (CET)
+    assert fields["expires_at"] == datetime(2027, 6, 30, 23, 0, tzinfo=UTC)  # end of the day in Europe/Lisbon (WEST)
 
 
 @pytest.mark.parametrize("actor", REVIEW_ACTORS)
