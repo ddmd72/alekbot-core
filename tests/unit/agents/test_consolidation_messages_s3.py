@@ -3,7 +3,7 @@ every pass, and what Stage 2a, Stage 2b and the email pass tell the model. Real 
 evaluating fake store under a scripted LLM; the store is read back, never mocked."""
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock
@@ -280,13 +280,21 @@ async def test_the_legacy_v2_path_without_a_zone_in_the_message_shows_utc(store)
 # ----------------------------------------------------------------------------------------------- Stage 2a entries
 
 
+# The write path refuses an expiry that ends within a day of the real now (born due), so the seeded expiries are set from
+# today: the trip is the next 15 January (15 days ahead at the least), the horizon runs 30 days past today. REPORTED stays
+# fixed in summer time on purpose: 23:30 UTC is the next calendar day in Europe/Lisbon only while it is UTC+1.
+REPORTED = utc(22, 23, 30)                                       # 23 October 00:30 in Europe/Lisbon
+TRIP_DAY = date(datetime.now(timezone.utc).year + 1, 1, 15)
+PILLS_DAYS = (datetime.now(timezone.utc) - REPORTED).days + 30
+
+
 async def seed_and_search(store: FactStore, agent: ConsolidationAgent) -> List[Dict[str, Any]]:
     """Three facts written through the real tool (a date, a horizon, a history fact) plus a legacy document with no decision."""
-    reported = "2026-10-22T23:30:00+00:00"                       # 23 October 00:30 in Europe/Lisbon
+    reported = REPORTED.isoformat()
     with RequestContext(user_id=USER, account_id=ACC):
         responses = await agent._execute_fact_management_tools(
-            [create("trip to Rome in January", expiry=on("2027-01-15"), reported_date=reported),
-             create("takes the pills daily", expiry=horizon(30), reported_date=reported),
+            [create("trip to Rome in January", expiry=on(TRIP_DAY), reported_date=reported),
+             create("takes the pills daily", expiry=horizon(PILLS_DAYS), reported_date=reported),
              create("was 64 kg in March 2024")],
             USER, ACC, write_context=ctx())
     assert [json.loads(r.result_str)["status"] for r in responses] == ["created"] * 3, [r.result_str for r in responses]
@@ -302,9 +310,9 @@ async def test_stage2a_entries_carry_expiry_due_and_the_owners_reported_day(stor
     shown = {e["content"]: e for e in entries(ConsolidationAgent._build_cluster_message(found))}
 
     trip, pills = shown["trip to Rome in January"], shown["takes the pills daily"]
-    assert trip["expiry"] == {"kind": "date", "date": "2027-01-15"} and "due" not in trip
-    assert pills["expiry"] == {"kind": "horizon", "days": 30}
-    assert pills["due"] == local_stamp(utc(22, 23, 30) + timedelta(days=30), LISBON)[:10]
+    assert trip["expiry"] == {"kind": "date", "date": TRIP_DAY.isoformat()} and "due" not in trip
+    assert pills["expiry"] == {"kind": "horizon", "days": PILLS_DAYS}
+    assert pills["due"] == local_stamp(REPORTED + timedelta(days=PILLS_DAYS), LISBON)[:10]
     assert trip["reported"] == pills["reported"] == "2026-10-23"                 # the owner's calendar day, not the UTC day
     assert shown["was 64 kg in March 2024"]["expiry"] == {"kind": "none"}
     legacy = shown["an old note without a decision"]
@@ -339,10 +347,10 @@ async def test_a_date_entry_sent_back_unchanged_in_a_content_update_keeps_expire
     with RequestContext(user_id=USER, account_id=ACC):
         responses = await agent._execute_fact_management_tools(
             [ToolCall(name="update_fact", args={"fact_id": trip["fact_id"], "updates": {
-                "content": "trip to Rome in January 2027", "expiry": trip["expiry"]}})],
+                "content": f"trip to Rome in January {TRIP_DAY.year}", "expiry": trip["expiry"]}})],
             USER, ACC, write_context=ctx("stage2a"))
     assert json.loads(responses[0].result_str)["status"] == "updated", responses[0].result_str
-    after = by_text(store, "trip to Rome in January 2027")
+    after = by_text(store, f"trip to Rome in January {TRIP_DAY.year}")
     assert after["expires_at"] == before["expires_at"] and after["expiry_kind"] == "date"
 
 
@@ -360,7 +368,7 @@ async def test_the_cluster_passs_auto_fetched_facts_show_the_same_expiry_as_the_
         for key in ("expiry", "reported"):
             assert fetched[content][key] == from_search[content][key], (content, key)
         assert fetched[content].get("due") == from_search[content].get("due"), content
-    assert fetched["trip to Rome in January"]["expiry"] == {"kind": "date", "date": "2027-01-15"}
+    assert fetched["trip to Rome in January"]["expiry"] == {"kind": "date", "date": TRIP_DAY.isoformat()}
     assert fetched["an old note without a decision"]["expiry"] is None
 
 

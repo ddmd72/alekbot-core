@@ -6,7 +6,7 @@ message it was routed. The last tests route the service's own message to a real 
 evaluating fact store, so the stored expiry proves the zone crossed both seams.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock
@@ -276,6 +276,10 @@ def test_the_owner_zone_resolver_is_required(queue, db, coordinator):
 # ------------------------------------------------------------------------------------------------ through the real agent
 
 
+# The write path refuses a date that ends within a day of the real now (born due), so the trip is on the next 15 July.
+TRIP_DAY = date(datetime.now(timezone.utc).year + 1, 7, 15)
+
+
 def _real_agent(store: FactStore, email_repo=None):
     """A real ConsolidationAgent over the evaluating fact store; its LLM creates one dated fact in Stage 1 and one in the
     email pass (when there is an email repository), then reports."""
@@ -304,13 +308,13 @@ def _real_agent(store: FactStore, email_repo=None):
         if "Begin deliberate consolidation." in first and "stage1" not in spent:
             spent.add("stage1")
             attributes = {"domain": "biographical", "temporal_class": "stable", "context_priority": "medium",
-                          "tags": ["t"], "metadata": {}, "type": "event", "expiry": on("2027-07-15")}
+                          "tags": ["t"], "metadata": {}, "type": "event", "expiry": on(TRIP_DAY)}
             return LLMResponse(text=None, tool_calls=[
                 ToolCall(name="create_fact", args={"content": "trip to Rome", "fact_attributes": attributes})])
         if "system_alert" in first and "email" not in spent:
             spent.add("email")
             attributes = {"domain": "biographical", "temporal_class": "stable", "context_priority": "medium",
-                          "tags": ["t"], "metadata": {}, "type": "event", "expiry": on("2027-07-15")}
+                          "tags": ["t"], "metadata": {}, "type": "event", "expiry": on(TRIP_DAY)}
             return LLMResponse(text=None, tool_calls=[
                 ToolCall(name="create_fact", args={"content": "flight booked", "fact_attributes": attributes})])
         return LLMResponse(text='{"operations": []}')
@@ -332,8 +336,8 @@ class AgentCoordinator:
 
 
 @pytest.mark.parametrize("owner_zone,expected_expiry", [
-    (LISBON, datetime(2027, 7, 15, 23, tzinfo=timezone.utc)),         # the end of 15 Jul in Europe/Lisbon
-    (TOKYO, datetime(2027, 7, 15, 15, tzinfo=timezone.utc)),         # the end of 15 Jul in Tokyo
+    (LISBON, datetime(TRIP_DAY.year, 7, 15, 23, tzinfo=timezone.utc)),         # the end of 15 Jul in Europe/Lisbon
+    (TOKYO, datetime(TRIP_DAY.year, 7, 15, 15, tzinfo=timezone.utc)),         # the end of 15 Jul in Tokyo
 ])
 async def test_the_production_path_writes_the_expiry_in_the_owners_zone_not_in_utc(queue, db, owner_zone, expected_expiry):
     from tests.support.fact_kit import ACC as FACT_ACC, USER as FACT_USER
@@ -353,8 +357,8 @@ async def test_the_production_path_writes_the_expiry_in_the_owners_zone_not_in_u
 
 
 @pytest.mark.parametrize("owner_zone,expected_expiry", [
-    (LISBON, datetime(2027, 7, 15, 23, tzinfo=timezone.utc)),
-    (TOKYO, datetime(2027, 7, 15, 15, tzinfo=timezone.utc)),
+    (LISBON, datetime(TRIP_DAY.year, 7, 15, 23, tzinfo=timezone.utc)),
+    (TOKYO, datetime(TRIP_DAY.year, 7, 15, 15, tzinfo=timezone.utc)),
 ])
 async def test_consolidate_full_carries_the_owners_zone_into_the_email_pass_too(queue, db, owner_zone, expected_expiry):
     from tests.support.fact_kit import ACC as FACT_ACC, USER as FACT_USER

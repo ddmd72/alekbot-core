@@ -5,7 +5,7 @@ every assertion reads a stored document. The email pass reads its candidates thr
 on the same fake: its dates come back naive, as they do in production.
 """
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock
@@ -41,6 +41,14 @@ def utc(day: int, hour: int, minute: int = 0, month: int = 10) -> datetime:
 
 
 OMIT = object()
+
+# The write path refuses an expiry that ends within a day of the real now (born due), so the seeded dates are set from today:
+# a trip on the next 15 July (in summer time, so its end in Europe/Lisbon is 23:00 UTC) or the next 15 January, and a
+# horizon that runs 30 days past today from the batch's fixed span end.
+SUMMER_TRIP = date(datetime.now(timezone.utc).year + 1, 7, 15)
+WINTER_TRIP = date(datetime.now(timezone.utc).year + 1, 1, 15)
+SUMMER_TRIP_ENDS = datetime(SUMMER_TRIP.year, 7, 15, 23, tzinfo=timezone.utc)      # the end of 15 Jul, Europe/Lisbon
+PILLS_DAYS = (datetime.now(timezone.utc) - utc(20, 11)).days + 30
 
 
 def attrs(**over: Any) -> Dict[str, Any]:
@@ -131,23 +139,23 @@ MESSAGES = [
 
 async def test_stage1_create_gets_the_span_end_and_expires_in_the_owner_zone(store):
     agent = make_agent(store, once({STAGE1: calls(
-        create("trip to Rome", expiry=on("2027-07-15")),
-        create("takes the pills", expiry=horizon(30)),
+        create("trip to Rome", expiry=on(SUMMER_TRIP)),
+        create("takes the pills", expiry=horizon(PILLS_DAYS)),
     )}))
     with RequestContext(user_id=USER, account_id=ACC):
         await agent._execute_deliberate_process_v3(MESSAGES, USER, ACC, [], owner_timezone=LISBON)
 
     trip, pills = by_text(store, "trip to Rome"), by_text(store, "takes the pills")
     assert at(trip["reported_date"]) == utc(20, 11) == at(pills["reported_date"])      # the last readable time
-    assert at(trip["expires_at"]) == datetime(2027, 7, 15, 23, tzinfo=timezone.utc)    # the end of 15 Jul, Europe/Lisbon
-    assert at(pills["expires_at"]) == utc(20, 11) + timedelta(days=30)                  # a horizon counts from the span end
+    assert at(trip["expires_at"]) == SUMMER_TRIP_ENDS                                    # the end of 15 Jul, Europe/Lisbon
+    assert at(pills["expires_at"]) == utc(20, 11) + timedelta(days=PILLS_DAYS)          # a horizon counts from the span end
 
 
 async def test_stage1_without_an_owner_zone_uses_utc(store):
-    agent = make_agent(store, once({STAGE1: calls(create("trip to Rome", expiry=on("2027-01-15")))}))
+    agent = make_agent(store, once({STAGE1: calls(create("trip to Rome", expiry=on(WINTER_TRIP)))}))
     with RequestContext(user_id=USER, account_id=ACC):
         await agent._execute_deliberate_process_v3(MESSAGES, USER, ACC, [])
-    assert at(by_text(store, "trip to Rome")["expires_at"]) == datetime(2027, 1, 16, tzinfo=timezone.utc)
+    assert at(by_text(store, "trip to Rome")["expires_at"]) == datetime(WINTER_TRIP.year, 1, 16, tzinfo=timezone.utc)
 
 
 async def test_stage1_clamps_a_model_date_into_the_batch_and_keeps_one_inside_it(store):
@@ -171,7 +179,7 @@ async def test_a_batch_without_readable_times_has_no_span_and_the_write_is_dated
 
 
 async def test_the_zone_reaches_the_pass_from_the_messages_context(store):
-    agent = make_agent(store, once({STAGE1: calls(create("trip to Rome", expiry=on("2027-07-15")))}))
+    agent = make_agent(store, once({STAGE1: calls(create("trip to Rome", expiry=on(SUMMER_TRIP)))}))
     store.repo.refresh_biographical_context_cache = AsyncMock()
     message = AgentMessage(
         task_id="t", sender="s", recipient="r", intent=AgentIntent.DELEGATE,
@@ -180,7 +188,7 @@ async def test_the_zone_reaches_the_pass_from_the_messages_context(store):
     with RequestContext(user_id=USER, account_id=ACC):
         response = await agent._handle_consolidate(message, USER, ACC, [], 0.0)
     assert response.status.value == "success", response
-    assert at(by_text(store, "trip to Rome")["expires_at"]) == datetime(2027, 7, 15, 23, tzinfo=timezone.utc)
+    assert at(by_text(store, "trip to Rome")["expires_at"]) == SUMMER_TRIP_ENDS
 
 
 # ----------------------------------------------------------------------------------------------- cleanup passes
@@ -251,7 +259,7 @@ async def test_every_pass_writes_under_its_own_actor_and_the_backstop_says_why(s
 
 async def test_the_cluster_pass_builds_its_own_context_without_a_span(store):
     agent = make_agent(store, once({CLUSTER: calls(
-        create("merged view", reported_date=utc(20, 9).isoformat(), expiry=on("2027-07-15")),
+        create("merged view", reported_date=utc(20, 9).isoformat(), expiry=on(SUMMER_TRIP)),
     )}))
     message = AgentMessage(
         task_id="t", sender="s", recipient="r", intent=AgentIntent.DELEGATE,
@@ -265,7 +273,7 @@ async def test_the_cluster_pass_builds_its_own_context_without_a_span(store):
     assert response.status.value == "success", response
     doc = by_text(store, "merged view")
     assert before <= at(doc["reported_date"]) <= datetime.now(timezone.utc)             # cleanup pass, no span: now, the model's date ignored
-    assert at(doc["expires_at"]) == datetime(2027, 7, 15, 23, tzinfo=timezone.utc)      # the owner's zone reached the pass
+    assert at(doc["expires_at"]) == SUMMER_TRIP_ENDS                                     # the owner's zone reached the pass
 
 
 # ----------------------------------------------------------------------------------------------- email pass
@@ -288,7 +296,7 @@ async def test_an_email_pass_with_naive_candidate_dates_writes_its_facts_and_mar
     assert all(e.email_date.tzinfo is None for e in await emails.get_unconsolidated_batch(USER))
 
     agent = make_agent(store, once({"system_alert": calls(
-        create("flight booked", reported_date="2026-10-11T00:00:00+00:00", expiry=on("2027-07-15")),
+        create("flight booked", reported_date="2026-10-11T00:00:00+00:00", expiry=on(SUMMER_TRIP)),
         create("no date sent"),
         create("date from the future", reported_date="2026-10-30T00:00:00+00:00"),
     )}), email_repo=emails)
@@ -304,7 +312,7 @@ async def test_an_email_pass_with_naive_candidate_dates_writes_its_facts_and_mar
     assert at(by_text(store, "flight booked")["reported_date"]) == utc(11, 0)             # inside the span: kept
     assert at(by_text(store, "no date sent")["reported_date"]) == utc(12, 15)             # span end, read as UTC
     assert at(by_text(store, "date from the future")["reported_date"]) == utc(12, 15)     # clamped into the span
-    assert at(by_text(store, "flight booked")["expires_at"]) == datetime(2027, 7, 15, 23, tzinfo=timezone.utc)
+    assert at(by_text(store, "flight booked")["expires_at"]) == SUMMER_TRIP_ENDS
     assert await emails.get_unconsolidated_batch(USER) == []                              # marked consolidated
 
 

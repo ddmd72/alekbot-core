@@ -598,13 +598,18 @@ async def test_a_pass_with_an_expiry_error_leaves_the_live_counters_untouched_an
     assert store.docs == {}
 
 
+# The write path refuses an expiry that ends within a day of the real now (born due): the two dated creates below carry
+# a horizon that runs 30 days past today from the earlier of their fixed reported dates (10:00 UTC).
+BOOKED_DAYS = (datetime.now(timezone.utc) - datetime(2026, 10, 22, 10, tzinfo=timezone.utc)).days + 30
+
+
 async def test_the_pass_writes_into_the_overlay_only_and_the_report_has_one_row_per_write(store, tmp_path):
     seeded = await seed(store, "walks daily and reads at night")
     before = live_state(store)
     stage1 = metered(calls(
-        create("flight booked", reported_date="2026-10-22T12:00", expiry=horizon(30)),
+        create("flight booked", reported_date="2026-10-22T12:00", expiry=horizon(BOOKED_DAYS)),
         create("no expiry sent", expiry=OMIT),
-        create("hotel booked", reported_date="2026-10-22T12:00:00+02:00", expiry=horizon(30)),
+        create("hotel booked", reported_date="2026-10-22T12:00:00+02:00", expiry=horizon(BOOKED_DAYS)),
         ToolCall(name="update_fact", args={"fact_id": seeded, "updates": {"state": "archived", "expiry": horizon(9)}}),
     ))
     agent, kit = await kit_agent(store, tmp_path, stage1, answered())
@@ -615,7 +620,7 @@ async def test_the_pass_writes_into_the_overlay_only_and_the_report_has_one_row_
     assert [(r["action"], r["status"]) for r in kit.rows] == [
         ("create", "created"), ("create", "failed"), ("create", "created"), ("update", "updated")]
     flight, refused, hotel, closed = kit.rows
-    assert flight["decision_stored"]["expiry_kind"] == "horizon" and flight["decision_stored"]["ttl_days"] == 30
+    assert flight["decision_stored"]["expiry_kind"] == "horizon" and flight["decision_stored"]["ttl_days"] == BOOKED_DAYS
     assert flight["reported_date_form"] == "naive" and flight["reported_date_chosen"].startswith("2026-10-22T12:00")
     assert hotel["reported_date_form"] == "aware" and hotel["reported_date_chosen"].startswith("2026-10-22T10:00")
     assert refused["refused"] == "expiry" and refused["decision_stored"] is None and refused["fact_id"] is None
