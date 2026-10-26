@@ -65,6 +65,7 @@ RU_LABELS = {
     UIMessage.MEMORY_ANSWER_NOTED.value: "Спасибо, записал.",
     UIMessage.MEMORY_REPLY_NOTED.value: "Принято, учту.",
     UIMessage.MEMORY_ALREADY_ANSWERED.value: "Уже отвечено, спасибо.",
+    UIMessage.MEMORY_FACT_CHANGED.value: "Этот факт тем временем изменился, ответ не применён; я к нему ещё вернусь.",
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Этот вопрос закрыт.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Факты, которые я отложил на этой неделе:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Чтобы вернуть один, скажите мне в чате, что это всё ещё так.",

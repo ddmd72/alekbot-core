@@ -52,10 +52,11 @@ def test_mirror_with_no_reported_language_yet_is_the_ui_language(current):
 
 # ------------------------------------------------------------------------------------------------ the label set
 
-def test_the_label_set_is_the_twelve_ui_strings_of_the_plan():
+def test_the_label_set_is_the_thirteen_ui_strings_of_the_plan():
     names = [
         "REVIEW_QUESTION", "OPTION_STILL_TRUE", "OPTION_ENDED", "OPTION_NEVER", "OPTION_DONT_KNOW", "REPLY_HINT",
-        "ANSWER_NOTED", "REPLY_NOTED", "ALREADY_ANSWERED", "QUESTION_CLOSED", "DIGEST_HEADER", "DIGEST_FOOTER",
+        "ANSWER_NOTED", "REPLY_NOTED", "ALREADY_ANSWERED", "FACT_CHANGED", "QUESTION_CLOSED", "DIGEST_HEADER",
+        "DIGEST_FOOTER",
     ]
     assert LABEL_KEYS == {UIMessage[f"MEMORY_{name}"].value for name in names}
     assert set(CANONICAL_LABELS) == LABEL_KEYS

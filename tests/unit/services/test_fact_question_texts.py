@@ -20,7 +20,7 @@ from tests.support.fact_review_world import ReviewWorld
 
 USER, ACC = "u1", "acc"
 ACKS = (UIMessage.MEMORY_ANSWER_NOTED, UIMessage.MEMORY_REPLY_NOTED, UIMessage.MEMORY_ALREADY_ANSWERED,
-        UIMessage.MEMORY_QUESTION_CLOSED)
+        UIMessage.MEMORY_FACT_CHANGED, UIMessage.MEMORY_QUESTION_CLOSED)
 
 RU: Dict[str, str] = {
     UIMessage.MEMORY_REVIEW_QUESTION.value: "Это всё ещё правда?",
@@ -32,6 +32,7 @@ RU: Dict[str, str] = {
     UIMessage.MEMORY_ANSWER_NOTED.value: "Спасибо, записал.",
     UIMessage.MEMORY_REPLY_NOTED.value: "Понял, учту.",
     UIMessage.MEMORY_ALREADY_ANSWERED.value: "Уже отвечено, спасибо.",
+    UIMessage.MEMORY_FACT_CHANGED.value: "Этот факт тем временем изменился, поэтому ответ не применён; я к нему вернусь.",
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Этот вопрос закрыт.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Факты, которые я отложил на этой неделе:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Чтобы вернуть один, скажите в чате, что он всё ещё верен.",

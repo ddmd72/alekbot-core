@@ -44,6 +44,7 @@ RU_LABELS = {
     "memory_answer_noted": "Спасибо, записал.",
     "memory_reply_noted": "Понял, учту.",
     "memory_already_answered": "Уже отвечено, спасибо.",
+    "memory_fact_changed": "Этот факт тем временем изменился, поэтому я не применил ответ; я к нему ещё вернусь.",
     "memory_question_closed": "Этот вопрос закрыт.",
     "memory_digest_header": "Факты, которые я отложил на этой неделе:",
     "memory_digest_footer": "Чтобы вернуть один, скажите в чате, что это всё ещё так.",

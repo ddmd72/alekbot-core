@@ -58,6 +58,7 @@ PT_LABELS = {
     UIMessage.MEMORY_ANSWER_NOTED.value: "Obrigado, registado.",
     UIMessage.MEMORY_REPLY_NOTED.value: "Anotado, vou ter isso em conta.",
     UIMessage.MEMORY_ALREADY_ANSWERED.value: "Já respondido, obrigado.",
+    UIMessage.MEMORY_FACT_CHANGED.value: "Esse facto mudou entretanto, por isso não apliquei a resposta; voltarei a ele.",
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Esta pergunta está fechada.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Factos que pus de lado esta semana:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Para recuperar um, diga-me no chat que ainda é verdade.",
