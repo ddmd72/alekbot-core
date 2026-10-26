@@ -61,32 +61,40 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class _FactWrites:
+    """Whether this run wrote a fact, for the one biographical-cache refresh (the agent refreshes after its own writes).
+    A step calls `wrote()` at once after each fact write lands, before anything else can raise, so a step that writes
+    and then fails still gets its refresh (in the run's `finally`)."""
+
+    def __init__(self) -> None:
+        self.any = False
+        self.refreshed = False
+
+    def wrote(self) -> None:
+        self.any = True
+
+
 @dataclass(frozen=True)
 class _StepResult:
-    """What one step did that the run must know: whether it wrote a fact (the biographical cache is refreshed once
-    for every write of this service; the agent refreshes after its own) and what it counts."""
+    """What one step counts. Its fact writes are not here: they are marked on the run's `_FactWrites` as they land."""
 
-    wrote_facts: bool = False
     counts: Dict[CounterField, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class _Timeouts(_StepResult):
-    """Step 6: besides the writes, the timed-out questions' facts that join this run's batch."""
+    """Step 6: besides the counts, the timed-out questions' facts that join this run's batch."""
 
     candidates: Tuple[FactEntity, ...] = ()
 
 
 @dataclass
 class _Tally:
-    """The run's own account of its steps."""
+    """The run's counts, from every step."""
 
-    wrote_facts: bool = False
-    refreshed: bool = False
     counts: Dict[CounterField, int] = field(default_factory=dict)
 
     def add(self, step: _StepResult) -> None:
-        self.wrote_facts = self.wrote_facts or step.wrote_facts
         for name, value in step.counts.items():
             self.counts[name] = self.counts.get(name, 0) + value
 
@@ -192,9 +200,14 @@ class FactReviewService:
         """Step 2: the send only. No lease, no model; the run's marks are the daily run's, not this one's."""
         zone = (await self._owner_zones.resolve(account_id)).zone
         tally = _Tally()
-        tally.add(await self._send_next(user_id, account_id, now, zone))
-        await self._count(account_id, now, tally)
-        return {"status": "completed"}
+        writes = _FactWrites()
+        try:
+            tally.add(await self._send_next(user_id, account_id, now, zone, writes))
+            await self._refresh_once(account_id, writes)
+            await self._count(account_id, now, tally)
+            return {"status": "completed"}
+        finally:
+            await self._refresh_after_error(account_id, writes)
 
     async def _daily(self, user_id: str, account_id: str, now: datetime) -> Dict[str, Any]:
         await self._agent_factory.ensure_agents_for_user(user_id)
@@ -236,13 +249,14 @@ class FactReviewService:
         self, user_id: str, account_id: str, now: datetime, zone: str, language: str, until: datetime,
     ) -> Dict[str, Any]:
         tally = _Tally()
+        writes = _FactWrites()
         try:
             await self._housekeeping(account_id, now, zone)
             state = await self._review_store.get_state(account_id)
             questions = await self._review_store.questions_for_account(account_id)
-            timeouts = await self._timeouts(user_id, account_id, questions, now, zone)
+            timeouts = await self._timeouts(user_id, account_id, questions, now, zone, writes)
             tally.add(timeouts)
-            tally.add(await self._kept_twice(user_id, account_id, state, questions, now, zone))
+            tally.add(await self._kept_twice(user_id, account_id, state, questions, now, zone, writes))
             batch = await self._select(account_id, state, questions, timeouts.candidates, now)
             failed = False
             if batch:  # step 9: nothing selected, no model call
@@ -253,9 +267,9 @@ class FactReviewService:
                         f"[FactReview] the review pass failed for account {account_id[:8]}: {response.error}"
                     )
                 else:
-                    tally.add(await self._after_pass(user_id, account_id, batch, response, now, zone))
-            tally.add(await self._send_next(user_id, account_id, now, zone))  # step 12
-            await self._refresh_once(account_id, tally)  # step 13
+                    tally.add(await self._after_pass(user_id, account_id, batch, response, now, zone, writes))
+            tally.add(await self._send_next(user_id, account_id, now, zone, writes))  # step 12
+            await self._refresh_once(account_id, writes)  # step 13
             await self._digest(user_id, account_id, now, zone)  # step 14
             if failed:
                 tally.count(CounterField.REVIEW_FAILED)
@@ -266,14 +280,7 @@ class FactReviewService:
             await self._mark("succeeded", self._review_store.mark_succeeded, account_id, now)
             return {"status": "completed"}
         finally:
-            if tally.wrote_facts and not tally.refreshed:
-                try:
-                    await self._refresh_once(account_id, tally)
-                except Exception as exc:
-                    logger.error(
-                        f"[FactReview] biographical cache of account {account_id[:8]} not refreshed after the review's "
-                        f"writes: {type(exc).__name__}: {exc}"
-                    )
+            await self._refresh_after_error(account_id, writes)
 
     async def _housekeeping(self, account_id: str, now: datetime, zone: str) -> None:
         """Step 5. A `stuck_pending` question with a message ref was delivered: it becomes asked at its `appended_at`. One
@@ -334,11 +341,22 @@ class FactReviewService:
         if not await mark(account_id, now):
             logger.warning(f"[FactReview] account {account_id[:8]} has no review state; not marked {what}")
 
-    async def _refresh_once(self, account_id: str, tally: _Tally) -> None:
-        """Step 13: once, when this service wrote a fact."""
-        if tally.wrote_facts and not tally.refreshed:
-            tally.refreshed = True
+    async def _refresh_once(self, account_id: str, writes: _FactWrites) -> None:
+        """Step 13: once, when this service wrote a fact. A refresh that raises here is not tried again."""
+        if writes.any and not writes.refreshed:
+            writes.refreshed = True
             await self._repo.refresh_biographical_context_cache(owner_id=account_id)
+
+    async def _refresh_after_error(self, account_id: str, writes: _FactWrites) -> None:
+        """The `finally` of a run: a run cut short by an error after a fact write still refreshes, once; a refresh
+        error there is logged, so it never hides the run's own error."""
+        try:
+            await self._refresh_once(account_id, writes)
+        except Exception as exc:
+            logger.error(
+                f"[FactReview] biographical cache of account {account_id[:8]} not refreshed after the review's "
+                f"writes: {type(exc).__name__}: {exc}"
+            )
 
     async def _count(self, account_id: str, now: datetime, tally: _Tally) -> None:
         """Step 15's counters; best effort, as every counter of the review: a failure is a WARNING."""
@@ -356,9 +374,16 @@ class FactReviewService:
     # ------------------------------------------------------------------------------------------------ stubs (T8b-T8d2)
 
     async def _timeouts(
-        self, user_id: str, account_id: str, questions: Sequence[FactReviewQuestion], now: datetime, zone: str,
+        self,
+        user_id: str,
+        account_id: str,
+        questions: Sequence[FactReviewQuestion],
+        now: datetime,
+        zone: str,
+        writes: _FactWrites,
     ) -> _Timeouts:
-        """T8c, step 6: the timed-out questions; a candidate joins the batch, else the fallback or `resolved_elsewhere`."""
+        """T8c, step 6: the timed-out questions; a candidate joins the batch, else the fallback or `resolved_elsewhere`.
+        Mark every fact write at once through `writes.wrote()`, right after it lands."""
         return _Timeouts()
 
     async def _kept_twice(
@@ -369,8 +394,10 @@ class FactReviewService:
         questions: Sequence[FactReviewQuestion],
         now: datetime,
         zone: str,
+        writes: _FactWrites,
     ) -> _StepResult:
-        """T8c, step 7: a stale fact offered twice gets a code question and is queued."""
+        """T8c, step 7: a stale fact offered twice gets a code question and is queued.
+        Mark every fact write at once through `writes.wrote()`, right after it lands."""
         return _StepResult()
 
     async def _select(
@@ -407,12 +434,17 @@ class FactReviewService:
         response: Optional[AgentResponse],
         now: datetime,
         zone: str,
+        writes: _FactWrites,
     ) -> _StepResult:
-        """T8b, step 11: outcomes, review closes, the timed-out candidates' fallback, asks to the queue, language."""
+        """T8b, step 11: outcomes, review closes, the timed-out candidates' fallback, asks to the queue, language.
+        Mark every fact write at once through `writes.wrote()`, right after it lands."""
         return _StepResult()
 
-    async def _send_next(self, user_id: str, account_id: str, now: datetime, zone: str) -> _StepResult:
-        """T8d1, step 12 (§3.7): claim, pair, post, asked; not delivered → the second pair and the queue's front."""
+    async def _send_next(
+        self, user_id: str, account_id: str, now: datetime, zone: str, writes: _FactWrites,
+    ) -> _StepResult:
+        """T8d1, step 12 (§3.7): claim, pair, post, asked; not delivered → the second pair and the queue's front.
+        Mark every fact write at once through `writes.wrote()`, right after it lands."""
         return _StepResult()
 
     async def _digest(self, user_id: str, account_id: str, now: datetime, zone: str) -> None:

@@ -6,7 +6,7 @@ name refusal) and repository over one evaluating Firestore fake, a real `FactAns
 what it returns. Assertions are on the stored questions, state, lease, session history, counters and created tasks."""
 import hashlib
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import pytest
@@ -79,7 +79,8 @@ class Coordinator:
 
 class Recording(FactReviewService):
     """The service with its stubs recorded: `calls` holds (stub, now) in call order. `script` maps a stub to what it
-    returns (or a callable of its arguments that returns it); unscripted stubs run as built."""
+    returns, or to a callable that returns it: a writing step's callable gets the run's write recorder, `select`'s
+    gets `now`. Unscripted stubs run as built."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -94,12 +95,13 @@ class Recording(FactReviewService):
             return await result if hasattr(result, "__await__") else result
         return scripted
 
-    async def _timeouts(self, user_id, account_id, questions, now, zone):
-        return await self._answer("timeouts", now, await super()._timeouts(user_id, account_id, questions, now, zone))
+    async def _timeouts(self, user_id, account_id, questions, now, zone, writes):
+        built = await super()._timeouts(user_id, account_id, questions, now, zone, writes)
+        return await self._answer("timeouts", now, built, writes)
 
-    async def _kept_twice(self, user_id, account_id, state, questions, now, zone):
-        built = await super()._kept_twice(user_id, account_id, state, questions, now, zone)
-        return await self._answer("kept_twice", now, built)
+    async def _kept_twice(self, user_id, account_id, state, questions, now, zone, writes):
+        built = await super()._kept_twice(user_id, account_id, state, questions, now, zone, writes)
+        return await self._answer("kept_twice", now, built, writes)
 
     async def _select(self, account_id, state, questions, candidates, now):
         return await self._answer("select", now, await super()._select(account_id, state, questions, candidates, now),
@@ -109,12 +111,13 @@ class Recording(FactReviewService):
         built = await super()._route(user_id, account_id, batch, questions, now, zone, language, until)
         return await self._answer("route", now, built)
 
-    async def _after_pass(self, user_id, account_id, batch, response, now, zone):
-        built = await super()._after_pass(user_id, account_id, batch, response, now, zone)
-        return await self._answer("after_pass", now, built)
+    async def _after_pass(self, user_id, account_id, batch, response, now, zone, writes):
+        built = await super()._after_pass(user_id, account_id, batch, response, now, zone, writes)
+        return await self._answer("after_pass", now, built, writes)
 
-    async def _send_next(self, user_id, account_id, now, zone):
-        return await self._answer("send", now, await super()._send_next(user_id, account_id, now, zone))
+    async def _send_next(self, user_id, account_id, now, zone, writes):
+        built = await super()._send_next(user_id, account_id, now, zone, writes)
+        return await self._answer("send", now, built, writes)
 
     async def _digest(self, user_id, account_id, now, zone):
         return await self._answer("digest", now, await super()._digest(user_id, account_id, now, zone))
@@ -196,6 +199,16 @@ def today(world: ReviewWorld) -> date:
     return world.now.date()      # 08:30 in the owner's zone: the same calendar day
 
 
+def writing(result: _StepResult) -> Callable[[Any], _StepResult]:
+    """A scripted step that marks one fact write as it lands, then returns `result`."""
+
+    def step(writes: Any) -> _StepResult:
+        writes.wrote()
+        return result
+
+    return step
+
+
 def stale_fact():
     return build_fact("f1", account_id=ACC)
 
@@ -268,10 +281,16 @@ class TestFactReviewServiceRun:
         await world.lease.acquire(ACC, "consolidation-run", world.now, world.now + timedelta(minutes=30))
         await world.seed_question(QuestionStatus.PENDING, appended_at=None)
 
+        before = datetime.now(timezone.utc)
         first = await r.run()
+        after = datetime.now(timezone.utc)
         second = await r.run()
 
         assert first == second == {"status": "deferred"}
+        # The service asks for a 120 s delay; the queue adapter anchors it at the wall clock of the enqueue.
+        scheduled = world.tasks.create_task_requests[0]["task"]["schedule_time"].ToDatetime(tzinfo=timezone.utc)
+        assert before + timedelta(seconds=120) <= scheduled + timedelta(microseconds=1)
+        assert scheduled <= after + timedelta(seconds=120)
         assert world.enqueued == [("fact_review", {"task_type": "fact_review", "user_id": USER, "account_id": ACC,
                                                    "mode": "daily"})]
         digest = hashlib.sha256(defer_key(ACC, world.now).encode()).hexdigest()[:32]
@@ -343,7 +362,7 @@ class TestFactReviewServiceRun:
         await world.seed_state()                                    # as the janitor's enqueue leaves it
         r = rig(world)
         r.service.script.update(
-            kept_twice=_StepResult(wrote_facts=True, counts={CounterField.QUEUED: 1}),
+            kept_twice=writing(_StepResult(counts={CounterField.QUEUED: 1})),
             select=lambda now: [stale_fact()],
             route=AgentResponse.failure("run-1", "consolidation_agent_u1", "provider down"),
         )
@@ -363,10 +382,10 @@ class TestFactReviewServiceRun:
         world = ReviewWorld()
         r = rig(world)
         r.service.script.update(
-            timeouts=_Timeouts(wrote_facts=True), kept_twice=_StepResult(wrote_facts=True),
+            timeouts=writing(_Timeouts()), kept_twice=writing(_StepResult()),
             select=lambda now: [stale_fact()],
             route=AgentResponse.success("run-1", "consolidation_agent_u1", {}),
-            after_pass=_StepResult(wrote_facts=True, counts={CounterField.REVIEWED: 3}),
+            after_pass=writing(_StepResult(counts={CounterField.REVIEWED: 3})),
         )
 
         assert await r.run() == {"status": "completed"}
@@ -379,11 +398,11 @@ class TestFactReviewServiceRun:
         world = ReviewWorld()
         await world.seed_state()
         r = rig(world)
-        r.service.script.update(kept_twice=_StepResult(wrote_facts=True))
+        r.service.script.update(kept_twice=writing(_StepResult()))
         original = r.service._send_next
 
-        async def failing_send(user_id, account_id, now, zone):
-            await original(user_id, account_id, now, zone)
+        async def failing_send(user_id, account_id, now, zone, writes):
+            await original(user_id, account_id, now, zone, writes)
             raise RuntimeError("store unavailable")
 
         r.service._send_next = failing_send  # type: ignore[method-assign]
@@ -394,6 +413,43 @@ class TestFactReviewServiceRun:
         assert r.refreshes == [ACC]
         assert lease_doc(world) is None                             # released in finally
         assert (await state(world)).last_review_at is None
+
+    @pytest.mark.parametrize("step", ["timeouts", "kept_twice", "after_pass", "send"])
+    async def test_a_step_that_writes_a_fact_and_then_raises_still_gets_one_refresh(self, step):
+        world = ReviewWorld()
+        await world.seed_state()
+        r = rig(world)
+
+        def writes_then_fails(writes: Any) -> None:
+            writes.wrote()
+            raise RuntimeError("queue unavailable")
+
+        r.service.script.update(select=lambda now: [stale_fact()],
+                                route=AgentResponse.success("run-1", "consolidation_agent_u1", {}))
+        r.service.script[step] = writes_then_fails
+
+        with pytest.raises(RuntimeError, match="queue unavailable"):
+            await r.run()
+
+        assert r.service.stubs[-1] == step                          # nothing ran after the failing step
+        assert r.refreshes == [ACC]
+        assert lease_doc(world) is None
+        assert (await state(world)).last_review_at is None
+
+    async def test_a_next_send_that_writes_a_fact_and_then_raises_still_gets_one_refresh(self):
+        world = ReviewWorld()
+        r = rig(world)
+
+        def writes_then_fails(writes: Any) -> None:
+            writes.wrote()
+            raise RuntimeError("queue unavailable")
+
+        r.service.script["send"] = writes_then_fails
+
+        with pytest.raises(RuntimeError, match="queue unavailable"):
+            await r.run("next")
+
+        assert r.refreshes == [ACC]
 
     # -------------------------------------------------------------------------------------------- housekeeping
 
@@ -407,7 +463,9 @@ class TestFactReviewServiceRun:
         back = await question(world)
         assert back.status is QuestionStatus.QUEUED and back.queue_key == seeded.queue_key
         assert back.session_id is None and back.appended_at is None
-        assert (await state(world)).current_question_id is None
+        after = await state(world)
+        assert after.current_question_id is None
+        assert after.delivery_failed_on is None                     # housekeeping is no failed delivery of today
         history = await world.session_store.messages(SESSION)
         assert [(m.role, m.parts[0].text) for m in history] == [
             ("user", not_delivered_frame("q1")), ("model", NOT_DELIVERED_REPLY)]
@@ -471,6 +529,20 @@ class TestFactReviewServiceRun:
         assert (await question(world)).status is QuestionStatus.UNANSWERED
         assert (await question(world, "q2")).status is QuestionStatus.ASKED         # asked today: still out
         assert (await state(world)).current_question_id is None
+
+    async def test_an_asked_question_from_an_earlier_day_that_is_not_current_becomes_unanswered_pointer_untouched(self):
+        world = ReviewWorld()
+        await world.seed_question(QuestionStatus.ASKED, asked_at=world.now - timedelta(days=1))
+        await world.seed_question(QuestionStatus.ASKED, question_id="q2", fact_id="f2",
+                                  asked_at=world.now - timedelta(hours=1),
+                                  message_ref=MessageRef(platform="slack", channel_id="D1", message_id="m2"))
+        await world.seed_state(current_question_id="q2", sent_on=today(world), sent=1)
+
+        await rig(world).run()
+
+        assert (await question(world)).status is QuestionStatus.UNANSWERED
+        assert (await question(world, "q2")).status is QuestionStatus.ASKED
+        assert (await state(world)).current_question_id == "q2"     # the pointer names the other one: left as it was
 
     async def test_a_failed_retraction_append_raises_and_leaves_the_question_pending(self):
         world = ReviewWorld()
