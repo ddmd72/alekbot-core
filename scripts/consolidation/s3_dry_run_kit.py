@@ -41,11 +41,12 @@ from src.domain.billing import calculate_cost
 from src.domain.due_fact import DueFact
 from src.domain.email import IndexedEmail, IndexingState
 from src.domain.entities import FactEntity, FactState
-from src.domain.exceptions import FactWriteConflict
+from src.domain.exceptions import FactResolutionError, FactWriteConflict
 from src.domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
 from src.domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot, check_count
 from src.domain.fact_lifecycle_run_guard import run_guard_held
 from src.domain.fact_resolution import resolve_chain
+from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_review_rules import stale_order_key
 from src.domain.fact_update import ParsedFactUpdate
 from src.domain.fact_tool_result import (
@@ -54,6 +55,9 @@ from src.domain.fact_tool_result import (
 from src.domain.fact_update_outcome import FactUpdateOutcome
 from src.domain.fact_write_context import FactWriteContext, as_utc
 from src.domain.pass_actor import PassActor
+from src.domain.prompt_v3.agent_profile import AgentProfile
+from src.domain.prompt_v3.blueprint import Blueprint
+from src.domain.prompt_v3.profile_slot import ProfileToken
 from src.domain.prompt_v3.slot import OwnerType
 from src.domain.prompt_v3.token import Token, TokenCategory, TokenClass, TokenId
 from src.domain.search import EnrichedFact, consolidation_hit
@@ -63,6 +67,8 @@ from src.ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from src.ports.fact_management_port import FactManagementPort
 from src.ports.fact_update_port import FactUpdatePort
 from src.ports.indexed_email_repository import IndexedEmailRepository
+from src.ports.prompt_v3.agent_profile_repository import AgentProfileRepository
+from src.ports.prompt_v3.blueprint_repository import BlueprintRepository
 from src.ports.prompt_v3.token_repository import TokenRepository
 from src.ports.repository import FactRepository
 from src.services.fact_write_service import FactWriteService
@@ -85,6 +91,12 @@ S3_TOKEN_IDS: Tuple[str, ...] = (
     "CONSOLIDATION_TAXONOMY",
     "CONSOLIDATION_TOOLS",
 )
+
+# The token the review pass adds (the review's other token, TAXONOMY, is one of the five above), the review's profile and
+# blueprint (not in Firestore until the S4 rollout, so served from the snapshot), and what `prepare` requires of it.
+REVIEW_TOKEN_IDS: Tuple[str, ...] = ("CONSOLIDATION_LIFECYCLE",)
+REVIEW_AGENT_ID = "consolidation_review"
+REVIEW_PROFILE_TOKEN_IDS: Tuple[str, ...] = ("CONSOLIDATION_TAXONOMY", *REVIEW_TOKEN_IDS)
 
 _ALL_STATES: AbstractSet[FactState] = frozenset(FactState)
 _PRIORITY_RANK = {"critical": 1, "high": 2, "medium": 3, "low": 4, "archival": 5}
@@ -617,6 +629,79 @@ class SnapshotTokenOverlay(TokenRepository):
         raise PermissionError("the snapshot token overlay is read only")
 
 
+def _snapshot_document(snapshot_dir: Path, kind: str, doc_id: str) -> Dict[str, Any]:
+    """A profile or blueprint document from `prompts_snapshot/<kind>/<doc_id>.yaml`; KeyError when it has no file."""
+    path = Path(snapshot_dir) / kind / f"{doc_id}.yaml"
+    if not path.is_file():
+        raise KeyError(f"{kind[:-1].capitalize()} not found in the snapshot: {doc_id}")
+    return dict(_serializer().doc_from_yaml(path.read_text(encoding="utf-8")))
+
+
+class SnapshotProfileOverlay(AgentProfileRepository):
+    """Serves the review's agent profile from `prompts_snapshot/profiles/` (built as `FirestoreAgentProfileRepository`
+    builds one) and every other profile, and every override, from `real`. Read only."""
+
+    def __init__(self, real: AgentProfileRepository, snapshot_dir: Path = SNAPSHOT_DIR,
+                 agent_ids: Sequence[str] = (REVIEW_AGENT_ID,)) -> None:
+        self._real = real
+        self._dir = Path(snapshot_dir)
+        self._ids = tuple(agent_ids)
+
+    async def get_agent_profile(self, agent_id: str) -> AgentProfile:
+        if agent_id not in self._ids:
+            return await self._real.get_agent_profile(agent_id)
+        doc = _snapshot_document(self._dir, "profiles", agent_id)
+        if doc.get("agent_id") != agent_id:
+            raise ValueError(f"snapshot profile file for {agent_id} names agent {doc.get('agent_id')!r}")
+        tokens = {tid: ProfileToken.from_dict(tid, data) for tid, data in (doc.get("tokens") or {}).items()}
+        return AgentProfile(blueprint_id=doc.get("blueprint_id", f"{agent_id}_agent_v1"), tokens=tokens)
+
+    async def get_override_tokens(self, owner_type: OwnerType, owner_id: str) -> Dict[str, ProfileToken]:
+        return await self._real.get_override_tokens(owner_type, owner_id)
+
+    async def set_override_tokens(
+        self, owner_type: OwnerType, owner_id: str, tokens: Dict[str, ProfileToken], clear_ids: Optional[set] = None,
+    ) -> None:
+        raise PermissionError("the snapshot profile overlay is read only")
+
+    async def delete_profile(self, owner_type: OwnerType, owner_value: str) -> None:
+        raise PermissionError("the snapshot profile overlay is read only")
+
+
+class SnapshotBlueprintOverlay(BlueprintRepository):
+    """Serves the review's blueprint from `prompts_snapshot/blueprints/` (built as `FirestoreBlueprintRepository` builds
+    one) and every other blueprint from `real`. Read only."""
+
+    def __init__(self, real: BlueprintRepository, snapshot_dir: Path = SNAPSHOT_DIR,
+                 blueprint_ids: Sequence[str] = ("consolidation_review_v1",)) -> None:
+        self._real = real
+        self._dir = Path(snapshot_dir)
+        self._ids = tuple(blueprint_ids)
+
+    def _load(self, blueprint_id: str) -> Blueprint:
+        doc = _snapshot_document(self._dir, "blueprints", blueprint_id)
+        blueprint = Blueprint(id=doc["blueprint_id"], outer_class=doc["outer_class"], class_order=list(doc["class_order"]))
+        blueprint.validate()
+        return blueprint
+
+    async def get(self, blueprint_id: str) -> Blueprint:
+        return self._load(blueprint_id) if blueprint_id in self._ids else await self._real.get(blueprint_id)
+
+    async def list_all(self) -> List[Blueprint]:
+        listed = await self._real.list_all()
+        served = {bid: self._load(bid) for bid in self._ids}
+        return [served.pop(b.id, b) for b in listed] + list(served.values())
+
+    async def exists(self, blueprint_id: str) -> bool:
+        return blueprint_id in self._ids or await self._real.exists(blueprint_id)
+
+    async def save(self, blueprint: Blueprint) -> None:
+        raise PermissionError("the snapshot blueprint overlay is read only")
+
+    async def delete(self, blueprint_id: str) -> None:
+        raise PermissionError("the snapshot blueprint overlay is read only")
+
+
 # ------------------------------------------------------------------------------------------------ cost
 
 class CostMeter:
@@ -898,6 +983,7 @@ class DryRunKit:
     rows: List[Dict[str, Any]] = field(default_factory=list)
     passes: List[Dict[str, Any]] = field(default_factory=list)
     current_pass: str = ""
+    with_review: bool = False       # the run also runs the review pass: its token, profile and blueprint come from the snapshot
 
     def __post_init__(self) -> None:
         self.meter = CostMeter(self.ledger_path, self.budget_usd)
@@ -907,6 +993,10 @@ class DryRunKit:
         self._service: Any = None
         self.served_tokens: List[Dict[str, str]] = []
         self.overrides_blocked: List[Dict[str, str]] = []
+        self.review_tokens: List[Dict[str, str]] = []
+        self.review_overrides_blocked: List[Dict[str, str]] = []
+        self.recorder: Optional[WriteRecorder] = None
+        self.review_world: Any = None
 
     def close(self) -> None:
         self.meter.close()
@@ -950,6 +1040,7 @@ class DryRunKit:
         adapter = FactManagementAdapter(self.repo, live._embedding, write_service, live._search_enrichment)
         recorder = WriteRecorder(adapter, self)
         agent._fact_management = recorder
+        self.recorder = recorder
         agent._fact_updates = recorder  # the typed path too: a review's writes must not reach the live store
         agent._lifecycle_counters = self.counters
         agent._alert_sink = self.sink
@@ -957,13 +1048,63 @@ class DryRunKit:
         if getattr(agent, "_indexed_email_repo", None) is not None:
             self.emails = NoWriteIndexedEmails(agent._indexed_email_repo)
             agent._indexed_email_repo = self.emails
-        service.token_repo = SnapshotTokenOverlay(service.token_repo, service.security_port, self.snapshot_dir)
+        token_ids = (*S3_TOKEN_IDS, *REVIEW_TOKEN_IDS) if self.with_review else S3_TOKEN_IDS
+        service.token_repo = SnapshotTokenOverlay(service.token_repo, service.security_port, self.snapshot_dir, token_ids)
+        if self.with_review:
+            service.profile_repo = SnapshotProfileOverlay(service.profile_repo, self.snapshot_dir)
+            service.blueprint_repo = SnapshotBlueprintOverlay(service.blueprint_repo, self.snapshot_dir)
         service.invalidate_cache()
         self._service = service
         self._wrap_calls(agent)
         self._wrap_passes(agent)
         self._wrap_review_cluster(agent)
         self._installed = True
+
+    async def stage_stale(self, ids: Sequence[str], at: Optional[datetime] = None) -> List[str]:
+        """Stale the current facts `ids` in the overlay, with the fields the janitor writes (`stale_fields`): the review's
+        input, since the live janitor is log-only and stales nothing. The live store is untouched; the facts' own
+        `expires_at` stays as stored (a fact with none is staged as due at `at`). A fact that is not current, or has no
+        document, raises ValueError before anything is staged. `at` is when the janitor ran (default: now); use the
+        review's clock. Returns the ids."""
+        if self.repo is None:
+            raise RuntimeError("install the kit before staging stale facts")
+        moment = as_utc(at) if at is not None else datetime.now(timezone.utc)
+        staged: List[Tuple[DueFact, Dict[str, Any]]] = []
+        for fact_id in dict.fromkeys(ids):
+            fact = await self.repo.get_fact_by_id(fact_id)
+            if fact is None:
+                raise ValueError(f"fact {fact_id} has no document: it cannot be staged stale")
+            try:
+                stored = await self.repo.resolve_current(fact_id, fact.account_id, frozenset({FactState.CURRENT}))
+            except FactResolutionError:
+                stored = None
+            if stored is None or stored.fact.id != fact_id:
+                raise ValueError(f"fact {fact_id} is not current: it cannot be staged stale")
+            due = DueFact(
+                fact_id=fact_id, account_id=fact.account_id, expires_at=stored.fact.expires_at or moment,
+                expiry_kind=stored.fact.expiry_kind, update_time=stored.update_time,
+                lifecycle_events=list(stored.fact.lifecycle_events),
+            )
+            staged.append((due, stale_fields(due, moment)))
+        for due, fields in staged:
+            await self.repo.stale_due_fact(due, fields)
+        return [due.fact_id for due, _ in staged]
+
+    def review_stand_ins(
+        self, *, account_repo: Any, user_repo: Any, live_sessions: Any = None, clock: Any = None,
+    ) -> Any:
+        """The stand-ins around this kit's overlay store and write recorder for a review run (`review_kit_stand_ins`),
+        with the real `FactAnswerService` over them. Their record joins the report's `review` section."""
+        from scripts.consolidation.review_kit_stand_ins import build_review_stand_ins
+
+        if self.repo is None or self.recorder is None:
+            raise RuntimeError("install the kit before building the review's stand-ins")
+        options = {} if clock is None else {"clock": clock}
+        self.review_world = build_review_stand_ins(
+            repo=self.repo, fact_updates=self.recorder, counters=self.counters, account_repo=account_repo,
+            user_repo=user_repo, live_sessions=live_sessions, **options,
+        )
+        return self.review_world
 
     def current_in_overlay(self, doc: Optional[FactEntity]) -> Optional[FactEntity]:
         """`doc` followed through the overlay to the document that is current now; None when the run closed it for good
@@ -1027,24 +1168,29 @@ class DryRunKit:
 
         agent._call_llm = counted
 
-    async def prepare(self, user_id: str, account_id: str) -> None:
-        """Check, before any model call, that the prompt will carry the snapshot text of the five S3 tokens.
-
-        All five load through the overlay (a missing file, an id mismatch or a security refusal raises here instead of the
-        assembly service dropping the token), the agent's profile must list each, and no account or user override may
-        replace one (the profile's `non_overridable` flag blocks an override in production; those are recorded). The tokens
-        served (id and sha256 of the body) go into the report."""
-        overlay = self._service.token_repo
+    async def _serve(self, token_ids: Sequence[str]) -> Dict[str, Token]:
+        """The tokens through the overlay; one that cannot be served (a missing file, an id mismatch, a security refusal)
+        raises here instead of the assembly service dropping it from the prompt."""
         served: Dict[str, Token] = {}
-        for token_id in S3_TOKEN_IDS:
+        for token_id in token_ids:
             try:
-                served[token_id] = await overlay.get(TokenId(token_id))
+                served[token_id] = await self._service.token_repo.get(TokenId(token_id))
             except Exception as exc:
                 raise SnapshotTokenError(f"snapshot token {token_id} cannot be served: {type(exc).__name__}: {exc}") from exc
-        profile = await self._service.profile_repo.get_agent_profile("consolidation")
-        absent = [token_id for token_id in S3_TOKEN_IDS if token_id not in profile.tokens]
+        return served
+
+    @staticmethod
+    def _require_listed(agent_id: str, profile: Any, token_ids: Sequence[str]) -> None:
+        absent = [token_id for token_id in token_ids if token_id not in profile.tokens]
         if absent:
-            raise SnapshotTokenError(f"the consolidation profile does not list {', '.join(absent)}: the prompt would lack them")
+            raise SnapshotTokenError(f"the {agent_id} profile does not list {', '.join(absent)}: the prompt would lack them")
+
+    async def _overrides_checked(
+        self, profile: Any, served: Dict[str, Token], user_id: str, account_id: str,
+    ) -> List[Dict[str, str]]:
+        """The account and user overrides that would replace a served token: refused, unless the profile's
+        `non_overridable` flag blocks them in production (those are returned for the report)."""
+        overlay = self._service.token_repo
         blocked: List[Dict[str, str]] = []
         for level, owner_id in ((OwnerType.ACCOUNT, account_id), (OwnerType.USER, user_id)):
             if not owner_id:
@@ -1065,11 +1211,51 @@ class DryRunKit:
                             f"a {level.value} override ({override_id}) would replace snapshot token {token_id}: "
                             "the dry run would not test the snapshot text"
                         )
-        self.overrides_blocked = blocked
-        self.served_tokens = [
+        return blocked
+
+    @staticmethod
+    def _digests(served: Dict[str, Token]) -> List[Dict[str, str]]:
+        return [
             {"id": token_id, "sha256": hashlib.sha256(token.content.encode("utf-8")).hexdigest()}
             for token_id, token in served.items()
         ]
+
+    async def _prepare_review(self, user_id: str, account_id: str) -> None:
+        """The same check for the review pass: its token serves, its profile (from the snapshot) lists the taxonomy and the
+        lifecycle token, its blueprint has a section for each (a token whose class the blueprint does not list is not
+        rendered), and no override replaces either."""
+        served = await self._serve(REVIEW_PROFILE_TOKEN_IDS)
+        profile = await self._service.profile_repo.get_agent_profile(REVIEW_AGENT_ID)
+        self._require_listed(REVIEW_AGENT_ID, profile, REVIEW_PROFILE_TOKEN_IDS)
+        try:
+            blueprint = await self._service.blueprint_repo.get(profile.blueprint_id)
+        except Exception as exc:
+            raise SnapshotTokenError(
+                f"the {REVIEW_AGENT_ID} blueprint {profile.blueprint_id} cannot be read: {type(exc).__name__}: {exc}"
+            ) from exc
+        unplaced = [token_id for token_id, token in served.items() if str(token.class_) not in blueprint.class_order]
+        if unplaced:
+            raise SnapshotTokenError(
+                f"the blueprint {profile.blueprint_id} has no section for {', '.join(unplaced)}: the review prompt would lack them"
+            )
+        self.review_overrides_blocked = await self._overrides_checked(profile, served, user_id, account_id)
+        self.review_tokens = self._digests({token_id: served[token_id] for token_id in REVIEW_TOKEN_IDS})
+
+    async def prepare(self, user_id: str, account_id: str) -> None:
+        """Check, before any model call, that the prompt will carry the snapshot text of the five S3 tokens.
+
+        All five load through the overlay (a missing file, an id mismatch or a security refusal raises here instead of the
+        assembly service dropping the token), the agent's profile must list each, and no account or user override may
+        replace one (the profile's `non_overridable` flag blocks an override in production; those are recorded). The tokens
+        served (id and sha256 of the body) go into the report. A kit built `with_review` makes the same check for the review
+        pass (`_prepare_review`): its lifecycle token, profile and blueprint come from the snapshot."""
+        served = await self._serve(S3_TOKEN_IDS)
+        profile = await self._service.profile_repo.get_agent_profile("consolidation")
+        self._require_listed("consolidation", profile, S3_TOKEN_IDS)
+        self.overrides_blocked = await self._overrides_checked(profile, served, user_id, account_id)
+        self.served_tokens = self._digests(served)
+        if self.with_review:
+            await self._prepare_review(user_id, account_id)
         self._prepared = True
 
     def _wrap_passes(self, agent: Any) -> None:
@@ -1204,6 +1390,8 @@ class DryRunKit:
             },
             "served_tokens": self.served_tokens,
             "overrides_blocked": self.overrides_blocked,
+            "review_tokens": self.review_tokens,
+            "review_overrides_blocked": self.review_overrides_blocked,
             "passes": self.passes,
             "reported_date_forms": {"per_pass": {k: dict(v) for k, v in forms.items()}, "total": dict(total)},
             "cleanup_creates_without_derived_from": {"per_pass": dict(undated), "total": sum(undated.values())},
@@ -1212,6 +1400,7 @@ class DryRunKit:
             "email_writes": dict(Counter(w["kind"] for w in (self.emails.writes if self.emails else []))),
             "counters": {"expiry_tool_errors": self.counters.expiry_tool_errors},
             "alerts": self.sink.posts,
+            "review": self.review_world.report() if self.review_world is not None else None,
         }
 
     def write_report(self, path: Path = DEFAULT_REPORT) -> Path:
