@@ -128,6 +128,7 @@ async def main():
             drive_task_queue=app.container.drive_task_queue,
             drive_transcribe_switch_on=app.container.drive_transcribe_switch_on,
             cabinet_facts=app.cabinet_facts,
+            fact_review_store=app.container.fact_review_store,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

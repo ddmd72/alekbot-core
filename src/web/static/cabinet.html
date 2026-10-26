@@ -1058,6 +1058,10 @@
             </div>
           </div>
 
+          <div id="review-questions" class="hidden"></div>
+
+          <div id="state-chips" class="filter-chips reveal" style="margin-bottom: 24px"></div>
+
           <div id="domain-chips" class="filter-chips reveal"></div>
 
           <div id="facts-container" class="bento-grid">
@@ -1595,6 +1599,19 @@
           "gmail.in_your_tz": "in your timezone",
           "toast.daily_review_saved": "Daily review saved",
           "toast.daily_review_failed": "Failed to save daily review settings",
+          "memory.state_current": "Current",
+          "memory.state_stale": "Waiting for review",
+          "memory.state_closed": "Set aside lately",
+          "memory.closed_empty": "Nothing was set aside in the last 30 days.",
+          "memory.closed_archived": "No longer true",
+          "memory.closed_invalidated": "Never was true",
+          "memory.closed_on": "Set aside {date}",
+          "questions.title": "Questions",
+          "questions.subtitle": "Facts I could not settle on my own. Tell me what is still true.",
+          "questions.status_current": "Asked now",
+          "questions.status_sent": "Asked on {date}, no answer yet",
+          "questions.status_waiting": "Waiting in line",
+          "questions.waiting_since": "waiting since {date}",
         },
         uk: {
           "nav.integrations": "Інтеграції",
@@ -1714,6 +1731,19 @@
           "gmail.in_your_tz": "у вашому часовому поясі",
           "toast.daily_review_saved": "Налаштування збережено",
           "toast.daily_review_failed": "Не вдалося зберегти налаштування",
+          "memory.state_current": "Поточні",
+          "memory.state_stale": "Очікують перевірки",
+          "memory.state_closed": "Нещодавно відкладені",
+          "memory.closed_empty": "За останні 30 днів нічого не відкладено.",
+          "memory.closed_archived": "Більше не так",
+          "memory.closed_invalidated": "Ніколи не було так",
+          "memory.closed_on": "Відкладено {date}",
+          "questions.title": "Питання",
+          "questions.subtitle": "Факти, у яких я не зміг розібратися сам. Підкажіть, що досі правда.",
+          "questions.status_current": "Запитано зараз",
+          "questions.status_sent": "Запитано {date}, відповіді ще немає",
+          "questions.status_waiting": "Чекає в черзі",
+          "questions.waiting_since": "очікує з {date}",
         },
         fr: {
           "nav.integrations": "Int\u00e9grations",
@@ -1833,6 +1863,19 @@
           "gmail.in_your_tz": "dans votre fuseau horaire",
           "toast.daily_review_saved": "Param\u00e8tres enregistr\u00e9s",
           "toast.daily_review_failed": "\u00c9chec de la sauvegarde",
+          "memory.state_current": "Actuels",
+          "memory.state_stale": "En attente de vérification",
+          "memory.state_closed": "Mis de côté récemment",
+          "memory.closed_empty": "Rien n'a été mis de côté ces 30 derniers jours.",
+          "memory.closed_archived": "N'est plus vrai",
+          "memory.closed_invalidated": "N'a jamais été vrai",
+          "memory.closed_on": "Mis de côté le {date}",
+          "questions.title": "Questions",
+          "questions.subtitle": "Des faits que je n'ai pas pu trancher seul. Dites-moi ce qui est toujours vrai.",
+          "questions.status_current": "Posée maintenant",
+          "questions.status_sent": "Posée le {date}, sans réponse",
+          "questions.status_waiting": "En file d'attente",
+          "questions.waiting_since": "en attente depuis le {date}",
         },
         es: {
           "nav.integrations": "Integraciones",
@@ -1952,6 +1995,19 @@
           "gmail.in_your_tz": "en tu zona horaria",
           "toast.daily_review_saved": "Ajustes guardados",
           "toast.daily_review_failed": "Error al guardar los ajustes",
+          "memory.state_current": "Actuales",
+          "memory.state_stale": "Pendientes de revisión",
+          "memory.state_closed": "Apartados hace poco",
+          "memory.closed_empty": "No se apartó nada en los últimos 30 días.",
+          "memory.closed_archived": "Ya no es cierto",
+          "memory.closed_invalidated": "Nunca fue cierto",
+          "memory.closed_on": "Apartado el {date}",
+          "questions.title": "Preguntas",
+          "questions.subtitle": "Hechos que no pude resolver por mi cuenta. Dime qué sigue siendo cierto.",
+          "questions.status_current": "Preguntada ahora",
+          "questions.status_sent": "Preguntada el {date}, sin respuesta",
+          "questions.status_waiting": "En espera",
+          "questions.waiting_since": "esperando desde el {date}",
         },
       };
 
@@ -2472,6 +2528,7 @@
 
       /* ── Facts state ─────────────────────────────────── */
       let factsMode = "idle",
+        factsState = "current",
         browseCursor = null,
         browseDomain = "all",
         browseKnownDomains = [];
@@ -2490,7 +2547,160 @@
         browseDomain = "all";
         browseKnownDomains = [];
         factsMode = "browse";
-        await browseLoad(true);
+        renderStateChips();
+        loadReviewQuestions();
+        if (factsState === "closed") await closedLoad();
+        else await browseLoad(true);
+      }
+
+      /* ── Fact states and the review's questions ──────── */
+      const FACT_STATE_KEYS = {
+        current: "memory.state_current",
+        stale: "memory.state_stale",
+        closed: "memory.state_closed",
+      };
+
+      function renderStateChips() {
+        document.getElementById("state-chips").innerHTML = Object.keys(
+          FACT_STATE_KEYS,
+        )
+          .map(
+            (st) =>
+              `<button data-state="${st}" onclick="setFactsState(this.dataset.state)" class="chip ${st === factsState ? "active" : ""}">${escapeHtml(t(FACT_STATE_KEYS[st]))}</button>`,
+          )
+          .join("");
+      }
+
+      function setFactsState(st) {
+        if (!FACT_STATE_KEYS[st] || st === factsState) return;
+        factsState = st;
+        browseCursor = null;
+        browseDomain = "all";
+        allFacts = [];
+        renderStateChips();
+        document
+          .getElementById("domain-chips")
+          .classList.toggle("hidden", st === "closed");
+        if (st === "closed") closedLoad();
+        else browseLoad(true);
+      }
+
+      function shortDate(iso) {
+        return iso
+          ? new Date(iso).toLocaleDateString(_currentLang, {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+            })
+          : "";
+      }
+
+      async function closedLoad() {
+        const container = document.getElementById("facts-container");
+        const countEl = document.getElementById("facts-count");
+        document.getElementById("facts-pagination").innerHTML = "";
+        try {
+          const res = await fetch(`${API}/api/user/facts/recently-closed`, {
+            credentials: "include",
+          });
+          if (!res.ok) throw new Error("Failed to load facts");
+          const data = await res.json();
+          const facts = data.facts || [];
+          document.getElementById("domain-chips").classList.add("hidden");
+          if (facts.length === 0) {
+            container.innerHTML = `<div style="grid-column: 1/-1; text-align:center; padding: 64px 20px;">
+                                     <h3 style="color:var(--text-muted); font-weight:500;">${escapeHtml(t("memory.closed_empty"))}</h3>
+                                   </div>`;
+            countEl.textContent = "";
+            return;
+          }
+          container.innerHTML = facts
+            .map((f) => {
+              const why = t(
+                f.state === "invalidated"
+                  ? "memory.closed_invalidated"
+                  : "memory.closed_archived",
+              );
+              const when = t("memory.closed_on").replace(
+                "{date}",
+                shortDate(f.closed_at),
+              );
+              return `
+        <div class="card fact-card reveal visible">
+          <div class="card-body" style="display:flex; flex-direction:column; height:100%;">
+            <div class="fact-text">${escapeHtml(f.text)}</div>
+            <div class="fact-meta">
+              <span class="fact-domain-badge">${escapeHtml(why)}</span>
+              <span style="color:var(--text-muted); font-size:13px;">${escapeHtml(when)}</span>
+            </div>
+          </div>
+        </div>`;
+            })
+            .join("");
+          countEl.textContent = `${facts.length}`;
+        } catch (e) {
+          showToast("Error loading facts: " + e.message, "error");
+        }
+      }
+
+      async function loadReviewQuestions() {
+        const box = document.getElementById("review-questions");
+        try {
+          const res = await fetch(`${API}/api/user/facts/review-queue`, {
+            credentials: "include",
+          });
+          if (!res.ok) {
+            box.classList.add("hidden");
+            return;
+          }
+          const data = await res.json();
+          renderReviewQuestions(data.questions || []);
+        } catch {
+          box.classList.add("hidden");
+        }
+      }
+
+      function reviewStatusLine(q) {
+        if (q.status === "current") return t("questions.status_current");
+        if (q.status === "sent")
+          return t("questions.status_sent").replace(
+            "{date}",
+            shortDate(q.asked_at),
+          );
+        return `${t("questions.status_waiting")}, ${t("questions.waiting_since").replace("{date}", shortDate(q.waiting_since))}`;
+      }
+
+      function renderReviewQuestions(questions) {
+        const box = document.getElementById("review-questions");
+        if (questions.length === 0) {
+          box.classList.add("hidden");
+          box.innerHTML = "";
+          return;
+        }
+        const rows = questions
+          .map((q) => {
+            const domain = q.domain
+              ? `<span class="fact-domain-badge">${escapeHtml(domainLabel(q.domain))}</span>`
+              : "";
+            return `
+        <div class="card fact-card" data-question-id="${escapeHtml(q.question_id)}" style="min-height:0; margin-bottom:16px;">
+          <div class="card-body">
+            <div class="fact-text">${escapeHtml(q.text)}</div>
+            <div class="fact-meta">
+              ${domain}
+              <span style="color:var(--text-muted); font-size:13px;">${escapeHtml(reviewStatusLine(q))}</span>
+            </div>
+          </div>
+        </div>`;
+          })
+          .join("");
+        box.innerHTML = `
+        <div style="margin-bottom: 40px;">
+          <h2 style="margin-bottom:4px;">${escapeHtml(t("questions.title"))} (${questions.length})</h2>
+          <p style="color:var(--text-muted); margin-bottom:16px;">${escapeHtml(t("questions.subtitle"))}</p>
+          ${rows}
+        </div>`;
+        box.classList.remove("hidden");
       }
 
       async function browseLoad(isFirst = false) {
@@ -2507,8 +2717,9 @@
           const cp = browseCursor
             ? `&cursor=${encodeURIComponent(browseCursor)}`
             : "";
+          const sp = factsState === "stale" ? "&state=stale" : "";
           const res = await fetch(
-            `${API}/api/user/facts/browse?limit=50${dp}${cp}`,
+            `${API}/api/user/facts/browse?limit=50${sp}${dp}${cp}`,
             { credentials: "include" },
           );
           if (!res.ok) throw new Error("Failed to load facts");
@@ -2546,7 +2757,7 @@
 
         // Ensure styling updates visually right away
         document
-          .querySelectorAll(".chip")
+          .querySelectorAll("#domain-chips .chip")
           .forEach((c) => c.classList.remove("active"));
         const chip = document.getElementById(`chip-${domain}`);
         if (chip) chip.classList.add("active");

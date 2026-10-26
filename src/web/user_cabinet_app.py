@@ -15,9 +15,14 @@ from ..services.cabinet_fact_service import CabinetFactService
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
+from ..domain.entities import FactEntity
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
+from ..domain.fact_review_digest import DIGEST_LIMIT, digest_facts, last_actor
+from ..domain.fact_review_overview import listable_state, queue_entries, set_aside_since, user_questions
+from ..domain.pass_actor import PassActor
 from ..ports.user_repository import UserRepository
 from ..ports.repository import FactRepository
+from ..ports.fact_review_store import FactReviewStore
 from ..ports.embedding_service import EmbeddingService
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
@@ -64,6 +69,7 @@ def create_user_cabinet_blueprint(
     drive_task_queue: Optional[TaskQueue] = None,
     drive_transcribe_switch_on: bool = False,
     cabinet_facts: Optional[CabinetFactService] = None,
+    fact_review_store: Optional[FactReviewStore] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -790,7 +796,10 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/user/facts/browse", methods=["GET"])
     @auth_required
     async def browse_facts():
-        """Paginated facts for the Cabinet browser. Supports domain filter + cursor."""
+        """Paginated facts for the Cabinet browser. Supports domain filter, state filter (current | stale) + cursor."""
+        state = listable_state(request.args.get("state"))
+        if state is None:
+            return jsonify({"error": "state must be current or stale"}), 400
         try:
             limit = min(int(request.args.get("limit", 100)), 500)
             cursor = request.args.get("cursor") or None
@@ -801,6 +810,7 @@ def create_user_cabinet_blueprint(
                 limit=limit,
                 cursor_doc_id=cursor,
                 domain=domain,
+                state=state,
             )
             items = [
                 {
@@ -808,13 +818,77 @@ def create_user_cabinet_blueprint(
                     "text": f.text,
                     "domain": f.domain.value if f.domain else None,
                     "type": f.type.value if f.type else None,
+                    "state": f.state.value,
                     "created_at": f.created_at.isoformat() if f.created_at else None,
+                    "stale_since": f.stale_since.isoformat() if f.stale_since else None,
                 }
                 for f in facts
             ]
             return jsonify({"facts": items, "next_cursor": next_cursor}), 200
         except Exception as e:
             logger.error(f"Error browsing facts: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/facts/recently-closed", methods=["GET"])
+    @auth_required
+    async def recently_closed_facts():
+        """Facts the review or the owner set aside lately (archived or invalidated), newest closure first. Read-only."""
+        try:
+            closed = await fact_repo.get_recently_closed(
+                g.account_id, since=set_aside_since(datetime.now(timezone.utc)), limit=DIGEST_LIMIT,
+            )
+            items = [
+                {
+                    "id": f.id,
+                    "text": f.text,
+                    "domain": f.domain.value if f.domain else None,
+                    "state": f.state.value,
+                    "closed_at": f.valid_to.isoformat() if f.valid_to else None,
+                    "actor": last_actor(f),
+                }
+                for f in digest_facts(closed)
+            ]
+            return jsonify({"facts": items}), 200
+        except Exception as e:
+            logger.error(f"Error listing recently closed facts: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    async def _question_fact(account_id: str, fact_id: str) -> Optional[FactEntity]:
+        """The fact a question is about as it stands now (followed forward as the owner's answer follows it), or None."""
+        try:
+            stored = await fact_repo.resolve_current(fact_id, account_id, PassActor.OWNER.accepts)
+        except FactResolutionError:
+            return None
+        return stored.fact if stored is not None else None
+
+    @bp.route("/api/user/facts/review-queue", methods=["GET"])
+    @auth_required
+    async def review_queue():
+        """The user's open memory-review questions: the one out now, those sent and unanswered, then the queue."""
+        if fact_review_store is None:
+            return jsonify({"error": "Memory review not configured"}), 501
+        try:
+            mine = user_questions(await fact_review_store.questions_for_account(g.account_id), g.account_id, g.user_id)
+            state = await fact_review_store.get_state(g.account_id)
+            found = await asyncio.gather(*(_question_fact(g.account_id, q.fact_id) for q in mine))
+            facts = {q.fact_id: fact for q, fact in zip(mine, found) if fact is not None}
+            entries = queue_entries(state, mine, facts, g.account_id)
+            return jsonify({
+                "questions": [
+                    {
+                        "question_id": e.question_id,
+                        "text": e.text,
+                        "domain": e.domain,
+                        "reported_date": e.reported_date.isoformat() if e.reported_date else None,
+                        "waiting_since": e.waiting_since.isoformat(),
+                        "asked_at": e.asked_at.isoformat() if e.asked_at else None,
+                        "status": e.place,
+                    }
+                    for e in entries
+                ],
+            }), 200
+        except Exception as e:
+            logger.error(f"Error listing review questions: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
     @bp.route("/api/user/facts/search", methods=["POST"])
