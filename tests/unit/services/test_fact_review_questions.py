@@ -495,6 +495,9 @@ class TestClosedWhilePending:
         assert closed.status is QuestionStatus.CLOSED and closed.answer is AnswerKind.STILL_TRUE
         assert closed.message_ref is None                           # the close came first: the ref is not kept
         assert len(next_tasks(world)) == 1                          # the close's release; the sender adds none
+        # The owner saw it: no not-delivered pair, and it counts as sent (reviewer, T8d1 review: beyond-plan items 3, 4).
+        assert [text for _, text in await history(world)] == [review_frame("q1"), question_text(posted(world)[0])]
+        assert (await day_row(world)).questions_sent == 1
         world.interactive.post = post  # type: ignore[method-assign]
 
         await r.run("next")
@@ -537,7 +540,9 @@ class TestClosedWhilePending:
         assert posted(world) == []
         assert (await stored(world, "q1")).status is QuestionStatus.CLOSED
         assert (await history(world))[2:] == [("user", not_delivered_frame("q1")), ("model", NOT_DELIVERED_REPLY)]
+        assert (await history(world))[0] == ("user", review_frame("q1"))
         assert len(next_tasks(world)) == 1
+        assert await day_row(world) is None          # neither sent nor a failed delivery (reviewer, T8d1 review: item 2)
 
 
 # ------------------------------------------------------------------------------------------------ a crash after the post

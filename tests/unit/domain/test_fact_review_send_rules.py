@@ -100,5 +100,7 @@ async def test_the_store_marks_a_retraction_once():
     assert await world.review_store.mark_retracted("q1")
     stored = (await world.review_store.get_questions(["q1"]))[0]
     assert stored.status is QuestionStatus.PENDING and stored.appended_at is None
+    raw = world.question_docs["q1"]                  # the stored document itself (reviewer, T8d1 review)
+    assert raw["status"] == "pending" and raw["appended_at"] is None and raw["session_id"] == stored.session_id
     assert not await world.review_store.mark_retracted("q1")
     assert not await world.review_store.mark_retracted("missing")
