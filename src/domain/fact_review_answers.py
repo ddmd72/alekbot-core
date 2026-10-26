@@ -11,7 +11,7 @@ from .fact_review_answer_change import AnswerChange
 from .fact_review_answer_kind import AnswerKind
 from .fact_review_question import AnswerSource, FactReviewQuestion
 from .fact_review_reasons import answer_reason, history_reason
-from .fact_review_rules import confirmed_expiry, fallback_fields, fallback_revives, is_dated_plan
+from .fact_review_rules import confirmed_expiry, fallback_fields, fallback_sets_aside, is_dated_plan
 from .fact_update import ParsedFactUpdate
 from .fact_write_context import FactWriteContext, as_utc, reviews_stored_memory
 from .interactive_message import InteractiveMessage
@@ -51,6 +51,11 @@ def deciding_answer(raw: object) -> Optional[AnswerKind]:
     except ValueError:
         return None
     return kind if kind in DECIDING_ANSWERS else None
+
+
+def option_id(kind: AnswerKind) -> str:
+    """The id of the option that stands for the answer `kind` (what `option_answer` reads back)."""
+    return kind.value
 
 
 def option_answer(option_id: str) -> Optional[AnswerKind]:
@@ -137,7 +142,7 @@ def answer_closes_fact(kind: AnswerKind, question: FactReviewQuestion) -> bool:
     """Whether the owner's answer `kind` sets the question's fact aside (archived or invalidated): `ended` and `never`
     do; `still_true` does not; `dont_know` does when the question's fallback is to archive. What the digest tells him."""
     if kind is AnswerKind.DONT_KNOW:
-        return not fallback_revives(question)
+        return fallback_sets_aside(question)
     return kind is not AnswerKind.STILL_TRUE
 
 

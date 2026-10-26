@@ -12,6 +12,8 @@ from .local_time import local_date
 from .memory_write_lease import defer_bucket
 
 FACT_REVIEW_TASK: Final[str] = "fact_review"
+# The Cloud Tasks dispatch deadline of a `fact_review` task, whoever enqueues it: a pass may run for most of it.
+REVIEW_DEADLINE_S: Final[int] = 1800
 
 ReviewMode = Literal["daily", "next"]
 REVIEW_MODES: Final[frozenset[str]] = frozenset({"daily", "next"})

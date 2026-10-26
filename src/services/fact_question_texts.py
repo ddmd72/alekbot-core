@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Callable, Mapping, Optional, Tuple
 
-from ..domain.fact_lifecycle_day import CounterField
+from ..domain.fact_lifecycle_day import CounterField, counter_day
 from ..domain.fact_review_language import (
     LABEL_KEYS,
     fact_question_message,
@@ -93,6 +93,12 @@ class FactQuestionTexts:
             await self._count_fallback(account_id)
         return MappingProxyType({key: self._localization.get_ui_string(language, UIMessage(key)) for key in LABEL_KEYS})
 
+    async def ui_labels(self, user_id: str) -> Mapping[str, str]:
+        """Every text of `LABEL_KEYS` in the user's UI language: what the Cabinet shows, which is not a message of the
+        review (no message language, no cached labels, nothing counted)."""
+        language = await self._language.resolve_ui_language(user_id)
+        return MappingProxyType({key: self._localization.get_ui_string(language, UIMessage(key)) for key in LABEL_KEYS})
+
     async def message_for(self, question: FactReviewQuestion, user_id: str, account_id: str) -> InteractiveMessage:
         """The message that asks the owner about the question's fact, in the message language."""
         return fact_question_message(question, await self.labels_for(user_id, account_id))
@@ -123,7 +129,7 @@ class FactQuestionTexts:
 
     async def _count_fallback(self, account_id: str) -> None:
         try:
-            await self._counters.add(account_id, self._clock().astimezone(timezone.utc).date(), {CounterField.LABELS_FALLBACK: 1})
+            await self._counters.add(account_id, counter_day(self._clock()), {CounterField.LABELS_FALLBACK: 1})
         except Exception as exc:
             logger.warning(
                 "[FactQuestionTexts] labels_fallback not counted for account %s: %s", account_id[:8], type(exc).__name__,

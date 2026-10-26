@@ -4,12 +4,14 @@ and when a delivered question must first be completed.
 A reply binds to a question only through the question's message ref (the store finds the question by it), so the rules
 here start from a question that was found. Reading the reply for a digit is the question message's (`digit_answer`); the
 path is decided from the question and that reading."""
+from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
 from .fact_answer_result import AnswerResult
 from .fact_review_answer_kind import AnswerKind
 from .fact_review_question import FactReviewQuestion, QuestionStatus
+from .messaging import MessageRef
 from .ui_messages import UIMessage
 
 
@@ -27,6 +29,47 @@ def reply_path(question: FactReviewQuestion, digit: Optional[AnswerKind]) -> Opt
     if not question.answerable:
         return None
     return ReplyPath.DIGIT if digit is not None else ReplyPath.WORDS
+
+
+class ClickPath(str, Enum):
+    OPEN = "open"        # the question is open and the click is on its message: the answer is applied
+    CLOSED = "closed"    # the question is closed: the click shows its existing answer, nothing is written
+    IGNORED = "ignored"  # the click is on another message than the question's: nothing happens
+
+
+def click_path(question: FactReviewQuestion, message_ref: MessageRef) -> ClickPath:
+    """The path of a click on the message `message_ref`. An open question takes it only on the message it was posted at; a
+    closed one also when it has no stored ref (closed during its own post), which the first click then heals."""
+    if question.is_open:
+        return ClickPath.OPEN if question.message_ref == message_ref else ClickPath.IGNORED
+    return ClickPath.CLOSED if question.message_ref in (None, message_ref) else ClickPath.IGNORED
+
+
+class ClickShow(str, Enum):
+    CHOSEN = "chosen"      # the answer was applied: the message shows the chosen option
+    KEPT = "kept"          # the fact changed or another writer won: the options stay, with a note
+    CLOSED = "closed"      # the question closed meanwhile: it is read again and shown as closed
+    NOTHING = "nothing"    # nothing is shown: the write was refused, or the question is not this owner's
+
+
+@dataclass(frozen=True)
+class ClickOutcome:
+    """What a click's apply result comes to on the message: what to show, and the note when it keeps the options."""
+
+    show: ClickShow
+    note: Optional[UIMessage] = None
+
+
+def click_outcome(result: AnswerResult) -> ClickOutcome:
+    """What the owner's click shows once `apply` has come to `result`."""
+    if result is AnswerResult.APPLIED:
+        return ClickOutcome(ClickShow.CHOSEN)
+    changed = fact_changed_note(result)
+    if changed is not None:
+        return ClickOutcome(ClickShow.KEPT, changed)
+    if result is AnswerResult.NOT_OPEN:
+        return ClickOutcome(ClickShow.CLOSED)
+    return ClickOutcome(ClickShow.NOTHING)
 
 
 def needs_completing(question: FactReviewQuestion) -> bool:

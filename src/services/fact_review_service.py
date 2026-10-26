@@ -21,7 +21,8 @@ from ..domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStatus
 from ..domain.entities import FactEntity
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
 from ..domain.fact_lifecycle import REVIEW_ACCEPTS
-from ..domain.fact_lifecycle_day import CounterField
+from ..domain.fact_lifecycle_alerts import revive_alert
+from ..domain.fact_lifecycle_day import CounterField, counter_day
 from ..domain.fact_review_after_pass import after_pass
 from ..domain.fact_review_ask import AskRequest
 from ..domain.fact_review_digest import (
@@ -39,7 +40,7 @@ from ..domain.fact_review_rules import (
     digest_due,
     due_timeouts,
     fallback_fields,
-    fallback_revives,
+    fallback_sets_aside,
     kept_twice,
     kept_twice_fallback,
     kept_twice_fields,
@@ -67,6 +68,7 @@ from ..domain.fact_review_task import (
 )
 from ..domain.fact_review_task_keys import (
     FACT_REVIEW_TASK,
+    REVIEW_DEADLINE_S,
     REVIEW_MODES,
     ReviewMode,
     defer_key,
@@ -99,7 +101,6 @@ if TYPE_CHECKING:
     from .owner_timezone_resolver import OwnerTimezoneResolver
     from .user_notification_service import UserNotificationService
 
-_DEFERRAL_DEADLINE_S = 1800  # the Cloud Tasks dispatch deadline of a deferred run, as ConsolidationService's
 _MARGIN_S = LEASE_MARGIN.total_seconds()
 _SENDER = "fact_review_service"
 # The consolidation agent's task name (`Intent.REVIEW_STALE_FACTS`; a literal, as ConsolidationService's own task names,
@@ -288,7 +289,7 @@ class FactReviewService:
             FACT_REVIEW_TASK,
             review_payload(user_id, account_id, "daily"),
             delay_seconds=LEASE_BUSY_RETRY_DELAY_S,
-            deadline_seconds=_DEFERRAL_DEADLINE_S,
+            deadline_seconds=REVIEW_DEADLINE_S,
             dedup_key=defer_key(account_id, now),
         )
         logger.info(f"⏳ [FactReview] memory-write lease busy: deferred the review of account {account_id[:8]}")
@@ -441,7 +442,7 @@ class FactReviewService:
         if not counts:
             return
         try:
-            await self._counters.add(account_id, now.astimezone(timezone.utc).date(), counts)
+            await self._counters.add(account_id, counter_day(now), counts)
         except Exception as exc:
             logger.warning(
                 f"[FactReview] {', '.join(c.value for c in counts)} not counted for account {account_id[:8]}: "
@@ -711,7 +712,7 @@ class FactReviewService:
         coordinator exception is the pass's failure (logged, a failed response): the failure rule, not a 5xx. The pass
         is told whether the language mirrors the owner (`mirror`); the agent words its own request."""
         async with RequestContext(user_id=user_id, account_id=account_id):
-            task = await self._task(user_id, account_id, batch, questions)
+            task = await self._task(user_id, account_id, batch, questions, now)
             budget = agent_timeout_s(until, self._clock())  # F2: the lease left now, not at the run's start
             if budget < _MARGIN_S:
                 logger.warning(
@@ -744,9 +745,10 @@ class FactReviewService:
 
     async def _task(
         self, user_id: str, account_id: str, batch: Sequence[FactEntity], questions: Sequence[FactReviewQuestion],
+        now: datetime,
     ) -> FactReviewTask:
         """The prefetch: per fact its lineage and nearest current facts, the open questions about the batch, and in
-        mirror mode the owner's recent messages."""
+        mirror mode the owner's recent messages. `now` is the run's instant, which the pass then uses too."""
         items: List[ReviewItem] = []
         for fact in batch:
             lineage = await self._repo.get_lineage(account_id, fact.lineage_id)
@@ -757,6 +759,7 @@ class FactReviewService:
             questions=questions_about(batch, questions),
             mirror=mirror,
             owner_messages=await self._owner_messages(user_id) if mirror else (),
+            now=now,
         )
 
     async def _owner_messages(self, user_id: str) -> Tuple[str, ...]:
@@ -827,7 +830,7 @@ class FactReviewService:
         self, account_id: str, questions: Sequence[FactReviewQuestion], now: datetime, writes: _FactWrites,
     ) -> _StepResult:
         """The fallback of each timed-out question (`_fallback`), counted as it lands: `timed_out`, and the facts it
-        revived (`fallback_revives`) for the revive alert. Steps 6 and 11 both go through here."""
+        revived (the ones whose fallback does not set the fact aside) for the revive alert. Steps 6 and 11 both go through here."""
         timed_out = 0
         archived = False
         revived: List[str] = []
@@ -835,10 +838,10 @@ class FactReviewService:
             written = await self._fallback(account_id, question, now, writes)
             if written is not None:
                 timed_out += 1
-                if fallback_revives(question):
-                    revived.append(written)
-                else:
+                if fallback_sets_aside(question):
                     archived = True
+                else:
+                    revived.append(written)
         if archived:
             await self._note_set_aside(account_id, now)
         return _StepResult(counts={CounterField.TIMED_OUT: timed_out} if timed_out else {}, revived=tuple(revived))
@@ -912,20 +915,17 @@ class FactReviewService:
     # ------------------------------------------------------------------------------------------------ step 15: alert
 
     async def _revive_alert(self, account_id: str, revived: Sequence[str], now: datetime) -> None:
-        """One 🚨 naming the facts this run revived whose revives within 30 days reached the alert (`revive_alert_due`):
+        """One 🚨 naming the facts this run revived whose revives within the window reached the alert (`revive_alert_due`):
         their horizon is probably wrong. Best effort: a failed read or post is a WARNING."""
         if not revived:
             return
         try:
-            due: List[str] = []
+            due: List[Tuple[str, int]] = []
             for fact_id in revived:
                 fact = await self._repo.get_fact_by_id(fact_id)
                 if fact is not None and revive_alert_due(fact.lifecycle_events, now):
-                    due.append(f"{fact_id[:8]} ({revives_in_30_days(fact.lifecycle_events, now)}×)")
+                    due.append((fact_id, revives_in_30_days(fact.lifecycle_events, now)))
             if due:
-                await self._alert_sink.post(
-                    f"🚨 [FactReview] account {account_id[:8]}: revived again within 30 days, the horizon is probably "
-                    f"wrong: {', '.join(due)}"
-                )
+                await self._alert_sink.post(revive_alert(account_id, due))
         except Exception as exc:
             logger.warning(f"[FactReview] revive alert of account {account_id[:8]} not posted: {type(exc).__name__}: {exc}")

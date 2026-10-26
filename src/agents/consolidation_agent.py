@@ -28,6 +28,7 @@ from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..domain.entities import FactDomain, FactEntity, FactState, normalize_fact_taxonomy
 from ..domain.fact_lifecycle import CLOSING_STATES
+from ..domain.fact_lifecycle_day import counter_day
 from ..domain.fact_argument_parsing import parse_enum
 from ..domain.fact_update import ParsedFactUpdate
 from ..domain.fact_update_outcome import FactUpdateOutcome
@@ -1346,7 +1347,7 @@ class ConsolidationAgent(BaseAgent):
                 task_id=message.task_id, agent_id=self.agent_id, error="review prompt is empty",
             )
 
-        now = self._now()
+        now = task.now or self._now()
         tracker = _TrackingFactUpdates(self._fact_management, self._fact_updates)
         scope = FactReviewScope(task.batch, account_id, zone, now, self._repo, tracker)
         language_instruction = _review_language_instruction() if task.mirror else None
@@ -1828,7 +1829,7 @@ class ConsolidationAgent(BaseAgent):
         if not counts or self._lifecycle_counters is None:
             return
         try:
-            await self._lifecycle_counters.add(account_id, datetime.now(timezone.utc).date(), counts)
+            await self._lifecycle_counters.add(account_id, counter_day(datetime.now(timezone.utc)), counts)
         except Exception as e:
             logger.warning(f"⚠️ [ConsolidationAgent] Lifecycle counters not updated: {type(e).__name__}")
 

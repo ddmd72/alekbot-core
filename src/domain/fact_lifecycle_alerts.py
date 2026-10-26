@@ -3,10 +3,10 @@ and how the messages read. One message per account per run, whatever the number 
 run when the store holds closed records past their expiry. Pure: the service reads and posts, this decides and words."""
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Final, Iterable, List, Optional, Tuple
+from typing import Final, Iterable, List, Optional, Sequence, Tuple
 
 from .fact_review_question import FactReviewQuestion, QuestionStatus
-from .fact_review_rules import POOL_CAP, QUEUE_ALERT, QueueAlertAction, queue_alert
+from .fact_review_rules import POOL_CAP, QUEUE_ALERT, REVIVE_WINDOW, QueueAlertAction, queue_alert
 from .fact_review_state import FactReviewState
 from .fact_write_context import as_utc
 
@@ -58,7 +58,7 @@ def review_alerts(
         lines.append(f"the pool is {pool}: stale facts and facts waiting for an answer, over {POOL_CAP}")
     record_oldest = False
     limit = timedelta(days=interval) + OLDEST_STALE_GRACE
-    age = None if oldest_stale is None else as_utc(now) - as_utc(oldest_stale)
+    age = None if oldest_stale is None else stale_age(oldest_stale, now)
     holds = age is not None and age > limit
     if age is not None and holds and (state.oldest_alert_at is None or as_utc(now) - state.oldest_alert_at >= OLDEST_ALERT_REPEAT):
         lines.append(f"the oldest stale fact has waited {age.days} days (limit {limit.days})")
@@ -74,6 +74,20 @@ def review_alerts(
     if reply_intake_failed > 0:
         lines.append(f"{reply_intake_failed} owner replies were not recorded yesterday")
     return AccountAlerts(tuple(lines), record_oldest, rearm_oldest, queue)
+
+
+def stale_age(oldest_stale: datetime, now: datetime) -> timedelta:
+    """How long the oldest stale fact has waited at `now`, never below zero."""
+    return max(timedelta(0), as_utc(now) - as_utc(oldest_stale))
+
+
+def revive_alert(account_id: str, revived: Sequence[Tuple[str, int]]) -> str:
+    """The 🚨 for facts this run revived again within `REVIVE_WINDOW`: each fact's id and its revives in the window."""
+    named = ", ".join(f"{fact_id[:8]} ({count}×)" for fact_id, count in revived)
+    return (
+        f"🚨 [FactReview] account {account_id[:8]}: revived again within {REVIVE_WINDOW.days} days, the horizon is "
+        f"probably wrong: {named}"
+    )
 
 
 def expiry_errors_alert(expiry_tool_errors: int) -> Optional[str]:

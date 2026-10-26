@@ -12,6 +12,7 @@ from types import MappingProxyType
 from typing import Final, List, Literal, Mapping, Optional, Tuple
 
 from .fact_review_answer_kind import AnswerKind
+from .fact_review_answers import option_id
 from .fact_review_question import FACT_QUESTION_KIND, FactReviewQuestion
 from .fact_review_state import FactReviewState
 from .interactive_binding import InteractiveBinding
@@ -40,6 +41,12 @@ _TEXT_KEYS: Final[tuple[str, ...]] = (
     UIMessage.MEMORY_DIGEST_ARCHIVED.value, UIMessage.MEMORY_DIGEST_INVALIDATED.value,
 )
 LABEL_KEYS: Final[frozenset[str]] = frozenset((*OPTION_KEYS.values(), *_TEXT_KEYS))
+
+
+def is_review_text(message: UIMessage) -> bool:
+    """Whether `message` is one of the texts the memory review says (`LABEL_KEYS`)."""
+    return message.value in LABEL_KEYS
+
 
 # The English texts the model translates (the `en` UI strings, which a test pins equal to these).
 CANONICAL_LABELS: Final[Mapping[str, str]] = MappingProxyType({
@@ -220,7 +227,7 @@ def fact_question_message(question: FactReviewQuestion, labels: Mapping[str, str
     missing: List[str] = sorted(LABEL_KEYS - labels.keys())
     if missing:
         raise ValueError(f"the labels lack: {', '.join(missing)}")
-    options = tuple(InteractiveOption(id=kind.value, label=labels[key]) for kind, key in OPTION_KEYS.items())
+    options = tuple(InteractiveOption(id=option_id(kind), label=labels[key]) for kind, key in OPTION_KEYS.items())
     return InteractiveMessage(
         prompt=labels[_QUESTION],
         quote=question.quoted_text,

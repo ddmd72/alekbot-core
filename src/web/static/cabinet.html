@@ -1602,7 +1602,7 @@
           "memory.state_current": "Current",
           "memory.state_stale": "Waiting for review",
           "memory.state_closed": "Set aside lately",
-          "memory.closed_empty": "Nothing was set aside in the last 30 days.",
+          "memory.closed_empty": "Nothing was set aside in the last {days} days.",
           "memory.closed_archived": "No longer true",
           "memory.closed_invalidated": "Never was true",
           "memory.closed_on": "Set aside {date}",
@@ -1745,7 +1745,7 @@
           "memory.state_current": "Поточні",
           "memory.state_stale": "Очікують перевірки",
           "memory.state_closed": "Нещодавно відкладені",
-          "memory.closed_empty": "За останні 30 днів нічого не відкладено.",
+          "memory.closed_empty": "За останні {days} днів нічого не відкладено.",
           "memory.closed_archived": "Більше не так",
           "memory.closed_invalidated": "Ніколи не було так",
           "memory.closed_on": "Відкладено {date}",
@@ -1888,7 +1888,7 @@
           "memory.state_current": "Actuels",
           "memory.state_stale": "En attente de vérification",
           "memory.state_closed": "Mis de côté récemment",
-          "memory.closed_empty": "Rien n'a été mis de côté ces 30 derniers jours.",
+          "memory.closed_empty": "Rien n'a été mis de côté ces {days} derniers jours.",
           "memory.closed_archived": "N'est plus vrai",
           "memory.closed_invalidated": "N'a jamais été vrai",
           "memory.closed_on": "Mis de côté le {date}",
@@ -2031,7 +2031,7 @@
           "memory.state_current": "Actuales",
           "memory.state_stale": "Pendientes de revisión",
           "memory.state_closed": "Apartados hace poco",
-          "memory.closed_empty": "No se apartó nada en los últimos 30 días.",
+          "memory.closed_empty": "No se apartó nada en los últimos {days} días.",
           "memory.closed_archived": "Ya no es cierto",
           "memory.closed_invalidated": "Nunca fue cierto",
           "memory.closed_on": "Apartado el {date}",
@@ -2653,7 +2653,7 @@
           document.getElementById("domain-chips").classList.add("hidden");
           if (facts.length === 0) {
             container.innerHTML = `<div style="grid-column: 1/-1; text-align:center; padding: 64px 20px;">
-                                     <h3 style="color:var(--text-muted); font-weight:500;">${escapeHtml(t("memory.closed_empty"))}</h3>
+                                     <h3 style="color:var(--text-muted); font-weight:500;">${escapeHtml(t("memory.closed_empty").replace("{days}", data.window_days))}</h3>
                                    </div>`;
             countEl.textContent = "";
             return;

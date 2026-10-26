@@ -19,18 +19,19 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping,
 from ..domain.due_fact import DueFact
 from ..domain.exceptions import FactWriteConflict
 from ..domain.fact_lifecycle_alerts import (
-    account_message, breaker_alert, expiry_errors_alert, purge_alert, review_alerts,
+    account_message, breaker_alert, expiry_errors_alert, purge_alert, review_alerts, stale_age,
 )
-from ..domain.fact_lifecycle_day import REVIEW_FIGURES, CounterField, FactLifecycleDay, SweepSnapshot
+from ..domain.fact_lifecycle_day import REVIEW_FIGURES, CounterField, FactLifecycleDay, SweepSnapshot, counter_day
 from ..domain.fact_lifecycle_review_line import QuestionStanding, question_standing
 from ..domain.fact_lifecycle_run_guard import run_guard_until
 from ..domain.fact_lifecycle_sweep import (
-    BREAKER_OK, PURGE_OVERDUE_AFTER, breaker_label, daily_line, plan_sweep, stale_fields,
+    BREAKER_OK, PURGE_OVERDUE_AFTER, accounts_to_visit, breaker_label, daily_line, plan_sweep, stale_fields,
+    unvisited_rows,
 )
 from ..domain.fact_review_question import FactReviewQuestion
 from ..domain.fact_review_rules import open_fact_ids, pool, review_due, review_interval
 from ..domain.fact_review_state import FactReviewState
-from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, daily_key, review_payload
+from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_DEADLINE_S, daily_key, review_payload
 from ..domain.fact_write_context import as_utc
 from ..domain.owner_timezone import ResolvedOwnerZone
 from ..ports.account_repository import AccountRepository
@@ -56,7 +57,6 @@ class FactLifecycleSweepService:
     None while the review is wired (the queue is optional in the composition): the run then enqueues nothing."""
 
     OPS_POST_TIMEOUT_S = 10.0     # cap of every ops post: a hung sink holds neither a run, nor its error, nor a cancellation
-    REVIEW_DEADLINE_S = 1800      # Cloud Tasks dispatch deadline of the daily review: a pass may run for most of it
 
     def __init__(
         self,
@@ -125,7 +125,7 @@ class FactLifecycleSweepService:
             logger.warning(f"[FactLifecycle] the run guard was not released ({type(error).__name__}); it expires on its own")
 
     async def _sweep_all(self, progress: Dict[str, str], now: datetime) -> Dict[str, Any]:
-        day = now.date()
+        day = counter_day(now)
         progress["stage"] = "the due query"
         due_by_account = _group(await self._repo.find_due_facts(now))
         progress["stage"] = "the stale backlog query"
@@ -136,10 +136,7 @@ class FactLifecycleSweepService:
         yesterday = {row.account_id: row for row in await self._counters.for_day(day - timedelta(days=1))}
         today = {row.account_id: row for row in await self._counters.for_day(day)}
         previous_runs = _previous_run_times(today, yesterday)
-        accounts = sorted(
-            set(due_by_account) | set(backlog) | set(states) | set(questions_by_account)
-            | {row.account_id for row in yesterday.values() if row.has_review_figures()}
-        )
+        accounts = accounts_to_visit(due_by_account, backlog, states, questions_by_account, yesterday.values())
 
         totals = {"accounts": 0, "due": 0, "staled": 0, "would_stale": 0, "deferred": 0, "conflicts": 0,
                   "no_decision": 0, "breaker_tripped": 0, "review_enqueued": 0}
@@ -172,11 +169,7 @@ class FactLifecycleSweepService:
         if purge_overdue:
             await self._post(purge_alert(purge_overdue))
         progress["stage"] = "the ops line"
-        seen = set(accounts)
-        unvisited = [
-            FactLifecycleDay(account_id=row.account_id, day=day, expiry_tool_errors=row.expiry_tool_errors)
-            for row in yesterday.values() if row.account_id not in seen and row.expiry_tool_errors
-        ]
+        unvisited = unvisited_rows(yesterday.values(), set(accounts), day)
         rows.extend(unvisited)
         for row in unvisited:       # an account the run does not visit has no other way to be told of its refused expiry calls
             line = expiry_errors_alert(row.expiry_tool_errors)
@@ -251,7 +244,7 @@ class FactLifecycleSweepService:
             stale_conflicts=conflicts,
             breaker=breaker,
             backlog=stale_count,
-            oldest_stale_days=max(0, (now - as_utc(oldest)).days) if oldest is not None else None,
+            oldest_stale_days=stale_age(oldest, now).days if oldest is not None else None,
             review_enqueued=enqueued,
         )
         # Written in log-only mode too: the numbers are what the owner reads before the janitor is switched on.
@@ -307,7 +300,7 @@ class FactLifecycleSweepService:
         created = await self._task_queue.enqueue_worker_task(
             FACT_REVIEW_TASK,
             review_payload(owner.owner_user_id, account_id, "daily"),
-            deadline_seconds=self.REVIEW_DEADLINE_S,
+            deadline_seconds=REVIEW_DEADLINE_S,
             dedup_key=daily_key(account_id, now, owner.zone),
         )
         await self._review_store.mark_enqueued(account_id, now)

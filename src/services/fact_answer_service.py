@@ -11,26 +11,33 @@ owner's click on a button of the question's message (`ChoiceHandlerPort`): the s
 existing answer for a closed one.
 """
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Callable, Dict, Mapping, Optional
+import asyncio
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 from ..domain.choice_outcome import ChoiceOutcome
 from ..domain.exceptions import FactExpiryError, FactResolutionError, FactWriteConflict
 from ..domain.fact_answer_result import AnswerResult
 from ..domain.fact_lifecycle import walked_to_unseen_text
-from ..domain.fact_lifecycle_day import CounterField
+from ..domain.fact_lifecycle_day import CounterField, counter_day
 from ..domain.fact_review_answer_kind import AnswerKind
-from ..domain.fact_review_answers import answer_closes_fact, answer_updates, digit_answer, option_answer
-from ..domain.fact_review_language import LABEL_KEYS, fact_question_message
-from ..domain.fact_review_question import FACT_QUESTION_KIND, AnswerSource, ClosedBy, FactReviewQuestion
+from ..domain.fact_review_answers import (
+    DECIDING_ANSWERS, answer_closes_fact, answer_updates, digit_answer, option_answer, option_id,
+)
+from ..domain.fact_review_language import OPTION_KEYS, fact_question_message, is_review_text
+from ..domain.fact_review_question import ANSWER_COUNTERS, FACT_QUESTION_KIND, AnswerSource, ClosedBy, FactReviewQuestion
 from ..domain.fact_review_frame import reply_part
 from ..domain.fact_review_question_close import QuestionClose
-from ..domain.fact_review_reply import ReplyPath, acknowledgement, fact_changed_note, needs_completing, reply_path
+from ..domain.fact_review_overview import QueueEntry, queue_entries, user_questions
+from ..domain.fact_review_reply import (
+    ClickPath, ClickShow, ReplyPath, acknowledgement, click_outcome, click_path, needs_completing, reply_path,
+)
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, next_key, review_payload
 from ..domain.fact_update_outcome import UpdateRefusal
 from ..domain.fact_write_context import FactWriteContext, as_utc
 from ..domain.interactive_choice import InteractiveChoice
 from ..domain.llm import Message, MessagePart
 from ..domain.pass_actor import PassActor
+from ..domain.stored_fact import StoredFact
 from ..domain.ui_messages import UIMessage
 from ..ports.choice_handler_port import ChoiceHandlerPort
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
@@ -45,14 +52,6 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from .fact_question_texts import FactQuestionTexts
     from .owner_timezone_resolver import OwnerTimezoneResolver
-
-# Who counts an owner answer, by where it came from.
-_ANSWERED: Mapping[str, CounterField] = {
-    "digit": CounterField.ANSWERED_BY_DIGIT,
-    "button": CounterField.ANSWERED_BY_BUTTON,
-    "cabinet": CounterField.ANSWERED_IN_CABINET,
-}
-
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -106,12 +105,12 @@ class FactAnswerService(ChoiceHandlerPort):
         the question (`close_question`, the owner's close), refreshes the biographical cache once and is counted by its
         source; an answer that sets the fact aside (`answer_closes_fact`) also marks the account undigested. Raises
         ValueError for a source that is not the owner's; store errors raise."""
-        counter = _ANSWERED.get(source)
+        counter = ANSWER_COUNTERS.get(source)
         if counter is None:
             raise ValueError(f"{source!r} is not where an owner answer comes from")
         now = as_utc(at)
         question = await self._question(question_id)
-        if question is None or question.account_id != account_id or question.user_id != user_id:
+        if question is None or not question.asked_of(account_id, user_id):
             logger.info(f"[FactAnswer] question {question_id} not found for account {account_id[:8]}")
             return AnswerResult.NOT_FOUND
         if not question.is_open:
@@ -119,13 +118,8 @@ class FactAnswerService(ChoiceHandlerPort):
             return AnswerResult.NOT_OPEN
         zone = (await self._owner_zones.resolve(account_id)).zone
         context = FactWriteContext.for_pass(PassActor.OWNER, zone, None)
-        try:
-            stored = await self._repo.resolve_current(question.fact_id, account_id, context.accepts)
-        except FactResolutionError as exc:
-            logger.info(f"[FactAnswer] question {question_id}: fact {question.fact_id[:8]} cannot be followed: {exc}")
-            return AnswerResult.CHANGED
-        if stored is None or walked_to_unseen_text(question.quoted_text, stored.fact, question.fact_id):
-            logger.info(f"[FactAnswer] question {question_id}: fact {question.fact_id[:8]} changed since it was asked")
+        stored = await self._asked_fact(question, context.accepts)
+        if stored is None:
             return AnswerResult.CHANGED
         try:
             change = answer_updates(kind, stored.fact, question, now, zone, source)
@@ -209,9 +203,13 @@ class FactAnswerService(ChoiceHandlerPort):
             if digit is None:
                 raise RuntimeError("a digit path carries its digit")
             result = await self.apply(account_id, user_id, question.question_id, digit, "digit", now)
-        elif path is ReplyPath.WORDS and not await self._review_store.record_reply(question.question_id, text, now):
-            logger.info(f"[FactAnswer] question {question.question_id}: the reply was not recorded; left to conversation")
-            return None
+        elif path is ReplyPath.WORDS:
+            if not await self._review_store.record_reply(question.question_id, text, now):
+                logger.info(f"[FactAnswer] question {question.question_id}: the reply was not recorded; left to conversation")
+                return None
+            await self._count(account_id, now, {CounterField.REPLIES_IN_WORDS: 1})
+        else:
+            await self._count(account_id, now, {CounterField.ALREADY_ANSWERED: 1})
         note = acknowledgement(path, result)
         if note is None:
             logger.info(f"[FactAnswer] question {question.question_id}: digit not applied ({result.value if result else None}); left to conversation")
@@ -241,34 +239,51 @@ class FactAnswerService(ChoiceHandlerPort):
         clicked message, which heals it on its first click, while a stored ref that is not the clicked message gives
         None. Store errors raise."""
         question = await self._question(choice.binding.id)
-        if question is None or question.user_id != user_id or question.account_id != account_id:
+        if question is None or not question.asked_of(account_id, user_id):
             logger.info(f"[FactAnswer] choice on question {choice.binding.id}: not this user's question; ignored")
             return None
         answer = option_answer(choice.option_id)
         if answer is None:
             logger.warning(f"[FactAnswer] choice on question {question.question_id}: {choice.option_id!r} is no answer")
             return None
-        if question.is_open:
-            if question.message_ref != choice.message_ref:
-                logger.info(f"[FactAnswer] choice on question {question.question_id}: not the question's message; ignored")
-                return None
+        path = click_path(question, choice.message_ref)
+        if path is ClickPath.IGNORED:
+            logger.info(f"[FactAnswer] choice on question {question.question_id}: not the question's message; ignored")
+            return None
+        if path is ClickPath.OPEN:
             if needs_completing(question):
                 await self._review_store.complete_delivered(question.question_id)
             result = await self.apply(account_id, user_id, question.question_id, answer, "button", choice.at)
-            if result is AnswerResult.APPLIED:
+            outcome = click_outcome(result)
+            if outcome.show is ClickShow.CHOSEN:
                 return await self._closed_outcome(question, answer, None)
-            changed = fact_changed_note(result)
-            if changed is not None:
-                return await self._kept_outcome(question, changed)
-            if result is not AnswerResult.NOT_OPEN:
+            if outcome.show is ClickShow.KEPT and outcome.note is not None:
+                return await self._kept_outcome(question, outcome.note)
+            if outcome.show is not ClickShow.CLOSED:
                 return None
             question = await self._question(question.question_id)
             if question is None:
                 return None
-        if question.message_ref not in (None, choice.message_ref):
-            logger.info(f"[FactAnswer] choice on closed question {question.question_id}: not its message; ignored")
-            return None
+            if click_path(question, choice.message_ref) is ClickPath.IGNORED:
+                logger.info(f"[FactAnswer] choice on closed question {question.question_id}: not its message; ignored")
+                return None
         return await self._closed_outcome(question, question.answer, None)
+
+    async def review_queue(self, account_id: str, user_id: str) -> List[QueueEntry]:
+        """The user's open questions in the order they are dealt with (`queue_entries`), each with its fact as an answer
+        would find it: followed forward as the owner's answer follows it, so a fact rewritten since the question shows the
+        question's quote (nothing the owner never saw), and a fact gone shows the quote too. Another account's or another
+        user's questions are never listed."""
+        mine = user_questions(await self._review_store.questions_for_account(account_id), account_id, user_id)
+        state = await self._review_store.get_state(account_id)
+        found = await asyncio.gather(*(self._asked_fact(q, PassActor.OWNER.accepts) for q in mine))
+        facts = {q.fact_id: stored.fact for q, stored in zip(mine, found) if stored is not None}
+        return queue_entries(state, mine, facts, account_id)
+
+    async def answer_options(self, user_id: str) -> List[Tuple[AnswerKind, str]]:
+        """The answers a click on the Cabinet can give, each with its label in the user's UI language."""
+        labels = await self._texts.ui_labels(user_id)
+        return [(kind, labels[OPTION_KEYS[kind]]) for kind in DECIDING_ANSWERS]
 
     async def close_question(
         self,
@@ -288,7 +303,7 @@ class FactAnswerService(ChoiceHandlerPort):
         Returns False, with nothing released or re-rendered, when the store refuses the close (no such question, closed
         already, or the answer and source do not fit the closer). Raises ValueError for a `note` that is not one of the
         review's texts."""
-        if note is not None and note.value not in LABEL_KEYS:
+        if note is not None and not is_review_text(note):
             raise ValueError(f"{note.value} is not a memory review text")
         return await self._close(question, closed_by, answer, source, note, self._clock())
 
@@ -349,13 +364,32 @@ class FactAnswerService(ChoiceHandlerPort):
         labels = await self._texts.labels_for(question.user_id, question.account_id)
         message = fact_question_message(question, labels)
         if answer is not None:
-            return ChoiceOutcome(message=message, chosen_option_id=answer.value)
+            return ChoiceOutcome(message=message, chosen_option_id=option_id(answer))
         return ChoiceOutcome(message=message, note=labels[(note or UIMessage.MEMORY_QUESTION_CLOSED).value])
 
     async def _kept_outcome(self, question: FactReviewQuestion, note: UIMessage) -> ChoiceOutcome:
         """The open question's message with `note` shown and its options kept, texts from one `labels_for`."""
         labels = await self._texts.labels_for(question.user_id, question.account_id)
         return ChoiceOutcome(message=fact_question_message(question, labels), note=labels[note.value], keep_options=True)
+
+    async def _asked_fact(
+        self, question: FactReviewQuestion, accepts: Callable[[object], bool],
+    ) -> Optional[StoredFact]:
+        """The fact the question is about as it stands now, followed forward as `accepts` allows: None when it is gone,
+        its chain ends elsewhere, or a newer document has a text the owner never saw (`walked_to_unseen_text`)."""
+        try:
+            stored = await self._repo.resolve_current(question.fact_id, question.account_id, accepts)
+        except FactResolutionError as exc:
+            logger.info(
+                f"[FactAnswer] question {question.question_id}: fact {question.fact_id[:8]} cannot be followed: {exc}"
+            )
+            return None
+        if stored is None or walked_to_unseen_text(question.quoted_text, stored.fact, question.fact_id):
+            logger.info(
+                f"[FactAnswer] question {question.question_id}: fact {question.fact_id[:8]} changed since it was asked"
+            )
+            return None
+        return stored
 
     async def _question(self, question_id: str) -> Optional[FactReviewQuestion]:
         return next(iter(await self._review_store.get_questions([question_id])), None)
@@ -390,7 +424,7 @@ class FactAnswerService(ChoiceHandlerPort):
 
     async def _count(self, account_id: str, now: datetime, counts: Dict[CounterField, int]) -> None:
         try:
-            await self._counters.add(account_id, now.astimezone(timezone.utc).date(), counts)
+            await self._counters.add(account_id, counter_day(now), counts)
         except Exception as exc:
             logger.warning(
                 f"[FactAnswer] {', '.join(c.value for c in counts)} not counted for account {account_id[:8]}: "

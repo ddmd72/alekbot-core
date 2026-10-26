@@ -1,8 +1,8 @@
 """The janitor's rules (FACT_LIFECYCLE_RFC D4, D10): the plan of one account's run, the breaker, the fields of a stale
 write, the log-only switch and the daily ops line. Pure: the service reads and writes, this decides and formats."""
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import AbstractSet, Any, Dict, Final, Mapping, Optional, Sequence, Tuple
+from datetime import date, datetime, timedelta, timezone
+from typing import AbstractSet, Any, Dict, Final, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .due_fact import DueFact
 from .entities import FactState
@@ -83,6 +83,30 @@ def plan_sweep(
         breaker_reason=reason,
         deferred=max(0, len(ordered) - headroom) if reason is None else 0,
     )
+
+
+def accounts_to_visit(
+    with_due: Iterable[str],
+    with_backlog: Iterable[str],
+    with_state: Iterable[str],
+    with_questions: Iterable[str],
+    yesterday: Iterable[FactLifecycleDay],
+) -> List[str]:
+    """The accounts a run visits, in id order: those with a due fact, a stale backlog, a review state or an open question,
+    and those whose row of yesterday has a review figure (so their alerts are raised and their review is judged)."""
+    return sorted(
+        {*with_due, *with_backlog, *with_state, *with_questions}
+        | {row.account_id for row in yesterday if row.has_review_figures()}
+    )
+
+
+def unvisited_rows(yesterday: Iterable[FactLifecycleDay], visited: AbstractSet[str], day: date) -> List[FactLifecycleDay]:
+    """The rows of `day` for accounts the run did not visit that had refused expiry calls yesterday: an account the run
+    does not visit has no other way to be told of them."""
+    return [
+        FactLifecycleDay(account_id=row.account_id, day=day, expiry_tool_errors=row.expiry_tool_errors)
+        for row in yesterday if row.account_id not in visited and row.expiry_tool_errors
+    ]
 
 
 def breaker_label(reason: Optional[str], dry_run: bool) -> str:

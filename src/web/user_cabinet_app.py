@@ -17,16 +17,12 @@ from ..services.localization_service import LocalizationService
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
-from ..domain.entities import FactEntity
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
-from ..domain.fact_review_answers import DECIDING_ANSWERS, deciding_answer
+from ..domain.fact_review_answers import deciding_answer
 from ..domain.fact_review_digest import last_actor
-from ..domain.fact_review_language import CANONICAL_LABELS, OPTION_KEYS
 from ..domain.fact_review_overview import (
-    SET_ASIDE_LIMIT, holds_other_users_question, listable_state, queue_entries, set_aside_since, user_questions,
+    SET_ASIDE_LIMIT, SET_ASIDE_WINDOW, holds_other_users_question, listable_state, set_aside_since,
 )
-from ..domain.pass_actor import PassActor
-from ..domain.ui_messages import UIMessage
 from ..ports.user_repository import UserRepository
 from ..ports.repository import FactRepository
 from ..ports.fact_review_store import FactReviewStore
@@ -861,39 +857,20 @@ def create_user_cabinet_blueprint(
                 }
                 for f in closed
             ]
-            return jsonify({"facts": items}), 200
+            return jsonify({"facts": items, "window_days": SET_ASIDE_WINDOW.days}), 200
         except Exception as e:
             logger.error(f"Error listing recently closed facts: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
-
-    async def _question_fact(account_id: str, fact_id: str) -> Optional[FactEntity]:
-        """The fact a question is about as it stands now (followed forward as the owner's answer follows it), or None."""
-        try:
-            stored = await fact_repo.resolve_current(fact_id, account_id, PassActor.OWNER.accepts)
-        except FactResolutionError:
-            return None
-        return stored.fact if stored is not None else None
-
-    async def _answer_options() -> list:
-        """The answers a click can give, labelled in the user's UI language (English without a localization)."""
-        labels = {key: CANONICAL_LABELS[key] for key in OPTION_KEYS.values()}
-        if localization is not None and language_service is not None:
-            language = await language_service.resolve_ui_language(g.user_id)
-            labels = {key: localization.get_ui_string(language, UIMessage(key)) for key in labels}
-        return [{"answer": kind.value, "label": labels[OPTION_KEYS[kind]]} for kind in DECIDING_ANSWERS]
 
     @bp.route("/api/user/facts/review-queue", methods=["GET"])
     @auth_required
     async def review_queue():
         """The user's open memory-review questions: the one out now, those sent and unanswered, then the queue."""
-        if fact_review_store is None:
+        if fact_answer_service is None:
             return jsonify({"error": "Memory review not configured"}), 501
         try:
-            mine = user_questions(await fact_review_store.questions_for_account(g.account_id), g.account_id, g.user_id)
-            state = await fact_review_store.get_state(g.account_id)
-            found = await asyncio.gather(*(_question_fact(g.account_id, q.fact_id) for q in mine))
-            facts = {q.fact_id: fact for q, fact in zip(mine, found) if fact is not None}
-            entries = queue_entries(state, mine, facts, g.account_id)
+            entries = await fact_answer_service.review_queue(g.account_id, g.user_id)
+            options = await fact_answer_service.answer_options(g.user_id)
             return jsonify({
                 "questions": [
                     {
@@ -907,7 +884,7 @@ def create_user_cabinet_blueprint(
                     }
                     for e in entries
                 ],
-                "options": await _answer_options(),
+                "options": [{"answer": kind.value, "label": label} for kind, label in options],
             }), 200
         except Exception as e:
             logger.error(f"Error listing review questions: {e}", exc_info=True)

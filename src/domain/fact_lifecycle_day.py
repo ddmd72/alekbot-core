@@ -4,6 +4,8 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Any, Dict, Final, Iterable, Mapping, Optional, Tuple
 
+from .local_time import local_date
+
 
 class CounterField(StrEnum):
     """A number added to by whoever meets its event; a janitor snapshot never replaces one."""
@@ -60,6 +62,11 @@ REVIEW_FIGURES: Final[Tuple[CounterField, ...]] = (
     CounterField.ALREADY_ANSWERED,
     CounterField.LABELS_FALLBACK,
 )
+
+
+def counter_day(at: datetime) -> date:
+    """The day a counter is added to: the UTC date of the event (a naive time is UTC)."""
+    return local_date(at, "UTC")
 
 
 def check_count(name: str, value: Any) -> None:
