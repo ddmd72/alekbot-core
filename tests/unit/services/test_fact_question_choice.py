@@ -407,8 +407,10 @@ class TestNothingHappens:
         world.docs[fact]["state"] = "archived"                      # closed meanwhile: `changed`
         docs = {k: dict(v) for k, v in world.docs.items()}
 
-        assert await click(world, "still_true") is None
+        outcome = await click(world, "still_true")
 
+        assert outcome is not None and outcome.keep_options and outcome.chosen_option_id is None
+        assert outcome.note == world.localization.get_ui_string(LanguageCode.EN, UIMessage.MEMORY_FACT_CHANGED)
         assert stored(world)["status"] == "asked" and world.docs == docs
         assert world.interactive.has_controls(ref)
 
@@ -418,8 +420,10 @@ class TestNothingHappens:
         await question_on(world, fact)
         writes = ScriptedWrites(lambda fid: FactUpdateOutcome.refused(fid, UpdateRefusal.CONFLICT, "changed meanwhile"))
 
-        assert await click(world, "ended", svc=service(world, fact_updates=writes)) is None
+        outcome = await click(world, "ended", svc=service(world, fact_updates=writes))
 
+        assert outcome is not None and outcome.keep_options and outcome.chosen_option_id is None
+        assert outcome.note == world.localization.get_ui_string(LanguageCode.EN, UIMessage.MEMORY_FACT_CHANGED)
         assert stored(world)["status"] == "asked" and world.docs[fact]["state"] == "stale"
 
     async def test_a_write_the_rules_refused_is_counted_and_leaves_the_question_open(self):

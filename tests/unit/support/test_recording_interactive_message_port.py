@@ -35,6 +35,15 @@ async def test_a_shown_choice_removes_the_controls_and_an_unknown_message_is_ref
         await port.show_choice(MessageRef("slack", "D1", "m9"), ChoiceOutcome(message=question(), note="Closed."))
 
 
+async def test_an_outcome_that_keeps_the_options_leaves_the_controls_until_one_removes_them():
+    port = ReviewWorld().interactive
+    ref = await port.post("slack", "D1", question())
+    await port.show_choice(ref, ChoiceOutcome(message=question(), note="That fact has changed.", keep_options=True))
+    assert port.has_controls(ref) and port.shown[ref].note == "That fact has changed."
+    await port.show_choice(ref, ChoiceOutcome(message=question(), chosen_option_id="a"))
+    assert not port.has_controls(ref)
+
+
 async def test_failures_are_settable_and_leave_nothing_recorded():
     port = ReviewWorld().interactive
     port.fail = True

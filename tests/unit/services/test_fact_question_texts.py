@@ -36,6 +36,8 @@ RU: Dict[str, str] = {
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Этот вопрос закрыт.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Факты, которые я отложил на этой неделе:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Чтобы вернуть один, скажите в чате, что он всё ещё верен.",
+    UIMessage.MEMORY_DIGEST_ARCHIVED.value: "это уже не так",
+    UIMessage.MEMORY_DIGEST_INVALIDATED.value: "этого никогда не было",
 }
 BAD_RU = {**RU, UIMessage.MEMORY_OPTION_STILL_TRUE.value: "Да 1"}       # a digit: refused by check_labels
 

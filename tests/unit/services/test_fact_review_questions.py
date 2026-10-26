@@ -69,6 +69,8 @@ RU_LABELS = {
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Этот вопрос закрыт.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Факты, которые я отложил на этой неделе:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Чтобы вернуть один, скажите мне в чате, что это всё ещё так.",
+    UIMessage.MEMORY_DIGEST_ARCHIVED.value: "это уже не так",
+    UIMessage.MEMORY_DIGEST_INVALIDATED.value: "этого никогда не было",
 }
 
 

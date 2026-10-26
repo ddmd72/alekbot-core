@@ -48,6 +48,8 @@ RU_LABELS = {
     "memory_question_closed": "Этот вопрос закрыт.",
     "memory_digest_header": "Факты, которые я отложил на этой неделе:",
     "memory_digest_footer": "Чтобы вернуть один, скажите в чате, что это всё ещё так.",
+    "memory_digest_archived": "это уже не так",
+    "memory_digest_invalidated": "этого никогда не было",
 }
 
 

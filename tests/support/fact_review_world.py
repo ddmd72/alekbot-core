@@ -99,7 +99,7 @@ class RecordingChannelFactory(NotificationChannelFactoryPort):
 
 class RecordingInteractiveMessagePort(InteractiveMessagePort):
     """A platform that keeps what it was given. `post` numbers messages per channel and answers the ref; `show_choice`
-    records the outcome (the message then has no controls), and fails for a message that was never posted, as a
+    records the outcome (the message then has no controls, unless the outcome keeps them), and fails for a message that was never posted, as a
     platform does. `fail` / `fail_show` make the next calls raise; `unreachable` lists platforms that refuse every post.
     `plain_platforms` have no controls (as a platform served by the plain-text adapter): `show_choice` there does
     nothing and `has_controls` is False. `normalise` maps a requested channel to the one the platform returns in the ref
@@ -138,8 +138,12 @@ class RecordingInteractiveMessagePort(InteractiveMessagePort):
         return next(message for posted_ref, message in self.posted if posted_ref == ref)
 
     def has_controls(self, ref: MessageRef) -> bool:
-        """True while the message at `ref` still offers its options (no outcome has been shown for it)."""
-        return ref.platform not in self.plain_platforms and ref not in self.shown
+        """True while the message at `ref` still offers its options: no outcome has been shown for it, or the last one
+        kept them (`keep_options`, a refused pick)."""
+        if ref.platform in self.plain_platforms:
+            return False
+        shown = self.shown.get(ref)
+        return shown is None or shown.keep_options
 
 
 class FakeNotificationState(NotificationStatePort):

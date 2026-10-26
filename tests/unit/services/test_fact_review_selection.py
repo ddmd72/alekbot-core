@@ -62,6 +62,8 @@ PT_LABELS = {
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Esta pergunta está fechada.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Factos que pus de lado esta semana:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Para recuperar um, diga-me no chat que ainda é verdade.",
+    UIMessage.MEMORY_DIGEST_ARCHIVED.value: "já não é verdade",
+    UIMessage.MEMORY_DIGEST_INVALIDATED.value: "nunca foi verdade",
 }
 
 
