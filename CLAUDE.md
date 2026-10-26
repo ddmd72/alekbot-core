@@ -1087,6 +1087,8 @@ taken from the owner's invented universe (rule in [`tests/CLAUDE.md`](tests/CLAU
 owner's memory, `get_user_context`, journals or chat history: no real names, relatives, health values, home, legal
 status, documents or contact data. A gate checks every commit and PR (`scripts/pii_gate/`, `.githooks/`,
 `.github/workflows/pii_gate.yml`); its private denylist and profile never enter this repo. CI runs the denylist only and prints counts; the model check is local-only.
+**Before every push** (any branch: a pushed branch is public) run the local semantic personal-data review described
+in the session setup; its findings stay local, and nothing is pushed until it is clean.
 
 ---
 
