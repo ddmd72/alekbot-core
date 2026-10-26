@@ -1,8 +1,8 @@
 """One account's memory-review bookkeeping: when it last ran, what it has sent today, which question is open."""
 import re
-from datetime import date
+from datetime import date, datetime
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Optional, Self
+from typing import Any, Dict, Iterable, Mapping, Optional, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
@@ -78,6 +78,69 @@ class FactReviewState(BaseModel):
 
     def __deepcopy__(self, memo: Optional[Dict[int, Any]] = None) -> Self:
         return type(self).model_validate(self.model_dump())
+
+    # ------------------------------------------------------------------------------------------------ moves
+    # Each move returns the fields it changes (empty: nothing to write); the store validates the state they make and
+    # writes exactly those fields.
+
+    def sent_today(self, today: date) -> int:
+        """Questions sent on the owner's local day `today`; the count of an earlier day is not today's."""
+        return self.sent if self.sent_on == today else 0
+
+    def claimed(self, question_id: str, today: date) -> Dict[str, Any]:
+        """A question goes out: it becomes the current one and counts for `today` (a new day starts at 1)."""
+        return {"current_question_id": question_id, "sent": self.sent_today(today) + 1, "sent_on": today}
+
+    def released(self, question_id: str) -> Dict[str, Any]:
+        """The pointer cleared when, and only when, it names this question."""
+        return {"current_question_id": None} if self.current_question_id == question_id else {}
+
+    def unrecorded_delivery_failure(self, question_id: str) -> Optional[str]:
+        """Why a failed delivery of this question has no day to record, or None when it has one. `sent_on` is the day of
+        the latest claim: this question's day only while the pointer names it."""
+        if self.current_question_id != question_id:
+            return "which is not the current question"
+        if self.sent_on is None:
+            return "with no claim day"
+        return None
+
+    def delivery_failed(self, question_id: str) -> Dict[str, Any]:
+        """The post of this question failed: that day gets no more sends (the claim's day), or nothing to record."""
+        if self.unrecorded_delivery_failure(question_id) is not None:
+            return {}
+        return {"delivery_failed_on": self.sent_on}
+
+    def enqueued(self, at: datetime) -> Dict[str, Any]:
+        """A review was enqueued; the alert clock starts at the first enqueue since a success."""
+        return {"enqueued_at": at, "unsuccessful_since": self.unsuccessful_since or at}
+
+    def succeeded(self, at: datetime) -> Dict[str, Any]:
+        return {"last_review_at": at, "unsuccessful_since": None}
+
+    def failed(self, at: datetime) -> Dict[str, Any]:
+        """The first failure since a success starts the alert clock; a later one keeps it."""
+        return {"last_failed_at": at, "unsuccessful_since": self.unsuccessful_since or at}
+
+    def undigested(self, at: datetime) -> Dict[str, Any]:
+        """A fact was set aside after the last digest; an earlier instant is kept."""
+        return {"undigested_since": self.undigested_since or at}
+
+    def digested(self, at: datetime) -> Dict[str, Any]:
+        return {"last_digest_at": at, "undigested_since": None}
+
+    def without_offers(self, fact_ids: Iterable[str]) -> Dict[str, Any]:
+        """The offers of these facts dropped; the others kept."""
+        removed = set(fact_ids)
+        return {"offers": {fact_id: count for fact_id, count in self.offers.items() if fact_id not in removed}}
+
+    def with_language(self, lang: str, labels: Mapping[str, str], labels_digest: str) -> Dict[str, Any]:
+        """`lang` is the message language and its labels (written for the canonical texts of `labels_digest`) are
+        replaced; other languages' labels and digests are kept."""
+        return {
+            "message_language": lang,
+            "labels": {**self.labels, lang: dict(labels)},
+            "label_digests": {**self.label_digests, lang: labels_digest},
+        }
 
     @field_serializer("offers")
     def _offers_as_dict(self, value: Mapping[str, int]) -> Dict[str, int]:

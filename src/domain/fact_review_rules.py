@@ -130,7 +130,7 @@ def next_in_queue(questions: Iterable[FactReviewQuestion]) -> Optional[FactRevie
 
 def sent_today(state: FactReviewState, today: date) -> int:
     """Questions sent on the owner's local day `today`; the count of an earlier day is not today's."""
-    return state.sent if state.sent_on == today else 0
+    return state.sent_today(today)
 
 
 def current_question(state: FactReviewState, questions: Iterable[FactReviewQuestion]) -> Optional[FactReviewQuestion]:
@@ -274,6 +274,11 @@ def _last_given(fact: FactEntity) -> datetime:
 def fallback_revives(question: FactReviewQuestion) -> bool:
     """Whether the question's fallback brings its fact back to current (`revive`) rather than archiving it."""
     return question.fallback != "archive"
+
+
+def fallback_sets_aside(question: FactReviewQuestion) -> bool:
+    """Whether the question's fallback sets its fact aside (archives it) rather than bringing it back."""
+    return not fallback_revives(question)
 
 
 def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetime, actor: FallbackActor) -> Dict[str, Any]:

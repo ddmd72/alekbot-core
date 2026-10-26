@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Final, List, Literal, Mapping, Optional, Sequence
 
 from .entities import FactEntity, FactState
-from .fact_review_question import FactReviewQuestion, QuestionStatus
+from .fact_review_question import SENT_STATUSES, FactReviewQuestion
 from .fact_review_rules import current_question, queue_order
 from .fact_review_state import FactReviewState
 
@@ -21,7 +21,6 @@ SET_ASIDE_LIMIT: Final[int] = 50
 
 # Where an open question stands: the one out now, one sent and not answered, or one still in line.
 QueuePlace = Literal["current", "sent", "waiting"]
-_SENT = (QuestionStatus.ASKED, QuestionStatus.UNANSWERED)
 
 
 @dataclass(frozen=True)
@@ -54,13 +53,13 @@ def set_aside_since(now: datetime) -> datetime:
 def user_questions(questions: Sequence[FactReviewQuestion], account_id: str, user_id: str) -> List[FactReviewQuestion]:
     """The open questions of `account_id` that were asked of `user_id`: a question shows its fact whole, so no one sees
     another account's, or another user's in the same account."""
-    return [q for q in questions if q.is_open and q.account_id == account_id and q.user_id == user_id]
+    return [q for q in questions if q.is_open and q.asked_of(account_id, user_id)]
 
 
 def holds_other_users_question(questions: Sequence[FactReviewQuestion], account_id: str, user_id: str) -> bool:
     """Whether any of `questions` belongs to another user of `account_id`: answering it is not `user_id`'s to do. A question
     of another account is not that: it does not exist for this account."""
-    return any(q.account_id == account_id and q.user_id != user_id for q in questions)
+    return any(q.account_id == account_id and not q.asked_of(account_id, user_id) for q in questions)
 
 
 def queue_entries(
@@ -77,10 +76,10 @@ def queue_entries(
     pointer = state if state is not None else FactReviewState(account_id=account_id)
     current = current_question(pointer, questions)
     sent = sorted(
-        (q for q in questions if q is not current and q.status in _SENT),
+        (q for q in questions if q is not current and q.status in SENT_STATUSES),
         key=lambda q: (q.asked_at or q.queued_at, q.question_id),
     )
-    waiting = queue_order(q for q in questions if q is not current and q.status not in _SENT)
+    waiting = queue_order(q for q in questions if q is not current and q.status not in SENT_STATUSES)
     entries = [_entry(q, facts.get(q.fact_id), "current") for q in ([current] if current is not None else [])]
     entries += [_entry(q, facts.get(q.fact_id), "sent") for q in sent]
     entries += [_entry(q, facts.get(q.fact_id), "waiting") for q in waiting]

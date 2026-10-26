@@ -12,6 +12,7 @@ from ..domain.entities import ExpiryKind, FactEntity, FactState
 from ..domain.exceptions import FactWriteConflict
 from ..domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
 from ..domain.fact_resolution import resolve_chain
+from ..domain.fact_review_overview import LISTABLE_STATES
 from ..domain.fact_review_rules import stale_order_key
 from ..domain.stored_fact import StoredFact
 from ..domain.vector_math import cosine_similarity
@@ -35,7 +36,6 @@ _gcp_retry_logger.addHandler(_GcpRetryForwarder())
 _gcp_retry_logger.setLevel(_logging.DEBUG)
 
 _VECTOR_FIELDS = ("vector", "tags_vector", "metadata_vector")
-_PAGINATED_STATES = ("current", "stale")
 
 # Numeric rank for context_priority — stored in Firestore only (not in FactEntity).
 # Allows efficient ORDER BY queries without changing the domain model.
@@ -299,8 +299,8 @@ class FirestoreFactRepository(FactRepository):
           (account_id, state, created_at DESC)
           (account_id, state, domain, created_at DESC)  — when domain filter used
         """
-        if state not in _PAGINATED_STATES:
-            raise ValueError(f"get_paginated_facts reads state one of {_PAGINATED_STATES}, not {state!r}")
+        if state not in LISTABLE_STATES:
+            raise ValueError(f"get_paginated_facts reads state one of {LISTABLE_STATES}, not {state!r}")
         query = (
             self.facts_col
             .where(filter=FieldFilter("account_id", "==", owner_id))
