@@ -5,7 +5,6 @@ Implements Slack Events API with async queue processing via Cloud Tasks
 """
 import asyncio
 import hashlib
-import hmac
 import json
 import time
 import weakref
@@ -14,7 +13,9 @@ from slack_bolt.async_app import AsyncApp
 from quart import Blueprint, request, jsonify
 
 from .base import SlackAdapter
+from .interactivity_route import SlackInteractivityRoute
 from .response_channel import SlackResponseChannel
+from .signature import verify_slack_signature
 from ...domain.cloud_task_delivery import RETRY_COUNT_HEADER
 from ...domain.messaging import MessageContext, FileAttachment
 from ...domain.ui_messages import UIMessage
@@ -94,6 +95,7 @@ class HTTPModeAdapter(SlackAdapter):
         audio_service: Optional[Any] = None,
         language_service: Optional[LanguageServicePort] = None,
         localization: Optional[LocalizationPort] = None,
+        worker_queue: Optional[TaskQueue] = None,
     ):
         super().__init__(
             app,
@@ -113,6 +115,8 @@ class HTTPModeAdapter(SlackAdapter):
         self._language_service = language_service
         self._localization = localization
         self._session_locks: weakref.WeakValueDictionary = weakref.WeakValueDictionary()
+        # Button presses are queued as `/worker` tasks on the main task queue (not the Slack events queue).
+        self._interactivity = SlackInteractivityRoute(self.slack_signing_secret, worker_queue)
 
         # ✅ Create Blueprint instead of Quart app
         self.blueprint = Blueprint('slack', __name__)
@@ -158,6 +162,12 @@ class HTTPModeAdapter(SlackAdapter):
         @self.blueprint.route("/events", methods=["POST"])
         async def slack_events():
             return await self._handle_slack_event()
+
+        @self.blueprint.route("/interactivity", methods=["POST"])
+        async def slack_interactivity():
+            body = cast(bytes, await request.get_data())  # raw body: the signature is checked on these bytes
+            result, status = await self._interactivity.handle(body, dict(request.headers))
+            return jsonify(result), status
 
     def get_blueprint(self):
         """Return blueprint for registration in main app."""
@@ -591,47 +601,7 @@ class HTTPModeAdapter(SlackAdapter):
             logger.error(f"❌ Error processing mention: {e}", exc_info=True)
 
     def _verify_signature(self, body: bytes, headers: Dict[str, str]) -> bool:
-        try:
-            logger.debug(f"🔍 [Signature] Headers: {list(headers.keys())}")
-
-            timestamp = headers.get("X-Slack-Request-Timestamp", "")
-            slack_signature = headers.get("X-Slack-Signature", "")
-
-            if not timestamp or not slack_signature:
-                logger.error(f"⚠️ Missing Slack signature headers. Timestamp: {bool(timestamp)}, Signature: {bool(slack_signature)}")
-                logger.error(f"⚠️ Available headers: {list(headers.keys())}")
-                return False
-
-            try:
-                time_diff = abs(time.time() - int(timestamp))
-                if time_diff > 300:
-                    logger.warning(f"⚠️ Slack request timestamp too old: {time_diff}s")
-                    return False
-            except ValueError as e:
-                logger.error(f"⚠️ Invalid timestamp format: {timestamp}, error: {e}")
-                return False
-
-            sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
-            expected_signature = "v0=" + hmac.new(
-                self.slack_signing_secret.encode(),
-                sig_basestring.encode(),
-                hashlib.sha256
-            ).hexdigest()
-
-            is_valid = hmac.compare_digest(expected_signature, slack_signature)
-
-            if not is_valid:
-                logger.error("⚠️ Signature mismatch!")
-                logger.error(f"   Expected: {expected_signature[:20]}...")
-                logger.error(f"   Received: {slack_signature[:20]}...")
-            else:
-                logger.debug("✅ Signature verified successfully")
-
-            return is_valid
-
-        except Exception as e:
-            logger.error(f"❌ Signature verification error: {e}", exc_info=True)
-            return False
+        return verify_slack_signature(body, headers, self.slack_signing_secret, time.time())
 
     def register_handlers(self) -> None:
         logger.info("✅ HTTP Mode handlers ready (implicit via routes)")

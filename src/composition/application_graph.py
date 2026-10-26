@@ -902,6 +902,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         fact_answers=_fact_answer_service,
         long_turn_service=long_turn_service,
         doc_delivery_service=doc_delivery_service,
+        worker_queue=agent_task_queue,
     )
     worker_handler.attach_slack_worker(slack_adapter.handle_queued_event)
     notification_channel_factory.register_factory(
