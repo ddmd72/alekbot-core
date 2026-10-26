@@ -18,7 +18,7 @@ To handle Slack's strict 3-second timeout and prevent double-processing, the HTT
 ### 2.1 Event Pipeline
 
 1. **Ingress:** Slack sends a webhook to `/slack/events`.
-2. **Verification:** `HTTPModeAdapter` verifies the `X-Slack-Signature` using HMAC-SHA256.
+2. **Verification:** `HTTPModeAdapter` reads the raw body (capped at 1 MiB, else 413), verifies the `X-Slack-Signature` on those bytes using HMAC-SHA256 for every request type, `url_verification` included, and only then parses it (a body that is not a JSON object is 400).
 3. **Enqueue:** The event is enqueued to **Google Cloud Tasks** under a deterministic task name derived from the `event_id`; `ALREADY_EXISTS` (Slack's retry) means it is already queued. There is no separate dedup store.
 4. **Response:** The adapter immediately returns `200 OK` to Slack.
 5. **Worker:** Cloud Tasks triggers the `/worker` endpoint; `WorkerHandler` claims the delivery by task name (a redelivery is skipped, `decisions/worker_task_dedup.md`) and executes the `ConversationHandler`. The lock key is the Slack thread (`thread_ts`, else the message `ts`), released by a first turn at the 90 s long-turn mark. A busy thread waits up to 100 s, then the event is re-queued under a named task (max 12 x 15 s), then a "resend" notice is posted; a redelivery that finds the lock busy re-queues at once.
@@ -38,7 +38,11 @@ The Slack adapter implements the **Blueprint Pattern** (Quart), allowing it to s
 Every HTTP request is validated using the `SLACK_SIGNING_SECRET`.
 
 - **Timestamp Check:** Prevents replay attacks by rejecting requests older than 5 minutes.
-- **HMAC Validation:** Ensures the request originated from Slack.
+- **HMAC Validation:** Ensures the request originated from Slack. The check precedes any parsing, on `/slack/events` and `/slack/interactivity` alike, and both routes read the body through `request_body.read_capped_body`.
+
+### 3.1.1 Literal text
+
+Text the bot did not write (a stored fact quoted in the memory digest, a model-translated acknowledgement) is sent with `ResponseChannel.send_literal` (`send_reply` is literal too): on Slack `&`, `<` and `>` are escaped by `adapters/slack/mrkdwn_text.py` and `mrkdwn` is off, so `<!channel>` or `<@U1>` is shown, not obeyed; on Telegram `parse_mode=None`. `UserNotificationService.notify_raw(..., literal=True)` is the notification path to it.
 
 ### 3.2 IAM Integration
 
