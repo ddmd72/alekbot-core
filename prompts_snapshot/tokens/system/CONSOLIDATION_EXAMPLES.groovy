@@ -12,7 +12,7 @@ uploaded_by: local_script
 ---
 
 example_1_update_weight: {
-    conversation: "USER: Вчера я весил 64 кг"
+    conversation: "USER: I weighed 64 kg yesterday"
 
     reasoning: '''
     <thinking>
@@ -85,7 +85,7 @@ example_1_update_weight: {
 }
 
 example_2_create_new_habit: {
-    conversation: "USER: Я начал плавать по вечерам, 45 минут каждый день"
+    conversation: "USER: I started swimming in the evenings, 45 minutes every day"
 
     reasoning: '''
     <thinking>
@@ -158,7 +158,7 @@ example_2_create_new_habit: {
 example_3_discard_echo: {
     conversation: '''
     ASSISTANT: Based on our history, you weigh 67kg.
-    USER: Да, всё верно.
+    USER: Yes, that's right.
     '''
 
     reasoning: '''

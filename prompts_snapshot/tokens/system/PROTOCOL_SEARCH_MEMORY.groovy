@@ -28,16 +28,16 @@ agents_registry {
 
         examples: [
             {
-                user_query: "Какой сейчас курс евро?"
-                tool_call: 'delegate_to_specialist(intent="search_web", query="текущий курс евро к доллару и гривне")'
+                user_query: "Qual é a cotação do euro agora?"
+                tool_call: 'delegate_to_specialist(intent="search_web", query="cotação atual do euro em dólares")'
             },
             {
-                user_query: "Что нового в Claude 4?"
+                user_query: "What's new in Claude 4?"
                 tool_call: 'delegate_to_specialist(intent="search_web", query="Claude 4 new features latest updates")'
             },
             {
-                user_query: "Погода в Порту завтра?"
-                tool_call: 'delegate_to_specialist(intent="search_web", query="погода в Порту завтра")'
+                user_query: "Como vai estar o tempo no Porto amanhã?"
+                tool_call: 'delegate_to_specialist(intent="search_web", query="tempo no Porto amanhã")'
             }
         ]
 
