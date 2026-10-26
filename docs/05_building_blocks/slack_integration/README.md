@@ -29,6 +29,10 @@ The Slack adapter implements the **Blueprint Pattern** (Quart), allowing it to s
 
 - **Prefix:** All Slack routes are prefixed with `/slack`.
 
+### 2.3 Interactive Messages
+
+A message with buttons is posted through the platform-neutral `InteractiveMessagePort` (`SlackInteractiveMessageAdapter`: section blocks for the prompt and the quote, an actions block of buttons whose `block_id` carries the binding, a context line with the reply hint). The memory review's question is the one user (`memory/README.md` §5.6). A press arrives at `POST /slack/interactivity` (`SlackInteractivityRoute`), which verifies the signature on the raw body before it parses anything, queues an `interactive_choice` Cloud Task and answers 200 at once; the worker applies the choice and re-renders the message with the chosen option and no buttons (`chat.update`). The Slack app needs Interactivity enabled with this route as its Request URL; a thread reply to the message works without it.
+
 ---
 
 ## 3. Security & Authorization
@@ -68,7 +72,7 @@ Every event (message or mention) triggers an `iam_service.authorize("slack", sla
 
 ### Planned Enhancements
 
-- **Interactive Components:** Support for Slack buttons, menus, and modals.
+- **Interactive Components:** menus and modals (buttons exist since the memory review, §2.3).
 - **App Home:** Implement a personalized dashboard within the Slack app.
 - **Slash Commands:** Add native commands for quick actions (e.g., `/remember`, `/search`).
 

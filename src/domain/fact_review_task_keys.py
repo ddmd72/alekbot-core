@@ -12,7 +12,8 @@ from .local_time import local_date
 from .memory_write_lease import defer_bucket
 
 FACT_REVIEW_TASK: Final[str] = "fact_review"
-# The Cloud Tasks dispatch deadline of a `fact_review` task, whoever enqueues it: a pass may run for most of it.
+# The Cloud Tasks dispatch deadline of a `daily` `fact_review` task: set by its two enqueuers, the janitor and the review's own
+# lease deferral (a pass may run for most of it). The `next` send released by an answer has no model call and sets none.
 REVIEW_DEADLINE_S: Final[int] = 1800
 
 ReviewMode = Literal["daily", "next"]
@@ -35,6 +36,8 @@ def next_key(question_id: str) -> str:
 
 
 def daily_key(account_id: str, now: datetime, tz: str) -> str:
-    """The dedup key of the janitor's daily review for `account_id`: one per owner-local calendar day (`tz` is the owner's
-    zone), so a second run the same local day names the same task and a run after local midnight a new one."""
+    """The dedup key of the daily review the janitor (`FactLifecycleSweepService`, its only caller) enqueues for `account_id`:
+    it carries the owner-local calendar day (`tz` is the owner's zone), so runs that start close together name the same task.
+    Cloud Tasks keeps a name only while its task is queued or running and for about an hour after, so this is not a once-a-day
+    guarantee: the daily rhythm is `review_due`'s interval rule."""
     return f"fact-review:{account_id}:{local_date(now, tz).isoformat()}"

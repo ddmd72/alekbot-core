@@ -20,6 +20,7 @@ How to use:
 - To remember facts from a document, file, email or search result, ask me: I show you the list, and you save it by pasting the `$memory save` code I send. Saved facts appear in memory after background consolidation
 - Search what I know: "what do you know about my car?", "find everything about my apartment renovation"
 - I automatically pick up important facts from conversations — you don't need to instruct me to remember everything
+- When I cannot tell whether an older fact is still true, I ask you one question at a time, quoting the fact. Answer with one digit by replying to my question (1 yes, 2 no longer, 3 never, 4 don't remember), press a button under it in Slack, or answer in Cabinet → Memory. Your own words in a reply work too. Once a week I list what I put aside; to bring a fact back, tell me in chat that it is still true
 
 Your facts are visible in Cabinet → Memory, where you can browse, search, filter by category, and delete individual entries.
 
@@ -239,6 +240,8 @@ Google Tasks:
 - Browse all facts I know about you — displayed as cards with domain labels (Email, Chat, Profile, etc.)
 - Filter by domain: click a domain chip to show only facts from that category
 - Search: type in the search bar and press Enter — semantic search across your entire knowledge base
+- Switch the list between current facts, facts waiting for review, and facts set aside in the last 30 days (read-only)
+- Answer my memory questions: each fact I am unsure about is shown in full with buttons (yes / no longer / never); mark several at once with the checkboxes
 - Delete a fact: click "Delete" on any card → confirm → fact is permanently removed
 - Correct a fact: click "Edit" → enter the correction → copy the generated message → paste it to me in chat and I'll update the fact
 

@@ -266,22 +266,46 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     reports no op and posts a 🚨 when the backstop's update is not `updated`. The agent builds a typed `PassCall` per call
     (`_pass_call`, through the write path's parsers) and renders the lines itself (`_summary_line`, `_limit_alert`,
     `_abandoned_alert`); the stats never see a tool argument.
-  - **The review pass's loop (Facts S4 T6b).** `_get_tool_declarations("review")` gives `update_fact` (basis, history, no
-    `reported_date`), `ask_owner` and `count_words`; `_run_consolidation_loop(pass_kind="review", max_turns=…, review_scope=…)`
-    sends the first two to `FactReviewScope` (`infrastructure/fact_review_scope.py`); the pass kind must match the write
-    context's actor. All review refusals go to `review_refusals`; only born-due and `scope` refusals can be abandoned (a
-    basis or ask refusal leaves the fact kept), and any success of the same fact in the pass answers them. The typed write
-    port is the agent's own required `fact_updates` dependency (a `FactUpdatePort`, refused otherwise when the agent is
-    built; composition passes the adapter twice); every run's tracker is `_TrackingFactUpdates(model port, typed port)`.
-  - **The review task (Facts S4 T6c).** `payload["task"] == Intent.REVIEW_STALE_FACTS` → `_handle_review_stale_facts`. The
-    payload is a `FactReviewTask` (`domain/fact_review_task.py`: items with versions and neighbours, open questions,
-    `mirror`, `owner_messages`) in its one plain-data form (`encode_review_task` / `decode_review_task`). Prompt
-    `consolidation_review` (no fallback: a build failure is `AgentResponse.failure`); the scope is built over the run's
-    tracker from `self._fact_updates` read at run time; one loop capped at `CONSOLIDATION.review_max_turns`. The message
-    (`_build_review_message`) is code-built from `fact_view` (`domain/search.py`, the one view Stage 2a and the search hits
-    use too); in mirror mode it carries `owner_messages` and the language request. The result is the scope's outcomes,
-    asks and kept ids plus `message_language` / `labels` read from the final report through `parse_message_language` /
-    `check_labels` (None when malformed). The agent writes no question and posts or appends nothing.
+  - **The review pass (Facts S4)** — a fourth task of this agent, `review_stale_facts` (`payload["task"] ==
+    Intent.REVIEW_STALE_FACTS` → `_handle_review_stale_facts`). It is never sent by a user message: `FactReviewService` (under the
+    account's memory-write lease) routes it. Owner's map `docs/05_building_blocks/memory/README.md` §5.6.
+    - **Task and message.** The payload is a `FactReviewTask` (`domain/fact_review_task.py`: items with versions and neighbours,
+      open questions, `mirror`, `owner_messages`) in its one plain-data form (`encode_review_task` / `decode_review_task`). The
+      prompt is `consolidation_review` (profile over `CONSOLIDATION_TAXONOMY` and `CONSOLIDATION_LIFECYCLE`; no fallback: a build
+      failure is `AgentResponse.failure`); no baseline conversation, no standing directives. The message (`_build_review_message`)
+      is code-built from `fact_view` (`domain/search.py`, the one view Stage 2a and the search hits use too); in mirror mode it
+      carries `owner_messages` and the request to report `message_language` and, for a language without UI strings, `labels`.
+    - **Tools and loop.** `_get_tool_declarations("review")` gives `update_fact` (with `basis` and `history`, no `reported_date`),
+      `ask_owner(fact_id, fallback, fallback_date?, noise?)` and `count_words`; no search, create or merge.
+      `_run_consolidation_loop(pass_kind="review", max_turns=CONSOLIDATION.review_max_turns (15), review_scope=…)` sends the first
+      two to `FactReviewScope` (`infrastructure/fact_review_scope.py`); the pass kind must match the write context's actor
+      (`PassActor.REVIEW`). The typed write port is the agent's own required `fact_updates` dependency (a `FactUpdatePort`, refused
+      when the agent is built without one; composition passes the adapter twice); every run's tracker is
+      `_TrackingFactUpdates(model port, typed port)`.
+    - **Scope rules (code, not prompt).** One lock first in every command, so calls apply in the order written. A `fact_id` outside the
+      batch is refused; a fact with a result in this pass is refused (a follow-up write to a lineage the pass made current is
+      allowed); a call that leaves a stale fact stale is refused. `basis` (`evidence`, `reply` with a `quote` found in the owner's
+      reply, `date_passed`) is read from the top level or `updates.basis`: invalidate and rewrite need evidence or a reply, archive
+      also `date_passed`, **a revive needs evidence or a reply**, history goes only with an archive on a reply that says it ended and
+      never on a dated plan, evidence must be a current fact of the account outside the fact's own lineage. An ask needs a fact
+      in the batch with no result and no open question; `fallback` is `revive` or `archive`, and `archive` only for a dated fact, a past
+      `fallback_date` or `noise`. Every refusal names the argument and the fix and is tagged `basis`, `scope` or `ask`; a
+      `reported_date` is dropped with the review's own note. All review refusals go to `review_refusals`; only born-due and `scope`
+      refusals can be abandoned (a basis or ask refusal leaves the fact kept), and any success of the same fact in the pass
+      answers them (`PassActor.one_result_per_fact`).
+    - **Result.** The scope's outcomes (`revived`, `rewritten`, `archived`, `invalidated`, `superseded`), asks and kept ids, plus
+      `message_language` and `labels` read from the final report through `parse_message_language` / `check_labels` (None when
+      malformed). The agent writes no question and posts or appends nothing: `FactReviewService` queues the asks, sends the questions
+      and applies timeouts, and `FactAnswerService` applies the owner's answers (no model).
+    - **The queue and the answer path (outside the agent).** A fact the pass asks about is made current under its precondition and
+      gets a `queued` question (`FactReviewQuestion`, `fact_review_questions`); questions go out one at a time through
+      `InteractiveMessagePort`; an answer is only a reply to the question message, a Slack button or a Cabinet click and is applied
+      by `FactAnswerService.apply` (the `owner` actor, the same preconditions, no lease); a reply in words is recorded and read by
+      the next review run once. See the map, §5.6.
+    - **The echo-trap exception, narrowed.** `Domain_Scope.memory_review_reply` in `CONSOLIDATION_POLICIES` is the one definition: a
+      USER message that begins `[Reply to memory review q=<id>]` answers a question the earlier pair `[System: memory review q=<id> …]`
+      framed; the quoted fact belongs to the review, and Stage 1 records only what the answer adds (a correction's true value). The
+      other echo-trap lines refer to it; do not restate it in a token. A bare digit with no marker is read by the ordinary rules.
 - DeepResearch (async, provider-agnostic, intent `deep_research`) — `create_interaction()` returns
   ACK (job_id); result delivered by adapter. **Default Claude** (`ClaudeDeepResearchRunnerAgent`,
   `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+

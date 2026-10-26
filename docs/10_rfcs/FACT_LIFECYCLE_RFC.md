@@ -1,6 +1,6 @@
 # RFC: Fact lifecycle — expiry decided by content, a daily janitor, a periodic review pass, owner questions, real versions
 
-**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2 is built** (2026-10-23, on the S2–S5 branch, not deployed; see "S2 as built" in §9); **S3 is built** (2026-10-23, on the S2–S5 branch, not deployed; see "S3 as built" in §9); S4–S5 are not built.
+**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2 is built** (2026-10-23, on the S2–S5 branch, not deployed; see "S2 as built" in §9); **S3 is built** (2026-10-23, on the S2–S5 branch, not deployed; see "S3 as built" in §9); **S4 is built** (2026-10-26, on the S2–S5 branch, not deployed; see "S4 as built" in §9); S5 is not built.
 Rev 1 had owner decisions Q1–Q4; two adversarial reviews (code paths; rollout and steady state) and a binding
 arbitration produced this revision. Slice S1 (§9) is merged and deployed; S2 is built and deploys with S3–S5; the rest is not built.
 **Supersedes, once accepted:** `DELIBERATE_FACT_MANAGEMENT_RFC.md` §2.2 axis 2 "Lifecycle Transitions", §4.4 (default
@@ -180,6 +180,7 @@ expiry: {"kind": "none"}                           // past event, stable, perman
 | Stage 1 create / update | the model's value clamped into the batch's message time span; default: the batch's last message time. The tool handler receives the span from `_execute_deliberate_process_v3` (messages carry timestamps) |
 | Stage 1 re-mention of an existing horizon fact (exact duplicate) | `update_fact({reported_date})`, in place, clamped like above; moves the horizon (§6 rule) |
 | Email consolidation | the email date: the model's value clamped into the span of the batch's email dates; default: the newest |
+| Merge (any pass) | never earlier than the newest source fact: the later of the model's span-clamped date (Stage 1 and email) and the latest `reported_date` of the sources; a cleanup pass takes the latest source date |
 | Stage 2a, Stage 2b, review rewrites, classify | any model value ignored; preserved |
 | Review revive on evidence | the later of its own value and the evidence fact's `reported_date` |
 | Review revive on the owner's reply | the reply's message time (recorded with the question, D7) |
@@ -288,6 +289,9 @@ neighbour of the stale one and supersedes the stale fact with it. One extra step
 
 ### D6. A periodic review pass decides what a stale fact is now
 
+*As built (S4), the cadence is daily, the review revives only on evidence or a reply, and what it cannot decide it asks about
+through a queue; "S4 as built" in §9 lists every difference from the text below.*
+
 `ConsolidationAgent` gets a fourth pass, `review_stale_facts`, run by the `fact_review` task.
 
 **Cadence (owner, 2026-10-21).** The review pass, and with it the question message, runs **every 3 days by default**,
@@ -347,6 +351,9 @@ On an ordinary day 0–5 facts go stale. After the one-time classify the backlog
 days by default; the owner may shorten the interval for the account while the backlog drains).
 
 ### D7. Questions to the owner, answered asynchronously
+
+*As built (S4), one fact is asked per message, the question text is written by code, and an answer is only a reply to the
+question message, a button or a Cabinet click, applied by code; "S4 as built" in §9 lists every difference from the text below.*
 
 When the review pass cannot decide, it calls `ask_owner(fact_ids, question, fallback)`.
 
@@ -705,8 +712,10 @@ level, overridable per account and per user).** The context is kept for the reco
    projections; `reported_date` ownership; born-due rule; directive and principle pin; STALE refused; janitor with
    breaker and cache refresh; tokens and code-built messages (§6) except the review token; `HISTORICAL` → `ARCHIVAL`;
    legacy v2 path validated; email date rule.
-4. **S4 — review pass and owner questions** (D6, D7, D10): `consolidation_review` profile and token; selection, prefetch,
-   outcomes, timeouts in code; question delivery and claim; echo-trap exception; P1, P2, P3 if confirmed; alerts.
+4. **S4 — review pass and owner questions** (D6, D7, D10): **built 2026-10-26** (on the S2–S5 branch, deploys with S5).
+   `consolidation_review` profile and token; selection, prefetch, outcomes, timeouts in code; the question queue and its
+   delivery; echo-trap exception; P1, P2, P3; the owner's answers by digit, button, reply and Cabinet; alerts. Record:
+   `decisions/fact_review_and_owner_questions.md`; the code is described in the owner's map, §5.5 and §5.6.
 5. **S5 — one-time classify (§7.3), review dry run (§7.3b), janitor on.**
 
 **S2 as built (2026-10-23).** Where this text and the code differ, the code wins and is described here. The owner
@@ -798,7 +807,8 @@ the rollout notes (ops).
   the last day, `{kind: horizon, days}` plus a read-only `due`, `{kind: none}`, or `null` without a decision), `reported_date`
   as an ISO time with the owner's offset, and never `ttl_days`, `expires_at` or `expiry_kind`. `expiry_view` shows a `date` as
   the last day (the moment before the next local midnight, so a copy sent back keeps the same `expires_at` even on a 23-hour DST
-  day; the plan said "minus one day"). `EnrichedFact` and the search projection keep the raw fields; `get_active_facts` projects
+  day; the plan said "minus one day"). A copy sent back keeps the same `expires_at` only while that date is still ahead: a
+  date that is today or past is refused as born due (on a cleanup pass with the rewrite-or-future-date text, S4 as built). `EnrichedFact` and the search projection keep the raw fields; `get_active_facts` projects
   them too (the cluster auto-fetch reads them there).
 - **D1, closing states.** `expiry` with `archived`, `invalidated` or `superseded` is **ignored** with a note, not refused, on an
   update and on a create or merge whose state is closing (such a create needs no `expiry`). A model `STALE` is refused on
@@ -891,6 +901,124 @@ Cites in this RFC that had moved or were wrong:
 | `_build_cluster_message` `:1111-1138`; `_build_directive_review_message` `:1021-1109`; `_enforce_directive_cap` `:845-865`; Stage 2b reads directives `:798-843`; code tool schema `:1259-1393` | `consolidation_agent.py:1406`; `:1314`; `:1024`; `_review_directives` `:972`; `_get_tool_declarations` `:1600` |
 | `refresh_biographical_context_cache` skips without service `:805-810` | `firestore_repo.py:753` (logs and swallows its errors) |
 | `TAXONOMY:78-93` (TTL column); `TOOLS:44`, `TAXONOMY:137`, `POLICIES:49` (`HISTORICAL`) | the TTL column is now the `expiry` block (kinds table, date rules) of `CONSOLIDATION_TAXONOMY`; `ARCHIVAL` since P8, uploaded with S3 |
+
+**S4 as built (2026-10-26).** On the S2–S5 branch, not deployed (it ships with S5 in one switch window). Where this text and
+the code differ, the code wins and is described here. The owner's map is `docs/05_building_blocks/memory/README.md` (§2.7,
+§5.5, §5.6); the decision record is `decisions/fact_review_and_owner_questions.md`; the deploy steps are in the rollout notes
+(ops).
+
+*Owner decisions of the build.*
+- **Daily review, a question queue, silence is safe (Q6).** The review runs daily (`DEFAULT_FACT_REVIEW_INTERVAL_DAYS = 1`,
+  per user `fact_review_interval_days`, no deploy needed to change it). A fact that needs the owner's answer joins a queue
+  ordered by how long it has been stale, and is **current while it waits** (it keeps its past `expires_at`; the janitor skips it
+  until the question is answered or times out). Code never replaces a question with a silent revive.
+- **The question mechanism.** One fact per message: "Is this still true?", the fact quoted as stored, and four options: 1 yes,
+  2 no longer, 3 never, 4 don't remember. One question is open at a time; the next goes out after an answer, else the next
+  local day; at most 5 a day; no quiet hours in code. An answer is **only a reply to the question message** (a Slack thread
+  reply, a Telegram reply), a button click (Slack, now) or the Cabinet; any other message is ordinary conversation.
+- **Answers (Q5, Q8).** Yes brings the fact back; "no longer" archives it and, for a lasting fact, creates a separate history
+  fact "No longer true (the owner said so in <month year>): …" in the same transaction; for a dated plan it only archives
+  (Q8); never invalidates; "don't remember" applies the question's fallback at once. A correction is a fact about the true value.
+- **Language (Q3).** The response-language setting decides: fixed gives that language, mirror gives the language of the owner's
+  recent messages, reported by the review pass; the question line, option labels, acknowledgements and digest come from the UI
+  strings (uk, en, fr, es) or, for another language, from the model under code checks, else the UI language.
+- **Q4.** The review never archives a fact as noise on its own; `noise` only decides what a question's silence does.
+- **Q1a, Q1b (S3 follow-ups).** A merge is never dated before its newest source. On a cleanup pass a past-date refusal has no
+  discard: "rewrite it as what happened with `{kind: none}`, or give a future date if the plan still holds", and an unanswered
+  one is an abandoned refusal (🚨).
+- **Q2.** No filter for Lelik in S4. The question pair stays visible to him, and an answer given on a phone call counts as
+  silence (the 14-day fallback). A follow-up.
+- **Q7.** The Cabinet question list is built in S4: each waiting or asked fact in full with three buttons and bulk marking; a
+  click runs the same code as a chat digit.
+- **Interactive messages (owner).** A question is a platform-neutral message (prompt, quote, options, a binding); Slack draws
+  buttons, Telegram plain text with the digits; a click comes back as a choice routed by the binding's kind. Built so that Smart
+  can later send blocks through the same port.
+- **O1, the fact-changed line.** A digit for a fact that changed since the question was asked (or whose write conflicted) is
+  not applied and is not sent on to Smart: the owner gets a neutral line ("That fact has changed in the meantime, so I didn't
+  apply your answer; I'll come back to it.") and the question stays open.
+- **O3, a refused click keeps its buttons.** The same line is shown on the Slack message with the options kept
+  (`ChoiceOutcome.keep_options`), so the owner can click again.
+- **O4, state words in the digest.** Each digest line says why the fact is listed ("no longer true" for an archive, "never was
+  true" for an invalidation). This brought the label set from 13 to 15 texts (12 at the start of the build, +1 for O1, +2 for O4).
+- **Literal text.** Text the bot did not write (a stored fact in the digest, a model-translated acknowledgement, the receipts
+  of reminders, drive and deep-research copies) is sent literally: Slack's markup characters are escaped and `mrkdwn` is off.
+  Both Slack routes verify the signature on the raw bytes before parsing and cap the body at 1 MiB.
+
+*Deltas from the RFC text.*
+- **D6, cadence and selection.** Daily, not every 3 days. The janitor enqueues the review when stale facts exist after its
+  run and the interval of owner-local days has passed since the last success, or when a reply in words waits, a question timed
+  out, a send never finished, the digest is due, or a queued question may go out. The stale facts of an account (at most about
+  50) are read and sorted in code; **no index `(account_id, state, stale_since)` is needed**. The only index S4 adds is
+  `(account_id, state, valid_to DESC)` on the facts, for the "set aside lately" list.
+- **D6, outcomes.** A revive needs evidence or the owner's reply (code refuses it otherwise); an ask is always allowed and
+  never needs a reason; the model has three tools (`update_fact`, `ask_owner`, `count_words`) and no search, create or merge.
+  A fact brought back is reviewed again N days from now, not from when the owner last said it (a horizon counts from now). Dead
+  plans are archived without a question when their date has passed (the basis `date_passed`), and the first review after the
+  deploy is expected to archive the two legacy dated plans that way. The "undecided twice → asked" rule (S4-D20) is by code.
+- **D6, breaker and cap.** The breaker is the review interval + 72 h with a wired `last_review_at`. The cap `50 − pool` and the
+  breaker's "over 50" count stale facts plus the facts of open questions (the pool), so waiting facts cannot grow the lifecycle
+  past 50.
+- **D7, asking.** `ask_owner(fact_id, fallback, fallback_date?, noise?)` takes one fact and no text; code writes the question
+  and sends it, so there is no model-written sentence, no numbering, no packing of several questions. The question record has
+  one `fact_id` (not `fact_ids`) and the quoted text. The daily claim `fact_review_messages/{user_id}:{local_date}` is replaced
+  by the question queue and the state document's send count; that collection now holds only the weekly digest's claim
+  (`{user_id}:digest:{iso_week}`).
+- **D7, answering (P1).** The recorded reply is taken **at intake** from a reply to the question message, not copied by
+  `ConsolidationService` (which is unchanged): a digit is applied by code at once; words are recorded on the question and read by
+  the review once on its next run. There is no `pair_consolidated_at`. The reply and its acknowledgement are appended to
+  history as one pair, `[Reply to memory review q=<id>] <text>` and the acknowledgement; Smart sees them and is not asked to
+  act. The echo-trap exception is narrowed to this frame: the quoted fact belongs to the review and Stage 1 records only what the
+  answer adds (a correction's true value).
+- **D7, residuals corrected.** "A reply in another channel is not recorded" and "question and reply in different batches" no
+  longer apply: only a reply to the question message counts, wherever it was posted, and it is applied at intake, not by a
+  batch. The residual that stays: Smart sees the last 30 messages only, so the pair can leave its view before consolidation.
+  A question that stays stale no longer waits "stale until answered": its fact is current while it waits (above).
+- **D7, timeout (P2).** 14 days from the send, for `asked` and `unanswered` questions only; a queued question never times out. A
+  fallback `revive` gives twice the window the last revive gave (14 to 365 days), **every silence again**: the RFC's "never asked
+  again after two silences" is dropped, because a fact is asked again only when it falls due again, and never replaced by a silent
+  revive when it next needs the owner. A fallback `archive` is for a dated plan, a past `fallback_date` or noise.
+- **P3.** The weekly digest lists removals made by the review, a timeout or the owner, in the message language, ending "To bring
+  one back, tell me in chat that it is still true." The Cabinet shows the stale facts and everything set aside in the last 30 days
+  with the actor; it **cannot restore** a closed fact (the RFC's "or the Cabinet" is not built; a follow-up).
+- **Cabinet question list (Q7).** Each waiting or asked fact is shown with its current text, followed forward as an answer
+  would follow it. A fact rewritten since its question (or gone) shows the **question's quote**, the text the owner was
+  asked about, not the new version, so nothing unseen is shown or answered; a click on such a row answers "changed" and
+  reloads. A click is a direct owner action under the same preconditions as a chat digit and releases the next question when
+  it answers the current one.
+- **D10.** Counters, alerts and the 🧹 line are listed in the owner's map (§5.5). Thresholds: the oldest stale fact older than
+  the interval + 2 days (when it starts, then weekly); more than 35 queued questions (once); no successful review for 48 h; the
+  breaker at the interval + 72 h; the pool over 50; closed review records stored 3 days past their expiry; a fact revived a
+  third time in 30 days.
+- **Janitor guard.** The janitor takes a run guard before anything is read (a small collection, 5 minutes), so two runs never
+  overlap; S3's "the job is not retried" rule stays.
+- **Other collections.** `fact_review_questions` and `fact_review_messages` carry `purge_after` (a Firestore TTL policy on that
+  field deletes closed records 90 days after closing, and digest claims 90 days after the claim; nothing named `expires_at`);
+  `fact_review_state` and `fact_lifecycle_run` have no TTL policy (the no-TTL test lists them).
+- **Config.** `UserBotConfig.fact_review_interval_days` and the same field on the account defaults.
+
+*Appendix A, rows touched by S4.* `stale_since` is cleared whenever a fact comes back to current (revive, rewrite, queue, a
+fallback revive, an owner's yes) and kept on a fact the review or the owner sets aside; the review also reads it for the queue
+order and the Cabinet for the stale view. `state` gains the review's and the owner's writers (`stale → current`, `→ archived`,
+`→ invalidated`, `→ superseded`, and `current → archived|invalidated|current` for a waiting fact); every reader still filters
+`current`, so a waiting fact is an ordinary current fact. `reported_date`: a revive on evidence takes the later of the stored
+date and the evidence date, on a reply or an answer the later of the stored date and the answer time; a rewrite, a queue
+and a fallback keep it. `expiry_kind`, `ttl_days`, `expires_at`: a revive counts the horizon from now, with `ttl_days` stored
+so that `expires_at = reported_date + ttl_days`; a queued fact keeps its past `expires_at`. `content`: the review's rewrite is a
+version, and the history fact of an "ended" answer is a new fact in its own lineage. `lifecycle_events`: actors `review`, `owner`,
+`timeout` and `review_fallback`; read by the revive alert, the digest (last actor) and the Cabinet (last actor). `valid_to` is read
+by the "set aside lately" list and the digest. `vector` is read by the review's neighbour query.
+
+*Notes for S5.*
+- Classify accepts a filtered set; S4 never assumes an `expiry_kind`. Revives keep the strict born-due rule.
+- The pool bound makes the drain safe: classify feeds the review at most 50 facts at a time (about three days of review passes
+  of 20), then questions go one at a time, up to 5 a day; the Cabinet answers any number at once. A question nobody answers
+  closes 14 days after it was sent.
+- The review dry run of §7 step 3b is bench 7 of the model dry run (`test_review_dryrun.py`); the answers bench (bench 6) is
+  the Stage 1 check of the echo-trap exception.
+- S5's expiry audit gets three invariants: a current fact has no `stale_since`; every horizon has `expires_at = reported_date +
+  ttl_days`; while the janitor writes and after that day's run, a current fact past its `expires_at` belongs to an open question.
+- Follow-ups outside S4: a call note that carries an answer to a question; a Cabinet "bring back" for a closed fact; Telegram
+  inline keyboards on the same port; Smart sending interactive blocks through it.
 
 **Documentation (owner, 2026-10-21).** Before S2, an owner's map of memory, `docs/05_building_blocks/memory/README.md`,
 on the pattern of the drive building block: a §0 question index, a plain-English walk-through of a fact's life from

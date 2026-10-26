@@ -8,8 +8,8 @@ by updating this file.
 
 Design records: `docs/10_rfcs/DELIBERATE_FACT_MANAGEMENT_RFC.md` (taxonomy, tools, cognitive process),
 `docs/10_rfcs/CLUSTER_REVIEW_RFC.md` (Stage 2a), `docs/10_rfcs/STANDING_DIRECTIVES_RFC.md` (Stage 2b),
-`docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` (`$memory save`), `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (S1, S2 and S3 built,
-S4–S5 not built), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,fact_versions_one_writer,fact_expiry_and_janitor,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
+`docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` (`$memory save`), `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (S1 live; S2, S3 and S4 built,
+S5 not built), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,fact_versions_one_writer,fact_expiry_and_janitor,fact_review_and_owner_questions,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
 
 ## 0. How to answer questions about memory
 
@@ -19,10 +19,15 @@ S4–S5 not built), decisions `docs/04_solution_strategy/decisions/{fact_s1_defe
 | What `is_current`, `valid_to`, `lineage_id`, `version`, `superseded_by` mean today; what an update or a merge does to them | §2.3, §2.4 |
 | Why an update gave the fact a new id; whether the old wording is kept and how to look at it; why an old id still works | §2.4, §9.3 |
 | When does a conversation become facts; why nothing happened after I told it something | §3 steps 1–3, §7 |
-| How to deploy or roll back the fact versions (S2) and the expiry work (S3), and how to read the audit afterwards | the rollout notes (ops), §9.6 |
+| How to deploy or roll back the fact versions (S2), the expiry work (S3) and the review (S4), and how to read the audit afterwards | the rollout notes (ops), §9.6 |
 | When a fact ends: what `expiry` is, who computes `expires_at`, why a write was refused for its expiry, what "born due" means | §2.7, §6 |
-| What the daily janitor does, why a fact went `stale`, what log-only means, the breaker, the 🧹 morning line | §5.5, §9.1 |
-| How to run the model dry run of the S3 prompts before the deploy (step M) | the rollout notes (ops) step M, §9.5 |
+| What the daily janitor does, why a fact went `stale`, what log-only means, the breaker, the pool, the run guard, the alerts, the 🧹 morning line | §5.5, §9.1 |
+| What the review pass does with a stale fact; why a fact came back, was set aside or was asked about | §5.6, §6 |
+| How a question reaches me, how I answer it (a digit, a button, a reply in words, the Cabinet), what happens if I do not | §5.6 |
+| Why no question arrived, or arrived twice, or its buttons did nothing | §5.6, §9.2b |
+| What the weekly digest says and when it is sent | §5.6 |
+| What the Cabinet shows for stale, set-aside and waiting facts, and what it cannot do | §4.8, §5.6 |
+| How to run the model dry run of the S3 and S4 prompts before the deploy (step M) | the rollout notes (ops) step M, §9.5 |
 | What the memory-write lease is; why a consolidation task waited or ran twice a few minutes apart | §3 step 3, §6, §7 |
 | What the consolidator sees (whose words, which text of the bot's replies) and how it decides create / update / merge / discard | §3 steps 4–5 |
 | Why the bot remembered something wrong, or something it said itself (echo trap) | §3 step 5, §9.3 |
@@ -44,7 +49,7 @@ S4–S5 not built), decisions `docs/04_solution_strategy/decisions/{fact_s1_defe
 | Why a reminder's or a system note's text became a fact | §9.3 |
 | Which batch wrote a given fact | §9.4 (step 0) |
 | Owner scripts, dry-run benches, the data audit, the prompt snapshot and its vocabulary tests | §9.5–§9.7 |
-| Review pass, owner questions, one-time classify of existing facts | §10 (not built) |
+| One-time classify of the existing facts, janitor on | §10 (not built) |
 | Where a piece of code lives | §11 |
 
 ---
@@ -64,12 +69,15 @@ S4–S5 not built), decisions `docs/04_solution_strategy/decisions/{fact_s1_defe
 There is no other writer of facts in normal operation: the bot does not save facts itself (§5.1). The owner can
 invalidate a fact from the Cabinet (§5.2); that rebuilds the baseline at once. One daily zero-LLM job, the janitor, only
 moves a fact whose expiry has passed from `current` to `stale` (§5.5); it is log-only until the owner switches it on.
+What becomes of a stale fact is decided by the **review pass** (a fifth model pass, §5.6): it brings the fact back, sets
+it aside, or asks the owner one question at a time in the primary chat. The owner's answers (a digit, a button, a
+reply, a Cabinet click) are applied by code, not by a model (§5.6).
 
 ### 1.2 The stores
 
 | Store | Collection | What it holds | Written by |
 |---|---|---|---|
-| Facts | `{prefix}domain_facts_v2` (`src/config/environment.py:114-120`) | one document per fact **version** (a content change adds a document, a lifecycle change edits one, §2.4), three 768-dim vectors each | consolidation tools (§3), Cabinet invalidate (§5.2), the janitor (§5.5, a state change to `stale` only) |
+| Facts | `{prefix}domain_facts_v2` (`src/config/environment.py:114-120`) | one document per fact **version** (a content change adds a document, a lifecycle change edits one, §2.4), three 768-dim vectors each | consolidation tools (§3), Cabinet invalidate (§5.2), the janitor (§5.5, a state change to `stale` only), the review pass and the owner's answers (§5.6) |
 | Sessions | `{prefix}sessions` (`environment.py:455-463`), doc id `{user_id}:{channel_id}` | the channel's recent messages (the sliding window) | `ConversationHandler`, notifications, `$memory save` |
 | Consolidation queue | `{prefix}consolidation_queue` (`environment.py:465-472`) | batches cut from sessions, until consolidated | overflow routing (§3 step 3), `$consolidate` |
 | Baseline cache | `{prefix}user_context`, doc id = account id (`environment.py:524-531`) | `biographical_facts`, `principles`, `directives` lists | `refresh_biographical_context_cache` (§3 step 9) |
@@ -77,6 +85,10 @@ moves a fact whose expiry has passed from `current` to `stale` (§5.5); it is lo
 | Memory drafts | `{prefix}memory_fact_drafts`, doc id `{user_id}:{code}` (`environment.py:350-354`) | facts Smart proposed, 7-day TTL | `propose_memory_facts` (§5.1) |
 | Janitor counters | `{prefix}fact_lifecycle_daily` (`environment.py:515-521`), doc id `{account_id}:{UTC day}` | one snapshot of the day's janitor run per account (last run of the day wins) and the day's `expiry_tool_errors` count; **no TTL policy**, no field named `expires_at` | the janitor, the consolidator's tool handler (§5.5) |
 | Janitor line mark | `{prefix}fact_lifecycle_lines` (`environment.py:523-529`), doc id = the UTC day | claims the day's single 🧹 ops line; never read as an account row; **no TTL policy** | the janitor (§5.5) |
+| Janitor run guard | `{prefix}fact_lifecycle_run`, one document `sweep` | `run_owner`, `run_until`: at most one janitor run at a time (an expired guard stays until the next run takes it over); **no TTL policy** | the janitor (§5.5) |
+| Review questions | `{prefix}fact_review_questions`, doc id = the question id | one question per fact: its status, the quoted text, the queue place, the message it was posted as, the owner's reply and answer (§5.6); a closed one carries `purge_after` for a TTL policy | the review service, `FactAnswerService` (§5.6) |
+| Review messages | `{prefix}fact_review_messages`, doc id `{user_id}:digest:{iso_week}` | the claim that lets one weekly digest go out per ISO week; carries `purge_after` | the review service (§5.6) |
+| Review state | `{prefix}fact_review_state`, doc id = account id | when the review last ran or failed, the offers per fact, the current question and today's send count, the digest marks, the alert marks, the message language and its labels; **no TTL policy** | the janitor (its enqueue and alert marks), the review service, `FactAnswerService` (§5.6) |
 
 ### 1.3 The actors
 
@@ -89,7 +101,14 @@ moves a fact whose expiry has passed from `current` to `stale` (§5.5); it is lo
 | `ConsolidationAgent` | the model loop, all stages | `src/agents/consolidation_agent.py` |
 | `FactManagementAdapter` | the model's tools (`FactManagementPort`): search, create, update, merge; and code's typed update (the agent's own `fact_updates` dependency, the same adapter in composition; `FactUpdatePort.apply_fact_update`: a decided `ParsedFactUpdate`, checked by `typed_update_refusal`, with the review's and the owner's `evidence_at`, `reason` and `history`; it returns a typed `FactUpdateOutcome`, and the model's `update_fact` dict is that outcome rendered by `fact_tool_result.update_result`), one apply under both updates; follows stale ids forward, writes under preconditions; applies the expiry, `reported_date` and trail rules of the pass's write context (§2.7) | `src/adapters/fact_management_adapter.py` |
 | `FactLifecycleSweepService` | the janitor: stales due facts, applies the breaker and the per-run cap, refreshes the baseline, stores the day's snapshot, posts the 🧹 line (§5.5) | `src/services/fact_lifecycle_sweep_service.py` |
-| `FirestoreFactLifecycleCounters` | the janitor's snapshots, the tool-error increments and the posted-line mark | `src/adapters/firestore_fact_lifecycle_counters.py` |
+| `FirestoreFactLifecycleCounters` | the janitor's snapshots, the review's and the answers' counter increments, the posted-line mark and the run guard | `src/adapters/firestore_fact_lifecycle_counters.py` |
+| `FactReviewService` | one review run for an account: the owner check, the memory-write lease, housekeeping, timeouts, selection, the model pass, the queue, the send of the next question, the cache, the digest, the counters (§5.6) | `src/services/fact_review_service.py` |
+| `FactReviewScope` | the review pass's two tools, `update_fact` and `ask_owner`, with the basis and ask rules | `src/infrastructure/fact_review_scope.py` |
+| `FactAnswerService` | the one path of an owner answer and the one way a question closes; the reply at intake; the click on a button (§5.6) | `src/services/fact_answer_service.py` |
+| `FirestoreFactReviewStore` | the question records, the account's review state, the digest claim | `src/adapters/firestore_fact_review_store.py` |
+| `FactQuestionTexts` | the one resolver of the question's language, its labels and its message | `src/services/fact_question_texts.py` |
+| Interactive messages | a platform-neutral message with options (`InteractiveMessage`), a router that picks the platform's adapter (Slack buttons, plain text with digits on Telegram), and `InteractiveChoiceService` for a click | `src/domain/interactive_message.py`, `src/infrastructure/interactive_message_router.py`, `src/adapters/slack/interactive_message_adapter.py`, `src/adapters/plain_text_interactive_message_adapter.py`, `src/services/interactive_choice_service.py` |
+| `CabinetFactService` | the Cabinet's invalidate (§5.2) | `src/services/cabinet_fact_service.py` |
 | `FactWriteService` | builds a `FactEntity` with its three vectors and stores it | `src/services/fact_write_service.py` |
 | `FirestoreFactRepository` | every fact query; the version, merge and in-place transactions; forward resolution; the baseline cache document | `src/adapters/firestore_repo.py` |
 | `BiographicalContextService` | chooses the baseline | `src/services/biographical_context_service.py` |
@@ -127,7 +146,7 @@ like any other message.
 | `created_at` | ordering of the baseline and the domain channel; a version copies it from the document it replaces, so it is the fact's first mention |
 | `version`, `lineage_id`, `replaces_fact_id`, `superseded_by`, `is_current`, `valid_from`, `valid_to` | §2.3–§2.4 |
 | `expiry_kind`, `ttl_days`, `expires_at` | the expiry decision, written by code from the model's `expiry` argument (§2.7): kind `date`, `horizon` or `none`; `ttl_days` only for a horizon; `expires_at` null for `none`. Read by the janitor (§5.5) and, as `expiry` / `due`, by the consolidator. The `ttl_days` values the model wrote before S3 (113 on 2026-10-23) mean nothing and are ignored while `expiry_kind` is null |
-| `stale_since`, `lifecycle_events` | `stale_since`: when the janitor staled the fact. `lifecycle_events`: the newest 20 state transitions `{at, from, to, actor, reason}` with code-built reasons (§2.7); written in the same write as the transition, never shown to a model |
+| `stale_since`, `lifecycle_events` | `stale_since`: when the janitor staled the fact; it orders the review queue and is cleared whenever the fact comes back to `current` (a revive, a rewrite, a queued question, an answer, a fallback), and kept on a fact the review or the owner sets aside. `lifecycle_events`: the newest 20 state transitions `{at, from, to, actor, reason}` with code-built reasons (§2.7); written in the same write as the transition, never shown to a model |
 | `last_updated` | written on every in-place write; read by no code |
 | `visibility` | defaults to `account_shared`; never filtered on read: every member of an account sees every fact |
 
@@ -140,7 +159,7 @@ The adapter also stores `context_priority_rank` (critical 1 … archival 5) next
 |---|---|---|
 | `domain` | `biographical`, `possession`, `health`, `medical_records`, `location`, `work`, `network`, `preference`, `agent_directive`, `skill`, `project`, `finance`, `education`, `legal`, `entertainment`, `communication` (`:18-35`) | baseline order (biographical first), standing directives (`agent_directive`), Router domain channel, Lelik's filter |
 | `temporal_class` | `permanent`, `stable`, `dynamic`, `ephemeral` (`:38-43`) | none; shown to the consolidator. Since S3 it is only a default for the expiry decision when no row of the kinds table applies (§2.7); no code reads it |
-| `state` | `current`, `stale`, `archived`, `superseded`, `invalidated` (`:46-52`) | **the only visibility switch**: every reader filters `state == "current"` (`firestore_repo.py:232,286,400,471,661,899`). Only the janitor sets `stale` (§5.5); the model is refused it everywhere (§2.7) |
+| `state` | `current`, `stale`, `archived`, `superseded`, `invalidated` (`:46-52`) | **the only visibility switch**: every reader filters `state == "current"` (`firestore_repo.py:232,286,400,471,661,899`). Only the janitor sets `stale` (§5.5); the model is refused it everywhere (§2.7). A fact whose question waits for the owner is `current` (§5.6) |
 | `context_priority` | `critical`, `high`, `medium`, `low`, `archival` (`:55-61`) | baseline order; `archival` (rank 5) is never in the baseline or the rulebook (`firestore_repo.py:479`) |
 
 The model writes these in upper case; `normalize_fact_taxonomy` lowercases them before the enums parse
@@ -155,7 +174,7 @@ Cabinet invalidate, the directive backstop):
 
 | State | `is_current` | `valid_to` | `superseded_by` | Typical cause |
 |---|---|---|---|---|
-| `current`, `stale` | true | none | none | created; `stale` is set by the janitor when the fact's expiry has passed (§5.5) |
+| `current`, `stale` | true | none | none | created; `stale` is set by the janitor when the fact's expiry has passed (§5.5). A stale fact the review cannot decide is made `current` again while its question waits (§5.6) |
 | `archived` | true | now | none | "was true, no longer" (the prompt's Negation rule) |
 | `invalidated` | true | now | none | "was never true", Stage 2b removal, Cabinet, backstop |
 | `superseded` | **false** | now | the successor's id (empty on documents closed before S2) | a document replaced by a newer version of its lineage, a merge source, or a compound fact the model split (it must name the fact that replaces it; the call is refused without it) |
@@ -308,6 +327,30 @@ owner says an existing fact again and the conversation confirms it held all alon
 before (`max(stored, new + days)`); when the link is unclear it creates a new fact and leaves the old one. A RAG echo stays
 DISCARD, and cleanup passes never extend.
 
+**Review and owner writes (S4).** The review pass and the owner's answers write through the same update path with their own
+pass actors, `review` and `owner` (`domain/pass_actor.py`, the one table that says whose dates count, whether a due horizon is
+floored, which stored states a write may start from and how a refusal reads). They differ from the consolidation passes in
+five ways (§5.6 has the flow):
+- **A horizon counts from now.** A revive or a rewrite by the review, an owner's "yes" and a silence's fallback give a
+  horizon of N days from the moment of the write (`horizon_from_now`): `expires_at` is that moment plus N days and `ttl_days`
+  is stored so that `reported_date + ttl_days` still equals it (up to a day later, whole days). The strict born-due rule
+  applies: no floor, so N must be at least 2 and a `date` must be ahead. The review prompt gives `none` only on evidence or a reply,
+  and a pinned fact always gets `none`.
+- **`reported_date`.** A revive on evidence takes the later of the stored date and the evidence fact's date; on a reply or an
+  owner answer, the later of the stored date and the answer time. A rewrite, a queue write and a fallback keep it. The review
+  never sends a date (it is dropped with a note).
+- **A confirmation keeps the decision it can** (`confirmed_expiry`): a pinned or `none` fact stays permanent, a `date` that
+  is still ahead keeps its date, anything else gets a horizon of the fallback window.
+- **A fact waiting for the owner is `current` with a past `expires_at`.** Queueing clears `stale_since` and leaves the expiry
+  as stored. Every reader sees an ordinary current fact; the janitor skips it while its question is open (§5.5).
+- **Silence doubles the window.** When nobody answers, a fact that falls back to `revive` gets twice the window its last
+  revive gave, between 14 and 365 days (28, 56, … days). It is never replaced by a silent revive of an unrelated length and
+  never "asked once and then forgotten". A fallback to `archive` is used only for a dated plan, a past `fallback_date` or noise.
+The trail actors added are `review` (reasons such as `revived on <id8>`, `revived on reply q=<id>`, `archived: date passed
+<date>`, `queued for the owner q=<id>`), `owner` (`confirmed q=<id> (digit|button|cabinet)`, `ended …`, `never …`,
+`did not remember q=<id>`), `timeout` (`no answer to q=<id>: revive|archive`) and `review_fallback` (`kept twice: queued
+q=<id>`).
+
 **What the model sees.** The consolidator's search results carry `expiry` in the shape it sends, `due` (the local end date of
 a horizon) and `reported_date` as an ISO time with the owner's offset; never `ttl_days`, `expires_at` or `expiry_kind`. A
 `date` view sent back unchanged keeps the same `expires_at` unless that date is today or past: then it is refused as born
@@ -360,6 +403,11 @@ The cut batch goes to `OverflowRoutingService.route_overflow` as a background ta
 1. `serialize_messages_for_consolidation` (`src/domain/consolidation_serialization.py:20-46`): **user parts** →
    `consolidation_text or text` (`consolidation_text` is legacy, no writer left); **bot parts → `text`, the summary**,
    never `full_text` (verbose, carries web-search context). Each message keeps its role and `created_at`.
+   A memory-review question reaches the batch as an ordinary pair of messages (§5.6): the user part is the code frame
+   `[System: memory review q=<id> — …]`, the model part is the question with the quoted fact (written with
+   `text == full_text`, so the batch sees the question as sent). The owner's reply is the pair
+   `[Reply to memory review q=<id>] <his text>` and the acknowledgement. Stage 1 reads them under the narrowed echo-trap
+   exception (step 5).
 2. A `ConsolidationBatch` (`src/domain/consolidation.py:14-28`) is stored in the queue with status `pending`
    (`overflow_routing_service.py:93-103`).
 3. A Cloud Task `task_type=consolidation` is enqueued for the user, with a 1800 s dispatch deadline
@@ -491,7 +539,15 @@ not live.
 
 **Rules that decide what is stored** (prompt tokens, mirrored in `prompts_snapshot/tokens/system/`):
 - `Domain_Scope` (POLICIES): never process ASSISTANT statements as facts unless the USER confirms with new
-  information; never store facts from questions.
+  information; never store facts from questions. **The one exception** (S4): a USER message that begins
+  `[Reply to memory review q=<id>]` is the owner answering Alek's memory-review question, framed by the earlier pair
+  `[System: memory review q=<id> …]`. The quoted fact belongs to the review, which applies the answer, so Stage 1 does not
+  update, extend, invalidate or re-create it from that reply. It records only what the answer adds: a correction that names
+  the true value becomes a fact about that value; any other new information follows the ordinary rules; a digit, "yes", "no",
+  "stopped" or "don't remember" add nothing. The question itself (the quote and the options) stays an echo and is discarded.
+  Other lines point to this one definition (the fallback line of POLICIES, the RAG-echo line and the negation line of
+  TAXONOMY), and worked examples in EXAMPLES show it (a correction, a bare digit, and a plain message with no marker). A bare digit sent as an ordinary message, with no
+  marker, is read by the ordinary rules; it states no fact.
 - `Trivial_Exclusions` (TAXONOMY): no logistics, outbursts, chitchat, meta talk, UI commands, unanswered questions,
   file operations, and the **RAG echo trap** — the assistant recalls a fact and the user only confirms it: discard.
   Test: "relevant in 30+ days?"
@@ -613,7 +669,7 @@ lines (`consolidation_agent.py`: no arguments, no fact text, 8 characters of the
   use hashes held in memory, never logged. `abandoned > 0` posts "🚨 Consolidation left expiry
   refusals unanswered" with the pass label, model, tool names and text lengths. It errs towards an alert: a retry that
   rewrites the text counts as abandoned.
-- **The review pass (Facts S4, T6b).** `_run_consolidation_loop(pass_kind="review", max_turns=review_max_turns (15),
+- **The review pass (Facts S4, §5.6).** `_run_consolidation_loop(pass_kind="review", max_turns=review_max_turns (15),
   review_scope=FactReviewScope)` offers three tools (`update_fact` with `basis` and `history` and no `reported_date`,
   `ask_owner`, `count_words`); `update_fact` and `ask_owner` go to the scope, any other tool is unknown, and the pass kind
   must match the actor. A review refusal (`refused`: `basis`, `ask`; outcome `review_refusal`) and a scope refusal
@@ -674,9 +730,11 @@ principle prefixed `[MINDSET]` (`src/services/prompt_v3/biographical_formatter.p
 under the note "Dates = when recorded … conversation history takes precedence if contradictory"
 (`prompt_assembly_service.py:452-454`). Facts and directives pass the security validator as untrusted text.
 
-**When it changes:** at the end of a consolidation run (§3 step 9), right after a Cabinet invalidate (§5.2), and after a
+**When it changes:** at the end of a consolidation run (§3 step 9), right after a Cabinet invalidate (§5.2), after a
 janitor run that staled a fact of the account (§5.5): a stale fact is not `current`, so it leaves the baseline, the
-prefetch and `search_memory` together. No reader of the baseline shows an expiry field.
+prefetch and `search_memory` together; and after a review run or an owner's answer that wrote a fact (§5.6): a fact brought
+back, queued for a question (it is `current` again) or set aside changes what the next message sees. No reader of the baseline
+shows an expiry field.
 
 **When the read fails.** A missing or empty cache document reads as no facts. A backend failure is logged and
 re-raised (`firestore_repo.py:851-853`): Smart, Quick, the Router and `PromptBuilder` catch it and answer without the
@@ -769,8 +827,15 @@ cache read raises, and the call is not opened on an empty context (`lelik_person
 
 ### 4.8 The Cabinet fact page
 
-Read routes (`src/web/user_cabinet_app.py:767-848`): all current facts; a paginated browser, newest first, optional
-domain filter; a single-vector search over `vector` (50 results). They show text, domain, type and created date.
+Read routes (`src/web/user_cabinet_app.py`): all current facts; a paginated browser, newest first, optional
+domain filter and a state filter, `current` (the default) or `stale`; a single-vector search over `vector` (50 results).
+They show text, domain, type and created date. Since S4 the page has three views and a question list (§5.6):
+- **Current** (the browser as before).
+- **Waiting for review**: the stale facts (`state=stale`), each with its `stale_since`, read-only.
+- **Set aside lately**: `GET /api/user/facts/recently-closed`, everything archived or invalidated in the last 30 days (not
+  only what the digest listed), newest closure first, each with its state and the actor of its last trail entry. Read-only: the Cabinet cannot bring a closed fact back. To bring one
+  back, the owner tells the bot in chat that it is still true.
+- **Questions**: the open memory-review questions with answer buttons (§5.6).
 The page holds fact ids, and a version write changes the id. A stale id still works for a delete (§5.2).
 **Pagination tie.** The browser pages by a cursor on `created_at`, ties broken by document id
 (`firestore_repo.py:266-314`). A version copies `created_at` from the document it replaces, so a fact that was versioned
@@ -879,74 +944,272 @@ service the command only enqueues.
 
 ### 5.5 The janitor (`fact_lifecycle_sweep`)
 
-A zero-LLM daily job that enforces the expiry decisions of §2.7. Cloud Scheduler job `alek-bot-dev-fact-lifecycle-sweep`,
-`30 9 * * *` Europe/Madrid (after the 09:00 billing summary), `POST /worker {"task_type": "fact_lifecycle_sweep"}`, 180 s
-attempt deadline, created by the deploy (`docs/07_deployment/SCHEDULERS.md`). Code: `FactLifecycleSweepService`
-(`src/services/fact_lifecycle_sweep_service.py`), rules in `src/domain/fact_lifecycle_sweep.py`.
+A zero-LLM daily job that enforces the expiry decisions of §2.7 and asks for a review when one is due. Cloud Scheduler job
+`alek-bot-dev-fact-lifecycle-sweep`, `30 9 * * *` Europe/Madrid (after the 09:00 billing summary),
+`POST /worker {"task_type": "fact_lifecycle_sweep"}`, 180 s attempt deadline, created by the deploy
+(`docs/07_deployment/SCHEDULERS.md`). Code: `FactLifecycleSweepService` (`src/services/fact_lifecycle_sweep_service.py`), the
+plan in `src/domain/fact_lifecycle_sweep.py`, the alerts in `fact_lifecycle_alerts.py`, the review part of the line in
+`fact_lifecycle_review_line.py`.
 
 **One run.**
+0. *Run guard.* Before it reads anything the run takes the guard (`{prefix}fact_lifecycle_run`, document `sweep`, held for
+   5 minutes, taken in a transaction) and frees it in a `finally`. A run that finds it held does nothing and answers 200
+   `{"status": "busy"}`; a guard that was never freed expires by itself. So two janitor runs never overlap (a hand run during
+   the scheduled one is now harmless).
 1. *Due:* `find_due_facts(now)` returns every document with `state == "current"` and `expires_at <= now`, collection-wide,
    projected to account, `expires_at`, `expiry_kind` and the trail (no text, no vectors) with its snapshot `update_time`. It
    needs the composite index `(state, expires_at)`. A due document **with no `expiry_kind`** (the old revision after a rollback,
    a hand edit) is skipped and counted `no_decision`, never staled; a document without an `account_id` is skipped and logged.
-2. *Backlog:* `stale_backlog()` counts the `stale` documents per account and the oldest `stale_since` (a stale fact with no
-   `stale_since` counts but has no age).
-3. *Per account, breaker first.* `breaker_reason` trips when the account has stale facts and no successful review in 72 h, or
-   more than 50 stale facts. S3 has no review, so `last_review_at` is always none: **in S3 any backlog trips the breaker**
-   (S4 wires the review time and changes the rule to the review interval + 72 h). A tripped breaker stales nothing for that
-   account and posts one 🚨 per account per run, **only when a due fact with a decision was actually held back**; the
-   snapshot and the morning line say `tripped` either way.
-4. *Per-run cap (owner, S3-D10).* An account that is not tripped gets at most `50 − backlog` stales per run, **oldest
-   expiry first** (then by id); the rest is counted `deferred` and waits for the next run (a conflict does not use the
-   headroom). In S3, where any backlog trips the breaker, the cap bites only from an empty backlog (the first write run can
-   stale up to 50 of an account's facts, then the breaker holds the rest). Once S4 wires the review time, a backlog is no
-   longer an automatic stop and the headroom bounds each run: at a backlog of 50 it is 0, so nothing is staled and
-   everything due is deferred until a review lowers the backlog.
-5. *Stale:* the service builds the write (`stale_fields`, from the trail the snapshot projected) and `stale_due_fact`
+2. *Backlog and reads:* `stale_backlog()` counts the `stale` documents per account and the oldest `stale_since` (a stale fact
+   with no `stale_since` counts but has no age). The review store gives every open question and every account's review state.
+3. *Accounts visited:* every account with a due fact, a stale backlog, a review state, an open question, or a review figure
+   or `reply_intake_failed` in yesterday's counters, so that its alerts and its review are judged.
+4. *Per account: skip, pool, breaker.* The facts of the account's open questions (`queued`, `pending`, `asked`,
+   `unanswered`) are taken out of the due facts **in both modes**: they are not staled and are not counted as due, deferred or
+   would-stale; the line shows them as `due_waiting`. Such a fact is `current` with a past `expires_at` until its answer or its
+   fallback gives it a new horizon or closes it (§5.6). The **pool** is the stale facts plus the facts of open questions.
+   `breaker_reason` trips when the account has stale facts and no successful review within the review interval + 72 h (4 days at
+   the daily default; no review yet counts as too old), or when the pool is over 50. A tripped breaker stales nothing for that
+   account and posts one 🚨 per account per run, **only when a due fact with a decision was actually held back**; the snapshot and
+   the morning line say `tripped` either way.
+5. *Per-run cap (owner, S3-D10).* An account that is not tripped gets at most `50 − pool` stales per run, **oldest expiry
+   first** (then by id); the rest is counted `deferred` and waits for the next run (a conflict does not use the headroom). So
+   stale facts plus waiting questions never pass 50: at a pool of 50 nothing is staled and everything due is deferred until
+   questions are answered or timed out.
+6. *Stale:* the service builds the write (`stale_fields`, from the trail the snapshot projected) and `stale_due_fact`
    applies it in one transaction under the snapshot's `update_time`: `state=stale`, `is_current` true, `valid_to` none,
-   `stale_since` and `last_updated` = now, and the trail entry `{current → stale, actor janitor, reason "expired <ISO>"}`. A changed or deleted document is a conflict (`FactWriteConflict`), skipped and counted until the next
-   run; any other error stops the run (below). It never archives, deletes or reads text, and takes no lease.
-6. *Baseline:* each account that staled anything gets `refresh_biographical_context_cache`, so the fact leaves every prompt
+   `stale_since` and `last_updated` = now, and the trail entry `{current → stale, actor janitor, reason "expired <ISO>"}`. A
+   changed or deleted document is a conflict (`FactWriteConflict`), skipped and counted until the next run; any other error stops
+   the run (below). It never archives, deletes or reads text, and takes no lease.
+7. *Review enqueue* (log-only mode too, so the review works from the deploy). `review_due` names the first reason that holds:
+   `stale` (stale facts after this run, and as many owner-local days since the last successful review as the account's
+   interval; none yet counts as elapsed), `reply` (a reply in words nobody has read), `timeout` (a question past its 14 days),
+   `pending` (a send that never finished), `digest` (due), `queue` (a queued question that may go out). Then one `fact_review`
+   task `{user_id: the account's first owner, account_id, mode: "daily"}` is enqueued with an 1800 s deadline and a name made of
+   the account and the owner's local date, and `enqueued_at` is set (which starts `unsuccessful_since`). No owner or no task
+   queue is a WARNING and nothing enqueued. The interval is `fact_review_interval_days` (the user's, else the account default,
+   else `DEFAULT_FACT_REVIEW_INTERVAL_DAYS` = 1), so a user's value needs no deploy. Cloud Tasks keeps a task name only while the
+   task is queued or running and for about an hour after, so the name merges runs that start close together; "one review a
+   local day" comes from the interval rule, not from the name.
+8. *Alerts:* one 🚨 per account per run (log-only too), listing every condition that holds: the pool over 50 (each run); the
+   oldest stale fact older than the interval + 2 days (when it starts, then weekly, and cleared when it stops holding); more
+   than 35 queued questions (once, re-armed when the queue is back to 35 or fewer); no successful review for more than 48 h
+   since the first one asked for (each run); yesterday's `reply_intake_failed` above zero; yesterday's refused expiry calls above
+   10; the breaker line. The marks the repeat rules need are written before the post, so a lost post is not repeated. Once
+   per run, one more 🚨 when closed review records are still stored more than 3 days past their `purge_after` (the TTL policy
+   is late or missing). The review service itself posts one when a fact is revived a third time within 30 days.
+9. *Baseline:* each account that staled anything gets `refresh_biographical_context_cache`, so the fact leaves every prompt
    (§4.1).
-7. *Snapshot and line:* one snapshot per account is stored (below), one log line per account
+10. *Snapshot and line:* one snapshot per account is stored (below), one log line per account
    (`[FactLifecycle] account=<8> due=N newly_due=N no_decision=N staled=N would_stale=N deferred=N conflicts=N backlog=N
-   breaker=<ok|reason> review_enqueued=0 dry_run=<bool>`), and the 🧹 line is posted once (below). The job returns
-   `{accounts, due, staled, would_stale, deferred, conflicts, no_decision, breaker_tripped, dry_run}`.
+   breaker=<ok|reason> review_enqueued=<0|1> dry_run=<bool>`), and the 🧹 line is posted once (below). The job returns
+   `{accounts, due, staled, would_stale, deferred, conflicts, no_decision, breaker_tripped, review_enqueued, purge_overdue,
+   dry_run}`, or `{"status": "busy"}`.
 
 **Log-only is the default.** `FACT_LIFECYCLE_SWEEP_DRY_RUN` (`os.getenv` in `build_application_graph`, not in
 `load_settings()`) is log-only unless it is an explicit off value (`0`, `false`, `no`, `off`); empty or unset or anything else
 stays log-only. The startup line says `fact lifecycle sweep: log-only` or `: writes`. In log-only mode nothing is written to
-facts or the cache: `would_stale` counts **every** due fact with a decision whatever the breaker says, `deferred` is what the
-cap would hold, the breaker reads `would trip`, and no breaker 🚨 is posted. The snapshot and the line are written in log-only
-mode too, because the owner reads them before switching writes on. Nothing in the code switches writes on: S5 does it, **only
-on the owner's word** (the rollout notes, ops; the switch is `FACT_LIFECYCLE_SWEEP_DRY_RUN` in `cloudbuild-dev.yaml`). Before S5's classify no current fact has `expires_at`, so the first
-log-only week checks the plumbing (the job runs, the query is served by its index, the counters and the line appear); it is
-not a preview of janitor-on.
+facts or the cache: `would_stale` counts every due fact with a decision (open questions' facts excepted) whatever the breaker
+says, `deferred` is what the cap would hold, the breaker reads `would trip`, and no breaker 🚨 is posted. The snapshot and the
+line are written in log-only mode too, because the owner reads them before switching writes on. **The review is not log-only**:
+it works on the facts that are already stale, whatever the janitor's mode (§5.6). Nothing in the code switches writes on: S5
+does it, **only on the owner's word** (the rollout notes, ops; the switch is `FACT_LIFECYCLE_SWEEP_DRY_RUN` in
+`cloudbuild-dev.yaml`). Before S5's classify no current fact has `expires_at`, so the first log-only week checks the plumbing
+(the job runs, the query is served by its index, the counters and the line appear); it is not a preview of janitor-on.
 
 **What it stores and posts.** `{prefix}fact_lifecycle_daily/<account>:<UTC day>` gets one snapshot with the whole field set:
 `run_at`, `due`, `newly_due` (due facts whose `expires_at` is after the previous run's `run_at`), `no_decision`, `staled`,
 `would_stale`, `deferred`, `stale_conflicts`, `breaker` (`ok`, `tripped`, `would trip`), `backlog` and `oldest_stale_days`
-(both measured **before** the run). The last run of the day wins, so a hand run never double-counts. The consolidator's tool
-handler adds `expiry_tool_errors` to the same document with an increment (§3.11). After the run, **once a day** (the day's mark
+(both measured **before** the run) and `review_enqueued`. The last run of the day wins, so a hand run never double-counts.
+The same document carries counters that other code adds to with increments and a snapshot never replaces: the consolidator's
+`expiry_tool_errors` (§3.11), the review's `reviewed`, `revived`, `rewritten`, `archived_by_review`, `invalidated`,
+`superseded`, `kept`, `queued`, `review_failed`, `review_refusals`, `labels_fallback`, and the question flow's `questions_sent`,
+`not_delivered`, `answered_by_digit`, `answered_by_button`, `answered_in_cabinet`, `answers_not_applied`, `closed_by_reply`,
+`timed_out`, `replies_in_words`, `already_answered`, `reply_intake_failed` (§5.6). After the run, **once a day** (the day's mark
 in `{prefix}fact_lifecycle_lines` is claimed before the post, so a failed post loses the line and never doubles it) a single
 ops message goes to the ops sink when some figure is non-zero or a breaker is not ok: `🧹 Fact lifecycle — run
-<YYYY-MM-DD HH:MM> UTC[ · log-only]`, then one line per account: `<8>: due N (new N, no decision N) | staled N / would stale N /
-deferred N | conflicts N | breaker ok/tripped/would trip | backlog N (oldest Nd) | expiry tool errors yesterday N`. It reports
-what this morning's run did, plus yesterday's tool errors.
+<YYYY-MM-DD HH:MM> UTC[ · log-only]`, then, when closed review records are overdue, `purge overdue N`, then one line per account:
+`<8>: due N (new N, no decision N) | staled N / would stale N / deferred N | conflicts N | breaker ok/tripped/would trip | backlog N
+(oldest Nd) | expiry tool errors yesterday N`, followed by the review segments, each only when one of its figures is above zero:
+`| review: reviewed N; counted on their own: revived N, rewritten N, archived N, invalidated N, superseded N, kept N, queued N`,
+`| questions sent N, answered by digit N, by button N, in the Cabinet N, by reply N, timed out N, queue N, unanswered N,
+due_waiting N`, `| review failed N, refusals N`, `| replies not recorded N` and a closing `| enqueued 0|1`. The counters in the
+segments are **yesterday's** (the day the review actually ran), the `queue`, `unanswered` and `due_waiting` figures are this
+run's. The buckets of the review segment are counters of their own, not a breakdown of `reviewed` (a `kept` fact can also be
+`timed out`, and `queued` also counts a kept-twice question).
 
 **Failure and overlap.** Every ops post is capped at 10 s (a hung sink holds neither the run nor its error). A failure other
 than a write conflict (a query, a counters read or write, a stale write) is logged with its type and the stage reached, posts
 one "🚨 Fact lifecycle run failed (<Type>) at <stage>" naming no fact, re-raises, and the job answers 500. **The job is not
-retried, by design**: a retry after the 180 s deadline could overlap a run still going, and each run computes its headroom
-from the backlog before it, so two overlapping runs can stale up to twice the cap. Per fact the precondition makes a double
-write a conflict, so only the cap is at risk. **Do not trigger the job by hand while the 09:30 run is going**; a real guard
-(a per-day run mark) is S4's call. The next day's run catches up. The 🧹 line is claimed per **UTC day**: a hand run before
-09:30 Europe/Madrid on the same UTC day takes the day's line, and the scheduled run then posts none (its numbers are in the
-snapshot).
+retried, by design**: a retry after the 180 s deadline would run beside a run still going; the run guard now makes that
+harmless (the second run answers `busy`), but a retry would also find the guard held, so the next day's run catches up. The
+guard frees itself after 5 minutes. The 🧹 line is claimed per **UTC day**: a hand run before 09:30 Europe/Madrid on the same
+UTC day takes the day's line, and the scheduled run then posts none (its numbers are in the snapshot).
 
 **Never a TTL policy.** A Firestore TTL policy deletes documents when a field passes. `expires_at` on a fact is a decision to
-stale it, so no policy may exist for the facts collection, the daily collection or the line collection (a test walks the
-tree and fails on one; `decisions/fact_expiry_and_janitor.md`).
+stale it, so no policy may exist for the facts collection, the daily collection, the line collection or the run-guard
+collection (a test walks the tree and fails on one; `decisions/fact_expiry_and_janitor.md`). The two review collections
+that expire carry a different field, `purge_after` (§5.6).
+
+### 5.6 The review pass, the question queue and the owner's answers (Facts S4)
+
+Decision record: `decisions/fact_review_and_owner_questions.md`. Spec: `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` D6, D7 and "S4 as
+built". The owner's rule through all of it: **when unsure, keep the fact, and ask.**
+
+**What a stale fact becomes.** The janitor hides a fact whose expiry passed. The review decides what it is now. One
+`fact_review` run per account per day (when something needs it, §5.5 step 7) does, in order, under the account's
+memory-write lease (the one consolidation holds, so the two never write at once; busy → the run defers itself by 120 s with a
+named task):
+1. *Owner check.* The user must be the account's first owner, and the profile must belong to the account; else a WARNING and
+   `not_owner`. Questions, sessions, language and timezone are the owner's; facts are the account's.
+2. *Housekeeping.* A question whose send never finished is completed (it has a message reference: it was posted) or taken
+   back (it has none: a "not delivered" pair is appended and the question goes back to the front of the queue). An asked
+   question sent on an earlier local day becomes `unanswered`: still open, still timing out, no longer the current one.
+3. *Timeouts, in code.* A question sent (`asked`, `unanswered`) 14 days ago is closed by silence. If its fact is still the
+   same document: when the owner answered in words that the review has not read, or a fact created since the question looks
+   like an answer (one of the five current facts nearest to it), the fact goes to the model once; otherwise its question's
+   **fallback** applies at once (below). A fact closed or rewritten meanwhile closes the question `resolved_elsewhere`.
+4. *Kept twice.* A stale fact the model left undecided twice (`offers` in the state) gets a code question and is queued. Code
+   never revives a fact on its own.
+5. *Selection.* Up to 20 facts: first those with a reply in words not yet read and the timed-out candidates, then the stale
+   facts, those offered least first and the longest stale first. A fact with an open question is the question's business and is
+   left out.
+6. *The model pass* (`review_stale_facts`, label `review`): nothing selected means no model call. The agent is the consolidation
+   agent with its own profile `consolidation_review` (blueprint `consolidation_review_v1`; tokens `CONSOLIDATION_TAXONOMY` and
+   `CONSOLIDATION_LIFECYCLE`), no baseline conversation, at most 15 turns. It sees, per fact, built by code: the text, domain,
+   expiry, `reported`, `stale_since`, its earlier versions, its five nearest current neighbours (its own lineage left out) and, when
+   there is one, its question with the owner's reply in words. In mirror mode it also sees the owner's last ten messages (up to
+   1,500 characters, system notes left out) so that it can report their language. Every listed fact must end with exactly one
+   outcome, decided by the first rule that applies: **supersede** (a current fact says the same), **revive** (a reply or other
+   evidence says it still holds; rewritten if the text changed), **archive** (it is over; basis a reply, evidence or the passed
+   date of a dated plan), **invalidate** (it was never true), else **ask** the owner. A fact the pass cannot decide and has
+   already asked about is *left*.
+7. *The tools* are three (`_get_tool_declarations("review")`): `update_fact(fact_id, updates, basis?, history?)`, `ask_owner(fact_id,
+   fallback, fallback_date?, noise?)` and `count_words`. There is no search, create or merge tool. `FactReviewScope` (one
+   `asyncio.Lock`, so calls apply in the order the model wrote them) routes them and refuses what the rules refuse, each
+   refusal naming the argument and its fix and tagged `basis`, `scope` or `ask`:
+   - **scope**: a fact outside the batch, or one that already has a result in this pass, is refused;
+   - **basis**: an invalidate or a rewrite needs evidence (another current fact, never a version of the same fact) or the
+     owner's reply (with a quote copied from it); an archive also accepts `date_passed` (a dated plan uses its own date; any other
+     kind needs a date before today in the owner's zone); **a revive needs evidence or a reply, and is refused otherwise** ("ask
+     the owner instead"); a supersede names a current fact;
+   - **history**: an archive on a reply that says the thing ended may carry one past-tense sentence, which code creates as a
+     separate fact (`{kind: none}`, its own lineage, same domain and tags) in the same transaction. A dated plan that is over is
+     archived only, with no history fact;
+   - **ask**: one fact, no question text (code writes the question), a `fallback` of `revive` (the default) or `archive`;
+     `archive` only for a dated fact, a past `fallback_date`, or `noise: true`. Noise never archives anything on its own; it only
+     sets what silence does.
+   The model never archives a fact as noise by itself, and a refused call writes nothing.
+8. *After the pass.* Outcomes remove the fact's `offers` entry and close its question `review`. Each ask makes the fact
+   `current` again under its precondition (state `current`, `stale_since` cleared, the expiry as stored) and creates a `queued`
+   question that quotes the fact and takes its place in line from the fact's `stale_since`. A timed-out candidate left
+   undecided gets its fallback. A conflicting fact write leaves the fact stale and creates no question.
+9. *Send* the next question if one may go (below); *refresh* the baseline cache once if any fact was written; *digest* if due
+   (below); add the counters, post the revive alert (a fact revived a third time in 30 days), and mark the run (`last_review_at`
+   and a cleared `unsuccessful_since` on success; `last_failed_at` on a failed pass). **A failed review pass** (the agent failed
+   or raised) still sends the next question and the digest; its earlier writes stand; the run answers 200 `failed`, with no Cloud
+   Tasks retry, and the janitor enqueues again the next day.
+
+**The fact is current while it waits.** A queued fact is an ordinary current fact for every reader and keeps its past
+`expires_at`; the janitor skips it while its question is open. This is the owner's rule: a question never hides a fact, and an
+unanswered one never silently revives it. The cost is that the pool (stale + waiting facts) is bounded at 50 (§5.5).
+
+**One question at a time.** The queue holds `queued` questions ordered by how long their facts have been stale. There is one
+current question per user (`current_question_id` in the state). The next goes out only when the current one is closed (a
+digit, a button, a reply the review has handled, a Cabinet click) or, if the owner does not answer, on the next local day (the
+old one becomes `unanswered` and keeps its timeout). At most 5 are sent per owner-local day and none on a day when a delivery
+failed. There are no quiet hours in code: the chat's own notification settings decide. Questions go **only to the owner's primary
+channel**; with no primary channel, or one bound to a companion, nothing is sent and the queue waits (the Cabinet can answer it).
+A queued question never times out. A send is: claim the first queued question in one transaction on the state (no current
+question, today's count under 5); append the pair to the session (user part `[System: memory review q=<id> — Alek asked the owner
+about a fact he could not confirm]`, model part the question, `text == full_text`, raising when not stored); post; store the
+message reference; mark `asked`. A pair that cannot be appended puts the question back at the front; a post that fails appends a
+second pair (`[System: memory review q=<id> not delivered — …]` and `(not delivered)`) and puts it back, and that day sends no more.
+The message is code-built: "Is this still true?", the fact quoted as stored, and the four options
+`1 — Yes   2 — No longer   3 — Never   4 — Don't remember`, then a hint that a reply in words works too.
+
+**The language of the message.** The owner's response-language setting decides: a fixed language gives that language
+(uk, en, fr, es); mirror mode gives the language of his recent messages, which the review pass reports as `message_language`.
+The 15 texts of a question (the question line, the four option labels, the reply hint, three acknowledgements, a "fact
+changed" note, a "closed" note, the digest's header and footer and its two state words) come from the UI strings for uk, en, fr and
+es. For any other language the review model returns them in its report and they are kept only if the code's checks pass (the
+exact 15 keys, one line each, within the length limits, no digit, `[` or URL, no control or invisible characters, four
+distinct option labels of at most four words); a set that fails is not used, the UI language is, and `labels_fallback` is
+counted. A passed set is cached in the state per language, with a digest of the English texts it translates, so a set written
+for other texts is ignored. The digits mean the same in every language. Facts are always quoted as stored, and each platform's
+adapter escapes whatever its markup would read as control syntax.
+
+**How the owner answers.** Only a *reply to the question message* counts (a Slack thread reply on the question's message, a
+Telegram reply to its message), or a click, or the Cabinet. Any other message is ordinary conversation and the question stays
+open. Four ways, one path (`FactAnswerService.apply`, with its source `digit`, `button` or `cabinet`):
+- **A digit as a reply** (1 yes, 2 no longer, 3 never, 4 don't remember). Taken at intake in `ConversationHandler`, before any
+  model call, in an unbound channel, for a text-only message. Applied at once by code. The acknowledgement is posted as a real
+  reply to the question message (in its thread on Slack, a Telegram reply on Telegram), as literal text, and the pair
+  `[Reply to memory review q=<id>] <text>` plus the acknowledgement is appended to the session.
+- **A button (Slack).** Four buttons under the question. A click is queued by `POST /slack/interactivity` as an
+  `interactive_choice` task (the route verifies the Slack signature on the raw bytes before it parses anything, then answers 200 at
+  once and does no more work in the request), and the worker applies it through the same path. The message is then re-rendered with
+  the chosen answer and no buttons. A click on a question that is already answered shows its answer. The click must come from the
+  question's own user, on the question's own message.
+- **A reply in words.** Recorded on the question (up to 2,000 characters), acknowledged ("Noted — I'll take it into account."),
+  and shown to the review once on its next run, which applies it and closes the question (releasing the next). It does not go to
+  Smart. It never shortens the 14 days; if the review leaves it undecided, the question waits for its timeout, and the timeout
+  step sees the reply.
+- **The Cabinet.** The "Questions" list shows each waiting or asked fact in full with three buttons (yes, no longer, never),
+  checkboxes and a bulk "mark selected as …" (1 to 50 at once). A click is a direct owner action under the same preconditions.
+A reply to a question that is already closed gets "Already answered." An answer to the *current* question releases the next one.
+Two kinds of message that are not taken as an answer fall through to ordinary conversation, so nothing the owner wrote is
+dropped: a reply the system could not take (an error in the path, which is logged, counted as `reply_intake_failed` and alerted the
+next morning; or a reply the store would not record) and a digit whose answer the write rules refused. A digit for a fact that
+**changed since the question was asked**, or whose write conflicted, is not applied and not sent on: the owner gets the
+"That fact has changed in the meantime, so I didn't apply your answer; I'll come back to it." note, and the question stays open
+(a button keeps its buttons and shows the note, so he can click again).
+
+**What an answer does** (`domain/fact_review_answers.py`; all against the fact as the owner saw it: a fact rewritten since, or a
+current text other than the quoted one, is `changed` and nothing is written):
+- *Yes* (still true): the fact is `current` with a confirmed expiry (§2.7); `reported_date` becomes the later of the stored
+  date and the answer time.
+- *No longer* (ended): a **standing** fact is archived and a separate lasting fact "No longer true (the owner said so in <Mon
+  YYYY>): <the old text>" is created beside it in one transaction (the month name is a fixed English tuple, never locale-
+  dependent); a **dated plan** (an expiry kind `date`, or a question whose fallback is archive) is only archived.
+- *Never*: the fact is invalidated; no new fact.
+- *Don't remember*: the question's fallback now.
+- A correction in words is handled by the review (invalidate, or supersede by the fact that states the true value) and by
+  Stage 1, which records the true value as its own fact.
+A close from any source goes through one method that clears the current slot, releases the next question and re-renders a
+Slack-posted message (the answer, or "This question is closed."); every close, including a review's, a timeout's and a
+`resolved_elsewhere`, uses it. Answers take no memory-write lease: the preconditions keep a concurrent consolidation or review
+write from being lost and the loser reports `conflict`.
+
+**What silence does.** A question's `fallback` decides, 14 days after it was sent. `revive` (the default): the fact is brought
+back with twice the window its last revive gave, 14 to 365 days (§2.7), with no new question until it falls due again. `archive`
+(a dated plan, a past `fallback_date`, or noise): the fact is archived. So an ignored question never silently revives a fact for a
+short, arbitrary time, and never archives a lasting one.
+
+**The weekly digest.** When the review or an answer sets a fact aside (archive or invalidate), the state records
+`undigested_since`. At the end of a review run (after a failed pass too), if something is undigested and the last digest is at
+least 7 days old (or there is none), the run claims the owner's ISO week and sends one message by `notify_raw`, as literal
+text (stored fact text is shown, never obeyed, and nothing is written to history): a header, one line per fact quoted as stored
+with its state in words ("no longer true" for an archive, "never was true" for an invalidation), and the footer "To bring one
+back, tell me in chat that it is still true." The digest lists only removals made by the review, a timeout or the owner (the
+last trail entry's actor), at most 50, read from the facts closed since the last digest (the first digest looks 30 days back).
+A fact the owner ended is listed as archived; the history fact written beside it is not. If there is nothing to list, no message
+is sent but the week is still claimed and the marks move. A digest that could not be delivered releases its claim and tries again
+at the next run. The Cabinet cannot bring a closed fact back; only the chat can.
+
+**What the owner sees in the Cabinet** (§4.8): the stale facts, everything set aside in the last 30 days with the actor of
+each close, and the question list. The question list shows each fact's current text; a fact that was rewritten since its
+question (and would answer "changed" if clicked) shows the quoted text the owner was asked about, so nothing unseen is shown or
+answered. Every click is checked for the session user, so one user's questions are never listed or answered by another.
+
+**Counters, alerts, retention.** §5.5 lists the counters, the alerts and the 🧹 segments. `purge_after` is `closed_at + 90 days`
+on a closed question and `claimed_at + 90 days` on a digest claim; it exists only in storage. A Firestore TTL policy on
+`purge_after` for `fact_review_questions` and `fact_review_messages` deletes them; without one they stay and the janitor's
+run-level 🚨 reports them 3 days past. An open question never has one. The state document has none.
+
+**The cost.** A digit, a button, a Cabinet click, a timeout fallback with nothing to see, a send and a digest cost no model
+call. A review pass is one model loop whose fixed prompt is about 25,000 tokens: about $0.08–0.10 (Sonnet 5.5) or $0.15–0.20
+(Opus 5.5) for a pass of 2 facts, and about $0.22–0.30 or $0.45–0.60 for a pass of 20 (§8).
 
 ---
 
@@ -984,8 +1247,19 @@ tree and fails on one; `decisions/fact_expiry_and_janitor.md`).
 | batch stored but the Cloud Task enqueue fails | logged | — | waits in the queue | the hourly sweep |
 | the janitor run fails (a query, the counters, a stale write) | logged with its type and stage, one "🚨 Fact lifecycle run failed" (no fact named), the job answers 500; what was staled before the failure is already out of the baseline | the facts staled so far stay stale | — | **no**: the job is not retried by design; the next day's run catches up (§5.5) |
 | a janitor stale write finds the fact changed since the read | counted `stale_conflicts`, skipped | none for that fact | — | the next run |
-| the janitor's breaker is tripped | nothing is staled for that account; one 🚨 per account per run, only when a due fact with a decision was held back | none | — | the next run, until a review lowers the backlog (S4) |
+| the janitor's breaker is tripped | nothing is staled for that account; one 🚨 per account per run, only when a due fact with a decision was held back | none | — | the next run, until a successful review lowers the backlog or the pool is back to 50 or fewer (§5.5) |
+| a second janitor run starts while one is going | the run guard is held: it does nothing and answers 200 `busy` | none | — | no; the next day's run |
 | the 🧹 line's claim or post fails, or the consolidator's `expiry_tool_errors` increment fails | WARNING with the exception type; the run or pass goes on; a failed post loses that day's line (the snapshots stay), a failed increment loses that pass's count | stored | — | — |
+| a review call is refused (`update_fact` or `ask_owner`: a basis the rules do not accept, a fact outside the batch or already decided, an ask that is not allowed) | the tool result says what to fix and is tagged `refused: basis`, `scope` or `ask`; nothing is written. A scope or born-due refusal nobody answers is abandoned (🚨, §3.11); a basis or ask refusal leaves the fact kept | none | — | the model fixes the call or leaves the fact; **a revive without evidence or a reply is never written** |
+| the review pass fails (agent failure or exception) | the run answers 200 `failed`, `review_failed` is counted, `last_failed_at` is set, the send of the next question and the digest still run; writes already made stand and the cache is refreshed | stand | — | no Cloud Tasks retry; the janitor enqueues again (the `unsuccessful_since` alert at 48 h) |
+| a review run finds the memory-write lease taken | it enqueues itself again, 120 s later, under a name made of the account and the lease bucket, and ends | none | — | yes, by the deferral |
+| an owner's answer finds the fact changed since the question (a rewritten fact, a different current text) or its write conflicts | `changed` or `conflict`: nothing is written, the owner gets "That fact has changed in the meantime…" (a button keeps its buttons), the question stays open | none | — | the owner may answer again; the review or the timeout handles it otherwise |
+| an owner's answer is refused by the write rules (`not_applied`) | WARNING, `answers_not_applied` counted, the question stays open; a digit reply is left to ordinary conversation | none | — | no |
+| a question cannot be sent (its pair is not stored, or the post fails) | pair not stored: the question goes back to the front of the queue, nothing posted. Post failed: a "not delivered" pair is appended, the question goes back to the front, no more are sent that day, `not_delivered` is counted | none | — | the next day's run |
+| the post succeeded but a mark failed (a crash between the post and `asked`) | housekeeping of the next run completes a pending question that has a message reference as `asked`; it is never sent twice | none | — | — |
+| an error in the reply intake | ERROR, `reply_intake_failed` counted (a 🚨 the next morning), the message goes on as ordinary conversation | none | — | no |
+| a Slack click arrives with a bad signature, or the queue is down | 401 with nothing parsed; 503 or 500 when the task is not queued (Slack shows the click as failed) | none | — | the owner clicks again |
+| the digest is not delivered or cannot be read | the claim is released and the marks stay, so the next run tries again; an error is logged and never fails the run | none | — | yes, the next run |
 | two runs of one account at once | prevented by the memory-write lease (§3 step 3): the second finds it taken and defers itself (a named task, 120 s later) | none from the loser | the loser does nothing; the winner owns the batch | yes, by the deferral |
 | lease taken and the user has no open batch | the loser stops; nothing to do | — | — | — |
 | less than 60 s of the run budget left when the batch would start | the batch stays `pending`, the lease is released, a deferral is enqueued (`consolidation_service.py:261-262`) | none | untouched | yes |
@@ -1053,8 +1327,22 @@ consolidation run).
 - The first janitor run after `expires_at` (09:30 Europe/Madrid) finds it due. In log-only mode it only counts it (`would_stale`). With
   writes on, it becomes `stale` with a `stale_since` and a trail entry, the baseline of the account is rebuilt, and the fact
   leaves the baseline, the prefetch and `search_memory` from the next message (§5.5).
-- A stale fact keeps its text in the store; nothing deletes it. S4's review pass, not built yet, will decide what it is now
-  (revive, archive or ask the owner); until then it waits, and the breaker stops further stales for the account.
+- A stale fact keeps its text in the store; nothing deletes it. The review pass decides what it is now (below).
+
+**A fact that went stale** (the janitor staled "the planning permission for the garden shed is expected by Oct 30").
+1. *Day 0, 09:30:* the janitor stales it, sees a stale fact and a review interval elapsed, and enqueues the account's `fact_review`.
+2. *Minutes later:* the review takes the memory-write lease, reads the fact with its neighbours. A neighbour "the permission
+   for the garden shed was received on Oct 28" decides it: the fact is superseded by that one, or archived with the plan's
+   date as basis (a dated plan that is over is archived only). Nothing is asked. A fact no neighbour decides ("Alex goes to
+   the FitLife gym") is queued instead: it becomes `current` again at once, with its old expiry, and a question about it is
+   queued.
+3. *Same run or a later one:* if no question is out and fewer than 5 went today, the question is posted to the primary chat,
+   one fact, four options. The owner replies "4"… or "3 — it's Iron Temple now", or presses a button, or answers in the
+   Cabinet. A digit, a button and a Cabinet click are applied at once; words are read by the review on its next run.
+4. *If he does not answer:* the next local day the question stays open as `unanswered` (and the next one may be sent); after 14
+   days from the send the fallback applies: a lasting fact is revived for twice the window it last had (between 14 and 365 days), a
+   dated plan is archived. Nothing is asked about it again until it falls due again.
+5. *Weekly:* what the review and the owner set aside in the week is listed in one digest message.
 
 **A directive** ("always answer in bullet points").
 - Consolidated with its batch (above). Stage 1 classifies it: `agent_directive` only if it is about agent behaviour
@@ -1094,6 +1382,14 @@ eval (2026-07-15, older models and prices) put Sonnet ≈ $0.5 and Opus ≈ $1.5
   counters.
 - The janitor calls no model: a few collection-wide queries, one transaction per staled fact, one cache rebuild per changed
   account.
+- The review pass (S4, §5.6) is one more model loop, run only when a fact is stale or a reply in words waits. Its fixed
+  prompt is about 25,000 tokens and is paid per pass, so a pass of 2 facts costs about $0.08–0.10 on Sonnet 5.5 ($0.15–0.20 on
+  Opus 5.5) and a pass of 20 facts about $0.22–0.30 ($0.45–0.60). Mirror mode adds about 400 input tokens a pass and, once per
+  new language, about 100 output tokens of labels. No model call is made for an empty selection, a send, a digest, a timeout
+  with nothing to look at, a digit, a button or a Cabinet click. A rewrite or an "ended" history fact embeds three vectors
+  (cents). Steady state, with the owner's estimate of 0–3 questions a week, is about $1.3–2.6 a month; if 0–5 facts go stale
+  every day, about $2.5–6 a month. The model dry run of the review (step M benches 6 and 7) is capped, with the S3 benches, at
+  $30 by the same ledger.
 
 **Where it is recorded.** Every model call goes through `BaseAgent._call_llm`, which bills the account per model that
 ran (`TokenLedger`, root `CLAUDE.md` → Token accounting) and writes a `prompt_content` row per turn (§9.1). The 📊 line
@@ -1116,6 +1412,7 @@ measured. `search_memory` adds one Gemini flash-lite call per search.
 | The run as a tree, failed calls included | Logfire (a failed call has no BigQuery row) |
 | What a pass did, at a glance | the 📊 / 🚨 Slack lines (§3.11) |
 | What the janitor staled or would stale, the breaker, the backlog | the 🧹 morning line in the ops channel; `{prefix}fact_lifecycle_daily` in the Firestore console (one snapshot per account per day); the `[FactLifecycle]` log lines |
+| What the review did yesterday, what is queued or unanswered, why a question was not sent | the review segments of the 🧹 line (§5.5); `{prefix}fact_review_state` (the current question, today's count `sent` and `sent_on`, `delivery_failed_on`, `unsuccessful_since`) and `{prefix}fact_review_questions` (each question's status, `closed_by`, `answer`) in the Firestore console; the `[FactReview]` and `[FactAnswer]` log lines |
 
 Log lines, in pipeline order:
 - `❄️ Overflow batch #n for <session>… (extracted=50, remaining=…)`, `🔔 Triggering overflow callback` (session store)
@@ -1136,6 +1433,15 @@ Log lines, in pipeline order:
 - Cabinet: `Fact <id> not invalidated: FactResolutionError|FactWriteConflict: …` (WARNING, the 409 of §5.2), `[FactRepo] invalidate of <id> conflicted (attempt n)`, and, if the baseline rebuild after a delete fails, `❌ [FirestoreRepo] Failed to refresh biographical cache for <account>`
 - `[Worker] sweep_consolidation complete: swept=N` (each swept user's FAILED batches were revived first)
 - janitor (§5.5): startup `fact lifecycle sweep: log-only` / `: writes`; per account `[FactLifecycle] account=<8> due=… newly_due=… no_decision=… staled=… would_stale=… deferred=… conflicts=… backlog=… breaker=<ok|reason> review_enqueued=0 dry_run=<bool>`; `[FactLifecycle] breaker tripped for account <8>: …` (WARNING); `[FactLifecycle] the run failed (<Type>) at <stage>` (ERROR) and `[Worker] fact_lifecycle_sweep failed (<Type>)`; `an ops message was cut after 10s` / `was not delivered` (WARNING)
+- review (§5.6): `[FactReview] …` lines: `user <8> is not the owner of account <8> … nothing done`, `memory-write lease busy: deferred
+  the review`, `question <id> timed out; …`, `N facts … kept twice: queued for the owner`, `📨 question <id> sent to account <8>
+  on <platform>`, `question <id> not delivered on <platform>`, `… was posted … but closed meanwhile`, `the review pass failed for
+  account <8>: …`, `📬 digest of account <8>: N facts`, `the digest of account <8> was not delivered; tried again next run`;
+  answers: `[FactAnswer] question <id> answered <kind> (<source>); applied`, `… the write conflicted; nothing written`, `… the
+  answer's write was refused (…)`, `reply to <platform> message <id> not taken: …` (ERROR, counted), `… fact … changed since it
+  was asked`; the Slack route: `[SlackInteractivity] queued a fact_question choice`, `… no task queue`, and the worker's
+  `interactive_choice` lines. The 📊 line of a review pass carries the label `review` (§3.11). The janitor adds
+  `review enqueued` / `already queued today` for an account and `another run holds the run guard; this run does nothing`.
 - expiry: `[OwnerZone] owner timezone unresolved for account <8>: …; using UTC` (WARNING); `⚠️ [ConsolidationAgent] Pass close-out cut after 10s` / `failed: <Type>` and `Lifecycle counters not updated: <Type>` (WARNING); the INFO line for an ignored `expiry` on a closing state
 - search: `🔍 [SearchEnrichment] Final: N facts (semantic_dedup: …, bio_dedup: …)`, `🔍 [find_nearest] START/DONE`
 
@@ -1152,6 +1458,27 @@ Log lines, in pipeline order:
    so look for the newest `version` of its `lineage_id`.
 6. Stored and current but not used: not in the baseline (§4.1 selection), and this message's prefetch did not rank it
    (§4.3). Try `search_memory` with other words; check its domain and priority.
+7. A fact that left memory without the owner saying so: look at its last trail entry (`actor`, `reason`). `janitor` = its
+   expiry passed (it is `stale`); `review` or `timeout` = the review set it aside, and it is in the next weekly digest and in the
+   Cabinet's "set aside lately" for 30 days; `owner` = his own answer. A set-aside fact is brought back by telling the bot in
+   chat that it is still true (the Cabinet cannot).
+
+### 9.2b Why did no question arrive, or why did one not move?
+
+1. Is there a stale fact? The Cabinet's "waiting for review" view, or the 🧹 line's `backlog`. A review runs only when a stale
+   fact, a reply in words, a timed-out question, an unfinished send, a due digest or a queued question needs it (§5.5 step 7).
+2. Did the review run? `{prefix}fact_review_state`: `enqueued_at`, `started_at`, `last_review_at`, `last_failed_at`. A 🚨 "no
+   successful review for N h" means it has not succeeded for two days.
+3. Did the review decide the facts itself? Most facts are decided from their neighbours and ask nothing. Look at the counters
+   (`revived`, `archived_by_review`, `queued`).
+4. Is a question waiting? `queued` questions wait for the current one to be answered, or for the next local day; at most 5 go per
+   local day; a failed delivery stops that day (`delivery_failed_on`); with no primary channel, or a primary channel bound to a
+   companion, nothing is sent (`no question sent … the queue waits` in the log). The Cabinet's question list shows the same queue.
+5. Did a button do nothing? Interactivity must be enabled in the Slack app with the main service's `/slack/interactivity` as its
+   request URL; a click that failed leaves no `[SlackInteractivity] queued …` line (a bad signature is a 401). A thread reply
+   works without it.
+6. Did a digit get "That fact has changed in the meantime"? The fact was rewritten or changed after the question was asked; the
+   review or the timeout handles that question.
 
 ### 9.3 Why did it remember something wrong?
 
@@ -1199,6 +1526,8 @@ Log lines, in pipeline order:
 | `scripts/validation/inspect_consolidation.py` | prints the queue and recent facts |
 | the five benches (stage 1 classification, cluster audit, decomposition, directive review in `scripts/consolidation/`, and the email bench `scripts/email/test_consolidation_dryrun.py`) with `--s3-kit` (`scripts/consolidation/s3_dry_run_kit.py`, `scripts/consolidation/s3_bench_support.py`) | the **model dry run of the S3 prompts** (deploy step M, owner-run on the Mac, cap $30): each bench runs the pass its gate reads, on the real agent and adapter over a no-write store |
 | `scripts/migration/fact_s3_stamp_legacy_stale.py` | deploy step 6a: stamps `stale_since` on stale facts that have none (dry run first; `--apply` writes) |
+| `scripts/consolidation/test_review_answers_dryrun.py --s3-kit` | step M bench 6: Stage 1 on windows with the real history shapes of a question and a reply (a digit, words, a correction, a bare digit with no marker, a not-delivered pair): the quoted fact must be left alone and only a correction's true value recorded (gate G4) |
+| `scripts/consolidation/test_review_dryrun.py --s3-kit --stage N --runs R [--mirror CODE]` | step M bench 7: the real `FactReviewService.run` on the kit over the owner's live stale facts, `N` more live facts staled in the kit's overlay, and seeded cases (a plan whose date passed, a revive with no basis, two stale duplicates, an undecidable fact, three replies in words); no stale fact, question, message or counter is written live (gates G5 and G6; `--mirror` checks the language the review reports) |
 
 The `scripts/consolidation/` benches run the real agent against live reads: fact writes are intercepted and the cache
 refresh is stubbed, but the model calls are real (paid) and may be recorded in the account's billing counters (the
@@ -1225,8 +1554,10 @@ collection read-only and checks every stored document against the invariants: st
 `FactEntity`, and no lineage with more than one `is_current` document. It prints counts only and writes the offending
 ids per class to `scripts/memory/data_audit_facts_<time>.json` (gitignored; no text or vectors). The S3 fields (`expiry_kind`, `expires_at`, `stale_since`, `lifecycle_events`) are checked only as
 part of that parse (a malformed value is `invalid_entity`); the expiry invariants (a horizon without `ttl_days`, a stale fact
-without `stale_since`) are S5's audit. Run it after any
-migration or backfill.
+without `stale_since`) are S5's audit. S5's audit also reads three invariants of the review: a current fact has no
+`stale_since`; every horizon has `expires_at = reported_date + ttl_days` (whole days); and, while the janitor writes and after
+that day's run, a current fact past its `expires_at` belongs to an open question (in log-only mode, and between a fact falling
+due and the next run, it need not). Run it after any migration or backfill.
 
 **Version-chain classes (Facts S2, `scripts/data_audit/facts.py`).** `superseded_by_dangling` (the target is missing or
 in another account), `superseded_by_cycle`, `superseded_by_not_pointing_back` (a same-lineage successor that does not
@@ -1286,7 +1617,9 @@ stays red.
 ### 9.7 The prompt snapshot and its vocabulary tests
 
 The consolidation prompt lives in Firestore; `prompts_snapshot/` is its git mirror (profile `consolidation.yaml`,
-blueprint `consolidation_agent_v1.yaml`, the six `CONSOLIDATION_*` tokens; `COGNITIVE_PROCESS_CONSOLIDATION.groovy`
+blueprint `consolidation_agent_v1.yaml`, the six `CONSOLIDATION_*` tokens; the review pass has its own profile
+`consolidation_review.yaml` and blueprint `consolidation_review_v1.yaml` over `CONSOLIDATION_TAXONOMY` and
+`CONSOLIDATION_LIFECYCLE`, and Smart's profile carries `PROTOCOL_MEMORY_REVIEW`; `COGNITIVE_PROCESS_CONSOLIDATION.groovy`
 is an older token the profile does not render). Edit there and upload with `firestore_utils/snapshot_upload.py`
 (`prompts_snapshot/README.md`). `tests/unit/prompts/test_consolidation_vocabulary.py` checks every enum value and tool field
 the tokens name against `entities.py` and `_get_tool_declarations` (and the search `returns:` keys against a real adapter
@@ -1298,33 +1631,39 @@ result), and `tests/unit/prompts/test_consolidation_expiry_prompt.py` pins the S
 snapshot already says `ARCHIVAL`; **until the five are uploaded (deploy step 4) the live prompt is the pre-S3 one**: it offers
 `ttl_days` (ignored by the new code), never mentions `expiry` (only the tool schema requires it), tells the model to retire a split fact with `SUPERSEDED` alone (refused) and says `HISTORICAL` (read as
 `ARCHIVAL`). The static template is cached for 24 hours per instance,
-so the upload goes in before the switch (the rollout notes, ops).
+so the upload goes in before the switch (the rollout notes, ops). S4 adds `CONSOLIDATION_LIFECYCLE`,
+`PROTOCOL_MEMORY_REVIEW`, the review profile and blueprint, and edits `CONSOLIDATION_POLICIES`, `_TAXONOMY`, `_EXAMPLES`,
+`_COGNITIVE_PROCESS`, `_TOOLS` and the Smart profile; the review pass cannot run without its profile, and the echo-trap
+exception (§3 step 5) is live only after the upload.
 
 ---
 
 ## 10. Not built yet
 
-`docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (rev 2, accepted 2026-10-21) — S1 (defect fixes) is live. **S2 and S3 are built** on the
+`docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (rev 2, accepted 2026-10-21) — S1 (defect fixes) is live. **S2, S3 and S4 are built** on the
 branch that carries S2–S5 (S2: real versions, validation before any write, preconditioned writes, the memory-write lease;
 §2.4, §3 step 3, §5.2, `decisions/fact_versions_one_writer.md`. S3: expiry decided from content, `reported_date` ownership,
 the lifecycle trail, the five prompt tokens and the code-built messages, the owner-zone timestamps, tool-error accounting, and
-the daily janitor in log-only mode; §2.7, §3.11, §5.5, `decisions/fact_expiry_and_janitor.md`), and go live with S4–S5, which
-deploy together. Still to come:
-- **S4** a review pass over stale facts and questions to the owner in chat (it will take the same lease): the
-  `consolidation_review` profile and token, selection, outcomes, timeouts, the echo-trap exception for framed pairs,
-  Smart's protocol line, the breaker's real "last successful review" (the interval + 72 h rule, RFC D6; S3 passes none, so any
-  backlog trips it), the review enqueue after a janitor run (S3 logs `review_enqueued=0`), the alert thresholds and the rest of
-  the D10 counters. The owner's rule for it: **when unsure, keep the fact** (the review revives a fact or asks the owner).
-- **S5** one-time classification of all current facts, review dry run, janitor on. The order, set by the owner: classify (dry
-  run → the owner reads it → apply) → review dry run → the janitor stays log-only on the classified facts for as long as
-  needed (the owner reads `would_stale` and the breaker each morning) → janitor on **only on the owner's word**. The same rule
-  applies to classify: it defaults to `none` when unsure. Classify must also accept a filtered set, to re-classify the
-  documents an old revision rewrote during a rollback window.
+the daily janitor in log-only mode; §2.7, §3.11, §5.5, `decisions/fact_expiry_and_janitor.md`. S4: the review pass, the
+question queue, the owner's answers by digit, button, reply or Cabinet, the weekly digest, the Cabinet views, the janitor's
+pool, guard and alerts; §5.5, §5.6, `decisions/fact_review_and_owner_questions.md`), and go live together with S5. Still to
+come:
+- **S5** one-time classification of all current facts, the review dry run on the classified facts, janitor on. The order, set by
+  the owner: classify (dry run → the owner reads it → apply) → review dry run (step M bench 7 is its tool) → the janitor
+  stays log-only on the classified facts for as long as needed (the owner reads `would_stale` and the breaker each morning) →
+  janitor on **only on the owner's word**. The same rule applies to classify: it defaults to `none` when unsure. Classify must
+  also accept a filtered set, to re-classify the documents an old revision rewrote during a rollback window. The queue bounds
+  the drain: the pool stays at 50 or fewer, so classify feeds the review at most 50 facts at a time (about three days of review
+  passes of 20), and the questions then go one at a time, up to 5 a day, answered by digit, button or the Cabinet (which can
+  answer any number at once).
+- **Follow-ups outside S4:** an answer given on a phone call counts as silence (no Lelik filter on the question pair); a
+  Cabinet "bring back" for a closed fact; Telegram inline keyboards on the same interactive-message port; Smart sending
+  interactive blocks through it.
 
-Until the S3–S5 deploy: nothing expires and no code sets `stale` (the 2 legacy stale documents predate the janitor; deploy
-step 6a stamps them). After the deploy and before S5's classify, no existing fact has
-an `expires_at`, so the janitor has nothing due even when it is switched on; new facts do. S2 does not ship alone: it refuses
-`SUPERSEDED` without a successor while the live consolidation prompts still tell the model to retire a split fact that way.
+Until the deploy: nothing expires and no code sets `stale` (the 2 legacy stale documents predate the janitor; deploy
+step 6a stamps them). After the deploy and before S5's classify, no existing fact has an `expires_at`, so the janitor has
+nothing due even when it is switched on; new facts do. S2 does not ship alone: it refuses `SUPERSEDED` without a successor
+while the live consolidation prompts still tell the model to retire a split fact that way.
 
 ---
 
@@ -1355,9 +1694,20 @@ an `expires_at`, so the janitor has nothing due even when it is switched on; new
 | `src/services/overflow_routing_service.py` | batch → Alek's queue or a companion's |
 | `src/adapters/firestore_consolidation_queue.py` | queue, oldest first, zombie reset (threshold per caller), bounded failed revival (`revive_failed`), `has_open_batches`, sweep query |
 | `src/adapters/gcp_task_queue.py` | `enqueue_consolidation_task` |
-| `src/handlers/worker_handler.py` | `consolidation`, `sweep_consolidation` (revives FAILED, then enqueues), `fact_lifecycle_sweep` (runs the janitor; 500 on a failed run) |
+| `src/handlers/worker_handler.py` | `consolidation`, `sweep_consolidation` (revives FAILED, then enqueues), `fact_lifecycle_sweep` (runs the janitor; 500 on a failed run), `fact_review` (`daily` or `next`), `interactive_choice` |
 | `src/services/consolidation_service.py` | one batch under the lease: run, delete or retry; deferral; `consolidate_now` (`$consolidate`); `revive_failed_batches` (sweep); the give-up log; the owner's timezone |
-| `src/services/fact_lifecycle_sweep_service.py` | the janitor (§5.5) |
+| `src/services/fact_lifecycle_sweep_service.py` | the janitor (§5.5): guard, visit set, pool, enqueue, alerts, line |
+| `src/services/fact_review_service.py`, `src/services/fact_answer_service.py`, `src/services/fact_question_texts.py` | the review run, the owner's answers and every question close, the question's texts and language (§5.6) |
+| `src/infrastructure/fact_review_scope.py` | the review pass's tool scope (`update_fact`, `ask_owner`) |
+| `src/domain/fact_review_rules.py` | selection, queue order, when a question may go out, timeouts, fallbacks, kept twice, basis and ask rules, the pool, `review_due`, the revive alert |
+| `src/domain/fact_review_question.py`, `fact_review_state.py`, `fact_review_frame.py`, `fact_review_reply.py` | the question record and its statuses, the account's review state, the history frames (`[System: memory review q=…]`, `[Reply to memory review q=…]`), the reply and click paths |
+| `src/domain/fact_review_answers.py`, `fact_review_answer_kind.py`, `fact_review_answer_change.py`, `fact_review_reasons.py` | what each answer writes, and the trail reasons |
+| `src/domain/fact_review_language.py`, `fact_review_digest.py`, `fact_review_task.py`, `fact_review_task_keys.py` | the message language and labels, the digest, the code-built message to the model, the `fact_review` task keys |
+| `src/domain/fact_lifecycle_alerts.py`, `fact_lifecycle_review_line.py`, `fact_lifecycle_run_guard.py`, `pass_actor.py` | the janitor's alerts, the review segments of the 🧹 line, the guard timing, the table of pass actors |
+| `src/domain/interactive_message.py`, `interactive_option.py`, `interactive_binding.py`, `interactive_choice.py`, `choice_outcome.py` | the platform-neutral interactive message and the choice |
+| `src/ports/fact_review_store.py`, `src/adapters/firestore_fact_review_store.py` | question and state storage, the queue claim, the digest claim |
+| `src/ports/interactive_message_port.py`, `src/ports/choice_handler_port.py`, `src/infrastructure/interactive_message_router.py`, `src/services/interactive_choice_service.py` | posting a choice message, showing a choice, picking the platform's adapter, routing a click by binding kind |
+| `src/adapters/slack/interactive_message_adapter.py`, `interactivity_route.py`, `signature.py`, `binding_codec.py`; `src/adapters/plain_text_interactive_message_adapter.py` | Slack buttons and the `/slack/interactivity` route (signature before parsing), the shared signature check, the block id codec; Telegram's plain text with digits |
 | `src/ports/fact_lifecycle_counters_port.py`, `src/adapters/firestore_fact_lifecycle_counters.py` | the day's snapshots, the tool-error increments, the posted-line mark |
 | `src/ports/memory_write_lease.py`, `src/adapters/firestore_memory_write_lease.py` | the per-account lease (acquire, release by owner token) |
 | `src/agents/consolidation_agent.py` | all stages, tools, loop, backstop, cluster and directive messages |
@@ -1377,10 +1727,11 @@ an `expires_at`, so the janitor has nothing due even when it is switched on; new
 | `src/services/lelik_persona_service.py` | Lelik's facts |
 | `src/composition/mcp_setup.py` | `get_user_context` |
 | `src/infrastructure/memory_fact_tools.py`, `src/services/memory_fact_service.py`, `src/adapters/firestore_memory_fact_draft_repository.py` | `$memory save` |
-| `src/handlers/conversation_handler.py` | `$consolidate` (and its outcome wording), `$memory save`, memory preview delivery |
-| `src/web/user_cabinet_app.py` | Cabinet fact routes (invalidate follows the id forward, answers 409, rebuilds the baseline) |
+| `src/handlers/conversation_handler.py` | `$consolidate` (and its outcome wording), `$memory save`, memory preview delivery, the reply to a memory-review question taken at intake |
+| `src/web/user_cabinet_app.py`, `src/web/static/cabinet.html` | Cabinet fact routes (invalidate follows the id forward, answers 409, rebuilds the baseline; the stale filter; recently closed; the question list and the bulk answers) |
 | `prompts_snapshot/{profiles/consolidation.yaml,blueprints/consolidation_agent_v1.yaml,tokens/system/CONSOLIDATION_*.groovy}` | the consolidation prompt (mirror) |
-| `scripts/consolidation/`, `scripts/data_audit/` | benches (with the S3 kit `s3_dry_run_kit.py`, `s3_bench_support.py`); the audit with the version-chain classes (§9.6) |
+| `prompts_snapshot/{profiles/consolidation_review.yaml,blueprints/consolidation_review_v1.yaml,tokens/system/CONSOLIDATION_LIFECYCLE.groovy,tokens/system/PROTOCOL_MEMORY_REVIEW.groovy}` | the review pass's prompt and Smart's memory-review protocol (mirror) |
+| `scripts/consolidation/`, `scripts/data_audit/` | benches (with the S3 kit `s3_dry_run_kit.py`, `s3_bench_support.py`, and the review benches and their stand-ins `test_review_dryrun.py`, `test_review_answers_dryrun.py`, `review_bench_*.py`, `review_kit_*.py`); the audit with the version-chain classes (§9.6) |
 | `scripts/migration/fact_s3_stamp_legacy_stale.py` | deploy step 6a (stamp `stale_since` on legacy stale facts) |
 
 Stale code comments, out of scope for this document (`src/`): `ConsolidationAgent._review_directives` says "hard cap of
