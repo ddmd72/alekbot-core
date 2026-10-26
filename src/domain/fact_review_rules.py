@@ -15,11 +15,12 @@ from .fact_lifecycle import (
     with_event,
 )
 from .fact_review_basis import ReviewAction, ReviewBasis
-from .fact_review_question import FactReviewQuestion, QuestionFallback, QuestionStatus
-from .fact_review_reasons import FallbackActor, fallback_reason, gives_window_reason, is_revive_reason
+from .fact_review_question import AnswerSource, FactReviewQuestion, QuestionFallback, QuestionStatus
+from .fact_review_reasons import FallbackActor, fallback_reason, gives_window_reason, is_revive_reason, queued_reason
 from .fact_review_state import FactReviewState
 from .fact_write_context import as_utc
 from .local_time import local_date
+from .pass_actor import PassActor
 from .settings import DEFAULT_FACT_REVIEW_INTERVAL_DAYS
 from .user import UserBotConfig
 
@@ -76,6 +77,22 @@ def select_batch(
     for fact in (*reply_facts, *candidates, *waiting):
         chosen.setdefault(fact.id, fact)
     return list(chosen.values())[:REVIEW_BATCH]
+
+
+def unread_replies(questions: Iterable[FactReviewQuestion]) -> List[FactReviewQuestion]:
+    """The open questions with an answer in words the review has not read (`reply_not_shown`), in queue order: their
+    facts go to the model first."""
+    return queue_order(q for q in questions if q.reply_not_shown)
+
+
+def offered(offers: Mapping[str, int], batch: Sequence[FactEntity]) -> Dict[str, int]:
+    """`offers` once `batch` goes to the model: one more for each stale batch fact. A current batch fact is there for its
+    question (a reply, a timeout), which is not an offer."""
+    counted = dict(offers)
+    for fact in batch:
+        if fact.state is FactState.STALE:
+            counted[fact.id] = counted.get(fact.id, 0) + 1
+    return counted
 
 
 def kept_twice(stale: Sequence[FactEntity], offers: Mapping[str, int], questions: Iterable[FactReviewQuestion]) -> List[FactEntity]:
@@ -213,6 +230,11 @@ def _last_given(fact: FactEntity) -> datetime:
     return max([as_utc(fact.reported_date), *given])
 
 
+def fallback_revives(question: FactReviewQuestion) -> bool:
+    """Whether the question's fallback brings its fact back to current (`revive`) rather than archiving it."""
+    return question.fallback != "archive"
+
+
 def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetime, actor: FallbackActor) -> Dict[str, Any]:
     """The in-place write of a question's fallback, applied when nobody answered or the owner does not remember.
 
@@ -223,7 +245,7 @@ def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetim
     if fact.state not in (FactState.STALE, FactState.CURRENT):
         raise ValueError(f"a fallback applies to a stale or current fact, not a {fact.state.value} one")
     reason = fallback_reason(question.question_id, question.fallback, actor)
-    if question.fallback != "archive":
+    if fallback_revives(question):
         expiry: Dict[str, Any] = {}
         if not keeps_expiry(fact, now):
             expiry = horizon_from_now(fallback_window_days(fact), fact.reported_date, now)
@@ -390,6 +412,26 @@ def queued_question(
         queue_key=queue_key(fact),
         queued_at=at,
     )
+
+
+# The stored state an ask queues a fact from: a fact that is no longer stale was decided elsewhere meanwhile.
+QUEUE_ACCEPTS: Final[frozenset[FactState]] = frozenset({FactState.STALE})
+
+
+def queued_fields(fact: FactEntity, question_id: str, now: datetime) -> Dict[str, Any]:
+    """The in-place write that makes a stale fact current while its question waits (plan §3.2 step 11): `stale_since`
+    cleared, the expiry decision as stored, and one trail entry under the review with `queued_reason`, which is no revive.
+    Build the question (`queued_question`) from the fact as read before this write: its place in line is the fact's
+    `stale_since`. Raises ValueError for a fact that is not stale."""
+    if fact.state is not FactState.STALE:
+        raise ValueError(f"a fact is queued for the owner from stale, not from {fact.state.value}")
+    return revival_fields(fact, {}, now, PassActor.REVIEW.value, queued_reason(question_id))
+
+
+def review_close_source(question: FactReviewQuestion) -> Optional[AnswerSource]:
+    """The answer source of a question the review closes: `review` when it decided on the owner's words (a recorded
+    reply), else none."""
+    return "review" if question.reply_text else None
 
 
 # ------------------------------------------------------------------------------------------------ basis and ask refusals

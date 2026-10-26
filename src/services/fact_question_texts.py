@@ -34,7 +34,8 @@ def _utcnow() -> datetime:
 
 
 class FactQuestionTexts:
-    """`language_for`, `labels_for`, `message_for` and `text`, each over one read of the account's review state.
+    """`language_for`, `labels_for`, `message_for` and `text`, each over one read of the account's review state;
+    `mirrors`, over the language setting only.
 
     The texts of a language come from the UI strings (uk, en, fr, es), from the label set the review cached for it, or,
     when that set is missing, stale or refused, from the owner's UI language (`review_labels` decides).
@@ -66,6 +67,17 @@ class FactQuestionTexts:
         """The ISO 639-1 code the owner's review messages are in (`message_language`)."""
         code, _, _ = await self._read(user_id, account_id)
         return code
+
+    async def mirrors(self, user_id: str) -> bool:
+        """Whether the owner's response language mirrors his messages: the review pass then reports their language
+        (and, for a language without UI strings, the labels)."""
+        try:
+            _, agent_mirror = await self._language.get_preference(user_id)
+        except Exception as exc:
+            logger.error("[FactQuestionTexts] the language setting of user %s not read: %s: %s",
+                         user_id[:8], type(exc).__name__, exc)
+            raise
+        return agent_mirror
 
     async def labels_for(self, user_id: str, account_id: str) -> Mapping[str, str]:
         """Every text of `LABEL_KEYS` in the message language, from the source `review_labels` names."""
