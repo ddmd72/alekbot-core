@@ -133,6 +133,7 @@ class ApplicationGraph:
     account_repo: FirestoreAccountRepository
     invite_service: InviteCodeService
     cabinet_facts: CabinetFactService
+    fact_answers: Optional[FactAnswerService]
     quota_service: FirestoreQuotaService
     alert_sink: Optional[SlackWebhookAdapter]
     session_service: SessionService
@@ -1006,6 +1007,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         account_repo=account_repo,
         invite_service=invite_service,
         cabinet_facts=cabinet_facts,
+        fact_answers=_fact_answer_service,
         quota_service=quota_service,
         alert_sink=_alert_webhook,
         session_service=session_service,

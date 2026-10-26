@@ -129,6 +129,8 @@ async def main():
             drive_transcribe_switch_on=app.container.drive_transcribe_switch_on,
             cabinet_facts=app.cabinet_facts,
             fact_review_store=app.container.fact_review_store,
+            fact_answer_service=app.fact_answers,
+            localization=app.localization,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

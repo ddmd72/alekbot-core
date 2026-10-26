@@ -12,14 +12,19 @@ from ..services.google_oauth_service import GoogleOAuthService
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.drive_search_service import DriveSearchService
 from ..services.cabinet_fact_service import CabinetFactService
+from ..services.fact_answer_service import FactAnswerService
+from ..services.localization_service import LocalizationService
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
 from ..domain.entities import FactEntity
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
+from ..domain.fact_review_answers import DECIDING_ANSWERS, MAX_BULK_ANSWERS, deciding_answer
 from ..domain.fact_review_digest import DIGEST_LIMIT, digest_facts, last_actor
+from ..domain.fact_review_language import CANONICAL_LABELS, OPTION_KEYS
 from ..domain.fact_review_overview import listable_state, queue_entries, set_aside_since, user_questions
 from ..domain.pass_actor import PassActor
+from ..domain.ui_messages import UIMessage
 from ..ports.user_repository import UserRepository
 from ..ports.repository import FactRepository
 from ..ports.fact_review_store import FactReviewStore
@@ -70,6 +75,8 @@ def create_user_cabinet_blueprint(
     drive_transcribe_switch_on: bool = False,
     cabinet_facts: Optional[CabinetFactService] = None,
     fact_review_store: Optional[FactReviewStore] = None,
+    fact_answer_service: Optional[FactAnswerService] = None,
+    localization: Optional[LocalizationService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -861,6 +868,14 @@ def create_user_cabinet_blueprint(
             return None
         return stored.fact if stored is not None else None
 
+    async def _answer_options() -> list:
+        """The answers a click can give, labelled in the user's UI language (English without a localization)."""
+        labels = {key: CANONICAL_LABELS[key] for key in OPTION_KEYS.values()}
+        if localization is not None and language_service is not None:
+            language = await language_service.resolve_ui_language(g.user_id)
+            labels = {key: localization.get_ui_string(language, UIMessage(key)) for key in labels}
+        return [{"answer": kind.value, "label": labels[OPTION_KEYS[kind]]} for kind in DECIDING_ANSWERS]
+
     @bp.route("/api/user/facts/review-queue", methods=["GET"])
     @auth_required
     async def review_queue():
@@ -886,9 +901,48 @@ def create_user_cabinet_blueprint(
                     }
                     for e in entries
                 ],
+                "options": await _answer_options(),
             }), 200
         except Exception as e:
             logger.error(f"Error listing review questions: {e}", exc_info=True)
+            return jsonify({"error": "Internal server error"}), 500
+
+    @bp.route("/api/user/facts/review-answers", methods=["POST"])
+    @auth_required
+    async def review_answers():
+        """Answer 1-50 open memory-review questions at once: {"answers": [{"question_id", "answer"}]}."""
+        if fact_answer_service is None or fact_review_store is None:
+            return jsonify({"error": "Memory review not configured"}), 501
+        body = await request.get_json(silent=True)
+        raw_items = body.get("answers") if isinstance(body, dict) else None
+        if not isinstance(raw_items, list) or not 1 <= len(raw_items) <= MAX_BULK_ANSWERS:
+            return jsonify({"error": f"answers must be a list of 1 to {MAX_BULK_ANSWERS} items"}), 400
+        items = []
+        for raw in raw_items:
+            question_id = raw.get("question_id") if isinstance(raw, dict) else None
+            kind = deciding_answer(raw.get("answer")) if isinstance(raw, dict) else None
+            if not isinstance(question_id, str) or not question_id or kind is None:
+                return jsonify({"error": "each answer needs a question_id and an answer of still_true, ended or never"}), 400
+            items.append((question_id, kind))
+        if len({question_id for question_id, _ in items}) != len(items):
+            return jsonify({"error": "a question may be answered once per request"}), 400
+        try:
+            named = await fact_review_store.get_questions([question_id for question_id, _ in items])
+            if any(q.account_id == g.account_id and q.user_id != g.user_id for q in named):
+                return jsonify({"error": "Not authorized"}), 403
+            results = []
+            for question_id, kind in items:
+                try:
+                    outcome = (await fact_answer_service.apply(
+                        g.account_id, g.user_id, question_id, kind, "cabinet", datetime.now(timezone.utc),
+                    )).value
+                except Exception as e:
+                    logger.error(f"Answer to question {question_id} failed: {e}", exc_info=True)
+                    outcome = "error"
+                results.append({"question_id": question_id, "result": outcome})
+            return jsonify({"results": results}), 200
+        except Exception as e:
+            logger.error(f"Error answering review questions: {e}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
 
     @bp.route("/api/user/facts/search", methods=["POST"])

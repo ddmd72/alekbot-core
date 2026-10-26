@@ -1612,6 +1612,17 @@
           "questions.status_sent": "Asked on {date}, no answer yet",
           "questions.status_waiting": "Waiting in line",
           "questions.waiting_since": "waiting since {date}",
+          "questions.mark_selected": "Mark selected as:",
+          "questions.select": "Select",
+          "questions.none_selected": "Select at least one fact first.",
+          "questions.failed": "Could not send the answers.",
+          "questions.result_applied": "Done",
+          "questions.result_changed": "The fact changed in the meantime; the list was reloaded.",
+          "questions.result_conflict": "Changed elsewhere just now; try again.",
+          "questions.result_not_open": "Already answered.",
+          "questions.result_not_found": "This question no longer exists.",
+          "questions.result_not_applied": "The answer could not be applied.",
+          "questions.result_error": "Something went wrong; try again.",
         },
         uk: {
           "nav.integrations": "Інтеграції",
@@ -1744,6 +1755,17 @@
           "questions.status_sent": "Запитано {date}, відповіді ще немає",
           "questions.status_waiting": "Чекає в черзі",
           "questions.waiting_since": "очікує з {date}",
+          "questions.mark_selected": "Позначити вибрані як:",
+          "questions.select": "Вибрати",
+          "questions.none_selected": "Спершу виберіть хоча б один факт.",
+          "questions.failed": "Не вдалося надіслати відповіді.",
+          "questions.result_applied": "Готово",
+          "questions.result_changed": "Факт тим часом змінився; список оновлено.",
+          "questions.result_conflict": "Щойно змінено в іншому місці; спробуйте ще раз.",
+          "questions.result_not_open": "Уже відповіли.",
+          "questions.result_not_found": "Цього питання вже немає.",
+          "questions.result_not_applied": "Відповідь не вдалося застосувати.",
+          "questions.result_error": "Щось пішло не так; спробуйте ще раз.",
         },
         fr: {
           "nav.integrations": "Int\u00e9grations",
@@ -1876,6 +1898,17 @@
           "questions.status_sent": "Posée le {date}, sans réponse",
           "questions.status_waiting": "En file d'attente",
           "questions.waiting_since": "en attente depuis le {date}",
+          "questions.mark_selected": "Marquer la sélection comme :",
+          "questions.select": "Sélectionner",
+          "questions.none_selected": "Sélectionnez d'abord au moins un fait.",
+          "questions.failed": "Impossible d'envoyer les réponses.",
+          "questions.result_applied": "Fait",
+          "questions.result_changed": "Le fait a changé entre-temps ; la liste a été rechargée.",
+          "questions.result_conflict": "Modifié ailleurs à l'instant ; réessayez.",
+          "questions.result_not_open": "Déjà répondu.",
+          "questions.result_not_found": "Cette question n'existe plus.",
+          "questions.result_not_applied": "La réponse n'a pas pu être appliquée.",
+          "questions.result_error": "Une erreur s'est produite ; réessayez.",
         },
         es: {
           "nav.integrations": "Integraciones",
@@ -2008,6 +2041,17 @@
           "questions.status_sent": "Preguntada el {date}, sin respuesta",
           "questions.status_waiting": "En espera",
           "questions.waiting_since": "esperando desde el {date}",
+          "questions.mark_selected": "Marcar la selección como:",
+          "questions.select": "Seleccionar",
+          "questions.none_selected": "Selecciona primero al menos un hecho.",
+          "questions.failed": "No se pudieron enviar las respuestas.",
+          "questions.result_applied": "Hecho",
+          "questions.result_changed": "El hecho cambió mientras tanto; se recargó la lista.",
+          "questions.result_conflict": "Cambiado en otro lugar hace un momento; inténtalo de nuevo.",
+          "questions.result_not_open": "Ya respondida.",
+          "questions.result_not_found": "Esta pregunta ya no existe.",
+          "questions.result_not_applied": "No se pudo aplicar la respuesta.",
+          "questions.result_error": "Algo salió mal; inténtalo de nuevo.",
         },
       };
 
@@ -2654,6 +2698,11 @@
             return;
           }
           const data = await res.json();
+          reviewOptions = data.options || [];
+          if (!reviewBound) {
+            box.addEventListener("click", onReviewClick);
+            reviewBound = true;
+          }
           renderReviewQuestions(data.questions || []);
         } catch {
           box.classList.add("hidden");
@@ -2670,6 +2719,22 @@
         return `${t("questions.status_waiting")}, ${t("questions.waiting_since").replace("{date}", shortDate(q.waiting_since))}`;
       }
 
+      let reviewOptions = [],
+        reviewResults = {},
+        reviewBound = false;
+
+      function answerButtons(questionId) {
+        const q = questionId
+          ? ` data-question-id="${escapeHtml(questionId)}"`
+          : "";
+        return reviewOptions
+          .map(
+            (o) =>
+              `<button data-answer="${escapeHtml(o.answer)}"${q} class="btn btn-secondary btn-sm">${escapeHtml(o.label)}</button>`,
+          )
+          .join("");
+      }
+
       function renderReviewQuestions(questions) {
         const box = document.getElementById("review-questions");
         if (questions.length === 0) {
@@ -2682,14 +2747,22 @@
             const domain = q.domain
               ? `<span class="fact-domain-badge">${escapeHtml(domainLabel(q.domain))}</span>`
               : "";
+            const result = reviewResults[q.question_id]
+              ? `<div style="color:var(--text-muted); font-size:13px; margin-top:8px;">${escapeHtml(t("questions.result_" + reviewResults[q.question_id]))}</div>`
+              : "";
             return `
-        <div class="card fact-card" data-question-id="${escapeHtml(q.question_id)}" style="min-height:0; margin-bottom:16px;">
+        <div class="card fact-card" style="min-height:0; margin-bottom:16px;">
           <div class="card-body">
-            <div class="fact-text">${escapeHtml(q.text)}</div>
+            <label style="display:flex; gap:12px; align-items:flex-start; cursor:pointer;">
+              <input type="checkbox" data-question-id="${escapeHtml(q.question_id)}" aria-label="${escapeHtml(t("questions.select"))}" style="margin-top:8px;" />
+              <span class="fact-text">${escapeHtml(q.text)}</span>
+            </label>
             <div class="fact-meta">
               ${domain}
               <span style="color:var(--text-muted); font-size:13px;">${escapeHtml(reviewStatusLine(q))}</span>
             </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">${answerButtons(q.question_id)}</div>
+            ${result}
           </div>
         </div>`;
           })
@@ -2698,9 +2771,65 @@
         <div style="margin-bottom: 40px;">
           <h2 style="margin-bottom:4px;">${escapeHtml(t("questions.title"))} (${questions.length})</h2>
           <p style="color:var(--text-muted); margin-bottom:16px;">${escapeHtml(t("questions.subtitle"))}</p>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:16px;">
+            <span style="color:var(--text-muted);">${escapeHtml(t("questions.mark_selected"))}</span>
+            ${answerButtons("")}
+          </div>
           ${rows}
         </div>`;
         box.classList.remove("hidden");
+      }
+
+      async function onReviewClick(ev) {
+        const btn = ev.target.closest("button[data-answer]");
+        if (!btn) return;
+        const box = document.getElementById("review-questions");
+        const ids = btn.dataset.questionId
+          ? [btn.dataset.questionId]
+          : Array.from(
+              box.querySelectorAll("input[type=checkbox][data-question-id]:checked"),
+            ).map((c) => c.dataset.questionId);
+        if (ids.length === 0) {
+          showToast(t("questions.none_selected"), "error");
+          return;
+        }
+        await sendReviewAnswers(
+          ids.map((id) => ({ question_id: id, answer: btn.dataset.answer })),
+        );
+      }
+
+      async function sendReviewAnswers(answers) {
+        const box = document.getElementById("review-questions");
+        box
+          .querySelectorAll("button")
+          .forEach((b) => (b.disabled = true));
+        try {
+          const res = await fetch(`${API}/api/user/facts/review-answers`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ answers }),
+          });
+          if (!res.ok) throw new Error("answers refused");
+          const data = await res.json();
+          reviewResults = {};
+          let applied = false;
+          let changed = false;
+          (data.results || []).forEach((r) => {
+            if (r.result === "applied") applied = true;
+            else reviewResults[r.question_id] = r.result;
+            if (r.result === "changed") changed = true;
+          });
+          if (changed) showToast(t("questions.result_changed"), "error");
+          await loadReviewQuestions();
+          if (applied || changed) {
+            if (factsState === "closed") await closedLoad();
+            else await browseLoad(true);
+          }
+        } catch (e) {
+          showToast(t("questions.failed"), "error");
+          await loadReviewQuestions();
+        }
       }
 
       async function browseLoad(isFirst = false) {

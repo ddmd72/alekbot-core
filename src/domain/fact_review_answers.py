@@ -19,12 +19,17 @@ from .local_time import local_moment
 from .new_fact_attributes import NewFactAttributes
 
 __all__ = [
-    "ARCHIVE_ONLY", "answer_closes_fact", "answer_updates", "digit_answer", "ended_text", "history_fact", "history_moved_refusal",
+    "ARCHIVE_ONLY", "DECIDING_ANSWERS", "MAX_BULK_ANSWERS", "answer_closes_fact", "answer_updates", "deciding_answer", "digit_answer", "ended_text", "history_fact", "history_moved_refusal",
     "history_refusal", "history_trail", "option_answer",
 ]
 
 # The one update a history fact goes with: the fact archived, nothing else changed.
 ARCHIVE_ONLY: Final[ParsedFactUpdate] = ParsedFactUpdate(state=FactState.ARCHIVED)
+
+# The answers that say what is true of the fact; `dont_know` only hands it to the question's fallback.
+DECIDING_ANSWERS: Final[tuple[AnswerKind, ...]] = (AnswerKind.STILL_TRUE, AnswerKind.ENDED, AnswerKind.NEVER)
+# How many questions one batch of answers may name.
+MAX_BULK_ANSWERS: Final[int] = 50
 
 # English whatever the process locale: the text is written into a stored fact.
 _MONTHS: Final[tuple[str, ...]] = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -37,6 +42,17 @@ def digit_answer(message: InteractiveMessage, text: str) -> Optional[AnswerKind]
     digit; the option's id is the answer of the same name. A message with an option that is no answer is a bug."""
     option_id = message.option_for_reply(text)
     return None if option_id is None else AnswerKind(option_id)
+
+
+def deciding_answer(raw: object) -> Optional[AnswerKind]:
+    """The deciding answer `raw` names (`still_true`, `ended` or `never`, exactly), or None for anything else."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        kind = AnswerKind(raw)
+    except ValueError:
+        return None
+    return kind if kind in DECIDING_ANSWERS else None
 
 
 def option_answer(option_id: str) -> Optional[AnswerKind]:
