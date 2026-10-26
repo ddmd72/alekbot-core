@@ -317,6 +317,7 @@ class AgentWorkerHandler:
                     user_id, context.get("account_id", ""), line,
                     channel_id_override=context.get("origin_channel_id"),
                     platform_override=context.get("origin_platform"),
+                    literal=True,  # the line carries the report's drive path, which holds the model's title
                 )
         except asyncio.TimeoutError:
             logger.warning("[AgentWorkerHandler] Deep research drive copy timed out after %ss for user=%s",
