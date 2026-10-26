@@ -656,7 +656,7 @@ class FactReviewService:
         if not listed:
             return 0
         labels = await self._texts.labels_for(user_id, account_id)
-        if not await self._notifications.notify_raw(user_id, account_id, digest_message(labels, listed)):
+        if not await self._notifications.notify_raw(user_id, account_id, digest_message(labels, listed), literal=True):
             return None
         return len(listed)
 
