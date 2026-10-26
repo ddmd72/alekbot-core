@@ -1,4 +1,4 @@
-"""Cabinet delete of a row whose fact was rewritten after the page loaded (owner, 2026-10-23), through the real route,
+"""Cabinet delete of a row whose fact was rewritten after it was shown (owner, 2026-10-23), through the real route,
 repository and adapter on the evaluating Firestore fake: a 409 the page answers with a reload, nothing written, and the
 new text stays current."""
 import copy
@@ -47,6 +47,6 @@ async def test_a_row_whose_text_was_rewritten_is_a_409_and_nothing_is_written(st
         status, body = resp.status_code, await resp.get_json()
 
     assert status == 409
-    assert "rewritten after the page loaded" in body["error"]
+    assert "rewritten after it was shown" in body["error"]
     assert store.docs == before
     assert store.docs[rewritten]["state"] == "current" and store.docs[rewritten]["text"] == "likes green tea"

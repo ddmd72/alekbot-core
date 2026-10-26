@@ -116,7 +116,7 @@ class TestCabinetFactService:
         with pytest.raises(FactResolutionError) as caught:
             await service.invalidate("f-v1", ACC)
 
-        assert str(caught.value) == "fact f-v1 was rewritten after the page loaded; reload"
+        assert str(caught.value) == "fact f-v1 was rewritten after it was shown"
         assert caught.value.current_id == "f-v2" and not isinstance(caught.value, ValueError)
         assert store.docs == before and repo.refreshed == []
 
@@ -150,7 +150,7 @@ class TestCabinetFactService:
                     _bio("v2", text="works remotely from Springfield", lineage_id="L", version=2))
         store.interfere("f-v1", {"state": "superseded", "is_current": False, "superseded_by": "f-v2", "valid_to": T0})
 
-        with pytest.raises(FactResolutionError, match="rewritten after the page loaded"):
+        with pytest.raises(FactResolutionError, match="rewritten after it was shown"):
             await service.invalidate("f-v1", ACC)
 
         assert store.docs["f-v2"]["state"] == "current" and repo.refreshed == []

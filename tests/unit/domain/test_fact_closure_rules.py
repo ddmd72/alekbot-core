@@ -1,5 +1,5 @@
 """The closure and Cabinet-invalidation rules of `domain/fact_lifecycle.py` (S4 T2c, hexagonal review H1): one place for
-the fields, the trail reason and the "rewritten after the page loaded" refusal the repository and the dry-run kit used to
+the fields, the trail reason and the "rewritten after it was shown" refusal the repository and the dry-run kit used to
 write each on their own."""
 from datetime import datetime, timedelta, timezone
 
@@ -93,5 +93,5 @@ def test_a_followed_version_with_a_newer_text_is_refused_naming_it():
     with pytest.raises(FactResolutionError) as caught:
         cabinet_invalidation("lives in Springfield", _fact("f-v2", text="lives at 12 Oak Street, Springfield", version=2), "f-v1", NOW)
 
-    assert str(caught.value) == "fact f-v1 was rewritten after the page loaded; reload"
+    assert str(caught.value) == "fact f-v1 was rewritten after it was shown"
     assert caught.value.current_id == "f-v2" and not isinstance(caught.value, ValueError)

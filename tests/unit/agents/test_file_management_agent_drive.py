@@ -193,7 +193,7 @@ class TestReceipts:
         resp = await agent.execute(_msg(Intent.DELETE_FILE_FROM_DRIVE, file_ref="drive:d1"))
         assert resp.status == AgentStatus.SUCCESS
         notifier.notify_raw.assert_awaited_once_with(
-            "u1", "a1", "DELDIR Meetings/2025 14", channel_id_override="C1", platform_override="slack")
+            "u1", "a1", "DELDIR Meetings/2025 14", channel_id_override="C1", platform_override="slack", literal=True)
 
     async def test_delete_file_receipt(self, agent, drive, notifier):
         drive.delete.return_value = DeleteOutcome(item=FILE, file_count=1)

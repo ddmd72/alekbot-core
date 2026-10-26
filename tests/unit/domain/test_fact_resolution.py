@@ -1,4 +1,4 @@
-"""`resolve_chain` (S4 T2c, hexagonal review H1): the one forward walk behind `resolve_current`. The same cases run over a
+"""`ForwardWalk` (S4 T2c, hexagonal review H1; sans-I/O since T12d): the one forward walk behind `resolve_current`. The same cases run over a
 plain dict reader, through the Firestore repository's reader (the evaluating fake) and through the dry-run kit's overlay
 reader, and must give the same document or the same refusal text."""
 from typing import Dict, List, Optional
@@ -9,10 +9,18 @@ from scripts.consolidation.s3_dry_run_kit import NoWriteFactRepository
 from src.domain.entities import FactEntity, FactState
 from src.domain.exceptions import FactResolutionError
 from src.domain.fact_lifecycle import CABINET_ACCEPTS, CONSOLIDATION_ACCEPTS
-from src.domain.fact_resolution import resolve_chain
+from src.domain.fact_resolution import ForwardWalk
 from src.domain.stored_fact import StoredFact
 from tests.support.fact_kit import ACC, OTHER, T0, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore
+
+
+async def resolve_chain(read, start_id, account_id, accepted):
+    """The loop every store runs over its own reader."""
+    walk = ForwardWalk(start_id, account_id, accepted)
+    while walk.wanted is not None:
+        walk.feed(await read(walk.wanted))
+    return walk.result
 
 
 def _closed(name: str, successor: str, **over) -> FactEntity:
