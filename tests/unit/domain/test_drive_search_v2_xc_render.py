@@ -64,9 +64,9 @@ def test_the_exact_footer_under_complete_coverage():
 
 def test_the_empty_conjunction_under_incomplete_coverage():
     tiered = TieredResult(concepts=("a1", "b1"), coverage=CoverageFacts(building=True),
-                          conjunction=(("barcelona", 41), ("trip", 2)))
+                          conjunction=(("coimbra", 41), ("trip", 2)))
     text = render_results(_result(tiered))
-    assert 'No searched file matches all of: "barcelona" (41 files), "trip" (2 files).' in text
+    assert 'No searched file matches all of: "coimbra" (41 files), "trip" (2 files).' in text
 
 
 # -- F5 --------------------------------------------------------------------------------------------------------------

@@ -71,8 +71,8 @@ agents_registry {
                 tool_call: 'delegate_to_specialist(intent="search_web_light", query="current euro exchange rates")'
             },
             {
-                user_query: "Weather in Paris next week?"
-                tool_call: 'delegate_to_specialist(intent="search_web_light", query="weather in Paris next week detailed forecast")'
+                user_query: "Weather in Berlin next week?"
+                tool_call: 'delegate_to_specialist(intent="search_web_light", query="weather in Berlin next week detailed forecast")'
             },
             {
                 user_query: "What's happening in Porto this weekend?"
@@ -93,8 +93,8 @@ agents_registry {
 
         examples: [
             {
-                user_query: "Find my flight booking confirmation for Paris"
-                tool_call: 'delegate_to_specialist(intent="search_emails", query="find my flight booking confirmation for Paris")'
+                user_query: "Find my flight booking confirmation for Berlin"
+                tool_call: 'delegate_to_specialist(intent="search_emails", query="find my flight booking confirmation for Berlin")'
             },
             {
                 user_query: "Any emails from the accountant about the invoice?"

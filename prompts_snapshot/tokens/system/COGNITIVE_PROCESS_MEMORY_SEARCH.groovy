@@ -70,15 +70,15 @@ examples {
     }
 
     ex_family {
-        input: 'SEARCH_REQUEST "Tell me about my wife and our family situation"'
+        input: 'SEARCH_REQUEST "Tell me about my partner and our family situation"'
         thought_process: '''
-            Subject: user's wife and family structure
-            Keywords: wife, spouse, family, partner — relational tags
-            Primary: "wife name age personal background" — what the KB fact about her would say
-            Alternative: "married household children family structure" — different angle: family unit/structure
+            Subject: user's partner and family structure
+            Keywords: partner, spouse, family, relationship — relational tags
+            Primary: "partner name age personal background" — what the KB fact about her would say
+            Alternative: "couple household children family structure" — different angle: family unit/structure
             Domain: network
         '''
-        output: '{"keywords":["wife","spouse","family","partner"],"primary_query":"wife name age personal background","alternative_query":"married household children family structure","domains":["network"]}'
+        output: '{"keywords":["partner","spouse","family","relationship"],"primary_query":"partner name age personal background","alternative_query":"couple household children family structure","domains":["network"]}'
     }
 
     ex_location {

@@ -31,7 +31,7 @@ def _make_email(email_id: str, text: str = "fact") -> IndexedEmail:
         category="travel",
         metadata={},
         subject="Test",
-        from_address="a@b.com",
+        from_address="a@example.com",
         email_date=datetime(2026, 1, 15),
         indexed_at=datetime(2026, 1, 15),
     )
@@ -46,7 +46,7 @@ def _make_creds(expired: bool = False) -> OAuthCredentials:
         refresh_token="ref",
         token_expiry=expiry,
         scopes=["gmail.readonly"],
-        email_address="user@test.com",
+        email_address="user@example.test",
     )
 
 
@@ -131,15 +131,15 @@ class TestRrfMerge:
 class TestVectorSearch:
 
     async def test_happy_path_returns_valid_json(self, service, mock_email_repo):
-        emails = [_make_email("e1", "flight to Paris")]
+        emails = [_make_email("e1", "flight to Berlin")]
         mock_email_repo.find_nearest.return_value = emails
 
-        raw = await service.vector_search("flight Paris", "Paris trip", ["travel"], "user123")
+        raw = await service.vector_search("flight Berlin", "Berlin trip", ["travel"], "user123")
 
         data = json.loads(raw)
         assert data["count"] == 1
         assert data["emails"][0]["email_id"] == "e1"
-        assert data["emails"][0]["text"] == "flight to Paris"
+        assert data["emails"][0]["text"] == "flight to Berlin"
 
     async def test_empty_results_returns_no_results_message(self, service, mock_email_repo):
         mock_email_repo.find_nearest.return_value = []

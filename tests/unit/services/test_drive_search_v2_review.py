@@ -109,7 +109,7 @@ async def test_m4_every_word_of_a_long_query_reaches_the_name_stream():
 
     w.repo.find_by_name_keys = spy
     target = w.file("zanzibar.pdf")
-    result = await w.search("медицинские записи холестерину Barcelona receipts tickets 2023 zanzibar")
+    result = await w.search("медицинские записи холестерину Coimbra receipts tickets 2023 zanzibar")
     assert seen and max(len(keys) for keys in seen) <= 30
     assert any("w:zanzibar" in keys for keys in seen)
     assert 'No file holds "zanzibar"' not in render_results(result)
@@ -132,16 +132,16 @@ async def test_m3_minor_a_labelled_card_with_a_grounded_keyword_shows_its_passag
     report = w.file("analitica.pdf", profile=DriveProfile(
         "Análisis", "Blood test", "es", "medical_record", label_words=("медицинские записи",),
         topic_words=("холестерин",)),
-        chunks=["Perfil lipídico. Colesterol total: 245 mg/dL (alto)."],
-        hints={0: [("холестерин", "Colesterol total: 245 mg/dL")]})
+        chunks=["Perfil lipídico. Colesterol total: 182 mg/dL (normal)."],
+        hints={0: [("холестерин", "Colesterol total: 182 mg/dL")]})
     result = await w.search("медицинские записи по холестерину")
     assert tier_of(result, report) == "labelled" and "Colesterol total" in card(result, report).passage
 
 
 async def test_m4_minor_a_cyrillic_misspelling_of_a_latin_name_is_a_similar_name():
     w = V2World()
-    item = w.file("Barcelona.jpg", kind="image", taken="2025-01-01")
-    result = await w.search("барселна")
+    item = w.file("Coimbra.jpg", kind="image", taken="2025-01-01")
+    result = await w.search("коїмба")
     assert card(result, item).similar_name
 
 
@@ -174,8 +174,8 @@ async def test_m9_minor_a_sheet_waiting_for_its_profile_is_not_counted_as_withou
 
 async def test_m10_minor_the_about_heading_keeps_the_query_order():
     w = V2World()
-    w.file("IMG_1.jpg", kind="image", taken="2023-06-01", place_forms=("Paris",))
-    assert 'About "paris 2023"' in render_results(await w.search("Paris 2023"))
+    w.file("IMG_1.jpg", kind="image", taken="2023-06-01", place_forms=("Berlin",))
+    assert 'About "berlin 2023"' in render_results(await w.search("Berlin 2023"))
 
 
 def test_m10_minor_one_group_member_is_singular():

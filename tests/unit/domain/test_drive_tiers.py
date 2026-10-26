@@ -47,7 +47,7 @@ def run(f, query, allowance=NONE, texts=None, items=None):
 
 class TestSourceClassCombinations:
     def test_verified_record_only_is_about(self):
-        m = run(file(about=["e:барселона", "e:барселон"]), "про Барселону")
+        m = run(file(about=["e:коїмбра", "e:коїмбр"]), "про Коїмбру")
         assert m.tier is MatchTier.ABOUT and m.covers[0].source_class is SourceClass.VERIFIED_RECORD
 
     def test_name_alone_is_about(self):
@@ -55,8 +55,8 @@ class TestSourceClassCombinations:
         assert m.tier is MatchTier.ABOUT and {c.where for c in m.covers} == {"name"}
 
     def test_passage_words_only_is_mentioned(self):
-        text = "Мы гуляли в Барселоне весь день."
-        m = run(file(chunks={C1: word_keys(text)}), "про Барселону", texts={C1: text})
+        text = "Ми гуляли в Коїмбрі весь день."
+        m = run(file(chunks={C1: word_keys(text)}), "про Коїмбру", texts={C1: text})
         assert m.tier is MatchTier.MENTIONED and m.chunk == C1
 
     def test_verified_plus_passage_is_mentioned(self):
@@ -66,8 +66,8 @@ class TestSourceClassCombinations:
         assert {(c.word, c.where) for c in m.covers} == {("rome", "record"), ("tickets", "chunk")}
 
     def test_skeleton_in_a_chunk_is_translation(self):
-        text = "Notes from the Barcelona trip."
-        m = run(file(chunks={C1: word_keys(text)}), "про Барселону", texts={C1: text})
+        text = "Notes from the Coimbra trip."
+        m = run(file(chunks={C1: word_keys(text)}), "про Коїмбру", texts={C1: text})
         assert m.tier is MatchTier.TRANSLATED and m.covers[0].source_class is SourceClass.TRANSLATION
 
     def test_hint_keyword_is_translation(self):
@@ -76,11 +76,11 @@ class TestSourceClassCombinations:
         assert m.tier is MatchTier.TRANSLATED and m.covers[0].where == "hint"
 
     def test_entity_skeleton_in_the_record_is_translation(self):
-        m = run(file(about=["ex:barselon"]), "про Барселону")
+        m = run(file(about=["ex:koimbr"]), "про Коїмбру")
         assert m.tier is MatchTier.TRANSLATED and m.covers[0].where == "record"
 
     def test_name_skeleton_is_translation(self):
-        m = run(file(name=["x:barselon", "w:barcelona"]), "про Барселону")
+        m = run(file(name=["x:koimbr", "w:coimbra"]), "про Коїмбру")
         assert m.tier is MatchTier.TRANSLATED and m.covers[0].where == "name"
 
     def test_automatic_record_only_is_labelled(self):
@@ -97,11 +97,11 @@ class TestSourceClassCombinations:
         assert m.tier is MatchTier.LABELLED
 
     def test_translation_plus_automatic_is_labelled(self):
-        m = run(file(about=["ex:barselon", "tw:trip"]), "Барселона trip")
+        m = run(file(about=["ex:koimbr", "tw:trip"]), "Коїмбра trip")
         assert m.tier is MatchTier.LABELLED
 
     def test_verified_plus_translation_is_translated(self):
-        m = run(file(about=["e:trip", "ex:barselon"]), "Барселона trip")
+        m = run(file(about=["e:trip", "ex:koimbr"]), "Коїмбра trip")
         assert m.tier is MatchTier.TRANSLATED
 
     def test_passage_plus_hint_in_the_same_chunk_is_translated(self):

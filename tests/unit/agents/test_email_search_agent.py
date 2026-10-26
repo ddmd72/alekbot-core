@@ -30,8 +30,8 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 SEARCH_RESULT = json.dumps({
     "count": 2,
     "emails": [
-        {"email_id": "e1", "from": "a@b.com", "date": "2026-01-15", "text": "flight booked", "attachments": []},
-        {"email_id": "e2", "from": "c@d.com", "date": "2026-01-16", "text": "hotel booked", "attachments": []},
+        {"email_id": "e1", "from": "a@example.com", "date": "2026-01-15", "text": "flight booked", "attachments": []},
+        {"email_id": "e2", "from": "c@example.org", "date": "2026-01-16", "text": "hotel booked", "attachments": []},
     ],
 })
 

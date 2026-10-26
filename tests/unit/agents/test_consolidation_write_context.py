@@ -139,7 +139,7 @@ async def test_stage1_create_gets_the_span_end_and_expires_in_the_owner_zone(sto
 
     trip, pills = by_text(store, "trip to Rome"), by_text(store, "takes the pills")
     assert at(trip["reported_date"]) == utc(20, 11) == at(pills["reported_date"])      # the last readable time
-    assert at(trip["expires_at"]) == datetime(2027, 1, 15, 23, tzinfo=timezone.utc)    # the end of 15 Jan, Paris
+    assert at(trip["expires_at"]) == datetime(2027, 1, 15, 23, tzinfo=timezone.utc)    # the end of 15 Jan, Europe/Paris
     assert at(pills["expires_at"]) == utc(20, 11) + timedelta(days=30)                  # a horizon counts from the span end
 
 

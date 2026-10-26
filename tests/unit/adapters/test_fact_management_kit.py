@@ -168,7 +168,7 @@ def _plain(doc):
 
 async def test_update_returns_the_result_dict_and_json(store):
     fid = await create(store)
-    res = await store.adapter.update_fact(fid, {"content": "mother is Mariya", "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": EXPIRY_NONE}, ACC, context=ctx())
     # Reviewer edit (facts S2, D8): `fact_id` is the document written, the new version, which replaces the argument.
     assert set(res) == {"fact_id", "status", "version", "message"} and res["fact_id"] != fid
     assert store.docs[res["fact_id"]]["replaces_fact_id"] == fid and res["version"] == 2
@@ -189,9 +189,9 @@ async def test_update_tags_replaces_them_whole_and_recomputes_all_three_vectors(
 
 async def test_update_metadata_overwrites_a_shared_key_and_keeps_the_others(store):
     fid = await create(store, metadata={"name": "Maria", "city": "Springfield"})
-    res = await store.adapter.update_fact(fid, {"metadata": {"name": "Masha"}, "expiry": EXPIRY_NONE}, ACC, context=ctx())
+    res = await store.adapter.update_fact(fid, {"metadata": {"name": "Mia"}, "expiry": EXPIRY_NONE}, ACC, context=ctx())
     # Reviewer edit (facts S2, D8): read through the returned id; the old version keeps its metadata.
-    assert store.docs[res["fact_id"]]["metadata"] == {"name": "Masha", "city": "Springfield"}
+    assert store.docs[res["fact_id"]]["metadata"] == {"name": "Mia", "city": "Springfield"}
     assert res["fact_id"] != fid and store.docs[fid]["metadata"] == {"name": "Maria", "city": "Springfield"}
 
 
@@ -261,7 +261,7 @@ async def test_update_state_applies_the_lifecycle_fields(store, state, is_curren
     # test_update_on_an_archived_fact_is_refused). SUPERSEDED needs its successor. The write stays in place, with no
     # embedding and the stored vectors, version and id (covers the retired mock tests of state-only updates).
     fid = await create(store)
-    successor = await create(store, "mother is Mariya")
+    successor = await create(store, "mother is Mariia")
     before = _plain(store.docs[fid])
     store.adapter._embedding = FailingEmbedder()
     updates = {"state": state, "superseded_by": successor} if state == "SUPERSEDED" else {"state": state}
@@ -289,12 +289,12 @@ async def test_repeating_an_update_changes_only_last_updated(store):
     # changes only its last_updated, in place.
     fid = await create(store)
     res = await store.adapter.update_fact(
-        fid, {"content": "mother is Mariya", "tags": ["family"], "expiry": EXPIRY_NONE}, ACC, context=ctx())
+        fid, {"content": "mother is Mariia", "tags": ["family"], "expiry": EXPIRY_NONE}, ACC, context=ctx())
     v2 = res["fact_id"]
     first = _plain(store.docs[v2])
     old = _plain(store.docs[fid])
     again = await store.adapter.update_fact(
-        fid, {"content": "mother is Mariya", "tags": ["family"], "expiry": EXPIRY_NONE}, ACC, context=ctx())
+        fid, {"content": "mother is Mariia", "tags": ["family"], "expiry": EXPIRY_NONE}, ACC, context=ctx())
     assert (again["fact_id"], again["version"]) == (v2, 2) and len(store.docs) == 2
     second = _plain(store.docs[v2])
     assert {k for k in second if second[k] != first[k]} == {"last_updated"}

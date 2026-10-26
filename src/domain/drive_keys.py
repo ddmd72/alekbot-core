@@ -93,7 +93,7 @@ _WORD_FAMILIES: Tuple[str, ...] = (KeyFamily.LABEL_WORD.value, KeyFamily.TOPIC_W
 _GRADE_ORDER: Mapping[str, int] = {Grade.IN_TEXT.value: 0, Grade.IN_TEXT_AS.value: 1, Grade.NOT_IN_TEXT.value: 2}
 _YEAR_MIN, _YEAR_MAX = 1900, 2099
 _SHORT_ID_CHARS = 5   # a query id with letters this short ("ред3", "a4") is words, not one number (review m1)
-# Person and place entities also key their last token alone (review m8: "Сергей Иванов" is about "Иванов").
+# Person and place entities also key their last token alone (review m8: "Тарас Мельник" is about "Мельник").
 _LAST_TOKEN_ENTITY_TYPES = frozenset({"person", "place"})
 
 # -- query-only word lists (not hashed: they change no stored key; SHORT_FUNCTION_WORDS, which do, are) ----------
@@ -764,10 +764,10 @@ def index_tables_digest() -> str:
 # A fixed multilingual fixture whose keys are pinned too (review m9): a change to a rule's code, not only to a table,
 # fails the pin until KEYS_VERSION moves.
 _GOLDEN_TEXTS: Tuple[str, ...] = (
-    "Договор аренды квартиры в Барселоне от 15.03.2024, сумма 1 250,00 EUR, депозит, подписи сторон.",
-    "Квитки до Києва та Харкова: у Львові о 18:30, комп'ютер, сім'я, iPhone 15, Wi-Fi, ИП Иванов.",
-    "Houses, policies, invoices and receipts for the Barcelona lease; PayPal; e-mail; ред3; March 2024.",
-    "медицинские записи по холестерину, нові квартири, нової картки, ёлка, за́мок, квар-\nтира",
+    "Договор аренды квартиры в Лиссабоне от 15.03.2024, сумма 1 250,00 EUR, депозит, подписи сторон.",
+    "Квитки до Одеси та Харкова: у Львові о 18:30, комп'ютер, сім'я, iPhone 15, Wi-Fi, ФОП Мельник.",
+    "Houses, policies, invoices and receipts for the Lisbon lease; PayPal; e-mail; ред3; March 2024.",
+    "медицинские записи по прививкам, нові квартири, нової картки, ёлка, за́мок, квар-\nтира",
 )
 
 
@@ -776,10 +776,10 @@ def golden_digest() -> str:
     out: List[object] = []
     for text in _GOLDEN_TEXTS:
         out += [word_keys(text), name_keys_v2(text[:60]), query_concepts(text)]
-    rec = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO, place_forms=("Barcelona", "Барселона"),
-                          photo_objects=(PhotoObject("Sagrada Familia"),), visible_text="Gate 12345",
+    rec = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO, place_forms=("Porto", "Порту"),
+                          photo_objects=(PhotoObject("Torre dos Clerigos"),), visible_text="Gate 12345",
                           profile=DriveProfile("t", "w", "ru", "receipt", entities=(
-                              ProfileEntity("Сергей Иванов", "person", "Сергей Иванов"),),
+                              ProfileEntity("Тарас Мельник", "person", "Тарас Мельник"),),
                               key_values=(KeyValue("invoice_number", "INV-2024/0012", "INV-2024/0012"),),
                               label_words=("receipt", "квитанции")))
     out.append(about_keys_of(rec))

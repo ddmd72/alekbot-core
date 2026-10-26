@@ -941,7 +941,7 @@ retried, by design**: a retry after the 180 s deadline could overlap a run still
 from the backlog before it, so two overlapping runs can stale up to twice the cap. Per fact the precondition makes a double
 write a conflict, so only the cap is at risk. **Do not trigger the job by hand while the 09:30 run is going**; a real guard
 (a per-day run mark) is S4's call. The next day's run catches up. The 🧹 line is claimed per **UTC day**: a hand run before
-09:30 Madrid on the same UTC day takes the day's line, and the scheduled run then posts none (its numbers are in the
+09:30 Europe/Madrid on the same UTC day takes the day's line, and the scheduled run then posts none (its numbers are in the
 snapshot).
 
 **Never a TTL policy.** A Firestore TTL policy deletes documents when a field passes. `expires_at` on a fact is a decision to
@@ -1050,7 +1050,7 @@ consolidation run).
   refused or, on a cleanup pass, floored to review in two days.
 - Until its end the fact is an ordinary current fact. If the owner says it again and the conversation confirms it held all
   along, the extension rule moves `reported_date` and a horizon counts from the new date.
-- The first janitor run after `expires_at` (09:30 Madrid) finds it due. In log-only mode it only counts it (`would_stale`). With
+- The first janitor run after `expires_at` (09:30 Europe/Madrid) finds it due. In log-only mode it only counts it (`would_stale`). With
   writes on, it becomes `stale` with a `stale_since` and a trail entry, the baseline of the account is rebuilt, and the fact
   leaves the baseline, the prefetch and `search_memory` from the next message (§5.5).
 - A stale fact keeps its text in the store; nothing deletes it. S4's review pass, not built yet, will decide what it is now

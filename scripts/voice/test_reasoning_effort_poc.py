@@ -28,12 +28,12 @@ import websockets
 REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"]
 
 RETENTION_PROBE_SCRIPT = [
-    "My colleague Ivan Petrov handles the Q3 budget — remember that.",
+    "My manager Lukas Weber handles the Q3 budget — remember that.",
     "What's the weather like today?",
     "Tell me a fact about Lisbon.",
     "What time is it in Tokyo right now?",
     "Can you count from one to five?",
-    "Who handles the Q3 budget?",  # retention check — correct answer: Ivan Petrov
+    "Who handles the Q3 budget?",  # retention check — correct answer: Lukas Weber
 ]
 
 TEXT_INPUT_RATE_PER_M = 4.0

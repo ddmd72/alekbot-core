@@ -477,7 +477,7 @@ class TestExecuteEdgeCases:
 
     async def test_email_for_triage_passed_as_extra_static_blocks(self, smart_agent, mock_llm_port):
         """email_for_triage in context must be passed as extra_static_blocks to build_for_agent."""
-        emails = [{"email_id": "e1", "subject": "Hello", "from": "a@b.com"}]
+        emails = [{"email_id": "e1", "subject": "Hello", "from": "a@example.com"}]
         mock_llm_port.generate_content = AsyncMock(
             return_value=build_llm_response("Done", [])
         )
@@ -526,7 +526,7 @@ class TestExecuteEdgeCases:
             args={"intent": "search_emails", "query": "invoice"}
         )
         import json as _json
-        email_result = _json.dumps({"emails": [{"email_id": "e1", "from": "a@b.com", "date": "2026"}]})
+        email_result = _json.dumps({"emails": [{"email_id": "e1", "from": "a@example.com", "date": "2026"}]})
         delegation_response = AgentResponse.success(
             task_id="t1", agent_id="email_search_agent", result=email_result
         )
@@ -643,7 +643,7 @@ class TestDelegateToAgentWithRetry:
 
     async def test_search_emails_uses_compact_formatter(self, engine, ctx):
         import json as _json
-        email_json = _json.dumps({"emails": [{"email_id": "e1", "from": "x@y.com", "date": "2026"}]})
+        email_json = _json.dumps({"emails": [{"email_id": "e1", "from": "x@example.net", "date": "2026"}]})
         success_resp = AgentResponse.success(task_id="t", agent_id="a", result=email_json)
         engine._coordinator.handle_delegation = AsyncMock(return_value=success_resp)
         tc = ToolCall(
@@ -652,7 +652,7 @@ class TestDelegateToAgentWithRetry:
         )
         result = await engine.dispatch(tc, ctx, {}, {}, "test", 0, 0)
         assert "e1" in result.result_str
-        assert "x@y.com" in result.result_str
+        assert "x@example.net" in result.result_str
 
 
 # =========================================================================
@@ -702,7 +702,7 @@ class TestFormatEmailSearchCompact:
     def test_email_with_attachments_and_text(self):
         import json as _json
         data = _json.dumps({"emails": [{
-            "email_id": "e1", "from": "a@b.com", "date": "2026",
+            "email_id": "e1", "from": "a@example.com", "date": "2026",
             "attachments": ["report.pdf"], "text": "See attached"
         }]})
         result = _format_email_search_compact(data)

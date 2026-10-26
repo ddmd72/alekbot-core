@@ -93,7 +93,7 @@ async def main():
     queries = [
         "Skoda Fabia car",
         "vehicle VIN number",
-        "license plate XX0000YY"
+        "license plate SAMPLE-0000"
     ]
     
     # This is the account_id stored in Firestore (WITH prefix now after fix!)

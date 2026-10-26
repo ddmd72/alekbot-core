@@ -42,10 +42,10 @@ USE rich_content FOR:
 
 EXAMPLES:
 
-Query: "Погода в Барселоне на неделю"
+Query: "Погода в Порту на неделю"
 {{
-  "full_response": "*Weather forecast for Springfield:*\\n\\nMonday-Wednesday sunny 16-19°C. Thursday rain, 14°C. Weekend cooler with clouds.",
-  "history_summary": "Springfield weather: Mon-Wed sunny 16-19°C, Thu rain 14°C, weekend cloudy 12-16°C",
+  "full_response": "*Weather forecast for Porto:*\\n\\nMonday-Wednesday sunny 16-19°C. Thursday rain, 14°C. Weekend cooler with clouds.",
+  "history_summary": "Porto weather: Mon-Wed sunny 16-19°C, Thu rain 14°C, weekend cloudy 12-16°C",
   "rich_content": {{
     "type": "table",
     "columns": ["Day", "Temp", "Condition", "Humidity", "Wind"],
@@ -56,22 +56,22 @@ Query: "Погода в Барселоне на неделю"
   }}
 }}
 
-Query: "Who is president of France?"
+Query: "Who is chancellor of Germany?"
 {{
-  "full_response": "The President of France is Emmanuel Macron. He has held this position since May 2017.",
-  "history_summary": "President of France: Emmanuel Macron (since May 2017)"
+  "full_response": "The Chancellor of Germany is Friedrich Merz. He has held this position since May 2025.",
+  "history_summary": "Chancellor of Germany: Friedrich Merz (since May 2025)"
 }}
 
-Query: "Concerts in Barcelona February"
+Query: "Concerts in Lisbon February"
 {{
-  "full_response": "*Concerts in Barcelona - February 2026:*\\n\\n*Coldplay* — Feb 10, Palau Sant Jordi\\n*Billie Eilish* — Feb 15, Primavera Sound\\n*Rosalía* — Feb 22, Sala Apolo\\n*The Weeknd* — Feb 28, Estadi Olímpic",
-  "history_summary": "Barcelona Feb 2026: Coldplay (10th), Billie Eilish (15th), Rosalía (22nd), The Weeknd (28th)",
+  "full_response": "*Concerts in Lisbon - February 2026:*\\n\\n*Coldplay* — Feb 10, MEO Arena\\n*Billie Eilish* — Feb 15, Coliseu dos Recreios\\n*Rosalía* — Feb 22, Campo Pequeno\\n*The Weeknd* — Feb 28, Estádio da Luz",
+  "history_summary": "Lisbon Feb 2026: Coldplay (10th), Billie Eilish (15th), Rosalía (22nd), The Weeknd (28th)",
   "rich_content": {{
     "type": "table",
     "columns": ["Artist", "Date", "Venue"],
     "rows": [
-      ["Coldplay", "Feb 10", "Palau Sant Jordi"],
-      ["Billie Eilish", "Feb 15", "Primavera Sound"]
+      ["Coldplay", "Feb 10", "MEO Arena"],
+      ["Billie Eilish", "Feb 15", "Coliseu dos Recreios"]
     ]
   }}
 }}
@@ -141,8 +141,8 @@ def main() -> None:
     )
 
     queries = [
-        "Weather in Madrid for next week",
-        "Quien es el presidente de España?",
+        "Weather in Lisbon for next week",
+        "Quien es el presidente de Portugal?",
         "Top 5 restaurants in Springfield",
         "When was Python programming language created?",
         "Compare iPhone 15 vs Samsung S24",

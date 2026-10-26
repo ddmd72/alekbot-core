@@ -6,23 +6,23 @@ import pytest
 from src.domain.drive_keys import all_forms, query_concepts, token_forms, token_spans, word_keys
 
 CYRILLIC_GROUPS = [
-    ("Барселона", "Барселону", "Барселоне", "Барселоной"),
-    ("Париж", "Париже"),
+    ("Коїмбра", "Коїмбру", "Коїмбрі", "Коїмброю"),
+    ("Берлін", "Берліні"),
     ("Рим", "Риме"),
-    ("Киев", "Киеве"),
+    ("клев", "клеве"),
     ("Київ", "Києві"),
     ("Львів", "Львові"),
     ("Харків", "Харкові"),
-    ("Иванов", "Иванова", "Ивановым"),
-    ("Петров", "Петрова"),
-    ("Сергей", "Сергея"),
-    ("Андрей", "Андрея"),
+    ("Мельник", "Мельника", "Мельником"),
+    ("Тарас", "Тараса"),
+    ("трофей", "трофея"),
+    ("юбилей", "юбилея"),
     ("музей", "музея"),
     ("альбом", "альбома"),
     ("диплом", "диплома"),
     ("герой", "героя"),
     ("Ростов", "Ростове"),
-    ("Чехов", "Чехова"),
+    ("Бондар", "Бондаря"),
     ("отель", "отеля"),
     ("кровь", "крови"),
     ("Казань", "Казани"),
@@ -42,7 +42,7 @@ LATIN_GROUPS = [
     ("receipt", "receipts"),
     ("invoice", "invoices"),
 ]
-NEGATIVE_PINS = [("барсетка", "Барселона"), ("Валентина", "Валенсия")]
+NEGATIVE_PINS = [("берлога", "Берлін"), ("Ганна", "Ганновер")]
 
 
 def _forms(word: str) -> set:
@@ -97,7 +97,7 @@ def test_nyu_york_is_one_compound_word_meeting_its_locative():
     ("movie", {"movie", "movi"}), ("movies", {"movies", "movi"}),
     ("policy", {"policy", "polici"}), ("policies", {"policies", "polici"}),
     ("receipt", {"receipt"}), ("receipts", {"receipts", "receipt"}),
-    ("paris", {"paris"}), ("analysis", {"analysis"}), ("taxis", {"taxis"}), ("menus", {"menus"}),
+    ("tennis", {"tennis"}), ("analysis", {"analysis"}), ("taxis", {"taxis"}), ("menus", {"menus"}),
     ("expires", {"expires", "expir"}), ("glasses", {"glasses", "glass"}), ("boxes", {"boxes", "box"}),
 ])
 def test_latin_own_forms_follow_the_corrected_plural_rule(word, expected):
@@ -111,9 +111,9 @@ def test_latin_forms_are_accent_stripped():
 
 
 @pytest.mark.parametrize("word,form", [
-    ("барселону", "барселон"),       # (b) an ending stripped
-    ("барселоной", "барселон"),      # (b) the longest ending
-    ("сергей", "серге"),             # (c) final й
+    ("коїмбру", "коїмбр"),           # (b) an ending stripped
+    ("коїмброю", "коїмбр"),          # (b) the longest ending
+    ("трофей", "трофе"),             # (c) final й
     ("кровь", "кров"),               # (c) final ь
     ("квиток", "квитк"),             # (d) fleeting -ок
     ("отец", "отц"),                 # (d) fleeting -ец
@@ -130,13 +130,13 @@ def test_cyrillic_forms(word, form):
 def test_cyrillic_forms_are_never_truncated():
     """No prefix cut: a form is the token, the token less one listed ending or soft letter, a fleeting-vowel or an
     alternation form — never a fixed-length stem."""
-    assert set(token_forms("барсетка")) == {"барсетка", "барсетк"}
-    assert set(token_forms("барселона")) == {"барселона", "барселон"}
+    assert set(token_forms("берлога")) == {"берлога", "берлог"}
+    assert set(token_forms("коїмбра")) == {"коїмбра", "коїмбр"}
 
 
 def test_forms_under_three_letters_are_not_kept():
     assert token_forms("по") == ()
-    assert "ки" not in token_forms("киев")
+    assert "кл" not in token_forms("клев")
     assert all(len(f) >= 3 for f in token_forms("моей"))
 
 
@@ -146,18 +146,18 @@ def test_the_alternation_needs_a_stem_of_four_letters():
 
 def test_the_index_stores_no_transliterated_spelling():
     """Review B2: native forms plus one skeleton per word; the variants are generated on the query side."""
-    assert all_forms("барселону") == token_forms("барселону")
-    keys = word_keys("Барселону")
-    assert [k for k in keys if k.startswith("x:")] == ["x:barselon"]
+    assert all_forms("коїмбру") == token_forms("коїмбру")
+    keys = word_keys("Коїмбру")
+    assert [k for k in keys if k.startswith("x:")] == ["x:koimbr"]
     assert not any(k.startswith("w:") and k[2:].isascii() for k in keys)
 
 
 @pytest.mark.parametrize("latin,cyrillic", [
-    ("barcelona", "барселона"),        # c before e -> с
-    ("valencia", "валенсиа"),          # c before i -> с
+    ("center", "сентер"),              # c before e -> с
+    ("lucia", "лусиа"),                # c before i -> с
     ("cycle", "сыкле"),                # c before y -> с; the second c before l -> к
     ("costa", "коста"),                # c elsewhere -> к
-    ("chekhov", "чехов"),              # ch is still ч
+    ("chess", "чесс"),                 # ch is still ч
 ])
 def test_latin_to_cyrillic_applies_the_c_rule(latin, cyrillic):
     from src.domain.drive_key_forms import lat_to_cyr_ru
@@ -166,12 +166,12 @@ def test_latin_to_cyrillic_applies_the_c_rule(latin, cyrillic):
 
 def test_latin_spelling_meets_cyrillic_text_only_through_a_skeleton():
     """Across scripts the match is a skeleton (`x:`), never a native form: a translation, not exact (M8)."""
-    assert _meets("Barcelona", "Были в Барселоне в мае.") == {"x:barselon"}
+    assert _meets("Coimbra", "Були в Коїмбрі в травні.") == {"x:koimbr"}
 
 
 def test_cyrillic_query_meets_latin_text_only_through_a_skeleton():
     # xc F3: the text is Latin, so its skeleton is `xl:`, which a Cyrillic query word reads
-    assert _meets("Барселону", "A week in Barcelona.") == {"xl:barselon"}
+    assert _meets("Коїмбру", "A week in Coimbra.") == {"xl:koimbr"}
 
 
 def test_digits_split_from_letters():
@@ -192,16 +192,16 @@ def test_tokens_split_like_name_keys_except_case_and_apostrophe():
     apostrophe stays inside the word (M4); ё folds to е (m7)."""
     # (the v1 `_tokens` is gone, xc m4: its outputs on these texts are the literals)
     for text, tokens in (("Нью-Йорк", ["нью", "йорк"]), ("IMG_2210.jpg", ["img", "2210", "jpg"]),
-                         ("Crème brûlée 2024", ["crème", "brûlée", "2024"]), ("Київ — «Львів»", ["київ", "львів"]),
+                         ("Crème brûlée 2024", ["crème", "brûlée", "2024"]), ("Харків — «Львів»", ["харків", "львів"]),
                          ("Peter's house", ["peter", "s", "house"])):
         assert [t for t, _, _ in token_spans(text)] == tokens, text
     assert [t for t, _, _ in token_spans("myFileName v2")] == ["myfilename", "v", "2"]
-    assert [t for t, _, _ in token_spans("Пётр сім'я")] == ["петр", "сімʼя"]
-    assert [t for t, _, _ in token_spans("Пётр's ʼдім")] == ["петр", "s", "дім"]   # a Latin ' still separates
+    assert [t for t, _, _ in token_spans("Лёд сім'я")] == ["лед", "сімʼя"]
+    assert [t for t, _, _ in token_spans("Лёд's ʼдім")] == ["лед", "s", "дім"]   # a Latin ' still separates
 
 
 def test_token_spans_point_into_the_original_text():
-    text = "Hotel in Barcelona, 3 nights"
+    text = "Hotel in Coimbra, 3 nights"
     for token, start, end in token_spans(text):
         assert text[start:end].casefold() == token
 

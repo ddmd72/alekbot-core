@@ -1083,7 +1083,7 @@ When in doubt: if it identifies or grants access to infrastructure, it goes in `
 ## ⛔ PERSONAL DATA RULE
 
 **The repo is public. Every example in docs, tests, fixtures, prompts, comments and commit messages is invented**,
-taken from the invented cast in [`tests/CLAUDE.md`](tests/CLAUDE.md) § Invented cast. Never take an example from the
+taken from the owner's invented universe (rule in [`tests/CLAUDE.md`](tests/CLAUDE.md) § Invented cast). Never take an example from the
 owner's memory, `get_user_context`, journals or chat history: no real names, relatives, health values, home, legal
 status, documents or contact data. A gate checks every commit and PR (`scripts/pii_gate/`, `.githooks/`,
 `.github/workflows/pii_gate.yml`); its private denylist and profile never enter this repo. CI runs the denylist only and prints counts; the model check is local-only.

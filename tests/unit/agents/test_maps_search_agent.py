@@ -111,7 +111,7 @@ def mock_llm() -> AsyncMock:
 def mock_maps_port() -> AsyncMock:
     m = AsyncMock(spec=MapsToolsPort)
     m.get_tool_declarations.return_value = _TOOL_DECLS
-    m.call_tool.return_value = {"places": [{"name": "Кафе Центр", "address": "вул. Хрещатик 1"}]}
+    m.call_tool.return_value = {"places": [{"name": "Кафе Центр", "address": "вул. Вигадана 5"}]}
     return m
 
 
@@ -275,7 +275,7 @@ class TestToolLoop:
                 text=None,
                 tool_calls=[_make_tool_call("places_search", {"query": "кафе поблизу"})],
             ),
-            LLMResponse(text="Знайдено: Кафе Центр на Хрещатику.", tool_calls=[]),
+            LLMResponse(text="Знайдено: Кафе Центр на вулиці Вигаданій.", tool_calls=[]),
         ]
 
         response = await agent.execute(_make_message({"query": "знайди кафе поблизу"}))
@@ -290,8 +290,8 @@ class TestToolLoop:
     async def test_route_tool_call(self, agent, mock_llm, mock_maps_port):
         """LLM calls route_computation tool."""
         mock_maps_port.call_tool.return_value = {
-            "distance": "540 km",
-            "duration": "5 hours 30 min",
+            "distance": "313 km",
+            "duration": "3 hours 10 min",
         }
         mock_llm.generate_content.side_effect = [
             LLMResponse(
@@ -299,21 +299,21 @@ class TestToolLoop:
                 tool_calls=[
                     _make_tool_call(
                         "route_computation",
-                        {"origin": "Kyiv", "destination": "Lviv"},
+                        {"origin": "Porto", "destination": "Lisbon"},
                     )
                 ],
             ),
-            LLMResponse(text="Маршрут Київ–Львів: 540 км, ~5 год 30 хв.", tool_calls=[]),
+            LLMResponse(text="Маршрут Порту–Лісабон: 313 км, ~3 год 10 хв.", tool_calls=[]),
         ]
 
         response = await agent.execute(
-            _make_message({"query": "маршрут з Києва до Львова"})
+            _make_message({"query": "маршрут з Порту до Лісабона"})
         )
 
         assert response.status == AgentStatus.SUCCESS
-        assert "540" in response.result["text"]
+        assert "313" in response.result["text"]
         mock_maps_port.call_tool.assert_awaited_once_with(
-            "route_computation", {"origin": "Kyiv", "destination": "Lviv"}
+            "route_computation", {"origin": "Porto", "destination": "Lisbon"}
         )
 
     async def test_multiple_tool_calls_in_one_turn(self, agent, mock_llm, mock_maps_port):

@@ -24,7 +24,7 @@ capability: "You solve tasks by writing and executing Python code. "
 input_format: "Tasks arrive as natural language OR as formulas/expressions. "
               "Both are valid. Examples: "
               "'how many days until new year', '(2**10 - 24) / 8', "
-              "'BMI at 92kg and 183cm', 'mortgage 300000 at 4.5% for 20 years'."
+              "'BMI at 64kg and 168cm', 'mortgage 300000 at 4.5% for 20 years'."
 
 rules: [
     "ALWAYS write Python code to compute. Never compute in-head.",

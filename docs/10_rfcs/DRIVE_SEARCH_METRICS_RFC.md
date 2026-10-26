@@ -36,7 +36,7 @@ What we cannot answer:
 - Is the indexer keeping up, and what does it cost per file?
 - Any of the above for a period older than 30 days: every source expires.
 
-Two incidents motivate the design. The "Barcelona" turn of 2026-10-13 made 8 LLM calls, 8 searches and 9 listings
+Two incidents motivate the design. The "Lisbon" turn of 2026-10-13 made 8 LLM calls, 8 searches and 9 listings
 for 371k tokens; we found it by reading logs by hand. And every v2 search since the rebuild reports
 `coverage=incomplete` because enrichment is still running — a single "incomplete rate" would hide every other cause.
 
@@ -331,7 +331,7 @@ Unit: **S** = search event (`mode = query` unless stated), **T** = drive turn, *
 | `search.chars` | S | histogram `chars_v1` → p50/p90 | ↓ | low | result bloat |
 | `search.ms` | S | histogram `ms_v1` → p50/p90 | ↓ | low | Firestore fan-out |
 | `search.status_rate` | S (all) | dims `status` | watch | — | gate failures |
-| `turn.searches_per_q` | T | mean `search_calls` | ↓ | ±0.3 | the Barcelona pattern |
+| `turn.searches_per_q` | T | mean `search_calls` | ↓ | ±0.3 | the Lisbon pattern |
 | `turn.tokens` | T | histogram `tokens_v1` → p50/p90 | ↓ | ±25 % | context bloat |
 | `turn.cost` | T | histogram `usd_v1` → p50 | ↓ | ±25 % | cost per question |
 | `turn.crawl_rate` | T | `listings_after_search ≥ 2` | ↓ | ±6 pp | distrust of the index |
@@ -506,7 +506,7 @@ Each slice is its own PR from a feature branch; docs (this RFC's status, the bui
 `WorkerHandler` list, `docs/07_deployment/SCHEDULERS.md`) move with the code.
 
 **Acceptance per slice:** S0 — row counts per day match a counts query on `prompt_content`; the owner spot-checks the
-Barcelona turn. S1 — one live search yields one event whose `trace_id` joins its `prompt_content` rows. S2 — a
+Lisbon turn. S1 — one live search yields one event whose `trace_id` joins its `prompt_content` rows. S2 — a
 rollup of a live day reproduces the S0 counts for that day within the `parse_ok` share; re-running it leaves the same
 rows. S3 — a manual weekly run posts once; a second run posts nothing. S4 — a snapshot row per user; lag histogram
 non-empty after a tick that settled records. S5 — anchor agreement recorded for two weeks; the cost line within 30 %

@@ -9,7 +9,7 @@ import pytest
 from src.domain.drive_keys import NAME_KEYS_V2, name_keys_v2, query_concepts, token_forms, token_spans
 
 
-@pytest.mark.parametrize("name", ["Барселоне 2023.jpg", "Receipts March.pdf", "IMG_2210.jpg", "Київ — план v2.docx",
+@pytest.mark.parametrize("name", ["Коїмбрі 2023.jpg", "Receipts March.pdf", "IMG_2210.jpg", "Одеса — план v2.docx",
                                   "Crème brûlée.md", "myFileName Нью-Йорк сім'я.txt", ""])
 def test_v2_keys_every_token_but_no_transliterated_spelling(name):
     """v2 replaces v1's transliterated `w:` variants by one `x:` skeleton per word (review B2/M8): a name matched
@@ -38,8 +38,8 @@ def test_v2_keys_every_token_but_no_transliterated_spelling(name):
 
 
 def test_v2_has_no_cross_script_spelling_under_w():
-    assert not {"w:kyiv", "w:kiyiv"} & set(name_keys_v2("Київ.docx"))
-    assert "w:barselone" not in name_keys_v2("Барселоне.jpg")
+    assert not {"w:odesa", "w:odessa"} & set(name_keys_v2("Одеса.docx"))
+    assert "w:koimbri" not in name_keys_v2("Коїмбрі.jpg")
 
 
 def test_v2_is_sorted_and_unique():
@@ -48,8 +48,8 @@ def test_v2_is_sorted_and_unique():
 
 
 def test_v2_adds_word_forms():
-    keys = set(name_keys_v2("Барселоне 2023.jpg"))
-    assert {"w:барселон", "x:barselon"} <= keys
+    keys = set(name_keys_v2("Коїмбрі 2023.jpg"))
+    assert {"w:коїмбр", "x:koimbr"} <= keys
 
 
 def test_v2_adds_number_and_year_forms_of_digit_tokens():
@@ -60,8 +60,8 @@ def test_v2_adds_number_and_year_forms_of_digit_tokens():
 
 @pytest.mark.parametrize("name,query", [
     ("Receipt 2023-05.pdf", "receipts"),
-    ("Барселона.jpg", "Барселоне"),
-    ("Barcelona trip.docx", "Барселона"),
+    ("Коїмбра.jpg", "Коїмбрі"),
+    ("Coimbra trip.docx", "Коїмбра"),
     ("Policies.pdf", "policy"),
     ("Trip 2023.md", "2023"),
     ("IMG_2210.jpg", "IMG_2210"),

@@ -278,10 +278,10 @@ class TestPlanned:
         assert rec.enrich_wake_at == datetime(2026, 11, 1, tzinfo=timezone.utc)
 
     def test_about_keys_follow_the_profile(self):
-        p = profile(entities=(ProfileEntity(name="Barcelona", type="place", printed="Barcelona"),))
+        p = profile(entities=(ProfileEntity(name="Coimbra", type="place", printed="Coimbra"),))
         rec = ep.planned(ep.profiled(doc(), p, source=ProfileSource.MODEL, fingerprint=FP, now=NOW), ctx())
-        assert "e:barcelona" in rec.about_keys and "l:type:contract" in rec.about_keys
-        assert "e:barcelona" not in ep.planned(replace(rec, indexed_generation=None), ctx()).about_keys
+        assert "e:coimbra" in rec.about_keys and "l:type:contract" in rec.about_keys
+        assert "e:coimbra" not in ep.planned(replace(rec, indexed_generation=None), ctx()).about_keys
 
     def test_a_planned_record_is_stable(self):
         once = ep.planned(doc(), ctx())

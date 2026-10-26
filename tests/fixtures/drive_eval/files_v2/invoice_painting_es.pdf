@@ -9,13 +9,13 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>
 endobj
 4 0 obj
-<< /Length 300 >>
+<< /Length 296 >>
 stream
 BT /F1 11 Tf 15 TL 56 790 Td
-(PINTURAS EJEMPLO) Tj
+(PINTURAS EXEMPLO) Tj
 T* (Factura n.º 2026/078) Tj
 T* (Fecha: 22/04/2026) Tj
-T* (Cliente: Alex Example) Tj
+T* (Cliente: Alex Doe) Tj
 T* (Trabajo: pintura del salón y del pasillo de la vivienda, dos manos,) Tj
 T* (reparación de grietas en el techo.) Tj
 T* (Total: 680,00 EUR \(IVA incluido\)) Tj
@@ -32,9 +32,9 @@ xref
 0000000058 00000 n 
 0000000115 00000 n 
 0000000241 00000 n 
-0000000592 00000 n 
+0000000588 00000 n 
 trailer
 << /Size 6 /Root 1 0 R >>
 startxref
-689
+685
 %%EOF

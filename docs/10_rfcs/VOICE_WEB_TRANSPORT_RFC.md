@@ -169,7 +169,7 @@ since 2026-09-23).
 
 | Measure | Value |
 |---|---|
-| Browser ⇄ SFU | RTT 21–48 ms, jitter 2–4 ms, 0 loss, POP Madrid |
+| Browser ⇄ SFU | RTT 21–48 ms, jitter 2–4 ms, 0 loss, POP Lisbon |
 | SFU → us | continuous 50 msg/s even in silence, 3840 B frames → **0.68 GB/h** |
 | us → SFU (continuous silence policy) | **0.64 GiB/h** |
 | First audio after end of speech (OpenAI, provider VAD) | 646–1479 ms, median ~900 (Twilio relay 2026-09-25: 1062–1939, median ~1350, plus PSTN) |
@@ -248,7 +248,7 @@ persisted per browser in `localStorage`, with the choice enforced via
 `OverconstrainedError`/`NotFoundError` (e.g. a saved device unplugged since the last call). Hint
 text nudges the owner toward the built-in mic when on Bluetooth.
 
-**Ringback.** The call page now plays a Spanish-style ringback tone (425 Hz, 1.5 s on / 3.0 s
+**Ringback.** The call page now plays a European-style ringback tone (425 Hz, 1.5 s on / 3.0 s
 off) from the moment the Call button is tapped until the first sustained (≥150 ms) audible
 sound from Lelik, detected by an `AnalyserNode` on a separate `MediaStreamSource` tap of the
 remote track — the `<audio>` element stays the sole playback path, so a suspended

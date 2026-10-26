@@ -88,7 +88,7 @@ class TestFindByAboutKeys:
             rec("b", eff=D, keys=("e:rome",)),                       # same date as a: item_id DESC breaks the tie
             rec("c", eff=D + timedelta(days=3), keys=("k:ticket",)),
             rec("d", eff=None, keys=("e:rome",)),                     # undated: last
-            rec("e", eff=D - timedelta(days=9), keys=("e:paris",), kind="image"),
+            rec("e", eff=D - timedelta(days=9), keys=("e:berlin",), kind="image"),
             rec("f", eff=D - timedelta(days=1), keys=("e:rome",), kind="image"),
             rec("x", user="other", eff=D, keys=("e:rome",)),
         ])
@@ -115,11 +115,11 @@ class TestFindByAboutKeys:
         assert await seeded.both("find_by_about_keys", "u", ["e:rome"], 5, after="gone") == []
 
     async def test_a_cursor_record_outside_the_keys_still_positions_the_page(self, seeded):
-        got = await seeded.both("find_by_about_keys", "u", ["e:rome"], 5, after="e")   # e: paris, D-9
+        got = await seeded.both("find_by_about_keys", "u", ["e:rome"], 5, after="e")   # e: berlin, D-9
         assert [r.item_id for r in got] == ["d"]
 
     async def test_single_kind(self, seeded):
-        got = await seeded.both("find_by_about_keys", "u", ["e:rome", "e:paris"], 10, kind="image")
+        got = await seeded.both("find_by_about_keys", "u", ["e:rome", "e:berlin"], 10, kind="image")
         assert [r.item_id for r in got] == ["f", "e"]
 
     async def test_dates_are_inclusive_and_exclude_undated(self, seeded):
@@ -176,7 +176,7 @@ class TestWordKeys:
         await pair.write(chunks=[
             chunk("b", 1, 0, keys=("w:rome",)), chunk("b", 1, 1, keys=("w:rome", "w:ticket")),
             chunk("b", 2, 0, keys=("w:ticket",)), chunk("a", 1, 3, keys=("w:rome",)),
-            chunk("c", 1, 0, keys=("w:paris",)), chunk("d", 1, 0, keys=("w:ticket",), kind="image"),
+            chunk("c", 1, 0, keys=("w:berlin",)), chunk("d", 1, 0, keys=("w:ticket",), kind="image"),
             chunk("z", 1, 0, keys=("w:rome",), user="other"),
         ])
         return pair
@@ -215,7 +215,7 @@ class TestHints:
         await pair.write(hints=[
             hint("b", 1, 1, keys=("w:roma",)), hint("b", 1, 0, keys=("w:roma", "w:billete")),
             hint("b", 2, 0, keys=("w:billete",)), hint("a", 1, 2, keys=("w:roma",), kind="docx"),
-            hint("c", 1, 0, keys=("w:paris",)), hint("z", 1, 0, keys=("w:roma",), user="other"),
+            hint("c", 1, 0, keys=("w:berlin",)), hint("z", 1, 0, keys=("w:roma",), user="other"),
         ])
         return pair
 
@@ -232,7 +232,7 @@ class TestHints:
 
     async def test_get_hint_keys(self, seeded):
         got = await seeded.both("get_hint_keys", "u", [("b", 1, 0), ("c", 1, 0), ("c", 2, 0), ("z", 1, 0)])
-        assert got == {("b", 1, 0): ("w:roma", "w:billete"), ("c", 1, 0): ("w:paris",)}
+        assert got == {("b", 1, 0): ("w:roma", "w:billete"), ("c", 1, 0): ("w:berlin",)}
 
     async def test_get_hints_of_one_generation_by_index(self, seeded):
         got = await seeded.both("get_hints", "u", "b", 1)
@@ -271,8 +271,8 @@ class TestHints:
         assert [h.item_id for h in await seeded.both("hints_page", "other", None, 10)] == ["z"]
 
     async def test_a_rewrite_replaces_the_document(self, seeded):
-        await seeded.write(hints=[hint("c", 1, 0, keys=("w:lyon",))])
-        assert await seeded.both("get_hint_keys", "u", [("c", 1, 0)]) == {("c", 1, 0): ("w:lyon",)}
+        await seeded.write(hints=[hint("c", 1, 0, keys=("w:hamburg",))])
+        assert await seeded.both("get_hint_keys", "u", [("c", 1, 0)]) == {("c", 1, 0): ("w:hamburg",)}
 
 
 class TestEnrichmentReads:

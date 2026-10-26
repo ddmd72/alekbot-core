@@ -88,7 +88,7 @@ class TestClosedFilesInCoverage:     # B-minor 2
         world = World()
         world.shared = world.drive.add("Shared", folder=True)
         world.mine = world.drive.add("Mine", folder=True)
-        world.closed = world.drive.add("residence card.pdf", parent=world.shared)
+        world.closed = world.drive.add("citizen card.pdf", parent=world.shared)
         world.open_one = world.drive.add("lease agreement.pdf", parent=world.mine)
         world.open_two = world.drive.add("lease agreement.pdf", parent=world.shared)
         await world.settle()

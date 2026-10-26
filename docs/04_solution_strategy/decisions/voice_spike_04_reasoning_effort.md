@@ -47,12 +47,12 @@ brief's exact 6-turn retention probe as sequential `conversation.item.create` + 
 turns, waiting for `response.done` before the next turn:
 
 ```
-1. "My colleague Ivan Petrov handles the Q3 budget — remember that."
+1. "My colleague Lukas Weber handles the Q3 budget — remember that."
 2. "What's the weather like today?"        (filler)
 3. "Tell me a fact about Lisbon."           (filler)
 4. "What time is it in Tokyo right now?"    (filler)
 5. "Can you count from one to five?"        (filler)
-6. "Who handles the Q3 budget?"             (retention check — correct answer: Ivan Petrov)
+6. "Who handles the Q3 budget?"             (retention check — correct answer: Lukas Weber)
 ```
 
 Latency per turn = wall clock from `response.create` to `response.done` (`time.monotonic()`).
@@ -82,7 +82,7 @@ Full run, real output, one session per row:
 | xhigh   | **PASS**  | 7.96s            | 1.12s    | 1843      | 553        | 276            | $0.02064 |
 
 **5 of 5 levels passed retention** — every level's final turn ("Who handles the Q3 budget?")
-correctly answered "Ivan Petrov" (counted directly from the printed transcript, not estimated).
+correctly answered "Lukas Weber" (counted directly from the printed transcript, not estimated).
 
 Reasoning tokens (`output_token_details.reasoning_tokens`) were present in the aggregate for every
 level tested — each level's summary reports a non-zero total rather than "n/a", so the split IS

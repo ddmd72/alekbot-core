@@ -21,8 +21,8 @@ ones Smart is most often asked to quote an amount from.
 ## Decision
 
 `is_machine_text(text)` (tables — CSV, XLSX, XLS, ODS — never reach it, `gate_exempt`):
-1. **Residue.** Each line loses a leading timestamp, IP address, WebVTT voice tag or speaker tag (`Alice:`,
-   `[Bob]`); a line that is then only a timestamp or a number is ignored; Markdown table rows are not measured. Meeting
+1. **Residue.** Each line loses a leading timestamp, IP address, WebVTT voice tag or speaker tag (`Clara:`,
+   `[Jamie]`); a line that is then only a timestamp or a number is ignored; Markdown table rows are not measured. Meeting
    transcripts, chat exports and dated journals keep prose after their prefixes.
 2. **Bounded sample.** Metrics are taken over at most `SAMPLE_LINES` (2 000) residue lines spread evenly over the
    text, and token variety over `VARIETY_SAMPLE` (2 000) tokens spread over those lines. Tokens holding a digit fold to

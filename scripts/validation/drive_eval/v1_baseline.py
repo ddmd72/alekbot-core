@@ -12,7 +12,8 @@ nothing is written outside the two worktrees):
     git worktree add ../alekbot-core-v1-baseline drive-search-v1
     cp scripts/validation/drive_eval/{v1_baseline.py,lexical_embeddings.py} \\
        ../alekbot-core-v1-baseline/scripts/validation/drive_eval/
-    cp -r tests/fixtures/drive_eval/{tree_v2.json,files_v2,gold_v2.json,enrichment.json} \\
+    rm -rf ../alekbot-core-v1-baseline/tests/fixtures/drive_eval/{files,files_v2}
+    cp -r tests/fixtures/drive_eval/{tree.json,tree_v2.json,files,files_v2,gold_v2.json,gold_g1.json,gold_g2.json,enrichment.json} \\
        ../alekbot-core-v1-baseline/tests/fixtures/drive_eval/
     (cd ../alekbot-core-v1-baseline && venv/bin/python -m scripts.validation.drive_eval.v1_baseline \\
        --out "$OLDPWD/tests/fixtures/drive_eval/baseline_v1.json")

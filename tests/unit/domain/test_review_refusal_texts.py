@@ -16,8 +16,8 @@ from src.domain.refusal_wording import RefusalWording
 
 UTC = timezone.utc
 PARIS = "Europe/Paris"
-NOW = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)  # 11:00 in Paris
-REPORTED = NOW - timedelta(days=90)  # 2026-07-26 in Paris
+NOW = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)  # 11:00 in Europe/Paris
+REPORTED = NOW - timedelta(days=90)  # 2026-07-26 in Europe/Paris
 PAST_DATE = compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 20)), REPORTED, PARIS)
 TODAY_DATE = compute_expiry(Expiry(ExpiryKind.DATE, on=date(2026, 10, 24)), REPORTED, PARIS)
 DUE_HORIZON = compute_expiry(Expiry(ExpiryKind.HORIZON, days=14), REPORTED, PARIS)  # ended 2026-08-09

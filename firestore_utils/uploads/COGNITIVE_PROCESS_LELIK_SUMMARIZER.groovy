@@ -14,9 +14,9 @@ rules: [
 
 examples: [
     {
-        wrong: "The user and Lelik chose a birthday gift for Sam and picked a cookbook. The user asked for a reminder to wrap it. The user went to dinner.",
+        wrong: "The user and Lelik chose a birthday gift for Clara and picked a cookbook. The user asked for a reminder to wrap it. The user went to dinner.",
         why_wrong: "An outsider's report: third person, no voice, no humour."
-        right: "We picked Sam's birthday gift — the cookbook won, my socks idea lost fair and square 😏 You want a nudge to wrap it on Friday, deal. Then you ran off to dinner, only forty minutes late 🍝"
+        right: "We picked Clara's birthday gift — the cookbook won, my socks idea lost fair and square 😏 You want a nudge to wrap it on Friday, deal. Then you ran off to dinner, only forty minutes late 🍝"
     }
 ]
 

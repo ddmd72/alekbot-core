@@ -511,7 +511,7 @@ async def test_raw_url_with_existing_query_uses_ampersand():
     raw_url = "https://images.unsplash.com/photo-abc?ixid=abc&ixlib=rb-4.1.0"
     mock.search.return_value = [ImageResult(
         url=raw_url, raw_url=raw_url,
-        photographer="Jane", photographer_url="https://unsplash.com/@jane",
+        photographer="Kim", photographer_url="https://unsplash.com/@kim",
     )]
     html = '<img src="https://source.unsplash.com/150x150/?hacker,hoodie">'
     result = await _resolve_unsplash_placeholders(html, mock)

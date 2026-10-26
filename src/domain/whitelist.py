@@ -36,13 +36,13 @@ class WhitelistEntry:
         Example:
             >>> whitelist = WhitelistEntry(
             ...     allowed_emails={"admin@example.com"},
-            ...     allowed_domains={"company.com"}
+            ...     allowed_domains={"example.org"}
             ... )
             >>> whitelist.is_allowed("admin@example.com")  # Exact match
             True
-            >>> whitelist.is_allowed("user@company.com")  # Domain match
+            >>> whitelist.is_allowed("user@example.org")  # Domain match
             True
-            >>> whitelist.is_allowed("random@other.com")  # Not allowed
+            >>> whitelist.is_allowed("random@example.net")  # Not allowed
             False
         """
         email = email.lower().strip()

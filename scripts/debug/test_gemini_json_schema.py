@@ -608,7 +608,7 @@ async def main():
                 "user: [Feb 26, 14:10 UTC] Привіт, як справи?\n"
                 "model: Добре, готовий допомагати.\n"
                 "user: [Feb 26, 14:15 UTC] Розкажи про мою роботу\n"
-                "model: Ти працюєш інженером у ExampleCorp.\n"
+                "model: Ти працюєш інженером даних в Acme.\n"
                 f"user: [Feb 26, 14:45 UTC] {user_msg_line}"
             )
             contents_rich = [types.Content(role="user", parts=[types.Part(text=rich_user_msg)])]
@@ -687,14 +687,14 @@ async def main():
                 "user: [Feb 26, 14:10 UTC] Привіт, як справи?\n"
                 "model: Добре, готовий допомагати.\n"
                 "user: [Feb 26, 14:15 UTC] Розкажи про мою роботу\n"
-                "model: Ти працюєш інженером у ExampleCorp.\n"
+                "model: Ти працюєш інженером даних в Acme.\n"
                 f"user: [Feb 26, 14:45 UTC] {user_msg_line}"
             )
             await test_ctx("20e_3turns", rich3)
             # 20f: 2 turns with timestamps
             rich2 = (
                 "user: [Feb 26, 14:15 UTC] Розкажи про мою роботу\n"
-                "model: Ти працюєш інженером у ExampleCorp.\n"
+                "model: Ти працюєш інженером даних в Acme.\n"
                 f"user: [Feb 26, 14:45 UTC] {user_msg_line}"
             )
             await test_ctx("20f_2turns", rich2)
@@ -715,14 +715,14 @@ async def main():
 knowledge_base {
     biographical_context: '''
 **Biographical**
-- Full name: Alex Sample (born January 1, 1980). Lives in Berlin, Germany.
-- Example citizen, originally from Example City.
+- Full name: Alex Doe (born January 1, 1980). Lives in Springfield.
+- Portuguese citizen, born in Springfield.
 
 **Work**
-- Engineering Manager at ExampleCorp (iOS/web/mobile apps).
+- Data engineer at Acme (data pipelines and reporting).
 
 **Network**
-- Spouse: Jane. Children: Bob (New York) and Alice (London).
+- Partner: Clara Moreira. Daughters: Jamie and Ana.
     '''
 }"""
 
@@ -769,7 +769,7 @@ knowledge_base {
                 ("22a_short_ru",  "а поищи все по моим рабочим проектам"),
                 ("22b_short_en",  "search my work projects"),
                 ("22c_wrapped",   'SEARCH_REQUEST "work projects"'),
-                ("22d_full",      'SEARCH_REQUEST "Work projects: ExampleCorp iOS web mobile apps, internal project, Engineering Manager role, professional tasks"'),
+                ("22d_full",      'SEARCH_REQUEST "Work projects: Acme data pipelines and reporting, internal project, data engineer role, professional tasks"'),
             ]
 
             print("\n=== Tests 22a-d: short/natural user message vs expanded SEARCH_REQUEST ===")

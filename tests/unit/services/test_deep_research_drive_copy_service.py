@@ -106,7 +106,7 @@ class TestCopy:
 
     async def test_the_date_is_the_users_local_day(self):
         drive = _drive()
-        late = datetime(2026, 10, 13, 23, 30, tzinfo=timezone.utc)      # already the 14th in Madrid
+        late = datetime(2026, 10, 13, 23, 30, tzinfo=timezone.utc)      # already the 14th in Europe/Madrid
         await _service(users=_users(tz="Europe/Madrid"), drive=drive, now=late).copy_report(USER, HTML, "q")
         assert drive.save.call_args.args[2].startswith("2026-10-14 ")
 

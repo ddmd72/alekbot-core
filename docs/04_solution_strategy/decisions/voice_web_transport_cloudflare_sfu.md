@@ -25,7 +25,7 @@ constraints (no UDP).
 
 | Measure | Value |
 |---|---|
-| Browser ⇄ SFU | RTT 21–48 ms, jitter 2–4 ms, 0 loss, POP Madrid |
+| Browser ⇄ SFU | RTT 21–48 ms, jitter 2–4 ms, 0 loss, POP Lisbon |
 | SFU → relay (continuous, even in silence) | 50 msg/s, 3840 B frames → 0.68 GB/h |
 | relay → SFU (continuous silence policy) | 0.64 GiB/h |
 | First audio after end of speech | 646–1479 ms, median ~900 (Twilio: 1062–1939, median

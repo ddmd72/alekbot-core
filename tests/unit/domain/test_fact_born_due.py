@@ -12,7 +12,7 @@ from src.domain.pass_actor import PassActor
 from tests.support.fact_write import EXPIRY_NONE, horizon, on
 
 PARIS = "Europe/Paris"
-NOW = datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc)  # 11:00 in Paris
+NOW = datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc)  # 11:00 in Europe/Paris
 REPORTED = NOW - timedelta(hours=2)
 CONVERSATION = PassActor.STAGE1  # no floor, the Stage 1 wording
 CLEANUP = PassActor.STAGE2A  # floors a due horizon, the cleanup wording
@@ -51,7 +51,7 @@ def test_a_date_of_today_asks_for_a_short_horizon(cleanup):
 
 
 def test_yesterday_in_the_owners_zone_is_past_even_when_it_is_still_today_in_utc():
-    late_night = datetime(2026, 10, 23, 22, 30, tzinfo=timezone.utc)  # 00:30 on the 24th in Paris
+    late_night = datetime(2026, 10, 23, 22, 30, tzinfo=timezone.utc)  # 00:30 on the 24th in Europe/Paris
     with pytest.raises(FactExpiryError, match="is past"):
         check(on("2026-10-23"), reported=late_night - timedelta(hours=1), now=late_night)
 

@@ -79,7 +79,7 @@ def test_every_file_the_indexer_reads_has_bytes():
     ("lease_porto.pdf", ["sixty (60) days", "EUR 1,250.00"]),
     ("super_important_agreement.pdf", ["five (5) years"]),
     ("tax_summary_2025.pdf", ["3,218.40"]),
-    ("resume.pdf", ["Camille Exemple"]),
+    ("resume.pdf", ["Greta Klein"]),
 ])
 def test_text_layer_pdfs_carry_their_gold_text(name, phrases):
     text = " ".join(_pdf_text(name).split())

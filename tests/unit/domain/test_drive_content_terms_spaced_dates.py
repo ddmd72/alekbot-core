@@ -41,8 +41,8 @@ def test_an_impossible_date_is_not_a_date():
 
 
 @pytest.mark.parametrize("text", [
-    "+34 07 05 2031 12",          # a phone: the triple is part of a longer run of digit groups
-    "ES91 07 05 2031 1234 5678",  # an IBAN
+    "+44 07 05 2031 12",          # a phone: the triple is part of a longer run of digit groups
+    "PT50 07 05 2031 1234 5678",  # an IBAN
     "600 07 05 2031",
 ])
 def test_a_triple_inside_a_phone_or_iban_run_is_not_a_date(text):

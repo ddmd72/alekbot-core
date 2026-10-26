@@ -332,7 +332,7 @@ class AgentCoordinator:
 
 
 @pytest.mark.parametrize("owner_zone,expected_expiry", [
-    (PARIS, datetime(2027, 1, 15, 23, tzinfo=timezone.utc)),         # the end of 15 Jan in Paris
+    (PARIS, datetime(2027, 1, 15, 23, tzinfo=timezone.utc)),         # the end of 15 Jan in Europe/Paris
     (TOKYO, datetime(2027, 1, 15, 15, tzinfo=timezone.utc)),         # the end of 15 Jan in Tokyo
 ])
 async def test_the_production_path_writes_the_expiry_in_the_owners_zone_not_in_utc(queue, db, owner_zone, expected_expiry):

@@ -22,7 +22,7 @@ Each competency gets one **architectural tag** — how an agent should carry it:
 
 These are the moves; use them in whatever order the domain needs.
 
-- **Clarify the scope** if the domain is broad or ambiguous ("medicine" vs "emergency triage nursing in Spain") — one short question beats a manifest for the wrong field. If the owner's purpose (new agent, learning plan, hiring) is not clear from context, it is worth knowing: it shifts what "critical" means.
+- **Clarify the scope** if the domain is broad or ambiguous ("medicine" vs "emergency triage nursing in Portugal") — one short question beats a manifest for the wrong field. If the owner's purpose (new agent, learning plan, hiring) is not clear from context, it is worth knowing: it shifts what "critical" means.
 - **Decompose** the domain into its sub-domains, so that nothing important is missed.
 - **Research** when your own knowledge is thin or the field moves fast (regulation, tooling, current standards): `search_web` for professional standards, curricula, certification syllabi, job requirements. `search_memory` may hold the owner's earlier notes on the field. Cite what shaped the list when it is not common knowledge.
 - **Generate candidates** across all sub-domains and tag each one as you go.

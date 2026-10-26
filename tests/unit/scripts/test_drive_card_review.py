@@ -41,7 +41,7 @@ def _snapshot():
              dates=[d]),
         _rec("b", [_g("date", "2030-01-02", NIT), _g("value", "ЖК 99887", NIT), _g("entity", "Orb", INT), _g("entity", "Orb2", INT)], doc_type="passport",
              capture="scan", extracted_by="reader@2", fallback=True),
-        _rec("c", [_g("date", "2029-03-04", INT), _g("entity", "Квиблтон", NIT), _g("entity", "Plinth", AS)], doc_type="invoice"),
+        _rec("c", [_g("date", "2029-03-04", INT), _g("entity", "Ганновер", NIT), _g("entity", "Plinth", AS)], doc_type="invoice"),
         _rec("d", [_g("value", "XY 11111", NIT)], doc_type="invoice", capture="screenshot", truncated=True),
     ]
 

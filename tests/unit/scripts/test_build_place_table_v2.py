@@ -32,27 +32,27 @@ def _alt(aid, gid, lang, name, preferred=False, short=False, colloquial=False, h
 
 def _inputs(tmp_path: Path):
     cities = [
-        _city("10", "Barcelona", 41.3888, 2.1590, "ES", 1_600_000, "PPLA"),
-        _city("11", "Sant Cugat del Vallès", 41.4720, 2.0865, "ES", 92_000),
-        _city("12", "Gràcia", 41.4036, 2.1564, "ES", 40_000, "PPLX"),          # a city section: left out
+        _city("10", "Porto", 41.1496, -8.6109, "PT", 1_600_000, "PPLA"),
+        _city("11", "Matozinhos", 41.1844, -8.6963, "PT", 92_000),
+        _city("12", "Foz do Douro", 41.1512, -8.6766, "PT", 40_000, "PPLX"),   # a city section: left out
         _city("20", "Lviv", 49.8383, 24.0232, "UA", 720_000, "PPLA"),
-        _city("30", "Far Village", 10.0, 10.0, "ES", 6_000),
+        _city("30", "Far Village", 10.0, 10.0, "PT", 6_000),
     ]
     with zipfile.ZipFile(tmp_path / "cities5000.zip", "w") as zf:
         zf.writestr("cities5000.txt", "\n".join(cities) + "\n")
     (tmp_path / "countryInfo.txt").write_text(
-        "# comment\n" + "\n".join([_country("ES", "Spain", "es-ES,ca", "900"),
+        "# comment\n" + "\n".join([_country("PT", "Portugal", "pt-PT,mwl", "900"),
                                    _country("UA", "Ukraine", "uk,ru-UA", "901")]) + "\n", encoding="utf-8")
     alternates = [
-        _alt(1, "10", "en", "Barcelona"), _alt(2, "10", "fr", "Barcelone", preferred=True),
-        _alt(3, "10", "ru", "Барселона"), _alt(4, "10", "uk", "Барселона"), _alt(5, "10", "ca", "Ciutat Comtal"),
-        _alt(6, "11", "es", "San Cugat del Vallés", preferred=True), _alt(7, "11", "en", "San Cugat del Vallés"),
+        _alt(1, "10", "en", "Porto"), _alt(2, "10", "es", "Oporto", preferred=True),
+        _alt(3, "10", "ru", "Порту"), _alt(4, "10", "uk", "Порту"), _alt(5, "10", "mwl", "Puorto"),
+        _alt(6, "11", "pt", "Matosinhos", preferred=True), _alt(7, "11", "en", "Matosinhos"),
         _alt(8, "20", "en", "Lvov", historic=True), _alt(9, "20", "en", "Lviv", preferred=True),
         _alt(10, "20", "ru", "Львов", preferred=True), _alt(11, "20", "ru", "Львову"),
         _alt(12, "20", "uk", "Львів"), _alt(13, "20", "fr", "Lviv"), _alt(14, "20", "fr", "Lvov", preferred=True),
         _alt(15, "20", "en", "City of Lions", colloquial=True),
-        _alt(16, "900", "en", "Spain", preferred=True), _alt(17, "900", "es", "España", preferred=True),
-        _alt(18, "900", "es", "Reino de España"), _alt(19, "900", "ru", "Испания", preferred=True),
+        _alt(16, "900", "en", "Portugal", preferred=True), _alt(17, "900", "uk", "Португалія", preferred=True),
+        _alt(18, "900", "ru", "Португальская Республика"), _alt(19, "900", "ru", "Португалия", preferred=True),
         _alt(20, "901", "uk", "Україна", preferred=True), _alt(21, "901", "ru", "Украина"),
         _alt(22, "999", "en", "Unrelated place"),
     ]
@@ -85,29 +85,29 @@ def test_rows_are_sorted_and_city_sections_left_out(built):
 
 def test_v1_columns_keep_their_rule(built):
     places, _ = built
-    assert places["10"]["name_en"] == "Barcelona" and places["10"]["name_local"] == "Barcelona"
+    assert places["10"]["name_en"] == "Porto" and places["10"]["name_local"] == "Porto"
     assert places["10"]["weight"] == str(1_600_000 * 3) and places["10"]["population"] == "1600000"
     assert places["20"]["name_en"] == "Lviv" and places["20"]["name_local"] == "Львів"
-    assert places["11"]["name_local"] == "San Cugat del Vallés" and places["11"]["country"] == "Spain"
+    assert places["11"]["name_local"] == "Matosinhos" and places["11"]["country"] == "Portugal"
 
 
 def test_alternate_names_follow_the_names_rule(built):
     places, _ = built
     # GeoNames' own name, then en/es/fr/uk/ru; preferred names win; colloquial, historic and inflected extras go
     assert places["20"]["alt_names"].split("|") == ["Lvov", "Львов"]
-    assert places["10"]["alt_names"].split("|") == ["Barcelone", "Барселона"]   # no Catalan "Ciutat Comtal"; uk and ru agree
-    assert places["11"]["alt_names"].split("|") == ["Sant Cugat del Vallès"]
+    assert places["10"]["alt_names"].split("|") == ["Oporto", "Порту"]   # no Mirandese "Puorto"; uk and ru agree
+    assert places["11"]["alt_names"].split("|") == ["Matozinhos"]
 
 
 def test_country_names(built):
     _, countries = built
-    assert countries["Spain"].split("|") == ["España", "Испания"]
+    assert countries["Portugal"].split("|") == ["Португалія", "Португалия"]
     assert countries["Ukraine"].split("|") == ["Україна", "Украина"]
 
 
 def test_the_large_place_key(built):
     places, _ = built
-    assert places["11"]["large_id"] == "10"            # Sant Cugat is about 11 km from Barcelona
+    assert places["11"]["large_id"] == "10"            # Matosinhos is about 8 km from Porto
     assert places["10"]["large_id"] == ""              # large itself
     assert places["30"]["large_id"] == ""              # none within PLACE_MAX_DISTANCE_KM
 

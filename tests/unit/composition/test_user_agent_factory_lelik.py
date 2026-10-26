@@ -14,11 +14,9 @@ def _ctx():
     return _UserContext(user_profile=profile, prompt_builder=MagicMock())
 
 
-# Short digit count deliberately: the repo's pre-commit hook flags "+" followed by
-# 7-15 digits as a possible real phone number; this value is never asserted on below,
-# only checked for truthiness, so it stays under that threshold like other test fixtures
-# in this repo (e.g. tests/unit/web/test_voice_webhook_app.py's "+346001").
-def _self(telephony=True, phone="+346001", notifications=True):
+# A number from the fictional +1 555 01xx range; it is never asserted on below, only
+# checked for truthiness (same value as tests/unit/web/test_voice_webhook_app.py).
+def _self(telephony=True, phone="+15550101", notifications=True):
     return SimpleNamespace(
         _telephony=MagicMock() if telephony else None,
         config={"TWILIO_PHONE_NUMBER": phone, "CLOUD_RUN_SERVICE_URL": "https://main.example.com"},

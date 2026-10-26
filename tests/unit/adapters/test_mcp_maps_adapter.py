@@ -72,7 +72,7 @@ _INITIALIZE_RESPONSE = {
 
 _PLACES_RESULT = {
     "places": [
-        {"name": "Аптека 24", "address": "вул. Хрещатик, 1", "rating": 4.5}
+        {"name": "Аптека 24", "address": "вул. Вигадана, 5", "rating": 4.5}
     ]
 }
 

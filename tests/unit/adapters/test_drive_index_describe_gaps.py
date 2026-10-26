@@ -23,8 +23,8 @@ def test_describe_gap_round_trips():
 
 def test_an_entitys_found_spellings_round_trip():
     from src.domain.drive_enrichment import DriveProfile, ProfileEntity
-    entity = ProfileEntity(name="Барселона", type="place", printed="BARCELONA", forms=("Barcelona",),
-                           found=("Barcelona",))
+    entity = ProfileEntity(name="Коїмбра", type="place", printed="COIMBRA", forms=("Coimbra",),
+                           found=("Coimbra",))
     r = DriveIndexRecord(user_id="u", item_id="a", name="a.pdf", kind="pdf", state=RecordState.INDEXED,
                          scope=Scope.NORMAL, profile=DriveProfile("t", "w", "en", "ticket", entities=(entity,)))
     assert record_from_doc(record_to_doc(r)).profile.entities == (entity,)

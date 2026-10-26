@@ -97,18 +97,18 @@ def test_parse_outer_quoted_json():
 
 def test_parse_link_list():
     raw = '''{
-        "full_response": "Bar Casa Vio [1] is great.",
+        "full_response": "Café Andorinha [1] is great.",
         "response_summary": "Great place",
         "rich_content": null,
         "link_list": [
-            {"anchor": "1", "title": "Bar Casa Vio", "url": "https://maps.google.com/?cid=123"}
+            {"anchor": "1", "title": "Café Andorinha", "url": "https://maps.google.com/?cid=123"}
         ]
     }'''
     user_text, summary, rich, link_list = parse_llm_response(raw)
-    assert user_text == "Bar Casa Vio [1] is great."
+    assert user_text == "Café Andorinha [1] is great."
     assert len(link_list) == 1
     assert link_list[0]["anchor"] == "1"
-    assert link_list[0]["title"] == "Bar Casa Vio"
+    assert link_list[0]["title"] == "Café Andorinha"
     assert link_list[0]["url"] == "https://maps.google.com/?cid=123"
 
 

@@ -154,3 +154,37 @@ def landmark_jpeg() -> bytes:
     for x in range(0, 640, 80):
         draw.rectangle((x, 400, x + 70, 480), fill=(120, 108, 100))
     return _jpeg(image)
+
+
+def harbour_jpeg() -> bytes:
+    """A wordless picture for the Hamburg photo: a grey sky, a band of harbour water, two cranes and a ship. Its own
+    picture, so the triage answer recorded for it (which may name the photo's place, D39) is never shared with a photo
+    taken elsewhere: the snapshot keys a triage answer by thumbnail bytes, not by place."""
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (640, 480), (0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    _gradient(draw, (0, 0, 640, 300), (150, 160, 172), (206, 212, 218))
+    _gradient(draw, (0, 300, 640, 480), (52, 74, 92), (30, 46, 60))
+    for x in (120, 300):
+        draw.line((x, 300, x, 110), fill=(196, 82, 40), width=8)
+        draw.line((x - 20, 120, x + 130, 120), fill=(196, 82, 40), width=6)
+    draw.polygon([(380, 300), (600, 300), (580, 330), (400, 330)], fill=(40, 40, 46))
+    draw.rectangle((430, 262, 560, 300), fill=(120, 40, 36))
+    return _jpeg(image)
+
+
+def riverside_jpeg() -> bytes:
+    """A wordless picture for the Coimbra photos: a hill of pale houses under a blue sky, a tower on top, a river in
+    front (its own picture, for the same reason as `harbour_jpeg`)."""
+    from PIL import Image, ImageDraw
+
+    image = Image.new("RGB", (640, 480), (0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    _gradient(draw, (0, 0, 640, 360), (120, 176, 226), (206, 228, 244))
+    draw.polygon([(0, 360), (0, 250), (200, 170), (330, 140), (460, 180), (640, 260), (640, 360)], fill=(178, 160, 120))
+    for i, (x, y) in enumerate(((90, 250), (170, 215), (250, 190), (380, 185), (470, 215), (550, 250))):
+        draw.rectangle((x, y, x + 50, y + 45), fill=(236, 232, 222) if i % 2 else (226, 214, 190))
+    draw.rectangle((318, 70, 342, 150), fill=(232, 226, 210))
+    _gradient(draw, (0, 360, 640, 480), (70, 112, 128), (48, 84, 98))
+    return _jpeg(image)

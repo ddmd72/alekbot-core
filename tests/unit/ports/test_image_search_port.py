@@ -78,19 +78,19 @@ class TestImageResultDataclass:
         result = ImageResult(
             url="https://images.unsplash.com/photo-123?w=1080",
             raw_url="https://images.unsplash.com/photo-123",
-            photographer="Jane Smith",
-            photographer_url="https://unsplash.com/@janesmith?utm_source=alekbot",
+            photographer="Kim",
+            photographer_url="https://unsplash.com/@kim?utm_source=alekbot",
         )
         assert result.url == "https://images.unsplash.com/photo-123?w=1080"
         assert result.raw_url == "https://images.unsplash.com/photo-123"
-        assert result.photographer == "Jane Smith"
-        assert result.photographer_url == "https://unsplash.com/@janesmith?utm_source=alekbot"
+        assert result.photographer == "Kim"
+        assert result.photographer_url == "https://unsplash.com/@kim?utm_source=alekbot"
 
     def test_is_frozen_dataclass(self):
         result = ImageResult(
             url="https://images.unsplash.com/photo-abc",
             raw_url="https://images.unsplash.com/photo-abc",
-            photographer="John Doe",
+            photographer="Jordan",
             photographer_url="https://unsplash.com/@johndoe",
         )
         with pytest.raises((AttributeError, TypeError)):
@@ -104,14 +104,14 @@ class TestImageResultDataclass:
         a = ImageResult(
             url="https://images.unsplash.com/photo-1",
             raw_url="https://images.unsplash.com/photo-1-raw",
-            photographer="Alice",
-            photographer_url="https://unsplash.com/@alice",
+            photographer="Clara",
+            photographer_url="https://unsplash.com/@clara",
         )
         b = ImageResult(
             url="https://images.unsplash.com/photo-1",
             raw_url="https://images.unsplash.com/photo-1-raw",
-            photographer="Alice",
-            photographer_url="https://unsplash.com/@alice",
+            photographer="Clara",
+            photographer_url="https://unsplash.com/@clara",
         )
         assert a == b
 
@@ -119,14 +119,14 @@ class TestImageResultDataclass:
         a = ImageResult(
             url="https://images.unsplash.com/photo-1",
             raw_url="https://images.unsplash.com/photo-1-raw",
-            photographer="Alice",
-            photographer_url="https://unsplash.com/@alice",
+            photographer="Clara",
+            photographer_url="https://unsplash.com/@clara",
         )
         b = ImageResult(
             url="https://images.unsplash.com/photo-2",
             raw_url="https://images.unsplash.com/photo-2-raw",
-            photographer="Bob",
-            photographer_url="https://unsplash.com/@bob",
+            photographer="Robin",
+            photographer_url="https://unsplash.com/@robin",
         )
         assert a != b
 
@@ -158,8 +158,8 @@ class TestImageSearchPortMockUsability:
             ImageResult(
                 url="https://images.unsplash.com/photo-1",
                 raw_url="https://images.unsplash.com/photo-1-raw",
-                photographer="Alice",
-                photographer_url="https://unsplash.com/@alice",
+                photographer="Clara",
+                photographer_url="https://unsplash.com/@clara",
             )
         ]
         mock_port.search.return_value = expected

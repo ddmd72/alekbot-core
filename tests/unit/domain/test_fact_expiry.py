@@ -146,7 +146,7 @@ def test_a_horizon_is_shown_with_its_days_and_a_read_only_due_date():
 
 
 def test_due_is_the_local_date_not_the_utc_date():
-    expires = utc(2026, 11, 5, 23, 30)  # 00:30 on the 6th in Paris
+    expires = utc(2026, 11, 5, 23, 30)  # 00:30 on the 6th in Europe/Paris
     assert expiry_view(ExpiryKind.HORIZON, 5, expires, PARIS)[1] == "2026-11-06"
 
 

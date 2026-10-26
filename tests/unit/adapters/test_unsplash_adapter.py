@@ -33,8 +33,8 @@ from src.ports.image_search_port import ImageResult, ImageSearchPort
 def _make_photo(
     url="https://images.unsplash.com/photo-1?w=1080",
     raw_url="https://images.unsplash.com/photo-1",
-    photographer_name="Jane Smith",
-    photographer_html="https://unsplash.com/@janesmith",
+    photographer_name="Kim",
+    photographer_html="https://unsplash.com/@kim",
 ):
     return {
         "urls": {
@@ -127,17 +127,17 @@ class TestUnsplashAdapterSuccess:
         assert results[0].raw_url == "https://images.unsplash.com/photo-abc"
 
     async def test_photographer_name_mapped(self):
-        photo = _make_photo(photographer_name="Alice Kim")
+        photo = _make_photo(photographer_name="Robin")
         session = _make_session(_make_response([photo]))
         adapter = UnsplashAdapter(access_key="key")
 
         with _patch_session(session):
             results = await adapter.search("city", count=1)
 
-        assert results[0].photographer == "Alice Kim"
+        assert results[0].photographer == "Robin"
 
     async def test_photographer_url_includes_utm_params(self):
-        photo = _make_photo(photographer_html="https://unsplash.com/@alice")
+        photo = _make_photo(photographer_html="https://unsplash.com/@clara")
         session = _make_session(_make_response([photo]))
         adapter = UnsplashAdapter(access_key="key")
 
@@ -148,14 +148,14 @@ class TestUnsplashAdapterSuccess:
         assert "utm_medium=referral" in results[0].photographer_url
 
     async def test_photographer_url_base_preserved(self):
-        photo = _make_photo(photographer_html="https://unsplash.com/@bob")
+        photo = _make_photo(photographer_html="https://unsplash.com/@robin")
         session = _make_session(_make_response([photo]))
         adapter = UnsplashAdapter(access_key="key")
 
         with _patch_session(session):
             results = await adapter.search("ocean", count=1)
 
-        assert results[0].photographer_url.startswith("https://unsplash.com/@bob")
+        assert results[0].photographer_url.startswith("https://unsplash.com/@robin")
 
     async def test_empty_results_returns_empty_list(self):
         session = _make_session(_make_response([]))

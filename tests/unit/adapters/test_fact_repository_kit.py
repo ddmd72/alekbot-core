@@ -494,8 +494,8 @@ async def test_unique_skips_a_duplicate_and_returns_the_existing_id_without_writ
 
 
 async def test_unique_judges_the_nearest_with_smart_deduplication(store):
-    await _put(store, "weighs 70 kg", [1.0, 0.0, 0.0])
-    new = make_fact("weighs 80 kg", vector=[1.0, 0.0, 0.0])
+    await _put(store, "weighs 64 kg", [1.0, 0.0, 0.0])
+    new = make_fact("weighs 66 kg", vector=[1.0, 0.0, 0.0])
     assert await store.repo.add_fact_if_unique(new) == (True, new.id)
 
 

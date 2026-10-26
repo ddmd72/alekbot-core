@@ -36,7 +36,7 @@ the switches are §7.2, `docs/07_deployment/README.md` → "Transcripts switch a
 | How a search decides which files to show and in which tier (About, Mentioned in, By translation, Labelled, Related) | §6, §6.2 |
 | Why a file with only some of the words is not shown; "No file holds …"; "Without …: N files match"; "ignored as common" | §6.2 |
 | What the coverage line means ("Coverage: incomplete — …"); why a search says the index is being rebuilt | §6.3, §6 (gate) |
-| One query followed end to end ("найди всё про Барселону"; "медицинские записи по холестерину") | §6.4 |
+| One query followed end to end ("найди всё про Коїмбру"; "медицинские записи по холестерину") | §6.4 |
 | What Smart reads and how it is told to use it; dates in queries vs date filters; which date a filter uses for a scan, a DOCX, a photo | §6.3, §6.5 |
 | What v1 search did (RRF, always 8, `content_terms`) and why it was replaced | §6.6 |
 | How quality is measured (G1, G2, OCR, G3), the live checks, logs, indexes | §7 |
@@ -284,7 +284,7 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   [residuals](../../04_solution_strategy/decisions/drive_place_name_residuals.md)). Geo table v2 (`GEO_TABLE_VERSION`
   2, RFC §25.4.3): `PlaceIndex.place()` also returns the place forms — the place's names in en, es, fr, uk, ru, its
   country's names and the nearest place of 100 000+ people within 50 km — written as `place_forms` beside
-  `place_name`, so "Барселона", "Barcelona" and "Spain" all key a photo taken there. A card is re-embedded only when
+  `place_name`, so "Берлін", "Berlin" and "Germany" all key a photo taken there. A card is re-embedded only when
   its hash changes.
 - **Name keys** (`name_keys_v2` in `drive_keys.py`, `NAME_KEYS_VERSION` 2): the native `w:` forms of each name token
   (with case parts and hyphen compounds), the `x:`/`xl:` skeleton of each word, the `n:`/`y:` forms of digit tokens
@@ -315,13 +315,13 @@ query word ORs it. Cyrillic: the token, the token less its longest and second-lo
 `й`/`ь`, a fleeting-vowel form ("квиток" → "квитк"), and the Ukrainian alternation `і` → `о`/`е`, `ї` → `є` ("Київ"
 → "києв"). Latin: accents stripped, then a singular (`-ies` → `-i`, `-es` after x/z/ch/sh, a final `-s` except
 `-ss`/`-us`/`-is`), then a final `-e` dropped or `-y` → `-i` ("houses" → `hous`, "policies" → `polici`). A 2-letter
-word ("ИП", "TV") is keyed exactly; short function words and 1-letter words never. So "Барселону", "Барселоне" and
-"Барселона" share `барселон`; "медицинские" and "медицинская" share `медицинск`.
+word ("ИП", "TV") is keyed exactly; short function words and 1-letter words never. So "Коїмбра", "Коїмбру",
+"Коїмбрі" and "Коїмброю" share `коїмбр`; "медицинские" and "медицинская" share `медицинск`.
 
 **Transliteration.** The index stores one *skeleton* per word: its Cyrillic stem written in a sound-class Latin
 alphabet (г/х → h, и/і/ы/й → i, ь dropped, doubled letters collapsed), a Latin word first spelled in Cyrillic. The
-query generates every variant (both Cyrillic schemes, the alternation both ways), so "Барселону" meets "Barcelona"
-(`barselon`), "Kyiv" meets "у Києві", "Киев" meets "Київ". A skeleton match is always a **translation**, never
+query generates every variant (both Cyrillic schemes, the alternation both ways), so "Коїмбру" meets "Coimbra"
+(`koimbr`), "Kyiv" meets "у Києві", "Киев" meets "Київ". A skeleton match is always a **translation**, never
 exact. The family records the script the word came from: `x:` / `ex:` for a Cyrillic word, `xl:` / `exl:` for a Latin
 one. A Latin query word never reads `xl:`/`exl:` (two Latin words meeting through a Cyrillic stem, "Mario" and
 "Maria", are not a translation; Latin spellings meet through their `w:` forms); a Cyrillic query word reads both.
@@ -1228,7 +1228,7 @@ ref. Coverage counts closed files only in scope, as their own sentence, never as
 ### 4.21 Photo location prior and scene labels (RFC §26.13, D39, D40; deployed 2026-10-19)
 
 - **The prior.** Triage's line for each thumbnail continues with the place and the coordinates when the record has them:
-  `Image 3: camera metadata present; taken near Barcelona, Spain (41.403, 2.174)` (`taken at (lat, lon)` with no place
+  `Image 3: camera metadata present; taken near Lisbon, Portugal (38.722, -9.139)` (`taken at (lat, lon)` with no place
   name). Built in `DriveIndexingService` from `rec.place_name` and `coarse_location(rec.facets)` (`drive_card.py`),
   rounded to **3 decimals** (~110 m) — the full-precision GPS never leaves the index, and `image_label` rounds again.
   No camera model, no date. The rule is in `COGNITIVE_PROCESS_DRIVE_TRIAGE`: name a landmark only when recognised in the
@@ -1546,7 +1546,7 @@ drive is not part of `SearchEnrichmentService`
 **Concepts** (§3.1 builds every key; RFC §25.5.1):
 1. Clip the query to 1 000 characters at a word boundary and tokenise it as the index does.
 2. **Phrase runs** of 2–3 consecutive tokens (function words included) give `e:`, `ex:`/`exl:`, `ef:`, `k:` and `pe:`
-   phrase keys to the words they hold: "Le Havre", "Нью-Йорке", "hoja de cálculo".
+   phrase keys to the words they hold: "The Hague", "Нью-Йорке", "hoja de cálculo".
 3. **Numbers first**: the maximal form of each number-like span — an amount, an ISO date, a joined id, a digit group
    (`n:`, `v:`, `pn:`); a 1900–2099 number also `y:`; a month name with a year ("в марте 2023") is one month concept,
    `m:2023-03` only.
@@ -1587,15 +1587,15 @@ a file's tier is the **weakest class it needs** (`drive_tiers.classify`):
 
 | Tier | Exact? | The file is in it when | Example |
 |---|---|---|---|
-| **About** | exact | every concept is covered by verified-record keys, or the name covers every word | a photo whose `place_forms` hold "Барселона"; an invoice whose verified number is `F-2026-0311` |
-| **Mentioned in** | exact | every concept is covered by the record or by **one chunk's** words, at least one by the chunk; two or more chunk-covered words sit within a 400-character window (`PROXIMITY_CHARS`) | a note saying "в Барселоне" |
-| **By translation** | automatic | as above, but at least one concept is covered only by a translation key | a Spanish passage naming "Barcelona" for the query "Барселону"; a grounded passage keyword "холестерин" over "colesterol" |
+| **About** | exact | every concept is covered by verified-record keys, or the name covers every word | a photo whose `place_forms` hold "Берлін"; an invoice whose verified number is `F-2026-0311` |
+| **Mentioned in** | exact | every concept is covered by the record or by **one chunk's** words, at least one by the chunk; two or more chunk-covered words sit within a 400-character window (`PROXIMITY_CHARS`) | a note saying "в Коїмбрі" |
+| **By translation** | automatic | as above, but at least one concept is covered only by a translation key | a Spanish passage naming "Coimbra" for the query "Коїмбру"; a grounded passage keyword "холестерин" over "colesterol" |
 | **Labelled** | automatic | at least one concept is covered only by an automatic key | a lab report whose profile wrote the topic word "cholesterol" and whose type is `medical_record` |
 | **Related by meaning only** | unverified | no tier above, and `meaning ≥ Z_RELATED`, or a similar name | at most 3 lines, never counted, never called a match |
 
 Each file is shown once, in its best tier. Within a tier: files missing no word first, then the meaning score, then
 newest, then item id. A skeleton match is labelled "by spelling in another script (automatic)", or "by another spelling
-(automatic)" when both words are Cyrillic ("Киев" / "Київ"); an `ef:` match shows the file's own spelling beside the
+(automatic)" when both words are Cyrillic ("Харьков" / "Харків"); an `ef:` match shows the file's own spelling beside the
 index's ('person "…" (spelling by the index; named in the file as "…")').
 
 **Strict AND (D28), with allowances.** Within a concept its keys are OR; across concepts, AND. A concept's weight is
@@ -1664,7 +1664,7 @@ by meaning; the drive is too small to tell related from unrelated" (never under 
    searched file holds …", "No other searched file is about or mentions all of these words." None says "final".
 
 **A card** is one nonce-tagged `<drive_document>` wrapper holding at most 700 characters of the card text, then:
-`matched:` with its sources in query order (`place "Rome" (named in the file)`, `place "Barcelona" (photo location)`,
+`matched:` with its sources in query order (`place "Rome" (named in the file)`, `place "Coimbra" (photo location)`,
 `name "tickets"`, `words "Rome", "tickets" in one passage`, `passage keyword "Rome", from "reserva en Roma"`,
 `type label "ticket" (automatic)`, `topic "cholesterol" (automatic)`, `life area …`, `validity …`, `kind …`, a value or
 a date with its label); `not matched (common)` for a word it was allowed to miss; `date: <day> (<source>)` — `taken`,
@@ -1712,58 +1712,62 @@ In the live check (2026-10-14) a place-name query took one skill load and two se
 ### 6.4 Two queries, end to end
 
 Both are real runs of the search on the synthetic eval fixture (`tree.json` + `tree_v2.json`, the recorded
-enrichment, offline lexical vectors; 2026-10-14), cards shortened with "…".
+enrichment, offline lexical vectors; 2026-10-25), cards shortened with "…".
 
-**"найди всё про Барселону"** (Smart puts the user's words in `drive_query`).
+**"найди всё про Коїмбру"** (Smart puts the user's words in `drive_query`).
 1. *Concepts.* "найди", "всё" (folded to "все") and "про" are generic and function words: removed and named. One
-   concept is left, *барселону*. Its keys: word keys `w:барселону`, `w:барселон` and the skeletons `x:barselon`,
-   `xl:barselon` (and the variants `…onu`, `…in` from the other Cyrillic scheme); hint keys `w:барселону`,
-   `w:барселон`; about keys `e:`/`ef:`/`k:`/`lw:`/`tw:`/`dw:`/`lv:`/`pw:`/`pe:` of the same forms, `ex:`/`exl:`
-   skeletons, phrase runs such as `e:про_барселон`, and `v:барселону`.
-2. *Streams.* The about stream finds the two photos taken in Barcelona (geo table v2 wrote `place_forms` "Barcelona,
-   Барселона, …, Spain", so they hold `e:барселон`) and a note whose profile verified the entity "Барселону" printed in
-   it. The name stream finds the folder "Barcelona 2024" through `xl:barselon` (its name's skeleton). A Spanish or
-   English passage saying "Barcelona" would be found by the word stream through `xl:barselon`; a Russian passage
-   saying "в Барселоне" through `w:барселон`.
-3. *Allowances.* One concept, present: strict AND is just "must cover *барселону*".
-4. *Tiers.* The photos and the note are **About** (verified record: the photo place and a printed entity); the folder
-   is **By translation** (a skeleton crosses scripts). Related holds three files the offline vectors happened to rank
-   high — exactly the noise the uncalibrated `Z_RELATED` lets through (RFC §25.7.1); they are labelled unverified.
+   concept is left, *коїмбру*. Its keys: word keys `w:коїмбру`, `w:коїмбр` and the skeletons `x:koimbr`,
+   `xl:koimbr` (and the variants `x:koimbru`, `xl:koimbru`); hint keys `w:коїмбру`, `w:коїмбр`; about keys
+   `e:`/`ef:`/`k:`/`lw:`/`tw:`/`dw:`/`lv:`/`pw:`/`pe:` of the same forms, `ex:`/`exl:` skeletons, phrase runs such as
+   `e:про_коїмбр`, and `v:коїмбру`.
+2. *Streams.* The about stream finds a note whose profile verified the entity "Коїмбру" printed in it (`e:коїмбр`),
+   and the two photos taken in Coimbra: geo table v2 wrote their `place_forms` "Coimbra, Coímbra, Коимбра, Portugal,
+   …", so they hold `e:коимбр` and the skeleton `ex:koimbr`, and only the skeleton meets the Ukrainian query (the
+   table has the Russian Cyrillic form of the city, not the Ukrainian one). The name stream finds the folder
+   "Coimbra 2024" through `xl:koimbr` (its name's skeleton). A Spanish or English passage saying "Coimbra" would be
+   found by the word stream through `xl:koimbr`; a Ukrainian passage saying "в Коїмбрі" through `w:коїмбр`.
+3. *Allowances.* One concept, present: strict AND is just "must cover *коїмбру*".
+4. *Tiers.* The note is **About** (a printed entity of a verified record); the photos and the folder are **By
+   translation** (a skeleton crosses scripts). Related holds three files the offline vectors happened to rank high —
+   exactly the noise the uncalibrated `Z_RELATED` lets through (RFC §25.7.1); they are labelled unverified.
 
 ```
 Searched names (several spellings and word forms), file descriptions, document text and passage keywords for:
-"барселону"; ignored: "найди", "все", "про".
+"коїмбру"; ignored: "найди", "все", "про".
 Coverage: complete.
-About "барселону" (3):
-<drive_document … path="Notes/Мысли о поездке.md">
-Мысли о поездке.md | note (Markdown) | notes | Russian-language travel notes about a planned five-day spring trip to
-Barcelona, … | Барселону, музей Пикассо, рынок Бокерия, … | …
-matched: place "Барселону" (named in the file)
+About "коїмбру" (1):
+<drive_document … path="Notes/Думки про поїздку.md">
+Думки про поїздку.md | note (Markdown) | notes | A Ukrainian note about a planned spring weekend trip to Coimbra, … |
+Думки про поїздку навесні | Коїмбру, Мондегу, Тарас Мельник | spring weekend trip, Coimbra accommodation, … | …
+matched: place "Коїмбру" (named in the file)
 date: 2026-01-25 (file date)
+capture: digital (detected)
+card accuracy: 100%
 index: indexed
 </drive_document …>
-<drive_document … path="Photos/Barcelona 2024/IMG_7102.HEIC">
-IMG_7102.HEIC | image | <photo description> | … | taken 2024-05-05 | camera Apple iPhone 15 | place Barcelona, Spain | …
-matched: place "Барселона" (photo location)
+By translation (automatic) (3):
+<drive_document … path="Photos/Coimbra 2024">
+Coimbra 2024 | folder
+matched: name "coimbra", by spelling in another script (automatic)
+…
+</drive_document …>
+<drive_document … path="Photos/Coimbra 2024/IMG_7102.HEIC">
+IMG_7102.HEIC | image | <photo description> | … | taken 2024-05-05 | camera Apple iPhone 15 | place Coimbra, Portugal | …
+matched: place "Коимбра" (photo location), by spelling in another script (automatic)
 date: 2024-05-05 (taken)
 index: metadata_only (photograph)
 </drive_document …>
-<drive_document … path="Photos/Barcelona 2024/IMG_7101.HEIC"> … </drive_document …>
-By translation (automatic) (1):
-<drive_document … path="Photos/Barcelona 2024">
-Barcelona 2024 | folder
-matched: name "barcelona", by spelling in another script (automatic)
-…
-</drive_document …>
+<drive_document … path="Photos/Coimbra 2024/IMG_7101.HEIC"> … </drive_document …>
 Related by meaning only, unverified (3):
-<drive_document … path="Finance/expenses-2025.csv"> … </drive_document …>
-<drive_document … path="Archive/Invoices 2024/invoice-240.pdf"> … </drive_document …>
-<drive_document … path="Archive/Invoices 2024/invoice-526.pdf"> … </drive_document …>
+<drive_document … path="Notes/Огляд квартири.md"> … </drive_document …>
+<drive_document … path="Archive/Invoices 2024/invoice-511.pdf"> … </drive_document …>
+<drive_document … path="Archive/Invoices 2024/invoice-599.pdf"> … </drive_document …>
 No other file is about or mentions all of these words.
 ```
 
-Smart reads: three exact matches, one automatic (a folder to list), three guesses; the coverage is complete, so the
-footer may say "no other file". It answers from the About cards and can list the folder; it has no reason to crawl.
+Smart reads: one exact match and three automatic ones (two photos and a folder to list), three guesses; the coverage is
+complete, so the footer may say "no other file". It answers from the About and By translation cards and can list the
+folder; it has no reason to crawl.
 
 **"медицинские записи по холестерину"** over a Spanish lab report ("colesterol"; the RFC §25.5.1 walk-through).
 1. *Concepts.* "по" removed; three concepts *медицинские*, *записи*, *холестерину*, with native forms `медицинск`,
@@ -1771,10 +1775,9 @@ footer may say "no other file". It answers from the About cards and can list the
 2. *Covers in the lab report.* Its profile has `doc_type = medical_record`, so by **D31** its `lw:` keys hold the fixed
    names of that type — "medical records", "historia clínica", "медичні записи", "медицинские записи", … — and so
    `lw:медицинск` and `lw:запис`: *медицинские* and *записи* are covered by automatic keys. *холестерину* is covered by
-   a grounded passage keyword "холестерин" (its hint document quotes the report's "Colesterol total" line) — a translation —
-   and by the profile's topic words. No key from the file's own Spanish text covers any of the three words.
-3. *Tier.* The weakest class the file needs is automatic: **Labelled**. Its card names each source and carries the
-   passage around the keyword's evidence.
+   the profile's topic words ("холестерин", a translation of the report's "Colesterol total"). No key from the file's
+   own Spanish text covers any of the three words.
+3. *Tier.* The weakest class the file needs is automatic: **Labelled**. Its card names each source.
 4. *Coverage.* Nothing the search could not see: sheets and data files have no passage keywords by policy, which is
    not a gap (their own words were searched), so the line reads complete.
 
@@ -1784,13 +1787,13 @@ Searched names (several spellings and word forms), file descriptions, document t
 Coverage: complete.
 Labelled (automatic) (1):
 <drive_document … path="Health/Informe laboratorio 2025-03.pdf">
-Informe laboratorio 2025-03.pdf | PDF document | medical_record | Spanish clinical laboratory report of … blood test,
-including lipid profile, … | Informe de análisis de sangre | … | blood test, lipid profile, total cholesterol, … |
-análisis de sangre, perfil lipídico, colesterol total, …
-matched: type label "медицинские" (automatic); type label "записи" (automatic); passage keyword "colesterol;
-cholesterol; cholestérol; холестерин", from "Colesterol total … mg/dL < … mg/dL"
-passage: … Perfil lipídico Resultado Valores de referencia Colesterol total … mg/dL < … mg/dL Colesterol HDL …
+Informe laboratorio 2025-03.pdf | PDF document | medical_record | Spanish-language blood test report with lipid profile
+and fasting glucose results for Alex Doe. | Informe de análisis de sangre | … | blood test, lipid profile, cholesterol,
+… | análisis de sangre, perfil lipídico, colesterol, …
+matched: type label "медицинские" (automatic); type label "записи" (automatic); topic "холестерин" (automatic)
 date: 2025-03-15 (file date)
+capture: digital (detected)
+card accuracy: 100%
 index: indexed
 </drive_document …>
 Related by meaning only, unverified (3): …
@@ -1799,7 +1802,7 @@ Related by meaning only, unverified (3): …
 Had no file held *записи* at all (`df = 0`), every tier but Related would be empty and the result would end with
 `No file holds "записи". Without "записи": 1 file matches the other words.` (under an incomplete coverage line: "No
 searched file holds …"), and Smart would search again with the subject alone. The same fixture shows that case for
-"Барселона билеты на самолёт": no file holds *самолет*, and `Without "самолет": 0 files match the other words.`
+"Коїмбра билеты на самолёт": no file holds *самолет*, and `Without "самолет": 0 files match the other words.`
 
 ### 6.5 Dates in queries and filters
 

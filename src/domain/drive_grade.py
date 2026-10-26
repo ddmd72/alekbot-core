@@ -292,8 +292,8 @@ class TextEvidence:
         return (Grade.IN_TEXT_AS, seen) if seen else (Grade.NOT_IN_TEXT, "")
 
     def skeleton_seen(self, spelling: str) -> str:
-        """The text's words whose transliteration skeletons are the spelling's, in order ("Барселона" for
-        "Barcelona"); "" unless every word of the spelling has one. Across scripts only: two Latin spellings
+        """The text's words whose transliteration skeletons are the spelling's, in order ("Берлин" for
+        "Berlin"); "" unless every word of the spelling has one. Across scripts only: two Latin spellings
         ("Maria" and "Mario" share a Cyrillic stem) are not a transliteration (xc F3)."""
         found: List[str] = []
         by_key = self._skeleton_words()

@@ -15,10 +15,10 @@ async def test_call_summary_message_pair_serializes_for_consolidation():
     the exact two-message shape notify_call_summary (Task 15) writes."""
     messages = [
         Message(role="user", parts=[MessagePart(text=_EVENT)]),
-        Message(role="model", parts=[MessagePart(text="📞 Discussed Q3 budget with Ivan.", full_text="📞 Discussed Q3 budget with Ivan.")]),
+        Message(role="model", parts=[MessagePart(text="📞 Discussed Q3 budget with Lukas Weber.", full_text="📞 Discussed Q3 budget with Lukas Weber.")]),
     ]
 
     serialized = serialize_messages_for_consolidation(messages)
 
     assert serialized[0]["parts"][0]["text"] == _EVENT
-    assert serialized[1]["parts"][0]["text"] == "📞 Discussed Q3 budget with Ivan."
+    assert serialized[1]["parts"][0]["text"] == "📞 Discussed Q3 budget with Lukas Weber."

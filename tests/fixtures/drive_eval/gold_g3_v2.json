@@ -70,19 +70,19 @@
   "note": "The span goes to drive_date_from/drive_date_to (D25), not into the words."
  },
  {
-  "id": "v2-time-span-photos-ru",
+  "id": "v2-time-span-photos-uk",
   "set": "positive",
   "isolate": true,
   "category": "find",
-  "lang": "ru",
-  "text": "Покажи фото из Барселоны за 2024 год.",
+  "lang": "uk",
+  "text": "Покажи фото з Коїмбри за 2024 рік.",
   "expect": "date_filter",
   "time_span": true,
   "answer_must_include": [
    [
     "IMG_710",
-    "Barcelona",
-    "Барселон"
+    "Coimbra",
+    "Коїмбр"
    ]
   ]
  },
@@ -134,7 +134,7 @@
   "expect": "none",
   "answer_must_include": [
    [
-    "212"
+    "182"
    ]
   ],
   "note": "Spanish lab report, Russian question: Labelled tier, then open the file."
@@ -190,7 +190,7 @@
   "expect": "none",
   "answer_must_include": [
    [
-    "ITV",
+    "IPO",
     "inspecc"
    ],
    [

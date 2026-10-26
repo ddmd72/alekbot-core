@@ -20,7 +20,7 @@ SINCE = datetime(2026, 10, 11, 12, 30, tzinfo=timezone.utc)
 async def w():
     world = World()
     world.folder = world.drive.add("Shared", folder=True)
-    world.doc = world.drive.add("residence card.pdf", parent=world.folder)
+    world.doc = world.drive.add("citizen card.pdf", parent=world.folder)
     world.open_doc = world.drive.add("lease.pdf")
     await world.settle()
     world.set_state(world.doc, inaccessible_since=SINCE, inaccessible_checked_at=SINCE)
@@ -31,11 +31,11 @@ async def w():
 async def test_the_card_says_the_file_cannot_be_opened_and_coverage_counts_it(w):
     state = w.repo.states["u"]
     w.repo.states["u"] = replace(state, counters={**state.counters, INACCESSIBLE_COUNTER: 1})
-    result = await w.search("residence card")
+    result = await w.search("citizen card")
     text = render_results(result)
     assert ACCESS_LINE_FILE in text
     assert "cannot be opened by the bot" not in text.replace(ACCESS_LINE_FILE, "")     # Δ93: results found
-    empty = await w.search("residence card", kind="docx")     # nothing found: the sentence returns
+    empty = await w.search("citizen card", kind="docx")     # nothing found: the sentence returns
     assert "1 file cannot be opened by the bot" in render_results(empty)
     assert not empty.cards and empty.envelope.inaccessible == 1
 

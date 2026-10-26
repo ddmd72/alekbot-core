@@ -158,10 +158,10 @@ def test_the_alert_never_carries_the_text():
 ANSWERED = [
     ("User plans to move to Springfield in September 2026", "User moved to Springfield in September 2026"),
     ("User intends to submit the tax return by 2026-06-30", "User submitted the tax return in June 2026"),
-    ("User will attend the Madrid conference on Oct 15", "User attended the Madrid conference on Oct 15 and gave a talk"),
+    ("User will attend the Hamburg conference on Oct 15", "User attended the Hamburg conference on Oct 15 and gave a talk"),
     ("User is scheduled for knee surgery on 2026-10-05", "User had knee surgery on 2026-10-05; recovery went well"),
     ("User has a dentist appointment on 2026-10-12", "User had the dentist appointment on 2026-10-12; no cavities"),
-    ("User expects the visa decision by 2026-10-30", "User received the visa decision on 2026-10-28"),
+    ("User expects the shed permit decision by 2026-10-30", "User received the shed permit decision on 2026-10-28"),
     ("User starts the new job at Acme on 2026-10-01", "User started the new job at Acme"),
     ("User is going to the Rome marathon on 2026-10-18", "User ran the Rome marathon in 3h 45m"),
 ]
@@ -193,7 +193,7 @@ def test_a_rewrite_that_keeps_half_or_fewer_of_the_words_alerts(refused, rewrite
 @pytest.mark.parametrize("label", CLEANUP)
 @pytest.mark.parametrize("refused,other", [
     ("User plans to fly to Lisbon on 2026-10-10", "User plans to renew the passport by 2026-12-01"),
-    ("User will attend the Madrid conference on Oct 15", "User attended a wedding in Springfield"),
+    ("User will attend the Hamburg conference on Oct 15", "User attended a wedding in Springfield"),
 ])
 def test_unrelated_creates_still_alert_under_containment(label, refused, other):
     s = stats(label)

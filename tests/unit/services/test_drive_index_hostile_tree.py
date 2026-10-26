@@ -22,7 +22,7 @@ from .drive_index_fakes import FakeEmbeddings
 
 _TREE = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval" / "tree.json"
 N, OR, IO = Scope.NORMAL, Scope.OPAQUE_ROOT, Scope.INSIDE_OPAQUE
-_DOCX = "Договор_ред3.docx"
+_DOCX = "Договір_ред3.docx"
 _DOCX_TEXT = ("Договір оренди нежитлового приміщення № 3. Орендодавець передає, а орендар приймає у тимчасове "
               "користування офісне приміщення загальною площею 48 квадратних метрів. Орендна плата становить "
               "1 250 євро на місяць і сплачується до п'ятого числа кожного місяця. Договір діє до 31 грудня 2026 "
@@ -64,12 +64,12 @@ EXPECTED = {
     # never-download names (§5.1): they keep a card with their reason, except OS and lock artefacts (record only)
     "Keys/id_rsa": (N, Reason.SECRET_NAME),
     "Keys/backup.kdbx": (N, Reason.SECRET_NAME),
-    "~$Договор_ред3.docx": (N, Reason.OS_ARTIFACT),
+    "~$Договір_ред3.docx": (N, Reason.OS_ARTIFACT),
     "Thumbs.db": (N, Reason.OS_ARTIFACT),
     # a nested archive and ordinary files: an archive stays metadata only; documents and images are read; audio
     # waits, pending, for the transcript stage (policy 3, §27.3), which this tick does not run
     "Archive/site-backup.zip": (N, Reason.KIND_NOT_ADMITTED),
-    "Contracts/Договор_ред3.docx": (N, None),          # a real DOCX: the parser reads its text, indexed (§24.1)
+    "Contracts/Договір_ред3.docx": (N, None),          # a real DOCX: the parser reads its text, indexed (§24.1)
     "Photos/WhatsApp/IMG-20251120-WA0001.jpg": (N, Reason.PHOTOGRAPH),   # no rendition: a photograph (§24.5)
     "Media/voice memo.m4a": (N, None),
 }

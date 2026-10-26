@@ -33,8 +33,8 @@ def _slots(tz_name, hour, start, days):
     "start",
     [
         datetime(2026, 6, 10, 0, 12, tzinfo=timezone.utc),
-        datetime(2026, 10, 23, 0, 12, tzinfo=timezone.utc),  # spans Madrid fall-back 10-25
-        datetime(2027, 3, 26, 0, 12, tzinfo=timezone.utc),  # spans Madrid spring-forward 03-28
+        datetime(2026, 10, 23, 0, 12, tzinfo=timezone.utc),  # spans Europe/Madrid fall-back 10-25
+        datetime(2027, 3, 26, 0, 12, tzinfo=timezone.utc),  # spans Europe/Madrid spring-forward 03-28
     ],
 )
 def test_each_local_date_gets_exactly_one_slot_date_and_it_is_reached(tz_name, hour, start):
@@ -125,10 +125,10 @@ def test_every_tick_slot_is_the_local_date_the_window_opened(tz_name, hour, star
         ("Australia/Sydney", 8, datetime(2026, 1, 14, 21, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
         ("Australia/Sydney", 8, datetime(2026, 1, 14, 23, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
         ("Australia/Sydney", 8, datetime(2026, 1, 15, 0, 12, tzinfo=timezone.utc), None),
-        # Madrid hour 0 (CET, UTC+1): 00:12 local is 23:12 UTC the previous day.
+        # Europe/Madrid hour 0 (CET, UTC+1): 00:12 local is 23:12 UTC the previous day.
         ("Europe/Madrid", 0, datetime(2026, 1, 14, 23, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
         ("Europe/Madrid", 0, datetime(2026, 1, 15, 1, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
-        # Madrid hour 23: window 23:00 local on the 15th runs into the 16th local, UTC is 22:12 on the 15th.
+        # Europe/Madrid hour 23: window 23:00 local on the 15th runs into the 16th local, UTC is 22:12 on the 15th.
         ("Europe/Madrid", 23, datetime(2026, 1, 15, 22, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
         ("Europe/Madrid", 23, datetime(2026, 1, 15, 23, 12, tzinfo=timezone.utc), date(2026, 1, 15)),
         ("Europe/Madrid", 23, datetime(2026, 1, 16, 0, 12, tzinfo=timezone.utc), date(2026, 1, 15)),

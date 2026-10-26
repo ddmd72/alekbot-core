@@ -11,7 +11,7 @@
 
 ## 1. Problem Statement
 
-Numeric questions ("how many days until New Year", "BMI at 70kg/175cm", "square root of 289",
+Numeric questions ("how many days until New Year", "BMI at 64kg/168cm", "square root of 289",
 "mortgage at 4.5% for 20 years") are currently answered by Quick/Smart from general knowledge.
 LLMs are unreliable at arithmetic and have no reliable way to execute precise calculations.
 
@@ -62,7 +62,7 @@ computes.
 | `compute_math` | Arithmetic, algebra, unit conversions | "square root of 289", "150 km in miles" |
 | `compute_datetime` | Date/time arithmetic, countdowns, age | "days until New Year", "what day was 2024-02-29" |
 | `compute_finance` | Financial formulas (numbers provided by user) | "mortgage at 4.5% for 20 years on 300k" |
-| `compute` | General numeric analysis (fallback) | "BMI at 70kg/175cm", "average of 12, 45, 78" |
+| `compute` | General numeric analysis (fallback) | "BMI at 64kg/168cm", "average of 12, 45, 78" |
 
 **Critical orchestrator instruction:** Compute agent ONLY computes with data provided in the
 query. For live data (exchange rates, stock prices, current weather) — use `search_web`.

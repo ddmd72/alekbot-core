@@ -103,7 +103,7 @@ Navigate to: `http://localhost:5000/auth/login`
   "success": true,
   "user": {
     "user_id": "uuid-here",
-    "email": "your-email@gmail.com",
+    "email": "your-email@example.com",
     "display_name": "Your Name"
   },
   "account": {
@@ -157,7 +157,7 @@ Expected response:
 {
   "user": {
     "user_id": "uuid",
-    "email": "your-email@gmail.com",
+    "email": "your-email@example.com",
     "external_user_id": "firebase|abc123..."
   },
   "account": {
@@ -207,7 +207,7 @@ Expected response:
   "user": {
     "user_id": "your-existing-user-id",
     "external_user_id": "firebase|abc123...",
-    "email": "your-email@gmail.com"
+    "email": "your-email@example.com"
   }
 }
 ```

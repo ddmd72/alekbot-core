@@ -87,13 +87,13 @@ FILLER = ("The details are written down here so they are easy to find later.",
           "A copy was kept for reference, together with the earlier notes.",
           "Questions should go to the person named at the top of the page.",
           "The figures were checked twice before this was saved.")
-CITIES = (("Lisbon", 38.72, -9.14), ("Porto", 41.16, -8.63), ("Madrid", 40.42, -3.70), ("Seville", 37.39, -5.98),
-          ("Barcelona", 41.39, 2.17), ("Paris", 48.86, 2.35), ("Lyon", 45.76, 4.84), ("Rome", 41.90, 12.49),
+CITIES = (("Lisbon", 38.72, -9.14), ("Porto", 41.16, -8.63), ("Coimbra", 40.21, -8.43), ("Braga", 41.55, -8.42),
+          ("Faro", 37.02, -7.93), ("Hamburg", 53.55, 9.99), ("Cologne", 50.94, 6.96), ("Rome", 41.90, 12.49),
           ("Milan", 45.46, 9.19), ("Naples", 40.85, 14.27), ("Berlin", 52.52, 13.40), ("Munich", 48.14, 11.58),
-          ("Vienna", 48.21, 16.37), ("Prague", 50.08, 14.44), ("Kraków", 50.06, 19.94), ("Kyiv", 50.45, 30.52),
+          ("Vienna", 48.21, 16.37), ("Prague", 50.08, 14.44), ("Kraków", 50.06, 19.94), ("Kharkiv", 49.99, 36.23),
           ("Lviv", 49.84, 24.03), ("Odesa", 46.48, 30.73), ("Amsterdam", 52.37, 4.90), ("Brussels", 50.85, 4.35),
-          ("Dublin", 53.35, -6.26), ("Edinburgh", 55.95, -3.19), ("Athens", 37.98, 23.73), ("Valencia", 39.47, -0.38))
-ORGS = ("Example Supplies Ltd", "Sample Workshop SL", "Muestra Servicios SA", "Приклад Сервіс", "Example Mutual",
+          ("Dublin", 53.35, -6.26), ("Edinburgh", 55.95, -3.19), ("Athens", 37.98, 23.73), ("Hannover", 52.37, 9.73))
+ORGS = ("Example Supplies Ltd", "Sample Workshop Lda.", "Reformas Exemplo Lda.", "Приклад Сервіс", "Example Mutual",
         "Demo Clinic", "Placeholder Academy", "Specimen Motors")
 PICTURES = ("files/photo_rome.jpg", "files/photo_porto.jpg", "files/photo_party.jpg")
 _KEYBOARD_SWAP = str.maketrans("aeiou", "eiaou")

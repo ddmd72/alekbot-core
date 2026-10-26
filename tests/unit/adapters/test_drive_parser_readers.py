@@ -112,7 +112,7 @@ spanning two lines
 
 intro
 00:00:01.000 --> 00:00:03.000
-<v Alice>We agreed on the budget.</v>
+<v Clara>We agreed on the budget.</v>
 
 00:00:03.000 --> 00:00:05.000 align:start
 We agreed on the budget.
@@ -138,7 +138,7 @@ line two
 
 
 def test_vtt_reduced_to_cue_text():
-    assert subtitle_cues(VTT) == "Alice: We agreed on the budget.\nWe agreed on the budget.\nNext step & owner"
+    assert subtitle_cues(VTT) == "Clara: We agreed on the budget.\nWe agreed on the budget.\nNext step & owner"
 
 
 def test_srt_reduced_to_cue_text_and_a_numeric_cue_survives():

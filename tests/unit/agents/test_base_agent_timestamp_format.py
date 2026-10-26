@@ -53,8 +53,8 @@ def test_stamp_is_stable_across_calls():
 # pattern with a reason; an accidental edit of the strftime string fails here.
 STAMP = re.compile(r"^\[(\d{4})-(\d{2})-(\d{2}) (Mon|Tue|Wed|Thu|Fri|Sat|Sun) (\d{2}):(\d{2}) ([A-Za-z0-9+\-]+)\] ")
 
-SUMMER_AT = int(datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc).timestamp())  # Friday, Madrid on CEST
-WINTER_AT = int(datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc).timestamp())  # Saturday, Madrid on CET
+SUMMER_AT = int(datetime(2026, 7, 10, 12, 0, tzinfo=timezone.utc).timestamp())  # Friday, Europe/Madrid on CEST
+WINTER_AT = int(datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc).timestamp())  # Saturday, Europe/Madrid on CET
 
 
 def _stamp_at(created_at, timezone_name="Europe/Madrid", text="hello"):

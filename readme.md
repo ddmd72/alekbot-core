@@ -171,7 +171,7 @@ Analogous to how the brain consolidates short-term into long-term memory:
 
 Memory search runs 6 parallel queries across text, tag, and metadata vectors.
 Results ranked by **Reciprocal Rank Fusion (RRF)** — facts appearing across multiple query
-channels rank higher. Deduplication is number-aware (88 kg ≠ 91 kg).
+channels rank higher. Deduplication is number-aware (64 kg ≠ 66 kg).
 
 ### Prompt Builder (Token System)
 

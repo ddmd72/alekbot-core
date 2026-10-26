@@ -383,7 +383,7 @@ class TestParseDt:
 
         assert result is not None
         assert result.tzinfo == timezone.utc
-        # 10:00 Madrid in March (UTC+1) → 09:00 UTC
+        # 10:00 Europe/Madrid in March (UTC+1) → 09:00 UTC
         assert result.hour == 9
 
     def test_invalid_string_returns_none(self):

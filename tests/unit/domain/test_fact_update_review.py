@@ -149,7 +149,7 @@ def test_a_revive_is_strictly_not_born_due_with_review_wording(actor, expiry):
 def test_a_revive_with_a_future_date_stores_the_date(actor):
     fields = finish({"state": "current", "expiry": on("2026-11-30")}, fact(), actor).plan.fields
     assert fields["expiry_kind"] is ExpiryKind.DATE
-    assert fields["expires_at"] == datetime(2026, 11, 30, 23, 0, tzinfo=UTC)  # end of the day in Paris (CET)
+    assert fields["expires_at"] == datetime(2026, 11, 30, 23, 0, tzinfo=UTC)  # end of the day in Europe/Paris (CET)
 
 
 @pytest.mark.parametrize("actor", REVIEW_ACTORS)

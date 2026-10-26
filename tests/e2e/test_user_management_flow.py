@@ -82,7 +82,7 @@ async def test_team_invite_consumption(invite_service, mock_user_repo, mock_acco
     code = await invite_service.generate_team_invite("owner", "acc-owner", "MEMBER")
     
     # 3. Setup Joining User (currently in their own default account)
-    joiner = UserProfile(user_id="joiner", account_id="acc-joiner-default", email="joiner@test.com")
+    joiner = UserProfile(user_id="joiner", account_id="acc-joiner-default", email="joiner@example.com")
     mock_user_repo.get_user.side_effect = lambda uid: joiner if uid == "joiner" else (owner if uid == "owner" else None)
     
     # 4. Consume Invite

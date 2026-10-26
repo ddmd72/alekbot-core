@@ -94,7 +94,7 @@ class TestKeys:
     def test_a_scene_word_does_not_find_another_scene(self):
         assert not _covers("sunsets", _photo("sunrise"))
 
-    @pytest.mark.parametrize("query", ["Barcelona", "contract 2024", "invoice", "Sagrada Familia"])
+    @pytest.mark.parametrize("query", ["Lisbon", "contract 2024", "invoice", "Torre de Belém"])
     def test_an_ordinary_query_emits_no_sl_key(self, query):
         assert not [k for c in query_concepts(query).concepts for k in c.about_keys if k.startswith("sl:")]
 

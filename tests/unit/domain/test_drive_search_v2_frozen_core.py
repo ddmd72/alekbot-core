@@ -198,10 +198,10 @@ class TestEnums:
     def test_skeletons_are_translations_wherever_they_live(self):
         """P1 review M8: a transliteration-only match is "By translation", never exact, in chunks and names too."""
         from src.domain.drive_keys import source_class_of_name_key, source_class_of_word_key
-        assert source_class_of_word_key("x:barselon") is SourceClass.TRANSLATION
-        assert source_class_of_name_key("x:barselon") is SourceClass.TRANSLATION
-        assert source_class_of_word_key("w:barcelona") is SourceClass.PASSAGE_WORDS
-        assert source_class_of_name_key("w:barcelona") is SourceClass.VERIFIED_RECORD
+        assert source_class_of_word_key("x:koimbr") is SourceClass.TRANSLATION
+        assert source_class_of_name_key("x:koimbr") is SourceClass.TRANSLATION
+        assert source_class_of_word_key("w:coimbra") is SourceClass.PASSAGE_WORDS
+        assert source_class_of_name_key("w:coimbra") is SourceClass.VERIFIED_RECORD
 
     def test_no_prefix_is_a_prefix_of_another(self):
         values = [f.value for f in KeyFamily]
@@ -443,10 +443,10 @@ class TestTexts:
     def test_d29_and_footers(self):
         assert T.ABSENT_LINE.format(word="vaccination") + " " + T.WITHOUT_LINE.format(word="vaccination", count=3) == (
             'No file holds "vaccination". Without "vaccination": 3 files match the other words.')
-        terms = ", ".join([T.CONJUNCTION_TERM.format(word="barcelona", count=41),
+        terms = ", ".join([T.CONJUNCTION_TERM.format(word="coimbra", count=41),
                            T.CONJUNCTION_TERM.format(word="trip", count=2)])
         assert T.FOOTER_NO_CONJUNCTION.format(terms=terms) == (
-            'No file matches all of: "barcelona" (41 files), "trip" (2 files).')
+            'No file matches all of: "coimbra" (41 files), "trip" (2 files).')
         assert T.MIGRATION_LINE == ("The index is being migrated to a new search format: only names, meaning and "
                                     "filters were searched.")
 

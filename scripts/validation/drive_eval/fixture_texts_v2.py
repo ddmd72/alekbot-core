@@ -23,27 +23,27 @@ from src.domain.drive_enrichment import DriveProfile, KeyValue, ProfileDate, Pro
 # -- health ----------------------------------------------------------------------------------------------------------
 
 LAB_REPORT_ES = [
-    "LABORATORIO CLÍNICO EJEMPLO - Análisis de sangre",
+    "LABORATÓRIO CLÍNICO EXEMPLO - Análisis de sangre",
     "Informe n.º LAB-2025-03-0417",
-    "Paciente: Ana Ejemplo García    Médico solicitante: Dr. Pablo Muestra",
+    "Paciente: Alex Doe    Médico solicitante: Dr. Paulo Amostra",
     "Fecha de extracción: 14/03/2025",
     "",
     "Perfil lipídico                     Resultado     Valores de referencia",
-    "Colesterol total                    212 mg/dL     < 200 mg/dL",
-    "Colesterol HDL                      48 mg/dL      > 40 mg/dL",
-    "Colesterol LDL                      141 mg/dL     < 130 mg/dL",
-    "Triglicéridos                       118 mg/dL     < 150 mg/dL",
-    "Glucosa en ayunas                   92 mg/dL      70 - 110 mg/dL",
+    "Colesterol total                    182 mg/dL     < 200 mg/dL",
+    "Colesterol HDL                      58 mg/dL      > 40 mg/dL",
+    "Colesterol LDL                      112 mg/dL     < 130 mg/dL",
+    "Triglicéridos                       98 mg/dL      < 150 mg/dL",
+    "Glucosa en ayunas                   104 mg/dL     70 - 110 mg/dL",
     "",
-    "Comentario: colesterol total y LDL ligeramente elevados. Se recomienda dieta",
-    "baja en grasas saturadas y repetir el análisis dentro de seis meses.",
-    "Firmado: Laboratorio Clínico Ejemplo, Calle de la Muestra 12, Ciudad Ejemplo.",
+    "Comentario: todos los valores dentro de los intervalos de referencia. Se recomienda",
+    "mantener la dieta habitual y repetir el análisis dentro de doce meses.",
+    "Firmado: Laboratório Clínico Exemplo, Rua da Amostra 12, Springfield.",
 ]
 
 # -- receipts --------------------------------------------------------------------------------------------------------
 
 RECEIPT_SUPERMARKET_ES = [
-    "SUPERMERCADO EJEMPLO S.A.",
+    "SUPERMERCADO EXEMPLO LDA.",
     "Ticket de compra n.º 4471-0214",
     "14/02/2026  18:32   Caja 3",
     "Leche entera 1 L        2 x 0,99     1,98",
@@ -63,12 +63,11 @@ RECEIPT_HARDWARE_EN = [
     "Total paid                         19.30 EUR",
     "Card payment. Keep this receipt for returns within 30 days.",
 ]
-RECEIPT_PHARMACY_RU = """АПТЕКА «ПРИМЕР»
+RECEIPT_PHARMACY_RU = """АПТЕКА «FARMÁCIA EXEMPLO»
 Кассовый чек № 0931
 21.04.2026 12:47
 
-Кассир: Мария
-Витамин D3, 60 капсул — 9,80
+Витамин C, 60 капсул — 9,80
 Пластырь бактерицидный — 3,20
 Капли для глаз увлажняющие — 6,40
 Бинт эластичный — 4,10
@@ -83,8 +82,8 @@ RECEIPT_PHARMACY_RU = """АПТЕКА «ПРИМЕР»
 MOTOR_POLICY_EN = [
     "EXAMPLE MUTUAL INSURANCE",
     "Motor insurance policy no. MP-2026-118204",
-    "Policyholder: Alex Example",
-    "Insured vehicle: Example Motors Corsa, registration 0000-XYZ",
+    "Policyholder: Alex Doe",
+    "Insured vehicle: Skoda Fabia 1.0 (2015), registration SAMPLE-0000",
     "Cover: comprehensive, including windscreen and roadside assistance",
     "Period of cover: 01/04/2026 to 31/03/2027",
     "This policy is valid until 31 March 2027.",
@@ -92,9 +91,9 @@ MOTOR_POLICY_EN = [
     "Renew before the expiry date to stay covered.",
 ]
 VEHICLE_INSPECTION_ES = [
-    "ESTACIÓN DE INSPECCIÓN TÉCNICA EJEMPLO",
-    "Informe de inspección técnica de vehículos (ITV)",
-    "Matrícula: 0000-XYZ    Marca: Example Motors    Modelo: Corsa",
+    "CENTRO DE INSPEÇÃO EXEMPLO",
+    "Informe de inspección periódica de vehículos (IPO)",
+    "Matrícula: SAMPLE-0000    Marca: Skoda    Modelo: Fabia",
     "Fecha de inspección: 12/09/2025",
     "Resultado: FAVORABLE",
     "Kilometraje: 84.210 km",
@@ -103,7 +102,7 @@ VEHICLE_INSPECTION_ES = [
 ]
 WARRANTY_WASHER_ES = [
     "CERTIFICADO DE GARANTÍA",
-    "Producto: lavadora Ejemplo WX-800, n.º de serie WX800-55-1209",
+    "Producto: lavadora Exemplo WX-800, n.º de serie WX800-55-1209",
     "Fecha de compra: 30/11/2024",
     "Garantía válida hasta el 30/11/2027.",
     "Cubre piezas y mano de obra del servicio técnico oficial.",
@@ -111,7 +110,7 @@ WARRANTY_WASHER_ES = [
 ]
 GYM_PASS_UK = """# Абонемент у спортзал «Приклад»
 
-Власник: Олекса Приклад
+Власник: Тарас Мельник
 Тип: безлімітний, 12 місяців, усі зали та басейн.
 Сплачено: 02.01.2026, 360 EUR.
 Абонемент діє до 31.12.2026.
@@ -122,23 +121,23 @@ GYM_PASS_UK = """# Абонемент у спортзал «Приклад»
 # -- the flat --------------------------------------------------------------------------------------------------------
 
 INVOICE_BATHROOM_ES = [
-    "REFORMAS EJEMPLO S.L.  -  CIF B00000000",
+    "REFORMAS EXEMPLO LDA.  -  NIF 000000000",
     "Factura n.º F-2026-0311",
     "Fecha: 11/03/2026",
-    "Cliente: Alex Example, Calle Ejemplo 1, 2.º B",
+    "Cliente: Alex Doe, 12 Oak Street, Springfield",
     "Concepto: reparación de fontanería y alicatado del baño de la vivienda.",
     "Sustitución del plato de ducha y de la grifería.",
     "Mano de obra (18 h)                    540,00",
     "Materiales                             312,40",
     "Base imponible                         852,40",
-    "IVA 21 %                               179,00",
-    "Total factura                        1.031,40 EUR",
+    "IVA 23 %                               196,05",
+    "Total factura                        1.048,45 EUR",
 ]
 INVOICE_PAINTING_ES = [
-    "PINTURAS EJEMPLO",
+    "PINTURAS EXEMPLO",
     "Factura n.º 2026/078",
     "Fecha: 22/04/2026",
-    "Cliente: Alex Example",
+    "Cliente: Alex Doe",
     "Trabajo: pintura del salón y del pasillo de la vivienda, dos manos,",
     "reparación de grietas en el techo.",
     "Total: 680,00 EUR (IVA incluido)",
@@ -148,8 +147,8 @@ INVOICE_PAINTING_ES = [
 
 HOTEL_BOOKING_RU = [
     "Подтверждение бронирования",
-    "Отель «Пример», Рим, Италия",
-    "Гость: Алекс Пример",
+    "Отель «Albergo Immaginario», Рим, Италия",
+    "Гость: Алекс Доу",
     "Заезд: 10.08.2025, выезд: 14.08.2025, 4 ночи.",
     "Номер бронирования: RM-55120",
     "Стоимость: 560,00 EUR, оплачено при бронировании.",
@@ -165,16 +164,16 @@ WEEKEND_IDEAS_EN = """# Weekend ideas
 
 # -- inflected forms of the pinned groups, inside bodies ---------------------------------------------------------------
 
-TRIP_NOTES_RU = """# Мысли о поездке весной
+TRIP_NOTES_UK = """# Думки про поїздку навесні
 
-Весной хотим съездить в Барселону на пять дней. В прошлый раз в Барселоне жили у друзей,
-теперь посмотрим квартиру рядом с морем. Нужно проверить музей Пикассо и рынок Бокерия.
-Сергей Иванов советовал гида — спросить у Иванова номер телефона.
+Навесні хочемо з'їздити в Коїмбру на вихідні. Минулого разу в Коїмбрі жили в друзів,
+тепер подивимося квартиру біля річки Мондегу. Треба побачити стару бібліотеку університету і ринок.
+Тарас Мельник радив гіда — спитати в Мельника номер телефону.
 """
 FLAT_VIEWING_UK = """# Огляд квартири
 
-У суботу оглядали квартиру у Києві на Подолі: дві кімнати, ремонт свіжий, балкон.
-Господар просить договір на рік. Купили квитки на потяг до Харкова на неділю,
+У суботу оглядали квартиру у Львові біля парку: дві кімнати, ремонт свіжий, балкон.
+Господар просить договір на рік. Купили квитки на потяг зі Львова до Харкова на неділю,
 щоб у Харкові подивитися ще один варіант.
 """
 HOUSE_HUNTING_EN = """# House hunting
@@ -237,11 +236,11 @@ def _invoice_2024_profile(n: int) -> DriveProfile:
     amount = f"1{n:03d}.50"
     return DriveProfile(
         title=f"Invoice {number}",
-        what_it_is=f"Invoice {number} from Example Supplies Ltd to Sample Workshop SL for office supplies",
+        what_it_is=f"Invoice {number} from Example Supplies Ltd to Sample Workshop Lda. for office supplies",
         language="en", doc_type="invoice", life_domains=("work", "finance"),
         dates=(ProfileDate(label="issued", iso=date(2024, 6, 30)),),
         entities=(ProfileEntity(name="Example Supplies Ltd", type="organization", printed="Example Supplies Ltd"),
-                  ProfileEntity(name="Sample Workshop SL", type="organization", printed="Sample Workshop SL")),
+                  ProfileEntity(name="Sample Workshop Lda.", type="organization", printed="Sample Workshop Lda.")),
         key_values=(KeyValue(label="invoice_number", printed=number, canonical=number),
                     KeyValue(label="amount_due", printed=f"{amount} EUR", canonical=amount)),
         topics=("office supplies",), topics_native=(),

@@ -2,7 +2,7 @@ from src.domain.place_lookup import PlaceIndex, PlaceRow
 
 ROWS = [PlaceRow(41.8919, 12.5113, "Rome", "Roma", "Italy"),
         PlaceRow(41.1579, -8.6291, "Porto", "Porto", "Portugal"),
-        PlaceRow(50.4501, 30.5234, "Kyiv", "Київ", "Ukraine"),
+        PlaceRow(49.8397, 24.0297, "Lviv", "Львів", "Ukraine"),
         PlaceRow(51.5085, -0.1257, "London", "London", "United Kingdom")]
 
 

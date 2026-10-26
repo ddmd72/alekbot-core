@@ -13,7 +13,7 @@ from src.web.twilio_signature_verifier import verify_twilio_signature
 
 _AUTH_TOKEN = "test-auth-token-0123456789abcdef"
 _URL = "https://main.example.com/voice/answer?ticket=t1"
-_FORM = {"CallSid": "CA1", "AnsweredBy": "human", "From": "+346001"}
+_FORM = {"CallSid": "CA1", "AnsweredBy": "human", "From": "+15550101"}
 
 
 def _sign(url: str, form: dict, token: str = _AUTH_TOKEN) -> str:
@@ -27,7 +27,7 @@ def test_valid_signature_accepted():
 def test_tampered_form_parameter_rejected():
     """Twilio's HMAC covers every POST parameter, sorted by name."""
     signature = _sign(_URL, _FORM)
-    tampered = {**_FORM, "From": "+346002"}
+    tampered = {**_FORM, "From": "+15550102"}
     assert verify_twilio_signature(_AUTH_TOKEN, _URL, tampered, signature) is False
 
 

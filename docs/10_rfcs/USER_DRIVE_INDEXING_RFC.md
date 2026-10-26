@@ -201,7 +201,7 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
 
 Step 1 gives the bot a long-term file area it can list, open, save, move and delete. It cannot find anything by
 meaning or content: Graph search inside the App Folder returned 401 (spike A6, Step 1 §7), and listing does not scale
-past a few folders. Files with uninformative names (`Договор_ред3.docx`, `notes (2).md`) are lost to the
+past a few folders. Files with uninformative names (`Договір_ред3.docx`, `notes (2).md`) are lost to the
 conversation.
 
 **Goals**
@@ -1402,12 +1402,12 @@ port) and the Smart protocol token change with its backup reference.
 8. **Eval** (`scripts/validation/drive_eval/`, run as `python -m scripts.validation.drive_eval`; Slice 1 calls
    `DriveSearchService` directly, the Smart dry-run scaffolding of `ab_agent_models.py` joins with G3 in Slice 2, RFC
    Δ13): a committed, PII-free, multilingual fixture folder (RU/UK/ES/EN/FR; names like `Scan_0012.pdf`,
-   `Договор_ред1..3.docx`; a nested folder; a repository) behind an in-memory `UserDrivePort` fake, and a gold file
+   `Договір_ред1..3.docx`; a nested folder; a repository) behind an in-memory `UserDrivePort` fake, and a gold file
    (Slice 1: `tests/fixtures/drive_eval/gold_g1.json`, cases `{id, case, query, filters, lang, goal, expected_paths,
    k?, min_hits?, known_hard?}`; Slice 2 adds `expected_substring`). Metrics: G1 and G2 recall@K, a substring hit for G2, the
    G3 search-initiated rate on positives and on a negative set (chit-chat, memory and web questions). Cases also cover
    a draft family whose dates disagree with its version names, and memory-vs-document conflicts in both directions.
-   Name cases: exact, partial, transliterated (`dogovor` → `Договор`) and misspelled names. G2 cases include
+   Name cases: exact, partial, transliterated (`dohovir` → `Договір`) and misspelled names. G2 cases include
    table-heavy and two-column PDFs and numeric questions (amounts, invoice numbers). Expected and recorded, not a
    surprise: recall on long documents stays below what contextual chunk headers would give.
    **The eval is a regression guard, not a decision tool.** Every quality choice is decided in this RFC with a default;
@@ -2417,7 +2417,7 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
   `-i`, `-es` dropped after `x`, `z`, `ch`, `sh`, else a final `-s` unless the token ends in `-ss`, `-us` or `-is`; then,
   on 4 letters or more, a final `-e` dropped and a final `-y` turned into `-i`. "house"/"houses" → `hous`;
   "lease"/"leases" → `leas`; "movie"/"movies" → `movi`; "policy"/"policies" → `polici`; "receipt"/"receipts" →
-  `receipt`; "Paris" and "analysis" stay. Residual: "taxis", "menus" are kept by the `-is`/`-us` exception.
+  `receipt`; "tennis" and "analysis" stay. Residual: "taxis", "menus" are kept by the `-is`/`-us` exception.
 - **Two-letter words** ("ИП", "ЖК", "TV", "CV", "X5") are keyed by their exact form (a) only: no stripping, no skeleton.
   The explicit 1–2-letter function words per language (`SHORT_FUNCTION_WORDS`: "на", "по", "in", "de", "et", …) are
   never keyed. A 1-letter word is never keyed.
@@ -2433,19 +2433,19 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
   - for a Latin word, its Cyrillic spellings by the Russian-style table and by the Ukrainian national scheme in reverse
     ("kyiv" → "киів", "kharkiv" → "харків"), and those spellings' forms (a)–(e) and stems.
 
-  "Kyiv" reaches "у Києві", "Kharkiv" reaches "в Харкові", "Барселону" reaches "Barcelona". "Lviv" does not reach
+  "Kyiv" reaches "у Києві", "Kharkiv" reaches "в Харкові", "Коїмбру" reaches "Coimbra". "Lviv" does not reach
   "Львові" (the soft sign); accepted. A match through a skeleton crosses scripts or spellings: it is a translation,
   never exact (§25.5.4).
 - **Measured** (review round 2, on a targeted list of 27 inflection groups — surnames, `-ей` names, nouns ending in a
   listed ending, soft sign, fleeting vowels, Ukrainian locatives — and a 1 216-word Russian/Ukrainian corpus): the
   rev 3.19 rule (one ending, then 5 letters) keyed 12 of 27 groups together and linked 177 pairs of different words
-  ("барсетка" with "Барселона", a given name with a city name); the form set keys 26 of 27 (the last fixed by the
+  (different words sharing their first five letters, a given name with a city name among them); the form set keys 26 of 27 (the last fixed by the
   extended endings) and links 47 pairs, most of them true inflections. P1 review, on a synthetic table of 172 words
   with their inflections (551 forms):
   - native forms link 664 of 702 same-word pairs (95 %), and 16 different-word pairs share a native form, all of
     them translations (договор/договір, hotels/hoteles);
   - skeletons link 7 more same-word pairs, and 47 different-word pairs only by skeleton (translation tier): all are
-    translations (Киев/Київ, Одесса/Одеса, Barcelona/Барселона, bank/банк) except one pair, an English common noun and a Russian given name;
+    translations (Киев/Київ, Одесса/Одеса, Coimbra/Коїмбра, bank/банк) except one pair, an English common noun and a Russian given name;
   - a ru/uk contract or UI chunk of 2 400 characters holds 650–715 keys.
 
 **Families**
@@ -2453,7 +2453,7 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
 - `x:` **skeletons** — one per word (chunks, names): a translation (§25.5.4). The family records the script the word
   came from (xc F3): `x:` for a Cyrillic word, `xl:` for a Latin one. A Latin query word reads only `x:` (it meets a
   Latin word through its `w:` forms: the Cyrillic stem of a Latin word would join "Mario" and "Maria", "casa" and
-  "caso"); a Cyrillic query word reads both, so "Барселоне" still meets "Barcelona" and "kyiv" "Київ".
+  "caso"); a Cyrillic query word reads both, so "Коїмбрі" still meets "Coimbra" and "kyiv" "Київ".
 - `n:` **number terms** — today's normaliser (`drive_content_terms`: amounts, numeric and written-out dates in five
   languages, ids, digit groups): index-side forms per chunk (the 256-term cap applies per chunk), maximal forms on the
   query side. Its rules now belong to `KEYS_VERSION` (§25.4.8).
@@ -2465,14 +2465,14 @@ Each token gets a **set of native forms**, each of 3 letters or more; the index 
 - `e:` **entity phrases** — a named thing's spelling the file prints (an entity's `printed`, and those of its `name`
   and `forms` verification found in the text or the name, kept as the entity's `found`; the photo place's
   `place_forms`). An entity spelling the profiler wrote that the file does not print is `ef:` (xc F1): the index's
-  own spelling, a translation, never exact, and its match line names what the file prints ('place "Барселона"
-  (spelling by the index; named in the file as "BARCELONA")'). The card text shows the printed spellings. Rules for
+  own spelling, a translation, never exact, and its match line names what the file prints ('place "Коїмбра"
+  (spelling by the index; named in the file as "COIMBRA")'). The card text shows the printed spellings. Rules for
   both families:
   - a single-token name gets its native form set;
-  - a multi-token phrase joins each token's form (b) with `_`, articles kept: "Le Havre" → `e:le_havr`,
+  - a multi-token phrase joins each token's form (b) with `_`, articles kept: "The Hague" → `e:the_hagu`,
     "Нью-Йорке" → `e:нью_йорк`. A hyphen compound also gets its joined form ("Нью-Йорк" → `e:ньюйорк`);
-  - a person or place of several words also keys its last word alone (the surname: "Сергей Иванов" is about
-    "Иванову").
+  - a person or place of several words also keys its last word alone (the surname: "Тарас Мельник" is about
+    "Мельнику").
 - `ex:` **entity skeletons** — the same phrases built from each token's skeleton: a translation; `exl:` when every
   token is Latin (xc F3, read only by a Cyrillic query word).
 - `pe:` **photo-object phrases** — a photo object's `name` and `forms`, built exactly as `e:` phrases; the query emits
@@ -2877,14 +2877,14 @@ duplicate collapse, the nonce wrapper and the refusal of an empty request.
 The delegate's `query` sentence is not read (D19).
 
 **Walk-throughs** (synthetic):
-- **"про Барселону"** → "про" is a function word (after the runs). *барселону*: forms `барселону`, `барселон`, skeleton
-  `barselon`.
-  - A photo with `place_forms` "Barcelona, Барселона, …, Spain, Испания" holds `e:барселона`, `e:барселон` → covers →
+- **"про Коїмбру"** → "про" is a function word (after the runs). *коїмбру*: forms `коїмбру`, `коїмбр`, skeleton
+  `koimbr`.
+  - A photo with `place_forms` "Coimbra, Коїмбра, …, Portugal, Португалія" holds `e:коїмбра`, `e:коїмбр` → covers →
     **About** ("place (photo location)").
-  - A document whose entity has the form "Барселона" → About ("named in the file").
-  - A note saying "в Барселоне" → `w:барселон` → **Mentioned in**.
-  - A Latin passage naming the city ("Barcelona") → `x:barselon` → **By translation**, as is a passage with a grounded
-    keyword "Барселона".
+  - A document whose entity has the form "Коїмбра" → About ("named in the file").
+  - A note saying "в Коїмбрі" → `w:коїмбр` → **Mentioned in**.
+  - A Latin passage naming the city ("Coimbra") → `xl:koimbr` → **By translation**, as is a passage with a grounded
+    keyword "Коїмбра".
 - **"медицинские записи по холестерину"** over a Spanish lab report ("colesterol"). Concepts *медицинские*, *записи*,
   *холестерину* ("по" removed). The profile wrote `topic_words` ("cholesterol", "colesterol", "холестерин", …) and
   `label_words` for `medical_record` ("medical record", "historia clínica", "медична картка", "медицинская запись",
@@ -2894,8 +2894,8 @@ The delegate's `query` sentence is not read (D19).
   class) and its card shows the passage keyword with the evidence window (P6 review m3). If no file anywhere holds *записи* (`df = 0`), the
   exact and automatic tiers are empty and the result says: "No file holds 'записи'. Without 'записи': 3 files match the
   other words." (D29), and Smart may search again with the subject alone.
-- **"Paris 2023"** → *paris* and *2023* (`n:2023`, `v:2023`, `y:2023`, `pn:2023`): a photo in Paris taken in 2023 holds
-  `e:paris` and `y:2023` → About. "Париж 2023" meets the alternate name "Париж" in `place_forms`.
+- **"Berlin 2023"** → *berlin* and *2023* (`n:2023`, `v:2023`, `y:2023`, `pn:2023`): a photo in Berlin taken in 2023 holds
+  `e:berlin` and `y:2023` → About. "Берлин 2023" meets the alternate name "Берлин" in `place_forms`.
 - **"all my receipts"** → "all", "my" removed; *receipts* (`receipts`, `receipt`): a profiled receipt's `lw:receipt` →
   **Labelled**; a file named "Receipt …" → About ("name"); a note saying "receipt" → Mentioned in; "квитанции" meets
   the Russian label words.
@@ -2952,9 +2952,9 @@ passage words, translation, automatic record. A file's tier is decided by the we
    - or a **skeleton** (P1 review M8): `x:` in the chunk's `word_keys` or in the name keys, `ex:` in the record's
      `about_keys`.
 
-   A skeleton match crosses scripts or spellings ("Barcelona" in a Russian note, "hotel" against "хотел"). It is never
+   A skeleton match crosses scripts or spellings ("Coimbra" in a Ukrainian note, "hotel" against "хотел"). It is never
    exact: it is shown with the window around the matched word, labelled "by spelling in another script (automatic)",
-   or "by another spelling (automatic)" when both words are Cyrillic ("Киев" / "Київ"). Two Latin words never meet
+   or "by another spelling (automatic)" when both words are Cyrillic ("Харьков" / "Харків"). Two Latin words never meet
    through a skeleton (`xl:`/`exl:` are read only by a Cyrillic query word, xc F3). A native-script match and a
    spelling the file prints (an entity's verified spelling or a place's own form, `e:`) stay exact; an entity
    spelling only the profiler wrote (`ef:`) is a translation (xc F1), shown as 'person "<spelling>" (spelling by the
@@ -3453,12 +3453,12 @@ Records for streams: the `DriveRecordLean` fields. Chunks for streams: `user_id`
 items by id.
 
 #### 25.13.4 Pinned normaliser groups (unit tests, index/query parity)
-Cyrillic: Барселона/Барселону/Барселоне/Барселоной; Париж/Париже; Рим/Риме; Киев/Киеве; Київ/Києві; Львів/Львові;
-Харків/Харкові; Иванов/Иванова/Ивановым; Петров/Петрова; Сергей/Сергея; Андрей/Андрея; музей/музея; альбом/альбома;
-диплом/диплома; герой/героя; Ростов/Ростове; Чехов/Чехова; отель/отеля; кровь/крови; Казань/Казани; квиток/квитки;
+Cyrillic: Коїмбра/Коїмбру/Коїмбрі/Коїмброю; Берлін/Берліні; Рим/Риме; клев/клеве; Київ/Києві; Львів/Львові;
+Харків/Харкові; Мельник/Мельника/Мельником; Тарас/Тараса; трофей/трофея; юбилей/юбилея; музей/музея; альбом/альбома;
+диплом/диплома; герой/героя; Ростов/Ростове; Бондар/Бондаря; отель/отеля; кровь/крови; Казань/Казани; квиток/квитки;
 чек/чеки; Нью-Йорк/Нью-Йорке; холестерин/холестерину. Latin: house/houses; lease/leases; bus/buses; glass/glasses;
-cache/caches; movie/movies; policy/policies; box/boxes; receipt/receipts; invoice/invoices; Paris; analysis. Digits:
-"ред3" → `w:ред`, `w:3`. Negative pins (must not share a form): барсетка/Барселона; Валентина/Валенсия.
+cache/caches; movie/movies; policy/policies; box/boxes; receipt/receipts; invoice/invoices; tennis; analysis. Digits:
+"ред3" → `w:ред`, `w:3`. Negative pins (must not share a form): берлога/Берлін; Ганна/Ганновер.
 
 P1 review (`KEYS_VERSION` 2) adds:
 - **Adjectives (exact):** новые/новая; нової/нова; медичної/медична; медицинские/медицинская; здание/здания;
@@ -3468,7 +3468,7 @@ P1 review (`KEYS_VERSION` 2) adds:
 - **Compounds and artefacts (exact):** email/e-mail; Wi-Fi/WiFi; квартира/"квар-\ntира"/"квар\u00adтира";
   замок/за́мок; ёлка/елка.
 - **Two-letter words (exact):** ИП, ЖК, TV, CV, X5.
-- **Across scripts (translation only):** Kyiv/Києві; Kharkiv/Харкові; Барселону/Barcelona.
+- **Across scripts (translation only):** Odesa/Одесі; Kharkiv/Харкові; Coimbra/Коїмбрі.
 - **Translation only, never exact:** hotel/хотел; cost/кости; net/нет; list/лист; data/дата.
 - **Negative pins:** сім'я/сім; iphone/phone (as a query); ип/ипотека; квиток/квитанция.
 - **Known stemming links, pinned so a widening shows:** почта/почти; банка/банк.
@@ -4065,8 +4065,8 @@ the standing rule (CLAUDE.md). Slices, in build order:
   opens the file) and a find question on one (Smart does not).
   *As built:* `gold_v2.json` gains the cases `cls-scans-{en,uk,es}`, `cls-screenshot-ru`, `cls-screenshots-en`,
   `ex-date-expiry-{dotted,spaced}`, `ex-date-valid-until`, `ex-value-id-number{,-spaced}`, `ex-inaccessible-name`
-  (`expect_inaccessible`), and S6's `cls-sunsets-{en,ru,es}`, `cls-sunset-photos`, `cls-beach-{ru,en}`, `ex-place-paris`,
-  `sem-landmark-eiffel{,-ru}`; a case may carry `known_hard` (run and reported, guarding nothing). `gold_g3_v2.json` gains
+  (`expect_inaccessible`), and S6's `cls-sunsets-{en,ru,es}`, `cls-sunset-photos`, `cls-beach-{ru,en}`, `ex-place-berlin`,
+  `sem-landmark-funkturm{,-uk}`; a case may carry `known_hard` (run and reported, guarding nothing). `gold_g3_v2.json` gains
   `v2-card-value-opens{,-ru}` (`must_open`: the file is opened at least once) and `v2-card-find-no-open{,-uk}`
   (`must_not_open`: none is); both are hard checks of `smart_dry_run.py`, the scan's card being under 90 % by the
   recorded profile's misread date. New fixtures: `fixture_texts_s26.py`, `fixture_images_s26.py`, `synthetic_s26.py`; the
@@ -4191,7 +4191,7 @@ Added after the rest of §26 was built (owner decisions 2026-10-19), numbered la
 put. Both ride the unreleased `TRIAGE_VERSION` 3, `CARD_VERSION` 4 and `KEYS_VERSION` 4: no extra rebuild.
 
 - **The location prior (D39).** Triage's per-image line was `Image <n>: camera metadata present|absent`. When the record
-  has the photo's location it continues: `Image 3: camera metadata present; taken near Barcelona, Spain (41.403, 2.174)`,
+  has the photo's location it continues: `Image 3: camera metadata present; taken near Lisbon, Portugal (38.722, -9.139)`,
   or `…; taken at (41.403, 2.174)` when no place name is known (the geo table's place name already ends in the country;
   with no country it is omitted). The coordinates come from `coarse_location(rec.facets)`, rounded to 3 decimals (about
   110 m), and `image_label` rounds again whatever the caller sent: **the full-precision GPS never reaches a model.**

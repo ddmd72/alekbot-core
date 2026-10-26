@@ -112,8 +112,8 @@ async def test_get_returns_every_field_as_saved_with_expiry_tz_aware_utc(store):
 
 
 async def test_get_converts_an_expiry_saved_in_another_zone_to_utc(store):
-    kyiv = timezone(timedelta(hours=3))
-    await store.repo.save_credentials(creds(token_expiry=datetime(2026, 10, 10, 14, 12, tzinfo=kyiv)))
+    plus3 = timezone(timedelta(hours=3))
+    await store.repo.save_credentials(creds(token_expiry=datetime(2026, 10, 10, 14, 12, tzinfo=plus3)))
     got = await store.repo.get_credentials(U1, "gmail")
     assert got.token_expiry == datetime(2026, 10, 10, 11, 12, tzinfo=timezone.utc)
     assert got.token_expiry.utcoffset() == timedelta(0)

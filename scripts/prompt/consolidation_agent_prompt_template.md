@@ -33,15 +33,15 @@ class ConversationalUserProfiler extends Agent {
          */
         user_characteristic_taxonomy: {
             STATE: "Current attributes, habits, recurring patterns (e.g., 'User runs daily')",
-            EVENT: "Past immutable occurrences with timestamps (e.g., 'User visited Paris in 2020')",
+            EVENT: "Past immutable occurrences with timestamps (e.g., 'User visited Berlin in 2020')",
             PRINCIPLE: "Values, philosophies (must include 'anchor' tag)",
             
             // CRITICAL: Entity Scope Classification (for RAG retrieval)
             entity_scopes: {
-                SELF: "Direct USER attributes (I weigh 70kg, I swim every evening)",
-                RELATIONSHIP: "People in USER's network (My sister Anna, Friend John)",
-                POSSESSION: "USER's belongings (My car, My house in Madrid)",
-                SHARED_EVENT: "Events involving USER (Trip to Paris with family)",
+                SELF: "Direct USER attributes (I weigh 64kg, I swim every evening)",
+                RELATIONSHIP: "People in USER's network (My sister Hanna, Friend Robin)",
+                POSSESSION: "USER's belongings (My car, My house in Springfield)",
+                SHARED_EVENT: "Events involving USER (Trip to Rome with family)",
                 NETWORK_BELIEF: "Principles of USER's contacts (Mom believes in honesty)"
             }
         }
@@ -67,13 +67,13 @@ class ConversationalUserProfiler extends Agent {
             
             relational: [
                 "relationship",      // "sister", "friend", "colleague"
-                "name",              // "Anna", "John"
+                "name",              // "Hanna", "Robin"
                 "related_to",        // "user"
-                "companions"         // ["wife", "children"]
+                "companions"         // ["partner", "children"]
             ],
             
             possessions: [
-                "item",              // "Tesla Model 3"
+                "item",              // "Skoda Fabia"
                 "category",          // "vehicle", "property", "device"
                 "action"             // "purchased", "sold", "owns"
             ],
@@ -147,7 +147,7 @@ class ConversationalUserProfiler extends Agent {
 
             pipeline_source_attribution_step_2 {
                 name: "New_Information_Check"
-                logic: "Does USER's statement ADD new information, or just acknowledge existing? \n✅ NEW: 'I weigh 70kg now' (user volunteers fact) \n✅ NEW: 'Yes, and now I'm 70kg' (confirmation + update) \n❌ ECHO: 'Yes' after ASSISTANT recalls (no new info) \n❌ ECHO: USER repeats what ASSISTANT just said"
+                logic: "Does USER's statement ADD new information, or just acknowledge existing? \n✅ NEW: 'I weigh 64kg now' (user volunteers fact) \n✅ NEW: 'Yes, and now I'm 64kg' (confirmation + update) \n❌ ECHO: 'Yes' after ASSISTANT recalls (no new info) \n❌ ECHO: USER repeats what ASSISTANT just said"
                 severity: "HIGH"
                 action_on_fail: "SKIP_FACT('USER acknowledgment without new information - likely RAG echo')"
             }
@@ -252,7 +252,7 @@ class ConversationalUserProfiler extends Agent {
                 " - USER's possessions (property, vehicles, belongings)",
                 " - USER's events (travel, appointments, milestones)",
                 " - Principles of people in USER's network (if mentioned)",
-                "NEVER extract external world facts ('Weather in Paris') unless USER-specific context",
+                "NEVER extract external world facts ('Weather in Berlin') unless USER-specific context",
                 "NEVER process ASSISTANT statements as facts unless USER confirms with NEW info",
                 "NEVER return non-JSON output (no text, no apologies, no explanations)"
             ]
@@ -303,30 +303,30 @@ class ConversationalUserProfiler extends Agent {
         @mandatory EXAMPLES {
             
             example_family_relationship: {
-                input: "USER: My sister Anna lives in Madrid. She's a doctor.",
+                input: "USER: My sister Hanna lives in Porto. She's a doctor.",
                 output: {
                     "new_facts": [
                         {
-                            "id": "fact_sister_anna_location",
-                            "content": "User's sister Anna lives in Madrid",
+                            "id": "fact_sister_hanna_location",
+                            "content": "User's sister Hanna lives in Porto",
                             "tags": ["family", "relationship", "location", "sister"],
                             "type": "STATE",
                             "metadata": {
                                 "entity_scope": "RELATIONSHIP",
                                 "relationship": "sister",
-                                "name": "Anna",
-                                "city": "Madrid",
+                                "name": "Hanna",
+                                "city": "Porto",
                                 "related_to": "user"
                             }
                         },
                         {
-                            "id": "fact_sister_anna_profession",
-                            "content": "User's sister Anna is a doctor",
+                            "id": "fact_sister_hanna_profession",
+                            "content": "User's sister Hanna is a doctor",
                             "tags": ["family", "profession", "healthcare"],
                             "type": "STATE",
                             "metadata": {
                                 "entity_scope": "RELATIONSHIP",
-                                "name": "Anna",
+                                "name": "Hanna",
                                 "profession": "doctor",
                                 "related_to": "user"
                             }
@@ -337,16 +337,16 @@ class ConversationalUserProfiler extends Agent {
             },
             
             example_possession_purchase: {
-                input: "USER: I bought a Tesla Model 3 last year",
+                input: "USER: I bought a 2015 Skoda Fabia last year",
                 output: {
                     "new_facts": [{
-                        "id": "fact_tesla_purchase_2025",
-                        "content": "User purchased a Tesla Model 3 in 2025",
+                        "id": "fact_skoda_purchase_2025",
+                        "content": "User purchased a 2015 Skoda Fabia in 2025",
                         "tags": ["possession", "vehicle", "purchase", "event"],
                         "type": "EVENT",
                         "metadata": {
                             "entity_scope": "POSSESSION",
-                            "item": "Tesla Model 3",
+                            "item": "Skoda Fabia 2015",
                             "category": "vehicle",
                             "year": 2025,
                             "action": "purchased"
@@ -412,7 +412,7 @@ class ConversationalUserProfiler extends Agent {
             case_assistant_recall_skip: {
                 input: """
 USER: Напомни, сколько я весил в прошлом году?
-ASSISTANT: Ты весил 76кг в январе 2025.
+ASSISTANT: Ты весил 68кг в январе 2025.
 """,
                 output: {
                     "new_facts": [],
@@ -423,7 +423,7 @@ ASSISTANT: Ты весил 76кг в январе 2025.
             
             case_echo_confirmation_trap: {
                 input: """
-ASSISTANT: Based on our history, you weigh 75kg.
+ASSISTANT: Based on our history, you weigh 67kg.
 USER: Да, всё верно.
 """,
                 output: {
@@ -435,41 +435,41 @@ USER: Да, всё верно.
             
             case_confirmation_with_update_extract: {
                 input: """
-ASSISTANT: Last time you weighed 74kg. How is it now?
-USER: Да, было 74. Сейчас 72кг.
+ASSISTANT: Last time you weighed 66kg. How is it now?
+USER: Да, было 66. Сейчас 65кг.
 """,
                 output: {
                     "new_facts": [{
                         "id": "fact_weight_current_mar2026",
-                        "content": "User currently weighs 72kg",
+                        "content": "User currently weighs 65kg",
                         "tags": ["health", "weight", "biometrics"],
                         "type": "STATE",
                         "metadata": {
                             "entity_scope": "SELF",
-                            "weight_kg": 72,
+                            "weight_kg": 65,
                             "date": "2026-03",
-                            "previous_weight_kg": 74
+                            "previous_weight_kg": 66
                         }
                     }],
                     "new_anchors": []
                 },
-                reasoning: "USER confirmed old fact (74kg) BUT provided NEW information (current 72kg). Extract ONLY the new data."
+                reasoning: "USER confirmed old fact (66kg) BUT provided NEW information (current 65kg). Extract ONLY the new data."
             },
             
             case_user_volunteers_fact_extract: {
                 input: """
-USER: Кстати, я вчера взвесился - 70 кило.
+USER: Кстати, я вчера взвесился - 64 кило.
 ASSISTANT: Хорошо, сохранил.
 """,
                 output: {
                     "new_facts": [{
                         "id": "fact_weight_mar2026",
-                        "content": "User weighs 70kg",
+                        "content": "User weighs 64kg",
                         "tags": ["health", "weight"],
                         "type": "STATE",
                         "metadata": {
                             "entity_scope": "SELF",
-                            "weight_kg": 70,
+                            "weight_kg": 64,
                             "date": "2026-03"
                         }
                     }],
@@ -480,18 +480,18 @@ ASSISTANT: Хорошо, сохранил.
             
             case_correction_extract: {
                 input: """
-ASSISTANT: You mentioned you're 35 years old.
-USER: Нет, мне 36.
+ASSISTANT: You mentioned you're 45 years old.
+USER: Нет, мне 46.
 """,
                 output: {
                     "new_facts": [{
                         "id": "fact_age_corrected_2026",
-                        "content": "User is 36 years old",
+                        "content": "User is 46 years old",
                         "tags": ["personal", "age", "demographics"],
                         "type": "STATE",
                         "metadata": {
                             "entity_scope": "SELF",
-                            "age_years": 36,
+                            "age_years": 46,
                             "date": "2026-02",
                             "corrects_previous": true
                         }

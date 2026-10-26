@@ -15,7 +15,7 @@ def _build(voice_provider=None):
     ctx = _UserContext(user_profile=profile, prompt_builder=MagicMock())
     fake = SimpleNamespace(
         _telephony=MagicMock(),
-        config={"TWILIO_PHONE_NUMBER": "+346001", "CLOUD_RUN_SERVICE_URL": "https://main.example.com"},
+        config={"TWILIO_PHONE_NUMBER": "+15550101", "CLOUD_RUN_SERVICE_URL": "https://main.example.com"},
         notification_service=MagicMock(),
         repository=MagicMock(),
         session_store=MagicMock(),

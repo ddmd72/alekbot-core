@@ -77,7 +77,7 @@ def _creds() -> OAuthCredentials:
 def _naive_meta(email_id: str) -> EmailMetadata:
     """Shaped like GmailProviderAdapter._parse_metadata output: naive UTC."""
     return EmailMetadata(
-        email_id=email_id, provider="gmail", subject="s", from_address="x@y.com",
+        email_id=email_id, provider="gmail", subject="s", from_address="x@example.net",
         date=datetime.now(timezone.utc).replace(tzinfo=None),
         labels=["INBOX"], snippet="",
     )
@@ -101,7 +101,7 @@ class TestNoCursorIncrementalWithNaiveEmailDates:
     ):
         """Page older than date_from → terminal-page branch, which also compares the two."""
         old = EmailMetadata(
-            email_id="old", provider="gmail", subject="s", from_address="x@y.com",
+            email_id="old", provider="gmail", subject="s", from_address="x@example.net",
             date=datetime(2020, 1, 1), labels=[], snippet="",
         )
         gmail.list_emails.return_value = ([old], "next-token")

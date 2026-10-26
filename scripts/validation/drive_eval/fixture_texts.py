@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Tuple
 
-# -- Contracts/Договор_ред1..3.docx: one family whose amounts and dates differ by version (§10.4, §17.8) ---------------
+# -- Contracts/Договір_ред1..3.docx: one family whose amounts and dates differ by version (§10.4, §17.8) ---------------
 DOGOVOR_VERSIONS: Dict[str, Dict[str, str]] = {
     "1": {"date": "03.11.2025", "amount": "40 000", "notice": "30"},
     "2": {"date": "20.02.2026", "amount": "45 000", "notice": "60"},
@@ -19,11 +19,11 @@ def dogovor_paragraphs(version: str) -> List[str]:
     v = DOGOVOR_VERSIONS[version]
     return [
         f"ДОГОВОР ОКАЗАНИЯ УСЛУГ № 17/25 (редакция {version})",
-        f"г. Самара, {v['date']}",
-        "ООО «Пример Сервис» (Исполнитель) и ИП Образцов А. В. (Заказчик) заключили настоящий договор о нижеследующем.",
+        f"г. Львів, {v['date']}",
+        "ТОВ «Приклад» (Исполнитель) и ФОП Мельник Т. (Заказчик) заключили настоящий договор о нижеследующем.",
         "1. Предмет договора. Исполнитель оказывает услуги по технической поддержке сайта Заказчика: обновления, "
         "резервное копирование и ответы на обращения в рабочие дни.",
-        f"2. Стоимость услуг составляет {v['amount']} рублей в месяц, без НДС. Оплата до 10 числа текущего месяца.",
+        f"2. Стоимость услуг составляет {v['amount']} гривен в месяц, без НДС. Оплата до 10 числа текущего месяца.",
         "3. Срок действия договора — до 31.12.2026 с автоматическим продлением на следующий календарный год.",
         f"4. Расторжение. Любая сторона вправе расторгнуть договор, письменно уведомив другую сторону за "
         f"{v['notice']} дней.",
@@ -34,12 +34,12 @@ def dogovor_paragraphs(version: str) -> List[str]:
 
 CONTRATO_HTML = """
 <h1>CONTRATO DE ARRENDAMIENTO DE VIVIENDA</h1>
-<p>En Alicante, a 8 de enero de 2026.</p>
-<p><b>REUNIDOS:</b> de una parte, D.ª Lucía Ejemplo Ruiz, en adelante la ARRENDADORA, y de otra, D. Marco Prueba Gil,
+<p>En Lisboa, a 8 de enero de 2026.</p>
+<p><b>REUNIDOS:</b> de una parte, D.ª Lúcia Exemplo, en adelante la ARRENDADORA, y de otra, D. Marco Teste,
 en adelante el ARRENDATARIO, que se reconocen capacidad para obligarse.</p>
 <h2>CLÁUSULAS</h2>
-<p><b>PRIMERA. Objeto.</b> La arrendadora cede en arrendamiento la vivienda situada en Calle Ficticia 12, 3.º B,
-03001 Alicante, con trastero n.º 4.</p>
+<p><b>PRIMERA. Objeto.</b> La arrendadora cede en arrendamiento la vivienda situada en Rua Fictícia 12, 3.º B,
+1000-000 Lisboa, con trastero n.º 4.</p>
 <p><b>SEGUNDA. Duración.</b> El contrato tendrá una duración de doce (12) meses a contar desde el 1 de febrero de 2026,
 prorrogable por anualidades.</p>
 <p><b>TERCERA. Renta.</b> La renta mensual es de 950,00 euros, pagaderos dentro de los cinco primeros días de cada mes
@@ -54,7 +54,7 @@ mediante transferencia bancaria.</p>
 LEASE_PORTO_HTML = """
 <h1>RESIDENTIAL LEASE AGREEMENT — PORTO</h1>
 <div class="cols">
-<p><b>Parties.</b> Example Properties Lda. (the Landlord) and Sam Placeholder (the Tenant) agree to the terms below.</p>
+<p><b>Parties.</b> Example Properties Lda. (the Landlord) and Hanna Doe (the Tenant) agree to the terms below.</p>
 <p><b>1. Premises.</b> The flat at Rua Imaginária 45, 2.º, 4000-123 Porto, furnished, with one parking space.</p>
 <p><b>2. Term.</b> Twelve months from 1 March 2026, renewable for further periods of twelve months.</p>
 <p><b>3. Rent.</b> EUR 1,250.00 per month, due on the 8th day of each month by bank transfer.</p>
@@ -83,16 +83,16 @@ fourteen days.</p>
 """
 
 RESUME_HTML = """
-<h1>Camille Exemple</h1>
-<p>Développeuse back-end — Lyon</p>
+<h1>Greta Klein</h1>
+<p>Développeuse back-end — Cologne</p>
 <h2>Expérience</h2>
-<p><b>2019–2024 · Société Fictive SA.</b> Conception d'une API de facturation (Python, PostgreSQL), réduction du temps
+<p><b>2019–2024 · Beispiel GmbH.</b> Conception d'une API de facturation (Python, PostgreSQL), réduction du temps
 de traitement des factures de 40 %.</p>
-<p><b>2016–2019 · Atelier Imaginaire.</b> Maintenance d'applications internes et migration vers des conteneurs.</p>
+<p><b>2016–2019 · Fiktiv Werkstatt GmbH.</b> Maintenance d'applications internes et migration vers des conteneurs.</p>
 <h2>Formation</h2>
-<p>Master en informatique, Université de Nulle-Part, 2016.</p>
+<p>Master en informatique, Universität Nirgendwo, Cologne, 2016.</p>
 <h2>Langues</h2>
-<p>Français (langue maternelle), anglais (C1), espagnol (B2).</p>
+<p>Allemand (langue maternelle), français (C1), anglais (B2).</p>
 """
 
 COEUR_HTML = """
@@ -122,14 +122,14 @@ TAX_SUMMARY_HTML = """
 
 SCHET_FAKTURA_HTML = """
 <h1>Счёт-фактура № 1847 от 05.02.2026</h1>
-<p>Продавец: ООО «Пример Сервис», ИНН 0000000000. Покупатель: ИП Образцов А. В.</p>
+<p>Продавец: ТОВ «Приклад», ЄДРПОУ 00000000. Покупатель: ФОП Мельник Т.</p>
 <table>
 <tr><th>Наименование</th><th>Кол-во</th><th>Цена</th><th>Сумма</th></tr>
 <tr><td>Техническая поддержка сайта, январь 2026</td><td>1</td><td>15 000,00</td><td>15 000,00</td></tr>
 <tr><td>Продление домена</td><td>1</td><td>1 260,00</td><td>1 260,00</td></tr>
 <tr><td>Резервное копирование</td><td>1</td><td>2 200,00</td><td>2 200,00</td></tr>
 </table>
-<p>Итого к оплате: 18 460,00 руб. НДС не облагается.</p>
+<p>Итого к оплате: 18 460,00 грн. НДС не облагается.</p>
 <p>Оплатить до 15.02.2026.</p>
 """
 
@@ -152,10 +152,10 @@ SCAN_HARDWARE_ES = [
     ("p", "Taladro percutor         1 x 69,90  69,90"),
     ("p", "Cinta americana          1 x 4,60    4,60"),
     ("b", "TOTAL  82,40 €"),
-    ("p", "IVA incluido (21 %). Gracias por su visita."),
+    ("p", "IVA incluido (23 %). Gracias por su visita."),
 ]
 RECEIPT_CAFE_RU = [
-    ("h", "КАФЕ «ЛАСТОЧКА»"),
+    ("h", "КАФЕ «ANDORINHA»"),
     ("p", "Кассовый чек № 0412"),
     ("p", "01.12.2025 19:18"),
     ("p", "Капучино 2 × 180,00 = 360,00"),
@@ -182,17 +182,17 @@ SCREEN_PARCEL_UK = [
 ]
 SCREEN_TRAIN_ES = [
     ("h", "Billete de tren"),
-    ("p", "Alicante → Madrid"),
+    ("p", "Lisboa → Oporto"),
     ("p", "23/03/2026 · 07:35 → 10:02"),
     ("b", "Coche 5 · Asiento 12A"),
     ("p", "Localizador: QX7P2M"),
     ("p", "Total: 34,80 €"),
 ]
 SCREEN_DENTIST_RU = [
-    ("h", "Стоматология «Улыбка»"),
+    ("h", "Стоматология «Clínica Ribeira»"),
     ("p", "Здравствуйте! Напоминаем о записи:"),
     ("b", "приём 3 декабря в 16:30"),
-    ("p", "кабинет 3, врач Сидорова Е. П."),
+    ("p", "кабинет 3, врач Марта Квіллен"),
     ("p", "Если планы изменились, ответьте на это сообщение."),
 ]
 
@@ -225,9 +225,9 @@ PLAN_VIAJE_MD = """# Plan de viaje: Roma
 
 FIESTAS_MD = """# Fiestas del año
 
-- 19 de marzo: Fallas (mascletà a las 14:00)
-- 24 de junio: Noche de San Juan, hogueras en la playa
-- 9 de octubre: Día de la Comunitat
+- 13 de junio: Santos Populares en Lisboa (sardinas a las 20:00)
+- 24 de junio: Noche de San Juan en Oporto, hogueras en la playa
+- 5 de octubre: Día de la Implantación de la República
 - 25 de diciembre: comida familiar en casa de la abuela
 """
 
@@ -260,8 +260,8 @@ WEEKLY_DIGEST_HTML = """<!doctype html>
 </body></html>
 """
 
-RENT_EML = """From: Lucia Ejemplo <landlord@example.org>
-To: Marco Prueba <tenant@example.org>
+RENT_EML = """From: Lucia Exemplo <landlord@example.org>
+To: Marco Teste <tenant@example.org>
 Subject: =?utf-8?q?Recibo_de_alquiler_=E2=80=94_noviembre_2026?=
 Date: Mon, 26 Oct 2026 09:30:00 +0100
 Message-ID: <rent-2026-11@example.org>
@@ -275,7 +275,7 @@ Te recuerdo que la renta de noviembre (950,00 €) vence el 5 de noviembre.
 Puedes hacer la transferencia como siempre, indicando "Alquiler noviembre" en el concepto.
 
 Un saludo,
-Lucía
+Lúcia
 """
 
 MEETING_VTT = """WEBVTT
@@ -299,15 +299,15 @@ MEETING_VTT = """WEBVTT
 USTAV_PARAGRAPHS = [
     "Устав клуба любителей шахмат «Ферзевый гамбит»",
     "1. Членом клуба может стать любой желающий старше 12 лет.",
-    "2. Членский взнос составляет 1 500 рублей в год и вносится до 1 февраля.",
+    "2. Членский взнос составляет 1 500 гривен в год и вносится до 1 февраля.",
     "3. Собрания проходят каждую среду в 19:00 в читальном зале библиотеки.",
     "4. Турнир клуба проводится ежегодно в октябре по швейцарской системе.",
 ]
 
 AKT_PARAGRAPHS = [
     "АКТ № 52 приймання-передачі виконаних робіт",
-    "м. Полтава, 28.02.2026",
-    "Виконавець: ФОП Приклад О. О. Замовник: ТОВ «Умовна Компанія».",
+    "м. Львів, 28.02.2026",
+    "Виконавець: ФОП Мельник Т. Замовник: ТОВ «Приклад».",
     "Виконавець виконав, а Замовник прийняв такі роботи: розробка макета сайту та адаптивної верстки.",
     "Загальна вартість робіт: 7 300,00 грн, без ПДВ.",
     "Сторони претензій одна до одної не мають.",
@@ -370,7 +370,7 @@ SITE_EXPORT_PACKAGE_JSON = """{
 VAULT_NOTE_TEMPLATE = ("# Note {n:03d}\n\nJournal entry number {n}. Read two chapters, watered the balcony plants and "
                        "wrote down three ideas for the weekend. Weather: mild, light wind.\n")
 INVOICE_2024_TEMPLATE = ("INVOICE INV-2024-{n:03d}\n"
-                         "Issued 2024-06-30 by Example Supplies Ltd to Sample Workshop SL.\n"
+                         "Issued 2024-06-30 by Example Supplies Ltd to Sample Workshop Lda.\n"
                          "Delivery {n:03d}: office paper (10 boxes), toner cartridges (2), cable ties.\n"
                          "Amount due: 1{n:03d}.50 EUR, payable within 30 days by bank transfer.\n"
                          "Thank you for your business. Questions about this invoice: quote its number.\n")

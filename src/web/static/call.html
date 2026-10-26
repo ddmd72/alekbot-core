@@ -531,7 +531,7 @@
       }
 
       /* ── Ringback ─────────────────────────────────────── */
-      // Spain dial tone: 425 Hz, 1.5 s on / 3.0 s off. Plays from Call tap until the first
+      // Ringback: 425 Hz (the common European tone), 1.5 s on / 3.0 s off. Plays from Call tap until the first
       // audible sound from Lelik (not until the WebRTC connection — the relay sends digital
       // silence frames before he actually speaks), or hang-up/error/ended/pagehide. Capped to
       // at most RINGBACK_LIVE_CAP_MS past "Live" regardless — it must never ring indefinitely.
