@@ -889,6 +889,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         short_link_service=short_link_service,
         skill_service=container.skill_service,
         memory_fact_service=container.memory_fact_service,
+        fact_answers=_fact_answer_service,
         long_turn_service=long_turn_service,
         doc_delivery_service=doc_delivery_service,
     )
@@ -950,6 +951,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                 short_link_service=short_link_service,
                 skill_service=container.skill_service,
                 memory_fact_service=container.memory_fact_service,
+                fact_answers=_fact_answer_service,
                 task_queue=agent_task_queue,
                 long_turn_service=long_turn_service,
                 doc_delivery_service=doc_delivery_service,

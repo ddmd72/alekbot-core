@@ -56,6 +56,7 @@ class TelegramAdapterFactory:
         short_link_service=None,
         skill_service=None,
         memory_fact_service=None,
+        fact_answers=None,
         task_queue=None,
         long_turn_service=None,
         doc_delivery_service=None,
@@ -111,6 +112,7 @@ class TelegramAdapterFactory:
             short_link_service=short_link_service,
             skill_service=skill_service,
             memory_fact_service=memory_fact_service,
+            fact_answers=fact_answers,
             long_turn_service=long_turn_service,
             doc_delivery_service=doc_delivery_service,
         )

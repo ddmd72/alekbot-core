@@ -5,7 +5,8 @@
 (`answer_updates`) and its trail reason; this service checks the question, follows the fact forward, writes through the
 typed write path or in place, and closes. `close_question` is every close (the owner's, the review's, a timeout,
 `resolved_elsewhere`): it clears the current slot with the close and releases the next question, and re-renders the
-question's message.
+question's message. `answer_reply` is the owner's reply at intake: it finds the question by the message replied to, takes
+the digit through `apply` or records the words, and appends the reply with its acknowledgement to history.
 """
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, Dict, Mapping, Optional
@@ -16,13 +17,16 @@ from ..domain.fact_answer_result import AnswerResult
 from ..domain.fact_lifecycle import walked_to_unseen_text
 from ..domain.fact_lifecycle_day import CounterField
 from ..domain.fact_review_answer_kind import AnswerKind
-from ..domain.fact_review_answers import answer_updates
+from ..domain.fact_review_answers import answer_updates, digit_answer
 from ..domain.fact_review_language import LABEL_KEYS, fact_question_message
 from ..domain.fact_review_question import AnswerSource, ClosedBy, FactReviewQuestion
+from ..domain.fact_review_frame import reply_part
 from ..domain.fact_review_question_close import QuestionClose
+from ..domain.fact_review_reply import ReplyPath, acknowledgement, needs_completing, reply_path
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, next_key, review_payload
 from ..domain.fact_update_outcome import UpdateRefusal
 from ..domain.fact_write_context import FactWriteContext, as_utc
+from ..domain.llm import Message, MessagePart
 from ..domain.pass_actor import PassActor
 from ..domain.ui_messages import UIMessage
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
@@ -52,8 +56,8 @@ def _utcnow() -> datetime:
 
 class FactAnswerService:
     """`apply(account_id, user_id, question_id, kind, source, at)` and `close_question(question, closed_by, answer,
-    source, note)`. Ports only; the texts and the owner's zone come from their one resolver each. `session_store` is
-    for the reply's history pair (T8f)."""
+    source, note)`, and `answer_reply(user_id, account_id, platform, channel_id, message_id, text, at)`. Ports only; the
+    texts and the owner's zone come from their one resolver each. `session_store` is for the reply's history pair."""
 
     def __init__(
         self,
@@ -144,6 +148,70 @@ class FactAnswerService:
         logger.info(f"[FactAnswer] question {question_id} answered {kind.value} ({source}); applied")
         return AnswerResult.APPLIED
 
+    async def answer_reply(
+        self, user_id: str, account_id: str, platform: str, channel_id: str, message_id: str, text: str, at: datetime,
+    ) -> Optional[str]:
+        """The owner's reply to the message `(platform, channel_id, message_id)`, taken at intake: the text to post back,
+        or None when the message is ordinary conversation.
+
+        The question is the one posted at that message (`by_message`: the same message id in another channel, platform or
+        user's question is not it). No such question, or no words in the reply, is None. A closed question answers
+        `MEMORY_ALREADY_ANSWERED`. An open, delivered one (`asked`, `unanswered`, or `pending` with its ref, which
+        `completed()` first moves to asked) takes the path `reply_path` names: a lone digit, read on the message the
+        owner saw, is applied through `apply` with source `digit` (`MEMORY_ANSWER_NOTED`; the next question is released
+        by the close, if this one was current); anything else is recorded for the review (`record_reply`,
+        `MEMORY_REPLY_NOTED`), applied and released by nothing here.
+
+        The acknowledgement and the reply are appended to the question's session as one pair, the user part the owner's
+        text verbatim under `reply_part`, the model part the acknowledgement; the append raises when it is not stored.
+        Nothing is posted here. The labels are read once, so a fallback is counted once.
+
+        None, with the message left to ordinary conversation and nothing lost, also when the reply could not be taken: a
+        digit that was not applied (`changed`, `conflict`, `not_applied`, no such question of this account), words the
+        store would not record (already shown to the review, or nothing more fits). Any error in the path is logged at
+        ERROR, counted (`reply_intake_failed`) and gives None; a pair that fails to append after an applied digit is such
+        an error, the answer stays applied."""
+        try:
+            return await self._answer_reply(user_id, account_id, platform, channel_id, message_id, text, as_utc(at))
+        except Exception as exc:
+            logger.error(
+                f"[FactAnswer] reply to {platform} message {message_id} not taken: {type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
+            await self._count(account_id, as_utc(at), {CounterField.REPLY_INTAKE_FAILED: 1})
+            return None
+
+    async def _answer_reply(
+        self, user_id: str, account_id: str, platform: str, channel_id: str, message_id: str, text: str, now: datetime,
+    ) -> Optional[str]:
+        question = await self._review_store.by_message(user_id, platform, channel_id, message_id)
+        if question is None or not text.strip():
+            return None
+        labels = await self._texts.labels_for(user_id, account_id)
+        digit = digit_answer(fact_question_message(question, labels), text) if question.is_open else None
+        path = reply_path(question, digit)
+        if path is None:
+            logger.warning(f"[FactAnswer] question {question.question_id} is open but was never delivered; reply left alone")
+            return None
+        if path is not ReplyPath.ALREADY_ANSWERED and needs_completing(question):
+            await self._review_store.complete_delivered(question.question_id)
+        result: Optional[AnswerResult] = None
+        if path is ReplyPath.DIGIT:
+            if digit is None:
+                raise RuntimeError("a digit path carries its digit")
+            result = await self.apply(account_id, user_id, question.question_id, digit, "digit", now)
+        elif path is ReplyPath.WORDS and not await self._review_store.record_reply(question.question_id, text, now):
+            logger.info(f"[FactAnswer] question {question.question_id}: the reply was not recorded; left to conversation")
+            return None
+        note = acknowledgement(path, result)
+        if note is None:
+            logger.info(f"[FactAnswer] question {question.question_id}: digit not applied ({result}); left to conversation")
+            return None
+        reply = labels[note.value]
+        await self._append_reply(question, reply_part(question.question_id, text), reply)
+        logger.info(f"[FactAnswer] question {question.question_id}: reply taken ({path.value}) and acknowledged")
+        return reply
+
     async def close_question(
         self,
         question: FactReviewQuestion,
@@ -219,6 +287,20 @@ class FactAnswerService:
                 f"[FactAnswer] message of question {question.question_id} not re-rendered on "
                 f"{question.message_ref.platform}: {type(exc).__name__}: {exc}"
             )
+
+    async def _append_reply(self, question: FactReviewQuestion, user_text: str, model_text: str) -> None:
+        """The owner's reply and its acknowledgement as one pair in the question's session, raising when not stored."""
+        if question.session_id is None:
+            raise ValueError(f"question {question.question_id} has no session to append to")
+        await self._session_store.append_messages_batch(
+            session_id=question.session_id,
+            owner_id=question.user_id,
+            messages=[
+                Message(role="user", parts=[MessagePart(text=user_text)]),
+                Message(role="model", parts=[MessagePart(text=model_text, full_text=model_text)]),
+            ],
+            raise_on_error=True,
+        )
 
     async def _not_applied(self, question: FactReviewQuestion, now: datetime, why: str) -> AnswerResult:
         logger.warning(f"[FactAnswer] question {question.question_id}: the answer's write was refused ({why})")
