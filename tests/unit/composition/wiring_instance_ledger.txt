@@ -9,6 +9,7 @@ src.adapters.claude_adapter.ClaudeAdapter 1  # by-design single instance
 src.adapters.claude_deep_research_adapter.ClaudeDeepResearchAdapter 1  # by-design single instance
 src.adapters.cloud_run_jobs_adapter.CloudRunJobsAdapter 1  # by-design single instance
 src.adapters.dateutil_recurrence_adapter.DateutilRecurrenceAdapter 1  # by-design single instance
+src.adapters.fact_management_adapter.FactManagementAdapter 1  # by-design the graph's one, built by container.create_fact_management_adapter for FactAnswerService (Facts S4 T10a); the agents' per-user copies are not walked
 src.adapters.file_localization_adapter.FileLocalizationAdapter 1  # by-design single instance
 src.adapters.firebase_auth_adapter.FirebaseAuthAdapter 1  # by-design single instance
 src.adapters.firestore_account_repo.FirestoreAccountRepository 1  # by-design single instance
@@ -24,11 +25,12 @@ src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-
 src.adapters.firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter 1  # by-design single instance
 src.adapters.firestore_email_job_repo.FirestoreEmailJobRepository 1  # by-design single instance
 src.adapters.firestore_fact_lifecycle_counters.FirestoreFactLifecycleCounters 1  # by-design single instance, held by the ServiceContainer (Facts S3, FACT_LIFECYCLE_RFC D10); the consolidator adds to it, the janitor shares it (application_graph.py FactLifecycleSweepService)
+src.adapters.firestore_fact_review_store.FirestoreFactReviewStore 1  # by-design single instance, held by the ServiceContainer as fact_review_store and shared by FactReviewService, FactAnswerService and FactQuestionTexts (Facts S4 T10a)
 src.adapters.firestore_indexed_email_repo.FirestoreIndexedEmailRepository 1  # by-design single instance
 src.adapters.firestore_invite_code_repo.FirestoreInviteCodeRepository 1  # by-design single instance
 src.adapters.firestore_long_turn_registry.FirestoreLongTurnRegistry 1  # by-design single instance
 src.adapters.firestore_memory_fact_draft_repository.FirestoreMemoryFactDraftRepository 1  # by-design single instance
-src.adapters.firestore_memory_write_lease.FirestoreMemoryWriteLease 1  # by-design single instance, held by the one ConsolidationService (Facts S2, decisions/fact_versions_one_writer.md)
+src.adapters.firestore_memory_write_lease.FirestoreMemoryWriteLease 1  # by-design single instance, built once as _memory_write_lease in application_graph.py and held by the one ConsolidationService and the one FactReviewService, so a consolidation and a memory review of an account never write at once (Facts S2, S4 T10a, decisions/fact_versions_one_writer.md)
 src.adapters.firestore_notification_state_adapter.FirestoreNotificationStateAdapter 1  # by-design single instance
 src.adapters.firestore_oauth_credentials_adapter.FirestoreOAuthCredentialsAdapter 1  # by-design single instance
 src.adapters.firestore_prompt_repository.FirestorePromptComponentRepository 1  # by-design single instance
@@ -61,6 +63,7 @@ src.adapters.notification_channel_factory.NotificationChannelFactory 1  # by-des
 src.adapters.openai_adapter.OpenAIAdapter 1  # by-design single instance
 src.adapters.openai_deep_research_adapter.OpenAIDeepResearchAdapter 1  # by-design single instance
 src.adapters.openai_transcription_adapter.OpenAITranscriptionAdapter 1  # by-design single instance
+src.adapters.plain_text_interactive_message_adapter.PlainTextInteractiveMessageAdapter 1  # by-design the telegram entry of the one InteractiveMessageRouter (application_graph.py, Facts S4 T10a)
 src.adapters.playwright_html_renderer.PlaywrightHtmlRenderer 1  # by-design single instance
 src.adapters.prompt_v3.firestore_agent_profile_repository.FirestoreAgentProfileRepository 1  # by-design single instance
 src.adapters.prompt_v3.firestore_blueprint_repository.FirestoreBlueprintRepository 1  # by-design single instance
@@ -69,6 +72,7 @@ src.adapters.security.composite_adapter.CompositeAdapter 3  # by-design assembly
 src.adapters.security.regex_adapter.RegexSecurityAdapter 3  # by-design one inside each of the three CompositeAdapters, stateless
 src.adapters.slack.channel_history.SlackChannelHistorySource 1  # by-design single instance
 src.adapters.slack.http_adapter.HTTPModeAdapter 1  # by-design single instance
+src.adapters.slack.interactive_message_adapter.SlackInteractiveMessageAdapter 1  # by-design the slack entry of the one InteractiveMessageRouter, over the Slack app's client (application_graph.py, Facts S4 T10a)
 src.adapters.slack.media_adapter.SlackMediaAdapter 2  # by-design the Slack factory's for rich content and the graph's for notification media (application_graph.py), stateless clients
 src.adapters.slack.webhook_adapter.SlackWebhookAdapter 1  # by-design single instance
 src.adapters.telegram.media_adapter.TelegramMediaAdapter 2  # by-design the Telegram factory's for rich content and the graph's for notification media (application_graph.py), stateless clients
@@ -107,7 +111,10 @@ src.services.email_embedding_repair_service.EmailEmbeddingRepairService 1  # by-
 src.services.email_indexing_service.EmailIndexingService 1  # by-design single instance
 src.services.email_review_service.EmailReviewService 1  # by-design single instance
 src.services.email_search_service.EmailSearchService 1  # by-design single instance
+src.services.fact_answer_service.FactAnswerService 1  # by-design the one answer path: FactReviewService holds it (application_graph.py, Facts S4 T8e, T10a)
 src.services.fact_lifecycle_sweep_service.FactLifecycleSweepService 1  # by-design one janitor: application_graph.py build_application_graph builds it once and hands it to WorkerHandler for the daily fact_lifecycle_sweep Scheduler job (FACT_LIFECYCLE_RFC D4); it holds the container's repository and counters
+src.services.fact_question_texts.FactQuestionTexts 1  # by-design single instance, shared by FactReviewService and FactAnswerService (application_graph.py, Facts S4 T7b, T10a)
+src.services.fact_review_service.FactReviewService 1  # by-design the one memory review, held by WorkerHandler for the fact_review task (application_graph.py, Facts S4 T8a, T10a)
 src.services.fact_write_service.FactWriteService 1  # by-design single instance
 src.services.file_access_token_service.FileAccessTokenService 1  # by-design single instance
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance
@@ -134,7 +141,7 @@ src.services.provider_breaker_alerter.ProviderBreakerAlerter 1  # by-design sing
 src.services.provider_registry.ProviderRegistry 4  # by-design LLM, deep-research jobs, image and video registries
 src.services.reminders_service.RemindersService 1  # by-design single instance
 src.services.rich_content_service.RichContentService 2  # by-design one per platform, Slack and Telegram
-src.services.search_enrichment_service.SearchEnrichmentService 2  # by-design the companion context assembler's and the per-user one in the agent factory cache (user_agent_factory.py:388)
+src.services.search_enrichment_service.SearchEnrichmentService 3  # by-design the companion context assembler's, the one inside FactAnswerService's FactManagementAdapter (application_graph.py, Facts S4 T10a) and the per-user one in the agent factory cache (user_agent_factory.py:391)
 src.services.session_service.SessionService 1  # by-design single instance
 src.services.short_link_service.ShortLinkService 1  # by-design single instance
 src.services.skill_file_resolver.SkillFileResolver 1  # by-design single instance

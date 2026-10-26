@@ -7,6 +7,7 @@ Each check reads the attribute that holds the dependency in the object `/worker`
 import pytest
 
 from src.adapters.fact_management_adapter import FactManagementAdapter
+from src.adapters.firestore_channel_binding_adapter import FirestoreChannelBindingAdapter
 from src.adapters.firestore_fact_review_store import FirestoreFactReviewStore
 from src.adapters.firestore_memory_write_lease import FirestoreMemoryWriteLease
 from src.adapters.plain_text_interactive_message_adapter import PlainTextInteractiveMessageAdapter
@@ -54,7 +55,8 @@ async def test_the_review_holds_the_graphs_own_objects_for_its_other_dependencie
     assert review._session_store is app.container.session_store
     assert review._task_queue is app.agent_task_queue and review._task_queue is not None
     assert review._alert_sink is app.alert_sink and review._alert_sink is not None
-    assert review._channel_bindings is not None
+    # The ledger counts one FirestoreChannelBindingAdapter in the graph, so the type proves it is the graph's one.
+    assert isinstance(review._channel_bindings, FirestoreChannelBindingAdapter)
 
 
 async def test_the_review_and_consolidation_hold_the_same_lease(prod_graph: ProdGraph):

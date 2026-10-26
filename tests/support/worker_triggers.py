@@ -24,7 +24,7 @@ OTHER_SERVICE: Dict[str, str] = {"drive_sync": "indexer_main.py /worker, deliver
 # A branch nothing sends. Empty: every handler has a trigger.
 MANUAL_ONLY: Dict[str, str] = {}
 # Names that stand for a task type: the module attribute they are read from, checked against its runtime value.
-CONSTANTS: Dict[str, str] = {"DRIVE_SYNC_TASK": "src.domain.drive_task_keys"}
+CONSTANTS: Dict[str, str] = {"DRIVE_SYNC_TASK": "src.domain.drive_task_keys", "FACT_REVIEW_TASK": "src.domain.fact_review_task_keys"}
 # The `task_type is None` branch of `_dispatch`: a queued Slack event has no task type by design.
 SLACK_EVENT_BRANCH = "<queued slack event>"
 
@@ -206,11 +206,14 @@ def trigger_types() -> Set[str]:
 # ----------------------------------------------------------------------------- the dispatch branches
 
 def _branch_name(test: ast.AST) -> str:
-    # task_type == "literal"
+    # task_type == "literal" | task_type == KNOWN_CONSTANT
     if (isinstance(test, ast.Compare) and isinstance(test.left, ast.Name) and test.left.id == "task_type"
-            and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)
-            and isinstance(test.comparators[0], ast.Constant) and isinstance(test.comparators[0].value, str)):
-        return test.comparators[0].value
+            and len(test.ops) == 1 and isinstance(test.ops[0], ast.Eq)):
+        right = test.comparators[0]
+        if isinstance(right, ast.Constant) and isinstance(right.value, str):
+            return right.value
+        if isinstance(right, ast.Name) and right.id in CONSTANTS:
+            return _constant_value(right.id)
     # task_type is None and "event" in payload and "session_id" in payload
     if (isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And) and isinstance(test.values[0], ast.Compare)
             and isinstance(test.values[0].left, ast.Name) and test.values[0].left.id == "task_type"
