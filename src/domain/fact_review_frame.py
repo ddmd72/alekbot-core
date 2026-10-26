@@ -26,6 +26,10 @@ def not_delivered_frame(question_id: str) -> str:
     return f"[System: memory review q={_checked(question_id)} not delivered — the owner did not see the question above]"
 
 
+# The model part of the not-delivered pair: what Alek "said" after `not_delivered_frame`. No question text.
+NOT_DELIVERED_REPLY = "(not delivered)"
+
+
 def reply_part(question_id: str, text: str) -> str:
     """The owner's reply to the question, verbatim, under the marker that tells every reader whose answer it is."""
     return f"[Reply to memory review q={_checked(question_id)}] {text}"
