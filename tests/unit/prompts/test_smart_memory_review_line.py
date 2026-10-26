@@ -1,4 +1,4 @@
-"""Smart's memory-review protocol (Facts S4 §3.10 last bullet, S4-D15, T7): `PROTOCOL_MEMORY_REVIEW` on the `smart` profile.
+"""Smart's memory-review protocol (Facts S4 §3.10 last bullet, S4-D15, T7): `PROTOCOL_MEMORY_REVIEW_MARKERS` on the `smart` profile.
 
 The pair in history is Alek's question; the owner answers by replying to the question message or in the Cabinet, and the
 system takes that reply; Smart answers briefly when asked about it, never asks again, never raises a not-delivered question,
@@ -9,7 +9,7 @@ from src.domain.fact_review_frame import not_delivered_frame, reply_part, review
 from tests.support import prompt_vocabulary as pv
 from tests.support.prompt_render import render_static, rendered_token_ids
 
-TOKEN_ID = "PROTOCOL_MEMORY_REVIEW"
+TOKEN_ID = "PROTOCOL_MEMORY_REVIEW_MARKERS"
 PROFILE = pv.load_profile("smart")
 DOC = pv.ser.token_from_file(pv.token_path(TOKEN_ID).read_text(encoding="utf-8"))
 BODY = DOC["content"]
@@ -36,7 +36,7 @@ def test_the_token_renders_in_smarts_protocols_section_after_long_turns():
     assert TOKEN_ID in rendered_token_ids("smart")
     text = render_static("smart")
     protocols = text[text.index("    protocols {"):]
-    assert protocols.index("PROTOCOL_LONG_TURNS {") < protocols.index("PROTOCOL_MEMORY_REVIEW {")
+    assert protocols.index("PROTOCOL_LONG_TURNS {") < protocols.index("PROTOCOL_MEMORY_REVIEW_MARKERS {")
 
 
 def test_the_owner_answers_by_a_reply_to_the_question_message_or_in_the_cabinet():
