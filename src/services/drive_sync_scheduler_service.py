@@ -52,7 +52,7 @@ from ..domain.drive_search import INACCESSIBLE_UNNOTIFIED_COUNTER, MAX_CHAIN_DEP
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_key, tick_payload
 from ..domain.language import LanguageCode
 from ..domain.notification_kind import NotificationKind
-from ..domain.notify_result import is_empty_answer
+from ..domain.notify_result import empty_answer_alert, is_empty_answer
 from ..domain.ui_messages import UIMessage
 from ..domain.user_drive import DriveConnection
 from ..ports.alert_sink import AlertSinkPort
@@ -282,8 +282,7 @@ class DriveSyncSchedulerService:
                                 "user_id": user_id[:8]})
             if self._alert_sink is not None:
                 try:
-                    await self._alert_sink.post("⚠️ Background turn ended with an empty answer (final, not retried). "
-                                                f"path=drive_reconnect_notice user={user_id[:8]}")
+                    await self._alert_sink.post(empty_answer_alert("drive_reconnect_notice", user_id))
                 except Exception as exc:
                     logger.warning(f"[DriveSync] background_empty_answer alert failed: {exc}")
             return 0

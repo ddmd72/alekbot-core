@@ -15,13 +15,32 @@ See: docs/10_rfcs/NOTIFICATION_DELIVERY_REFACTOR_RFC.md § 6
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence
 
 from .agent import AgentStatus
 
 
 # Error string an orchestrator/formatter agent returns when its turn ended with no answer at all.
 EMPTY_ANSWER_ERROR = "empty_answer"
+
+
+def is_empty_turn(
+    text: Optional[str], structured: object, delivery_items: Sequence[object], async_dispatches: Sequence[object],
+) -> bool:
+    """Whether a turn ended with nothing the user would see: no text, no rich content, no delivery items and no async
+    dispatch still to answer. Every orchestrator that returns ``EMPTY_ANSWER_ERROR`` decides it here; each passes what
+    its own delivery carries (an agent that never delivers rich content or items passes ``None`` and ``()``), because a
+    part the caller drops cannot make the turn non-empty."""
+    return not (text or "").strip() and structured is None and not delivery_items and not async_dispatches
+
+
+def empty_answer_alert(path: str, user_id: str, note_id: Optional[str] = None) -> str:
+    """The ops alert for a background turn that ended with an empty answer (final, not retried): which path, which user
+    (the first 8 characters of the id) and, for a reminder, which note. No content."""
+    return (
+        "⚠️ Background turn ended with an empty answer (final, not retried). "
+        f"path={path} user={user_id[:8]}" + (f" note={note_id}" if note_id else "")
+    )
 
 
 @dataclass(frozen=True)

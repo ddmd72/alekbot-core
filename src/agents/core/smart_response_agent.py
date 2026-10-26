@@ -26,6 +26,7 @@ from ...domain.agent import (
     RoutingMetadata,
 )
 from ...domain.messaging import SmartResponse
+from ...domain.notify_result import EMPTY_ANSWER_ERROR, is_empty_turn
 from ...domain.exceptions import TranscriptLockedError
 from ...domain.turn_clock import CURRENT_TURN_CLOCK
 from ...domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
@@ -591,9 +592,8 @@ class SmartResponseAgent(BaseAgent):
             if (not smart_response.text.strip() and delegation_result.async_dispatches):
                 logger.info("empty_text_after_async agent=%s intents=%s",
                             self.agent_id, delegation_result.async_dispatches)
-            if (not smart_response.text.strip() and smart_response.structured_data is None
-                    and not delegation_result.delivery_items
-                    and not delegation_result.async_dispatches):
+            if is_empty_turn(smart_response.text, smart_response.structured_data, delegation_result.delivery_items,
+                             delegation_result.async_dispatches):
                 logger.error(
                     "empty_answer agent=%s model=%s terminal=%s",
                     self.agent_id, eff.ctx.model_name, delegation_result.terminal_tool_args is not None,
@@ -601,7 +601,7 @@ class SmartResponseAgent(BaseAgent):
                            "via_terminal_tool": delegation_result.terminal_tool_args is not None},
                 )
                 return AgentResponse.failure(
-                    task_id=message.task_id, agent_id=self.agent_id, error="empty_answer",
+                    task_id=message.task_id, agent_id=self.agent_id, error=EMPTY_ANSWER_ERROR,
                 )
             total_tokens = delegation_result.total_tokens
             delivery_items = delegation_result.delivery_items

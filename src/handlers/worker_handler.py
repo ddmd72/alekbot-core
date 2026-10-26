@@ -80,7 +80,7 @@ from ..domain.exceptions import OAuthGrantRevokedError
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_MODES
 from ..domain.interactive_choice import INTERACTIVE_CHOICE_TASK, InteractiveChoice
 from ..domain.notification_kind import NotificationKind
-from ..domain.notify_result import is_empty_answer
+from ..domain.notify_result import empty_answer_alert, is_empty_answer
 from ..domain.workspace import fire_key as workspace_fire_key
 from ..infrastructure.notification_sla import dispatch_deadline_s
 from ..handlers.agent_worker_handler import AgentWorkerHandler
@@ -587,10 +587,7 @@ class WorkerHandler:
         if self._billing_webhook is None:
             return
         try:
-            await self._billing_webhook.post(
-                f"⚠️ Background turn ended with an empty answer (final, not retried). "
-                f"path={path} user={user_id[:8]}" + (f" note={note_id}" if note_id else "")
-            )
+            await self._billing_webhook.post(empty_answer_alert(path, user_id, note_id))
         except Exception as exc:
             logger.warning("[Worker] background_empty_answer alert failed: %s", exc)
 

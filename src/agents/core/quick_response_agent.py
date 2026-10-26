@@ -45,6 +45,7 @@ from ...ports.llm_port import AgentExecutionContext
 from ...utils.logger import logger
 from ...utils.llm_response_parser import extract_structured_response
 from ...domain.messaging import SmartResponse
+from ...domain.notify_result import EMPTY_ANSWER_ERROR, is_empty_turn
 
 if TYPE_CHECKING:
     from ...services.history_summary_service import HistorySummaryService
@@ -272,9 +273,8 @@ class QuickResponseAgent(BaseAgent):
             if (not smart_response.text.strip() and delegation_result.async_dispatches):
                 logger.info("empty_text_after_async agent=%s intents=%s",
                             self.agent_id, delegation_result.async_dispatches)
-            if (not smart_response.text.strip() and final_rich is None
-                    and not delegation_result.delivery_items
-                    and not delegation_result.async_dispatches):
+            if is_empty_turn(smart_response.text, final_rich, delegation_result.delivery_items,
+                             delegation_result.async_dispatches):
                 logger.error(
                     "empty_answer agent=%s model=%s terminal=%s",
                     self.agent_id, self.model_name, delegation_result.terminal_tool_args is not None,
@@ -282,7 +282,7 @@ class QuickResponseAgent(BaseAgent):
                            "via_terminal_tool": delegation_result.terminal_tool_args is not None},
                 )
                 return AgentResponse.failure(
-                    task_id=message.task_id, agent_id=self.agent_id, error="empty_answer",
+                    task_id=message.task_id, agent_id=self.agent_id, error=EMPTY_ANSWER_ERROR,
                 )
 
             # Post-processing: fire-and-forget history summary (plain-text path).
