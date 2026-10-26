@@ -77,7 +77,9 @@ from ..services.memory_fact_service import MemoryFactService
 from ..services.workspace_service import WorkspaceService
 from ..adapters.firestore_memory_fact_draft_repository import FirestoreMemoryFactDraftRepository
 from ..adapters.firestore_fact_lifecycle_counters import FirestoreFactLifecycleCounters
+from ..adapters.firestore_fact_review_store import FirestoreFactReviewStore
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
+from ..ports.fact_review_store import FactReviewStore
 from ..services.skill_file_resolver import SkillFileResolver
 from ..services.file_conversion_service import FileConversionService
 from ..agents.email_classification_agent import EmailClassificationAgent
@@ -397,6 +399,9 @@ class ServiceContainer:
 
         # The fact lifecycle's per-day numbers (D10): the consolidator adds its expiry tool errors, the janitor its run.
         self.fact_lifecycle_counters: FactLifecycleCountersPort = FirestoreFactLifecycleCounters(db_client, env_config)
+        # The memory review's questions and per-account state (Facts S4): the review, the owner's answers and the
+        # question texts share this one store.
+        self.fact_review_store: FactReviewStore = FirestoreFactReviewStore(db_client, env_config)
 
         # Built after FileConversionService: copy sources (uploads, delivered documents) go through it (§12).
         self.workspace_service = (

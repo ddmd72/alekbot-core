@@ -35,6 +35,8 @@ Supported task_types:
   - fact_lifecycle_sweep          → the fact janitor (FACT_LIFECYCLE_RFC D4): stale every current fact whose `expires_at`
                                      has passed, unless the account's breaker is tripped; log-only until
                                      `FACT_LIFECYCLE_SWEEP_DRY_RUN=0`. Cron, daily 09:30 Europe/Madrid, not retried; a failed run answers 500
+  - fact_review                   → FactReviewService.run(user_id, account_id, mode): the owner's memory review (`daily`, the
+                                     default) or only the send of the next question (`next`); another mode is a 400
   - start_drive_sync              → fan-out: DriveSyncSchedulerService enqueues one drive_sync tick per
                                      user on the drive queue (the indexer service runs it), raises the
                                      staleness alert and the one reconnect notice (USER_DRIVE_INDEXING_RFC
@@ -66,11 +68,13 @@ if TYPE_CHECKING:
     from ..services.companion_extraction_service import CompanionExtractionService
     from ..services.drive_sync_scheduler_service import DriveSyncSchedulerService
     from ..services.fact_lifecycle_sweep_service import FactLifecycleSweepService
+    from ..services.fact_review_service import FactReviewService
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain import deep_research_notices as dr_notices
 from ..domain.exceptions import OAuthGrantRevokedError
+from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_MODES
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import is_empty_answer
 from ..domain.workspace import fire_key as workspace_fire_key
@@ -135,8 +139,10 @@ class WorkerHandler:
         deep_research_fetch: "Optional[Callable[[str], Awaitable[dict]]]" = None,
         prompt_content_store: "Optional[PromptContentStore]" = None,
         fact_lifecycle_sweep: "Optional[FactLifecycleSweepService]" = None,
+        fact_review: "Optional[FactReviewService]" = None,
     ) -> None:
         self._fact_lifecycle_sweep = fact_lifecycle_sweep
+        self._fact_review = fact_review
         self._task_claims = task_claims
         # Keys of attempts running in this process. Check-and-add has no await between, so
         # asyncio's single thread makes it race-free without a lock.
@@ -333,6 +339,8 @@ class WorkerHandler:
             return await self._handle_start_drive_sync()
         elif task_type == "fact_lifecycle_sweep":
             return await self._handle_fact_lifecycle_sweep()
+        elif task_type == FACT_REVIEW_TASK:
+            return await self._handle_fact_review(payload)
         elif task_type is None and "event" in payload and "session_id" in payload:
             # Queued Slack event (GcpTaskQueue.enqueue_slack_event): no task_type by design.
             if self._slack_worker is None:
@@ -1299,3 +1307,26 @@ class WorkerHandler:
             logger.error(f"[Worker] fact_lifecycle_sweep failed ({type(exc).__name__})", exc_info=True)
             return {"error": "sweep_failed", "error_type": type(exc).__name__}, 500
         return totals, 200
+
+    async def _handle_fact_review(self, payload: dict) -> Tuple[dict, int]:
+        """One memory-review run (`daily`, the default) or the send of the next question (`next`).
+
+        The ids and the mode are checked here, before the service is called: a missing id or a mode that is neither is
+        a 400 and nothing runs. Every result of the run is 200-shaped (`completed`, `deferred`, `failed`, `not_owner`);
+        a lease, store or queue error raises, so the claim is released and Cloud Tasks retries.
+        """
+        if self._fact_review is None:
+            logger.warning(f"[Worker] {FACT_REVIEW_TASK}: review service not configured")
+            return {"error": "fact review not configured"}, 501
+        user_id = payload.get("user_id")
+        account_id = payload.get("account_id")
+        mode = payload.get("mode")
+        if not user_id or not account_id:
+            logger.warning(f"[Worker] {FACT_REVIEW_TASK}: missing user_id or account_id")
+            return {"error": "missing user_id or account_id"}, 400
+        if mode is None:  # the service's default mode, `daily`
+            return await self._fact_review.run(user_id=user_id, account_id=account_id), 200
+        if not isinstance(mode, str) or mode not in REVIEW_MODES:
+            logger.warning(f"[Worker] {FACT_REVIEW_TASK}: unknown mode {mode!r}")
+            return {"error": "unknown mode"}, 400
+        return await self._fact_review.run(user_id=user_id, account_id=account_id, mode=mode), 200
