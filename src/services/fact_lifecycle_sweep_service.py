@@ -14,11 +14,15 @@ questions the store's own expiry has not removed. Without a review store (S3 beh
 import asyncio
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from ..domain.due_fact import DueFact
 from ..domain.exceptions import FactWriteConflict
-from ..domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot
+from ..domain.fact_lifecycle_alerts import (
+    account_message, breaker_alert, expiry_errors_alert, purge_alert, review_alerts,
+)
+from ..domain.fact_lifecycle_day import REVIEW_FIGURES, CounterField, FactLifecycleDay, SweepSnapshot
+from ..domain.fact_lifecycle_review_line import QuestionStanding, question_standing
 from ..domain.fact_lifecycle_run_guard import run_guard_until
 from ..domain.fact_lifecycle_sweep import (
     BREAKER_OK, PURGE_OVERDUE_AFTER, breaker_label, daily_line, plan_sweep, stale_fields,
@@ -141,15 +145,19 @@ class FactLifecycleSweepService:
                   "no_decision": 0, "breaker_tripped": 0, "review_enqueued": 0}
         rows: List[FactLifecycleDay] = []
         waiting: Dict[str, int] = {}
+        standing: Dict[str, QuestionStanding] = {}
+        shown = (CounterField.EXPIRY_TOOL_ERRORS, *REVIEW_FIGURES)
         for account_id in accounts:
             progress["stage"], progress["account"] = "the account sweep", account_id
             snapshot, due_waiting = await self._sweep_account(
                 account_id, day, now, due_by_account.get(account_id, []), backlog.get(account_id, (0, None)),
                 previous_runs.get(account_id), states.get(account_id), questions_by_account.get(account_id, []),
+                yesterday.get(account_id),
             )
             waiting[account_id] = due_waiting
-            tool_errors = yesterday[account_id].expiry_tool_errors if account_id in yesterday else 0
-            rows.append(FactLifecycleDay.of(account_id, day, snapshot, {CounterField.EXPIRY_TOOL_ERRORS: tool_errors}))
+            standing[account_id] = question_standing(questions_by_account.get(account_id, []))
+            prior = yesterday.get(account_id)
+            rows.append(FactLifecycleDay.of(account_id, day, snapshot, prior.counts(shown) if prior else {}))
             totals["accounts"] += 1
             totals["due"] += snapshot.due
             totals["staled"] += snapshot.staled
@@ -161,13 +169,15 @@ class FactLifecycleSweepService:
             totals["review_enqueued"] += snapshot.review_enqueued
         progress["stage"], progress["account"] = "the purge check", ""
         purge_overdue = await self._purge_overdue(now)
+        if purge_overdue:
+            await self._post(purge_alert(purge_overdue))
         progress["stage"] = "the ops line"
         seen = set(accounts)
         rows.extend(
             FactLifecycleDay(account_id=row.account_id, day=day, expiry_tool_errors=row.expiry_tool_errors)
             for row in yesterday.values() if row.account_id not in seen and row.expiry_tool_errors
         )
-        await self._post_line(now, day, rows, waiting)
+        await self._post_line(now, day, rows, waiting, standing, purge_overdue)
         return {**totals, "purge_overdue": purge_overdue, "dry_run": self._dry_run}
 
     async def _review_reads(self) -> Tuple[Dict[str, List[FactReviewQuestion]], Dict[str, FactReviewState]]:
@@ -196,19 +206,23 @@ class FactLifecycleSweepService:
         previous_run: Optional[datetime],
         review_state: Optional[FactReviewState],
         questions: Sequence[FactReviewQuestion],
+        yesterday: Optional[FactLifecycleDay] = None,
     ) -> Tuple[SweepSnapshot, int]:
         """One account's run. Returns its snapshot and the due facts it left to their open questions (a figure of the
-        run: the ops line shows it, the snapshot does not)."""
+        run: the ops line shows it, the snapshot does not). `yesterday` is the account's row of the day before, whose
+        figures the alerts read. The run's alerts go out as one 🚨 after the review is enqueued."""
         stale_count, oldest = backlog
         state = review_state or FactReviewState(account_id=account_id)
         owner = await self._owner(account_id)
         interval = await self._interval(account_id, owner)
+        held = pool(stale_count, questions)
         plan = plan_sweep(
             dues, stale_count, open_fact_ids(questions), previous_run, now,
-            pool=pool(stale_count, questions), last_review_at=state.last_review_at, interval=interval,
+            pool=held, last_review_at=state.last_review_at, interval=interval,
         )
         reason = plan.breaker_reason
         staled = conflicts = would_stale = deferred = 0
+        breaker_line: Optional[str] = None
 
         if self._dry_run:
             would_stale = len(plan.ordered)
@@ -216,9 +230,10 @@ class FactLifecycleSweepService:
         elif reason is None:
             staled, conflicts, deferred = await self._stale(account_id, now, plan.ordered, plan.headroom)
         else:
-            await self._hold_back(account_id, reason, len(plan.ordered))
+            breaker_line = self._hold_back(account_id, reason, len(plan.ordered))
 
         enqueued = await self._enqueue_review(account_id, owner, state, questions, interval, stale_count + staled, now)
+        await self._alert(account_id, now, breaker_line, held, oldest, interval, state, questions, yesterday)
         breaker = breaker_label(reason, self._dry_run)
         snapshot = SweepSnapshot(
             run_at=now,
@@ -325,21 +340,67 @@ class FactLifecycleSweepService:
                 await self._repo.refresh_biographical_context_cache(account_id)     # a staled fact leaves every prompt (D5)
         return staled, conflicts, len(decided) - attempted
 
-    async def _hold_back(self, account_id: str, reason: str, held: int) -> None:
-        """The breaker is tripped in write mode: log it; alert only when a due fact with a decision was actually held back
-        (the snapshot and the ops line report a tripped breaker either way)."""
+    def _hold_back(self, account_id: str, reason: str, held: int) -> Optional[str]:
+        """The breaker is tripped in write mode: log it; the alert line is returned only when a due fact with a decision was
+        actually held back (the snapshot and the ops line report a tripped breaker either way)."""
         logger.warning(f"[FactLifecycle] breaker tripped for account {account_id[:8]}: {reason}; {held} due facts not staled")
-        if held:
-            await self._post(
-                f"🚨 Fact lifecycle breaker tripped for account {account_id[:8]}: {reason}. {held} due facts were not staled."
+        return breaker_alert(account_id, reason, held) if held else None
+
+    async def _alert(
+        self,
+        account_id: str,
+        now: datetime,
+        breaker_line: Optional[str],
+        held: int,
+        oldest: Optional[datetime],
+        interval: int,
+        state: FactReviewState,
+        questions: Sequence[FactReviewQuestion],
+        yesterday: Optional[FactLifecycleDay],
+    ) -> None:
+        """The account's one 🚨 of the run (log-only mode too): the breaker, when it held facts back, and the conditions of
+        `review_alerts` and `expiry_errors_alert`. The marks the repeat rules need are written before the post, so a lost
+        post is not repeated. The review's conditions need its store; without one only the breaker and the expiry
+        errors can be reported."""
+        lines: List[str] = []
+        expiry = expiry_errors_alert(yesterday.expiry_tool_errors if yesterday else 0)
+        if expiry is not None:
+            lines.append(expiry)
+        if self._review_store is not None:
+            found = review_alerts(
+                pool=held, oldest_stale=oldest, interval=interval, state=state, questions=questions,
+                reply_intake_failed=yesterday.reply_intake_failed if yesterday else 0, now=now,
             )
+            lines = [*found.lines, *lines]
+            if found.record_oldest:
+                await self._mark(account_id, "oldest alert", self._review_store.mark_oldest_alert(account_id, now))
+            if found.queue is not None:
+                await self._mark(
+                    account_id, "queue alert",
+                    self._review_store.mark_queue_alert(account_id, now if found.queue == "raise" else None),
+                )
+        message = account_message(account_id, breaker_line, lines)
+        if message is not None:
+            await self._post(message)
+
+    @staticmethod
+    async def _mark(account_id: str, what: str, write: Awaitable[bool]) -> None:
+        """A review-state mark; an account without a state document gives False, which only means the alert may repeat."""
+        if not await write:
+            logger.warning(f"[FactLifecycle] the {what} of account {account_id[:8]} was not recorded: no review state")
 
     async def _post_line(
-        self, now: datetime, day: date, rows: List[FactLifecycleDay], waiting: Mapping[str, int]
+        self,
+        now: datetime,
+        day: date,
+        rows: List[FactLifecycleDay],
+        waiting: Mapping[str, int],
+        standing: Mapping[str, QuestionStanding],
+        purge_overdue: int,
     ) -> None:
         """Post the day's line after the run, once a day. The day is claimed before the post: a failed post loses the
         day's line (the snapshots stay in the store), where claiming after could post it twice."""
-        line = daily_line(now, rows, self._dry_run, waiting)
+        line = daily_line(now, rows, self._dry_run, waiting, standing=standing, purge_overdue=purge_overdue)
         if line is None or self._alert_sink is None:
             return
         try:

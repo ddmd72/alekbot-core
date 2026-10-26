@@ -9,6 +9,7 @@ from .entities import FactState
 from .env_switch import is_off_value
 from .fact_lifecycle import lifecycle_event, lifecycle_fields, with_event
 from .fact_lifecycle_day import FactLifecycleDay
+from .fact_lifecycle_review_line import QuestionStanding, has_review_line, review_segments
 from .fact_review_rules import POOL_CAP
 from .fact_write_context import as_utc
 from .settings import DEFAULT_FACT_REVIEW_INTERVAL_DAYS
@@ -131,35 +132,45 @@ def sweep_dry_run(raw: Optional[str]) -> bool:
 
 
 def daily_line(
-    run_at: datetime, rows: Sequence[FactLifecycleDay], dry_run: bool, waiting: Optional[Mapping[str, int]] = None
+    run_at: datetime,
+    rows: Sequence[FactLifecycleDay],
+    dry_run: bool,
+    waiting: Optional[Mapping[str, int]] = None,
+    *,
+    standing: Optional[Mapping[str, QuestionStanding]] = None,
+    purge_overdue: int = 0,
 ) -> Optional[str]:
-    """The day's ops line for the run at `run_at`: one line per account with something to say, or None when no row has.
+    """The day's ops line for the run at `run_at`: one line per account with something to say, or None when nothing is.
 
-    `expiry_tool_errors` of a row is the figure the caller chose to show (the service passes yesterday's). `waiting`
-    gives, by account id, the due facts the run left to their open questions (`SweepPlan.due_waiting`); it is a figure of
-    the run, not of the stored row.
+    `expiry_tool_errors` and the review counters of a row are the figures the caller chose to show (the service passes
+    yesterday's). `waiting` gives, by account id, the due facts the run left to their open questions
+    (`SweepPlan.due_waiting`) and `standing` the questions its queue held (`question_standing`); both are figures of the
+    run, not of the stored row. `purge_overdue` is the run-level figure printed under the header when above zero; on a
+    day with no account line it still earns the header and that line.
     """
     held = waiting or {}
+    queues = standing or {}
     lines = [
-        _account_line(row, held.get(row.account_id, 0))
-        for row in sorted(rows, key=lambda r: r.account_id) if _worth_a_line(row, held.get(row.account_id, 0))
+        _account_line(row, held.get(row.account_id, 0), queues.get(row.account_id, QuestionStanding()))
+        for row in sorted(rows, key=lambda r: r.account_id)
+        if _worth_a_line(row, held.get(row.account_id, 0), queues.get(row.account_id, QuestionStanding()))
     ]
-    if not lines:
+    if not lines and not purge_overdue:
         return None
     moment = run_at.astimezone(timezone.utc) if run_at.tzinfo is not None else run_at
     header = f"🧹 Fact lifecycle — run {moment:%Y-%m-%d %H:%M} UTC" + (" · log-only" if dry_run else "")
-    return "\n".join([header, *lines])
+    run_level = [f"purge overdue {purge_overdue}"] if purge_overdue else []
+    return "\n".join([header, *run_level, *lines])
 
 
-def _worth_a_line(row: FactLifecycleDay, waiting: int) -> bool:
+def _worth_a_line(row: FactLifecycleDay, waiting: int, standing: QuestionStanding) -> bool:
     numbers = (row.due, row.newly_due, row.no_decision, row.staled, row.would_stale, row.deferred,
-               row.stale_conflicts, row.backlog, row.expiry_tool_errors, waiting)
-    return any(numbers) or row.breaker not in ("", BREAKER_OK)
+               row.stale_conflicts, row.backlog, row.expiry_tool_errors)
+    return any(numbers) or row.breaker not in ("", BREAKER_OK) or has_review_line(row, waiting, standing)
 
 
-def _account_line(row: FactLifecycleDay, waiting: int) -> str:
+def _account_line(row: FactLifecycleDay, waiting: int, standing: QuestionStanding) -> str:
     oldest = f" (oldest {row.oldest_stale_days}d)" if row.oldest_stale_days is not None else ""
-    waits = f" | due_waiting {waiting}" if waiting else ""
     return (
         f"{row.account_id[:8]}: due {row.due} (new {row.newly_due}, no decision {row.no_decision})"
         f" | staled {row.staled} / would stale {row.would_stale} / deferred {row.deferred}"
@@ -167,5 +178,5 @@ def _account_line(row: FactLifecycleDay, waiting: int) -> str:
         f" | breaker {row.breaker or BREAKER_OK}"
         f" | backlog {row.backlog}{oldest}"
         f" | expiry tool errors yesterday {row.expiry_tool_errors}"
-        f"{waits}"
+        f"{review_segments(row, waiting, standing)}"
     )

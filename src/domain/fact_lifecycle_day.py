@@ -2,7 +2,7 @@
 from dataclasses import dataclass, fields
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Any, Dict, Final, Mapping, Optional, Tuple
+from typing import Any, Dict, Final, Iterable, Mapping, Optional, Tuple
 
 
 class CounterField(StrEnum):
@@ -34,7 +34,32 @@ class CounterField(StrEnum):
 
 
 # The counters of the memory review and its answers: every counter but the expiry tool errors, which the expiry path counts.
-REVIEW_FIGURES: Final[Tuple[CounterField, ...]] = tuple(f for f in CounterField if f is not CounterField.EXPIRY_TOOL_ERRORS)
+# Listed, not derived: the ops line prints the first seventeen in this order (`fact_lifecycle_review_line`), the last five
+# are counted and stored but have no place on it. A new counter is added here by hand, and a test refuses one that is missing.
+REVIEW_FIGURES: Final[Tuple[CounterField, ...]] = (
+    CounterField.REVIEWED,
+    CounterField.REVIVED,
+    CounterField.REWRITTEN,
+    CounterField.ARCHIVED_BY_REVIEW,
+    CounterField.INVALIDATED,
+    CounterField.SUPERSEDED,
+    CounterField.KEPT,
+    CounterField.QUEUED,
+    CounterField.QUESTIONS_SENT,
+    CounterField.ANSWERED_BY_DIGIT,
+    CounterField.ANSWERED_BY_BUTTON,
+    CounterField.ANSWERED_IN_CABINET,
+    CounterField.CLOSED_BY_REPLY,
+    CounterField.TIMED_OUT,
+    CounterField.REVIEW_FAILED,
+    CounterField.REVIEW_REFUSALS,
+    CounterField.REPLY_INTAKE_FAILED,
+    CounterField.NOT_DELIVERED,
+    CounterField.ANSWERS_NOT_APPLIED,
+    CounterField.REPLIES_IN_WORDS,
+    CounterField.ALREADY_ANSWERED,
+    CounterField.LABELS_FALLBACK,
+)
 
 
 def check_count(name: str, value: Any) -> None:
@@ -120,6 +145,10 @@ class FactLifecycleDay:
     already_answered: int = 0
     reply_intake_failed: int = 0
     labels_fallback: int = 0
+
+    def counts(self, figures: Iterable[CounterField]) -> Dict[CounterField, int]:
+        """This row's value of each of `figures`."""
+        return {figure: getattr(self, figure.value) for figure in figures}
 
     def has_review_figures(self) -> bool:
         """Any counter of the memory review or its answers is above zero (`REVIEW_FIGURES`)."""
