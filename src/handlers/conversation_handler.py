@@ -1112,8 +1112,9 @@ class ConversationHandler(ConversationHandlerPort):
     ) -> bool:
         """Offer a reply (a thread reply on Slack, a Telegram reply) to the memory review's `answer_reply` and, when it
         answers, post that text where the owner replied; True then, and the turn ends (no status, no LLM call, no session
-        write here: the service appended the pair). Only a text-only message of an unbound channel is offered. The
-        handler decides nothing about questions: None from the service leaves the message to the ordinary flow."""
+        write here: the service appended the pair). The text goes out as a reply to the question's message. Only a
+        text-only message of an unbound channel is offered. The handler decides nothing about questions: None from the
+        service leaves the message to the ordinary flow."""
         replied_to = context.metadata.get("reply_to_message_id")
         if self._fact_answers is None or not replied_to or mode.is_bound or context.attachments or not context.text:
             return False
@@ -1128,7 +1129,7 @@ class ConversationHandler(ConversationHandlerPort):
         if answer is None:
             return False
         try:
-            await response_channel.send_message(answer, thread_id=context.thread_id)
+            await response_channel.send_reply(answer, str(replied_to))
         except Exception as e:
             # The reply is taken and stored; falling through to the LLM would answer it a second time.
             logger.error("❌ [ConversationHandler] Memory review acknowledgement not posted for user %s: %s",

@@ -118,6 +118,15 @@ class ResponseChannel(Protocol):
         """
         raise NotImplementedError(f"{self.platform} cannot return a message reference")
 
+    async def send_reply(self, text: str, to_message_id: str) -> Any:
+        """
+        Post `text` tied to the message `to_message_id` of this channel, the way the platform ties a reply to a message
+        (a thread reply on Slack, a reply on Telegram). A failure is raised: the caller decides what it means.
+
+        Not abstract: only a platform whose messages can be matched by a reply implements it.
+        """
+        raise NotImplementedError(f"{self.platform} cannot reply to a message")
+
     @abstractmethod
     async def update_message(self, message_id: str, text: str, link_list: Optional[List[Any]] = None) -> None:
         """

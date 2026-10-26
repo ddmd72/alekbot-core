@@ -82,7 +82,9 @@ class Rig:
 
     @property
     def posted(self) -> List[str]:
-        return [call.args[0] for call in self.channel.send_message.await_args_list]
+        """Everything the channel was asked to say, acknowledgements (replies) and ordinary messages alike."""
+        return [call.args[0] for call in (*self.channel.send_reply.await_args_list,
+                                          *self.channel.send_message.await_args_list)]
 
     async def send(self, context: MessageContext) -> None:
         await self.handler.handle_message(context, self.channel)
@@ -95,6 +97,7 @@ def channel(platform: str = "slack", channel_id: str = CHANNEL) -> MagicMock:
     ch.send_status_with_phrase = AsyncMock(return_value=("status-1", "thinking..."))
     ch.send_status = AsyncMock()
     ch.send_message = AsyncMock()
+    ch.send_reply = AsyncMock()
     ch.send_chunked_message = AsyncMock()
     ch.update_message = AsyncMock()
     ch.send_rich_content = AsyncMock()
@@ -184,7 +187,8 @@ class TestReplyTaken:
 
         assert rig.model_calls == 0
         assert rig.posted == [ack(world, UIMessage.MEMORY_ANSWER_NOTED)]
-        assert rig.channel.send_message.await_args.kwargs == {"thread_id": THREAD}
+        assert rig.channel.send_reply.await_args.args == (ack(world, UIMessage.MEMORY_ANSWER_NOTED), "m1")
+        rig.channel.send_message.assert_not_awaited()
         rig.channel.send_status_with_phrase.assert_not_awaited()           # no status for a turn that is not one
         assert world.docs[fact]["state"] == "archived"
         [history_fact] = set(world.docs) - before
@@ -212,7 +216,7 @@ class TestReplyTaken:
         world, fact = await world_with_question()
         rig = Rig(world)
         await rig.send(reply_context("1"))
-        rig.channel.send_message.reset_mock()
+        rig.channel.send_reply.reset_mock()
 
         await rig.send(reply_context("3"))
 
@@ -254,7 +258,7 @@ class TestReplyTaken:
         await rig.send(context)
 
         assert rig.model_calls == 0 and rig.posted == [ack(world, UIMessage.MEMORY_ANSWER_NOTED)]
-        assert rig.channel.send_message.await_args.kwargs == {"thread_id": None}
+        assert rig.channel.send_reply.await_args.args == (ack(world, UIMessage.MEMORY_ANSWER_NOTED), "55")
         assert world.docs[fact]["state"] == "invalidated"
 
     async def test_a_mention_reply_takes_its_channel_from_the_response_channel(self):
@@ -264,6 +268,7 @@ class TestReplyTaken:
         await rig.send(reply_context("1", slack_channel=None))
 
         assert rig.model_calls == 0 and stored(world)["status"] == "closed"
+        assert rig.channel.send_reply.await_args.args[1] == "m1"          # the question's ts, not the reply's own
 
     async def test_a_reply_to_a_posted_question_not_marked_asked_is_taken(self):
         world, fact = await world_with_question(status=QuestionStatus.PENDING)
@@ -278,7 +283,7 @@ class TestReplyTaken:
     async def test_an_acknowledgement_that_cannot_be_posted_is_logged_and_the_message_is_not_answered_twice(self, caplog):
         world, _ = await world_with_question()
         rig = Rig(world)
-        rig.channel.send_message.side_effect = RuntimeError("slack down")
+        rig.channel.send_reply.side_effect = RuntimeError("slack down")
 
         with caplog.at_level(logging.ERROR):
             await rig.send(reply_context("1"))

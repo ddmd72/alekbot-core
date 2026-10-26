@@ -183,6 +183,10 @@ class SlackResponseChannel(ResponseChannel):
             logger.error(f"❌ [SlackResponseChannel] Failed to send message: {e}")
             raise
     
+    async def send_reply(self, text: str, to_message_id: str) -> Any:
+        """Post `text` in the thread of the message `to_message_id` (its `ts` is the thread parent)."""
+        return await self.send_message(text, thread_id=to_message_id)
+
     async def update_message(self, message_id: str, text: str, link_list: Optional[list] = None) -> None:
         """
         Update an existing Slack message with length limit.

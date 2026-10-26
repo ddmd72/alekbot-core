@@ -298,6 +298,19 @@ class TelegramResponseChannel(ResponseChannel):
             raise
         return MessageRef(platform=self.platform, channel_id=self.channel_id, message_id=str(message.message_id))
 
+    async def send_reply(self, text: str, to_message_id: str) -> str:
+        """Send `text` literally (no parse mode: it may be model-translated text, which must not meet MarkdownV2
+        escaping) as a reply to the message `to_message_id` of this chat; returns the new message's id. A failure is
+        logged and raised."""
+        try:
+            message = await self.bot.send_message(
+                chat_id=self.chat_id, text=text, parse_mode=None, reply_to_message_id=int(to_message_id),
+            )
+        except Exception as e:
+            logger.error(f"❌ [TelegramResponseChannel] Failed to send reply to message {to_message_id}: {e}")
+            raise
+        return str(message.message_id)
+
     async def update_message(self, message_id: str, text: str, link_list: Optional[List] = None) -> None:
         """
         Update an existing Telegram message with graceful markdown fallback.
