@@ -48,6 +48,7 @@ from ..utils.logger import logger
 from ..ports.llm_port import AgentExecutionContext
 from ..ports.fact_write_port import FactWritePort
 from ..ports.alert_sink import AlertSinkPort
+from ..domain.consolidation import REVIEW_PROFILE_ID
 from ..domain.consolidation_pass_stats import (
     OUTCOME_ERROR, OUTCOME_OK, OUTCOME_SCOPE_REFUSAL, ConsolidationPassStats, PassCall, PassTool,
 )
@@ -1329,7 +1330,7 @@ class ConsolidationAgent(BaseAgent):
         zone = self._owner_timezone(message)
         try:
             system_prompt = await self.prompt_builder.build_for_agent(
-                agent_type="consolidation_review",
+                agent_type=REVIEW_PROFILE_ID,
                 user_id=user_id,
                 account_id=account_id,
                 routing_metadata=None,

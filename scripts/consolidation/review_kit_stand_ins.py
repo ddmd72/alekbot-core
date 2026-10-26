@@ -19,7 +19,8 @@ from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.domain.agent import AgentMessage, AgentResponse
 from src.domain.channel_binding import ChannelBinding
 from src.domain.choice_outcome import ChoiceOutcome
-from src.domain.fact_lifecycle_run_guard import run_guard_held
+from src.domain.consolidation import consolidation_agent_id
+from src.domain.lease import lease_held
 from src.domain.interactive_message import InteractiveMessage
 from src.domain.language import LanguageCode
 from src.domain.llm import Message
@@ -55,7 +56,7 @@ def _utcnow() -> datetime:
 
 class MemoryLease(MemoryWriteLeasePort):
     """The memory-write lease in memory: one holder per account until its expiry, the port's validation and the
-    domain's `run_guard_held` for "still held"."""
+    domain's `lease_held` for "still held"."""
 
     def __init__(self) -> None:
         self._held: Dict[str, Tuple[str, datetime]] = {}
@@ -71,7 +72,7 @@ class MemoryLease(MemoryWriteLeasePort):
         if until <= now:
             raise ValueError("until must be later than now")
         held = self._held.get(account_id)
-        if held is not None and run_guard_held(held[1], now):
+        if held is not None and lease_held(held[1], now):
             return False
         self._held[account_id] = (owner, until)
         self.taken.append({"account_id": account_id, "until": until})
@@ -345,7 +346,7 @@ class KitCoordinator:
 
     async def route_message(self, message: AgentMessage) -> AgentResponse:
         self.routed.append(message)
-        expected = f"consolidation_agent_{message.context.get('user_id')}"
+        expected = consolidation_agent_id(message.context.get('user_id'))
         if message.recipient != expected:
             return AgentResponse.failure(
                 message.task_id, "kit_coordinator", f"the kit routes to {expected} only, not {message.recipient}",

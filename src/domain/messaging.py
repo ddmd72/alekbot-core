@@ -8,6 +8,11 @@ from abc import abstractmethod
 from .ui_messages import StatusType
 
 
+def session_id_for(user_id: str, channel_id: str) -> str:
+    """The chat session of a user in one channel (Slack C.../D..., Telegram chat id): deterministic, one per channel."""
+    return f"{user_id}:{channel_id}"
+
+
 @dataclass
 class FileAttachment:
     """Platform-agnostic file attachment representation."""

@@ -18,6 +18,7 @@ from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStatus
+from ..domain.consolidation import consolidation_agent_id
 from ..domain.entities import FactEntity
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
 from ..domain.fact_lifecycle import REVIEW_ACCEPTS
@@ -76,6 +77,7 @@ from ..domain.fact_review_task_keys import (
 )
 from ..domain.llm import Message, MessagePart
 from ..domain.local_time import local_date
+from ..domain.messaging import session_id_for
 from ..domain.memory_write_lease import LEASE_BUSY_RETRY_DELAY_S, LEASE_MARGIN, agent_timeout_s, lease_until
 from ..domain.notification import NotificationChannel
 from ..domain.owner_timezone import not_owner_reason
@@ -554,7 +556,7 @@ class FactReviewService:
         channel = await self._question_channel(user_id, account_id)
         if channel is None:
             return _StepResult()
-        claimed = await self._review_store.claim_next(account_id, today, f"{user_id}:{channel.channel_id}")
+        claimed = await self._review_store.claim_next(account_id, today, session_id_for(user_id, channel.channel_id))
         if claimed is None:
             return _StepResult()
         qid = claimed.question_id
@@ -724,7 +726,7 @@ class FactReviewService:
             message = AgentMessage(
                 task_id=uuid.uuid4().hex,
                 sender=_SENDER,
-                recipient=f"consolidation_agent_{user_id}",
+                recipient=consolidation_agent_id(user_id),
                 intent=AgentIntent.DELEGATE,
                 payload={"task": _REVIEW_TASK, **encode_review_task(task)},
                 context={
@@ -767,7 +769,7 @@ class FactReviewService:
         channel = await self._notifications.resolve_channel(user_id)
         if channel is None:
             return ()
-        session = await self._session_store.load_session(f"{user_id}:{channel.channel_id}")
+        session = await self._session_store.load_session(session_id_for(user_id, channel.channel_id))
         return owner_messages_block(owner_message_texts(session.history))
 
     async def _offer(

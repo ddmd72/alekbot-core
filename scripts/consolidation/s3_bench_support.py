@@ -20,6 +20,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from scripts.consolidation import s3_dry_run_kit as kit_module
 from scripts.consolidation.s3_dry_run_kit import DryRunKit, add_kit_arguments, check_budget_flag, inside_memory_dir
 from src.domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStatus
+from src.domain.consolidation import consolidation_agent_id
 from src.domain.entities import FactState
 from src.domain.fact_tool_result import WRITTEN_STATUSES
 
@@ -64,7 +65,7 @@ def kit_message(
 ) -> AgentMessage:
     """The message a bench sends the agent: the task the gate reads, the payload, and the owner's zone in the context."""
     return AgentMessage.create(
-        sender=sender, recipient=f"consolidation_agent_{user_id}", intent=AgentIntent.DELEGATE,
+        sender=sender, recipient=consolidation_agent_id(user_id), intent=AgentIntent.DELEGATE,
         payload={"task": task, **payload}, context=kit.message_context(user_id, account_id, session_id=session_id),
     )
 

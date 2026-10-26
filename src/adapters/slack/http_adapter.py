@@ -19,7 +19,7 @@ from .response_channel import SlackResponseChannel
 from .signature import verify_slack_signature
 from ...domain.cloud_task_delivery import RETRY_COUNT_HEADER
 from ...domain.chat_text import unwrapped
-from ...domain.messaging import MessageContext, FileAttachment
+from ...domain.messaging import MessageContext, FileAttachment, session_id_for
 from ...domain.ui_messages import UIMessage
 from ...domain.prompt import ANONYMOUS_ACCOUNT_ID  # SESSION_26
 from ...ports.task_queue import TaskQueue
@@ -423,7 +423,7 @@ class HTTPModeAdapter(SlackAdapter):
         return jsonify(body), status
 
     def _resolve_session_id(self, user_id: str, channel_id: str) -> str:
-        return f"{user_id}:{channel_id}"
+        return session_id_for(user_id, channel_id)
 
     async def _process_message_event(
         self,

@@ -45,10 +45,11 @@ from scripts.consolidation.s3_bench_support import (  # noqa: E402
 )
 from scripts.consolidation.s3_dry_run_kit import DryRunKit  # noqa: E402
 from src.domain.fact_tool_result import WRITTEN_STATUSES  # noqa: E402
+from src.domain.pass_actor import PassActor  # noqa: E402
 
 BENCH = "review_answers"
 ANSWER_TASK = "consolidate"     # the task the gate reads
-ANSWER_PASS = "stage1"          # the pass label the gate reads
+ANSWER_PASS = PassActor.STAGE1.value   # the pass label the gate reads
 
 
 def build_parser() -> argparse.ArgumentParser:

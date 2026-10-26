@@ -19,7 +19,7 @@ from typing import Dict, Mapping, Optional, Protocol, TYPE_CHECKING
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentResponse, AgentStatus
 from ..domain.llm import Message, MessagePart
-from ..domain.messaging import SmartResponse
+from ..domain.messaging import SmartResponse, session_id_for
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import NotifyResult
 from ..domain.request_context import RequestContext
@@ -240,7 +240,7 @@ class UserNotificationService:
                 f"channel={channel_info.channel_id} user={user_id[:8]}"
             )
             if self._session_store:
-                session_id = f"{user_id}:{channel_info.channel_id}"
+                session_id = session_id_for(user_id, channel_info.channel_id)
                 await self._session_store.append_messages_batch(
                     session_id=session_id,
                     owner_id=user_id,
@@ -373,7 +373,7 @@ class UserNotificationService:
             )
 
         recipient = agent_id_override or f"quick_response_agent_{user_id}"
-        effective_session_id = session_id if session_id is not None else f"{user_id}:{channel_info.channel_id}"
+        effective_session_id = session_id if session_id is not None else session_id_for(user_id, channel_info.channel_id)
         framed = MessagePart(text=f"[System: {system_alert}{framing_suffix}]")
         message = AgentMessage.create(
             sender="notification_service",
@@ -547,7 +547,7 @@ class UserNotificationService:
                         f"[Document delivered to user: {label} — {url}\n"
                         f"If the user asks about it, you can read the full content using the fetch_url intent.]"
                     )
-                doc_session_id = f"{user_id}:{channel_info.channel_id}"
+                doc_session_id = session_id_for(user_id, channel_info.channel_id)
                 await self._session_store.append_messages_batch(
                     session_id=doc_session_id,
                     owner_id=user_id,

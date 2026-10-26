@@ -41,6 +41,7 @@ from src.domain.billing import calculate_cost
 from src.domain.due_fact import DueFact
 from src.domain.email import IndexedEmail, IndexingState
 from src.domain.entities import FactEntity, FactState
+from src.domain.consolidation import REVIEW_PROFILE_ID
 from src.domain.exceptions import FactResolutionError, FactWriteConflict
 from src.domain.fact_lifecycle import REVIEW_CLOSED_STATES, require_in_place
 from src.domain.fact_lifecycle_day import CounterField, FactLifecycleDay, SweepSnapshot, check_count
@@ -93,7 +94,6 @@ S3_TOKEN_IDS: Tuple[str, ...] = (
 # The token the review pass adds (the review's other token, TAXONOMY, is one of the five above), the review's profile and
 # blueprint (not in Firestore until the S4 rollout, so served from the snapshot), and what `prepare` requires of it.
 REVIEW_TOKEN_IDS: Tuple[str, ...] = ("CONSOLIDATION_LIFECYCLE",)
-REVIEW_AGENT_ID = "consolidation_review"
 REVIEW_PROFILE_TOKEN_IDS: Tuple[str, ...] = ("CONSOLIDATION_TAXONOMY", *REVIEW_TOKEN_IDS)
 
 _ALL_STATES: AbstractSet[FactState] = frozenset(FactState)
@@ -650,7 +650,7 @@ class SnapshotProfileOverlay(AgentProfileRepository):
     builds one) and every other profile, and every override, from `real`. Read only."""
 
     def __init__(self, real: AgentProfileRepository, snapshot_dir: Path = SNAPSHOT_DIR,
-                 agent_ids: Sequence[str] = (REVIEW_AGENT_ID,)) -> None:
+                 agent_ids: Sequence[str] = (REVIEW_PROFILE_ID,)) -> None:
         self._real = real
         self._dir = Path(snapshot_dir)
         self._ids = tuple(agent_ids)
@@ -1233,13 +1233,13 @@ class DryRunKit:
         lifecycle token, its blueprint has a section for each (a token whose class the blueprint does not list is not
         rendered), and no override replaces either."""
         served = await self._serve(REVIEW_PROFILE_TOKEN_IDS)
-        profile = await self._service.profile_repo.get_agent_profile(REVIEW_AGENT_ID)
-        self._require_listed(REVIEW_AGENT_ID, profile, REVIEW_PROFILE_TOKEN_IDS)
+        profile = await self._service.profile_repo.get_agent_profile(REVIEW_PROFILE_ID)
+        self._require_listed(REVIEW_PROFILE_ID, profile, REVIEW_PROFILE_TOKEN_IDS)
         try:
             blueprint = await self._service.blueprint_repo.get(profile.blueprint_id)
         except Exception as exc:
             raise SnapshotTokenError(
-                f"the {REVIEW_AGENT_ID} blueprint {profile.blueprint_id} cannot be read: {type(exc).__name__}: {exc}"
+                f"the {REVIEW_PROFILE_ID} blueprint {profile.blueprint_id} cannot be read: {type(exc).__name__}: {exc}"
             ) from exc
         unplaced = [token_id for token_id, token in served.items() if str(token.class_) not in blueprint.class_order]
         if unplaced:

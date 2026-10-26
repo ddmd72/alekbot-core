@@ -20,7 +20,9 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from ..domain.agent import AgentMessage, AgentIntent, AgentStatus
-from ..domain.consolidation import MAX_BATCH_ATTEMPTS, MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch
+from ..domain.consolidation import (
+    MAX_BATCH_ATTEMPTS, MAX_FAILED_REVIVALS, BatchStatus, ConsolidationBatch, consolidation_agent_id,
+)
 from ..domain.consolidation_run import ConsolidationRun
 from ..domain.memory_write_lease import (
     LEASE_BUSY_RETRY_DELAY_S,
@@ -285,7 +287,7 @@ class ConsolidationService:
         message = AgentMessage(
             task_id=batch.batch_id,
             sender="consolidation_service",
-            recipient=f"consolidation_agent_{batch.user_id}",
+            recipient=consolidation_agent_id(batch.user_id),
             intent=AgentIntent.DELEGATE,
             payload={
                 "task": _INTENT_CONSOLIDATE_FULL,

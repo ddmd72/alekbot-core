@@ -23,18 +23,20 @@ from scripts.consolidation.review_bench_cases import (
 )
 from scripts.consolidation.review_kit_stand_ins import ReviewStandIns, build_review_service
 from scripts.consolidation.s3_dry_run_kit import DryRunKit
-from src.domain.entities import FactDomain, FactEntity
+from src.domain.entities import FactEntity
+from src.domain.fact_lifecycle import expiry_pinned
 from src.domain.fact_review_frame import question_text
 from src.domain.fact_review_reasons import is_revive_reason, is_rewrite_reason, queued_reason
 from src.domain.fact_review_rules import REVIEW_BATCH, QUEUE_ACCEPTS, queued_fields, queued_question
 from src.domain.fact_review_state import FactReviewState
 from src.domain.fact_write_context import as_utc
-from src.domain.messaging import MessageRef
+from src.domain.pass_actor import PassActor
+from src.domain.messaging import MessageRef, session_id_for
 from src.infrastructure.agent_manifest import Intent
 
 # What the gates read.
 REVIEW_TASK = Intent.REVIEW_STALE_FACTS     # the payload task the service routes
-REVIEW_PASS = "review"                      # the pass label in the kit's report (the actor of the pass)
+REVIEW_PASS = PassActor.REVIEW.value        # the pass label in the kit's report (the actor of the pass)
 G5_MAX_TURNS = 13                           # of the review's 15
 
 # Plan §8's two reference points (a batch of 2 facts, a batch of 20), at the upper figure of each range, as dollars: the
@@ -75,10 +77,10 @@ def live_staged_count(requested: int, legacy: int, fixed: int) -> int:
 
 def pick_staged(current: Sequence[FactEntity], count: int, skip: AbstractSet[str] = frozenset()) -> List[FactEntity]:
     """The `count` current facts to stage stale: those with an expiry (the janitor stales nothing else), the ones due
-    soonest first; never a standing directive (the rulebook is curated, not reviewed) and never a fact in `skip`."""
+    soonest first; never a pinned fact (a directive, principle or mindset fact: its lifecycle is curated, not reviewed) and never a fact in `skip`."""
     eligible = [
         f for f in current
-        if f.expires_at is not None and f.id not in skip and f.domain is not FactDomain.AGENT_DIRECTIVE
+        if f.expires_at is not None and f.id not in skip and not expiry_pinned(f.domain, f.type, f.tags)
     ]
     eligible.sort(key=lambda f: (as_utc(f.expires_at), f.id))   # type: ignore[arg-type]  # filtered above
     return eligible[:max(0, count)]
@@ -137,7 +139,7 @@ async def _ask_about(
     asked_at = now - timedelta(days=3)
     ref = MessageRef(platform="kit", channel_id=channel, message_id=f"kit-seed-{case.key}")
     question = (
-        question.claimed(f"{user_id}:{channel}").appended(asked_at - timedelta(minutes=1)).posted(ref).asked(asked_at)
+        question.claimed(session_id_for(user_id, channel)).appended(asked_at - timedelta(minutes=1)).posted(ref).asked(asked_at)
         .with_reply(case.reply or "", now - timedelta(days=1))
     )
     bundle.store.seed_question(question)

@@ -11,6 +11,7 @@ from typing import Any
 from google.cloud import firestore
 
 from ..config.environment import EnvironmentConfig
+from ..domain.lease import lease_held
 from ..ports.memory_write_lease import MemoryWriteLeasePort
 from ..utils.logger import logger
 
@@ -35,7 +36,7 @@ class FirestoreMemoryWriteLease(MemoryWriteLeasePort):
         async def _take(transaction: Any) -> bool:
             snap = await ref.get(transaction=transaction)
             held_until = (snap.to_dict() or {}).get("lease_until") if snap.exists else None
-            if held_until is not None and held_until > now:
+            if lease_held(held_until, now):
                 return False
             transaction.set(ref, {"lease_owner": owner, "lease_until": until, "acquired_at": now})
             return True

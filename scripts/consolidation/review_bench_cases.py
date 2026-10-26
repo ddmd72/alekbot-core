@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.domain.entities import ExpiryKind, FactDomain, FactEntity, FactState, FactType, TemporalClass
+from src.domain.fact_expiry import Expiry
+from src.domain.fact_lifecycle import compute_expiry
 from src.domain.fact_review_frame import (
     NOT_DELIVERED_REPLY,
     not_delivered_frame,
@@ -24,6 +26,7 @@ from src.domain.fact_review_frame import (
 )
 from src.domain.fact_review_language import CANONICAL_LABELS, fact_question_message
 from src.domain.fact_review_rules import queued_question
+from src.domain.ui_messages import UIMessage
 
 SEED_NAMESPACE = "alekbot-review-bench"
 STALE_DAYS_AGO = 2           # the stale cases went stale this long before the run
@@ -52,7 +55,7 @@ class FactCase:
 
     @property
     def expires_at(self) -> datetime:
-        return self.reported + timedelta(days=self.ttl_days)
+        return compute_expiry(Expiry(ExpiryKind.HORIZON, days=self.ttl_days), self.reported, "UTC")["expires_at"]
 
     @property
     def fact_id(self) -> str:
@@ -180,7 +183,7 @@ def answer_cases() -> Tuple[AnswerCase, ...]:
     q5, p5 = pair(5)
     q6, p6 = pair(6)
     q7, p7 = pair(7)
-    acknowledged = ("model", "Thank you, recorded.")
+    acknowledged = ("model", CANONICAL_LABELS[UIMessage.MEMORY_ANSWER_NOTED.value])
     return (
         AnswerCase("digit_reply", (*p1, ("user", reply_part(q1, "2")), acknowledged), NO_WRITE, question_id=q1),
         AnswerCase(

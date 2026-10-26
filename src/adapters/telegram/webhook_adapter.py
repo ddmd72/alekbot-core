@@ -12,7 +12,7 @@ from ...ports.platform_port import PlatformPort
 from .response_channel import TelegramResponseChannel
 from ...domain.prompt import ANONYMOUS_ACCOUNT_ID  # SESSION_26
 from ...domain.chat_text import unwrapped
-from ...domain.messaging import MessageContext, FileAttachment
+from ...domain.messaging import MessageContext, FileAttachment, session_id_for
 from ...ports.conversation_handler_port import ConversationHandlerPort
 from ...ports.platform_auth_port import PlatformAuthPort
 from ...ports.language_service_port import LanguageServicePort
@@ -105,7 +105,7 @@ class TelegramWebhookAdapter(PlatformPort):
 
     def _resolve_session_id(self, user_id: str, chat_id: str) -> str:
         """Deterministic session ID from user + channel (chat)."""
-        return f"{user_id}:{chat_id}"
+        return session_id_for(user_id, chat_id)
 
     async def _verify_webhook_signature(self, request_obj) -> bool:
         """

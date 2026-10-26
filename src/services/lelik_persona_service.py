@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from ..domain.entities import FactDomain
 from ..domain.lelik_context import LelikContext
 from ..domain.llm import Message
+from ..domain.messaging import session_id_for
 from ..domain.user import UserBotConfig
 from ..ports.repository import FactRepository
 from ..ports.session_store import SessionStore
@@ -68,7 +69,7 @@ class LelikPersonaService:
         if channel is None:
             logger.info(f"[LelikPersona] No primary/last-active channel for {user_id[:8]}, no history slice")
             return []
-        session = await self._sessions.load_session(f"{user_id}:{channel.channel_id}")
+        session = await self._sessions.load_session(session_id_for(user_id, channel.channel_id))
         tz = self._timezone()
         entries = []
         for message in (session.history or [])[-HISTORY_MESSAGES:]:
