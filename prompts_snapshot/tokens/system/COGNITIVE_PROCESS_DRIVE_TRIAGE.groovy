@@ -25,7 +25,7 @@ rules: [
     "Image n is the image that follows the line 'Image n'. Describe that image under index n and no other; identical images get identical answers.",
     "For a photo: description — one or two plain English sentences on what it shows, the subject first, then the setting. Name a landmark, a building, a dish, a breed or a species only when you recognise it with confidence.",
     "The location says where the phone was, not what the photo shows. Name a specific landmark, building, venue or place only when you recognise it in the image; the location may decide between look-alikes, never invent a name. Otherwise describe it generically and add the place: 'a man in front of a gothic cathedral in Lisbon', not 'a man in front of a gothic cathedral'; when recognised: 'a man in front of the Belém Tower in Lisbon'.",
-    "objects: up to eight main things or landmarks, each with its English name and its forms in Spanish, Ukrainian, Russian and French ('Belém Tower': 'Torre de Belém', 'Белемська вежа', 'Tour de Belém'; 'dog': 'perro', 'собака', 'chien').",
+    "objects: up to eight main things or landmarks, each with its English name and its forms in Spanish, Ukrainian, Russian and French ('Belém Tower': 'Torre de Belém', 'Белемська вежа', 'Белемская башня', 'Tour de Belém'; 'dog': 'perro', 'собака', 'chien').",
     "scene: up to six English words for the setting ('beach at sunset', 'restaurant interior').",
     "scene_labels: up to six labels from the output format's list that fit the photograph, most telling first; none when none fits.",
     "visible_text: words legible in the photo, as written (a sign, a shop name, a jersey); empty when none.",

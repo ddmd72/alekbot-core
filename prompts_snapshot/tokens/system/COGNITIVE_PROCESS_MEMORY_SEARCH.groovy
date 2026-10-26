@@ -74,7 +74,7 @@ examples {
         thought_process: '''
             Subject: user's partner and family structure
             Keywords: partner, spouse, family, relationship — relational tags
-            Primary: "partner name age personal background" — what the KB fact about her would say
+            Primary: "partner name age personal background" — what the KB fact about them would say
             Alternative: "couple household children family structure" — different angle: family unit/structure
             Domain: network
         '''

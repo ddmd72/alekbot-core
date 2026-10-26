@@ -385,7 +385,7 @@ uploaded_by: local_script
 
         example_time_series_update: {
 
-            conversation: "USER: Вчера я весил 64 кг"
+            conversation: "USER: I weighed 64 kg yesterday"
 
             reasoning: '''
             <thinking>
@@ -433,7 +433,7 @@ uploaded_by: local_script
 
             conversation: '''
             ASSISTANT: Based on our history, you weigh 67kg.
-            USER: Да, всё верно.
+            USER: Yes, that's right.
             '''
 
             reasoning: '''

@@ -1619,7 +1619,7 @@ stays red.
 The consolidation prompt lives in Firestore; `prompts_snapshot/` is its git mirror (profile `consolidation.yaml`,
 blueprint `consolidation_agent_v1.yaml`, the six `CONSOLIDATION_*` tokens; the review pass has its own profile
 `consolidation_review.yaml` and blueprint `consolidation_review_v1.yaml` over `CONSOLIDATION_TAXONOMY` and
-`CONSOLIDATION_LIFECYCLE`, and Smart's profile carries `PROTOCOL_MEMORY_REVIEW`; `COGNITIVE_PROCESS_CONSOLIDATION.groovy`
+`CONSOLIDATION_LIFECYCLE`, and Smart's profile carries `PROTOCOL_MEMORY_REVIEW_MARKERS`; `COGNITIVE_PROCESS_CONSOLIDATION.groovy`
 is an older token the profile does not render). Edit there and upload with `firestore_utils/snapshot_upload.py`
 (`prompts_snapshot/README.md`). `tests/unit/prompts/test_consolidation_vocabulary.py` checks every enum value and tool field
 the tokens name against `entities.py` and `_get_tool_declarations` (and the search `returns:` keys against a real adapter
@@ -1632,7 +1632,7 @@ snapshot already says `ARCHIVAL`; **until the five are uploaded (deploy step 4) 
 `ttl_days` (ignored by the new code), never mentions `expiry` (only the tool schema requires it), tells the model to retire a split fact with `SUPERSEDED` alone (refused) and says `HISTORICAL` (read as
 `ARCHIVAL`). The static template is cached for 24 hours per instance,
 so the upload goes in before the switch (the rollout notes, ops). S4 adds `CONSOLIDATION_LIFECYCLE`,
-`PROTOCOL_MEMORY_REVIEW`, the review profile and blueprint, and edits `CONSOLIDATION_POLICIES`, `_TAXONOMY`, `_EXAMPLES`,
+`PROTOCOL_MEMORY_REVIEW_MARKERS`, the review profile and blueprint, and edits `CONSOLIDATION_POLICIES`, `_TAXONOMY`, `_EXAMPLES`,
 `_COGNITIVE_PROCESS`, `_TOOLS` and the Smart profile; the review pass cannot run without its profile, and the echo-trap
 exception (§3 step 5) is live only after the upload.
 
@@ -1730,7 +1730,7 @@ while the live consolidation prompts still tell the model to retire a split fact
 | `src/handlers/conversation_handler.py` | `$consolidate` (and its outcome wording), `$memory save`, memory preview delivery, the reply to a memory-review question taken at intake |
 | `src/web/user_cabinet_app.py`, `src/web/static/cabinet.html` | Cabinet fact routes (invalidate follows the id forward, answers 409, rebuilds the baseline; the stale filter; recently closed; the question list and the bulk answers) |
 | `prompts_snapshot/{profiles/consolidation.yaml,blueprints/consolidation_agent_v1.yaml,tokens/system/CONSOLIDATION_*.groovy}` | the consolidation prompt (mirror) |
-| `prompts_snapshot/{profiles/consolidation_review.yaml,blueprints/consolidation_review_v1.yaml,tokens/system/CONSOLIDATION_LIFECYCLE.groovy,tokens/system/PROTOCOL_MEMORY_REVIEW.groovy}` | the review pass's prompt and Smart's memory-review protocol (mirror) |
+| `prompts_snapshot/{profiles/consolidation_review.yaml,blueprints/consolidation_review_v1.yaml,tokens/system/CONSOLIDATION_LIFECYCLE.groovy,tokens/system/PROTOCOL_MEMORY_REVIEW_MARKERS.groovy}` | the review pass's prompt and Smart's memory-review protocol (mirror) |
 | `scripts/consolidation/`, `scripts/data_audit/` | benches (with the S3 kit `s3_dry_run_kit.py`, `s3_bench_support.py`, and the review benches and their stand-ins `test_review_dryrun.py`, `test_review_answers_dryrun.py`, `review_bench_*.py`, `review_kit_*.py`); the audit with the version-chain classes (§9.6) |
 | `scripts/migration/fact_s3_stamp_legacy_stale.py` | deploy step 6a (stamp `stale_since` on legacy stale facts) |
 
