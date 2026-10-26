@@ -48,7 +48,7 @@ from ..domain.fact_review_rules import (
     queued_fields,
     queued_question,
     revive_alert_due,
-    revives_in_30_days,
+    revives_in_window,
     review_close_source,
     select_batch,
     stuck_pending,
@@ -924,7 +924,7 @@ class FactReviewService:
             for fact_id in revived:
                 fact = await self._repo.get_fact_by_id(fact_id)
                 if fact is not None and revive_alert_due(fact.lifecycle_events, now):
-                    due.append((fact_id, revives_in_30_days(fact.lifecycle_events, now)))
+                    due.append((fact_id, revives_in_window(fact.lifecycle_events, now)))
             if due:
                 await self._alert_sink.post(revive_alert(account_id, due))
         except Exception as exc:

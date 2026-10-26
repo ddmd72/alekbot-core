@@ -307,7 +307,7 @@ def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetim
 
 # ------------------------------------------------------------------------------------------------ revive alert
 
-def revives_in_30_days(events: Sequence[Mapping[str, Any]], now: datetime) -> int:
+def revives_in_window(events: Sequence[Mapping[str, Any]], now: datetime) -> int:
     """How many times a fact came back to current within REVIVE_WINDOW of `now`, read from its `lifecycle_events`.
 
     A revive is an entry into `current` whose code-built reason names one (a review revive, an owner's yes, a
@@ -317,7 +317,7 @@ def revives_in_30_days(events: Sequence[Mapping[str, Any]], now: datetime) -> in
 
 def revive_alert_due(events: Sequence[Mapping[str, Any]], now: datetime) -> bool:
     """A fact revived REVIVE_ALERT times or more in the window: its horizon is probably wrong."""
-    return revives_in_30_days(events, now) >= REVIVE_ALERT
+    return revives_in_window(events, now) >= REVIVE_ALERT
 
 
 def _leads_to_current(event: Mapping[str, Any], reason_test: Callable[[object], bool]) -> bool:
