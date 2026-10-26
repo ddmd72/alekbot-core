@@ -19,7 +19,7 @@ from ..domain.fact_answer_result import AnswerResult
 from ..domain.fact_lifecycle import walked_to_unseen_text
 from ..domain.fact_lifecycle_day import CounterField
 from ..domain.fact_review_answer_kind import AnswerKind
-from ..domain.fact_review_answers import answer_updates, digit_answer, option_answer
+from ..domain.fact_review_answers import answer_closes_fact, answer_updates, digit_answer, option_answer
 from ..domain.fact_review_language import LABEL_KEYS, fact_question_message
 from ..domain.fact_review_question import FACT_QUESTION_KIND, AnswerSource, ClosedBy, FactReviewQuestion
 from ..domain.fact_review_frame import reply_part
@@ -104,7 +104,8 @@ class FactAnswerService(ChoiceHandlerPort):
         fields (`dont_know`) under the repository's precondition. A conflict is `conflict`; any other refusal of the
         write, or a `FactExpiryError`, is `not_applied` (WARNING, `answers_not_applied`). Only an applied answer closes
         the question (`close_question`, the owner's close), refreshes the biographical cache once and is counted by its
-        source. Raises ValueError for a source that is not the owner's; store errors raise."""
+        source; an answer that sets the fact aside (`answer_closes_fact`) also marks the account undigested. Raises
+        ValueError for a source that is not the owner's; store errors raise."""
         counter = _ANSWERED.get(source)
         if counter is None:
             raise ValueError(f"{source!r} is not where an owner answer comes from")
@@ -147,6 +148,8 @@ class FactAnswerService(ChoiceHandlerPort):
             return AnswerResult.CONFLICT
         except FactExpiryError as exc:
             return await self._not_applied(question, now, f"expiry: {exc}")
+        if answer_closes_fact(kind, question):
+            await self._note_set_aside(account_id, now)
         await self._close(question, ClosedBy.OWNER, kind, source, None, now)
         await self._repo.refresh_biographical_context_cache(owner_id=account_id)
         await self._count(account_id, now, {counter: 1})
@@ -366,6 +369,15 @@ class FactAnswerService(ChoiceHandlerPort):
         logger.warning(f"[FactAnswer] question {question.question_id}: the answer's write was refused ({why})")
         await self._count(question.account_id, now, {CounterField.ANSWERS_NOT_APPLIED: 1})
         return AnswerResult.NOT_APPLIED
+
+    async def _note_set_aside(self, account_id: str, now: datetime) -> None:
+        """A fact was set aside: the account's next digest has something to tell (`undigested_since`, the first instant
+        kept). Best effort: the answer is written, so a failure here is a WARNING and never the answer's."""
+        try:
+            if not await self._review_store.mark_undigested(account_id, now):
+                logger.warning(f"[FactAnswer] account {account_id[:8]} has no review state; undigested_since not set")
+        except Exception as exc:
+            logger.warning(f"[FactAnswer] undigested_since of account {account_id[:8]} not set: {type(exc).__name__}: {exc}")
 
     async def _count(self, account_id: str, now: datetime, counts: Dict[CounterField, int]) -> None:
         try:

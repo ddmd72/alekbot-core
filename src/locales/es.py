@@ -183,4 +183,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Esta pregunta está cerrada.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Datos que dejé de lado esta semana:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Para recuperar uno, dime en el chat que sigue siendo cierto.",
+    UIMessage.MEMORY_DIGEST_ARCHIVED.value: "ya no es cierto",
+    UIMessage.MEMORY_DIGEST_INVALIDATED.value: "nunca fue cierto",
 }

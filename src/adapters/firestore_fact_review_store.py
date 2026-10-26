@@ -326,6 +326,9 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def mark_digest(self, account_id: str, at: datetime) -> bool:
         return await self._mark(account_id, lambda state: {"last_digest_at": at, "undigested_since": None})
 
+    async def mark_undigested(self, account_id: str, at: datetime) -> bool:
+        return await self._mark(account_id, lambda state: {"undigested_since": state.undigested_since or at})
+
     async def mark_oldest_alert(self, account_id: str, at: datetime) -> bool:
         return await self._mark(account_id, lambda state: {"oldest_alert_at": at})
 

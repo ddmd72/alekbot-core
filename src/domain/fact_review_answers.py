@@ -11,7 +11,7 @@ from .fact_review_answer_change import AnswerChange
 from .fact_review_answer_kind import AnswerKind
 from .fact_review_question import AnswerSource, FactReviewQuestion
 from .fact_review_reasons import answer_reason, history_reason
-from .fact_review_rules import confirmed_expiry, fallback_fields, is_dated_plan
+from .fact_review_rules import confirmed_expiry, fallback_fields, fallback_revives, is_dated_plan
 from .fact_update import ParsedFactUpdate
 from .fact_write_context import FactWriteContext, as_utc, reviews_stored_memory
 from .interactive_message import InteractiveMessage
@@ -19,7 +19,7 @@ from .local_time import local_moment
 from .new_fact_attributes import NewFactAttributes
 
 __all__ = [
-    "ARCHIVE_ONLY", "answer_updates", "digit_answer", "ended_text", "history_fact", "history_moved_refusal",
+    "ARCHIVE_ONLY", "answer_closes_fact", "answer_updates", "digit_answer", "ended_text", "history_fact", "history_moved_refusal",
     "history_refusal", "history_trail", "option_answer",
 ]
 
@@ -117,6 +117,14 @@ def history_moved_refusal(shown_text: str, stored: FactEntity, requested_id: str
             "nothing was written"
         )
     return None
+
+
+def answer_closes_fact(kind: AnswerKind, question: FactReviewQuestion) -> bool:
+    """Whether the owner's answer `kind` sets the question's fact aside (archived or invalidated): `ended` and `never`
+    do; `still_true` does not; `dont_know` does when the question's fallback is to archive. What the digest tells him."""
+    if kind is AnswerKind.DONT_KNOW:
+        return not fallback_revives(question)
+    return kind is not AnswerKind.STILL_TRUE
 
 
 def answer_updates(

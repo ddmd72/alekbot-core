@@ -10,11 +10,11 @@ budget at routing time (as `ConsolidationService`): the agent's timeout is what 
 pass ends before the lease does however long the steps before it took. Every question close goes through
 `FactAnswerService.close_question`; nothing here closes one itself.
 
-Built: steps 1-13 and 15 and the failure rule (T8a, T8b, T8c, T8d1). The digest (T8d2) is a stub that does nothing.
+Built: steps 1-15 and the failure rule (T8a, T8b, T8c, T8d1, T8d2).
 """
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 from ..domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStatus
@@ -24,6 +24,9 @@ from ..domain.fact_lifecycle import REVIEW_ACCEPTS
 from ..domain.fact_lifecycle_day import CounterField
 from ..domain.fact_review_after_pass import after_pass
 from ..domain.fact_review_ask import AskRequest
+from ..domain.fact_review_digest import (
+    DIGEST_LIMIT, digest_day, digest_facts, digest_message, digest_since, pass_set_aside,
+)
 from ..domain.fact_review_frame import NOT_DELIVERED_REPLY, not_delivered_frame, question_text, review_frame
 from ..domain.fact_review_language import language_to_store
 from ..domain.fact_review_question import ClosedBy, FactReviewQuestion
@@ -33,6 +36,7 @@ from ..domain.fact_review_rules import (
     asked_fact_unchanged,
     becomes_unanswered,
     channel_refusal,
+    digest_due,
     due_timeouts,
     fallback_fields,
     fallback_revives,
@@ -603,11 +607,69 @@ class FactReviewService:
         else:
             logger.warning(f"[FactReview] question {question.question_id} not requeued ({why}): it changed meanwhile")
 
-    # ------------------------------------------------------------------------------------------------ stub (T8d2)
+    # ------------------------------------------------------------------------------------------------ step 14: digest
 
     async def _digest(self, user_id: str, account_id: str, now: datetime, zone: str) -> None:
-        """T8d2, step 14 (§3.11): the weekly digest when due."""
-        return None
+        """Step 14 (§3.11): the weekly digest when `digest_due`. The owner's local week is claimed first (one digest per
+        ISO week); then the facts closed since the last digest (`digest_since`, `DIGEST_LIMIT`) that the digest lists
+        (`digest_facts`) are sent as one message in the message language, `notify_raw`, which writes no history. Then
+        `last_digest_at = now` and `undigested_since` cleared. Nothing to list: the week is still claimed and the marks
+        still move, and no message is sent (the account is not asked again until something else is set aside).
+
+        Best effort, like the revive alert: it runs after the pass's own work, so an error is logged at ERROR and ends the
+        digest, never the run. A digest that was not delivered (no usable channel, or the post failed) or whose read
+        failed releases its claim and leaves the marks, so the next run tries again; one that was sent but could not be
+        marked keeps the claim, so the owner is not sent it twice."""
+        try:
+            state = await self._review_store.get_state(account_id)
+            if state is None or not digest_due(state, now):
+                return
+            day = digest_day(now, zone)
+            if not await self._review_store.claim_digest(user_id, day, now):
+                logger.info(f"[FactReview] the digest of account {account_id[:8]} was already claimed this week")
+                return
+            try:
+                listed = await self._send_digest(user_id, account_id, state, now)
+            except Exception:
+                await self._release_digest(user_id, day)
+                raise
+            if listed is None:
+                await self._release_digest(user_id, day)
+                logger.warning(f"[FactReview] the digest of account {account_id[:8]} was not delivered; tried again next run")
+                return
+            if not await self._review_store.mark_digest(account_id, now):
+                logger.warning(f"[FactReview] account {account_id[:8]} has no review state; digest not marked")
+            logger.info(f"📬 [FactReview] digest of account {account_id[:8]}: {listed} facts")
+        except Exception as exc:
+            logger.error(
+                f"❌ [FactReview] the digest of account {account_id[:8]} failed: {type(exc).__name__}: {exc}", exc_info=True,
+            )
+
+    async def _send_digest(
+        self, user_id: str, account_id: str, state: FactReviewState, now: datetime,
+    ) -> Optional[int]:
+        """The digest's read and post: how many facts it listed (0: nothing to list, nothing sent), or None when its
+        message was not delivered."""
+        closed = await self._repo.get_recently_closed(account_id, since=digest_since(state, now), limit=DIGEST_LIMIT)
+        listed = digest_facts(closed)
+        if not listed:
+            return 0
+        labels = await self._texts.labels_for(user_id, account_id)
+        if not await self._notifications.notify_raw(user_id, account_id, digest_message(labels, listed)):
+            return None
+        return len(listed)
+
+    async def _release_digest(self, user_id: str, day: date) -> None:
+        try:
+            await self._review_store.release_digest(user_id, day)
+        except Exception as exc:
+            logger.warning(f"[FactReview] the digest claim of user {user_id[:8]} not released: {type(exc).__name__}: {exc}")
+
+    async def _note_set_aside(self, account_id: str, now: datetime) -> None:
+        """A fact was archived or invalidated in this run: the next digest has something to tell (`undigested_since`, the
+        first instant kept)."""
+        if not await self._review_store.mark_undigested(account_id, now):
+            logger.warning(f"[FactReview] account {account_id[:8]} has no review state; undigested_since not set")
 
     # ------------------------------------------------------------------------------------------------ step 8: select
 
@@ -748,6 +810,8 @@ class FactReviewService:
             if await self._queue(account_id, fact.id, self._ask_builder(user_id, ask, now), writes):
                 queued.append(fact.id)
                 counts[CounterField.QUEUED] = counts.get(CounterField.QUEUED, 0) + 1
+        if pass_set_aside(counts):
+            await self._note_set_aside(account_id, now)
         removed = plan.offers_removed(queued)
         if removed and not await self._review_store.mark_removed(account_id, removed):
             logger.warning(f"[FactReview] account {account_id[:8]} has no review state; offers not cleared")
@@ -765,6 +829,7 @@ class FactReviewService:
         """The fallback of each timed-out question (`_fallback`), counted as it lands: `timed_out`, and the facts it
         revived (`fallback_revives`) for the revive alert. Steps 6 and 11 both go through here."""
         timed_out = 0
+        archived = False
         revived: List[str] = []
         for question in questions:
             written = await self._fallback(account_id, question, now, writes)
@@ -772,6 +837,10 @@ class FactReviewService:
                 timed_out += 1
                 if fallback_revives(question):
                     revived.append(written)
+                else:
+                    archived = True
+        if archived:
+            await self._note_set_aside(account_id, now)
         return _StepResult(counts={CounterField.TIMED_OUT: timed_out} if timed_out else {}, revived=tuple(revived))
 
     async def _fallback(

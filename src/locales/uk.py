@@ -211,4 +211,6 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Це питання закрите.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Факти, які я відклав цього тижня:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Щоб повернути один із них, напиши мені в чаті, що це досі так.",
+    UIMessage.MEMORY_DIGEST_ARCHIVED.value: "більше не так",
+    UIMessage.MEMORY_DIGEST_INVALIDATED.value: "ніколи не було так",
 }

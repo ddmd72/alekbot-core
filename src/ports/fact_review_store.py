@@ -193,6 +193,11 @@ class FactReviewStore(ABC):
         """`last_digest_at = at`, and `undigested_since` cleared."""
 
     @abstractmethod
+    async def mark_undigested(self, account_id: str, at: datetime) -> bool:
+        """`undigested_since = at` when it is unset (a fact was set aside after the last digest); an earlier instant is
+        kept. False when the account has no review state."""
+
+    @abstractmethod
     async def mark_oldest_alert(self, account_id: str, at: datetime) -> bool:
         """`oldest_alert_at = at`."""
 
