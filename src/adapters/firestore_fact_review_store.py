@@ -329,7 +329,7 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def mark_undigested(self, account_id: str, at: datetime) -> bool:
         return await self._mark(account_id, lambda state: {"undigested_since": state.undigested_since or at})
 
-    async def mark_oldest_alert(self, account_id: str, at: datetime) -> bool:
+    async def mark_oldest_alert(self, account_id: str, at: Optional[datetime]) -> bool:
         return await self._mark(account_id, lambda state: {"oldest_alert_at": at})
 
     async def mark_queue_alert(self, account_id: str, at: Optional[datetime]) -> bool:

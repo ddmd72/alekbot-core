@@ -204,7 +204,10 @@ async def test_the_cap_counts_the_facts_of_queued_questions_45_queued_and_5_stal
     snap = daily(world)
     assert (snap["staled"], snap["deferred"], snap["breaker"], snap["due"]) == (0, 2, "ok", 2)
     assert (result["staled"], result["breaker_tripped"]) == (0, 0)
-    assert "due_waiting 45" in world.sink.texts[0]
+    (line,) = [text for text in world.sink.texts if text.startswith("🧹")]
+    assert "due_waiting 45" in line
+    (queue_alert,) = alerts(world)
+    assert "45 questions are queued, over 35" in queue_alert
 
 
 async def test_one_fewer_queued_question_leaves_headroom_for_exactly_one_fact_the_oldest():

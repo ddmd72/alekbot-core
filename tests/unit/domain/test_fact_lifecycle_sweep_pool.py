@@ -108,7 +108,7 @@ def test_a_waiting_figure_alone_earns_a_line_and_shows_in_its_account_row():
     row = FactLifecycleDay(account_id="acc-12345678", day=date(2026, 10, 23))
     assert daily_line(NOW, [row], False) is None
     line = daily_line(NOW, [row], False, {"acc-12345678": 2})
-    assert line is not None and line.endswith("| due_waiting 2")
+    assert line is not None and line.endswith(", due_waiting 2 | enqueued 0")
 
 
 def test_a_zero_waiting_figure_adds_nothing_to_the_row():

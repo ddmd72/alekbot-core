@@ -19,10 +19,12 @@ EXPIRY_TOOL_ERRORS_ALERT: Final[int] = 10                      # yesterday's ref
 @dataclass(frozen=True)
 class AccountAlerts:
     """What the review's conditions say for one account's run: the lines to post, whether to record the oldest-stale
-    alert (`oldest_alert_at = now`) and what to do with the queue alert's mark (`raise`: set it to now, `rearm`: clear it)."""
+    alert (`oldest_alert_at = now`) or re-arm it (clear the mark), and what to do with the queue alert's mark (`raise`:
+    set it to now, `rearm`: clear it)."""
 
     lines: Tuple[str, ...] = ()
     record_oldest: bool = False
+    rearm_oldest: bool = False
     queue: Optional[QueueAlertAction] = None
 
 
@@ -40,7 +42,8 @@ def review_alerts(
 
     - the pool (stale facts plus the facts of open questions) is over `POOL_CAP`: every run while it is;
     - the oldest stale fact is older than `interval` days + `OLDEST_STALE_GRACE`: when it starts, then every
-      `OLDEST_ALERT_REPEAT` (`state.oldest_alert_at`); a stale fact without `stale_since` has no age and raises none;
+      `OLDEST_ALERT_REPEAT` (`state.oldest_alert_at`); a stale fact without `stale_since` has no age and raises none.
+      When the condition stops holding the mark is cleared (`rearm_oldest`), so the next episode alerts at once;
     - more than `QUEUE_ALERT` questions are queued: once, until they are `QUEUE_ALERT` or fewer again
       (`queue_alert`, `state.queue_alert_at`);
     - no review has succeeded for more than `UNSUCCESSFUL_REVIEW_ALERT` since the first one asked for
@@ -54,12 +57,13 @@ def review_alerts(
     if pool > POOL_CAP:
         lines.append(f"the pool is {pool}: stale facts and facts waiting for an answer, over {POOL_CAP}")
     record_oldest = False
-    if oldest_stale is not None:
-        age = as_utc(now) - as_utc(oldest_stale)
-        limit = timedelta(days=interval) + OLDEST_STALE_GRACE
-        if age > limit and (state.oldest_alert_at is None or as_utc(now) - state.oldest_alert_at >= OLDEST_ALERT_REPEAT):
-            lines.append(f"the oldest stale fact has waited {age.days} days (limit {limit.days})")
-            record_oldest = True
+    limit = timedelta(days=interval) + OLDEST_STALE_GRACE
+    age = None if oldest_stale is None else as_utc(now) - as_utc(oldest_stale)
+    holds = age is not None and age > limit
+    if age is not None and holds and (state.oldest_alert_at is None or as_utc(now) - state.oldest_alert_at >= OLDEST_ALERT_REPEAT):
+        lines.append(f"the oldest stale fact has waited {age.days} days (limit {limit.days})")
+        record_oldest = True
+    rearm_oldest = not holds and state.oldest_alert_at is not None
     queue = queue_alert(state, held)
     if queue == "raise":
         queued = sum(1 for q in held if q.status is QuestionStatus.QUEUED)
@@ -69,7 +73,7 @@ def review_alerts(
         lines.append(f"no successful review for {hours} h")
     if reply_intake_failed > 0:
         lines.append(f"{reply_intake_failed} owner replies were not recorded yesterday")
-    return AccountAlerts(tuple(lines), record_oldest, queue)
+    return AccountAlerts(tuple(lines), record_oldest, rearm_oldest, queue)
 
 
 def expiry_errors_alert(expiry_tool_errors: int) -> Optional[str]:

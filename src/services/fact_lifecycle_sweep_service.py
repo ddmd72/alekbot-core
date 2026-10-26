@@ -173,10 +173,15 @@ class FactLifecycleSweepService:
             await self._post(purge_alert(purge_overdue))
         progress["stage"] = "the ops line"
         seen = set(accounts)
-        rows.extend(
+        unvisited = [
             FactLifecycleDay(account_id=row.account_id, day=day, expiry_tool_errors=row.expiry_tool_errors)
             for row in yesterday.values() if row.account_id not in seen and row.expiry_tool_errors
-        )
+        ]
+        rows.extend(unvisited)
+        for row in unvisited:       # an account the run does not visit has no other way to be told of its refused expiry calls
+            line = expiry_errors_alert(row.expiry_tool_errors)
+            if line is not None:
+                await self._post(account_message(row.account_id, None, [line]))
         await self._post_line(now, day, rows, waiting, standing, purge_overdue)
         return {**totals, "purge_overdue": purge_overdue, "dry_run": self._dry_run}
 
@@ -372,8 +377,11 @@ class FactLifecycleSweepService:
                 reply_intake_failed=yesterday.reply_intake_failed if yesterday else 0, now=now,
             )
             lines = [*found.lines, *lines]
-            if found.record_oldest:
-                await self._mark(account_id, "oldest alert", self._review_store.mark_oldest_alert(account_id, now))
+            if found.record_oldest or found.rearm_oldest:
+                await self._mark(
+                    account_id, "oldest alert",
+                    self._review_store.mark_oldest_alert(account_id, now if found.record_oldest else None),
+                )
             if found.queue is not None:
                 await self._mark(
                     account_id, "queue alert",

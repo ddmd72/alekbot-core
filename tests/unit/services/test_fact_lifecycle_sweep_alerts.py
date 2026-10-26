@@ -105,6 +105,27 @@ async def test_the_oldest_alert_is_recorded_and_not_repeated_within_a_week_but_t
     assert first is not None
 
 
+async def test_a_new_episode_alerts_at_once_after_the_backlog_drained():
+    world = ReviewWorld()
+    await reviewed_recently(world)
+    first = await stale_for(world, 10)
+    await run(world)
+    assert len(alerts(world)) == 1 and world.state_doc(ACC)["oldest_alert_at"] is not None
+
+    world.docs[first]["state"] = "archived"                                      # drained: no stale fact is left
+    world.advance(days=1)
+    await reviewed_recently(world, last_review_at=world.now - timedelta(hours=1),
+                            oldest_alert_at=world.state_doc(ACC)["oldest_alert_at"])
+    await run(world)
+    assert len(alerts(world)) == 1 and world.state_doc(ACC)["oldest_alert_at"] is None     # re-armed, nothing said
+
+    world.advance(days=2)                                                        # inside the week of the first alert
+    await reviewed_recently(world, last_review_at=world.now - timedelta(hours=1))
+    await stale_for(world, 4, "Clara kept a diary entry")
+    await run(world)
+    assert len(alerts(world)) == 2 and world.state_doc(ACC)["oldest_alert_at"] is not None
+
+
 async def test_the_oldest_alert_is_in_log_only_mode_too():
     world = ReviewWorld()
     await reviewed_recently(world)
@@ -214,6 +235,18 @@ async def test_expiry_tool_errors_alert_above_ten_only(errors, expected):
     assert len(alerts(world)) == expected
 
 
+async def test_refused_expiry_calls_alert_an_account_the_run_does_not_otherwise_visit():
+    world = ReviewWorld()
+    await world.counters.add(OTHER, yesterday(world), {CounterField.EXPIRY_TOOL_ERRORS: 11})
+    await world.counters.add(ACC, yesterday(world), {CounterField.EXPIRY_TOOL_ERRORS: 10})
+
+    result = await run(world)
+
+    assert result["accounts"] == 0
+    (alert,) = alerts(world)
+    assert OTHER[:8] in alert and "11 expiry tool calls were refused" in alert
+
+
 # ------------------------------------------------------------------------------------------------ one per account
 
 async def test_every_condition_of_an_account_lands_in_one_message_and_another_account_gets_its_own():
@@ -297,7 +330,7 @@ async def test_the_review_segments_come_from_yesterdays_counters_and_todays_ques
     assert "| review: reviewed 4; counted on their own: revived 1, rewritten 0, archived 0, invalidated 0, superseded 0, kept 2, queued 1" in account
     assert "| questions sent 3, answered by digit 1, by button 0, in the Cabinet 0, by reply 0, timed out 1, queue 1, unanswered 1, due_waiting 2" in account
     assert "review failed" not in account and "replies not recorded" not in account
-    assert account.endswith("| enqueued 1") or account.endswith("| enqueued 0")
+    assert account.endswith("| enqueued 1")
 
 
 async def test_todays_counters_are_not_on_the_line():

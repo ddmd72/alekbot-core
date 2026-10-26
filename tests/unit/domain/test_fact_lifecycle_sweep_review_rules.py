@@ -57,9 +57,16 @@ def test_the_oldest_stale_alert_repeats_weekly_not_sooner():
     assert again.record_oldest is True and len(again.lines) == 1
 
 
-def test_an_oldest_alert_mark_is_not_touched_when_the_condition_does_not_hold():
+def test_an_oldest_alert_mark_is_cleared_when_the_condition_stops_holding():
     found = alerts(interval=1, oldest_days=2, st=state(oldest_alert_at=NOW - timedelta(days=30)))
-    assert (found.lines, found.record_oldest) == ((), False)
+    assert (found.lines, found.record_oldest, found.rearm_oldest) == ((), False, True)
+    assert alerts(oldest_days=None, st=state(oldest_alert_at=NOW)).rearm_oldest is True
+
+
+def test_there_is_nothing_to_rearm_without_a_mark_and_nothing_while_the_episode_goes_on():
+    assert alerts(interval=1, oldest_days=2).rearm_oldest is False
+    running = alerts(interval=1, oldest_days=20, st=state(oldest_alert_at=NOW - timedelta(days=2)))
+    assert (running.lines, running.record_oldest, running.rearm_oldest) == ((), False, False)
 
 
 # ------------------------------------------------------------------------------------------------ the queue

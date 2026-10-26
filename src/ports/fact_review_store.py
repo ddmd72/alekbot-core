@@ -198,8 +198,8 @@ class FactReviewStore(ABC):
         kept. False when the account has no review state."""
 
     @abstractmethod
-    async def mark_oldest_alert(self, account_id: str, at: datetime) -> bool:
-        """`oldest_alert_at = at`."""
+    async def mark_oldest_alert(self, account_id: str, at: Optional[datetime]) -> bool:
+        """`oldest_alert_at = at`; None re-arms the alert."""
 
     @abstractmethod
     async def mark_queue_alert(self, account_id: str, at: Optional[datetime]) -> bool:
