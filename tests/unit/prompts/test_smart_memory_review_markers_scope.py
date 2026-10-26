@@ -42,3 +42,20 @@ def test_apply_to_says_the_block_does_not_apply_without_a_marker():
 
 def test_talking_about_it_is_scoped_to_a_marked_question():
     assert "a marked question" in _value("talking_about_it")
+
+
+def test_apply_to_pins_the_not_delivered_marker_and_exactly_three_markers():
+    apply_to = _value("apply_to")
+    assert "not delivered" in apply_to
+    assert apply_to.count("memory review q=<id>") == 3
+
+
+def test_apply_to_keeps_the_exclusion_clause():
+    clause = "not even when the owner talks about his memory, his facts or what you remember"
+    assert clause in _value("apply_to")
+
+
+def test_purpose_says_the_messages_belong_to_the_system_which_applies_the_answers():
+    purpose = _value("purpose")
+    assert "belong to the system" in purpose
+    assert "applies them itself" in purpose

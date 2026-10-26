@@ -2,10 +2,10 @@
 category: protocol
 class: protocols
 metadata:
-  description: 'Smart: messages marked memory review in history ([System: memory
-    review q=…] + the question), how the owner answers it (a reply to the question
-    message, or the Cabinet), the not-delivered frame, and what Smart never does for
-    it (ask again, propose_memory_facts, say it saved anything) (Facts S4 §3.10, S4-D15).'
+  description: 'Smart: messages marked memory review in history ([System: memory review
+    q=…] + the question), how the owner answers it (a reply to the question message,
+    or the Cabinet), the not-delivered frame, and what Smart never does for it (ask
+    again, propose_memory_facts, say it saved anything) (Facts S4 §3.10, S4-D15).'
   override_by:
   - SYSTEM
   - AGENT
