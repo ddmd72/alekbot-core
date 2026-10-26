@@ -20,7 +20,7 @@ from src.domain.fact_review_language import labels_digest
 from src.domain.fact_review_question import ClosedBy, FactReviewQuestion, QuestionStatus
 from src.domain.fact_review_reasons import queued_reason
 from src.domain.fact_review_result import FactReviewResult, encode_review_result
-from src.domain.fact_review_rules import revives_in_30_days
+from src.domain.fact_review_rules import revives_in_window
 from src.domain.fact_review_task import FactReviewTask, decode_review_task
 from src.domain.fact_review_task_keys import defer_key
 from src.domain.language import LanguageCode
@@ -543,7 +543,7 @@ class TestAfterThePass:
         for fact_id in ids:
             doc = world.docs[fact_id]
             assert doc["state"] == "current"
-            assert revives_in_30_days(doc["lifecycle_events"], NOW) == 0
+            assert revives_in_window(doc["lifecycle_events"], NOW) == 0
         row = await day_row(world)
         assert (row.queued, row.revived, row.reviewed) == (20, 0, 20)
         assert world.sink.texts == []
@@ -674,7 +674,7 @@ class TestReviveAlert:
     async def test_a_third_revive_within_thirty_days_raises_one_alert_naming_the_fact(self):
         world, fact = await self._revive([revived_on(20), revived_on(10)])
 
-        assert revives_in_30_days(world.docs[fact]["lifecycle_events"], NOW) == 3
+        assert revives_in_window(world.docs[fact]["lifecycle_events"], NOW) == 3
         assert len(world.sink.texts) == 1
         assert world.sink.texts[0].startswith("🚨") and f"{fact[:8]} (3×)" in world.sink.texts[0]
 

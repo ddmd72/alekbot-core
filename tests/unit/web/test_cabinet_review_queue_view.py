@@ -1,6 +1,7 @@
 """Facts S4 · T11a: `GET /api/user/facts/review-queue` (plan §3.18), through the real route, repository and review store on the
 evaluating Firestore fake. The user's open questions come in the order they are dealt with (the question out now, those sent
-and unanswered, then the queue in its order), each with its fact in full as it stands now, its domain, `reported_date`,
+and unanswered, then the queue in its order), each with its fact in full as it stands now (the text the question quoted when the fact is gone or was rewritten to
+a text the owner was not asked about), its domain, `reported_date`,
 since when it waits and its status. Another account's and another user's questions are never listed; no store is a 501."""
 import copy
 from datetime import timedelta
@@ -11,6 +12,10 @@ from quart import Quart
 
 from src.domain.entities import ExpiryKind
 from src.domain.fact_review_question import QuestionStatus
+from src.domain.language import LanguageCode
+from src.domain.owner_timezone import ResolvedOwnerZone
+from src.services.fact_answer_service import FactAnswerService
+from src.services.fact_question_texts import FactQuestionTexts
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import ACC, OTHER, USER
 from tests.support.fact_lifecycle_world import NOW
@@ -23,13 +28,32 @@ TEXT_TEA = "drinks green tea every morning"
 TEXT_MARKET = "buys bread at the Saturday market"
 
 
+class FixedZones:
+    async def resolve(self, account_id: str) -> ResolvedOwnerZone:
+        return ResolvedOwnerZone(USER, "Europe/Lisbon")
+
+
+def _service(world: ReviewWorld, store: Any) -> Any:
+    """The answer service whose `review_queue` the route reads, over `store` (none: no service)."""
+    if store is None:
+        return None
+    texts = FactQuestionTexts(world.language, world.localization, store, world.counters, LanguageCode.EN,
+                              clock=world.clock)
+    return FactAnswerService(
+        fact_updates=world.store.adapter, repo=world.repo, review_store=store, counters=world.counters,
+        task_queue=world.queue, session_store=world.session_store, texts=texts, interactive=world.interactive,
+        owner_zones=FixedZones(),
+    )
+
+
 def _app(world: ReviewWorld, account: str = ACC, user: str = USER, store: Any = "world") -> Quart:
+    store = world.review_store if store == "world" else store
     session_service = MagicMock()
     session_service.verify_access_token = MagicMock(return_value={"sub": user, "account_id": account, "role": "owner"})
     app = Quart("test_cabinet_review_queue_view")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(), fact_repo=world.repo,
-        embedding_service=MagicMock(), fact_review_store=world.review_store if store == "world" else store,
+        embedding_service=MagicMock(), fact_review_store=store, fact_answer_service=_service(world, store),
     ))
     return app
 
@@ -104,7 +128,7 @@ async def test_a_sent_question_says_when_it_was_asked():
     assert (body["questions"][0]["status"], body["questions"][0]["asked_at"]) == ("sent", asked_at.isoformat())
 
 
-async def test_a_fact_rewritten_since_the_question_shows_its_current_text():
+async def test_a_fact_rewritten_since_the_question_shows_the_text_the_question_quoted():
     world = ReviewWorld()
     fact = await world.seed(TEXT_TEA)
     await _ask(world, fact, "q1")
@@ -114,7 +138,7 @@ async def test_a_fact_rewritten_since_the_question_shows_its_current_text():
 
     _, body = await _queue(world)
 
-    assert body["questions"][0]["text"] == "drinks black tea every morning"
+    assert body["questions"][0]["text"] == TEXT_TEA
 
 
 async def test_a_fact_that_is_gone_shows_the_text_the_question_quoted():

@@ -1,5 +1,5 @@
 """POST /slack/events through the Quart test client (P7 finding F4: the route's 401 never ran in a test; only
-`_verify_signature` was called directly). `src/adapters/slack/http_adapter.py:158-167`, `:582-623`.
+`_verify_signature` was called directly).
 
 The signing secret and the HMAC are real; the queue records what was enqueued; nothing behind the gate is reachable
 (Tripwire). A refused event enqueues nothing.
@@ -111,13 +111,22 @@ async def test_a_body_that_is_json_but_not_utf8_is_401():
     assert w.nothing_happened()
 
 
-async def test_url_verification_is_the_only_unsigned_type_answered():
+async def test_a_signed_url_verification_is_answered_with_its_challenge():
     w = World()
-    resp = await w.post(json.dumps({"type": "url_verification", "challenge": "c-123"}).encode(),
-                        {"Content-Type": "application/json"})
+    body = json.dumps({"type": "url_verification", "challenge": "c-123"}).encode()
+    resp = await w.post(body, _sign(body))
     assert resp.status_code == 200
     assert await resp.get_data(as_text=True) == "c-123"
     assert resp.headers["Content-Type"].startswith("text/plain")
+    assert w.nothing_happened()
+
+
+async def test_an_unsigned_url_verification_is_401_and_gets_no_challenge():
+    w = World()
+    resp = await w.post(json.dumps({"type": "url_verification", "challenge": "c-123"}).encode(),
+                        {"Content-Type": "application/json"})
+    assert resp.status_code == 401
+    assert "c-123" not in await resp.get_data(as_text=True)
     assert w.nothing_happened()
 
 

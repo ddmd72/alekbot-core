@@ -14,7 +14,7 @@ from src.domain.fact_review_reasons import (
     kept_twice_reason,
     queued_reason,
 )
-from src.domain.fact_review_rules import fallback_window_days, revive_alert_due, revives_in_30_days
+from src.domain.fact_review_rules import fallback_window_days, revive_alert_due, revives_in_window
 from tests.support.review_rule_builders import NOW, fact
 
 DAY = timedelta(days=1)
@@ -56,7 +56,7 @@ CASES = {
 def test_the_alert_reader_recognises_exactly_the_revive_builders(name):
     reason, is_revive, _ = CASES[name]
     assert is_revive_reason(reason) is is_revive
-    assert revives_in_30_days([entry(reason)], NOW) == (1 if is_revive else 0)
+    assert revives_in_window([entry(reason)], NOW) == (1 if is_revive else 0)
 
 
 @pytest.mark.parametrize("name", CASES)
@@ -70,7 +70,7 @@ def test_the_window_reader_recognises_the_revive_and_rewrite_builders(name):
 
 @pytest.mark.parametrize("name", [n for n in CASES if CASES[n][1]])
 def test_a_revive_entry_that_leads_elsewhere_is_not_a_revive(name):
-    assert revives_in_30_days([entry(CASES[name][0], to="archived")], NOW) == 0
+    assert revives_in_window([entry(CASES[name][0], to="archived")], NOW) == 0
 
 
 def test_three_revives_of_any_builder_raise_the_alert():

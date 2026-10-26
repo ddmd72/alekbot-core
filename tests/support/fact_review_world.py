@@ -62,18 +62,27 @@ class ReviewSessionStore(FirestoreSessionStore):
 
 
 class RecordingChannel:
-    """A platform channel as `UserNotificationService.notify_raw` uses it: `send_long_text` records, or raises while `fail`."""
+    """A platform channel as `UserNotificationService.notify_raw` uses it: `send_long_text` (the bot's own markdown) and
+    `send_literal` (text shown exactly as written) record, or raise while `fail`. `texts` holds every delivered text in
+    order; `literal` holds the ones that went through `send_literal`."""
 
     def __init__(self, platform: str, channel_id: str, fail: bool = False) -> None:
         self.platform = platform
         self.channel_id = channel_id
         self.fail = fail
         self.texts: List[str] = []
+        self.literal: List[str] = []
 
     async def send_long_text(self, text: str) -> None:
         if self.fail:
             raise RuntimeError("send failed")
         self.texts.append(text)
+
+    async def send_literal(self, text: str, to_message_id: Optional[str] = None) -> None:
+        if self.fail:
+            raise RuntimeError("send failed")
+        self.texts.append(text)
+        self.literal.append(text)
 
 
 class RecordingChannelFactory(NotificationChannelFactoryPort):
@@ -95,6 +104,11 @@ class RecordingChannelFactory(NotificationChannelFactoryPort):
     def sent(self) -> List[Tuple[str, str, str]]:
         """(platform, channel_id, text) of every delivered text, per channel in order."""
         return [(c.platform, c.channel_id, text) for c in self.channels.values() for text in c.texts]
+
+    @property
+    def sent_literal(self) -> List[Tuple[str, str, str]]:
+        """(platform, channel_id, text) of every text delivered through `send_literal`, per channel in order."""
+        return [(c.platform, c.channel_id, text) for c in self.channels.values() for text in c.literal]
 
 
 class RecordingInteractiveMessagePort(InteractiveMessagePort):

@@ -102,6 +102,18 @@ class TestWeekly:
         assert [(platform, channel) for platform, channel, _ in world.channels.sent] == [("slack", "D1")]
         assert await world.session_store.messages(SESSION) == before == []
 
+    async def test_it_is_sent_as_literal_text_so_a_quoted_fact_is_shown_and_never_obeyed(self):
+        # T12c A4/R1: the digest quotes stored fact text, which the bot did not write; it goes through `send_literal`
+        # only, so `<!channel>` reaches the platform's literal path as written, never its markdown send.
+        world = await due_world()
+        await closed(world, "Alex asked the <!channel> to bring cake & tea")
+
+        await Rig(world).run()
+
+        [text] = digests(world)
+        assert "• «Alex asked the <!channel> to bring cake & tea» — no longer true" in text
+        assert world.channels.sent_literal == world.channels.sent == [("slack", "D1", text)]
+
     @pytest.mark.parametrize("state", [
         dict(undigested_since=None, last_digest_at=None),
         dict(undigested_since=NOW - 3 * DAY, last_digest_at=NOW - 6 * DAY),
