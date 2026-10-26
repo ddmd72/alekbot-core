@@ -210,6 +210,11 @@ class NoWriteFactRepository(FactRepository):
             self._record("add_fact", fact_id=fact.id)
         return fact.id
 
+    def seed_document(self, fact: FactEntity) -> None:
+        """Put a document in the overlay as it is, without a record in `writes`: a bench case's input (a fact the live
+        store lacks), not a write of the run. It has no live rank, so no vector search finds it."""
+        self._put(fact)
+
     async def get_fact_by_id(self, fact_id: str) -> Optional[FactEntity]:
         doc = self._docs.get(fact_id)
         if doc is not None:

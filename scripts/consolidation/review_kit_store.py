@@ -174,6 +174,16 @@ class RecordingReviewStore(FirestoreFactReviewStore):
         if state is not None:
             states.docs[account_id] = state_document(state)
 
+    def seed_question(self, question: FactReviewQuestion) -> None:
+        """Put a question in the store as it is, of any status: a bench case's input (a reply on an asked question, a
+        closed one). Not a write: `load_account` copies only the open questions, so a case that needs a closed one
+        seeds it here. Replaces a question with the same id."""
+        self.memory.collection(self._env.fact_review_questions_collection).docs[question.question_id] = question_document(question)
+
+    def seed_state(self, state: FactReviewState) -> None:
+        """Put the account's review state in the store as it is (an account that never ran a review has none stored)."""
+        self.memory.collection(self._env.fact_review_state_collection).docs[state.account_id] = state_document(state)
+
     # What the run left, as models (the test and the benches read these).
     def questions(self) -> List[FactReviewQuestion]:
         return [question_from(d) for d in self.memory.collection(self._env.fact_review_questions_collection).docs.values()]

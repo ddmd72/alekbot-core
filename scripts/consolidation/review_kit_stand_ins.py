@@ -9,12 +9,14 @@ The question store is `review_kit_store.RecordingReviewStore` (production's adap
 the real `FactAnswerService` over the kit's `WriteRecorder`, so an owner answer runs production's rules and lands in the
 overlay.
 """
+import asyncio
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from scripts.consolidation.review_kit_store import RecordingReviewStore
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
+from src.domain.agent import AgentMessage, AgentResponse
 from src.domain.channel_binding import ChannelBinding
 from src.domain.choice_outcome import ChoiceOutcome
 from src.domain.fact_lifecycle_run_guard import run_guard_held
@@ -36,6 +38,7 @@ from src.ports.repository import FactRepository
 from src.ports.session_store import SessionStore
 from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_question_texts import FactQuestionTexts
+from src.services.fact_review_service import FactReviewService
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from src.services.user_notification_service import UserNotificationService
 
@@ -273,6 +276,7 @@ class ReviewStandIns:
     owner_zones: OwnerTimezoneResolver
     answer_service: FactAnswerService
     extra: Dict[str, Any] = field(default_factory=dict)
+    clock: Callable[[], datetime] = _utcnow      # the run's one clock: the answers, the review service and `stage_stale(at=)` read it
 
     def report(self) -> Dict[str, Any]:
         """What the run did to each stand-in, for the report."""
@@ -322,5 +326,74 @@ def build_review_stand_ins(
         store=store, lease=MemoryLease(), task_queue=queue, agent_factory=NoopAgentFactory(), sessions=sessions,
         interactive=interactive, notification_state=notification_state, channel_bindings=KitChannelBindings(),
         language=language, notifier=NoPostNotifier(notification_state), texts=texts, owner_zones=owner_zones,
-        answer_service=answers,
+        answer_service=answers, clock=clock,
+    )
+
+
+# ------------------------------------------------------------------------------------------------ the review service
+
+class KitCoordinator:
+    """The coordinator the review service routes its pass through on the kit: the kit-installed `ConsolidationAgent`'s
+    `execute`, nothing else. Never the real `AgentCoordinator` (it resolves the user's cached live agent, whose repository
+    and fact ports write live) and never `process()` (its `_flush_billing` writes the account's live usage counters). The
+    agent's timeout is the message's, as the lease budget sets it; an overrun raises, which the service takes as the pass's
+    failure. `routed` keeps every message it was given."""
+
+    def __init__(self, agent: Any) -> None:
+        self._agent = agent
+        self.routed: List[AgentMessage] = []
+
+    async def route_message(self, message: AgentMessage) -> AgentResponse:
+        self.routed.append(message)
+        expected = f"consolidation_agent_{message.context.get('user_id')}"
+        if message.recipient != expected:
+            return AgentResponse.failure(
+                message.task_id, "kit_coordinator", f"the kit routes to {expected} only, not {message.recipient}",
+            )
+        timeout = message.timeout_ms / 1000 if message.timeout_ms else None
+        return await asyncio.wait_for(self._agent.execute(message), timeout)
+
+
+def build_review_service(
+    kit: Any,
+    bundle: ReviewStandIns,
+    *,
+    agent: Any,
+    account_repo: Any,
+    user_repo: Any,
+    run_timeout_s: Optional[float] = None,
+) -> FactReviewService:
+    """The real `FactReviewService` built from the kit and its stand-ins only, so no port can be a live one by mistake:
+    the kit's overlay store, counters and alert sink, and the bundle's question store, lease, queue, sessions, platform,
+    notifier, notification state, channel bindings, texts, owner zones, answer service, agent factory and clock (the one
+    clock of the run: the bench passes the same to `stage_stale(at=)`). The two read-only ports are the owner's account and
+    user repositories (the owner check and his zone). The coordinator is a `KitCoordinator` over `agent`, which must have
+    the kit installed. Raises ValueError for a bundle that is not the kit's or an agent the kit was not installed on."""
+    from src.infrastructure.agent_config import CONSOLIDATION
+
+    if kit.repo is None or kit.review_world is not bundle:
+        raise ValueError("the stand-ins are not the kit's: build them with kit.review_stand_ins after kit.install")
+    if getattr(agent, "_repo", None) is not kit.repo:
+        raise ValueError("the agent has not the kit installed: its pass would write through its own repository")
+    return FactReviewService(
+        repo=kit.repo,
+        review_store=bundle.store,
+        counters=kit.counters,
+        lease=bundle.lease,
+        coordinator=KitCoordinator(agent),
+        agent_factory=bundle.agent_factory,
+        user_repo=user_repo,
+        account_repo=account_repo,
+        texts=bundle.texts,
+        owner_zones=bundle.owner_zones,
+        notification_state=bundle.notification_state,
+        channel_bindings=bundle.channel_bindings,
+        notifications=bundle.notifier,
+        session_store=bundle.sessions,
+        task_queue=bundle.task_queue,
+        answer_service=bundle.answer_service,
+        interactive=bundle.interactive,
+        alert_sink=kit.sink,
+        run_timeout_s=run_timeout_s if run_timeout_s is not None else CONSOLIDATION.timeout_ms / 1000,
+        clock=bundle.clock,
     )
