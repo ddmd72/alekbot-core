@@ -19,10 +19,12 @@ from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
 from ..domain.entities import FactEntity
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
-from ..domain.fact_review_answers import DECIDING_ANSWERS, MAX_BULK_ANSWERS, deciding_answer
-from ..domain.fact_review_digest import DIGEST_LIMIT, digest_facts, last_actor
+from ..domain.fact_review_answers import DECIDING_ANSWERS, deciding_answer
+from ..domain.fact_review_digest import last_actor
 from ..domain.fact_review_language import CANONICAL_LABELS, OPTION_KEYS
-from ..domain.fact_review_overview import listable_state, queue_entries, set_aside_since, user_questions
+from ..domain.fact_review_overview import (
+    SET_ASIDE_LIMIT, holds_other_users_question, listable_state, queue_entries, set_aside_since, user_questions,
+)
 from ..domain.pass_actor import PassActor
 from ..domain.ui_messages import UIMessage
 from ..ports.user_repository import UserRepository
@@ -48,6 +50,9 @@ DOCS_OWNER_USER_ID = os.getenv('DOCS_OWNER_USER_ID')
 # gate ahead of add_platform_id — mirrors the shape of the pre-commit hook's own
 # phone-number regex (scripts/git-hooks/pre-commit: `\+[1-9][0-9]{7,14}`).
 _E164_PATTERN = re.compile(r"^\+[1-9]\d{6,14}$")
+
+# How many questions one request of answers may name.
+MAX_BULK_ANSWERS = 50
 
 
 def create_user_cabinet_blueprint(
@@ -839,10 +844,11 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/user/facts/recently-closed", methods=["GET"])
     @auth_required
     async def recently_closed_facts():
-        """Facts the review or the owner set aside lately (archived or invalidated), newest closure first. Read-only."""
+        """Everything closed (archived or invalidated) in the last 30 days, newest closure first, each with the actor of
+        its last trail entry. Read-only."""
         try:
             closed = await fact_repo.get_recently_closed(
-                g.account_id, since=set_aside_since(datetime.now(timezone.utc)), limit=DIGEST_LIMIT,
+                g.account_id, since=set_aside_since(datetime.now(timezone.utc)), limit=SET_ASIDE_LIMIT,
             )
             items = [
                 {
@@ -853,7 +859,7 @@ def create_user_cabinet_blueprint(
                     "closed_at": f.valid_to.isoformat() if f.valid_to else None,
                     "actor": last_actor(f),
                 }
-                for f in digest_facts(closed)
+                for f in closed
             ]
             return jsonify({"facts": items}), 200
         except Exception as e:
@@ -928,7 +934,7 @@ def create_user_cabinet_blueprint(
             return jsonify({"error": "a question may be answered once per request"}), 400
         try:
             named = await fact_review_store.get_questions([question_id for question_id, _ in items])
-            if any(q.account_id == g.account_id and q.user_id != g.user_id for q in named):
+            if holds_other_users_question(named, g.account_id, g.user_id):
                 return jsonify({"error": "Not authorized"}), 403
             results = []
             for question_id, kind in items:

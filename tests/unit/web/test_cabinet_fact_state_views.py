@@ -160,7 +160,7 @@ async def test_recently_closed_leaves_out_what_closed_before_the_window(world):
     assert [f["text"] for f in body["facts"]] == ["inside"]
 
 
-async def test_recently_closed_lists_what_the_digest_lists_and_no_other_closer(world):
+async def test_recently_closed_lists_everything_closed_whoever_closed_it_each_with_its_actor(world):
     store, repo = world
     await repo.add_fact(_closed("by the review", FactState.ARCHIVED, 1, "review"))
     await repo.add_fact(_closed("by the cabinet", FactState.INVALIDATED, 2, "cabinet"))
@@ -170,7 +170,19 @@ async def test_recently_closed_lists_what_the_digest_lists_and_no_other_closer(w
 
     _, body = await _get(repo, "/api/user/facts/recently-closed")
 
-    assert [f["text"] for f in body["facts"]] == ["by the review"]
+    assert [(f["text"], f["actor"]) for f in body["facts"]] == [
+        ("by the review", "review"), ("by the cabinet", "cabinet"), ("by the consolidator", "stage1"),
+    ]
+
+
+async def test_recently_closed_lists_at_most_fifty_newest_first(world):
+    store, repo = world
+    for n in range(52):
+        await repo.add_fact(_closed(f"closed {n}", FactState.ARCHIVED, 0.01 * (n + 1), "review"))
+
+    _, body = await _get(repo, "/api/user/facts/recently-closed")
+
+    assert [f["text"] for f in body["facts"]] == [f"closed {n}" for n in range(50)]
 
 
 async def test_recently_closed_lists_only_the_sessions_account(world):

@@ -4,7 +4,9 @@ from datetime import timedelta
 
 import pytest
 
-from src.domain.fact_review_overview import listable_state, queue_entries, set_aside_since, user_questions
+from src.domain.fact_review_overview import (
+    SET_ASIDE_LIMIT, holds_other_users_question, listable_state, queue_entries, set_aside_since, user_questions,
+)
 from src.domain.fact_review_question import QuestionStatus
 from src.domain.fact_review_state import FactReviewState
 from tests.support.review_rule_builders import NOW, fact, question, state
@@ -72,3 +74,18 @@ def test_an_entry_shows_its_fact_as_it_stands_or_what_the_question_quoted():
 
     assert (shown.text, shown.reported_date, shown.waiting_since) == ("Drinks black tea", changed.reported_date, q.queue_key)
     assert (gone.text, gone.domain, gone.reported_date) == ("Drinks green tea", None, None)
+
+
+def test_a_question_of_another_user_in_the_account_is_not_the_users_to_answer():
+    mine = question(question_id="mine")
+    colleague = question(question_id="colleague", user_id="u2")
+    stranger = question(question_id="stranger", account_id="acc-2", user_id="u3")
+
+    assert holds_other_users_question([mine, colleague], "acc", "u1") is True
+    assert holds_other_users_question([mine], "acc", "u1") is False
+    assert holds_other_users_question([mine, stranger], "acc", "u1") is False
+    assert holds_other_users_question([], "acc", "u1") is False
+
+
+def test_the_set_aside_list_holds_fifty_facts():
+    assert SET_ASIDE_LIMIT == 50

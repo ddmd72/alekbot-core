@@ -16,6 +16,8 @@ from .fact_review_state import FactReviewState
 LISTABLE_STATES: Final[tuple[str, ...]] = (FactState.CURRENT.value, FactState.STALE.value)
 # How far back the facts the review set aside are listed.
 SET_ASIDE_WINDOW: Final[timedelta] = timedelta(days=30)
+# How many of them are listed.
+SET_ASIDE_LIMIT: Final[int] = 50
 
 # Where an open question stands: the one out now, one sent and not answered, or one still in line.
 QueuePlace = Literal["current", "sent", "waiting"]
@@ -53,6 +55,12 @@ def user_questions(questions: Sequence[FactReviewQuestion], account_id: str, use
     """The open questions of `account_id` that were asked of `user_id`: a question shows its fact whole, so no one sees
     another account's, or another user's in the same account."""
     return [q for q in questions if q.is_open and q.account_id == account_id and q.user_id == user_id]
+
+
+def holds_other_users_question(questions: Sequence[FactReviewQuestion], account_id: str, user_id: str) -> bool:
+    """Whether any of `questions` belongs to another user of `account_id`: answering it is not `user_id`'s to do. A question
+    of another account is not that: it does not exist for this account."""
+    return any(q.account_id == account_id and q.user_id != user_id for q in questions)
 
 
 def queue_entries(

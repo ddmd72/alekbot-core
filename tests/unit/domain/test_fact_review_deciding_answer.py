@@ -1,8 +1,8 @@
-"""Facts S4 · T11b: the answers a batch may carry (`deciding_answer`, `DECIDING_ANSWERS`, `MAX_BULK_ANSWERS`)."""
+"""Facts S4 · T11b: the answers a batch may carry (`deciding_answer`, `DECIDING_ANSWERS`)."""
 import pytest
 
 from src.domain.fact_review_answer_kind import AnswerKind
-from src.domain.fact_review_answers import DECIDING_ANSWERS, MAX_BULK_ANSWERS, deciding_answer
+from src.domain.fact_review_answers import DECIDING_ANSWERS, deciding_answer
 
 
 @pytest.mark.parametrize("raw, kind", [
@@ -19,4 +19,3 @@ def test_anything_else_is_not_an_answer(raw):
 
 def test_dont_know_is_the_one_answer_a_batch_cannot_carry():
     assert set(DECIDING_ANSWERS) == set(AnswerKind) - {AnswerKind.DONT_KNOW}
-    assert MAX_BULK_ANSWERS == 50

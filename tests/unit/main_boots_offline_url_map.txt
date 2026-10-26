@@ -20,6 +20,8 @@ GET /api/tasks/status
 GET /api/user/deep-research
 GET /api/user/facts
 GET /api/user/facts/browse
+GET /api/user/facts/recently-closed
+GET /api/user/facts/review-queue
 GET /api/user/invite-codes
 GET /api/user/language
 GET /api/user/location
@@ -61,6 +63,7 @@ POST /api/gmail/index
 POST /api/gmail/jobs/<job_id>/cancel
 POST /api/tasks/microsoft/reindex
 POST /api/user/facts/<fact_id>/invalidate
+POST /api/user/facts/review-answers
 POST /api/user/facts/search
 POST /api/user/invite-codes
 POST /api/user/join-team

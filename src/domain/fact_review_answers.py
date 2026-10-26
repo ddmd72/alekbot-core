@@ -19,7 +19,7 @@ from .local_time import local_moment
 from .new_fact_attributes import NewFactAttributes
 
 __all__ = [
-    "ARCHIVE_ONLY", "DECIDING_ANSWERS", "MAX_BULK_ANSWERS", "answer_closes_fact", "answer_updates", "deciding_answer", "digit_answer", "ended_text", "history_fact", "history_moved_refusal",
+    "ARCHIVE_ONLY", "DECIDING_ANSWERS", "answer_closes_fact", "answer_updates", "deciding_answer", "digit_answer", "ended_text", "history_fact", "history_moved_refusal",
     "history_refusal", "history_trail", "option_answer",
 ]
 
@@ -28,8 +28,6 @@ ARCHIVE_ONLY: Final[ParsedFactUpdate] = ParsedFactUpdate(state=FactState.ARCHIVE
 
 # The answers that say what is true of the fact; `dont_know` only hands it to the question's fallback.
 DECIDING_ANSWERS: Final[tuple[AnswerKind, ...]] = (AnswerKind.STILL_TRUE, AnswerKind.ENDED, AnswerKind.NEVER)
-# How many questions one batch of answers may name.
-MAX_BULK_ANSWERS: Final[int] = 50
 
 # English whatever the process locale: the text is written into a stored fact.
 _MONTHS: Final[tuple[str, ...]] = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
