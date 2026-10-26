@@ -54,15 +54,15 @@ LAYERS: List[Tuple[str, Tuple[str, ...]]] = [
 NOISE_PP = 0.3
 FLOORS: Dict[str, float] = {
     "src/domain": 98.0,
-    "src/ports": 92.0,
+    "src/ports": 92.6,
     "src/infrastructure": 96.3,
     "src/agents": 94.5,
-    "src/services": 91.3,
+    "src/services": 91.9,
     "src/handlers": 92.7,
-    "src/adapters": 84.6,
-    "src/web": 75.2,
+    "src/adapters": 85.2,
+    "src/web": 76.2,
     "src/composition": 94.1,
-    "src (other)": 74.4,
+    "src (other)": 75.8,
     "root entry points": 76.0,
 }
 
