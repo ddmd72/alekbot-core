@@ -25,10 +25,10 @@ def on(value: Union[str, date, datetime]) -> Dict[str, Any]:
 
 def ctx(
     actor: str = "stage1",
-    timezone: str = "Europe/Paris",
+    timezone: str = "Europe/Lisbon",
     span: Optional[Tuple[datetime, datetime]] = None,
 ) -> FactWriteContext:
-    """A `FactWriteContext`; the defaults are a Stage 1 pass in the owner's Europe/Paris calendar with no message span. The
+    """A `FactWriteContext`; the defaults are a Stage 1 pass in the owner's Europe/Lisbon calendar with no message span. The
     pass's rules (`model_dates` and the rest) come from its `PassActor` row."""
     return FactWriteContext(actor=PassActor(actor), timezone=timezone, span=span)
 

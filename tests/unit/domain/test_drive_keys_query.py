@@ -177,7 +177,7 @@ def test_walk_through_medical_records_concepts():
     assert "lw:запис" in q.concepts[1].about_keys and "lw:медицинские" in q.concepts[0].about_keys
 
 
-def test_walk_through_paris_2023_concepts():
+def test_walk_through_berlin_2023_concepts():
     q = query_concepts("Berlin 2023")
     assert _words(q) == ["2023", "berlin"]
     assert {"n:2023", "v:2023", "y:2023"} <= set(q.concepts[0].about_keys)

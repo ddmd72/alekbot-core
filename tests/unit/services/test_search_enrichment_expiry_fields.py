@@ -20,9 +20,9 @@ from src.services.search_enrichment_service import SearchEnrichmentService
 from tests.support.fact_kit import ACC, T0, USER, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore
 
-PARIS = "Europe/Paris"
-# 2026-07-10 22:00 UTC is the end of 2026-07-10 in Europe/Paris (CEST).
-DATE_DUE = datetime(2026, 7, 10, 22, 0, tzinfo=timezone.utc)
+LISBON = "Europe/Lisbon"
+# 2026-07-10 23:00 UTC is the end of 2026-07-10 in Europe/Lisbon (WEST).
+DATE_DUE = datetime(2026, 7, 10, 23, 0, tzinfo=timezone.utc)
 HORIZON_DUE = T0 + timedelta(days=30)
 
 
@@ -62,10 +62,10 @@ async def test_vector_search_carries_the_decision_and_the_view_reads_it_back(sto
     assert {k: (f.expiry_kind, f.ttl_days) for k, f in facts.items()} == {
         "dated": (ExpiryKind.DATE, None), "horizon": (ExpiryKind.HORIZON, 30),
         "permanent": (ExpiryKind.NONE, None), "undecided": (None, None)}
-    assert decision(facts["dated"], PARIS) == ({"kind": "date", "date": "2026-07-10"}, None)
-    assert decision(facts["horizon"], PARIS) == ({"kind": "horizon", "days": 30}, "2026-01-31")
-    assert decision(facts["permanent"], PARIS) == ({"kind": "none"}, None)
-    assert decision(facts["undecided"], PARIS) == (None, None)
+    assert decision(facts["dated"], LISBON) == ({"kind": "date", "date": "2026-07-10"}, None)
+    assert decision(facts["horizon"], LISBON) == ({"kind": "horizon", "days": 30}, "2026-01-31")
+    assert decision(facts["permanent"], LISBON) == ({"kind": "none"}, None)
+    assert decision(facts["undecided"], LISBON) == (None, None)
 
 
 async def test_the_domain_channel_alone_carries_the_decision_too(store, service):
@@ -75,7 +75,7 @@ async def test_the_domain_channel_alone_carries_the_decision_too(store, service)
     facts = {f.content: f for f in context.facts}
     assert {f.source for f in facts.values()} == {"domain_direct"}
     assert facts["dated"].expiry_kind is ExpiryKind.DATE and facts["dated"].expires_at == DATE_DUE
-    assert decision(facts["horizon"], PARIS) == ({"kind": "horizon", "days": 30}, "2026-01-31")
+    assert decision(facts["horizon"], LISBON) == ({"kind": "horizon", "days": 30}, "2026-01-31")
 
 
 async def test_expires_at_is_an_aware_utc_datetime(store, service):
@@ -94,7 +94,7 @@ async def test_the_enriched_context_still_serialises_to_json_for_a_cloud_task(st
 
 
 async def test_a_naive_stored_expires_at_is_read_as_utc(store, service):
-    await store.repo.add_fact(make_fact("naive", expiry_kind=ExpiryKind.DATE, expires_at=datetime(2026, 7, 10, 22, 0)))
+    await store.repo.add_fact(make_fact("naive", expiry_kind=ExpiryKind.DATE, expires_at=datetime(2026, 7, 10, 23, 0)))
     facts = await enrich(service)
-    assert facts["naive"].expires_at == datetime(2026, 7, 10, 22, 0, tzinfo=timezone.utc)
-    assert decision(facts["naive"], PARIS)[0] == {"kind": "date", "date": "2026-07-10"}
+    assert facts["naive"].expires_at == datetime(2026, 7, 10, 23, 0, tzinfo=timezone.utc)
+    assert decision(facts["naive"], LISBON)[0] == {"kind": "date", "date": "2026-07-10"}

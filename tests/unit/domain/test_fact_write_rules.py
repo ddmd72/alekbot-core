@@ -64,7 +64,7 @@ def test_a_different_successor_passes():
 def test_a_pass_whose_model_dates_do_not_count_says_so_when_the_call_carried_a_date():
     reported, note = reported_date_for_merge(ctx("stage2a", span=SPAN), SPAN[0], [SOURCE], NOW)
     assert reported == SOURCE
-    assert note == [kept_reported_date_note(SOURCE, "Europe/Paris")]
+    assert note == [kept_reported_date_note(SOURCE, "Europe/Lisbon")]
 
 
 def test_a_conversation_pass_with_a_model_date_has_no_note():

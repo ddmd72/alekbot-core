@@ -20,7 +20,7 @@ import asyncio
 from collections import Counter
 from typing import List, Dict, Any, FrozenSet, Literal, Mapping, Optional, Tuple
 from datetime import datetime, timezone
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
@@ -55,6 +55,7 @@ from ..domain.fact_review_language import (
     CANONICAL_LABELS, MAX_LABEL_CHARS, MAX_OPTION_WORDS, MAX_TEXT_CHARS, check_labels, parse_message_language,
 )
 from ..domain.fact_review_question import FactReviewQuestion
+from ..domain.fact_review_result import FactReviewResult, encode_review_result
 from ..domain.fact_review_task import FactReviewTask, ReviewItem, decode_review_task
 from ..domain.fact_tool_result import STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
@@ -1376,22 +1377,22 @@ class ConsolidationAgent(BaseAgent):
 
         # The language is asked for in mirror mode only (§3.17); a fixed-mode report's language is not read.
         language, labels = _reported_language(report) if task.mirror else (None, None)
-        outcomes = [asdict(d) for d in scope.decisions()]
+        result = FactReviewResult(
+            outcomes=tuple(scope.decisions()),
+            asks=tuple(scope.asks()),
+            kept=tuple(f.id for f in scope.kept()),
+            message_language=language,
+            labels=labels,
+        )
         total_duration = time.time() - start_time
         logger.info(
-            f"✅ [ConsolidationAgent] review_stale_facts done: {len(task.items)} facts, {len(outcomes)} decided, "
-            f"{len(scope.asks())} asked in {total_duration:.1f}s"
+            f"✅ [ConsolidationAgent] review_stale_facts done: {len(task.items)} facts, {len(result.outcomes)} decided, "
+            f"{len(result.asks)} asked in {total_duration:.1f}s"
         )
         return AgentResponse.success(
             task_id=message.task_id,
             agent_id=self.agent_id,
-            result={
-                "outcomes": outcomes,
-                "asks": [asdict(a) for a in scope.asks()],
-                "kept": [f.id for f in scope.kept()],
-                "message_language": language,
-                "labels": labels,
-            },
+            result=encode_review_result(result),
             confidence=1.0,
             metadata={"total_duration_ms": int(total_duration * 1000)},
         )

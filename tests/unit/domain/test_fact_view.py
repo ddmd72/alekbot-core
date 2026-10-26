@@ -20,7 +20,7 @@ from src.domain.fact_write_context import as_utc
 from src.domain.search import EnrichedContext, EnrichedFact, consolidation_hit, fact_view
 
 UTC = timezone.utc
-PARIS = "Europe/Paris"
+LISBON = "Europe/Lisbon"
 
 
 def stored(fact_id, text, fact_type, reported, **over):
@@ -31,9 +31,11 @@ def stored(fact_id, text, fact_type, reported, **over):
 
 
 FACTS = {
+    # Reported and due both before the end of Lisbon's summer time (25 October): in winter Lisbon is UTC, and the
+    # zone would not show in `due`.
     "horizon": stored(
-        "f1", "takes the pills daily", FactType.EVENT, datetime(2026, 10, 22, 23, 30, tzinfo=UTC),
-        expiry_kind=ExpiryKind.HORIZON, ttl_days=30, expires_at=datetime(2026, 11, 21, 23, 30, tzinfo=UTC),
+        "f1", "takes the pills daily", FactType.EVENT, datetime(2026, 9, 22, 23, 30, tzinfo=UTC),
+        expiry_kind=ExpiryKind.HORIZON, ttl_days=30, expires_at=datetime(2026, 10, 22, 23, 30, tzinfo=UTC),
     ),
     "date, naive reported": stored(
         "f2", "trip to Rome", FactType.STATE, datetime(2026, 10, 22, 10, 0),
@@ -42,42 +44,42 @@ FACTS = {
     "no decision": stored("f3", "legacy", FactType.STATE, datetime(2026, 3, 1, 12, 0, tzinfo=UTC)),
 }
 
-# The old outputs, in the owner's zone (Europe/Paris).
+# The old outputs, in the owner's zone (Europe/Lisbon).
 OLD_CLUSTER_ENTRY = {
     "horizon": {"fact_id": "f1", "content": "takes the pills daily", "similarity": 0.0,
-                "expiry": {"kind": "horizon", "days": 30}, "due": "2026-11-22",
-                "reported_date": "2026-10-23T01:30:00+02:00"},
+                "expiry": {"kind": "horizon", "days": 30}, "due": "2026-10-23",
+                "reported_date": "2026-09-23T00:30:00+01:00"},
     "date, naive reported": {"fact_id": "f2", "content": "trip to Rome", "similarity": 0.0,
                              "expiry": {"kind": "date", "date": "2027-01-15"}, "due": None,
-                             "reported_date": "2026-10-22T12:00:00+02:00"},
+                             "reported_date": "2026-10-22T11:00:00+01:00"},
     "no decision": {"fact_id": "f3", "content": "legacy", "similarity": 0.0, "expiry": None, "due": None,
-                    "reported_date": "2026-03-01T13:00:00+01:00"},
+                    "reported_date": "2026-03-01T12:00:00+00:00"},
 }
 OLD_SEARCH_HIT = {
     "horizon": {"fact_id": "f1", "content": "takes the pills daily", "similarity": 0.8, "source": "keyword",
                 "type": "event", "domain": None, "temporal_class": None, "state": "current",
                 "context_priority": "medium", "tags": [], "metadata": {},
-                "reported_date": "2026-10-23T01:30:00+02:00", "expiry": {"kind": "horizon", "days": 30},
-                "due": "2026-11-22", "version": 1},
+                "reported_date": "2026-09-23T00:30:00+01:00", "expiry": {"kind": "horizon", "days": 30},
+                "due": "2026-10-23", "version": 1},
     "date, naive reported": {"fact_id": "f2", "content": "trip to Rome", "similarity": 0.8, "source": "keyword",
                              "type": "state", "domain": None, "temporal_class": None, "state": "current",
                              "context_priority": "medium", "tags": [], "metadata": {},
-                             "reported_date": "2026-10-22T12:00:00+02:00",
+                             "reported_date": "2026-10-22T11:00:00+01:00",
                              "expiry": {"kind": "date", "date": "2027-01-15"}, "due": None, "version": 1},
     "no decision": {"fact_id": "f3", "content": "legacy", "similarity": 0.8, "source": "keyword", "type": "state",
                     "domain": None, "temporal_class": None, "state": "current", "context_priority": "medium",
-                    "tags": [], "metadata": {}, "reported_date": "2026-03-01T13:00:00+01:00", "expiry": None,
+                    "tags": [], "metadata": {}, "reported_date": "2026-03-01T12:00:00+00:00", "expiry": None,
                     "due": None, "version": 1},
 }
 OLD_CLUSTER_LINE = {
     "horizon": '1. {"fact_id": "f1", "content": "takes the pills daily", "similarity": 0.0, '
-               '"expiry": {"kind": "horizon", "days": 30}, "due": "2026-11-22", "reported": "2026-10-23"}',
+               '"expiry": {"kind": "horizon", "days": 30}, "due": "2026-10-23", "reported": "2026-09-23"}',
     "date, naive reported": '1. {"fact_id": "f2", "content": "trip to Rome", "similarity": 0.0, '
                             '"expiry": {"kind": "date", "date": "2027-01-15"}, "reported": "2026-10-22"}',
     "no decision": '1. {"fact_id": "f3", "content": "legacy", "similarity": 0.0, "expiry": null, '
                    '"reported": "2026-03-01"}',
 }
-OLD_REPORTED_DAY = {"horizon": "2026-10-23", "date, naive reported": "2026-10-22", "no decision": "2026-03-01"}
+OLD_REPORTED_DAY = {"horizon": "2026-09-23", "date, naive reported": "2026-10-22", "no decision": "2026-03-01"}
 
 
 def hit(fact):
@@ -88,7 +90,7 @@ def hit(fact):
 
 @pytest.mark.parametrize("name", FACTS)
 def test_the_view_equals_the_old_cluster_entry_on_every_key_it_had(name):
-    view = fact_view(FACTS[name], PARIS)
+    view = fact_view(FACTS[name], LISBON)
     old = {k: v for k, v in OLD_CLUSTER_ENTRY[name].items() if k != "similarity"}
     assert {k: view[k] for k in old} == old
     assert view["reported"] == OLD_REPORTED_DAY[name]
@@ -96,7 +98,7 @@ def test_the_view_equals_the_old_cluster_entry_on_every_key_it_had(name):
 
 @pytest.mark.parametrize("name", FACTS)
 def test_the_view_equals_the_old_search_hit_on_every_key_they_share(name):
-    view = fact_view(FACTS[name], PARIS)
+    view = fact_view(FACTS[name], LISBON)
     shared = set(view) & set(OLD_SEARCH_HIT[name])
     assert shared == {"fact_id", "content", "expiry", "due", "reported_date"}
     assert {k: view[k] for k in shared} == {k: OLD_SEARCH_HIT[name][k] for k in shared}
@@ -106,37 +108,37 @@ def test_the_view_equals_the_old_search_hit_on_every_key_they_share(name):
 def test_the_document_and_its_search_hit_give_the_same_view(name):
     # Reviewer edit (T6c re-review, S3): `fact_view` takes the stored fact only; a hit's view is `consolidation_hit`,
     # built on the same core, so the hit carries the document's view on every view key.
-    view, from_hit = fact_view(FACTS[name], PARIS), consolidation_hit(hit(FACTS[name]), PARIS)
+    view, from_hit = fact_view(FACTS[name], LISBON), consolidation_hit(hit(FACTS[name]), LISBON)
     assert {k: from_hit[k] for k in view} == view
 
 
 @pytest.mark.parametrize("name", FACTS)
 def test_the_cluster_entry_is_the_old_entry_plus_the_reported_day(name):
-    assert ConsolidationAgent._cluster_entry(FACTS[name], PARIS) == {
+    assert ConsolidationAgent._cluster_entry(FACTS[name], LISBON) == {
         **OLD_CLUSTER_ENTRY[name], "reported": OLD_REPORTED_DAY[name],
     }
 
 
 @pytest.mark.parametrize("name", FACTS)
 def test_the_search_hit_is_the_old_hit_plus_the_reported_day(name):
-    assert consolidation_hit(hit(FACTS[name]), PARIS) == {**OLD_SEARCH_HIT[name], "reported": OLD_REPORTED_DAY[name]}
+    assert consolidation_hit(hit(FACTS[name]), LISBON) == {**OLD_SEARCH_HIT[name], "reported": OLD_REPORTED_DAY[name]}
 
 
 @pytest.mark.parametrize("name", FACTS)
 def test_the_cluster_message_line_is_byte_identical_from_an_entry_and_from_a_search_hit(name):
-    from_entry = ConsolidationAgent._build_cluster_message([ConsolidationAgent._cluster_entry(FACTS[name], PARIS)])
-    from_hit = ConsolidationAgent._build_cluster_message([{**consolidation_hit(hit(FACTS[name]), PARIS), "similarity": 0.0}])
+    from_entry = ConsolidationAgent._build_cluster_message([ConsolidationAgent._cluster_entry(FACTS[name], LISBON)])
+    from_hit = ConsolidationAgent._build_cluster_message([{**consolidation_hit(hit(FACTS[name]), LISBON), "similarity": 0.0}])
     assert from_entry.splitlines()[-1] == from_hit.splitlines()[-1] == OLD_CLUSTER_LINE[name]
 
 
 def test_the_reported_day_is_the_owners_calendar_day_not_the_utc_day():
-    fact = FACTS["horizon"]  # 23:30 UTC on 22 October is 01:30 on 23 October in Europe/Paris
-    assert fact_view(fact, "UTC")["reported"] == "2026-10-22"
-    assert fact_view(fact, PARIS)["reported"] == "2026-10-23"
+    fact = FACTS["horizon"]  # 23:30 UTC on 22 September is 00:30 on 23 September in Europe/Lisbon
+    assert fact_view(fact, "UTC")["reported"] == "2026-09-22"
+    assert fact_view(fact, LISBON)["reported"] == "2026-09-23"
 
 
 def test_a_search_hit_without_a_reported_date_shows_none():
-    view = consolidation_hit(EnrichedFact(fact_id="f", content="c", source="keyword"), PARIS)  # reviewer edit, S3
+    view = consolidation_hit(EnrichedFact(fact_id="f", content="c", source="keyword"), LISBON)  # reviewer edit, S3
     assert (view["reported_date"], view["reported"], view["expiry"], view["due"]) == (None, None, None, None)
 
 
@@ -154,8 +156,8 @@ def test_the_enriched_context_crosses_the_task_payload_encoder():
     context = EnrichedContext(facts=[hit(FACTS["horizon"])], total_sources=1, dedup_count=0, biographical_dedup_count=0)
     wire = json.loads(json.dumps({"enriched_context": asdict(context)}, cls=_DomainEncoder))
     (fact,) = wire["enriched_context"]["facts"]
-    assert fact["reported_date"] == "2026-10-22T23:30:00+00:00"
-    assert fact["expires_at"] == "2026-11-21T23:30:00+00:00"
+    assert fact["reported_date"] == "2026-09-22T23:30:00+00:00"
+    assert fact["expires_at"] == "2026-10-22T23:30:00+00:00"
     assert fact["expiry_kind"] == "horizon" and fact["ttl_days"] == 30
 
 
@@ -181,9 +183,9 @@ def test_the_task_payload_encoder_still_refuses_what_it_does_not_know():
 
 
 def test_expiry_view_takes_the_enum():
-    midnight = datetime(2026, 7, 10, 22, 0, tzinfo=UTC)
-    assert expiry_view(ExpiryKind.DATE, None, midnight, PARIS) == ({"kind": "date", "date": "2026-07-10"}, None)
-    assert expiry_view(None, 7, midnight, PARIS) == (None, None)
+    midnight = datetime(2026, 7, 10, 23, 0, tzinfo=UTC)
+    assert expiry_view(ExpiryKind.DATE, None, midnight, LISBON) == ({"kind": "date", "date": "2026-07-10"}, None)
+    assert expiry_view(None, 7, midnight, LISBON) == (None, None)
 
 
 @pytest.mark.parametrize("raw,kind", [

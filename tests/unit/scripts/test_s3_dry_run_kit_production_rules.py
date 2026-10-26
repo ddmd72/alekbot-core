@@ -5,7 +5,7 @@ The owner zone is compared with production's `OwnerTimezoneResolver` (what `Cons
 field for field with the dict the real `FactManagementAdapter` returns from the real `SearchEnrichmentService`.
 """
 import argparse
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Dict
 
@@ -49,7 +49,7 @@ def memory_dir(tmp_path, monkeypatch):
 
 SCENARIOS = {
     "an owner in Tokyo": lambda: (Accounts(account(ann="owner")), Users(profile("ann", "Asia/Tokyo"))),
-    "two owners": lambda: (Accounts(account(zed="owner", ann="owner")), Users(profile("ann", "Europe/Paris"), profile("zed", "Asia/Tokyo"))),
+    "two owners": lambda: (Accounts(account(zed="owner", ann="owner")), Users(profile("ann", "Europe/Lisbon"), profile("zed", "Asia/Tokyo"))),
     "no account": lambda: (Accounts(), Users()),
     "no owner": lambda: (Accounts(account(bob="member")), Users(profile("bob", "Asia/Tokyo"))),
     "no profile": lambda: (Accounts(account(ann="owner")), Users()),
@@ -69,7 +69,7 @@ async def test_the_kit_resolves_the_owner_zone_as_the_consolidation_service_does
 async def test_a_zone_override_still_wins_in_the_kit_and_must_be_a_zone():
     accounts, users = SCENARIOS["an owner in Tokyo"]()
 
-    assert await owner_timezone(accounts, users, ACCOUNT, override="Europe/Paris") == "Europe/Paris"
+    assert await owner_timezone(accounts, users, ACCOUNT, override="Europe/Lisbon") == "Europe/Lisbon"
     assert accounts.asked == []
     with pytest.raises(ValueError):
         await owner_timezone(accounts, users, ACCOUNT, override="Mars/Olympus")
@@ -88,12 +88,21 @@ async def hits_of(adapter: FactManagementAdapter, query: str, zone: str) -> Dict
     return {hit["fact_id"]: hit for hit in found}
 
 
-@pytest.mark.parametrize("expiry", [horizon(30), on("2026-12-24"), EXPIRY_NONE], ids=["horizon", "date", "none"])
+# The write path refuses an expiry that ends within a day of the real now (born due), so the expiries are set from today
+# over the fixed reported dates: a horizon that runs 30 days past today, a date on the next 24 December.
+SEEDED_REPORTED = datetime(2026, 10, 22, 23, 30, tzinfo=timezone.utc)
+CHANGED_REPORTED = datetime(2026, 10, 1, 8, tzinfo=timezone.utc)
+SEEDED_DAYS = (datetime.now(timezone.utc) - SEEDED_REPORTED).days + 30
+CHANGED_DAYS = (datetime.now(timezone.utc) - CHANGED_REPORTED).days + 30
+SEEDED_DAY = date(datetime.now(timezone.utc).year + 1, 12, 24)
+
+
+@pytest.mark.parametrize("expiry", [horizon(SEEDED_DAYS), on(SEEDED_DAY), EXPIRY_NONE], ids=["horizon", "date", "none"])
 @pytest.mark.parametrize("zone", ["Asia/Tokyo", "UTC"])
 async def test_the_kit_search_hit_equals_the_production_hit_field_for_field(store, expiry, zone):
     fact_id = await seed(
         store, "walks daily in the park", expiry=expiry, tags=["walks", "health"], metadata={"place": "park"},
-        reported_date="2026-10-22T23:30:00+00:00",
+        reported_date=SEEDED_REPORTED.isoformat(),
     )
     production = (await hits_of(production_adapter(store), "walks daily in the park", zone))[fact_id]
     doc = await store.repo.get_fact_by_id(fact_id)
@@ -102,11 +111,11 @@ async def test_the_kit_search_hit_equals_the_production_hit_field_for_field(stor
 
 
 async def test_the_kit_hit_of_a_changed_document_equals_production_after_the_same_change(store):
-    old_id = await seed(store, "walks daily in the park", expiry=EXPIRY_NONE, tags=["walks"], reported_date="2026-10-01T08:00:00+00:00")
+    old_id = await seed(store, "walks daily in the park", expiry=EXPIRY_NONE, tags=["walks"], reported_date=CHANGED_REPORTED.isoformat())
     adapter = production_adapter(store)
     before = (await hits_of(adapter, "walks daily in the park", "Asia/Tokyo"))[old_id]
     changed = await store.adapter.update_fact(
-        old_id, {"content": "walks daily in the park, now with the dog", "tags": ["walks", "dog"], "expiry": horizon(30)},
+        old_id, {"content": "walks daily in the park, now with the dog", "tags": ["walks", "dog"], "expiry": horizon(CHANGED_DAYS)},
         ACC, context=ctx(actor="stage1", timezone="Asia/Tokyo"),
     )
     new_id = changed["fact_id"]
@@ -116,7 +125,7 @@ async def test_the_kit_hit_of_a_changed_document_equals_production_after_the_sam
     rendered = hit_from_document(doc, before, "Asia/Tokyo")
 
     assert new_id != old_id and rendered == {**after, "similarity": before["similarity"]}      # relevance stays the old hit's
-    assert rendered["expiry"] == {"kind": "horizon", "days": 30} and "dog" in rendered["tags"]
+    assert rendered["expiry"] == {"kind": "horizon", "days": CHANGED_DAYS} and "dog" in rendered["tags"]
 
 
 # ----------------------------------------------------------------------------------------------- L1: undated creates

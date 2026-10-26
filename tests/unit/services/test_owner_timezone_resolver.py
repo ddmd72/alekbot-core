@@ -12,7 +12,7 @@ from src.domain.owner_timezone import FALLBACK_TIMEZONE, ResolvedOwnerZone
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from tests.unit.services.test_consolidation_owner_timezone import ACCOUNT, Accounts, Users, account, profile
 
-PARIS = "Europe/Paris"
+LISBON = "Europe/Lisbon"
 TOKYO = "Asia/Tokyo"
 UNRESOLVED = "owner timezone unresolved for account"
 
@@ -22,18 +22,18 @@ def warnings(caplog) -> List[str]:
 
 
 async def test_the_owner_is_found_and_their_zone_returned(caplog):
-    accounts, users = Accounts(account(ann="owner", bob="member")), Users(profile("ann", PARIS), profile("bob", TOKYO))
+    accounts, users = Accounts(account(ann="owner", bob="member")), Users(profile("ann", LISBON), profile("bob", TOKYO))
 
     with caplog.at_level(logging.WARNING):
         resolved = await OwnerTimezoneResolver(accounts, users).resolve(ACCOUNT)
 
-    assert resolved == ResolvedOwnerZone("ann", PARIS)
+    assert resolved == ResolvedOwnerZone("ann", LISBON)
     assert accounts.asked == [ACCOUNT] and users.asked == ["ann"]
     assert warnings(caplog) == []
 
 
 async def test_no_account_gives_no_owner_utc_and_one_warning(caplog):
-    users = Users(profile("ann", PARIS))
+    users = Users(profile("ann", LISBON))
 
     with caplog.at_level(logging.WARNING):
         resolved = await OwnerTimezoneResolver(Accounts(), users).resolve(ACCOUNT)
@@ -58,7 +58,7 @@ async def test_an_account_without_an_owner_gives_no_owner_utc_and_one_warning(ca
 
 async def test_several_owners_give_the_first_ones_zone_and_one_warning(caplog):
     accounts = Accounts(account(zed="owner", ann="owner"))
-    users = Users(profile("ann", TOKYO), profile("zed", PARIS))
+    users = Users(profile("ann", TOKYO), profile("zed", LISBON))
 
     with caplog.at_level(logging.WARNING):
         resolved = await OwnerTimezoneResolver(accounts, users).resolve(ACCOUNT)
@@ -90,7 +90,7 @@ async def test_an_owner_without_a_profile_gives_utc_and_one_warning(caplog):
 
 async def test_a_raising_account_store_gives_utc_and_one_warning_never_a_raise(caplog):
     accounts = Accounts(account(ann="owner"), raises=RuntimeError("firestore unavailable"))
-    users = Users(profile("ann", PARIS))
+    users = Users(profile("ann", LISBON))
 
     with caplog.at_level(logging.WARNING):
         resolved = await OwnerTimezoneResolver(accounts, users).resolve(ACCOUNT)
@@ -113,7 +113,7 @@ async def test_a_raising_user_store_gives_utc_and_one_warning_and_keeps_the_owne
 
 
 async def test_each_resolve_reads_again():
-    accounts, users = Accounts(account(ann="owner")), Users(profile("ann", PARIS))
+    accounts, users = Accounts(account(ann="owner")), Users(profile("ann", LISBON))
     resolver = OwnerTimezoneResolver(accounts, users)
 
     await resolver.resolve(ACCOUNT)

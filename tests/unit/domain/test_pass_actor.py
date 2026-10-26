@@ -111,9 +111,9 @@ def test_the_agents_write_context_refuses_a_label_that_is_no_pass():
 
 @pytest.mark.parametrize("label", ROWS)
 def test_for_pass_takes_every_field_from_the_row(label):
-    got = FactWriteContext.for_pass(PassActor(label), "Europe/Paris", SPAN)
-    assert (got.actor, got.timezone, got.span, got.model_dates) == (label, "Europe/Paris", SPAN, ROWS[label][0])
-    assert got == FactWriteContext(actor=label, timezone="Europe/Paris", span=SPAN)     # a plain label of a pass converts
+    got = FactWriteContext.for_pass(PassActor(label), "Europe/Lisbon", SPAN)
+    assert (got.actor, got.timezone, got.span, got.model_dates) == (label, "Europe/Lisbon", SPAN, ROWS[label][0])
+    assert got == FactWriteContext(actor=label, timezone="Europe/Lisbon", span=SPAN)     # a plain label of a pass converts
 
 
 def test_for_pass_span_defaults_to_none():

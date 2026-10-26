@@ -20,6 +20,7 @@ from ..domain.fact_review_answers import answer_updates
 from ..domain.fact_review_language import LABEL_KEYS, fact_question_message
 from ..domain.fact_review_question import AnswerSource, ClosedBy, FactReviewQuestion
 from ..domain.fact_review_question_close import QuestionClose
+from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, next_key, review_payload
 from ..domain.fact_update_outcome import UpdateRefusal
 from ..domain.fact_write_context import FactWriteContext, as_utc
 from ..domain.pass_actor import PassActor
@@ -36,9 +37,6 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from .fact_question_texts import FactQuestionTexts
     from .owner_timezone_resolver import OwnerTimezoneResolver
-
-# The worker task that sends the next question once the current one is closed (its dispatch branch: T10a).
-FACT_REVIEW_TASK = "fact_review"
 
 # Who counts an owner answer, by where it came from.
 _ANSWERED: Mapping[str, CounterField] = {
@@ -194,8 +192,8 @@ class FactAnswerService:
         try:
             await self._task_queue.enqueue_worker_task(
                 FACT_REVIEW_TASK,
-                {"user_id": question.user_id, "account_id": question.account_id, "mode": "next"},
-                dedup_key=f"fact-review-next:{question.question_id}",
+                review_payload(question.user_id, question.account_id, "next"),
+                dedup_key=next_key(question.question_id),
             )
         except Exception as exc:
             # The close stands; the next question then goes out with the next daily run.

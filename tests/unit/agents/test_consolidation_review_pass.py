@@ -30,7 +30,7 @@ from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
 from tests.support.review_rule_builders import question as build_question
 
-TZ = "Europe/Paris"
+TZ = "Europe/Lisbon"
 USER = "abcdef1234567890-tail"
 HORIZON = {"kind": "horizon", "days": 30}
 REPORT = LLMResponse(text=json.dumps({"operations": []}), tool_calls=[])
@@ -367,7 +367,7 @@ async def test_each_fact_line_is_built_from_the_view_with_versions_neighbours_an
     assert neighbour["reported"] == "2026-10-22"
     assert line["question"] == {
         "question_id": "q1", "asked_on": open_question.asked_at.astimezone(ZoneInfo(TZ)).date().isoformat(),
-        "fallback": "revive", "timed_out": False, "reply": "still do", "reply_at": "2026-10-22T09:30:00+02:00",
+        "fallback": "revive", "timed_out": False, "reply": "still do", "reply_at": "2026-10-22T08:30:00+01:00",
     }
 
 

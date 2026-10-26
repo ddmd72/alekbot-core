@@ -284,7 +284,7 @@ stale `running` jobs.
   `deep_research_failed`, `deep_research_webhook_event`, `fire_due_reminders`,
   `execute_reminder`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
   `renew_all_task_subscriptions`, `start_daily_email_review`, `daily_email_review`,
-  `billing_daily_summary`, `fact_lifecycle_sweep`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
+  `billing_daily_summary`, `fact_lifecycle_sweep`, `fact_review`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
   `docs/07_deployment/SCHEDULERS.md`.
   `WorkerHandler` is the only dispatcher: `telegram_update` and a queued Slack event (no `task_type`; `event` +
   `session_id`) go to the adapters attached by the builder (`build_application_graph`);

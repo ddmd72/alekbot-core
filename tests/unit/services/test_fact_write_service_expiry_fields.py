@@ -25,7 +25,7 @@ def store():
 async def write(store, **data):
     attrs = parse_new_fact({"text": "a fact", "reported_date": REPORTED.isoformat(), **data})
     if attrs.expiry is not None:
-        attrs = dataclasses.replace(attrs, expiry_fields=compute_expiry(attrs.expiry, REPORTED, "Europe/Paris"))
+        attrs = dataclasses.replace(attrs, expiry_fields=compute_expiry(attrs.expiry, REPORTED, "Europe/Lisbon"))
     (entity,) = await store.write.build_facts(ACC, USER, [attrs])
     await store.repo.add_fact(entity)
     return store.docs[entity.id]
@@ -38,9 +38,9 @@ async def test_a_horizon_decision_is_stored_in_its_three_fields(store):
 
 
 async def test_a_date_decision_is_due_at_the_end_of_that_day_in_the_owners_zone(store):
-    doc = await write(store, expiry=on("2026-10-30"))
+    doc = await write(store, expiry=on("2026-10-24"))
     assert (doc["expiry_kind"], doc["ttl_days"]) == ("date", None)
-    assert doc["expires_at"] == datetime(2026, 10, 30, 23, 0, tzinfo=timezone.utc)
+    assert doc["expires_at"] == datetime(2026, 10, 24, 23, 0, tzinfo=timezone.utc)
 
 
 async def test_a_none_decision_is_stored_as_none_with_no_expires_at(store):

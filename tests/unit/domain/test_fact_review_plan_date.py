@@ -12,10 +12,10 @@ PASSED = ReviewBasis("date_passed", on=date(2026, 9, 1))
 
 def test_a_date_fact_uses_its_own_last_day_in_the_owners_zone():
     dated = fact("f1", expiry_kind=ExpiryKind.DATE, ttl_days=None,
-                 expires_at=datetime(2026, 9, 30, 22, 0, tzinfo=timezone.utc))
-    assert plan_date(dated, PASSED, "Europe/Paris") == date(2026, 9, 30)
+                 expires_at=datetime(2026, 9, 30, 23, 0, tzinfo=timezone.utc))
+    assert plan_date(dated, PASSED, "Europe/Lisbon") == date(2026, 9, 30)
 
 
 def test_any_other_fact_uses_the_basis_date():
-    assert plan_date(fact("f1"), PASSED, "Europe/Paris") == date(2026, 9, 1)
-    assert plan_date(fact("f1"), ReviewBasis("date_passed"), "Europe/Paris") is None
+    assert plan_date(fact("f1"), PASSED, "Europe/Lisbon") == date(2026, 9, 1)
+    assert plan_date(fact("f1"), ReviewBasis("date_passed"), "Europe/Lisbon") is None

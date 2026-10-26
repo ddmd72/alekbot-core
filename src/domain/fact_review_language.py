@@ -143,6 +143,29 @@ def message_language(
     return reported or ui_language.value
 
 
+def language_to_store(
+    state: Optional[FactReviewState], reported: object, labels: object,
+) -> Optional[Tuple[str, Mapping[str, str], str]]:
+    """What a mirror-mode pass's report changes in the state, as `(language, its labels, their digest)`, or None when
+    it changes nothing.
+
+    `reported` is read through `parse_message_language`; no language is nothing. For a language without UI strings a
+    label set that passes `check_labels` is stored, written for today's canonical texts (`labels_digest`). Otherwise
+    (UI strings, or no usable set) only the language changes: its cached labels and digest are written back as they
+    were, so a good earlier set is never lost to a pass that wrote none; and when the language is the one already
+    stored there is nothing to write."""
+    code = parse_message_language(reported)
+    if code is None:
+        return None
+    if ui_strings_language(code) is None and isinstance(labels, Mapping) and check_labels(labels) is None:
+        return code, {key: str(value).strip() for key, value in labels.items()}, labels_digest()
+    if state is not None and state.message_language == code:
+        return None
+    cached = state.labels.get(code, {}) if state is not None else {}
+    digest = state.label_digests.get(code, "") if state is not None else ""
+    return code, dict(cached), digest
+
+
 def check_labels(labels: object) -> Optional[str]:
     """Why a model-written label set may not be used, or None when it may.
 

@@ -62,5 +62,5 @@ def test_a_cleanup_merge_still_takes_exactly_the_newest_source_date(actor):
     cleanup = ctx(actor, span=SPAN)
     # The model sent a date this pass does not use, so the merge says which one it kept.
     assert reported_date_for_merge(cleanup, SPAN[0], [OLD, FRESH], NOW) == (
-        FRESH, [kept_reported_date_note(FRESH, "Europe/Paris")]
+        FRESH, [kept_reported_date_note(FRESH, "Europe/Lisbon")]
     )

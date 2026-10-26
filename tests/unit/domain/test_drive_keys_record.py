@@ -221,7 +221,7 @@ def test_walk_through_medical_records_record_side():
     assert {s.field for k in hits for s in about_sources(rec)[k]} == {AboutField.TOPIC_WORD, AboutField.LABEL_WORD}
 
 
-def test_walk_through_paris_2023_record_side():
+def test_walk_through_berlin_2023_record_side():
     photo = RecordKeyInputs(kind="image", triage_verdict=TriageVerdict.PHOTO,
                             effective_date=datetime(2023, 6, 3, tzinfo=UTC), place_forms=("Berlin", "Берлін", "Germany"))
     assert _covers("Berlin 2023", photo) and _covers("Берлін 2023", photo)

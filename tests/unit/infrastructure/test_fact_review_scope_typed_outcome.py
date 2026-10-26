@@ -17,7 +17,7 @@ from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
 
-TZ = "Europe/Paris"
+TZ = "Europe/Lisbon"
 REVIVE = {"state": "current", "expiry": {"kind": "horizon", "days": 30}}
 
 

@@ -1,7 +1,7 @@
-"""The account owner's IANA zone: the pure decisions over the two reads it takes.
+"""The account owner's IANA zone: the pure decisions over the two reads it takes, and whether a user is that owner.
 
 The reads (the account, then the first owner's profile) are I/O and happen outside; each step below decides over what was
-read, and `ResolvedOwnerZone` is the answer.
+read, and `ResolvedOwnerZone` is the answer. `not_owner_reason` decides over the same account read who its owner is.
 """
 
 from dataclasses import dataclass
@@ -50,6 +50,21 @@ def owner_to_read(account: "Optional[BillingAccount]") -> OwnerToRead:
     if not owners:
         return OwnerToRead(None, 0, "account has no owner")
     return OwnerToRead(owners[0], len(owners))
+
+
+def not_owner_reason(account: "Optional[BillingAccount]", user_id: str, profile: "Optional[UserProfile]") -> Optional[str]:
+    """Why `user_id` may not act as the account's owner, or None when it may: the user is the account's first owner
+    (`owner_to_read`) and the user's own profile belongs to that account. `profile` is the profile read for `user_id`."""
+    step = owner_to_read(account)
+    if account is None or step.owner_id is None:
+        return step.unresolved
+    if step.owner_id != user_id:
+        return "user is not the account's first owner"
+    if profile is None:
+        return "user has no profile"
+    if profile.account_id != account.account_id:
+        return "user's profile belongs to another account"
+    return None
 
 
 def owner_zone(owner: "Optional[UserProfile]") -> OwnerZone:

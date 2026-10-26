@@ -10,21 +10,21 @@ from src.domain.fact_lifecycle import born_due, compute_expiry
 from src.domain.pass_actor import PassActor
 from tests.support.fact_write import on
 
-PARIS = "Europe/Paris"
+LISBON = "Europe/Lisbon"
 NOW = datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc)
 REPORTED = NOW - timedelta(days=30)
 
 
 def refusal(date_text, *, cleanup):
-    fields = compute_expiry(parse_expiry(on(date_text)), REPORTED, PARIS)
+    fields = compute_expiry(parse_expiry(on(date_text)), REPORTED, LISBON)
     with pytest.raises(FactBornDueError) as refused:
-        born_due(fields, REPORTED, NOW, PARIS, PassActor.STAGE2A if cleanup else PassActor.STAGE1)
+        born_due(fields, REPORTED, NOW, LISBON, PassActor.STAGE2A if cleanup else PassActor.STAGE1)
     return str(refused.value)
 
 
 def test_the_cleanup_refusal_offers_history_or_a_future_date_and_never_discard():
     text = refusal("2026-10-20", cleanup=True)
-    assert "the date 2026-10-20 is past (today is 2026-10-23 in Europe/Paris)" in text
+    assert "the date 2026-10-20 is past (today is 2026-10-23 in Europe/Lisbon)" in text
     assert "discard" not in text.lower()
     assert "do not drop the fact" in text
     assert "{kind: none}" in text and "past tense" in text

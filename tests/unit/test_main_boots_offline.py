@@ -67,6 +67,7 @@ ENQUEUE_PAYLOADS: Dict[str, dict] = {
     "deep_research_webhook_event": {"event_type": "response.cancelled", "job_id": "job1", "user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "query": "q", "origin_platform": "slack"},
     "setup_microsoft_todo": {"user_id": "u1"},
     "reindex_task_list": {"user_id": "u1", "list_id": "l1"},
+    "fact_review": {"user_id": "u1", "account_id": "a1", "mode": "daily"},
 }
 
 # The pinned answer of every task type, from the boot with the deploy's environment and an empty database (P9).
@@ -110,6 +111,9 @@ MATRIX: Dict[str, Expect] = {
     # No Microsoft To Do credentials are seeded; Quart's 500 page hides the exception, the log has it.
     "setup_microsoft_todo": Expect(500, None, exception="ValueError('No MS To Do credentials for user u1')"),
     "reindex_task_list": Expect(500, None, exception="ValueError('No MS To Do credentials for user u1')"),
+    # The seeded account has no owner: the review stops at its owner check.
+    "fact_review": Expect(200, {"status": "not_owner"},
+                          log="[FactReview] user u1 is not the owner of account a1 (account has no owner); nothing done"),
 }
 
 

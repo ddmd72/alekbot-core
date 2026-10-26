@@ -166,7 +166,7 @@ class TestSmartDeduplication:
     # REAL-WORLD SCENARIO TESTS
     # ========================================================================
     
-    def test_paris_london_addition(self, service):
+    def test_berlin_london_addition(self, service):
         """User example: Berlin → Berlin + London."""
         is_dup, reason = service.is_duplicate(
             "Я в прошлом году был в Берлине и в Лондоне",  # New: longer

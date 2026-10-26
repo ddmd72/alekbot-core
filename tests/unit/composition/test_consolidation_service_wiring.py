@@ -120,7 +120,13 @@ def test_the_graph_builds_the_one_service_with_the_lease_the_queue_and_the_run_t
     (built,) = _calls(tree, "ConsolidationService")
     keywords = {k.arg: ast.unparse(k.value) for k in built.keywords}
 
-    assert keywords["lease"].startswith("FirestoreMemoryWriteLease(")
+    # The one lease (Facts S4 T10a): built once under one name, which both writers of an account's memory receive.
+    (lease_built,) = _calls(tree, "FirestoreMemoryWriteLease")
+    (lease_assign,) = [n for n in ast.walk(tree) if isinstance(n, ast.Assign) and n.value is lease_built]
+    assert [ast.unparse(t) for t in lease_assign.targets] == ["_memory_write_lease"]
+    (review,) = _calls(tree, "FactReviewService")
+    assert keywords["lease"] == "_memory_write_lease"
+    assert {k.arg: ast.unparse(k.value) for k in review.keywords}["lease"] == "_memory_write_lease"
     assert keywords["task_queue"] == "agent_task_queue"
     assert keywords["run_timeout_s"] == "CONSOLIDATION_CFG.timeout_ms / 1000"
 

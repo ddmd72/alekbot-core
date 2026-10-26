@@ -648,7 +648,7 @@ class TestPrepareStructuredConversation:
             {"role": "user", "text": "hello"},
             {"role": "assistant", "text": "world"},
         ]
-        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
+        result = agent._prepare_structured_conversation(msgs, "Europe/Lisbon")
         assert result[0]["role"] == "user"
         assert result[1]["role"] == "assistant"
         assert result[0]["content"] == "hello"
@@ -656,26 +656,26 @@ class TestPrepareStructuredConversation:
     def test_parts_text_extraction(self):
         agent = self._agent()
         msgs = [{"role": "user", "parts": [{"text": "a"}, {"text": "b"}]}]
-        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
+        result = agent._prepare_structured_conversation(msgs, "Europe/Lisbon")
         assert result[0]["content"] == "a b"
 
     def test_numeric_timestamp(self):
         agent = self._agent()
         msgs = [{"role": "user", "text": "hi", "timestamp": 1700000000.0}]
-        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
+        result = agent._prepare_structured_conversation(msgs, "Europe/Lisbon")
         assert result[0]["timestamp"] != ""
-        assert result[0]["timestamp"] == "2023-11-14 Tue 23:13 CET"     # 22:13:20 UTC, in the owner's zone
+        assert result[0]["timestamp"] == "2023-11-14 Tue 22:13 WET"     # 22:13:20 UTC, in the owner's zone
 
     def test_iso_timestamp(self):
         agent = self._agent()
         msgs = [{"role": "user", "text": "hi", "created_at": "2026-03-15T12:00:00Z"}]
-        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
-        assert result[0]["timestamp"] == "2026-03-15 Sun 13:00 CET"     # was: "Mar 15" in "Mar 15, 12:00 UTC"
+        result = agent._prepare_structured_conversation(msgs, "Europe/Lisbon")
+        assert result[0]["timestamp"] == "2026-03-15 Sun 12:00 WET"     # was: "Mar 15" in "Mar 15, 12:00 UTC"
 
     def test_bad_timestamp_gives_empty_string(self):
         agent = self._agent()
         msgs = [{"role": "user", "text": "hi", "timestamp": "INVALID"}]
-        result = agent._prepare_structured_conversation(msgs, "Europe/Paris")
+        result = agent._prepare_structured_conversation(msgs, "Europe/Lisbon")
         assert result[0]["timestamp"] == ""
 
 
@@ -1107,18 +1107,18 @@ class TestFormatEmailCandidates:
         email.text = "user bought a laptop"
         email.category = "PURCHASE"
         email.tags = ["purchase", "tech"]
-        email.email_date = datetime(2026, 3, 1, 9, 0)                  # naive = UTC
+        email.email_date = datetime(2026, 7, 1, 9, 0)                  # naive = UTC
         email.from_address = "shop@example.com"
         email.subject = "Your order #123"
         email.attachments = []
         email.metadata = {}
 
-        result = ConsolidationAgent._format_email_candidates([email], "Europe/Paris")
+        result = ConsolidationAgent._format_email_candidates([email], "Europe/Lisbon")
 
         assert "em-abc" in result
         assert "user bought a laptop" in result
-        assert "2026-03-01" in result
-        assert '"date": "2026-03-01T10:00:00+01:00"' in result          # 09:00 UTC in the owner's zone, with its offset
+        assert "2026-07-01" in result
+        assert '"date": "2026-07-01T10:00:00+01:00"' in result          # 09:00 UTC in the owner's zone, with its offset
         assert "shop@example.com" in result
         assert "Your order #123" in result
         assert result.startswith("1. ")
@@ -1135,7 +1135,7 @@ class TestFormatEmailCandidates:
         email.attachments = ["invoice.pdf"]
         email.metadata = {}
 
-        result = ConsolidationAgent._format_email_candidates([email], "Europe/Paris")
+        result = ConsolidationAgent._format_email_candidates([email], "Europe/Lisbon")
         assert "invoice.pdf" in result
 
     def test_multiple_emails_numbered(self):
@@ -1153,7 +1153,7 @@ class TestFormatEmailCandidates:
             e.metadata = {}
             emails.append(e)
 
-        result = ConsolidationAgent._format_email_candidates(emails, "Europe/Paris")
+        result = ConsolidationAgent._format_email_candidates(emails, "Europe/Lisbon")
         assert "1. " in result
         assert "2. " in result
         assert "3. " in result
@@ -1532,7 +1532,7 @@ class TestFormatEmailCandidatesMetadata:
         email.attachments = []
         email.metadata = {"amount": 9.99, "currency": "USD"}
 
-        result = ConsolidationAgent._format_email_candidates([email], "Europe/Paris")
+        result = ConsolidationAgent._format_email_candidates([email], "Europe/Lisbon")
 
         assert "amount" in result
         assert "9.99" in result

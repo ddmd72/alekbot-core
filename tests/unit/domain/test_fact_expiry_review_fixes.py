@@ -12,7 +12,7 @@ from src.domain.fact_lifecycle import born_due, compute_expiry, expiry_pinned
 from src.domain.pass_actor import PassActor
 from tests.support.fact_write import horizon, on
 
-PARIS = "Europe/Paris"
+LISBON = "Europe/Lisbon"
 NOW = datetime(2026, 10, 23, 9, 0, tzinfo=timezone.utc)
 CONVERSATION = PassActor.STAGE1  # no floor, the Stage 1 wording
 CLEANUP = PassActor.STAGE2A  # floors a due horizon, the cleanup wording
@@ -34,18 +34,18 @@ def test_the_repository_decoder_accepts_members_and_known_strings_only():
 
 
 def test_expiry_view_reads_each_member_and_no_kind_as_no_view():
-    midnight = utc(2026, 7, 10, 22, 0)
-    assert expiry_view(ExpiryKind.NONE, None, None, PARIS) == ({"kind": "none"}, None)
-    assert expiry_view(ExpiryKind.DATE, None, midnight, PARIS) == ({"kind": "date", "date": "2026-07-10"}, None)
-    assert expiry_view(ExpiryKind.HORIZON, 7, midnight, PARIS) == ({"kind": "horizon", "days": 7}, "2026-07-11")
-    assert expiry_view(_expiry_kind("nonsense"), 7, midnight, PARIS) == (None, None)
+    midnight = utc(2026, 7, 10, 23, 0)
+    assert expiry_view(ExpiryKind.NONE, None, None, LISBON) == ({"kind": "none"}, None)
+    assert expiry_view(ExpiryKind.DATE, None, midnight, LISBON) == ({"kind": "date", "date": "2026-07-10"}, None)
+    assert expiry_view(ExpiryKind.HORIZON, 7, midnight, LISBON) == ({"kind": "horizon", "days": 7}, "2026-07-11")
+    assert expiry_view(_expiry_kind("nonsense"), 7, midnight, LISBON) == (None, None)
 
 
 # Reviewer edit (Facts S4 T6c, L4): `born_due` reads `compute_expiry`'s fields, whose kind is the member; a stored kind
 # string is decoded by the repository before any domain rule sees it. The three F1 cases keep their assertions with the
 # member (the string form is no longer a domain input).
 def decided_fields(expiry, reported):
-    got = compute_expiry(parse_expiry(expiry), reported, PARIS)
+    got = compute_expiry(parse_expiry(expiry), reported, LISBON)
     assert isinstance(got["expiry_kind"], ExpiryKind)
     return got
 
@@ -54,21 +54,21 @@ def decided_fields(expiry, reported):
 def test_a_past_date_is_refused_on_every_pass(cleanup):
     reported = NOW - timedelta(hours=1)
     with pytest.raises(FactExpiryError, match="is past"):
-        born_due(decided_fields(on("2026-10-20"), reported), reported, NOW, PARIS, CLEANUP if cleanup else CONVERSATION)
+        born_due(decided_fields(on("2026-10-20"), reported), reported, NOW, LISBON, CLEANUP if cleanup else CONVERSATION)
 
 
 def test_a_due_horizon_is_floored_on_a_cleanup_pass_and_refused_otherwise():
     reported = NOW - timedelta(days=30)
     due = decided_fields(horizon(14), reported)
-    floored, note = born_due(due, reported, NOW, PARIS, CLEANUP)
+    floored, note = born_due(due, reported, NOW, LISBON, CLEANUP)
     assert floored["expires_at"] == NOW + timedelta(days=2) and floored["expiry_kind"] is ExpiryKind.HORIZON and note
     with pytest.raises(FactExpiryError, match="horizon of 14 days"):
-        born_due(due, reported, NOW, PARIS, CONVERSATION)
+        born_due(due, reported, NOW, LISBON, CONVERSATION)
 
 
 def test_a_none_kind_is_never_due():
     fields = {"expiry_kind": ExpiryKind.NONE, "ttl_days": None, "expires_at": None}
-    assert born_due(fields, NOW, NOW, PARIS, CONVERSATION) == (fields, None)
+    assert born_due(fields, NOW, NOW, LISBON, CONVERSATION) == (fields, None)
 
 
 def test_pinning_reads_domain_and_type_given_as_strings():
@@ -89,7 +89,7 @@ def test_an_enormous_horizon_is_a_fact_expiry_error(days):
 
 
 def test_the_largest_horizon_computes():
-    got = compute_expiry(parse_expiry(horizon(36500)), NOW, PARIS)
+    got = compute_expiry(parse_expiry(horizon(36500)), NOW, LISBON)
     assert got["expires_at"] == NOW + timedelta(days=36500)
 
 
@@ -101,7 +101,7 @@ def test_a_date_outside_the_calendar_we_compute_is_a_fact_expiry_error(day):
 
 
 @pytest.mark.parametrize("day", ["1900-01-01", "9998-12-31"])
-@pytest.mark.parametrize("zone", ["Pacific/Kiritimati", "Pacific/Pago_Pago", "UTC", PARIS])
+@pytest.mark.parametrize("zone", ["Pacific/Kiritimati", "Pacific/Pago_Pago", "UTC", LISBON])
 def test_the_edge_dates_compute_in_every_zone_without_overflow(day, zone):
     assert compute_expiry(parse_expiry(on(day)), NOW, zone)["expires_at"].year in (1900, 1901, 9998, 9999)
 
@@ -111,16 +111,16 @@ def test_the_edge_dates_compute_in_every_zone_without_overflow(day, zone):
 
 def test_born_due_reads_a_naive_now_as_utc():
     reported = NOW - timedelta(days=30)
-    fields = compute_expiry(parse_expiry(horizon(14)), reported, PARIS)
+    fields = compute_expiry(parse_expiry(horizon(14)), reported, LISBON)
     naive = NOW.replace(tzinfo=None)
-    assert born_due(fields, reported, naive, PARIS, CLEANUP) == born_due(fields, reported, NOW, PARIS, CLEANUP)
+    assert born_due(fields, reported, naive, LISBON, CLEANUP) == born_due(fields, reported, NOW, LISBON, CLEANUP)
     with pytest.raises(FactExpiryError) as aware_refusal:
-        born_due(fields, reported, NOW, PARIS, CONVERSATION)
+        born_due(fields, reported, NOW, LISBON, CONVERSATION)
     with pytest.raises(FactExpiryError) as naive_refusal:
-        born_due(fields, reported, naive, PARIS, CONVERSATION)
+        born_due(fields, reported, naive, LISBON, CONVERSATION)
     assert str(naive_refusal.value) == str(aware_refusal.value)
     with pytest.raises(FactExpiryError, match="is past"):
-        born_due(compute_expiry(parse_expiry(on("2026-10-20")), reported, PARIS), reported, naive, PARIS, CONVERSATION)
+        born_due(compute_expiry(parse_expiry(on("2026-10-20")), reported, LISBON), reported, naive, LISBON, CONVERSATION)
 
 
 # --- F4 ----------------------------------------------------------------------------------------------------------
@@ -139,10 +139,10 @@ def test_an_expiry_built_with_a_string_kind_is_the_member():
 
 
 def test_a_date_after_today_refused_on_a_23_hour_dst_day_does_not_say_today():
-    now = utc(2026, 3, 28, 22, 30)  # 23:30 on the 28th in Europe/Paris; the 29th is only 23 hours long
-    fields = compute_expiry(parse_expiry(on("2026-03-29")), now, PARIS)
+    now = utc(2026, 3, 28, 23, 30)  # 23:30 on the 28th in Europe/Lisbon; the 29th is only 23 hours long
+    fields = compute_expiry(parse_expiry(on("2026-03-29")), now, LISBON)
     with pytest.raises(FactExpiryError) as refused:
-        born_due(fields, now, now, PARIS, CONVERSATION)
+        born_due(fields, now, now, LISBON, CONVERSATION)
     assert "a plan ending 2026-03-29 is too close" in str(refused.value) and "today" not in str(refused.value)
 
 
@@ -150,10 +150,10 @@ def test_a_date_after_today_refused_on_a_23_hour_dst_day_does_not_say_today():
 def test_the_minimum_in_the_message_is_the_smallest_that_passes_a_day_later(age_days):
     reported = NOW - timedelta(days=age_days)
     with pytest.raises(FactExpiryError) as refused:
-        born_due(compute_expiry(parse_expiry(horizon(1)), reported, PARIS), reported, NOW, PARIS, CONVERSATION)
+        born_due(compute_expiry(parse_expiry(horizon(1)), reported, LISBON), reported, NOW, LISBON, CONVERSATION)
     given = int(str(refused.value).split("give at least ")[1].split(" days")[0])
     a_day_later = NOW + timedelta(days=1)
-    born_due(compute_expiry(parse_expiry(horizon(given)), reported, PARIS), reported, a_day_later, PARIS, CONVERSATION)
+    born_due(compute_expiry(parse_expiry(horizon(given)), reported, LISBON), reported, a_day_later, LISBON, CONVERSATION)
     if given > 1:
         with pytest.raises(FactExpiryError):
-            born_due(compute_expiry(parse_expiry(horizon(given - 1)), reported, PARIS), reported, a_day_later, PARIS, CONVERSATION)
+            born_due(compute_expiry(parse_expiry(horizon(given - 1)), reported, LISBON), reported, a_day_later, LISBON, CONVERSATION)

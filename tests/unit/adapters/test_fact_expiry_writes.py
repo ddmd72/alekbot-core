@@ -6,7 +6,7 @@ stored documents and on the returned dicts.
 """
 import copy
 import logging
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,7 +16,7 @@ from tests.support.fact_kit import ACC, USER, put_raw
 from tests.support.fact_store import INDEXES_FILE, FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx, horizon, on
 
-PARIS = ZoneInfo("Europe/Paris")
+LISBON = ZoneInfo("Europe/Lisbon")
 GENERIC_PIN_TEXT = "expiry is required for this fact"
 CLEANUP = {"actor": "stage2a"}
 
@@ -36,11 +36,17 @@ def meta(**over):
 
 
 def days_ahead(days):
-    return (datetime.now(timezone.utc) + timedelta(days=days)).astimezone(PARIS).date()
+    return (datetime.now(timezone.utc) + timedelta(days=days)).astimezone(LISBON).date()
+
+
+def summer_day_ahead(day_of_july):
+    """A July day of next year: always ahead, and in Lisbon's summer time, so its end is not UTC midnight (Lisbon's
+    winter is UTC, where a date ahead by a few weeks would not show the owner's zone in `expires_at`)."""
+    return date(datetime.now(timezone.utc).year + 1, 7, day_of_july)
 
 
 def end_of_day_utc(day):
-    return datetime.combine(day + timedelta(days=1), time.min, tzinfo=PARIS).astimezone(timezone.utc)
+    return datetime.combine(day + timedelta(days=1), time.min, tzinfo=LISBON).astimezone(timezone.utc)
 
 
 def seed(store, doc_id, text="seeded", **entity):
@@ -63,7 +69,7 @@ def embedder_refuses(store, monkeypatch):
 # ----------------------------------------------------------------------------------------------- create
 
 async def test_create_stores_a_date_decision_ending_at_the_owners_midnight(store):
-    day = days_ahead(30)
+    day = summer_day_ahead(30)
     fid = await create(store, expiry=on(day))
     doc = store.docs[fid]
     assert (doc["expiry_kind"], doc["ttl_days"]) == ("date", None)
@@ -184,7 +190,7 @@ async def test_a_fact_born_closed_needs_no_expiry_and_a_sent_past_date_is_ignore
 async def test_merge_stores_the_decision_on_the_merged_fact_and_closes_the_sources(store):
     first = await create(store, "mother is Maria", expiry=EXPIRY_NONE)
     second = await create(store, "mother lives in Springfield", expiry=EXPIRY_NONE)
-    day = days_ahead(20)
+    day = summer_day_ahead(20)
     res = await store.adapter.merge_facts([first, second], "mother Maria lives in Springfield", meta(expiry=on(day)),
                                           context=ctx())
     assert res["status"] == "merged"
@@ -235,7 +241,7 @@ async def test_merge_as_archived_needs_no_expiry(store):
 
 async def test_a_content_change_stores_the_decision_on_the_new_version(store):
     fid = await create(store, expiry=EXPIRY_NONE)
-    day = days_ahead(15)
+    day = summer_day_ahead(15)
     res = await store.adapter.update_fact(fid, {"content": "mother is Mariia", "expiry": on(day)}, ACC, context=ctx())
     assert res["status"] == "updated" and res["fact_id"] != fid
     version = store.docs[res["fact_id"]]
@@ -265,7 +271,7 @@ async def test_a_pinned_fact_gets_none_on_a_new_version_without_expiry(store):
 
 async def test_an_expiry_alone_is_written_in_place(store):
     fid = await create(store, expiry=EXPIRY_NONE)
-    day = days_ahead(25)
+    day = summer_day_ahead(25)
     res = await store.adapter.update_fact(fid, {"expiry": on(day)}, ACC, context=ctx())
     assert (res["status"], res["fact_id"], res["version"]) == ("updated", fid, 1)
     assert len(store.docs) == 1

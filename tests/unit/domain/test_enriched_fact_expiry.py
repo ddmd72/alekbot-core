@@ -28,26 +28,26 @@ def decision(f, zone):
 def test_a_fact_without_a_decision_has_no_view():
     f = fact()
     assert (f.expiry_kind, f.ttl_days, f.expires_at) == (None, None, None)
-    assert decision(f, "Europe/Paris") == (None, None)
+    assert decision(f, "Europe/Lisbon") == (None, None)
 
 
-@pytest.mark.parametrize("zone,day", [("Europe/Paris", "2026-07-10"), ("UTC", "2026-07-10"), ("Pacific/Kiritimati", "2026-07-10")])
+@pytest.mark.parametrize("zone,day", [("Europe/Lisbon", "2026-07-10"), ("UTC", "2026-07-10"), ("Pacific/Kiritimati", "2026-07-10")])
 def test_a_date_decision_shows_the_last_local_day(zone, day):
     # Each instant is the start of 2026-07-11 in its zone, i.e. the end of the last day shown.
-    instants = {"Europe/Paris": datetime(2026, 7, 10, 22, 0, tzinfo=UTC), "UTC": datetime(2026, 7, 11, 0, 0, tzinfo=UTC),
+    instants = {"Europe/Lisbon": datetime(2026, 7, 10, 23, 0, tzinfo=UTC), "UTC": datetime(2026, 7, 11, 0, 0, tzinfo=UTC),
                 "Pacific/Kiritimati": datetime(2026, 7, 10, 10, 0, tzinfo=UTC)}
     f = fact(expiry_kind=ExpiryKind.DATE, expires_at=instants[zone])
     assert decision(f, zone) == ({"kind": "date", "date": day}, None)
 
 
 def test_a_horizon_decision_shows_days_and_the_local_due_date():
-    f = fact(expiry_kind=ExpiryKind.HORIZON, ttl_days=14, expires_at=datetime(2026, 3, 1, 23, 30, tzinfo=UTC))
-    assert decision(f, "Europe/Paris") == ({"kind": "horizon", "days": 14}, "2026-03-02")
+    f = fact(expiry_kind=ExpiryKind.HORIZON, ttl_days=14, expires_at=datetime(2026, 7, 1, 23, 30, tzinfo=UTC))
+    assert decision(f, "Europe/Lisbon") == ({"kind": "horizon", "days": 14}, "2026-07-02")
 
 
 def test_a_naive_time_is_read_as_utc():
-    f = fact(expiry_kind=ExpiryKind.DATE, expires_at=datetime(2026, 7, 10, 22, 0))
-    assert decision(f, "Europe/Paris") == ({"kind": "date", "date": "2026-07-10"}, None)
+    f = fact(expiry_kind=ExpiryKind.DATE, expires_at=datetime(2026, 7, 10, 23, 0))
+    assert decision(f, "Europe/Lisbon") == ({"kind": "date", "date": "2026-07-10"}, None)
 
 
 def test_a_stored_kind_string_becomes_the_member_before_the_hit_is_built():
@@ -55,7 +55,7 @@ def test_a_stored_kind_string_becomes_the_member_before_the_hit_is_built():
                         expiry_kind="date", expires_at=datetime(2026, 7, 10, 22, 0, tzinfo=UTC))  # type: ignore[arg-type]
     hit = EnrichedFact.from_fact(stored, "s", None)
     assert hit.expiry_kind is ExpiryKind.DATE
-    assert decision(hit, "Europe/Paris")[0] == {"kind": "date", "date": "2026-07-10"}
+    assert decision(hit, "Europe/Lisbon")[0] == {"kind": "date", "date": "2026-07-10"}
 
 
 def test_none_needs_no_date():

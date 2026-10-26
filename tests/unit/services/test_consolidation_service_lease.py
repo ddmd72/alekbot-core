@@ -234,7 +234,7 @@ async def test_a_run_holds_the_account_lease_with_a_fresh_owner_per_batch_and_re
 
 
 async def test_the_message_carries_the_batch_the_user_and_no_transient_retry(make_service, queue, coordinator):
-    service = make_service(user_repo=UserRepo({USER: ACC, USER2: ACC}, zones={USER: "Europe/Paris"}))
+    service = make_service(user_repo=UserRepo({USER: ACC, USER2: ACC}, zones={USER: "Europe/Lisbon"}))
     await _put(queue, "b1")
 
     await service.process_user_batches(USER, max_batches=1)
@@ -242,7 +242,7 @@ async def test_the_message_carries_the_batch_the_user_and_no_transient_retry(mak
     assert coordinator.contexts_seen == [(USER, ACC)], "routed inside the user's request context"
 
     message = coordinator.messages[0]
-    assert message.context == {"user_id": USER, "suppress_transient_retry": True, "owner_timezone": "Europe/Paris"}
+    assert message.context == {"user_id": USER, "suppress_transient_retry": True, "owner_timezone": "Europe/Lisbon"}
     assert message.payload["task"] == "consolidate_full" and message.payload["messages"] == [{"role": "user"}]
 
 

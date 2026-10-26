@@ -15,11 +15,15 @@ from .fact_lifecycle import (
     with_event,
 )
 from .fact_review_basis import ReviewAction, ReviewBasis
-from .fact_review_question import FactReviewQuestion, QuestionFallback, QuestionStatus
-from .fact_review_reasons import FallbackActor, fallback_reason, gives_window_reason, is_revive_reason
+from .fact_review_question import AnswerSource, FactReviewQuestion, QuestionFallback, QuestionStatus
+from .fact_review_reasons import (
+    FallbackActor, fallback_reason, gives_window_reason, is_revive_reason, kept_twice_reason, queued_reason,
+)
 from .fact_review_state import FactReviewState
+from .fact_review_task import neighbours_of
 from .fact_write_context import as_utc
 from .local_time import local_date
+from .pass_actor import PassActor
 from .settings import DEFAULT_FACT_REVIEW_INTERVAL_DAYS
 from .user import UserBotConfig
 
@@ -76,6 +80,22 @@ def select_batch(
     for fact in (*reply_facts, *candidates, *waiting):
         chosen.setdefault(fact.id, fact)
     return list(chosen.values())[:REVIEW_BATCH]
+
+
+def unread_replies(questions: Iterable[FactReviewQuestion]) -> List[FactReviewQuestion]:
+    """The open questions with an answer in words the review has not read (`reply_not_shown`), in queue order: their
+    facts go to the model first."""
+    return queue_order(q for q in questions if q.reply_not_shown)
+
+
+def offered(offers: Mapping[str, int], batch: Sequence[FactEntity]) -> Dict[str, int]:
+    """`offers` once `batch` goes to the model: one more for each stale batch fact. A current batch fact is there for its
+    question (a reply, a timeout), which is not an offer."""
+    counted = dict(offers)
+    for fact in batch:
+        if fact.state is FactState.STALE:
+            counted[fact.id] = counted.get(fact.id, 0) + 1
+    return counted
 
 
 def kept_twice(stale: Sequence[FactEntity], offers: Mapping[str, int], questions: Iterable[FactReviewQuestion]) -> List[FactEntity]:
@@ -160,6 +180,25 @@ def due_timeouts(questions: Iterable[FactReviewQuestion], now: datetime) -> List
     return queue_order(q for q in questions if q.is_timed_out(now))
 
 
+def asked_fact_unchanged(question: FactReviewQuestion, fact: Optional[FactEntity]) -> bool:
+    """Whether `fact`, the question's fact followed forward to the document that may be written now (None: gone, or
+    closed or merged meanwhile), is still the very document the question asks about. A rewrite is a new document, so a
+    fact rewritten or closed since it was queued has been settled elsewhere and its question no longer asks anything."""
+    return fact is not None and fact.id == question.fact_id
+
+
+def timeout_candidate(fact: FactEntity, question: FactReviewQuestion, nearest: Sequence[FactEntity]) -> bool:
+    """S4-D19: a timed-out question's fact goes to the model once before any fallback when the owner answered meanwhile.
+    First his own reply in words on the question, not yet read (`reply_not_shown`): an answer is not silence. Else one of
+    its neighbours (`neighbours_of` over `nearest`, the current facts nearest to it by its vector, nearest first) created
+    after the question was asked: what he said elsewhere may decide it. Otherwise silence decides (`fallback_fields`)."""
+    if question.asked_at is None:
+        return False
+    if question.reply_not_shown:
+        return True
+    return any(as_utc(n.created_at) > question.asked_at for n in neighbours_of(fact, nearest))
+
+
 def fallback_window_days(fact: FactEntity) -> int:
     """How long a silence brings a fact back for: twice the window it was last given, between MIN_FALLBACK_DAYS and
     MAX_FALLBACK_DAYS. The window runs from the later of `reported_date` and the fact's last revive or rewrite to
@@ -213,6 +252,11 @@ def _last_given(fact: FactEntity) -> datetime:
     return max([as_utc(fact.reported_date), *given])
 
 
+def fallback_revives(question: FactReviewQuestion) -> bool:
+    """Whether the question's fallback brings its fact back to current (`revive`) rather than archiving it."""
+    return question.fallback != "archive"
+
+
 def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetime, actor: FallbackActor) -> Dict[str, Any]:
     """The in-place write of a question's fallback, applied when nobody answered or the owner does not remember.
 
@@ -223,7 +267,7 @@ def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetim
     if fact.state not in (FactState.STALE, FactState.CURRENT):
         raise ValueError(f"a fallback applies to a stale or current fact, not a {fact.state.value} one")
     reason = fallback_reason(question.question_id, question.fallback, actor)
-    if question.fallback != "archive":
+    if fallback_revives(question):
         expiry: Dict[str, Any] = {}
         if not keeps_expiry(fact, now):
             expiry = horizon_from_now(fallback_window_days(fact), fact.reported_date, now)
@@ -390,6 +434,41 @@ def queued_question(
         queue_key=queue_key(fact),
         queued_at=at,
     )
+
+
+# The stored state an ask queues a fact from: a fact that is no longer stale was decided elsewhere meanwhile.
+QUEUE_ACCEPTS: Final[frozenset[FactState]] = frozenset({FactState.STALE})
+
+
+def queued_fields(fact: FactEntity, question_id: str, now: datetime) -> Dict[str, Any]:
+    """The in-place write that makes a stale fact current while its question waits (plan §3.2 step 11): `stale_since`
+    cleared, the expiry decision as stored, and one trail entry under the review with `queued_reason`, which is no revive.
+    Build the question (`queued_question`) from the fact as read before this write: its place in line is the fact's
+    `stale_since`. Raises ValueError for a fact that is not stale."""
+    return _queued_for_owner(fact, now, PassActor.REVIEW.value, queued_reason(question_id))
+
+
+# The trail actor of a fact queued by code because the review left it undecided MAX_OFFERS times (plan §2.1).
+KEPT_TWICE_ACTOR: Final[str] = "review_fallback"
+
+
+def kept_twice_fields(fact: FactEntity, question_id: str, now: datetime) -> Dict[str, Any]:
+    """`queued_fields` for a fact the review kept MAX_OFFERS times (`kept_twice`) and code queues itself: the same write,
+    with its trail entry under KEPT_TWICE_ACTOR and `kept_twice_reason`, which is no revive. Its question is
+    `queued_question` with `kept_twice_fallback`. Raises ValueError for a fact that is not stale."""
+    return _queued_for_owner(fact, now, KEPT_TWICE_ACTOR, kept_twice_reason(question_id))
+
+
+def _queued_for_owner(fact: FactEntity, now: datetime, actor: str, reason: str) -> Dict[str, Any]:
+    if fact.state is not FactState.STALE:
+        raise ValueError(f"a fact is queued for the owner from stale, not from {fact.state.value}")
+    return revival_fields(fact, {}, now, actor, reason)
+
+
+def review_close_source(question: FactReviewQuestion) -> Optional[AnswerSource]:
+    """The answer source of a question the review closes: `review` when it decided on the owner's words (a recorded
+    reply), else none."""
+    return "review" if question.reply_text else None
 
 
 # ------------------------------------------------------------------------------------------------ basis and ask refusals

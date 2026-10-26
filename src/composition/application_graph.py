@@ -42,7 +42,10 @@ from src.adapters.openai_deep_research_adapter import OpenAIDeepResearchAdapter
 from src.adapters.openai_transcription_adapter import OpenAITranscriptionAdapter
 from src.adapters.platform.factory import PlatformAdapterFactory
 from src.adapters.playwright_html_renderer import PlaywrightHtmlRenderer
+from src.adapters.plain_text_interactive_message_adapter import PlainTextInteractiveMessageAdapter
 from src.adapters.slack.http_adapter import HTTPModeAdapter
+from src.adapters.slack.interactive_message_adapter import PLATFORM as SLACK_PLATFORM
+from src.adapters.slack.interactive_message_adapter import SlackInteractiveMessageAdapter
 from src.adapters.slack.media_adapter import SlackMediaAdapter
 from src.adapters.slack.response_channel import SlackResponseChannel
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
@@ -70,6 +73,7 @@ from src.infrastructure.agent_config import CONSOLIDATION as CONSOLIDATION_CFG
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
 from src.infrastructure.agent_registry import AgentRegistry
+from src.infrastructure.interactive_message_router import InteractiveMessageRouter
 from src.infrastructure.notification_sla import NOTIFICATION_SLA, dispatch_deadline_s
 from src.services.agent_fallback_service import AgentFallbackService
 from src.services.authentication_service import AuthenticationService
@@ -83,7 +87,10 @@ from src.services.consolidation_service import ConsolidationService
 from src.services.deep_research_drive_copy_service import DeepResearchDriveCopyService
 from src.services.document_delivery_service import DocumentDeliveryService
 from src.services.email_embedding_repair_service import EmailEmbeddingRepairService
+from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_lifecycle_sweep_service import FactLifecycleSweepService
+from src.services.fact_question_texts import FactQuestionTexts
+from src.services.fact_review_service import FactReviewService
 from src.services.file_access_token_service import FileAccessTokenService
 from src.services.file_link_service import FileLinkService
 from src.services.file_upload_service import FileUploadService
@@ -443,7 +450,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     )
 
     logger.info("🌐 Initializing Language Services...")
-    _localization = _LocalizationService(FileLocalizationAdapter())
+    _localization_port = FileLocalizationAdapter()  # also read directly by the memory review's question texts
+    _localization = _LocalizationService(_localization_port)
     _system_lang = LanguageCode.from_str(
         config.get("SYSTEM_DEFAULT_LANGUAGE", "en"), default=LanguageCode.EN
     )
@@ -642,8 +650,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         else None
     )
 
-    # The one owner-zone resolver: the consolidation run here, the memory review and the owner's answers later (Facts S4).
+    # The one owner-zone resolver: the consolidation run, the memory review and the owner's answers (Facts S4).
     _owner_zones = OwnerTimezoneResolver(account_repo=account_repo, user_repo=user_repo)
+    # The one memory-write lease: a consolidation batch and a memory review of the same account never write at once.
+    _memory_write_lease = FirestoreMemoryWriteLease(db_client, env_config)
 
     # Services for WorkerHandler — wrap ports so the handler never imports ports directly.
     # The one ConsolidationService also serves `$consolidate` on both chat adapters (Facts S2).
@@ -651,7 +661,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         queue=consolidation_queue,
         coordinator=coordinator,
         agent_factory=agent_factory,
-        lease=FirestoreMemoryWriteLease(db_client, env_config),
+        lease=_memory_write_lease,
         run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
         task_queue=agent_task_queue,
         indexed_email_repo=indexed_email_repo,
@@ -714,6 +724,73 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # The Cabinet's fact writes (the owner's delete), over the same fact repository the agents use.
     cabinet_facts = CabinetFactService(container.repository)
 
+    # The Slack app is built here, before the memory review, whose questions are posted through its client; the
+    # Slack adapter below is built over the same app.
+    bot_token = config["SLACK_BOT_TOKEN"]
+    logger.debug(f"Bot token starts with: {bot_token[:10]}...")
+    logger.debug("Creating AsyncApp...")
+    app = AsyncApp(token=bot_token)
+    logger.debug("AsyncApp created successfully")
+
+    # Interactive messages (Facts S4 plan §3.20): buttons on Slack, numbered text on Telegram, picked by platform.
+    # The Telegram channel itself is registered on the channel factory below, only when Telegram is configured.
+    _interactive = InteractiveMessageRouter({
+        SLACK_PLATFORM: SlackInteractiveMessageAdapter(app.client),
+        "telegram": PlainTextInteractiveMessageAdapter(notification_channel_factory),
+    })
+    _fact_question_texts = FactQuestionTexts(
+        language=_language_service,
+        localization=_localization_port,
+        review_store=container.fact_review_store,
+        counters=container.fact_lifecycle_counters,
+        system_default=_system_lang,
+    )
+    # The owner's answers (digit, button, Cabinet) and every question close. Its fact writes go through the typed
+    # update path only, which never searches; the search service is the adapter's constructor argument, at the
+    # system defaults.
+    _answer_search_config = SearchConfig()
+    _fact_answer_service = FactAnswerService(
+        fact_updates=container.create_fact_management_adapter(SearchEnrichmentService(
+            repository=container.repository,
+            embedding_service=container.embedding_service,
+            keyword_limit=_answer_search_config.DEFAULT_KEYWORD_LIMIT,
+            phrase_one_limit=_answer_search_config.DEFAULT_PHRASE_ONE_LIMIT,
+            phrase_two_limit=_answer_search_config.DEFAULT_PHRASE_TWO_LIMIT,
+            total_limit=_answer_search_config.DEFAULT_SEMANTIC_SEARCH_LIMIT,
+        )),
+        repo=container.repository,
+        review_store=container.fact_review_store,
+        counters=container.fact_lifecycle_counters,
+        task_queue=agent_task_queue,
+        session_store=session_store,
+        texts=_fact_question_texts,
+        interactive=_interactive,
+        owner_zones=_owner_zones,
+    ) if agent_task_queue else None
+    # The memory review (Facts S4): built when its answer path (so its task queue, for the deferral and the next
+    # question) and its ops sink exist; without it `/worker` answers fact_review with 501.
+    _fact_review_service = FactReviewService(
+        repo=container.repository,
+        review_store=container.fact_review_store,
+        counters=container.fact_lifecycle_counters,
+        lease=_memory_write_lease,
+        coordinator=coordinator,
+        agent_factory=agent_factory,
+        user_repo=user_repo,
+        account_repo=account_repo,
+        texts=_fact_question_texts,
+        owner_zones=_owner_zones,
+        notification_state=notification_state_repo,
+        channel_bindings=channel_binding_adapter,
+        notifications=notification_service,
+        session_store=session_store,
+        task_queue=agent_task_queue,
+        answer_service=_fact_answer_service,
+        interactive=_interactive,
+        alert_sink=_alert_webhook,
+        run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
+    ) if (_fact_answer_service is not None and agent_task_queue is not None and _alert_webhook is not None) else None
+
     # Worker handler — dispatches Cloud Tasks to appropriate handlers
     # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
     # from running twice; a claim whose attempt died is taken over by the retry.
@@ -758,6 +835,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         deep_research_fetch=_openai_dr_fetch,
         prompt_content_store=container.prompt_content_store,
         fact_lifecycle_sweep=_fact_lifecycle_sweep,
+        fact_review=_fact_review_service,
     )
 
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
@@ -786,14 +864,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         logger.info("ℹ️ Audio transcription disabled (OPENAI_API_KEY not set)")
 
     logger.info("🔌 Initializing Slack Adapter...")
-
-    bot_token = config["SLACK_BOT_TOKEN"]
-
-    logger.debug(f"Bot token starts with: {bot_token[:10]}...")
-
-    logger.debug("Creating AsyncApp...")
-    app = AsyncApp(token=bot_token)
-    logger.debug("AsyncApp created successfully")
 
     slack_adapter = SlackAdapterFactory.create_adapter(
         app=app,

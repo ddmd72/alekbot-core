@@ -80,7 +80,7 @@ def test_every_other_pass_ignores_evidence_at(actor, model_value, content_change
 @pytest.mark.parametrize("actor", [a for a in OTHER_ACTORS if not a.model_dates])
 def test_a_cleanup_pass_keeps_its_own_note(actor):
     assert reported_date_for_update(ctx(str(actor)), NOW, STORED, False, NOW) == (
-        STORED, kept_reported_date_note(STORED, "Europe/Paris"))
+        STORED, kept_reported_date_note(STORED, "Europe/Lisbon"))
 
 
 def test_the_review_note_is_shaped_like_the_kept_note_and_says_horizons_count_from_now():
@@ -113,8 +113,8 @@ def test_a_horizon_after_a_later_reported_date_counts_from_that_date(actor):
 @pytest.mark.parametrize("actor", REVIEW_ACTORS)
 def test_a_future_date_and_none_are_stored_as_s3_stores_them(actor):
     context = ctx(str(actor))
-    future = Expiry(ExpiryKind.DATE, on=date(2026, 12, 31))
-    assert review_horizon(future, STORED, NOW, context) == (compute_expiry(future, STORED, "Europe/Paris"), None)
+    future = Expiry(ExpiryKind.DATE, on=date(2027, 7, 31))  # summer: in winter Lisbon's end of day is UTC midnight
+    assert review_horizon(future, STORED, NOW, context) == (compute_expiry(future, STORED, "Europe/Lisbon"), None)
     assert review_horizon(EXPIRY_NONE, STORED, NOW, context) == (
         {"expiry_kind": ExpiryKind.NONE, "ttl_days": None, "expires_at": None}, None)
 

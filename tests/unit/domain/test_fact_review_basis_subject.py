@@ -22,7 +22,7 @@ def replied(fact_id="f1"):
 
 def refusal(current, subject, q):
     return basis_refusal(current, TAGS, REPLY, named_fact=None, question=q, made_current={current.id}, history=None,
-                         today=TODAY, tz="Europe/Paris", subject=subject)
+                         today=TODAY, tz="Europe/Lisbon", subject=subject)
 
 
 def test_a_reply_backs_a_later_version_of_the_fact_it_was_asked_about():

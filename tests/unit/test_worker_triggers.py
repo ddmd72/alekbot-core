@@ -39,12 +39,6 @@ def test_the_worker_jobs_post_to_worker_with_a_task_type():
         assert "task_type" in json.loads(job.create["message-body"]), job.name
 
 
-_T10A_PENDING = pytest.mark.skip(
-    reason="owner 2026-10-24, temporary: S4's fact_review enqueue (T8e) landed before its WorkerHandler branch (T10a); "
-           "remove this mark in T10a")
-
-
-@_T10A_PENDING
 @pytest.mark.slow
 def test_every_trigger_has_a_branch_and_every_branch_a_trigger():
     triggers = wt.trigger_types()
@@ -55,7 +49,6 @@ def test_every_trigger_has_a_branch_and_every_branch_a_trigger():
     assert not missing_trigger, f"dispatched but never sent: {sorted(missing_trigger)}"
 
 
-@_T10A_PENDING
 @pytest.mark.slow
 def test_the_exemption_tables_are_not_stale():
     assert set(wt.OTHER_SERVICE) <= wt.trigger_types()
@@ -64,7 +57,6 @@ def test_the_exemption_tables_are_not_stale():
     assert wt.MANUAL_ONLY == {}
 
 
-@_T10A_PENDING
 @pytest.mark.slow
 def test_the_trigger_set_is_the_eleven_scheduler_types_and_the_enqueue_only_ones():
     scheduler = set(wt.scheduler_task_types())
@@ -73,7 +65,7 @@ def test_the_trigger_set_is_the_eleven_scheduler_types_and_the_enqueue_only_ones
     assert enqueue_only == {
         "agent_execution", "video_generation_polling", "email_indexing", "consolidation", "companion_consolidation",
         "telegram_update", "execute_reminder", "setup_microsoft_todo", "reindex_task_list", "renew_task_subscriptions",
-        "daily_email_review", "deep_research_failed", "deep_research_webhook_event", "drive_sync",
+        "daily_email_review", "deep_research_failed", "deep_research_webhook_event", "drive_sync", "fact_review",
     }
 
 
@@ -140,6 +132,16 @@ class H:
 
 def test_the_dispatch_parser_reads_literals_and_the_slack_branch():
     assert wt.branches_in_source(_DISPATCH) == {"one", "two", wt.SLACK_EVENT_BRANCH}
+
+
+def test_the_dispatch_parser_reads_a_known_constant_as_its_runtime_value():
+    source = ("class H:\n    async def _dispatch(self, payload, headers):\n        task_type = 1\n"
+              "        if task_type == FACT_REVIEW_TASK:\n            return 1\n")
+    assert wt.branches_in_source(source) == {"fact_review"}
+
+
+def test_the_review_task_constant_at_an_enqueue_site_resolves_to_its_runtime_value():
+    assert _types("async def f(q):\n    await q.enqueue_worker_task(FACT_REVIEW_TASK, {})") == ["fact_review"]
 
 
 @pytest.mark.parametrize("comparison", [
