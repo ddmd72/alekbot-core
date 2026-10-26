@@ -47,8 +47,10 @@ class TestAcknowledgement:
         assert acknowledgement(ReplyPath.DIGIT, AnswerResult.APPLIED) is UIMessage.MEMORY_ANSWER_NOTED
         assert acknowledgement(ReplyPath.DIGIT, AnswerResult.NOT_OPEN) is UIMessage.MEMORY_ALREADY_ANSWERED
 
-    @pytest.mark.parametrize(
-        "result", [AnswerResult.CHANGED, AnswerResult.CONFLICT, AnswerResult.NOT_FOUND, AnswerResult.NOT_APPLIED, None],
-    )
-    def test_a_digit_that_was_not_applied_is_not_answered_here(self, result):
+    @pytest.mark.parametrize("result", [AnswerResult.CHANGED, AnswerResult.CONFLICT])
+    def test_a_digit_on_a_fact_that_changed_or_whose_write_conflicted_says_so(self, result):
+        assert acknowledgement(ReplyPath.DIGIT, result) is UIMessage.MEMORY_FACT_CHANGED
+
+    @pytest.mark.parametrize("result", [AnswerResult.NOT_FOUND, AnswerResult.NOT_APPLIED, None])
+    def test_a_digit_that_is_not_applied_for_another_reason_is_not_answered_here(self, result):
         assert acknowledgement(ReplyPath.DIGIT, result) is None

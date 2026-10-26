@@ -35,6 +35,7 @@ _HINT: Final[str] = UIMessage.MEMORY_REPLY_HINT.value
 _TEXT_KEYS: Final[tuple[str, ...]] = (
     _QUESTION, _HINT,
     UIMessage.MEMORY_ANSWER_NOTED.value, UIMessage.MEMORY_REPLY_NOTED.value, UIMessage.MEMORY_ALREADY_ANSWERED.value,
+    UIMessage.MEMORY_FACT_CHANGED.value,
     UIMessage.MEMORY_QUESTION_CLOSED.value, UIMessage.MEMORY_DIGEST_HEADER.value, UIMessage.MEMORY_DIGEST_FOOTER.value,
 )
 LABEL_KEYS: Final[frozenset[str]] = frozenset((*OPTION_KEYS.values(), *_TEXT_KEYS))
@@ -50,6 +51,7 @@ CANONICAL_LABELS: Final[Mapping[str, str]] = MappingProxyType({
     UIMessage.MEMORY_ANSWER_NOTED.value: "Thank you, recorded.",
     UIMessage.MEMORY_REPLY_NOTED.value: "Noted — I'll take it into account.",
     UIMessage.MEMORY_ALREADY_ANSWERED.value: "Already answered, thank you.",
+    UIMessage.MEMORY_FACT_CHANGED.value: "That fact has changed in the meantime, so I didn't apply your answer; I'll come back to it.",
     UIMessage.MEMORY_QUESTION_CLOSED.value: "This question is closed.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Facts I put aside this week:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "To bring one back, tell me in chat that it is still true.",

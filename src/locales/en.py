@@ -202,6 +202,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.MEMORY_ANSWER_NOTED.value: "Thank you, recorded.",
     UIMessage.MEMORY_REPLY_NOTED.value: "Noted — I'll take it into account.",
     UIMessage.MEMORY_ALREADY_ANSWERED.value: "Already answered, thank you.",
+    UIMessage.MEMORY_FACT_CHANGED.value: "That fact has changed in the meantime, so I didn't apply your answer; I'll come back to it.",
     UIMessage.MEMORY_QUESTION_CLOSED.value: "This question is closed.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Facts I put aside this week:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "To bring one back, tell me in chat that it is still true.",

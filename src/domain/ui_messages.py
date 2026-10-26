@@ -111,6 +111,7 @@ class UIMessage(Enum):
     MEMORY_ANSWER_NOTED = "memory_answer_noted"
     MEMORY_REPLY_NOTED = "memory_reply_noted"
     MEMORY_ALREADY_ANSWERED = "memory_already_answered"
+    MEMORY_FACT_CHANGED = "memory_fact_changed"
     MEMORY_QUESTION_CLOSED = "memory_question_closed"
     MEMORY_DIGEST_HEADER = "memory_digest_header"
     MEMORY_DIGEST_FOOTER = "memory_digest_footer"

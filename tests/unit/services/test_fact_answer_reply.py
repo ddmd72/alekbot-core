@@ -13,6 +13,7 @@ import pytest
 
 from src.domain.billing import BillingAccount
 from src.domain.entities import ExpiryKind
+from src.domain.fact_update_outcome import FactUpdateOutcome, UpdateRefusal
 from src.domain.fact_review_frame import not_delivered_frame, reply_part, review_frame
 from src.domain.fact_review_language import fact_question_message
 from src.domain.fact_review_question import FactReviewQuestion, QuestionStatus
@@ -22,6 +23,7 @@ from src.domain.messaging import MessageRef
 from src.domain.owner_timezone import ResolvedOwnerZone
 from src.domain.ui_messages import UIMessage
 from src.domain.user import UserBotConfig, UserProfile
+from src.ports.fact_update_port import FactUpdatePort
 from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_question_texts import FactQuestionTexts
 from src.services.fact_review_service import FactReviewService
@@ -56,9 +58,20 @@ def texts_of(world: ReviewWorld) -> FactQuestionTexts:
                              clock=world.clock)
 
 
-def service(world: ReviewWorld, review_store: Any = None, texts: Any = None) -> FactAnswerService:
+class ScriptedWrites(FactUpdatePort):
+    """A typed write path that answers `outcome(fact_id)` and writes nothing."""
+
+    def __init__(self, outcome: Any) -> None:
+        self.outcome = outcome
+
+    async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None,
+                                history=None):
+        return self.outcome(fact_id)
+
+
+def service(world: ReviewWorld, review_store: Any = None, texts: Any = None, fact_updates: Any = None) -> FactAnswerService:
     return FactAnswerService(
-        fact_updates=world.store.adapter, repo=world.repo, review_store=review_store or world.review_store,
+        fact_updates=fact_updates or world.store.adapter, repo=world.repo, review_store=review_store or world.review_store,
         counters=world.counters, task_queue=world.queue, session_store=world.session_store,
         texts=texts or texts_of(world), interactive=world.interactive, owner_zones=FixedZones(), clock=no_clock,
     )
@@ -257,16 +270,58 @@ class TestNotAnAnswer:
 
         assert await service(world).answer_reply(USER, ACC, "slack", CHANNEL, "m1", "2", world.now) is None
 
-    async def test_a_digit_that_was_not_applied_leaves_the_question_open_and_the_message_to_conversation(self):
+    async def test_a_digit_on_a_fact_that_changed_is_told_so_and_leaves_the_question_open(self):
         world = ReviewWorld()
         fact = await stale_fact(world)
         await question_on(world, fact)
         world.docs[fact]["state"] = "archived"                     # the fact was closed meanwhile: `changed`
+        docs = {k: dict(v) for k, v in world.docs.items()}
 
-        assert await reply(world, "1") is None
+        text = await reply(world, "1")
+
+        assert text == ack(world, UIMessage.MEMORY_FACT_CHANGED)
+        assert stored(world)["status"] == "asked" and world.docs == docs
+        assert await history(world) == [("user", reply_part("q1", "1")), ("model", text)]
+        row = await day_row(world)
+        assert row is None or (row.reply_intake_failed, row.answered_by_digit) == (0, 0)
+
+    async def test_a_digit_whose_write_conflicted_is_told_so_and_leaves_the_question_open(self):
+        world = ReviewWorld()
+        fact = await stale_fact(world)
+        await question_on(world, fact)
+        writes = ScriptedWrites(lambda fid: FactUpdateOutcome.refused(fid, UpdateRefusal.CONFLICT, "changed meanwhile"))
+
+        text = await reply(world, "2", svc=service(world, fact_updates=writes))
+
+        assert text == ack(world, UIMessage.MEMORY_FACT_CHANGED)
+        assert stored(world)["status"] == "asked" and world.docs[fact]["state"] == "stale"
+        assert await history(world) == [("user", reply_part("q1", "2")), ("model", text)]
+        row = await day_row(world)
+        assert row is None or row.reply_intake_failed == 0
+
+    async def test_the_changed_fact_line_is_in_the_message_language(self):
+        world = ReviewWorld()
+        world.language.preferences[USER] = (LanguageCode.FR, False)
+        fact = await stale_fact(world)
+        await question_on(world, fact)
+        world.docs[fact]["state"] = "archived"
+
+        text = await reply(world, "1")
+
+        assert text == world.localization.get_ui_string(LanguageCode.FR, UIMessage.MEMORY_FACT_CHANGED)
+        assert text != ack(world, UIMessage.MEMORY_FACT_CHANGED)
+
+    async def test_a_digit_the_write_rules_refused_is_left_to_conversation_and_counted_as_not_applied(self):
+        world = ReviewWorld()
+        fact = await stale_fact(world)
+        await question_on(world, fact)
+        writes = ScriptedWrites(lambda fid: FactUpdateOutcome.refused(fid, UpdateRefusal.INVALID, "refused by the rules"))
+
+        assert await reply(world, "3", svc=service(world, fact_updates=writes)) is None
+
         assert stored(world)["status"] == "asked" and await history(world) == []
         row = await day_row(world)
-        assert row is None or row.reply_intake_failed == 0         # an expected outcome, not a failure
+        assert (row.answers_not_applied, row.reply_intake_failed) == (1, 0)
 
     async def test_words_the_review_has_already_been_shown_are_not_recorded_and_go_to_conversation(self):
         world = ReviewWorld()

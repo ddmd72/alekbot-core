@@ -159,16 +159,17 @@ class FactAnswerService:
         `MEMORY_ALREADY_ANSWERED`. An open, delivered one (`asked`, `unanswered`, or `pending` with its ref, which
         `completed()` first moves to asked) takes the path `reply_path` names: a lone digit, read on the message the
         owner saw, is applied through `apply` with source `digit` (`MEMORY_ANSWER_NOTED`; the next question is released
-        by the close, if this one was current); anything else is recorded for the review (`record_reply`,
-        `MEMORY_REPLY_NOTED`), applied and released by nothing here.
+        by the close, if this one was current; `MEMORY_FACT_CHANGED` when the fact changed or the write conflicted, the
+        question staying open); anything else is recorded for the review (`record_reply`, `MEMORY_REPLY_NOTED`), applied
+        and released by nothing here.
 
         The acknowledgement and the reply are appended to the question's session as one pair, the user part the owner's
         text verbatim under `reply_part`, the model part the acknowledgement; the append raises when it is not stored.
         Nothing is posted here. The labels are read once, so a fallback is counted once.
 
         None, with the message left to ordinary conversation and nothing lost, also when the reply could not be taken: a
-        digit that was not applied (`changed`, `conflict`, `not_applied`, no such question of this account), words the
-        store would not record (already shown to the review, or nothing more fits). Any error in the path is logged at
+        digit whose write the rules refused (`not_applied`) or for a question that is not this account's (`not_found`),
+        words the store would not record (already shown to the review, or nothing more fits). Any error in the path is logged at
         ERROR, counted (`reply_intake_failed`) and gives None; a pair that fails to append after an applied digit is such
         an error, the answer stays applied."""
         try:
@@ -205,7 +206,7 @@ class FactAnswerService:
             return None
         note = acknowledgement(path, result)
         if note is None:
-            logger.info(f"[FactAnswer] question {question.question_id}: digit not applied ({result}); left to conversation")
+            logger.info(f"[FactAnswer] question {question.question_id}: digit not applied ({result.value if result else None}); left to conversation")
             return None
         reply = labels[note.value]
         await self._append_reply(question, reply_part(question.question_id, text), reply)

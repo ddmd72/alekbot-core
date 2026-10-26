@@ -179,6 +179,7 @@ UI_STRINGS: Dict[str, str] = {
     UIMessage.MEMORY_ANSWER_NOTED.value: "Gracias, anotado.",
     UIMessage.MEMORY_REPLY_NOTED.value: "Anotado: lo tendré en cuenta.",
     UIMessage.MEMORY_ALREADY_ANSWERED.value: "Ya respondiste, gracias.",
+    UIMessage.MEMORY_FACT_CHANGED.value: "Ese dato ha cambiado entretanto, así que no apliqué tu respuesta; volveré a él.",
     UIMessage.MEMORY_QUESTION_CLOSED.value: "Esta pregunta está cerrada.",
     UIMessage.MEMORY_DIGEST_HEADER.value: "Datos que dejé de lado esta semana:",
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Para recuperar uno, dime en el chat que sigue siendo cierto.",

@@ -37,8 +37,9 @@ def needs_completing(question: FactReviewQuestion) -> bool:
 
 def acknowledgement(path: ReplyPath, result: Optional[AnswerResult] = None) -> Optional[UIMessage]:
     """The text that answers a reply on `path`, or None when the reply is not answered here (the message then goes on as
-    ordinary conversation). A digit's text depends on what applying it came to (`result`): applied, or the question was
-    closed meanwhile; any other result leaves the question open and the digit unapplied."""
+    ordinary conversation). A digit's text depends on what applying it came to (`result`): applied; the question closed
+    meanwhile; or the fact changed or another writer won (the question stays open, nothing was written). A refused write
+    (`not_applied`) and a question that is not this owner's (`not_found`) are not answered here."""
     if path is ReplyPath.ALREADY_ANSWERED:
         return UIMessage.MEMORY_ALREADY_ANSWERED
     if path is ReplyPath.WORDS:
@@ -47,4 +48,6 @@ def acknowledgement(path: ReplyPath, result: Optional[AnswerResult] = None) -> O
         return UIMessage.MEMORY_ANSWER_NOTED
     if result is AnswerResult.NOT_OPEN:
         return UIMessage.MEMORY_ALREADY_ANSWERED
+    if result in (AnswerResult.CHANGED, AnswerResult.CONFLICT):
+        return UIMessage.MEMORY_FACT_CHANGED
     return None

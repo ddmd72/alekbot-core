@@ -16,6 +16,7 @@ from src.domain.agent import AgentResponse
 from src.domain.channel_binding import ChannelBinding
 from src.domain.entities import ExpiryKind
 from src.domain.fact_review_frame import reply_part
+from src.domain.fact_update_outcome import FactUpdateOutcome, UpdateRefusal
 from src.domain.fact_review_language import fact_question_message
 from src.domain.fact_review_question import FactReviewQuestion, QuestionStatus
 from src.domain.language import LanguageCode
@@ -24,6 +25,7 @@ from src.domain.owner_timezone import ResolvedOwnerZone
 from src.domain.settings import ConsolidationSettings
 from src.domain.ui_messages import UIMessage
 from src.handlers.conversation_handler import ConversationHandler
+from src.ports.fact_update_port import FactUpdatePort
 from src.services.fact_answer_service import FactAnswerService
 from src.services.fact_question_texts import FactQuestionTexts
 from tests.support.fact_kit import ACC
@@ -42,6 +44,17 @@ THREAD = "1729760000.000100"          # the question message's ts: a reply's thr
 class FixedZones:
     async def resolve(self, account_id: str) -> ResolvedOwnerZone:
         return ResolvedOwnerZone(USER, TZ)
+
+
+class ScriptedWrites(FactUpdatePort):
+    """A typed write path that answers `outcome(fact_id)` and writes nothing."""
+
+    def __init__(self, outcome: Any) -> None:
+        self.outcome = outcome
+
+    async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None,
+                                history=None):
+        return self.outcome(fact_id)
 
 
 class Rig:
@@ -356,14 +369,45 @@ class TestOrdinaryConversation:
         assert stored(world)["status"] == "asked" and world.docs[fact]["state"] == "stale"
         assert any("store unavailable" in r.getMessage() for r in caplog.records)
 
-    async def test_a_digit_that_cannot_be_applied_goes_to_the_model_with_the_question_open(self):
+    async def test_a_digit_the_write_rules_refused_goes_to_the_model_with_the_question_open(self):
+        world, fact = await world_with_question()
+        rig = Rig(world)
+        rig.answers._fact_updates = ScriptedWrites(
+            lambda fid: FactUpdateOutcome.refused(fid, UpdateRefusal.INVALID, "refused by the rules"))
+
+        await rig.send(reply_context("1"))
+
+        assert rig.model_calls == 1 and stored(world)["status"] == "asked"
+
+
+class TestFactChanged:
+    async def test_a_digit_on_a_fact_that_changed_is_told_so_in_the_reply_without_the_model(self):
         world, fact = await world_with_question()
         world.docs[fact]["state"] = "archived"
         rig = Rig(world)
 
         await rig.send(reply_context("1"))
 
-        assert rig.model_calls == 1 and stored(world)["status"] == "asked"
+        text = ack(world, UIMessage.MEMORY_FACT_CHANGED)
+        assert rig.model_calls == 0 and rig.posted == [text]
+        assert rig.channel.send_reply.await_args.args == (text, "m1")
+        assert stored(world)["status"] == "asked" and next_tasks(world) == []
+        assert await history(world) == [("user", reply_part("q1", "1")), ("model", text)]
+        row = await day_row(world)
+        assert row is None or row.reply_intake_failed == 0
+
+    async def test_a_digit_whose_write_conflicted_is_told_so_in_the_reply_without_the_model(self):
+        world, fact = await world_with_question()
+        rig = Rig(world)
+        rig.answers._fact_updates = ScriptedWrites(
+            lambda fid: FactUpdateOutcome.refused(fid, UpdateRefusal.CONFLICT, "changed meanwhile"))
+
+        await rig.send(reply_context("2"))
+
+        text = ack(world, UIMessage.MEMORY_FACT_CHANGED)
+        assert rig.model_calls == 0 and rig.posted == [text]
+        assert stored(world)["status"] == "asked" and world.docs[fact]["state"] == "stale"
+        assert await history(world) == [("user", reply_part("q1", "2")), ("model", text)]
 
 
 # ------------------------------------------------------------------------------------------------ not an interactive turn
