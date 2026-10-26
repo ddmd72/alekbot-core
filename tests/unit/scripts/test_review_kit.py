@@ -43,6 +43,7 @@ from scripts.consolidation.s3_dry_run_kit import (
     WriteRecorder,
 )
 from src.adapters.fact_management_adapter import FactManagementAdapter
+from src.config.environment import EnvironmentConfig
 from src.domain.billing import BillingAccount
 from src.domain.choice_outcome import ChoiceOutcome
 from src.domain.entities import FactState
@@ -395,6 +396,48 @@ async def test_the_kit_store_reads_the_live_account_and_writes_nothing_back():
     assert [w["doc_id"] for w in store.writes] == ["q1", "acc", "q2", "acc"]
     assert live_state(world) == before
     assert (await world.review_store.get_state("acc")).current_question_id == "q1"
+
+
+async def test_a_kit_store_transaction_whose_body_raises_writes_nothing():
+    # Reviewer (T12a): the kit replaces the adapter's transaction runner, so its commit-or-nothing is pinned here.
+    store = RecordingReviewStore()
+    ref = store.memory.collection("c").document("x")
+
+    async def body(transaction):
+        transaction.set(ref, {"a": 1})
+        raise RuntimeError("the body failed after a write")
+
+    with pytest.raises(RuntimeError):
+        await store._in_transaction(body, "test")
+
+    assert store.writes == [] and store.memory.collection("c").docs == {}
+
+
+async def test_the_digest_claim_lands_in_the_kit_store_once_and_its_release_frees_it():
+    store = RecordingReviewStore()
+    day = NOW.date()
+
+    assert await store.claim_digest(USER, day, NOW) is True
+    assert await store.claim_digest(USER, day, NOW) is False
+    await store.release_digest(USER, day)
+    messages = store.memory.collection(EnvironmentConfig().fact_review_messages_collection)
+    assert messages.docs == {}
+    assert await store.claim_digest(USER, day, NOW) is True
+
+    assert len(messages.docs) == 1 and next(iter(messages.docs.values()))["kind"] == "digest"
+
+
+async def test_a_digest_release_is_recorded_as_a_delete_in_the_kit_stores_writes():
+    store = RecordingReviewStore()
+    day = NOW.date()
+    collection = EnvironmentConfig().fact_review_messages_collection
+
+    await store.claim_digest(USER, day, NOW)
+    await store.release_digest(USER, day)
+
+    claim, release = store.writes
+    assert (claim["op"], claim["collection"]) == ("set", collection)
+    assert (release["op"], release["collection"], release["doc_id"]) == ("delete", collection, claim["doc_id"])
 
 
 async def test_the_kit_store_refuses_what_it_cannot_do_instead_of_answering_wrongly():

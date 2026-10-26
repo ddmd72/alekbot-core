@@ -29,6 +29,7 @@ from src.config.environment import EnvironmentConfig
 from src.domain.fact_review_question import FactReviewQuestion
 from src.domain.fact_review_state import FactReviewState
 from src.ports.fact_review_store import FactReviewStore
+from src.utils.logger import logger
 
 
 class _Snapshot:
@@ -85,6 +86,7 @@ class _Document:
 
     async def delete(self) -> None:
         self._collection.docs.pop(self.id, None)
+        self._collection.record(self.id, [], "delete")
 
 
 class _Collection(_Query):
@@ -103,7 +105,10 @@ class _Collection(_Query):
             self.docs[doc_id] = copy.deepcopy(data)
         else:
             self.docs[doc_id] = {**self.docs.get(doc_id, {}), **{name: copy.deepcopy(data[name]) for name in merge}}
-        self._on_write(self.name, doc_id, sorted(data) if merge is None else sorted(merge))
+        self.record(doc_id, sorted(data) if merge is None else sorted(merge), "set")
+
+    def record(self, doc_id: str, fields: List[str], op: str) -> None:
+        self._on_write(self.name, doc_id, fields, op)
 
     async def stream(self) -> AsyncIterator[_Snapshot]:
         for doc_id, data in list(self.docs.items()):
@@ -143,8 +148,8 @@ class MemoryFirestore:
 
 
 class RecordingReviewStore(FirestoreFactReviewStore):
-    """`FactReviewStore` for a dry run: production's adapter on memory. `writes` lists every document write as
-    `{"collection", "doc_id", "fields"}`, in order; seeding by `load_account` is not a write."""
+    """`FactReviewStore` for a dry run: production's adapter on memory. `writes` lists every document write, a delete
+    included, as `{"op": "set" | "delete", "collection", "doc_id", "fields"}`, in order; seeding by `load_account` is not a write."""
 
     def __init__(self, env_config: Optional[EnvironmentConfig] = None) -> None:
         self.writes: List[Dict[str, Any]] = []
@@ -152,8 +157,8 @@ class RecordingReviewStore(FirestoreFactReviewStore):
         self._env = env_config or EnvironmentConfig()
         super().__init__(self.memory, self._env)
 
-    def _record(self, collection: str, doc_id: str, fields: List[str]) -> None:
-        self.writes.append({"collection": collection, "doc_id": doc_id, "fields": fields})
+    def _record(self, collection: str, doc_id: str, fields: List[str], op: str) -> None:
+        self.writes.append({"op": op, "collection": collection, "doc_id": doc_id, "fields": fields})
 
     async def load_account(self, real: FactReviewStore, account_id: str) -> None:
         """Copy the account's open questions and its review state from `real` (its two read methods; nothing is written
@@ -179,7 +184,11 @@ class RecordingReviewStore(FirestoreFactReviewStore):
 
     async def _in_transaction(self, body: Any, what: str) -> Any:
         transaction = self.memory.transaction()
-        result = await body(transaction)
+        try:
+            result = await body(transaction)
+        except Exception as exc:
+            logger.error(f"❌ [RecordingReviewStore] transaction on {what} failed: {type(exc).__name__}: {exc}")
+            raise
         transaction.commit()
         return result
 
