@@ -146,9 +146,14 @@ class UserNotificationService:
         text: str,
         channel_id_override: Optional[str] = None,
         platform_override: Optional[str] = None,
+        literal: bool = False,
     ) -> bool:
         """
         Deliver text directly to user's channel. No agent reformatting.
+
+        `literal=True` is for text the bot did not write (a stored fact quoted in a digest): it goes through
+        `ResponseChannel.send_literal`, so nothing in it is formatted, linked or obeyed by the platform (`<!channel>`
+        is shown). The default sends the text as the bot's own markdown.
 
         Uses fallback chain: override → primary → last active. Returns whether the text was sent; delivery
         errors are logged and swallowed (USER_DRIVE_INDEXING_RFC §26.2: the drive notice posts its text only
@@ -172,9 +177,12 @@ class UserNotificationService:
             return False
 
         try:
-            # send_long_text so a long raw body threads instead of being truncated;
-            # no link_list here (notify_raw delivers verbatim text, no anchor resolution).
-            await response_channel.send_long_text(text)
+            if literal:
+                await response_channel.send_literal(text)
+            else:
+                # send_long_text so a long raw body threads instead of being truncated;
+                # no link_list here (notify_raw delivers verbatim text, no anchor resolution).
+                await response_channel.send_long_text(text)
             logger.info(
                 f"📬 [Notification] Raw delivery to {channel_info.platform} "
                 f"channel={channel_info.channel_id} user={user_id[:8]}"

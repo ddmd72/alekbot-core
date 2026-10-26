@@ -9,6 +9,7 @@ from ...domain.messaging import MessageRef
 from ...ports.interactive_message_port import InteractiveMessagePort
 from ...utils.logger import logger
 from .binding_codec import encode
+from .mrkdwn_text import escaped_pieces
 
 PLATFORM = "slack"
 # Slack's limit for the text of a section block (and of the other text objects we use).
@@ -16,8 +17,6 @@ MAX_TEXT_CHARS = 3000
 # Slack's limit for the text of a button; a domain option label is at most this long (pinned by a test).
 MAX_BUTTON_TEXT_CHARS = 75
 ELLIPSIS = "…"
-
-_ESCAPES = {"&": "&amp;", "<": "&lt;", ">": "&gt;"}  # Slack's documented rule for mrkdwn text
 
 
 def _capped(pieces: List[str], limit: int = MAX_TEXT_CHARS) -> str:
@@ -37,14 +36,14 @@ def _capped(pieces: List[str], limit: int = MAX_TEXT_CHARS) -> str:
 
 def _mrkdwn(text: str) -> str:
     """`text` as Slack `mrkdwn`: `&`, `<` and `>` escaped (so `<!channel>` or `<@U1>` is shown, not obeyed), then capped."""
-    return _capped([_ESCAPES.get(ch, ch) for ch in text])
+    return _capped(escaped_pieces(text))
 
 
 def _quote_mrkdwn(quote: str) -> str:
     """The quote as a Slack block quote: every line starts with `> `, after the text has been escaped."""
     pieces = ["> "]
-    for ch in quote:
-        pieces.append("\n> " if ch == "\n" else _ESCAPES.get(ch, ch))
+    for ch, piece in zip(quote, escaped_pieces(quote)):
+        pieces.append("\n> " if ch == "\n" else piece)
     return _capped(pieces)
 
 
@@ -75,7 +74,7 @@ def _fallback_text(message: InteractiveMessage) -> str:
     budget = MAX_TEXT_CHARS - len(head) - len(tail) - 2 - 2  # two newlines, two guillemets
     if budget <= len(ELLIPSIS):
         return f"{head}\n{tail}"
-    shown = _capped([_ESCAPES.get(ch, ch) for ch in quote], budget)
+    shown = _capped(escaped_pieces(quote), budget)
     return f"{head}\n«{shown}»\n{tail}"
 
 

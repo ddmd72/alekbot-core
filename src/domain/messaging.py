@@ -121,11 +121,25 @@ class ResponseChannel(Protocol):
     async def send_reply(self, text: str, to_message_id: str) -> Any:
         """
         Post `text` tied to the message `to_message_id` of this channel, the way the platform ties a reply to a message
-        (a thread reply on Slack, a reply on Telegram). A failure is raised: the caller decides what it means.
+        (a thread reply on Slack, a reply on Telegram). The text is literal, as in `send_literal`. A failure is raised:
+        the caller decides what it means.
 
         Not abstract: only a platform whose messages can be matched by a reply implements it.
         """
         raise NotImplementedError(f"{self.platform} cannot reply to a message")
+
+    async def send_literal(self, text: str, to_message_id: Optional[str] = None) -> Any:
+        """
+        Deliver `text` exactly as written: nothing in it is formatted, linked, mentioned or obeyed by the platform. For
+        text whose author is not the bot (a stored fact, a model-translated label): `<!channel>`, `<@U1>`, `&amp;`, `*`
+        and backticks are shown, not interpreted. No link anchors are resolved. Text over the platform's length is split
+        into several messages. With `to_message_id` the (first) message is a reply to that message, as `send_reply`.
+        A failure is raised: the caller decides what it means.
+
+        Not abstract: a channel that cannot do it refuses, and the caller must not fall back to `send_message`, whose
+        formatting is what this method exists to avoid.
+        """
+        raise NotImplementedError(f"{self.platform} cannot send literal text")
 
     @abstractmethod
     async def update_message(self, message_id: str, text: str, link_list: Optional[List[Any]] = None) -> None:

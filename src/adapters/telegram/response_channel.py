@@ -311,6 +311,25 @@ class TelegramResponseChannel(ResponseChannel):
             raise
         return str(message.message_id)
 
+    async def send_literal(self, text: str, to_message_id: Optional[str] = None) -> str:
+        """Send `text` exactly as written: no parse mode (so `*`, `_`, backticks and `<` stay as written), no link
+        anchors. Text over `TELEGRAM_CHUNK_SIZE` is split into several messages; with `to_message_id` the first is a
+        reply to that message of this chat. Returns the first message's id. A failure is logged and raised."""
+        chunks = self.chunker.split(text) if text else []
+        if not chunks:
+            raise ValueError("a literal message needs text")
+        first = None
+        try:
+            for index, chunk in enumerate(chunks):
+                extra = {"reply_to_message_id": int(to_message_id)} if to_message_id and index == 0 else {}
+                message = await self.bot.send_message(chat_id=self.chat_id, text=chunk, parse_mode=None, **extra)
+                if first is None:
+                    first = str(message.message_id)
+        except Exception as e:
+            logger.error(f"❌ [TelegramResponseChannel] Failed to send literal message: {e}")
+            raise
+        return str(first)
+
     async def update_message(self, message_id: str, text: str, link_list: Optional[List] = None) -> None:
         """
         Update an existing Telegram message with graceful markdown fallback.
