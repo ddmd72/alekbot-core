@@ -64,6 +64,7 @@ from src.config.auth import AuthConfig
 from src.config.environment import validate_telegram_config
 from src.domain.agent import AgentConfig
 from src.domain.fact_lifecycle_sweep import sweep_dry_run
+from src.domain.fact_review_question import FACT_QUESTION_KIND
 from src.domain.language import LanguageCode
 from src.domain.notification_kind import NotificationKind as _NotificationKind
 from src.domain.settings import SearchConfig
@@ -96,6 +97,7 @@ from src.services.file_link_service import FileLinkService
 from src.services.file_upload_service import FileUploadService
 from src.services.google_oauth_service import GMAIL_SCOPES, GoogleOAuthService
 from src.services.iam_service import IAMService
+from src.services.interactive_choice_service import InteractiveChoiceService
 from src.services.invite_code_service import InviteCodeService
 from src.services.language_preference_service import LanguagePreferenceService
 from src.services.localization_service import LocalizationService as _LocalizationService
@@ -767,6 +769,13 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         interactive=_interactive,
         owner_zones=_owner_zones,
     ) if agent_task_queue else None
+    # An owner's click on an interactive message (Facts S4 plan §3.20): the Slack interactivity route queues it, the
+    # worker's `interactive_choice` branch runs it. The handlers are keyed by the binding kind they answer.
+    _interactive_choice = InteractiveChoiceService(
+        iam=iam_service,
+        handlers={FACT_QUESTION_KIND: _fact_answer_service},
+        interactive=_interactive,
+    ) if _fact_answer_service is not None else None
     # The memory review (Facts S4): built when its answer path (so its task queue, for the deferral and the next
     # question) and its ops sink exist; without it `/worker` answers fact_review with 501.
     _fact_review_service = FactReviewService(
@@ -836,6 +845,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         prompt_content_store=container.prompt_content_store,
         fact_lifecycle_sweep=_fact_lifecycle_sweep,
         fact_review=_fact_review_service,
+        interactive_choice=_interactive_choice,
     )
 
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.

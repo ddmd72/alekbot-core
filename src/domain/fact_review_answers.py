@@ -20,7 +20,7 @@ from .new_fact_attributes import NewFactAttributes
 
 __all__ = [
     "ARCHIVE_ONLY", "answer_updates", "digit_answer", "ended_text", "history_fact", "history_moved_refusal",
-    "history_refusal", "history_trail",
+    "history_refusal", "history_trail", "option_answer",
 ]
 
 # The one update a history fact goes with: the fact archived, nothing else changed.
@@ -37,6 +37,15 @@ def digit_answer(message: InteractiveMessage, text: str) -> Optional[AnswerKind]
     digit; the option's id is the answer of the same name. A message with an option that is no answer is a bug."""
     option_id = message.option_for_reply(text)
     return None if option_id is None else AnswerKind(option_id)
+
+
+def option_answer(option_id: str) -> Optional[AnswerKind]:
+    """The answer an option of the question's message stands for (the option's id is the answer of the same name), or None
+    for an id the message does not offer: a callback from a message of another version, or a damaged one."""
+    try:
+        return AnswerKind(option_id)
+    except ValueError:
+        return None
 
 
 def ended_text(content: str, at: datetime, tz: str) -> str:

@@ -6,7 +6,9 @@
 typed write path or in place, and closes. `close_question` is every close (the owner's, the review's, a timeout,
 `resolved_elsewhere`): it clears the current slot with the close and releases the next question, and re-renders the
 question's message. `answer_reply` is the owner's reply at intake: it finds the question by the message replied to, takes
-the digit through `apply` or records the words, and appends the reply with its acknowledgement to history.
+the digit through `apply` or records the words, and appends the reply with its acknowledgement to history. `handle` is the
+owner's click on a button of the question's message (`ChoiceHandlerPort`): the same `apply` for an open question, the
+existing answer for a closed one.
 """
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Callable, Dict, Mapping, Optional
@@ -17,18 +19,20 @@ from ..domain.fact_answer_result import AnswerResult
 from ..domain.fact_lifecycle import walked_to_unseen_text
 from ..domain.fact_lifecycle_day import CounterField
 from ..domain.fact_review_answer_kind import AnswerKind
-from ..domain.fact_review_answers import answer_updates, digit_answer
+from ..domain.fact_review_answers import answer_updates, digit_answer, option_answer
 from ..domain.fact_review_language import LABEL_KEYS, fact_question_message
-from ..domain.fact_review_question import AnswerSource, ClosedBy, FactReviewQuestion
+from ..domain.fact_review_question import FACT_QUESTION_KIND, AnswerSource, ClosedBy, FactReviewQuestion
 from ..domain.fact_review_frame import reply_part
 from ..domain.fact_review_question_close import QuestionClose
 from ..domain.fact_review_reply import ReplyPath, acknowledgement, needs_completing, reply_path
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, next_key, review_payload
 from ..domain.fact_update_outcome import UpdateRefusal
 from ..domain.fact_write_context import FactWriteContext, as_utc
+from ..domain.interactive_choice import InteractiveChoice
 from ..domain.llm import Message, MessagePart
 from ..domain.pass_actor import PassActor
 from ..domain.ui_messages import UIMessage
+from ..ports.choice_handler_port import ChoiceHandlerPort
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..ports.fact_review_store import FactReviewStore
 from ..ports.fact_update_port import FactUpdatePort
@@ -54,10 +58,11 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class FactAnswerService:
+class FactAnswerService(ChoiceHandlerPort):
     """`apply(account_id, user_id, question_id, kind, source, at)` and `close_question(question, closed_by, answer,
-    source, note)`, and `answer_reply(user_id, account_id, platform, channel_id, message_id, text, at)`. Ports only; the
-    texts and the owner's zone come from their one resolver each. `session_store` is for the reply's history pair."""
+    source, note)`, `answer_reply(user_id, account_id, platform, channel_id, message_id, text, at)` and `handle(choice,
+    user_id, account_id)`. Ports only; the texts and the owner's zone come from their one resolver each. `session_store`
+    is for the reply's history pair."""
 
     def __init__(
         self,
@@ -104,7 +109,7 @@ class FactAnswerService:
         if counter is None:
             raise ValueError(f"{source!r} is not where an owner answer comes from")
         now = as_utc(at)
-        question = next(iter(await self._review_store.get_questions([question_id])), None)
+        question = await self._question(question_id)
         if question is None or question.account_id != account_id or question.user_id != user_id:
             logger.info(f"[FactAnswer] question {question_id} not found for account {account_id[:8]}")
             return AnswerResult.NOT_FOUND
@@ -213,6 +218,51 @@ class FactAnswerService:
         logger.info(f"[FactAnswer] question {question.question_id}: reply taken ({path.value}) and acknowledged")
         return reply
 
+    @property
+    def kind(self) -> str:
+        return FACT_QUESTION_KIND
+
+    async def handle(self, choice: InteractiveChoice, user_id: str, account_id: str) -> Optional[ChoiceOutcome]:
+        """The owner's click on a button of a question's message: the outcome to show on the message, or None when
+        nothing is to be shown.
+
+        The question is the one the binding names; it must be this user's and this account's, and its option an answer
+        (else None, nothing written). An **open** question must be the one posted at the clicked message
+        (`message_ref` equal; a question not delivered, or another message, is None); a delivered `pending` one is
+        completed first (`completed()`, as at a reply), then the answer is applied through `apply` with source `button`,
+        at the time of the click, and the outcome shows the chosen option. A refused apply (`changed`, `conflict`,
+        `not_applied`) is None: the question stays open with its buttons, and `apply` has logged why. A question that
+        closes while the click is applied is treated as closed. A **closed** question shows its existing answer (its
+        note when it has none) and writes nothing; one with no stored ref (closed during its own post) is shown on the
+        clicked message, which heals it on its first click, while a stored ref that is not the clicked message gives
+        None. Store errors raise."""
+        question = await self._question(choice.binding.id)
+        if question is None or question.user_id != user_id or question.account_id != account_id:
+            logger.info(f"[FactAnswer] choice on question {choice.binding.id}: not this user's question; ignored")
+            return None
+        answer = option_answer(choice.option_id)
+        if answer is None:
+            logger.warning(f"[FactAnswer] choice on question {question.question_id}: {choice.option_id!r} is no answer")
+            return None
+        if question.is_open:
+            if question.message_ref != choice.message_ref:
+                logger.info(f"[FactAnswer] choice on question {question.question_id}: not the question's message; ignored")
+                return None
+            if needs_completing(question):
+                await self._review_store.complete_delivered(question.question_id)
+            result = await self.apply(account_id, user_id, question.question_id, answer, "button", choice.at)
+            if result is AnswerResult.APPLIED:
+                return await self._closed_outcome(question, answer, None)
+            if result is not AnswerResult.NOT_OPEN:
+                return None
+            question = await self._question(question.question_id)
+            if question is None:
+                return None
+        if question.message_ref not in (None, choice.message_ref):
+            logger.info(f"[FactAnswer] choice on closed question {question.question_id}: not its message; ignored")
+            return None
+        return await self._closed_outcome(question, question.answer, None)
+
     async def close_question(
         self,
         question: FactReviewQuestion,
@@ -276,18 +326,27 @@ class FactAnswerService:
         if question.message_ref is None:
             return
         try:
-            labels = await self._texts.labels_for(question.user_id, question.account_id)
-            message = fact_question_message(question, labels)
-            if answer is not None:
-                outcome = ChoiceOutcome(message=message, chosen_option_id=answer.value)
-            else:
-                outcome = ChoiceOutcome(message=message, note=labels[(note or UIMessage.MEMORY_QUESTION_CLOSED).value])
+            outcome = await self._closed_outcome(question, answer, note)
             await self._interactive.show_choice(question.message_ref, outcome)
         except Exception as exc:
             logger.warning(
                 f"[FactAnswer] message of question {question.question_id} not re-rendered on "
                 f"{question.message_ref.platform}: {type(exc).__name__}: {exc}"
             )
+
+    async def _closed_outcome(
+        self, question: FactReviewQuestion, answer: Optional[AnswerKind], note: Optional[UIMessage],
+    ) -> ChoiceOutcome:
+        """The question's message without controls: the chosen option for an answer, else `note` (default
+        `MEMORY_QUESTION_CLOSED`), all texts from one `labels_for`."""
+        labels = await self._texts.labels_for(question.user_id, question.account_id)
+        message = fact_question_message(question, labels)
+        if answer is not None:
+            return ChoiceOutcome(message=message, chosen_option_id=answer.value)
+        return ChoiceOutcome(message=message, note=labels[(note or UIMessage.MEMORY_QUESTION_CLOSED).value])
+
+    async def _question(self, question_id: str) -> Optional[FactReviewQuestion]:
+        return next(iter(await self._review_store.get_questions([question_id])), None)
 
     async def _append_reply(self, question: FactReviewQuestion, user_text: str, model_text: str) -> None:
         """The owner's reply and its acknowledgement as one pair in the question's session, raising when not stored."""

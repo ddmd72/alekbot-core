@@ -37,6 +37,8 @@ Supported task_types:
                                      `FACT_LIFECYCLE_SWEEP_DRY_RUN=0`. Cron, daily 09:30 Europe/Madrid, not retried; a failed run answers 500
   - fact_review                   → FactReviewService.run(user_id, account_id, mode): the owner's memory review (`daily`, the
                                      default) or only the send of the next question (`next`); another mode is a 400
+  - interactive_choice            → InteractiveChoiceService.handle(choice): an owner's pick on an interactive message,
+                                     queued by the Slack interactivity route; a payload that is not a choice is a 400
   - start_drive_sync              → fan-out: DriveSyncSchedulerService enqueues one drive_sync tick per
                                      user on the drive queue (the indexer service runs it), raises the
                                      staleness alert and the one reconnect notice (USER_DRIVE_INDEXING_RFC
@@ -69,12 +71,14 @@ if TYPE_CHECKING:
     from ..services.drive_sync_scheduler_service import DriveSyncSchedulerService
     from ..services.fact_lifecycle_sweep_service import FactLifecycleSweepService
     from ..services.fact_review_service import FactReviewService
+    from ..services.interactive_choice_service import InteractiveChoiceService
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
 from ..domain import deep_research_notices as dr_notices
 from ..domain.exceptions import OAuthGrantRevokedError
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_MODES
+from ..domain.interactive_choice import INTERACTIVE_CHOICE_TASK, InteractiveChoice
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import is_empty_answer
 from ..domain.workspace import fire_key as workspace_fire_key
@@ -140,9 +144,11 @@ class WorkerHandler:
         prompt_content_store: "Optional[PromptContentStore]" = None,
         fact_lifecycle_sweep: "Optional[FactLifecycleSweepService]" = None,
         fact_review: "Optional[FactReviewService]" = None,
+        interactive_choice: "Optional[InteractiveChoiceService]" = None,
     ) -> None:
         self._fact_lifecycle_sweep = fact_lifecycle_sweep
         self._fact_review = fact_review
+        self._interactive_choice = interactive_choice
         self._task_claims = task_claims
         # Keys of attempts running in this process. Check-and-add has no await between, so
         # asyncio's single thread makes it race-free without a lock.
@@ -341,6 +347,8 @@ class WorkerHandler:
             return await self._handle_fact_lifecycle_sweep()
         elif task_type == FACT_REVIEW_TASK:
             return await self._handle_fact_review(payload)
+        elif task_type == INTERACTIVE_CHOICE_TASK:
+            return await self._handle_interactive_choice(payload)
         elif task_type is None and "event" in payload and "session_id" in payload:
             # Queued Slack event (GcpTaskQueue.enqueue_slack_event): no task_type by design.
             if self._slack_worker is None:
@@ -1330,3 +1338,19 @@ class WorkerHandler:
             logger.warning(f"[Worker] {FACT_REVIEW_TASK}: unknown mode {mode!r}")
             return {"error": "unknown mode"}, 400
         return await self._fact_review.run(user_id=user_id, account_id=account_id, mode=mode), 200
+
+    async def _handle_interactive_choice(self, payload: dict) -> Tuple[dict, int]:
+        """One owner's pick on an interactive message (the Slack interactivity route queued it).
+
+        The body is the choice (`InteractiveChoice.to_payload()`); a body that is not one is a 400 and nothing runs. Every
+        result of the service is 200-shaped (`shown`, `ignored`, `unknown_user`, `unknown_kind`); a store or platform
+        error raises, so the claim is released and Cloud Tasks retries.
+        """
+        if self._interactive_choice is None:
+            logger.warning(f"[Worker] {INTERACTIVE_CHOICE_TASK}: choice service not configured")
+            return {"error": "interactive choice not configured"}, 501
+        choice = InteractiveChoice.from_payload(payload)
+        if choice is None:
+            logger.warning(f"[Worker] {INTERACTIVE_CHOICE_TASK}: the payload is not a choice")
+            return {"error": "invalid choice"}, 400
+        return await self._interactive_choice.handle(choice), 200

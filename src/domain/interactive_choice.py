@@ -1,11 +1,14 @@
 """The owner's pick on an interactive message, as a platform reports it."""
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Final, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .interactive_binding import InteractiveBinding
 from .messaging import MessageRef
+
+# The worker task type that carries a choice (`to_payload()` is its body).
+INTERACTIVE_CHOICE_TASK: Final[str] = "interactive_choice"
 
 
 class InteractiveChoice(BaseModel):
