@@ -66,7 +66,7 @@ class ScriptedWrites(FactUpdatePort):
         self.outcome = outcome
 
     async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None,
-                                history=None):
+                                history=None, expected_id=None):
         return self.outcome(fact_id)
 
 

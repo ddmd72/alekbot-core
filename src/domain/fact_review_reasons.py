@@ -7,7 +7,7 @@ from datetime import date, datetime
 from typing import Final, Literal, Optional
 
 from .entities import FactEntity
-from .fact_review_answer_kind import AnswerKind
+from .fact_review_answer_kind import HISTORY_ANSWERS, AnswerKind
 from .fact_review_basis import ReviewAction, ReviewBasis
 from .fact_review_question import AnswerSource, FactReviewQuestion, QuestionFallback
 
@@ -29,10 +29,6 @@ _DID_NOT_REMEMBER: Final[str] = "did not remember q="
 _ANSWER_VERBS: Final[dict[AnswerKind, str]] = {
     AnswerKind.STILL_TRUE: _CONFIRMED, AnswerKind.ENDED: "ended q=", AnswerKind.NEVER: "never q=",
 }
-# The owner's answers that write the question's text as history (P2-3).
-_HISTORY_ANSWERS: Final[frozenset[AnswerKind]] = frozenset({
-    AnswerKind.HAPPENED, AnswerKind.NOT_HAPPENED, AnswerKind.NOT_NEEDED, AnswerKind.PAID, AnswerKind.NOT_PAID,
-})
 
 
 def basis_reason(
@@ -148,7 +144,7 @@ def answer_reason(kind: AnswerKind, question_id: str, source: Optional[AnswerSou
         return f"{_DID_NOT_REMEMBER}{question_id}"
     if source is None:
         raise ValueError("an answer other than 'I do not remember' has a source")
-    if kind in _HISTORY_ANSWERS:
+    if kind in HISTORY_ANSWERS:
         return f"{_AS_HISTORY} q={question_id}: {kind.value} ({source})"
     if kind is AnswerKind.RENEWED:
         return f"{_RENEWED}{question_id} ({source})"

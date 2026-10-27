@@ -3,7 +3,7 @@
 before it reaches the real write: an exception, a refusal, or any outcome; an unscripted call is the real write."""
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Deque, List, Optional, Union
+from typing import Awaitable, Callable, Deque, List, Optional, Union
 from collections import deque
 
 from src.domain.fact_update import ParsedFactUpdate
@@ -23,6 +23,7 @@ class UpdateCall:
     evidence_at: Optional[datetime]
     reason: Optional[str]
     history: Optional[str]
+    expected_id: Optional[str] = None
 
 
 class RecordingFactUpdates(FactUpdatePort):
@@ -33,6 +34,7 @@ class RecordingFactUpdates(FactUpdatePort):
         self._real = real
         self.calls: List[UpdateCall] = []
         self._script: Deque[Optional[Scripted]] = deque()
+        self.before: Optional[Callable[[str], Awaitable[None]]] = None   # runs once, just before the next call is applied
 
     def script(self, *outcomes: Optional[Scripted]) -> None:
         self._script.extend(outcomes)
@@ -50,8 +52,12 @@ class RecordingFactUpdates(FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
+        expected_id: Optional[str] = None,
     ) -> FactUpdateOutcome:
-        self.calls.append(UpdateCall(fact_id, update, account_id, context, evidence_at, reason, history))
+        self.calls.append(UpdateCall(fact_id, update, account_id, context, evidence_at, reason, history, expected_id))
+        if self.before is not None:
+            hook, self.before = self.before, None
+            await hook(fact_id)
         scripted = self._script.popleft() if self._script else None
         if isinstance(scripted, BaseException):
             raise scripted
@@ -59,4 +65,5 @@ class RecordingFactUpdates(FactUpdatePort):
             return scripted
         return await self._real.apply_fact_update(
             fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history,
+            expected_id=expected_id,
         )

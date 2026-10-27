@@ -302,7 +302,7 @@ def test_graph_tests_follow_a_support_module_that_imports_main(tmp_path):
 def test_non_wiring_targets_do_not_get_the_graph_group():
     for target in TARGETS:
         if target.operators != "wiring":
-            assert target.extra_tests == ()
+            assert not target.graph_group and target.extra_tests == target.extra
     plain = next(t for t in TARGETS if t.operators != "wiring")
     assert "x" in mutation_targets.MutationTarget(plain.module, None, extra=("x",)).tests
 

@@ -30,7 +30,7 @@ class KeptOutcomes(FactUpdatePort):
         self.script = None
 
     async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None,
-                                history=None):
+                                history=None, expected_id=None):
         outcome = self.script(fact_id) if self.script is not None else await self._inner.apply_fact_update(
             fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history)
         self.outcomes.append(outcome)

@@ -151,6 +151,22 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.services.fact_answer_service", "tests/unit/services/fact_answer_service_equivalent_mutants.txt"),
     MutationTarget("src.services.fact_review_service", "tests/unit/services/fact_review_service_equivalent_mutants.txt"),
     MutationTarget("src.agents.consolidation_agent", "tests/unit/agents/consolidation_agent_equivalent_mutants.txt"),
+    # P15 part 2 and P16: one equivalent file each, holding a header comment the driver skips. Not None: test_mutation_targets.py counts
+    # None as one shared file, so two or more None targets fail it (only the wiring file may be shared). A reviewer rules a mutant
+    # equivalent by adding a line there when the weekly run reports a survivor.
+    MutationTarget("src.handlers.worker_handler", "tests/unit/handlers/worker_handler_equivalent_mutants.txt",
+                   extra=("tests/unit/test_worker_redelivery_route.py",)),  # reaches it only through main
+    MutationTarget("src.adapters.firestore_task_claim_store", "tests/unit/adapters/firestore_task_claim_store_equivalent_mutants.txt",
+                   extra=("tests/unit/test_worker_redelivery_route.py",)),  # reaches it only through main
+    MutationTarget("src.services.reminders_service", "tests/unit/services/reminders_service_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.firestore_agent_note_adapter", "tests/unit/adapters/firestore_agent_note_adapter_equivalent_mutants.txt"),
+    MutationTarget("src.services.task_setup_service", "tests/unit/services/task_setup_service_equivalent_mutants.txt"),
+    MutationTarget("src.services.companion_extraction_service", "tests/unit/services/companion_extraction_service_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.firestore_companion_extraction_queue", "tests/unit/adapters/firestore_companion_extraction_queue_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.dateutil_recurrence_adapter", "tests/unit/adapters/dateutil_recurrence_adapter_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.firestore_account_repo", "tests/unit/adapters/firestore_account_repo_equivalent_mutants.txt"),
+    MutationTarget("src.services.session_service", "tests/unit/services/session_service_equivalent_mutants.txt"),
+    MutationTarget("src.domain.daily_review_window", "tests/unit/domain/daily_review_window_equivalent_mutants.txt"),
 )
 
 

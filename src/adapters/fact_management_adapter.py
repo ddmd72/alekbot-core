@@ -290,6 +290,7 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
+        expected_id: Optional[str] = None,
     ) -> FactUpdateOutcome:
         """
         Code's update: `update` already decided, with the inputs only code has. It is first held to the rules the
@@ -299,6 +300,7 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
             evidence_at: The review's or the owner's evidence moment (finish_fact_update); the history fact's date
             reason: The code-built trail reason of a review or owner write (finish_fact_update)
             history: The text of a fact to create beside an archive (history_refusal, history_fact)
+            expected_id: The exact document the caller decided on; a first resolution to another document is MOVED
 
         Returns:
             The typed outcome (update_fact renders the same outcome); history_fact_id with history
@@ -313,7 +315,8 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
                 logger.warning(f"⚠️  [FactManagement] update {fact_id[:8]} refused (history): {refusal}")
                 return FactUpdateOutcome.refused(fact_id, UpdateRefusal.HISTORY, refusal)
         return await self._update(
-            fact_id, account_id, context, lambda: update, evidence_at=evidence_at, reason=reason, history=history
+            fact_id, account_id, context, lambda: update, evidence_at=evidence_at, reason=reason, history=history,
+            expected_id=expected_id,
         )
 
     async def _update(
@@ -326,12 +329,14 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
+        expected_id: Optional[str] = None,
     ) -> FactUpdateOutcome:
         """The one apply of both entries: every refusal becomes a refused outcome. `parse` gives the update once, after
         the first resolution."""
         try:
             return await self._update_with_one_retry(
-                fact_id, account_id, context, parse, evidence_at=evidence_at, reason=reason, history=history
+                fact_id, account_id, context, parse, evidence_at=evidence_at, reason=reason, history=history,
+                expected_id=expected_id,
             )
         except FactExpiryError as e:
             logger.warning(f"⚠️  [FactManagement] update_fact {fact_id[:8]} refused (expiry): {e}")
@@ -359,6 +364,7 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
         evidence_at: Optional[datetime],
         reason: Optional[str],
         history: Optional[str],
+        expected_id: Optional[str] = None,
     ) -> FactUpdateOutcome:
         logger.debug(f"🔄 [FactManagement] Updating fact {fact_id[:8]}...")
         parsed: Optional[ParsedFactUpdate] = None
@@ -378,6 +384,11 @@ class FactManagementAdapter(FactManagementPort, FactUpdatePort):
                 parsed = parse()
             if first_resolved_id is None:
                 first_resolved_id = stored.fact.id
+                if expected_id is not None and stored.fact.id != expected_id:
+                    logger.warning(f"⚠️  [FactManagement] Fact {fact_id[:8]} is no longer the document decided on; update refused")
+                    return FactUpdateOutcome.refused(
+                        fact_id, UpdateRefusal.MOVED, f"fact {fact_id} changed concurrently; search again"
+                    )
             else:
                 moved = concurrent_update_refusal(fact_id, first_resolved_id, stored.fact.id, parsed)
                 if moved is not None:

@@ -4,7 +4,9 @@ Since P2 a passed date backs only a history rewrite, and only the owner's reply 
 import re
 from dataclasses import dataclass
 from datetime import date
-from typing import Any, Dict, Final, Literal, Mapping, Optional
+from typing import Any, Dict, Final, Literal, Mapping, Optional, Tuple
+
+from .fact_review_question import TEXT_KEYS
 
 BasisKind = Literal["evidence", "reply", "date_passed"]
 # What a review write does to a fact: `review_action` decides it, the basis rules and the trail reasons read it.
@@ -72,7 +74,9 @@ def parse_history(raw: object) -> Optional[str]:
     return raw
 
 
-_PAYMENT_SHAPE: Final[str] = "payment must be {paid: <text>, not_paid: <text>}"
+# The two texts of a routine invoice's payment: the keys of a digest `paid` question (`TEXT_KEYS`), the one list.
+PAYMENT_KEYS: Final[Tuple[str, ...]] = TEXT_KEYS[("paid", "digest")]
+_PAYMENT_SHAPE: Final[str] = "payment must be {" + ", ".join(f"{key}: <text>" for key in PAYMENT_KEYS) + "}"
 
 
 def parse_payment(raw: object) -> Optional[Dict[str, str]]:
@@ -83,11 +87,11 @@ def parse_payment(raw: object) -> Optional[Dict[str, str]]:
         return None
     if (
         not isinstance(raw, Mapping)
-        or set(raw) != {"paid", "not_paid"}
+        or set(raw) != set(PAYMENT_KEYS)
         or not all(isinstance(value, str) for value in raw.values())
     ):
         raise ValueError(_PAYMENT_SHAPE)
-    return {"paid": raw["paid"], "not_paid": raw["not_paid"]}
+    return {key: raw[key] for key in PAYMENT_KEYS}
 
 
 def parse_day(value: Any, place: str) -> Optional[date]:

@@ -85,7 +85,7 @@ class RecordingUpdates(FactUpdatePort):
         self._real = real
         self.calls: List[Any] = []
 
-    async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None, history=None):
+    async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None, history=None, expected_id=None):
         self.calls.append((fact_id, context))
         return await self._real.apply_fact_update(
             fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history,

@@ -29,6 +29,7 @@ class NoTypedWrites(FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
+        expected_id: Optional[str] = None,
     ) -> FactUpdateOutcome:
         raise RuntimeError(
             "this bench's dry run has no typed write path (the review pass): run it on the S3 kit (--s3-kit)"

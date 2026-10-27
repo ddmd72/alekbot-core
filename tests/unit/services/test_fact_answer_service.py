@@ -55,7 +55,7 @@ class ScriptedWrites(FactUpdatePort):
         self.outcome = outcome
 
     async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None,
-                                history=None):
+                                history=None, expected_id=None):
         return self.outcome(fact_id)
 
 
@@ -67,7 +67,7 @@ class KeptWrites(FactUpdatePort):
         self.sent: List[Any] = []
 
     async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None,
-                                history=None):
+                                history=None, expected_id=None):
         self.sent.append((update, evidence_at))
         return await self._inner.apply_fact_update(fact_id, update, account_id, context=context,
                                                    evidence_at=evidence_at, reason=reason, history=history)

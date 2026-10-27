@@ -1,5 +1,6 @@
 """What the owner said about a fact he was asked about."""
 from enum import Enum
+from typing import Final
 
 
 class AnswerKind(str, Enum):
@@ -18,3 +19,9 @@ class AnswerKind(str, Enum):
     NOT_NEEDED = "not_needed"
     PAID = "paid"
     NOT_PAID = "not_paid"
+
+
+# The owner's answers that write one of the question's texts as history (P2-3): read by the trail reasons and by the write.
+HISTORY_ANSWERS: Final[frozenset[AnswerKind]] = frozenset({
+    AnswerKind.HAPPENED, AnswerKind.NOT_HAPPENED, AnswerKind.NOT_NEEDED, AnswerKind.PAID, AnswerKind.NOT_PAID,
+})

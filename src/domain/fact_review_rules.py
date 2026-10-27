@@ -4,7 +4,9 @@ fact becomes then, and when the janitor must start a review. Pure: the services 
 
 Statuses of a question move only through the methods of `FactReviewQuestion`; nothing here builds a question by hand."""
 from datetime import date, datetime, timedelta, timezone
-from typing import AbstractSet, Any, Callable, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence, cast
+from typing import (
+    AbstractSet, Any, Callable, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence, cast, get_args,
+)
 
 from .channel_binding import ChannelBinding
 from .entities import ExpiryKind, FactEntity, FactState
@@ -16,7 +18,7 @@ from .fact_lifecycle import (
     compute_expiry, expiry_pinned, horizon_from_now, lifecycle_event, lifecycle_fields, resolves_too_soon, revival_fields,
     with_event,
 )
-from .fact_review_basis import ReviewAction, ReviewBasis
+from .fact_review_basis import PAYMENT_KEYS, ReviewAction, ReviewBasis
 from .fact_review_outcome import MADE_CURRENT, ReviewDecision
 from .fact_review_question import (
     DIGEST_QUESTION_DAYS, TEXT_KEYS, AnswerSource, FactReviewQuestion, QuestionDelivery, QuestionFallback, QuestionKind,
@@ -592,7 +594,6 @@ NOISE_ARCHIVED_ONLY: Final[str] = (
     "history: a fact whose question falls back to archive is noise and is archived only; leave history out"
 )
 NOT_EVIDENCE: Final[str] = "{place} names a fact this pass rewrote as history on date_passed; that is no evidence"
-_PAYMENT_KEYS: Final[tuple[str, ...]] = ("paid", "not_paid")
 # Why a fold may not join an ask (`fold_refusal`).
 FoldRefusal = Literal["self", "not_in_batch", "taken"]
 
@@ -855,7 +856,7 @@ def payment_refusal(update: ParsedFactUpdate, payment: Optional[Mapping[str, str
         return None
     if not update.as_history:
         return "payment goes only with an as_history rewrite of an invoice that was received"
-    for key in _PAYMENT_KEYS:
+    for key in PAYMENT_KEYS:
         problem = written_text_problem(payment.get(key))
         if problem is not None:
             return f"payment.{key}: {problem}"
@@ -876,7 +877,7 @@ def _squash(text: str) -> str:
     return " ".join(text.casefold().split())
 
 
-_QUESTION_KINDS: Final[tuple[str, ...]] = ("still_true", "happened", "renewed", "paid")
+_QUESTION_KINDS: Final[tuple[str, ...]] = get_args(QuestionKind)
 
 
 def ask_refusal(
@@ -906,7 +907,7 @@ def ask_refusal(
     refusal = _ask_shape_refusal(fact, fallback, fallback_date, noise, question)
     if refusal is not None:
         return refusal
-    return _ask_texts_refusal(question, texts or {})
+    return _ask_texts_refusal(question, texts or {}, fact)
 
 
 def _ask_shape_refusal(
@@ -945,7 +946,7 @@ def _ask_shape_refusal(
     return None
 
 
-def _ask_texts_refusal(question: str, texts: Mapping[str, str]) -> Optional[str]:
+def _ask_texts_refusal(question: str, texts: Mapping[str, str], fact: FactEntity) -> Optional[str]:
     kind = cast(QuestionKind, question)  # checked against _QUESTION_KINDS before
     keys = TEXT_KEYS[(kind, "chat")]
     if set(texts) != set(keys):
@@ -954,4 +955,19 @@ def _ask_texts_refusal(question: str, texts: Mapping[str, str]) -> Optional[str]
         problem = written_text_problem(texts[key])
         if problem is not None:
             return f"ask_owner.texts.{key}: {problem}"
+        if _squash(texts[key]) == _squash(fact.text):
+            return f"ask_owner.texts.{key}: the same as the fact's stored text; write what the answer makes true"
     return None
+
+
+# A history fallback that fails this many times gives its question up (C9).
+MAX_FALLBACK_ATTEMPTS: Final[int] = 3
+
+
+def history_fallback_gives_up(question: FactReviewQuestion, refused: bool) -> bool:
+    """Whether a `history` fallback that wrote nothing closes its question `resolved_elsewhere` instead of leaving it open
+    for the next run: `refused` (a typed refusal, not an exception) at an attempt after the first (the spec stores no
+    previous refusal, so a repeat is read as a refusal after one failed attempt), or this was the
+    `MAX_FALLBACK_ATTEMPTS`th failure of any kind."""
+    attempts = question.fallback_attempts
+    return (refused and attempts >= 1) or attempts + 1 >= MAX_FALLBACK_ATTEMPTS
