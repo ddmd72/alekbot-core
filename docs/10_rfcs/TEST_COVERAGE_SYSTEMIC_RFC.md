@@ -529,9 +529,9 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P10 | **Prompt stores**: `firestore_prompt_repository`, `prompt_v3/*` on H1 + kits; 4-level resolution (USER > ACCOUNT > AGENT > SYSTEM) semantics | check | 1.5–2 | a wrong prompt for every agent | 2 |
 | P11 | **Every other stateful store, by inventory** (H2 meta-test), ordered by risk: voice tickets / ephemeral store, dedup, notes delivery stamp, quota, long turns first; then indexed email, session store, consolidation and companion queues, user, account, task search index, channel binding, skills, memory-fact drafts, companion memory, email job and exclusions, GCS stores, `gcp_task_queue` | check | 5–7 | ordering, projections, missing fields, tenancy, atomicity in stores that look covered | 2 |
 | P12 | **Cloud gate, full** (§4): lease, render step, explicit-database scripts, missing index definitions, GCS bucket, paused queue, WIF for the post-merge job; every H2 kit against the real adapters; precondition tests | cloud | 2–3 | fake ≠ Firestore across all kits | 2 (revised 2026-10-27: lease document and render gate dropped; see "Rules revised") |
-| P13 | **Service seams**: handler-level tests that run the **real** `UserNotificationService`, `TaskDispatchService`, `AgentCoordinator`, `SearchEnrichmentService` and `PromptBuilder` over H1 and port fakes for each entry path (worker task types, `ConversationHandler`, `AgentWorkerHandler`), asserting the observable outcome (which channel, which history entry); mutation operator: drop one forwarded kwarg | check | 2 | parameter coupling between services (§1.4 item 6) | 2 |
-| P14 | **Scripted-LLM end to end** for every agent that writes state through tools (Consolidation, Notes, Tasks, Smart's local tools `propose_memory_facts` / `draft_skill` / `workspace`, FileManagement drive mutations): a scripted tool call that uses every declared field, asserted on the final store state; a generic check that every declared tool field changes stored state or is refused — nothing accepted and dropped. **P9 hand-over:** the two deep-research rows of the boot test's `MATRIX` (`deep_research_failed`, `deep_research_webhook_event`, 500 until the formatter's prompt blueprint is seeded) must become 200 here; the other three belong to P15 (list in the "Built (P9)" note). | check | 1.5 | tools that report success after dropping input (§1.3.5) | 2 |
-| P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 | (built 2026-10-27; see "Built (P15, part 1)" and "Built (P15, part 2)"; the `MATRIX` rows wait for card H)
+| P13 | **Service seams**: handler-level tests that run the **real** `UserNotificationService`, `TaskDispatchService`, `AgentCoordinator`, `SearchEnrichmentService` and `PromptBuilder` over H1 and port fakes for each entry path (worker task types, `ConversationHandler`, `AgentWorkerHandler`), asserting the observable outcome (which channel, which history entry); mutation operator: drop one forwarded kwarg | check | 2 | parameter coupling between services (§1.4 item 6) | 2 | (built 2026-10-27; see "Built (P13)")
+| P14 | **Scripted-LLM end to end** for every agent that writes state through tools (Consolidation, Notes, Tasks, Smart's local tools `propose_memory_facts` / `draft_skill` / `workspace`, FileManagement drive mutations): a scripted tool call that uses every declared field, asserted on the final store state; a generic check that every declared tool field changes stored state or is refused — nothing accepted and dropped. **P9 hand-over:** the two deep-research rows of the boot test's `MATRIX` (`deep_research_failed`, `deep_research_webhook_event`, 500 until the formatter's prompt blueprint is seeded) must become 200 here; the other three belong to P15 (list in the "Built (P9)" note). | check | 1.5 | tools that report success after dropping input (§1.3.5) | 2 | (built 2026-10-27; see "Built (P14)"; the two deep-research `MATRIX` rows are 200)
+| P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 | (built 2026-10-27; see "Built (P15, part 1)" and "Built (P15, part 2)"; the three `MATRIX` rows are 200 (matrix card M))
 | P16 | **Clock suite**: a pinned clock and a table of instants (both 2026 DST transitions in Europe/Berlin, Europe/Helsinki, America/New_York; month end; UTC midnight) through every function that matches an hour or a day boundary (daily review, billing rotation, drive monthly budgets, reminder `due`, Cabinet 24h cap, scratch 7-day TTL) | check | 0.5 | §1.4 item 7 and its class | 2 | (built 2026-10-27; see "Built (P16)")
 | P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 (revised 2026-10-27: only with a regeneration command per recorded fixture; see "Rules revised") |
 | P18 | **Reality checks** (§4a): spec-drift workflow, `provider-contract-review` skill + monthly routine, `make contract-probe` for the sandboxed providers | sched | 2–3 + owner sandbox setup | contracts that disagree with reality | 3 |
@@ -728,9 +728,12 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - four environment reads made at import time, before the seal sets the deploy's values: `ENABLE_GROUNDING_ATTRIBUTION` and
     `DEEP_RESEARCH_SECOND_PASS` (`agent_config.py`), `DOCS_OWNER_USER_ID` (`user_cabinet_app.py`) and the logger's `K_SERVICE`; no assertion depends on them today;
   - a secret that is empty in Secret Manager (the sealed environment fills every secret name with a shaped fake);
-  - the reasoned non-200 trigger rows: `deep_research_failed` and `deep_research_webhook_event` (500, the notice formatter's prompt blueprint is missing
+  - the reasoned non-200 trigger rows (**closed 2026-10-27**, last lines of this item): `deep_research_failed` and `deep_research_webhook_event` (500, the notice formatter's prompt blueprint is missing
     from the empty database) and `setup_microsoft_todo` and `reindex_task_list` (500, no To Do credentials seeded), and `email_indexing` (404 "job not found", no indexing job seeded). They must become 200 in later packages: **P14 owns the two deep-research
     rows** (the LLM formatter), **P15 owns the other three** (the redelivery payloads: seed the To Do credentials and an indexing job).
+    Closed by the matrix card: all five rows answer 200 through the deployed route, with their outcomes asserted (the Slack notice, the history pair,
+    the To Do config, the reindex task, the completed job); `_probe` seeds them (`_seed_rows`, `tests/support/prompt_seed.py` for the notice formatter's
+    prompt). Three other rows changed as a consequence of the seed: `daily_email_review`, `start_email_indexing` and `renew_all_task_subscriptions`.
 - **Left for "tidy main.py":** the voice closures; `/worker`, `/health` and `/favicon` as a blueprint (then `test_main_worker_route_gate.py` retires);
   the MCP dispatcher; the `slack_adapter.start` patch; the dead Socket-mode branch; the duplicate `/health`; the main.py allowlist entries.
 
@@ -791,8 +794,8 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - P15-S7: a stale success closes a tripped provider breaker.
 - **Known limit.** The nested `context` dict of `agent_execution` is not checked per key: producers forward a runtime dict and the consumer passes
   the whole dict to the agent.
-- **Built in part 2** (next note): per-type double runs, retry after a partial effect and the agent instance-state meta-test. Still open: the three
-  `MATRIX` rows of the P9 hand-over (card H, after P14's `MATRIX` edit).
+- **Built in part 2** (next note): per-type double runs, retry after a partial effect and the agent instance-state meta-test. Closed since: the three
+  `MATRIX` rows of the P9 hand-over are 200 (matrix cards M1 and M2; card H was replaced).
 
 **Built (P15, part 2, 2026-10-27).** Redelivery, retry after an effect, and agent instance state. Test-only: no `src/` change. Ten new files:
 - **The redelivery world.** `tests/support/redelivery_world.py` (self-test `tests/unit/support/test_redelivery_world.py`): the real `WorkerHandler`,
@@ -879,6 +882,64 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - GCS: P11-G4-1 a workspace delete that loses to an overwrite leaves its stamp on the replaced version; P11-G4-2 two concurrent chat uploads of one name both return it and the later replaces the earlier; P11-G4-3 a delete of a missing upload leaks the SDK `NotFound`; P11-G4-4 a fetch of a missing media key leaks it too; P11-G4-5 an HTML rich-content file is posted as its storage key. The second residual of G4-1 (the workspace RFC's accepted case) is not pinned.
   - Cloud Tasks: none.
 - **Not covered.** Legacy document shapes (notes, accounts, sessions, batches, emails, users, NFD file names): left for a read-only data audit. Methods with no caller in `src/` (`GcsFileStorageAdapter.get_url`, `GcpTaskQueue.get_queue_stats` and `purge_queue`, `FirestoreTaskConfigRepository._strip_tz`, the user-id argument of `delete_exclusion`, the session store's `append_message`, `get_latest_session_id`, `delete_session` and `cleanup_expired_sessions`): the docstrings say "no caller" and the kits test no more of them than the contract needs. The fact review store runs only through the review world's suite, the drive index repository through its v2 parity suite. The meta-test does not require the index refusal on a kit's `EvalDb` (it checks the fake, not its options; the Firestore kits turn the refusal on by themselves).
+
+**Built (P13, 2026-10-27).** Service seams. Test-only: no `src/` change.
+- **Files.** `tests/support/seam_world.py` (self-test `tests/unit/support/test_seam_world.py`, 7 tests); `tests/support/prompt_seed.py` (`test_prompt_seed.py`, 4); the entry-path files in
+  `tests/unit/handlers/`: `test_seam_worker_notices.py` (worker notices and the video chain, 5 tests), `test_seam_agent_worker_delivery.py` (`AgentWorkerHandler` deliveries, 12),
+  `test_seam_chat_turn.py` (the chat turn, 3 + 1 xfail) and `test_seam_background_runs.py` (background runs, 6 + 1 xfail); and card F, `tests/unit/agents/core/test_smart_prompt_enrichment_seam.py`
+  (the real Smart, Router, `PromptBuilder` and `SearchEnrichmentService`, 4 + 1 xfail).
+- **Declared deltas.** On the `/worker`, agent-worker and chat paths the agents are scripted stand-ins registered in the real `AgentCoordinator`; `PromptBuilder` and `SearchEnrichmentService` run only
+  through card F's real Smart and Router (a prompt store seeded by `prompt_seed.py`). The seam world's wiring deltas from `build_application_graph` are in its module docstring: no `file_ref_resolver`,
+  `alert_sink` or `agent_factory` on the coordinator; no `short_link_service` and no `deep_research_drive_copy` on `AgentWorkerHandler`; `WorkerHandler` gets only the keywords the world passes; the
+  platform channels, media ports and Cloud Tasks SDK client are recording fakes; the session store has no overflow callbacks and a 50/30 window; the queue has no OIDC account; `chat_handler` passes no
+  file service, consolidation queue, fallback, long-turn, skill or memory-fact service. A stand-in that runs out of steps becomes a failed turn inside the coordinator, so every pin requires `not world.unscripted()`.
+- **Defects pinned as strict xfails (3; the fix removes the marker).**
+  - **P13-D1** (`test_seam_chat_turn.py`): a Telegram chat turn carries `origin_channel_id` None (the adapter puts `chat_id`, never `channel`, in the metadata; `conversation_handler.py:651,936`), so its
+    async results (page, PDF, DOCX, image) go to the primary channel when one is set.
+  - **P13-D2** (`test_seam_background_runs.py`): a background run's document follows the last-active channel at delivery, not the channel the run spoke in (`notify` puts neither `origin_channel_id` nor
+    `origin_platform` into the agent's context, `user_notification_service.py:383-402`), when no primary is set.
+  - **P13-D3** (card F): the daily review's context `thinking_effort` `"medium"` loses to the complexity override's `"high"` (`smart_response_agent.py:389`), against the accepted
+    `TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC.md`. The arbiter ruled it a defect and the test a strict xfail; the owner can overrule it: if the override is by design,
+    the test becomes a pin of `"high"` and `TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC.md:117` is corrected.
+- **Found, not carded.**
+  - F-1: no live deep-research path posts the raw report links. `DEEP_RESEARCH_RFC.md:85-90` says each raw round file gets a link; `deliver_deep_research` posts one only when it gets `notification=`, and the OpenAI
+    webhook (`worker_handler.py:662-675`) and the Cloud Run Job (`job_main.py:271-286`) pass none, though both upload the raw files. An open owner question: the RFC text is stale or the link was lost in the move to
+    Jobs and webhooks. Neither pinned nor fixed.
+  - F-2: D2's mechanism also sends a background Smart turn's FileManagement receipts to primary/last-active, not to the run's channel.
+  - F-3: the `execute_deep_research_claude` branches of `AgentWorkerHandler` have no producer in `src/`.
+  - F-4: P9-D4 seen again (`AgentWorkerHandler.task_queue` is annotated `TaskDispatchService` and gets the raw queue).
+- **Cut** (reasons in the inventory): FileManagement's three SYNC deliveries (same root cause as D1), the drive-copy line, NotesAgent receipts, the voice paths (`notify_call_summary`, `notify_answer_copy`),
+  `DriveSyncSchedulerService` notices, `FactReviewService` (already outcome-covered by `tests/support/fact_review_world.py`), single-key re-enqueues (P15 chains), the W4 timeout notice (same mechanism as W5)
+  and `job_main`.
+- **Mutation.** Eleven modules are registered in `tests/support/mutation_targets.py`, each with an empty `*_equivalent_mutants.txt`: `user_notification_service`, `task_dispatch_service`,
+  `document_delivery_service`, `deep_research_delivery`, `video_generation_delivery` (also takes `test_seam_worker_notices.py` as `extra`), `agent_coordinator`, `agent_worker_handler`,
+  `conversation_handler` (2065 lines: a long job in the weekly run), `prompt_builder`, `search_enrichment_service`, `router_agent`. The weekly run is the first pass.
+- **Results.** The five seam files hold 30 passing tests and 3 strict xfails; the two harness self-test files hold 11. Suite-wide counts and per-layer coverage are `make ci`'s and the CI "Coverage per layer" notice's; this note changes no floor.
+
+**Built (P14, 2026-10-27).** Scripted-LLM end to end for the agents that write state through tools. Test-only: no `src/` change.
+- **Harness.** `tests/support/scripted_llm.py` (the scripted model: records deep copies of requests; a script that runs out raises `ScriptExhausted`, counted in `unanswered`; 12 self-tests),
+  `tests/support/tool_fields.py` (`declared()`, `READ_ONLY`, `READ_ONLY_FIELDS`, `unused`; 7) and `tests/support/tool_e2e.py` (`smart_rig`; 30 self-tests).
+- **E2E files (six).** `test_consolidation_tool_fields_e2e.py` (7 + 1 xfail), `test_notes_agent_tool_fields_e2e.py` (7 + 2), `test_tasks_agent_tool_fields_e2e.py` (7 + 2),
+  `test_file_management_drive_tool_fields_e2e.py` (9), all in `tests/unit/agents/`; `core/test_smart_local_tools_e2e.py` (4); `tests/unit/services/test_fact_review_tool_fields_e2e.py` (6, the review pass).
+- **The meta-test and ledger.** `tests/unit/agents/test_every_tool_field_is_stored_or_refused.py` (26 tests) and `tests/unit/agents/tool_field_ledger.txt`: 155 declared fields, each a line:
+  136 `stored`, 3 `noted`, 1 `prompt-input`, 1 `verification`, 14 `read-only`. Rules in `tests/CLAUDE.md` -> "Tool fields (P14)". A field counts as sent when its leaf name occurs in the referenced
+  test's body, in a module-level constant or in a module-level builder function it loads.
+- **Defects pinned as strict xfails (5).**
+  - P14-D1: Consolidation `update_fact` answers `updated` for an update of only unknown keys (`domain`, `context_priority`, `context`), naming none; only `last_updated` moves
+    (`fact_update.py:47,67-71`, `fact_update_plan.py:41-42`).
+  - P14-D2: Notes `complexity` outside the enum is dropped on create and update and the call answers `created` / `updated` (`notes_agent.py:232-238,533,586`).
+  - P14-D3: Notes `update_self_reminder` with an unparsable `due` answers `updated` and keeps the old due (`notes_agent.py:212-229,565`; create refuses it).
+  - P14-D4: Tasks `update_task(due_datetime=X, is_reminder_on=false)` on a task with no due turns the reminder on (`tasks_agent.py:527-531`).
+  - P14-D5: Tasks `create_task` / `update_task` with an unparsable `due_datetime`, `start_datetime` or `reminder_datetime` drop it and answer `created` / `updated` (`tasks_agent.py:712-720`).
+- **Found while looking, not carded** (each needs an arbiter decision): Notes `clear_recurrence: "false"` (a string) clears the rule, `bool("false")` is True (`notes_agent.py:557`); Tasks `update_task(recurrence=...)`
+  without `due_datetime` derives weekday, day and month from now, not from the task's stored due (`tasks_agent.py:533-534,676`); Notes `create_note` / `update_note` raise `ValueError` (not found, other owner,
+  text over 25 words) and `_execute_tool` does not catch it (`notes_agent.py:579-590`), so the exception leaves `NotesAgent.execute` (what the coordinator answers was not traced).
+- **Not covered.** `open_file`, `delete_file` and `search_files_in_drive` (not drive mutations; P11 and the drive search suites); `use_skill` and `cancel_long_turn` (read or cancel); the cross-intent fields of the flat
+  delegate `context` (the meta-test checks each intent's own schema, not the union); undeclared keys in general (D1 is pinned because it is the §1.3.5 shape; a generic "every unknown key is noted" rule is a product
+  decision); a bad value of a declared field beyond D2-D5.
+- **The two deep-research `MATRIX` rows are 200** (matrix card M; see "Built (P9)").
+- **Mutation.** Eight modules are registered, each with an empty equivalent file next to the e2e file that tests it: `notes_agent`, `tasks_agent`, `file_management_agent`, `fact_management_adapter`, `fact_review_scope`,
+  `memory_fact_tools`, `skill_tools`, `workspace_tools` (`consolidation_agent` already was). Every one is reached through `tests/` imports, so `--tests-for` needs no `extra` for them.
 
 **Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
 deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years
