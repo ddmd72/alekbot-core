@@ -4,20 +4,25 @@ Source of truth: the `FactRepository` docstring (src/ports/repository.py) and `_
 A class name is a stable string; vector and text values are never returned, only field names and document ids.
 """
 from collections import defaultdict
-from datetime import datetime, timezone
-from typing import Any, Iterable, Optional
+from datetime import datetime, timedelta, timezone
+from typing import AbstractSet, Any, Iterable, Optional
 
 from google.cloud.firestore_v1.vector import Vector
 from pydantic import ValidationError
 
-from src.domain.entities import FactEntity, FactState
-from src.domain.fact_lifecycle import _LIFECYCLE
+from src.domain.entities import FactDomain, FactEntity, FactState, FactType
+from src.domain.fact_lifecycle import _LIFECYCLE, expiry_pinned
 
 VECTOR_FIELDS = ("vector", "tags_vector", "metadata_vector")
 # The fields whose own class already reports their error, so invalid_entity skips them.
 _OWN_CLASS = {"account_id", "state"}
 # Classes reported beside the violations but not violations: documents closed before S2, when no `superseded_by` existed.
 COUNTED_CLASSES = frozenset({"superseded_without_successor_pre_s2"})
+# Reported beside the violations until classify (Facts S5) has been applied: a current fact without `expiry_kind` is then
+# expected, not a defect. `--expiry-required` turns it into a violation.
+EXPIRY_REQUIRED_CLASS = "current_without_expiry_kind"
+# The account of the system's own facts; they carry no expiry.
+SYSTEM_ACCOUNT = "SYSTEM"
 
 
 def check_fact(doc_id: str, doc: dict[str, Any]) -> list[str]:
@@ -56,6 +61,38 @@ def check_fact(doc_id: str, doc: dict[str, Any]) -> list[str]:
         if not _is_vector(doc.get(name)):
             found.append(f"missing_{name}")
     found.extend(_entity_errors(doc))
+    return found
+
+
+def check_expiry(
+    doc_id: str,
+    doc: dict[str, Any],
+    due_as_of: Optional[datetime] = None,
+    open_fact_ids: AbstractSet[str] = frozenset(),
+) -> list[str]:
+    """Class names of the expiry invariants this stored document violates (empty = clean), in a fixed order.
+
+    `horizon_not_counted_from_reported_date` demands `expires_at >= reported_date + ttl_days`, not equality: the cleanup
+    pass floors a due horizon to `now + 2 days` and a re-mention never moves `expires_at` earlier, so a later date is
+    legal; an earlier one is the defect. `current_past_expiry_not_waiting` is judged only when `due_as_of` is given
+    (the time of a janitor run); a fact past `expires_at` is waiting when an open question names it in `open_fact_ids`.
+    """
+    found: list[str] = []
+    current = _state(doc) is FactState.CURRENT
+    kind = doc.get("expiry_kind")
+    account = doc.get("account_id")
+    if current and account and account != SYSTEM_ACCOUNT and kind is None:
+        found.append(EXPIRY_REQUIRED_CLASS)
+    if current and kind not in (None, "none") and _pinned(doc):
+        found.append("pinned_expiry_not_none")
+    if current and doc.get("stale_since") is not None:
+        found.append("current_with_stale_since")
+    if kind == "horizon" and not _horizon_counted(doc):
+        found.append("horizon_not_counted_from_reported_date")
+    expires_at = doc.get("expires_at")
+    if (due_as_of is not None and current and kind is not None and isinstance(expires_at, datetime)
+            and _aware(expires_at) <= _aware(due_as_of) and doc_id not in open_fact_ids):
+        found.append("current_past_expiry_not_waiting")
     return found
 
 
@@ -139,6 +176,36 @@ def check_across(
 def s2_data_present(docs: Iterable[tuple[str, dict[str, Any]]]) -> bool:
     """Whether any document carries a version pointer: the fields exist only once S2 has written."""
     return any(doc.get("superseded_by") or doc.get("replaces_fact_id") for _, doc in docs)
+
+
+def _pinned(doc: dict[str, Any]) -> bool:
+    """The writer's own pin rule on the stored `domain`, `type` and `tags`; an unreadable value reads as absent."""
+    try:
+        domain: Optional[FactDomain] = FactDomain(_lowered(doc.get("domain")))
+    except (ValueError, TypeError):
+        domain = None
+    try:
+        fact_type: Optional[FactType] = FactType(_lowered(doc.get("type")))
+    except (ValueError, TypeError):
+        fact_type = None
+    tags = doc.get("tags")
+    names = [t for t in tags if isinstance(t, str)] if isinstance(tags, list) else []
+    return expiry_pinned(domain, fact_type, names)  # type: ignore[arg-type]
+
+
+def _lowered(value: Any) -> Any:
+    """A stored enum value is sometimes upper case (`AGENT_DIRECTIVE`): the entity parse and the classify script lower it."""
+    return value.lower() if isinstance(value, str) else value
+
+
+def _horizon_counted(doc: dict[str, Any]) -> bool:
+    """A positive whole `ttl_days`, both timestamps, and `expires_at` not before `reported_date + ttl_days`."""
+    days, expires_at, reported = doc.get("ttl_days"), doc.get("expires_at"), doc.get("reported_date")
+    if isinstance(days, bool) or not isinstance(days, int) or days < 1:
+        return False
+    if not isinstance(expires_at, datetime) or not isinstance(reported, datetime):
+        return False
+    return _aware(expires_at) >= _aware(reported) + timedelta(days=days)
 
 
 def _lookup(by_id: dict[str, dict[str, Any]], target: Any) -> Optional[dict[str, Any]]:

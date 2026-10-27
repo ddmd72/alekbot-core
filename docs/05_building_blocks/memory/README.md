@@ -8,8 +8,8 @@ by updating this file.
 
 Design records: `docs/10_rfcs/DELIBERATE_FACT_MANAGEMENT_RFC.md` (taxonomy, tools, cognitive process),
 `docs/10_rfcs/CLUSTER_REVIEW_RFC.md` (Stage 2a), `docs/10_rfcs/STANDING_DIRECTIVES_RFC.md` (Stage 2b),
-`docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` (`$memory save`), `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (S1 live; S2, S3 and S4 built,
-S5 not built), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,fact_versions_one_writer,fact_expiry_and_janitor,fact_review_and_owner_questions,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
+`docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` (`$memory save`), `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (S1 live; S2, S3 and S4 deployed 2026-10-27, janitor log-only;
+S5's classify built, not run), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,fact_versions_one_writer,fact_expiry_and_janitor,fact_review_and_owner_questions,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
 
 ## 0. How to answer questions about memory
 
@@ -1403,6 +1403,11 @@ eval (2026-07-15, older models and prices) put Sonnet ≈ $0.5 and Opus ≈ $1.5
   (cents). Steady state, with the owner's estimate of 0–3 questions a week, is about $1.3–2.6 a month; if 0–5 facts go stale
   every day, about $2.5–6 a month. The model dry run of the review (step M benches 6 and 7) is capped, with the S3 benches, at
   $30 by the same ledger.
+- S5 classify (one-time, owner-run): one structured call per batch of 25 through the live consolidation agent, about 500 facts
+  to the model, 21 batches, so about $2–4 on Opus 5.5 and $1–2 on Sonnet 5.5 (an estimate, not measured). The model is the one the
+  live agent resolves; `--expect-model` must name it, and the run refuses otherwise. Without `--budget-usd` it only estimates and
+  prints the spend so far; the cap is lifetime over classify's own ledger (`scripts/memory/fact_s5_classify_spend.json`, not the
+  S3 kit's), so a re-run starts from what was spent. Apply and a small `--ids-file` re-run cost cents.
 
 **Where it is recorded.** Every model call goes through `BaseAgent._call_llm`, which bills the account per model that
 ran (`TokenLedger`, root `CLAUDE.md` → Token accounting) and writes a `prompt_content` row per turn (§9.1). The 📊 line
@@ -1539,6 +1544,7 @@ Log lines, in pipeline order:
 | `scripts/validation/inspect_consolidation.py` | prints the queue and recent facts |
 | the five benches (stage 1 classification, cluster audit, decomposition, directive review in `scripts/consolidation/`, and the email bench `scripts/email/test_consolidation_dryrun.py`) with `--s3-kit` (`scripts/consolidation/s3_dry_run_kit.py`, `scripts/consolidation/s3_bench_support.py`) | the **model dry run of the S3 prompts** (deploy step M, owner-run on the Mac, cap $30): each bench runs the pass its gate reads, on the real agent and adapter over a no-write store |
 | `scripts/migration/fact_s3_stamp_legacy_stale.py` | deploy step 6a: stamps `stale_since` on stale facts that have none (dry run first; `--apply` writes) |
+| `scripts/migration/fact_s5_classify.py --expect-model NAME [--budget-usd X] [--ids-file PATH]` / `--apply PLAN` | S5's one-time expiry decision for the current facts that have none. Dry run first: it reads, asks the live consolidation agent once per batch of 25 and writes a report and a plan under `scripts/memory/`, with nothing written to the database; the owner reads the report; then `--apply` replays that plan exactly, with no model, under the change token recorded at the scan (a fact changed since is skipped and listed in `…_changed.txt`). `--ids-file` classifies only the listed ids (the skipped ones, or documents an old revision rewrote). A run without `--budget-usd` only estimates. Unsure → `none`; a run that gets no answer stops and lists the undecided ids rather than writing `none`. Writes `expiry_kind`, `ttl_days`, `expires_at` and one trail entry (actor `migration`) |
 | `scripts/consolidation/test_review_answers_dryrun.py --s3-kit` | step M bench 6: Stage 1 on windows with the real history shapes of a question and a reply (a digit, words, a correction, a bare digit with no marker, a not-delivered pair): the quoted fact must be left alone and only a correction's true value recorded (gate G4); `--case NAME` runs one case, e.g. `correction_translated_quote` (the question quoted in Ukrainian) |
 | `scripts/consolidation/test_review_dryrun.py --s3-kit --stage N --runs R [--mirror CODE]` | step M bench 7: the real `FactReviewService.run` on the kit over the owner's live stale facts, `N` more live facts staled in the kit's overlay, and seeded cases (a plan whose date passed, a revive with no basis, two stale duplicates, an undecidable fact, three replies in words); no stale fact, question, message or counter is written live (gates G5 and G6; `--mirror` checks the language the review reports; `--fixed CODE` runs fixed mode and lists the translations the pass kept) |
 
@@ -1566,11 +1572,21 @@ collection read-only and checks every stored document against the invariants: st
 `reported_date` and `last_updated` timestamps, all three vectors stored as vectors, the document parses as a
 `FactEntity`, and no lineage with more than one `is_current` document. It prints counts only and writes the offending
 ids per class to `scripts/memory/data_audit_facts_<time>.json` (gitignored; no text or vectors). The S3 fields (`expiry_kind`, `expires_at`, `stale_since`, `lifecycle_events`) are checked only as
-part of that parse (a malformed value is `invalid_entity`); the expiry invariants (a horizon without `ttl_days`, a stale fact
-without `stale_since`) are S5's audit. S5's audit also reads three invariants of the review: a current fact has no
-`stale_since`; every horizon has `expires_at = reported_date + ttl_days` (whole days); and, while the janitor writes and after
-that day's run, a current fact past its `expires_at` belongs to an open question (in log-only mode, and between a fact falling
-due and the next run, it need not). Run it after any migration or backfill.
+part of that parse (a malformed value is `invalid_entity`); the expiry invariants are a second check (`check_expiry`) with five classes:
+- `current_without_expiry_kind`: a current fact of a non-`SYSTEM` account with no `expiry_kind`. A violation only with
+  `--expiry-required` (use it after classify is applied); without the flag the facts are counted, not reported.
+- `pinned_expiry_not_none`: a directive, principle or `mindset` fact whose expiry is not `none`.
+- `current_with_stale_since`: a current fact that still has `stale_since`.
+- `horizon_not_counted_from_reported_date`: a horizon without a positive `ttl_days`, `expires_at` or `reported_date`, or with
+  `expires_at` earlier than `reported_date + ttl_days`. The rule is `>=`, not equality: the cleanup pass floors a due horizon
+  to now + 2 days and a re-mention never moves `expires_at` earlier, so a later date is legal; an earlier one is the defect.
+- `current_past_expiry_not_waiting`: a current fact past its `expires_at` that no open review question holds. Judged only with
+  `--janitor-ran-at <time>`, for use while the janitor writes and after that day's run (in log-only mode, and between a fact
+  falling due and the next run, it need not hold). Facts that a pool cap deferred or a breaker held back are past their
+  `expires_at` and in no question, so they appear here too: **compare the count with that run's `deferred` and breaker** (the
+  janitor's 🧹 line) before reading it as a defect.
+The stored `reported_date` distribution is not an audit class (there is no baseline to compare with); the classify apply
+test pins that apply writes no `reported_date`. Run it after any migration or backfill.
 
 **Version-chain classes (Facts S2, `scripts/data_audit/facts.py`).** `superseded_by_dangling` (the target is missing or
 in another account), `superseded_by_cycle`, `superseded_by_not_pointing_back` (a same-lineage successor that does not
@@ -1653,30 +1669,28 @@ exception (§3 step 5) is live only after the upload.
 
 ## 10. Not built yet
 
-`docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (rev 2, accepted 2026-10-21) — S1 (defect fixes) is live. **S2, S3 and S4 are built** on the
-branch that carries S2–S5 (S2: real versions, validation before any write, preconditioned writes, the memory-write lease;
-§2.4, §3 step 3, §5.2, `decisions/fact_versions_one_writer.md`. S3: expiry decided from content, `reported_date` ownership,
-the lifecycle trail, the five prompt tokens and the code-built messages, the owner-zone timestamps, tool-error accounting, and
-the daily janitor in log-only mode; §2.7, §3.11, §5.5, `decisions/fact_expiry_and_janitor.md`. S4: the review pass, the
-question queue, the owner's answers by digit, button, reply or Cabinet, the weekly digest, the Cabinet views, the janitor's
-pool, guard and alerts; §5.5, §5.6, `decisions/fact_review_and_owner_questions.md`), and go live together with S5. Still to
-come:
-- **S5** one-time classification of all current facts, the review dry run on the classified facts, janitor on. The order, set by
-  the owner: classify (dry run → the owner reads it → apply) → review dry run (step M bench 7 is its tool) → the janitor
-  stays log-only on the classified facts for as long as needed (the owner reads `would_stale` and the breaker each morning) →
-  janitor on **only on the owner's word**. The same rule applies to classify: it defaults to `none` when unsure. Classify must
-  also accept a filtered set, to re-classify the documents an old revision rewrote during a rollback window. The queue bounds
-  the drain: the pool stays at 50 or fewer, so classify feeds the review at most 50 facts at a time (about three days of review
-  passes of 20), and the questions then go one at a time, up to 5 a day, answered by digit, button or the Cabinet (which can
-  answer any number at once).
+`docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (rev 2, accepted 2026-10-21) — S1 (defect fixes) is live. **S2, S3 and S4 were deployed
+2026-10-27** (S2: real versions, validation before any write, preconditioned writes, the memory-write lease; §2.4, §3 step 3,
+§5.2, `decisions/fact_versions_one_writer.md`. S3: expiry decided from content, `reported_date` ownership, the lifecycle trail,
+the five prompt tokens and the code-built messages, the owner-zone timestamps, tool-error accounting, and the daily janitor in
+log-only mode; §2.7, §3.11, §5.5, `decisions/fact_expiry_and_janitor.md`. S4: the review pass, the question queue, the owner's
+answers by digit, button, reply or Cabinet, the weekly digest, the Cabinet views, the janitor's pool, guard and alerts; §5.5,
+§5.6, `decisions/fact_review_and_owner_questions.md`). **S5's classify is built, not run** (the classify script, §9.5; "S5 as
+built" in the RFC), and the audit has its expiry classes (§9.6). Still to come:
+- **S5 steps.** The order, set by the owner: classify (dry run → the owner reads the report → apply) → the review dry run (step M
+  bench 7 is its tool; its G5 detector no longer counts the history fact of an "ended" answer) → the janitor stays log-only on
+  the classified facts for as long as needed (the owner reads `would_stale` and the breaker each morning) → janitor on **only on
+  the owner's word**. Classify defaults to `none` when unsure, accepts a filtered set (`--ids-file`), and a pool of 50 or fewer
+  bounds the drain: the review gets at most 50 facts at a time (about three days of passes of 20), then questions go one at a
+  time, up to 5 a day, answered by digit, button or the Cabinet (which can answer any number at once). Bench 7 stages a
+  sample, not the whole set that classify makes due, so the first live wave is bounded by the pool cap, oldest expiry first.
 - **Follow-ups outside S4:** an answer given on a phone call counts as silence (no Lelik filter on the question pair); a
   Cabinet "bring back" for a closed fact; Telegram inline keyboards on the same interactive-message port; Smart sending
   interactive blocks through it.
 
-Until the deploy: nothing expires and no code sets `stale` (the 2 legacy stale documents predate the janitor; deploy
-step 6a stamps them). After the deploy and before S5's classify, no existing fact has an `expires_at`, so the janitor has
-nothing due even when it is switched on; new facts do. S2 does not ship alone: it refuses `SUPERSEDED` without a successor
-while the live consolidation prompts still tell the model to retire a split fact that way.
+Since the deploy, new facts carry an `expiry_kind`; the facts stored before it have none, so the janitor has nothing due
+on them even when it is switched on. That is what classify fixes. S2 does not ship alone: it refuses `SUPERSEDED` without a
+successor while the live consolidation prompts still tell the model to retire a split fact that way.
 
 ---
 

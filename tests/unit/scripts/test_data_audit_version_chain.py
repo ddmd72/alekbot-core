@@ -322,7 +322,12 @@ async def test_the_runner_reports_counted_documents_apart_from_violations(tmp_pa
     report = json.loads((await runner.run(store.db, "facts", FACTS, tmp_path, now=NOW, s2_cutoff=CUTOFF)).read_text())
     assert report["s2_cutoff"] == CUTOFF.isoformat()
     assert report["classes"] == {"superseded_without_successor": {"count": 1, "doc_ids": ["new"]}}
-    assert report["counted"] == {"superseded_without_successor_pre_s2": {"count": 1, "doc_ids": ["old"]}}
+    # Reviewer edit (facts S5, C3; plan_design §3): without --expiry-required a current fact with no expiry_kind is
+    # counted, so the current "ok" is now counted too, beside the pre-S2 entry, and still never a violation.
+    assert report["counted"] == {
+        "current_without_expiry_kind": {"count": 1, "doc_ids": ["ok"]},
+        "superseded_without_successor_pre_s2": {"count": 1, "doc_ids": ["old"]},
+    }
 
 
 async def test_the_runner_without_a_cutoff_flags_nothing_of_that_kind(tmp_path, capsys):
@@ -442,7 +447,11 @@ async def test_documents_written_by_s2_versions_and_merges_are_clean(tmp_path):
 
     report = json.loads((await runner.run(store.db, "facts", FACTS, tmp_path, now=NOW, s2_cutoff=CUTOFF)).read_text())
     assert report["documents"] == 10 and report["classes"] == {} and report["warnings"] == []
-    assert list(report["counted"]) == ["superseded_without_successor_pre_s2"]
+    # Reviewer edit (facts S5, C3; plan_design §3): these fixtures carry no expiry, so without --expiry-required every
+    # current head is counted as current_without_expiry_kind; no closed document is, and nothing is a violation.
+    assert list(report["counted"]) == ["current_without_expiry_kind", "superseded_without_successor_pre_s2"]
+    assert sorted(report["counted"]["current_without_expiry_kind"]["doc_ids"]) == [
+        "f-merged2", "f-plain", "f-src-c", "f-x3"]
 
 
 async def test_the_audit_sees_a_pointer_broken_in_a_store_the_writers_built(tmp_path):
