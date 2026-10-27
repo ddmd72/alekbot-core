@@ -13,6 +13,7 @@ import pytest
 from src.agents.consolidation_agent import _REVIEW_HEADER, ConsolidationAgent
 from src.domain.entities import ExpiryKind, FactState
 from src.domain.fact_review_basis import BasisKind
+from src.domain.fact_review_question import QuestionKind
 from tests.support import prompt_vocabulary as pv
 from tests.support.prompt_render import render_static, rendered_token_ids
 
@@ -52,9 +53,10 @@ def _schema_names():
 SCHEMA_NAMES = _schema_names()
 # snake_case words the token may use that are not schema names: the message's own fields (`_review_line`), the checklist
 # keys (`_REVIEW_HEADER`), the final report's keys (`_reported_language`), the field the review never sends and the
-# token's own `outcome_order` block, which the checklist refers to.
-MESSAGE_WORDS = {"stale_since", "timed_out", "reply_at", "asked_on", "neighbour_says", "dated_plan_passed",
-                 "message_language", "reported_date", "outcome_order"}
+# token's own `outcome_order` block, which the checklist refers to. P2 revised: `dated_plan_passed` left the checklist;
+# its history column's value `own_text` joined it, and the ask's kinds are the domain's QuestionKind values.
+MESSAGE_WORDS = {"stale_since", "timed_out", "reply_at", "asked_on", "neighbour_says", "own_text",
+                 "message_language", "reported_date", "outcome_order"} | set(get_args(QuestionKind))
 
 
 def test_the_profile_uses_the_review_blueprint_and_exactly_the_two_tokens():
@@ -163,10 +165,18 @@ def test_the_header_and_the_lifecycle_token_give_the_same_checklist_line():
 def test_the_reply_mapping_archives_an_ended_standing_fact_with_history_and_a_dated_plan_only():
     assert "stopped or ended -> archive" in PROSE
     assert "also send history: one sentence in the past tense saying it ended and when the owner said so" in PROSE
-    assert "A dated plan is archived only, with no history." in PROSE
+    # P2 revised (P2-1, P2-3 reply mapping): a date fact is rewritten as history, never archived; the new answers map to
+    # a history rewrite or a renewal rewrite on basis reply
+    assert "A dated plan" not in PROSE
+    assert "A fact of expiry kind date is not archived: rewrite it as history (as_history) on basis reply." in PROSE
+    assert ("it happened, it did not happen, or it is no longer needed -> a history rewrite (as_history) on basis reply"
+            in PROSE)
+    assert "renewed -> a rewrite to the renewed state on basis reply (code sets its expiry)" in PROSE
+    assert "not renewed -> a rewrite to the current state on basis reply, with {kind: none}" in PROSE
     assert "never true, or a bare no -> invalidate" in PROSE
     assert "a correction -> invalidate, or supersede by the current fact that states the true value" in PROSE
     assert "don't remember -> the question's fallback, now" in PROSE
+    assert "or for fallback history a history rewrite in the unknown phrasing" in PROSE
     assert "a digit never reaches the review" in PROSE
 
 
@@ -182,9 +192,15 @@ def test_the_final_report_shape_has_the_keys_the_agent_reads():
 
 
 def test_a_none_expiry_needs_evidence_or_a_reply_and_the_fallback_choice_is_stated():
-    assert "{kind: none} says the fact holds for good: give it only when evidence or the owner's reply says so." in PROSE
-    assert "revive by default; archive only for a fact of expiry kind date" in PROSE
-    assert "with a past fallback_date" in PROSE and "or with noise: true" in PROSE
+    # P2 revised (P2-1, P2-3): a history rewrite carries {kind: none}; the fallback is history for happened, renewed and
+    # paid, revive for still_true, archive only with noise; fallback_date is retired and named nowhere
+    assert ("{kind: none} says the fact holds for good: give it only when evidence or the owner's reply says so, or with "
+            "a history rewrite.") in PROSE
+    assert ("fallback is what happens if the owner does not answer: history (its unknown text is written) for happened, "
+            "renewed and paid; revive for still_true; archive only with noise: true") in PROSE
+    assert ("A fact of expiry kind date is asked as happened, renewed or paid, or as still_true with archive and "
+            "noise: true.") in PROSE
+    assert "fallback_date" not in PROSE
 
 
 def test_the_lifecycle_token_round_trips_through_the_serializer():
@@ -215,7 +231,8 @@ def test_the_review_prompt_carries_taxonomys_conversation_rules_so_lifecycle_rep
     assert line.startswith("In this pass two taxonomy lines are replaced: the horizon line that counts N from "
                            "reported_date, and the date rule that discards a past plan or rewrites it as history. ")
     assert "a horizon counts from now, not from reported_date" in line
-    assert "a plan whose date has passed is archived with basis date_passed, never rewritten as history or discarded" in line
+    # P2 revised (P2-7 in_this_pass): a passed date is rewritten as history, never archived
+    assert "a fact whose date has passed is rewritten as history (as_history), never archived or discarded" in line
     assert f'in_this_pass: "{line}"' in REVIEW_PROMPT
 
 
@@ -242,31 +259,34 @@ def test_the_header_and_the_lifecycle_token_say_when_a_fact_is_left():
 
 def test_the_checklist_outcomes_include_leave_with_no_call():
     outcomes = re.search(r'"outcome: ([^"]*)"', LIFECYCLE).group(1)
-    assert outcomes.startswith("supersede, revive, rewrite, archive, invalidate, ask_owner or leave, ")
+    assert outcomes.startswith("supersede, revive, rewrite, history, archive, invalidate, ask_owner or leave, ")  # P2
     assert "leave is a fact whose question is open or timed out and that nothing decides: make no call for it." in outcomes
     assert "its outcome is leave, and its question stays open" in PROSE
     assert "otherwise its outcome is leave, and its fallback applies after this pass" in PROSE
 
 
 def test_a_dated_plan_is_defined_as_is_dated_plan_counts_it():
-    """S2: `is_dated_plan` counts a date fact and a fact whose question falls back to archive."""
+    """S2, P2 revised: `is_dated_plan` counts a fact of expiry kind date only (its question no longer counts); the token
+    no longer defines a "dated plan": its history checklist column names the date fact, and the horizon plan whose day
+    passed, which only the model can see (P2-4 residual)."""
     from src.domain.fact_review_rules import is_dated_plan
-    from tests.support.review_rule_builders import fact, question
-    from src.domain.fact_review_question import QuestionStatus
+    from tests.support.review_rule_builders import fact
 
-    definition = "a fact of expiry kind date, or one whose question's fallback is archive"
-    assert f"A dated plan is {definition}." in PROSE
-    assert f"dated_plan_passed: true when the fact is a dated plan ({definition}) whose date is before today." in PROSE
+    assert "dated_plan_passed" not in PROSE and "A dated plan is" not in PROSE
+    assert ("history: for a fact whose date has passed (a fact of expiry kind date, or a horizon plan whose day is before "
+            "today): evidence when a neighbour reports the outcome, own_text when its own text already reports what was "
+            "done, ask when neither does; none for any other fact.") in PROSE
     standing = fact()
-    assert not is_dated_plan(standing, question(QuestionStatus.ASKED, fallback="revive"))
-    assert is_dated_plan(standing, question(QuestionStatus.ASKED, fallback="archive", noise=True))
+    assert not is_dated_plan(standing)
+    assert not is_dated_plan(fact(expiry_kind=ExpiryKind.HORIZON))
     assert is_dated_plan(fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=standing.expires_at))
 
 
 def test_a_passed_plan_that_moved_is_not_archived():
     """N2: the archive of a passed plan yields to step (2) when the reply or evidence says the plan moved."""
-    assert ("archived with basis date_passed, never rewritten as history or discarded, unless the reply or evidence "
-            "says it moved.") in _in_this_pass()
+    # P2 revised: the history rewrite of a passed plan yields to step (2) when the reply or evidence says it moved
+    assert ("rewritten as history (as_history), never archived or discarded, unless the reply or evidence says it "
+            "moved.") in _in_this_pass()
     assert "(2) the reply or evidence says it still holds: revive it with that basis" in PROSE
 
 
