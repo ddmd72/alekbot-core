@@ -26,6 +26,8 @@ def test_docs_only_sets(paths):
 
 @pytest.mark.parametrize("path", [
     "src/skills/smart/x/SKILL.md",
+    "src/skills/smart/x/CLAUDE.md",
+    "src/skills/smart/x/notes.md",
     "src/domain/notes.md",
     "src/x.py",
     "tests/unit/test_a.py",
