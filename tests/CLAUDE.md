@@ -102,6 +102,18 @@ is unchanged. The parity artifact is redacted (four values are replaced before u
 
 Extending the fake with a new Firestore feature = a new scenario in `tests/support/firestore_parity.py`, run on the emulator and with `make test-cloud`; an adapter that starts using a feature the fake lacks fails loudly (unsupported operator / no such method) — extend the fake then, never work around it in the test.
 
+## Store kits (P11)
+
+- **The rule.** Every public class of a store module in `src/adapters/` that implements a port (`firestore_*`, `gcs_*`, `gcp_task_queue`,
+  `fact_management_adapter`, the `*_queue` modules, `prompt_v3/firestore_*`) is run by a kit over a fake with semantics (`EvalDb`, the GCS
+  fake, the Cloud Tasks client fake) or sits on the allowlist with a reason. The allowlist only shrinks.
+- **The two files.** `tests/support/store_inventory.py` is the one definition: the discovery (AST, no adapter imported), `KITS` (class -> kit
+  files), `CLIENT_FAKES` and `BUILDERS` (how a kit's source is recognised). `tests/unit/adapters/stateful_store_allowlist.txt` holds
+  `module.Class  # reason`. `test_every_stateful_store_has_a_kit.py` fails a class in neither or both, a kit that imports the class but builds it
+  over no fake (a mock client does not count), a stale allowlist line and a `KITS` key that names no store.
+- **A new store** gets its kit in the same change and one `KITS` line; a store that cannot have one yet gets an allowlist line with the reason.
+  A kit that builds its store through a new helper or fake adds its name to `CLIENT_FAKES` or `BUILDERS`, never an edit of the rule.
+
 ## Coverage floors and the untested-module list
 
 - `.coveragerc` has `branch = True` and measures `src/` plus the root `*_main.py`; `make ci` fails under the global
