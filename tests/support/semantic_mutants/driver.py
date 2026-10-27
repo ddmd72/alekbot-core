@@ -8,7 +8,8 @@
                    keys survive unrelated edits, numbers do not). The tool never rules a mutant equivalent itself.
 --operators SET    `default` (the data-access operators) or `wiring` (wire-drop, call-skip: for a composition root,
                    any module incl. the root module `main`); the sets never mix.
---report PATH      also write the run as JSON (module, operators, tests, counts, one entry per mutant) to PATH.
+--report PATH      also write the run as JSON (module, operators, tests, counts, complete, total, one entry per mutant) to
+                   PATH, rewritten after every mutant ("complete": false until the last one) so a cut-off run keeps its data.
 --no-fail          exit 0 when mutants survived or errored (the report carries the verdict); a failed baseline still exits 2.
 --cwd DIR          directory of the child runs (default: the repository root); the self-tests use it for a toy module.
 
@@ -115,12 +116,15 @@ def format_outcome(o: Outcome) -> str:
     return line + (f"\n        {o.detail}" if o.status == "error" else "")
 
 
-def write_report(path: str, module: str, operators: str, tests: List[str], counts: Dict[str, int], outcomes: List[Outcome]) -> None:
+def write_report(path: str, module: str, operators: str, tests: List[str], counts: Dict[str, int], outcomes: List[Outcome],
+                 total: int, complete: bool) -> None:
     data = {
         "module": module,
         "operators": operators,
         "tests": list(tests),
         "counts": counts,
+        "complete": complete,
+        "total": total,
         "outcomes": [
             {"number": o.mutant.number, "status": o.status, "lineno": o.mutant.lineno, "operator": o.mutant.operator,
              "description": o.mutant.description, "key": o.mutant.key, "detail": o.detail}
@@ -156,16 +160,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     outcomes: List[Outcome] = []
+
+    def count() -> Dict[str, int]:
+        return {s: sum(o.status == s for o in outcomes) for s in ("killed", "survived", "equivalent", "error")}
+
     for m in mutants:
         o = Outcome(m, "equivalent", equivalent[m.key]) if m.key in equivalent else run_mutant(m, args.module, args.tests, cwd, args.operators)
         outcomes.append(o)
         print(format_outcome(o) + (f"  ({o.detail})" if o.status == "equivalent" else ""), flush=True)
+        if args.report:
+            write_report(args.report, args.module, args.operators, args.tests, count(), outcomes, len(mutants), False)
 
-    counts = {s: sum(o.status == s for o in outcomes) for s in ("killed", "survived", "equivalent", "error")}
+    counts = count()
     print(f"\n{len(outcomes)} mutants: {counts['killed']} killed, {counts['survived']} survived, "
           f"{counts['equivalent']} ruled equivalent, {counts['error']} error  ({time.monotonic() - started:.0f}s)")
     if args.report:
-        write_report(args.report, args.module, args.operators, args.tests, counts, outcomes)
+        write_report(args.report, args.module, args.operators, args.tests, counts, outcomes, len(mutants), True)
     survivors = [o for o in outcomes if o.status == "survived"]
     if args.no_fail:
         return 0

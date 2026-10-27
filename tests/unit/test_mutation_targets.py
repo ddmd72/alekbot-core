@@ -124,6 +124,10 @@ def test_tests_for_follows_imports_through_tests_only(tmp_path):
         "tests/unit/test_via_conftest.py": "from tests.unit import conftest\n",
         "tests/unit/sub/__init__.py": "",
         "tests/unit/sub/test_rel.py": "from ...support import helper\n",
+        "tests/unit/test_alias.py": "import tests.support.helper as h\n",
+        "tests/unit/fakes.py": "from tests.support import helper\n",
+        "tests/unit/test_via_fakes.py": "from tests.unit import fakes\n",
+        "tests/integration/test_it.py": "from src.pkg import target\n",
     }
     for rel, text in files.items():
         path = tmp_path / rel
@@ -131,8 +135,10 @@ def test_tests_for_follows_imports_through_tests_only(tmp_path):
         path.write_text(text)
     assert computed_tests_for("src.pkg.target", tmp_path) == (
         "tests/unit/sub/test_rel.py",
+        "tests/unit/test_alias.py",
         "tests/unit/test_direct.py",
         "tests/unit/test_relative.py",
+        "tests/unit/test_via_fakes.py",
         "tests/unit/test_via_support.py",
     )
 
@@ -180,3 +186,38 @@ def test_summarize_cli_writes_both_files(tmp_path):
     assert mutation_targets.main(["--summarize", str(reports), "--out-md", str(md_path), "--out-json", str(json_path)]) == 0
     assert "pkg.x: clean" in md_path.read_text()
     assert json.loads(json_path.read_text())["findings"] == []
+
+
+def test_expected_modules_without_a_report_are_listed_as_missing(tmp_path):
+    (tmp_path / "a.json").write_text(json.dumps(_report("pkg.a", {"killed": 1, "survived": 0, "equivalent": 0, "error": 0},
+                                                       [_outcome(1, "killed", 1, "11111111")])))
+    md, combined = summarize(tmp_path, ["pkg.a", "pkg.b"])
+    rows = [line for line in md.splitlines() if line.startswith("| pkg.")]
+    assert rows == ["| pkg.a | 1 | 0 | 0 | 0 | complete |",
+                    "| pkg.b | missing (no report: baseline failed, timed out or not run) |"]
+    assert [(m["module"], m["status"]) for m in combined["modules"]] == [("pkg.a", "complete"), ("pkg.b", "missing")]
+
+
+def test_no_reports_at_all_is_every_module_missing_never_clean(tmp_path):
+    md, combined = summarize(tmp_path, ["pkg.a", "pkg.b"])
+    assert md.count("missing (no report") == 2 and "clean" not in md
+    assert [m["status"] for m in combined["modules"]] == ["missing", "missing"]
+
+
+def test_summarize_cli_expects_the_registered_modules(tmp_path):
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    out = tmp_path / "s.md"
+    assert mutation_targets.main(["--summarize", str(reports), "--module", "src.domain.fact_review_question",
+                                  "--out-md", str(out), "--out-json", str(tmp_path / "s.json")]) == 0
+    assert "| src.domain.fact_review_question | missing" in out.read_text()
+    assert out.read_text().count("missing") == 1
+
+
+def test_an_incomplete_report_is_marked_partial(tmp_path):
+    report = _report("pkg.p", {"killed": 1, "survived": 0, "equivalent": 0, "error": 0}, [_outcome(1, "killed", 1, "11111111")])
+    report.update(complete=False, total=5)
+    (tmp_path / "p.json").write_text(json.dumps(report))
+    md, combined = summarize(tmp_path, ["pkg.p"])
+    assert "| pkg.p | 1 | 0 | 0 | 0 | partial (1 of 5 mutants) |" in md
+    assert combined["modules"][0]["status"] == "partial"

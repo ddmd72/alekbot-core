@@ -42,7 +42,8 @@ jobs:
         env:
           MODULE: ${{ github.event.inputs.module }}
         run: |
-          echo "targets=$(python -m tests.support.mutation_targets --matrix --module "$MODULE")" >> "$GITHUB_OUTPUT"
+          targets=$(python -m tests.support.mutation_targets --matrix --module "$MODULE")
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
 
   mutate:
     name: mutate ${{ matrix.slug }}
@@ -64,6 +65,8 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run the mutants
+        timeout-minutes: 340
+        continue-on-error: true  # a cut-off run keeps its partial report; the upload step below still runs
         # --no-fail: the exit code is 0 whatever survived; the report carries the verdict.
         env:
           MODULE: ${{ matrix.module }}
@@ -107,9 +110,11 @@ jobs:
           path: reports
 
       - name: Summarize
+        env:
+          MODULE: ${{ github.event.inputs.module }}
         run: |
           mkdir -p out
-          python -m tests.support.mutation_targets --summarize reports --out-md out/survivors.md --out-json out/survivors.json
+          python -m tests.support.mutation_targets --summarize reports --module "$MODULE" --out-md out/survivors.md --out-json out/survivors.json
           cat out/survivors.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the survivors

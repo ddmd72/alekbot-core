@@ -143,26 +143,42 @@ def matrix(module: Optional[str] = None) -> Dict[str, List[Dict[str, str]]]:
     }
 
 
-def summarize(reports_dir: Path) -> tuple[str, Dict[str, Any]]:
-    reports = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(reports_dir.rglob("*.json"))]
-    reports.sort(key=lambda r: r["module"])
-    lines = ["# Mutation survivors", "", "| module | killed | survived | equivalent | error |", "|---|---|---|---|---|"]
-    for r in reports:
-        c = r["counts"]
-        lines.append(f"| {r['module']} | {c['killed']} | {c['survived']} | {c['equivalent']} | {c['error']} |")
+MISSING = "missing (no report: baseline failed, timed out or not run)"
+
+
+def summarize(reports_dir: Path, expected: Optional[List[str]] = None) -> tuple[str, Dict[str, Any]]:
+    reports = {}
+    for p in sorted(reports_dir.rglob("*.json")):
+        r = json.loads(p.read_text(encoding="utf-8"))
+        reports[r["module"]] = r
+    modules = sorted(set(reports) | set(expected or []))
+    lines = ["# Mutation survivors", "", "| module | killed | survived | equivalent | error | status |", "|---|---|---|---|---|---|"]
     findings: List[Dict[str, Any]] = []
-    for r in reports:
+    summary: List[Dict[str, Any]] = []
+    detail: List[str] = []
+    for module in modules:
+        r = reports.get(module)
+        if r is None:
+            lines.append(f"| {module} | {MISSING} |")
+            summary.append({"module": module, "status": "missing"})
+            continue
+        c = r["counts"]
+        done = len(r["outcomes"])
+        partial = r.get("complete", True) is False
+        status = f"partial ({done} of {r.get('total', '?')} mutants)" if partial else "complete"
+        lines.append(f"| {module} | {c['killed']} | {c['survived']} | {c['equivalent']} | {c['error']} | {status} |")
+        summary.append({"module": module, "status": "partial" if partial else "complete", "counts": c, "done": done, "total": r.get("total")})
         bad = [o for o in r["outcomes"] if o["status"] in ("survived", "error")]
         if not bad:
-            lines += ["", f"{r['module']}: clean"]
+            detail += ["", f"{module}: clean" + (" so far" if partial else "")]
             continue
-        lines += ["", f"## {r['module']}", ""]
+        detail += ["", f"## {module}", ""]
         for o in bad:
             line = f"- [{o['status']}] L{o['lineno']} {o['operator']}: {o['description']} (key {o['key']})"
-            lines.append(line + (f" - {o['detail']}" if o["status"] == "error" and o.get("detail") else ""))
-            findings.append({"module": r["module"], **o})
-    combined = {"modules": [{"module": r["module"], "counts": r["counts"]} for r in reports], "findings": findings}
-    return "\n".join(lines) + "\n", combined
+            detail.append(line + (f" - {o['detail']}" if o["status"] == "error" and o.get("detail") else ""))
+            findings.append({"module": module, **o})
+    combined = {"modules": summary, "findings": findings}
+    return "\n".join(lines + detail) + "\n", combined
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -187,7 +203,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.summarize:
         if not (args.out_md and args.out_json):
             ap.error("--summarize needs --out-md and --out-json")
-        md, combined = summarize(Path(args.summarize))
+        expected = [row["module"] for row in matrix(args.module)["include"]]
+        md, combined = summarize(Path(args.summarize), expected)
         Path(args.out_md).write_text(md, encoding="utf-8")
         Path(args.out_json).write_text(json.dumps(combined, indent=2), encoding="utf-8")
         return 0

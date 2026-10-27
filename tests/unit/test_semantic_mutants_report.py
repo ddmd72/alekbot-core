@@ -51,6 +51,27 @@ def test_report_carries_counts_and_one_entry_per_mutant(toy):
     assert data["outcomes"][1]["detail"] == "boom"
 
 
+def test_the_report_is_rewritten_after_every_mutant_and_complete_only_at_the_end(toy, monkeypatch):
+    tmp_path, mutants = toy
+    report = tmp_path / "r.json"
+    seen = []
+    real = driver.run_mutant
+
+    def spying(m, *a, **k):
+        if report.exists():
+            seen.append(json.loads(report.read_text()))
+        return real(m, *a, **k)
+
+    monkeypatch.setattr(driver, "run_mutant", spying)
+    run(tmp_path, "--report", str(report), "--no-fail")
+
+    assert len(seen) == len(mutants) - 1  # absent before the first mutant, present before each later one
+    assert [len(d["outcomes"]) for d in seen] == list(range(1, len(mutants)))
+    assert all(d["complete"] is False and d["total"] == len(mutants) for d in seen)
+    final = json.loads(report.read_text())
+    assert final["complete"] is True and len(final["outcomes"]) == len(mutants)
+
+
 def test_equivalent_mutants_are_reported_as_such(toy):
     tmp_path, mutants = toy
     eq = tmp_path / "eq.txt"
