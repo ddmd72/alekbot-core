@@ -14,7 +14,8 @@ from typing import Dict, List, Optional, Set
 import pytest
 
 from tests.support.store_inventory import (
-    BUILDERS, CLIENT_FAKES, KITS, REPO, read_allowlist, stateful_store_classes, store_classes_in_source,
+    BUILDERS, CLIENT_FAKES, KITS, MOCKS, NOT_STORE_MODULES, REPO, _imports_cloud_client, cloud_client_modules, matches_store_globs,
+    read_allowlist, stateful_store_classes, store_classes_in_source,
 )
 
 STORES = stateful_store_classes()
@@ -30,75 +31,84 @@ def _name_of(node: ast.expr) -> str:
     return ""
 
 
-def _fakes(tree: ast.Module, base_fakes: frozenset = CLIENT_FAKES) -> Set[str]:
-    """The fake names, plus every class of the file deriving from one (to a fixed point)."""
-    fakes = set(base_fakes)
+def _with_derived(tree: ast.Module, names: Set[str]) -> Set[str]:
+    """`names` plus every class of the file deriving from one (to a fixed point)."""
+    out = set(names)
     classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
     grew = True
     while grew:
         grew = False
         for cls in classes:
-            if cls.name not in fakes and any(_name_of(b) in fakes for b in cls.bases):
-                fakes.add(cls.name)
+            if cls.name not in out and any(_name_of(b) in out for b in cls.bases):
+                out.add(cls.name)
                 grew = True
-    return fakes
+    return out
 
 
-def _tainted_names(tree: ast.Module, fakes: Set[str]) -> Set[str]:
-    """Names and attribute names that hold a fake or something built over one."""
-    tainted: Set[str] = set()
-    # a function that returns/contains a fake call is a fixture of it: a parameter of that name is tainted
-    for fn in ast.walk(tree):
-        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if any(isinstance(n, ast.Call) and _name_of(n.func) in fakes for n in ast.walk(fn)):
-                tainted.add(fn.name)
+def _default_patch(call: ast.Call) -> bool:
+    """`patch(target)` / `patch.object(obj, name)` with no replacement given: the replacement is a `MagicMock`."""
+    if any(k.arg in {"new", "new_callable"} for k in call.keywords):
+        return False
+    owner = call.func.value if isinstance(call.func, ast.Attribute) else None
+    if _name_of(call.func) == "patch":
+        return len(call.args) < 2
+    return _name_of(call.func) == "object" and owner is not None and _name_of(owner) == "patch" and len(call.args) < 3
+
+
+class _Flow:
+    """Where a kind of value (`sources`: the fake names, or the mock names) flows in one file: the names and attribute names
+    that hold it or something built from it (assignment, `with ... as`, a parameter annotated with it, a fixture returning
+    it). `mock=True` also counts a default `patch(...)` as a source, and a function is a fixture of it only when it returns it."""
+
+    def __init__(self, tree: ast.Module, sources: Set[str], mock: bool = False) -> None:
+        self.sources, self.mock = sources, mock
+        self.tainted: Set[str] = set()
+        functions = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        for fn in functions:
             for arg in fn.args.args + fn.args.kwonlyargs:
                 if arg.annotation is not None and any(
-                        isinstance(n, ast.Name) and n.id in fakes for n in ast.walk(arg.annotation)):
-                    tainted.add(arg.arg)
+                        isinstance(n, ast.Name) and n.id in sources for n in ast.walk(arg.annotation)):
+                    self.tainted.add(arg.arg)
+            if not mock and any(isinstance(n, ast.Call) and _name_of(n.func) in sources for n in ast.walk(fn)):
+                self.tainted.add(fn.name)       # a fake built anywhere in a function: it is that fake's fixture
+        grew = True
+        while grew:
+            grew = False
+            for node in ast.walk(tree):
+                pairs: List[tuple] = []
+                if isinstance(node, ast.Assign):
+                    pairs = [(t, node.value) for t in node.targets]
+                elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                    pairs = [(node.target, node.value)]
+                elif isinstance(node, (ast.With, ast.AsyncWith)):
+                    pairs = [(i.optional_vars, i.context_expr) for i in node.items if i.optional_vars is not None]
+                elif mock and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.name not in self.tainted and any(
+                            isinstance(r, ast.Return) and r.value is not None and self.hit(r.value)
+                            for r in ast.walk(node)):
+                        self.tainted.add(node.name)
+                        grew = True
+                for target, value in pairs:
+                    if not self.hit(value):
+                        continue
+                    for t in ast.walk(target):
+                        if isinstance(t, ast.Name) and t.id != "self" and t.id not in self.tainted:
+                            self.tainted.add(t.id)
+                            grew = True
+                        if isinstance(t, ast.Attribute) and t.attr not in self.tainted:
+                            self.tainted.add(t.attr)
+                            grew = True
 
-    def hit(expr: ast.AST) -> bool:
+    def hit(self, expr: ast.AST) -> bool:
         for n in ast.walk(expr):
-            if isinstance(n, ast.Call) and _name_of(n.func) in fakes:
+            if isinstance(n, ast.Call) and (
+                    _name_of(n.func) in self.sources or (self.mock and _default_patch(n))):
                 return True
-            if isinstance(n, ast.Name) and (n.id in fakes or n.id in tainted):
+            if isinstance(n, ast.Name) and (n.id in self.sources or n.id in self.tainted):
                 return True
-            if isinstance(n, ast.Attribute) and n.attr in tainted:
+            if isinstance(n, ast.Attribute) and n.attr in self.tainted:
                 return True
         return False
-
-    grew = True
-    while grew:
-        grew = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                targets, value = node.targets, node.value
-            elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                targets, value = [node.target], node.value
-            else:
-                continue
-            if not hit(value):
-                continue
-            for target in targets:
-                for t in ast.walk(target):
-                    if isinstance(t, ast.Name) and t.id != "self" and t.id not in tainted:
-                        tainted.add(t.id)
-                        grew = True
-                    if isinstance(t, ast.Attribute) and t.attr not in tainted:
-                        tainted.add(t.attr)
-                        grew = True
-    return tainted
-
-
-def _references_fake(scope: ast.AST, fakes: Set[str], tainted: Set[str]) -> bool:
-    for n in ast.walk(scope):
-        if isinstance(n, ast.Name) and (n.id in fakes or n.id in tainted):
-            return True
-        if isinstance(n, ast.Call) and _name_of(n.func) in fakes:
-            return True
-        if isinstance(n, ast.Attribute) and n.attr in tainted:
-            return True
-    return False
 
 
 def _used(tree: ast.Module, name: str, own: ast.AST) -> bool:
@@ -113,8 +123,35 @@ def _used(tree: ast.Module, name: str, own: ast.AST) -> bool:
     return False
 
 
+def _verdict(call: ast.Call, scope: ast.AST, tree: ast.Module, fake: _Flow, mock: _Flow) -> str:
+    """`fake`, `mock` or `none` for one construction of the class.
+
+    `fake`: an argument derives from a fake; or, with none from a fake, the enclosing top-level helper, fixture or class
+    references one and is used. `mock`: no argument derives from a fake and one derives from a mock (`MagicMock()`,
+    `create_autospec(...)`, a default `patch(...)`), or the enclosing definition assigns a mock to an attribute
+    (`adapter._client = MagicMock()`). A mock for a configuration argument next to a fake client is fine. A construction in
+    a definition nothing uses (not a `test*`, not called, not a fixture parameter) counts for nothing."""
+    args = list(call.args) + [k.value for k in call.keywords]
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if not (scope.name.startswith(("test", "Test")) or _used(tree, scope.name, scope)):
+            return "none"
+    if any(fake.hit(a) for a in args):
+        return "fake"
+    if any(mock.hit(a) for a in args):
+        return "mock"
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        for n in ast.walk(scope):
+            if isinstance(n, ast.Assign) and any(isinstance(t, ast.Attribute) for t in n.targets) and mock.hit(n.value) \
+                    and not fake.hit(n.value):
+                return "mock"
+        if fake.hit(scope):
+            return "fake"
+    return "none"
+
+
 def kit_problem(tree: ast.Module, dotted_class: str) -> Optional[str]:
-    """None when the source runs the class over a fake with semantics; else one line saying what is missing."""
+    """None when the source runs the class over a fake with semantics; else one line saying what is missing or wrong. Every
+    construction of the class is judged (`_verdict`); one over a mock refuses the kit, and one over a fake is required."""
     module, _, cls = dotted_class.rpartition(".")
     for builder, (_, built) in BUILDERS.items():
         if dotted_class in built and any(
@@ -129,21 +166,22 @@ def kit_problem(tree: ast.Module, dotted_class: str) -> Optional[str]:
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and _name_of(n.func) == cls]
     if not calls:
         return f"imports {cls} but never constructs it"
-    fakes = _fakes(tree)
-    tainted = _tainted_names(tree, fakes)
+    fake = _Flow(tree, _with_derived(tree, CLIENT_FAKES))
+    mock = _Flow(tree, _with_derived(tree, MOCKS), mock=True)
     parents: Dict[ast.AST, ast.AST] = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    verdicts = []
     for call in calls:
-        args = list(call.args) + [k.value for k in call.keywords]
-        if any(_references_fake(a, fakes, tainted) for a in args):
-            return None
         scope: ast.AST = call
         while scope in parents and parents[scope] is not tree:
             scope = parents[scope]
-        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and _references_fake(
-                scope, fakes, tainted) and _used(tree, scope.name, scope):
-            return None
-    return (f"constructs {cls} with no argument derived from a fake ({', '.join(sorted(CLIENT_FAKES))}), and in no used "
-            "helper that references one")
+        verdicts.append(_verdict(call, scope, tree, fake, mock))
+    if "mock" in verdicts:
+        return (f"constructs {cls} over a mock ({', '.join(sorted(MOCKS))}, a default patch): a mock client has no "
+                "semantics; use a fake of " + ", ".join(sorted(CLIENT_FAKES)))
+    if "fake" not in verdicts:
+        return (f"constructs {cls} with no argument derived from a fake ({', '.join(sorted(CLIENT_FAKES))}), and in no used "
+                "helper that references one")
+    return None
 
 
 @lru_cache(maxsize=None)
@@ -188,6 +226,37 @@ def test_allowlist_lines_are_well_formed_and_not_stale():
         if name in KITS:
             problems.append(f"{name}: stale line, the class has a kit now (the list only shrinks)")
     assert not problems, "\n".join(problems)
+
+
+def test_a_module_importing_a_cloud_client_is_a_store_module_or_excluded_with_a_reason():
+    """The discovery goes by file name; this is the second rule, by import: a store module with another name is still seen."""
+    problems: List[str] = []
+    importing = cloud_client_modules()
+    for module in importing:
+        path = REPO / (module.replace(".", "/") + ".py")
+        if not matches_store_globs(path) and module not in NOT_STORE_MODULES:
+            problems.append(f"{module}: imports a google.cloud client but matches no store glob and is not in NOT_STORE_MODULES")
+    for module, reason in NOT_STORE_MODULES.items():
+        path = REPO / (module.replace(".", "/") + ".py")
+        if len(reason.split()) < 2:
+            problems.append(f"{module}: the reason is missing")
+        if not path.is_file():
+            problems.append(f"{module}: stale exclusion, the module is gone")
+        elif module not in importing:
+            problems.append(f"{module}: stale exclusion, it no longer imports a google.cloud client")
+        elif matches_store_globs(path):
+            problems.append(f"{module}: stale exclusion, it matches a store glob now (a stateful store needs a kit or an allowlist line)")
+    assert not problems, "\n".join(problems)
+
+
+def test_the_import_rule_reads_every_import_form():
+    forms = ["from google.cloud import firestore", "from google.cloud import storage as gcs", "from google.cloud import tasks_v2",
+             "from google.cloud import bigquery", "from google.cloud.firestore_v1 import AsyncClient", "import google.cloud.storage",
+             "from google.cloud.bigquery import Client", "def f():\n    from google.cloud import firestore"]
+    for form in forms:
+        assert _imports_cloud_client(ast.parse(form)), form
+    for form in ["from google.cloud import logging", "import google.auth", "from ..ports import x", "import firestore"]:
+        assert not _imports_cloud_client(ast.parse(form)), form
 
 
 def test_kits_keys_are_stateful_store_classes():
@@ -244,30 +313,70 @@ def _problem(source: str, cls: str = CLS) -> Optional[str]:
 
 
 def test_rule_accepts_a_direct_fake_a_fixture_an_assigned_attribute_and_an_annotated_helper():
-    assert _problem(HEAD + "def t():\n    FirestoreWhitelistRepository(EvalDb(), None)\n") is None
-    assert _problem(HEAD + "def db():\n    return EvalDb()\n\ndef r(db):\n    return FirestoreWhitelistRepository(db, 1)\n") is None
+    assert _problem(HEAD + "def test_t():\n    FirestoreWhitelistRepository(EvalDb(), None)\n") is None
+    assert _problem(HEAD + "def db():\n    return EvalDb()\n\ndef test_r(db):\n    return FirestoreWhitelistRepository(db, 1)\n") is None
     assert _problem(HEAD + "class S:\n    def __init__(self):\n        self.db = EvalDb()\n"
-                    "        self.repo = FirestoreWhitelistRepository(self.db, 1)\n") is None
+                    "        self.repo = FirestoreWhitelistRepository(self.db, 1)\n\ndef test_s():\n    S()\n") is None
     assert _problem(HEAD + "def make(db: EvalDb):\n    return FirestoreWhitelistRepository(None)\n\n"
-                    "def t():\n    make(EvalDb())\n") is None
-    assert _problem(HEAD + "class MyDb(EvalDb):\n    pass\n\ndef t():\n    FirestoreWhitelistRepository(MyDb())\n") is None
+                    "def test_t():\n    make(EvalDb())\n") is None
+    assert _problem(HEAD + "class MyDb(EvalDb):\n    pass\n\ndef test_t():\n    FirestoreWhitelistRepository(MyDb())\n") is None
 
 
-def test_rule_refuses_a_mock_client_a_missing_import_a_missing_construction_and_an_unused_helper():
-    mocked = ("from unittest.mock import MagicMock\n"
-              "from src.adapters.firestore_whitelist_repo import FirestoreWhitelistRepository\n"
-              "def t():\n    FirestoreWhitelistRepository(MagicMock(), None)\n")
-    assert "no argument derived from a fake" in _problem(mocked)
+def test_rule_refuses_a_missing_import_a_missing_construction_and_an_unused_helper():
     assert "does not import" in _problem("from tests.support.firestore_eval import EvalDb\nx = EvalDb()\n")
     assert "never constructs" in _problem(HEAD + "x = EvalDb()\n")
     unused = HEAD + "def helper(db: EvalDb):\n    return FirestoreWhitelistRepository(None)\n"
     assert "no argument derived from a fake" in _problem(unused)
+    never_called = HEAD + "def _never():\n    return FirestoreWhitelistRepository(EvalDb())\n"
+    assert "no argument derived from a fake" in _problem(never_called)
+
+
+MOCK_HEAD = "from unittest import mock\nfrom unittest.mock import AsyncMock, MagicMock, create_autospec\n"
+
+
+def test_rule_refuses_a_construction_over_a_mock_client():
+    mocked = HEAD + MOCK_HEAD + "def test_t():\n    FirestoreWhitelistRepository(MagicMock(), None)\n"
+    assert "over a mock" in _problem(mocked)
+    # the review's case 1: the scope builds an EvalDb on the line before, but the store is handed a mock
+    accounts = ("from src.adapters.firestore_account_repo import FirestoreAccountRepository\n" + HEAD + MOCK_HEAD +
+                "class Accounts:\n    def __init__(self):\n        self.db = EvalDb()\n"
+                "        self.repo = FirestoreAccountRepository(MagicMock(), 'accounts')\n\n"
+                "def test_t():\n    Accounts()\n")
+    assert "over a mock" in _problem(accounts, "src.adapters.firestore_account_repo.FirestoreAccountRepository")
+    # the review's case 2: the helper takes a fake and then replaces the store's client with a mock
+    storage = ("from src.adapters.gcs_file_storage_adapter import GcsFileStorageAdapter\n"
+               "from tests.support.gcs_fake import FakeGcs\n" + MOCK_HEAD +
+               "def _adapter(fake: FakeGcs):\n    adapter = GcsFileStorageAdapter('b')\n"
+               "    adapter._client = MagicMock()\n    return adapter\n\n"
+               "def test_t():\n    _adapter(FakeGcs())\n")
+    gcs = "src.adapters.gcs_file_storage_adapter.GcsFileStorageAdapter"
+    assert "over a mock" in _problem(storage, gcs)
+    assert _problem(storage.replace("MagicMock()", "fake.client()"), gcs) is None     # control: the same helper over the fake
+    for spelling in ("AsyncMock()", "mock.Mock()", "create_autospec(object)", "mock.patch('x.y')", "mock.patch.object(a, 'b')"):
+        variant = HEAD + MOCK_HEAD + f"def test_t():\n    FirestoreWhitelistRepository({spelling}, None)\n"
+        assert "over a mock" in _problem(variant), spelling
+    named = HEAD + MOCK_HEAD + "def test_t():\n    client = MagicMock()\n    FirestoreWhitelistRepository(client, None)\n"
+    assert "over a mock" in _problem(named)
+    with_patch = HEAD + MOCK_HEAD + ("def test_t():\n    with mock.patch('x.y') as client:\n"
+                                     "        FirestoreWhitelistRepository(client, None)\n")
+    assert "over a mock" in _problem(with_patch)
+    one_bad = HEAD + MOCK_HEAD + ("def test_a():\n    FirestoreWhitelistRepository(EvalDb(), None)\n\n"
+                                  "def test_b():\n    FirestoreWhitelistRepository(MagicMock(), None)\n")
+    assert "over a mock" in _problem(one_bad)       # one good construction does not excuse a mocked one
+
+
+def test_rule_accepts_a_mock_that_is_not_the_client_and_a_patch_with_a_replacement():
+    config_mock = HEAD + MOCK_HEAD + "def test_t():\n    env = MagicMock()\n    FirestoreWhitelistRepository(EvalDb(), env)\n"
+    assert _problem(config_mock) is None
+    replaced = HEAD + MOCK_HEAD + ("def test_t():\n    with mock.patch('x.y', EvalDb):\n"
+                                   "        FirestoreWhitelistRepository(EvalDb(), None)\n")
+    assert _problem(replaced) is None
 
 
 def test_rule_accepts_a_named_builder_without_the_class_import():
     cls = "src.adapters.firestore_memory_write_lease.FirestoreMemoryWriteLease"
-    assert _problem("def t():\n    world = ReviewWorld()\n", cls) is None
-    assert "does not import" in _problem("def t():\n    world = FactStore()\n", cls)
+    assert _problem("def test_t():\n    world = ReviewWorld()\n", cls) is None
+    assert "does not import" in _problem("def test_t():\n    world = FactStore()\n", cls)
 
 
 def test_discovery_reads_port_bases_and_client_taking_classes_only():
