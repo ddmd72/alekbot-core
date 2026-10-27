@@ -14,6 +14,7 @@ import pytest
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.entities import ExpiryKind
 from src.domain.fact_review_language import LABEL_KEYS, fact_question_message
+from src.domain.fact_review_options import OPTIONS
 from src.domain.fact_review_question import FACT_QUESTION_KIND, ClosedBy, FactReviewQuestion, QuestionStatus
 from src.domain.fact_update_outcome import FactUpdateOutcome, UpdateRefusal
 from src.domain.interactive_binding import InteractiveBinding
@@ -29,6 +30,7 @@ from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
 from tests.support.review_rule_builders import question as build_question
+from tests.unit.domain.review_p2_texts import TEXTS
 
 USER = "u1"
 TZ = "Europe/Lisbon"
@@ -454,5 +456,13 @@ def test_the_handler_answers_the_fact_question_kind():
 
 
 def test_every_answer_is_a_button_of_the_message():
+    # P2 revised (C11): a message's buttons are its question kind's options; together the kinds offer every answer
     message = fact_question_message(build_question(), {key: key for key in LABEL_KEYS})
-    assert [option.id for option in message.options] == [kind.value for kind in AnswerKind]
+    assert [option.id for option in message.options] == [kind.value for kind in OPTIONS["still_true"]]
+    offered = set()
+    for qkind in ("happened", "renewed", "paid"):
+        asked = build_question(question=qkind, fallback="history", texts=TEXTS[qkind])
+        ids = [option.id for option in fact_question_message(asked, {key: key for key in LABEL_KEYS}).options]
+        assert ids == [kind.value for kind in OPTIONS[qkind]]
+        offered.update(ids)
+    assert offered | {o.id for o in message.options} == {kind.value for kind in AnswerKind}

@@ -37,6 +37,7 @@ from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
+from tests.support.review_p2_labels import RU_P2_LABELS
 
 USER = "u1"
 TZ = "Europe/Lisbon"            # summer time until 25 October: the world's NOW, 07:30 UTC, is 08:30 the same day there
@@ -71,6 +72,7 @@ RU_LABELS = {
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Чтобы вернуть один, скажите мне в чате, что это всё ещё так.",
     UIMessage.MEMORY_DIGEST_ARCHIVED.value: "это уже не так",
     UIMessage.MEMORY_DIGEST_INVALIDATED.value: "этого никогда не было",
+    **RU_P2_LABELS,  # P2 revised (C11): the set is the 28 label keys
 }
 
 

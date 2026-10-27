@@ -169,8 +169,9 @@ class TestTheNeighbourCheck:
         await world.seed_state(account_id=ACC)
         r = Rig(world)
 
+        # P2 revised (P2-2): a standing fact a neighbour shows ended is superseded by it, never archived on evidence
         async def play(task: FactReviewTask, scope: FactReviewScope) -> None:
-            result = await scope.update_fact({"fact_id": fact, "updates": {"state": "archived"}, "basis": on(ev)})
+            result = await scope.update_fact({"fact_id": fact, "updates": {"state": "superseded", "superseded_by": ev}})
             assert result["status"] == "updated", result
 
         r.agent.play = play
@@ -178,9 +179,9 @@ class TestTheNeighbourCheck:
 
         question = await stored_question(world, "qt")
         assert question.closed_by is ClosedBy.REVIEW
-        assert world.docs[fact]["state"] == "archived" and fallback_events(world, fact) == []
+        assert world.docs[fact]["state"] == "superseded" and fallback_events(world, fact) == []
         row = await day_row(world)
-        assert (row.timed_out, row.archived_by_review) == (0, 1)
+        assert (row.timed_out, row.superseded) == (0, 1)
 
     async def test_neighbours_older_than_the_question_mean_the_fallback_now_with_no_model_call(self):
         world = ReviewWorld()
@@ -372,7 +373,7 @@ class TestKeptTwice:
         assert (row.queued, row.revived) == (1, 0)
         assert world.sink.texts == []
 
-    async def test_a_dated_fact_kept_twice_falls_back_to_archive(self):
+    async def test_a_dated_fact_kept_twice_falls_back_to_history(self):
         world = ReviewWorld()
         fact = await world.seed_stale("Alex plans a weekend in Coimbra")         # a date decision that has passed
         assert world.docs[fact]["expiry_kind"] == ExpiryKind.DATE.value
@@ -380,8 +381,10 @@ class TestKeptTwice:
 
         await Rig(world).run()
 
+        # P2 revised (C6): a date fact kept twice gets a code-built happened question that falls back to history
         (question,) = await open_questions(world)
-        assert question.fallback == "archive" and world.docs[fact]["state"] == "current"
+        assert question.fallback == "history" and world.docs[fact]["state"] == "current"
+        assert (question.question, question.origin, question.texts) == ("happened", "kept_twice", {})
 
     async def test_a_fact_offered_once_is_offered_again_not_queued(self):
         world = ReviewWorld()

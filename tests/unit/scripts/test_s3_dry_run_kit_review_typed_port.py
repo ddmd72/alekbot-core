@@ -22,10 +22,11 @@ from tests.unit.scripts.test_s3_dry_run_kit import (  # noqa: F401  (fixtures: s
 async def test_a_review_write_through_the_installed_kit_lands_in_the_overlay_only(store, tmp_path):
     put_raw(store, "old", "works at Acme", state="stale", stale_since=T0 + timedelta(days=40), reported_date=T0)
     evidence = await seed(store, "works at Beta since October")
-    archive = ToolCall(name="update_fact", args={
-        "fact_id": "old", "updates": {"state": "archived"}, "basis": {"kind": "evidence", "evidence_fact_id": evidence},
+    # P2 revised (P2-2): a standing fact a neighbour shows ended is superseded by it, never archived on evidence
+    supersede = ToolCall(name="update_fact", args={
+        "fact_id": "old", "updates": {"state": "superseded", "superseded_by": evidence},
     })
-    agent, kit = await kit_agent(store, tmp_path, metered(calls(archive)), answered())
+    agent, kit = await kit_agent(store, tmp_path, metered(calls(supersede)), answered())
     assert isinstance(agent._fact_updates, kit_module.WriteRecorder) and agent._fact_updates is agent._fact_management
     before = live_state(store)
 
@@ -37,8 +38,8 @@ async def test_a_review_write_through_the_installed_kit_lands_in_the_overlay_onl
         write_context=ctx(actor="review", timezone="UTC"), pass_kind="review", review_scope=scope,
     )
 
-    assert [(d.fact_id, d.outcome) for d in scope.decisions()] == [("old", "archived")]
+    assert [(d.fact_id, d.outcome) for d in scope.decisions()] == [("old", "superseded")]
     assert live_state(store) == before
-    assert kit.repo.overlay_document("old").state is FactState.ARCHIVED
+    assert kit.repo.overlay_document("old").state is FactState.SUPERSEDED
     assert [(row["action"], row["actor"], row["status"]) for row in kit.rows] == [("update", "review", "updated")]
     assert tracker.wrote
