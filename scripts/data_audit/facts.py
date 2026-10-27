@@ -181,16 +181,21 @@ def s2_data_present(docs: Iterable[tuple[str, dict[str, Any]]]) -> bool:
 def _pinned(doc: dict[str, Any]) -> bool:
     """The writer's own pin rule on the stored `domain`, `type` and `tags`; an unreadable value reads as absent."""
     try:
-        domain: Optional[FactDomain] = FactDomain(doc.get("domain"))
+        domain: Optional[FactDomain] = FactDomain(_lowered(doc.get("domain")))
     except (ValueError, TypeError):
         domain = None
     try:
-        fact_type: Optional[FactType] = FactType(doc.get("type"))
+        fact_type: Optional[FactType] = FactType(_lowered(doc.get("type")))
     except (ValueError, TypeError):
         fact_type = None
     tags = doc.get("tags")
     names = [t for t in tags if isinstance(t, str)] if isinstance(tags, list) else []
     return expiry_pinned(domain, fact_type, names)  # type: ignore[arg-type]
+
+
+def _lowered(value: Any) -> Any:
+    """A stored enum value is sometimes upper case (`AGENT_DIRECTIVE`): the entity parse and the classify script lower it."""
+    return value.lower() if isinstance(value, str) else value
 
 
 def _horizon_counted(doc: dict[str, Any]) -> bool:
