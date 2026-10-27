@@ -90,8 +90,11 @@ def test_execution_context_puts_the_fake_behind_a_real_breaker():
 
 
 def test_tool_results_reads_the_three_shapes_of_the_last_message():
-    consolidation = _request(_user("batch"), Message(role="user", parts=[MessagePart(tool_response={
-        "name": "create_fact", "response": {"result": '{"status": "created", "fact_id": "f1"}'}})]))
+    consolidation = _request(_user("batch"), Message(role="user", parts=[
+        MessagePart(tool_response={
+            "name": "create_fact", "response": {"result": '{"status": "created", "fact_id": "f1"}'}}),
+        MessagePart(tool_response={"name": "count_words", "response": {"result": '{"word_count": 2}'}}),
+    ]))
     notes = _request(_user("remind"), Message(role="user", parts=[MessagePart(tool_response={
         "name": "create_self_reminder", "response": {"result": str({"status": "created", "note_id": "1"})}})]))
     tasks = _request(_user("task"), Message(role="user", parts=[MessagePart(tool_response={
@@ -101,6 +104,7 @@ def test_tool_results_reads_the_three_shapes_of_the_last_message():
 
     assert tool_results(llm) == [
         ("create_fact", {"status": "created", "fact_id": "f1"}),        # JSON string decoded
+        ("count_words", {"word_count": 2}),                             # every result of one message
         ("create_self_reminder", "{'status': 'created', 'note_id': '1'}"),  # Python repr kept as is
         ("create_task", {"title": "Car service", "ref": "ab12cd34"}),   # no "result": the response itself
     ]
@@ -114,6 +118,27 @@ def test_a_two_turn_transcript_yields_each_result_once():
     llm = ScriptedLLM([])
     llm.requests = [_request(_user("q")), _request(_user("q"), *turn_1), _request(_user("q"), *turn_1, *turn_2)]
 
+    assert tool_results(llm) == [("count_words", {"words": 2}), ("count_words", {"words": 3})]
+
+
+@pytest.mark.parametrize("fake", ["scripted", "routed"])
+async def test_requests_built_over_one_shared_message_list_are_recorded_as_sent(fake):
+    """`DelegationEngine` builds each turn's request as `model_copy(update={"messages": history})` over one list it
+    keeps appending to: a fake that kept the live request would show the final transcript for every request."""
+    answers = [text("one"), text("two"), text("three")]
+    llm = ScriptedLLM(answers) if fake == "scripted" else RoutedLLM(lambda r: answers.pop(0))
+    call_1 = tools(("count_words", {"text": "a b"}))
+    call_2 = tools(("count_words", {"text": "c d e"}))
+    history = [_user("q")]
+    req1 = _request(*history)
+    req1.messages = history                     # the engine's request holds its live list, not a copy
+    await llm.generate_content(req1)
+    history.extend(build_tool_turn(call_1, [(call_1.tool_calls[0], '{"words": 2}')]))
+    await llm.generate_content(req1.model_copy(update={"messages": history}))
+    history.extend(build_tool_turn(call_2, [(call_2.tool_calls[0], '{"words": 3}')]))
+    await llm.generate_content(req1.model_copy(update={"messages": history}))
+
+    assert [len(r.messages) for r in llm.requests] == [1, 3, 5]
     assert tool_results(llm) == [("count_words", {"words": 2}), ("count_words", {"words": 3})]
 
 
