@@ -9,7 +9,7 @@ by updating this file.
 Design records: `docs/10_rfcs/DELIBERATE_FACT_MANAGEMENT_RFC.md` (taxonomy, tools, cognitive process),
 `docs/10_rfcs/CLUSTER_REVIEW_RFC.md` (Stage 2a), `docs/10_rfcs/STANDING_DIRECTIVES_RFC.md` (Stage 2b),
 `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` (`$memory save`), `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (S1 live; S2, S3 and S4 deployed 2026-10-27, janitor writes since the deploy of 2026-10-27;
-S5's classify applied 2026-10-27 (529 + 30 facts); P2 revised, "a fact whose date passed becomes history", deployed), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,fact_versions_one_writer,fact_expiry_and_janitor,fact_review_and_owner_questions,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
+S5's classify applied 2026-10-27; P2 revised, "a fact whose date passed becomes history", deployed), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,fact_versions_one_writer,fact_expiry_and_janitor,fact_review_and_owner_questions,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
 
 ## 0. How to answer questions about memory
 
@@ -1032,7 +1032,7 @@ facts or the cache: `would_stale` counts every due fact with a decision (open qu
 says, `deferred` is what the cap would hold, the breaker reads `would trip`, and no breaker 🚨 is posted. The snapshot and the
 line are written in log-only mode too, because the owner reads them before switching writes on. **The review is not log-only**:
 it works on the facts that are already stale, whatever the janitor's mode (§5.6). Nothing in the code switches writes on: the owner did it on 2026-10-27 with `FACT_LIFECYCLE_SWEEP_DRY_RUN=0` in
-`cloudbuild-dev.yaml` (a deploy). The rollback lever is removing the variable (a deploy; `--set-env-vars` replaces every variable). S5's classify was applied the same day (529 + 30 facts) and the owner's re-review of closed facts applied (48 decisions).
+`cloudbuild-dev.yaml` (a deploy). The rollback lever is removing the variable (a deploy; `--set-env-vars` replaces every variable). S5's classify was applied the same day and the owner's re-review of closed facts applied.
 
 **What it stores and posts.** `{prefix}fact_lifecycle_daily/<account>:<UTC day>` gets one snapshot with the whole field set:
 `run_at`, `due`, `newly_due` (due facts whose `expires_at` is after the previous run's `run_at`), `no_decision`, `staled`,
