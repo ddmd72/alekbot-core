@@ -190,6 +190,17 @@ uploads `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors
 scheduled cloud session), which writes the killing assertion or proposes an `equivalent` line, as a test-only PR. The local run above
 stays as the done-check, once per package.
 
+## Clock tests (P16)
+
+- Instants come from `tests.support.clock_instants` (the 2026 DST transitions, skipped and repeated local hours, month ends, UTC midnight); never
+  retype one in a test.
+- Pin a clock per module with `pin_datetime(monkeypatch, module, instant)`, and re-pin at every step that moves time. A third-party clock such as
+  PyJWT's is pinned in its own module. No freezegun or time-machine.
+- Compare a fold-1 value through `.astimezone(timezone.utc)`: aware datetimes with different folds can compare equal.
+- Example zones are Europe/Berlin, Europe/Helsinki and America/New_York.
+- A new test with a DST or month boundary uses this harness. Open defects are strict xfails with their `P16-D<n>` id
+  (`TEST_COVERAGE_SYSTEMIC_RFC.md` -> "Built (P16)").
+
 ## Markers and the machine lock (P1, `tests/plugins/`)
 
 - **`@pytest.mark.slow`** — the test takes over 0.5 s with coverage on (setup + call + teardown). Skipped unless

@@ -531,7 +531,7 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P13 | **Service seams**: handler-level tests that run the **real** `UserNotificationService`, `TaskDispatchService`, `AgentCoordinator`, `SearchEnrichmentService` and `PromptBuilder` over H1 and port fakes for each entry path (worker task types, `ConversationHandler`, `AgentWorkerHandler`), asserting the observable outcome (which channel, which history entry); mutation operator: drop one forwarded kwarg | check | 2 | parameter coupling between services (§1.4 item 6) | 2 |
 | P14 | **Scripted-LLM end to end** for every agent that writes state through tools (Consolidation, Notes, Tasks, Smart's local tools `propose_memory_facts` / `draft_skill` / `workspace`, FileManagement drive mutations): a scripted tool call that uses every declared field, asserted on the final store state; a generic check that every declared tool field changes stored state or is refused — nothing accepted and dropped. **P9 hand-over:** the two deep-research rows of the boot test's `MATRIX` (`deep_research_failed`, `deep_research_webhook_event`, 500 until the formatter's prompt blueprint is seeded) must become 200 here; the other three belong to P15 (list in the "Built (P9)" note). | check | 1.5 | tools that report success after dropping input (§1.3.5) | 2 |
 | P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 |
-| P16 | **Clock suite**: a pinned clock and a table of instants (both 2026 DST transitions in Europe/Madrid, Europe/Kyiv, America/New_York; month end; UTC midnight) through every function that matches an hour or a day boundary (daily review, billing rotation, drive monthly budgets, reminder `due`, Cabinet 24h cap, scratch 7-day TTL) | check | 0.5 | §1.4 item 7 and its class | 2 |
+| P16 | **Clock suite**: a pinned clock and a table of instants (both 2026 DST transitions in Europe/Berlin, Europe/Helsinki, America/New_York; month end; UTC midnight) through every function that matches an hour or a day boundary (daily review, billing rotation, drive monthly budgets, reminder `due`, Cabinet 24h cap, scratch 7-day TTL) | check | 0.5 | §1.4 item 7 and its class | 2 | (built 2026-10-27; see "Built (P16)")
 | P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 (revised 2026-10-27: only with a regeneration command per recorded fixture; see "Rules revised") |
 | P18 | **Reality checks** (§4a): spec-drift workflow, `provider-contract-review` skill + monthly routine, `make contract-probe` for the sandboxed providers | sched | 2–3 + owner sandbox setup | contracts that disagree with reality | 3 |
 | P19 | **Web surfaces, the rest**: `oauth_app`, `user_cabinet_app` route-level tests through the Quart test client on H1 stores — connect flows (with Google token mocks), session cap, every Cabinet write route | check | 1.5–2 | data-exposure bugs beyond the gates of P7 | 3 |
@@ -732,6 +732,35 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
     rows** (the LLM formatter), **P15 owns the other three** (the redelivery payloads: seed the To Do credentials and an indexing job).
 - **Left for "tidy main.py":** the voice closures; `/worker`, `/health` and `/favicon` as a blueprint (then `test_main_worker_route_gate.py` retires);
   the MCP dispatcher; the `slack_adapter.start` patch; the dead Socket-mode branch; the duplicate `/health`; the main.py allowlist entries.
+
+**Built (P16, 2026-10-27).** The clock suite. Test-only: no `src/` change. Files and deviations:
+- **Harness.** `tests/support/clock_instants.py` (self-test `tests/unit/support/test_clock_instants.py`): the 2026 DST instants, the skipped and
+  repeated local hours, fold-0 and fold-1 anchors, month ends, UTC and summer midnight. `pin_datetime(monkeypatch, module, instant)` replaces a
+  module's `datetime` with a subclass whose `now(tz=...)` answers the pinned instant (re-pinned per step; `isinstance` kept by a metaclass). No
+  freezegun or time-machine: a pin is per module, so a test names the module whose clock it moves.
+- **Tests.** Reminders: recurrence across DST (`test_recurrence_instants.py`), firing (`test_reminders_due_instants.py`), NotesAgent and Cabinet
+  local-time input. Daily review and Gmail auto-index (`test_autoindex_hour_instants.py`, `test_daily_review_*`), plus a Gmail `after:` wire test
+  (`test_gmail_review_query_wire.py`, `tests/support/gmail_wire.py`). Billing rotation and the daily summary. The Cabinet 24 h cap, the workspace
+  scratch TTL, month and day keys. To Do times at the Graph boundary (`test_todo_time_instants_wire.py`).
+- **Zones.** Europe/Berlin (UTC+1/+2), Europe/Helsinki (UTC+2/+3) and America/New_York: two offsets around the same EU switch
+  instant plus the US rules.
+- **Defects pinned as strict xfails** (the id is in each reason; the fix removes the marker):
+  - P16-D1: the Gmail auto-index hour match ignores DST (a skipped hour never runs, a repeated hour runs twice, an unknown zone aborts the fan-out).
+  - P16-D2: the review header carries the UTC date.
+  - P16-D4: recurrence drops `fold` (DAILY in the repeated hour returns an instant before the anchor; HOURLY and 15-minute rules lose a real hour on
+    the fall-back day).
+  - P16-D5: a skipped local wall time is accepted as the earlier offset; an unknown Cabinet zone answers 500.
+  - P16-D6: `/auth/refresh` mints a fresh 24 h access token (the cap from login is not enforced).
+  - P16-D7: the billing summary's Month line mixes months after traffic past 00:00Z on the 1st.
+  - P16-D10: To Do sends an aware time's wall-clock digits labelled UTC (due, start, reminder).
+  - P16-D11: the automatic To Do reminder is 20:00 UTC. A fix needs a zone input, so its reviewer rewrites that test.
+- **D3, restated.** The review's port window is anchored at run time, but the Gmail query is day-granular, so reviews overlap by up to a day and the
+  fall-back day leaves a one-hour timestamp hole that `after:` covers. If Gmail reads `after:` in Pacific time, that hole could be a miss for a
+  Helsinki user. Unverified; an owner question, not a test.
+- **Rejected as non-defects after review:** an ambiguous local time resolving to fold 0 (RFC 5545 says so); the UTC billing day (by design); the
+  monthly drive budgets in UTC (documented).
+- **Not covered:** the drive's `_search_v2_alerts` and `_sweep_orphans`; the To Do `update_task` path; the owner's choice whether an ambiguous wall
+  time should be refused.
 
 **Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
 deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years
