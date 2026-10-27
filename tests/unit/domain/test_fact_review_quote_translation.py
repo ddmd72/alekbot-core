@@ -16,10 +16,10 @@ PLAYS_UK = "Алекс грає в теніс по неділях"
 
 
 def test_a_translation_keeps_the_numbers_of_its_source():
-    assert translation_problem("Алекс бігає з 2019 року", "Alex has run since 2019") is None
-    assert translation_problem("Алекс бігає з 2018 року", "Alex has run since 2019") is not None
-    assert translation_problem("Алекс важить 64,5 кг", "Alex weighs 64.5 kg") is None
-    assert translation_problem("Алекс важить 64,5 кг 3", "Alex weighs 64.5 kg") is not None
+    assert translation_problem("Алекс пробіг Римський марафон за 3 год 45 хв.", "Alex ran the Rome marathon in 3h 45m.") is None
+    assert translation_problem("Алекс пробіг Римський марафон за 3 год 54 хв.", "Alex ran the Rome marathon in 3h 45m.") is not None
+    assert translation_problem("Алекс пробіг Римський марафон за 3,75 год", "Alex ran the Rome marathon in 3.75 hours") is None
+    assert translation_problem("Алекс пробіг Римський марафон за 3,75 год 3", "Alex ran the Rome marathon in 3.75 hours") is not None
 
 
 def test_a_translation_may_not_carry_lines_brackets_links_controls_or_excess_length():
@@ -77,13 +77,13 @@ def test_shown_quote_needs_the_language_and_a_still_valid_translation():
     assert shown_quote(PLAYS, record, "fr") == PLAYS
     assert shown_quote(PLAYS, record, None) == PLAYS
     assert shown_quote(PLAYS, None, "uk") == PLAYS
-    changed = QuoteTranslation("uk", quote_digest("Alex has run since 2019"), "Алекс бігає з 2018 року")
-    assert shown_quote("Alex has run since 2019", changed, "uk") == "Alex has run since 2019"
+    changed = QuoteTranslation("uk", quote_digest("Alex ran the Rome marathon in 3h 45m."), "Алекс пробіг Римський марафон за 3 год 54 хв.")
+    assert shown_quote("Alex ran the Rome marathon in 3h 45m.", changed, "uk") == "Alex ran the Rome marathon in 3h 45m."
 
 
 def test_quote_digest_ignores_whitespace_only_differences():
     assert quote_digest("Alex  plays\ntennis ") == quote_digest("Alex plays tennis")
-    assert quote_digest("Alex plays tennis") != quote_digest("Alex plays golf")
+    assert quote_digest("Alex plays tennis") != quote_digest("Alex plays tennis on Saturdays")
     assert len(quote_digest("x")) == 16
     assert quote_digest("é") == quote_digest("é")
 

@@ -15,8 +15,8 @@ from tests.support.fact_review_world import ReviewWorld
 from tests.support.review_rule_builders import question as build_question
 
 USER, ACC = "u1", "acc"
-QUOTED = "Drinks green tea"
-QUOTED_UK = "П'є зелений чай"
+QUOTED = "Alex plays tennis on Sundays."
+QUOTED_UK = "Алекс грає в теніс щонеділі."
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ async def test_the_question_shows_the_translation_in_the_message_language(world)
     fixed(world, LanguageCode.UK)
     await store_uk(world)
 
-    message = await texts(world).message_for(build_question(QuestionStatus.ASKED), USER, ACC)
+    message = await texts(world).message_for(build_question(QuestionStatus.ASKED, quoted_text=QUOTED), USER, ACC)
 
     assert message.quote == QUOTED_UK
     assert message.prompt == world.localization.get_ui_string(LanguageCode.UK, UIMessage.MEMORY_REVIEW_QUESTION)
@@ -76,23 +76,23 @@ async def test_the_question_shows_the_translation_in_the_message_language(world)
 async def test_the_same_text_under_another_fact_id_shows_the_translation(world):
     fixed(world, LanguageCode.UK)
     await store_uk(world)
-    other = build_question(QuestionStatus.ASKED, question_id="q2", fact_id="another-fact-id")
+    other = build_question(QuestionStatus.ASKED, quoted_text=QUOTED, question_id="q2", fact_id="another-fact-id")
 
     assert (await texts(world).message_for(other, USER, ACC)).quote == QUOTED_UK
 
 
 async def test_a_translation_into_another_language_is_not_shown(world):
     fixed(world, LanguageCode.UK)
-    await store_uk(world, language="fr", translated="Boit du thé vert")
+    await store_uk(world, language="fr", translated="Alex joue au tennis le dimanche.")
 
-    assert (await texts(world).message_for(build_question(QuestionStatus.ASKED), USER, ACC)).quote == QUOTED
+    assert (await texts(world).message_for(build_question(QuestionStatus.ASKED, quoted_text=QUOTED), USER, ACC)).quote == QUOTED
 
 
 async def test_english_messages_read_no_translation(world):
     fixed(world, LanguageCode.EN)
     store = CountingStore(world.review_store)
 
-    message = await texts(world, store).message_for(build_question(QuestionStatus.ASKED), USER, ACC)
+    message = await texts(world, store).message_for(build_question(QuestionStatus.ASKED, quoted_text=QUOTED), USER, ACC)
 
     assert message.quote == QUOTED and store.translation_reads == 0
 
@@ -102,7 +102,7 @@ async def test_a_failing_translation_read_shows_the_stored_text(world, caplog):
 
     with caplog.at_level(logging.WARNING):
         message = await texts(world, FailingTranslations(world.review_store)).message_for(
-            build_question(QuestionStatus.ASKED), USER, ACC)
+            build_question(QuestionStatus.ASKED, quoted_text=QUOTED), USER, ACC)
 
     assert message.quote == QUOTED
     warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
@@ -116,7 +116,7 @@ async def test_a_message_still_counts_one_labels_fallback(world):
     await world.review_store.mark_enqueued(ACC, world.now)
     await world.review_store.set_language(ACC, "ru", {}, "stale-digest")     # a Russian set that does not hold
 
-    await texts(world).question_and_labels(build_question(QuestionStatus.ASKED), USER, ACC)
+    await texts(world).question_and_labels(build_question(QuestionStatus.ASKED, quoted_text=QUOTED), USER, ACC)
 
     rows = [row for row in await world.counters.for_day(world.now.date()) if row.account_id == ACC]
     assert rows[0].labels_fallback == 1
@@ -127,7 +127,7 @@ async def test_question_and_labels_reads_once(world):
     await store_uk(world)
     store = CountingStore(world.review_store)
 
-    message, labels = await texts(world, store).question_and_labels(build_question(QuestionStatus.ASKED), USER, ACC)
+    message, labels = await texts(world, store).question_and_labels(build_question(QuestionStatus.ASKED, quoted_text=QUOTED), USER, ACC)
 
     assert store.states == 1 and store.translation_reads == 1
     assert message.quote == QUOTED_UK and message.prompt == labels["memory_review_question"]

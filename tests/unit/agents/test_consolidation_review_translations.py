@@ -64,8 +64,8 @@ async def test_mirror_mode_also_asks_for_translations_into_the_reported_language
 
 
 async def test_a_fixed_mode_report_returns_valid_translations_tagged_with_the_fixed_language(world, caplog):
-    fact, other = await _stale(world, PLAYS), await _stale(world, "was born in 1990")
-    final = _report(translations={fact: PLAYS_UK, other: "народився у 1991", "no-such-id": "щось"})
+    fact, other = await _stale(world, PLAYS), await _stale(world, "Alex was born in 1980.")
+    final = _report(translations={fact: PLAYS_UK, other: "Алекс народився у 1981.", "no-such-id": "щось"})
     agent = _agent(world, [final])
     task = FactReviewTask.model_validate({**(await _task(world, fact, other, mirror=False)).model_dump(), "language": "uk"})
 
@@ -78,7 +78,7 @@ async def test_a_fixed_mode_report_returns_valid_translations_tagged_with_the_fi
     ]
     warned = " ".join(r.getMessage() for r in caplog.records if "translation refused" in r.getMessage())
     assert other in warned and "no-such-id" in warned
-    assert PLAYS_UK not in warned and "1991" not in warned
+    assert PLAYS_UK not in warned and "1981" not in warned
 
 
 async def test_a_mirror_report_tags_translations_with_the_reported_language(world):
