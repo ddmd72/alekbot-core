@@ -735,30 +735,33 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
 
 **Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
 deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years
-without his attention. Everything that can run in the cloud runs in the cloud; nothing reports to Slack; artifacts are read by a
+without his attention. Everything that can run in the cloud runs in the cloud; the two weekly workflows never report to Slack (the CI, timing and PII-gate notifications are unchanged); artifacts are read by a
 scheduled routine that fixes survivors by PR.
 - **F1 `.github/workflows/mutation.yml`** (`Mutation survivors`): Sunday 02:00 UTC and `workflow_dispatch` (optional input `module`);
-  one job per module registered in `tests/support/mutation_targets.py` (`MutationTarget(module, tests, equivalent, operators)`, `TARGETS`;
-  CLI `python -m tests.support.mutation_targets --matrix | --summarize DIR --out-md --out-json`). The driver gained `--report PATH` (JSON)
+  one job per module registered in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", extra_tests=())`, `TARGETS`; tests are computed by import closure, `extra_tests` is the
+  escape hatch for a test that reaches the module only through `src` or a conftest fixture;
+  CLI `python -m tests.support.mutation_targets --matrix | --tests-for <module> | --summarize DIR --out-md --out-json`). The driver gained `--report PATH` (JSON)
   and `--no-fail`. Artifacts `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`), also in the step summary.
   `survivors.md` lists every registered module, `missing` when a job produced no report and `partial (N of M)` when it was cut (the report is rewritten after each mutant). Never red because mutants survived. Registering a package's modules in `TARGETS` is part of "package done"; a unit test fails when a
   `*_equivalent_mutants.txt` file has no registered target. The local done-check (the table in `tests/CLAUDE.md`) stays, once per package.
 - **F2** `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` rewrites `tests/unit/main_boots_offline_url_map.txt`
-  from the booted app (header kept, sorted); the diff in the PR is the review. Without the variable nothing is written.
-- **F3** Docs-only PRs skip `make ci`. `scripts/ci/docs_only.py` is the one definition of "docs": `docs/**`, root `*.md`,
-  `tests/CLAUDE.md`, `src/**/CLAUDE.md`, `.github/**/*.md`; not `src/**/SKILL.md`, `tests/fixtures/**`, `scripts/**`, any non-markdown
-  file. The `check` job keeps its name and prints a notice instead; a docs-only PR still runs the doc-reading tests listed in `DOC_READING_TESTS`.
+  from the booted app (header kept, sorted); the diff in the PR is the review. Without the variable nothing is written. The implementer commits the rewritten pin, the task reviewer reads its diff (no separate approval), and a new route must also be refused or listed in `PUBLIC` of `tests/unit/web/test_every_route_refuses_anonymous.py`.
+- **F3** Docs-only PRs skip `make ci`. `scripts/ci/docs_only.py` is the one definition of "docs": every file under `docs/` (any extension), root `*.md`,
+  `.github/**/*.md`, `CLAUDE.md` anywhere except under `src/skills/`; nothing else (not `src/**/SKILL.md`, `tests/fixtures/**`, `scripts/**`, any
+  other file). The skip also applies to a push to `main` and to the `timing` job; dependencies are still installed, the PII gate and the CI Slack
+  notice still run. The `check` job keeps its name and prints a notice instead; a docs-only PR still runs the doc-reading tests listed in
+  `DOC_READING_TESTS` (the meta-test is an equality check; known gap: a test reading a root `*.md` or `CLAUDE.md` is not detected).
 - **F4 `.github/workflows/parity.yml`** (`Firestore parity`): Sunday 03:00 UTC and `workflow_dispatch`; authenticates through Workload
   Identity Federation as the test service account (`tests/cloud/conftest.py` accepts default credentials that already identify as that
   account, otherwise impersonates as before; every guard unchanged); runs `make test-cloud`; artifact `parity` (`parity.xml`,
-  `parity.log`; the three secret values are replaced before upload). Never red because a scenario failed, but red when a secret is empty or zero tests ran.
+  `parity.log`; four values are replaced before upload: the three secrets plus `TEST_WIF_PROVIDER` and the ids inside it; a failed redaction deletes both files and skips the upload). Never red because a scenario failed, but red when a secret is empty, federation fails, zero tests ran, or `parity.xml` is missing or unreadable.
 - **F6 (outside the repo)** the Monday routine, a scheduled cloud Claude session: downloads the latest `survivors` and `parity`
   artifacts, writes the killing assertion or proposes an `equivalent` line per survivor, opens a test-only PR. KPI: open survivors by
   the next Monday = 0, `error` statuses = 0, growth of equivalents watched. It escalates to the owner only a survivor older than two
   weeks, in one line with a recommendation.
-- **R7** Mechanical adaptations of existing tests after a rename, a signature or constructor-argument change, or an import move go in
-  their own commit titled `test(mechanical): ...`. The reviewer reads that commit as a whole and checks one thing: no assertion changed
-  (added, removed or loosened). Behavioural edits stay per test under the reviewer rule.
+- **R7** Mechanical adaptations of existing tests after a rename or a signature or constructor-argument change go in the implementer's
+  own commit titled `test(mechanical): ...` (an import path fixed after a rename needs no reviewer). The reviewer reads that commit as a
+  whole and checks one thing: no assertion changed (a different value, condition or count asserted; renaming an identifier inside an assert is mechanical). Behavioural edits stay per test under the reviewer rule.
 - **R8** In `wiring_instance_ledger.txt` a line with count 1 is a registration and is the implementer's to add; counts above 1 and every
   line of `wiring_none_ledger.txt` remain the reviewer's decision. Both ledgers still fail both ways.
 - **R9** A per-layer coverage floor (`scripts/check_coverage_layers.py` `FLOORS`) may be lowered in the same PR that needs it, with a

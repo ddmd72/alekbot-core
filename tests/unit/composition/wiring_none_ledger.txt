@@ -1,6 +1,7 @@
 # Every attribute that is None in the production application graph after start(), with one user's eager and lazy agents.
 # Read by test_application_graph_wiring.py; it fails both ways (a None that is not here, a line whose None is gone).
-# Line: <key>  # <reason> <evidence>. Reasons: off-in-prod | optional-knob | lazy | runtime | by-design | defect:<id>.
+# Line: <key>  # <reason> <evidence>. Reasons: off-in-prod | optional-knob | lazy | runtime | by-design | defect:D<n> (the id from the P9 defect list).
+# R8: every line of this file is the reviewer's decision; an implementer does not add one.
 # Key: a path from `app` (exact), `Class.attr` (None on every walked instance of the class), `Class.attr*` (any instance may be None).
 # A loop that start() creates (_flush_task, _sweep_task) is never listed: the test requires it to be running.
 

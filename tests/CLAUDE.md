@@ -15,9 +15,9 @@ This table is the one place that says which test command to run when. Other docs
 | Wiring done-check (P9) | `python -m tests.support.semantic_mutants --module <src.composition.X or main> --operators wiring --equivalent tests/unit/composition/wiring_equivalent_mutants.txt --tests <the P9 test files>` | the command is spelled out in "The production graph" below; about 9-10 s per mutant |
 | Only when the task needs them | `make test-integration`, `make test-e2e-all` | some integration tests and all e2e tests call real services |
 | Fake against the real thing (P5) | `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pytest tests/unit/support/test_firestore_parity.py`, and `make test-cloud` | the parity scenarios on the Firestore emulator, and on the test database (see below) |
-| Docs-only PR | (automatic) | `make ci` is skipped (F3), but the doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`) still run; a meta-test fails when a unit test reads `docs/` or walks `*.md` without being listed |
-| Weekly cloud runs (nothing to do by hand) | `Mutation survivors` (`mutation.yml`) and `Firestore parity` (`parity.yml`), Sunday; after a package: `gh workflow run mutation.yml -f module=<module>` | artifacts `survivors` and `parity`, read by the Monday routine, which fixes survivors by PR; never red for a survivor or a failed scenario, never Slack |
-| Re-pin the URL map | `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` | single file, no `-n`; rewrites `main_boots_offline_url_map.txt` from the booted app; the diff is the review |
+| Docs-only PR | (automatic) | `make ci` is skipped (F3; also on a push to `main` and in the `timing` job; dependencies are still installed, the PII gate and the CI Slack notice still run). Docs: every file under `docs/` (any extension), `CLAUDE.md` anywhere except under `src/skills/` (nothing there is docs), root `*.md`, `.github/**/*.md`. The doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`) still run; the meta-test is an equality check (fails when an unlisted test reads docs and when a listed one stops). Known gap: a test reading a root `*.md` or a `CLAUDE.md` is not detected |
+| Weekly cloud runs (nothing to do by hand) | `Mutation survivors` (`mutation.yml`) and `Firestore parity` (`parity.yml`), Sunday; after a package: `gh workflow run mutation.yml -f module=<module>` (works once the module is registered on `main`, or with `--ref <branch>`; `Firestore parity` runs on `main` only, WIF is bound to it) | artifacts `survivors` and `parity`, read by the Monday routine, which fixes survivors by PR; never red for a survivor or a failed scenario, never Slack |
+| Re-pin the URL map | `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` | single file, no `-n`; rewrites `main_boots_offline_url_map.txt` from the booted app; the implementer commits the rewritten pin and the task reviewer reads its diff (no separate approval); a new route must also be refused or listed in `PUBLIC` of `tests/unit/web/test_every_route_refuses_anonymous.py` |
 | Wall-clock tests | `make test-timing`, by hand (CI runs it after a merge to `main`) | `timing` tests only |
 
 Never: re-run a suite because a `timing` test failed; combine `--testmon` with `--cov`; run two full suites at once
@@ -96,7 +96,7 @@ refuses to start unless the database ends in `-test`, is not the live one and th
 impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; a run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run). The weekly `Firestore parity` workflow (`.github/workflows/parity.yml`, Sunday 03:00 UTC and `workflow_dispatch`) authenticates through Workload
 Identity Federation as the test service account and runs `make test-cloud` (artifact `parity`: `parity.xml`, `parity.log`; never red for a failed scenario).
 `tests/cloud/conftest.py` accepts default credentials that already identify as the test service account, otherwise it impersonates as before; every guard
-is unchanged. The parity artifact is redacted (the three secret values are replaced before upload); the job fails when a secret is empty or zero tests ran. The Sunday 03:00 UTC run can collide with a manual `make test-cloud` (no lease yet): do not run it by hand at that time. One runner at a time: the workflow runs under a `concurrency` group (no lease document).
+is unchanged. The parity artifact is redacted (four values are replaced before upload: the three secrets plus `TEST_WIF_PROVIDER` and the ids inside it); the job is red when a secret is empty, federation fails, zero tests ran, or `parity.xml` is missing or unreadable; when the redaction itself fails both files are deleted and the upload is skipped. The Sunday 03:00 UTC run can collide with a manual `make test-cloud` (no lease yet): do not run it by hand at that time. One runner at a time: the workflow runs under a `concurrency` group (no lease document).
 
 Extending the fake with a new Firestore feature = a new scenario in `tests/support/firestore_parity.py`, run on the emulator and with `make test-cloud`; an adapter that starts using a feature the fake lacks fails loudly (unsupported operator / no such method) — extend the fake then, never work around it in the test.
 
@@ -104,7 +104,7 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
 
 - `.coveragerc` has `branch = True` and measures `src/` plus the root `*_main.py`; `make ci` fails under the global
   `--cov-fail-under`, the per-file table (`scripts/check_coverage_thresholds.py`) and the **per-layer floors**
-  (`scripts/check_coverage_layers.py`, branch-aware percent per layer). Floors only rise: raise a floor only to min(local `make ci`, the CI 'Coverage per layer' notice) − 0.3. The script
+  (`scripts/check_coverage_layers.py`, branch-aware percent per layer). Floors rise, or are lowered with a reason line and the reviewer's OK: raise a floor only to min(local `make ci`, the CI 'Coverage per layer' notice) − 0.3. The script
   prints "floor can rise to X" when that would be 0.5 above the floor; raise it in the same change. A floor may be lowered in the same PR that needs it, with a one-line reason comment next to the value and the reviewer's OK; the owner reads it in the diff (R9).
 - The per-file table holds the auth files (verifiers, sign-in, MCP authorization, the gated webhooks and routes) at 100 % lines (P7):
   a refusal line no test runs fails `make ci`.
@@ -137,10 +137,10 @@ The main service's non-web objects are built by `build_application_graph(config,
 - **The ledgers** (`tests/unit/composition/wiring_none_ledger.txt`, `wiring_instance_ledger.txt`; checks in `tests/support/wiring_ledger.py`):
   every `None` the walk finds and every instance count is listed with a reason; both fail **both ways** (an unlisted `None` or count,
   and a listed line whose `None` or count is gone). The reason is one of `off-in-prod`, `optional-knob`, `lazy`, `runtime`,
-  `by-design`, `defect:<id>`, followed by evidence of at least two words. A count-1 line of `wiring_instance_ledger.txt` is a registration and
+  `by-design`, `defect:D<n>` (the id from the P9 defect list), followed by evidence of at least two words. A count-1 line of `wiring_instance_ledger.txt` is a registration and
   is the implementer's to add; counts above 1 and every line of `wiring_none_ledger.txt` are the reviewer's decision, not a way to make a
   test pass. A `defect:` line is a wiring fault someone owns. `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py`
-  rewrites `main_boots_offline_url_map.txt` from the booted app (header kept, sorted); without the variable nothing is written. Line forms:
+  rewrites `main_boots_offline_url_map.txt` from the booted app (header kept, sorted); without the variable nothing is written. The implementer commits the rewritten pin and the task reviewer reads its diff (no separate approval); a new route must also be refused or listed in `PUBLIC` of `tests/unit/web/test_every_route_refuses_anonymous.py`. Line forms:
   - `wiring_none_ledger.txt`: `<key>  # <reason> <evidence>`, the key a path from `app` (exact), `Class.attr` (None on every walked
     instance of the class) or `Class.attr*` (any instance may be None; refused on adapter, service, handler and composition classes);
   - `wiring_instance_ledger.txt`: `<module.Class> <count>  # <reason> <evidence>`; a count above 1 names where each instance is built.
@@ -152,9 +152,7 @@ The main service's non-web objects are built by `build_application_graph(config,
            src.composition.slack_adapter_factory src.composition.telegram_adapter_factory; do
     python -m tests.support.semantic_mutants --module "$m" --operators wiring \
       --equivalent tests/unit/composition/wiring_equivalent_mutants.txt \
-      --tests tests/unit/test_main_boots_offline.py tests/unit/test_worker_triggers.py \
-              tests/unit/composition/test_application_graph_wiring.py tests/unit/composition/test_application_graph_values.py \
-              tests/unit/test_main_wiring_values.py
+      --tests $(python -m tests.support.mutation_targets --tests-for "$m")
   done
   ```
   A survivor gets a new assertion in a new file; the reviewer alone rules a mutant equivalent in `wiring_equivalent_mutants.txt`.
@@ -174,8 +172,8 @@ python -m tests.support.semantic_mutants --module src.adapters.firestore_repo \
 ```
 
 The test list is computed, not hand-written: `python -m tests.support.mutation_targets --tests-for <src.module>` prints every `tests/unit`
-test file that reaches the module through imports (it follows imports only through `tests/` modules, never through `src/`). A test that
-reaches a module only through `src` (e.g. through `main`) is listed in the target's `extra_tests`.
+test file that reaches the module through imports (it follows imports only through `tests/` modules, never through `src/`). `extra_tests` is the escape hatch for a test that reaches the module only through `src` (e.g. via `main`) or only through a conftest fixture
+(conftests are never followed). For a registered target `--tests-for <m>` prints the full list (computed + `extra_tests`); it exits 2 with a message when no unit test reaches the module.
 
 Statuses: killed, survived, equivalent, and `error` (the selected tests never loaded the module, or the run could not tell; exit 2;
 not a pass). `except-success` skips handlers that only log and already return the success value. Slow tests run in the mutant
@@ -184,7 +182,7 @@ children (`RUN_SLOW_TESTS=1`).
 A survivor means the tests do not notice that defect: write the assertion that does. `--equivalent` takes
 `key  # reason` lines (the 8-hex key in the report) and is the reviewer's tool, never the implementer's.
 
-Registering a package's modules in `tests/support/mutation_targets.py` (`MutationTarget(module, tests, equivalent, operators)` in `TARGETS`)
+Registering a package's modules in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", extra_tests=())` in `TARGETS`)
 is part of "package done"; a unit test fails when a `*_equivalent_mutants.txt` file has no registered target. The driver takes
 `--report PATH` (JSON) and `--no-fail` (exit 0 whatever survived). The `Mutation survivors` workflow (`.github/workflows/mutation.yml`,
 Sunday 02:00 UTC and `workflow_dispatch` with an optional `module`) runs one job per registered module with `--report --no-fail` and
@@ -217,6 +215,10 @@ The one who writes the code never edits an existing test to make it pass; a revi
 (root `CLAUDE.md` -> "Tests - REVIEWER RULE"). A failing test is the specification speaking. The network guard may fail
 existing tests: record test id, exception and what it connects to, and hand the list to a reviewer.
 
-Mechanical adaptations (R7): a rename, a signature or constructor-argument change, or an import move that breaks existing tests goes in
-its own commit titled `test(mechanical): ...`. The reviewer reads that commit as a whole and checks one thing: no assertion changed
-(added, removed or loosened). Behavioural edits stay per test under the reviewer rule.
+Mechanical adaptations (R7): a rename or a signature or constructor-argument change that breaks existing tests goes in the implementer's
+own commit titled `test(mechanical): ...` (an import path fixed after a module rename you performed needs no reviewer at all). The reviewer
+reads that commit as a whole and checks one thing: no assertion changed. An assertion is changed when a different value, condition or count
+is asserted; renaming an identifier or keyword inside an assert after a rename is mechanical. Behavioural edits stay per test under the reviewer rule.
+
+Tests of deleted code are deleted in the same PR by the implementer and listed in the PR body; the reviewer checks that each deleted
+test's subject is gone (not a weakening).
