@@ -15,7 +15,7 @@ from google.api_core.exceptions import NotFound, ServiceUnavailable
 
 from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
 from src.domain.email import IndexedEmail, IndexingState
-from tests.support.firestore_eval import EvalDb, stored_vector
+from tests.support.firestore_eval import EvalDb, EvalQuery, stored_vector
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -136,17 +136,37 @@ async def test_find_nearest_leaves_out_an_unparseable_fact(repo):
 
 @pytest.mark.xfail(strict=True, raises=AssertionError,
                    reason="P11-G2-2: every vector query failing reads as no match ('No emails found')")
-async def test_find_nearest_raises_when_every_channel_fails(repo):
+async def test_find_nearest_raises_when_every_channel_fails(repo, monkeypatch):
     """Flips when find_nearest re-raises after gather if every channel raised (one line after the gather)."""
     await repo.save_batch([email("e1", tags_vector=Y)])
     require(ids(await repo.find_nearest("u1", {"vector": X, "tags_vector": Y})) == ["e1"], "the healthy search finds e1")
+    refused = record_refusals(monkeypatch)
     repo.db.collection(FACTS).fail = ServiceUnavailable("503 UNAVAILABLE firestore down")
     raised = None
     try:
         await repo.find_nearest("u1", {"vector": X, "tags_vector": Y})
     except Exception as exc:     # noqa: BLE001 - any raise is the outcome; the type is the fix's choice
         raised = exc
+    require(refused == ["vector", "tags_vector"] or refused == ["tags_vector", "vector"],
+            "both channel queries were refused by the failing collection")
     assert raised is not None
+
+
+def record_refusals(monkeypatch):
+    """The vector field of every facts query that raised ServiceUnavailable, in order."""
+    refused = []
+    original = EvalQuery.get
+
+    async def get(query, transaction=None):
+        try:
+            return await original(query, transaction=transaction)
+        except ServiceUnavailable:
+            if query.group is None and query.cols[0].name == FACTS:
+                refused.extend(op[1]["vector_field"] for op in query.ops if op[0] == "find_nearest")
+            raise
+
+    monkeypatch.setattr(EvalQuery, "get", get)
+    return refused
 
 
 # --------------------------------------------------------------------------------------------------- cursors
@@ -176,18 +196,19 @@ async def test_delete_by_user_removes_more_than_500_and_keeps_other_users_and_cu
 # --------------------------------------------------------------------------------------------------- consolidation
 
 async def test_unconsolidated_is_oldest_indexed_first_with_limit_and_served_by_the_index(repo):
-    await repo.save_batch([email("e3", indexed_at=D0 + timedelta(hours=3)), email("e1", indexed_at=D0),
+    # ids sort against time, so only the ordering by indexed_at gives this order
+    await repo.save_batch([email("e1", indexed_at=D0 + timedelta(hours=3)), email("e3", indexed_at=D0),
                            email("e2", indexed_at=D0 + timedelta(hours=2)),
                            email("theirs", user_id="u2", indexed_at=D0 - timedelta(hours=1)),
                            email("done", indexed_at=D0 - timedelta(hours=2), consolidated_at=D0)])
-    assert ids(await repo.get_unconsolidated_batch("u1")) == ["e1", "e2", "e3"]
-    assert ids(await repo.get_unconsolidated_batch("u1", limit=2)) == ["e1", "e2"]
+    assert ids(await repo.get_unconsolidated_batch("u1")) == ["e3", "e2", "e1"]
+    assert ids(await repo.get_unconsolidated_batch("u1", limit=2)) == ["e3", "e2"]
 
 
 async def test_a_new_email_is_unconsolidated(repo):
-    await repo.save_batch([email("e2", indexed_at=D0 + timedelta(minutes=1)), email("e1")])
+    await repo.save_batch([email("e1", indexed_at=D0 + timedelta(minutes=1)), email("e2")])
     got = await repo.get_unconsolidated_batch("u1")
-    assert ids(got) == ["e1", "e2"] and got[0].consolidated_at is None
+    assert ids(got) == ["e2", "e1"] and got[0].consolidated_at is None
 
 
 async def test_mark_consolidated_removes_them_from_the_batch_and_other_users_untouched(repo):

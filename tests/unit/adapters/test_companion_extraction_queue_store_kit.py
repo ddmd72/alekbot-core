@@ -45,11 +45,12 @@ def ids(batches):
 
 
 async def test_pending_is_oldest_first_and_served_by_the_declared_index(queue):
-    await put(queue, "c2", 2.0)
-    await put(queue, "c1", 1.0)
-    await put(queue, "c3", 3.0, BatchStatus.RETRY_PENDING)
+    # ids sort against time, so only the ordering by created_at gives this order
+    await put(queue, "c1", 2.0)
+    await put(queue, "c3", 1.0)
+    await put(queue, "c2", 3.0, BatchStatus.RETRY_PENDING)
     got = await queue.get_pending_batches(SID)
-    assert ids(got) == ["c1", "c2", "c3"]
+    assert ids(got) == ["c3", "c1", "c2"]
     assert (got[0].account_id, got[0].companion_type, got[0].messages) == ("a1", "tutor", MESSAGES)
 
 
@@ -57,9 +58,9 @@ async def test_pending_limit_after_filter_and_other_sessions_excluded(queue):
     await put(queue, "other", 0.1, session_id=SID2)
     await put(queue, "processing", 0.2, BatchStatus.PROCESSING)
     await put(queue, "failed", 0.3, BatchStatus.FAILED)
-    for n, t in (("c3", 3.0), ("c1", 1.0), ("c2", 2.0)):
+    for n, t in (("c1", 3.0), ("c2", 2.0), ("c3", 1.0)):
         await put(queue, n, t)
-    assert ids(await queue.get_pending_batches(SID, limit=1)) == ["c1"]
+    assert ids(await queue.get_pending_batches(SID, limit=2)) == ["c3", "c2"]
     assert ids(await queue.get_pending_batches(SID2)) == ["other"]
 
 

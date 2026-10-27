@@ -57,9 +57,10 @@ class SessionStore(ABC):
     ) -> None:
         """Append messages at the end, all or none, then apply the sliding window.
 
-        Window: while the history is longer than the window (the store's values, or the threshold resolver's
-        (max, batch) for this session), the oldest `batch` messages are cut and each cut batch is handed to the
-        overflow callback, oldest first, after the append is stored.
+        Window (an append to an existing session): while the history is longer than the window (the store's
+        values, or the threshold resolver's (max, batch) for this session), the oldest `batch` messages are cut and
+        each cut batch is handed to the overflow callback, oldest first, after the append is stored. The first
+        append to a new session is stored whole.
         Atomicity: concurrent appends to one session are all kept. The cut and the hand-off are not atomic: the cut
         is stored first, so a failed hand-off loses that batch (P11-G2-3; the memory map lists it as a known loss).
         Idempotency: none; a repeated call appends the messages again.

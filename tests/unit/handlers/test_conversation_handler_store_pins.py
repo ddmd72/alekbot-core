@@ -26,16 +26,14 @@ SID = "u1:C1"
 
 @pytest.fixture
 def world(monkeypatch):
-    sleeps = []
-
     async def no_wait(delay):
-        sleeps.append(delay)
+        return None
 
     monkeypatch.setattr(retry_module, "asyncio", SimpleNamespace(sleep=no_wait))
     db = EvalDb(indexes=INDEXES_FILE, groups={SESS: "development_sessions"})
     store = FirestoreSessionStore(db, SESS, max_history_length=70, batch_size=50)
     handler = ConversationHandler(coordinator=None, agent_factory=None, file_service=None)
-    return SimpleNamespace(db=db, store=store, handler=handler, sleeps=sleeps)
+    return SimpleNamespace(db=db, store=store, handler=handler)
 
 
 async def save_turn(world):

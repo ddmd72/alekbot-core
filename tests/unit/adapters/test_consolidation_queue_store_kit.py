@@ -45,12 +45,13 @@ def ids(batches):
 # --------------------------------------------------------------------------------------------------- pending
 
 async def test_pending_is_oldest_first_and_served_by_the_declared_index(queue):
-    await put(queue, "b2", 2.0)
-    await put(queue, "b1", 1.0)
-    await put(queue, "b3", 3.0, BatchStatus.RETRY_PENDING)
+    # ids sort against time, so only the ordering by created_at gives this order
+    await put(queue, "b1", 2.0)
+    await put(queue, "b3", 1.0)
+    await put(queue, "b2", 3.0, BatchStatus.RETRY_PENDING)
     got = await queue.get_pending_batches("u1")
-    assert ids(got) == ["b1", "b2", "b3"]
-    assert got[0] == ConsolidationBatch(batch_id="b1", user_id="u1", session_id="u1:C1", messages=MESSAGES,
+    assert ids(got) == ["b3", "b1", "b2"]
+    assert got[0] == ConsolidationBatch(batch_id="b3", user_id="u1", session_id="u1:C1", messages=MESSAGES,
                                         created_at=1.0)
 
 
@@ -58,9 +59,9 @@ async def test_pending_respects_limit_after_the_filter(queue):
     await put(queue, "other-old", 0.1, user_id="u2")
     await put(queue, "failed-old", 0.2, BatchStatus.FAILED)
     await put(queue, "processing-old", 0.3, BatchStatus.PROCESSING)
-    for n, t in (("b3", 3.0), ("b1", 1.0), ("b2", 2.0)):
+    for n, t in (("b1", 3.0), ("b2", 2.0), ("b3", 1.0)):
         await put(queue, n, t)
-    assert ids(await queue.get_pending_batches("u1", limit=2)) == ["b1", "b2"]
+    assert ids(await queue.get_pending_batches("u1", limit=2)) == ["b3", "b2"]
 
 
 async def test_pending_excludes_processing_failed_completed_and_other_users(queue):

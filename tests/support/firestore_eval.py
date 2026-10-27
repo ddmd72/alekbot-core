@@ -8,7 +8,7 @@ this module imports nothing from it). Documents are nested dicts. Evaluated, not
   is excluded), ranges, `in`, `array_contains*`; Firestore's value-type ordering; the implicit ordering (a range or
   `!=` filter orders by its field after the explicit orderings, in the last explicit direction, then `__name__`, so it
   decides what a `limit` returns); a naive `datetime` filter value (also inside an `in` list) is the UTC instant, as
-  the client encodes it (cursor values are compared as given); cursors; `limit`; `select`; aggregations; cosine `find_nearest` (any other measure
+  the client encodes it (cursor values and datetimes nested in a map value are compared as given); cursors; `limit`; `select`; aggregations; cosine `find_nearest` (any other measure
   is refused) whose pre-filter may be a range or `!=`; dotted field paths everywhere (`where`, `order_by`, `select`,
   cursors, `snap.get`);
 - writes: `set` (merge or not), `create` (`AlreadyExists`), `update` (dotted keys are nested paths, `NotFound` on a
