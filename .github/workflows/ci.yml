@@ -19,9 +19,9 @@ jobs:
           fetch-depth: 0
 
       - name: Classify the change
-        # A change of documentation only (docs/, root *.md, CLAUDE.md files, .github/*.md) skips install and `make ci`.
-        # scripts/ci/docs_only.py is the one place that defines "docs"; an empty or unknown diff runs everything.
-        # Runs before setup-python: the runner's python3, stdlib only.
+        # A change of documentation only (docs/, root *.md, CLAUDE.md files, .github/*.md) skips `make ci` and runs
+        # only the tests that read docs. scripts/ci/docs_only.py is the one place that defines "docs"; an empty or
+        # unknown diff runs everything. --no-renames lists the old path of a rename. Runs before setup-python (stdlib python3).
         id: changes
         env:
           EVENT: ${{ github.event_name }}
@@ -31,24 +31,18 @@ jobs:
         run: |
           FILES=""
           if [ "$EVENT" = "pull_request" ]; then
-            FILES=$(git diff --name-only "origin/$BASE_REF...HEAD" || true)
+            FILES=$(git diff --no-renames --name-only "origin/$BASE_REF...HEAD" || true)
           elif [ -n "$BEFORE" ] && [ "${BEFORE#*[!0]}" != "$BEFORE" ]; then
-            FILES=$(git diff --name-only "$BEFORE" "$SHA" || true)
+            FILES=$(git diff --no-renames --name-only "$BEFORE" "$SHA" || true)
           fi
           echo "docs_only=$(printf '%s\n' "$FILES" | python3 scripts/ci/docs_only.py)" >> "$GITHUB_OUTPUT"
 
-      - name: Docs-only change
-        if: steps.changes.outputs.docs_only == 'true'
-        run: 'echo "::notice title=docs-only::make ci skipped: only documentation changed"'
-
       - uses: actions/setup-python@v5
-        if: steps.changes.outputs.docs_only != 'true'
         with:
           python-version: "3.13"
           cache: pip
 
       - name: Install dependencies
-        if: steps.changes.outputs.docs_only != 'true'
         run: pip install -r requirements.txt
 
       - name: Cache ffmpeg
@@ -78,6 +72,13 @@ jobs:
       - name: Put ffmpeg on PATH
         if: steps.changes.outputs.docs_only != 'true'
         run: echo "$HOME/.cache/ffmpeg/bin" >> "$GITHUB_PATH"
+
+      - name: Doc-reading tests
+        # Docs-only change: the tests that read documentation still run (scripts/ci/docs_only.py: DOC_READING_TESTS).
+        if: steps.changes.outputs.docs_only == 'true'
+        run: |
+          echo "::notice title=docs-only::make ci skipped: only documentation changed; doc-reading tests ran"
+          python -m pytest $(python scripts/ci/docs_only.py --doc-reading-tests) -q -p no:cacheprovider
 
       - name: make ci
         # make ci = ruff check src/ and the root entry points + mypy (domain/ports) + the unit suite once (slow tests, coverage gate)
@@ -143,16 +144,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify the change
+        # Same rule as the `check` job (scripts/ci/docs_only.py): a docs-only push to main skips the timing run.
+        # Always a push here; an all-zero `before` (new branch) or an empty diff runs everything.
+        id: changes
+        env:
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          FILES=""
+          if [ -n "$BEFORE" ] && [ "${BEFORE#*[!0]}" != "$BEFORE" ]; then
+            FILES=$(git diff --no-renames --name-only "$BEFORE" "$SHA" || true)
+          fi
+          echo "docs_only=$(printf '%s\n' "$FILES" | python3 scripts/ci/docs_only.py)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/setup-python@v5
+        if: steps.changes.outputs.docs_only != 'true'
         with:
           python-version: "3.13"
           cache: pip
 
       - name: Install dependencies
+        if: steps.changes.outputs.docs_only != 'true'
         run: pip install -r requirements.txt
 
       - name: make test-timing
+        if: steps.changes.outputs.docs_only != 'true'
         run: make test-timing
 
       - name: Notify Slack (pass/fail)

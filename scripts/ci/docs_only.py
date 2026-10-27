@@ -2,7 +2,9 @@
 
 This module is the one place that defines "documentation". Fail safe: anything not
 recognised as docs, and an empty list, means "not docs-only" (run everything).
-Usage: git diff --name-only A...B | python scripts/ci/docs_only.py   ->  true | false
+Usage: git diff --no-renames --name-only A...B | python scripts/ci/docs_only.py   ->  true | false
+(--no-renames is required: a rename otherwise lists only the new path, hiding the old code path.)
+`--doc-reading-tests` prints the unit tests that read documentation, which a docs-only run still executes.
 """
 import sys
 from pathlib import PurePosixPath
@@ -13,6 +15,13 @@ _DOC_NAMES = {"CLAUDE.md"}
 # Top-level trees that are code input even when the file is Markdown
 # (system skills are loaded at startup; scripts and tests are executed or asserted on).
 _CODE_TREES = ("src", "tests", "scripts", "prompts_snapshot")
+
+# Unit tests that read files this module calls docs. A docs-only run executes exactly these;
+# tests/unit/scripts/test_docs_only.py fails when another test starts reading docs.
+DOC_READING_TESTS: tuple[str, ...] = (
+    "tests/unit/domain/test_drive_search_v2_frozen_core.py",
+    "tests/unit/test_facts_have_no_ttl_policy.py",
+)
 
 
 def _is_doc(path: str) -> bool:
@@ -38,7 +47,10 @@ def is_docs_only(paths: Iterable[str]) -> bool:
     return bool(cleaned) and all(_is_doc(p) for p in cleaned)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    if "--doc-reading-tests" in (sys.argv[1:] if argv is None else argv):
+        print(" ".join(DOC_READING_TESTS))
+        return
     print("true" if is_docs_only(sys.stdin.read().splitlines()) else "false")
 
 
