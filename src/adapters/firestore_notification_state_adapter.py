@@ -12,6 +12,10 @@ from ..utils.logger import logger
 
 
 class FirestoreNotificationStateAdapter(NotificationStatePort):
+    """Firestore mechanics (the port states the observable contract): the last active channel lives in
+    `EnvironmentConfig.user_notification_state_collection`, the primary one in `{firestore_collection_prefix}user_primary_channel`
+    (no EnvironmentConfig property); document id `user_id`; fields user_id, platform, channel_id, updated_at, written
+    with a plain `set`."""
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
         self.db = db_client
