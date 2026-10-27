@@ -284,12 +284,13 @@ never a condition of "done".
   after seeding), assert its stored effect in a test there, then add the ledger line in sorted order.
 - **The harness:** `tests/support/scripted_llm.py` scripts only the model; the agent's tool loop runs for real. A script that runs out raises
   `ScriptExhausted` (a `RuntimeError`, never an `AssertionError`, so a strict xfail does not swallow it) and counts in `unanswered`; **every test
-  ends with the two script facts**, `llm.unanswered == 0 and llm.pending() == 0` (`require` them inside a strict xfail), and with
-  `unused(surface, tool, calls) == []` for each tool of its surface. `tests/support/tool_e2e.smart_rig` builds a real Smart over a scripted
+  ends with the two script facts**, `llm.unanswered == 0 and llm.pending() == 0` (`require` them inside a strict xfail); each e2e file has one
+  `test_the_scripted_calls_use_every_declared_field` (`unused(surface, tool, calls) == []` per tool), which a new field also fails. `tests/support/tool_e2e.smart_rig` builds a real Smart over a scripted
   model; P13 card F uses its keywords.
 - Files: `test_consolidation_tool_fields_e2e.py`, `test_notes_agent_tool_fields_e2e.py`, `test_tasks_agent_tool_fields_e2e.py`,
   `test_file_management_drive_tool_fields_e2e.py` (`tests/unit/agents/`), `core/test_smart_local_tools_e2e.py`,
-  `tests/unit/services/test_fact_review_tool_fields_e2e.py`. Open defects are strict xfails with their `P14-D<n>` id.
+  `tests/unit/services/test_fact_review_tool_fields_e2e.py`. Open defects are strict xfails with their `P14-D<n>` id
+  (`TEST_COVERAGE_SYSTEMIC_RFC.md` -> "Built (P14)").
 
 ## Markers and the machine lock (P1, `tests/plugins/`)
 
