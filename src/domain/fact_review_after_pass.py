@@ -30,7 +30,8 @@ class AfterPass:
     closed by the review. `fallbacks`: the timed-out candidates the pass left undecided, each with its timed-out
     question. `asks`: each held ask with its batch fact as the pass was given it. `revived`: the documents the pass
     revived (the revive alert reads them). `counts`: the pass's numbers (`reviewed` is the batch; `closed_by_reply` the
-    closes on the owner's words); a queued question and an applied fallback are counted when they land."""
+    closes on the owner's words; `to_history` the rewrites as history, also counted as `rewritten`); a queued question
+    and an applied fallback are counted when they land."""
 
     decided: Tuple[str, ...] = ()
     closes: Tuple[FactReviewQuestion, ...] = ()
@@ -41,9 +42,14 @@ class AfterPass:
 
     def offers_removed(self, queued: Iterable[str]) -> Tuple[str, ...]:
         """The facts whose `offers` entry goes: the decided ones, and those of the asks whose queue write landed
-        (`queued`: their fact ids); an ask that was not queued keeps its fact's entry."""
-        asked = {fact.id for fact, _ in self.asks}
-        return tuple(dict.fromkeys([*self.decided, *(fact_id for fact_id in queued if fact_id in asked)]))
+        (`queued`: their fact ids) with the ask's folds (P2-2); an ask that was not queued keeps its fact's entry and its
+        folds'."""
+        landed = set(queued)
+        removed = [*self.decided]
+        for fact, ask in self.asks:
+            if fact.id in landed:
+                removed += [fact.id, *ask.folds]
+        return tuple(dict.fromkeys(removed))
 
 
 def after_pass(
@@ -67,6 +73,8 @@ def after_pass(
     for decision in outcomes:
         counter = _OUTCOME_COUNTERS[decision.outcome]
         counts[counter] = counts.get(counter, 0) + 1
+        if decision.as_history:
+            counts[CounterField.TO_HISTORY] = counts.get(CounterField.TO_HISTORY, 0) + 1
     counts[CounterField.CLOSED_BY_REPLY] = sum(1 for q in closes if q.reply_text)
     return AfterPass(
         decided=decided,
