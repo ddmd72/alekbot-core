@@ -333,6 +333,10 @@ def build_review_stand_ins(
 
 # ------------------------------------------------------------------------------------------------ the review service
 
+# The digest's invoices block links here; nothing is sent in a kit run, and the .invalid name resolves nowhere.
+KIT_CABINET_URL = "https://cabinet.invalid/cabinet"
+
+
 class KitCoordinator:
     """The coordinator the review service routes its pass through on the kit: the kit-installed `ConsolidationAgent`'s
     `execute`, nothing else. Never the real `AgentCoordinator` (it resolves the user's cached live agent, whose repository
@@ -401,6 +405,8 @@ def build_review_service(
         answer_service=bundle.answer_service,
         interactive=bundle.interactive,
         alert_sink=kit.sink,
+        fact_updates=kit.recorder,   # the kit's typed path: a history fallback or a fold's supersede lands in the overlay
+        cabinet_url=KIT_CABINET_URL,
         run_timeout_s=run_timeout_s if run_timeout_s is not None else CONSOLIDATION.timeout_ms / 1000,
         clock=bundle.clock,
     )
