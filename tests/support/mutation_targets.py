@@ -7,6 +7,7 @@ tests/ helpers. A new `*_equivalent_mutants.txt` under tests/unit must be regist
     python -m tests.support.mutation_targets --matrix [--module X]
     python -m tests.support.mutation_targets --tests-for MODULE   # the computed test list, space-separated
     python -m tests.support.mutation_targets --summarize DIR --out-md PATH --out-json PATH
+    python -m tests.support.mutation_targets --annotations JSON_PATH   # GitHub annotations from the --out-json file
 """
 
 import argparse
@@ -181,15 +182,68 @@ def summarize(reports_dir: Path, expected: Optional[List[str]] = None) -> tuple[
     return "\n".join(lines + detail) + "\n", combined
 
 
+ANNOTATION_LIMIT = 4000  # the runner truncates a message at 4096 characters after decoding, silently
+MAX_SURVIVOR_ANNOTATIONS = 9
+DESCRIPTION_LIMIT = 160
+
+
+def _escape(text: str) -> str:
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _module_line(row: Dict[str, Any]) -> str:
+    if row["status"] == "missing":
+        return f"{row['module']}: missing"
+    c = row["counts"]
+    total = row.get("total")
+    status = f"partial ({row['done']} of {'?' if total is None else total})" if row["status"] == "partial" else "complete"
+    return f"{row['module']}: {c['killed']}/{c['survived']}/{c['equivalent']}/{c['error']}, {status}"
+
+
+def _finding_line(f: Dict[str, Any]) -> str:
+    description = " ".join(str(f.get("description", "")).split())[:DESCRIPTION_LIMIT]
+    return f"{f['module']} L{f['lineno']} {f['operator']} key={f['key']} {f['status']}: {description}"
+
+
+def annotations(combined: Dict[str, Any]) -> List[str]:
+    """GitHub workflow commands for the verdict of a --summarize run (the weekly session reads annotations, not artifacts)."""
+    out = ["::notice title=Mutation summary::" + "%0A".join(_escape(_module_line(r)) for r in combined["modules"])]
+    lines = [_escape(_finding_line(f)) for f in combined["findings"]]
+    chunks: List[List[str]] = []
+    size = 0
+    index = 0
+    while index < len(lines):
+        last = len(chunks) == MAX_SURVIVOR_ANNOTATIONS - 1
+        limit = ANNOTATION_LIMIT - (80 if last else 0)  # room for the overflow line
+        chunk: List[str] = []
+        size = 0
+        while index < len(lines):
+            add = len(lines[index]) + (3 if chunk else 0)
+            if chunk and size + add > limit:
+                break
+            chunk.append(lines[index])
+            size += add
+            index += 1
+        chunks.append(chunk)
+        if last:
+            break
+    if index < len(lines):
+        chunks[-1].append(_escape(f"… {len(lines) - index} more: see the survivors artifact"))
+    for i, chunk in enumerate(chunks, 1):
+        out.append(f"::warning title=Mutation survivors ({i} of {len(chunks)})::" + "%0A".join(chunk))
+    return out
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(
         prog="python -m tests.support.mutation_targets",
-        usage="%(prog)s (--matrix [--module X] | --summarize DIR [--module X] --out-md PATH --out-json PATH | --tests-for MODULE)",
+        usage="%(prog)s (--matrix [--module X] | --summarize DIR [--module X] --out-md PATH --out-json PATH | --annotations JSON | --tests-for MODULE)",
     )
     ap.add_argument("--matrix", action="store_true", help="print the GitHub matrix JSON")
     ap.add_argument("--module", default="", help="restrict --matrix to one module")
     ap.add_argument("--summarize", metavar="DIR", help="summarize every *.json report under DIR")
     ap.add_argument("--tests-for", metavar="MODULE", help="print the computed test list of MODULE, space-separated")
+    ap.add_argument("--annotations", metavar="JSON_PATH", help="print GitHub annotations for the --out-json file of --summarize")
     ap.add_argument("--out-md")
     ap.add_argument("--out-json")
     args = ap.parse_args(argv)
@@ -216,7 +270,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         Path(args.out_md).write_text(md, encoding="utf-8")
         Path(args.out_json).write_text(json.dumps(combined, indent=2), encoding="utf-8")
         return 0
-    ap.error("one of --matrix, --summarize or --tests-for is required")
+    if args.annotations:
+        for line in annotations(json.loads(Path(args.annotations).read_text(encoding="utf-8"))):
+            print(line)
+        return 0
+    ap.error("one of --matrix, --summarize, --annotations or --tests-for is required")
     return 2
 
 
