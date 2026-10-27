@@ -1,7 +1,10 @@
 """H3: the unit suite cannot leave the machine (tests/unit/conftest.py, tests/support/network_guard.py)."""
 
 import asyncio
+import os
+import shutil
 import socket
+import tempfile
 
 import google.auth
 import grpc
@@ -101,18 +104,22 @@ class TestSocketGuard:
         finally:
             server.close()
 
-    def test_connect_to_a_unix_socket_works(self, tmp_path):
-        path = str(tmp_path / "s.sock")
+    def test_connect_to_a_unix_socket_works(self):
+        # Not tmp_path: an AF_UNIX path is capped at 104 bytes on macOS (108 on Linux), and macOS's tmp_path
+        # (/private/var/folders/…/pytest-of-<user>/pytest-<n>/<test name>/) is longer than that.
+        directory = tempfile.mkdtemp(prefix="ng-", dir="/tmp")
+        path = os.path.join(directory, "s.sock")
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.bind(path)
-        server.listen(1)
         try:
+            server.bind(path)
+            server.listen(1)
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
                 client.connect(path)
                 conn, _ = server.accept()
                 conn.close()
         finally:
             server.close()
+            shutil.rmtree(directory, ignore_errors=True)
 
     def test_a_fresh_event_loop_works(self):
         loop = asyncio.new_event_loop()  # builds a socketpair: creation must stay allowed
