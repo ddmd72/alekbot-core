@@ -142,7 +142,7 @@ help: ## Show this help message
 	@echo "  make ci              PR job: lint + mypy + unit suite once (slow tests, coverage gate) + G2"
 	@echo "  make test-coverage   Unit tests + per-file coverage gate"
 	@echo "  make test-integration Run integration tests"
-	@echo "  make test-cloud      Cloud gate: the parity scenarios on the Firestore test database (serial, by hand)"
+	@echo "  make test-cloud      Cloud gate: the parity scenarios on the Firestore test database and, with TEST_GCS_BUCKET, the GCS test bucket (serial, by hand)"
 	@echo "  make lint            Lint src/ and the root entry points with ruff"
 	@echo "  make format          Format src/ with ruff"
 	@echo ""
@@ -281,9 +281,10 @@ test-integration: ## Run integration tests
 	@echo "🧪 Running integration tests..."
 	DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/integration/ -v --asyncio-mode=auto
 
-# Cloud gate (RFC §4): real writes to the Firestore TEST database behind the guards in tests/cloud/conftest.py; never in
+# Cloud gate (RFC §4): real writes to the Firestore TEST database and, with TEST_GCS_BUCKET set, the GCS TEST bucket (the guards
+# are in tests/cloud/conftest.py and tests/cloud/test_gcs_parity_cloud.py; GCS skips without the variable); never in
 # `make check` / `make ci` / `make test`. Serial. One manual runner at a time: the lease document comes with P12.
-test-cloud: ## Cloud gate: the parity scenarios on the Firestore test database (serial)
+test-cloud: ## Cloud gate: the parity scenarios on the Firestore test database and the GCS test bucket (serial)
 	@echo "☁️  Running the cloud gate on the test database..."
 	RUN_CLOUD_TESTS=1 DEBUG_PROMPTS=false $(PYTHON) -m pytest tests/cloud -q -p no:randomly --asyncio-mode=auto
 

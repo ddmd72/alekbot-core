@@ -7,7 +7,8 @@ this module imports nothing from it). Documents are nested dicts. Evaluated, not
   `==` / `!=`, which become IS_NULL / IS_NOT_NULL) with `==`, null, `!=` (a document without the field or with a null
   is excluded), ranges, `in`, `array_contains*`; Firestore's value-type ordering; the implicit ordering (a range or
   `!=` filter orders by its field after the explicit orderings, in the last explicit direction, then `__name__`, so it
-  decides what a `limit` returns); cursors; `limit`; `select`; aggregations; cosine `find_nearest` (any other measure
+  decides what a `limit` returns); a naive `datetime` filter value (also inside an `in` list) is the UTC instant, as
+  the client encodes it (cursor values and datetimes nested in a map value are compared as given); cursors; `limit`; `select`; aggregations; cosine `find_nearest` (any other measure
   is refused) whose pre-filter may be a range or `!=`; dotted field paths everywhere (`where`, `order_by`, `select`,
   cursors, `snap.get`);
 - writes: `set` (merge or not), `create` (`AlreadyExists`), `update` (dotted keys are nested paths, `NotFound` on a
@@ -280,6 +281,18 @@ def _plain(value: Any) -> Any:
     return copy.deepcopy(value)
 
 
+def _filter_value(value: Any) -> Any:
+    """A `where` value as the client sends it: `_helpers.encode_value` turns a naive `datetime` into the UTC instant
+    (`google.cloud._helpers._microseconds_from_datetime`), also inside an `in` / `array_contains_any` list, so it
+    compares with the stored aware values instead of raising `TypeError`. Every other value is kept as given (cursor
+    values are not encoded here). Parity scenario `naive_datetime_filter_is_utc`."""
+    if isinstance(value, datetime) and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    if isinstance(value, (list, tuple)):
+        return type(value)(_filter_value(v) for v in value)
+    return value
+
+
 def _merge(target: Dict[str, Any], data: Dict[str, Any], prefix: str, sink: Sink) -> None:
     """`set(merge=True)`: maps merge recursively, `DELETE_FIELD` removes, anything else replaces."""
     for name, value in data.items():
@@ -445,11 +458,11 @@ class EvalQuery:
         if filter is not None:
             op = filter.op_string
             op = op if isinstance(op, str) else StructuredQuery.UnaryFilter.Operator(op).name
-            return self._then(("where", filter.field_path, op, filter.value))
+            return self._then(("where", filter.field_path, op, _filter_value(filter.value)))
         assert field_path is not None and op_string is not None, "where() takes a field, an operator and a value"
         op = _validate_opation(op_string, value)    # the client's check: None / NaN only with == and !=
         op = op if isinstance(op, str) else StructuredQuery.UnaryFilter.Operator(op).name
-        return self._then(("where", field_path, op, value))
+        return self._then(("where", field_path, op, _filter_value(value)))
 
     def order_by(self, field: str, direction: str = "ASCENDING") -> "EvalQuery":
         return self._then(("order_by", field, direction))

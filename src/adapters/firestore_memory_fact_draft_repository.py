@@ -29,6 +29,13 @@ def _expired(data: dict, now: datetime) -> bool:
 
 
 class FirestoreMemoryFactDraftRepository(MemoryFactDraftRepository):
+    """Firestore mechanics behind the port's contract.
+
+    Collection `EnvironmentConfig.memory_fact_drafts_collection`, document id `{user_id}:{code}`. A Firestore TTL policy
+    on `expires_at` removes old drafts; its sweep lags up to a day, so `get_draft` re-checks the expiry itself.
+    `create_draft` is one `create` (it fails with AlreadyExists when the document exists). No query is issued, so no
+    index is needed.
+    """
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
         self._drafts = db_client.collection(env_config.memory_fact_drafts_collection)

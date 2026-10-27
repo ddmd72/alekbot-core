@@ -36,6 +36,19 @@ _MAX_COSINE_DISTANCE = 0.4
 
 
 class FirestoreIndexedEmailRepository(IndexedEmailRepository):
+    """Firestore mechanics (the port states the observable contract):
+    - Facts: `EnvironmentConfig.domain_email_facts_collection` (`{prefix}domain_email_facts_v1`), body
+      `IndexedEmail.model_dump()` with the vector fields wrapped in `Vector`; cursors:
+      `EnvironmentConfig.email_indexing_state_collection`, document id `{user_id}_{provider}`.
+    - `save_batch` and `mark_consolidated` write in batches of 500 (`batch.set` of the whole document / `batch.update`);
+      `delete_by_user` deletes 500 per query until none is left.
+    - `find_nearest`: one `find_nearest` per vector field (COSINE, `distance_threshold` 0.4, `limit * 2`),
+      pre-filtered by `user_id`, `state` and the `email_date` range, run concurrently; fused by RRF (k = 60). Needs the
+      vector indexes (state, user_id[, email_date], <field>).
+    - `get_unconsolidated_batch` needs the composite index (user_id, consolidated_at, indexed_at); a document without a
+      `consolidated_at` field never matches `consolidated_at == null`.
+    - Datetimes read back are rebuilt as plain naive datetimes (a `DatetimeWithNanoseconds` must not be written back).
+    """
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
         self.db = db_client

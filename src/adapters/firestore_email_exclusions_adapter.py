@@ -24,6 +24,13 @@ def _exclusion_doc_id(user_id: str, pattern_type: str, pattern: str) -> str:
 
 
 class FirestoreEmailExclusionsAdapter(EmailExclusionsPort):
+    """Firestore mechanics behind the port's contract.
+
+    Collection `EnvironmentConfig.email_exclusions_collection` (`{prefix}email_exclusions`), document id
+    `sha256("{user_id}|{pattern_type}|{pattern}")[:32]`, so a repeat is an upsert of the same document. `add_exclusions`
+    writes one batch (at most 500 patterns). `get_exclusions` is an equality query on user_id, streamed; `exclusion_id`
+    is filled from the document id.
+    """
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
         self.db = db_client

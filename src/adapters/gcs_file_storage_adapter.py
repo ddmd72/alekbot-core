@@ -32,7 +32,10 @@ def sanitize_filename(filename: str) -> str:
 
 
 class GcsFileStorageAdapter(FileStoragePort):
-    """Stores user files in a GCS bucket under {user_id}/files/ prefix."""
+    """Stores user files in a GCS bucket under {user_id}/files/ prefix.
+
+    The bucket is GCS_MEDIA_BUCKET, the same private bucket GcsMediaAdapter writes delivered content to (since
+    2026-06-01); the two keep apart by key prefix only."""
 
     def __init__(self, bucket_name: str) -> None:
         self._bucket_name = bucket_name

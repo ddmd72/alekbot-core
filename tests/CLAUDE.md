@@ -14,7 +14,7 @@ This table is the one place that says which test command to run when. Other docs
 | Before you call a package done, and whenever you report coverage | `make ci` | everything in `make check` + `slow` tests + the coverage gates (per file and per layer); CI runs exactly this on every PR |
 | Mutation check, by hand, optional | `python -m tests.support.semantic_mutants --module <m> --tests $(python -m tests.support.mutation_targets --tests-for <m>) [--operators wiring] [--equivalent <file>]` | one module's mutants; nobody has to run it: the weekly run is the only mutation pass ("Mutation check" below; wiring command in "The production graph") |
 | Only when the task needs them | `make test-integration`, `make test-e2e-all` | some integration tests and all e2e tests call real services |
-| Fake against the real thing (P5) | `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pytest tests/unit/support/test_firestore_parity.py`, and `make test-cloud` | the parity scenarios on the Firestore emulator, and on the test database (see below) |
+| Fake against the real thing (P5) | `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pytest tests/unit/support/test_firestore_parity.py`, and `make test-cloud` | the Firestore parity scenarios on the emulator and on the test database; the GCS scenarios run on the fake in `make check` (`tests/unit/support/test_gcs_parity.py`) and, with `TEST_GCS_BUCKET` set, on the test bucket in `make test-cloud` (see below) |
 | Docs-only PR | (automatic) | `make ci` is skipped (F3; also on a push to `main` and in the `timing` job; dependencies are still installed, the PII gate and the CI Slack notice still run). Docs: every file under `docs/` (any extension), `CLAUDE.md` anywhere except under `src/skills/` (nothing there is docs), root `*.md`, `.github/**/*.md`. The doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`) still run; the meta-test is an equality check (fails when an unlisted test reads docs and when a listed one stops). Known gap: a test reading a root `*.md` or a `CLAUDE.md` is not detected |
 | Weekly cloud runs (nothing to do by hand) | `Mutation survivors` (`mutation.yml`) and `Firestore parity` (`parity.yml`), Sunday; after a package: `gh workflow run mutation.yml -f module=<module>` (works once the module is registered on `main`, or with `--ref <branch>`; `Firestore parity` runs on `main` only, WIF is bound to it) | artifacts `survivors` and `parity` and as check-run annotations (≤ 10 per step, 4000 chars each) for the cloud reader, read by the Monday routine, which fixes survivors by PR; never red for a survivor or a failed scenario, never Slack |
 | Re-pin the URL map | `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` | single file, no `-n`; rewrites `main_boots_offline_url_map.txt` from the booted app; the implementer commits the rewritten pin and the task reviewer reads its diff (no separate approval); a new route must also be refused or listed in `PUBLIC` of `tests/unit/web/test_every_route_refuses_anonymous.py` |
@@ -31,7 +31,7 @@ tests/
   integration/    — mocked or scripted services; the offline G2 end-to-end test runs in `make check`
   support/        — shared fakes (fact_store.py, firestore_eval.py), network_guard.py, plugin_runs.py, semantic_mutants/
   contracts/      — adapter contract rules (adapter_contracts.py)
-  cloud/          — the cloud gate: real writes to the Firestore test database (`make test-cloud`); never in check or ci, weekly in the cloud (`Firestore parity`)
+  cloud/          — the cloud gate: real writes to the Firestore test database and, with `TEST_GCS_BUCKET` set, the GCS test bucket (`make test-cloud`); never in check or ci, weekly in the cloud (`Firestore parity`, Firestore only until P12)
 ```
 
 ## The convention
@@ -100,7 +100,21 @@ Identity Federation as the test service account and runs `make test-cloud` (arti
 `tests/cloud/conftest.py` accepts default credentials that already identify as the test service account, otherwise it impersonates as before; every guard
 is unchanged. The parity artifact is redacted (four values are replaced before upload: the three secrets plus `TEST_WIF_PROVIDER` and the ids inside it); the job is red when a secret is empty, federation fails, zero tests ran, or `parity.xml` is missing or unreadable; when the redaction itself fails both files are deleted and the upload is skipped. The Sunday 03:00 UTC run can collide with a manual `make test-cloud` (no lease yet): do not run it by hand at that time. One runner at a time: the workflow runs under a `concurrency` group (no lease document).
 
+**GCS has its own set** (`tests/support/gcs_parity.py`, run against the fake in `tests/support/gcs_fake.py`): on the fake in `make check` (`tests/unit/support/test_gcs_parity.py`), and on a versioned test bucket in `make test-cloud` through `tests/cloud/test_gcs_parity_cloud.py`, which skips without `TEST_GCS_BUCKET` (the weekly workflow does not pass it yet: P12). A new GCS feature = a new scenario in `tests/support/gcs_parity.py`.
+
 Extending the fake with a new Firestore feature = a new scenario in `tests/support/firestore_parity.py`, run on the emulator and with `make test-cloud`; an adapter that starts using a feature the fake lacks fails loudly (unsupported operator / no such method) — extend the fake then, never work around it in the test.
+
+## Store kits (P11)
+
+- **The rule.** Every public class of a store module in `src/adapters/` that implements a port (`firestore_*`, `gcs_*`, `gcp_task_queue`,
+  `fact_management_adapter`, the `*_queue` modules, `prompt_v3/firestore_*`) is run by a kit over a fake with semantics (`EvalDb`, the GCS
+  fake, the Cloud Tasks client fake) or sits on the allowlist with a reason. A second rule goes by import: a module of `src/adapters/` that imports a `google.cloud` firestore, storage, tasks or bigquery client either matches those names or is on `NOT_STORE_MODULES` with a reason. Lines only leave the allowlist; a new line needs the owner's OK.
+- **The two files.** `tests/support/store_inventory.py` is the one definition: the discovery (AST, no adapter imported), `KITS` (class -> kit
+  files), `CLIENT_FAKES` and `BUILDERS` (how a kit's source is recognised). `tests/unit/adapters/stateful_store_allowlist.txt` holds
+  `module.Class  # reason`. `test_every_stateful_store_has_a_kit.py` fails a class in neither or both, a kit that imports the class but builds it
+  over no fake, or over a mock (`MagicMock()`, a default `patch`, `adapter._client = MagicMock()`: a mock for a configuration argument next to a fake client is fine), a stale allowlist line and a `KITS` key that names no store.
+- **A new store** gets its kit in the same change and one `KITS` line, not an allowlist line (a new line needs the owner's OK).
+  A kit that builds its store through a new helper or fake adds its name to `CLIENT_FAKES` or `BUILDERS`, never an edit of the rule.
 
 ## Coverage floors and the untested-module list
 

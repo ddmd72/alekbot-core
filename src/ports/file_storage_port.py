@@ -4,9 +4,9 @@ FileStoragePort — store and retrieve user file attachments.
 Implementations:
   GcsFileStorageAdapter — uploads to a GCS bucket under {user_id}/files/ prefix.
 
-Distinction from MediaStoragePort: MediaStoragePort stores public non-PII content
-(HTML pages, widgets) with public URLs. FileStoragePort stores private user file
-attachments with TTL, download, and duplicate name resolution.
+Distinction from MediaStoragePort: MediaStoragePort stores delivered content privately
+under caller-made keys; FileStoragePort stores user file attachments by filename under
+the user's prefix, with download and duplicate name resolution.
 """
 from abc import ABC, abstractmethod
 
@@ -27,6 +27,15 @@ class FileStoragePort(ABC):
 
         Returns:
             The deduplicated filename (e.g. "report (1).docx" if name was taken).
+
+        Stores `data` as `{user_id}/files/<name>` and returns <name>: `filename` NFC-normalised,
+        `#?[]*:` and newline/CR/tab replaced by "_", then made unique among this user's files
+        Finder-style (`a.png`, `a (1).png`, `a (2).png`).
+        Tenancy: uniqueness is per user; another user's names never count.
+        Atomicity: never replaces an existing object; two concurrent uploads of one name return
+        two names (P11-G4-2: not yet true, both return it and the later write replaces the earlier).
+        Idempotency: uploading the same bytes again stores a new name.
+        Errors: storage errors propagate; a name is returned only when the bytes are stored.
         """
 
     @abstractmethod
@@ -42,17 +51,22 @@ class FileStoragePort(ABC):
             Raw file bytes.
 
         Raises:
-            FileNotFoundError: if the file does not exist.
+            FileNotFoundError: if the file does not exist (another user's name included).
+            Other storage errors propagate unchanged.
+
+        `filename` is NFC-normalised first.
         """
 
     @abstractmethod
     async def delete(self, filename: str, user_id: str) -> None:
-        """Delete a file from storage."""
+        """Remove `{user_id}/files/<filename>`.
+        Errors: FileNotFoundError when absent (P11-G4-3: today the SDK's NotFound leaks); other storage
+        errors propagate."""
 
     @abstractmethod
     async def exists(self, filename: str, user_id: str) -> bool:
-        """Check if a file exists (used for duplicate name resolution)."""
+        """Whether `{user_id}/files/<filename>` exists. upload's own dedup is the only caller."""
 
     @abstractmethod
     async def get_url(self, filename: str, user_id: str) -> str:
-        """Assemble a full URL from filename + user_id. For external sharing only."""
+        """The object's storage URL. No caller in src/; the bucket is private, so the URL does not open."""

@@ -14,6 +14,10 @@ _TTL = timedelta(days=2)
 
 
 class FirestoreLongTurnRegistry(LongTurnRegistry):
+    """Collection `{prefix}long_turns`; a document is `LongTurnRecord.model_dump(mode="json")` plus `expires_at`
+    (now + 2 days) for the collection's TTL policy, never returned. list_running is two equalities (no composite index)
+    and filters the stale heartbeats in code."""
+
     def __init__(self, db_client, collection: str) -> None:
         self._db = db_client
         self._collection = collection

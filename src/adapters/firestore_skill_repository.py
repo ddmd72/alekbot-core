@@ -70,6 +70,17 @@ def _doc_label(doc_id: str) -> str:
 
 
 class FirestoreSkillRepository(SkillRepository):
+    """Firestore mechanics behind the port's contract (document layout: module docstring).
+
+    Collections `EnvironmentConfig.skills_collection` and `skill_drafts_collection`. A Firestore TTL policy on
+    `expires_at` covers `skill_drafts` and `draft_files` only, never a skill's `files`; its sweep lags, so
+    `get_draft` re-checks the expiry. `save_version` is one transaction (all reads, then every write): the cap is a
+    query on the user's index documents inside it (counted for a new name only; no phantom protection is claimed), a
+    concurrent save of one skill aborts and re-runs the loser, which takes the next version, and the draft read makes
+    the loser of a same-draft race raise SkillDraftNotFound. `delete_skill` deletes in batches of 450 refs (under
+    Firestore's 500-write batch limit), the index document last. No declared composite index: every query is
+    an equality on user_id (and name for the drafts).
+    """
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
         self._db = db_client

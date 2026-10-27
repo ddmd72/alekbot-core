@@ -30,6 +30,13 @@ _COMPANION_FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(10)
 
 
 class FirestoreCompanionMemoryRepository(CompanionMemoryRepository):
+    """Firestore mechanics behind the port's contract.
+
+    Collection `EnvironmentConfig.companion_records_collection`, document id = record id, the vector stored as a
+    `Vector` value (a record without one stores null and no vector query matches it). `save_batch` writes in batches of
+    500. `find_nearest` is one cosine vector query pre-filtered on session_id and account_id, distance threshold 0.4,
+    at most 10 in flight; it is served by the declared vector index (session_id, account_id, vector).
+    """
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
         self.db = db_client

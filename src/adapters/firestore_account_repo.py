@@ -14,7 +14,13 @@ from ..utils.logger import logger
 
 
 class FirestoreAccountRepository(AccountRepository):
-    """Firestore adapter for account-level billing operations."""
+    """Firestore adapter for account-level billing operations.
+
+    Collection `{prefix}domain_accounts_v2`; a document is `BillingAccount.model_dump()` with a nested `usage` map.
+    `increment_account_usage` is lock-free (server-side `Increment`s in one `update`, the returned position read from
+    the write's transform results) unless a window rotates; the rotation runs in one transaction
+    (decisions/billing_usage_increment_lock_free.md). `list_all_accounts` is one equality on `is_active`.
+    """
 
     def __init__(self, db_client, collection_name: str):
         """

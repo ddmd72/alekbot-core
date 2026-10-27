@@ -18,11 +18,19 @@ from typing import Optional
 
 
 class CompanionCacheRepository(ABC):
+    """Cached summary of one companion session. Backend errors propagate."""
 
     @abstractmethod
     async def get_summary(self, session_id: str) -> Optional[str]:
-        """Fast read of the cached session summary. None if never written."""
+        """The cached summary of `session_id`, or None if never written.
+
+        Tenancy: keyed by session_id only, unlike the companion records (COMPANION_AGENTS_RFC §3: one account per
+        companion session); to be revisited when the companion stores move to the agent workspace.
+        """
 
     @abstractmethod
     async def save_summary(self, session_id: str, account_id: str, summary: str) -> None:
-        """Overwrite the cached summary for this session (full replace, no merge)."""
+        """Replace the session's cached summary (session_id, account_id, summary, refreshed_at = server time).
+
+        Last writer wins, whatever its account.
+        """

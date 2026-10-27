@@ -25,6 +25,11 @@ _ZOMBIE_THRESHOLD_SECONDS = 1800
 
 
 class FirestoreCompanionExtractionQueue(CompanionExtractionQueue):
+    """Firestore mechanics (the port states the observable contract): collection
+    `EnvironmentConfig.companion_extraction_queue_collection`, document id = `batch_id` (`cbatch_<12 hex>`), body
+    `CompanionExtractionBatch.model_dump()` written with a plain `set`. `get_pending_batches` needs the composite index
+    (session_id, status, created_at); `get_stuck_session_ids` is a `select(["session_id"])` projection;
+    `increment_attempts` is a get then an update; `reset_recoverable_batches` one update per batch, no precondition."""
 
     def __init__(self, db_client: firestore.AsyncClient, env_config: EnvironmentConfig):
         self.db = db_client

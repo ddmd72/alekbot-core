@@ -5,42 +5,60 @@ from ..domain.billing import BillingAccount, UsageIncrement
 
 
 class AccountRepository(ABC):
-    """Abstract interface for account-level billing operations."""
+    """Billing accounts by account_id.
+
+    - Tenancy: the account id is the scope; no user filter.
+    - Legacy: get_account and list_all_accounts build BillingAccount: a missing field takes the model default; unknown
+      fields are dropped. An unknown `tier`: no writer produces one; behaviour pending the data audit.
+    - Errors: backend errors propagate.
+    """
 
     @abstractmethod
     async def get_account(self, account_id: str) -> Optional[BillingAccount]:
-        """Retrieve billing account by id."""
+        """The account, or None when absent."""
         pass
 
     @abstractmethod
     async def create_account(self, account: BillingAccount) -> BillingAccount:
-        """Create a new billing account."""
+        """Store the account as given, replacing any document with the same id. Returns it."""
         pass
 
     @abstractmethod
     async def update_account(self, account: BillingAccount) -> BillingAccount:
-        """Update billing account details."""
+        """Store the account's fields as given. Usage counters are not the caller's to write: a usage
+        increment that landed since the caller's get_account is kept (P11-G1-3: today the whole document, usage
+        included, is replaced)."""
         pass
 
     @abstractmethod
     async def increment_account_usage(
         self, account_id: str, tokens: int, cost: float
     ) -> UsageIncrement:
-        """Increment account usage; only a daily/monthly window rotation is transactional.
+        """Add tokens, cost and one request to the account's total, daily and monthly counters.
 
-        Returns the resulting daily-spend position so callers can detect a budget
-        limit crossing without re-reading the account.
+        Atomicity: no concurrent increment is lost. When the UTC day or month has turned since the stored reset stamp,
+        the window rotates exactly once under concurrent callers (prev_daily_* snapshot of the ended day, its date in
+        prev_daily_date) and this increment is applied to the new window.
+        Returns the day's spend before and after this increment, so concurrent callers get disjoint, ordered slices
+        and a caller can detect a budget limit crossing without re-reading the account.
+        Legacy: an account without `usage` starts its windows on this call; a missing daily_cost_limit is the default
+        ($5). A non-datetime reset stamp: no writer produces one; behaviour pending the data audit.
+        Errors: ValueError, nothing written, for an absent account.
         """
         pass
 
     @abstractmethod
     async def check_quota(self, account_id: str) -> Tuple[bool, str]:
-        """Return (has_quota, reason) based on account usage vs limits."""
+        """Return (has_quota, reason) based on account usage vs limits.
+
+        Dead by decision (no caller in src/; the hard cap was dropped 2026-07-26).
+        """
         pass
 
     @abstractmethod
     async def list_all_accounts(self) -> List[BillingAccount]:
-        """Return all active billing accounts."""
+        """Accounts whose stored is_active is true. Order: none promised. No limit. A document without is_active:
+        no writer produces one; behaviour pending the data audit."""
         pass
 
     # ========================================================================
