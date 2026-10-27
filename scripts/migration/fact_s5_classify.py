@@ -21,6 +21,8 @@ Flags:
     --expect-model NAME   the model every account's agent must run (dry run only, required)
     --budget-usd X        the lifetime spend cap; without it the run only estimates
     --ids-file PATH       classify only these fact ids (one per line, blank and # lines ignored; under scripts/memory/)
+    --include-closed      only with --ids-file: also classify the listed archived and invalidated facts (a re-review);
+                          their plan entries are for a later reopen script, and --apply refuses them (not_current)
     --user-id ID          the user whose agent is built first (default: DEV_USER_ID from the dotenv file)
     --apply PLAN          apply a plan file (under scripts/memory/); no other flag is allowed with it
 
@@ -74,6 +76,7 @@ from scripts.migration.fact_s5_classify_rules import (  # noqa: E402
     OUTCOME_APPLIED,
     OUTCOME_CHANGED,
     OUTCOME_FAILED,
+    OUTCOME_NOT_CURRENT,
     RESPONSE_SCHEMA,
     SKIP_OWNER,
     Decision,
@@ -119,7 +122,7 @@ INSTRUCTION_FILE = Path(__file__).with_name("fact_s5_classify_instruction.txt")
 TAXONOMY_SNAPSHOT = PROJECT_ROOT / "prompts_snapshot" / "tokens" / "system" / "CONSOLIDATION_TAXONOMY.groovy"
 TAXONOMY_TOKEN_ID = "CONSOLIDATION_TAXONOMY"
 SCAN_FIELDS = ["account_id", "text", "domain", "type", "tags", "temporal_class", "metadata", "context",
-               "reported_date", "created_at", "expiry_kind"]
+               "reported_date", "created_at", "expiry_kind", "state"]
 REQUEST_TIMEOUT_S: Final[int] = 500
 
 RESIDUALS: Final[Tuple[str, ...]] = (
@@ -174,9 +177,15 @@ class RunStopped(RuntimeError):
 # ---------------------------------------------------------------------------------------------------------------------
 
 
-async def scan(db: Any, collection: str) -> List[ScannedFact]:
-    """Every current fact, with the fields classify reads and its change token (reads only)."""
-    query = db.collection(collection).where(filter=FieldFilter("state", "==", FactState.CURRENT.value)).select(SCAN_FIELDS)
+async def scan(db: Any, collection: str, include_closed: bool = False) -> List[ScannedFact]:
+    """Every current fact (with `include_closed`, also the archived and invalidated ones), with the fields classify reads
+    and its change token (reads only)."""
+    if include_closed:
+        states = [FactState.CURRENT.value, FactState.ARCHIVED.value, FactState.INVALIDATED.value]
+        state_filter = FieldFilter("state", "in", states)
+    else:
+        state_filter = FieldFilter("state", "==", FactState.CURRENT.value)
+    query = db.collection(collection).where(filter=state_filter).select(SCAN_FIELDS)
     facts: List[ScannedFact] = []
     async for snap in query.stream():
         facts.append(scanned_fact(snap.id, snap.to_dict() or {}, snap.update_time))
@@ -210,8 +219,9 @@ async def prepare(
     collection: str,
     owner_of: Callable[[str], Awaitable[ResolvedOwnerZone]],
     ids: Optional[AbstractSet[str]] = None,
+    include_closed: bool = False,
 ) -> Prepared:
-    facts = await scan(db, collection)
+    facts = await scan(db, collection, include_closed)
     selected, skipped = select(facts, ids)
     by_account: Dict[str, List[ScannedFact]] = {}
     for fact in selected:
@@ -480,7 +490,7 @@ async def apply_plan(repo: Any, plan_path: Path, collection: str, out_dir: Path,
     outcomes: Dict[str, str] = {}
     for entry in entries:
         outcomes[entry.fact_id] = await _apply_entry(repo, entry, now)
-    counts = {name: 0 for name in (OUTCOME_APPLIED, OUTCOME_ALREADY, OUTCOME_CHANGED, OUTCOME_FAILED)}
+    counts = {name: 0 for name in (OUTCOME_APPLIED, OUTCOME_ALREADY, OUTCOME_CHANGED, OUTCOME_FAILED, OUTCOME_NOT_CURRENT)}
     for outcome in outcomes.values():
         counts[outcome] += 1
 
@@ -500,6 +510,8 @@ async def apply_plan(repo: Any, plan_path: Path, collection: str, out_dir: Path,
 
 async def _apply_entry(repo: Any, entry: Any, now: datetime) -> str:
     """The outcome of one entry. Never raises: the loop must reach the files."""
+    if entry.state != FactState.CURRENT.value:
+        return OUTCOME_NOT_CURRENT   # a closed fact's entry is for a later reopen script: nothing is read or written
     try:
         try:
             stored = await repo.resolve_current(entry.fact_id, entry.account_id, frozenset({FactState.CURRENT}))
@@ -530,6 +542,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expect-model", metavar="NAME", help="the model every account's agent must run (dry run, required)")
     parser.add_argument("--budget-usd", type=float, help="lifetime spend cap over all classify runs; omitted: estimate only")
     parser.add_argument("--ids-file", metavar="PATH", help="classify only the fact ids listed in this file")
+    parser.add_argument("--include-closed", action="store_true",
+                        help="with --ids-file: also classify the listed archived and invalidated facts (apply never writes them)")
     parser.add_argument("--apply", metavar="PLAN", help="apply a plan file instead of classifying")
     parser.add_argument("--user-id", default=os.getenv("DEV_USER_ID"), help="the user whose agent is built first")
     return parser
@@ -546,9 +560,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.apply is not None:
-        if args.budget_usd is not None or args.ids_file is not None or args.expect_model is not None:
-            parser.error("--apply takes no --budget-usd, --ids-file or --expect-model")
+        if args.budget_usd is not None or args.ids_file is not None or args.expect_model is not None or args.include_closed:
+            parser.error("--apply takes no --budget-usd, --ids-file, --include-closed or --expect-model")
     else:
+        if args.include_closed and args.ids_file is None:
+            parser.error("--include-closed needs --ids-file")
         if not args.expect_model:
             parser.error("a dry run needs --expect-model")
         if not args.user_id:
@@ -577,7 +593,7 @@ async def _dry_run_main(
 ) -> int:
     handles = await build_agent(args.user_id)
     owner_of = OwnerTimezoneResolver(handles.account_repo, handles.user_repo).resolve
-    prepared = await prepare(handles.db, collection, owner_of, ids)
+    prepared = await prepare(handles.db, collection, owner_of, ids, args.include_closed)
 
     agents: Dict[str, Any] = {args.user_id: handles.agent}
     for account in prepared.accounts:
