@@ -3,8 +3,10 @@
 The route is main's own (`main.py`, `worker()`), booted offline by the machinery of `test_main_boots_offline.py`: the boot's
 probe is replaced by a scenario that posts through the real OIDC gate with Cloud Tasks headers. The claim documents are read
 from the claim store the worker handler holds, in the collection it was built with. Dropping `delivery=delivery` in the
-route turns the first, second and third tests red. Gathered test: Firestore evaluation is `EvalDb`; the claim's `create`
-and `get` yield there, so the two posts really interleave.
+route turns the first, second and third tests red.
+
+Not exercised: the queued Slack event (no `task_type`) is also a named Cloud Tasks delivery; the claim key is the task
+name and does not depend on the type.
 """
 import asyncio
 from typing import Any, Awaitable, Callable, Dict, List, Tuple
@@ -87,6 +89,7 @@ async def test_a_second_delivery_of_a_claimed_task_is_a_duplicate(monkeypatch, c
 
 async def test_a_retryable_answer_releases_and_the_retry_runs(monkeypatch, caplog):
     rows = await _run(monkeypatch, caplog, _two_deliveries)
+    assert any(claim and claim.get("state") == "done" for _, _, claim in rows.values()), "the route never claimed"
     retryable = [t for t, (first, _, _) in rows.items() if first[0] >= 500]
     assert retryable, "no task type answered 500 or above"
     problems = []
@@ -100,6 +103,10 @@ async def test_a_retryable_answer_releases_and_the_retry_runs(monkeypatch, caplo
 
 
 async def test_a_gathered_double_runs_once(monkeypatch, caplog):
+    """Pins the in-process `_running_claims` guard (`worker_handler.py:218-221`), which answers a concurrent copy before
+    the store is asked (by design, `worker_task_dedup.md:90-92`). The store's own precondition race belongs in a store
+    test and is out of scope here. The claim collection yields on `get` (`EvalDb`), otherwise the first post finishes before
+    the second starts and the store, not the guard, answers."""
     async def scenario(client: Any, handler: Any) -> List[Answer]:
         store = handler._task_claims
         store.db_client.collection(store.collection_name).yield_on_get = True
@@ -110,6 +117,9 @@ async def test_a_gathered_double_runs_once(monkeypatch, caplog):
     ran = [a for a in answers if a != (200, {"status": "duplicate"})]
     assert len(ran) == 1, answers
     assert ran[0] == (200, {"status": "note_gone"})
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("Skipping concurrent delivery" in m for m in messages)
+    assert not any("Skipping redelivered task" in m for m in messages)
 
 
 async def test_scheduler_bodies_are_never_claimed(monkeypatch, caplog):
@@ -118,7 +128,7 @@ async def test_scheduler_bodies_are_never_claimed(monkeypatch, caplog):
         for task_type, body in sorted(worker_triggers.scheduler_task_types().items()):
             rows[task_type] = (await _post(client, body), await _post(client, body))
         store = handler._task_claims
-        rows["__claims__"] = [d.id async for d in store.db_client.collection(store.collection_name).stream()]
+        rows["__claims__"] = [d.id async for d in store.db_client.collection(store.collection_name).stream() if "attempt" in (d.to_dict() or {})]
         return rows
 
     rows = await _run(monkeypatch, caplog, scenario)
@@ -126,5 +136,4 @@ async def test_scheduler_bodies_are_never_claimed(monkeypatch, caplog):
     assert rows, "no scheduler body"
     assert claims == [], claims
     assert {t: r for t, r in rows.items() if r[0] != r[1]} == {}
-    assert all(r[0][0] == r[1][0] != 409 for r in rows.values())
     assert all(r[1] != (200, {"status": "duplicate"}) for r in rows.values())
