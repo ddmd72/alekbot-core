@@ -3,6 +3,7 @@
 # counted over the FULL walk, agents included, and must equal the same count (a second repository built inside an agent build).
 # Read by test_application_graph_wiring.py; it fails both ways (a class not listed, a count that differs).
 # Line: <module.Class> <count>  # <reason> <evidence>. A count above 1 names where each instance is built; a duplicate construction is the #148 class.
+# R8: a line with count 1 is a registration and is the implementer's to add; counts above 1 are the reviewer's decision.
 
 src.adapters.bigquery_prompt_content_adapter.BigQueryPromptContentAdapter 1  # by-design single instance
 src.adapters.claude_adapter.ClaudeAdapter 1  # by-design single instance

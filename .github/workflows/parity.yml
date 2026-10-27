@@ -1,0 +1,134 @@
+name: Firestore parity
+
+# Fake-vs-real Firestore scenarios (make test-cloud): real writes to the TEST database only.
+# The verdict lives in the `parity` artifact and the step summary; the job is red only when the run itself
+# could not happen (auth, install, upload, an unconfigured gate, zero tests run), never because a scenario failed. Runs on main (WIF is bound to it).
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: parity
+  cancel-in-progress: false
+
+jobs:
+  parity:
+    name: parity scenarios against the test database
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.TEST_WIF_PROVIDER }}
+          service_account: ${{ secrets.TEST_SA_EMAIL }}
+
+      - name: Check that federation works
+        # auth@v2 only writes the credentials file; the token exchange happens at the first call. Not continue-on-error:
+        # a rejected federation is "the run could not happen" and turns the job red.
+        run: |
+          python -c "import google.auth, google.auth.transport.requests as r; c,_=google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform']); c.refresh(r.Request()); print('auth ok')"
+
+      - name: Check that the gate is configured
+        # An empty secret makes every test skip, which would read as a green run.
+        env:
+          TEST_FIRESTORE_DATABASE: ${{ secrets.TEST_FIRESTORE_DATABASE }}
+          TEST_SA_EMAIL: ${{ secrets.TEST_SA_EMAIL }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        run: |
+          for name in TEST_FIRESTORE_DATABASE TEST_SA_EMAIL GOOGLE_CLOUD_PROJECT; do
+            if [ -z "${!name}" ]; then echo "::error::secret for $name is empty"; exit 1; fi
+          done
+
+      - name: make test-cloud
+        # A failed scenario must not turn the workflow red (it would email the owner): the verdict is the artifact.
+        continue-on-error: true
+        env:
+          TEST_FIRESTORE_DATABASE: ${{ secrets.TEST_FIRESTORE_DATABASE }}
+          TEST_SA_EMAIL: ${{ secrets.TEST_SA_EMAIL }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          PYTEST_ADDOPTS: --junitxml=parity.xml -rfEs
+        run: |
+          set -o pipefail
+          make test-cloud 2>&1 | tee parity.log
+
+      - name: Redact infrastructure ids
+        # Artifacts of a public repo are downloadable and GitHub masks secrets only in the console log.
+        # On any failure both files are deleted, and the upload below runs only when this step succeeded.
+        id: redact
+        if: always()
+        env:
+          TEST_FIRESTORE_DATABASE: ${{ secrets.TEST_FIRESTORE_DATABASE }}
+          TEST_SA_EMAIL: ${{ secrets.TEST_SA_EMAIL }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          TEST_WIF_PROVIDER: ${{ secrets.TEST_WIF_PROVIDER }}
+        run: |
+          python - <<'PY' || { rm -f parity.log parity.xml; exit 1; }
+          import os
+          import urllib.parse
+          from pathlib import Path
+
+          names = ("TEST_FIRESTORE_DATABASE", "TEST_SA_EMAIL", "GOOGLE_CLOUD_PROJECT", "TEST_WIF_PROVIDER")
+          values = {os.environ.get(n, "") for n in names}
+          values.add(urllib.parse.quote(os.environ.get("TEST_SA_EMAIL", ""), safe=""))
+          parts = os.environ.get("TEST_WIF_PROVIDER", "").split("/")
+          for key in ("projects", "workloadIdentityPools", "providers"):
+              if key in parts and parts.index(key) + 1 < len(parts):
+                  values.add(parts[parts.index(key) + 1])
+          values.discard("")
+          for path in (Path("parity.log"), Path("parity.xml")):
+              if not path.exists():
+                  continue
+              text = path.read_text(encoding="utf-8", errors="replace")
+              for value in sorted(values, key=len, reverse=True):
+                  text = text.replace(value, "<redacted>")
+              path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Upload result
+        if: always() && steps.redact.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity
+          path: |
+            parity.xml
+            parity.log
+          if-no-files-found: warn
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "### Firestore parity"
+            echo '```'
+            if [ -f parity.log ]; then grep -E "passed|failed|error|skipped" parity.log | tail -20; else echo "no parity.log: the run did not start"; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          try:
+              root = ET.parse("parity.xml").getroot()
+              suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+              total = sum(int(s.get("tests", "0")) - int(s.get("skipped", "0")) for s in suites)
+          except Exception as exc:
+              print(f"::error::parity.xml missing or unreadable: {type(exc).__name__}")
+              sys.exit(1)
+          if total == 0:
+              print("::error::the run executed no test (zero, or all skipped)")
+              sys.exit(1)
+          PY

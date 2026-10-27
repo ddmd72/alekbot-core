@@ -68,7 +68,7 @@ done-check): the table in `tests/CLAUDE.md` § Running is the one place that say
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/ main.py indexer_main.py job_main.py relay_main.py sandbox_main.py` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
 informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite (which excludes `slow` tests; they run in `make ci`); it is the local pre-commit gate. CI (`.github/workflows/ci.yml`) runs
-`make ci` (the same plus slow tests and the coverage gate) on every push/PR (posting ✅/❌ to Slack). The full unit/architecture suite (~13 300 tests) is green
+`make ci` (the same plus slow tests and the coverage gate) on every push/PR (posting ✅/❌ to Slack). Docs-only PRs skip it (also a push to `main` and the `timing` job) but still run the doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`; that file defines "docs": every file under `docs/`, root `*.md`, `.github/**/*.md`, `CLAUDE.md` anywhere except under `src/skills/`). Two weekly cloud workflows, `Mutation survivors` and `Firestore parity`, write artifacts that a scheduled routine reads, never Slack (`tests/CLAUDE.md` § Running). The full unit/architecture suite (~13 300 tests) is green
 and **safe to run in full** (any historical "don't run the full suite" warning was a since-fixed
 chunker infinite loop, not a standing hazard). `make test-unit` / `make check` run it in parallel
 via pytest-xdist (`-n auto`; cap with `PYTEST_WORKERS=6`): ~1:34 on a 12-core Mac vs ~5:00
@@ -88,7 +88,7 @@ and `make ci` runs everything once. Locally `--durations=25` is an advisory repo
 coverage; it selects by executed Python lines, so it can miss a test whose input is a data file or code run in a child
 process: **`make check` before a commit is mandatory** (`tests/CLAUDE.md`). **One full suite at a time on a
 machine:** a session with `-n` (or 2000+ tests) takes `fcntl.flock` on a file in the temp dir, prints the holder and
-waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that only rise (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; every package is done when `python -m tests.support.semantic_mutants` leaves every mutant killed or ruled equivalent by the reviewer. Lint scope is `src/` and the root entry points (default high-signal ruleset: pyflakes + pycodestyle
+waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that rise, or are lowered per the rule in `tests/CLAUDE.md` (reason line + reviewer OK) (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; every package is done when `python -m tests.support.semantic_mutants` leaves every mutant killed or ruled equivalent by the reviewer. Lint scope is `src/` and the root entry points (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 
@@ -1116,7 +1116,7 @@ in the session setup; its findings stay local, and nothing is pushed until it is
 decides each edit.** Owner's standing rule since 2026-09-30, replacing per-test owner approval.
 
 If a code change makes an existing test fail:
-1. STOP. The implementer does not touch the test.
+1. STOP. The implementer does not touch the test (except the mechanical commit of R7 below).
 2. Record EXACTLY which test failed and WHY (assertion, actual vs expected).
 3. Hand it to a **reviewer**: the task reviewer in subagent-driven work, otherwise a dedicated
    reviewer subagent. Give it the failing test, the intended change and its spec (RFC, plan).
@@ -1129,6 +1129,11 @@ If a code change makes an existing test fail:
 
 New behaviour gets NEW tests. Self-authorized without review: fixing a broken import path caused
 by a module rename you just performed.
+
+Every other mechanical adaptation (a rename, a signature or constructor-argument change) goes in the implementer's own commit titled
+`test(mechanical): ...`; the reviewer reads that commit as a whole and checks one thing: no assertion changed. An assertion is changed when
+a different value, condition or count is asserted; renaming an identifier or keyword inside an assert after a rename is mechanical.
+Behavioural edits stay per test under the reviewer rule (`tests/CLAUDE.md`).
 
 This applies to: test files (`tests/`), conftest.py, shared test helpers, fixtures.
 

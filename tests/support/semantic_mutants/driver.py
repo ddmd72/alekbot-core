@@ -8,6 +8,9 @@
                    keys survive unrelated edits, numbers do not). The tool never rules a mutant equivalent itself.
 --operators SET    `default` (the data-access operators) or `wiring` (wire-drop, call-skip: for a composition root,
                    any module incl. the root module `main`); the sets never mix.
+--report PATH      also write the run as JSON (module, operators, tests, counts, complete, total, one entry per mutant) to
+                   PATH, rewritten after every mutant ("complete": false until the last one) so a cut-off run keeps its data.
+--no-fail          exit 0 when mutants survived or errored (the report carries the verdict); a failed baseline still exits 2.
 --cwd DIR          directory of the child runs (default: the repository root); the self-tests use it for a toy module.
 
 Per mutant: killed (the selected tests failed or the run hung), survived (they passed: the tests do not notice the
@@ -113,12 +116,34 @@ def format_outcome(o: Outcome) -> str:
     return line + (f"\n        {o.detail}" if o.status == "error" else "")
 
 
+def write_report(path: str, module: str, operators: str, tests: List[str], counts: Dict[str, int], outcomes: List[Outcome],
+                 total: int, complete: bool) -> None:
+    data = {
+        "module": module,
+        "operators": operators,
+        "tests": list(tests),
+        "counts": counts,
+        "complete": complete,
+        "total": total,
+        "outcomes": [
+            {"number": o.mutant.number, "status": o.status, "lineno": o.mutant.lineno, "operator": o.mutant.operator,
+             "description": o.mutant.description, "key": o.mutant.key, "detail": o.detail}
+            for o in outcomes
+        ],
+    }
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m tests.support.semantic_mutants", description=__doc__.split("\n\n")[0])
     ap.add_argument("--module", required=True, help="dotted module to mutate, e.g. src.adapters.firestore_repo")
     ap.add_argument("--tests", nargs="+", required=True, help="pytest paths / node ids that must kill every mutant")
     ap.add_argument("--equivalent", help="file of `key  # reason` lines: mutants a reviewer ruled equivalent")
     ap.add_argument("--operators", choices=OPERATOR_SETS, default=DEFAULT_OPERATORS, help="operator set (default: the data-access operators)")
+    ap.add_argument("--report", help="write the run as JSON to this path")
+    ap.add_argument("--no-fail", action="store_true", help="exit 0 even when mutants survived or errored")
     ap.add_argument("--cwd", default=str(REPO_ROOT))
     args = ap.parse_args(argv)
 
@@ -135,15 +160,25 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
 
     outcomes: List[Outcome] = []
+
+    def count() -> Dict[str, int]:
+        return {s: sum(o.status == s for o in outcomes) for s in ("killed", "survived", "equivalent", "error")}
+
     for m in mutants:
         o = Outcome(m, "equivalent", equivalent[m.key]) if m.key in equivalent else run_mutant(m, args.module, args.tests, cwd, args.operators)
         outcomes.append(o)
         print(format_outcome(o) + (f"  ({o.detail})" if o.status == "equivalent" else ""), flush=True)
+        if args.report:
+            write_report(args.report, args.module, args.operators, args.tests, count(), outcomes, len(mutants), False)
 
-    counts = {s: sum(o.status == s for o in outcomes) for s in ("killed", "survived", "equivalent", "error")}
+    counts = count()
     print(f"\n{len(outcomes)} mutants: {counts['killed']} killed, {counts['survived']} survived, "
           f"{counts['equivalent']} ruled equivalent, {counts['error']} error  ({time.monotonic() - started:.0f}s)")
+    if args.report:
+        write_report(args.report, args.module, args.operators, args.tests, counts, outcomes, len(mutants), True)
     survivors = [o for o in outcomes if o.status == "survived"]
+    if args.no_fail:
+        return 0
     if survivors:
         print("SURVIVORS (the tests do not notice these defects; kill them or have a reviewer rule them equivalent):")
         for o in survivors:
