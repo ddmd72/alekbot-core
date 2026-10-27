@@ -8,8 +8,8 @@ by updating this file.
 
 Design records: `docs/10_rfcs/DELIBERATE_FACT_MANAGEMENT_RFC.md` (taxonomy, tools, cognitive process),
 `docs/10_rfcs/CLUSTER_REVIEW_RFC.md` (Stage 2a), `docs/10_rfcs/STANDING_DIRECTIVES_RFC.md` (Stage 2b),
-`docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` (`$memory save`), `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (S1 live; S2, S3 and S4 deployed 2026-10-27, janitor log-only;
-S5's classify built, not run; P2 revised, "a fact whose date passed becomes history", built, not deployed), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,fact_versions_one_writer,fact_expiry_and_janitor,fact_review_and_owner_questions,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
+`docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` (`$memory save`), `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (S1 live; S2, S3 and S4 deployed 2026-10-27, janitor writes since the deploy of 2026-10-27;
+S5's classify applied 2026-10-27; P2 revised, "a fact whose date passed becomes history", deployed), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,fact_versions_one_writer,fact_expiry_and_janitor,fact_review_and_owner_questions,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
 
 ## 0. How to answer questions about memory
 
@@ -70,7 +70,7 @@ S5's classify built, not run; P2 revised, "a fact whose date passed becomes hist
 
 There is no other writer of facts in normal operation: the bot does not save facts itself (§5.1). The owner can
 invalidate a fact from the Cabinet (§5.2); that rebuilds the baseline at once. One daily zero-LLM job, the janitor, only
-moves a fact whose expiry has passed from `current` to `stale` (§5.5); it is log-only until the owner switches it on.
+moves a fact whose expiry has passed from `current` to `stale` (§5.5); it has written since the deploy of 2026-10-27 (rollback: remove `FACT_LIFECYCLE_SWEEP_DRY_RUN` from the deploy).
 What becomes of a stale fact is decided by the **review pass** (a fifth model pass, §5.6): it brings the fact back, sets
 it aside, or asks the owner one question at a time in the primary chat. The owner's answers (a digit, a button, a
 reply, a Cabinet click) are applied by code, not by a model (§5.6).
@@ -1025,16 +1025,14 @@ plan in `src/domain/fact_lifecycle_sweep.py`, the alerts in `fact_lifecycle_aler
    `{accounts, due, staled, would_stale, deferred, conflicts, no_decision, breaker_tripped, review_enqueued, purge_overdue,
    dry_run}`, or `{"status": "busy"}`.
 
-**Log-only is the default.** `FACT_LIFECYCLE_SWEEP_DRY_RUN` (`os.getenv` in `build_application_graph`, not in
+**Log-only is the code default; the deploy sets the variable, so the janitor writes since 2026-10-27.** `FACT_LIFECYCLE_SWEEP_DRY_RUN` (`os.getenv` in `build_application_graph`, not in
 `load_settings()`) is log-only unless it is an explicit off value (`0`, `false`, `no`, `off`); empty or unset or anything else
 stays log-only. The startup line says `fact lifecycle sweep: log-only` or `: writes`. In log-only mode nothing is written to
 facts or the cache: `would_stale` counts every due fact with a decision (open questions' facts excepted) whatever the breaker
 says, `deferred` is what the cap would hold, the breaker reads `would trip`, and no breaker 🚨 is posted. The snapshot and the
 line are written in log-only mode too, because the owner reads them before switching writes on. **The review is not log-only**:
-it works on the facts that are already stale, whatever the janitor's mode (§5.6). Nothing in the code switches writes on: S5
-does it, **only on the owner's word** (the rollout notes, ops; the switch is `FACT_LIFECYCLE_SWEEP_DRY_RUN` in
-`cloudbuild-dev.yaml`). Before S5's classify no current fact has `expires_at`, so the first log-only week checks the plumbing
-(the job runs, the query is served by its index, the counters and the line appear); it is not a preview of janitor-on.
+it works on the facts that are already stale, whatever the janitor's mode (§5.6). Nothing in the code switches writes on: the owner did it on 2026-10-27 with `FACT_LIFECYCLE_SWEEP_DRY_RUN=0` in
+`cloudbuild-dev.yaml` (a deploy). The rollback lever is removing the variable (a deploy; `--set-env-vars` replaces every variable). S5's classify was applied the same day and the owner's re-review of closed facts applied.
 
 **What it stores and posts.** `{prefix}fact_lifecycle_daily/<account>:<UTC day>` gets one snapshot with the whole field set:
 `run_at`, `due`, `newly_due` (due facts whose `expires_at` is after the previous run's `run_at`), `no_decision`, `staled`,
@@ -1668,8 +1666,7 @@ directive is looked at again under the new rule, always dry run first: classify 
 expiry plan for them; bench 7 with `--stage-ids` (the same ids), `--expiry-plan` and `--max-passes` shows, in its `_listed.md`,
 what the review would write for each; the owner reads it; only then either the reopen script with `--ids-file` and
 `--expiry-plan` makes the kept ones (archived or invalidated) stale and the next daily review decides them (their questions
-join the pool, at most 50), or, for the facts he decided himself, the owner-decisions script writes each decision. The janitor
-stays log-only meanwhile.
+join the pool, at most 50), or, for the facts he decided himself, the owner-decisions script writes each decision. (Historical: the janitor stayed log-only meanwhile; it writes since 2026-10-27.)
 
 The `scripts/consolidation/` benches run the real agent against live reads: fact writes are intercepted and the cache
 refresh is stubbed, but the model calls are real (paid) and may be recorded in the account's billing counters (the
@@ -1799,15 +1796,14 @@ the five prompt tokens and the code-built messages, the owner-zone timestamps, t
 log-only mode; §2.7, §3.11, §5.5, `decisions/fact_expiry_and_janitor.md`. S4: the review pass, the question queue, the owner's
 answers by digit, button, reply or Cabinet, the weekly digest, the Cabinet views, the janitor's pool, guard and alerts; §5.5,
 §5.6, `decisions/fact_review_and_owner_questions.md`). **S5's classify is built, not run** (the classify script, §9.5; "S5 as
-built" in the RFC), and the audit has its expiry classes (§9.6). **P2 revised is built, not deployed** (a fact whose date
+built" in the RFC), and the audit has its expiry classes (§9.6). **P2 revised is deployed (2026-10-27)** (a fact whose date
 passed becomes history; the question kinds, the invoice digest questions, the digest's two new blocks, the reopen and rollback
 scripts; §2.7, §5.6, §9.5, RFC §9 "P2 revised"); its release order is code, then the `CONSOLIDATION_LIFECYCLE` upload the same
-day, then the reopen script, classify apply and a bench 7 re-run, and **the janitor is not switched on before it ships**. Still
+day, then the reopen script, classify apply and a bench 7 re-run, and the janitor was switched on after it shipped (2026-10-27). Still
 to come:
 - **S5 steps.** The order, set by the owner: classify (dry run → the owner reads the report → apply) → the review dry run (step M
-  bench 7 is its tool; its G5 detector no longer counts the history fact of an "ended" answer) → the janitor stays log-only on
-  the classified facts for as long as needed (the owner reads `would_stale` and the breaker each morning) → janitor on **only on
-  the owner's word**. Classify defaults to `none` when unsure, accepts a filtered set (`--ids-file`), and a pool of 50 or fewer
+  bench 7 is its tool; its G5 detector no longer counts the history fact of an "ended" answer) → the janitor stayed log-only on
+  the classified facts until the owner's word → janitor on (done 2026-10-27, `FACT_LIFECYCLE_SWEEP_DRY_RUN=0`). Classify defaults to `none` when unsure, accepts a filtered set (`--ids-file`), and a pool of 50 or fewer
   bounds the drain: the review gets at most 50 facts at a time (about three days of passes of 20), then questions go one at a
   time, up to 5 a day, answered by digit, button or the Cabinet (which can answer any number at once). Bench 7 stages a
   sample, not the whole set that classify makes due, so the first live wave is bounded by the pool cap, oldest expiry first.

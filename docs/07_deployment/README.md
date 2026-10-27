@@ -484,8 +484,8 @@ stay up unused. **Hard stop:** remove the caller's `roles/run.invoker` binding o
 remains): `gcloud storage rm --all-versions "gs://<WORKSPACE_BUCKET>/<USER_ID>/**"`.
 
 **Fact janitor.** Stop it at once: `gcloud scheduler jobs pause alek-bot-dev-fact-lifecycle-sweep --location=us-central1
---project=<PROJECT_ID>`. It is log-only unless `FACT_LIFECYCLE_SWEEP_DRY_RUN` is an explicit off value in the main
-service's `--set-env-vars` (root `CLAUDE.md`; [SCHEDULERS.md](SCHEDULERS.md) § Fact Lifecycle Sweep).
+--project=<PROJECT_ID>`. It writes since the deploy of 2026-10-27 (`FACT_LIFECYCLE_SWEEP_DRY_RUN=0` in the main
+service's `--set-env-vars`); the rollback lever is removing that variable (a deploy: `--set-env-vars` replaces every variable), which makes it log-only again (root `CLAUDE.md`; [SCHEDULERS.md](SCHEDULERS.md) § Fact Lifecycle Sweep).
 
 **Memory telemetry.** `MEMORY_TELEMETRY=off` disables the sampler; `MEMORY_SAMPLE_INTERVAL_S` sets the idle interval
 (§ Memory telemetry sink above).

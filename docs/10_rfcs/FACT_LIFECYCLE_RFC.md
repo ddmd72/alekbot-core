@@ -1,8 +1,8 @@
 # RFC: Fact lifecycle — expiry decided by content, a daily janitor, a periodic review pass, owner questions, real versions
 
-**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2, S3 and S4 were deployed 2026-10-27** (the real versions and lease, expiry decided from content, the review, owner questions and digest are on; the janitor is log-only; see "S2 as built", "S3 as built", "S4 as built" in §9); **S5's classify script is built, not run** (see "S5 as built" in §9); the janitor stays log-only until the owner's word. **P2 revised by the owner (2026-10-27):** a fact whose date has passed is no longer archived without a question; what happened, and what was only intended, becomes history, and archive is kept for noise and what the owner archives; never-true stays invalidated. The review change this needs is **built, not deployed** (see "P2 revised" in §9); the janitor is not switched on before it ships.
+**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2, S3 and S4 were deployed 2026-10-27** (the real versions and lease, expiry decided from content, the review, owner questions and digest are on; the janitor was log-only until S5; see "S2 as built", "S3 as built", "S4 as built" in §9); **S5's classify was applied 2026-10-27** (see "S5 as built" in §9) and the owner's re-review of closed facts applied; **the janitor writes since the deploy of 2026-10-27** (`FACT_LIFECYCLE_SWEEP_DRY_RUN=0`; rollback = remove the variable, a deploy). **P2 revised by the owner (2026-10-27):** a fact whose date has passed is no longer archived without a question; what happened, and what was only intended, becomes history, and archive is kept for noise and what the owner archives; never-true stays invalidated. The review change this needs is **deployed** (see "P2 revised" in §9); the janitor was switched on after it shipped.
 Rev 1 had owner decisions Q1–Q4; two adversarial reviews (code paths; rollout and steady state) and a binding
-arbitration produced this revision. Slice S1 (§9) is merged and deployed; S2–S4 are deployed (2026-10-27) with the janitor log-only; S5's classify is built and not yet run, and switching the janitor on is a later, separate step.
+arbitration produced this revision. Slice S1 (§9) is merged and deployed; S2–S4 are deployed (2026-10-27) with the janitor log-only; S5's classify was applied and the janitor switched on on 2026-10-27.
 **Supersedes, once accepted:** `DELIBERATE_FACT_MANAGEMENT_RFC.md` §2.2 axis 2 "Lifecycle Transitions", §4.4 (default
 TTL by class), §4.5 (state transition rules), §5.3 "Update Modes", §7.1 `FactLifecycleService`. The rest of that RFC
 (taxonomy, tools, cognitive process) stays in force.
@@ -876,7 +876,7 @@ the rollout notes (ops), step M.
 - **S4:** the breaker's rule becomes the review interval + 72 h (D6) when `last_review_at` is wired (S3 passes none and pins
   only its own 72 h and 50 edges); the review enqueue is S4's (S3 logs `review_enqueued=0`); revives keep the strict born-due
   refusal (no floor); the janitor's overlap guard is S4's call; "revived 3× in 30 days" reads `lifecycle_events`.
-- **S5 order (owner, Q7):** classify (dry run → the owner reads it → apply) → review dry run (§7 step 3b) → the janitor stays
+- **S5 order (owner, Q7; completed 2026-10-27, the janitor writes since that deploy; rollback = remove the variable):** classify (dry run → the owner reads it → apply) → review dry run (§7 step 3b) → the janitor stays
   log-only **on the classified facts for as long as needed** (the owner reads `would_stale` per account and the breaker each
   morning) → janitor on **only on the owner's word** (`FACT_LIFECYCLE_SWEEP_DRY_RUN=0`, a deploy). S5's classify defaults to
   `none` when unsure ("when unsure, keep the fact") and accepts a filtered set, so that documents an old revision rewrote in a
@@ -1053,8 +1053,8 @@ by the "set aside lately" list and the digest. `vector` is read by the review's 
 - Follow-ups outside S4: a call note that carries an answer to a question; a Cabinet "bring back" for a closed fact; Telegram
   inline keyboards on the same port; Smart sending interactive blocks through it.
 
-**S5 as built (2026-10-27).** Classify, the audit's expiry classes and the bench 7 fix are built; classify has not been run, and the
-janitor is still log-only.
+**S5 as built (2026-10-27).** Classify, the audit's expiry classes and the bench 7 fix are built; classify was applied on 2026-10-27, and the
+janitor has written since that day's deploy.
 
 - *The script.* `scripts/migration/fact_s5_classify.py`, owner-run, with its pure rules in `fact_s5_classify_rules.py`. Two modes.
   **Dry run** (the default) scans the current facts (reads only), checks the live prompt (below), asks the live consolidation
@@ -1125,14 +1125,14 @@ janitor is still log-only.
   the janitor on is a separate change, made only on the owner's word. (18) Classify has no throttle of its own; the janitor's pool
   cap feeds the review at most 50 facts at a time.
 
-**P2 revised (2026-10-27).** Built, not deployed; the janitor stays log-only until it ships. Where this text and the code
+**P2 revised (2026-10-27).** Deployed 2026-10-27; the janitor was switched on after it shipped. Where this text and the code
 differ, the code wins and is described in *As built* at the end of this section. The owner's map is `docs/05_building_blocks/memory/README.md`
 (§2.7, §5.5, §5.6, §7, §9.5); the decision record is `decisions/fact_review_and_owner_questions.md` ("Revised 2026-10-27").
 
 **P2 revised (owner, 2026-10-27): a fact whose date has passed becomes history.** Built on `feat/facts-p2-history`. It
 replaces P2's "a plan whose date has passed with no outcome is archived without a question" (§8 P2), D6's "Dead plans with no
 outcome are archived without asking", S4 as built's `date_passed` archive and Q8's "a dated plan is archived only", and the
-review token's lines that say the same. The janitor is not switched on before this ships.
+review token's lines that say the same. The janitor was switched on only after this shipped.
 
 *The owner's rule.* Anything that really happened is a fact; an intention is a fact too ("planned it, did not go"); a bill or
 a payment is a fact of past life with a very low priority. So a stale fact whose date has passed is rewritten as **history**,

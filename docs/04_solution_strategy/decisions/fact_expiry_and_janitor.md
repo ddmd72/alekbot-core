@@ -1,4 +1,4 @@
-# Decision: expiry is decided from content and enforced by a daily zero-LLM janitor, log-only until S5 (Facts S3, 2026-10-23)
+# Decision: expiry is decided from content and enforced by a daily zero-LLM janitor, log-only until 2026-10-27, writing since (Facts S3, 2026-10-23)
 
 **Decision.** Spec: `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` D1, D2, D4, D5, D10, "S3 as built", "S4 as built"; owner's map: `docs/05_building_blocks/memory/README.md` §2.7, §5.5.
 - The model decides each fact's end from its content (`date`, `horizon` or `none`, a required `expiry` argument); code computes `expiry_kind`, `ttl_days` and `expires_at` from it, in the owner's timezone, and refuses a decision that is born due. A cleanup pass (Stage 2a/2b, backstop, cluster) floors a due horizon to now + 2 days instead; a closing state ignores `expiry`; directives, principles and mindset facts are pinned to `none`.
@@ -20,4 +20,4 @@
 - Classify through the consolidation tool loop: its born-due rule refuses a past `date` and its cleanup floor invents an `expires_at` for a due horizon, and its `reported_date` rules move a field classify must leave alone; those are exactly the facts classify exists to find.
 - The classify instruction as a prompt-snapshot token: `snapshot_pull --check` would report it as drift, and the next pull would delete it as a file gone from the store.
 
-**Revise when** a second janitor writer appears, the run takes longer than the 5-minute guard, or the pool cap of 50 proves too low or high after the S5 log-only period.
+**Revise when** a second janitor writer appears, the run takes longer than the 5-minute guard, or the pool cap of 50 proves too low or high after the log-only period (writing since 2026-10-27).
