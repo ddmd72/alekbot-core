@@ -22,6 +22,7 @@ _REWRITTEN: Final[str] = "rewritten on "
 _AS_HISTORY: Final[str] = "rewritten as history"
 _REWRITTEN_Q: Final[str] = "rewritten q="
 _RENEWED: Final[str] = "renewed q="
+_OWNER_DECIDED: Final[str] = "owner decided on review"
 _CONFIRMED: Final[str] = "confirmed q="
 _NO_ANSWER: Final[str] = "no answer to q="
 _DID_NOT_REMEMBER: Final[str] = "did not remember q="
@@ -127,6 +128,12 @@ def queued_reason(question_id: str) -> str:
     return f"queued for the owner q={question_id}"
 
 
+def owner_decided_reason() -> str:
+    """A fact the owner decided himself in a re-review of closed facts (the migration script): one reason whatever he
+    decided (history, current, supersede, invalidate or revive). It is a rewrite for the readers, never a revive."""
+    return _OWNER_DECIDED
+
+
 def kept_twice_reason(question_id: str) -> str:
     """The fact was left undecided twice and queued by code."""
     return f"kept twice: queued q={question_id}"
@@ -174,9 +181,9 @@ def is_revive_reason(reason: object) -> bool:
 
 
 def is_rewrite_reason(reason: object) -> bool:
-    """The reason of a rewrite (`rewritten on …`, `rewritten as history…`, the owner's `rewritten q=…` and `renewed q=…`):
-    a new version, not a revive."""
-    return isinstance(reason, str) and reason.startswith((_REWRITTEN, _AS_HISTORY, _REWRITTEN_Q, _RENEWED))
+    """The reason of a rewrite (`rewritten on …`, `rewritten as history…`, the owner's `rewritten q=…` and `renewed q=…`,
+    and the owner's `owner decided on review`): a new version, not a revive."""
+    return isinstance(reason, str) and reason.startswith((_REWRITTEN, _AS_HISTORY, _REWRITTEN_Q, _RENEWED, _OWNER_DECIDED))
 
 
 def gives_window_reason(reason: object) -> bool:
