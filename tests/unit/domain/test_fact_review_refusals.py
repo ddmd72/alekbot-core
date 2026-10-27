@@ -219,9 +219,9 @@ def test_the_dated_facts_day_is_the_owners_not_utc():
 
 
 def test_a_plan_east_of_utc_is_the_same_day_in_both_readings():
-    madrid = fact(**dated(date(2026, 10, 24), ZoneInfo("Europe/Madrid")))  # 24 Oct 22:00 UTC
-    assert refuse("history", ReviewBasis("date_passed"), subject=madrid, today=date(2026, 10, 25), tz="Europe/Madrid") is None
-    assert "not before today" in refuse("history", ReviewBasis("date_passed"), subject=madrid, today=date(2026, 10, 24), tz="Europe/Madrid")
+    berlin = fact(**dated(date(2026, 10, 24), ZoneInfo("Europe/Berlin")))  # 24 Oct 22:00 UTC
+    assert refuse("history", ReviewBasis("date_passed"), subject=berlin, today=date(2026, 10, 25), tz="Europe/Berlin") is None
+    assert "not before today" in refuse("history", ReviewBasis("date_passed"), subject=berlin, today=date(2026, 10, 24), tz="Europe/Berlin")
 
 
 @pytest.mark.parametrize("action", ["revive", "rewrite", "invalidate"])

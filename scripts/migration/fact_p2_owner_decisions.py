@@ -34,7 +34,7 @@ refuses (MOVED) and the fact is skipped and listed, never followed to the newer 
 Reads GOOGLE_CLOUD_PROJECT and FIRESTORE_DATABASE from the environment or the repo's .env.
 
 Usage:
-    python -m scripts.migration.fact_p2_owner_decisions --decisions scripts/memory/decisions.json [--timezone Europe/Madrid] [--apply]
+    python -m scripts.migration.fact_p2_owner_decisions --decisions scripts/memory/decisions.json [--timezone Europe/Lisbon] [--apply]
 """
 
 import argparse
