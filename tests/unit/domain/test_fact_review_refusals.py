@@ -253,11 +253,11 @@ def test_history_on_an_archive_with_another_basis_is_refused():
 
 
 def test_history_on_a_dated_plan_is_refused_because_a_plan_that_is_over_is_rewritten_as_history():
-    # P2 revised (C5, C7): a date fact that is over is rewritten as history, not archived beside a history fact; a
-    # standing fact is no dated plan whatever its question's fallback, so it keeps the S4 history fact
+    # P2 revised (C5, C7): a date fact that is over is rewritten as history, not archived beside a history fact; a fact
+    # whose question falls back to archive is noise and is archived only (arbiter: archive only for noise and never-true)
     q = question(Q.ASKED, **REPLIED)
     assert refuse("archive", reply_basis(), q=q, subject=fact(**dated(date(2026, 10, 20))), history="it ended") == DATED_PLAN_HISTORY
-    assert refuse("archive", reply_basis(), q=question(Q.ASKED, fallback="archive", **REPLIED), history="it ended") is None
+    assert "archived only" in refuse("archive", reply_basis(), q=question(Q.ASKED, fallback="archive", **REPLIED), history="it ended")
 
 
 def test_blank_history_is_refused():

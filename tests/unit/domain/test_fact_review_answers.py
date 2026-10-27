@@ -201,12 +201,12 @@ def test_ended_on_a_dated_plan_archives_only():
     assert change.history is None
 
 
-def test_ended_on_a_standing_fact_whose_question_falls_back_to_archive_keeps_its_history_fact():
-    # P2 revised (C7): a dated plan is a fact of expiry kind date only, whatever its question's fallback; a standing
-    # fact asked with an archive fallback is archived and keeps its history fact, as every standing fact does
+def test_ended_on_a_fact_whose_question_falls_back_to_archive_archives_only():
+    # Arbiter (owner's rule: archive only for noise and never-true): a question that falls back to archive asks about
+    # noise, and noise is archived with no history fact
     change = answer_updates(AnswerKind.ENDED, fact(), question(fallback="archive"), NOW, MADRID, "cabinet")
     assert change.update == ARCHIVE
-    assert change.history == ended_text("Drinks green tea", NOW, MADRID)
+    assert change.history is None
     assert change.reason == "ended q=q1 (cabinet)"
 
 
