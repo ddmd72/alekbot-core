@@ -4,6 +4,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+import pytest
+
 from tests.support import mutation_targets
 from tests.support.mutation_targets import TARGETS, matrix, summarize
 from tests.support.mutation_targets import tests_for as computed_tests_for
@@ -221,3 +223,29 @@ def test_an_incomplete_report_is_marked_partial(tmp_path):
     md, combined = summarize(tmp_path, ["pkg.p"])
     assert "| pkg.p | 1 | 0 | 0 | 0 | partial (1 of 5 mutants) |" in md
     assert combined["modules"][0]["status"] == "partial"
+
+
+def test_tests_for_cli_prints_a_registered_targets_full_list(capsys):
+    assert mutation_targets.main(["--tests-for", "main"]) == 0
+    printed = capsys.readouterr().out.split()
+    target = next(t for t in TARGETS if t.module == "main")
+    assert printed == list(target.tests)
+    assert set(target.extra_tests) <= set(printed)
+
+
+def test_tests_for_cli_prints_the_computed_list_of_an_unregistered_module(capsys):
+    assert mutation_targets.main(["--tests-for", "src.domain.fact_review_answers"]) == 0
+    assert capsys.readouterr().out.split() == list(computed_tests_for("src.domain.fact_review_answers"))
+
+
+def test_tests_for_cli_exits_two_when_no_test_reaches_the_module(capsys):
+    assert mutation_targets.main(["--tests-for", "no.such.module"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == "" and "no unit test reaches no.such.module" in captured.err
+
+
+def test_usage_lists_every_mode(capsys):
+    with pytest.raises(SystemExit):
+        mutation_targets.main([])
+    err = capsys.readouterr().err
+    assert "--matrix" in err and "--summarize" in err and "--tests-for" in err
