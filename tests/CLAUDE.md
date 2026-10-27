@@ -11,8 +11,7 @@ This table is the one place that says which test command to run when. Other docs
 | While editing | `pytest <path>::<test>` or `make test-affected` | the tests you name, or the unit tests testmon selects for your diff (it can miss a test whose input is a data file or code in a child process) |
 | Before every commit | `make check`, once (not after every edit) | lint + mypy + the unit suite without `slow` tests + the offline G2 test |
 | Before you call a package done, and whenever you report coverage | `make ci` | everything in `make check` + `slow` tests + the coverage gates (per file and per layer); CI runs exactly this on every PR |
-| Package done-check (RFC §5) | `python -m tests.support.semantic_mutants --module <m> --tests $(python -m tests.support.mutation_targets --tests-for <m>) --equivalent <file>` (the test list is computed, see "Mutation check") | every mutant killed or ruled equivalent by the reviewer |
-| Wiring done-check (P9) | `python -m tests.support.semantic_mutants --module <src.composition.X or main> --operators wiring --equivalent tests/unit/composition/wiring_equivalent_mutants.txt --tests <the P9 test files>` | the command is spelled out in "The production graph" below; about 9-10 s per mutant |
+| Mutation check, by hand, optional | `python -m tests.support.semantic_mutants --module <m> --tests $(python -m tests.support.mutation_targets --tests-for <m>) [--operators wiring] [--equivalent <file>]` | one module's mutants; nobody has to run it: the weekly run is the only mutation pass ("Mutation check" below; wiring command in "The production graph") |
 | Only when the task needs them | `make test-integration`, `make test-e2e-all` | some integration tests and all e2e tests call real services |
 | Fake against the real thing (P5) | `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pytest tests/unit/support/test_firestore_parity.py`, and `make test-cloud` | the parity scenarios on the Firestore emulator, and on the test database (see below) |
 | Docs-only PR | (automatic) | `make ci` is skipped (F3; also on a push to `main` and in the `timing` job; dependencies are still installed, the PII gate and the CI Slack notice still run). Docs: every file under `docs/` (any extension), `CLAUDE.md` anywhere except under `src/skills/` (nothing there is docs), root `*.md`, `.github/**/*.md`. The doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`) still run; the meta-test is an equality check (fails when an unlisted test reads docs and when a listed one stops). Known gap: a test reading a root `*.md` or a `CLAUDE.md` is not detected |
@@ -150,8 +149,8 @@ The main service's non-web objects are built by `build_application_graph(config,
     instance of the class) or `Class.attr*` (any instance may be None; refused on adapter, service, handler and composition classes);
   - `wiring_instance_ledger.txt`: `<module.Class> <count>  # <reason> <evidence>`; a count above 1 names where each instance is built.
 - **Mutation** (`wire-drop` replaces one argument or dict value with `None`; `call-skip` drops one `attach_*`, `register_*` or `set_*`
-  call). The done-check for the builder and `main.py`, one run per module, in the background (a full set of about 950 mutants takes about
-  2.5-3 hours; each mutant runs the graph tests in a child process):
+  call). The weekly run covers the builder and `main.py` (registered targets). By hand and optional, one run per module, in the background
+  (a full set of about 950 mutants takes about 2.5-3 hours; each mutant runs the graph tests in a child process):
   ```bash
   for m in src.composition.application_graph main src.composition.service_container src.composition.user_agent_factory \
            src.composition.slack_adapter_factory src.composition.telegram_adapter_factory; do
@@ -165,10 +164,10 @@ The main service's non-web objects are built by `build_application_graph(config,
   an enqueue literal in dead code; the rollback env switches; the wiring of `indexer_main`, `job_main`, `relay_main`; a secret that is
   empty in Secret Manager; the four env reads made at import time, before the seal. They are listed in the RFC's "Built (P9)" note.
 
-## Mutation check: the done-criterion for a package
+## Mutation check: the weekly run
 
-Every package ends with this check: it is done when every mutant of its modules is killed by its tests or
-ruled equivalent by the reviewer. Mutants: a dropped `order_by`/`where`/`select` field/`model_dump` field/dict key of a
+Mutation testing is the weekly cloud run, nothing else (owner decision 2026-10-27: mutant hunting during normal work only adds cost). Between
+runs the code lives with its survivors; no package waits for a clean local pass. The driver below stays as a tool anyone may run by hand. Mutants: a dropped `order_by`/`where`/`select` field/`model_dump` field/dict key of a
 written document/write/forwarded keyword, a flipped sort direction, an `except` that returns success.
 
 ```bash
@@ -184,16 +183,16 @@ Statuses: killed, survived, equivalent, and `error` (the selected tests never lo
 not a pass). `except-success` skips handlers that only log and already return the success value. Slow tests run in the mutant
 children (`RUN_SLOW_TESTS=1`).
 
-A survivor means the tests do not notice that defect: write the assertion that does. `--equivalent` takes
-`key  # reason` lines (the 8-hex key in the report) and is the reviewer's tool, never the implementer's.
+A survivor means the tests do not notice that defect: write the assertion that does (the Monday routine does it from the weekly report).
+`--equivalent` takes `key  # reason` lines (the 8-hex key in the report) and is the reviewer's tool, never the implementer's.
 
 Registering a package's modules in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", graph_group=False, extra=())` in `TARGETS`)
-is part of "package done"; a unit test fails when a `*_equivalent_mutants.txt` file has no registered target. The driver takes
+is part of "package done" (the run itself is not); a unit test fails when a `*_equivalent_mutants.txt` file has no registered target. The driver takes
 `--report PATH` (JSON) and `--no-fail` (exit 0 whatever survived). The `Mutation survivors` workflow (`.github/workflows/mutation.yml`,
 Sunday 02:00 UTC and `workflow_dispatch` with an optional `module`) runs one job per registered module with `--report --no-fail` and
 uploads `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`). `survivors.md` lists every registered module: `missing` when a job produced no report (baseline failed, timed out), `partial (N of M)` when the job was cut; the report is rewritten after each mutant. The verdict is also printed as check-run annotations (≤ 10 per step, 4000 chars each) for the cloud reader. Survivors are read by the Monday routine (a
-scheduled cloud session), which writes the killing assertion or proposes an `equivalent` line, as a test-only PR. The local run above
-stays as the done-check, once per package.
+scheduled cloud session), which writes the killing assertion or proposes an `equivalent` line, as a test-only PR. A local run is optional and
+never a condition of "done".
 
 ## Clock tests (P16)
 

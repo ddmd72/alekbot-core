@@ -492,11 +492,10 @@ review. Manual: probes. Docs-only PRs skip `make ci` (F3, `scripts/ci/docs_only.
 
 ## 5. Work packages
 
-### Done criterion: semantic mutants
+### Semantic mutants (a done criterion until 2026-10-27, now the weekly run only)
 
 A raise-mutant is killed by any test that merely calls the method; the defects found were semantic (ASC for DESC, a
-dropped projection field, a missing state flag, a missing tenant check). Each package therefore ends with a **semantic
-mutation check**, run by a small pytest plugin (generalised from the blind-spot report's prototype), with this operator
+dropped projection field, a missing state flag, a missing tenant check). The **semantic mutation check** is therefore run by a small pytest plugin (generalised from the blind-spot report's prototype), with this operator
 set:
 
 - drop or flip an `order_by`;
@@ -506,7 +505,9 @@ set:
 - skip one write in a multi-write path;
 - drop one forwarded keyword argument.
 
-A package is done when every mutant in its set is killed or ruled equivalent by the reviewer. `mutmut` (P23) is a
+Until 2026-10-27 a package was done when every mutant in its set was killed or ruled equivalent by the reviewer. Since the owner's
+decision of that date no package runs this check locally: it registers its modules in `TARGETS`, and the weekly `Mutation survivors`
+run is the only mutation pass (see "Rules revised"). The reviewer still owns the `*_equivalent_mutants.txt` lines. `mutmut` (P23) is a
 metric only, never a done-gate.
 
 ### Packages
@@ -867,7 +868,7 @@ scheduled routine that fixes survivors by PR.
   CLI `python -m tests.support.mutation_targets --matrix | --tests-for <module> | --summarize DIR --out-md --out-json | --annotations survivors.json`). The driver gained `--report PATH` (JSON)
   and `--no-fail`. Artifacts `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`), also in the step summary.
   The `summarize` job also prints the verdict as check-run annotations (a notice per module, warnings for survivors, at most 9, 4000 characters each). `survivors.md` lists every registered module, `missing` when a job produced no report and `partial (N of M)` when it was cut (the report is rewritten after each mutant). Never red because mutants survived. Registering a package's modules in `TARGETS` is part of "package done"; a unit test fails when a
-  `*_equivalent_mutants.txt` file has no registered target. The local done-check (the table in `tests/CLAUDE.md`) stays, once per package.
+  `*_equivalent_mutants.txt` file has no registered target. The local run (the table in `tests/CLAUDE.md`) stays as a tool for anyone to run by hand, optional (see the 2026-10-27 line below).
 - **F2** `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` rewrites `tests/unit/main_boots_offline_url_map.txt`
   from the booted app (header kept, sorted); the diff in the PR is the review. Without the variable nothing is written. The implementer commits the rewritten pin, the task reviewer reads its diff (no separate approval), and a new route must also be refused or listed in `PUBLIC` of `tests/unit/web/test_every_route_refuses_anonymous.py`.
 - **F3** Docs-only PRs skip `make ci`. `scripts/ci/docs_only.py` is the one definition of "docs": every file under `docs/` (any extension), root `*.md`,
@@ -897,6 +898,9 @@ scheduled routine that fixes survivors by PR.
 - **Rejected.** Deferring packages to "when the store is next touched" (the owner will not interrupt feature work later); survivor
   reports to Slack (nobody triages daily); a mutation run on every merge to `main` (composition modules change in almost every feature
   PR, 1-5 h each; reconsider if survivors accumulate between weekly runs). Record: `decisions/test_gates_friction.md`.
+- **2026-10-27 owner: the per-package mutation done-check is dropped** (and the P9 wiring done-check with it); P15 part 2 was the last package
+  with one (31 survivors: 24 test gaps, 7 equivalent, 0 code bugs). Registering the modules in `TARGETS` stays part of "package done"; the
+  driver and `--tests-for` stay as tools; the weekly run is the only mutation pass. Record: `decisions/test_gates_friction.md`.
 
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**

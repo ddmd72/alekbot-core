@@ -20,3 +20,15 @@
 - Survivors accumulate between weekly runs: add an on-merge mutation run for the touched modules.
 - An `*_equivalent_mutants.txt` file grows faster than the tests: an operator is noisy.
 - A floor is lowered more than twice a quarter: that layer's tests are the problem, not the floor.
+
+## Update 2026-10-27: no per-package mutation done-check
+
+**Decision (owner):** Mutant hunting during normal work only adds cost and makes no sense. The weekly cloud run (`Mutation survivors`, `.github/workflows/mutation.yml`, read by the Monday routine) is the only mutation pass; between runs the code lives with its survivors. The per-package local done-check and the P9 wiring done-check are dropped as requirements.
+
+**What stays:** a package registers its new modules in `tests/support/mutation_targets.py` `TARGETS`, so the weekly run covers them; the driver (`python -m tests.support.semantic_mutants`) and `--tests-for` remain tools anyone may run by hand; the reviewer still owns the lines of `*_equivalent_mutants.txt`.
+
+**Why:** the local run costs hours of machine time per package (the wiring set alone about 3 h) and delays the hand-over. Every done-check so far found test gaps and no code bug; P15 part 2, the last package that had one, gave 31 survivors: 24 test gaps, 7 equivalent, 0 code bugs.
+
+**Rejected alternative:** keep the done-check for packages that change `src/`. The owner chose none.
+
+**Trigger to revisit:** the weekly run finds a code bug that a done-check would have caught before merge.
