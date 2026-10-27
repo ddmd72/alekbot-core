@@ -1,6 +1,7 @@
 """NotificationStatePort kit (P11 · G2): the docstring of `src/ports/notification_state_port.py` checked against
 `FirestoreNotificationStateAdapter` on the evaluating Firestore fake (H1). The adapter runs no query; the index refusal is
-on anyway, for uniformity. Assertions are on the raw stored documents and on what readers return.
+on anyway, for uniformity. Assertions are on the raw stored documents and on what readers return. Records missing a
+required field are not pinned (no writer produces one; the data audit settles them).
 """
 from datetime import datetime, timezone
 from pathlib import Path
@@ -71,15 +72,3 @@ async def test_missing_updated_at_reads_as_now_aware(state):
     docs(state, PRIMARY)["u1"] = {"user_id": "u1", "platform": "slack", "channel_id": "C2", "updated_at": None}
     assert (await state.get("u1")).updated_at == T0
     assert (await state.get_primary("u1")).updated_at == T0
-
-
-async def test_a_record_missing_a_required_field_raises(state):
-    docs(state)["u1"] = {"user_id": "u1", "platform": "slack", "updated_at": T0}
-    docs(state, PRIMARY)["u1"] = {"user_id": "u1", "channel_id": "C2", "updated_at": T0}
-    raised = []
-    for read in (state.get("u1"), state.get_primary("u1")):
-        try:
-            await read
-        except KeyError as exc:
-            raised.append(exc.args[0])
-    assert raised == ["channel_id", "platform"]

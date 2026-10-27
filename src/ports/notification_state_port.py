@@ -16,8 +16,8 @@ class NotificationStatePort(ABC):
     - Tenancy: user_id only.
     - Atomicity: each save replaces the record; last writer wins (the latest message wins).
     - Dates: a stored updated_at reads as naive UTC; a record without one reads as now (aware UTC). No caller reads it.
-    - Legacy: a record missing user_id, platform or channel_id raises (KeyError). Any other shape (an updated_at that is
-      not a timestamp): no writer produces one; behaviour pending the data audit.
+    - Legacy: a record missing user_id, platform or channel_id, or with an updated_at that is not a timestamp: no
+      writer produces one; behaviour pending the data audit.
     - Errors: backend errors propagate.
     """
 

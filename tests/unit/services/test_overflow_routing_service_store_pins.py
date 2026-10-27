@@ -86,7 +86,10 @@ async def test_a_handed_off_batch_is_stored_in_the_queue_and_its_task_enqueued()
     "P11-G2-3: an overflow batch is cut from the session before its hand-off and lost when the enqueue fails "
     "(known loss, docs/05_building_blocks/memory/README.md:1259); fix is the owner's choice"))
 async def test_a_cut_batch_survives_a_failed_enqueue(monkeypatch):
-    """Flips when the cut batch is stored durably before (or with) the cut, or the hand-off is retried until stored."""
+    """Flips (XPASS) when the hand-off retries until the batch is stored, or the messages stay stored until the
+    hand-off succeeded. A fix that writes the batch inside the append's transaction leaves no plain queue write for
+    the fault to hit: the first `require` then reports FAILED, and that fix's reviewer moves the fault or retires the
+    pin. The `require` stays strict on purpose: relaxed, a setup whose fault never fires would XPASS."""
     chain = Chain()
     fault = FailOnce(monkeypatch)
     await chain.five_appends()
