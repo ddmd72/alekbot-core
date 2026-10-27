@@ -83,6 +83,8 @@ from scripts.validation.drive_intent_text_scan_logic import OLD_INTENTS
 
 from .dry_run_drive import DriveOpLog, DryRunDriveOperations
 from .fixture_drive import FixtureDrive
+from .g3_overrides import (
+    PROMPTS_FIRESTORE, PROMPTS_SNAPSHOT, install_snapshot_prompts, run_setup, setup_line, specialist_config)
 from .specialist_fixture import EvalUserSearch, build_drive_fixture
 
 SETS = ("positive", "negative")
@@ -530,6 +532,13 @@ def _args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser.add_argument("--record", action="store_true")
     parser.add_argument("--rebuild-index", action="store_true",
                         help="build the fixture index even when scripts/memory/drive_g3/cache/ holds a matching one")
+    parser.add_argument("--prompts-from-snapshot", action="store_true",
+                        help="serve the drive specialist's prompt files and Smart's PROTOCOL_AGENT_SELECTION from "
+                             "prompts_snapshot/ (the \"after\", before any upload); default: the Firestore prompts")
+    parser.add_argument("--specialist-provider", choices=("claude", "openai"), default=None,
+                        help="the drive specialist's provider, in memory only (default: the user's config)")
+    parser.add_argument("--specialist-tier", choices=("eco", "balanced", "performance"), default=None,
+                        help="the drive specialist's tier, in memory only (default: the user's config)")
     parser.add_argument("--max-usd", type=float, required=True,
                         help="hard stop on the estimated spend of every LLM call in the run (cost_meter.py)")
     args = parser.parse_args(argv)
@@ -617,6 +626,11 @@ async def _run(args: argparse.Namespace) -> int:
         factory = UserAgentFactory(config=settings, env_config=env_config,
                                    coordinator=AgentCoordinator(registry=registry), user_repo=user_repo,
                                    account_repo=account_repo, **container.agent_services())
+        setup = run_setup(PROMPTS_SNAPSHOT if args.prompts_from_snapshot else PROMPTS_FIRESTORE,
+                          args.specialist_provider, args.specialist_tier)
+        if args.prompts_from_snapshot:
+            install_snapshot_prompts(container.assembly_service)   # before any agent or prompt is built
+        print(setup_line(setup))
         agents = await factory.ensure_agents_for_user(user_id)
         smart = agents["smart_agent"]
         if smart.skill_service is not None:
@@ -625,7 +639,9 @@ async def _run(args: argparse.Namespace) -> int:
             smart.workspace_service = DryRunWorkspace(smart.workspace_service)   # no workspace write reaches the bucket
         smart.memory_fact_service = RecordingMemoryFacts()   # no Firestore write: the tool is declared, never stored
         user_context = agents["_user_context"]
-        fixture = build_drive_fixture(user_id, drive, search, user_config=user_context.user_profile.config,
+        fixture = build_drive_fixture(user_id, drive, search, user_config=specialist_config(
+                                          user_context.user_profile.config, args.specialist_provider,
+                                          args.specialist_tier),
                                       prompt_builder=user_context.prompt_builder,
                                       context_builder=container.context_builder)
         eval_user = fixture.search
@@ -725,8 +741,10 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"hard failure: {failure}")
     _OUT.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    print(setup_line(setup))
+    print(f"models: smart={model or '-'} specialist={','.join(sorted(specialist_models)) or '-'}")
     print(f"drive-turn wall time p50: {wall_p50(rows)}s over {len(rows)} runs")
-    (_OUT / f"g3_{stamp}.json").write_text(json.dumps({"model": model, "specialist_models": sorted(specialist_models),
+    (_OUT / f"g3_{stamp}.json").write_text(json.dumps({**setup, "model": model, "specialist_models": sorted(specialist_models),
                                                        "wall_p50_s": wall_p50(rows), "scores": table,
                                                        "turn_cap_runs": capped, "spent_usd": round(meter.spent, 6),
                                                        "max_usd": args.max_usd, "stopped": stopped, "rows": rows},
