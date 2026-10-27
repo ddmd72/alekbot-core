@@ -177,3 +177,8 @@ def test_malformed_new_arguments_name_their_place(raw, place):
 def test_a_null_argument_is_its_default():
     parsed = parse_ask_owner({"fact_id": "f1", "fallback": "revive", "question": None, "texts": None, "folds": None})
     assert parsed == AskRequest("f1", "revive")
+
+
+def test_a_fallback_that_is_no_text_names_the_three_fallbacks():
+    with pytest.raises(ValueError, match="^ask_owner.fallback must be revive, archive or history"):
+        parse_ask_owner({"fact_id": "f1", "fallback": None})

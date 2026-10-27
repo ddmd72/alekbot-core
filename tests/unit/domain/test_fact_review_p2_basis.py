@@ -223,3 +223,7 @@ def test_the_fold_refusals():
 def test_the_horizon_expiry_of_an_ordinary_rewrite_is_untouched_by_the_history_rules():
     rewrite = ParsedFactUpdate(state=FactState.CURRENT, content=SERVICED, expiry=Expiry(ExpiryKind.HORIZON, days=30))
     assert refuse(rewrite, evidence_basis(), evidence=OTHER()) is None
+
+
+def test_a_revive_with_no_basis_is_still_told_to_ask():
+    assert refuse("revive").startswith("nothing here says it still holds")

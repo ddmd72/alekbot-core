@@ -201,3 +201,9 @@ def test_the_timeout_writer_is_its_own_label_on_the_owners_row():
                  "refusals_counter", "refusal_wording", "closing_reason"):
         assert getattr(PassActor.TIMEOUT, prop) == getattr(PassActor.OWNER, prop), prop
     assert FactState.STALE in PassActor.TIMEOUT.accepts
+
+
+def test_an_ordinary_metadata_update_still_merges():
+    current = plan_fact()
+    update = parse_fact_update({"metadata": {"seat": "12A"}, "expiry": horizon(30)})
+    assert plan_fact_update(current, update, NOW).version_fact.metadata == {**current.metadata, "seat": "12A"}
