@@ -6,17 +6,19 @@ from pathlib import Path
 
 from tests.support import mutation_targets
 from tests.support.mutation_targets import TARGETS, matrix, summarize
+from tests.support.mutation_targets import tests_for as computed_tests_for
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_every_registered_path_exists():
+def test_every_registered_path_exists_and_every_module_has_tests():
     for t in TARGETS:
         assert t.tests, t.module
-        for path in t.tests:
+        for path in (*t.tests, *t.extra_tests):
             assert (REPO_ROOT / path).is_file(), (t.module, path)
         if t.equivalent:
             assert (REPO_ROOT / t.equivalent).is_file(), (t.module, t.equivalent)
+        assert computed_tests_for(t.module), t.module
 
 
 def test_every_registered_module_resolves_to_a_source_file():
@@ -48,7 +50,7 @@ def test_matrix_shape():
         assert set(row) == {"module", "slug", "tests", "equivalent", "operators"}
         assert all(isinstance(v, str) for v in row.values())
     first = data["include"][0]
-    assert first["tests"].split() == list(TARGETS[0].tests)
+    assert first["tests"].split() == list(TARGETS[0].tests) == sorted(set(first["tests"].split()))
 
 
 def test_matrix_can_be_restricted_to_one_module():
@@ -66,6 +68,73 @@ def test_matrix_cli_prints_one_json_line(capsys):
 
 def test_matrix_cli_refuses_an_unknown_module(capsys):
     assert mutation_targets.main(["--matrix", "--module", "no.such.module"]) == 2
+
+
+def test_firestore_repo_tests_include_the_kits_reached_through_tests_support():
+    found = set(computed_tests_for("src.adapters.firestore_repo"))
+    assert {
+        "tests/unit/adapters/test_fact_store_roundtrip.py",
+        "tests/unit/adapters/test_fact_repository_kit.py",
+        "tests/unit/adapters/test_fact_repository_versions_kit.py",
+        "tests/unit/adapters/test_fact_management_kit.py",
+        "tests/unit/adapters/test_fact_write_kit.py",
+    } <= found
+
+
+def test_application_graph_tests_include_every_prod_graph_user():
+    found = set(computed_tests_for("src.composition.application_graph"))
+    users = {
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in (REPO_ROOT / "tests/unit").rglob("test_*.py")
+        if p != Path(__file__) and "tests.support.prod_graph" in p.read_text(encoding="utf-8")
+    }
+    assert users, "the grep found no prod_graph user"
+    assert users <= found
+    # three of the five P9 files reach the builder only through main (never followed into src/): they ride in extra_tests
+    target = next(t for t in TARGETS if t.module == "src.composition.application_graph")
+    assert {
+        "tests/unit/test_main_boots_offline.py",
+        "tests/unit/test_worker_triggers.py",
+        "tests/unit/composition/test_application_graph_wiring.py",
+        "tests/unit/composition/test_application_graph_values.py",
+        "tests/unit/test_main_wiring_values.py",
+    } <= set(target.tests)
+
+
+def test_main_tests_include_the_boot_test():
+    assert "tests/unit/test_main_boots_offline.py" in computed_tests_for("main")
+
+
+def test_tests_for_follows_imports_through_tests_only(tmp_path):
+    files = {
+        "src/pkg/__init__.py": "",
+        "src/pkg/target.py": "X = 1\n",
+        "src/pkg/other.py": "from src.pkg import target\n",
+        "tests/__init__.py": "",
+        "tests/support/__init__.py": "",
+        "tests/support/helper.py": "from src.pkg.target import X\n",
+        "tests/support/outer.py": "from tests.support import helper\n",
+        "tests/unit/__init__.py": "",
+        "tests/unit/test_via_support.py": "from tests.support import outer\n",
+        "tests/unit/test_direct.py": "from src.pkg import target\n",
+        "tests/unit/test_relative.py": "from ..support import helper\n",
+        "tests/unit/test_via_src.py": "from src.pkg.other import X\n",
+        "tests/unit/test_unrelated.py": "import os\n",
+        "tests/unit/conftest.py": "from src.pkg import target\n",
+        "tests/unit/test_via_conftest.py": "from tests.unit import conftest\n",
+        "tests/unit/sub/__init__.py": "",
+        "tests/unit/sub/test_rel.py": "from ...support import helper\n",
+    }
+    for rel, text in files.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    assert computed_tests_for("src.pkg.target", tmp_path) == (
+        "tests/unit/sub/test_rel.py",
+        "tests/unit/test_direct.py",
+        "tests/unit/test_relative.py",
+        "tests/unit/test_via_support.py",
+    )
 
 
 def _report(module, counts, outcomes):

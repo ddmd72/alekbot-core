@@ -1,33 +1,110 @@
 """Registry of the modules whose tests are held to the semantic-mutation bar (one entry per done package).
 
 The weekly workflow (.github/workflows/mutation.yml) runs the driver once per entry and keeps the reports as artifacts.
-A new `*_equivalent_mutants.txt` under tests/unit must be registered here (a unit test enforces it).
+The tests of a module are computed (tests_for), never listed by hand: the unit tests whose imports reach it through
+tests/ helpers. A new `*_equivalent_mutants.txt` under tests/unit must be registered here (a unit test enforces it).
 
     python -m tests.support.mutation_targets --matrix [--module X]
+    python -m tests.support.mutation_targets --tests-for MODULE   # the computed test list, space-separated
     python -m tests.support.mutation_targets --summarize DIR --out-md PATH --out-json PATH
 """
 
 import argparse
+import ast
 import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True)
 class MutationTarget:
     module: str
-    tests: tuple[str, ...]
     equivalent: Optional[str]
     operators: str = "default"
+    extra_tests: tuple[str, ...] = ()  # added to the computed selection, in case the import closure misses one
 
     @property
     def slug(self) -> str:
         return self.module.replace(".", "-")
 
+    @property
+    def tests(self) -> tuple[str, ...]:
+        return tuple(sorted(set(tests_for(self.module)) | set(self.extra_tests)))
 
-_WIRING_TESTS = (
+
+_ImportGraph = Dict[str, Tuple[str, FrozenSet[str]]]  # tests module -> (repo-relative path, names it may import)
+_GRAPHS: Dict[str, _ImportGraph] = {}
+
+
+def _dotted(rel: Path) -> str:
+    parts = list(rel.with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _imported_names(tree: ast.AST, package: str) -> FrozenSet[str]:
+    """Every dotted name a file may import: `import a.b` -> a.b; `from a import b` -> a and a.b (b may be a module)."""
+    names: Set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                up = package.split(".")[: len(package.split(".")) - (node.level - 1)] if package else []
+                base = ".".join(filter(None, [*up, node.module or ""]))
+            else:
+                base = node.module or ""
+            if not base:
+                continue
+            names.add(base)
+            names.update(f"{base}.{alias.name}" for alias in node.names if alias.name != "*")
+    return frozenset(names)
+
+
+def _import_graph(root: Path) -> _ImportGraph:
+    key = str(root)
+    if key not in _GRAPHS:
+        graph: _ImportGraph = {}
+        for path in sorted((root / "tests").rglob("*.py")):
+            if path.name == "conftest.py":
+                continue  # a conftest is never followed
+            rel = path.relative_to(root)
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            package = ".".join(rel.parent.parts)
+            graph[_dotted(rel)] = (rel.as_posix(), _imported_names(tree, package))
+        _GRAPHS[key] = graph
+    return _GRAPHS[key]
+
+
+def tests_for(module: str, root: Path = REPO_ROOT) -> tuple[str, ...]:
+    """Every tests/unit/**/test_*.py whose imports reach `module` through modules under tests/ only (never through src/)."""
+    graph = _import_graph(root)
+    reached = {name for name, (_, imports) in graph.items() if module in imports}
+    changed = True
+    while changed:
+        changed = False
+        for name, (_, imports) in graph.items():
+            if name not in reached and imports & reached:
+                reached.add(name)
+                changed = True
+    found = []
+    for name in reached:
+        rel = graph[name][0]
+        if rel.startswith("tests/unit/") and Path(rel).name.startswith("test_"):
+            found.append(rel)
+    return tuple(sorted(found))
+
+
+_WIRING_EXTRA = (
     "tests/unit/test_main_boots_offline.py",
     "tests/unit/test_worker_triggers.py",
     "tests/unit/composition/test_application_graph_wiring.py",
@@ -38,7 +115,7 @@ _WIRING_EQUIVALENT = "tests/unit/composition/wiring_equivalent_mutants.txt"
 
 TARGETS: tuple[MutationTarget, ...] = (
     *(
-        MutationTarget(module, _WIRING_TESTS, _WIRING_EQUIVALENT, "wiring")
+        MutationTarget(module, _WIRING_EQUIVALENT, "wiring", _WIRING_EXTRA)
         for module in (
             "src.composition.application_graph",
             "main",
@@ -48,62 +125,11 @@ TARGETS: tuple[MutationTarget, ...] = (
             "src.composition.telegram_adapter_factory",
         )
     ),
-    MutationTarget(
-        "src.adapters.firestore_repo",
-        (
-            "tests/unit/adapters/test_fact_store_roundtrip.py",
-            "tests/unit/adapters/test_fact_repository_kit.py",
-            "tests/unit/adapters/test_fact_repository_versions_kit.py",
-            "tests/unit/adapters/test_fact_management_kit.py",
-            "tests/unit/adapters/test_fact_write_kit.py",
-        ),
-        "tests/unit/adapters/fact_store_kit_equivalent_mutants.txt",
-    ),
-    MutationTarget(
-        "src.domain.fact_review_question",
-        (
-            "tests/unit/domain/test_fact_review_question.py",
-            "tests/unit/domain/test_fact_review_question_sets.py",
-        ),
-        "tests/unit/domain/fact_review_question_equivalent_mutants.txt",
-    ),
-    MutationTarget(
-        "src.services.fact_answer_service",
-        (
-            "tests/unit/services/test_fact_answer_service.py",
-            "tests/unit/services/test_fact_answer_reply.py",
-            "tests/unit/services/test_fact_answer_queue_and_counters.py",
-            "tests/unit/services/test_fact_question_choice.py",
-        ),
-        "tests/unit/services/fact_answer_service_equivalent_mutants.txt",
-    ),
-    MutationTarget(
-        "src.services.fact_review_service",
-        (
-            "tests/unit/services/test_fact_review_service_run.py",
-            "tests/unit/services/test_fact_review_selection.py",
-            "tests/unit/services/test_fact_review_questions.py",
-        ),
-        "tests/unit/services/fact_review_service_equivalent_mutants.txt",
-    ),
-    MutationTarget(
-        "src.agents.consolidation_agent",
-        (
-            "tests/unit/test_consolidation_agent.py",
-            "tests/unit/agents/test_consolidation_agent.py",
-            "tests/unit/agents/test_consolidation_review_pass.py",
-            "tests/unit/agents/test_consolidation_review_pass_stats.py",
-            "tests/unit/agents/test_consolidation_review_report.py",
-            "tests/unit/agents/test_consolidation_loop_alerts.py",
-            "tests/unit/agents/test_consolidation_pass_lines.py",
-            "tests/unit/agents/test_consolidation_error_turns.py",
-            "tests/unit/agents/test_consolidation_versions_offline.py",
-            "tests/unit/agents/test_consolidation_write_context.py",
-            "tests/unit/agents/test_consolidation_update_fact_account.py",
-            "tests/unit/agents/test_consolidation_context_forwarding.py",
-        ),
-        "tests/unit/agents/consolidation_agent_equivalent_mutants.txt",
-    ),
+    MutationTarget("src.adapters.firestore_repo", "tests/unit/adapters/fact_store_kit_equivalent_mutants.txt"),
+    MutationTarget("src.domain.fact_review_question", "tests/unit/domain/fact_review_question_equivalent_mutants.txt"),
+    MutationTarget("src.services.fact_answer_service", "tests/unit/services/fact_answer_service_equivalent_mutants.txt"),
+    MutationTarget("src.services.fact_review_service", "tests/unit/services/fact_review_service_equivalent_mutants.txt"),
+    MutationTarget("src.agents.consolidation_agent", "tests/unit/agents/consolidation_agent_equivalent_mutants.txt"),
 )
 
 
@@ -144,9 +170,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--matrix", action="store_true", help="print the GitHub matrix JSON")
     ap.add_argument("--module", default="", help="restrict --matrix to one module")
     ap.add_argument("--summarize", metavar="DIR", help="summarize every *.json report under DIR")
+    ap.add_argument("--tests-for", metavar="MODULE", help="print the computed test list of MODULE, space-separated")
     ap.add_argument("--out-md")
     ap.add_argument("--out-json")
     args = ap.parse_args(argv)
+    if args.tests_for:
+        print(" ".join(sorted(set(tests_for(args.tests_for)) | {x for t in TARGETS if t.module == args.tests_for for x in t.extra_tests})))
+        return 0
     if args.matrix:
         data = matrix(args.module)
         if args.module and not data["include"]:
