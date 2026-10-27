@@ -103,7 +103,7 @@ async def test_apply_writes_exactly_the_expiry_fields_and_one_trail_entry(tmp_pa
     plan = await classify_plan(store, tmp_path)
     before = copy.deepcopy(store.docs)
     counts = await s5.apply_plan(store.repo, plan, FACTS, tmp_path, LATER)
-    assert counts == {"applied": 4, "already_applied": 0, "skipped_changed": 0, "failed": 0}
+    assert counts == {"applied": 4, "already_applied": 0, "skipped_changed": 0, "failed": 0, "not_current": 0}
     for fact_id, old in before.items():
         new = store.docs[fact_id]
         assert {k: v for k, v in new.items() if k not in NEW_KEYS} == {k: v for k, v in old.items() if k not in NEW_KEYS}
@@ -174,7 +174,7 @@ async def test_a_second_apply_of_the_same_plan_changes_nothing(tmp_path):
     after_first = copy.deepcopy(store.docs)
     again = LATER + timedelta(hours=1)
     counts = await s5.apply_plan(store.repo, plan, FACTS, tmp_path, again)
-    assert counts == {"applied": 0, "already_applied": 4, "skipped_changed": 0, "failed": 0}
+    assert counts == {"applied": 0, "already_applied": 4, "skipped_changed": 0, "failed": 0, "not_current": 0}
     assert store.docs == after_first
     assert set(outcomes_of(tmp_path, again).values()) == {"already_applied"}
     assert not (tmp_path / f"fact_s5_classify_{again:%Y%m%dT%H%M%SZ}_changed.txt").exists()
@@ -201,7 +201,7 @@ async def test_an_unreadable_document_fails_alone_and_prints_only_the_error_type
     plan = await classify_plan(store, tmp_path)
     capsys.readouterr()
     counts = await s5.apply_plan(store.repo, plan, FACTS, tmp_path, LATER)
-    assert counts == {"applied": 2, "already_applied": 0, "skipped_changed": 0, "failed": 1}
+    assert counts == {"applied": 2, "already_applied": 0, "skipped_changed": 0, "failed": 1, "not_current": 0}
     assert outcomes_of(tmp_path, LATER) == {"f-a": "applied", "f-bad": "failed", "f-c": "applied"}
     out = capsys.readouterr().out
     assert "ValidationError" in out
@@ -308,3 +308,30 @@ def test_main_apply_exits_one_when_an_entry_failed(monkeypatch, tmp_path, capsys
     assert s5.main(["--apply", str(plan)]) == 1
     out = capsys.readouterr().out
     assert "failed: 1" in out and "applied: 1" in out
+
+
+# ---- closed facts -----------------------------------------------------------------------------------------------------
+
+async def classify_closed_plan(store, out_dir, ids):
+    prepared = await s5.prepare(store.db, FACTS, owner_of, ids, include_closed=True)
+    system, taxonomy, instruction = s5.load_prompt(*_prompt_texts())
+    callers = {a.account_id: scripted(ANSWERS) for a in prepared.accounts}
+    await s5.classify(prepared, callers, system, (taxonomy, instruction), collection=FACTS, out_dir=out_dir, now=NOW)
+    return out_dir / f"fact_s5_classify_{NOW:%Y%m%dT%H%M%SZ}_plan.json"
+
+
+async def test_apply_refuses_the_entry_of_a_closed_fact_and_writes_the_current_one(tmp_path):
+    store = await seeded_store([
+        raw("f-arch", CAR, state="archived", is_current=False), raw("f-inv", PIPE, state="invalidated", is_current=False),
+        raw("f-cur", MARIA),
+    ])
+    plan = await classify_closed_plan(store, tmp_path, {"f-arch", "f-inv", "f-cur"})
+    assert {e["fact_id"]: e["state"] for e in json.loads(plan.read_text())["decisions"]} == {
+        "f-arch": "archived", "f-inv": "invalidated", "f-cur": "current",
+    }
+    before = copy.deepcopy(store.docs)
+    counts = await s5.apply_plan(store.repo, plan, FACTS, tmp_path, LATER)
+    assert counts == {"applied": 1, "already_applied": 0, "skipped_changed": 0, "failed": 0, "not_current": 2}
+    assert outcomes_of(tmp_path, LATER) == {"f-arch": "not_current", "f-inv": "not_current", "f-cur": "applied"}
+    assert store.docs["f-arch"] == before["f-arch"] and store.docs["f-inv"] == before["f-inv"]
+    assert store.docs["f-cur"]["expiry_kind"] == "none"
