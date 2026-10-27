@@ -246,7 +246,7 @@ async def test_a_reminder_without_an_effort_runs_at_its_complexity_s_effort(monk
 # ----------------------------------------------------------------------------- the chat turn
 
 async def test_a_chat_turn_s_enriched_fact_reaches_smart_after_the_cache_boundary(monkeypatch):
-    """Guards `semantic_lens`/`search_phrase`/`relevant_domains` `router_agent.py:332-338` → the fact store; the
+    """Guards the enrichment call `router_agent.py:332-338` only as a whole (each channel finds the one fact); the
     routed `enriched_context` `:385` → `smart_response_agent.py:419,442-445` → `prompt_builder.py:191-201,213-214` →
     `prompt_assembly_service.py:409-417,540-542` (after the boundary); the routed `task_complexity` `router_agent.py:384`
     → `smart_response_agent.py:379` → resolver (BALANCED). Dropping `enriched_context` loses the fact; putting it with
