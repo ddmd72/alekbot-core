@@ -4,12 +4,15 @@ whether the digest is due (`digest_due`) and the week's key (`iso_week_of`) are 
 
 It lists removals only: a fact that is `archived` or `invalidated` whose last trail entry is the review's, a timeout's or
 the owner's. A fact the owner ended is listed as archived; the history fact written beside it is `current`, so it is
-never a removal and is not listed. Facts are quoted as stored; only the lines around them are in the message language."""
+never a removal and is not listed. A fact is quoted as the owner is shown it (`shown_quote`): its translation into the message language when the review
+stored one that still holds, else as stored; the lines around it are in the message language."""
 from datetime import date, datetime, timedelta
+from types import MappingProxyType
 from typing import Final, List, Mapping, Optional, Sequence, get_args
 
 from .entities import FactEntity, FactState
 from .fact_lifecycle_day import CounterField
+from .fact_review_quote_translation import QuoteTranslation, quote_digest, shown_quote
 from .fact_review_reasons import FallbackActor
 from .fact_review_state import FactReviewState
 from .local_time import local_date
@@ -57,8 +60,14 @@ def digest_facts(closed: Sequence[FactEntity]) -> List[FactEntity]:
     return listed[:DIGEST_LIMIT]
 
 
-def digest_message(labels: Mapping[str, str], facts: Sequence[FactEntity]) -> str:
-    """The digest text: the header, one line per fact (its text quoted as stored, on one line, with its state's label),
+def digest_message(
+    labels: Mapping[str, str],
+    facts: Sequence[FactEntity],
+    translations: Mapping[str, QuoteTranslation] = MappingProxyType({}),
+    language: Optional[str] = None,
+) -> str:
+    """The digest text: the header, one line per fact (its text as the owner is shown it, `shown_quote` over the
+    translation in `translations` under `quote_digest(fact.text)` and `language`, on one line, with its state's label),
     a blank line and the footer. `labels` is the message language's label set. Raises ValueError for no facts (a digest
     with nothing to list is not sent) or for a fact that is neither archived nor invalidated."""
     if not facts:
@@ -68,5 +77,6 @@ def digest_message(labels: Mapping[str, str], facts: Sequence[FactEntity]) -> st
         key = STATE_LABEL_KEYS.get(fact.state)
         if key is None:
             raise ValueError(f"fact {fact.id} is {fact.state.value}: only archived and invalidated facts are listed")
-        lines.append(f"• «{' '.join(fact.text.split())}» — {labels[key]}")
+        shown = shown_quote(fact.text, translations.get(quote_digest(fact.text)), language)
+        lines.append(f"• «{' '.join(shown.split())}» — {labels[key]}")
     return "\n".join([labels[_HEADER], *lines, "", labels[_FOOTER]])

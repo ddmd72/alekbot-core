@@ -28,7 +28,9 @@ from src.agents.base_agent import BaseAgent
 from src.domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStatus
 from src.domain.entities import FactDomain, FactState
 from src.domain.fact_review_frame import not_delivered_frame, question_text, reply_part, review_frame
-from src.domain.fact_review_language import CANONICAL_LABELS, fact_question_message
+from src.domain.fact_review_language import CANONICAL_LABELS, LABEL_KEYS, fact_question_message
+from src.domain.fact_review_quote_translation import QuoteTranslation, quote_digest
+from src.locales.uk import UI_STRINGS as UK_STRINGS
 from src.domain.fact_review_question import QuestionStatus
 from src.domain.fact_review_reasons import queued_reason
 from src.domain.fact_review_rules import REVIEW_BATCH, queued_question
@@ -511,8 +513,15 @@ def test_every_answer_window_is_built_from_the_production_shapes():
                              type=cases.FactType.STATE, state=FactState.STALE, stale_since=NOW),
             qid, "u", "revive", at=NOW,
         )
-        assert case.window[1] == ("model", question_text(fact_question_message(quoted, CANONICAL_LABELS)))
+        if case.name == "correction_translated_quote":   # the uk production shape: uk texts, the stored fact translated
+            uk_labels = {key: UK_STRINGS[key] for key in LABEL_KEYS}
+            translation = QuoteTranslation("uk", quote_digest(cases.QUOTED), cases.QUOTED_UK)
+            expected = fact_question_message(quoted, uk_labels, translation, "uk")
+        else:
+            expected = fact_question_message(quoted, CANONICAL_LABELS)
+        assert case.window[1] == ("model", question_text(expected))
     by_name = {c.name: c for c in cases.answer_cases()}
+    assert "correction_translated_quote" in by_name
     assert ("user", reply_part(by_name["digit_reply"].question_id, "2")) in by_name["digit_reply"].window
     assert ("user", not_delivered_frame(by_name["not_delivered"].question_id)) in by_name["not_delivered"].window
     ids = [c.question_id for c in cases.answer_cases() if c.question_id]

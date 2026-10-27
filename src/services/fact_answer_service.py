@@ -362,17 +362,16 @@ class FactAnswerService(ChoiceHandlerPort):
         self, question: FactReviewQuestion, answer: Optional[AnswerKind], note: Optional[UIMessage],
     ) -> ChoiceOutcome:
         """The question's message without controls: the chosen option for an answer, else `note` (default
-        `MEMORY_QUESTION_CLOSED`), all texts from one `labels_for`."""
-        labels = await self._texts.labels_for(question.user_id, question.account_id)
-        message = fact_question_message(question, labels)
+        `MEMORY_QUESTION_CLOSED`), the texts and the shown quote from one read (`question_and_labels`)."""
+        message, labels = await self._texts.question_and_labels(question, question.user_id, question.account_id)
         if answer is not None:
             return ChoiceOutcome(message=message, chosen_option_id=option_id(answer))
         return ChoiceOutcome(message=message, note=labels[(note or UIMessage.MEMORY_QUESTION_CLOSED).value])
 
     async def _kept_outcome(self, question: FactReviewQuestion, note: UIMessage) -> ChoiceOutcome:
-        """The open question's message with `note` shown and its options kept, texts from one `labels_for`."""
-        labels = await self._texts.labels_for(question.user_id, question.account_id)
-        return ChoiceOutcome(message=fact_question_message(question, labels), note=labels[note.value], keep_options=True)
+        """The open question's message with `note` shown and its options kept, texts and the shown quote from one read (`question_and_labels`)."""
+        message, labels = await self._texts.question_and_labels(question, question.user_id, question.account_id)
+        return ChoiceOutcome(message=message, note=labels[note.value], keep_options=True)
 
     async def _asked_fact(
         self, question: FactReviewQuestion, accepts: AbstractSet[FactState],

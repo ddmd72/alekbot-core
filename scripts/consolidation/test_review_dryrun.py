@@ -13,11 +13,14 @@ platform and the notifier are the kit's stand-ins; the agent is the kit-installe
 
     python scripts/consolidation/test_review_dryrun.py --s3-kit --stage 18 --runs 2
     python scripts/consolidation/test_review_dryrun.py --s3-kit --stage 4 --runs 1 --mirror ru
+    python scripts/consolidation/test_review_dryrun.py --s3-kit --stage 4 --runs 1 --fixed uk
 
 `--stage N` is a ceiling: one batch holds at most 20 facts, so the live facts staged are what is left after the live stale
 facts and the seeded cases. `--runs R` replays the same input R times, each from the live state (the model's dispersion).
 `--mirror CODE` turns mirror mode on with no fixed language and checks the language the review reports from the owner's own
 recent messages against CODE (it is the owner's messages that decide, not the flag).
+`--fixed CODE` (uk, en, fr, es; not with `--mirror`) turns mirror mode off with that fixed language: the pass then
+translates every fact into it, and the report lists the translations it kept (`translations`; counts on the terminal).
 
 Output: counts and gate lines on the terminal; the full report (fact text, outcomes, question texts) in
 `scripts/memory/s3_dry_run_review_<stamp>.json`.
@@ -44,6 +47,7 @@ from scripts.consolidation.review_bench_support import (  # noqa: E402
 )
 from scripts.consolidation.s3_bench_support import add_s3_arguments, build_agent, kit_session, load_env  # noqa: E402
 from src.domain.fact_review_rules import REVIEW_BATCH  # noqa: E402
+from src.domain.language import LanguageCode  # noqa: E402
 
 BENCH = "review"
 
@@ -52,7 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Memory review dry run on the S3 kit (plan bench 7)")
     ap.add_argument("--stage", type=int, default=18, help="live facts to stale in the kit (a ceiling: one batch is 20)")
     ap.add_argument("--runs", type=int, default=2, help="how many times to replay the same input")
-    ap.add_argument("--mirror", default=None, metavar="CODE", help="mirror mode on; the language expected from his messages")
+    language = ap.add_mutually_exclusive_group()
+    language.add_argument("--mirror", default=None, metavar="CODE", help="mirror mode on; the language expected from his messages")
+    language.add_argument("--fixed", default=None, choices=[c.value for c in LanguageCode],
+                          help="mirror mode off, with this fixed language (the pass translates into it)")
     ap.add_argument("--user-id", default=os.getenv("DEV_USER_ID"))
     ap.add_argument("--account-id", default=os.getenv("DEV_ACCOUNT_ID"))
     add_s3_arguments(ap)
@@ -73,11 +80,11 @@ async def run_s3_kit(handles: Any, live_state: Any, args: Any) -> None:
     async with kit_session(
         handles, args, args.user_id, args.account_id, BENCH, with_review=True, summary=review_summary,
     ) as (kit, extra):
-        extra.update({"model": handles.agent.model_name, "stage": args.stage, "mirror": args.mirror, "runs": []})
+        extra.update({"model": handles.agent.model_name, "stage": args.stage, "mirror": args.mirror, "fixed": args.fixed, "runs": []})
         for number in range(1, args.runs + 1):
             run = await run_once(
                 kit, handles, live_state, user_id=args.user_id, account_id=args.account_id, requested=args.stage,
-                mirror=args.mirror,
+                mirror=args.mirror, fixed=LanguageCode(args.fixed) if args.fixed else None,
             )
             extra["runs"].append(run)
             print(f"\n  run {number}")

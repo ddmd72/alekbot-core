@@ -101,7 +101,7 @@ def test_the_result_round_trips_through_its_plain_form():
     assert encoded == {
         "outcomes": [{"fact_id": "f1", "outcome": "revived", "written_id": "f1", "basis_kind": "evidence"}],
         "asks": [{"fact_id": "f2", "fallback": "archive", "fallback_date": NOW.date(), "noise": True}],
-        "kept": ["f3"], "message_language": "pt", "labels": {"k": "v"},
+        "kept": ["f3"], "message_language": "pt", "labels": {"k": "v"}, "translations": [],
     }
     assert decode_review_result(encoded) == result
 
