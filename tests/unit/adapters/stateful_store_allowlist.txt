@@ -1,6 +1,7 @@
 # Stateful store adapters (src/adapters) that no kit runs over a fake with semantics yet. Checked by
-# test_every_stateful_store_has_a_kit.py. The list only shrinks: write the kit, register the class in
+# test_every_stateful_store_has_a_kit.py. Lines only leave this list: write the kit, register the class in
 # tests/support/store_inventory.py KITS and delete the line; the meta-test fails when a listed class is in KITS or is gone.
+# A new line is never added here without the owner's OK: a new store needs a kit, not a line.
 # Format: `dotted.module.Class  # reason` (the reason is at least two words).
 src.adapters.firestore_iam_adapter.FirestoreIAMAdapter  # no caller in src/ (owner discussion, P6); IAMPort docstring records its observed contract, its test uses a mocked account repository
 src.adapters.firestore_prompt_repository.FirestorePromptComponentRepository  # P10 prompt stores (next package)

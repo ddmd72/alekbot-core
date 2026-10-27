@@ -33,6 +33,19 @@ CLIENT_PARAMS: frozenset = frozenset({"db", "client", "firestore_client", "stora
 # Cloud Tasks client of `tests/support/redelivery_world.py`.
 CLIENT_FAKES: frozenset = frozenset({"EvalDb", "NameAwareDb", "FactStore", "FakeGcs", "FailingTasksClient"})
 
+# Names that stand for a mock. A construction whose arguments derive from one of these and from no fake is refused, and so is a
+# helper that assigns one to an attribute of the store (`adapter._client = MagicMock()`); `patch(target)` and `patch.object(o, n)`
+# with no replacement count too (the replacement is a `MagicMock`). A mock for a configuration argument next to a fake client is fine.
+MOCKS: frozenset = frozenset({"MagicMock", "Mock", "AsyncMock", "NonCallableMagicMock", "NonCallableMock", "create_autospec"})
+
+# Second discovery rule: a module of `src/adapters/` that imports one of these `google.cloud` client libraries is a store module
+# (its file name matches `STORE_MODULE_GLOBS`) or is listed here with the reason it is not one. A stale line fails.
+CLOUD_CLIENT_LIBRARIES: Tuple[str, ...] = ("firestore", "storage", "tasks_v2", "bigquery")
+NOT_STORE_MODULES: Dict[str, str] = {
+    "src.adapters.bigquery_prompt_content_adapter":
+        "the BigQuery prompt-content write sink, outside the RFC's H2 list (an append-only log, no store port to read back)",
+}
+
 _STORE = "src.adapters."
 
 # A named builder: a callable that constructs the listed classes over a fake, so a kit that calls it need not import the class.
@@ -141,6 +154,32 @@ def _takes_client(cls: ast.ClassDef) -> bool:
     return False
 
 
+def _imports_cloud_client(tree: ast.Module) -> bool:
+    def library(dotted: str) -> bool:
+        return any(dotted == f"google.cloud.{lib}" or dotted.startswith((f"google.cloud.{lib}.", f"google.cloud.{lib}_"))
+                   for lib in CLOUD_CLIENT_LIBRARIES)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            if library(node.module) or (node.module == "google.cloud" and any(library(f"google.cloud.{a.name}")
+                                                                              for a in node.names)):
+                return True
+        elif isinstance(node, ast.Import) and any(library(a.name) for a in node.names):
+            return True
+    return False
+
+
+def matches_store_globs(path: Path) -> bool:
+    return any(fnmatch.fnmatch(path.name, pattern) for pattern in STORE_MODULE_GLOBS)
+
+
+def cloud_client_modules() -> List[str]:
+    """Dotted module of every file under `src/adapters/` that imports one of `CLOUD_CLIENT_LIBRARIES` (a lazy import inside a
+    function counts), whatever its name."""
+    return [_dotted(path) for path in sorted(ADAPTERS.rglob("*.py"))
+            if _imports_cloud_client(ast.parse(path.read_text(encoding="utf-8")))]
+
+
 def store_classes_in_source(source: str) -> List[str]:
     """Class names of one store module's source that are stores: public, with a direct base imported from `src.ports`, or with
     no base at all and an `__init__` that takes a client (`CLIENT_PARAMS`). Private classes (the retry forwarder, the JSON encoder)
@@ -159,7 +198,7 @@ def stateful_store_classes() -> List[str]:
     adapters are never imported."""
     found: List[str] = []
     for path in sorted(ADAPTERS.rglob("*.py")):
-        if any(fnmatch.fnmatch(path.name, pattern) for pattern in STORE_MODULE_GLOBS):
+        if matches_store_globs(path):
             found += [f"{_dotted(path)}.{name}" for name in store_classes_in_source(path.read_text(encoding="utf-8"))]
     return found
 
