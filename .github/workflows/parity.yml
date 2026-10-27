@@ -2,7 +2,7 @@ name: Firestore parity
 
 # Fake-vs-real Firestore scenarios (make test-cloud): real writes to the TEST database only.
 # The verdict lives in the `parity` artifact and the step summary; the job is red only when the run itself
-# could not happen (auth, install, upload), never because a scenario failed. Runs on main (WIF is bound to it).
+# could not happen (auth, install, upload, an unconfigured gate, zero tests run), never because a scenario failed. Runs on main (WIF is bound to it).
 on:
   schedule:
     - cron: '0 3 * * 0'
@@ -73,10 +73,11 @@ jobs:
           TEST_FIRESTORE_DATABASE: ${{ secrets.TEST_FIRESTORE_DATABASE }}
           TEST_SA_EMAIL: ${{ secrets.TEST_SA_EMAIL }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          TEST_WIF_PROVIDER: ${{ secrets.TEST_WIF_PROVIDER }}
         run: |
           for f in parity.log parity.xml; do
             [ -f "$f" ] || continue
-            for name in TEST_FIRESTORE_DATABASE TEST_SA_EMAIL GOOGLE_CLOUD_PROJECT; do
+            for name in TEST_FIRESTORE_DATABASE TEST_SA_EMAIL GOOGLE_CLOUD_PROJECT TEST_WIF_PROVIDER; do
               value="${!name}"
               [ -n "$value" ] || continue
               VALUE="$value" python -c "import os,sys; v=os.environ['VALUE']; p=sys.argv[1]; t=open(p,encoding='utf-8',errors='replace').read(); open(p,'w',encoding='utf-8').write(t.replace(v,'<redacted>'))" "$f"
@@ -108,11 +109,11 @@ jobs:
           try:
               root = ET.parse("parity.xml").getroot()
               suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
-              total = sum(int(s.get("tests", "0")) for s in suites)
+              total = sum(int(s.get("tests", "0")) - int(s.get("skipped", "0")) for s in suites)
           except Exception as exc:
               print(f"::error::parity.xml missing or unreadable: {type(exc).__name__}")
               sys.exit(1)
           if total == 0:
-              print("::error::the run executed zero tests")
+              print("::error::the run executed no test (zero, or all skipped)")
               sys.exit(1)
           PY
