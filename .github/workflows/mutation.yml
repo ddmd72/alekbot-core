@@ -1,0 +1,126 @@
+name: Mutation survivors
+
+# Weekly semantic-mutation run, one job per registered module (tests/support/mutation_targets.py).
+# It never goes red because mutants survived: the survivors are data in the `survivors` artifact.
+
+on:
+  schedule:
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      module:
+        description: "One module to mutate (empty = every registered module)"
+        required: false
+        default: ""
+
+concurrency:
+  group: mutation
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  matrix:
+    name: matrix
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.matrix.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build the matrix
+        id: matrix
+        env:
+          MODULE: ${{ github.event.inputs.module }}
+        run: |
+          targets=$(python -m tests.support.mutation_targets --matrix --module "$MODULE")
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  mutate:
+    name: mutate ${{ matrix.slug }}
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.targets) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the mutants
+        timeout-minutes: 340
+        continue-on-error: true  # a cut-off run keeps its partial report; the upload step below still runs
+        # --no-fail: the exit code is 0 whatever survived; the report carries the verdict.
+        env:
+          MODULE: ${{ matrix.module }}
+          TESTS: ${{ matrix.tests }}
+          EQUIVALENT: ${{ matrix.equivalent }}
+          OPERATORS: ${{ matrix.operators }}
+          SLUG: ${{ matrix.slug }}
+        run: |
+          mkdir -p reports
+          EQ=()
+          if [ -n "$EQUIVALENT" ]; then EQ=(--equivalent "$EQUIVALENT"); fi
+          # TESTS is a space-separated list of repository paths: split it on purpose.
+          # shellcheck disable=SC2086
+          python -m tests.support.semantic_mutants --module "$MODULE" --operators "$OPERATORS" "${EQ[@]}" \
+            --report "reports/$SLUG.json" --no-fail --tests $TESTS
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-${{ matrix.slug }}
+          path: reports/${{ matrix.slug }}.json
+          if-no-files-found: warn
+
+  summarize:
+    name: summarize
+    needs: mutate
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Download the reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mutation-*
+          path: reports
+
+      - name: Summarize
+        env:
+          MODULE: ${{ github.event.inputs.module }}
+        run: |
+          mkdir -p out
+          python -m tests.support.mutation_targets --summarize reports --module "$MODULE" --out-md out/survivors.md --out-json out/survivors.json
+          cat out/survivors.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the survivors
+        uses: actions/upload-artifact@v4
+        with:
+          name: survivors
+          path: |
+            out/survivors.md
+            out/survivors.json
