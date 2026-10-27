@@ -19,7 +19,7 @@ from tests.support.firestore_eval import EvalDb
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 COL = "eval_memory_fact_drafts"
 NOW = UTC_MIDNIGHT.utc
-GYM = {"text": "Alex goes to the Iron Temple gym on Mondays", "source": "gym schedule"}
+GYM = {"text": "Alex changed gyms from FitLife to Iron Temple", "source": "gym"}
 TEA = {"text": "Maria likes tea", "source": "family"}
 
 

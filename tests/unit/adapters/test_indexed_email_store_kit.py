@@ -39,9 +39,9 @@ def docs(repo):
 
 def email(email_id, user_id="u1", **over) -> IndexedEmail:
     fields = dict(email_id=email_id, user_id=user_id, account_id="a1", source="gmail",
-                  text="Clara sent invoice FA-0137 for the bathroom repair.", vector=X, tags=["invoice"],
-                  category="finance", metadata={"subject": "Invoice FA-0137"}, subject="Invoice FA-0137",
-                  from_address="clara@example.com", email_date=D0, indexed_at=D0)
+                  text="Invoice for the bathroom repair at 12 Oak Street.", vector=X, tags=["invoice"],
+                  category="finance", metadata={"subject": "Bathroom repair invoice"}, subject="Bathroom repair invoice",
+                  from_address="invoices@example.com", email_date=D0, indexed_at=D0)
     fields.update(over)
     return IndexedEmail(**fields)
 
@@ -53,7 +53,7 @@ def ids(emails):
 # --------------------------------------------------------------------------------------------------- save
 
 async def test_save_round_trip_unwraps_vectors_and_returns_naive_utc_dates(repo):
-    sent = email("e1", tags_vector=Y, attachments=["invoice-FA-0137.pdf"],
+    sent = email("e1", tags_vector=Y, attachments=["invoice_bathroom_es.pdf"],
                  email_date=datetime(2026, 10, 5, 12, 0, tzinfo=timezone(timedelta(hours=2))))
     assert await repo.save_batch([sent]) == 1
     stored = docs(repo)["u1_e1"]
