@@ -370,8 +370,15 @@ async def test_a_store_that_fails_before_anything_is_applied_is_a_500_without_de
 # ------------------------------------------------------------------------------------------------ the buttons' labels
 
 async def _options(world: ReviewWorld, **kwargs: Any) -> Optional[list]:
+    """P2 revised (C15): the options ride on each listed question, by its kind; the view has no top-level options. The
+    world gets one still_true question in the queue, whose options are read."""
+    await _ask(world, await _standing(world), "q1", QuestionStatus.QUEUED)
     async with _app(world, **kwargs).test_client() as client:
-        return (await (await client.get("/api/user/facts/review-queue", headers=TOKEN)).get_json())["options"]
+        body = await (await client.get("/api/user/facts/review-queue", headers=TOKEN)).get_json()
+    assert "options" not in body
+    [listed] = body["questions"]
+    assert (listed["question_id"], listed["kind"], listed["group"]) == ("q1", "still_true", "questions")
+    return listed["options"]
 
 
 async def test_the_queue_view_offers_the_three_deciding_answers_in_the_users_ui_language():
