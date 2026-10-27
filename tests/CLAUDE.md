@@ -11,7 +11,7 @@ This table is the one place that says which test command to run when. Other docs
 | While editing | `pytest <path>::<test>` or `make test-affected` | the tests you name, or the unit tests testmon selects for your diff (it can miss a test whose input is a data file or code in a child process) |
 | Before every commit | `make check`, once (not after every edit) | lint + mypy + the unit suite without `slow` tests + the offline G2 test |
 | Before you call a package done, and whenever you report coverage | `make ci` | everything in `make check` + `slow` tests + the coverage gates (per file and per layer); CI runs exactly this on every PR |
-| Package done-check (RFC §5) | `python -m tests.support.semantic_mutants --module <src.module> --tests <test paths>` | every mutant killed or ruled equivalent by the reviewer |
+| Package done-check (RFC §5) | `python -m tests.support.semantic_mutants --module <m> --tests $(python -m tests.support.mutation_targets --tests-for <m>) --equivalent <file>` (the test list is computed, see "Mutation check") | every mutant killed or ruled equivalent by the reviewer |
 | Wiring done-check (P9) | `python -m tests.support.semantic_mutants --module <src.composition.X or main> --operators wiring --equivalent tests/unit/composition/wiring_equivalent_mutants.txt --tests <the P9 test files>` | the command is spelled out in "The production graph" below; about 9-10 s per mutant |
 | Only when the task needs them | `make test-integration`, `make test-e2e-all` | some integration tests and all e2e tests call real services |
 | Fake against the real thing (P5) | `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pytest tests/unit/support/test_firestore_parity.py`, and `make test-cloud` | the parity scenarios on the Firestore emulator, and on the test database (see below) |
@@ -170,8 +170,12 @@ written document/write/forwarded keyword, a flipped sort direction, an `except` 
 
 ```bash
 python -m tests.support.semantic_mutants --module src.adapters.firestore_repo \
-    --tests tests/unit/adapters/test_fact_store_roundtrip.py [--equivalent FILE]   # one child pytest per mutant; exit 1 if any survives
+    --tests $(python -m tests.support.mutation_targets --tests-for src.adapters.firestore_repo) [--equivalent FILE]   # one child pytest per mutant; exit 1 if any survives
 ```
+
+The test list is computed, not hand-written: `python -m tests.support.mutation_targets --tests-for <src.module>` prints every `tests/unit`
+test file that reaches the module through imports (it follows imports only through `tests/` modules, never through `src/`). A test that
+reaches a module only through `src` (e.g. through `main`) is listed in the target's `extra_tests`.
 
 Statuses: killed, survived, equivalent, and `error` (the selected tests never loaded the module, or the run could not tell; exit 2;
 not a pass). `except-success` skips handlers that only log and already return the success value. Slow tests run in the mutant
@@ -184,7 +188,7 @@ Registering a package's modules in `tests/support/mutation_targets.py` (`Mutatio
 is part of "package done"; a unit test fails when a `*_equivalent_mutants.txt` file has no registered target. The driver takes
 `--report PATH` (JSON) and `--no-fail` (exit 0 whatever survived). The `Mutation survivors` workflow (`.github/workflows/mutation.yml`,
 Sunday 02:00 UTC and `workflow_dispatch` with an optional `module`) runs one job per registered module with `--report --no-fail` and
-uploads `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`). Survivors are read by the Monday routine (a
+uploads `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`). `survivors.md` lists every registered module: `missing` when a job produced no report (baseline failed, timed out), `partial (N of M)` when the job was cut; the report is rewritten after each mutant. Survivors are read by the Monday routine (a
 scheduled cloud session), which writes the killing assertion or proposes an `equivalent` line, as a test-only PR. The local run above
 stays as the done-check, once per package.
 
