@@ -1,4 +1,4 @@
-"""The Facts P2 reopen script (`--ids-file` / `--all-archived`), run on the evaluating fake."""
+"""The Facts P2 reopen script (`--ids-file` only: archived and invalidated facts), run on the evaluating fake."""
 import copy
 import json
 from datetime import datetime, timezone
@@ -44,6 +44,8 @@ async def db():
     await col.document("owner-archive").set(_fact(account=OTHER, lifecycle_events=[_event("ended q=q1 (button)", "owner")]))
     await col.document("no-stale-since").set(_fact(stale_since=None))
     await col.document("current-1").set(_fact(state="current", valid_to=None))
+    await col.document("invalidated-1").set(_fact(state="invalidated", lifecycle_events=[
+        {"at": ARCHIVED_AT, "from": "current", "to": "invalidated", "actor": "review", "reason": "invalidated on abcd1234"}]))
     await col.document("system-1").set(_fact(account="system"))
     return fake
 
@@ -54,22 +56,23 @@ def _snapshot(db):
 
 
 ALL = {"talk", "owner-archive", "no-stale-since"}
+LIST = ["talk", "owner-archive", "no-stale-since", "current-1", "system-1"]   # what the owner listed
 
 
 async def test_dry_run_writes_nothing_and_reports_to_the_file(db, tmp_path, capsys):
     before = _snapshot(db)
 
-    counts = await reopen_script.run(db, COL, apply=False, out_dir=tmp_path, now=NOW)
+    counts = await reopen_script.run(db, COL, apply=False, out_dir=tmp_path, now=NOW, ids=LIST)
 
     assert _snapshot(db) == before
-    assert counts == {"candidates": 3, "not_found": 0, "not_archived": 0, "system_account": 1,
+    assert counts == {"candidates": 3, "not_found": 0, "not_closed": 1, "system_account": 1,
                       "reopened": 0, "skipped_changed": 0, "failed": 0}
     report = json.loads((tmp_path / "fact_p2_reopen_2026-10-28.json").read_text(encoding="utf-8"))
     by_id = {f["id"]: f for f in report["facts"]}
     assert set(by_id) == ALL
     assert by_id["talk"] == {
         "id": "talk", "account_prefix": ACCOUNT[:8], "text": TEXT, "domain": "work", "type": "state",
-        "reported_date": OLD.isoformat(), "valid_to": ARCHIVED_AT.isoformat(), "stale_since": SINCE.isoformat(),
+        "state": "archived", "reported_date": OLD.isoformat(), "valid_to": ARCHIVED_AT.isoformat(), "stale_since": SINCE.isoformat(),
         "last_event": {"at": ARCHIVED_AT.isoformat(), "from": "stale", "to": "archived", "actor": "review",
                        "reason": DATE_PASSED},
     }
@@ -82,7 +85,7 @@ async def test_dry_run_writes_nothing_and_reports_to_the_file(db, tmp_path, caps
 async def test_apply_writes_exactly_the_reopen(db, tmp_path):
     before_docs, _ = _snapshot(db)
 
-    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, ids=LIST)
 
     assert counts["reopened"] == 3 and counts["skipped_changed"] == 0 and counts["failed"] == 0
     docs = db.collection(COL).docs
@@ -102,7 +105,7 @@ async def test_apply_writes_exactly_the_reopen(db, tmp_path):
 
 
 async def test_the_stored_stale_since_is_restored_and_a_missing_one_takes_valid_to(db, tmp_path):
-    await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+    await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, ids=LIST)
 
     docs = db.collection(COL).docs
     assert docs["talk"]["stale_since"] == SINCE
@@ -119,20 +122,12 @@ async def test_apply_leaves_other_states_and_the_system_account_alone(db, tmp_pa
     untouched = ("current-1", "system-1")
     docs_before, versions_before = _snapshot(db)
 
-    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, ids=LIST)
 
     docs, versions = _snapshot(db)
     for doc_id in untouched:
         assert docs[doc_id] == docs_before[doc_id] and versions[doc_id] == versions_before[doc_id]
     assert counts["candidates"] == 3 and counts["system_account"] == 1
-
-
-async def test_account_narrows_all_archived(db, tmp_path):
-    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, account=OTHER)
-
-    docs = db.collection(COL).docs
-    assert counts["reopened"] == 1
-    assert docs["owner-archive"]["state"] == "stale" and docs["talk"]["state"] == "archived"
 
 
 async def test_ids_select_only_those_facts_and_report_what_is_left_out(db, tmp_path):
@@ -141,7 +136,7 @@ async def test_ids_select_only_those_facts_and_report_what_is_left_out(db, tmp_p
         ids=["talk", "current-1", "gone", "system-1"])
 
     docs = db.collection(COL).docs
-    assert counts == {"candidates": 1, "not_found": 1, "not_archived": 1, "system_account": 1,
+    assert counts == {"candidates": 1, "not_found": 1, "not_closed": 1, "system_account": 1,
                       "reopened": 1, "skipped_changed": 0, "failed": 0}
     assert docs["talk"]["state"] == "stale" and docs["owner-archive"]["state"] == "archived"
     assert docs["current-1"]["state"] == "current" and docs["system-1"]["state"] == "archived"
@@ -165,7 +160,7 @@ async def test_a_document_changed_after_the_scan_is_skipped_and_counted(db, tmp_
 
     monkeypatch.setattr(reopen_script, "scan", scan_then_interfere)
 
-    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, ids=LIST)
 
     docs = db.collection(COL).docs
     assert counts["reopened"] == 2 and counts["skipped_changed"] == 1 and counts["failed"] == 0
@@ -184,23 +179,23 @@ async def test_a_document_deleted_after_the_scan_is_skipped(db, tmp_path, monkey
 
     monkeypatch.setattr(reopen_script, "scan", scan_then_delete)
 
-    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, ids=LIST)
 
     assert counts["reopened"] == 2 and counts["skipped_changed"] == 1
 
 
 async def test_a_second_apply_reopens_nothing(db, tmp_path):
-    await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+    await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, ids=LIST)
     before = _snapshot(db)
 
-    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=datetime(2026, 10, 29, tzinfo=timezone.utc))
+    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=datetime(2026, 10, 29, tzinfo=timezone.utc), ids=LIST)
 
     assert counts["candidates"] == 0 and counts["reopened"] == 0
     assert _snapshot(db) == before
 
 
 async def test_apply_report_lists_ids_and_outcomes_without_text(db, tmp_path):
-    await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+    await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, ids=LIST)
 
     raw = (tmp_path / "fact_p2_reopen_2026-10-28_applied.json").read_text(encoding="utf-8")
     assert json.loads(raw)["outcomes"] == {"talk": "reopened", "owner-archive": "reopened", "no-stale-since": "reopened"}
@@ -218,7 +213,7 @@ async def test_a_general_write_error_counts_as_failed_and_writes_nothing(db, tmp
     monkeypatch.setattr(EvalDocRef, "update", update)
     docs_before, versions_before = _snapshot(db)
 
-    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, ids=LIST)
 
     docs, versions = _snapshot(db)
     assert counts["failed"] == 1 and counts["reopened"] == 2
@@ -258,38 +253,57 @@ def _main_with_fake_client(monkeypatch, tmp_path, argv):
         col.versions["talk"] = 1
     monkeypatch.setattr(client_helper, "async_client", lambda: fake)
     monkeypatch.setattr(reopen_script, "MEMORY_DIR", tmp_path)
-    assert reopen_script.main(argv) == 0
+    (tmp_path / "ids.txt").write_text("talk\n", encoding="utf-8")
+    assert reopen_script.main(["--ids-file", str(tmp_path / "ids.txt"), *argv]) == 0
     return fake, collection
 
 
-def test_main_all_archived_is_a_dry_run_by_default(monkeypatch, tmp_path):
-    fake, collection = _main_with_fake_client(monkeypatch, tmp_path, ["--all-archived"])
+def test_main_is_a_dry_run_by_default(monkeypatch, tmp_path):
+    fake, collection = _main_with_fake_client(monkeypatch, tmp_path, [])
 
     assert fake.collection(collection).docs["talk"]["state"] == "archived"
     assert not list(tmp_path.glob("*_applied.json")) and list(tmp_path.glob("fact_p2_reopen_*.json"))
 
 
 def test_main_apply_reopens_the_facts_collection_only(monkeypatch, tmp_path):
-    fake, collection = _main_with_fake_client(monkeypatch, tmp_path, ["--all-archived", "--apply"])
+    fake, collection = _main_with_fake_client(monkeypatch, tmp_path, ["--apply"])
 
     assert fake.collection(collection).docs["talk"]["state"] == "stale"
     assert fake.collection("some_other_collection").docs["talk"]["state"] == "archived"
 
 
-def test_main_reads_an_ids_file_under_the_memory_folder(monkeypatch, tmp_path):
-    (tmp_path / "ids.txt").write_text("talk\n", encoding="utf-8")
-    fake, collection = _main_with_fake_client(monkeypatch, tmp_path, ["--ids-file", str(tmp_path / "ids.txt"), "--apply"])
-
-    assert fake.collection(collection).docs["talk"]["state"] == "stale"
-
-
-def test_main_needs_one_selection_and_account_goes_with_all_archived(monkeypatch, tmp_path):
+def test_main_refuses_a_missing_ids_file_and_a_run_without_one(monkeypatch, tmp_path):
+    monkeypatch.setattr(reopen_script, "MEMORY_DIR", tmp_path)
     with pytest.raises(SystemExit):
         reopen_script.main([])
     with pytest.raises(SystemExit):
-        reopen_script.main(["--ids-file", str(tmp_path / "x.txt"), "--account", "a"])
-    with pytest.raises(SystemExit):
         reopen_script.main(["--ids-file", str(tmp_path / "missing.txt")])
+
+
+@pytest.mark.parametrize("flag", [["--all-archived"], ["--account", "a"]])
+def test_the_removed_selection_flags_are_refused(monkeypatch, tmp_path, flag):
+    (tmp_path / "ids.txt").write_text("talk\n", encoding="utf-8")
+    monkeypatch.setattr(reopen_script, "MEMORY_DIR", tmp_path)
+
+    with pytest.raises(SystemExit):
+        reopen_script.main(["--ids-file", str(tmp_path / "ids.txt"), *flag])
+
+
+async def test_an_invalidated_fact_is_reopened_and_its_trail_names_its_real_state(db, tmp_path):
+    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, ids=["invalidated-1", "talk"])
+
+    docs = db.collection(COL).docs
+    assert counts["reopened"] == 2 and counts["not_closed"] == 0
+    assert (docs["invalidated-1"]["state"], docs["invalidated-1"]["valid_to"]) == ("stale", None)
+    assert docs["invalidated-1"]["lifecycle_events"][-1] == {
+        "at": NOW, "from": "invalidated", "to": "stale", "actor": "migration", "reason": "reopened under P2 revised"}
+    assert docs["talk"]["lifecycle_events"][-1]["from"] == "archived"
+
+
+async def test_only_archived_and_invalidated_count_as_closed(db, tmp_path):
+    counts = await reopen_script.run(db, COL, apply=False, out_dir=tmp_path, now=NOW, ids=["current-1", "invalidated-1"])
+
+    assert counts["candidates"] == 1 and counts["not_closed"] == 1
 
 
 # ------------------------------------------------------------------------------------------------ --expiry-plan
@@ -305,7 +319,7 @@ def _plan(*ids):
 async def test_the_plans_expiry_is_written_with_the_reopen_and_an_absent_fact_is_listed(db, tmp_path, capsys):
     before = _snapshot(db)[0]
 
-    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, expiry_plan=_plan("talk"))
+    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, expiry_plan=_plan("talk"), ids=LIST)
 
     docs = db.collection(COL).docs
     assert counts["reopened"] == 3 and counts["without_expiry"] == 2
@@ -321,7 +335,7 @@ async def test_the_plans_expiry_is_written_with_the_reopen_and_an_absent_fact_is
 async def test_a_dry_run_with_a_plan_writes_nothing_and_lists_the_facts_without_expiry(db, tmp_path):
     before = _snapshot(db)
 
-    await reopen_script.run(db, COL, apply=False, out_dir=tmp_path, now=NOW, expiry_plan=_plan("talk"))
+    await reopen_script.run(db, COL, apply=False, out_dir=tmp_path, now=NOW, expiry_plan=_plan("talk"), ids=LIST)
 
     assert _snapshot(db) == before
     report = json.loads((tmp_path / "fact_p2_reopen_2026-10-28.json").read_text(encoding="utf-8"))
@@ -331,7 +345,7 @@ async def test_a_dry_run_with_a_plan_writes_nothing_and_lists_the_facts_without_
 async def test_without_a_plan_the_expiry_fields_stay_and_no_list_is_made(db, tmp_path):
     before_docs, _ = _snapshot(db)
 
-    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+    counts = await reopen_script.run(db, COL, apply=True, out_dir=tmp_path, now=NOW, ids=LIST)
 
     assert "without_expiry" not in counts
     assert db.collection(COL).docs["talk"]["expires_at"] == before_docs["talk"]["expires_at"]
@@ -345,7 +359,7 @@ def test_main_reads_the_expiry_plan_from_the_memory_folder(monkeypatch, tmp_path
             "fact_id": "talk", "fields": {"expiry_kind": "date", "ttl_days": None, "expires_at": PLAN_EXPIRES.isoformat()}}],
     }), encoding="utf-8")
     fake, collection = _main_with_fake_client(
-        monkeypatch, tmp_path, ["--all-archived", "--expiry-plan", str(tmp_path / "plan.json"), "--apply"])
+        monkeypatch, tmp_path, ["--expiry-plan", str(tmp_path / "plan.json"), "--apply"])
 
     stored = fake.collection(collection).docs["talk"]
     assert stored["expiry_kind"] == "date" and stored["expires_at"] == PLAN_EXPIRES and stored["state"] == "stale"
@@ -357,4 +371,4 @@ def test_main_refuses_a_plan_outside_the_memory_folder(monkeypatch, tmp_path):
     outside.write_text("{}", encoding="utf-8")
 
     with pytest.raises(SystemExit):
-        reopen_script.main(["--all-archived", "--expiry-plan", str(outside)])
+        reopen_script.main(["--ids-file", str(tmp_path / "ids.txt"), "--expiry-plan", str(outside)])

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.domain.fact_review_question import QUESTION_RETENTION
 from scripts.migration import fact_p2_rollback_questions as rollback
 from src.domain.fact_review_question import QuestionStatus
 from tests.support.fact_review_world import ReviewWorld
@@ -52,6 +53,9 @@ async def db():
     await col.document("default-only").set(_doc())
     await col.document("open-happened").set(_doc(question="happened", texts=TEXTS, fallback="history", status="asked",
                                                   asked_at=NOW, fallback_attempts=1))
+    await col.document("queued-happened").set(_doc(question="happened", texts=TEXTS, fallback="history", status="queued"))
+    await col.document("pending-paid").set(_doc(question="paid", texts=PAID, fallback="history", status="pending",
+                                                 session_id="u:D1"))
     await col.document("open-kept-twice").set(_doc(origin="kept_twice", fallback="archive", noise=True,
                                                     fallback_date="2026-11-01", status="queued"))
     await col.document("closed-happened").set(_doc(**CLOSED))
@@ -93,7 +97,8 @@ async def test_dry_run_writes_nothing_and_reports_ids_without_text(db, tmp_path,
     counts = await rollback.run(db, COL, apply=False, out_dir=tmp_path, now=NOW)
 
     assert _snapshot(db) == before
-    assert counts == {"p2_records": 4, "p2_defaults_only": 1, "deleted": 0, "rewritten": 0, "stripped": 0,
+    assert counts == {"p2_records": 6, "p2_defaults_only": 1, "deleted": 0, "closed_sent": 0, "rewritten": 0,
+                      "stripped": 0,
                       "skipped_changed": 0, "failed": 0}
     raw = (tmp_path / "fact_p2_rollback_2026-10-28.json").read_text(encoding="utf-8")
     plans = json.loads(raw)["plans"]
@@ -102,14 +107,15 @@ async def test_dry_run_writes_nothing_and_reports_ids_without_text(db, tmp_path,
     assert "s4-old" not in plans
     assert "green tea" not in raw and "parking fine" not in raw
     out = capsys.readouterr().out
-    assert "p2_records: 4" in out and "digest" not in out
+    assert "p2_records: 6" in out and "digest" not in out
 
 
 async def test_apply_leaves_every_document_in_the_s4_shape(db, tmp_path):
     counts = await rollback.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
 
     docs = db.collection(COL).docs
-    assert counts["deleted"] == 1 and counts["rewritten"] == 3 and counts["stripped"] == 1 and counts["failed"] == 0
+    assert counts["deleted"] == 1 and counts["closed_sent"] == 2 and counts["rewritten"] == 3 and counts["stripped"] == 1
+    assert counts["failed"] == 0
     assert "digest" not in docs
     for doc_id, doc in docs.items():
         assert set(doc) <= S4_FIELDS | STORED_ONLY, doc_id
@@ -129,9 +135,27 @@ async def test_an_open_p2_record_falls_back_to_a_revive(db, tmp_path):
     await rollback.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
 
     docs = db.collection(COL).docs
-    for doc_id in ("open-happened", "open-kept-twice"):
+    for doc_id in ("queued-happened", "open-kept-twice"):
         assert (docs[doc_id]["fallback"], docs[doc_id]["noise"], docs[doc_id]["fallback_date"]) == ("revive", False, None)
-    assert docs["open-happened"]["status"] == "asked" and docs["open-happened"]["quoted_text"] == "Drinks green tea"
+    assert docs["queued-happened"]["status"] == "queued" and docs["queued-happened"]["quoted_text"] == "Drinks green tea"
+
+
+async def test_a_sent_p2_question_is_closed_resolved_elsewhere_never_converted(db, tmp_path):
+    await rollback.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+
+    docs = db.collection(COL).docs
+    for doc_id in ("open-happened", "pending-paid"):
+        doc = docs[doc_id]
+        assert (doc["status"], doc["closed_by"], doc["answer"], doc["answer_source"]) == ("closed", "resolved_elsewhere", None, None)
+        assert doc["closed_at"] == NOW and doc["purge_after"] == NOW + QUESTION_RETENTION
+        assert not set(doc) & set(rollback.P2_KEYS) and doc["fallback"] == "revive"
+
+
+async def test_a_closed_sent_question_keeps_its_message_and_ask_time(db, tmp_path):
+    await rollback.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
+
+    doc = db.collection(COL).docs["open-happened"]
+    assert doc["status"] == "closed" and doc["closed_by"] == "resolved_elsewhere" and doc["asked_at"] == NOW
 
 
 async def test_a_default_only_record_is_only_stripped(db, tmp_path):
@@ -158,7 +182,7 @@ async def test_a_second_apply_does_nothing(db, tmp_path):
 
     counts = await rollback.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
 
-    assert counts == {"p2_records": 0, "p2_defaults_only": 0, "deleted": 0, "rewritten": 0, "stripped": 0,
+    assert counts == {"p2_records": 0, "p2_defaults_only": 0, "deleted": 0, "closed_sent": 0, "rewritten": 0, "stripped": 0,
                       "skipped_changed": 0, "failed": 0}
     assert _snapshot(db) == before
 
@@ -168,7 +192,7 @@ async def test_a_changed_or_deleted_document_is_skipped(db, tmp_path, monkeypatc
 
     async def scan_then_interfere(database, collection):
         result = await real_scan(database, collection)
-        await database.collection(COL).document("open-happened").update({"reply_text": "edited meanwhile"})
+        await database.collection(COL).document("queued-happened").update({"reply_text": "edited meanwhile"})
         await database.collection(COL).document("digest").delete()
         return result
 
@@ -176,8 +200,9 @@ async def test_a_changed_or_deleted_document_is_skipped(db, tmp_path, monkeypatc
 
     counts = await rollback.run(db, COL, apply=True, out_dir=tmp_path, now=NOW)
 
-    assert counts["skipped_changed"] == 2 and counts["rewritten"] == 2 and counts["stripped"] == 1
-    assert db.collection(COL).docs["open-happened"]["question"] == "happened"
+    assert counts["skipped_changed"] == 2 and counts["rewritten"] == 2 and counts["closed_sent"] == 2
+    assert counts["stripped"] == 1
+    assert db.collection(COL).docs["queued-happened"]["question"] == "happened"
 
 
 async def test_a_general_write_error_counts_as_failed(db, tmp_path, monkeypatch, capsys):

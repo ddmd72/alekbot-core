@@ -11,8 +11,14 @@ legal for S4:
     digest delivery  -> the document is deleted
     closed           -> closed_by "resolved_elsewhere", answer and answer_source cleared (`purge_after` kept), and the
                         fallback fields as for an open one (a closed `history` fallback is no S4 value either)
-    open             -> fallback "revive", noise False, fallback_date cleared
+    open, sent       -> (status pending, asked or unanswered: its message went out with P2 options) CLOSED as
+                        `resolved_elsewhere` with the five-key strip, never converted: the old code would read the owner's
+                        digit with S4 meanings ("3" -> never) and invalidate a real event. `closed_at` and
+                        `purge_after` (90 days) are stamped at apply.
+    open, queued     -> converted: fallback "revive", noise False, fallback_date cleared
 A document with only the default-valued P2 keys is just stripped.
+
+Run it once more after the traffic switch (the P2 code may have written records between the first run and the switch).
 
 Dry run by default (reads only). `--apply` writes each document under the `update_time` of the scanned snapshot; a
 document changed (or deleted) since the scan is skipped and counted (re-run to pick it up). A second `--apply` does nothing.
@@ -38,13 +44,18 @@ sys.path.insert(0, str(project_root))
 
 from google.api_core.exceptions import FailedPrecondition, NotFound  # noqa: E402
 from google.cloud.firestore_v1 import DELETE_FIELD  # noqa: E402
+from src.domain.fact_review_question import QUESTION_RETENTION  # noqa: E402
 
 MEMORY_DIR = project_root / "scripts" / "memory"
 P2_KEYS = ("question", "texts", "origin", "delivery", "fallback_attempts")
 S4_ANSWERS = frozenset({"still_true", "ended", "never", "dont_know"})
 SCAN_FIELDS = [*P2_KEYS, "fallback", "answer", "status", "delivery"]
 
+# Open statuses whose question message was (or may have been) sent.
+SENT_STATUSES = frozenset({"pending", "asked", "unanswered"})
+
 DELETE = "deleted"
+CLOSE = "closed_sent"
 REWRITE = "rewritten"
 STRIP = "stripped"
 CHANGED = "skipped_changed"
@@ -77,6 +88,13 @@ def plan_of(data: dict[str, Any]) -> Optional[tuple[str, dict[str, Any]]]:
     fallback = {"fallback": "revive", "noise": False, "fallback_date": None}   # the S4 model has no `history` fallback
     if data.get("status") == "closed":
         return REWRITE, {**removals, **fallback, "closed_by": "resolved_elsewhere", "answer": None, "answer_source": None}
+    if data.get("status") in SENT_STATUSES:
+        # Its message went out with P2 options: the old code would read the owner's digit with S4 meanings ("3" -> never)
+        # and invalidate a real event. Closed, never converted; `closed_at` and `purge_after` are stamped at apply.
+        return CLOSE, {
+            **removals, **fallback, "status": "closed", "closed_by": "resolved_elsewhere", "answer": None,
+            "answer_source": None,
+        }
     return REWRITE, {**removals, **fallback}
 
 
@@ -114,14 +132,15 @@ async def run(db: Any, collection: str, apply: bool, out_dir: Path, now: Optiona
     counts = {
         "p2_records": sum(1 for item in found if item[3]),
         "p2_defaults_only": sum(1 for item in found if not item[3]),
-        DELETE: 0, REWRITE: 0, STRIP: 0, CHANGED: 0, FAILED: 0,
+        DELETE: 0, CLOSE: 0, REWRITE: 0, STRIP: 0, CHANGED: 0, FAILED: 0,
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     day = f"{now:%Y-%m-%d}"
     if apply:
         outcomes: dict[str, str] = {}
         for ref, _, update_time, _, action, fields in found:
-            outcomes[ref.id] = await apply_one(db, ref, update_time, action, fields)
+            stamps = {"closed_at": now, "purge_after": now + QUESTION_RETENTION} if action == CLOSE else {}
+            outcomes[ref.id] = await apply_one(db, ref, update_time, action, {**fields, **stamps})
         for outcome in outcomes.values():
             counts[outcome] += 1
         report: dict[str, Any] = {"generated_at": now.isoformat(), "collection": collection, "outcomes": outcomes}
