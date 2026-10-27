@@ -182,7 +182,10 @@ def summarize(reports_dir: Path, expected: Optional[List[str]] = None) -> tuple[
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(prog="python -m tests.support.mutation_targets")
+    ap = argparse.ArgumentParser(
+        prog="python -m tests.support.mutation_targets",
+        usage="%(prog)s (--matrix [--module X] | --summarize DIR [--module X] --out-md PATH --out-json PATH | --tests-for MODULE)",
+    )
     ap.add_argument("--matrix", action="store_true", help="print the GitHub matrix JSON")
     ap.add_argument("--module", default="", help="restrict --matrix to one module")
     ap.add_argument("--summarize", metavar="DIR", help="summarize every *.json report under DIR")
@@ -191,7 +194,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--out-json")
     args = ap.parse_args(argv)
     if args.tests_for:
-        print(" ".join(sorted(set(tests_for(args.tests_for)) | {x for t in TARGETS if t.module == args.tests_for for x in t.extra_tests})))
+        target = next((t for t in TARGETS if t.module == args.tests_for), None)
+        found = target.tests if target else tests_for(args.tests_for)
+        if not found:
+            print(f"no unit test reaches {args.tests_for}", file=sys.stderr)
+            return 2
+        print(" ".join(found))
         return 0
     if args.matrix:
         data = matrix(args.module)
@@ -208,7 +216,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         Path(args.out_md).write_text(md, encoding="utf-8")
         Path(args.out_json).write_text(json.dumps(combined, indent=2), encoding="utf-8")
         return 0
-    ap.error("one of --matrix or --summarize is required")
+    ap.error("one of --matrix, --summarize or --tests-for is required")
     return 2
 
 
