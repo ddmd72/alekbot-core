@@ -1,4 +1,4 @@
-"""Defect of the email indexing watchdog that the job store's blind update exposes (P11 · G3-5), pinned through the real
+"""Defect of the email indexing watchdog that the job store's blind update exposes (P11-G3-5), pinned through the real
 `EmailIndexingService` over the real `FirestoreEmailJobRepository` on the evaluating Firestore fake (H1).
 
 The race is forced, not gathered: the job repository's stale query is wrapped so that a completing `update_job` lands
@@ -84,7 +84,8 @@ async def test_a_job_that_completes_after_the_stale_query_stays_completed(world)
     """The watchdog lists the stale running jobs, then writes `failed` with no precondition, so a job that completed in
     between is shown as failed. Flipping fix: a `last_update_time` precondition on the watchdog's update, or a
     transaction that re-checks `status == "running"`; a fix that raises when the job moved passes too (the exception is
-    swallowed here), a fix that skips it passes."""
+    swallowed here), a fix that skips it passes. A fix that replaces the stale query (query and conditional update in
+    one repository method) never calls the wrapped read and reports FAILED: re-point the hook to the new read."""
     await _silent_running_job(world)
     world.complete_right_after_the_query()
     try:

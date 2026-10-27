@@ -1,4 +1,4 @@
-"""ShortLinkRepositoryPort kit (P11 · G3-8): the docstring of `src/ports/short_link_repository_port.py` checked against
+"""ShortLinkRepositoryPort kit (P11, G3 store 8): the docstring of `src/ports/short_link_repository_port.py` checked against
 `FirestoreShortLinkRepository` on the evaluating Firestore fake (H1), with the index refusal ON (the adapter issues no
 query). Assertions are on the raw stored documents and on what `resolve` returns.
 
@@ -22,7 +22,7 @@ from tests.support.firestore_eval import EvalDb
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 COL = "eval_short_links"
 NOW = UTC_MIDNIGHT.utc
-TARGET = "https://example.com/f/token-garden-plan"
+TARGET = "https://example.com/f/birth-certificate"
 
 
 def _adapter(db: EvalDb) -> FirestoreShortLinkRepository:

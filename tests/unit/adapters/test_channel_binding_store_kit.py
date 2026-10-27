@@ -1,4 +1,4 @@
-"""ChannelBindingPort kit (P11 · G3-3): the docstring of `src/ports/channel_binding_port.py` checked against
+"""ChannelBindingPort kit (P11, G3 store 3): the docstring of `src/ports/channel_binding_port.py` checked against
 `FirestoreChannelBindingAdapter` on the evaluating Firestore fake (H1), with the index refusal ON (the adapter issues no
 query). Assertions are on the raw stored documents and on what `get` returns.
 

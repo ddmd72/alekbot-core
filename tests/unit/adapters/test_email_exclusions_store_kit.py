@@ -1,4 +1,4 @@
-"""EmailExclusionsPort kit (P11 · G3-7): the docstring of `src/ports/email_exclusions_port.py` checked against
+"""EmailExclusionsPort kit (P11, G3 store 7): the docstring of `src/ports/email_exclusions_port.py` checked against
 `FirestoreEmailExclusionsAdapter` on the evaluating Firestore fake (H1), with the index refusal ON. Only `get_exclusions`
 has a caller in `src/` (nothing writes the collection); the other methods are marked "no caller" and tested for what the
 docstring promises. The foreign-user delete is not pinned (docstring only).

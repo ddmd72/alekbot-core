@@ -1,4 +1,4 @@
-"""CompanionMemoryRepository kit (P11 · G3-6): the docstring of `src/ports/companion_memory_repository.py` checked
+"""CompanionMemoryRepository kit (P11, G3 store 6): the docstring of `src/ports/companion_memory_repository.py` checked
 against `FirestoreCompanionMemoryRepository` on the evaluating Firestore fake (H1), with the index refusal ON (the
 declared vector index is (session_id, account_id, vector)). Assertions are on the raw stored documents and on what
 `find_nearest` returns. Vectors are 2-dimensional on purpose (H1 does not check the declared 768).
@@ -43,14 +43,14 @@ def store():
     return Store()
 
 
-def record(rid="r1", session=SESSION, account="a1", vector=VEC, text="Mixes up past and present tense") -> CompanionRecord:
+def record(rid="r1", session=SESSION, account="a1", vector=VEC, text="Practises guitar 1 h/day") -> CompanionRecord:
     return CompanionRecord(id=rid, session_id=session, account_id=account, created_by_user_id="u1", text=text,
-                           vector=vector, domain="error_pattern", created_at=CREATED)
+                           vector=vector, domain="habit", created_at=CREATED)
 
 
 def raw(store, rid="r1", **over) -> None:
-    doc = {"id": rid, "session_id": SESSION, "account_id": "a1", "created_by_user_id": "u1", "text": "Practised the past tense",
-           "vector": Vector(VEC), "tags": [], "domain": "error_pattern", "created_at": CREATED}
+    doc = {"id": rid, "session_id": SESSION, "account_id": "a1", "created_by_user_id": "u1", "text": "Plays tennis on Sundays",
+           "vector": Vector(VEC), "tags": [], "domain": "habit", "created_at": CREATED}
     for field, value in over.items():
         if value is ...:
             doc.pop(field)
@@ -70,8 +70,8 @@ async def test_save_batch_writes_each_record_under_its_id_with_a_vector_value_an
     assert sorted(store.docs) == ["r1", "r2"]
     doc = store.docs["r1"]
     assert (doc["id"], doc["session_id"], doc["account_id"], doc["created_by_user_id"], doc["domain"], doc["tags"]) == (
-        "r1", SESSION, "a1", "u1", "error_pattern", [])
-    assert doc["text"] == "Mixes up past and present tense"
+        "r1", SESSION, "a1", "u1", "habit", [])
+    assert doc["text"] == "Practises guitar 1 h/day"
     assert isinstance(doc["vector"], Vector) and stored_vector(doc["vector"]) == VEC
 
 

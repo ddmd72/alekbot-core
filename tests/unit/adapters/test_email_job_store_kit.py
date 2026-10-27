@@ -1,4 +1,4 @@
-"""EmailIndexingJobRepository kit (P11 · G3-7): the docstring of `src/ports/email_indexing_job_repository.py` checked
+"""EmailIndexingJobRepository kit (P11, G3 store 7): the docstring of `src/ports/email_indexing_job_repository.py` checked
 against `FirestoreEmailJobRepository` on the evaluating Firestore fake (H1), with the index refusal ON. Assertions are on
 the raw stored documents and on what the readers return.
 
@@ -170,10 +170,11 @@ async def test_update_merges_the_given_fields_and_leaves_the_others(store):
 
 async def test_a_datetime_subclass_in_an_update_is_stored_as_the_same_instant(store):
     """The adapter rewrites a `DatetimeWithNanoseconds` as a plain datetime before the write (the SDK fails on the
-    subclass in some versions); the fake cannot show that failure, so the outcome is the stored instant."""
+    subclass in some versions): the document holds a plain datetime with the same instant."""
     await store.repo.create_job(job())
     stamp = DatetimeWithNanoseconds(2026, 10, 2, 7, 0, 0, 500000, tzinfo=timezone.utc)
     await store.repo.update_job("j1", {"completed_at": stamp, "status": "completed"})
+    assert type(store.docs["j1"]["completed_at"]) is datetime
     assert store.docs["j1"]["completed_at"] == datetime(2026, 10, 2, 7, 0, 0, 500000, tzinfo=timezone.utc)
     assert store.docs["j1"]["status"] == "completed"
 

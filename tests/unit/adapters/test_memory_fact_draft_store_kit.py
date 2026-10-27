@@ -1,4 +1,4 @@
-"""MemoryFactDraftRepository kit (P11 · G3-5): the docstring of `src/ports/memory_fact_draft_repository.py` checked
+"""MemoryFactDraftRepository kit (P11, G3 store 5): the docstring of `src/ports/memory_fact_draft_repository.py` checked
 against `FirestoreMemoryFactDraftRepository` on the evaluating Firestore fake (H1), with the index refusal ON (the adapter
 issues no query). Assertions are on the raw stored documents and on what `get_draft` returns.
 

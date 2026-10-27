@@ -1,4 +1,4 @@
-"""TaskConfigPort kit (P11 · G3-2): the docstring of `src/ports/task_config_port.py` checked against
+"""TaskConfigPort kit (P11, G3 store 2): the docstring of `src/ports/task_config_port.py` checked against
 `FirestoreTaskConfigRepository` on the evaluating Firestore fake (H1), with the index refusal ON (the adapter issues no
 query, so nothing is refused). Assertions are on the raw stored documents and on what the readers return.
 
@@ -163,8 +163,8 @@ async def test_a_subscription_without_expires_at_reads_naive(store):
     (`firestore_task_config_repository.py` `_sub_from_dict`): `expires_at or datetime.now(timezone.utc).replace(tzinfo=None)`;
     a fix that drops such a subscription passes too."""
     store.docs["u1"] = {"primary_list_id": "L1", "subscriptions": [{"sub_id": "s1", "list_id": "L1"}]}
-    require(store.docs["u1"]["subscriptions"][0]["sub_id"] == "s1", "the raw document is stored")
     cfg = await store.repo.get_config("u1")
+    require(cfg.primary_list_id == "L1", "the stored config is read")
     assert all(s.expires_at.tzinfo is None for s in cfg.subscriptions), (
         f"read back {[s.expires_at for s in cfg.subscriptions]}")
 

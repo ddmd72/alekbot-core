@@ -55,7 +55,7 @@ class TaskSearchIndex(ABC):
 
         Order: best match first, the fields' rankings fused. Results past a fixed similarity bound are dropped.
         Filter: `show_completed=False` excludes completed entries and entries with no status.
-        `list_id`: restricts the search to one list; no caller passes it and no declared index serves it.
+        `list_id`: restricts the search to one list; not supported by the current backend, and no caller passes it.
         Legacy: an entry that does not parse (missing indexed_at or status, unknown status or importance) is skipped.
         Errors: a failing field query is logged and the other fields still answer. Known defect P11-G3-1: when every
         field query fails the result is [] instead of the error, so the caller reports "no tasks".
@@ -66,8 +66,8 @@ class TaskSearchIndex(ABC):
     async def get_by_short_id(self, user_id: str, short_id: str) -> Optional[TaskSearchEntry]:
         """The entry of `user_id` whose short_id is `short_id`, or None.
 
-        Legacy: an entry that does not parse reads as None. Two entries with one short_id (8 hex characters of
-        md5(task_id)): one of them, unspecified.
+        Legacy: an entry that does not parse reads as None. A short_id is not guaranteed unique: on a clash
+        one of the matching entries is returned, which one is unspecified.
         """
         ...
 

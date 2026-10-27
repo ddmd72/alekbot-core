@@ -9,8 +9,7 @@ from ..domain.skill import Skill
 class SkillRepository(ABC):
     """Custom (per-user) skills and their drafts.
 
-    Holds for every method: tenancy is by user_id (a foreign user's id reaches nothing); backend errors propagate
-    (SkillService.list_skills alone degrades to the system skills).
+    Holds for every method: tenancy is by user_id (a foreign user's id reaches nothing); backend errors propagate.
     """
 
     @abstractmethod

@@ -1,10 +1,10 @@
-"""Defects of `TaskSetupService` that the task config store's full-overwrite contract exposes (P11 · G3-3), pinned
+"""Defects of `TaskSetupService` that the task config store's full-overwrite contract exposes (P11-G3-3), pinned
 through the real service over the real `FirestoreTaskConfigRepository` on the evaluating Firestore fake (H1).
 
 The lifecycle (the provider boundary) and the task queue are two tiny in-test fakes; the service is built by `_service`
 so a signature change of its constructor touches one line.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,12 +12,15 @@ import pytest
 
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.domain.task import TaskSubscriptionConfig
+from src.services import task_setup_service
 from src.services.task_setup_service import TaskSetupService
+from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
 from tests.support.firestore_eval import EvalDb
 from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 COL = "eval_task_config"
+NOW = UTC_MIDNIGHT.utc
 
 
 class _Lifecycle:
@@ -29,7 +32,7 @@ class _Lifecycle:
 
     async def register_subscription(self, user_id: str, list_id: str, notification_url_base: str) -> TaskSubscriptionConfig:
         return TaskSubscriptionConfig(sub_id="sub1", list_id=list_id,
-                                      expires_at=datetime.now(timezone.utc) + timedelta(days=2))
+                                      expires_at=NOW + timedelta(days=2))
 
 
 class _Queue:
@@ -57,7 +60,8 @@ def _service(repo, queue) -> TaskSetupService:
 
 
 @pytest.fixture
-def world():
+def world(monkeypatch):
+    pin_datetime(monkeypatch, task_setup_service, NOW)
     return World()
 
 

@@ -1,4 +1,4 @@
-"""TaskSearchIndex kit (P11 · G3-1): the docstring of `src/ports/task_search_index.py` checked against
+"""TaskSearchIndex kit (P11, G3 store 1): the docstring of `src/ports/task_search_index.py` checked against
 `FirestoreTaskSearchIndex` on the evaluating Firestore fake (H1), with the index refusal ON. Assertions are on the raw
 stored documents and on what the readers return.
 
@@ -48,8 +48,8 @@ def store():
 
 
 def entry(task_id="t1", user_id="u1", content=VEC, context=None, status=TaskStatus.NOT_STARTED, list_id="L1",
-          title="Buy seeds for the community garden", **over) -> TaskSearchEntry:
-    fields = dict(task_id=task_id, list_id=list_id, list_name="Garden", user_id=user_id, title=title, status=status,
+          title="Renew Clara's passport by 2026-12-01", **over) -> TaskSearchEntry:
+    fields = dict(task_id=task_id, list_id=list_id, list_name="Household", user_id=user_id, title=title, status=status,
                   short_id=f"s-{task_id}", content_vector=content, context_vector=context, indexed_at=INDEXED_AT)
     fields.update(over)
     return TaskSearchEntry(**fields)
@@ -58,7 +58,7 @@ def entry(task_id="t1", user_id="u1", content=VEC, context=None, status=TaskStat
 def raw(store, task_id="t1", user_id="u1", content=VEC, **over) -> str:
     """Seed the raw document of `entry(task_id)` under `{user_id}_{task_id}` as the adapter writes it (vectors as
     `Vector`), with `over` on top; a value of `...` removes the field."""
-    doc = {"task_id": task_id, "list_id": "L1", "list_name": "Garden", "user_id": user_id, "title": "Water the tomatoes",
+    doc = {"task_id": task_id, "list_id": "L1", "list_name": "Household", "user_id": user_id, "title": "Book the car service",
            "status": "notStarted", "tags": [], "importance": "normal", "short_id": f"s-{task_id}",
            "content_vector": Vector(content), "context_vector": None, "indexed_at": INDEXED_AT}
     for field, value in over.items():
@@ -77,12 +77,12 @@ async def ids(store, vectors=None, user_id="u1", **kw):
 # --------------------------------------------------------------------------------------------------- upsert
 
 async def test_upsert_stores_one_document_per_task_and_a_repeat_replaces_it(store):
-    await store.index.upsert(entry(context=[0.0, 1.0], importance=TaskImportance.HIGH, tags=["seeds"]))
-    await store.index.upsert(entry(title="Buy seeds and compost", context=[0.0, 1.0], importance=TaskImportance.HIGH))
+    await store.index.upsert(entry(context=[0.0, 1.0], importance=TaskImportance.HIGH, tags=["family"]))
+    await store.index.upsert(entry(title="Book the car service for 2026-11-05", context=[0.0, 1.0], importance=TaskImportance.HIGH))
     assert list(store.docs) == ["u1_t1"]
     doc = store.docs["u1_t1"]
-    assert (doc["title"], doc["status"], doc["importance"], doc["tags"]) == ("Buy seeds and compost", "notStarted", "high", [])
-    assert (doc["task_id"], doc["list_id"], doc["list_name"], doc["user_id"], doc["short_id"]) == ("t1", "L1", "Garden", "u1", "s-t1")
+    assert (doc["title"], doc["status"], doc["importance"], doc["tags"]) == ("Book the car service for 2026-11-05", "notStarted", "high", [])
+    assert (doc["task_id"], doc["list_id"], doc["list_name"], doc["user_id"], doc["short_id"]) == ("t1", "L1", "Household", "u1", "s-t1")
     assert isinstance(doc["content_vector"], Vector) and stored_vector(doc["content_vector"]) == VEC
     assert stored_vector(doc["context_vector"]) == [0.0, 1.0]
     assert doc["indexed_at"] == INDEXED_AT
@@ -232,13 +232,17 @@ async def test_find_nearest_raises_when_every_query_fails(store):
 async def test_find_nearest_answers_from_the_fields_that_work_when_one_field_query_fails(store):
     await store.index.upsert(entry("t1", content=VEC, context=VEC))
     check_index = store.db._check_index
+    refused = []
 
     def refuse_the_context_index(name, is_group, ops):
         if any(op[0] == "find_nearest" and op[1]["vector_field"] == "context_vector" for op in ops):
+            refused.append(name)
             raise FailedPrecondition("the index is not ready")
         return check_index(name, is_group, ops)
     store.db._check_index = refuse_the_context_index
-    assert await ids(store, {"content_vector": VEC, "context_vector": VEC}) == ["t1"]
+    got = await ids(store, {"content_vector": VEC, "context_vector": VEC})
+    require(refused, "the context-vector query was refused")
+    assert got == ["t1"]
 
 
 # ----------------------------------------------------------------------------------------- get_by_short_id
@@ -246,7 +250,7 @@ async def test_find_nearest_answers_from_the_fields_that_work_when_one_field_que
 async def test_get_by_short_id_is_scoped_to_the_user_and_an_unparseable_entry_reads_none(store):
     await store.index.upsert(entry("t1", short_id="a1b2c3d4"))
     got = await store.index.get_by_short_id("u1", "a1b2c3d4")
-    assert (got.task_id, got.user_id, got.title) == ("t1", "u1", "Buy seeds for the community garden")
+    assert (got.task_id, got.user_id, got.title) == ("t1", "u1", "Renew Clara's passport by 2026-12-01")
     assert await store.index.get_by_short_id("u2", "a1b2c3d4") is None
     assert await store.index.get_by_short_id("u1", "ffffffff") is None
     raw(store, "t2", "u1", short_id="deadbeef", status="archived")

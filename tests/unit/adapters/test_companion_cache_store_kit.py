@@ -1,4 +1,4 @@
-"""CompanionCacheRepository kit (P11 · G3-6): the docstring of `src/ports/companion_cache_repository.py` checked against
+"""CompanionCacheRepository kit (P11, G3 store 6): the docstring of `src/ports/companion_cache_repository.py` checked against
 `FirestoreCompanionCacheRepository` on the evaluating Firestore fake (H1), with the index refusal ON (the adapter issues
 no query). Assertions are on the raw stored documents and on what the readers return.
 
@@ -23,7 +23,7 @@ from tests.support.redelivery_world import require
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 CACHE, REC = "eval_companion_context_cache", "eval_companion_records"
 SESSION = "slack:C1"
-SUMMARY = "Practised the past tense with a cookbook recipe"
+SUMMARY = "Plays tennis on Sundays"
 
 
 def _adapter(db: EvalDb) -> FirestoreCompanionCacheRepository:
@@ -62,8 +62,8 @@ async def test_save_then_get_returns_the_summary_and_the_document_carries_sessio
 
 async def test_a_second_save_replaces_the_whole_document(store):
     await store.repo.save_summary(SESSION, "a1", SUMMARY)
-    await store.repo.save_summary(SESSION, "a1", "Practised the future tense")
-    assert await store.repo.get_summary(SESSION) == "Practised the future tense"
+    await store.repo.save_summary(SESSION, "a1", "Practises guitar 1 h/day")
+    assert await store.repo.get_summary(SESSION) == "Practises guitar 1 h/day"
     assert list(store.docs) == [SESSION]
 
 
