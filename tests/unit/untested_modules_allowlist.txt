@@ -18,7 +18,6 @@ src.domain.file_access  # link-lifetime constants; used by delivery services
 src.domain.tool_result  # ToolResult model; used by the delegation engine
 src.domain.voice_amd  # is_voicemail(); used by the voice web apps, no direct test
 src.domain.voice_errand  # errand intent constant; used by the manifest and the voice session service
-src.ports.long_turn_registry  # ABC; its Firestore implementation is the thing to test
 src.services.google_oauth_service  # incremental Google OAuth; used by the oauth and cabinet apps
 src.utils.logging_context  # trace/session ContextVars; used by logger and handlers
 src.utils.timer  # log_execution_time decorator
