@@ -55,6 +55,8 @@ OUTCOME_APPLIED = "applied"
 OUTCOME_ALREADY = "already_applied"
 OUTCOME_CHANGED = "skipped_changed"
 OUTCOME_FAILED = "failed"
+OUTCOME_NOT_CURRENT = "not_current"   # an entry of a closed fact: apply writes current facts only
+PLAN_STATES: Final[Tuple[str, ...]] = (FactState.CURRENT.value, FactState.ARCHIVED.value, FactState.INVALIDATED.value)
 
 CHARS_PER_TOKEN: Final[float] = 3.1
 OUTPUT_TOKENS_PER_FACT: Final[int] = 50
@@ -112,6 +114,7 @@ class ScannedFact:
     reported_date: Optional[datetime]  # aware UTC; None when absent or not a datetime
     created_at: Optional[datetime]     # same rule
     expiry_kind: Optional[str]         # the stored raw value
+    state: str = "current"             # current, or archived / invalidated for a closed fact classified by id
 
 
 def _lowered(value: Any) -> Optional[str]:
@@ -128,6 +131,7 @@ def scanned_fact(doc_id: str, data: Mapping[str, Any], update_time: Any) -> Scan
     expiry_kind = data.get("expiry_kind")
     text = data.get("text")
     account = data.get("account_id")
+    state = data.get("state")
     reported = data.get("reported_date")
     created = data.get("created_at")
     return ScannedFact(
@@ -144,6 +148,7 @@ def scanned_fact(doc_id: str, data: Mapping[str, Any], update_time: Any) -> Scan
         reported_date=as_utc(reported) if isinstance(reported, datetime) else None,
         created_at=as_utc(created) if isinstance(created, datetime) else None,
         expiry_kind=expiry_kind,
+        state=state if isinstance(state, str) else "current",
     )
 
 
@@ -400,6 +405,7 @@ class PlanEntry:
     fields: Dict[str, Any]
     source: str
     code: Optional[str]
+    state: str = "current"
 
 
 def plan_entry(decision: Decision, fact: ScannedFact, fields: Mapping[str, Any]) -> PlanEntry:
@@ -414,6 +420,7 @@ def plan_entry(decision: Decision, fact: ScannedFact, fields: Mapping[str, Any])
         },
         source=decision.source,
         code=decision.code,
+        state=fact.state,
     )
 
 
@@ -454,6 +461,7 @@ def plan_document(
                 "fields": _serialised_fields(e.fields),
                 "source": e.source,
                 "code": e.code,
+                "state": e.state,
             }
             for e in entries
         ],
@@ -485,6 +493,9 @@ def _read_entry(index: int, item: Any) -> PlanEntry:
     code = item.get("code")
     if code is not None and code not in FALLBACK_CODES:
         raise _refuse(index, "unknown code")
+    state = item.get("state", FactState.CURRENT.value)
+    if state not in PLAN_STATES:
+        raise _refuse(index, "unknown state")
     raw = item.get("fields")
     if not isinstance(raw, dict):
         raise _refuse(index, "fields are missing")
@@ -520,7 +531,7 @@ def _read_entry(index: int, item: Any) -> PlanEntry:
         raise _refuse(index, "the fields are not the shape of their kind")
     return PlanEntry(
         ids["fact_id"], ids["account_id"], ids["token"],
-        {"expiry_kind": kind, "ttl_days": ttl_days, "expires_at": expires_at}, source, code,
+        {"expiry_kind": kind, "ttl_days": ttl_days, "expires_at": expires_at}, source, code, state,
     )
 
 
