@@ -271,7 +271,7 @@ table** and an **exemption list** (older RFCs citing since-renamed paths). Draft
      fixture asserts `credentials.service_account_email` equals the test SA before any write. Without this, local runs
      use the owner's project-wide rights and the condition protects nothing.
    - **CI uses Workload Identity Federation**, limited to `refs/heads/main` of this repository; pool, provider and SA
-     names live in GitHub variables. CI has no GCP auth today (`.github/workflows/ci.yml:33`).
+     names live in GitHub repository secrets (`TEST_WIF_PROVIDER`, `TEST_SA_EMAIL`, `TEST_FIRESTORE_DATABASE`, `GOOGLE_CLOUD_PROJECT`). CI has no GCP auth today (`.github/workflows/ci.yml:33`).
 4. **Guards check the constructed client** (its database and project), not env vars.
 5. **Cloud fixtures build repositories directly from an `EnvironmentConfig`**, never through composition or
    `load_settings()`. Under `APP_ENV=test`, `is_development` is False, so queue names switch to the `-prod` suffix
@@ -747,11 +747,11 @@ scheduled routine that fixes survivors by PR.
   from the booted app (header kept, sorted); the diff in the PR is the review. Without the variable nothing is written.
 - **F3** Docs-only PRs skip `make ci`. `scripts/ci/docs_only.py` is the one definition of "docs": `docs/**`, root `*.md`,
   `tests/CLAUDE.md`, `src/**/CLAUDE.md`, `.github/**/*.md`; not `src/**/SKILL.md`, `tests/fixtures/**`, `scripts/**`, any non-markdown
-  file. The `check` job keeps its name and prints a notice instead.
+  file. The `check` job keeps its name and prints a notice instead; a docs-only PR still runs the doc-reading tests listed in `DOC_READING_TESTS`.
 - **F4 `.github/workflows/parity.yml`** (`Firestore parity`): Sunday 03:00 UTC and `workflow_dispatch`; authenticates through Workload
   Identity Federation as the test service account (`tests/cloud/conftest.py` accepts default credentials that already identify as that
   account, otherwise impersonates as before; every guard unchanged); runs `make test-cloud`; artifact `parity` (`parity.xml`,
-  `parity.log`). Never red because a scenario failed.
+  `parity.log`; the three secret values are replaced before upload). Never red because a scenario failed, but red when a secret is empty or zero tests ran.
 - **F6 (outside the repo)** the Monday routine, a scheduled cloud Claude session: downloads the latest `survivors` and `parity`
   artifacts, writes the killing assertion or proposes an `equivalent` line per survivor, opens a test-only PR. KPI: open survivors by
   the next Monday = 0, `error` statuses = 0, growth of equivalents watched. It escalates to the owner only a survivor older than two

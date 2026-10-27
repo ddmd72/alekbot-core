@@ -68,7 +68,7 @@ done-check): the table in `tests/CLAUDE.md` § Running is the one place that say
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/ main.py indexer_main.py job_main.py relay_main.py sandbox_main.py` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
 informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite (which excludes `slow` tests; they run in `make ci`); it is the local pre-commit gate. CI (`.github/workflows/ci.yml`) runs
-`make ci` (the same plus slow tests and the coverage gate) on every push/PR (posting ✅/❌ to Slack). Docs-only PRs skip it (`scripts/ci/docs_only.py` defines "docs"). Two weekly cloud workflows, `Mutation survivors` and `Firestore parity`, write artifacts that a scheduled routine reads, never Slack (`tests/CLAUDE.md` § Running). The full unit/architecture suite (~13 300 tests) is green
+`make ci` (the same plus slow tests and the coverage gate) on every push/PR (posting ✅/❌ to Slack). Docs-only PRs skip it but still run the doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`; that file also defines "docs"). Two weekly cloud workflows, `Mutation survivors` and `Firestore parity`, write artifacts that a scheduled routine reads, never Slack (`tests/CLAUDE.md` § Running). The full unit/architecture suite (~13 300 tests) is green
 and **safe to run in full** (any historical "don't run the full suite" warning was a since-fixed
 chunker infinite loop, not a standing hazard). `make test-unit` / `make check` run it in parallel
 via pytest-xdist (`-n auto`; cap with `PYTEST_WORKERS=6`): ~1:34 on a 12-core Mac vs ~5:00

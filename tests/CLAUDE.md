@@ -15,8 +15,9 @@ This table is the one place that says which test command to run when. Other docs
 | Wiring done-check (P9) | `python -m tests.support.semantic_mutants --module <src.composition.X or main> --operators wiring --equivalent tests/unit/composition/wiring_equivalent_mutants.txt --tests <the P9 test files>` | the command is spelled out in "The production graph" below; about 9-10 s per mutant |
 | Only when the task needs them | `make test-integration`, `make test-e2e-all` | some integration tests and all e2e tests call real services |
 | Fake against the real thing (P5) | `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pytest tests/unit/support/test_firestore_parity.py`, and `make test-cloud` | the parity scenarios on the Firestore emulator, and on the test database (see below) |
+| Docs-only PR | (automatic) | `make ci` is skipped (F3), but the doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`) still run; a meta-test fails when a unit test reads `docs/` or walks `*.md` without being listed |
 | Weekly cloud runs (nothing to do by hand) | `Mutation survivors` (`mutation.yml`) and `Firestore parity` (`parity.yml`), Sunday; after a package: `gh workflow run mutation.yml -f module=<module>` | artifacts `survivors` and `parity`, read by the Monday routine, which fixes survivors by PR; never red for a survivor or a failed scenario, never Slack |
-| Re-pin the URL map | `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` | rewrites `main_boots_offline_url_map.txt` from the booted app; the diff is the review |
+| Re-pin the URL map | `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` | single file, no `-n`; rewrites `main_boots_offline_url_map.txt` from the booted app; the diff is the review |
 | Wall-clock tests | `make test-timing`, by hand (CI runs it after a merge to `main`) | `timing` tests only |
 
 Never: re-run a suite because a `timing` test failed; combine `--testmon` with `--cov`; run two full suites at once
@@ -30,7 +31,7 @@ tests/
   integration/    — mocked or scripted services; the offline G2 end-to-end test runs in `make check`
   support/        — shared fakes (fact_store.py, firestore_eval.py), network_guard.py, plugin_runs.py, semantic_mutants/
   contracts/      — adapter contract rules (adapter_contracts.py)
-  cloud/          — the cloud gate: real writes to the Firestore test database (`make test-cloud`); never in check or ci
+  cloud/          — the cloud gate: real writes to the Firestore test database (`make test-cloud`); never in check or ci, weekly in the cloud (`Firestore parity`)
 ```
 
 ## The convention
@@ -95,7 +96,7 @@ refuses to start unless the database ends in `-test`, is not the live one and th
 impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; a run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run). The weekly `Firestore parity` workflow (`.github/workflows/parity.yml`, Sunday 03:00 UTC and `workflow_dispatch`) authenticates through Workload
 Identity Federation as the test service account and runs `make test-cloud` (artifact `parity`: `parity.xml`, `parity.log`; never red for a failed scenario).
 `tests/cloud/conftest.py` accepts default credentials that already identify as the test service account, otherwise it impersonates as before; every guard
-is unchanged. One runner at a time: the workflow runs under a `concurrency` group (no lease document).
+is unchanged. The parity artifact is redacted (the three secret values are replaced before upload); the job fails when a secret is empty or zero tests ran. The Sunday 03:00 UTC run can collide with a manual `make test-cloud` (no lease yet): do not run it by hand at that time. One runner at a time: the workflow runs under a `concurrency` group (no lease document).
 
 Extending the fake with a new Firestore feature = a new scenario in `tests/support/firestore_parity.py`, run on the emulator and with `make test-cloud`; an adapter that starts using a feature the fake lacks fails loudly (unsupported operator / no such method) — extend the fake then, never work around it in the test.
 
