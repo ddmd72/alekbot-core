@@ -224,6 +224,7 @@ async def test_workspace_commands_land_in_the_bucket():
     assert str(versions[0].generation) in history
     assert restored.startswith(f"restored generation {versions[0].generation} as generation {versions[2].generation}")
     assert "decision expected by 2026-10-30" in version_view
+    assert f"version {versions[0].generation}, not current" in version_view   # the live text equals v1 after restore
     assert deleted.startswith(f"deleted workspace:{SHED_NOTES}")
 
     # What the bucket holds: the restored text is live again, the history keeps all three, nothing is left under
