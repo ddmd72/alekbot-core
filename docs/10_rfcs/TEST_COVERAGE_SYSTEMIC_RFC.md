@@ -741,7 +741,7 @@ scheduled routine that fixes survivors by PR.
   one job per module registered in `tests/support/mutation_targets.py` (`MutationTarget(module, tests, equivalent, operators)`, `TARGETS`;
   CLI `python -m tests.support.mutation_targets --matrix | --summarize DIR --out-md --out-json`). The driver gained `--report PATH` (JSON)
   and `--no-fail`. Artifacts `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`), also in the step summary.
-  Never red because mutants survived. Registering a package's modules in `TARGETS` is part of "package done"; a unit test fails when a
+  `survivors.md` lists every registered module, `missing` when a job produced no report and `partial (N of M)` when it was cut (the report is rewritten after each mutant). Never red because mutants survived. Registering a package's modules in `TARGETS` is part of "package done"; a unit test fails when a
   `*_equivalent_mutants.txt` file has no registered target. The local done-check (the table in `tests/CLAUDE.md`) stays, once per package.
 - **F2** `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` rewrites `tests/unit/main_boots_offline_url_map.txt`
   from the booted app (header kept, sorted); the diff in the PR is the review. Without the variable nothing is written.
