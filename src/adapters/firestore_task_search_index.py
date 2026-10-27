@@ -30,6 +30,19 @@ _FIND_NEAREST_SEMAPHORE = asyncio.Semaphore(10)
 
 
 class FirestoreTaskSearchIndex(TaskSearchIndex):
+    """Firestore mechanics behind the port's contract.
+
+    Collection `EnvironmentConfig.task_search_index_collection` (`{prefix}task_search_index`), document id
+    `{user_id}_{task_id}`, vectors stored as `Vector` values. Declared vector indexes (config/firestore.indexes.json):
+    (user_id, content_vector), (user_id, context_vector), (user_id, status, content_vector),
+    (user_id, status, context_vector); none serves `list_id`, so a query with it is refused as a missing index (the
+    field query then fails and is logged, see find_nearest).
+
+    find_nearest: one cosine vector query per field (`limit * 2` each, distance threshold 0.4, pre-filter user_id and
+    `status != completed`), at most 10 in flight, fused by Reciprocal Rank Fusion (k = 60). `status !=` excludes a
+    document without the field. The delete methods remove in batches of 500. A document that does not parse is logged
+    and skipped. `indexed_at` is read back naive.
+    """
 
     def __init__(self, db_client, env_config: EnvironmentConfig) -> None:
         self.db = db_client
