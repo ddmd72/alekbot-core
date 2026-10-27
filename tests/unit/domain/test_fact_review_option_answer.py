@@ -4,12 +4,17 @@ import pytest
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_answers import digit_answer, option_answer
 from src.domain.fact_review_language import LABEL_KEYS, fact_question_message
+from src.domain.fact_review_options import OPTIONS
 from tests.support.review_rule_builders import question
+from tests.unit.domain.review_p2_texts import TEXTS
 
 
 @pytest.mark.parametrize("kind", list(AnswerKind))
 def test_every_option_of_the_message_is_the_answer_of_the_same_name(kind):
-    message = fact_question_message(question(), {key: key for key in LABEL_KEYS})
+    # P2 revised (C11): a message offers the options of its question's kind; each answer is asked on a kind it belongs to
+    qkind = next(k for k, options in OPTIONS.items() if kind in options)
+    asked = question() if qkind == "still_true" else question(question=qkind, fallback="history", texts=TEXTS[qkind])
+    message = fact_question_message(asked, {key: key for key in LABEL_KEYS})
 
     assert option_answer(kind.value) is kind
     assert message.option(kind.value) is not None

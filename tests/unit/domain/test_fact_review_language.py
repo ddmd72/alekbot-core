@@ -15,6 +15,7 @@ from src.domain.fact_review_language import (
     parse_message_language,
     ui_strings_language,
 )
+from src.domain.fact_review_options import OPTIONS
 from src.domain.fact_review_question import FACT_QUESTION_KIND
 from src.domain.fact_review_state import FactReviewState
 from src.domain.interactive_option import MAX_LABEL_CHARS
@@ -57,7 +58,12 @@ def test_the_label_set_is_the_fifteen_ui_strings_of_the_plan():
         "REVIEW_QUESTION", "OPTION_STILL_TRUE", "OPTION_ENDED", "OPTION_NEVER", "OPTION_DONT_KNOW", "REPLY_HINT",
         "ANSWER_NOTED", "REPLY_NOTED", "ALREADY_ANSWERED", "FACT_CHANGED", "QUESTION_CLOSED", "DIGEST_HEADER",
         "DIGEST_FOOTER", "DIGEST_ARCHIVED", "DIGEST_INVALIDATED",
+        # P2 revised (C11): the 13 new strings, 28 in all
+        "REVIEW_QUESTION_HAPPENED", "REVIEW_QUESTION_RENEWED", "REVIEW_QUESTION_PAID", "OPTION_HAPPENED",
+        "OPTION_NOT_HAPPENED", "OPTION_RENEWED", "OPTION_NOT_RENEWED", "OPTION_NOT_NEEDED", "OPTION_PAID",
+        "OPTION_NOT_PAID", "DIGEST_HISTORY_HEADER", "DIGEST_INVOICES_HEADER", "DIGEST_INVOICES_CABINET",
     ]
+    assert len(names) == len(LABEL_KEYS) == 28
     assert LABEL_KEYS == {UIMessage[f"MEMORY_{name}"].value for name in names}
     assert set(CANONICAL_LABELS) == LABEL_KEYS
     assert list(OPTION_KEYS) == list(AnswerKind)
@@ -77,8 +83,14 @@ def test_the_english_digest_footer_is_the_plans_sentence():
 
 
 def test_the_four_english_options_read_as_the_plans_line():
-    labels = [CANONICAL_LABELS[key] for key in OPTION_KEYS.values()]
+    # P2 revised (C11): OPTION_KEYS spans every answer; the still_true question's four options read as S4's line, and
+    # the new options as the spec's P2-3 table
+    labels = [CANONICAL_LABELS[OPTION_KEYS[kind]] for kind in OPTIONS["still_true"]]
     assert labels == ["Yes", "No longer", "Never", "Don't remember"]
+    assert [CANONICAL_LABELS[key] for key in OPTION_KEYS.values()] == [
+        "Yes", "No longer", "Never", "Don't remember",
+        "It happened", "It did not", "Renewed", "Not renewed", "No longer needed", "Paid", "Not paid",
+    ]
 
 
 # ------------------------------------------------------------------------------------------------ check_labels
@@ -185,8 +197,9 @@ def test_the_digits_are_the_answers_in_every_language():
     from src.domain.fact_review_answers import digit_answer
     for mod in (uk, en, fr, es):
         message = fact_question_message(question(), {key: mod.UI_STRINGS[key] for key in LABEL_KEYS})
-        assert [digit_answer(message, d) for d in "1234"] == list(AnswerKind)
-        assert [o.id for o in message.options] == [k.value for k in AnswerKind]
+        # P2 revised (C11): the digits number the options of the question's kind; S4's still_true question keeps 1-4
+        assert [digit_answer(message, d) for d in "1234"] == list(OPTIONS["still_true"])
+        assert [o.id for o in message.options] == [k.value for k in OPTIONS["still_true"]]
 
 
 def test_the_fact_is_quoted_as_stored_in_any_language():
