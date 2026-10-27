@@ -13,7 +13,7 @@ the ones nobody imported, at 0 %) and the root entry points; an entry point that
 ``main.py`` was one until P9) is not in the data at all, so it is counted here as 0 % from its source with
 coverage.py's own parser.
 
-THE RULE (same as the per-file table in check_coverage_thresholds.py): a floor only rises. A floor may be lowered in the
+THE RULE: a floor rises, or it may be lowered in the
 same PR that needs it, with a one-line reason comment next to the value and the reviewer's OK; the owner reads the
 lowering in the diff (it is never silent). Each floor is the lowest value observed minus NOISE_PP, rounded DOWN to one
 decimal (run-to-run coverage noise is ~0.1 pp). When measured − NOISE_PP is 0.5 points or more above a floor the
@@ -49,7 +49,7 @@ LAYERS: List[Tuple[str, Tuple[str, ...]]] = [
 ]
 
 # floor = min observed (CI runner and VM, 2026-10-22) − NOISE_PP, rounded down to 0.1; run-to-run coverage noise is ~0.1 pp
-# (owner decision 2026-10-22). Only rising. One owner-approved exception (2026-10-22, P7 F1): `.coveragerc` stopped
+# (owner decision 2026-10-22). A floor rises; it may be lowered in the PR that needs it, with a one-line reason comment and the reviewer's OK (R9). Example (2026-10-22, P7 F1): `.coveragerc` stopped
 # hiding whole functions whose signature holds `...`, so domain, ports and the root entry points were re-set from the
 # honest measurement (VM run; the CI runner's numbers re-adjust them to min(VM, CI) − NOISE_PP).
 NOISE_PP = 0.3
