@@ -117,6 +117,16 @@ jobs:
           python -m tests.support.mutation_targets --summarize reports --module "$MODULE" --out-md out/survivors.md --out-json out/survivors.json
           cat out/survivors.md >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Survivors as annotations
+        # The weekly session cannot download artifacts; it reads check-run annotations.
+        if: always()
+        run: |
+          if [ -f out/survivors.json ]; then
+            python -m tests.support.mutation_targets --annotations out/survivors.json
+          else
+            echo "::warning::out/survivors.json is absent: no annotations"
+          fi
+
       - name: Upload the survivors
         uses: actions/upload-artifact@v4
         with:

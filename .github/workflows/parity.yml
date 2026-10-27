@@ -109,6 +109,41 @@ jobs:
             parity.log
           if-no-files-found: warn
 
+      - name: Verdict as an annotation
+        # The weekly session cannot download artifacts; it reads check-run annotations. Names only: messages can carry ids.
+        if: always() && steps.redact.outcome == 'success'
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          LIMIT = 6000
+          try:
+              root = ET.parse("parity.xml").getroot()
+          except Exception:
+              print("::warning title=Parity verdict::no parity.xml")
+              raise SystemExit(0)
+          suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+          tests = sum(int(s.get("tests", "0")) for s in suites)
+          failed = sum(int(s.get("failures", "0")) for s in suites)
+          errors = sum(int(s.get("errors", "0")) for s in suites)
+          skipped = sum(int(s.get("skipped", "0")) for s in suites)
+          print(f"::notice title=Parity verdict::tests {tests}, failed {failed}, errors {errors}, skipped {skipped}")
+          if failed + errors > 0:
+              names = [
+                  f"{c.get('classname', '')}::{c.get('name', '')}".replace("%", "%25")
+                  for c in root.iter("testcase")
+                  if c.find("failure") is not None or c.find("error") is not None
+              ]
+              message, used = [], 0
+              for i, name in enumerate(names):
+                  if used + len(name) + 3 > LIMIT - 40:
+                      message.append(f"… {len(names) - i} more")
+                      break
+                  message.append(name)
+                  used += len(name) + 3
+              print("::warning title=Parity failures::" + "%0A".join(message))
+          PY
+
       - name: Step summary
         if: always()
         run: |
