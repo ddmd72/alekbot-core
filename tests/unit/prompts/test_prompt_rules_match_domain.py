@@ -26,7 +26,7 @@ from src.domain.fact_lifecycle import (
 )
 from src.domain.fact_review_basis import ReviewBasis
 from src.domain.fact_review_question import QuestionStatus
-from src.domain.fact_review_rules import REVIVE_NEEDS_BASIS, basis_refusal
+from src.domain.fact_review_rules import ARCHIVE_NEEDS_REPLY, DATED_PLAN_HISTORY, REVIVE_NEEDS_BASIS, basis_refusal
 from src.domain.fact_update import ParsedFactUpdate
 from src.domain.fact_write_context import (
     REVIEW_REPORTED_DATE_NOTE, FactWriteContext, decide_expiry, reported_date_for_merge, reported_date_for_new,
@@ -35,6 +35,7 @@ from src.domain.fact_write_context import (
 from src.domain.pass_actor import PassActor
 from tests.support import prompt_vocabulary as pv
 from tests.support.review_rule_builders import NOW, fact, question
+from tests.unit.domain.review_p2_texts import TEXTS
 
 UTC = timezone.utc
 TODAY = NOW.date()
@@ -217,6 +218,10 @@ _UPDATES = {
     "rewrite": ParsedFactUpdate(content="Drinks green tea daily", state=FactState.CURRENT),
     "archive": ParsedFactUpdate(state=FactState.ARCHIVED),
     "invalidate": ParsedFactUpdate(state=FactState.INVALIDATED),
+    # P2 revised (P2-1): the token's `history` call, a rewrite as history
+    "history": ParsedFactUpdate(
+        content="The user drank green tea until Oct 2026.", state=FactState.CURRENT, expiry=EXPIRY_NONE, as_history=True,
+    ),
 }
 _REPLIED = question(QuestionStatus.ASKED, reply_text="Yes, I still drink it every morning", reply_at=NOW - timedelta(hours=5))
 _EVIDENCE = fact("ev", lineage_id="L-ev", state=FactState.CURRENT)
@@ -248,9 +253,12 @@ def test_the_bases_the_lifecycle_token_gives_each_change_are_the_ones_the_domain
 def test_the_schema_says_the_same_bases_as_the_lifecycle_token():
     description = _BASIS_SCHEMA["description"]
     assert "A revive, a rewrite and an invalidation need evidence or reply" in description
-    assert "an archive needs evidence, reply or date_passed" in description
+    # P2 revised (P2-2): an archive needs the owner's reply; a history rewrite takes any of the three kinds
+    assert "an archive needs reply" in description
+    assert "a history rewrite (as_history) takes evidence, reply or date_passed" in description
     assert _named_kinds("revive") == _named_kinds("rewrite") == _named_kinds("invalidate") == {"evidence", "reply"}
-    assert _named_kinds("archive") == {"evidence", "reply", "date_passed"}
+    assert _named_kinds("archive") == {"reply"}
+    assert _named_kinds("history") == {"evidence", "reply", "date_passed"}
 
 
 def test_a_revive_with_nothing_behind_it_is_refused_as_the_lifecycle_token_says():
@@ -272,14 +280,18 @@ def test_a_supersede_takes_no_basis_but_a_current_successor():
 
 
 def test_history_goes_with_an_ended_reply_and_never_with_a_dated_plan():
-    assert "A dated plan is archived only, with no history." in LIFECYCLE
+    # P2 revised (P2-1, C5): a date fact is not archived beside a history fact; it is rewritten as history on the reply
+    assert "A fact of expiry kind date is not archived: rewrite it as history (as_history) on basis reply." in LIFECYCLE
     archive, reply = _UPDATES["archive"], ReviewBasis("reply", question_id="q1", quote="still drink it")
     standing = basis_refusal(fact(), archive, reply, named_fact=None, question=_REPLIED, made_current=frozenset(),
                              history="He stopped drinking green tea in October 2026.", today=TODAY, tz="UTC")
     assert standing is None
     plan = basis_refusal(fact(**_PAST_PLAN), archive, reply, named_fact=None, question=_REPLIED,
                          made_current=frozenset(), history="The trip took place.", today=TODAY, tz="UTC")
-    assert plan == "history: a plan that is over is archived only; leave history out"
+    assert plan == DATED_PLAN_HISTORY
+    rewritten = basis_refusal(fact(**_PAST_PLAN), _UPDATES["history"], reply, named_fact=None, question=_REPLIED,
+                              made_current=frozenset(), history=None, today=TODAY, tz="UTC")
+    assert rewritten is None
 
 
 # ---------------------------------------------------------------------------------- T7 fix round (review S4, S6)
@@ -316,39 +328,57 @@ async def test_the_word_limit_every_prompt_states_is_the_limit_count_words_repor
     assert json.loads(over[0].result_str)["within_limit"] is False
 
 
-def _ask(fallback, *, kind=ExpiryKind.HORIZON, fallback_date=None, noise=False, open_question=None):
+def _ask(fallback, *, kind=ExpiryKind.HORIZON, fallback_date=None, noise=False, open_question=None, question="still_true"):
     from src.domain.fact_review_rules import ask_refusal
 
     subject = fact(**_PAST_PLAN) if kind is ExpiryKind.DATE else fact()
-    return ask_refusal(subject, fallback, fallback_date, noise, open_question, NOW, "UTC")
+    return ask_refusal(subject, fallback, fallback_date, noise, open_question, NOW, "UTC", question=question,
+                       texts=TEXTS[question])
 
 
 ASKING = " ".join(re.search(r"asking: \[(.*?)\n    \]", LIFECYCLE, re.DOTALL).group(1).split())
 
 
+# P2 revised (P2-3): history is the fallback of happened, renewed and paid; revive of still_true; archive only with
+# noise; a date fact is asked happened, renewed or paid, or still_true with archive + noise; fallback_date is retired.
 @pytest.mark.parametrize("case,refused", [
     (dict(fallback="revive"), False),
     (dict(fallback="revive", fallback_date=TODAY - timedelta(days=3)), True),
     (dict(fallback="revive", noise=True), True),
-    (dict(fallback="archive", kind=ExpiryKind.DATE), False),
-    (dict(fallback="archive", fallback_date=TODAY - timedelta(days=3)), False),
+    (dict(fallback="archive", kind=ExpiryKind.DATE), True),
+    (dict(fallback="archive", fallback_date=TODAY - timedelta(days=3)), True),
     (dict(fallback="archive", noise=True), False),
     (dict(fallback="archive"), True),
     (dict(fallback="archive", fallback_date=TODAY), True),
     (dict(fallback="archive", fallback_date=TODAY + timedelta(days=3)), True),
     (dict(fallback="later"), True),
+    (dict(fallback="archive", kind=ExpiryKind.DATE, noise=True), False),
+    (dict(fallback="revive", kind=ExpiryKind.DATE), True),
+    (dict(fallback="history"), True),
+    (dict(fallback="history", question="happened", kind=ExpiryKind.DATE), False),
+    (dict(fallback="history", question="renewed", kind=ExpiryKind.DATE), False),
+    (dict(fallback="history", question="paid", kind=ExpiryKind.DATE), False),
+    (dict(fallback="history", question="happened"), False),
+    (dict(fallback="revive", question="happened"), True),
+    (dict(fallback="revive", question="renewed"), True),
+    (dict(fallback="archive", question="happened", noise=True), False),
+    (dict(fallback="archive", question="paid", noise=True), True),
 ], ids=["revive", "revive+date", "revive+noise", "archive-date-fact", "archive-past-date", "archive-noise",
-        "archive-bare", "archive-date-today", "archive-future-date", "unknown"])
+        "archive-bare", "archive-date-today", "archive-future-date", "unknown", "archive-noise-date-fact",
+        "revive-date-fact", "history-still-true", "happened-date-fact", "renewed-date-fact", "paid-date-fact",
+        "happened-horizon-plan", "happened-revive", "renewed-revive", "happened-archive-noise", "paid-archive-noise"])
 def test_the_fallback_rule_the_prompts_state_is_the_one_ask_refusal_applies(case, refused):
     """S6: LIFECYCLE's asking lines and `_ASK_OWNER_SCHEMA`'s fallback description, against `ask_refusal`."""
     from src.agents.consolidation_agent import _ASK_OWNER_SCHEMA
 
     fallback = _ASK_OWNER_SCHEMA["parameters"]["properties"]["fallback"]["description"]
-    assert ("revive or archive; archive only for a fact of expiry kind date, with a past fallback_date, or with noise"
-            in fallback)
-    assert _ASK_OWNER_SCHEMA["parameters"]["properties"]["fallback_date"]["description"].endswith("before today")
-    assert ("revive by default; archive only for a fact of expiry kind date (its plan is over once the date passes), "
-            "with a past fallback_date (the day of the plan, YYYY-MM-DD, before today), or with noise: true") in ASKING
+    assert ("history (its unknown text is written) for happened, renewed and paid; revive for still_true; archive only "
+            "with noise") in fallback
+    assert "fallback_date" not in _ASK_OWNER_SCHEMA["parameters"]["properties"]
+    assert ("fallback is what happens if the owner does not answer: history (its unknown text is written) for happened, "
+            "renewed and paid; revive for still_true; archive only with noise: true when the fact reads as noise, not as "
+            "something the owner said. A fact of expiry kind date is asked as happened, renewed or paid, or as still_true "
+            "with archive and noise: true.") in ASKING
     assert (_ask(**case) is not None) == refused, case
 
 
@@ -365,10 +395,13 @@ def test_a_fact_whose_question_is_open_or_timed_out_is_not_asked_again(asked_day
         assert refusal is not None and "leave it" in refusal
 
 
-def test_a_date_fact_archived_on_date_passed_uses_its_own_date():
-    """S6 (optional): "A fact of expiry kind date uses its own date: leave date out" against `plan_date`."""
+def test_a_date_fact_rewritten_as_history_on_date_passed_uses_its_own_date():
+    """S6 (optional): "A fact of expiry kind date uses its own date: leave date out" against `plan_date`. P2 revised:
+    date_passed backs only a history rewrite, never an archive ("It backs only a history rewrite")."""
     from src.domain.fact_review_rules import plan_date
 
     assert "A fact of expiry kind date uses its own date: leave date out." in LIFECYCLE
+    assert "It backs only a history rewrite" in LIFECYCLE
     assert plan_date(fact(**_PAST_PLAN), ReviewBasis("date_passed"), "UTC") == date(2026, 9, 30)
-    assert _basis_refusal("archive", "date_passed") is None
+    assert _basis_refusal("history", "date_passed") is None
+    assert _basis_refusal("archive", "date_passed") == ARCHIVE_NEEDS_REPLY
