@@ -153,7 +153,7 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.agents.consolidation_agent", "tests/unit/agents/consolidation_agent_equivalent_mutants.txt"),
     # P15 part 2 and P16: one equivalent file each, holding a header comment the driver skips. Not None: test_mutation_targets.py counts
     # None as one shared file, so two or more None targets fail it (only the wiring file may be shared). A reviewer rules a mutant
-    # equivalent by adding a line there after the cloud done-check.
+    # equivalent by adding a line there when the weekly run reports a survivor.
     MutationTarget("src.handlers.worker_handler", "tests/unit/handlers/worker_handler_equivalent_mutants.txt",
                    extra=("tests/unit/test_worker_redelivery_route.py",)),  # reaches it only through main
     MutationTarget("src.adapters.firestore_task_claim_store", "tests/unit/adapters/firestore_task_claim_store_equivalent_mutants.txt",
