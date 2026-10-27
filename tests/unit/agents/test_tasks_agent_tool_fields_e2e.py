@@ -60,7 +60,7 @@ CREATE_WEEKLY = {
     "recurrence": {"pattern": "weekly", "interval": 2, "days_of_week": ["tuesday"]},
 }
 UPDATE_WEEKLY = {
-    "task_ref": REF, "title": "Car service Nov 4", "body": "Garage receipt for the car service",
+    "task_ref": REF, "title": "Car service Nov 4", "body": "Bring the logbook",
     "due_datetime": "2026-11-04T09:00:00", "start_datetime": "2026-11-03T09:00:00",
     "reminder_datetime": "2026-11-03T18:00:00", "is_reminder_on": True, "importance": "low",
     "status": "completed", "tags": ["car", "garage"],
@@ -209,7 +209,7 @@ async def test_update_with_every_field_reaches_graph_and_the_index(monkeypatch):
     assert response.status == AgentStatus.SUCCESS
     weekly, monthly, yearly = [r.json for r in rig.sent("PATCH", f"{TASKS_URL}/{FIRST_TASK}")]
     assert weekly["title"] == "Car service Nov 4"
-    assert weekly["body"] == {"content": "Garage receipt for the car service", "contentType": "text"}
+    assert weekly["body"] == {"content": "Bring the logbook", "contentType": "text"}
     assert weekly["dueDateTime"] == _utc_payload("2026-11-04T09:00:00")
     assert weekly["startDateTime"] == _utc_payload("2026-11-03T09:00:00")
     assert weekly["reminderDateTime"] == _utc_payload("2026-11-03T18:00:00")
@@ -256,6 +256,7 @@ async def test_background_reaches_the_task_agents_prompt(monkeypatch):
 
     assert response.status == AgentStatus.SUCCESS
     assert first_user_text(rig.llm).endswith("\n\nContext: The car service is on Nov 4, bring the logbook.")
+    assert rig.fake.unrouted == []
     assert rig.finished()
 
 
@@ -272,6 +273,7 @@ async def test_a_new_due_turns_the_reminder_on_the_evening_before_control(monkey
     assert patch["dueDateTime"] == _utc_payload("2026-11-04T09:00:00")
     assert patch["isReminderOn"] is True
     assert patch["reminderDateTime"] == _utc_payload("2026-11-03T20:00:00")
+    assert rig.fake.unrouted == []
     assert rig.finished()
 
 
@@ -287,6 +289,7 @@ async def test_an_explicit_reminder_off_survives_a_new_due(monkeypatch):
     patches = rig.sent("PATCH", f"{TASKS_URL}/{FIRST_TASK}")
     require(rig.finished(), "every scripted answer was used and none was missing")
     require(len(patches) == 1, "exactly one PATCH reached the task")
+    require(rig.fake.unrouted == [], "every Graph request was routed")
     assert patches[0].json["isReminderOn"] is False
 
 
@@ -300,6 +303,7 @@ async def test_a_parsable_due_creates_the_task_control(monkeypatch):
     assert response.status == AgentStatus.SUCCESS
     (post,) = rig.sent("POST", TASKS_URL)
     assert post.json["dueDateTime"] == _utc_payload("2026-11-04T09:00:00")
+    assert rig.fake.unrouted == []
     assert rig.finished()
 
 
@@ -315,6 +319,7 @@ async def test_an_unparsable_due_is_refused_not_dropped(monkeypatch):
     results = rig.results_of("create_task")
     require(rig.finished(), "every scripted answer was used and none was missing")
     require(len(results) == 1, "the model received the create's result")
+    require(rig.fake.unrouted == [], "every Graph request was routed")
     # Only the task URL: the list-creation POST (to `.../me/todo/lists`) is not a task.
     assert rig.sent("POST", TASKS_URL) == [] and "error" in results[0]
 
