@@ -318,7 +318,7 @@ def _invalidate(fact_id, evidence_id):
 
 
 async def test_a_closing_write_sent_again_after_it_was_written_posts_no_alert(world):
-    fact, evidence = await _stale(world, "plays tennis on Sundays"), await world.seed("never played tennis")
+    fact, evidence = await _stale(world, "plays chess on Sundays"), await world.seed("plays tennis on Sundays instead")
     agent = _agent(world, [_tools(_invalidate(fact, evidence)), _tools(_invalidate(fact, evidence)), _REPORT])
 
     _, scope, _ = await _review(world, agent, [fact])

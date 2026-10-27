@@ -1137,7 +1137,7 @@ review token's lines that say the same. The janitor is not switched on before th
 *The owner's rule.* Anything that really happened is a fact; an intention is a fact too ("planned it, did not go"); a bill or
 a payment is a fact of past life with a very low priority. So a stale fact whose date has passed is rewritten as **history**,
 in one of three phrasings:
-- **happened**: "In Nov 2026 the user had the car serviced (Nov 4).";
+- **happened**: "In Nov 2026 the user had the car serviced (Nov 5).";
 - **planned, did not happen**: "The user planned to attend a conference Nov 18–20, 2026, and did not go.";
 - **planned, unknown**: "The user planned to attend a concert on Dec 5, 2026; whether it took place is unknown."
 
@@ -1201,7 +1201,7 @@ never-true stays `invalidated`; a duplicate is still superseded.
 | `reply` (the owner's words on the question, with a quote) | revive, rewrite, archive, invalidate | the same, plus an `as_history` rewrite; **the only basis for a model archive** |
 | `date_passed` (the plan's date is before today; a `date` fact uses its own) | archive only | an `as_history` rewrite only |
 
-- **Evidence** is a neighbour that reports the outcome ("the car service on Nov 4 found worn brake pads" → happened; "sold the
+- **Evidence** is a neighbour that reports the outcome ("the garage receipt for the car service on Nov 5" → happened; "sold the
   concert tickets" → did not happen). A standing fact that a neighbour shows ended is superseded by that neighbour (outcome
   (1), unchanged), never archived on it.
 - **The fact's own text** is the `date_passed` case: what the stored text already reports as done (an invoice received, a
@@ -1359,27 +1359,25 @@ never-true stays `invalidated`; a duplicate is still superseded.
 - The model is told in `CONSOLIDATION_LIFECYCLE` (P2-7) and in the code-built `_REVIEW_HEADER` and schemas, which repeat the
   outcome order.
 
-**P2-5. Volume and money.** Classify's dry runs make 98 facts due now (91 + 7): 23 of expiry kind `date`, 75 `horizon`. By a
-read of the dry-run report, the 23 are roughly 12 plans or events, 3 bills or payments and 8 validity ends or deadlines (2–3
-of them documents in the narrow sense); some 8–10 of the horizon facts are pending outcomes (a pickup, a callback, a
-certificate awaited).
-- *Questions, without optimism.* The old rule asked nothing about the 23. The new one, if no neighbour decides anything and
-  nothing folds: 23 − about 5 own-text histories (bills, cancellations) = 18 questions (including 2–4 noise asks the old rule
-  archived on their date). Folds and evidence are unmeasured; folding needs the parts in one batch (now likely, P2-2), and
-  evidence needs a neighbour written after the plan, which the dry run did not count. Likely 11–18 chat questions, all of them
-  added by P2 over the old rule. The invoice decision changes no chat count: the 3 or so routine invoices were already
-  own-text histories; they now land in the digest's invoice block (the Cabinet ticks them, no chat question), and a fine or a
-  debt (0–1 in the wave) is one chat `paid` question. The 75 horizon facts are S4's business and unchanged by P2: 55–75
-  `still_true` questions (S4 revives only on evidence; none measured). **First wave: about 65–90 chat questions, upper bound
-  94; plus about 3 invoice lines in the first digest.** Silence lines start in the digest about 14 days after the first
-  plan questions are sent.
-- *Drain.* With the two morning archives re-opened (P2-6) the pool starts at 2, so the first janitor run stales 48 facts,
-  the oldest `expires_at` first (then by id). The review selects up to 20 a day by (offers, `stale_since`, `expires_at`, id);
-  three daily passes (20, 20, 10) queue about 35–45 questions, and the >35 queue alert fires once (expected). Open questions
+**P2-5. Volume and money.** The size of the first wave after classify is bounded by the janitor's pool cap of 50 and by 5
+questions a day, not by how many facts are due. Most of the questions are the S4 `still_true` kind (S4 revives only on
+evidence); the facts of expiry kind `date` are the ones P2 adds, and some of those are decided by code without a question
+(a bill or a cancellation whose own text already reports it).
+- *Questions, without optimism.* The old rule asked nothing about a due `date` fact. The new one, if no neighbour decides
+  anything and nothing folds, asks one question per such fact, less the own-text histories (bills, cancellations), and
+  including a few noise asks the old rule archived on their date. Folds and evidence are unmeasured; folding needs the parts
+  in one batch (now likely, P2-2), and evidence needs a neighbour written after the plan, which the dry run did not count.
+  All of these questions are added by P2 over the old rule. The invoice decision changes no chat count: routine invoices were
+  already own-text histories; they now land in the digest's invoice block (the Cabinet ticks them, no chat question), and a
+  fine or a debt is one chat `paid` question. The horizon facts are S4's business and unchanged by P2. Silence lines start in
+  the digest about 14 days after the first plan questions are sent.
+- *Drain.* With the two morning archives re-opened (P2-6) the pool starts small, so the first janitor run stales facts up to
+  the pool cap, the oldest `expires_at` first (then by id). The review selects up to 20 a day by (offers, `stale_since`,
+  `expires_at`, id); a few daily passes queue the questions, and the >35 queue alert fires once (expected). Open questions
   count in the pool, so new stales follow only as questions close. One question is out at a time, the next after an answer,
-  at most 5 a day; unanswered, one a day. The owner answering in chat: about 15–20 days. Ignoring them: one a day, each
-  closing 14 days after its send, about 80–100 days, while the due facts not yet staled stay current (visible). The Cabinet
-  clears any number in one sitting. The bound is the pool cap and 5 a day; evidence-first only shortens the queue. A
+  at most 5 a day; unanswered, one a day. The owner answering in chat clears the wave in a few weeks. Ignoring them: one a
+  day, each closing 14 days after its send, a few months, while the due facts not yet staled stay current (visible). The
+  Cabinet clears any number in one sitting. The bound is the pool cap and 5 a day; evidence-first only shortens the queue. A
   re-review of closed facts (P2-6) adds what it reopens to the pool.
 - *Cost.* About 5 full passes for the wave plus 10–20 small ones (words replies, timeout candidates): about $3 on the live
   agent's model (`claude-sonnet-5-5`; owner's map §5.6: $0.22–0.30 a 20-fact pass, $0.08–0.10 a small one), about $6 on

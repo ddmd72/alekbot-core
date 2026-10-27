@@ -20,7 +20,7 @@ from tests.support.review_rule_builders import question as build_question
 
 TZ = "Europe/Lisbon"
 NONE = {"kind": "none"}
-HISTORY_TEXT = "The user planned to attend a pottery class on Nov 4, 2026, and did not go."
+HISTORY_TEXT = "The user planned to attend a tennis lesson on Nov 4, 2026, and did not go."
 HISTORY = {"state": "current", "content": HISTORY_TEXT, "expiry": NONE}
 DATE_PASSED = {"kind": "date_passed"}
 INVOICE_FACT = "Phone bill invoice of 42.50 EUR, due Oct 20, 2026"
@@ -31,9 +31,9 @@ PAYMENT = {
     "not_paid": "The phone bill invoice (42.50 EUR), due Oct 20, 2026, was not paid.",
 }
 ASK_HAPPENED = {
-    "happened": "The user attended a pottery class on Nov 4, 2026.",
-    "not_happened": "The user planned a pottery class on Nov 4, 2026, and did not go.",
-    "unknown": "The user planned a pottery class on Nov 4, 2026; whether it took place is unknown.",
+    "happened": "The user attended a tennis lesson on Nov 4, 2026.",
+    "not_happened": "The user planned a tennis lesson on Nov 4, 2026, and did not go.",
+    "unknown": "The user planned a tennis lesson on Nov 4, 2026; whether it took place is unknown.",
 }
 
 
@@ -42,7 +42,7 @@ def world():
     return ReviewWorld()
 
 
-async def dated(world, text="Pottery class on Nov 4, 2026"):
+async def dated(world, text="Tennis lesson on Nov 4, 2026"):
     return await world.seed_stale(text, expiry_kind=ExpiryKind.DATE)
 
 

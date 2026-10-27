@@ -17,9 +17,9 @@ from src.domain.fact_update import AS_HISTORY_SAME_TEXT, ParsedFactUpdate
 from tests.support.review_rule_builders import NOW, fact, question
 
 TODAY = date(2026, 10, 24)
-CAR = "The user booked a car service at the garage for Oct 20, 2026."
-SERVICED = "In Oct 2026 the user had the car serviced (Oct 20)."
-REPLIED = dict(reply_text="Yes, the garage did the service on the 20th", reply_at=NOW - timedelta(hours=5))
+CAR = "A car service at the garage was booked for Oct 20, 2026."
+SERVICED = "In Oct 2026 the car was serviced (Oct 20)."
+REPLIED = dict(reply_text="Yes, they did the service on the day", reply_at=NOW - timedelta(hours=5))
 OTHER = lambda **o: fact("ev", lineage_id="L-ev", state=FactState.CURRENT, **o)  # noqa: E731
 
 HISTORY = ParsedFactUpdate(state=FactState.CURRENT, content=SERVICED, expiry=EXPIRY_NONE, as_history=True)

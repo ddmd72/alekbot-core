@@ -124,7 +124,7 @@ async def _stale(world, text):
     return await world.seed_stale(text, expiry_kind=ExpiryKind.HORIZON, ttl_days=14, reported_date=NOW - timedelta(days=60))
 
 
-async def _evidence(world, text="moved to Lisbon in October"):
+async def _evidence(world, text="moved back to Springfield in September"):
     return await world.seed(text, reported_date=NOW - timedelta(days=1))
 
 
@@ -179,21 +179,21 @@ async def test_the_agent_takes_the_review_task(world):
 
 @pytest.mark.parametrize("updates, outcome", [
     ({"state": "current", "expiry": HORIZON}, "revived"),
-    ({"state": "current", "content": "lives in Lisbon", "expiry": HORIZON}, "rewritten"),
+    ({"state": "current", "content": "lives in Springfield", "expiry": HORIZON}, "rewritten"),
     ({"state": "archived"}, "archived"),
     ({"state": "invalidated"}, "invalidated"),
     ("supersede", "superseded"),
 ])
 async def test_each_outcome_is_returned_from_the_scope(world, updates, outcome):
-    fact, ev = await _stale(world, "lives in Porto"), await _evidence(world)
+    fact, ev = await _stale(world, "lives in Lisbon"), await _evidence(world)
     questions = ()
     if updates == "supersede":
         call = {"fact_id": fact, "updates": {"state": "superseded", "superseded_by": ev}}
     elif outcome == "archived":
         # P2 revised (P2-4): the review archives only on the owner's reply to the fact's question
         questions = (build_question(QuestionStatus.ASKED, fact_id=fact, account_id=ACC, user_id=USER,
-                                    reply_text="I left Porto", reply_at=NOW - timedelta(hours=2)),)
-        call = {"fact_id": fact, "updates": updates, "basis": {"kind": "reply", "question_id": "q1", "quote": "left Porto"}}
+                                    reply_text="I left Lisbon", reply_at=NOW - timedelta(hours=2)),)
+        call = {"fact_id": fact, "updates": updates, "basis": {"kind": "reply", "question_id": "q1", "quote": "left Lisbon"}}
     else:
         call = {"fact_id": fact, "updates": updates, "basis": _on(ev)}
     agent = _agent(world, [_tools(("update_fact", call)), REPORT])
@@ -228,12 +228,12 @@ async def test_the_prompt_is_the_review_profile_without_directives_or_history(wo
     prompts = Prompts()
     agent = _agent(world, [REPORT], prompts)
 
-    await _run(agent, await _task(world, fact), bio=("lives in Lisbon",))
+    await _run(agent, await _task(world, fact), bio=("lives in Springfield",))
 
     (call,) = prompts.calls
     assert call["agent_type"] == "consolidation_review"
     assert call["include_directives"] is False and call["conversation_history"] == []
-    assert call["biographical_facts"] == [{"text": "lives in Lisbon"}]
+    assert call["biographical_facts"] == [{"text": "lives in Springfield"}]
     assert _requests(agent)[0].system_instruction == "REVIEW SYSTEM PROMPT"
 
 
@@ -271,7 +271,7 @@ async def test_a_payload_without_a_review_task_is_a_failure(world):
 
 
 async def test_the_owners_zone_and_the_review_label_reach_the_write_context(world):
-    fact, ev = await _stale(world, "lives in Porto"), await _evidence(world)
+    fact, ev = await _stale(world, "lives in Lisbon"), await _evidence(world)
     # P2 revised (P2-2): evidence backs no archive; the write is an invalidation it backs
     agent = _agent(world, [_tools(("update_fact", {"fact_id": fact, "updates": {"state": "invalidated"}, "basis": _on(ev)})),
                            REPORT])
@@ -301,7 +301,7 @@ async def test_the_turn_cap_is_the_review_cap(world):
 
 
 async def test_the_scope_writes_through_a_port_installed_after_construction(world):
-    fact, ev = await _stale(world, "lives in Porto"), await _evidence(world)
+    fact, ev = await _stale(world, "lives in Lisbon"), await _evidence(world)
     agent = _agent(world, [_tools(("update_fact", {"fact_id": fact, "updates": {"state": "current", "expiry": HORIZON},
                                                    "basis": _on(ev)})), REPORT])
     recorder = RecordingUpdates(world.store.adapter)

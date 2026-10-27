@@ -41,7 +41,7 @@ async def stale(world, text):
     )
 
 
-async def evidence(world, text="moved to Lisbon in October"):
+async def evidence(world, text="moved back to Springfield in September"):
     return await world.seed(text, reported_date=NOW - timedelta(days=1))
 
 
@@ -160,7 +160,7 @@ async def test_a_follow_up_write_to_a_lineage_this_pass_made_current_passes(worl
     scope = await scope_of(world, fact)
 
     first = await scope.update_fact(
-        {"fact_id": fact, "updates": {"content": "lives in Lisbon", "expiry": HORIZON}, "basis": on(ev)}
+        {"fact_id": fact, "updates": {"content": "lives in Springfield", "expiry": HORIZON}, "basis": on(ev)}
     )
     new_id = first["fact_id"]
     second = await scope.update_fact(
@@ -179,7 +179,7 @@ async def test_a_follow_up_by_the_batch_id_lands_on_the_version_this_pass_wrote(
     fact, ev = await stale(world, "a"), await evidence(world)
     scope = await scope_of(world, fact)
     first = await scope.update_fact(
-        {"fact_id": fact, "updates": {"content": "lives in Lisbon", "expiry": HORIZON}, "basis": on(ev)}
+        {"fact_id": fact, "updates": {"content": "lives in Springfield", "expiry": HORIZON}, "basis": on(ev)}
     )
 
     # P2 revised (P2-2): the follow-up closes the version by an invalidation on evidence (no archive on evidence)
@@ -311,9 +311,9 @@ async def test_two_stale_duplicates_end_as_one_current_and_one_superseded(world)
 
 @pytest.mark.parametrize("updates, outcome, stored_state", [
     (REVIVE, "revived", "current"),
-    ({"state": "current", "content": "lives in Lisbon", "expiry": HORIZON}, "rewritten", "superseded"),
+    ({"state": "current", "content": "lives in Springfield", "expiry": HORIZON}, "rewritten", "superseded"),
     # P2 revised (P2-1, P2-2): evidence backs a history rewrite, no archive; a history rewrite is a version
-    ({"state": "current", "content": "The user lived in Porto until Oct 2026.", "expiry": {"kind": "none"},
+    ({"state": "current", "content": "The user lived in Lisbon until Sep 2026.", "expiry": {"kind": "none"},
       "as_history": True}, "rewritten", "superseded"),
     ({"state": "invalidated"}, "invalidated", "invalidated"),
 ])

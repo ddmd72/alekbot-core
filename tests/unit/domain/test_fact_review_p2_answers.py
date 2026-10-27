@@ -24,7 +24,7 @@ from tests.support.review_rule_builders import NOW, fact, question
 from tests.unit.domain.review_p2_texts import DIGEST_TEXTS, HAPPENED_TEXTS, PAID_TEXTS, RENEWED_TEXTS, TEXTS
 
 A = AnswerKind
-MADRID = BERLIN  # the owner's zone in these tests
+OWNER_ZONE = BERLIN  # the user's zone in these tests
 QID = "q1"
 CONCERT = "The user plans to go to the concert on Dec 5, 2026."
 DATED = dict(text=CONCERT, expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=datetime(2026, 12, 6, tzinfo=timezone.utc))
@@ -94,7 +94,7 @@ HISTORY_CASES = [
 @pytest.mark.parametrize("source", ["digit", "button", "cabinet"])
 def test_a_history_answer_writes_the_questions_stored_text_as_history(qkind, kind, key, source):
     stale = fact(**DATED)
-    change = answer_updates(kind, stale, asked(qkind), NOW, MADRID, source)
+    change = answer_updates(kind, stale, asked(qkind), NOW, OWNER_ZONE, source)
     assert change.update == ParsedFactUpdate(
         state=FactState.CURRENT, content=TEXTS[qkind][key], expiry=EXPIRY_NONE, as_history=True
     )
@@ -103,15 +103,15 @@ def test_a_history_answer_writes_the_questions_stored_text_as_history(qkind, kin
 
 
 def test_a_digest_answer_writes_the_payment_text():
-    change = answer_updates(A.PAID, fact(text=PAID_TEXTS["unknown"]), digest(), NOW, MADRID, "cabinet")
+    change = answer_updates(A.PAID, fact(text=PAID_TEXTS["unknown"]), digest(), NOW, OWNER_ZONE, "cabinet")
     assert change.update.content == DIGEST_TEXTS["paid"] and change.update.as_history
 
 
 def test_renewed_rewrites_to_its_text_with_the_confirmed_window_and_keeps_the_priority():
     stale = fact(text="The user has a gym membership until Nov 2026.", context_priority=ContextPriority.HIGH)
-    change = answer_updates(A.RENEWED, stale, asked("renewed"), NOW, MADRID, "digit")
+    change = answer_updates(A.RENEWED, stale, asked("renewed"), NOW, OWNER_ZONE, "digit")
     assert change.update == ParsedFactUpdate(
-        state=FactState.CURRENT, content=RENEWED_TEXTS["renewed"], expiry=confirmed_expiry(stale, NOW, MADRID)
+        state=FactState.CURRENT, content=RENEWED_TEXTS["renewed"], expiry=confirmed_expiry(stale, NOW, OWNER_ZONE)
     )
     assert change.reason == f"renewed q={QID} (digit)"
     plan = plan_fact_update(stale, change.update, NOW)
@@ -122,7 +122,7 @@ def test_renewed_rewrites_to_its_text_with_the_confirmed_window_and_keeps_the_pr
 
 def test_not_renewed_rewrites_to_its_text_with_no_expiry_and_keeps_the_priority():
     stale = fact(text="The user has a gym membership until Nov 2026.", context_priority=ContextPriority.HIGH)
-    change = answer_updates(A.NOT_RENEWED, stale, asked("renewed"), NOW, MADRID, "button")
+    change = answer_updates(A.NOT_RENEWED, stale, asked("renewed"), NOW, OWNER_ZONE, "button")
     assert change.update == ParsedFactUpdate(
         state=FactState.CURRENT, content=RENEWED_TEXTS["not_renewed"], expiry=EXPIRY_NONE
     )
@@ -135,8 +135,8 @@ def test_not_renewed_rewrites_to_its_text_with_no_expiry_and_keeps_the_priority(
 @pytest.mark.parametrize("qkind", ["happened", "renewed", "paid"])
 def test_dont_know_on_a_history_question_writes_the_unknown_text_under_the_owner(qkind):
     stale = fact(**DATED)
-    change = answer_updates(A.DONT_KNOW, stale, asked(qkind), NOW, MADRID, "digit")
-    assert change == history_fallback(stale, asked(qkind), NOW, MADRID, "owner")
+    change = answer_updates(A.DONT_KNOW, stale, asked(qkind), NOW, OWNER_ZONE, "digit")
+    assert change == history_fallback(stale, asked(qkind), NOW, OWNER_ZONE, "owner")
     assert change.update == ParsedFactUpdate(
         state=FactState.CURRENT, content=TEXTS[qkind]["unknown"], expiry=EXPIRY_NONE, as_history=True
     )
@@ -146,12 +146,12 @@ def test_dont_know_on_a_history_question_writes_the_unknown_text_under_the_owner
 def test_dont_know_on_a_revive_or_archive_question_is_still_the_in_place_fallback():
     stale = fact()
     for q in (asked("still_true"), question(fallback="archive", noise=True)):
-        assert answer_updates(A.DONT_KNOW, stale, q, NOW, MADRID, "digit").fields == fallback_fields(stale, q, NOW, "owner")
+        assert answer_updates(A.DONT_KNOW, stale, q, NOW, OWNER_ZONE, "digit").fields == fallback_fields(stale, q, NOW, "owner")
 
 
 def test_ended_on_a_dated_fact_archives_only_and_a_standing_fact_gets_its_history():
-    assert answer_updates(A.ENDED, fact(**DATED), asked("still_true"), NOW, MADRID, "digit").history is None
-    standing = answer_updates(A.ENDED, fact(), asked("still_true"), NOW, MADRID, "digit")
+    assert answer_updates(A.ENDED, fact(**DATED), asked("still_true"), NOW, OWNER_ZONE, "digit").history is None
+    standing = answer_updates(A.ENDED, fact(), asked("still_true"), NOW, OWNER_ZONE, "digit")
     assert standing.history is not None and standing.history.startswith("No longer true")
 
 
@@ -160,20 +160,20 @@ def test_ended_on_a_dated_fact_archives_only_and_a_standing_fact_gets_its_histor
 ])
 def test_a_misfit_answer_raises(kind, q):
     with pytest.raises(ValueError, match=f"^{kind.value} is not an option of a {q} question$"):
-        answer_updates(kind, fact(), asked(q), NOW, MADRID, "digit")
+        answer_updates(kind, fact(), asked(q), NOW, OWNER_ZONE, "digit")
 
 
 def test_dont_know_on_a_digest_question_is_a_misfit():
     with pytest.raises(ValueError):
-        answer_updates(A.DONT_KNOW, fact(), digest(), NOW, MADRID, "cabinet")
+        answer_updates(A.DONT_KNOW, fact(), digest(), NOW, OWNER_ZONE, "cabinet")
 
 
 # ------------------------------------------------------------------------------------------------ the texts by origin
 
 def test_a_review_questions_text_is_the_stored_one_and_a_missing_key_raises():
-    assert written_text(asked("happened"), "not_happened", CONCERT, NOW, MADRID) == HAPPENED_TEXTS["not_happened"]
+    assert written_text(asked("happened"), "not_happened", CONCERT, NOW, OWNER_ZONE) == HAPPENED_TEXTS["not_happened"]
     with pytest.raises(ValueError):
-        written_text(asked("happened"), "paid", CONCERT, NOW, MADRID)
+        written_text(asked("happened"), "paid", CONCERT, NOW, OWNER_ZONE)
 
 
 def test_a_kept_twice_text_is_built_in_the_owners_month():
@@ -195,20 +195,20 @@ def test_a_kept_twice_text_is_built_in_the_owners_month():
 def test_a_kept_twice_question_has_no_other_text():
     for key in ("paid", "renewed", "not_needed"):
         with pytest.raises(ValueError):
-            written_text(kept_twice_happened(), key, CONCERT, NOW, MADRID)
+            written_text(kept_twice_happened(), key, CONCERT, NOW, OWNER_ZONE)
 
 
 def test_a_kept_twice_text_keeps_a_long_stored_text_whole_past_forty_words():
     long_text = " ".join(["word"] * 40)
-    built = written_text(kept_twice_happened(), "unknown", long_text, NOW, MADRID)
+    built = written_text(kept_twice_happened(), "unknown", long_text, NOW, OWNER_ZONE)
     assert built.endswith(long_text) and word_count(built) > 40
 
 
 @pytest.mark.parametrize("kind, key", [(A.HAPPENED, "happened"), (A.NOT_HAPPENED, "not_happened"), (A.DONT_KNOW, "unknown")])
 def test_a_kept_twice_answer_writes_the_code_built_text(kind, key):
     stale = fact(**DATED)
-    change = answer_updates(kind, stale, kept_twice_happened(), NOW, MADRID, "digit")
-    assert change.update.content == written_text(kept_twice_happened(), key, CONCERT, NOW, MADRID)
+    change = answer_updates(kind, stale, kept_twice_happened(), NOW, OWNER_ZONE, "digit")
+    assert change.update.content == written_text(kept_twice_happened(), key, CONCERT, NOW, OWNER_ZONE)
     assert change.update.as_history
 
 
@@ -216,7 +216,7 @@ def test_a_kept_twice_answer_writes_the_code_built_text(kind, key):
 
 def test_the_history_fallback_of_silence():
     stale = fact(**DATED)
-    change = history_fallback(stale, asked("happened"), NOW, MADRID, "timeout")
+    change = history_fallback(stale, asked("happened"), NOW, OWNER_ZONE, "timeout")
     assert change.update == ParsedFactUpdate(
         state=FactState.CURRENT, content=HAPPENED_TEXTS["unknown"], expiry=EXPIRY_NONE, as_history=True
     )
@@ -227,7 +227,7 @@ def test_the_history_fallback_of_silence():
 def test_the_history_fallback_needs_a_history_question():
     for q in (asked("still_true"), question(fallback="archive", noise=True)):
         with pytest.raises(ValueError):
-            history_fallback(fact(), q, NOW, MADRID, "timeout")
+            history_fallback(fact(), q, NOW, OWNER_ZONE, "timeout")
 
 
 # ------------------------------------------------------------------------------------------------ which answers close the fact
@@ -269,9 +269,9 @@ def test_fallback_fields_still_revives_and_archives():
 
 def test_no_longer_on_a_noise_question_archives_with_no_history_and_a_standing_fact_keeps_its_history():
     # Arbiter (owner's rule: archive only for noise and never-true): noise is never history.
-    pottery = fact(text="The user wondered about a pottery class flyer.")
-    noise = answer_updates(A.ENDED, pottery, question(fallback="archive", noise=True), NOW, MADRID, "digit")
+    flyer = fact(text="The user wondered about a tennis lesson flyer.")
+    noise = answer_updates(A.ENDED, flyer, question(fallback="archive", noise=True), NOW, OWNER_ZONE, "digit")
     assert noise.update == ParsedFactUpdate(state=FactState.ARCHIVED) and noise.history is None
-    standing = answer_updates(A.ENDED, fact(text="The user goes to a pottery class."), asked("still_true"), NOW, MADRID, "digit")
+    standing = answer_updates(A.ENDED, fact(text="The user goes to a tennis lesson."), asked("still_true"), NOW, OWNER_ZONE, "digit")
     assert standing.update == ParsedFactUpdate(state=FactState.ARCHIVED)
-    assert standing.history is not None and standing.history.endswith("The user goes to a pottery class.")
+    assert standing.history is not None and standing.history.endswith("The user goes to a tennis lesson.")

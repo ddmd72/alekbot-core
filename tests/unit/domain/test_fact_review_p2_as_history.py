@@ -21,8 +21,8 @@ UTC = timezone.utc
 NOW = datetime(2026, 11, 22, 9, 0, tzinfo=UTC)
 REPORTED = datetime(2026, 9, 1, 8, 30, tzinfo=UTC)
 CREATED = datetime(2026, 9, 1, 8, 31, tzinfo=UTC)
-PLAN = "The user plans to give a talk at the Hamburg conference Nov 18-20, 2026 (booking HC-4471)."
-HISTORY = "The user gave a talk at the Hamburg conference Nov 18-20, 2026."
+PLAN = "A talk at a conference is planned for Nov 18-20, 2026."
+HISTORY = "A talk at a conference took place Nov 18-20, 2026."
 HISTORY_UPDATES = {"state": "CURRENT", "content": HISTORY, "expiry": {"kind": "none"}, "as_history": True}
 DATE_PASSED = basis_reason("rewrite", ReviewBasis("date_passed", on=date(2026, 11, 20)), date(2026, 11, 20), as_history=True)
 ON_EVIDENCE = basis_reason("rewrite", ReviewBasis("evidence", evidence_fact_id="e1234567-rest"), as_history=True)
@@ -32,7 +32,7 @@ ON_REPLY = basis_reason("rewrite", ReviewBasis("reply", question_id="q7", quote=
 def plan_fact(state=FactState.STALE, **over) -> FactEntity:
     base = dict(
         id="f1", account_id="acc", created_by_user_id="u1", lineage_id="lin", text=PLAN, type=FactType.EVENT,
-        tags=["travel"], metadata={"city": "Hamburg", "booking": "HC-4471"}, context="said while packing",
+        tags=["travel"], metadata={"city": "Berlin"}, context="said while packing",
         domain=FactDomain.WORK, temporal_class=TemporalClass.DYNAMIC, context_priority=ContextPriority.HIGH,
         version=1, reported_date=REPORTED, created_at=CREATED, last_updated=REPORTED, expiry_kind=ExpiryKind.DATE,
         expires_at=datetime(2026, 11, 21, tzinfo=UTC), state=state,
@@ -109,7 +109,7 @@ def test_the_typed_path_holds_code_to_the_same_shape():
 # ------------------------------------------------------------------------------------------------ the plan
 
 def test_the_plan_clears_metadata_before_the_embedding_texts_and_context_on_the_version():
-    current = plan_fact(metadata={"city": "Hamburg"})
+    current = plan_fact(metadata={"city": "Berlin"})
     update = parse_fact_update(HISTORY_UPDATES)
     plan = plan_fact_update(current, update, NOW)
     assert plan.kind == "version" and plan.vectors_stale

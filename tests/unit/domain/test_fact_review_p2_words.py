@@ -5,7 +5,7 @@ from src.domain.fact_words import MAX_FACT_WORDS, word_count, written_text_probl
 
 
 def test_the_words_are_the_whitespace_separated_runs():
-    assert word_count("The user had the car serviced  (Nov 4).") == 8
+    assert word_count("The user had the car serviced  (Nov 5).") == 8
     assert word_count("") == 0
     assert word_count(" \n\t ") == 0
 
@@ -35,5 +35,5 @@ def test_a_bracket_is_refused():
 
 def test_a_good_history_text_has_no_problem():
     assert written_text_problem(
-        "The user planned to attend a talk at the Hamburg conference Nov 18-20, 2026, and did not go."
+        "A talk at a conference Nov 18-20, 2026 was planned and did not take place."
     ) is None

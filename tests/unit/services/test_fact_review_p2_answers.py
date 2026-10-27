@@ -18,11 +18,11 @@ from tests.support.fact_review_world import ReviewWorld
 from tests.unit.services.test_fact_answer_service import day_row, service, texts_of
 from tests.unit.services.test_fact_question_choice import choice_of
 
-POTTERY = "Alex has a pottery class on Saturday"
+TENNIS = "Alex has a tennis lesson on Saturday"
 GYM = "Alex has a gym membership"
 PHONE = "The phone bill of October arrived"
-HAPPENED = {"happened": "Went to the pottery class", "not_happened": "Skipped the pottery class",
-            "unknown": "Planned a pottery class; unknown whether it took place"}
+HAPPENED = {"happened": "Went to the tennis lesson", "not_happened": "Skipped the tennis lesson",
+            "unknown": "Planned a tennis lesson; unknown whether it took place"}
 RENEWED = {"renewed": "Renewed the gym membership", "not_renewed": "Let the gym membership lapse",
            "not_needed": "No longer needs a gym membership", "unknown": "Gym membership renewal unknown"}
 PAID = {"paid": "The October phone bill is paid", "not_paid": "The October phone bill is not paid",
@@ -39,7 +39,7 @@ async def fact_for(world: ReviewWorld, text: str, kind: str) -> str:
 
 async def asked_question(world: ReviewWorld, kind: str, texts: Dict[str, str], delivery: str = "chat",
                          text: Optional[str] = None) -> FactReviewQuestion:
-    subject = text or {"happened": POTTERY, "renewed": GYM, "paid": PHONE}[kind]
+    subject = text or {"happened": TENNIS, "renewed": GYM, "paid": PHONE}[kind]
     fact_id = await fact_for(world, subject, kind)
     fields: Dict[str, Any] = dict(
         question_id="q1", account_id=ACC, user_id=USER, fact_id=fact_id, quoted_text=subject, question=kind,
@@ -60,11 +60,11 @@ def versions(world: ReviewWorld, fact_id: str) -> List[dict]:
 # (question kind, texts, answer, source) -> (written text, trail reason, expiry kind written)
 WRITES = [
     ("happened", HAPPENED, AnswerKind.HAPPENED, "digit",
-     "Went to the pottery class", "rewritten as history q=q1: happened (digit)", "none"),
+     "Went to the tennis lesson", "rewritten as history q=q1: happened (digit)", "none"),
     ("happened", HAPPENED, AnswerKind.NOT_HAPPENED, "button",
-     "Skipped the pottery class", "rewritten as history q=q1: not_happened (button)", "none"),
+     "Skipped the tennis lesson", "rewritten as history q=q1: not_happened (button)", "none"),
     ("happened", HAPPENED, AnswerKind.DONT_KNOW, "cabinet",
-     "Planned a pottery class; unknown whether it took place", "rewritten as history: did not remember q=q1", "none"),
+     "Planned a tennis lesson; unknown whether it took place", "rewritten as history: did not remember q=q1", "none"),
     ("renewed", RENEWED, AnswerKind.RENEWED, "digit",
      "Renewed the gym membership", "renewed q=q1 (digit)", "horizon"),
     ("renewed", RENEWED, AnswerKind.NOT_RENEWED, "button",

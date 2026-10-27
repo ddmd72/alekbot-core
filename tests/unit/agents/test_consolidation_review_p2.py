@@ -18,14 +18,14 @@ from tests.unit.agents.test_consolidation_review_pass import (  # noqa: F401,F81
 )
 from tests.support.review_rule_builders import question as build_question
 
-PLAYS = "Pottery class on Nov 4, 2026"
+PLAYS = "Tennis lesson on Nov 4, 2026"
 TEXTS = {
-    "happened": "The user attended a pottery class on Nov 4, 2026.",
-    "not_happened": "The user planned a pottery class on Nov 4, 2026, and did not go.",
-    "unknown": "The user planned a pottery class on Nov 4, 2026; whether it took place is unknown.",
+    "happened": "The user attended a tennis lesson on Nov 4, 2026.",
+    "not_happened": "The user planned a tennis lesson on Nov 4, 2026, and did not go.",
+    "unknown": "The user planned a tennis lesson on Nov 4, 2026; whether it took place is unknown.",
 }
-UK_HAPPENED = "Користувач відвідав заняття з кераміки 4 листопада 2026."
-UK_NOT_HAPPENED = "Користувач планував заняття з кераміки 4 листопада 2026 і не пішов."
+UK_HAPPENED = "Користувач відвідав заняття з тенісу 4 листопада 2026."
+UK_NOT_HAPPENED = "Користувач планував заняття з тенісу 4 листопада 2026 і не пішов."
 INVOICE = "An invoice for the phone bill (42.50 EUR), due Oct 20, 2026, was received; payment not confirmed."
 PAYMENT = {
     "paid": "The phone bill invoice (42.50 EUR), due Oct 20, 2026, was paid.",
@@ -49,7 +49,7 @@ def _ask(fact):
 async def test_the_translations_of_the_texts_of_an_ask_are_kept_beside_the_facts(world):
     fact = await _stale(world, PLAYS)
     final = _report(translations={
-        fact: "Заняття з кераміки 4 листопада 2026",
+        fact: "Заняття з тенісу 4 листопада 2026",
         f"{fact}:happened": UK_HAPPENED,
         f"{fact}:not_happened": UK_NOT_HAPPENED,
     })
@@ -60,7 +60,7 @@ async def test_the_translations_of_the_texts_of_an_ask_are_kept_beside_the_facts
     assert response.status == AgentStatus.SUCCESS, response.error
     kept = {t["source_digest"]: t["text"] for t in response.result["translations"]}
     assert kept == {
-        quote_digest(PLAYS): "Заняття з кераміки 4 листопада 2026",
+        quote_digest(PLAYS): "Заняття з тенісу 4 листопада 2026",
         quote_digest(TEXTS["happened"]): UK_HAPPENED,
         quote_digest(TEXTS["not_happened"]): UK_NOT_HAPPENED,
     }
@@ -69,7 +69,7 @@ async def test_the_translations_of_the_texts_of_an_ask_are_kept_beside_the_facts
 
 async def test_the_history_text_of_a_rewrite_is_translated_under_its_history_key(world):
     fact = await _stale(world, PLAYS)
-    history = "The user planned a pottery class on Nov 4, 2026, and did not go."
+    history = "The user planned a tennis lesson on Nov 4, 2026, and did not go."
     write = ("update_fact", {
         "fact_id": fact, "updates": {"state": "current", "content": history, "expiry": {"kind": "none"}},
         "basis": {"kind": "date_passed", "date": "2026-11-04"}, "as_history": True,
@@ -87,7 +87,7 @@ async def test_the_history_text_of_a_rewrite_is_translated_under_its_history_key
 async def test_a_translation_of_an_unknown_key_or_with_a_changed_number_is_refused(world, caplog):
     fact = await _stale(world, PLAYS)
     final = _report(translations={
-        f"{fact}:happened": "Користувач відвідав заняття з кераміки 5 листопада 2026.",   # the 4 became a 5
+        f"{fact}:happened": "Користувач відвідав заняття з тенісу 5 листопада 2026.",   # the 4 became a 5
         f"{fact}:not_happened": UK_NOT_HAPPENED,
         f"{fact}:unknown": "x",                                                          # a text the pass never wrote
         "no-such-id:happened": "щось",

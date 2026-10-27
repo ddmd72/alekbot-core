@@ -98,7 +98,7 @@ async def test_history_writes_the_text_as_a_history_version(store, tmp_path):
 
 
 async def test_current_writes_the_text_with_expiry_none_at_its_stored_priority(store, tmp_path):
-    text = "Alex gives a talk at the Hamburg conference every year."
+    text = "Alex gave a talk at the Hamburg conference on 15 October 2026."
 
     await _run(store, tmp_path, _d("talk", "current", text=text))
 

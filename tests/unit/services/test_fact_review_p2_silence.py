@@ -15,9 +15,9 @@ from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
 from tests.unit.services.test_fact_review_selection import USER, Rig, day_row, stored_question
 
-TALK = "Alex gives a talk at the Hamburg conference"
+TALK = "Alex gives a talk at the Hamburg conference on Oct 15, 2026"
 TEXTS = {
-    "happened": "Gave a talk at the Hamburg conference in spring 2026",
+    "happened": "Gave a talk at the Hamburg conference on Oct 15, 2026",
     "not_happened": "The Hamburg conference talk did not take place",
     "unknown": "Planned a talk at the Hamburg conference; unknown whether it took place",
 }
@@ -86,7 +86,7 @@ class TestAFailingHistoryWrite:
     async def test_a_raising_write_counts_one_attempt_keeps_the_question_open_and_the_run_goes_on(self, caplog):
         world = ReviewWorld()
         fact = await dated_fact(world)
-        other = await dated_fact(world, "Alex has a pottery class on Saturday")
+        other = await dated_fact(world, "Alex has a tennis lesson on Saturday")
         await silent(world, "q1", fact)
         await silent(world, "q2", other, asked_at=NOW - timedelta(days=14, hours=1))
         await world.seed_state(account_id=ACC)

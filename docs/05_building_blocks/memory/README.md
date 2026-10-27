@@ -356,7 +356,7 @@ refusal reads; `timeout` uses the owner's row). They differ from the consolidati
   `metadata` emptied and `context` cleared before the embedding texts are built, so nothing of the plan's metadata describes the
   history. Only the review, the owner and a timeout may write one (`finish_fact_update` refuses any other writer). The text is
   English, past tense, at most 40 words, keeps the date at the fact's precision, drops identifiers (booking numbers, codes,
-  times) and keeps an invoice's amount and due day: "In Nov 2026 the user had the car serviced (Nov 4).", "The user planned to
+  times) and keeps an invoice's amount and due day: "In Nov 2026 the user had the car serviced (Nov 5).", "The user planned to
   attend a conference Nov 18–20, 2026, and did not go.", "The user planned to attend a concert on Dec 5, 2026; whether it took
   place is unknown."
 The trail actors added are `review` (reasons such as `revived on <id8>`, `revived on reply q=<id>`, `archived: date passed

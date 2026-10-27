@@ -22,10 +22,10 @@ LABELS = dict(CANONICAL_LABELS)
 URL = "https://cabinet.example/cabinet?tab=memory"
 HISTORY = HAPPENED_TEXTS["unknown"]
 INVOICE = "An invoice for the phone bill (45 EUR), due Nov 3, 2026, was received; payment not confirmed."
-POTTERY = "The user goes to a pottery class on Tuesdays."
+TENNIS = "The user goes to a tennis lesson on Sundays."
 
 
-def archived(text=POTTERY):
+def archived(text=TENNIS):
     event = {"at": NOW, "from": "current", "to": "archived", "actor": "review", "reason": "code-built"}
     return make_fact(text, state=FactState.ARCHIVED, lifecycle_events=[event])
 
@@ -75,7 +75,7 @@ def test_nothing_to_list_is_no_digest():
 
 def test_a_removal_that_is_not_set_aside_is_still_refused():
     with pytest.raises(ValueError):
-        digest_message(LABELS, [make_fact(POTTERY, state=FactState.CURRENT)], histories=[HISTORY])
+        digest_message(LABELS, [make_fact(TENNIS, state=FactState.CURRENT)], histories=[HISTORY])
 
 
 def test_every_line_is_shown_through_its_translation_and_english_without_one():
