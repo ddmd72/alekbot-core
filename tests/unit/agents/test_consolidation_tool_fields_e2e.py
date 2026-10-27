@@ -102,6 +102,15 @@ MERGE_HORIZON: Dict[str, Any] = {
         "expiry": {"kind": "horizon", "days": HORIZON_DAYS},
     },
 }
+MERGED_FITLIFE = "User trained at the FitLife gym on Main Street."
+MERGE_CLOSED: Dict[str, Any] = {
+    "fact_ids": ["seed-fitlife-a", "seed-fitlife-b"],
+    "merged_content": MERGED_FITLIFE,
+    "fact_attributes": {
+        "domain": "health", "temporal_class": "dynamic", "state": "archived", "context_priority": "low",
+        "tags": ["gym"], "expiry": {"kind": "none"},
+    },
+}
 SEARCH_ALL: Dict[str, Any] = {"keywords": ["gym", "Iron Temple"], "primary_query": "User trains at the Iron Temple gym",
                               "alternative_query": "which gym the user goes to", "limit": 5}
 COUNT = {"text": JOB}
@@ -241,8 +250,6 @@ async def test_update_fact_supersede_and_close(store):
 
 
 async def test_merge_facts_writes_every_attribute(store):
-    """`merge_facts.fact_attributes.state` is sent ("current" in MERGE_DATE) but cannot be observed apart from the
-    default: a merged fact must stay current, and a closing state would close the merge itself."""
     seed(store, "seed-passport-a", "User has a passport.", FactDomain.LEGAL)
     seed(store, "seed-passport-b", "User's passport expires on 2031-03-04.", FactDomain.LEGAL)
     seed(store, "seed-gym-a", "User trains at the Iron Temple gym.", FactDomain.HEALTH)
@@ -268,6 +275,21 @@ async def test_merge_facts_writes_every_attribute(store):
     gym_id = next(k for k, d in store.docs.items() if d["text"] == MERGED_GYM)
     assert [store.docs[s]["superseded_by"] for s in ("seed-passport-a", "seed-passport-b")] == [passport_id] * 2
     assert [store.docs[s]["superseded_by"] for s in ("seed-gym-a", "seed-gym-b")] == [gym_id] * 2
+    script_spent(script.llm)
+
+
+async def test_merge_facts_into_a_closed_fact(store):
+    """`fact_attributes.state` of a merge is stored: the merged fact is written archived, and both sources point to it."""
+    seed(store, "seed-fitlife-a", "User trains at the FitLife gym.", FactDomain.HEALTH)
+    seed(store, "seed-fitlife-b", "User's gym is FitLife on Main Street.", FactDomain.HEALTH)
+    script = Pass(tools(("merge_facts", MERGE_CLOSED)))
+
+    response = await run(store, script)
+
+    assert response.status == AgentStatus.SUCCESS, response.error
+    merged_id = next(k for k, d in store.docs.items() if d["text"] == MERGED_FITLIFE)
+    assert store.docs[merged_id]["state"] == "archived"
+    assert [store.docs[s]["superseded_by"] for s in ("seed-fitlife-a", "seed-fitlife-b")] == [merged_id] * 2
     script_spent(script.llm)
 
 
@@ -324,6 +346,6 @@ def test_the_scripted_calls_use_every_declared_field():
     assert unused("consolidation", "create_fact", [CREATE_CURRENT, CREATE_ARCHIVED]) == []
     assert unused("consolidation", "update_fact",
                   [UPDATE_VERSION, UPDATE_SUPERSEDE, UPDATE_CLOSE, UPDATE_KNOWN]) == []
-    assert unused("consolidation", "merge_facts", [MERGE_DATE, MERGE_HORIZON]) == []
+    assert unused("consolidation", "merge_facts", [MERGE_DATE, MERGE_HORIZON, MERGE_CLOSED]) == []
     assert unused("consolidation", "search_existing_facts", [SEARCH_ALL]) == []
     assert unused("consolidation", "count_words", [COUNT]) == []

@@ -23,7 +23,7 @@ consolidation:merge_facts.fact_attributes.expiry.days  # stored tests/unit/agent
 consolidation:merge_facts.fact_attributes.expiry.kind  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
 consolidation:merge_facts.fact_attributes.metadata  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
 consolidation:merge_facts.fact_attributes.reported_date  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
-consolidation:merge_facts.fact_attributes.state  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_attributes.state  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_into_a_closed_fact
 consolidation:merge_facts.fact_attributes.tags  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
 consolidation:merge_facts.fact_attributes.temporal_class  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
 consolidation:merge_facts.fact_ids  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
