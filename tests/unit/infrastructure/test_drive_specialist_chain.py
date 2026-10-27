@@ -140,7 +140,8 @@ async def test_a_chat_turn_reaches_the_lazy_specialist_and_back_with_receipts_vi
     # the delete really ran (no dry run here) and its receipt went to the chat the turn came from
     world.drive.delete.assert_awaited_once_with(USER, "old")
     world.notifier.notify_raw.assert_awaited_once_with(USER, ACCOUNT, "Deleted Inbox/old.txt",
-                                                       channel_id_override="C1", platform_override="slack")
+                                                       channel_id_override="C1", platform_override="slack",
+                                                       literal=True)
     # the opened PDF reached Smart's next request as a vision file, after the specialist's answer
     files = [p.file_data for m in smart_requests[1].messages for p in m.parts if p.file_data]
     assert [f["mime_type"] for f in files] == ["application/pdf"]
