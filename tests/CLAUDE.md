@@ -185,7 +185,11 @@ Statuses: killed, survived, equivalent, and `error` (the selected tests never lo
 not a pass). `except-success` skips handlers that only log and already return the success value. Slow tests run in the mutant
 children (`RUN_SLOW_TESTS=1`).
 
-A survivor means the tests do not notice that defect: write the assertion that does. `--equivalent` takes
+A survivor means the tests do not notice that defect: write the assertion that does. Run that new test on the
+**unmutated** code first: it passes → `test-gap` (the code was right, a check was missing); it fails → `code-bug` (a real
+defect in current code: fix it in the same task, under the reviewer rule; a run with no `src/` authority, such as the
+weekly routine, pins it as a strict xfail `MUT-D<n>` instead). Each survivor's class goes into the owner's mutation
+ledger (kept outside this repository; the `delivery` skill names it), so the mutants' yield in real defects is measurable. `--equivalent` takes
 `key  # reason` lines (the 8-hex key in the report) and is the reviewer's tool, never the implementer's.
 
 Registering a package's modules in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", graph_group=False, extra=())` in `TARGETS`)
