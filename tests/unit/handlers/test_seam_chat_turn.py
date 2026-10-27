@@ -11,7 +11,6 @@ Pins P13-D1: a Telegram turn carries `origin_channel_id` None, so its async resu
 """
 import asyncio
 from datetime import timedelta
-from typing import Any, List, Optional, Tuple
 
 import pytest
 
@@ -22,62 +21,13 @@ from src.domain.messaging import MessageContext
 from src.domain.ui_messages import UIMessage
 from src.locales.uk import UI_STRINGS
 from tests.support.seam_world import (
-    ACCOUNT, OTHER_SLACK, PRIMARY, SEAM_CONSOLIDATION, T0, TELEGRAM, USER, Delegation, SeamWorld, Step, page, require,
-    says,
+    ACCOUNT, OTHER_SLACK, PRIMARY, SEAM_CONSOLIDATION, T0, TELEGRAM, USER, ChatChannel, Delegation, SeamWorld, Step,
+    page, require, says, slack_turn,
 )
 
 ON_ITS_WAY = "Your page about heat pumps in Springfield is on its way."
 PAGE_FILE = "heat-pumps.html"
 PAGE_LABEL = "Heat pumps in Springfield.html"
-
-
-class ChatChannel:
-    """The platform response channel of one chat turn (no `MagicMock`): the methods `ConversationHandler` calls on a turn
-    and on a command (`test_conversation_handler_interactive_delivery.py:31-44`), recording what was sent."""
-
-    def __init__(self, platform: str, channel_id: str) -> None:
-        self.platform = platform
-        self.channel_id = channel_id
-        self.max_message_length = 4000
-        self.supports_message_editing = True
-        self.texts: List[str] = []
-        self.statuses: List[Any] = []
-        self.rich: List[Any] = []
-
-    async def send_status_with_phrase(self, status_type: Any, thread_id: Optional[str] = None) -> Tuple[str, str]:
-        self.statuses.append(status_type)
-        return "m1", "thinking"
-
-    async def get_status_phrase(self, status_type: Any) -> str:
-        return "processing"
-
-    async def update_status_with_phrase_and_dots(self, message_id: str, phrase: str, dots: int) -> None:
-        return None
-
-    async def send_status(self, status: Any, thread_id: Optional[str] = None) -> None:
-        self.statuses.append(status)
-
-    async def send_message(self, text: str, thread_id: Optional[str] = None) -> None:
-        self.texts.append(text)
-
-    async def send_chunked_message(self, text: str, status_message_id: Optional[str] = None,
-                                   thread_id: Optional[str] = None, link_list: Optional[list] = None) -> None:
-        self.texts.append(text)
-
-    async def send_flat_response(self, text: str, status_message_id: Optional[str] = None) -> None:
-        self.texts.append(text)
-
-    async def update_message(self, message_id: str, text: str) -> None:
-        self.texts.append(text)
-
-    async def send_rich_content(self, content: Any, thread_id: Optional[str] = None) -> None:
-        self.rich.append(content)
-
-
-def _slack_turn(text: str) -> MessageContext:
-    """As `src/adapters/slack/http_adapter.py:512-530` builds it, without `turn_id` (no long-turn service here)."""
-    return MessageContext(text=text, session_id="u1:C2", user_id=USER, account_id=ACCOUNT,
-                          metadata={"channel": "C2", "event_type": "message"})
 
 
 def _telegram_turn(text: str) -> MessageContext:
@@ -104,7 +54,7 @@ async def test_a_page_asked_for_in_a_slack_channel_is_delivered_there(monkeypatc
     _asks_for_a_page(world)
     chat = ChatChannel(*OTHER_SLACK)
 
-    await world.chat_handler().handle_message(_slack_turn("Make me a page about heat pumps in Springfield."), chat)
+    await world.chat_handler().handle_message(slack_turn("Make me a page about heat pumps in Springfield."), chat)
 
     require(not world.unscripted(), "every agent call was scripted")
     require(chat.texts == [ON_ITS_WAY], "the turn answered in its own chat")

@@ -23,7 +23,6 @@ from src.adapters.in_memory_provider_resilience import InMemoryProviderResilienc
 from src.agents.core.router_agent import RouterAgent, create_router_agent
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.domain.entities import FactDomain
-from src.domain.messaging import MessageContext
 from src.domain.task_complexity import TaskComplexity
 from src.domain.user import PerformanceTier, UserBotConfig
 from src.handlers import worker_handler
@@ -39,7 +38,9 @@ from tests.support.fact_store import FactStore
 from tests.support.prompt_seed import seed_agent_prompt
 from tests.support.redelivery_world import ScriptedReview
 from tests.support.scripted_llm import ScriptedLLM, execution_context, text
-from tests.support.seam_world import ACCOUNT, OTHER_SLACK, PRIMARY, T0, USER, SeamWorld, require
+from tests.support.seam_world import (
+    ACCOUNT, OTHER_SLACK, PRIMARY, T0, USER, ChatChannel, SeamWorld, require, slack_turn,
+)
 from tests.support.tool_e2e import smart_rig
 
 EMAILS = [
@@ -61,50 +62,6 @@ class TieredLLM(ScriptedLLM):
 
     def get_model_for_tier(self, tier: PerformanceTier) -> str:
         return f"tier-{tier.value}"
-
-
-class ChatChannel:
-    """The platform response channel of one chat turn, re-declared from card D (private to its file): the methods
-    `ConversationHandler` calls on a turn (`test_conversation_handler_interactive_delivery.py:31-44`), recording what
-    was sent."""
-
-    def __init__(self, platform: str, channel_id: str) -> None:
-        self.platform = platform
-        self.channel_id = channel_id
-        self.max_message_length = 4000
-        self.supports_message_editing = True
-        self.texts: List[str] = []
-        self.statuses: List[Any] = []
-        self.rich: List[Any] = []
-
-    async def send_status_with_phrase(self, status_type: Any, thread_id: Optional[str] = None) -> Tuple[str, str]:
-        self.statuses.append(status_type)
-        return "m1", "thinking"
-
-    async def get_status_phrase(self, status_type: Any) -> str:
-        return "processing"
-
-    async def update_status_with_phrase_and_dots(self, message_id: str, phrase: str, dots: int) -> None:
-        return None
-
-    async def send_status(self, status: Any, thread_id: Optional[str] = None) -> None:
-        self.statuses.append(status)
-
-    async def send_message(self, text: str, thread_id: Optional[str] = None) -> None:
-        self.texts.append(text)
-
-    async def send_chunked_message(self, text: str, status_message_id: Optional[str] = None,
-                                   thread_id: Optional[str] = None, link_list: Optional[list] = None) -> None:
-        self.texts.append(text)
-
-    async def send_flat_response(self, text: str, status_message_id: Optional[str] = None) -> None:
-        self.texts.append(text)
-
-    async def update_message(self, message_id: str, text: str) -> None:
-        self.texts.append(text)
-
-    async def send_rich_content(self, content: Any, thread_id: Optional[str] = None) -> None:
-        self.rich.append(content)
 
 
 def envelope(full: str, summary: str) -> Any:
@@ -168,12 +125,6 @@ async def seam(monkeypatch: Any, *smart_script: Any, router_script: Optional[Lis
         )
         world.coordinator.register_agent(router)
     return SimpleNamespace(world=world, store=store, smart_llm=smart_llm, router_llm=router_llm)
-
-
-def _slack_turn(text_: str) -> MessageContext:
-    """As `src/adapters/slack/http_adapter.py:512-530` builds it, without `turn_id` (card D's shape)."""
-    return MessageContext(text=text_, session_id="u1:C2", user_id=USER, account_id=ACCOUNT,
-                          metadata={"channel": "C2", "event_type": "message"})
 
 
 async def _daily_review(monkeypatch: Any) -> SimpleNamespace:
@@ -256,7 +207,7 @@ async def test_a_chat_turn_s_enriched_fact_reaches_smart_after_the_cache_boundar
     await seed_fact(s.store.repo, FACT, account=ACCOUNT, created_by_user_id=USER, domain=FactDomain.HEALTH)
     chat = ChatChannel(*OTHER_SLACK)
 
-    await s.world.chat_handler().handle_message(_slack_turn(QUESTION), chat)
+    await s.world.chat_handler().handle_message(slack_turn(QUESTION), chat)
 
     require(not s.world.unscripted(), "every agent call was scripted")
     require(scripted_out(s.router_llm) and scripted_out(s.smart_llm), "both scripts were used exactly")
@@ -278,7 +229,7 @@ async def test_a_chat_turn_that_needs_no_search_carries_no_enriched_fact(monkeyp
     await seed_fact(s.store.repo, FACT, account=ACCOUNT, created_by_user_id=USER, domain=FactDomain.HEALTH)
     chat = ChatChannel(*OTHER_SLACK)
 
-    await s.world.chat_handler().handle_message(_slack_turn(QUESTION), chat)
+    await s.world.chat_handler().handle_message(slack_turn(QUESTION), chat)
 
     require(not s.world.unscripted(), "every agent call was scripted")
     require(scripted_out(s.router_llm) and scripted_out(s.smart_llm), "both scripts were used exactly")

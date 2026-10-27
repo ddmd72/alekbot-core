@@ -43,7 +43,7 @@ from src.adapters.gcs_media_adapter import GcsMediaAdapter
 from src.config.environment import EnvironmentConfig
 from src.domain.agent import AgentMessage, AgentResponse, DeliveryItem
 from src.domain.agent_note import NoteCreate
-from src.domain.messaging import SmartResponse
+from src.domain.messaging import MessageContext, SmartResponse
 from src.domain.notification_kind import NotificationKind
 from src.domain.settings import ConsolidationSettings
 from src.domain.task_complexity import TaskComplexity
@@ -71,9 +71,9 @@ from tests.support.redelivery_world import (
 )
 
 __all__ = [
-    "ACCOUNT", "BUCKET", "OTHER_SLACK", "PRIMARY", "SECRET", "T0", "TELEGRAM", "USER",
+    "ACCOUNT", "BUCKET", "ChatChannel", "OTHER_SLACK", "PRIMARY", "SECRET", "T0", "TELEGRAM", "USER",
     "Delegation", "PreconditionFailed", "RecordingMedia", "SeamChannel", "SeamChannels", "SeamFactory", "SeamWorld",
-    "StandInAgent", "Step", "TaskRequest", "Upload", "docx", "fails", "page", "pdf", "require", "says",
+    "StandInAgent", "Step", "TaskRequest", "Upload", "docx", "fails", "page", "pdf", "require", "says", "slack_turn",
 ]
 
 PRIMARY = ("slack", "C1")
@@ -305,6 +305,59 @@ class SeamFactory:
 
     def get_session_store(self) -> FirestoreSessionStore:
         return self._session_store
+
+
+# ----------------------------------------------------------------------------- the chat turn
+
+class ChatChannel:
+    """The platform response channel of one chat turn (no `MagicMock`; P13 cards D and F): the methods
+    `ConversationHandler` calls on a turn and on a command (`test_conversation_handler_interactive_delivery.py:31-44`),
+    recording what was sent."""
+
+    def __init__(self, platform: str, channel_id: str) -> None:
+        self.platform = platform
+        self.channel_id = channel_id
+        self.max_message_length = 4000
+        self.supports_message_editing = True
+        self.texts: List[str] = []
+        self.statuses: List[Any] = []
+        self.rich: List[Any] = []
+
+    async def send_status_with_phrase(self, status_type: Any, thread_id: Optional[str] = None) -> Tuple[str, str]:
+        self.statuses.append(status_type)
+        return "m1", "thinking"
+
+    async def get_status_phrase(self, status_type: Any) -> str:
+        return "processing"
+
+    async def update_status_with_phrase_and_dots(self, message_id: str, phrase: str, dots: int) -> None:
+        return None
+
+    async def send_status(self, status: Any, thread_id: Optional[str] = None) -> None:
+        self.statuses.append(status)
+
+    async def send_message(self, text: str, thread_id: Optional[str] = None) -> None:
+        self.texts.append(text)
+
+    async def send_chunked_message(self, text: str, status_message_id: Optional[str] = None,
+                                   thread_id: Optional[str] = None, link_list: Optional[list] = None) -> None:
+        self.texts.append(text)
+
+    async def send_flat_response(self, text: str, status_message_id: Optional[str] = None) -> None:
+        self.texts.append(text)
+
+    async def update_message(self, message_id: str, text: str) -> None:
+        self.texts.append(text)
+
+    async def send_rich_content(self, content: Any, thread_id: Optional[str] = None) -> None:
+        self.rich.append(content)
+
+
+def slack_turn(text: str) -> MessageContext:
+    """A Slack message in `C2` as `src/adapters/slack/http_adapter.py:512-530` builds it, without `turn_id` (no
+    long-turn service in the seam world)."""
+    return MessageContext(text=text, session_id="u1:C2", user_id=USER, account_id=ACCOUNT,
+                          metadata={"channel": "C2", "event_type": "message"})
 
 
 # ----------------------------------------------------------------------------- the world
