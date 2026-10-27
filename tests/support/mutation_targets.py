@@ -169,6 +169,7 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.domain.daily_review_window", "tests/unit/domain/daily_review_window_equivalent_mutants.txt"),
     MutationTarget("src.adapters.firestore_session_store", "tests/unit/adapters/firestore_session_store_equivalent_mutants.txt"),
     MutationTarget("src.adapters.firestore_consolidation_queue", "tests/unit/adapters/firestore_consolidation_queue_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.firestore_indexed_email_repo", "tests/unit/adapters/firestore_indexed_email_repo_equivalent_mutants.txt"),
 )
 
 
