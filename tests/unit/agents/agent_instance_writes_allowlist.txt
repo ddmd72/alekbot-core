@@ -1,0 +1,33 @@
+# Writes to shared state outside __init__ in agent methods (checked by test_agent_request_state_meta.py, P15 card J3).
+# Agent instances are per-user singletons serving concurrent executions, so each line here is shared state someone explained.
+# Line: <path>::<Class>.<method>::<key>  # <reason> <evidence, at least two words>
+# The key is the dotted attribute path from self (or <cls>. / <module>.) up to the first subscript or call; no line numbers.
+# Reasons: constructor-only (checked: every *.<method>( call in src/ is inside __init__), lazy-cache (checked: every write of
+# the key in the method is inside `if self.<key> is None:`), cross-request-by-design, port-call, dead-write, defect:<id>
+# (an arbiter-confirmed defect id). A lock is never a reason alone: lock-guarded comes only as
+# cross-request-by-design+lock-guarded (evidence names the consumer that outlives the request) or lazy-cache+lock-guarded,
+# and then every write of the key in the method must sit inside `async with self.<lock>:`.
+# A write with no line fails, and so does a line whose write is gone.
+src/agents/base_agent.py::BaseAgent._set_execution_context::_agent_execution_context  # constructor-only every caller is an agent constructor (base_agent.py:872-879, the setter the execution-context meta-test requires)
+src/agents/consolidation_agent.py::ConsolidationAgent._report_pass::_lifecycle_counters  # port-call .add on the injected FactLifecycleCountersPort (consolidation_agent.py:1833), a counter write, not instance state
+src/agents/core/quick_response_agent.py::QuickResponseAgent.execute::config.metadata  # dead-write user_tone written per request (quick_response_agent.py:173); nothing reads config.metadata["user_tone"] (arbiter S9c), deletion candidate
+src/agents/core/smart_response_agent.py::SmartResponseAgent._run::config.metadata  # dead-write user_tone written per request (smart_response_agent.py:414); nothing reads config.metadata["user_tone"] (arbiter S9c), deletion candidate
+src/agents/core/router_agent.py::RouterAgent._load_triage_prompt::_cached_triage_prompt  # lazy-cache built under if self._cached_triage_prompt is None: the triage prompt of this user's router, built once and never invalidated by design (router_agent.py:429-442, arbiter S9b)
+src/agents/drive_document_reader_agent.py::DriveDocumentReaderAgent._system_prompt::_system  # lazy-cache+lock-guarded the agent's system prompt, built once on first use under async with self._system_lock (drive_document_reader_agent.py:188-192)
+src/agents/drive_image_triage_agent.py::DriveImageTriageAgent._classify::_system  # lazy-cache+lock-guarded the agent's system prompt, built once on first use under async with self._system_lock (drive_image_triage_agent.py:181-183)
+src/agents/drive_passage_agent.py::DrivePassageAgent._hints::_system  # lazy-cache+lock-guarded the agent's system prompt, built once on first use under async with self._system_lock (drive_passage_agent.py:144-146)
+src/agents/drive_profiler_agent.py::DriveProfilerAgent._profile::_system  # lazy-cache+lock-guarded the agent's system prompt, built once on first use under async with self._system_lock (drive_profiler_agent.py:183-185)
+src/agents/file_management_agent.py::FileManagementAgent._drive_call::_mutation_locks  # cross-request-by-design the per-user drive mutation lock, shared on purpose so one user's mutations run one at a time (file_management_agent.py:499, USER_DRIVE_RFC §4.13)
+src/agents/file_management_agent.py::FileManagementAgent._drive_call::_shielded  # cross-request-by-design registry of shielded drive mutations that outlive the request (file_management_agent.py:507, USER_DRIVE_RFC §4.13)
+src/agents/file_management_agent.py::FileManagementAgent._arm_late_failure_notice::_armed  # cross-request-by-design the late-failure notice armed per shielded task (file_management_agent.py:579, USER_DRIVE_RFC §4.13)
+src/agents/file_management_agent.py::FileManagementAgent._note_target::_targets  # cross-request-by-design the path a shielded task touches, keyed by that task (file_management_agent.py:586, USER_DRIVE_RFC §4.13)
+src/agents/file_management_agent.py::FileManagementAgent._on_mutation_done::_armed  # cross-request-by-design done callback pops the armed notice of its own task (file_management_agent.py:607, USER_DRIVE_RFC §4.13)
+src/agents/file_management_agent.py::FileManagementAgent._on_mutation_done::_notices  # cross-request-by-design registry of late-failure notice tasks (file_management_agent.py:623, USER_DRIVE_RFC §4.13)
+src/agents/file_management_agent.py::FileManagementAgent._on_mutation_done::_shielded  # cross-request-by-design done callback drops its own task from the registry (file_management_agent.py:606, USER_DRIVE_RFC §4.13)
+src/agents/file_management_agent.py::FileManagementAgent._on_mutation_done::_targets  # cross-request-by-design done callback pops the path of its own task (file_management_agent.py:608, USER_DRIVE_RFC §4.13)
+src/agents/infrastructure/billing_agent.py::BillingAgent.execute::pending_records  # cross-request-by-design+lock-guarded usage records buffered across requests under async with self._lock, consumed by the periodic flush task started in start() (billing_agent.py:72-74)
+src/agents/infrastructure/billing_agent.py::BillingAgent._flush_account::pending_records  # cross-request-by-design+lock-guarded the flush that outlives the request pops its account's records under async with self._lock (billing_agent.py:88-89)
+src/agents/infrastructure/billing_agent.py::BillingAgent.start::_flush_task  # cross-request-by-design the periodic flush task started once after the event loop runs (billing_agent.py:47-49)
+src/agents/infrastructure/logger_agent.py::LoggerAgent.execute::buffer  # cross-request-by-design+lock-guarded log entries buffered across requests under async with self._lock, consumed by the periodic flush task started in start() (logger_agent.py:75-77)
+src/agents/infrastructure/logger_agent.py::LoggerAgent._flush_logs::buffer  # cross-request-by-design+lock-guarded the flush that outlives the request copies and clears the buffer under async with self._lock (logger_agent.py:94-99)
+src/agents/infrastructure/logger_agent.py::LoggerAgent.start::_flush_task  # cross-request-by-design the periodic flush task started once after the event loop runs (logger_agent.py:53-55)

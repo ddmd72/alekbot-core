@@ -492,11 +492,10 @@ review. Manual: probes. Docs-only PRs skip `make ci` (F3, `scripts/ci/docs_only.
 
 ## 5. Work packages
 
-### Done criterion: semantic mutants
+### Semantic mutants (a done criterion until 2026-10-27, now the weekly run only)
 
 A raise-mutant is killed by any test that merely calls the method; the defects found were semantic (ASC for DESC, a
-dropped projection field, a missing state flag, a missing tenant check). Each package therefore ends with a **semantic
-mutation check**, run by a small pytest plugin (generalised from the blind-spot report's prototype), with this operator
+dropped projection field, a missing state flag, a missing tenant check). The **semantic mutation check** is therefore run by a small pytest plugin (generalised from the blind-spot report's prototype), with this operator
 set:
 
 - drop or flip an `order_by`;
@@ -506,7 +505,9 @@ set:
 - skip one write in a multi-write path;
 - drop one forwarded keyword argument.
 
-A package is done when every mutant in its set is killed or ruled equivalent by the reviewer. `mutmut` (P23) is a
+Until 2026-10-27 a package was done when every mutant in its set was killed or ruled equivalent by the reviewer. Since the owner's
+decision of that date no package runs this check locally: it registers its modules in `TARGETS`, and the weekly `Mutation survivors`
+run is the only mutation pass (see "Rules revised"). The reviewer still owns the `*_equivalent_mutants.txt` lines. `mutmut` (P23) is a
 metric only, never a done-gate.
 
 ### Packages
@@ -530,7 +531,7 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P12 | **Cloud gate, full** (§4): lease, render step, explicit-database scripts, missing index definitions, GCS bucket, paused queue, WIF for the post-merge job; every H2 kit against the real adapters; precondition tests | cloud | 2–3 | fake ≠ Firestore across all kits | 2 (revised 2026-10-27: lease document and render gate dropped; see "Rules revised") |
 | P13 | **Service seams**: handler-level tests that run the **real** `UserNotificationService`, `TaskDispatchService`, `AgentCoordinator`, `SearchEnrichmentService` and `PromptBuilder` over H1 and port fakes for each entry path (worker task types, `ConversationHandler`, `AgentWorkerHandler`), asserting the observable outcome (which channel, which history entry); mutation operator: drop one forwarded kwarg | check | 2 | parameter coupling between services (§1.4 item 6) | 2 |
 | P14 | **Scripted-LLM end to end** for every agent that writes state through tools (Consolidation, Notes, Tasks, Smart's local tools `propose_memory_facts` / `draft_skill` / `workspace`, FileManagement drive mutations): a scripted tool call that uses every declared field, asserted on the final store state; a generic check that every declared tool field changes stored state or is refused — nothing accepted and dropped. **P9 hand-over:** the two deep-research rows of the boot test's `MATRIX` (`deep_research_failed`, `deep_research_webhook_event`, 500 until the formatter's prompt blueprint is seeded) must become 200 here; the other three belong to P15 (list in the "Built (P9)" note). | check | 1.5 | tools that report success after dropping input (§1.3.5) | 2 |
-| P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 | (part built 2026-10-27; see "Built (P15, part 1)")
+| P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 | (built 2026-10-27; see "Built (P15, part 1)" and "Built (P15, part 2)"; the `MATRIX` rows wait for card H)
 | P16 | **Clock suite**: a pinned clock and a table of instants (both 2026 DST transitions in Europe/Berlin, Europe/Helsinki, America/New_York; month end; UTC midnight) through every function that matches an hour or a day boundary (daily review, billing rotation, drive monthly budgets, reminder `due`, Cabinet 24h cap, scratch 7-day TTL) | check | 0.5 | §1.4 item 7 and its class | 2 | (built 2026-10-27; see "Built (P16)")
 | P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 (revised 2026-10-27: only with a regeneration command per recorded fixture; see "Rules revised") |
 | P18 | **Reality checks** (§4a): spec-drift workflow, `provider-contract-review` skill + monthly routine, `make contract-probe` for the sandboxed providers | sched | 2–3 + owner sandbox setup | contracts that disagree with reality | 3 |
@@ -790,8 +791,72 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   - P15-S7: a stale success closes a tripped provider breaker.
 - **Known limit.** The nested `context` dict of `agent_execution` is not checked per key: producers forward a runtime dict and the consumer passes
   the whole dict to the agent.
-- **Waits for the owner (not built):** per-type double runs, retry after a partial effect, the agent instance-state meta-test, and the three
-  `MATRIX` rows of the P9 hand-over.
+- **Built in part 2** (next note): per-type double runs, retry after a partial effect and the agent instance-state meta-test. Still open: the three
+  `MATRIX` rows of the P9 hand-over (card H, after P14's `MATRIX` edit).
+
+**Built (P15, part 2, 2026-10-27).** Redelivery, retry after an effect, and agent instance state. Test-only: no `src/` change. Ten new files:
+- **The redelivery world.** `tests/support/redelivery_world.py` (self-test `tests/unit/support/test_redelivery_world.py`): the real `WorkerHandler`,
+  claim store, note store, `UserNotificationService`, `RemindersService` and `GcpTaskQueue` on one `EvalDb`, a scripted agent turn and recording
+  channels. `deliver_twice` sends two task names the claim does not merge, in sequence or under `asyncio.gather` (`names=None` sends Scheduler bodies);
+  `deliver_with_retry` redelivers only when Cloud Tasks would (a raise, `>= 500`, `429`); `Rendezvous` forces a gathered interleaving where the read is
+  a query (a query never yields on `EvalDb`; `yield_on_get` covers document reads only) and reports `met` / `stalled`. `require()` and
+  `Twice.reraise()` raise `PreconditionFailed`: inside a strict xfail every precondition uses them, because a bare `assert` precondition would turn a
+  broken setup into a silent XFAIL. Each xfail was shown to report FAILED with a broken setup.
+- **Per-type double runs.** `tests/unit/handlers/test_worker_redelivery_notify.py` (a one-time reminder fire delivered twice posts once and the second
+  answers `note_gone`; a recurrent fire posts once through the stored stamp), `..._todo.py` (To Do setup and an orphan renewal delivered twice),
+  `..._scheduler.py` (the Scheduler types, below), `..._chains.py` (companion extraction, the Telegram intake `dedup_key`, an owner's click on a review
+  question) and `..._email_indexing.py` (the email-indexing chain on the production graph: a page delivered twice at once, a lost next-page enqueue
+  retried from the saved cursor). The scheduler, To Do and email-indexing files are `slow` (they build the production graph).
+- **Scheduler types, table in the docstring of `test_worker_redelivery_scheduler.py`.** Eleven types, each pinned or ruled out; ten are pinned by a test here or by a named existing test:
+  `fire_due_reminders` (one-time: here, sequential and gathered; recurrent: `test_reminders_due_instants.py`), `start_daily_email_review`,
+  `sweep_consolidation`, `fact_lifecycle_sweep` and `start_drive_sync` (existing tests), `start_email_indexing` (here; strict xfail P15-D6),
+  `email_indexing_watchdog` and `repair_email_embeddings` (here, sequential; the gathered run is harmless by construction, cited),
+  `sweep_companion_consolidation` (the chain file) and `renew_all_task_subscriptions` (one renewal per user per run, by design). Ruled out: `billing_daily_summary` (not tested; P15-D8 is overstated, a second summary needs a manual double run).
+- **Retry after an effect.** `tests/unit/handlers/test_worker_retry_after_effect.py`: the first attempt makes its effect, then answers 5xx or
+  raises; the claim is released and the same task name is delivered again. Passing pins: a turn that reached no channel is retried and posts once; a
+  lost video next-poll enqueue is retried and the chain continues once; a Telegram update or a Slack event whose turn failed after its reply is not run
+  again; a question posted and recorded is not posted again.
+- **Defects pinned as strict xfails** (the id is in each reason; the fix removes the marker). Each has a precondition that holds before and after the
+  fix and a passing control in the same file:
+  - P15-D1 (four tests, `test_worker_retry_after_effect.py`): a background turn that already posted or enqueued is answered 500, so the retry repeats it (a reminder or a daily review,
+    a failed rich part after the text, a report enqueued before the failure).
+  - P15-D3 (`test_worker_retry_after_effect.py`): a lost `execute_reminder` enqueue leaves the fire claimed and it is never enqueued again.
+  - P15-D5 (two tests, `test_worker_redelivery_chains.py`): a companion batch is extracted by two concurrent deliveries; a batch that always fails is revived and extracted without bound.
+  - P15-D6 (`test_worker_redelivery_scheduler.py`): two concurrent auto-index ticks both pass the running-job guard and start two jobs.
+  - P15-D11 (`test_worker_retry_after_effect.py`): a review question whose post succeeded but whose message-ref write failed is posted again the next day, with a false "not delivered" note.
+  - P15-D12 (`test_worker_redelivery_chains.py`): a concurrent double click on a review question applies the answer twice (a second owner-trail entry on the fact, doubled answer counters);
+    the message the owner sees is correct. Low impact (audit trail and statistics).
+- **Overstated ids, not xfails.** P15-D2 (gathered To Do setup: setup is enqueued once per OAuth callback, so two copies need two connects in one
+  instant; the sequential double is pinned), P15-D4 (a landed-then-error enqueue chain: a rare deadline after the server accepted the task; the
+  not-landed retry is pinned as a passing test), P15-D7 (a drive-sync fan-out race; existing tests pin the deduplication) and P15-D8 (a second billing
+  summary after a manual double run) are not tested where today's behaviour is right, and each file's docstring says which.
+- **Agent instance state.** `tests/unit/agents/test_agent_request_state_meta.py` with `agent_instance_writes_allowlist.txt` (23 lines): every write to
+  shared state outside `__init__` in a class that derives from `BaseAgent` (`self.*`, class state, module-level names, `global`, `setattr`) needs a line
+  with a reason and evidence, because agent instances are per-user singletons serving concurrent executions (the 3.6x billing inflation was such a
+  write). Reasons in use: `constructor-only` (checked: every call is in `__init__`), `lazy-cache` (checked: each write is under `if self.x is None:`),
+  `cross-request-by-design` (the per-user drive mutation registry, the billing and logger buffers), `cross-request-by-design+lock-guarded` and
+  `lazy-cache+lock-guarded` (the lock is checked, and is never a reason alone), `port-call` (a counter on an injected port) and `dead-write`
+  (`config.metadata["user_tone"]`, nothing reads it). It fails both ways; 38 tests, including self-tests per write shape. Known limits are in the file.
+- **Mutation registry.** Eleven modules are registered in `tests/support/mutation_targets.py`: the worker handler, the task claim store, the reminders
+  service, the note store, the To Do setup service, the companion extraction service and queue, and the four P16 modules the P16 merge did not register
+  (recurrence adapter, account repository, session service, daily review window). Each has its own `*_equivalent_mutants.txt` holding one header comment, which the driver skips, so no mutant is ruled equivalent yet. Own files because
+  `test_every_equivalent_file_belongs_to_a_registered_target` (`tests/unit/test_mutation_targets.py:44`) counts `None` as one shared file: two or more
+  `None` targets fail it, and only the wiring file may be shared. The route test `test_worker_redelivery_route.py` reaches the worker handler and the
+  claim store only through `src/`, so it is their `extra=`; `test_non_wiring_targets_do_not_get_the_graph_group` was amended by the final review to allow
+  `extra` on a non-wiring target.
+- **Coverage.** `make ci` at the end: 25 917 passed, 77 skipped, 106 xfailed; total 91.63 %. Per layer (branch-aware): domain 98.62, ports 92.94,
+  infrastructure 96.70, agents 95.34, services 92.26, handlers 93.59, adapters 86.77, web 77.61, composition 94.55, src (other) 76.18, root entry
+  points 76.63; against floors of 92.7 (handlers) and 85.7 (adapters), so the script offers 93.2 and 86.4. The floors are raised in this PR, after the CI "Coverage per layer" notice, by the rule min(local, CI) - 0.3
+  (handlers at most 93.2, adapters at most 86.4). The package adds 10 of the suite's 106 strict xfails (D1 four, D3, D5 two, D6, D11, D12); the full run takes about 6 min 15 s.
+  The `firestore_notification_state_adapter` allowlist line of `untested_modules_allowlist.txt` is deleted: the redelivery world imports it.
+- **Found while building, not carded** (no defect id; each needs an arbiter decision):
+  1. A reminder is posted again if writing its delivered stamp fails right after the post: `mark_fire_delivered` raising
+     (`src/handlers/worker_handler.py:1043`) releases the claim, and the retry finds no stamp.
+  2. Two reminders created in the same millisecond overwrite each other: the note id is the creation millisecond and the write is a plain `set()`
+     (`src/adapters/firestore_agent_note_adapter.py:68,83`). Two `manage_self_reminders` calls in one tool batch run concurrently; likelihood unverified.
+  3. Two renewals of one user's To Do subscription at once leak one subscription: both read the config, register a replacement and save, with no
+     guard (`src/services/task_setup_service.py:174-208,290-318`); the other subscription stays on Graph until it expires.
+  4. No test pinned the Telegram intake `dedup_key` (`src/adapters/telegram/webhook_adapter.py:146,154`); the chain file now does.
 
 **Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
 deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years
@@ -803,7 +868,7 @@ scheduled routine that fixes survivors by PR.
   CLI `python -m tests.support.mutation_targets --matrix | --tests-for <module> | --summarize DIR --out-md --out-json | --annotations survivors.json`). The driver gained `--report PATH` (JSON)
   and `--no-fail`. Artifacts `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`), also in the step summary.
   The `summarize` job also prints the verdict as check-run annotations (a notice per module, warnings for survivors, at most 9, 4000 characters each). `survivors.md` lists every registered module, `missing` when a job produced no report and `partial (N of M)` when it was cut (the report is rewritten after each mutant). Never red because mutants survived. Registering a package's modules in `TARGETS` is part of "package done"; a unit test fails when a
-  `*_equivalent_mutants.txt` file has no registered target. The local done-check (the table in `tests/CLAUDE.md`) stays, once per package.
+  `*_equivalent_mutants.txt` file has no registered target. The local run (the table in `tests/CLAUDE.md`) stays as a tool for anyone to run by hand, optional (see the 2026-10-27 line below).
 - **F2** `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` rewrites `tests/unit/main_boots_offline_url_map.txt`
   from the booted app (header kept, sorted); the diff in the PR is the review. Without the variable nothing is written. The implementer commits the rewritten pin, the task reviewer reads its diff (no separate approval), and a new route must also be refused or listed in `PUBLIC` of `tests/unit/web/test_every_route_refuses_anonymous.py`.
 - **F3** Docs-only PRs skip `make ci`. `scripts/ci/docs_only.py` is the one definition of "docs": every file under `docs/` (any extension), root `*.md`,
@@ -833,6 +898,9 @@ scheduled routine that fixes survivors by PR.
 - **Rejected.** Deferring packages to "when the store is next touched" (the owner will not interrupt feature work later); survivor
   reports to Slack (nobody triages daily); a mutation run on every merge to `main` (composition modules change in almost every feature
   PR, 1-5 h each; reconsider if survivors accumulate between weekly runs). Record: `decisions/test_gates_friction.md`.
+- **2026-10-27 owner: the per-package mutation done-check is dropped** (and the P9 wiring done-check with it); P15 part 2 was the last package
+  with one (31 survivors: 24 test gaps, 7 equivalent, 0 code bugs). Registering the modules in `TARGETS` stays part of "package done"; the
+  driver and `--tests-for` stay as tools; the weekly run is the only mutation pass. Record: `decisions/test_gates_friction.md`.
 
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**

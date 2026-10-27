@@ -1,0 +1,3 @@
+# Mutants a reviewer ruled equivalent for src.adapters.firestore_task_claim_store: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check).
+5fe07649  # except-success (1st `except (FailedPrecondition, NotFound)` returning None in file order) mark_done: the handler only logs at INFO and is the function's last statement in a -> None method, so it falls through to the implicit None, the class the driver skips as equivalent (tests/CLAUDE.md); re-check the ordinal when a None-returning handler of that type is added above
+e33f995a  # except-success (2nd `except (FailedPrecondition, NotFound)` returning None in file order) release: same class (INFO log only, last statement, -> None); re-check the ordinal as above
