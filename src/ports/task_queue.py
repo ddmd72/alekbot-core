@@ -8,7 +8,14 @@ from typing import Protocol, Dict, Any, Optional
 
 
 class TaskQueue(Protocol):
-    """Port for enqueueing background tasks."""
+    """Port for enqueueing background tasks.
+
+    Cloud Tasks semantics: at-least-once delivery, no order between tasks. A named create meets ALREADY_EXISTS while a
+    task of that name is queued or running and for about an hour after it ran or was deleted; unnamed creates are never
+    deduplicated. Payloads are JSON: Pydantic models as their dump, datetimes/dates as ISO-8601, enums as their value;
+    any other non-JSON value raises TypeError before a create. A create that fails raises; whether it landed is unknown
+    to the caller (a lost answer), which is what names are for.
+    """
 
     async def enqueue_slack_event(
         self,
@@ -21,19 +28,22 @@ class TaskQueue(Protocol):
     ) -> str:
         """Enqueue a Slack event for background processing. busy_requeues counts re-queues of a busy session.
 
-        task_name: deterministic Cloud Tasks name; ALREADY_EXISTS (task already queued) counts as success."""
+        task_name: deterministic Cloud Tasks name; ALREADY_EXISTS (task already queued) counts as success.
+
+        POST {service_url}/worker, dispatch deadline 1800 s, schedule time now+delay when delay_seconds > 0. With
+        task_name, ALREADY_EXISTS is success and makes no second task. Returns a name for logging (no caller reads it)."""
         ...
 
     async def create_queue_if_not_exists(self) -> None:
-        """Create the queue if missing."""
+        """Create the queue when it does not exist; a second call creates nothing. Startup only. Errors raise."""
         ...
 
     def get_queue_stats(self) -> Dict[str, Any]:
-        """Return queue stats."""
+        """Return queue stats. No caller in src/."""
         ...
 
     async def purge_queue(self) -> None:
-        """Purge all queued tasks."""
+        """Purge all queued tasks. No caller in src/."""
         ...
 
     async def enqueue_agent_task(
@@ -54,6 +64,9 @@ class TaskQueue(Protocol):
                           Set to 1800 for long-running research tasks (Claude deep research).
         dedup_key: names the task, so a second enqueue with the same key (a retried create whose
                    first attempt succeeded) returns the existing task's name instead of a second task.
+                   The key names the task deterministically, namespaced by the task type; a duplicate
+                   returns that task's full name.
+                   Without a key every call makes a task. The dispatch deadline is set only when given.
         """
         ...
 
@@ -63,6 +76,7 @@ class TaskQueue(Protocol):
 
         Returns task name (Cloud Tasks task ID).
         Worker receives payload with task_type="consolidation".
+        Unnamed (a repeat makes a second task); dispatch deadline 1800 s.
         """
         ...
 
@@ -72,6 +86,7 @@ class TaskQueue(Protocol):
 
         Returns task name (Cloud Tasks task ID).
         Worker receives payload with task_type="companion_consolidation".
+        Unnamed; dispatch deadline 600 s.
         """
         ...
 
@@ -99,6 +114,7 @@ class TaskQueue(Protocol):
         delay_seconds: schedule this many seconds in the future (Cloud Tasks schedule_time).
         First enqueue uses delay_seconds=30 (no point polling immediately after kick-off).
         session_id: original conversation session for delivery back to user's thread.
+        Unnamed; no dispatch deadline.
         """
         ...
 
@@ -111,6 +127,7 @@ class TaskQueue(Protocol):
         Worker receives payload with task_type="email_indexing" + job_id.
         One Cloud Tasks request = one Gmail page (~300 emails) = full CPU allocation.
         Worker re-enqueues if job.next_page_token is set after processing.
+        Unnamed; no dispatch deadline.
         """
         ...
 
@@ -141,5 +158,7 @@ class TaskQueue(Protocol):
             queued/running/recently completed. Callers never construct a task name
             themselves. Returns None when the enqueue was a no-op due to such a duplicate.
         Returns task name (Cloud Tasks task ID), or None on a de-duplicated no-op.
+        A dedup key names the task deterministically, namespaced by task_type. The body is
+        {"task_type": task_type, **payload}.
         """
         ...

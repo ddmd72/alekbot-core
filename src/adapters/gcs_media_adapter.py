@@ -26,7 +26,12 @@ def _inject_noindex(data: bytes) -> bytes:
 
 
 class GcsMediaAdapter(MediaStoragePort):
-    """Stores content privately in a GCS bucket, addressable by object key."""
+    """Stores content privately in a GCS bucket, addressable by object key.
+
+    Signed URLs are V4 GET URLs: a credential that signs locally signs them; otherwise (Cloud Run metadata
+    credentials) they are signed through IAM signBlob as the refreshed runtime service account, or the constructor's
+    override. The bucket's lifecycle deletes `email_review/` objects after 5 days and everything else after 30, so a
+    fetch of an older key finds nothing."""
 
     def __init__(self, bucket_name: str, service_account_email: str | None = None) -> None:
         self._bucket_name = bucket_name

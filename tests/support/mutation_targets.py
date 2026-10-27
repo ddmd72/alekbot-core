@@ -181,6 +181,10 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.adapters.firestore_email_job_repo", "tests/unit/adapters/firestore_email_job_repo_equivalent_mutants.txt"),
     MutationTarget("src.adapters.firestore_email_exclusions_adapter", "tests/unit/adapters/firestore_email_exclusions_adapter_equivalent_mutants.txt"),
     MutationTarget("src.adapters.firestore_short_link_repository", "tests/unit/adapters/firestore_short_link_repository_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.gcp_task_queue", "tests/unit/adapters/gcp_task_queue_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.gcs_workspace_adapter", "tests/unit/adapters/gcs_workspace_adapter_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.gcs_file_storage_adapter", "tests/unit/adapters/gcs_file_storage_adapter_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.gcs_media_adapter", "tests/unit/adapters/gcs_media_adapter_equivalent_mutants.txt"),
 )
 
 

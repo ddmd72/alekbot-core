@@ -36,7 +36,11 @@ class _DomainEncoder(json.JSONEncoder):
 
 
 class GcpTaskQueue(TaskQueue):
-    """Adapter for Google Cloud Tasks."""
+    """Adapter for Google Cloud Tasks.
+
+    A dedup key names the task `{task_type}-<sha256(key)[:32]>` (`agent_execution-…` for agent tasks), a valid Cloud
+    Tasks id whatever the key holds. The client is synchronous gRPC: task creates run off the loop
+    (`asyncio.to_thread`); `create_queue_if_not_exists` calls it on the loop, so it is for startup only."""
 
     def __init__(
         self,

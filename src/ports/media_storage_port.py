@@ -31,6 +31,13 @@ class MediaStoragePort(ABC):
         Returns:
             The stored object key (NOT a URL). The service layer turns this into a
             capability link via FileLinkService.
+
+        Uploads privately under `key` and returns `key` (never a URL; a user-facing link is
+        built by FileLinkService or DocumentDeliveryService). text/html gets a robots noindex
+        meta right after the first case-insensitive `<head>` without attributes.
+        Idempotency: an existing key is overwritten (last write wins); callers make keys unique.
+        Tenancy: none here; the `<prefix>/<user_id>/` key segment is the caller's ownership mark.
+        Errors: storage errors propagate.
         """
 
     @abstractmethod
@@ -46,6 +53,9 @@ class MediaStoragePort(ABC):
 
         Returns:
             Raw object bytes.
+
+        Errors: FileNotFoundError when the key does not exist (delivered objects expire)
+        (P11-G4-4: today the SDK's NotFound leaks); other storage errors propagate.
         """
 
     @abstractmethod
@@ -66,4 +76,8 @@ class MediaStoragePort(ABC):
 
         Returns:
             Time-limited HTTPS URL to the object.
+
+        A time-limited GET URL, valid `ttl_seconds`, signed as the runtime identity. Does not
+        check that the object exists.
+        Errors: RuntimeError when the signer's email is unknown.
         """

@@ -52,6 +52,9 @@ def _new_id() -> str:
 
 
 class GcsWorkspaceAdapter(WorkspaceStorePort):
+    """A put stamps `customTime` under scratch/ (the bucket's 7-day lifecycle rule counts from it). A delete is two
+    requests: a metadata patch of the live version, then a delete of the live object through a fresh blob, both under
+    `if_generation_match` (a generation-addressed delete would erase the version)."""
 
     def __init__(self, bucket_name: str, client: Optional[Any] = None, new_id: Callable[[], str] = _new_id) -> None:
         self._bucket_name = bucket_name
