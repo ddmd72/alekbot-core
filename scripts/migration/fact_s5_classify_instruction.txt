@@ -10,9 +10,9 @@ classify_stored_facts {
         "A decision that is already due is a correct answer: the system then hands that fact to the memory review, which decides what it is now."
     ]
 
-    unsure: "When you are not sure which answer fits, or the content gives no date you can rely on, answer {kind: none} with unsure: true. Never invent a date the content does not state or clearly imply."
+    unsure: "When you are not sure which answer fits, or a date answer would need a date the content does not state or clearly imply, answer {kind: none} with unsure: true. A horizon needs no date in the content: it counts from reported_date. Never invent a date the content does not state or clearly imply."
 
-    fields: "Each fact has a number n, its text, domain, temporal_class, tags, metadata, context, reported_date and created_at (local days in the owner's timezone). Dates in the text, tags and metadata are content."
+    fields: "Each fact has a number n, its text, domain, temporal_class, tags, metadata, context, reported_date and created_at (local days in the owner's timezone). Dates in the text, tags and metadata are content. A fact whose reported_date is null cannot take a horizon."
 
     answer: "Exactly one decision per fact, by its number n: kind (date, horizon or none); date (YYYY-MM-DD, with kind date only: the last day the fact holds); days (a whole number from 1 to 36500, with kind horizon only); unsure (true or false); reason (one short line in English: the kinds_table row that applies and the words of the fact that decide it)."
 }

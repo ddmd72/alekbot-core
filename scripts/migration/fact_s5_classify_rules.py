@@ -22,6 +22,7 @@ from src.domain.fact_lifecycle import (
     require_in_place,
     with_event,
 )
+from src.domain.fact_write_context import as_utc
 from src.domain.local_time import local_day, local_moment, local_stamp
 
 BATCH_SIZE: Final[int] = 25
@@ -112,15 +113,9 @@ class ScannedFact:
     expiry_kind: Optional[str]         # the stored raw value
 
 
-def _aware(value: Any) -> Optional[datetime]:
-    """An aware UTC datetime for a datetime (naive means UTC); anything else, an ISO string included, is None."""
-    if not isinstance(value, datetime):
-        return None
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
-
-
 def _lowered(value: Any) -> Optional[str]:
-    """The rule of `normalize_fact_taxonomy`: a string value is lowercased before the enum parse."""
+    """A string `domain` or `type` lowercased before the enum parse, so a stored `AGENT_DIRECTIVE` still reads as pinned.
+    More facts read as pinned than under the live parse, which is the safe direction (pinned means `none`)."""
     return value.lower() if isinstance(value, str) else None
 
 
@@ -132,6 +127,8 @@ def scanned_fact(doc_id: str, data: Mapping[str, Any], update_time: Any) -> Scan
     expiry_kind = data.get("expiry_kind")
     text = data.get("text")
     account = data.get("account_id")
+    reported = data.get("reported_date")
+    created = data.get("created_at")
     return ScannedFact(
         fact_id=doc_id,
         account_id=account if isinstance(account, str) else "",
@@ -143,8 +140,8 @@ def scanned_fact(doc_id: str, data: Mapping[str, Any], update_time: Any) -> Scan
         temporal_class=temporal if isinstance(temporal, str) else None,
         metadata=metadata if isinstance(metadata, dict) else {},
         context=context if isinstance(context, str) else None,
-        reported_date=_aware(data.get("reported_date")),
-        created_at=_aware(data.get("created_at")),
+        reported_date=as_utc(reported) if isinstance(reported, datetime) else None,
+        created_at=as_utc(created) if isinstance(created, datetime) else None,
         expiry_kind=expiry_kind,
     )
 

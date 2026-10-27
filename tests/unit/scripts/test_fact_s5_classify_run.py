@@ -244,6 +244,17 @@ async def test_unsure_is_none_and_the_report_says_what_the_model_said(tmp_path):
     assert "unsure (model said date)" in row and "no real date" in row
 
 
+async def test_unsure_on_a_horizon_type_fact_is_flagged_and_none(tmp_path):
+    db = await standard_db()
+    table = {**ANSWERS, PIPE: {"kind": "horizon", "days": 30, "unsure": True, "reason": "not sure it is still active"}}
+    await run(db, scripted(table), tmp_path)
+    entry = by_fact(plan_of(tmp_path))["f-pipe"]
+    assert entry["source"] == "unsure" and entry["fields"] == {"expiry_kind": "none", "ttl_days": None, "expires_at": None}
+    report = (tmp_path / "fact_s5_classify_20261027T120000Z_report.md").read_text(encoding="utf-8")
+    row = next(line for line in report.split("\n") if PIPE in line)
+    assert "| none |" in row and "unsure (model said horizon)" in row
+
+
 async def test_an_iso_string_reported_date_cannot_carry_a_horizon_and_a_directive_is_never_sent(tmp_path):
     db = EvalDb()
     await seed(db, [raw("f-str", PIPE, reported_date="2026-10-01T09:30:00Z"), raw("f-dir", RULE, domain="AGENT_DIRECTIVE")])
