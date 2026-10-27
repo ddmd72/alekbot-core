@@ -5,7 +5,8 @@ comparison) are read from the environment or the repository's dotenv file inside
 guard that fails says which rule broke, not the values. Without `RUN_CLOUD_TESTS=1` (set by `make test-cloud`), or with any setting missing, every test here skips.
 
 Guards, before any write: no emulator in the environment; the database name ends in `-test` and is not the live
-database; the credentials are impersonated credentials of the test service account (which holds datastore.user and
+database; the credentials are those of the test service account (impersonated from the default credentials, or, under Workload
+Identity Federation in CI, the default credentials themselves; the email is checked on both paths), which holds datastore.user and
 datastore.indexAdmin on the test database only); the constructed client's database and project are the configured ones.
 """
 import os
@@ -23,6 +24,7 @@ from google.auth import impersonated_credentials
 from google.cloud import firestore, firestore_admin_v1
 
 from src.config.environment import EnvironmentConfig
+from tests.support.cloud_credentials import select_credentials
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
@@ -55,9 +57,10 @@ def cloud() -> SimpleNamespace:
     if database == live:
         pytest.fail("guard: the test database is the live database")
     source, _ = google.auth.default(scopes=SCOPES)
-    credentials = impersonated_credentials.Credentials(
-        source_credentials=source, target_principal=sa, target_scopes=SCOPES, lifetime=3600)
-    if credentials.service_account_email != sa:
+    try:
+        credentials = select_credentials(source, sa, lambda src: impersonated_credentials.Credentials(
+            source_credentials=src, target_principal=sa, target_scopes=SCOPES, lifetime=3600))
+    except PermissionError:
         pytest.fail("guard: the credentials are not those of the test service account")
     return SimpleNamespace(database=database, project=project, credentials=credentials)
 

@@ -1,0 +1,70 @@
+name: Firestore parity
+
+# Fake-vs-real Firestore scenarios (make test-cloud): real writes to the TEST database only.
+# The verdict lives in the `parity` artifact and the step summary; the job is red only when the run itself
+# could not happen (auth, install, upload), never because a scenario failed. Runs on main (WIF is bound to it).
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: parity
+  cancel-in-progress: false
+
+jobs:
+  parity:
+    name: parity scenarios against the test database
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.TEST_WIF_PROVIDER }}
+          service_account: ${{ secrets.TEST_SA_EMAIL }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: make test-cloud
+        # A failed scenario must not turn the workflow red (it would email the owner): the verdict is the artifact.
+        continue-on-error: true
+        env:
+          TEST_FIRESTORE_DATABASE: ${{ secrets.TEST_FIRESTORE_DATABASE }}
+          TEST_SA_EMAIL: ${{ secrets.TEST_SA_EMAIL }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+          PYTEST_ADDOPTS: --junitxml=parity.xml -rA
+        run: |
+          set -o pipefail
+          make test-cloud 2>&1 | tee parity.log
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity
+          path: |
+            parity.xml
+            parity.log
+          if-no-files-found: warn
+
+      - name: Step summary
+        if: always()
+        run: |
+          {
+            echo "### Firestore parity"
+            echo '```'
+            if [ -f parity.log ]; then grep -E "passed|failed|error|skipped" parity.log | tail -20; else echo "no parity.log: the run did not start"; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
