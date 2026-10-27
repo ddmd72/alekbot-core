@@ -27,7 +27,7 @@ class _ModelOnlyDryRun(FactManagementPort):
 
 
 class _BothDryRun(_ModelOnlyDryRun, FactUpdatePort):
-    async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None, history=None):
+    async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None, history=None, expected_id=None):
         return {"status": "updated"}
 
 

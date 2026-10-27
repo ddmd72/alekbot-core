@@ -23,6 +23,7 @@ class UpdateCall:
     evidence_at: Optional[datetime]
     reason: Optional[str]
     history: Optional[str]
+    expected_id: Optional[str] = None
 
 
 class RecordingFactUpdates(FactUpdatePort):
@@ -50,8 +51,9 @@ class RecordingFactUpdates(FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
+        expected_id: Optional[str] = None,
     ) -> FactUpdateOutcome:
-        self.calls.append(UpdateCall(fact_id, update, account_id, context, evidence_at, reason, history))
+        self.calls.append(UpdateCall(fact_id, update, account_id, context, evidence_at, reason, history, expected_id))
         scripted = self._script.popleft() if self._script else None
         if isinstance(scripted, BaseException):
             raise scripted
@@ -59,4 +61,5 @@ class RecordingFactUpdates(FactUpdatePort):
             return scripted
         return await self._real.apply_fact_update(
             fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history,
+            expected_id=expected_id,
         )
