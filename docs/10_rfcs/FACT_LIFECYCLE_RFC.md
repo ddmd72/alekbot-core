@@ -1,6 +1,6 @@
 # RFC: Fact lifecycle — expiry decided by content, a daily janitor, a periodic review pass, owner questions, real versions
 
-**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2, S3 and S4 were deployed 2026-10-27** (the real versions and lease, expiry decided from content, the review, owner questions and digest are on; the janitor is log-only; see "S2 as built", "S3 as built", "S4 as built" in §9); **S5's classify script is built, not run** (see "S5 as built" in §9); the janitor stays log-only until the owner's word.
+**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2, S3 and S4 were deployed 2026-10-27** (the real versions and lease, expiry decided from content, the review, owner questions and digest are on; the janitor is log-only; see "S2 as built", "S3 as built", "S4 as built" in §9); **S5's classify script is built, not run** (see "S5 as built" in §9); the janitor stays log-only until the owner's word. **P2 revised by the owner (2026-10-27):** a fact whose date has passed is no longer archived without a question; what happened, and what was only intended, becomes history, and archive is kept for noise and what was never true. The review change this needs is not built; the janitor is not switched on before it ships.
 Rev 1 had owner decisions Q1–Q4; two adversarial reviews (code paths; rollout and steady state) and a binding
 arbitration produced this revision. Slice S1 (§9) is merged and deployed; S2–S4 are deployed (2026-10-27) with the janitor log-only; S5's classify is built and not yet run, and switching the janitor on is a later, separate step.
 **Supersedes, once accepted:** `DELIBERATE_FACT_MANAGEMENT_RFC.md` §2.2 axis 2 "Lifecycle Transitions", §4.4 (default
@@ -1048,6 +1048,9 @@ janitor is still log-only.
   or a window. `reported_date`, `state`, text and vectors stay untouched, and so does `last_updated` (§7.3 says "only"; the
   field has no reader in `src/`). Directives, principles and `mindset` facts get `none` by code, with no model call. No lease:
   a precondition per document, as the janitor and the Cabinet write.
+- *A date already past when stated.* A `date` answer before the local day of the fact's `reported_date` becomes `none` in
+  code, source `past_at_report`: the fact recorded something already over when it was said (the taxonomy's "past event →
+  none"), not a plan. The instruction says so too; the first dry run had 4 such answers among 45 dates.
 - *Unsure → none.* A decision flagged `unsure` becomes `none` in code, whatever kind was sent. An answer that is missing, repeated or
   refused by the parser is asked again once for those facts only; still unusable it becomes `none` with a code
   (`missing`, `invalid_expiry`, `no_reported_date`). Every such decision shows in the report's flag column and in the summary.
