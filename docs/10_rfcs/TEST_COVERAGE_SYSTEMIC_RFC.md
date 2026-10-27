@@ -271,7 +271,7 @@ table** and an **exemption list** (older RFCs citing since-renamed paths). Draft
      fixture asserts `credentials.service_account_email` equals the test SA before any write. Without this, local runs
      use the owner's project-wide rights and the condition protects nothing.
    - **CI uses Workload Identity Federation**, limited to `refs/heads/main` of this repository; pool, provider and SA
-     names live in GitHub variables. CI has no GCP auth today (`.github/workflows/ci.yml:33`).
+     names live in GitHub repository secrets (`TEST_WIF_PROVIDER`, `TEST_SA_EMAIL`, `TEST_FIRESTORE_DATABASE`, `GOOGLE_CLOUD_PROJECT`). CI has no GCP auth today (`.github/workflows/ci.yml:33`).
 4. **Guards check the constructed client** (its database and project), not env vars.
 5. **Cloud fixtures build repositories directly from an `EnvironmentConfig`**, never through composition or
    `load_settings()`. Under `APP_ENV=test`, `is_development` is False, so queue names switch to the `-prod` suffix
@@ -465,7 +465,8 @@ when the process dies, and the hook covers make, direct `pytest` calls and subag
 **CI.** The PR job switches from `make check` to **`make ci`** (= `make check` + slow tests + the coverage gate),
 ≤ ~10 min; the repo is public, so GitHub-hosted runners cost nothing and sharding is available. After a merge to
 `main`: the cloud gate, timing tests, the skip-ledger job (P22). Weekly: spec drift, mutation metric. Monthly: contract
-review. Manual: probes.
+review. Manual: probes. Docs-only PRs skip `make ci` (F3, `scripts/ci/docs_only.py`); the weekly cloud jobs are the
+`Mutation survivors` and `Firestore parity` workflows (artifacts, no Slack; see "Rules revised").
 
 **Built (P1, 2026-10-22).** `make test-affected` (one `pytest --testmon` run, `.testmondata` seeded into a new worktree),
 `make ci`, the `slow` marker and the `fcntl` suite lock (`tests/plugins/suite_lock.py`, `tests/conftest.py`, `Makefile`,
@@ -526,18 +527,18 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P9 | **Wiring and reachability**: every `task_type` in the scheduler scripts and every enqueue call site dispatches through `WorkerHandler.handle` to a non-501 handler under a production-shaped container built with fakes; every handler is reachable or allowlisted as manual-only with a reason; every Optional handler dependency is non-None in the production wiring; an unknown `task_type` is refused | check | 1 | dead features, missing triggers, §1.4 items 8–10 | 1 |
 | P10 | **Prompt stores**: `firestore_prompt_repository`, `prompt_v3/*` on H1 + kits; 4-level resolution (USER > ACCOUNT > AGENT > SYSTEM) semantics | check | 1.5–2 | a wrong prompt for every agent | 2 |
 | P11 | **Every other stateful store, by inventory** (H2 meta-test), ordered by risk: voice tickets / ephemeral store, dedup, notes delivery stamp, quota, long turns first; then indexed email, session store, consolidation and companion queues, user, account, task search index, channel binding, skills, memory-fact drafts, companion memory, email job and exclusions, GCS stores, `gcp_task_queue` | check | 5–7 | ordering, projections, missing fields, tenancy, atomicity in stores that look covered | 2 |
-| P12 | **Cloud gate, full** (§4): lease, render step, explicit-database scripts, missing index definitions, GCS bucket, paused queue, WIF for the post-merge job; every H2 kit against the real adapters; precondition tests | cloud | 2–3 | fake ≠ Firestore across all kits | 2 |
+| P12 | **Cloud gate, full** (§4): lease, render step, explicit-database scripts, missing index definitions, GCS bucket, paused queue, WIF for the post-merge job; every H2 kit against the real adapters; precondition tests | cloud | 2–3 | fake ≠ Firestore across all kits | 2 (revised 2026-10-27: lease document and render gate dropped; see "Rules revised") |
 | P13 | **Service seams**: handler-level tests that run the **real** `UserNotificationService`, `TaskDispatchService`, `AgentCoordinator`, `SearchEnrichmentService` and `PromptBuilder` over H1 and port fakes for each entry path (worker task types, `ConversationHandler`, `AgentWorkerHandler`), asserting the observable outcome (which channel, which history entry); mutation operator: drop one forwarded kwarg | check | 2 | parameter coupling between services (§1.4 item 6) | 2 |
 | P14 | **Scripted-LLM end to end** for every agent that writes state through tools (Consolidation, Notes, Tasks, Smart's local tools `propose_memory_facts` / `draft_skill` / `workspace`, FileManagement drive mutations): a scripted tool call that uses every declared field, asserted on the final store state; a generic check that every declared tool field changes stored state or is refused — nothing accepted and dropped. **P9 hand-over:** the two deep-research rows of the boot test's `MATRIX` (`deep_research_failed`, `deep_research_webhook_event`, 500 until the formatter's prompt blueprint is seeded) must become 200 here; the other three belong to P15 (list in the "Built (P9)" note). | check | 1.5 | tools that report success after dropping input (§1.3.5) | 2 |
 | P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 |
 | P16 | **Clock suite**: a pinned clock and a table of instants (both 2026 DST transitions in Europe/Madrid, Europe/Kyiv, America/New_York; month end; UTC midnight) through every function that matches an hour or a day boundary (daily review, billing rotation, drive monthly budgets, reminder `due`, Cabinet 24h cap, scratch 7-day TTL) | check | 0.5 | §1.4 item 7 and its class | 2 |
-| P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 |
+| P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 (revised 2026-10-27: only with a regeneration command per recorded fixture; see "Rules revised") |
 | P18 | **Reality checks** (§4a): spec-drift workflow, `provider-contract-review` skill + monthly routine, `make contract-probe` for the sandboxed providers | sched | 2–3 + owner sandbox setup | contracts that disagree with reality | 3 |
 | P19 | **Web surfaces, the rest**: `oauth_app`, `user_cabinet_app` route-level tests through the Quart test client on H1 stores — connect flows (with Google token mocks), session cap, every Cabinet write route | check | 1.5–2 | data-exposure bugs beyond the gates of P7 | 3 |
 | P20 | **Field registry and spec drift**: H5 for facts (AST); H6 with the normalisation table; one Firestore database default (§1.4 item 13) and a lint test requiring `database=` in scripts | check | 1.5–2.5 | write-only fields, spec drift, wrong database | 3 |
 | P21 | **Data audit**: a pure checker per entity (invariants from the H2 inventory), unit-tested in `make check`; the owner runs it read-only against live data; output to `scripts/memory/` | check + owner | 1 | data-class defects like B9 | 3 |
 | P22 | **Infrastructure in git**: a skip ledger (a meta-test lists every `skipif`; CI reports which ran) and a post-merge job that runs `npm ci` + the real-node DOCX and PDF render and builds `Dockerfile.sandbox`; a TTL list in git (every model writing `expires_at` appears in it) and the runbook generated from it; a Secret Manager fallback suite (`src/config/settings.py` `get_secret` / `load_settings`) | check / post-merge | 1.5 | tests that run in no gate; TTL and secret drift | 3 |
-| P23 | **Mutation metric**: `mutmut` on the store modules, weekly or owner-run; survivors are a backlog | sched | 0.5 | suites that verify nothing, as a trend | 3 |
+| P23 | **Mutation metric**: `mutmut` on the store modules, weekly or owner-run; survivors are a backlog | sched | 0.5 | suites that verify nothing, as a trend | 3 (revised 2026-10-27: dropped, the weekly semantic run is the metric; see "Rules revised") |
 | P24 | **`tests/integration/` split**: `tests/integration/offline/` (mocked, scripted; may join `make check` if fast) and `tests/cloud/` (§4); the two cloud-writing tests move under the guards or go to a reviewer for retirement | check / cloud | 0.5 | live-data pollution by tests | 3 |
 
 **Built (P2, 2026-10-22).** H3 (`tests/unit/conftest.py` + `tests/support/network_guard.py`; the offline G2 run gets the same guard
@@ -731,6 +732,44 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
     rows** (the LLM formatter), **P15 owns the other three** (the redelivery payloads: seed the To Do credentials and an indexing job).
 - **Left for "tidy main.py":** the voice closures; `/worker`, `/health` and `/favicon` as a blueprint (then `test_main_worker_route_gate.py` retires);
   the MCP dispatcher; the `slack_adapter.start` patch; the dead Socket-mode branch; the duplicate `/health`; the main.py allowlist entries.
+
+**Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
+deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years
+without his attention. Everything that can run in the cloud runs in the cloud; nothing reports to Slack; artifacts are read by a
+scheduled routine that fixes survivors by PR.
+- **F1 `.github/workflows/mutation.yml`** (`Mutation survivors`): Sunday 02:00 UTC and `workflow_dispatch` (optional input `module`);
+  one job per module registered in `tests/support/mutation_targets.py` (`MutationTarget(module, tests, equivalent, operators)`, `TARGETS`;
+  CLI `python -m tests.support.mutation_targets --matrix | --summarize DIR --out-md --out-json`). The driver gained `--report PATH` (JSON)
+  and `--no-fail`. Artifacts `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`), also in the step summary.
+  Never red because mutants survived. Registering a package's modules in `TARGETS` is part of "package done"; a unit test fails when a
+  `*_equivalent_mutants.txt` file has no registered target. The local done-check (the table in `tests/CLAUDE.md`) stays, once per package.
+- **F2** `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` rewrites `tests/unit/main_boots_offline_url_map.txt`
+  from the booted app (header kept, sorted); the diff in the PR is the review. Without the variable nothing is written.
+- **F3** Docs-only PRs skip `make ci`. `scripts/ci/docs_only.py` is the one definition of "docs": `docs/**`, root `*.md`,
+  `tests/CLAUDE.md`, `src/**/CLAUDE.md`, `.github/**/*.md`; not `src/**/SKILL.md`, `tests/fixtures/**`, `scripts/**`, any non-markdown
+  file. The `check` job keeps its name and prints a notice instead; a docs-only PR still runs the doc-reading tests listed in `DOC_READING_TESTS`.
+- **F4 `.github/workflows/parity.yml`** (`Firestore parity`): Sunday 03:00 UTC and `workflow_dispatch`; authenticates through Workload
+  Identity Federation as the test service account (`tests/cloud/conftest.py` accepts default credentials that already identify as that
+  account, otherwise impersonates as before; every guard unchanged); runs `make test-cloud`; artifact `parity` (`parity.xml`,
+  `parity.log`; the three secret values are replaced before upload). Never red because a scenario failed, but red when a secret is empty or zero tests ran.
+- **F6 (outside the repo)** the Monday routine, a scheduled cloud Claude session: downloads the latest `survivors` and `parity`
+  artifacts, writes the killing assertion or proposes an `equivalent` line per survivor, opens a test-only PR. KPI: open survivors by
+  the next Monday = 0, `error` statuses = 0, growth of equivalents watched. It escalates to the owner only a survivor older than two
+  weeks, in one line with a recommendation.
+- **R7** Mechanical adaptations of existing tests after a rename, a signature or constructor-argument change, or an import move go in
+  their own commit titled `test(mechanical): ...`. The reviewer reads that commit as a whole and checks one thing: no assertion changed
+  (added, removed or loosened). Behavioural edits stay per test under the reviewer rule.
+- **R8** In `wiring_instance_ledger.txt` a line with count 1 is a registration and is the implementer's to add; counts above 1 and every
+  line of `wiring_none_ledger.txt` remain the reviewer's decision. Both ledgers still fail both ways.
+- **R9** A per-layer coverage floor (`scripts/check_coverage_layers.py` `FLOORS`) may be lowered in the same PR that needs it, with a
+  one-line reason comment next to the value and the reviewer's OK; the owner reads it in the diff. Floors never drift down silently.
+- **Drops and conditions.** P23 (weekly `mutmut`) is dropped: the weekly semantic run is the mutation metric. P12 keeps its remaining
+  content but drops the lease document (one weekly run under a `concurrency` group) and the render step as a gate. P17 is accepted only
+  with a regeneration command per recorded fixture (`make contract-record PROVIDER=...`), never hand-edited fixtures. A local pre-push
+  hook for `slow` tests was considered and dropped (CI is the gate).
+- **Rejected.** Deferring packages to "when the store is next touched" (the owner will not interrupt feature work later); survivor
+  reports to Slack (nobody triages daily); a mutation run on every merge to `main` (composition modules change in almost every feature
+  PR, 1-5 h each; reconsider if survivors accumulate between weekly runs). Record: `decisions/test_gates_friction.md`.
 
 **Totals.** Tranche 1 (P1–P9) ≈ 12–16 days; tranche 2 (P10–P17) ≈ 24–33; tranche 3 (P18–P24) ≈ 9–11. **Whole plan
 ≈ 45–59 days.**

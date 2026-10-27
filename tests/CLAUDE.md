@@ -15,6 +15,9 @@ This table is the one place that says which test command to run when. Other docs
 | Wiring done-check (P9) | `python -m tests.support.semantic_mutants --module <src.composition.X or main> --operators wiring --equivalent tests/unit/composition/wiring_equivalent_mutants.txt --tests <the P9 test files>` | the command is spelled out in "The production graph" below; about 9-10 s per mutant |
 | Only when the task needs them | `make test-integration`, `make test-e2e-all` | some integration tests and all e2e tests call real services |
 | Fake against the real thing (P5) | `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pytest tests/unit/support/test_firestore_parity.py`, and `make test-cloud` | the parity scenarios on the Firestore emulator, and on the test database (see below) |
+| Docs-only PR | (automatic) | `make ci` is skipped (F3), but the doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`) still run; a meta-test fails when a unit test reads `docs/` or walks `*.md` without being listed |
+| Weekly cloud runs (nothing to do by hand) | `Mutation survivors` (`mutation.yml`) and `Firestore parity` (`parity.yml`), Sunday; after a package: `gh workflow run mutation.yml -f module=<module>` | artifacts `survivors` and `parity`, read by the Monday routine, which fixes survivors by PR; never red for a survivor or a failed scenario, never Slack |
+| Re-pin the URL map | `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` | single file, no `-n`; rewrites `main_boots_offline_url_map.txt` from the booted app; the diff is the review |
 | Wall-clock tests | `make test-timing`, by hand (CI runs it after a merge to `main`) | `timing` tests only |
 
 Never: re-run a suite because a `timing` test failed; combine `--testmon` with `--cov`; run two full suites at once
@@ -28,7 +31,7 @@ tests/
   integration/    — mocked or scripted services; the offline G2 end-to-end test runs in `make check`
   support/        — shared fakes (fact_store.py, firestore_eval.py), network_guard.py, plugin_runs.py, semantic_mutants/
   contracts/      — adapter contract rules (adapter_contracts.py)
-  cloud/          — the cloud gate: real writes to the Firestore test database (`make test-cloud`); never in check or ci
+  cloud/          — the cloud gate: real writes to the Firestore test database (`make test-cloud`); never in check or ci, weekly in the cloud (`Firestore parity`)
 ```
 
 ## The convention
@@ -90,7 +93,10 @@ query for a missing index, so those scenarios skip), and the test database in `t
 is the arbiter. A new kit that leans on a Firestore behaviour H1 has not been checked for adds a scenario here first. The cloud
 run (switched on by `RUN_CLOUD_TESTS=1`, which `make test-cloud` sets; a bare pytest skips it) reads `TEST_FIRESTORE_DATABASE`, `TEST_SA_EMAIL` and `GOOGLE_CLOUD_PROJECT` from the environment or the repo's dotenv file,
 refuses to start unless the database ends in `-test`, is not the live one and the client uses the test service account's
-impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; a run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run). One runner at a time (the lease comes with P12).
+impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; a run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run). The weekly `Firestore parity` workflow (`.github/workflows/parity.yml`, Sunday 03:00 UTC and `workflow_dispatch`) authenticates through Workload
+Identity Federation as the test service account and runs `make test-cloud` (artifact `parity`: `parity.xml`, `parity.log`; never red for a failed scenario).
+`tests/cloud/conftest.py` accepts default credentials that already identify as the test service account, otherwise it impersonates as before; every guard
+is unchanged. The parity artifact is redacted (the three secret values are replaced before upload); the job fails when a secret is empty or zero tests ran. The Sunday 03:00 UTC run can collide with a manual `make test-cloud` (no lease yet): do not run it by hand at that time. One runner at a time: the workflow runs under a `concurrency` group (no lease document).
 
 Extending the fake with a new Firestore feature = a new scenario in `tests/support/firestore_parity.py`, run on the emulator and with `make test-cloud`; an adapter that starts using a feature the fake lacks fails loudly (unsupported operator / no such method) — extend the fake then, never work around it in the test.
 
@@ -99,7 +105,7 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
 - `.coveragerc` has `branch = True` and measures `src/` plus the root `*_main.py`; `make ci` fails under the global
   `--cov-fail-under`, the per-file table (`scripts/check_coverage_thresholds.py`) and the **per-layer floors**
   (`scripts/check_coverage_layers.py`, branch-aware percent per layer). Floors only rise: raise a floor only to min(local `make ci`, the CI 'Coverage per layer' notice) − 0.3. The script
-  prints "floor can rise to X" when that would be 0.5 above the floor; raise it in the same change. Never lower one without the owner's per-layer OK.
+  prints "floor can rise to X" when that would be 0.5 above the floor; raise it in the same change. A floor may be lowered in the same PR that needs it, with a one-line reason comment next to the value and the reviewer's OK; the owner reads it in the diff (R9).
 - The per-file table holds the auth files (verifiers, sign-in, MCP authorization, the gated webhooks and routes) at 100 % lines (P7):
   a refusal line no test runs fails `make ci`.
 - `tests/unit/web/test_every_route_refuses_anonymous.py` probes every route of every deployed blueprint with an anonymous request: a new
@@ -131,8 +137,10 @@ The main service's non-web objects are built by `build_application_graph(config,
 - **The ledgers** (`tests/unit/composition/wiring_none_ledger.txt`, `wiring_instance_ledger.txt`; checks in `tests/support/wiring_ledger.py`):
   every `None` the walk finds and every instance count is listed with a reason; both fail **both ways** (an unlisted `None` or count,
   and a listed line whose `None` or count is gone). The reason is one of `off-in-prod`, `optional-knob`, `lazy`, `runtime`,
-  `by-design`, `defect:<id>`, followed by evidence of at least two words. Adding a line is a decision for the reviewer, not a way to make a
-  test pass; a `defect:` line is a wiring fault someone owns. Line forms:
+  `by-design`, `defect:<id>`, followed by evidence of at least two words. A count-1 line of `wiring_instance_ledger.txt` is a registration and
+  is the implementer's to add; counts above 1 and every line of `wiring_none_ledger.txt` are the reviewer's decision, not a way to make a
+  test pass. A `defect:` line is a wiring fault someone owns. `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py`
+  rewrites `main_boots_offline_url_map.txt` from the booted app (header kept, sorted); without the variable nothing is written. Line forms:
   - `wiring_none_ledger.txt`: `<key>  # <reason> <evidence>`, the key a path from `app` (exact), `Class.attr` (None on every walked
     instance of the class) or `Class.attr*` (any instance may be None; refused on adapter, service, handler and composition classes);
   - `wiring_instance_ledger.txt`: `<module.Class> <count>  # <reason> <evidence>`; a count above 1 names where each instance is built.
@@ -172,6 +180,14 @@ children (`RUN_SLOW_TESTS=1`).
 A survivor means the tests do not notice that defect: write the assertion that does. `--equivalent` takes
 `key  # reason` lines (the 8-hex key in the report) and is the reviewer's tool, never the implementer's.
 
+Registering a package's modules in `tests/support/mutation_targets.py` (`MutationTarget(module, tests, equivalent, operators)` in `TARGETS`)
+is part of "package done"; a unit test fails when a `*_equivalent_mutants.txt` file has no registered target. The driver takes
+`--report PATH` (JSON) and `--no-fail` (exit 0 whatever survived). The `Mutation survivors` workflow (`.github/workflows/mutation.yml`,
+Sunday 02:00 UTC and `workflow_dispatch` with an optional `module`) runs one job per registered module with `--report --no-fail` and
+uploads `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`). Survivors are read by the Monday routine (a
+scheduled cloud session), which writes the killing assertion or proposes an `equivalent` line, as a test-only PR. The local run above
+stays as the done-check, once per package.
+
 ## Markers and the machine lock (P1, `tests/plugins/`)
 
 - **`@pytest.mark.slow`** — the test takes over 0.5 s with coverage on (setup + call + teardown). Skipped unless
@@ -196,3 +212,7 @@ A survivor means the tests do not notice that defect: write the assertion that d
 The one who writes the code never edits an existing test to make it pass; a reviewer decides each edit
 (root `CLAUDE.md` -> "Tests - REVIEWER RULE"). A failing test is the specification speaking. The network guard may fail
 existing tests: record test id, exception and what it connects to, and hand the list to a reviewer.
+
+Mechanical adaptations (R7): a rename, a signature or constructor-argument change, or an import move that breaks existing tests goes in
+its own commit titled `test(mechanical): ...`. The reviewer reads that commit as a whole and checks one thing: no assertion changed
+(added, removed or loosened). Behavioural edits stay per test under the reviewer rule.
