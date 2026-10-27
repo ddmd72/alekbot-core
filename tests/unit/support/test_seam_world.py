@@ -140,3 +140,4 @@ async def test_requests_decode_a_named_delayed_task(world):
     assert request.scheduled is True
     assert request.deadline_s is None
     assert request.body == {"task_type": "fire_due_reminders"}
+    assert world.requests("execute_reminder") == []   # the task_type filter (every other card filters by it)

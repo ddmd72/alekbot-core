@@ -15,7 +15,9 @@ repository (`UserDirectory`) and the agent factory (`SeamFactory`).
 Declared wiring deltas from production: the coordinator gets no `file_ref_resolver`, `alert_sink` or `agent_factory`
 (the stand-ins are registered up front); `AgentWorkerHandler` gets no `short_link_service` and no
 `deep_research_drive_copy`; `WorkerHandler` gets only the keywords `SeamWorld.__init__` passes (plus the caller's
-`worker_overrides`); the platform channel factory, the media ports and the Cloud Tasks SDK client are recording fakes.
+`worker_overrides`); the platform channel factory, the media ports and the Cloud Tasks SDK client are recording fakes;
+the session store has no overflow/threshold callbacks and a 50/30 window (live: 70/50); the queue has no OIDC account;
+`chat_handler` passes no file service, consolidation queue, fallback, long-turn, skill or memory-fact service (`**kw`).
 
 A stand-in that runs out of scripted steps records the message in `unscripted` and raises `RuntimeError`, which the
 coordinator turns into `AgentResponse.failure` (`agent_coordinator.py:194-210`): a test that goes through a service sees
