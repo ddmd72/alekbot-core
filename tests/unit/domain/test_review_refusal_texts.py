@@ -128,7 +128,9 @@ def test_a_review_actor_never_gets_the_discard_text(actor, fields):
 
 
 def test_the_review_and_the_owner_read_the_review_wording():
-    assert {a for a in PassActor if a.refusal_wording is RefusalWording.REVIEW} == {PassActor.REVIEW, PassActor.OWNER}
+    assert {a for a in PassActor if a.refusal_wording is RefusalWording.REVIEW} == {
+        PassActor.REVIEW, PassActor.OWNER, PassActor.TIMEOUT,  # P2 revised: TIMEOUT takes the owner's row
+    }
 
 
 def test_the_review_note():

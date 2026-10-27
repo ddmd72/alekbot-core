@@ -717,3 +717,14 @@ def test_a_past_at_report_entry_survives_the_plan_and_the_apply_checks():
     mine = lifecycle_event(NOW, FactState.CURRENT, FactState.CURRENT, "migration", trail_reason(entry.source, entry.code))
     assert already_applied(entry, stored_fact(entry, [mine]))
     assert summary([decision], {"f1": planned_fields(decision, fact, BERLIN)}, [], [], NOW)["by_source"]["past_at_report"] == 1
+
+
+def test_read_plan_reads_a_closed_state_and_refuses_an_unknown_one():
+    doc = mutated()
+    doc["decisions"][0]["state"] = "archived"
+    assert read_plan(doc, "facts")[0].state == "archived"
+    del doc["decisions"][0]["state"]
+    assert read_plan(doc, "facts")[0].state == "current"     # a plan written before the field existed
+    doc["decisions"][0]["state"] = "superseded"
+    with pytest.raises(PlanFileError, match="plan entry 0.*state"):
+        read_plan(doc, "facts")

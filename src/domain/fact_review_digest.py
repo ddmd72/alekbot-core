@@ -2,9 +2,11 @@
 when, how many, and the message it is made into. Pure: the service reads the closed facts, claims the week, sends and marks;
 whether the digest is due (`digest_due`) and the week's key (`iso_week_of`) are in `fact_review_rules`.
 
-It lists removals only: a fact that is `archived` or `invalidated` whose last trail entry is the review's, a timeout's or
+It lists removals: a fact that is `archived` or `invalidated` whose last trail entry is the review's, a timeout's or
 the owner's. A fact the owner ended is listed as archived; the history fact written beside it is `current`, so it is
-never a removal and is not listed. A fact is quoted as the owner is shown it (`shown_quote`): its translation into the message language when the review
+never a removal and is not listed. P2-3 adds two blocks: the facts a timeout wrote as history (its question's `unknown`
+text, `digest_histories`), and the routine invoices waiting for a payment answer in the Cabinet (`digest_invoices`). A
+text is quoted as the owner is shown it (`shown_quote`): its translation into the message language when the review
 stored one that still holds, else as stored; the lines around it are in the message language."""
 from datetime import date, datetime, timedelta
 from types import MappingProxyType
@@ -12,6 +14,8 @@ from typing import Final, List, Mapping, Optional, Sequence, get_args
 
 from .entities import FactEntity, FactState
 from .fact_lifecycle_day import CounterField
+from .fact_review_answers import written_text
+from .fact_review_question import UNKNOWN_TEXT, ClosedBy, FactReviewQuestion
 from .fact_review_quote_translation import QuoteTranslation, quote_digest, shown_quote
 from .fact_review_reasons import FallbackActor
 from .fact_review_state import FactReviewState
@@ -30,6 +34,9 @@ STATE_LABEL_KEYS: Final[Mapping[FactState, str]] = {
 }
 _HEADER = UIMessage.MEMORY_DIGEST_HEADER.value
 _FOOTER = UIMessage.MEMORY_DIGEST_FOOTER.value
+_HISTORY_HEADER = UIMessage.MEMORY_DIGEST_HISTORY_HEADER.value
+_INVOICES_HEADER = UIMessage.MEMORY_DIGEST_INVOICES_HEADER.value
+_INVOICES_CABINET = UIMessage.MEMORY_DIGEST_INVOICES_CABINET.value
 
 
 def pass_set_aside(counts: Mapping[CounterField, int]) -> bool:
@@ -60,23 +67,75 @@ def digest_facts(closed: Sequence[FactEntity]) -> List[FactEntity]:
     return listed[:DIGEST_LIMIT]
 
 
+def digest_histories(questions: Sequence[FactReviewQuestion], since: datetime) -> List[FactReviewQuestion]:
+    """The questions whose silence wrote their fact as history since `since` (closed by a timeout with the `history`
+    fallback, `closed_at` after `since`), newest first, at most DIGEST_LIMIT. An owner's answer is not listed."""
+    listed = [
+        q for q in questions
+        if q.closed_by is ClosedBy.TIMEOUT and q.fallback == "history" and q.closed_at is not None and q.closed_at > since
+    ]
+    return sorted(listed, key=lambda q: (q.closed_at, q.question_id), reverse=True)[:DIGEST_LIMIT]
+
+
+def digest_invoices(questions: Sequence[FactReviewQuestion]) -> List[FactReviewQuestion]:
+    """The open digest questions (routine invoices waiting for a payment answer in the Cabinet), oldest first, at most
+    DIGEST_LIMIT."""
+    listed = [q for q in questions if q.is_open and q.delivery == "digest"]
+    return sorted(listed, key=lambda q: (q.queued_at, q.question_id))[:DIGEST_LIMIT]
+
+
+def history_line(question: FactReviewQuestion, tz: str) -> str:
+    """What a timed-out question wrote as history: its `unknown` text (code-built for a kept-twice question, dated at its
+    close in the owner's zone `tz`). ValueError for a question that is not closed."""
+    if question.closed_at is None:
+        raise ValueError(f"question {question.question_id} is not closed")
+    return written_text(question, UNKNOWN_TEXT, question.quoted_text, question.closed_at, tz)
+
+
 def digest_message(
     labels: Mapping[str, str],
     facts: Sequence[FactEntity],
     translations: Mapping[str, QuoteTranslation] = MappingProxyType({}),
     language: Optional[str] = None,
+    *,
+    histories: Sequence[str] = (),
+    invoices: Sequence[str] = (),
+    cabinet_url: Optional[str] = None,
 ) -> str:
-    """The digest text: the header, one line per fact (its text as the owner is shown it, `shown_quote` over the
-    translation in `translations` under `quote_digest(fact.text)` and `language`, on one line, with its state's label),
-    a blank line and the footer. `labels` is the message language's label set. Raises ValueError for no facts (a digest
-    with nothing to list is not sent) or for a fact that is neither archived nor invalidated."""
-    if not facts:
-        raise ValueError("a digest lists at least one fact")
-    lines = []
-    for fact in facts:
-        key = STATE_LABEL_KEYS.get(fact.state)
-        if key is None:
-            raise ValueError(f"fact {fact.id} is {fact.state.value}: only archived and invalidated facts are listed")
-        shown = shown_quote(fact.text, translations.get(quote_digest(fact.text)), language)
-        lines.append(f"• «{' '.join(shown.split())}» — {labels[key]}")
-    return "\n".join([labels[_HEADER], *lines, "", labels[_FOOTER]])
+    """The digest text, its sections joined by one blank line, each only when it lists something:
+
+    1. the removals: the header, one line per fact (its text as the owner is shown it, with its state's label), a blank
+       line and the footer;
+    2. the history header and one line per text a timeout wrote as history (`histories`);
+    3. the invoices header, one line per invoice text (`invoices`), then, with a `cabinet_url`, the Cabinet line and the
+       URL on its own line (code appends it: a label may not hold a URL).
+
+    Every text is shown through `shown_quote` over the translation in `translations` under its `quote_digest` and
+    `language`, on one line. `labels` is the message language's label set. With removals only the text is the S4 one.
+    Raises ValueError when there is nothing to list (a digest with nothing is not sent) or for a fact that is neither
+    archived nor invalidated."""
+    if not facts and not histories and not invoices:
+        raise ValueError("a digest lists at least one fact, history or invoice")
+    sections: List[str] = []
+    if facts:
+        lines = []
+        for fact in facts:
+            key = STATE_LABEL_KEYS.get(fact.state)
+            if key is None:
+                raise ValueError(f"fact {fact.id} is {fact.state.value}: only archived and invalidated facts are listed")
+            lines.append(f"• «{_shown(fact.text, translations, language)}» — {labels[key]}")
+        sections.append("\n".join([labels[_HEADER], *lines, "", labels[_FOOTER]]))
+    if histories:
+        sections.append("\n".join([
+            labels[_HISTORY_HEADER], *(f"• «{_shown(text, translations, language)}»" for text in histories),
+        ]))
+    if invoices:
+        block = [labels[_INVOICES_HEADER], *(f"• «{_shown(text, translations, language)}»" for text in invoices)]
+        if cabinet_url:
+            block += [labels[_INVOICES_CABINET], cabinet_url]
+        sections.append("\n".join(block))
+    return "\n\n".join(sections)
+
+
+def _shown(text: str, translations: Mapping[str, QuoteTranslation], language: Optional[str]) -> str:
+    return " ".join(shown_quote(text, translations.get(quote_digest(text)), language).split())

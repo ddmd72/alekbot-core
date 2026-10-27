@@ -4,26 +4,32 @@ fact becomes then, and when the janitor must start a review. Pure: the services 
 
 Statuses of a question move only through the methods of `FactReviewQuestion`; nothing here builds a question by hand."""
 from datetime import date, datetime, timedelta, timezone
-from typing import AbstractSet, Any, Callable, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence
+from typing import (
+    AbstractSet, Any, Callable, Dict, Final, Iterable, List, Literal, Mapping, Optional, Sequence, cast, get_args,
+)
 
 from .channel_binding import ChannelBinding
 from .entities import ExpiryKind, FactEntity, FactState
 from .fact_expiry import EXPIRY_NONE, Expiry, stored_expiry
-from .fact_update import ParsedFactUpdate
+from .fact_update import AS_HISTORY_SAME_TEXT, ParsedFactUpdate
 from .fact_update_outcome import EXPIRY_REFUSALS, UpdateRefusal
 from .fact_update_plan import content_changed
 from .fact_lifecycle import (
     compute_expiry, expiry_pinned, horizon_from_now, lifecycle_event, lifecycle_fields, resolves_too_soon, revival_fields,
     with_event,
 )
-from .fact_review_basis import ReviewAction, ReviewBasis
+from .fact_review_basis import PAYMENT_KEYS, ReviewAction, ReviewBasis
 from .fact_review_outcome import MADE_CURRENT, ReviewDecision
-from .fact_review_question import AnswerSource, FactReviewQuestion, QuestionFallback, QuestionStatus
+from .fact_review_question import (
+    DIGEST_QUESTION_DAYS, TEXT_KEYS, AnswerSource, FactReviewQuestion, QuestionDelivery, QuestionFallback, QuestionKind,
+    QuestionOrigin, QuestionStatus,
+)
 from .fact_review_reasons import (
     FallbackActor, fallback_reason, gives_window_reason, is_revive_reason, kept_twice_reason, queued_reason,
 )
 from .fact_review_state import FactReviewState
 from .fact_review_task import neighbours_of
+from .fact_words import written_text_problem
 from .fact_write_context import as_utc
 from .local_time import local_date
 from .notification import NotificationChannel
@@ -43,6 +49,8 @@ REVIVE_WINDOW: Final[timedelta] = timedelta(days=30)
 DIGEST_INTERVAL: Final[timedelta] = timedelta(days=7)
 # `queue_key` of a fact with no `stale_since`: it queues before every dated one.
 EARLIEST_QUEUE_KEY: Final[datetime] = datetime(1970, 1, 1, tzinfo=timezone.utc)
+# The `expires_at` of a fact with none, in the batch order: after every dated one.
+_NO_EXPIRY_KEY: Final[datetime] = datetime.max.replace(tzinfo=timezone.utc)
 _DAY = timedelta(days=1)
 
 # Why the janitor starts a review, in the order they are tried.
@@ -75,12 +83,15 @@ def select_batch(
 
     First the facts whose question has a recorded reply the review has not read (`reply_facts`) and the timed-out
     candidates; they are current, are not filtered, and keep the order given. Then the stale facts by (offers, longest
-    stale first, id): a fact with an open question is the question's business, and one offered MAX_OFFERS times is asked
-    instead (`kept_twice`)."""
+    stale first, earliest `expires_at` with none last, id): a fact with an open question is the question's business, and
+    one offered MAX_OFFERS times is asked instead (`kept_twice`). Parts of one plan, staled in one janitor run and ending
+    on one day, so come in one batch (P2-2)."""
     held = open_fact_ids(questions)
     waiting = sorted(
         (f for f in stale if f.id not in held and offers.get(f.id, 0) < MAX_OFFERS),
-        key=lambda f: (offers.get(f.id, 0), queue_key(f), f.id),
+        key=lambda f: (
+            offers.get(f.id, 0), queue_key(f), as_utc(f.expires_at) if f.expires_at is not None else _NO_EXPIRY_KEY, f.id,
+        ),
     )
     chosen: Dict[str, FactEntity] = {}
     for fact in (*reply_facts, *candidates, *waiting):
@@ -114,8 +125,9 @@ def kept_twice(stale: Sequence[FactEntity], offers: Mapping[str, int], questions
 
 
 def open_fact_ids(questions: Iterable[FactReviewQuestion]) -> frozenset[str]:
-    """The facts of the open questions (queued, pending, asked, unanswered): the review holds them, the janitor skips them."""
-    return frozenset(q.fact_id for q in questions if q.is_open)
+    """The facts of the open chat questions (queued, pending, asked, unanswered): the review holds them, the janitor skips
+    them. A digest question's fact is already history (current, `none`): it holds nothing."""
+    return frozenset(q.fact_id for q in questions if q.is_open and q.in_chat)
 
 
 # ------------------------------------------------------------------------------------------------ the queue
@@ -126,8 +138,8 @@ def queue_order(questions: Iterable[FactReviewQuestion]) -> List[FactReviewQuest
 
 
 def next_in_queue(questions: Iterable[FactReviewQuestion]) -> Optional[FactReviewQuestion]:
-    """The first queued question in queue order, or None."""
-    return next(iter(queue_order(q for q in questions if q.status is QuestionStatus.QUEUED)), None)
+    """The first queued chat question in queue order, or None. A digest question is never sent."""
+    return next(iter(queue_order(q for q in questions if q.status is QuestionStatus.QUEUED and q.in_chat)), None)
 
 
 def sent_today(state: FactReviewState, today: date) -> int:
@@ -274,13 +286,18 @@ def _last_given(fact: FactEntity) -> datetime:
 
 
 def fallback_revives(question: FactReviewQuestion) -> bool:
-    """Whether the question's fallback brings its fact back to current (`revive`) rather than archiving it."""
-    return question.fallback != "archive"
+    """Whether the question's fallback brings its fact back to current (`revive`)."""
+    return question.fallback == "revive"
 
 
 def fallback_sets_aside(question: FactReviewQuestion) -> bool:
-    """Whether the question's fallback sets its fact aside (archives it) rather than bringing it back."""
-    return not fallback_revives(question)
+    """Whether the question's fallback sets its fact aside (`archive`)."""
+    return question.fallback == "archive"
+
+
+def fallback_writes_history(question: FactReviewQuestion) -> bool:
+    """Whether the question's fallback writes its `unknown` text as history (`history`, a typed rewrite)."""
+    return question.fallback == "history"
 
 
 def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetime, actor: FallbackActor) -> Dict[str, Any]:
@@ -289,7 +306,10 @@ def fallback_fields(fact: FactEntity, question: FactReviewQuestion, now: datetim
     `archive`: the fact is archived, its `stale_since` kept. `revive`: current again, `stale_since` cleared, a horizon of
     `fallback_window_days` counted from now and stored from `reported_date` (which stays); a fact whose decision
     `keeps_expiry` keeps it, so the expiry fields are left alone (a pinned fact that had a horizon gets `none`). Either way the trail
-    gets one entry under `actor`, with a code-built reason."""
+    gets one entry under `actor`, with a code-built reason. A `history` fallback is a new version, not an in-place write:
+    ValueError (`fact_review_answers.history_fallback` builds it)."""
+    if fallback_writes_history(question):
+        raise ValueError("a history fallback is written through the typed path (history_fallback), not in place")
     if fact.state not in (FactState.STALE, FactState.CURRENT):
         raise ValueError(f"a fallback applies to a stale or current fact, not a {fact.state.value} one")
     reason = fallback_reason(question.question_id, question.fallback, actor)
@@ -396,7 +416,7 @@ def review_due(
         return "pending"
     if digest_due(state, now):
         return "digest"
-    if any(q.status is QuestionStatus.QUEUED for q in questions) and _queue_may_go(state, questions, now, tz):
+    if any(q.status is QuestionStatus.QUEUED and q.in_chat for q in questions) and _queue_may_go(state, questions, now, tz):
         return "queue"
     return None
 
@@ -419,8 +439,8 @@ def pool(stale_count: int, questions: Iterable[FactReviewQuestion]) -> int:
 
 def queue_alert(state: FactReviewState, questions: Iterable[FactReviewQuestion]) -> Optional[QueueAlertAction]:
     """One alert when the queued questions pass QUEUE_ALERT (`raise`: record it in `queue_alert_at`), and nothing more
-    until they are QUEUE_ALERT or fewer again (`rearm`: clear the record)."""
-    queued = sum(1 for q in questions if q.status is QuestionStatus.QUEUED)
+    until they are QUEUE_ALERT or fewer again (`rearm`: clear the record). Digest questions are not in the queue."""
+    queued = sum(1 for q in questions if q.status is QuestionStatus.QUEUED and q.in_chat)
     if queued > QUEUE_ALERT and state.queue_alert_at is None:
         return "raise"
     if queued <= QUEUE_ALERT and state.queue_alert_at is not None:
@@ -431,9 +451,9 @@ def queue_alert(state: FactReviewState, questions: Iterable[FactReviewQuestion])
 # ------------------------------------------------------------------------------------------------ a question about a fact
 
 def kept_twice_fallback(fact: FactEntity) -> QuestionFallback:
-    """What silence does to a fact the review asked about by itself: a dated plan is over (archive, Q8 and RFC P2), any
-    other fact is kept (revive)."""
-    return "archive" if fact.expiry_kind is ExpiryKind.DATE else "revive"
+    """What silence does to a fact the review asked about by itself: a dated plan becomes history with its `unknown`
+    text (P2-3), any other fact is kept (revive)."""
+    return "history" if fact.expiry_kind is ExpiryKind.DATE else "revive"
 
 
 def queued_question(
@@ -445,9 +465,14 @@ def queued_question(
     at: datetime,
     fallback_date: Optional[date] = None,
     noise: bool = False,
+    question: QuestionKind = "still_true",
+    texts: Optional[Mapping[str, str]] = None,
+    origin: QuestionOrigin = "review",
+    delivery: QuestionDelivery = "chat",
 ) -> FactReviewQuestion:
     """A new `queued` question about `fact`: it quotes the fact's text now and takes its place in line from the fact's
-    `stale_since` (`queue_key`). The one construction for an ask (the review) and a kept-twice question (code)."""
+    `stale_since` (`queue_key`). The one construction for an ask (the review) and a kept-twice question (code); `question`,
+    `texts`, `origin` and `delivery` are the record's (P2-3)."""
     return FactReviewQuestion(
         question_id=question_id,
         account_id=fact.account_id,
@@ -459,7 +484,47 @@ def queued_question(
         noise=noise,
         queue_key=queue_key(fact),
         queued_at=at,
+        question=question,
+        texts=dict(texts or {}),
+        origin=origin,
+        delivery=delivery,
     )
+
+
+def kept_twice_question(fact: FactEntity, question_id: str, user_id: str, *, at: datetime) -> FactReviewQuestion:
+    """The question code asks about a fact the review kept MAX_OFFERS times: a `date` fact is asked `happened` with the
+    `history` fallback, any other `still_true` with `revive`; origin `kept_twice`, so its texts are built by code."""
+    fallback = kept_twice_fallback(fact)
+    kind: QuestionKind = "happened" if fallback == "history" else "still_true"
+    return queued_question(fact, question_id, user_id, fallback, at=at, question=kind, origin="kept_twice")
+
+
+def digest_question(
+    fact: FactEntity, question_id: str, user_id: str, paid: str, not_paid: str, *, at: datetime
+) -> FactReviewQuestion:
+    """The Cabinet-only question about a routine invoice the review rewrote "payment not confirmed" (P2-2): kind `paid`,
+    delivery `digest`, the `payment` texts, fallback `history` (never applied: it is never sent, so it never times out).
+    Its place in line is its creation: a fresh history version has no `stale_since`."""
+    return FactReviewQuestion(
+        question_id=question_id,
+        account_id=fact.account_id,
+        user_id=user_id,
+        fact_id=fact.id,
+        quoted_text=fact.text,
+        fallback="history",
+        queue_key=at,
+        queued_at=at,
+        question="paid",
+        texts={"paid": paid, "not_paid": not_paid},
+        origin="review",
+        delivery="digest",
+    )
+
+
+def digest_question_expired(question: FactReviewQuestion, now: datetime) -> bool:
+    """A digest question unanswered DIGEST_QUESTION_DAYS after it was queued: it closes, its fact already says "payment
+    not confirmed"."""
+    return not question.in_chat and question.queued_at + DIGEST_QUESTION_DAYS <= now
 
 
 # The stored state an ask queues a fact from: a fact that is no longer stale was decided elsewhere meanwhile.
@@ -505,14 +570,45 @@ _BASIS_SHAPES: Final[Mapping[str, str]] = {
     "revive": "{kind: evidence, evidence_fact_id} or {kind: reply, question_id, quote}",
     "rewrite": "{kind: evidence, evidence_fact_id} or {kind: reply, question_id, quote}",
     "invalidate": "{kind: evidence, evidence_fact_id} or {kind: reply, question_id, quote}",
-    "archive": "{kind: evidence, evidence_fact_id}, {kind: reply, question_id, quote} or {kind: date_passed, date}",
+    "archive": "{kind: reply, question_id, quote}",
+    "history": (
+        "{kind: evidence, evidence_fact_id}, {kind: reply, question_id, quote} or {kind: date_passed, date}"
+    ),
 }
+# P2-4: the review archives only on the owner's words; a fact that is over becomes history.
+ARCHIVE_NEEDS_REPLY: Final[str] = (
+    "an archive needs the owner's reply ({kind: reply, question_id, quote}); a fact that is over is rewritten as history "
+    "(as_history: true), or ask the owner with question happened"
+)
+DATE_PASSED_ONLY_HISTORY: Final[str] = "basis.kind date_passed backs only a history rewrite (as_history: true)"
+HISTORY_WITH_REWRITE: Final[str] = (
+    "history goes beside an archive; to rewrite this fact as history send as_history: true"
+)
+DATED_PLAN_HISTORY: Final[str] = (
+    "history: a fact of expiry kind date is rewritten as history (as_history: true with content), not archived beside a "
+    "history fact"
+)
+# A question that falls back to archive asks about noise (P2-4; a stored S4 one, about a plan set aside): when it is over it
+# is archived, never history.
+NOISE_ARCHIVED_ONLY: Final[str] = (
+    "history: a fact whose question falls back to archive is noise and is archived only; leave history out"
+)
+NOT_EVIDENCE: Final[str] = "{place} names a fact this pass rewrote as history on date_passed; that is no evidence"
+# Why a fold may not join an ask (`fold_refusal`).
+FoldRefusal = Literal["self", "not_in_batch", "taken"]
 
 
-def is_dated_plan(fact: FactEntity, question: Optional[FactReviewQuestion] = None) -> bool:
-    """A plan with a date: a `date` fact, or one whose question falls back to archive. When it is over it is archived
-    only, with no history fact (Q8)."""
-    return fact.expiry_kind is ExpiryKind.DATE or (question is not None and question.fallback == "archive")
+def archived_only(fact: FactEntity, question: FactReviewQuestion) -> bool:
+    """Whether the owner's "No longer" archives the fact with no history fact beside it: a dated plan (`is_dated_plan`,
+    an S4 question about one) or noise (the question falls back to archive, `fallback_sets_aside`). Only a standing fact
+    gets its history (S4-D27)."""
+    return is_dated_plan(fact) or fallback_sets_aside(question)
+
+
+def is_dated_plan(fact: FactEntity) -> bool:
+    """A plan with a date: a `date` fact. When it is over it becomes history (P2-1); an S4 "No longer" on it archives
+    it only, with no history fact (Q8)."""
+    return fact.expiry_kind is ExpiryKind.DATE
 
 
 STAYS_STALE_REFUSAL: Final[str] = "this pass changes the fact's state; reported_date is kept by the system"
@@ -568,8 +664,25 @@ def may_write_current(decision: Optional[ReviewDecision], has_open_question: boo
 
 def made_current_documents(decisions: Mapping[str, ReviewDecision], left: Mapping[str, FactEntity]) -> AbstractSet[str]:
     """The documents this pass made current (they count as current evidence and successors, R3-13): per lineage in
-    `decisions`, the document `left` holds."""
-    return {left[lineage].id for lineage, decision in decisions.items() if decision.outcome in MADE_CURRENT}
+    `decisions`, the document `left` holds. A history this pass rewrote on `date_passed` is left out: it is no evidence
+    (`date_passed_histories`)."""
+    return {
+        left[lineage].id for lineage, decision in decisions.items()
+        if decision.outcome in MADE_CURRENT and not _date_passed_history(decision)
+    }
+
+
+def date_passed_histories(decisions: Mapping[str, ReviewDecision], left: Mapping[str, FactEntity]) -> AbstractSet[str]:
+    """The documents this pass rewrote as history on `date_passed` (P2-2): no evidence and no successor in this pass, though
+    they are current; the next run reads them as ordinary current facts."""
+    return {
+        left[lineage].id for lineage, decision in decisions.items()
+        if decision.outcome in MADE_CURRENT and _date_passed_history(decision)
+    }
+
+
+def _date_passed_history(decision: ReviewDecision) -> bool:
+    return decision.as_history and decision.basis_kind == "date_passed"
 
 
 def reason_plan_date(fact: FactEntity, basis: Optional[ReviewBasis], tz: str) -> Optional[date]:
@@ -614,55 +727,74 @@ def basis_refusal(
     today: date,
     tz: str,
     subject: Optional[FactEntity] = None,
+    not_evidence: AbstractSet[str] = frozenset(),
 ) -> Optional[str]:
     """Why a review change has no reason behind it, as the text the model reads, or None when it has.
 
     The action is `review_action(current, update)`; a call that changes nothing is refused with STAYS_STALE_REFUSAL.
     `named_fact`: the fact `basis.evidence_fact_id` names (for a supersede, `update.superseded_by`), as read, or None
     when there is none. `question`: the batch question `basis.question_id` names, or None. `made_current`: ids this pass
-    made current. `history`: the text of the history fact sent with an archive. `subject`: the batch fact the pass is
-    deciding (the document its question names), when `current` is a later version of it; default `current`. A fact
-    comes back only on another fact
-    or the owner's words; a plan is archived on its passed date; supersede names its successor, not a basis."""
+    made current. `not_evidence`: ids this pass rewrote as history on `date_passed` (`date_passed_histories`), which are
+    neither evidence nor a successor. `history`: the text of the history fact sent with an archive. `subject`: the batch
+    fact the pass is deciding (the document its question names), when `current` is a later version of it; default
+    `current`.
+
+    A fact comes back only on another fact or the owner's words; it is archived only on the owner's words (P2-4); a fact
+    that is over is rewritten as history (`update.as_history`) on evidence, a reply or its passed date (`date_passed`
+    backs nothing else); supersede names its successor, not a basis."""
     action = review_action(current, update)
     if action is None:
         return STAYS_STALE_REFUSAL
     fact = current
     evidence = named_fact
     if history is not None and action != "archive":
-        return _HISTORY_ONLY_WITH_ARCHIVE
+        return HISTORY_WITH_REWRITE if action == "rewrite" else _HISTORY_ONLY_WITH_ARCHIVE
+    if update.as_history and (action != "rewrite" or (update.content or "").strip() == current.text.strip()):
+        return AS_HISTORY_SAME_TEXT
     if action == "supersede":
-        return _usable_fact_refusal("superseded_by", evidence, fact, made_current)
+        return _usable_fact_refusal("superseded_by", evidence, fact, made_current, not_evidence)
     if basis is None:
-        return REVIVE_NEEDS_BASIS if action == "revive" else f"basis: {action} needs a basis: {_BASIS_SHAPES[action]}"
-    if basis.kind == "date_passed" and action != "archive":
-        return f"basis.kind date_passed backs only an archive; {action} needs {_BASIS_SHAPES[action]}"
+        if action == "revive":
+            return REVIVE_NEEDS_BASIS
+        if update.as_history:
+            return f"basis: a history rewrite needs a basis: {_BASIS_SHAPES['history']}"
+        return f"basis: {action} needs a basis: {_BASIS_SHAPES[action]}"
+    if action == "archive" and basis.kind != "reply":
+        return ARCHIVE_NEEDS_REPLY
+    if basis.kind == "date_passed" and not update.as_history:
+        return f"{DATE_PASSED_ONLY_HISTORY}; {action} needs {_BASIS_SHAPES[action]}"
     refusal = (
-        _evidence_refusal(fact, basis, evidence, made_current) if basis.kind == "evidence"
+        _evidence_refusal(fact, basis, evidence, made_current, not_evidence) if basis.kind == "evidence"
         else _reply_refusal(subject or fact, basis, question) if basis.kind == "reply"
         else _date_passed_refusal(fact, basis, today, tz)
     )
     return refusal or _history_refusal(action, fact, basis, question, history)
 
 
-def _usable_fact_refusal(place: str, other: Optional[FactEntity], fact: FactEntity, made_current: AbstractSet[str]) -> Optional[str]:
+def _usable_fact_refusal(
+    place: str, other: Optional[FactEntity], fact: FactEntity, made_current: AbstractSet[str],
+    not_evidence: AbstractSet[str] = frozenset(),
+) -> Optional[str]:
     if other is None:
         return f"{place} names no fact of this account that is current"
     if other.account_id != fact.account_id:
         return f"{place} names no fact of this account that is current"
     if other.lineage_id == fact.lineage_id:
         return f"{place} is the fact's own lineage; another fact must say it"
+    if other.id in not_evidence:
+        return NOT_EVIDENCE.format(place=place)
     if other.state is not FactState.CURRENT and other.id not in made_current:
         return f"{place} names a fact that is {other.state.value}, not current"
     return None
 
 
 def _evidence_refusal(
-    fact: FactEntity, basis: ReviewBasis, evidence: Optional[FactEntity], made_current: AbstractSet[str]
+    fact: FactEntity, basis: ReviewBasis, evidence: Optional[FactEntity], made_current: AbstractSet[str],
+    not_evidence: AbstractSet[str],
 ) -> Optional[str]:
     if not basis.evidence_fact_id:
         return "basis.evidence_fact_id: the id of the current fact that says it"
-    return _usable_fact_refusal("basis.evidence_fact_id", evidence, fact, made_current)
+    return _usable_fact_refusal("basis.evidence_fact_id", evidence, fact, made_current, not_evidence)
 
 
 def _reply_refusal(subject: FactEntity, basis: ReviewBasis, question: Optional[FactReviewQuestion]) -> Optional[str]:
@@ -701,21 +833,51 @@ def _date_passed_refusal(fact: FactEntity, basis: ReviewBasis, today: date, tz: 
 
 
 def _history_refusal(
-    action: ReviewAction, fact: FactEntity, basis: ReviewBasis, question: Optional[FactReviewQuestion], history: Optional[str]
+    action: ReviewAction, fact: FactEntity, basis: ReviewBasis, question: Optional[FactReviewQuestion],
+    history: Optional[str],
 ) -> Optional[str]:
     if history is None:
         return None
     if action != "archive" or basis.kind != "reply":
         return _HISTORY_ONLY_WITH_ARCHIVE
-    if is_dated_plan(fact, question):
-        return "history: a plan that is over is archived only; leave history out"
+    if is_dated_plan(fact):
+        return DATED_PLAN_HISTORY
+    if question is not None and fallback_sets_aside(question):
+        return NOISE_ARCHIVED_ONLY
     if not history.strip():
         return "history: one sentence in the past tense saying it ended"
     return None
 
 
+def payment_refusal(update: ParsedFactUpdate, payment: Optional[Mapping[str, str]]) -> Optional[str]:
+    """Why a write may not carry `payment` (the paid and not-paid texts of a routine invoice, P2-2), or None: only an
+    `as_history` rewrite takes it, and each text is one the review may write (`written_text_problem`)."""
+    if payment is None:
+        return None
+    if not update.as_history:
+        return "payment goes only with an as_history rewrite of an invoice that was received"
+    for key in PAYMENT_KEYS:
+        problem = written_text_problem(payment.get(key))
+        if problem is not None:
+            return f"payment.{key}: {problem}"
+    return None
+
+
+def fold_refusal(fold_id: str, why: FoldRefusal) -> str:
+    """The text of a fold the ask may not take: the asked fact itself, no other batch fact, or one already decided,
+    asked or with an open question in this pass."""
+    if why == "self":
+        return f"ask_owner.folds: {fold_id} is the asked fact itself"
+    if why == "not_in_batch":
+        return f"ask_owner.folds: {fold_id} names no other fact of this batch"
+    return f"ask_owner.folds: {fold_id} already has a result, an ask or an open question in this pass"
+
+
 def _squash(text: str) -> str:
     return " ".join(text.casefold().split())
+
+
+_QUESTION_KINDS: Final[tuple[str, ...]] = get_args(QuestionKind)
 
 
 def ask_refusal(
@@ -726,25 +888,86 @@ def ask_refusal(
     open_question: Optional[FactReviewQuestion],
     now: datetime,
     tz: str,
+    *,
+    question: str = "still_true",
+    texts: Optional[Mapping[str, str]] = None,
 ) -> Optional[str]:
     """Why the owner may not be asked about this fact now, as the text the model reads, or None.
 
     `open_question`: the fact's open question, if any. One that has timed out is a candidate sent back to the model once;
-    its fallback applies, so it is not asked again. `archive` is the fallback only of a `date` fact, one whose
-    `fallback_date` is before today, or noise; `fallback_date` and `noise` belong to archive."""
+    its fallback applies, so it is not asked again. P2-3: `question` is the kind asked and `texts` the outcome texts the
+    review writes now, exactly the kind's (`TEXT_KEYS`), each one a text the review may write (`written_text_problem`).
+    `revive` is the fallback of a `still_true` question; `history` of a `happened`, `renewed` or `paid` one; `archive` only
+    with `noise`, never for `paid`. A `date` fact is asked `happened`, `renewed` or `paid`, or `still_true` as noise.
+    `fallback_date` is retired. `tz` is the owner's zone (no rule reads it since `fallback_date` went)."""
     if open_question is not None:
         if open_question.is_timed_out(now):
             return "ask_owner: this fact's question timed out and its fallback applies; decide it or leave it"
         return "ask_owner: this fact already has an open question; leave it"
-    if fallback not in ("revive", "archive"):
-        return "ask_owner.fallback: revive or archive"
-    if fallback == "revive":
-        if fallback_date is not None or noise:
-            return "ask_owner: fallback_date and noise go with fallback archive only"
-        return None
-    today = local_date(now, tz)
-    if fallback_date is not None and fallback_date >= today:
-        return f"ask_owner.fallback_date: the plan's date must be before today ({today.isoformat()})"
-    if fact.expiry_kind is ExpiryKind.DATE or fallback_date is not None or noise:
-        return None
-    return "ask_owner.fallback archive: only for a dated plan, with a past fallback_date, or with noise; use revive"
+    refusal = _ask_shape_refusal(fact, fallback, fallback_date, noise, question)
+    if refusal is not None:
+        return refusal
+    return _ask_texts_refusal(question, texts or {}, fact)
+
+
+def _ask_shape_refusal(
+    fact: FactEntity, fallback: str, fallback_date: Optional[date], noise: bool, question: str
+) -> Optional[str]:
+    if question not in _QUESTION_KINDS:
+        return "ask_owner.question: still_true, happened, renewed or paid"
+    if fallback not in ("revive", "archive", "history"):
+        return "ask_owner.fallback: revive, archive or history"
+    if fallback_date is not None:
+        return (
+            "ask_owner.fallback_date is retired: a plan whose date passed is asked with question happened and fallback "
+            "history"
+        )
+    if noise and fallback != "archive":
+        return "ask_owner: noise goes with fallback archive only"
+    if fallback == "archive" and not noise:
+        return (
+            "ask_owner.fallback archive: only with noise: true; a plan whose date passed is asked with question happened "
+            "and fallback history"
+        )
+    if fallback == "history" and question == "still_true":
+        return "ask_owner.fallback history: only with question happened, renewed or paid"
+    if fallback == "revive" and question in ("happened", "renewed"):
+        return (
+            "ask_owner.fallback revive: a happened or renewed question falls back to history (or archive with noise: "
+            "true)"
+        )
+    if question == "paid" and fallback != "history":
+        return "ask_owner.fallback: a paid question falls back to history"
+    if fact.expiry_kind is ExpiryKind.DATE and question == "still_true" and fallback != "archive":
+        return (
+            "ask_owner: a fact of expiry kind date is asked with question happened, renewed or paid, or as still_true "
+            "with fallback archive and noise: true"
+        )
+    return None
+
+
+def _ask_texts_refusal(question: str, texts: Mapping[str, str], fact: FactEntity) -> Optional[str]:
+    kind = cast(QuestionKind, question)  # checked against _QUESTION_KINDS before
+    keys = TEXT_KEYS[(kind, "chat")]
+    if set(texts) != set(keys):
+        return f"ask_owner.texts: give exactly {', '.join(keys) or 'none'} for question {kind}"
+    for key in keys:
+        problem = written_text_problem(texts[key])
+        if problem is not None:
+            return f"ask_owner.texts.{key}: {problem}"
+        if _squash(texts[key]) == _squash(fact.text):
+            return f"ask_owner.texts.{key}: the same as the fact's stored text; write what the answer makes true"
+    return None
+
+
+# A history fallback that fails this many times gives its question up (C9).
+MAX_FALLBACK_ATTEMPTS: Final[int] = 3
+
+
+def history_fallback_gives_up(question: FactReviewQuestion, refused: bool) -> bool:
+    """Whether a `history` fallback that wrote nothing closes its question `resolved_elsewhere` instead of leaving it open
+    for the next run: `refused` (a typed refusal, not an exception) at an attempt after the first (the spec stores no
+    previous refusal, so a repeat is read as a refusal after one failed attempt), or this was the
+    `MAX_FALLBACK_ATTEMPTS`th failure of any kind."""
+    attempts = question.fallback_attempts
+    return (refused and attempts >= 1) or attempts + 1 >= MAX_FALLBACK_ATTEMPTS

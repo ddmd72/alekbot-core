@@ -26,6 +26,7 @@ from src.services.fact_question_texts import FactQuestionTexts
 from src.services.fact_review_service import FactReviewService, _StepResult, _Timeouts
 from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from tests.support.fact_review_world import ReviewWorld
+from tests.support.review_fact_updates import RecordingFactUpdates
 from tests.support.review_rule_builders import fact as build_fact
 
 ACC = "acc"
@@ -146,6 +147,7 @@ class Rig:
             task_queue=world.queue, session_store=world.session_store, texts=texts, interactive=world.interactive,
             owner_zones=zones, clock=world.clock,
         )
+        self.fact_updates = RecordingFactUpdates(world.store.adapter)
         self.refreshes: List[str] = []
         real = world.repo.refresh_biographical_context_cache
 
@@ -161,6 +163,7 @@ class Rig:
             channel_bindings=world.channel_bindings, notifications=world.notifier, session_store=world.session_store,
             task_queue=world.queue, answer_service=answers, interactive=world.interactive, alert_sink=world.sink,
             run_timeout_s=600, clock=clock or world.clock,
+            fact_updates=self.fact_updates, cabinet_url="https://cabinet.example/cabinet?tab=memory",
         )
 
     async def run(self, mode: str = "daily") -> Dict[str, Any]:
@@ -591,4 +594,5 @@ def _kwargs_of(r: Rig) -> Dict[str, Any]:
         owner_zones=s._owner_zones, notification_state=s._notification_state, channel_bindings=s._channel_bindings,
         notifications=s._notifications, session_store=s._session_store, task_queue=s._task_queue,
         answer_service=s._answer_service, interactive=s._interactive, alert_sink=s._alert_sink,
+        fact_updates=s._fact_updates, cabinet_url=s._cabinet_url,
     )

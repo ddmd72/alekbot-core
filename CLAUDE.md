@@ -540,15 +540,24 @@ tree). See `decisions/fact_expiry_and_janitor.md`, map §5.5.
 task per account (daily by default, `fact_review_interval_days`, log-only mode too). `FactReviewService` runs it under the
 memory-write lease: housekeeping, timeouts in code, selection of up to 20 stale facts, one pass of the consolidation agent
 with its own profile (`consolidation_review`; tools `update_fact`, `ask_owner`, `count_words` only; `FactReviewScope` refuses
-a revive, rewrite or invalidation without evidence or the owner's reply), then the send of the next question and the weekly
-digest. What the pass cannot decide becomes a **question**, one fact per message, written by code (never a model), one at a
-time, at most 5 a day, to the primary chat only. The fact is **current while its question waits**; the janitor skips it and
+a revive, rewrite or invalidation without evidence or the owner's reply, an archive without the owner's reply, and
+`date_passed` except on an `as_history` rewrite), then the send of the next question and the weekly digest. **P2 revised
+(owner 2026-10-27; built, not deployed; the janitor stays off until it ships):** a fact whose date passed is rewritten as
+**history** (a version at `archival` priority, `expiry none`: happened / planned and did not happen / planned, unknown), never
+archived; archive is kept for noise, an end the owner states and the Cabinet (RFC §9 "P2 revised"). What the pass cannot
+decide becomes a **question** of a kind (`still_true`, `happened`, `renewed`, `paid`; options per kind, the answer texts
+written by the pass at ask time), one fact per message, written by code (never a model), one at a time, at most 5 a day, to
+the primary chat only. A routine invoice with no payment confirmation is not asked in chat: it becomes "payment not
+confirmed" history and a **digest question**, listed in the weekly digest and answered in bulk in the Cabinet; a fine or a
+debt is asked `paid`. The fact is **current while its question waits**; the janitor skips it and
 counts it in the *pool* (stale + waiting facts, capped at 50). An answer is only a reply to the question message, a Slack
 button (`POST /slack/interactivity`: signature checked on the raw bytes first, the work done by the `interactive_choice` task)
 or a Cabinet click, applied by `FactAnswerService` (no model, no lease, same preconditions); words are read by the review once.
-Silence for 14 days applies the question's fallback (a revive gets twice the last window, 14 to 365 days). Closed
-questions and digest claims carry `purge_after` for a Firestore TTL policy; never `expires_at`. The 15 message texts are UI
-strings (uk, en, fr, es) or model-written under code checks. Text the bot did not write (a stored fact, a translated
+Silence for 14 days applies the question's fallback: revive (twice the last window, 14 to 365 days), archive (noise only),
+or history (the question's "unknown" text written through the typed path under the `timeout` actor and listed in the
+digest; a failed write is retried on the next runs, at most 3 attempts, then the question closes `resolved_elsewhere`).
+Closed questions and digest claims carry `purge_after` for a Firestore TTL policy; never `expires_at`. The 28 message texts are UI
+strings (uk, en, fr, es) or model-written under code checks; every text the pass writes is translated like the quotes. Text the bot did not write (a stored fact, a translated
 acknowledgement) is sent literally (`send_literal`, `notify_raw(literal=True)`). **Cloud Tasks names dedupe only while a task is
 queued or running and for about an hour after**: a name like `fact-review:<account>:<local date>` merges runs that start close
 together; "once per local day" for close runs only. The daily rhythm comes from `review_due`, not from the name. See

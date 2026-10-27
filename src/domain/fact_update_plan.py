@@ -59,6 +59,9 @@ def plan_fact_update(current: FactEntity, update: ParsedFactUpdate, now: datetim
     }
     if update.temporal_class is not None:
         changes["temporal_class"] = update.temporal_class
+    if update.as_history:
+        # Metadata and context described the fact while it held (as a history fact drops them, `history_fact`).
+        changes["context"] = None
     changes.update(lifecycle_fields(update.state or current.state, now))
     if stale:
         changes.update({"vector": None, "tags_vector": None, "metadata_vector": None})
@@ -90,8 +93,16 @@ def successor_refusal(successor_id: str, closing_id: str) -> Optional[str]:
 
 
 def _resulting_content(current: FactEntity, update: ParsedFactUpdate) -> tuple[str, list[str], dict[str, Any]]:
+    """The text, tags and metadata `update` leaves; a history rewrite (`as_history`) leaves no metadata, so the metadata
+    vector comes from the history text."""
     new_tags = _resulting_tags(current.tags, update.tags)
-    new_metadata = {**current.metadata, **update.metadata} if update.metadata is not None else current.metadata
+    new_metadata: dict[str, Any]
+    if update.as_history:
+        new_metadata = {}
+    elif update.metadata is not None:
+        new_metadata = {**current.metadata, **update.metadata}
+    else:
+        new_metadata = current.metadata
     new_text = update.content if update.content is not None else current.text
     return new_text, new_tags, new_metadata
 

@@ -22,6 +22,25 @@ TZ = "Europe/Lisbon"
 HORIZON = {"kind": "horizon", "days": 30}
 ARCHIVE = {"state": "archived"}
 REPLY_AT = NOW - timedelta(hours=2)
+# P2 revised (P2-1): a history rewrite of a plan whose date passed, in the "planned, unknown" phrasing
+HISTORY_OF_ROME = {
+    "state": "current", "expiry": {"kind": "none"}, "as_history": True,
+    "content": "The user planned a trip to Rome in Oct 2026; whether it took place is unknown.",
+}
+ARCHIVE_NEEDS_REPLY = (
+    "an archive needs the owner's reply ({kind: reply, question_id, quote}); a fact that is over is rewritten as history "
+    "(as_history: true), or ask the owner with question happened"
+)
+ARCHIVE_ONLY_NOISE = (
+    "ask_owner.fallback archive: only with noise: true; a plan whose date passed is asked with question happened and "
+    "fallback history"
+)
+RETIRED = "ask_owner.fallback_date is retired: a plan whose date passed is asked with question happened and fallback history"
+HAPPENED_TEXTS = {
+    "happened": "The user went on a trip to Rome in Oct 2026.",
+    "not_happened": "The user planned a trip to Rome in Oct 2026 and did not go.",
+    "unknown": "The user planned a trip to Rome in Oct 2026; whether it took place is unknown.",
+}
 SHAPES = "{kind: evidence, evidence_fact_id}, {kind: reply, question_id, quote} or {kind: date_passed, date?}"
 
 
@@ -152,22 +171,29 @@ async def test_a_basis_kind_that_is_a_list_or_an_object_is_a_value_error_with_th
 
 # ------------------------------------------------------------------------------------------------ date passed
 
-async def test_date_passed_with_a_past_date_archives_a_horizon_plan(world):
+async def test_date_passed_with_a_past_date_rewrites_a_horizon_plan_as_history(world):
+    # P2 revised (P2-1, P2-2): a passed date backs a history rewrite only; an archive on it is refused
     fact = await stale(world, "trip to Rome")
     scope = await scope_of(world, fact)
+    passed = {"kind": "date_passed", "date": "2026-10-01"}
 
-    res = await scope.update_fact({"fact_id": fact, "updates": ARCHIVE, "basis": {"kind": "date_passed", "date": "2026-10-01"}})
+    archive = await scope.update_fact({"fact_id": fact, "updates": ARCHIVE, "basis": passed})
+    res = await scope.update_fact({"fact_id": fact, "updates": HISTORY_OF_ROME, "basis": passed})
 
+    assert archive["refused"] == "basis" and archive["message"] == ARCHIVE_NEEDS_REPLY
     assert res["status"] == "updated", res
-    assert state_of(world, fact) == "archived" and last_reason(world, fact) == "archived: date passed 2026-10-01"
-    assert [(d.outcome, d.basis_kind) for d in scope.decisions()] == [("archived", "date_passed")]
+    assert state_of(world, fact) == "superseded" and state_of(world, res["fact_id"]) == "current"
+    assert world.docs[res["fact_id"]]["text"] == HISTORY_OF_ROME["content"]
+    assert last_reason(world, res["fact_id"]) == "rewritten as history: date passed 2026-10-01"
+    assert [(d.outcome, d.basis_kind, d.as_history) for d in scope.decisions()] == [("rewritten", "date_passed", True)]
 
 
 async def test_date_passed_with_a_future_date_is_refused(world):
     fact = await stale(world, "trip to Rome")
     scope = await scope_of(world, fact)
 
-    res = await scope.update_fact({"fact_id": fact, "updates": ARCHIVE, "basis": {"kind": "date_passed", "date": "2026-12-01"}})
+    # P2 revised (P2-2): the date rule is read through the history rewrite a passed date backs
+    res = await scope.update_fact({"fact_id": fact, "updates": HISTORY_OF_ROME, "basis": {"kind": "date_passed", "date": "2026-12-01"}})
 
     assert res["refused"] == "basis"
     assert res["message"] == "basis.date_passed: the plan's date 2026-12-01 is not before today (2026-10-23)"
@@ -259,7 +285,11 @@ async def test_history_on_a_dated_plan_is_refused(world):
         "fact_id": plan, "updates": ARCHIVE, "basis": on_reply("trip is over"), "history": "Flew to Rome in 2026.",
     })
 
-    assert res["refused"] == "basis" and res["message"] == "history: a plan that is over is archived only; leave history out"
+    # P2 revised (C5): a date fact that is over is rewritten as history, not archived beside a history fact
+    assert res["refused"] == "basis" and res["message"] == (
+        "history: a fact of expiry kind date is rewritten as history (as_history: true with content), not archived beside "
+        "a history fact"
+    )
     assert state_of(world, plan) == "current"
 
 
@@ -272,7 +302,8 @@ async def test_history_without_basis_reply_is_refused(world):
     })
 
     assert res["refused"] == "basis"
-    assert res["message"] == "history goes only with an archive on basis {kind: reply} where the owner said it ended"
+    # P2 revised (P2-4): an archive on evidence is refused before its history is read
+    assert res["message"] == ARCHIVE_NEEDS_REPLY
     assert state_of(world, fact) == "current"
 
 
@@ -306,11 +337,12 @@ async def test_a_history_that_is_not_text_is_refused_with_its_shape(world):
 # ------------------------------------------------------------------------------------------------ asks
 
 @pytest.mark.parametrize("args", [
-    {"fallback": "archive", "fallback_date": "2026-10-01"},
+    # P2 revised (P2-3): a past fallback_date is retired (refused below); a horizon plan is asked as happened instead
+    {"question": "happened", "texts": HAPPENED_TEXTS, "fallback": "history"},
     {"fallback": "archive", "noise": True},
     {"fallback": "revive"},
 ])
-async def test_an_archive_fallback_on_a_horizon_fact_needs_a_past_date_or_noise(world, args):
+async def test_an_archive_fallback_on_a_horizon_fact_needs_noise(world, args):
     fact = await stale(world, "a")
     scope = await scope_of(world, fact)
 
@@ -321,12 +353,12 @@ async def test_an_archive_fallback_on_a_horizon_fact_needs_a_past_date_or_noise(
 
 
 @pytest.mark.parametrize("args, message", [
-    ({"fallback": "archive"},
-     "ask_owner.fallback archive: only for a dated plan, with a past fallback_date, or with noise; use revive"),
-    ({"fallback": "archive", "fallback_date": "2026-12-01"},
-     "ask_owner.fallback_date: the plan's date must be before today (2026-10-23)"),
-    ({"fallback": "revive", "noise": True}, "ask_owner: fallback_date and noise go with fallback archive only"),
-    ({"fallback": "forget"}, "ask_owner.fallback: revive or archive"),
+    # P2 revised (C5): the ask refusals' texts; fallback_date is retired, past or future
+    ({"fallback": "archive"}, ARCHIVE_ONLY_NOISE),
+    ({"fallback": "archive", "fallback_date": "2026-12-01"}, RETIRED),
+    ({"fallback": "revive", "noise": True}, "ask_owner: noise goes with fallback archive only"),
+    ({"fallback": "forget"}, "ask_owner.fallback: revive, archive or history"),
+    ({"fallback": "archive", "fallback_date": "2026-10-01"}, RETIRED),
 ])
 async def test_the_archive_fallback_rules_refuse_the_rest(world, args, message):
     fact = await stale(world, "a")
@@ -338,12 +370,15 @@ async def test_the_archive_fallback_rules_refuse_the_rest(world, args, message):
     assert scope.asks() == [] and [f.id for f in scope.kept()] == [fact]
 
 
-async def test_an_archive_fallback_on_a_dated_plan_passes(world):
+async def test_an_archive_fallback_on_a_dated_plan_passes_with_noise(world):
+    # P2 revised (P2-3): a date fact is asked as still_true only with archive and noise
     plan = await stale(world, "trip to Rome", expiry_kind=ExpiryKind.DATE, ttl_days=None)
     scope = await scope_of(world, plan)
 
-    res = await scope.ask_owner({"fact_id": plan, "fallback": "archive"})
+    plain = await scope.ask_owner({"fact_id": plan, "fallback": "archive"})
+    res = await scope.ask_owner({"fact_id": plan, "fallback": "archive", "noise": True})
 
+    assert plain["refused"] == "ask" and plain["message"] == ARCHIVE_ONLY_NOISE
     assert res["status"] == "asked", res
 
 

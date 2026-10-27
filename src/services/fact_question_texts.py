@@ -142,13 +142,27 @@ class FactQuestionTexts:
         message = fact_question_message(question, labels, found.get(quote_digest(question.quoted_text)), language)
         return message, labels
 
-    async def digest_for(self, user_id: str, account_id: str, facts: Sequence[FactEntity]) -> str:
-        """The weekly digest's text: each fact in its translation into the lines' language when one is stored, else as stored."""
+    async def digest_for(
+        self,
+        user_id: str,
+        account_id: str,
+        facts: Sequence[FactEntity],
+        *,
+        histories: Sequence[str] = (),
+        invoices: Sequence[str] = (),
+        cabinet_url: Optional[str] = None,
+    ) -> str:
+        """The weekly digest's text: each fact, history text and invoice text in its translation into the lines' language
+        when one is stored, else as stored. `histories` and `invoices` are the texts of the two new blocks; `cabinet_url`
+        ends the invoices block."""
         code, state, ui_language = await self._read(user_id, account_id)
         labels = await self._labels(code, state, ui_language, account_id)
         language = shown_language(code, state, ui_language)
-        found = await self._translations(account_id, language, [fact.text for fact in facts])
-        return digest_message(labels, facts, found, language)
+        shown = [fact.text for fact in facts] + list(histories) + list(invoices)
+        found = await self._translations(account_id, language, shown)
+        return digest_message(
+            labels, facts, found, language, histories=histories, invoices=invoices, cabinet_url=cabinet_url,
+        )
 
     async def text(self, user_id: str, account_id: str, message: UIMessage) -> str:
         """One text of the review (an acknowledgement, the closed note, a digest line) from the same source as

@@ -46,9 +46,14 @@ def test_result_texts_are_not_copies_of_english():
 
 
 def test_the_answer_labels_come_from_the_server_not_from_the_page():
+    # P2 revised (C15): the buttons are built from the options the server sends with each question, not from one
+    # page-wide list: answerButtons takes them as its argument, a row passes its question's, a bulk bar its group's
     body = _function("answerButtons")
-    assert "reviewOptions" in body and "${escapeHtml(o.label)}" in body
-    assert "data.options" in _page()
+    assert body.strip().startswith("function answerButtons(options, questionId)")
+    assert "return options" in body and ".map(" in body
+    assert "${escapeHtml(o.label)}" in body and "${escapeHtml(o.answer)}" in body
+    assert "answerButtons(q.options, q.question_id)" in _page()
+    assert "data.options" not in _page() and "reviewOptions" not in _page()
     for label in ("Yes", "No longer", "Never"):
         assert f">{label}<" not in _page()
 

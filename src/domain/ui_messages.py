@@ -100,8 +100,8 @@ class UIMessage(Enum):
     DRIVE_INACCESSIBLE_LIST_TITLE = "drive_inaccessible_list_title"
     # Slack message dropped after the session stayed busy through every re-queue (s1b AB2).
     MESSAGE_NOT_PROCESSED_BUSY = "message_not_processed_busy"
-    # The memory review's question and its replies (Facts S4 plan §3.17). These fifteen are also the label set of
-    # `fact_review_language`: a language without UI strings gets a checked model-written copy under the same keys.
+    # The memory review's question and its replies (Facts S4 plan §3.17, P2-3). These twenty-eight are also the label set
+    # of `fact_review_language`: a language without UI strings gets a checked model-written copy under the same keys.
     MEMORY_REVIEW_QUESTION = "memory_review_question"
     MEMORY_OPTION_STILL_TRUE = "memory_option_still_true"
     MEMORY_OPTION_ENDED = "memory_option_ended"
@@ -117,3 +117,16 @@ class UIMessage(Enum):
     MEMORY_DIGEST_FOOTER = "memory_digest_footer"
     MEMORY_DIGEST_ARCHIVED = "memory_digest_archived"
     MEMORY_DIGEST_INVALIDATED = "memory_digest_invalidated"
+    MEMORY_REVIEW_QUESTION_HAPPENED = "memory_review_question_happened"
+    MEMORY_REVIEW_QUESTION_RENEWED = "memory_review_question_renewed"
+    MEMORY_REVIEW_QUESTION_PAID = "memory_review_question_paid"
+    MEMORY_OPTION_HAPPENED = "memory_option_happened"
+    MEMORY_OPTION_NOT_HAPPENED = "memory_option_not_happened"
+    MEMORY_OPTION_RENEWED = "memory_option_renewed"
+    MEMORY_OPTION_NOT_RENEWED = "memory_option_not_renewed"
+    MEMORY_OPTION_NOT_NEEDED = "memory_option_not_needed"
+    MEMORY_OPTION_PAID = "memory_option_paid"
+    MEMORY_OPTION_NOT_PAID = "memory_option_not_paid"
+    MEMORY_DIGEST_HISTORY_HEADER = "memory_digest_history_header"
+    MEMORY_DIGEST_INVOICES_HEADER = "memory_digest_invoices_header"
+    MEMORY_DIGEST_INVOICES_CABINET = "memory_digest_invoices_cabinet"

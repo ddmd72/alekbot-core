@@ -7,7 +7,7 @@ happened to the process after the post: it is completed as `asked`, never sent a
 from datetime import date, datetime, timedelta
 from enum import Enum
 from types import MappingProxyType
-from typing import Any, Literal, Mapping, Optional, Self
+from typing import Any, Dict, Final, Literal, Mapping, Optional, Self, Tuple
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -26,8 +26,28 @@ MAX_REPLY_CHARS = 2000
 # The binding kind that routes a choice made on a question's message to the fact-question handler.
 FACT_QUESTION_KIND = "fact_question"
 
-# What happens to the fact when nobody answers.
-QuestionFallback = Literal["revive", "archive"]
+# What happens to the fact when nobody answers: kept (`revive`), set aside (`archive`), or its `unknown` text written as
+# history (`history`, P2-3).
+QuestionFallback = Literal["revive", "archive", "history"]
+# What a question asks (P2-3): whether the fact still holds, whether a plan took place, whether a validity end was renewed,
+# whether a bill was paid. Each kind has its own options (`fact_review_options.OPTIONS`).
+QuestionKind = Literal["still_true", "happened", "renewed", "paid"]
+# Who asked: the review model (it wrote the texts), or code for a fact the review kept twice (code builds the texts).
+QuestionOrigin = Literal["review", "kept_twice"]
+# Where it is answered: the owner's chat, or only the Cabinet, listed in the weekly digest (a routine invoice).
+QuestionDelivery = Literal["chat", "digest"]
+# The text key of the `unknown` outcome: what "don't remember" and silence write as history.
+UNKNOWN_TEXT: Final = "unknown"
+# The text keys a `review` question carries, by (kind, delivery). A `kept_twice` question carries none.
+TEXT_KEYS: Final[Mapping[Tuple[QuestionKind, QuestionDelivery], Tuple[str, ...]]] = MappingProxyType({
+    ("still_true", "chat"): (),
+    ("happened", "chat"): ("happened", "not_happened", UNKNOWN_TEXT),
+    ("renewed", "chat"): ("renewed", "not_renewed", "not_needed", UNKNOWN_TEXT),
+    ("paid", "chat"): ("paid", "not_paid", UNKNOWN_TEXT),
+    ("paid", "digest"): ("paid", "not_paid"),
+})
+# An unanswered digest question closes `resolved_elsewhere` after this: its fact already says "payment not confirmed".
+DIGEST_QUESTION_DAYS: Final = timedelta(days=90)
 # Where an answer came from. `review` is the review applying the owner's words.
 AnswerSource = Literal["digit", "button", "cabinet", "review"]
 
@@ -71,6 +91,10 @@ class FactReviewQuestion(BaseModel):
     how a reply is matched to it. `reply_text` collects the owner's answers in words until the review has read them
     (`offered_at`). Every datetime is timezone-aware.
 
+    P2-3: `question` is its kind, `texts` the outcome texts the review wrote at ask time (a `kept_twice` question has
+    none: code builds them), `delivery` chat or digest (Cabinet only), `fallback_attempts` how often its history fallback
+    failed. `texts` makes it unhashable: a question never goes into a set or a dict key.
+
     Frozen, and `model_copy` validates again: a question that exists is a legal one."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -97,6 +121,11 @@ class FactReviewQuestion(BaseModel):
     answer_source: Optional[AnswerSource] = None
     closed_at: Optional[AwareDatetime] = None
     closed_by: Optional[ClosedBy] = None
+    question: QuestionKind = "still_true"
+    texts: Dict[str, str] = Field(default_factory=dict)
+    origin: QuestionOrigin = "review"
+    delivery: QuestionDelivery = "chat"
+    fallback_attempts: int = Field(default=0, ge=0)
 
     # ------------------------------------------------------------------------------------------------ invariants
 
@@ -104,6 +133,7 @@ class FactReviewQuestion(BaseModel):
     def _the_fields_agree_with_the_status(self) -> Self:
         if (self.fallback_date is not None or self.noise) and self.fallback != "archive":
             raise ValueError("a fallback date or noise belongs to an archive fallback")
+        self._check_kind()
         self._check_attempt()
         self._check_reply()
         if self.status is QuestionStatus.CLOSED:
@@ -111,6 +141,26 @@ class FactReviewQuestion(BaseModel):
         elif any(getattr(self, name) is not None for name in _CLOSING_FIELDS):
             raise ValueError("only a closed question has an answer, closed_at or closed_by")
         return self
+
+    def _check_kind(self) -> None:
+        """The kind, its texts, its origin, its delivery and its fallback agree (P2-3)."""
+        if self.delivery == "digest" and (self.question != "paid" or self.origin != "review"):
+            raise ValueError("a digest question is a paid question the review asked")
+        if self.origin == "review":
+            if set(self.texts) != set(TEXT_KEYS[(self.question, self.delivery)]):
+                raise ValueError(f"a {self.question} question the review asked has exactly its texts")
+            if any(not text.strip() for text in self.texts.values()):
+                raise ValueError("a question's texts are not empty")
+        elif self.texts or self.question not in ("still_true", "happened"):
+            raise ValueError("a kept-twice question is still_true or happened and has no texts")
+        if self.question == "still_true":
+            allowed = self.fallback in ("revive", "archive")
+        elif self.question == "paid":
+            allowed = self.fallback == "history"
+        else:
+            allowed = self.fallback == "history" or (self.fallback == "archive" and self.noise)
+        if not allowed:
+            raise ValueError(f"a {self.question} question cannot fall back to {self.fallback}")
 
     def _check_attempt(self) -> None:
         if self.status is QuestionStatus.QUEUED:
@@ -168,6 +218,11 @@ class FactReviewQuestion(BaseModel):
     def asked_of(self, account_id: str, user_id: str) -> bool:
         """The question belongs to this user in this account: the only one who may answer it."""
         return self.account_id == account_id and self.user_id == user_id
+
+    @property
+    def in_chat(self) -> bool:
+        """It is sent to the owner's chat; a digest question is answered only in the Cabinet and never sent."""
+        return self.delivery == "chat"
 
     @property
     def delivered(self) -> bool:
@@ -270,6 +325,11 @@ class FactReviewQuestion(BaseModel):
         return self._moved(
             status=QuestionStatus.CLOSED, closed_by=by, closed_at=at, answer=answer, answer_source=source,
         )
+
+    def fallback_failed(self) -> Self:
+        """Its history fallback could not be written this time: one more attempt counted, the question still open."""
+        self._require(self.is_open, "fallback_failed")
+        return self._moved(fallback_attempts=self.fallback_attempts + 1)
 
     # ------------------------------------------------------------------------------------------------ plumbing
 

@@ -24,7 +24,7 @@ class AnsweringPort(FactUpdatePort):
         self.answer = answer
 
     async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None,
-                                history=None):
+                                history=None, expected_id=None):
         return self.answer(fact_id)
 
 

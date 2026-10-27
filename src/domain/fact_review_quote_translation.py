@@ -21,6 +21,8 @@ INVISIBLE_CATEGORIES: Final[frozenset[str]] = frozenset({"Cc", "Cf"})  # control
 _CODE = re.compile(r"[a-z]{2}")
 _DIGEST = re.compile(r"[0-9a-f]{16}")
 _DIGIT_RUN = re.compile(r"[0-9]+")
+# The text key of a rewrite's content among the texts a pass writes (P2-3); an ask's texts go by their own keys.
+HISTORY_TEXT_KEY: Final[str] = "history"
 
 
 @dataclass(frozen=True)
@@ -81,37 +83,43 @@ def translation_problem(value: object, source: str) -> Optional[str]:
     return None
 
 
+def written_text_key(fact_id: str, text_key: str) -> str:
+    """The `translations` key of a text the pass wrote about the batch fact `fact_id`: `<fact_id>:<text key>`."""
+    return f"{fact_id}:{text_key}"
+
+
 def translations_wanted(language: Optional[str]) -> bool:
     """Whether a message in `language` can show translations: a two-letter code other than `SOURCE_LANGUAGE`."""
     return isinstance(language, str) and _CODE.fullmatch(language) is not None and language != SOURCE_LANGUAGE
 
 
 def report_translations(
-    raw: object, language: Optional[str], batch: Mapping[str, str],
+    raw: object, language: Optional[str], sources: Mapping[str, str],
 ) -> Tuple[Tuple[QuoteTranslation, ...], List[str]]:
-    """The translations a final report gave (`raw` = its `translations` value). `batch` maps each batch fact id to its
-    stored text. Returns `(kept, refusals)`.
+    """The translations a final report gave (`raw` = its `translations` value). `sources` maps each key to its English
+    text: a batch fact id to its stored text, and a `written_text_key` to a text the pass wrote (P2-3). Returns
+    `(kept, refusals)`.
 
     Nothing is kept and nothing refused when `translations_wanted(language)` is false or `raw` is None. Refusals are
-    `"<fact_id>: <why>"` or one `"translations: <why>"`, never a text: `raw` not an object; a key not in the batch; a
-    value with a `translation_problem`. A kept one is stripped and keyed by `quote_digest` of the batch text; two batch
-    facts with the same text give one record (the later wins). Order: batch order."""
+    `"<key>: <why>"` or one `"translations: <why>"`, never a text: `raw` not an object; a key not in `sources`; a
+    value with a `translation_problem`. A kept one is stripped and keyed by `quote_digest` of the source text; two
+    sources with the same text give one record (the later wins). Order: the order of `sources`."""
     if raw is None or language is None or not translations_wanted(language):
         return (), []
     if not isinstance(raw, Mapping):
         return (), ["translations: not an object"]
     refusals: List[str] = []
     for key in raw:
-        if key not in batch:
-            refusals.append(f"{key}: not a fact of the batch")
+        if key not in sources:
+            refusals.append(f"{key}: names no listed fact or text this pass wrote")
     kept: dict[str, QuoteTranslation] = {}
-    for fact_id, source in batch.items():
-        if fact_id not in raw:
+    for key, source in sources.items():
+        if key not in raw:
             continue
-        value = raw[fact_id]
+        value = raw[key]
         problem = translation_problem(value, source)
         if problem is not None:
-            refusals.append(f"{fact_id}: {problem}")
+            refusals.append(f"{key}: {problem}")
             continue
         digest = quote_digest(source)
         kept.pop(digest, None)  # the later wins, at the later position

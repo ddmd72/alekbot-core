@@ -333,18 +333,28 @@ def build_review_stand_ins(
 
 # ------------------------------------------------------------------------------------------------ the review service
 
+# The digest's invoices block links here; nothing is sent in a kit run, and the .invalid name resolves nowhere.
+KIT_CABINET_URL = "https://cabinet.invalid/cabinet"
+
+
 class KitCoordinator:
     """The coordinator the review service routes its pass through on the kit: the kit-installed `ConsolidationAgent`'s
     `execute`, nothing else. Never the real `AgentCoordinator` (it resolves the user's cached live agent, whose repository
     and fact ports write live) and never `process()` (its `_flush_billing` writes the account's live usage counters). The
     agent's timeout is the message's, as the lease budget sets it; an overrun raises, which the service takes as the pass's
-    failure. `routed` keeps every message it was given."""
+    failure. `routed` keeps every message it was given, `responses` every answer."""
 
     def __init__(self, agent: Any) -> None:
         self._agent = agent
         self.routed: List[AgentMessage] = []
+        self.responses: List[AgentResponse] = []   # what each routed message was answered, for the bench's report
 
     async def route_message(self, message: AgentMessage) -> AgentResponse:
+        response = await self._route(message)
+        self.responses.append(response)
+        return response
+
+    async def _route(self, message: AgentMessage) -> AgentResponse:
         self.routed.append(message)
         expected = consolidation_agent_id(message.context.get('user_id'))
         if message.recipient != expected:
@@ -395,6 +405,8 @@ def build_review_service(
         answer_service=bundle.answer_service,
         interactive=bundle.interactive,
         alert_sink=kit.sink,
+        fact_updates=kit.recorder,   # the kit's typed path: a history fallback or a fold's supersede lands in the overlay
+        cabinet_url=KIT_CABINET_URL,
         run_timeout_s=run_timeout_s if run_timeout_s is not None else CONSOLIDATION.timeout_ms / 1000,
         clock=bundle.clock,
     )

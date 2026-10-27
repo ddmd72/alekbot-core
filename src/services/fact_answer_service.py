@@ -12,7 +12,7 @@ existing answer for a closed one.
 """
 from datetime import datetime, timezone
 import asyncio
-from typing import TYPE_CHECKING, AbstractSet, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, AbstractSet, Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..domain.choice_outcome import ChoiceOutcome
 from ..domain.entities import FactState
@@ -22,10 +22,12 @@ from ..domain.fact_lifecycle import walked_to_unseen_text
 from ..domain.fact_lifecycle_day import CounterField, counter_day
 from ..domain.fact_review_answer_kind import AnswerKind
 from ..domain.fact_review_answers import (
-    DECIDING_ANSWERS, answer_closes_fact, answer_updates, digit_answer, option_answer, option_id,
+    DECIDING_ANSWERS, answer_closes_fact, answer_fits, answer_updates, digit_answer, option_answer, option_id,
 )
 from ..domain.fact_review_language import OPTION_KEYS, fact_question_message, is_review_text
-from ..domain.fact_review_question import ANSWER_COUNTERS, FACT_QUESTION_KIND, AnswerSource, ClosedBy, FactReviewQuestion
+from ..domain.fact_review_question import (
+    ANSWER_COUNTERS, FACT_QUESTION_KIND, AnswerSource, ClosedBy, FactReviewQuestion, QuestionKind,
+)
 from ..domain.fact_review_frame import reply_part
 from ..domain.fact_review_question_close import QuestionClose
 from ..domain.fact_review_overview import QueueEntry, queue_entries, user_questions
@@ -103,7 +105,9 @@ class FactAnswerService(ChoiceHandlerPort):
         or a newer document whose text the owner never saw (`walked_to_unseen_text`) is `changed`, nothing written.
         Then the domain's `answer_updates` is written: an update through the typed write path, the in-place fallback
         fields (`dont_know`) under the repository's precondition. A conflict is `conflict`; any other refusal of the
-        write, or a `FactExpiryError`, is `not_applied` (WARNING, `answers_not_applied`). Only an applied answer closes
+        write, or a `FactExpiryError`, is `not_applied` (WARNING, `answers_not_applied`); so is an answer that is not an option of
+        the question's kind (`answer_fits`: `happened` on a `still_true` question, `dont_know` on a digest question), refused
+        before the fact is read. Only an applied answer closes
         the question (`close_question`, the owner's close), refreshes the biographical cache once and is counted by its
         source; an answer that sets the fact aside (`answer_closes_fact`) also marks the account undigested. Raises
         ValueError for a source that is not the owner's; store errors raise."""
@@ -118,6 +122,8 @@ class FactAnswerService(ChoiceHandlerPort):
         if not question.is_open:
             logger.info(f"[FactAnswer] question {question_id} is {question.status.value}; answer not applied")
             return AnswerResult.NOT_OPEN
+        if not answer_fits(kind, question):
+            return await self._not_applied(question, now, f"{kind.value} is not an option of a {question.question} question")
         zone = (await self._owner_zones.resolve(account_id)).zone
         context = FactWriteContext.for_pass(PassActor.OWNER, zone, None)
         stored = await self._asked_fact(question, context.accepts)
@@ -133,6 +139,7 @@ class FactAnswerService(ChoiceHandlerPort):
                 outcome = await self._fact_updates.apply_fact_update(
                     stored.fact.id, change.update, account_id, context=context,
                     evidence_at=change.evidence_at, reason=change.reason, history=change.history,
+                    expected_id=stored.fact.id,
                 )
                 if outcome.refusal is UpdateRefusal.CONFLICT:
                     logger.warning(f"[FactAnswer] question {question_id}: the write conflicted; nothing written")
@@ -282,10 +289,13 @@ class FactAnswerService(ChoiceHandlerPort):
         facts = {q.fact_id: stored.fact for q, stored in zip(mine, found) if stored is not None}
         return queue_entries(state, mine, facts, account_id)
 
-    async def answer_options(self, user_id: str) -> List[Tuple[AnswerKind, str]]:
-        """The answers a click on the Cabinet can give, each with its label in the user's UI language."""
+    async def answer_options(
+        self, user_id: str, kinds: Iterable[QuestionKind],
+    ) -> Dict[QuestionKind, List[Tuple[AnswerKind, str]]]:
+        """The answers a click on the Cabinet can give to a question of each of `kinds`, each with its label in the user's
+        UI language; the labels are read once."""
         labels = await self._texts.ui_labels(user_id)
-        return [(kind, labels[OPTION_KEYS[kind]]) for kind in DECIDING_ANSWERS]
+        return {kind: [(a, labels[OPTION_KEYS[a]]) for a in DECIDING_ANSWERS[kind]] for kind in dict.fromkeys(kinds)}
 
     async def close_question(
         self,

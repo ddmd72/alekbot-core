@@ -9,7 +9,9 @@ from src.domain.fact_review_state import FactReviewState
 from src.domain.language import LanguageCode
 from src.domain.ui_messages import UIMessage
 
-RU: Dict[str, str] = {key: f"ру {key.split('_')[-1]}" for key in CANONICAL_LABELS}
+# P2 revised (C11): the options of one question kind must differ, and the last word of a key does not tell
+# memory_option_happened from memory_option_not_happened; the key without its prefix does
+RU: Dict[str, str] = {key: f"ру {key.removeprefix('memory_')}" for key in CANONICAL_LABELS}
 BAD_RU = {**RU, UIMessage.MEMORY_OPTION_STILL_TRUE.value: "Да 1"}
 
 

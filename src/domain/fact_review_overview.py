@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Final, List, Literal, Mapping, Optional, Sequence
 
 from .entities import FactEntity, FactState
-from .fact_review_question import SENT_STATUSES, FactReviewQuestion
+from .fact_review_question import SENT_STATUSES, FactReviewQuestion, QuestionDelivery, QuestionKind
 from .fact_review_rules import current_question, queue_order
 from .fact_review_state import FactReviewState
 
@@ -27,7 +27,8 @@ QueuePlace = Literal["current", "sent", "waiting"]
 class QueueEntry:
     """One open question as the owner sees it: its fact in full as it stands now (the quoted text when the fact is gone),
     the fact's domain and `reported_date` when known, since when it has been waiting (`waiting_since`, the queue key: the
-    fact's `stale_since`), when it was sent (`asked_at`, none while it waits) and its place."""
+    fact's `stale_since`), when it was sent (`asked_at`, none while it waits), its place, and the question's kind and
+    delivery (P2-3: a `digest` question is a routine invoice, answered in the Cabinet only)."""
 
     question_id: str
     fact_id: str
@@ -37,6 +38,8 @@ class QueueEntry:
     waiting_since: datetime
     asked_at: Optional[datetime]
     place: QueuePlace
+    question: QuestionKind = "still_true"
+    delivery: QuestionDelivery = "chat"
 
 
 def listable_state(raw: Optional[str]) -> Optional[str]:
@@ -96,4 +99,6 @@ def _entry(question: FactReviewQuestion, fact: Optional[FactEntity], place: Queu
         waiting_since=question.queue_key,
         asked_at=question.asked_at,
         place=place,
+        question=question.question,
+        delivery=question.delivery,
     )

@@ -123,14 +123,20 @@ async def test_the_answer_options_are_the_three_deciding_answers_in_the_users_ui
     world = ReviewWorld()
     world.language.preferences[USER] = (LanguageCode.UK, False)
 
-    options = await _service(world).answer_options(USER)
+    # P2 revised (C14): the options per question kind asked for, each kind's deciding answers with UI-language labels
+    by_kind = await _service(world).answer_options(USER, ["still_true", "paid", "still_true"])
 
+    assert list(by_kind) == ["still_true", "paid"]
+    options = by_kind["still_true"]
     assert [kind for kind, _ in options] == [AnswerKind.STILL_TRUE, AnswerKind.ENDED, AnswerKind.NEVER]
     labels = await _texts(world).ui_labels(USER)
     assert [label for _, label in options] == [
         labels["memory_option_still_true"], labels["memory_option_ended"], labels["memory_option_never"],
     ]
     assert all(label != "Yes" for _, label in options)
+    assert by_kind["paid"] == [
+        (AnswerKind.PAID, labels["memory_option_paid"]), (AnswerKind.NOT_PAID, labels["memory_option_not_paid"]),
+    ]
 
 
 async def test_the_ui_labels_count_no_fallback_and_cover_every_text():

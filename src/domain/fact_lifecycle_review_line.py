@@ -19,6 +19,8 @@ _OWN_BUCKETS: Final[Tuple[Tuple[str, CounterField], ...]] = (
     ("superseded", CounterField.SUPERSEDED),
     ("kept", CounterField.KEPT),
     ("queued", CounterField.QUEUED),
+    ("to history", CounterField.TO_HISTORY),
+    ("folded", CounterField.FOLDED),
 )
 # Counters of the questions; `timed out` is one of them, not part of the review buckets.
 _QUESTION_COUNTERS: Final[Tuple[Tuple[str, CounterField], ...]] = (
@@ -32,6 +34,7 @@ _QUESTION_COUNTERS: Final[Tuple[Tuple[str, CounterField], ...]] = (
 _FAILURES: Final[Tuple[Tuple[str, CounterField], ...]] = (
     ("review failed", CounterField.REVIEW_FAILED),
     ("refusals", CounterField.REVIEW_REFUSALS),
+    ("fallbacks not applied", CounterField.FALLBACKS_NOT_APPLIED),
 )
 _UNRECORDED: Final[Tuple[Tuple[str, CounterField], ...]] = (("replies not recorded", CounterField.REPLY_INTAKE_FAILED),)
 
@@ -53,8 +56,8 @@ class QuestionStanding:
 
 
 def question_standing(questions: Iterable[FactReviewQuestion]) -> QuestionStanding:
-    """The standing of an account's open questions."""
-    held = list(questions)
+    """The standing of an account's open chat questions (a digest question is never sent, so never in the queue)."""
+    held = [q for q in questions if q.in_chat]
     return QuestionStanding(
         queued=sum(1 for q in held if q.status is QuestionStatus.QUEUED),
         unanswered=sum(1 for q in held if q.status is QuestionStatus.UNANSWERED),

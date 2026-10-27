@@ -9,7 +9,7 @@ by updating this file.
 Design records: `docs/10_rfcs/DELIBERATE_FACT_MANAGEMENT_RFC.md` (taxonomy, tools, cognitive process),
 `docs/10_rfcs/CLUSTER_REVIEW_RFC.md` (Stage 2a), `docs/10_rfcs/STANDING_DIRECTIVES_RFC.md` (Stage 2b),
 `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md` (`$memory save`), `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` (S1 live; S2, S3 and S4 deployed 2026-10-27, janitor log-only;
-S5's classify built, not run), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,fact_versions_one_writer,fact_expiry_and_janitor,fact_review_and_owner_questions,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
+S5's classify built, not run; P2 revised, "a fact whose date passed becomes history", built, not deployed), decisions `docs/04_solution_strategy/decisions/{fact_s1_defects,fact_versions_one_writer,fact_expiry_and_janitor,fact_review_and_owner_questions,standing_directives,directive_applicability_gate,memory_facts_owner_confirmed,consolidation_one_batch_per_task,consolidation_failed_batch_bounded,sonnet55_adaptive_thinking_stall,consolidation_provider_model_eval}.md`.
 
 ## 0. How to answer questions about memory
 
@@ -22,7 +22,8 @@ S5's classify built, not run), decisions `docs/04_solution_strategy/decisions/{f
 | How to deploy or roll back the fact versions (S2), the expiry work (S3) and the review (S4), and how to read the audit afterwards | the rollout notes (ops), §9.6 |
 | When a fact ends: what `expiry` is, who computes `expires_at`, why a write was refused for its expiry, what "born due" means | §2.7, §6 |
 | What the daily janitor does, why a fact went `stale`, what log-only means, the breaker, the pool, the run guard, the alerts, the 🧹 morning line | §5.5, §9.1 |
-| What the review pass does with a stale fact; why a fact came back, was set aside or was asked about | §5.6, §6 |
+| What the review pass does with a stale fact; why a fact came back, was set aside, became history or was asked about | §5.6, §6 |
+| What happens to a plan whose date passed, a document or membership that ended, an invoice, a fine (P2 revised: history, the question kinds, the invoice block) | §5.6, §2.7, §7 |
 | How a question reaches me, how I answer it (a digit, a button, a reply in words, the Cabinet), what happens if I do not | §5.6 |
 | Why no question arrived, or arrived twice, or its buttons did nothing | §5.6, §9.2b |
 | What the weekly digest says and when it is sent | §5.6 |
@@ -49,6 +50,7 @@ S5's classify built, not run), decisions `docs/04_solution_strategy/decisions/{f
 | Why a reminder's or a system note's text became a fact | §9.3 |
 | Which batch wrote a given fact | §9.4 (step 0) |
 | Owner scripts, dry-run benches, the data audit, the prompt snapshot and its vocabulary tests | §9.5–§9.7 |
+| How to re-open archived facts, re-review closed facts with a dry run first, or roll P2's questions back | §9.5 |
 | One-time classify of the existing facts, janitor on | §10 (not built) |
 | Where a piece of code lives | §11 |
 
@@ -328,14 +330,14 @@ before (`max(stored, new + days)`); when the link is unclear it creates a new fa
 DISCARD, and cleanup passes never extend.
 
 **Review and owner writes (S4).** The review pass and the owner's answers write through the same update path with their own
-pass actors, `review` and `owner` (`domain/pass_actor.py`, the one table that says whose dates count, whether a due horizon is
-floored, which stored states a write may start from and how a refusal reads). They differ from the consolidation passes in
-five ways (§5.6 has the flow):
+pass actors, `review`, `owner` and (P2 revised) `timeout` for a silence that writes history (`domain/pass_actor.py`, the one
+table that says whose dates count, whether a due horizon is floored, which stored states a write may start from and how a
+refusal reads; `timeout` uses the owner's row). They differ from the consolidation passes in six ways (§5.6 has the flow):
 - **A horizon counts from now.** A revive or a rewrite by the review, an owner's "yes" and a silence's fallback give a
   horizon of N days from the moment of the write (`horizon_from_now`): `expires_at` is that moment plus N days and `ttl_days`
   is stored so that `reported_date + ttl_days` still equals it (up to a day later, whole days). The strict born-due rule
   applies: no floor, so N must be at least 2 and a `date` must be ahead. The review prompt gives `none` only on evidence or a reply,
-  and a pinned fact always gets `none`.
+  or with a history rewrite on any basis (P2 revised), and a pinned fact always gets `none`.
 - **`reported_date`.** A revive on evidence takes the later of the stored date and the evidence fact's date; on a reply or an
   owner answer, the later of the stored date and the answer time. A rewrite, a queue write and a fallback keep it. The review
   never sends a date (it is dropped with a note).
@@ -345,11 +347,27 @@ five ways (§5.6 has the flow):
   as stored. Every reader sees an ordinary current fact; the janitor skips it while its question is open (§5.5).
 - **Silence doubles the window.** When nobody answers, a fact that falls back to `revive` gets twice the window its last
   revive gave, between 14 and 365 days (28, 56, … days). It is never replaced by a silent revive of an unrelated length and
-  never "asked once and then forgotten". A fallback to `archive` is used only for a dated plan, a past `fallback_date` or noise.
+  never "asked once and then forgotten". A fallback to `archive` is used only for noise (P2 revised; before it, also for a dated
+  plan or a past `fallback_date`, which stored questions keep); a fallback to `history` writes the question's "unknown" text.
+- **A fact whose date passed becomes history (P2 revised, built, not deployed).** The review or an owner's answer sends
+  `as_history`: `updates {state: CURRENT, content: <the history text>, expiry: {kind: none}}`. It is a **version** in the same
+  lineage (D8: `version + 1`, three vectors from the new text, `created_at` and `reported_date` kept, the dated original
+  `superseded` by it in one transaction), at **`archival` priority** (out of the baseline cache, found by every search), with
+  `metadata` emptied and `context` cleared before the embedding texts are built, so nothing of the plan's metadata describes the
+  history. Only the review, the owner and a timeout may write one (`finish_fact_update` refuses any other writer). The text is
+  English, past tense, at most 40 words, keeps the date at the fact's precision, drops identifiers (booking numbers, codes,
+  times) and keeps an invoice's amount and due day: "In Nov 2026 the user had the car serviced (Nov 5).", "The user planned to
+  attend a conference Nov 18–20, 2026, and did not go.", "The user planned to attend a concert on Dec 5, 2026; whether it took
+  place is unknown."
 The trail actors added are `review` (reasons such as `revived on <id8>`, `revived on reply q=<id>`, `archived: date passed
 <date>`, `queued for the owner q=<id>`), `owner` (`confirmed q=<id> (digit|button|cabinet)`, `ended …`, `never …`,
 `did not remember q=<id>`), `timeout` (`no answer to q=<id>: revive|archive`) and `review_fallback` (`kept twice: queued
-q=<id>`).
+q=<id>`). P2 revised adds the history reasons: `rewritten as history on <id8>` / `on reply q=<id>` / `: date passed <date>`
+(review), `rewritten as history q=<id>: <happened|not_happened|not_needed|paid|not_paid> (<source>)`, `renewed q=<id>
+(<source>)`, `rewritten q=<id>: not_renewed (<source>)` and `rewritten as history: did not remember q=<id>` (owner),
+`rewritten as history: no answer to q=<id>` (timeout). They read as rewrites (so `renewed` gives a window a later silence
+doubles), never as revives. The S4 reason `archived: date passed <date>` has no P2 writer; the facts it closed are re-opened by
+id with the reopen script (§9.5).
 
 **What the model sees.** The consolidator's search results carry `expiry` in the shape it sends, `due` (the local end date of
 a horizon) and `reported_date` as an ISO time with the owner's offset; never `ttl_days`, `expires_at` or `expiry_kind`. A
@@ -835,7 +853,8 @@ They show text, domain, type and created date. Since S4 the page has three views
 - **Set aside lately**: `GET /api/user/facts/recently-closed`, everything archived or invalidated in the last 30 days (not
   only what the digest listed), newest closure first, each with its state and the actor of its last trail entry. Read-only: the Cabinet cannot bring a closed fact back. To bring one
   back, the owner tells the bot in chat that it is still true.
-- **Questions**: the open memory-review questions with answer buttons (§5.6).
+- **Questions**: the open memory-review questions with answer buttons, the options of each question's kind (§5.6); since P2
+  revised (not deployed) also the group "Invoices with no payment confirmation" (Paid / Not paid, in bulk).
 The page holds fact ids, and a version write changes the id. A stale id still works for a delete (§5.2).
 **Pagination tie.** The browser pages by a cursor on `created_at`, ties broken by document id
 (`firestore_repo.py:266-314`). A version copies `created_at` from the document it replaces, so a fact that was versioned
@@ -1023,7 +1042,8 @@ does it, **only on the owner's word** (the rollout notes, ops; the switch is `FA
 (both measured **before** the run) and `review_enqueued`. The last run of the day wins, so a hand run never double-counts.
 The same document carries counters that other code adds to with increments and a snapshot never replaces: the consolidator's
 `expiry_tool_errors` (§3.11), the review's `reviewed`, `revived`, `rewritten`, `archived_by_review`, `invalidated`,
-`superseded`, `kept`, `queued`, `review_failed`, `review_refusals`, `labels_fallback`, and the question flow's `questions_sent`,
+`superseded`, `kept`, `queued`, `to_history`, `folded`, `review_failed`, `review_refusals`, `labels_fallback`, and the question
+flow's `fallbacks_not_applied` (P2 revised: a silence's history write that was refused or raised), `questions_sent`,
 `not_delivered`, `answered_by_digit`, `answered_by_button`, `answered_in_cabinet`, `answers_not_applied`, `closed_by_reply`,
 `timed_out`, `replies_in_words`, `already_answered`, `reply_intake_failed` (§5.6). After the run, **once a day** (the day's mark
 in `{prefix}fact_lifecycle_lines` is claimed before the post, so a failed post loses the line and never doubles it) a single
@@ -1031,12 +1051,15 @@ ops message goes to the ops sink when some figure is non-zero or a breaker is no
 <YYYY-MM-DD HH:MM> UTC[ · log-only]`, then, when closed review records are overdue, `purge overdue N`, then one line per account:
 `<8>: due N (new N, no decision N) | staled N / would stale N / deferred N | conflicts N | breaker ok/tripped/would trip | backlog N
 (oldest Nd) | expiry tool errors yesterday N`, followed by the review segments, each only when one of its figures is above zero:
-`| review: reviewed N; counted on their own: revived N, rewritten N, archived N, invalidated N, superseded N, kept N, queued N`,
+`| review: reviewed N; counted on their own: revived N, rewritten N, archived N, invalidated N, superseded N, kept N, queued N,
+to history N, folded N`,
 `| questions sent N, answered by digit N, by button N, in the Cabinet N, by reply N, timed out N, queue N, unanswered N,
-due_waiting N`, `| review failed N, refusals N`, `| replies not recorded N` and a closing `| enqueued 0|1`. The counters in the
+due_waiting N`, `| review failed N, refusals N, fallbacks not applied N`, `| replies not recorded N` and a closing `| enqueued 0|1`. The counters in the
 segments are **yesterday's** (the day the review actually ran), the `queue`, `unanswered` and `due_waiting` figures are this
 run's. The buckets of the review segment are counters of their own, not a breakdown of `reviewed` (a `kept` fact can also be
-`timed out`, and `queued` also counts a kept-twice question).
+`timed out`, and `queued` also counts a kept-twice question; `to history` counts the review's history rewrites, which are
+in `rewritten` too, and a silence's history, not an owner's answer). The `queue` and `unanswered` figures and the "more than 35 queued" alert count chat
+questions only: a digest question (P2 revised) is never sent and is never in the queue or the pool.
 
 **Failure and overlap.** Every ops post is capped at 10 s (a hung sink holds neither the run nor its error). A failure other
 than a write conflict (a query, a counters read or write, a stale write) is logged with its type and the stage reached, posts
@@ -1054,7 +1077,10 @@ that expire carry a different field, `purge_after` (§5.6).
 ### 5.6 The review pass, the question queue and the owner's answers (Facts S4)
 
 Decision record: `decisions/fact_review_and_owner_questions.md`. Spec: `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` D6, D7 and "S4 as
-built". The owner's rule through all of it: **when unsure, keep the fact, and ask.**
+built", and "P2 revised" in §9 for what this section marks **P2** (owner, 2026-10-27; built, not deployed, and the janitor is
+not switched on before it ships). The owner's rule through all of it: **when unsure, keep the fact, and ask.** P2 adds a second:
+**anything that really happened is a fact, and so is an intention**, so a fact whose date passed becomes history, never an
+archive; archive is kept for noise, an end the owner states, and the Cabinet.
 
 **What a stale fact becomes.** The janitor hides a fact whose expiry passed. The review decides what it is now. One
 `fact_review` run per account per day (when something needs it, §5.5 step 7) does, in order, under the account's
@@ -1070,7 +1096,8 @@ named task):
    like an answer (one of the five current facts nearest to it), the fact goes to the model once; otherwise its question's
    **fallback** applies at once (below). A fact closed or rewritten meanwhile closes the question `resolved_elsewhere`.
 4. *Kept twice.* A stale fact the model left undecided twice (`offers` in the state) gets a code question and is queued. Code
-   never revives a fact on its own.
+   never revives a fact on its own. **P2:** for a `date` fact that question is `happened` with fallback `history` and texts
+   built by code at the answer's or the silence's moment (below); any other fact keeps the S4 `still_true` with `revive`.
 5. *Selection.* Up to 20 facts: first those with a reply in words not yet read and the timed-out candidates, then the stale
    facts, those offered least first and the longest stale first. A fact with an open question is the question's business and is
    left out.
@@ -1081,28 +1108,51 @@ named task):
    there is one, its question with the owner's reply in words. In mirror mode it also sees the owner's last ten messages (up to
    1,500 characters, system notes left out) so that it can report their language. Every listed fact must end with exactly one
    outcome, decided by the first rule that applies: **supersede** (a current fact says the same), **revive** (a reply or other
-   evidence says it still holds; rewritten if the text changed), **archive** (it is over; basis a reply, evidence or the passed
-   date of a dated plan), **invalidate** (it was never true), else **ask** the owner. A fact the pass cannot decide and has
+   evidence says it still holds; rewritten if the text changed), **history** (**P2**: its date passed; rewritten as what happened,
+   what was planned and did not happen, or what was planned with an unknown outcome, on evidence, on its own text or on a reply),
+   **archive** (the owner's reply says it is over; before P2 also evidence or the passed date of a dated plan), **invalidate**
+   (it was never true), else **ask** the owner. A fact the pass cannot decide and has
    already asked about is *left*.
-7. *The tools* are three (`_get_tool_declarations("review")`): `update_fact(fact_id, updates, basis?, history?)`, `ask_owner(fact_id,
-   fallback, fallback_date?, noise?)` and `count_words`. There is no search, create or merge tool. `FactReviewScope` (one
+7. *The tools* are three (`_get_tool_declarations("review")`): `update_fact(fact_id, updates, basis?, history?, as_history?,
+   payment?)`, `ask_owner(fact_id, fallback, question?, texts?, folds?, noise?)` and `count_words` (**P2**; before it `ask_owner`
+   took `fact_id, fallback, fallback_date?, noise?`, and `fallback_date` is now refused). There is no search, create or merge tool. `FactReviewScope` (one
    `asyncio.Lock`, so calls apply in the order the model wrote them) routes them and refuses what the rules refuse, each
    refusal naming the argument and its fix and tagged `basis`, `scope` or `ask`:
    - **scope**: a fact outside the batch, or one that already has a result in this pass, is refused;
    - **basis**: an invalidate or a rewrite needs evidence (another current fact, never a version of the same fact) or the
-     owner's reply (with a quote copied from it); an archive also accepts `date_passed` (a dated plan uses its own date; any other
-     kind needs a date before today in the owner's zone); **a revive needs evidence or a reply, and is refused otherwise** ("ask
-     the owner instead"); a supersede names a current fact;
-   - **history**: an archive on a reply that says the thing ended may carry one past-tense sentence, which code creates as a
-     separate fact (`{kind: none}`, its own lineage, same domain and tags) in the same transaction. A dated plan that is over is
-     archived only, with no history fact;
-   - **ask**: one fact, no question text (code writes the question), a `fallback` of `revive` (the default) or `archive`;
-     `archive` only for a dated fact, a past `fallback_date`, or `noise: true`. Noise never archives anything on its own; it only
-     sets what silence does.
+     owner's reply (with a quote copied from it); **an archive needs the owner's reply** (**P2**; before it, evidence or
+     `date_passed` too); a **history rewrite** (`as_history: true` with `updates {state: CURRENT, content, expiry: {kind:
+     none}}`) takes evidence, a reply or `date_passed` (a `date` fact uses its own date; any other kind needs a date before today
+     in the owner's zone), and `date_passed` backs nothing else: it is the fact's **own text** reporting the outcome (an
+     invoice received, a payment made, a subscription cancelled), never "it took place" or "it was paid"; **a revive needs
+     evidence or a reply, and is refused otherwise** ("ask the owner instead"); a supersede names a current fact, or a fact this
+     pass made current; a fact this pass rewrote as history on `date_passed` is no evidence and no successor;
+   - **history** (the S4 "ended" shape): an archive on a reply that says a standing thing ended may carry one past-tense
+     sentence, which code creates as a separate fact (`{kind: none}`, its own lineage, same domain and tags) in the same
+     transaction. Refused on a `date` fact (rewrite it with `as_history`) and on noise (archived only), and with a `CURRENT`
+     rewrite ("send as_history: true");
+   - **payment** (**P2**): with an `as_history` rewrite of a routine invoice that was received and is not confirmed paid
+     ("An invoice for the phone bill (€24), due Nov 10, was received; payment not confirmed."), the two texts `paid` and
+     `not_paid` code keeps for the owner's later tick. An invoice is never a payment: payment is confirmed only by evidence or
+     the owner. A fine or a debt is asked instead (`question: paid`);
+   - **ask**: one fact, no question text (code writes the question), a `question` kind and the `texts` code writes for each
+     answer (**P2**, below), and a `fallback`: `revive` (the default, `still_true` only), `history` (the question's "unknown"
+     text written as history; the fallback of `happened` and `renewed`, and the only one of `paid`) or `archive` (only with
+     `noise: true`, on any kind but `paid`). A
+     `date` fact is asked `happened`, `renewed` or `paid`, or `still_true` with `archive` and noise. The texts are written in
+     the same turn with no `count_words` call: code checks each (one line, no `[`, at most 40 words, not the same as the
+     fact's stored text) and refuses the ask naming the one that failed. `folds` names other batch facts that are parts of the same plan (the flights, the hotel and the
+     transfer of one trip): one question for all of them, its texts describing the whole plan. Noise never archives anything
+     on its own; it only sets what silence does.
    The model never archives a fact as noise by itself, and a refused call writes nothing.
 8. *After the pass.* Outcomes remove the fact's `offers` entry and close its question `review`. Each ask makes the fact
    `current` again under its precondition (state `current`, `stale_since` cleared, the expiry as stored) and creates a `queued`
-   question that quotes the fact and takes its place in line from the fact's `stale_since`. A timed-out candidate left
+   question that quotes the fact and takes its place in line from the fact's `stale_since`. **P2:** only after an ask is
+   queued are its folds superseded by the asked fact (a failed queue folds nothing; the folds stay stale for the next run), and
+   each routine invoice's history version gets a `paid` **digest question** (delivery `digest`, never sent in chat, answered in
+   the Cabinet, closed `resolved_elsewhere` when its fact changes or after 90 days). The stale facts are put before the model
+   by (offers, `stale_since`, `expires_at`, id), so the parts of one plan, staled in one janitor run with the same last day,
+   share a batch. A timed-out candidate left
    undecided gets its fallback. A conflicting fact write leaves the fact stale and creates no question.
 9. *Send* the next question if one may go (below); *refresh* the baseline cache once if any fact was written; *digest* if due
    (below); add the counters, post the revive alert (a fact revived a third time in 30 days), and mark the run (`last_review_at`
@@ -1120,28 +1170,43 @@ digit, a button, a reply the review has handled, a Cabinet click) or, if the own
 old one becomes `unanswered` and keeps its timeout). At most 5 are sent per owner-local day and none on a day when a delivery
 failed. There are no quiet hours in code: the chat's own notification settings decide. Questions go **only to the owner's primary
 channel**; with no primary channel, or one bound to a companion, nothing is sent and the queue waits (the Cabinet can answer it).
-A queued question never times out. A send is: claim the first queued question in one transaction on the state (no current
+A queued question never times out. An invoice digest question (**P2**) is never in this queue, the pool or the janitor's skip:
+its fact is a current history with `none`. A send is: claim the first queued question in one transaction on the state (no current
 question, today's count under 5); append the pair to the session (user part `[System: memory review q=<id> — Alek asked the owner
 about a fact he could not confirm]`, model part the question, `text == full_text`, raising when not stored); post; store the
 message reference; mark `asked`. A pair that cannot be appended puts the question back at the front; a post that fails appends a
 second pair (`[System: memory review q=<id> not delivered — …]` and `(not delivered)`) and puts it back, and that day sends no more.
-The message is code-built: "Is this still true?", the fact quoted as the owner is shown it (translated into the message language when the review stored a translation, else as stored), and the four options
-`1 — Yes   2 — No longer   3 — Never   4 — Don't remember`, then a hint that a reply in words works too.
+The message is code-built: the question line of its kind, the fact quoted as the owner is shown it (translated into the
+message language when the review stored a translation, else as stored), the options of its kind as digits, then a hint that a
+reply in words works too. **P2:** the kind decides the line and the options (before P2 every question was the first row):
+
+| Kind | For | Line | Options |
+|---|---|---|---|
+| `still_true` | everything S4 asks | Is this still true? | 1 Yes, 2 No longer, 3 Never, 4 Don't remember |
+| `happened` | a plan or event whose date passed (a `date` fact, or a horizon plan such as a pickup) | Did this happen? | 1 It happened, 2 It did not, 3 Don't remember |
+| `renewed` | a validity end that changes the current fact (a document, a permit, a membership, a trial) | Was this renewed? | 1 Renewed, 2 Not renewed, 3 No longer needed, 4 Don't remember |
+| `paid` (chat) | a fine or a debt whose due day passed | Was this paid? | 1 Paid, 2 Not paid, 3 Don't remember |
+| `paid` (digest) | a routine invoice already written "payment not confirmed" | never sent in chat | the Cabinet's Paid / Not paid |
 
 **The language of the message.** The owner's response-language setting decides: a fixed language gives that language
 (uk, en, fr, es); mirror mode gives the language of his recent messages, which the review pass reports as `message_language`.
-The 15 texts of a question (the question line, the four option labels, the reply hint, three acknowledgements, a "fact
-changed" note, a "closed" note, the digest's header and footer and its two state words) come from the UI strings for uk, en, fr and
-es. For any other language the review model returns them in its report and they are kept only if the code's checks pass (the
-exact 15 keys, one line each, within the length limits, no digit, `[` or URL, no control or invisible characters, four
-distinct option labels of at most four words); a set that fails is not used, the UI language is, and `labels_fallback` is
-counted. A passed set is cached in the state per language, with a digest of the English texts it translates, so a set written
-for other texts is ignored. The digits mean the same in every language. Each platform's adapter escapes whatever its markup would read as control syntax.
+The 28 texts of a question (**P2**; 15 in S4: the question line, the four option labels, the reply hint, three
+acknowledgements, a "fact changed" note, a "closed" note, the digest's header and footer and its two state words; P2 adds the
+three other question lines, the seven other option labels and the digest's history header, invoice header and Cabinet line)
+come from the UI strings for uk, en, fr and es. For any other language the review model returns them in its report and they are
+kept only if the code's checks pass (the exact 28 keys, one line each, within the length limits, no digit, `[` or URL, no
+control or invisible characters, option labels of at most four words that differ within each kind); a set that fails is not
+used, the UI language is, and `labels_fallback` is counted. The P2 key set changes the labels' digest, so a cached model set
+is ignored once until the next pass writes one. A passed set is cached in the state per language, with a digest of the English texts it translates, so a set written
+for other texts is ignored. The digits are the options of the question's kind, the same in every language. Each platform's adapter escapes whatever its markup would read as control syntax.
 
 **The fact in the message language (quote translations).** Stored facts are English. A message in another language quotes
 the fact translated by the review pass: the pass is told the language (fixed mode: the task's `language`; mirror mode: the
 language it reports from the owner's messages) and returns `translations`, one per listed fact, in its final report (no
-call, no effect on any outcome). The code keeps a translation only if it is one line, has no `[`, link or control character,
+call, no effect on any outcome). **P2:** it also returns every text it wrote in the pass, under `<fact_id>:<text key>`
+(`history` for a rewrite's content, each ask text, each `payment` text), so the digest's history and invoice lines and a later
+question about a history fact are shown translated too; a key that names no text the pass wrote is refused. A code-built
+kept-twice text is the one text never translated. The code keeps a translation only if it is one line, has no `[`, link or control character,
 is at most 500 characters and keeps the source's numbers exactly (the multiset of digit runs); a fact whose own text has a
 link or `[` is never translated. A kept one is stored right after the pass (before the closes) under
 `{account_id}:quote:{language}:{digest of the English text}`, so the same text under any fact id finds it; it expires 180 days
@@ -1155,11 +1220,11 @@ quote is in the message's language. The Cabinet keeps showing the English text. 
 **How the owner answers.** Only a *reply to the question message* counts (a Slack thread reply on the question's message, a
 Telegram reply to its message), or a click, or the Cabinet. Any other message is ordinary conversation and the question stays
 open. Four ways, one path (`FactAnswerService.apply`, with its source `digit`, `button` or `cabinet`):
-- **A digit as a reply** (1 yes, 2 no longer, 3 never, 4 don't remember). Taken at intake in `ConversationHandler`, before any
+- **A digit as a reply** (the options of the question's kind; for `still_true` 1 yes, 2 no longer, 3 never, 4 don't remember). Taken at intake in `ConversationHandler`, before any
   model call, in an unbound channel, for a text-only message. Applied at once by code. The acknowledgement is posted as a real
   reply to the question message (in its thread on Slack, a Telegram reply on Telegram), as literal text, and the pair
   `[Reply to memory review q=<id>] <text>` plus the acknowledgement is appended to the session.
-- **A button (Slack).** Four buttons under the question. A click is queued by `POST /slack/interactivity` as an
+- **A button (Slack).** One button per option of the question's kind. A click is queued by `POST /slack/interactivity` as an
   `interactive_choice` task (the route verifies the Slack signature on the raw bytes before it parses anything, then answers 200 at
   once and does no more work in the request), and the worker applies it through the same path. The message is then re-rendered with
   the chosen answer and no buttons. A click on a question that is already answered shows its answer. The click must come from the
@@ -1168,8 +1233,12 @@ open. Four ways, one path (`FactAnswerService.apply`, with its source `digit`, `
   and shown to the review once on its next run, which applies it and closes the question (releasing the next). It does not go to
   Smart. It never shortens the 14 days; if the review leaves it undecided, the question waits for its timeout, and the timeout
   step sees the reply.
-- **The Cabinet.** The "Questions" list shows each waiting or asked fact in full with three buttons (yes, no longer, never),
-  checkboxes and a bulk "mark selected as …" (1 to 50 at once). A click is a direct owner action under the same preconditions.
+- **The Cabinet.** The "Questions" list shows each waiting or asked fact in full with one button per deciding option of its
+  question (for `still_true`: yes, no longer, never; "don't remember" is never offered there), checkboxes and a bulk "mark
+  selected as …" (1 to 50 at once) that offers only the options of one kind at a time. **P2:** the invoice digest questions are
+  their own group, "Invoices with no payment confirmation", with Paid / Not paid in bulk. A click is a direct owner action under
+  the same preconditions; an answer that is not one of its question's options (a click from another message version, a stale
+  page) is `not_applied` before any write.
 A reply to a question that is already closed gets "Already answered." An answer to the *current* question releases the next one.
 Two kinds of message that are not taken as an answer fall through to ordinary conversation, so nothing the owner wrote is
 dropped: a reply the system could not take (an error in the path, which is logged, counted as `reply_intake_failed` and alerted the
@@ -1184,9 +1253,16 @@ current text other than the quoted one, is `changed` and nothing is written):
   date and the answer time.
 - *No longer* (ended): a **standing** fact is archived and a separate lasting fact "No longer true (the owner said so in <Mon
   YYYY>): <the old text>" is created beside it in one transaction (the month name is a fixed English tuple, never locale-
-  dependent); a **dated plan** (an expiry kind `date`, or a question whose fallback is archive) is only archived.
+  dependent); a **dated plan** (an expiry kind `date`, on a stored S4 question) or **noise** (a question whose fallback is
+  archive) is only archived, with no history fact. Since P2 a new question about a dated plan is `happened`, not `still_true`.
 - *Never*: the fact is invalidated; no new fact.
-- *Don't remember*: the question's fallback now.
+- **P2** *It happened*, *It did not*, *No longer needed*, *Paid*, *Not paid*: the question's text for that answer is written as
+  history (a version at `archival`, `expiry none`, §2.7). *Renewed*: the fact is rewritten to the `renewed` text, current, with
+  a confirmed expiry, its priority kept. *Not renewed*: rewritten to the `not_renewed` text, `expiry none`, priority kept (it is
+  the current state). A kept-twice question has no stored texts: code builds them at the answer's moment, keeping the stored
+  text whole ("Took place as planned (the owner confirmed in Nov 2026): …", "Did not take place (the owner said so in
+  …): …", "Planned; whether it took place is unknown (no answer by …): …").
+- *Don't remember*: the question's fallback now (for `history`, its "unknown" text as history, under the owner).
 - A correction in words is handled by the review (invalidate, or supersede by the fact that states the true value) and by
   Stage 1, which records the true value as its own fact.
 A close from any source goes through one method that clears the current slot, releases the next question and re-renders a
@@ -1194,10 +1270,19 @@ Slack-posted message (the answer, or "This question is closed."); every close, i
 `resolved_elsewhere`, uses it. Answers take no memory-write lease: the preconditions keep a concurrent consolidation or review
 write from being lost and the loser reports `conflict`.
 
-**What silence does.** A question's `fallback` decides, 14 days after it was sent. `revive` (the default): the fact is brought
-back with twice the window its last revive gave, 14 to 365 days (§2.7), with no new question until it falls due again. `archive`
-(a dated plan, a past `fallback_date`, or noise): the fact is archived. So an ignored question never silently revives a fact for a
-short, arbitrary time, and never archives a lasting one.
+**What silence does.** A question's `fallback` decides, 14 days after it was sent. `revive` (the default for `still_true`): the
+fact is brought back with twice the window its last revive gave, 14 to 365 days (§2.7), with no new question until it falls due
+again. `archive` (noise; on a stored S4 question also a dated plan or a past `fallback_date`): the fact is archived. **P2**
+`history` (`happened`, `renewed`, `paid`): the question's "unknown" text ("The user planned to attend a concert on Dec 5, 2026;
+whether it took place is unknown.") is written as history through the typed write path under the `timeout` actor; the fact now
+has `none`, so it never falls due and is never asked again, and the weekly digest lists it. A write conflict leaves the question
+for the next run; a refused or failing write is a WARNING and `fallbacks_not_applied`, the question stays open with one more
+attempt, and it closes `resolved_elsewhere` on a typed refusal after the first attempt or at the third attempt; one bad question
+never stops the run. If the history landed and the close did not (a crash between), the next run sees the question's own
+timeout reason on the version its fact now resolves to and closes it `timeout`, so the digest still lists it. Every typed write
+(the review's, an answer's, the timeout's) names the exact document it decided on (`expected_id`): if the fact moved on
+meanwhile the write is refused and nothing is written, so an answer racing a timeout never overwrites the other's history. So an ignored question never silently revives a fact for a short, arbitrary time, never archives a lasting
+one, and never loses what was planned.
 
 **The weekly digest.** When the review or an answer sets a fact aside (archive or invalidate), the state records
 `undigested_since`. At the end of a review run (after a failed pass too), if something is undigested and the last digest is at
@@ -1209,11 +1294,19 @@ last trail entry's actor), at most 50, read from the facts closed since the last
 A fact the owner ended is listed as archived; the history fact written beside it is not. If there is nothing to list, no message
 is sent but the week is still claimed and the marks move. A digest that could not be delivered releases its claim and tries again
 at the next run. The Cabinet cannot bring a closed fact back; only the chat can.
+**P2** adds two blocks, each only when it has lines, and a digest with only them is sent too: **"Recorded as history without your
+answer:"**, one line per fact a silence wrote as history since the last digest (its "unknown" text; an owner's answer and a
+history the review wrote on evidence or its own text are not listed), and **"Invoices with no payment confirmation:"**, one line
+per open invoice digest question (at most 50, oldest first), then "Mark the paid ones in the Cabinet:" and the link to the
+Cabinet's Memory tab, appended by code. Every line is shown as the owner is shown any quote: translated when a translation is
+stored, else the English text.
 
 **What the owner sees in the Cabinet** (§4.8): the stale facts, everything set aside in the last 30 days with the actor of
 each close, and the question list. The question list shows each fact's current text; a fact that was rewritten since its
 question (and would answer "changed" if clicked) shows the quoted text the owner was asked about, so nothing unseen is shown or
 answered. Every click is checked for the session user, so one user's questions are never listed or answered by another.
+**P2:** each question carries its own kind and options; the invoice digest questions are a group of their own, where "Paid" or
+"Not paid" writes that text as history over the "payment not confirmed" version.
 
 **Counters, alerts, retention.** §5.5 lists the counters, the alerts and the 🧹 segments. `purge_after` is `closed_at + 90 days`
 on a closed question and `claimed_at + 90 days` on a digest claim; it exists only in storage. A Firestore TTL policy on
@@ -1221,7 +1314,8 @@ on a closed question and `claimed_at + 90 days` on a digest claim; it exists onl
 run-level 🚨 reports them 3 days past. An open question never has one. The state document has none.
 
 **The cost.** A digit, a button, a Cabinet click, a timeout fallback with nothing to see, a send and a digest cost no model
-call. A review pass is one model loop whose fixed prompt is about 25,000 tokens: about $0.08–0.10 (Sonnet 5.5) or $0.15–0.20
+call (P2's answers and silence included: the texts are written when the question is asked, about $0.01–0.02 more per plan
+question). A review pass is one model loop whose fixed prompt is about 25,000 tokens: about $0.08–0.10 (Sonnet 5.5) or $0.15–0.20
 (Opus 5.5) for a pass of 2 facts, and about $0.22–0.30 or $0.45–0.60 for a pass of 20 (§8).
 
 ---
@@ -1345,17 +1439,32 @@ consolidation run).
 **A fact that went stale** (the janitor staled "the planning permission for the garden shed is expected by Oct 30").
 1. *Day 0, 09:30:* the janitor stales it, sees a stale fact and a review interval elapsed, and enqueues the account's `fact_review`.
 2. *Minutes later:* the review takes the memory-write lease, reads the fact with its neighbours. A neighbour "the permission
-   for the garden shed was received on Oct 28" decides it: the fact is superseded by that one, or archived with the plan's
-   date as basis (a dated plan that is over is archived only). Nothing is asked. A fact no neighbour decides ("Alex goes to
+   for the garden shed was received on Oct 28" decides it: the fact is superseded by that one (before P2 it could also be
+   archived on the plan's date; **P2** never archives it). Nothing is asked. A fact no neighbour decides ("Alex goes to
    the FitLife gym") is queued instead: it becomes `current` again at once, with its old expiry, and a question about it is
    queued.
 3. *Same run or a later one:* if no question is out and fewer than 5 went today, the question is posted to the primary chat,
-   one fact, four options. The owner replies "4"… or "3 — it's Iron Temple now", or presses a button, or answers in the
+   one fact, the options of its kind (four for `still_true`). The owner replies "4"… or "3 — it's Iron Temple now", or presses a button, or answers in the
    Cabinet. A digit, a button and a Cabinet click are applied at once; words are read by the review on its next run.
 4. *If he does not answer:* the next local day the question stays open as `unanswered` (and the next one may be sent); after 14
-   days from the send the fallback applies: a lasting fact is revived for twice the window it last had (between 14 and 365 days), a
-   dated plan is archived. Nothing is asked about it again until it falls due again.
+   days from the send the fallback applies: a lasting fact is revived for twice the window it last had (between 14 and 365 days),
+   noise is archived (**P2**: a plan is written as history with an unknown outcome; before P2 a dated plan was archived).
+   Nothing is asked about it again until it falls due again.
 5. *Weekly:* what the review and the owner set aside in the week is listed in one digest message.
+
+**A plan whose date passed (P2 revised, built, not deployed)** ("the user will attend a concert on Dec 5", a `date` fact).
+1. *Dec 6, 09:30:* the janitor (once switched on) stales it; the review runs the same morning.
+2. *The review decides from memory when it can:* a neighbour "sold the concert tickets" → history on evidence, "The user planned
+   to attend a concert on Dec 5, 2026, and did not go."; a fact whose own text already reports the outcome (an invoice received,
+   a subscription cancelled) → history on its own text (`date_passed`). Either way a new version at `archival`, `expiry none`,
+   out of the baseline and found by search. Nothing is asked.
+3. *Otherwise it asks* "Did this happen?" with the three texts written now (happened, did not, unknown); the parts of one plan
+   are folded into one question. A membership or a document that ended is asked "Was this renewed?"; a parking fine "Was this
+   paid?". A routine phone bill is not asked: it becomes "received; payment not confirmed" history and a line in the next
+   digest's invoice block, ticked in the Cabinet.
+4. *An answer* (digit, button, Cabinet) writes that answer's text at once, with no model. *Silence* for 14 days writes the
+   "unknown" text, and the next weekly digest lists it under "Recorded as history without your answer". It is never archived
+   and never asked twice.
 
 **A directive** ("always answer in bullet points").
 - Consolidated with its batch (above). Stage 1 classifies it: `agent_directive` only if it is about agent behaviour
@@ -1497,6 +1606,9 @@ Log lines, in pipeline order:
    works without it.
 6. Did a digit get "That fact has changed in the meantime"? The fact was rewritten or changed after the question was asked; the
    review or the timeout handles that question.
+7. (**P2**) An invoice never arrives as a chat question: a routine invoice is a digest question, listed in the weekly digest's
+   invoice block and answered in the Cabinet's "Invoices with no payment confirmation" group. A fact the review rewrote as
+   history from evidence or its own text asks nothing either (the `to history` figure of the 🧹 line).
 
 ### 9.3 Why did it remember something wrong?
 
@@ -1544,9 +1656,20 @@ Log lines, in pipeline order:
 | `scripts/validation/inspect_consolidation.py` | prints the queue and recent facts |
 | the five benches (stage 1 classification, cluster audit, decomposition, directive review in `scripts/consolidation/`, and the email bench `scripts/email/test_consolidation_dryrun.py`) with `--s3-kit` (`scripts/consolidation/s3_dry_run_kit.py`, `scripts/consolidation/s3_bench_support.py`) | the **model dry run of the S3 prompts** (deploy step M, owner-run on the Mac, cap $30): each bench runs the pass its gate reads, on the real agent and adapter over a no-write store |
 | `scripts/migration/fact_s3_stamp_legacy_stale.py` | deploy step 6a: stamps `stale_since` on stale facts that have none (dry run first; `--apply` writes) |
-| `scripts/migration/fact_s5_classify.py --expect-model NAME [--budget-usd X] [--ids-file PATH]` / `--apply PLAN` | S5's one-time expiry decision for the current facts that have none. Dry run first: it reads, asks the live consolidation agent once per batch of 25 and writes a report and a plan under `scripts/memory/`, with nothing written to the database; the owner reads the report; then `--apply` replays that plan exactly, with no model, under the change token recorded at the scan (a fact changed since is skipped and listed in `…_changed.txt`). `--ids-file` classifies only the listed ids (the skipped ones, or documents an old revision rewrote). A run without `--budget-usd` only estimates. Unsure → `none`; a run that gets no answer stops and lists the undecided ids rather than writing `none`. Writes `expiry_kind`, `ttl_days`, `expires_at` and one trail entry (actor `migration`) |
+| `scripts/migration/fact_s5_classify.py --expect-model NAME [--budget-usd X] [--ids-file PATH]` / `--apply PLAN` | S5's one-time expiry decision for the current facts that have none. Dry run first: it reads, asks the live consolidation agent once per batch of 25 and writes a report and a plan under `scripts/memory/`, with nothing written to the database; the owner reads the report; then `--apply` replays that plan exactly, with no model, under the change token recorded at the scan (a fact changed since is skipped and listed in `…_changed.txt`). `--ids-file` classifies only the listed ids (the skipped ones, or documents an old revision rewrote); with `--include-closed` it also classifies the listed archived and invalidated facts, for a re-review (P2 revised). A run without `--budget-usd` only estimates. Unsure → `none`; a run that gets no answer stops and lists the undecided ids rather than writing `none`. Writes `expiry_kind`, `ttl_days`, `expires_at` and one trail entry (actor `migration`) |
 | `scripts/consolidation/test_review_answers_dryrun.py --s3-kit` | step M bench 6: Stage 1 on windows with the real history shapes of a question and a reply (a digit, words, a correction, a bare digit with no marker, a not-delivered pair): the quoted fact must be left alone and only a correction's true value recorded (gate G4); `--case NAME` runs one case, e.g. `correction_translated_quote` (the question quoted in Ukrainian) |
-| `scripts/consolidation/test_review_dryrun.py --s3-kit --stage N --runs R [--mirror CODE]` | step M bench 7: the real `FactReviewService.run` on the kit over the owner's live stale facts, `N` more live facts staled in the kit's overlay, and seeded cases (a plan whose date passed, a revive with no basis, two stale duplicates, an undecidable fact, three replies in words); no stale fact, question, message or counter is written live (gates G5 and G6; `--mirror` checks the language the review reports; `--fixed CODE` runs fixed mode and lists the translations the pass kept) |
+| `scripts/consolidation/test_review_dryrun.py --s3-kit --stage N --runs R [--mirror CODE]` | step M bench 7: the real `FactReviewService.run` on the kit over the owner's live stale facts, `N` more live facts staled in the kit's overlay, and seeded cases (a plan whose date passed, a revive with no basis, two stale duplicates, an undecidable fact, three replies in words); no stale fact, question, message or counter is written live (gates G5 and G6; `--mirror` checks the language the review reports; `--fixed CODE` runs fixed mode and lists the translations the pass kept). **P2:** the turn bar is 12 of the review's 15, the plan case expects a `happened` question or a history on evidence (never an archive, never a `date_passed` history), and the G5 detector counts no history rewrite as an unbased revive. `--stage-ids PATH` (ids under `scripts/memory/`) replaces all the staging: exactly the listed facts, in any state (archived, invalidated, current), staged stale in the overlay; `--expiry-plan PLAN` gives them a classify plan's expiry; `--max-passes N` (default 6) runs review passes until every listed fact is decided; the report gains a human `<report>_listed.md` (each fact's original state and text, its outcome, the text or question the review would write) |
+| `scripts/migration/fact_p2_reopen_archives.py` (`--ids-file PATH`, `--expiry-plan PLAN`, `--apply`) | P2 revised: re-opens the facts of the owner's reviewed list (ids under `scripts/memory/`, the only selection) that are `archived` or `invalidated` as `stale`, so the daily review decides them again under the new rule. Dry run by default (counts on stdout; ids, state, text and the last trail entry to `scripts/memory/`). `--apply` writes under the scanned `update_time` (a changed document is skipped): state `stale`, `last_updated`, the restored `stale_since` and one trail entry (`<its real state> → stale`, actor `migration`, "reopened under P2 revised"); with `--expiry-plan` also the plan's expiry (a fact absent from it is reopened without and listed). A missing or `SYSTEM` fact, or one in any other state (`not_closed`), is counted and left alone. Text and vectors are never touched; a second apply reopens nothing |
+| `scripts/migration/fact_p2_owner_decisions.py` (`--decisions PATH`, `--apply`) | P2 revised: writes the owner's **own** decision on each listed closed fact, for a re-review in which he decided every fact himself. The file (under `scripts/memory/`) lists `{fact_id, account_id, action, text?, successor_id?}`, `action` one of `history` (the text as a history version), `current` (the text as a current fact, `none`), `supersede` (by `successor_id`, current or written earlier in the run), `invalidate`, `revive` (current, text unchanged, `none`); it is validated whole before any write. Per fact: the reopen script's own reopen, then one typed write as the owner, reason `owner decided on review` (a rewrite for every reader, never a revive), with `expected_id`, so a fact whose chain moved on is skipped and listed, never followed. Dry run by default (id, action, old and new text to `scripts/memory/`); a changed fact is skipped; a failure never stops the run; a half-done fact (reopened, not written) is `resumed` next run; a second apply finds every fact `already_decided` |
+| `scripts/migration/fact_p2_rollback_questions.py` (`--apply`) | P2 revised, before a rollback to the S4 revision only: removes the five P2 keys from every question document (the old model refuses even default-valued ones), deletes the invoice digest questions, closes the closed P2 ones as `resolved_elsewhere` with no answer, **closes the sent ones** (`pending`, `asked`, `unanswered`: their message carried P2 options, so the old code would misread a digit) as `resolved_elsewhere`, and gives only the `queued` ones fallback `revive`. Run it again after the traffic switch. Dry run by default; ids only, no text |
+
+**A re-review of closed facts (P2 revised; planned, owner-run).** Every archived fact and every invalidated fact that is not a
+directive is looked at again under the new rule, always dry run first: classify with `--include-closed --ids-file` writes an
+expiry plan for them; bench 7 with `--stage-ids` (the same ids), `--expiry-plan` and `--max-passes` shows, in its `_listed.md`,
+what the review would write for each; the owner reads it; only then either the reopen script with `--ids-file` and
+`--expiry-plan` makes the kept ones (archived or invalidated) stale and the next daily review decides them (their questions
+join the pool, at most 50), or, for the facts he decided himself, the owner-decisions script writes each decision. The janitor
+stays log-only meanwhile.
 
 The `scripts/consolidation/` benches run the real agent against live reads: fact writes are intercepted and the cache
 refresh is stubbed, but the model calls are real (paid) and may be recorded in the account's billing counters (the
@@ -1676,7 +1799,11 @@ the five prompt tokens and the code-built messages, the owner-zone timestamps, t
 log-only mode; §2.7, §3.11, §5.5, `decisions/fact_expiry_and_janitor.md`. S4: the review pass, the question queue, the owner's
 answers by digit, button, reply or Cabinet, the weekly digest, the Cabinet views, the janitor's pool, guard and alerts; §5.5,
 §5.6, `decisions/fact_review_and_owner_questions.md`). **S5's classify is built, not run** (the classify script, §9.5; "S5 as
-built" in the RFC), and the audit has its expiry classes (§9.6). Still to come:
+built" in the RFC), and the audit has its expiry classes (§9.6). **P2 revised is built, not deployed** (a fact whose date
+passed becomes history; the question kinds, the invoice digest questions, the digest's two new blocks, the reopen and rollback
+scripts; §2.7, §5.6, §9.5, RFC §9 "P2 revised"); its release order is code, then the `CONSOLIDATION_LIFECYCLE` upload the same
+day, then the reopen script, classify apply and a bench 7 re-run, and **the janitor is not switched on before it ships**. Still
+to come:
 - **S5 steps.** The order, set by the owner: classify (dry run → the owner reads the report → apply) → the review dry run (step M
   bench 7 is its tool; its G5 detector no longer counts the history fact of an "ended" answer) → the janitor stays log-only on
   the classified facts for as long as needed (the owner reads `would_stale` and the breaker each morning) → janitor on **only on
@@ -1728,7 +1855,8 @@ successor while the live consolidation prompts still tell the model to retire a 
 | `src/infrastructure/fact_review_scope.py` | the review pass's tool scope (`update_fact`, `ask_owner`) |
 | `src/domain/fact_review_rules.py` | selection, queue order, when a question may go out, timeouts, fallbacks, kept twice, basis and ask rules, the pool, `review_due`, the revive alert |
 | `src/domain/fact_review_question.py`, `fact_review_state.py`, `fact_review_frame.py`, `fact_review_reply.py` | the question record and its statuses, the account's review state, the history frames (`[System: memory review q=…]`, `[Reply to memory review q=…]`), the reply and click paths |
-| `src/domain/fact_review_answers.py`, `fact_review_answer_kind.py`, `fact_review_answer_change.py`, `fact_review_reasons.py` | what each answer writes, and the trail reasons |
+| `src/domain/fact_review_answers.py`, `fact_review_answer_kind.py`, `fact_review_answer_change.py`, `fact_review_reasons.py` | what each answer writes (P2: `answer_fits`, `history_fallback`, the kept-twice texts), and the trail reasons |
+| `src/domain/fact_review_options.py`, `fact_review_ask.py`, `fact_review_invoice.py`, `fact_review_basis.py`, `fact_words.py` | P2: the options per question kind, the `ask_owner` arguments (`question`, `texts`, `folds`), the routine invoice request, the basis and `payment` parsing, the one word counter and the written-text checks |
 | `src/domain/fact_review_language.py`, `fact_review_digest.py`, `fact_review_task.py`, `fact_review_task_keys.py` | the message language and labels, the digest, the code-built message to the model, the `fact_review` task keys |
 | `src/domain/fact_lifecycle_alerts.py`, `fact_lifecycle_review_line.py`, `fact_lifecycle_run_guard.py`, `pass_actor.py` | the janitor's alerts, the review segments of the 🧹 line, the guard timing, the table of pass actors |
 | `src/domain/interactive_message.py`, `interactive_option.py`, `interactive_binding.py`, `interactive_choice.py`, `choice_outcome.py` | the platform-neutral interactive message and the choice |
@@ -1760,6 +1888,7 @@ successor while the live consolidation prompts still tell the model to retire a 
 | `prompts_snapshot/{profiles/consolidation_review.yaml,blueprints/consolidation_review_v1.yaml,tokens/system/CONSOLIDATION_LIFECYCLE.groovy,tokens/system/PROTOCOL_MEMORY_REVIEW_MARKERS.groovy}` | the review pass's prompt and Smart's memory-review protocol (mirror) |
 | `scripts/consolidation/`, `scripts/data_audit/` | benches (with the S3 kit `s3_dry_run_kit.py`, `s3_bench_support.py`, and the review benches and their stand-ins `test_review_dryrun.py`, `test_review_answers_dryrun.py`, `review_bench_*.py`, `review_kit_*.py`); the audit with the version-chain classes (§9.6) |
 | `scripts/migration/fact_s3_stamp_legacy_stale.py` | deploy step 6a (stamp `stale_since` on legacy stale facts) |
+| `scripts/migration/fact_p2_reopen_archives.py`, `scripts/migration/fact_p2_owner_decisions.py`, `scripts/migration/fact_p2_rollback_questions.py`, `scripts/consolidation/plan_inputs.py` | P2: re-open archived or invalidated facts as stale; write the owner's own decisions on closed facts; bring P2 questions to the S4 shape before a rollback; the ids-file and expiry-plan readers they and bench 7 share (§9.5) |
 
 Stale code comments, out of scope for this document (`src/`): `ConsolidationAgent._review_directives` says "hard cap of
 10" and `biographical_context_service.py:155` says "soft cap ~12" (the code uses 15); the `BiographicalContextService`

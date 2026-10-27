@@ -14,7 +14,7 @@ class NoTypedWrites(FactUpdatePort):
     """A typed write path for a run that makes no typed write: one would be a test bug, so it raises."""
 
     async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None,
-                                history=None):
+                                history=None, expected_id=None):
         raise AssertionError(f"no typed update expected in this test (fact {fact_id})")
 
 

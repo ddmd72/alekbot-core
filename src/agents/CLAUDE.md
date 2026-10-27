@@ -278,8 +278,14 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
       Both modes ask for `translations` (the content of every listed fact, one line, numbers unchanged, translated into the message
       language; `_TRANSLATIONS_RULE`): in mirror mode when `message_language` is not `en`, in fixed mode (`_fixed_translation_instruction`)
       when `task.language` is a code other than `en`; a fixed-language task in English or with no language asks for none.
-    - **Tools and loop.** `_get_tool_declarations("review")` gives `update_fact` (with `basis` and `history`, no `reported_date`),
-      `ask_owner(fact_id, fallback, fallback_date?, noise?)` and `count_words`; no search, create or merge.
+    - **Tools and loop.** `_get_tool_declarations("review")` gives `update_fact` (with `basis`, `history`, `as_history` and
+      `payment`, no `reported_date`), `ask_owner(fact_id, fallback, question?, texts?, folds?, noise?)` and `count_words`; no
+      search, create or merge (P2 revised, RFC §9: `fallback_date` left the schema; the parser still reads it so that its
+      refusal can name it). `question` is `still_true` (default), `happened`, `renewed` or `paid`; `texts` are the facts code
+      writes for each answer (`happened`/`not_happened`/`unknown`, `renewed`/`not_renewed`/`not_needed`/`unknown`,
+      `paid`/`not_paid`/`unknown`; none for `still_true`), one line, English, at most 40 words by the domain `word_count`,
+      checked by code with no `count_words` call; `folds` are other batch facts that are parts of the same plan, superseded by
+      the asked fact only after its question is queued.
       `_run_consolidation_loop(pass_kind="review", max_turns=CONSOLIDATION.review_max_turns (15), review_scope=…)` sends the first
       two to `FactReviewScope` (`infrastructure/fact_review_scope.py`); the pass kind must match the write context's actor
       (`PassActor.REVIEW`). The typed write port is the agent's own required `fact_updates` dependency (a `FactUpdatePort`, refused
@@ -288,25 +294,37 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     - **Scope rules (code, not prompt).** One lock first in every command, so calls apply in the order written. A `fact_id` outside the
       batch is refused; a fact with a result in this pass is refused (a follow-up write to a lineage the pass made current is
       allowed); a call that leaves a stale fact stale is refused. `basis` (`evidence`, `reply` with a `quote` found in the owner's
-      reply, `date_passed`) is read from the top level or `updates.basis`: invalidate and rewrite need evidence or a reply, archive
-      also `date_passed`, **a revive needs evidence or a reply**, history goes only with an archive on a reply that says it ended and
-      never on a dated plan, evidence must be a current fact of the account outside the fact's own lineage. An ask needs a fact
-      in the batch with no result and no open question; `fallback` is `revive` or `archive`, and `archive` only for a dated fact, a past
-      `fallback_date` or `noise`. Every refusal names the argument and the fix and is tagged `basis`, `scope` or `ask`; a
+      reply, `date_passed`) is read from the top level or `updates.basis`: invalidate and rewrite need evidence or a reply,
+      **an archive needs the owner's reply** (P2 revised: no archive on evidence or `date_passed`), **a revive needs evidence or
+      a reply**, an `as_history` rewrite (`{state: CURRENT, content, expiry: {kind: none}}`) takes evidence, a reply or
+      `date_passed`, and `date_passed` backs nothing else; `history` goes only with an archive on a reply that says a standing
+      fact ended (never on a dated plan or noise); evidence must be a current fact of the account outside the fact's own
+      lineage, and never a fact this pass rewrote as history on `date_passed` (`not_evidence`). `payment` goes only with an
+      `as_history` rewrite of a received invoice. An ask needs a fact in the batch with no result and no open question (its
+      folds too); `fallback` is `revive`, `archive` or `history`: `archive` only with `noise`, `history` only for `happened`,
+      `renewed` or `paid`, and a `date` fact is asked `happened`, `renewed` or `paid`, or `still_true` with `archive` + `noise`.
+      On a `renewed` question's reply a non-history rewrite with an expiry gets `confirmed_expiry` from code. Every refusal names the argument and the fix and is tagged `basis`, `scope` or `ask`; a
       `reported_date` is dropped with the review's own note. All review refusals go to `review_refusals`; only born-due and `scope`
       refusals can be abandoned (a basis or ask refusal leaves the fact kept), and any success of the same fact in the pass
       answers them (`PassActor.one_result_per_fact`).
-    - **Result.** The scope's outcomes (`revived`, `rewritten`, `archived`, `invalidated`, `superseded`), asks and kept ids, plus
+    - **Result.** The scope's outcomes (`revived`, `rewritten`, `archived`, `invalidated`, `superseded`; a decision carries
+      `as_history`), asks (with `question`, `texts`, `folds`), `invoices` (one `InvoiceRequest` per routine-invoice history with
+      its `payment` texts) and kept ids, plus
       `message_language` and `labels` read from the final report through `parse_message_language` / `check_labels` (None when
       malformed), and `translations` read through `report_translations` (`domain/fact_review_quote_translation.py`: one line, no `[`,
       link or control character, at most 500 characters, the source's digit runs unchanged; refusals are logged by fact id, never
-      by text; the language is the task's fixed one or the reported one). The agent writes no question and posts or appends nothing: `FactReviewService` queues the asks, sends the questions
+      by text; the language is the task's fixed one or the reported one). Since P2 revised the keys are each listed fact's id
+      (its quote) and `<fact_id>:<text key>` for every text the pass wrote (`history` for a rewrite's content, each ask text,
+      each `payment` text), checked against the English texts the scope collected; a key naming no written text is refused. The agent writes no question and posts or appends nothing: `FactReviewService` queues the asks, sends the questions
       and applies timeouts, and `FactAnswerService` applies the owner's answers (no model).
     - **The queue and the answer path (outside the agent).** A fact the pass asks about is made current under its precondition and
       gets a `queued` question (`FactReviewQuestion`, `fact_review_questions`); questions go out one at a time through
       `InteractiveMessagePort`; an answer is only a reply to the question message, a Slack button or a Cabinet click and is applied
-      by `FactAnswerService.apply` (the `owner` actor, the same preconditions, no lease); a reply in words is recorded and read by
-      the next review run once. See the map, §5.6.
+      by `FactAnswerService.apply` (the `owner` actor, the same preconditions, no lease; an answer that is not one of its
+      question's options is `not_applied`); a reply in words is recorded and read by the next review run once. After the pass
+      the service supersedes the folds of each queued ask and creates a `paid` **digest question** (delivery `digest`, never
+      sent in chat, answered in the Cabinet) for each invoice; a timed-out `history` question writes its "unknown" text through
+      the typed port under `PassActor.TIMEOUT`. See the map, §5.6.
     - **The echo-trap exception, narrowed.** `Domain_Scope.memory_review_reply` in `CONSOLIDATION_POLICIES` is the one definition: a
       USER message that begins `[Reply to memory review q=<id>]` answers a question the earlier pair `[System: memory review q=<id> …]`
       framed; the quoted fact belongs to the review, and Stage 1 records only what the answer adds (a correction's true value). The

@@ -1,17 +1,22 @@
 """The owner's answers to a memory-review question: which digit means what, and how each answer changes its fact.
 
-Digits only: there is no word parsing in code. An answer in words goes to the review model as text."""
+Digits only: there is no word parsing in code. An answer in words goes to the review model as text. Each question kind
+has its own options (`fact_review_options`, P2-3); an answer that is not one of its question's options is no answer."""
 from datetime import datetime
-from typing import Final, Optional
+from types import MappingProxyType
+from typing import Final, Mapping, Optional, Tuple
 
 from .entities import ContextPriority, FactEntity, FactState, TemporalClass
 from .fact_expiry import EXPIRY_NONE
 from .fact_lifecycle import compute_expiry, lifecycle_event, walked_to_unseen_text, with_event
 from .fact_review_answer_change import AnswerChange
-from .fact_review_answer_kind import AnswerKind
-from .fact_review_question import AnswerSource, FactReviewQuestion
-from .fact_review_reasons import answer_reason, history_reason
-from .fact_review_rules import confirmed_expiry, fallback_fields, fallback_sets_aside, is_dated_plan
+from .fact_review_answer_kind import HISTORY_ANSWERS, AnswerKind
+from .fact_review_options import OPTIONS, options_of, text_key
+from .fact_review_question import UNKNOWN_TEXT, AnswerSource, FactReviewQuestion, QuestionKind
+from .fact_review_reasons import FallbackActor, answer_reason, fallback_reason, history_reason
+from .fact_review_rules import (
+    archived_only, confirmed_expiry, fallback_fields, fallback_sets_aside, fallback_writes_history,
+)
 from .fact_update import ParsedFactUpdate
 from .fact_write_context import FactWriteContext, as_utc, reviews_stored_memory
 from .interactive_message import InteractiveMessage
@@ -19,15 +24,19 @@ from .local_time import local_moment
 from .new_fact_attributes import NewFactAttributes
 
 __all__ = [
-    "ARCHIVE_ONLY", "DECIDING_ANSWERS", "answer_closes_fact", "answer_updates", "deciding_answer", "digit_answer", "ended_text", "history_fact", "history_moved_refusal",
-    "history_refusal", "history_trail", "option_answer",
+    "ARCHIVE_ONLY", "DECIDING_ANSWERS", "answer_closes_fact", "answer_fits", "answer_updates", "deciding_answer",
+    "digit_answer", "ended_text", "history_fact", "history_fallback", "history_moved_refusal", "history_refusal",
+    "history_trail", "option_answer", "written_text",
 ]
 
 # The one update a history fact goes with: the fact archived, nothing else changed.
 ARCHIVE_ONLY: Final[ParsedFactUpdate] = ParsedFactUpdate(state=FactState.ARCHIVED)
 
-# The answers that say what is true of the fact; `dont_know` only hands it to the question's fallback.
-DECIDING_ANSWERS: Final[tuple[AnswerKind, ...]] = (AnswerKind.STILL_TRUE, AnswerKind.ENDED, AnswerKind.NEVER)
+# The answers that say what is true of the fact, by question kind; `dont_know` only hands it to the question's fallback.
+DECIDING_ANSWERS: Final[Mapping[QuestionKind, Tuple[AnswerKind, ...]]] = MappingProxyType({
+    kind: tuple(answer for answer in options if answer is not AnswerKind.DONT_KNOW) for kind, options in OPTIONS.items()
+})
+_ANY_DECIDING: Final[frozenset[AnswerKind]] = frozenset(a for answers in DECIDING_ANSWERS.values() for a in answers)
 
 # English whatever the process locale: the text is written into a stored fact.
 _MONTHS: Final[tuple[str, ...]] = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -42,15 +51,24 @@ def digit_answer(message: InteractiveMessage, text: str) -> Optional[AnswerKind]
     return None if option_id is None else AnswerKind(option_id)
 
 
-def deciding_answer(raw: object) -> Optional[AnswerKind]:
-    """The deciding answer `raw` names (`still_true`, `ended` or `never`, exactly), or None for anything else."""
+def deciding_answer(raw: object, question: Optional[FactReviewQuestion] = None) -> Optional[AnswerKind]:
+    """The deciding answer `raw` names, exactly, or None for anything else (never `dont_know`). With `question`, one of
+    its kind's deciding answers; without, any kind's, so a request about a question that is not there still reaches the
+    apply step and is told it is not found."""
     if not isinstance(raw, str):
         return None
     try:
         kind = AnswerKind(raw)
     except ValueError:
         return None
-    return kind if kind in DECIDING_ANSWERS else None
+    allowed = DECIDING_ANSWERS[question.question] if question is not None else _ANY_DECIDING
+    return kind if kind in allowed else None
+
+
+def answer_fits(kind: AnswerKind, question: FactReviewQuestion) -> bool:
+    """Whether `kind` is one of `question`'s options (`options_of`): a click from another message, a stale Cabinet page
+    or a digest question's `dont_know` is not."""
+    return kind in options_of(question)
 
 
 def option_id(kind: AnswerKind) -> str:
@@ -65,6 +83,44 @@ def option_answer(option_id: str) -> Optional[AnswerKind]:
         return AnswerKind(option_id)
     except ValueError:
         return None
+
+
+def written_text(question: FactReviewQuestion, key: str, fact_text: str, at: datetime, tz: str) -> str:
+    """The text an outcome of `question` writes as history (`key`: `text_key` of the answer). A `review` question's is
+    the one the review wrote at ask time (ValueError when it has none under `key`). A `kept_twice` question's is built by
+    code from the stored `fact_text`, whole and with the month in English of `at` in the owner's zone `tz`, for
+    `happened`, `not_happened` and `unknown` only (ValueError otherwise)."""
+    if question.origin == "review":
+        if key not in question.texts:
+            raise ValueError(f"question {question.question_id} has no {key} text")
+        return question.texts[key]
+    said = local_moment(at, tz)
+    month = f"{_MONTHS[said.month - 1]} {said.year}"
+    if key == "happened":
+        return f"Took place as planned (the owner confirmed in {month}): {fact_text}"
+    if key == "not_happened":
+        return f"Did not take place (the owner said so in {month}): {fact_text}"
+    if key == UNKNOWN_TEXT:
+        return f"Planned; whether it took place is unknown (no answer by {month}): {fact_text}"
+    raise ValueError(f"a kept-twice question has no {key} text")
+
+
+def history_fallback(
+    fact: FactEntity, question: FactReviewQuestion, now: datetime, tz: str, actor: FallbackActor
+) -> AnswerChange:
+    """The `history` fallback of `question` (silence, or the owner's "don't remember"): its `unknown` text written as a
+    history rewrite of `fact`, through the typed write path, with `fallback_reason`. ValueError for another fallback."""
+    if not fallback_writes_history(question):
+        raise ValueError(f"question {question.question_id} falls back to {question.fallback}, not history")
+    update = ParsedFactUpdate(
+        state=FactState.CURRENT,
+        content=written_text(question, UNKNOWN_TEXT, fact.text, now, tz),
+        expiry=EXPIRY_NONE,
+        as_history=True,
+    )
+    return AnswerChange(
+        update=update, reason=fallback_reason(question.question_id, question.fallback, actor), evidence_at=now
+    )
 
 
 def ended_text(content: str, at: datetime, tz: str) -> str:
@@ -140,10 +196,11 @@ def history_moved_refusal(shown_text: str, stored: FactEntity, requested_id: str
 
 def answer_closes_fact(kind: AnswerKind, question: FactReviewQuestion) -> bool:
     """Whether the owner's answer `kind` sets the question's fact aside (archived or invalidated): `ended` and `never`
-    do; `still_true` does not; `dont_know` does when the question's fallback is to archive. What the digest tells him."""
+    do; `dont_know` does when the question's fallback is to archive. Every other answer keeps the lineage current (a
+    history is a current version). What the digest tells him."""
     if kind is AnswerKind.DONT_KNOW:
         return fallback_sets_aside(question)
-    return kind is not AnswerKind.STILL_TRUE
+    return kind in (AnswerKind.ENDED, AnswerKind.NEVER)
 
 
 def answer_updates(
@@ -155,10 +212,17 @@ def answer_updates(
     (`AnswerChange` says why two shapes).
     `still_true`: current again, keeping the fact's own decision when it is permanent or a date still ahead
     (`confirmed_expiry`), else for the window a silence would give, counted from now.
-    `ended`: archived; a standing fact also gets its `ended_text` as a history fact, a dated plan (`is_dated_plan`) is
-    archived only. `never`: invalidated, nothing new. `dont_know`: the question's fallback now, as the owner's
-    (`fallback_fields`). The trail reasons are the domain builders'."""
+    `ended`: archived; a standing fact also gets its `ended_text` as a history fact, a dated plan or noise
+    (`archived_only`) is archived only. `never`: invalidated, nothing new. `dont_know`: the question's fallback now, as the owner's
+    (`history_fallback` for `history`, else `fallback_fields`). P2-3: `happened`, `not_happened`, `not_needed`, `paid`
+    and `not_paid` write their text (`written_text`) as history; `renewed` rewrites the fact to its text, current, with
+    the window a confirmation gives (`confirmed_expiry`); `not_renewed` rewrites it to its text with expiry `none`. The
+    trail reasons are the domain builders'. ValueError for an answer that is not one of the question's options."""
+    if not answer_fits(kind, question):
+        raise ValueError(f"{kind.value} is not an option of a {question.question} question")
     if kind is AnswerKind.DONT_KNOW:
+        if fallback_writes_history(question):
+            return history_fallback(fact, question, now, tz, "owner")
         return AnswerChange(fields=fallback_fields(fact, question, now, "owner"))
     update: ParsedFactUpdate
     history: Optional[str] = None
@@ -166,7 +230,22 @@ def answer_updates(
         update = ParsedFactUpdate(state=FactState.CURRENT, expiry=confirmed_expiry(fact, now, tz))
     elif kind is AnswerKind.ENDED:
         update = ARCHIVE_ONLY
-        history = None if is_dated_plan(fact, question) else ended_text(fact.text, now, tz)
+        history = None if archived_only(fact, question) else ended_text(fact.text, now, tz)
+    elif kind in HISTORY_ANSWERS:
+        update = ParsedFactUpdate(
+            state=FactState.CURRENT, content=written_text(question, text_key(kind), fact.text, now, tz),
+            expiry=EXPIRY_NONE, as_history=True,
+        )
+    elif kind is AnswerKind.RENEWED:
+        update = ParsedFactUpdate(
+            state=FactState.CURRENT, content=written_text(question, "renewed", fact.text, now, tz),
+            expiry=confirmed_expiry(fact, now, tz),
+        )
+    elif kind is AnswerKind.NOT_RENEWED:
+        update = ParsedFactUpdate(
+            state=FactState.CURRENT, content=written_text(question, "not_renewed", fact.text, now, tz),
+            expiry=EXPIRY_NONE,
+        )
     else:
         update = ParsedFactUpdate(state=FactState.INVALIDATED)
     return AnswerChange(

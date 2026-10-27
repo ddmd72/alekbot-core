@@ -38,7 +38,8 @@ async def test_the_review_queue_maps_the_services_entries_and_options_to_json():
         QueueEntry(question_id="q1", fact_id="f1", text="Drinks green tea", domain="preference", reported_date=None,
                    waiting_since=ASKED, asked_at=None, place="waiting"),
     ])
-    service.answer_options = AsyncMock(return_value=[(AnswerKind.STILL_TRUE, "Yes"), (AnswerKind.ENDED, "No longer")])
+    # P2 revised (C14): answer_options maps each question kind to its options with their labels
+    service.answer_options = AsyncMock(return_value={"still_true": [(AnswerKind.STILL_TRUE, "Yes"), (AnswerKind.ENDED, "No longer")]})
     async with _app(fact_answer_service=service).test_client() as client:
         response = await client.get("/api/user/facts/review-queue", headers=TOKEN)
         body = await response.get_json()
@@ -47,8 +48,11 @@ async def test_the_review_queue_maps_the_services_entries_and_options_to_json():
     assert body["questions"] == [{
         "question_id": "q1", "text": "Drinks green tea", "domain": "preference", "reported_date": None,
         "waiting_since": ASKED.isoformat(), "asked_at": None, "status": "waiting",
+        # P2 revised (C15): each item carries its kind, its group and its kind's options; no top-level options
+        "kind": "still_true", "group": "questions",
+        "options": [{"answer": "still_true", "label": "Yes"}, {"answer": "ended", "label": "No longer"}],
     }]
-    assert body["options"] == [{"answer": "still_true", "label": "Yes"}, {"answer": "ended", "label": "No longer"}]
+    assert "options" not in body
 
 
 async def test_without_an_answer_service_the_review_queue_is_not_configured():

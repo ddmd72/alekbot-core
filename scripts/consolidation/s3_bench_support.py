@@ -139,11 +139,13 @@ async def biographical_facts(handles: BenchHandles, account_id: str) -> List[Dic
 async def kit_session(
     handles: BenchHandles, args: Any, user_id: str, account_id: str, bench: str, *, with_review: bool = False,
     summary: Optional[Callable[[Dict[str, Any], Dict[str, Any]], List[str]]] = None,
+    sidecar: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None,
 ) -> AsyncIterator[Tuple[DryRunKit, Dict[str, Any]]]:
     """The kit installed, prepared and, whatever happens in the body, reported and closed.
 
     One kit per process: the spend ledger is locked for the kit's life. The body adds what is bench-specific to the
     `extra` dict; the report goes to `scripts/memory/` even when the run stopped on a failed response or the cap.
+    `sidecar(extra)` may return the text of a second, human file written beside the JSON.
     `with_review` makes the kit serve and check the memory review's token, profile and blueprint too; `summary(report,
     extra)` gives the gate lines printed at the end (default: the S3 gates)."""
     budget = check_budget_flag(args.budget_usd, getattr(args, "allow_over_owner_cap", False))
@@ -160,6 +162,11 @@ async def kit_session(
         finally:
             path = write_bench_report(kit, bench, extra)
             print(f"\n  kit report -> {path}")
+            text = sidecar(extra) if sidecar is not None else None
+            if text:   # a human file beside the JSON: `<report name>_listed.md`
+                md_path = kit_module.inside_memory_dir(path.with_name(f"{path.stem}_listed.md"))
+                md_path.write_text(text, encoding="utf-8")
+                print(f"  listed facts -> {md_path}")
             for line in (summary(kit.report(), extra) if summary is not None else gate_summary(kit.report())):
                 print(f"  {line}")
     finally:

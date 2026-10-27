@@ -41,7 +41,7 @@ async def stale(world, text):
     )
 
 
-async def evidence(world, text="moved to Lisbon in October"):
+async def evidence(world, text="moved back to Springfield in September"):
     return await world.seed(text, reported_date=NOW - timedelta(days=1))
 
 
@@ -101,11 +101,12 @@ async def test_a_write_to_the_queued_current_fact_of_a_batch_question_passes(wor
     waiting = build_question(QuestionStatus.QUEUED, question_id="q1", account_id=ACC, fact_id=queued)
     scope = await scope_of(world, queued, questions=[waiting])
 
-    res = await scope.update_fact({"fact_id": queued, "updates": {"state": "archived"}, "basis": on(ev)})
+    # P2 revised (P2-2): evidence no longer backs an archive; the scope rule is read through an invalidation it backs
+    res = await scope.update_fact({"fact_id": queued, "updates": {"state": "invalidated"}, "basis": on(ev)})
 
     assert res["status"] == "updated", res
-    assert state_of(world, queued) == "archived"
-    assert [(d.fact_id, d.outcome) for d in scope.decisions()] == [(queued, "archived")]
+    assert state_of(world, queued) == "invalidated"
+    assert [(d.fact_id, d.outcome) for d in scope.decisions()] == [(queued, "invalidated")]
 
 
 # ------------------------------------------------------------------------------------------------ one result per fact
@@ -144,12 +145,14 @@ async def test_a_write_then_an_ask_in_one_gathered_turn_keeps_the_write(world):
 async def test_a_closed_fact_is_decided_and_takes_no_second_write(world):
     fact, ev = await stale(world, "a"), await evidence(world)
     scope = await scope_of(world, fact)
-    await scope.update_fact({"fact_id": fact, "updates": {"state": "archived"}, "basis": on(ev)})
+    # P2 revised (P2-2): the fact is closed by an invalidation on evidence (evidence no longer backs an archive)
+    first = await scope.update_fact({"fact_id": fact, "updates": {"state": "invalidated"}, "basis": on(ev)})
 
-    again = await scope.update_fact({"fact_id": fact, "updates": {"state": "invalidated"}, "basis": on(ev)})
+    again = await scope.update_fact({"fact_id": fact, "updates": REVIVE, "basis": on(ev)})
 
+    assert first["status"] == "updated", first
     assert again["refused"] == "scope" and again["message"] == decided_refusal(UPDATE)
-    assert state_of(world, fact) == "archived"
+    assert state_of(world, fact) == "invalidated"
 
 
 async def test_a_follow_up_write_to_a_lineage_this_pass_made_current_passes(world):
@@ -157,7 +160,7 @@ async def test_a_follow_up_write_to_a_lineage_this_pass_made_current_passes(worl
     scope = await scope_of(world, fact)
 
     first = await scope.update_fact(
-        {"fact_id": fact, "updates": {"content": "lives in Lisbon", "expiry": HORIZON}, "basis": on(ev)}
+        {"fact_id": fact, "updates": {"content": "lives in Springfield", "expiry": HORIZON}, "basis": on(ev)}
     )
     new_id = first["fact_id"]
     second = await scope.update_fact(
@@ -176,14 +179,15 @@ async def test_a_follow_up_by_the_batch_id_lands_on_the_version_this_pass_wrote(
     fact, ev = await stale(world, "a"), await evidence(world)
     scope = await scope_of(world, fact)
     first = await scope.update_fact(
-        {"fact_id": fact, "updates": {"content": "lives in Lisbon", "expiry": HORIZON}, "basis": on(ev)}
+        {"fact_id": fact, "updates": {"content": "lives in Springfield", "expiry": HORIZON}, "basis": on(ev)}
     )
 
-    second = await scope.update_fact({"fact_id": fact, "updates": {"state": "archived"}, "basis": on(ev)})
+    # P2 revised (P2-2): the follow-up closes the version by an invalidation on evidence (no archive on evidence)
+    second = await scope.update_fact({"fact_id": fact, "updates": {"state": "invalidated"}, "basis": on(ev)})
 
     assert second["status"] == "updated" and second["fact_id"] == first["fact_id"], second
-    assert state_of(world, first["fact_id"]) == "archived"
-    assert [d.outcome for d in scope.decisions()] == ["archived"]
+    assert state_of(world, first["fact_id"]) == "invalidated"
+    assert [d.outcome for d in scope.decisions()] == ["invalidated"]
 
 
 # ------------------------------------------------------------------------------------------------ input
@@ -307,8 +311,10 @@ async def test_two_stale_duplicates_end_as_one_current_and_one_superseded(world)
 
 @pytest.mark.parametrize("updates, outcome, stored_state", [
     (REVIVE, "revived", "current"),
-    ({"state": "current", "content": "lives in Lisbon", "expiry": HORIZON}, "rewritten", "superseded"),
-    ({"state": "archived"}, "archived", "archived"),
+    ({"state": "current", "content": "lives in Springfield", "expiry": HORIZON}, "rewritten", "superseded"),
+    # P2 revised (P2-1, P2-2): evidence backs a history rewrite, no archive; a history rewrite is a version
+    ({"state": "current", "content": "The user lived in Lisbon until Sep 2026.", "expiry": {"kind": "none"},
+      "as_history": True}, "rewritten", "superseded"),
     ({"state": "invalidated"}, "invalidated", "invalidated"),
 ])
 async def test_the_outcome_comes_from_the_state_the_write_left(world, updates, outcome, stored_state):
@@ -397,5 +403,5 @@ async def test_malformed_ask_arguments_are_an_ask_refusal(world):
 
     res = await scope.ask_owner({"fact_id": fact})
 
-    assert res["refused"] == "ask" and res["message"].startswith("ask_owner.fallback must be revive or archive")
+    assert res["refused"] == "ask" and res["message"].startswith("ask_owner.fallback must be revive, archive or history")
     assert scope.asks() == []

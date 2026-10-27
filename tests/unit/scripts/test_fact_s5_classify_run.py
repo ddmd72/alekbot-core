@@ -115,8 +115,8 @@ def prompt():
     return s5.load_prompt(SNAPSHOT_TEXT, INSTRUCTION_TEXT, SNAPSHOT_TEXT)
 
 
-async def run(db, caller, out_dir, ids=None, meter=None, owner=owner_of, now=NOW):
-    prepared = await s5.prepare(db, FACTS, owner, ids)
+async def run(db, caller, out_dir, ids=None, meter=None, owner=owner_of, now=NOW, include_closed=False):
+    prepared = await s5.prepare(db, FACTS, owner, ids, include_closed)
     callers = {a.account_id: caller for a in prepared.accounts}
     system, taxonomy, instruction = prompt()
     result = await s5.classify(
@@ -278,6 +278,37 @@ async def test_an_iso_string_reported_date_cannot_carry_a_horizon_and_a_directiv
     assert entry["f-dir"]["source"] == "pinned"
     assert result["no_reported_date"] == 1 and result["fallback_by_code"] == {"no_reported_date": 1}
     assert all(RULE not in r.messages[0].parts[0].text for r in requests)
+
+
+async def test_closed_facts_are_selected_only_with_the_flag_and_only_when_listed(tmp_path):
+    db = EvalDb()
+    await seed(db, [
+        raw("f-arch", CAR, state="archived", is_current=False), raw("f-inv", PIPE, state="invalidated", is_current=False),
+        raw("f-sup", GUITAR, state="superseded", is_current=False), raw("f-stale", TRIAL, state="stale"),
+        raw("f-cur", MARIA), raw("f-unlisted", CONF, state="archived", is_current=False),
+        raw("f-arch-decided", "decided closed text", state="archived", expiry_kind="none"),
+        raw("f-arch-rule", RULE, state="archived", domain="AGENT_DIRECTIVE"),
+        raw("f-arch-sys", SYSTEM_TEXT, state="archived", account="SYSTEM"),
+    ])
+    listed = {"f-arch", "f-inv", "f-sup", "f-stale", "f-cur", "f-arch-decided", "f-arch-rule", "f-arch-sys"}
+    without = await s5.prepare(db, FACTS, owner_of, listed)
+    assert {f.fact_id for a in without.accounts for f in a.for_model + a.pinned} == {"f-cur"}
+    assert {s.fact_id: s.reason for s in without.skipped if s.reason == "not_found_or_not_current"} == {
+        i: "not_found_or_not_current" for i in listed - {"f-cur"}}
+    with_flag = await s5.prepare(db, FACTS, owner_of, listed, include_closed=True)
+    [account] = with_flag.accounts
+    assert {f.fact_id for f in account.for_model} == {"f-arch", "f-inv", "f-cur"}
+    assert [f.fact_id for f in account.pinned] == ["f-arch-rule"]
+    assert {s.fact_id: s.reason for s in with_flag.skipped} == {
+        "f-sup": "not_found_or_not_current", "f-stale": "not_found_or_not_current",
+        "f-arch-decided": "already_decided", "f-arch-sys": "system_account",
+    }
+    assert {f.fact_id: f.state for f in account.for_model + account.pinned}["f-arch"] == "archived"
+    result, _ = await run(db, scripted(ANSWERS), tmp_path, ids=listed, include_closed=True)
+    plan = by_fact(plan_of(tmp_path))
+    assert set(plan) == {"f-arch", "f-inv", "f-cur", "f-arch-rule"}
+    assert plan["f-arch"]["state"] == "archived" and plan["f-cur"]["state"] == "current"
+    assert plan["f-arch-rule"]["source"] == "pinned" and plan["f-arch-rule"]["fields"]["expiry_kind"] == "none"
 
 
 async def test_filtered_mode_takes_only_the_listed_facts(tmp_path):
@@ -604,6 +635,21 @@ def test_apply_takes_no_dry_run_flag(cli, extra):
     with pytest.raises(SystemExit):
         s5.main(["--apply", "x", *extra])
     assert cli["client"] == 0 and cli["build_agent"] == [] and FakeEnvConfig.created_after == []
+
+
+def test_include_closed_needs_an_ids_file_and_is_not_an_apply_flag(cli):
+    with pytest.raises(SystemExit):
+        s5.main(["--expect-model", "m", "--include-closed"])
+    with pytest.raises(SystemExit):
+        s5.main(["--apply", "x", "--include-closed"])
+    assert cli["build_agent"] == [] and cli["client"] == 0 and FakeEnvConfig.created_after == []
+
+
+def test_include_closed_with_an_ids_file_reaches_the_agent(cli, memory_dir):
+    (memory_dir / "ids.txt").write_text("a\n", encoding="utf-8")
+    with pytest.raises(Reached):
+        s5.main(["--expect-model", "m", "--include-closed", "--ids-file", str(memory_dir / "ids.txt")])
+    assert cli["build_agent"] == ["dotenv-user"]
 
 
 def test_apply_builds_its_client_after_the_dotenv_file_and_the_config(cli):

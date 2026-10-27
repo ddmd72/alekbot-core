@@ -43,7 +43,7 @@ class RecordingPort(FactManagementPort, FactUpdatePort):
         return {"fact_id": fact_id, "status": "updated", "version": 1, "message": "ok"}
 
     async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None,
-                                history=None):
+                                history=None, expected_id=None):
         self.updates.append({"fact_id": fact_id, "update": update, "context": context,
                              "evidence_at": evidence_at, "reason": reason, "history": history})
         if update.state is not None:

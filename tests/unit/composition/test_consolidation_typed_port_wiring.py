@@ -27,7 +27,7 @@ class _Typed(FactUpdatePort):
     def __init__(self) -> None:
         self.calls = []
 
-    async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None, history=None):
+    async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None, history=None, expected_id=None):
         self.calls.append((fact_id, update, account_id, evidence_at, reason, history))
         # Reviewer edit (S4 T8e): a typed outcome (T3c review M2), not the model's dict: a new version written.
         return FactUpdateOutcome(fact_id=fact_id, written_id=f"{fact_id}-v2", version=2, current_id=fact_id)

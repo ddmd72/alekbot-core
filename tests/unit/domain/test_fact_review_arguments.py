@@ -5,6 +5,8 @@ import pytest
 
 from src.domain.fact_review_ask import AskRequest, parse_ask_owner
 from src.domain.fact_review_basis import ReviewBasis, parse_day, parse_review_basis
+from src.domain.fact_review_rules import ask_refusal
+from tests.support.review_rule_builders import NOW, fact
 
 
 # ------------------------------------------------------------------------------------------------ basis
@@ -103,7 +105,13 @@ def test_the_fallback_is_kept_as_text_for_the_ask_rules_to_judge():
 
 
 def test_question_text_the_model_sends_is_ignored():
-    assert parse_ask_owner({"fact_id": "f1", "fallback": "revive", "question": "Still true?"}) == AskRequest("f1", "revive")
+    # P2 revised (C8): `question` is the ask's kind now; a question text the model sends is no kind, kept as given
+    # (lowercased) and refused by the ask rules, so it is never sent to the owner
+    request = parse_ask_owner({"fact_id": "f1", "fallback": "revive", "question": "Still true?"})
+    assert request == AskRequest("f1", "revive", question="still true?")
+    assert ask_refusal(
+        fact(), request.fallback, None, False, None, NOW, "UTC", question=request.question, texts=request.texts,
+    ) == "ask_owner.question: still_true, happened, renewed or paid"
 
 
 @pytest.mark.parametrize("raw", [None, "f1", ["f1"]])

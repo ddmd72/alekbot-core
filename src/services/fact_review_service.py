@@ -19,20 +19,23 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional
 
 from ..domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStatus
 from ..domain.consolidation import consolidation_agent_id
-from ..domain.entities import FactEntity
+from ..domain.entities import FactEntity, FactState
 from ..domain.exceptions import FactResolutionError, FactWriteConflict
 from ..domain.fact_lifecycle import REVIEW_ACCEPTS
 from ..domain.fact_lifecycle_alerts import revive_alert
 from ..domain.fact_lifecycle_day import CounterField, counter_day
 from ..domain.fact_review_after_pass import after_pass
 from ..domain.fact_review_ask import AskRequest
+from ..domain.fact_review_answers import history_fallback
 from ..domain.fact_review_digest import (
-    DIGEST_LIMIT, digest_day, digest_facts, digest_since, pass_set_aside,
+    DIGEST_LIMIT, digest_day, digest_facts, digest_histories, digest_invoices, digest_since, history_line, pass_set_aside,
 )
 from ..domain.fact_review_frame import NOT_DELIVERED_REPLY, not_delivered_frame, question_text, review_frame
 from ..domain.fact_review_language import language_to_store
+from ..domain.fact_review_invoice import InvoiceRequest
 from ..domain.fact_review_question import ClosedBy, FactReviewQuestion
 from ..domain.fact_review_quote_translation import QuoteTranslation
+from ..domain.fact_review_reasons import fallback_reason, superseded_reason
 from ..domain.fact_review_result import decode_review_result
 from ..domain.fact_review_rules import (
     QUEUE_ACCEPTS,
@@ -40,12 +43,16 @@ from ..domain.fact_review_rules import (
     becomes_unanswered,
     channel_refusal,
     digest_due,
+    digest_question,
+    digest_question_expired,
     due_timeouts,
     fallback_fields,
     fallback_sets_aside,
+    fallback_writes_history,
+    history_fallback_gives_up,
     kept_twice,
-    kept_twice_fallback,
     kept_twice_fields,
+    kept_twice_question,
     offered,
     queued_fields,
     queued_question,
@@ -58,6 +65,9 @@ from ..domain.fact_review_rules import (
     unread_replies,
 )
 from ..domain.fact_review_state import FactReviewState
+from ..domain.fact_update import ParsedFactUpdate
+from ..domain.fact_update_outcome import UpdateRefusal
+from ..domain.fact_write_context import FactWriteContext
 from ..domain.fact_review_task import (
     NEIGHBOUR_QUERY,
     FactReviewTask,
@@ -82,6 +92,7 @@ from ..domain.messaging import session_id_for
 from ..domain.memory_write_lease import LEASE_BUSY_RETRY_DELAY_S, LEASE_MARGIN, agent_timeout_s, lease_until
 from ..domain.notification import NotificationChannel
 from ..domain.owner_timezone import not_owner_reason
+from ..domain.pass_actor import PassActor
 from ..domain.request_context import RequestContext
 from ..domain.stored_fact import StoredFact
 from ..ports.account_repository import AccountRepository
@@ -89,6 +100,7 @@ from ..ports.alert_sink import AlertSinkPort
 from ..ports.channel_binding_port import ChannelBindingPort
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..ports.fact_review_store import FactReviewStore
+from ..ports.fact_update_port import FactUpdatePort
 from ..ports.interactive_message_port import InteractiveMessagePort
 from ..ports.memory_write_lease import MemoryWriteLeasePort
 from ..ports.notification_state_port import NotificationStatePort
@@ -146,6 +158,16 @@ class _Timeouts(_StepResult):
     candidates: Tuple[FactEntity, ...] = ()
 
 
+@dataclass(frozen=True)
+class _Fallback:
+    """What one timed-out question's fallback came to: `written_id` (None: nothing landed), `wrote_history` and
+    `not_applied` (a history fallback that failed and was counted)."""
+
+    written_id: Optional[str] = None
+    wrote_history: bool = False
+    not_applied: int = 0
+
+
 @dataclass
 class _Tally:
     """The run's counts and revived facts, from every step."""
@@ -181,6 +203,9 @@ class FactReviewService:
     - `notifications`: the owner's channel for his recent messages (step 10), the digest (T8d2);
     - `alert_sink`: the revive alert (step 15);
     - `counters`: the day's counters (step 15);
+    - `fact_updates`: the typed fact write of a history fallback (step 6, the timeout path), of the folds an ask supersedes
+      and of nothing else (step 11);
+    - `cabinet_url`: where the digest's invoices block sends the owner;
     - `clock`: read once per run, and once more for the lease budget at routing time.
     """
 
@@ -206,6 +231,9 @@ class FactReviewService:
         alert_sink: AlertSinkPort,
         run_timeout_s: float,
         clock: Callable[[], datetime] = _utcnow,
+        *,
+        fact_updates: FactUpdatePort,
+        cabinet_url: str,
     ) -> None:
         if run_timeout_s <= _MARGIN_S:
             raise ValueError(f"run_timeout_s must exceed the lease margin ({_MARGIN_S:.0f} s), got {run_timeout_s}")
@@ -229,6 +257,8 @@ class FactReviewService:
         self._alert_sink = alert_sink
         self._run_timeout_s = run_timeout_s
         self._clock = clock
+        self._fact_updates = fact_updates
+        self._cabinet_url = cabinet_url
 
     async def run(self, user_id: str, account_id: str, mode: ReviewMode = "daily") -> Dict[str, Any]:
         """One run; every result is 200-shaped.
@@ -320,6 +350,7 @@ class FactReviewService:
             timeouts = await self._timeouts(user_id, account_id, questions, now, zone, writes)
             tally.add(timeouts)
             tally.add(await self._kept_twice(user_id, account_id, state, questions, now, zone, writes))
+            await self._settle_digest(account_id, questions, now)
             # Steps 6 and 7 close and create questions and change offers: the batch is chosen from what is stored now.
             state = await self._review_store.get_state(account_id)
             questions = await self._review_store.questions_for_account(account_id)
@@ -468,13 +499,20 @@ class FactReviewService:
         zero LLM: a reply in words not yet shown, or a newer neighbour): a candidate joins this run's batch (`candidates`; the pass sees its question as
         timed out, and `after_pass` gives it the fallback if it stays undecided); every other one gets its fallback now
         (`_fallbacks`, the one fallback path). So no timed-out question that is not a candidate is left open for the
-        batch, except one whose fallback write conflicted (the next run's)."""
+        batch, except one whose fallback write conflicted (the next run's) and one whose `history` fallback was refused or
+        failed (it stays open with `fallback_attempts` counted until `_history_failed` closes it)."""
         candidates: List[FactEntity] = []
         due: List[FactReviewQuestion] = []
         for question in due_timeouts(questions, now):
             stored = await self._asked_fact(account_id, question, "timed out")
             if stored is None:
-                if await self._answer_service.close_question(question, ClosedBy.RESOLVED_ELSEWHERE):
+                if await self._silence_already_written(account_id, question):
+                    # The fallback landed and its close did not (a crash between): close it as the timeout it was, so
+                    # the digest still lists the silence.
+                    if await self._answer_service.close_question(question, ClosedBy.TIMEOUT):
+                        await self._note_set_aside(account_id, now)
+                        logger.info(f"[FactReview] question {question.question_id} timed out; its history was already written")
+                elif await self._answer_service.close_question(question, ClosedBy.RESOLVED_ELSEWHERE):
                     logger.info(f"[FactReview] question {question.question_id} timed out; its fact was settled elsewhere")
                 continue
             if timeout_candidate(stored.fact, question, await self._nearest(user_id, account_id, stored.fact)):
@@ -482,7 +520,7 @@ class FactReviewService:
                 candidates.append(stored.fact)
             else:
                 due.append(question)
-        settled = await self._fallbacks(account_id, due, now, writes)
+        settled = await self._fallbacks(account_id, due, now, zone, writes)
         return _Timeouts(counts=settled.counts, revived=settled.revived, candidates=tuple(candidates))
 
     async def _kept_twice(
@@ -502,7 +540,7 @@ class FactReviewService:
             return _StepResult()
         def build(stored: FactEntity, question_id: str) -> Tuple[FactReviewQuestion, Dict[str, Any]]:
             return (
-                queued_question(stored, question_id, user_id, kept_twice_fallback(stored), at=now),
+                kept_twice_question(stored, question_id, user_id, at=now),
                 kept_twice_fields(stored, question_id, now),
             )
 
@@ -515,6 +553,35 @@ class FactReviewService:
         if queued:
             logger.info(f"[FactReview] {len(queued)} facts of account {account_id[:8]} kept twice: queued for the owner")
         return _StepResult(counts={CounterField.QUEUED: len(queued)} if queued else {})
+
+    async def _silence_already_written(self, account_id: str, question: FactReviewQuestion) -> bool:
+        """Whether the question's fact moved on because this question's own `history` fallback wrote it: the version it now
+        resolves to ends with the timeout fallback's trail reason (`fallback_reason(qid, "history", "timeout")`)."""
+        if not fallback_writes_history(question):
+            return False
+        try:
+            stored = await self._repo.resolve_current(question.fact_id, account_id, REVIEW_ACCEPTS)
+        except FactResolutionError:
+            return False
+        if stored is None or not stored.fact.lifecycle_events:
+            return False
+        last = stored.fact.lifecycle_events[-1].get("reason")
+        return last == fallback_reason(question.question_id, "history", "timeout")
+
+    async def _settle_digest(self, account_id: str, questions: Sequence[FactReviewQuestion], now: datetime) -> None:
+        """Housekeeping of the Cabinet-only questions (`delivery == "digest"`, P2-2): one unanswered `DIGEST_QUESTION_DAYS`
+        (`digest_question_expired`), or whose fact moved on (`_asked_fact`), closes `resolved_elsewhere`. Writes no fact."""
+        for question in questions:
+            if question.in_chat:
+                continue
+            if digest_question_expired(question, now):
+                why = "unanswered too long"
+            elif await self._asked_fact(account_id, question, "digest question") is None:
+                why = "its fact moved on"
+            else:
+                continue
+            if await self._answer_service.close_question(question, ClosedBy.RESOLVED_ELSEWHERE):
+                logger.info(f"[FactReview] digest question {question.question_id} closed: {why}")
 
     async def _nearest(self, user_id: str, account_id: str, fact: FactEntity) -> List[FactEntity]:
         """The current facts nearest to `fact` by its vector (its own document among them), nearest first; none without
@@ -616,7 +683,8 @@ class FactReviewService:
     async def _digest(self, user_id: str, account_id: str, now: datetime, zone: str) -> None:
         """Step 14 (§3.11): the weekly digest when `digest_due`. The owner's local week is claimed first (one digest per
         ISO week); then the facts closed since the last digest (`digest_since`, `DIGEST_LIMIT`) that the digest lists
-        (`digest_facts`) are sent as one message in the message language, `notify_raw`, which writes no history. Then
+        (`digest_facts`), the facts written as history by a timeout since then and the open invoice questions are sent as
+        one message in the message language, `notify_raw`, which writes no history. Then
         `last_digest_at = now` and `undigested_since` cleared. Nothing to list: the week is still claimed and the marks
         still move, and no message is sent (the account is not asked again until something else is set aside).
 
@@ -633,7 +701,7 @@ class FactReviewService:
                 logger.info(f"[FactReview] the digest of account {account_id[:8]} was already claimed this week")
                 return
             try:
-                listed = await self._send_digest(user_id, account_id, state, now)
+                listed = await self._send_digest(user_id, account_id, state, now, zone)
             except Exception:
                 await self._release_digest(user_id, day)
                 raise
@@ -643,25 +711,33 @@ class FactReviewService:
                 return
             if not await self._review_store.mark_digest(account_id, now):
                 logger.warning(f"[FactReview] account {account_id[:8]} has no review state; digest not marked")
-            logger.info(f"📬 [FactReview] digest of account {account_id[:8]}: {listed} facts")
+            logger.info(f"📬 [FactReview] digest of account {account_id[:8]}: {listed} entries")
         except Exception as exc:
             logger.error(
                 f"❌ [FactReview] the digest of account {account_id[:8]} failed: {type(exc).__name__}: {exc}", exc_info=True,
             )
 
     async def _send_digest(
-        self, user_id: str, account_id: str, state: FactReviewState, now: datetime,
+        self, user_id: str, account_id: str, state: FactReviewState, now: datetime, zone: str,
     ) -> Optional[int]:
-        """The digest's read and post: how many facts it listed (0: nothing to list, nothing sent), or None when its
-        message was not delivered."""
-        closed = await self._repo.get_recently_closed(account_id, since=digest_since(state, now), limit=DIGEST_LIMIT)
+        """The digest's read and post: how many entries it listed (removed facts, histories written by silence and open
+        invoice questions; 0: nothing to list, nothing sent), or None when its message was not delivered."""
+        since = digest_since(state, now)
+        closed = await self._repo.get_recently_closed(account_id, since=since, limit=DIGEST_LIMIT)
         listed = digest_facts(closed)
-        if not listed:
+        histories = digest_histories(await self._review_store.timeout_histories(account_id), since)
+        invoices = digest_invoices(await self._review_store.questions_for_account(account_id))
+        if not (listed or histories or invoices):
             return 0
-        text = await self._texts.digest_for(user_id, account_id, listed)
+        text = await self._texts.digest_for(
+            user_id, account_id, listed,
+            histories=[history_line(q, zone) for q in histories],
+            invoices=[q.quoted_text for q in invoices],
+            cabinet_url=self._cabinet_url,
+        )
         if not await self._notifications.notify_raw(user_id, account_id, text, literal=True):
             return None
-        return len(listed)
+        return len(listed) + len(histories) + len(invoices)
 
     async def _release_digest(self, user_id: str, day: date) -> None:
         try:
@@ -803,8 +879,9 @@ class FactReviewService:
         which releases the next when one was current); the undecided timed-out candidates get their fallback (`_fallbacks`,
         as in step 6); every ask is queued (`_queue`, as in step 7); then the `offers` entries of the decided and the queued facts go (`offers_removed`); the reported language and labels go to the state (`language_to_store`).
         The pass's quote translations are stored first (`_store_translations`, best effort), so a later failure of the
-        step does not lose them. Each fact write is marked through `writes.wrote()` as it lands. None (nothing routed)
-        does nothing."""
+        step does not lose them. A queued ask then supersedes its folds (`_fold`), and each routine invoice of the batch
+        gets its Cabinet question (`_invoices`). Each fact write is marked through `writes.wrote()` as it lands. None
+        (nothing routed) does nothing."""
         if response is None:
             return _StepResult()
         result = decode_review_result(response.result)
@@ -814,7 +891,7 @@ class FactReviewService:
         revived = list(plan.revived)
         for question in plan.closes:
             await self._answer_service.close_question(question, ClosedBy.REVIEW, source=review_close_source(question))
-        settled = await self._fallbacks(account_id, [question for _, question in plan.fallbacks], now, writes)
+        settled = await self._fallbacks(account_id, [question for _, question in plan.fallbacks], now, zone, writes)
         for name, value in settled.counts.items():
             counts[name] = counts.get(name, 0) + value
         revived.extend(settled.revived)
@@ -823,6 +900,10 @@ class FactReviewService:
             if await self._queue(account_id, fact.id, self._ask_builder(user_id, ask, now), writes):
                 queued.append(fact.id)
                 counts[CounterField.QUEUED] = counts.get(CounterField.QUEUED, 0) + 1
+                folded = await self._fold(account_id, fact, ask, zone, writes)
+                if folded:
+                    counts[CounterField.FOLDED] = counts.get(CounterField.FOLDED, 0) + folded
+        invoices = await self._invoices(user_id, account_id, batch, result.invoices, now)
         if pass_set_aside(counts):
             await self._note_set_aside(account_id, now)
         removed = plan.offers_removed(queued)
@@ -832,56 +913,163 @@ class FactReviewService:
         logger.info(
             f"[FactReview] after the pass of account {account_id[:8]}: {len(plan.decided)} decided, "
             f"{len(plan.closes)} closed, {counts.get(CounterField.QUEUED, 0)}/{len(plan.asks)} queued, "
-            f"{counts.get(CounterField.TIMED_OUT, 0)}/{len(plan.fallbacks)} fallbacks"
+            f"{counts.get(CounterField.TIMED_OUT, 0)}/{len(plan.fallbacks)} fallbacks, "
+            f"{counts.get(CounterField.FOLDED, 0)} folded, {invoices} invoices"
         )
         return _StepResult(counts=counts, revived=tuple(revived))
 
     async def _fallbacks(
-        self, account_id: str, questions: Sequence[FactReviewQuestion], now: datetime, writes: _FactWrites,
+        self, account_id: str, questions: Sequence[FactReviewQuestion], now: datetime, zone: str, writes: _FactWrites,
     ) -> _StepResult:
-        """The fallback of each timed-out question (`_fallback`), counted as it lands: `timed_out`, and the facts it
-        revived (the ones whose fallback does not set the fact aside) for the revive alert. Steps 6 and 11 both go through here."""
-        timed_out = 0
-        archived = False
+        """The fallback of each timed-out question (`_fallback`), counted as it lands: `timed_out`, `to_history` for a
+        history fallback, `fallbacks_not_applied` for a history fallback that failed, and the facts it revived (the ones
+        whose fallback neither sets the fact aside nor writes history) for the revive alert. The account is marked
+        undigested when a fallback archived a fact or wrote history. Steps 6 and 11 both go through here."""
+        timed_out = to_history = not_applied = 0
+        noted = False
         revived: List[str] = []
         for question in questions:
-            written = await self._fallback(account_id, question, now, writes)
-            if written is not None:
-                timed_out += 1
-                if fallback_sets_aside(question):
-                    archived = True
-                else:
-                    revived.append(written)
-        if archived:
+            result = await self._fallback(account_id, question, now, zone, writes)
+            not_applied += result.not_applied
+            if result.written_id is None:
+                continue
+            timed_out += 1
+            if result.wrote_history:
+                to_history += 1
+                noted = True
+            elif fallback_sets_aside(question):
+                noted = True
+            else:
+                revived.append(result.written_id)
+        if noted:
             await self._note_set_aside(account_id, now)
-        return _StepResult(counts={CounterField.TIMED_OUT: timed_out} if timed_out else {}, revived=tuple(revived))
+        counts = {
+            CounterField.TIMED_OUT: timed_out, CounterField.TO_HISTORY: to_history,
+            CounterField.FALLBACKS_NOT_APPLIED: not_applied,
+        }
+        return _StepResult(counts={name: value for name, value in counts.items() if value}, revived=tuple(revived))
 
     async def _fallback(
-        self, account_id: str, question: FactReviewQuestion, now: datetime, writes: _FactWrites,
-    ) -> Optional[str]:
-        """A timed-out question's fallback (`fallback_fields`, actor `timeout`) on its fact as stored now, under the
-        precondition, then the question closed `timeout`. The written document's id; None when the fact moved on or the
-        write conflicted (left for the next run, which sees the question again)."""
+        self, account_id: str, question: FactReviewQuestion, now: datetime, zone: str, writes: _FactWrites,
+    ) -> "_Fallback":
+        """A timed-out question's fallback on its fact as stored now, then the question closed `timeout`. `revive` and
+        `archive`: `fallback_fields`, actor `timeout`, in place under the precondition. `history`: its `unknown` text
+        written as a history rewrite through the typed path (`_history_fallback`). The written document's id; None when the
+        fact moved on or the write conflicted (left for the next run, which sees the question again)."""
         stored = await self._asked_fact(account_id, question, "fallback not applied")
         if stored is None:
-            return None
+            return _Fallback()
+        if fallback_writes_history(question):
+            return await self._history_fallback(account_id, question, stored.fact, now, zone, writes)
         try:
             await self._repo.update_fact_fields(stored, fallback_fields(stored.fact, question, now, "timeout"))
         except FactWriteConflict:
             logger.warning(f"[FactReview] question {question.question_id}: the fallback's write conflicted; left")
-            return None
+            return _Fallback()
         writes.wrote()
         await self._answer_service.close_question(question, ClosedBy.TIMEOUT)
-        return stored.fact.id
+        return _Fallback(written_id=stored.fact.id)
+
+    async def _history_fallback(
+        self, account_id: str, question: FactReviewQuestion, fact: FactEntity, now: datetime, zone: str,
+        writes: _FactWrites,
+    ) -> "_Fallback":
+        """The `history` fallback (C9): `history_fallback`'s update through `FactUpdatePort` under the actor `timeout`. Written:
+        the question closes `timeout`. A conflict: left for the next run, nothing counted. Any other refusal, or an
+        exception: `_history_failed`. Never raises."""
+        change = history_fallback(fact, question, now, zone, "timeout")
+        try:
+            outcome = await self._fact_updates.apply_fact_update(
+                fact.id, change.update, account_id, context=FactWriteContext.for_pass(PassActor.TIMEOUT, zone, None),
+                evidence_at=change.evidence_at, reason=change.reason,
+                expected_id=fact.id,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[FactReview] question {question.question_id}: the history fallback raised {type(exc).__name__}: {exc}"
+            )
+            return await self._history_failed(question, None)
+        if outcome.refusal is UpdateRefusal.CONFLICT:
+            logger.warning(f"[FactReview] question {question.question_id}: the history fallback's write conflicted; left")
+            return _Fallback()
+        if outcome.refusal is not None:
+            logger.warning(
+                f"[FactReview] question {question.question_id}: the history fallback was refused "
+                f"({outcome.refusal.value}): {outcome.refusal_text}"
+            )
+            return await self._history_failed(question, outcome.refusal)
+        writes.wrote()
+        await self._answer_service.close_question(question, ClosedBy.TIMEOUT)
+        return _Fallback(written_id=outcome.written_id, wrote_history=True)
+
+    async def _history_failed(self, question: FactReviewQuestion, refusal: Optional[UpdateRefusal]) -> "_Fallback":
+        """A history fallback that wrote nothing: the question closes `resolved_elsewhere` when a typed refusal comes at an
+        attempt after the first (the spec stores no previous refusal) or at the third attempt, so it cannot loop; else the
+        store counts the attempt and the question stays open for the next run."""
+        attempts = question.fallback_attempts
+        if history_fallback_gives_up(question, refusal is not None):
+            await self._answer_service.close_question(question, ClosedBy.RESOLVED_ELSEWHERE)
+            logger.warning(f"[FactReview] question {question.question_id}: the history fallback failed {attempts + 1} times; closed")
+        elif not await self._review_store.mark_fallback_failed(question.question_id):
+            logger.warning(f"[FactReview] question {question.question_id}: the failed attempt was not counted (it changed)")
+        return _Fallback(not_applied=1)
+
+    async def _fold(
+        self, account_id: str, fact: FactEntity, ask: AskRequest, zone: str, writes: _FactWrites,
+    ) -> int:
+        """The folds of a queued ask (P2-2): each stale fact the question absorbs is superseded by the asked fact. A refusal
+        or an exception is a WARNING (the fold's id and the refusal, never a text) and the fold stays stale. How many landed."""
+        landed = 0
+        for fold_id in ask.folds:
+            try:
+                outcome = await self._fact_updates.apply_fact_update(
+                    fold_id, ParsedFactUpdate(state=FactState.SUPERSEDED, superseded_by=fact.id), account_id,
+                    context=FactWriteContext.for_pass(PassActor.REVIEW, zone, None), reason=superseded_reason(fact.id),
+                )
+            except Exception as exc:
+                logger.warning(f"[FactReview] fold {fold_id[:8]} of fact {fact.id[:8]} raised {type(exc).__name__}: {exc}")
+                continue
+            if outcome.refusal is not None:
+                logger.warning(
+                    f"[FactReview] fold {fold_id[:8]} of fact {fact.id[:8]} stays stale: {outcome.refusal.value}"
+                )
+                continue
+            writes.wrote()
+            landed += 1
+        return landed
+
+    async def _invoices(
+        self, user_id: str, account_id: str, batch: Sequence[FactEntity], requests: Sequence[InvoiceRequest],
+        now: datetime,
+    ) -> int:
+        """A routine invoice the pass rewrote "payment not confirmed" (P2-2) gets one Cabinet-only question on the written
+        version, never sent. A request for a fact outside the batch is ignored; a written version that is gone or not
+        current is a WARNING and skipped. The account is marked undigested once when any was created. How many were."""
+        in_batch = {fact.id for fact in batch}
+        created = 0
+        for request in requests:
+            if request.fact_id not in in_batch:
+                continue
+            written = await self._repo.get_fact_by_id(request.written_id)
+            if written is None or written.state is not FactState.CURRENT:
+                logger.warning(f"[FactReview] invoice {request.written_id[:8]}: the written version is gone or not current; skipped")
+                continue
+            question = digest_question(written, uuid.uuid4().hex, user_id, request.paid, request.not_paid, at=now)
+            if await self._review_store.create_queued(question):
+                created += 1
+        if created:
+            await self._note_set_aside(account_id, now)
+        return created
 
     @staticmethod
     def _ask_builder(user_id: str, ask: AskRequest, now: datetime) -> "_QueueBuild":
-        """What an ask queues: the question with the pass's fallback (`queued_question`) and `queued_fields`."""
+        """What an ask queues: the question with the pass's kind, texts and fallback (`queued_question`) and `queued_fields`.
+        `fallback_date` is retired upstream (refused), so it is not passed."""
 
         def build(stored: FactEntity, question_id: str) -> Tuple[FactReviewQuestion, Dict[str, Any]]:
             question = queued_question(
                 stored, question_id, user_id, ask.fallback,  # type: ignore[arg-type]  # validated by the question model
-                at=now, fallback_date=ask.fallback_date, noise=ask.noise,
+                at=now, noise=ask.noise, question=ask.question, texts=dict(ask.texts),  # type: ignore[arg-type]
             )
             return question, queued_fields(stored, question_id, now)
 

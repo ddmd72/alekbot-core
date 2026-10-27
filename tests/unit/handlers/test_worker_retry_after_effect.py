@@ -432,6 +432,7 @@ class Rig:
             channel_bindings=world.channel_bindings, notifications=world.notifier, session_store=world.session_store,
             task_queue=world.queue, answer_service=answers, interactive=world.interactive, alert_sink=world.sink,
             run_timeout_s=600, clock=world.clock,
+            fact_updates=world.store.adapter, cabinet_url="https://cabinet.example/cabinet?tab=memory",
         )
 
     async def run(self, mode: str = "daily") -> Dict[str, Any]:

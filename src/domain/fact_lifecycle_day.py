@@ -33,10 +33,13 @@ class CounterField(StrEnum):
     ALREADY_ANSWERED = "already_answered"
     REPLY_INTAKE_FAILED = "reply_intake_failed"
     LABELS_FALLBACK = "labels_fallback"
+    TO_HISTORY = "to_history"
+    FOLDED = "folded"
+    FALLBACKS_NOT_APPLIED = "fallbacks_not_applied"
 
 
 # The counters of the memory review and its answers: every counter but the expiry tool errors, which the expiry path counts.
-# Listed, not derived: the ops line prints the first seventeen in this order (`fact_lifecycle_review_line`), the last five
+# Listed, not derived: the ops line prints the first twenty in this order (`fact_lifecycle_review_line`), the last five
 # are counted and stored but have no place on it. A new counter is added here by hand, and a test refuses one that is missing.
 REVIEW_FIGURES: Final[Tuple[CounterField, ...]] = (
     CounterField.REVIEWED,
@@ -47,6 +50,8 @@ REVIEW_FIGURES: Final[Tuple[CounterField, ...]] = (
     CounterField.SUPERSEDED,
     CounterField.KEPT,
     CounterField.QUEUED,
+    CounterField.TO_HISTORY,
+    CounterField.FOLDED,
     CounterField.QUESTIONS_SENT,
     CounterField.ANSWERED_BY_DIGIT,
     CounterField.ANSWERED_BY_BUTTON,
@@ -55,6 +60,7 @@ REVIEW_FIGURES: Final[Tuple[CounterField, ...]] = (
     CounterField.TIMED_OUT,
     CounterField.REVIEW_FAILED,
     CounterField.REVIEW_REFUSALS,
+    CounterField.FALLBACKS_NOT_APPLIED,
     CounterField.REPLY_INTAKE_FAILED,
     CounterField.NOT_DELIVERED,
     CounterField.ANSWERS_NOT_APPLIED,
@@ -152,6 +158,9 @@ class FactLifecycleDay:
     already_answered: int = 0
     reply_intake_failed: int = 0
     labels_fallback: int = 0
+    to_history: int = 0
+    folded: int = 0
+    fallbacks_not_applied: int = 0
 
     def counts(self, figures: Iterable[CounterField]) -> Dict[CounterField, int]:
         """This row's value of each of `figures`."""

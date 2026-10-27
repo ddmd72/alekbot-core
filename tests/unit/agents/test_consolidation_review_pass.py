@@ -28,6 +28,7 @@ from src.ports.llm_port import AgentExecutionContext, LLMPort, LLMResponse, Prov
 from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
+from tests.support.review_p2_labels import RU_P2_LABELS
 from tests.support.review_rule_builders import question as build_question
 
 TZ = "Europe/Lisbon"
@@ -50,6 +51,7 @@ RU_LABELS = {
     "memory_digest_footer": "Чтобы вернуть один, скажите в чате, что это всё ещё так.",
     "memory_digest_archived": "это уже не так",
     "memory_digest_invalidated": "этого никогда не было",
+    **RU_P2_LABELS,  # P2 revised (C11): the set is the 28 label keys
 }
 
 
@@ -83,7 +85,7 @@ class RecordingUpdates(FactUpdatePort):
         self._real = real
         self.calls: List[Any] = []
 
-    async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None, history=None):
+    async def apply_fact_update(self, fact_id, update, account_id, *, context, evidence_at=None, reason=None, history=None, expected_id=None):
         self.calls.append((fact_id, context))
         return await self._real.apply_fact_update(
             fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history,
@@ -122,7 +124,7 @@ async def _stale(world, text):
     return await world.seed_stale(text, expiry_kind=ExpiryKind.HORIZON, ttl_days=14, reported_date=NOW - timedelta(days=60))
 
 
-async def _evidence(world, text="moved to Lisbon in October"):
+async def _evidence(world, text="moved back to Springfield in September"):
     return await world.seed(text, reported_date=NOW - timedelta(days=1))
 
 
@@ -177,25 +179,31 @@ async def test_the_agent_takes_the_review_task(world):
 
 @pytest.mark.parametrize("updates, outcome", [
     ({"state": "current", "expiry": HORIZON}, "revived"),
-    ({"state": "current", "content": "lives in Lisbon", "expiry": HORIZON}, "rewritten"),
+    ({"state": "current", "content": "lives in Springfield", "expiry": HORIZON}, "rewritten"),
     ({"state": "archived"}, "archived"),
     ({"state": "invalidated"}, "invalidated"),
     ("supersede", "superseded"),
 ])
 async def test_each_outcome_is_returned_from_the_scope(world, updates, outcome):
-    fact, ev = await _stale(world, "lives in Porto"), await _evidence(world)
+    fact, ev = await _stale(world, "lives in Lisbon"), await _evidence(world)
+    questions = ()
     if updates == "supersede":
         call = {"fact_id": fact, "updates": {"state": "superseded", "superseded_by": ev}}
+    elif outcome == "archived":
+        # P2 revised (P2-4): the review archives only on the owner's reply to the fact's question
+        questions = (build_question(QuestionStatus.ASKED, fact_id=fact, account_id=ACC, user_id=USER,
+                                    reply_text="I left Lisbon", reply_at=NOW - timedelta(hours=2)),)
+        call = {"fact_id": fact, "updates": updates, "basis": {"kind": "reply", "question_id": "q1", "quote": "left Lisbon"}}
     else:
         call = {"fact_id": fact, "updates": updates, "basis": _on(ev)}
     agent = _agent(world, [_tools(("update_fact", call)), REPORT])
 
-    response = await _run(agent, await _task(world, fact))
+    response = await _run(agent, await _task(world, fact, questions=questions))
 
     assert response.status == AgentStatus.SUCCESS, response.error
     (decided,) = response.result["outcomes"]
     assert decided["fact_id"] == fact and decided["outcome"] == outcome
-    assert decided["basis_kind"] == (None if updates == "supersede" else "evidence")
+    assert decided["basis_kind"] == (None if updates == "supersede" else "reply" if outcome == "archived" else "evidence")
     assert world.docs[decided["written_id"]]["state"] in ("current", outcome)
     assert response.result["asks"] == [] and response.result["kept"] == []
 
@@ -208,7 +216,9 @@ async def test_asks_are_returned_and_nothing_is_written(world):
     response = await _run(agent, await _task(world, fact, kept))
 
     assert response.status == AgentStatus.SUCCESS, response.error
-    assert response.result["asks"] == [{"fact_id": fact, "fallback": "revive", "fallback_date": None, "noise": False}]
+    # P2 revised (C8): an ask carries its question kind, texts and folds
+    assert response.result["asks"] == [{"fact_id": fact, "fallback": "revive", "fallback_date": None, "noise": False,
+                                         "question": "still_true", "texts": {}, "folds": []}]
     assert response.result["outcomes"] == [] and response.result["kept"] == [kept]
     assert {fid: world.docs[fid] for fid in (fact, kept)} == before
 
@@ -218,12 +228,12 @@ async def test_the_prompt_is_the_review_profile_without_directives_or_history(wo
     prompts = Prompts()
     agent = _agent(world, [REPORT], prompts)
 
-    await _run(agent, await _task(world, fact), bio=("lives in Lisbon",))
+    await _run(agent, await _task(world, fact), bio=("lives in Springfield",))
 
     (call,) = prompts.calls
     assert call["agent_type"] == "consolidation_review"
     assert call["include_directives"] is False and call["conversation_history"] == []
-    assert call["biographical_facts"] == [{"text": "lives in Lisbon"}]
+    assert call["biographical_facts"] == [{"text": "lives in Springfield"}]
     assert _requests(agent)[0].system_instruction == "REVIEW SYSTEM PROMPT"
 
 
@@ -261,8 +271,9 @@ async def test_a_payload_without_a_review_task_is_a_failure(world):
 
 
 async def test_the_owners_zone_and_the_review_label_reach_the_write_context(world):
-    fact, ev = await _stale(world, "lives in Porto"), await _evidence(world)
-    agent = _agent(world, [_tools(("update_fact", {"fact_id": fact, "updates": {"state": "archived"}, "basis": _on(ev)})),
+    fact, ev = await _stale(world, "lives in Lisbon"), await _evidence(world)
+    # P2 revised (P2-2): evidence backs no archive; the write is an invalidation it backs
+    agent = _agent(world, [_tools(("update_fact", {"fact_id": fact, "updates": {"state": "invalidated"}, "basis": _on(ev)})),
                            REPORT])
     recorder = RecordingUpdates(world.store.adapter)
     agent._fact_updates = recorder
@@ -290,7 +301,7 @@ async def test_the_turn_cap_is_the_review_cap(world):
 
 
 async def test_the_scope_writes_through_a_port_installed_after_construction(world):
-    fact, ev = await _stale(world, "lives in Porto"), await _evidence(world)
+    fact, ev = await _stale(world, "lives in Lisbon"), await _evidence(world)
     agent = _agent(world, [_tools(("update_fact", {"fact_id": fact, "updates": {"state": "current", "expiry": HORIZON},
                                                    "basis": _on(ev)})), REPORT])
     recorder = RecordingUpdates(world.store.adapter)
@@ -313,12 +324,16 @@ async def test_the_message_has_no_budget_and_asks_for_no_question_text(world):
     text = _user_text(agent)
     assert text.startswith("SYSTEM MAINTENANCE — STALE FACT REVIEW")
     assert "Every listed fact gets exactly one outcome." in text
-    assert ("<fact_id> | neighbour_says=<id|none> | reply=<yes|no|over|never|unclear|none> | dated_plan_passed=<bool> | "
-            "outcome=<…>") in text
+    # P2 revised (P2-7 checklist, outcome_order (3)): the history column replaces dated_plan_passed, and a passed date
+    # is rewritten as history before any archive, which only the owner's reply backs
+    assert ("<fact_id> | neighbour_says=<id|none> | reply=<yes|no|over|never|unclear|none> | "
+            "history=<evidence|own_text|ask|none> | outcome=<…>") in text
     header = text.split("Facts under review:")[0]
     order = ["(1) a current fact states the same thing: supersede it by that fact",
              "(2) the reply or evidence says it still holds: revive it with that basis",
-             "(3) it is over: archive it (basis reply, evidence or date_passed); it was never true: invalidate it",
+             "(3) its date has passed: rewrite it as history (basis evidence or reply, or date_passed when its own text "
+             "already reports the outcome); otherwise, when the owner's reply says it is over: archive it; it was never "
+             "true: invalidate it",
              "(4) anything else: ask_owner"]
     assert all(step in header for step in order)
     assert [header.index(step) for step in order] == sorted(header.index(step) for step in order)
@@ -380,8 +395,8 @@ async def test_each_fact_line_is_built_from_the_view_with_versions_neighbours_an
     (neighbour,) = line["neighbours"]
     assert neighbour["fact_id"] == near and neighbour["content"] == "joined a tennis club"
     assert neighbour["reported"] == "2026-10-22"
-    assert line["question"] == {
-        "question_id": "q1", "asked_on": open_question.asked_at.astimezone(ZoneInfo(TZ)).date().isoformat(),
+    assert line["question"] == {  # P2 revised (C, _review_line): the question's kind follows its id
+        "question_id": "q1", "kind": "still_true", "asked_on": open_question.asked_at.astimezone(ZoneInfo(TZ)).date().isoformat(),
         "fallback": "revive", "timed_out": False, "reply": "still do", "reply_at": "2026-10-22T08:30:00+01:00",
     }
 

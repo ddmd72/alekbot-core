@@ -17,12 +17,13 @@ _CLOSED: dict[FactState, ReviewOutcome] = {
 @dataclass(frozen=True)
 class ReviewDecision:
     """One batch fact's result: `fact_id` is the batch fact, `written_id` the document the last write left, `basis_kind`
-    that write's basis (None for a supersede)."""
+    that write's basis (None for a supersede), `as_history` whether it rewrote the fact as history (P2-1)."""
 
     fact_id: str
     outcome: ReviewOutcome
     written_id: str
     basis_kind: Optional[BasisKind]
+    as_history: bool = False
 
 
 def review_outcome(batch_fact: FactEntity, written: FactEntity) -> ReviewOutcome:
