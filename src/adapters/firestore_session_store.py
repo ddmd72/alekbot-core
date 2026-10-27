@@ -20,7 +20,19 @@ from ..utils.logger import logger
 class FirestoreSessionStore(SessionStore):
     """
     Manages session state persistence in Firestore.
-    Provides automatic TTL cleanup and transaction support.
+
+    Firestore mechanics (the port states the observable contract):
+    - Collection `EnvironmentConfig.sessions_collection` (`{prefix}sessions`), one document per session id; fields
+      `history` (list of message dicts), `created_at`, `last_activity` (float epoch), `owner_id`, `updated_at`
+      (SERVER_TIMESTAMP), `expires_at`. No TTL policy covers the collection: `expires_at` is written and never read;
+      expiry is the lazy 90-day check in `load_session`.
+    - `append_messages_batch` reads and writes the document in one transaction (`set(merge=True)`); a conflicting
+      commit re-runs the body, so concurrent appends are all kept. The threshold resolver runs once, before the
+      transaction. The window is applied only when the document already exists. Each cut batch goes to the overflow
+      callback as a fire-and-forget task after the commit; a failing callback is only logged.
+    - `save_session` is a `set(merge=True)` with no precondition.
+    - `get_latest_session_id` needs the composite index (owner_id ASC, last_activity DESC).
+    - `delete_session` and `cleanup_expired_sessions` are not on the port and have no caller in src/.
     """
 
     def __init__(

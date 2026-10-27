@@ -9,10 +9,21 @@ from src.domain.notification import NotificationChannel
 
 
 class NotificationStatePort(ABC):
+    """Port for a user's notification channels: the last active one and the primary one ($primary), one record each
+    per user_id.
+
+    Holds for every method:
+    - Tenancy: user_id only.
+    - Atomicity: each save replaces the record; last writer wins (the latest message wins).
+    - Dates: a stored updated_at reads as naive UTC; a record without one reads as now (aware UTC). No caller reads it.
+    - Legacy: a record missing user_id, platform or channel_id raises (KeyError). Any other shape (an updated_at that is
+      not a timestamp): no writer produces one; behaviour pending the data audit.
+    - Errors: backend errors propagate.
+    """
 
     @abstractmethod
     async def save(self, user_id: str, platform: str, channel_id: str) -> None:
-        """Upsert the last active channel for a user. Called on every incoming message."""
+        """Replace the user's last active channel. Called on every incoming message."""
 
     @abstractmethod
     async def get(self, user_id: str) -> Optional[NotificationChannel]:
@@ -20,7 +31,7 @@ class NotificationStatePort(ABC):
 
     @abstractmethod
     async def save_primary(self, user_id: str, platform: str, channel_id: str) -> None:
-        """Set the primary notification channel for a user. Explicit via $primary command."""
+        """Replace the user's primary channel, kept apart from the last active one. Explicit via $primary command."""
 
     @abstractmethod
     async def get_primary(self, user_id: str) -> Optional[NotificationChannel]:

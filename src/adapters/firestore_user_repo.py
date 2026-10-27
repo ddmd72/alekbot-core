@@ -34,7 +34,12 @@ def _sanitize_user_doc(data: Dict[str, Any]) -> Dict[str, Any]:
 class FirestoreUserRepository(UserRepository):
     """
     Firestore implementation of UserRepository.
-    Stores users in '{env}_users' collection.
+
+    Firestore mechanics (the port states the observable contract): collection `EnvironmentConfig.domain_users_collection`,
+    document id `user_id`, body `UserProfile.model_dump()` written with a plain `set` (no precondition) by create_user,
+    update_user and unlink_platform_identity. Lookups are single-field equality queries with `limit(1)`
+    (`platform_identities.<platform>` is a dotted path). link_platform_identity reads the user and queries the identity
+    inside one transaction, then sets the whole document.
     """
     
     def __init__(self, db_client, env_config: EnvironmentConfig, account_repo: AccountRepository):
