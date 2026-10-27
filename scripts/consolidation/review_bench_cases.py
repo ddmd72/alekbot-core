@@ -72,7 +72,9 @@ def stale_cases(now: datetime) -> Tuple[FactCase, ...]:
         FactCase(
             "plan_date_passed", "Alex will give a talk at the Hamburg conference on 15 October 2026.",
             FactDomain.WORK, FactType.STATE, _utc(2026, 9, 10), 35,
-            "archived on the plan's date (basis date_passed), no history fact, no question",
+            "a horizon plan whose day passed and that nothing decides: asked with question happened (texts happened, "
+            "not_happened, unknown; fallback history) or rewritten as history on evidence; never archived, never a "
+            "date_passed history (its text reports no outcome)",
         ),
         FactCase(
             "revive_without_basis", "Alex trains at the Iron Temple gym.",
