@@ -5,7 +5,6 @@
 #
 # Stores and adapters with no behind-port test yet (the store kits of TEST_COVERAGE_SYSTEMIC_RFC build them).
 src.adapters.firestore_email_exclusions_adapter  # Firestore store; reached only through service_container wiring
-src.adapters.firestore_notification_state_adapter  # Firestore store (last active channel); wired from main.py only
 src.adapters.gcp_log_sink  # Cloud Logging sink; wired from main.py only
 src.adapters.playwright_html_renderer  # headless-Chromium renderer; wired from main.py only
 src.adapters.telegram.media_adapter  # Telegram upload adapter; wiring only

@@ -206,6 +206,30 @@ stays as the done-check, once per package.
 - A new test with a DST or month boundary uses this harness. Open defects are strict xfails with their `P16-D<n>` id
   (`TEST_COVERAGE_SYSTEMIC_RFC.md` -> "Built (P16)").
 
+## Redelivery and interleaving (P15)
+
+- **`tests/support/redelivery_world.py`** is the world for any handler-level redelivery test: the real `WorkerHandler`, claim store, note
+  store, `UserNotificationService`, `RemindersService` and `GcpTaskQueue` on one `EvalDb`, a scripted agent turn and recording channels, plus
+  `deliver`, `deliver_twice` (two task names the claim does not merge, in sequence or under `asyncio.gather`; `names=None` sends Scheduler
+  bodies), `deliver_with_retry` (a retry is delivered only when Cloud Tasks would: a raise, `>= 500` or `429`) and `Rendezvous`. Use it; do not
+  build a second one.
+- **Inside a strict `xfail(raises=AssertionError)` every precondition uses `require(cond, what)` or `Twice.reraise()`** (they raise
+  `PreconditionFailed`, which is not the expected failure), never a bare `assert`: a bare `assert` precondition would turn a broken setup into a
+  silent XFAIL. Only the outcome assertion is a bare `assert`. A gathered pin takes `require(rv.met and not rv.stalled, ...)` as its race evidence.
+  The exception: when the flipping fix keeps the losing delivery away from the race point (a lease, so it never reads), `rv.met` would flip with the
+  fix, and the precondition is `twice.overlapped and rv.reached.is_set() and not rv.stalled` (P15-D5, first test of
+  `test_worker_redelivery_chains.py`).
+- **A gathered test forces its interleaving and asserts that it happened.** `collection.yield_on_get = True` interleaves document reads only; a
+  query never yields, so a race whose read is a query takes a `Rendezvous` (or an `asyncio.Event` gate). A serial run must fail the assertion that
+  the interleaving happened.
+- **Agent instance state** (`tests/unit/agents/test_agent_request_state_meta.py`): agent instances are per-user singletons serving concurrent
+  executions, so a write to shared state outside `__init__` (`self.*`, class state, module-level names) in any class under `src/` that derives from
+  `BaseAgent` needs a line in `tests/unit/agents/agent_instance_writes_allowlist.txt` with a reason (`constructor-only`, `lazy-cache`,
+  `cross-request-by-design`, `port-call`, `dead-write`, `defect:<id>`) and evidence; `constructor-only`, `lazy-cache` and the lock are checked
+  mechanically, and a lock is never a reason alone: it comes only as `cross-request-by-design+lock-guarded` or `lazy-cache+lock-guarded`. A line is
+  `<path>::<Class>.<method>::<key>  # <reason> <evidence, at least two words>` (the key is the dotted attribute path up to the first subscript or call,
+  no line numbers). It fails both ways (a write with no line; a line whose write is gone).
+
 ## Markers and the machine lock (P1, `tests/plugins/`)
 
 - **`@pytest.mark.slow`** — the test takes over 0.5 s with coverage on (setup + call + teardown). Skipped unless
