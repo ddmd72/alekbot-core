@@ -531,12 +531,12 @@ user parts `p.consolidation_text or p.text` (`consolidation_text` is legacy, see
 **Loop alerts:** a pass that hits the turn cap without a final report posts a 🚨 ops alert (`AlertSinkPort`);
 while `CONSOLIDATION_STATS_ALERTS` (`os.getenv`, default on, temporary since 2026-10-20) is on, every pass
 posts a 📊 stats line. See `decisions/sonnet55_adaptive_thinking_stall.md`.
-**Expiry and the janitor (Facts S3, built, ships with S5):** the consolidator's writes carry an `expiry` (`date` / `horizon` /
+**Expiry and the janitor (Facts S3, deployed 2026-10-27):** the consolidator's writes carry an `expiry` (`date` / `horizon` /
 `none`) that code turns into `expires_at` in the owner's timezone (map §2.7); a daily zero-LLM janitor (`fact_lifecycle_sweep`)
-stales due facts behind a breaker and is **log-only until S5**; never a TTL policy on the facts collection (a test scans the
+stales due facts behind a breaker and is **log-only until the owner switches it on (S5)**; never a TTL policy on the facts collection (a test scans the
 tree). See `decisions/fact_expiry_and_janitor.md`, map §5.5.
 
-**Memory review (Facts S4, built, ships with S5)** — what a stale fact becomes. The janitor (above) enqueues a `fact_review`
+**Memory review (Facts S4, deployed 2026-10-27)** — what a stale fact becomes. The janitor (above) enqueues a `fact_review`
 task per account (daily by default, `fact_review_interval_days`, log-only mode too). `FactReviewService` runs it under the
 memory-write lease: housekeeping, timeouts in code, selection of up to 20 stale facts, one pass of the consolidation agent
 with its own profile (`consolidation_review`; tools `update_fact`, `ask_owner`, `count_words` only; `FactReviewScope` refuses
