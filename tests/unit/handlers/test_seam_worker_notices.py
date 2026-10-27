@@ -187,7 +187,7 @@ async def test_a_pending_video_is_polled_again_and_delivered_to_its_chat(monkeyp
 
     require(second == ({"status": "delivered"}, 200), "the done poll was answered 'delivered'")
     require(video.polled == ["req-1", "req-1"], "the request was polled twice")
-    require(not world.unscripted(), "no agent was called")
+    require(not world.unscripted(), "no agent call went unscripted")
     [(label, url)] = world.docs_to(*TELEGRAM)
     assert label == "Your generated video"
     assert url.startswith("https://svc.test.example/f/")

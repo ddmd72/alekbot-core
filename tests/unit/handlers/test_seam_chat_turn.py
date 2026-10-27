@@ -22,7 +22,8 @@ from src.domain.messaging import MessageContext
 from src.domain.ui_messages import UIMessage
 from src.locales.uk import UI_STRINGS
 from tests.support.seam_world import (
-    ACCOUNT, OTHER_SLACK, PRIMARY, T0, TELEGRAM, USER, Delegation, SeamWorld, Step, page, require, says,
+    ACCOUNT, OTHER_SLACK, PRIMARY, SEAM_CONSOLIDATION, T0, TELEGRAM, USER, Delegation, SeamWorld, Step, page, require,
+    says,
 )
 
 ON_ITS_WAY = "Your page about heat pumps in Springfield is on its way."
@@ -83,7 +84,7 @@ def _telegram_turn(text: str) -> MessageContext:
     """As `src/adapters/telegram/webhook_adapter.py:283-301` builds it: `platform` and `chat_id`, no `channel` key, no
     `turn_id`."""
     return MessageContext(text=text, session_id="u1:7001", user_id=USER, account_id=ACCOUNT,
-                          metadata={"platform": "telegram", "chat_id": 7001, "telegram_user_id": 9001})
+                          metadata={"platform": "telegram", "chat_id": 7001, "telegram_user_id": "9001"})
 
 
 def _asks_for_a_page(world: SeamWorld) -> None:
@@ -205,7 +206,7 @@ async def test_consolidate_answers_in_the_chat_it_was_typed_in(monkeypatch):
     `test_consolidate_command_interleaving.py:38-98` (re-declared here) over the real `FirestoreConsolidationQueue`."""
     world = SeamWorld(monkeypatch)
     await world.set_primary(*PRIMARY)
-    batch_size = 30  # SeamWorld's chat handler settings (`SEAM_CONSOLIDATION`); u1 has no override
+    batch_size = SEAM_CONSOLIDATION.batch_size  # the chat handler's settings; u1 has no override
     history = [Message(role="user" if i % 2 == 0 else "model", parts=[MessagePart(text=f"old message {i}")])
                for i in range(batch_size + 2)]
     await world.sessions.append_messages_batch("u1:7001", history, owner_id=USER, raise_on_error=True)
@@ -219,7 +220,7 @@ async def test_consolidate_answers_in_the_chat_it_was_typed_in(monkeypatch):
     chat = ChatChannel(*TELEGRAM)
     context = MessageContext(text="$consolidate", session_id="u1:7001", user_id=USER, account_id=ACCOUNT,
                              metadata={"event_type": "command", "platform": "telegram", "channel": "7001",
-                                       "chat_id": 7001, "telegram_user_id": 9001})
+                                       "chat_id": 7001, "telegram_user_id": "9001"})
 
     await handler.handle_command("consolidate", context, chat)
 
