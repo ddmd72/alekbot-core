@@ -1613,6 +1613,8 @@
           "questions.status_waiting": "Waiting in line",
           "questions.waiting_since": "waiting since {date}",
           "questions.mark_selected": "Mark selected as:",
+          "questions.invoices_title": "Invoices with no payment confirmation",
+          "questions.one_kind": "Select questions of one kind to mark them together.",
           "questions.select": "Select",
           "questions.none_selected": "Select at least one fact first.",
           "questions.failed": "Could not send the answers.",
@@ -1756,6 +1758,8 @@
           "questions.status_waiting": "Чекає в черзі",
           "questions.waiting_since": "очікує з {date}",
           "questions.mark_selected": "Позначити вибрані як:",
+          "questions.invoices_title": "Рахунки без підтвердження оплати",
+          "questions.one_kind": "Виберіть питання одного виду, щоб позначити їх разом.",
           "questions.select": "Вибрати",
           "questions.none_selected": "Спершу виберіть хоча б один факт.",
           "questions.failed": "Не вдалося надіслати відповіді.",
@@ -1899,6 +1903,8 @@
           "questions.status_waiting": "En file d'attente",
           "questions.waiting_since": "en attente depuis le {date}",
           "questions.mark_selected": "Marquer la sélection comme :",
+          "questions.invoices_title": "Factures sans confirmation de paiement",
+          "questions.one_kind": "Sélectionnez des questions d'un même type pour les marquer ensemble.",
           "questions.select": "Sélectionner",
           "questions.none_selected": "Sélectionnez d'abord au moins un fait.",
           "questions.failed": "Impossible d'envoyer les réponses.",
@@ -2042,6 +2048,8 @@
           "questions.status_waiting": "En espera",
           "questions.waiting_since": "esperando desde el {date}",
           "questions.mark_selected": "Marcar la selección como:",
+          "questions.invoices_title": "Facturas sin confirmación de pago",
+          "questions.one_kind": "Selecciona preguntas de un mismo tipo para marcarlas juntas.",
           "questions.select": "Seleccionar",
           "questions.none_selected": "Selecciona primero al menos un hecho.",
           "questions.failed": "No se pudieron enviar las respuestas.",
@@ -2698,9 +2706,10 @@
             return;
           }
           const data = await res.json();
-          reviewOptions = data.options || [];
+          reviewQuestions = data.questions || [];
           if (!reviewBound) {
             box.addEventListener("click", onReviewClick);
+            box.addEventListener("change", onReviewChange);
             reviewBound = true;
           }
           renderReviewQuestions(data.questions || []);
@@ -2719,20 +2728,87 @@
         return `${t("questions.status_waiting")}, ${t("questions.waiting_since").replace("{date}", shortDate(q.waiting_since))}`;
       }
 
-      let reviewOptions = [],
+      let reviewQuestions = [],
         reviewResults = {},
         reviewBound = false;
 
-      function answerButtons(questionId) {
+      function answerButtons(options, questionId) {
         const q = questionId
           ? ` data-question-id="${escapeHtml(questionId)}"`
           : "";
-        return reviewOptions
+        return options
           .map(
             (o) =>
               `<button data-answer="${escapeHtml(o.answer)}"${q} class="btn btn-secondary btn-sm">${escapeHtml(o.label)}</button>`,
           )
           .join("");
+      }
+
+      function checkedReviewIds(group) {
+        const box = document.getElementById("review-questions");
+        return Array.from(
+          box.querySelectorAll(
+            `input[type=checkbox][data-group="${group}"][data-question-id]:checked`,
+          ),
+        ).map((c) => c.dataset.questionId);
+      }
+
+      function bulkBarContent(group) {
+        const inGroup = reviewQuestions.filter((q) => q.group === group);
+        const checked = checkedReviewIds(group)
+          .map((id) => inGroup.find((q) => q.question_id === id))
+          .filter(Boolean);
+        const kinds = new Set(checked.map((q) => q.kind));
+        if (kinds.size > 1)
+          return `<span style="color:var(--text-muted);">${escapeHtml(t("questions.one_kind"))}</span>`;
+        const first = checked[0] || inGroup[0];
+        return `<span style="color:var(--text-muted);">${escapeHtml(t("questions.mark_selected"))}</span>${answerButtons(first ? first.options : [], "")}`;
+      }
+
+      function refreshBulkBar(group) {
+        const bar = document
+          .getElementById("review-questions")
+          .querySelector(`div[data-group="${group}"]`);
+        if (bar) bar.innerHTML = bulkBarContent(group);
+      }
+
+      function reviewRow(q) {
+        const domain = q.domain
+          ? `<span class="fact-domain-badge">${escapeHtml(domainLabel(q.domain))}</span>`
+          : "";
+        const result = reviewResults[q.question_id]
+          ? `<div style="color:var(--text-muted); font-size:13px; margin-top:8px;">${escapeHtml(t("questions.result_" + reviewResults[q.question_id]))}</div>`
+          : "";
+        return `
+        <div class="card fact-card" style="min-height:0; margin-bottom:16px;">
+          <div class="card-body">
+            <label style="display:flex; gap:12px; align-items:flex-start; cursor:pointer;">
+              <input type="checkbox" data-question-id="${escapeHtml(q.question_id)}" data-group="${escapeHtml(q.group)}" aria-label="${escapeHtml(t("questions.select"))}" style="margin-top:8px;" />
+              <span class="fact-text">${escapeHtml(q.text)}</span>
+            </label>
+            <div class="fact-meta">
+              ${domain}
+              <span style="color:var(--text-muted); font-size:13px;">${escapeHtml(reviewStatusLine(q))}</span>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">${answerButtons(q.options, q.question_id)}</div>
+            ${result}
+          </div>
+        </div>`;
+      }
+
+      function reviewSection(group, title, subtitle) {
+        const qs = reviewQuestions.filter((q) => q.group === group);
+        if (qs.length === 0) return "";
+        const sub = subtitle
+          ? `<p style="color:var(--text-muted); margin-bottom:16px;">${escapeHtml(subtitle)}</p>`
+          : "";
+        return `
+        <div style="margin-bottom: 40px;">
+          <h2 style="margin-bottom:4px;">${escapeHtml(title)} (${qs.length})</h2>
+          ${sub}
+          <div data-group="${escapeHtml(group)}" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:16px;">${bulkBarContent(group)}</div>
+          ${qs.map(reviewRow).join("")}
+        </div>`;
       }
 
       function renderReviewQuestions(questions) {
@@ -2742,53 +2818,26 @@
           box.innerHTML = "";
           return;
         }
-        const rows = questions
-          .map((q) => {
-            const domain = q.domain
-              ? `<span class="fact-domain-badge">${escapeHtml(domainLabel(q.domain))}</span>`
-              : "";
-            const result = reviewResults[q.question_id]
-              ? `<div style="color:var(--text-muted); font-size:13px; margin-top:8px;">${escapeHtml(t("questions.result_" + reviewResults[q.question_id]))}</div>`
-              : "";
-            return `
-        <div class="card fact-card" style="min-height:0; margin-bottom:16px;">
-          <div class="card-body">
-            <label style="display:flex; gap:12px; align-items:flex-start; cursor:pointer;">
-              <input type="checkbox" data-question-id="${escapeHtml(q.question_id)}" aria-label="${escapeHtml(t("questions.select"))}" style="margin-top:8px;" />
-              <span class="fact-text">${escapeHtml(q.text)}</span>
-            </label>
-            <div class="fact-meta">
-              ${domain}
-              <span style="color:var(--text-muted); font-size:13px;">${escapeHtml(reviewStatusLine(q))}</span>
-            </div>
-            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;">${answerButtons(q.question_id)}</div>
-            ${result}
-          </div>
-        </div>`;
-          })
-          .join("");
-        box.innerHTML = `
-        <div style="margin-bottom: 40px;">
-          <h2 style="margin-bottom:4px;">${escapeHtml(t("questions.title"))} (${questions.length})</h2>
-          <p style="color:var(--text-muted); margin-bottom:16px;">${escapeHtml(t("questions.subtitle"))}</p>
-          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:16px;">
-            <span style="color:var(--text-muted);">${escapeHtml(t("questions.mark_selected"))}</span>
-            ${answerButtons("")}
-          </div>
-          ${rows}
-        </div>`;
+        box.innerHTML =
+          reviewSection("questions", t("questions.title"), t("questions.subtitle")) +
+          reviewSection("invoices", t("questions.invoices_title"), "");
         box.classList.remove("hidden");
+      }
+
+      function onReviewChange(ev) {
+        const group = ev.target.dataset && ev.target.dataset.group;
+        if (group) refreshBulkBar(group);
       }
 
       async function onReviewClick(ev) {
         const btn = ev.target.closest("button[data-answer]");
         if (!btn) return;
-        const box = document.getElementById("review-questions");
+        const bar = btn.closest("div[data-group]");
         const ids = btn.dataset.questionId
           ? [btn.dataset.questionId]
-          : Array.from(
-              box.querySelectorAll("input[type=checkbox][data-question-id]:checked"),
-            ).map((c) => c.dataset.questionId);
+          : bar
+            ? checkedReviewIds(bar.dataset.group)
+            : [];
         if (ids.length === 0) {
           showToast(t("questions.none_selected"), "error");
           return;
