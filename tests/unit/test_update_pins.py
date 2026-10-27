@@ -5,7 +5,7 @@ from tests.unit import test_main_boots_offline as boot_test
 from tests.unit.test_main_boots_offline import Boot, _check_url_map, _update_pins_if_asked
 
 HEADER = "# invented header line"
-BOOTED = ["GET /alpha", "GET /health", "GET /health", "POST /zeta"]
+BOOTED = ["POST /zeta", "GET /health", "GET /alpha", "GET /health"]
 DRIFTED = "\n".join([HEADER, "GET /alpha", "GET /gone"]) + "\n"
 
 

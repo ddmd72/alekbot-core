@@ -10,7 +10,9 @@ task type through the real route and OIDC gate. The probe only observes; a failu
 `main()`, so assertions run after `main()` returns. Everything is read from one boot, each section is checked on its own
 and the failures are reported together.
 
-`UPDATE_PINS=1` rewrites the url_map pin from the booted app; review the diff.
+`UPDATE_PINS=1` rewrites the url_map pin from the booted app; review the diff. The boot test is `slow`, so the command is
+`UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` (one file, no `-n`: a parallel self-test could
+read the pin mid-rewrite).
 """
 import ast
 import inspect
