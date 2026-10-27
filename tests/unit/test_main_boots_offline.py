@@ -9,11 +9,14 @@ would serve (log slice, `url_map`, the keyword arguments of every blueprint fact
 task type through the real route and OIDC gate. The probe only observes; a failure inside `serve` is swallowed by
 `main()`, so assertions run after `main()` returns. Everything is read from one boot, each section is checked on its own
 and the failures are reported together.
+
+`UPDATE_PINS=1` rewrites the url_map pin from the booted app; review the diff.
 """
 import ast
 import inspect
 import json
 import logging
+import os
 import re
 import socket
 import types
@@ -329,6 +332,18 @@ def _check_agent_task_queue(boot: Boot) -> List[str]:
     return problems
 
 
+def _write_url_map(rules: List[str]) -> None:
+    """Rewrite the url_map pin: the header comment lines are kept, the rules follow sorted (duplicates kept)."""
+    header = [line for line in URL_MAP.read_text().splitlines() if line.startswith("#")]
+    URL_MAP.write_text("\n".join(header + sorted(rules)) + "\n")
+
+
+def _update_pins_if_asked(boot: Boot) -> None:
+    """Under UPDATE_PINS=1 only; called by the boot test, never by a check (the self-tests feed checks invented rules)."""
+    if os.environ.get("UPDATE_PINS") == "1":
+        _write_url_map(boot.rules)
+
+
 def _check_url_map(boot: Boot) -> List[str]:
     expected = [line for line in URL_MAP.read_text().splitlines() if line and not line.startswith("#")]
     missing = Counter(expected) - Counter(boot.rules)
@@ -459,6 +474,7 @@ async def test_main_boots_offline_and_serves_the_deployed_surface(monkeypatch, c
     boot = await _boot(monkeypatch, caplog)
     if boot.probe_error is not None:
         raise boot.probe_error
+    _update_pins_if_asked(boot)
     problems = [f"{check.__name__}: {p}" for check in CHECKS for p in check(boot)]
     assert not problems, "\n".join(problems)
 
