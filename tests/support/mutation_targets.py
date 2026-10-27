@@ -170,6 +170,7 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.adapters.gcp_task_queue", "tests/unit/adapters/gcp_task_queue_equivalent_mutants.txt"),
     MutationTarget("src.adapters.gcs_workspace_adapter", "tests/unit/adapters/gcs_workspace_adapter_equivalent_mutants.txt"),
     MutationTarget("src.adapters.gcs_file_storage_adapter", "tests/unit/adapters/gcs_file_storage_adapter_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.gcs_media_adapter", "tests/unit/adapters/gcs_media_adapter_equivalent_mutants.txt"),
 )
 
 
