@@ -83,7 +83,7 @@ def test_shown_quote_needs_the_language_and_a_still_valid_translation():
 
 def test_quote_digest_ignores_whitespace_only_differences():
     assert quote_digest("Alex  plays\ntennis ") == quote_digest("Alex plays tennis")
-    assert quote_digest("Alex plays tennis") != quote_digest("Alex plays tennis on Saturdays")
+    assert quote_digest("Alex plays tennis") != quote_digest("Alex plays tennis on Sundays")
     assert len(quote_digest("x")) == 16
     assert quote_digest("é") == quote_digest("é")
 
