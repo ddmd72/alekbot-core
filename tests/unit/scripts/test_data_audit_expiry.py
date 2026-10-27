@@ -11,7 +11,10 @@ from google.cloud.firestore_v1.vector import Vector
 from scripts.data_audit import run as runner
 from scripts.data_audit.facts import EXPIRY_REQUIRED_CLASS, SYSTEM_ACCOUNT, check_expiry
 from src.config.environment import EnvironmentConfig
+from src.domain.fact_lifecycle import REVIEW_ACCEPTS, horizon_from_now, revival_fields
+from src.domain.fact_lifecycle_sweep import stale_fields
 from src.domain.fact_review_question import OPEN_STATUSES
+from src.domain.fact_review_rules import queued_fields
 from tests.support.fact_kit import put_raw
 from tests.support.fact_store import FACTS, FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx, horizon, on
@@ -298,3 +301,69 @@ def test_the_modules_call_no_write_method():
         tree = ast.parse((REPO_ROOT / "scripts" / "data_audit" / name).read_text(encoding="utf-8"))
         called = {n.func.attr for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
         assert not called & writes, (name, called & writes)
+
+
+# ------------------------------------------------------------------------------ pins stored in upper case
+
+@pytest.mark.parametrize("pin", [{"domain": "AGENT_DIRECTIVE"}, {"type": "PRINCIPLE"}])
+def test_an_upper_case_stored_pin_still_counts_as_pinned(pin):
+    assert check_expiry("f1", stored(**pin)) == ["pinned_expiry_not_none"]
+    assert check_expiry("f1", stored(**NONE_KIND, **pin)) == []
+
+
+# ------------------------------------------------------------------------------ documents the lifecycle writers leave
+
+async def _horizon_fact(store):
+    res = await store.adapter.create_fact("practises guitar 1 h/day", meta(expiry=horizon(30)), context=ctx())
+    assert res["status"] == "created", res
+    return res["fact_id"]
+
+
+async def _staled(store):
+    """A horizon fact the janitor staled a month on, read back with the review's token."""
+    fid = await _horizon_fact(store)
+    later = datetime.now(timezone.utc) + timedelta(days=31)
+    [due] = [d for d in await store.repo.find_due_facts(later) if d.fact_id == fid]
+    await store.repo.stale_due_fact(due, stale_fields(due, later))
+    stored_fact = await store.repo.resolve_current(fid, ACC, REVIEW_ACCEPTS)
+    assert stored_fact is not None and store.docs[fid]["state"] == "stale"
+    return fid, stored_fact, later
+
+
+async def test_a_horizon_fact_remembered_with_a_later_reported_date_is_clean():
+    store = FactStore()
+    fid = await _horizon_fact(store)
+    first = datetime.now(timezone.utc) - timedelta(days=20)      # the fact was first reported 20 days ago
+    store.docs[fid]["reported_date"] = first
+    store.docs[fid]["expires_at"] = first + timedelta(days=30)
+    assert check_expiry(fid, store.docs[fid]) == []
+    later = datetime.now(timezone.utc) - timedelta(days=1)
+    res = await store.adapter.update_fact(fid, {"reported_date": later.isoformat()}, ACC, context=ctx())
+    assert res["status"] == "updated", res
+    doc = store.docs[fid]
+    assert doc["reported_date"] == later and doc["expires_at"] == later + timedelta(days=30)
+    assert check_expiry(fid, doc) == []
+
+
+async def test_a_revived_fact_is_clean_and_not_due():
+    store = FactStore()
+    fid, stored_fact, now = await _staled(store)
+    fact_entity = stored_fact.fact
+    expiry_fields = horizon_from_now(30, fact_entity.reported_date, now)
+    await store.repo.update_fact_fields(
+        stored_fact, revival_fields(fact_entity, expiry_fields, now, "owner", "the owner confirmed it"))
+    doc = store.docs[fid]
+    assert doc["state"] == "current" and doc["stale_since"] is None and doc["expires_at"] > now
+    assert check_expiry(fid, doc, due_as_of=now) == []
+
+
+async def test_a_queued_fact_is_flagged_past_expiry_only_without_its_open_question():
+    store = FactStore()
+    fid, stored_fact, now = await _staled(store)
+    await store.repo.update_fact_fields(stored_fact, queued_fields(stored_fact.fact, "q-1", now))
+    doc = store.docs[fid]
+    assert doc["state"] == "current" and doc["stale_since"] is None and doc["expires_at"] <= now
+    assert check_expiry(fid, doc) == []
+    assert check_expiry(fid, doc, due_as_of=now, open_fact_ids=frozenset({fid})) == []
+    assert check_expiry(fid, doc, due_as_of=now, open_fact_ids=frozenset({"q-1"})) == [PAST]
+    assert check_expiry(fid, doc, due_as_of=now) == [PAST]
