@@ -39,6 +39,8 @@ def _is_doc(path: str) -> bool:
     if parts[0] == ".github":
         return True
     if parts[0] in _CODE_TREES:
+        if parts[:2] == ("src", "skills"):  # the skill loader bundles every file of a skill folder into the prompt
+            return False
         return p.name in _DOC_NAMES  # tests/CLAUDE.md, src/**/CLAUDE.md
     return False
 
