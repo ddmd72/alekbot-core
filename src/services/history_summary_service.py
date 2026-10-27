@@ -39,7 +39,7 @@ class HistorySummaryService:
                 "- Plain text only. No Markdown (*bold*, _italic_), no blockquotes.\n\n"
                 "Examples:\n"
                 "  [Irony/Tech]: XML as a delimiter — works for Claude, overkill for Gemini. Groovy is cleaner. 🧱\n"
-                "  [Factual]: Dietary: purine diet, no anchovies/mussels, approved: venison, mackerel, salmon.\n"
+                "  [Factual]: Clara's birthday Jul 14: gift = cookbook; Coimbra weekend set for Mar 6–8. 🎁\n"
                 "  [Analytical]: Role Prompting: 4 components — Persona, Context, Task, Tone. Anti-role trick noted. 🎭"
             ),
             messages=[Message(role="user", parts=[MessagePart(text=response_text)])],
