@@ -1,5 +1,6 @@
 """The Smart rig (P14 card A): one real turn over the scripted model, the three local-tool gates as production sets
 them, and a given collaborator is the one Smart uses."""
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -18,7 +19,8 @@ from src.services.skill_service import SkillService
 from src.services.workspace_service import WorkspaceService
 from tests.support.firestore_eval import EvalDb
 from tests.support.gcs_fake import FakeGcs
-from tests.support.scripted_llm import ScriptedLLM, text
+from src.agents.core.smart_response_agent import SmartResponseAgent
+from tests.support.scripted_llm import ScriptedLLM, execution_context, text, tool_results, tools
 from tests.support.tool_e2e import EmptySessions, StubPromptBuilder, smart_message, smart_rig
 
 BUCKET = "ws-bucket"
@@ -103,3 +105,58 @@ async def test_a_given_prompt_builder_reaches_the_request_and_given_collaborator
     assert builder.calls and builder.calls[0]["agent_type"] == "smart"
     assert agent.resolver is resolver and agent.user_config is config
     assert llm.unanswered == 0 and llm.pending() == 0
+
+
+async def test_a_multi_turn_smart_run_records_each_turns_own_tool_result():
+    """Smart's engine builds every turn over one shared message list: each request must read as it was sent."""
+    llm = ScriptedLLM([
+        tools(("workspace", {"command": "create", "path": "projects/garden-shed.md",
+                             "content": "Planning permission for a garden shed: decision expected by 2026-10-30."})),
+        tools(("workspace", {"command": "view", "path": "projects/garden-shed.md"})),
+        text("done"),
+    ])
+    agent = smart_rig(llm, workspace_service=_workspace())
+
+    await agent.execute(smart_message("Note the garden shed permission in the workspace"))
+
+    found = tool_results(llm)
+    assert [n for n, _ in found] == ["workspace", "workspace"]
+    assert str(found[0][1]).startswith("created workspace:"), found[0][1]
+    assert llm.unanswered == 0 and llm.pending() == 0
+
+
+# Every keyword smart_rig passes through, and the attribute Smart keeps it under (smart_response_agent.py __init__).
+PASSTHROUGH = [
+    ("session_store", "session_store"), ("repository", "repository"), ("embedding_service", "embedding_service"),
+    ("coordinator", "coordinator"), ("history_summary_service", "history_summary_service"),
+    ("long_turn_registry", "long_turn_registry"), ("execution_context", "execution_context"),
+    ("thinking_effort", "_default_thinking_effort"), ("user_timezone", "_user_timezone"),
+    ("history_recent_full_turns", "history_recent_full_turns"), ("model_name", "model_name"),
+    ("prompt_builder", "prompt_builder"), ("resolver", "resolver"), ("user_config", "user_config"),
+    ("skill_service", "skill_service"), ("memory_fact_service", "memory_fact_service"),
+    ("workspace_service", "workspace_service"),
+]
+
+
+@pytest.mark.parametrize("keyword, attribute", PASSTHROUGH)
+def test_every_given_keyword_reaches_the_agent(keyword, attribute):
+    llm = ScriptedLLM([])
+    sentinels = {"execution_context": execution_context(llm, "smart", model="given-model"),
+                 "thinking_effort": "high", "user_timezone": "Europe/Helsinki", "history_recent_full_turns": 9,
+                 "model_name": "given-model"}
+    given = sentinels.get(keyword, object())
+
+    agent = smart_rig(llm, **{keyword: given})
+
+    assert getattr(agent, attribute) is given
+
+
+def test_smart_rig_takes_exactly_smarts_constructor_keywords():
+    rig_keywords = set(inspect.signature(smart_rig).parameters) - {"llm", "user_id"}
+    smart_keywords = set(inspect.signature(SmartResponseAgent.__init__).parameters) - {"self", "config"}
+    assert rig_keywords == smart_keywords
+    assert {k for k, _ in PASSTHROUGH} == smart_keywords
+
+
+def test_smart_message_merges_the_given_context():
+    assert smart_message("x", run_origin="voice:ask_alek").context["run_origin"] == "voice:ask_alek"

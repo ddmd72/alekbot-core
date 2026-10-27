@@ -54,8 +54,9 @@ class _FakeModel(LLMPort):
 
 
 class ScriptedLLM(_FakeModel):
-    """Answers in order; an exception item is raised. Records every request. An empty script counts the request in
-    `unanswered` and raises `ScriptExhausted`."""
+    """Answers in order; an exception item is raised. Records a deep copy of every request (`DelegationEngine` builds
+    each turn's request over one shared message list, so a recorded reference would show the final transcript). An
+    empty script counts the request in `unanswered` and raises `ScriptExhausted`."""
 
     def __init__(self, script: Sequence[Scripted]) -> None:
         self.script: List[Scripted] = list(script)
@@ -67,7 +68,7 @@ class ScriptedLLM(_FakeModel):
         return len(self.script)
 
     async def generate_content(self, request: LLMRequest) -> LLMResponse:
-        self.requests.append(request)
+        self.requests.append(request.model_copy(deep=True))  # a snapshot: callers keep appending to one list
         if not self.script:
             self.unanswered += 1
             raise ScriptExhausted("no scripted response")
@@ -95,7 +96,7 @@ class RoutedLLM(_FakeModel):
         return self._pending() if self._pending is not None else 0
 
     async def generate_content(self, request: LLMRequest) -> LLMResponse:
-        self.requests.append(request)
+        self.requests.append(request.model_copy(deep=True))  # a snapshot: callers keep appending to one list
         self.in_flight += 1
         self.peak = max(self.peak, self.in_flight)
         try:
@@ -162,5 +163,5 @@ def tool_results(llm: Any) -> List[Tuple[str, Any]]:
 
 def first_user_text(llm: Any) -> str:
     """The text of the first user message of the first request ("" when it has none)."""
-    first = next(m for m in llm.requests[0].messages if m.role == "user")
-    return "".join(p.text or "" for p in first.parts)
+    first = next((m for m in llm.requests[0].messages if m.role == "user"), None)
+    return "".join(p.text or "" for p in first.parts) if first is not None else ""
