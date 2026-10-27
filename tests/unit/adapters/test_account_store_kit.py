@@ -208,6 +208,20 @@ async def test_update_account_stores_the_new_iam_policy(accounts):
     assert (await accounts.repo.get_account("a1")).iam_policy == {"u1": "owner", "u2": "member"}
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError,
+                   reason="P11-G1-3: update_account overwrites usage counters incremented since the caller's read")
+async def test_update_account_keeps_usage_counted_since_the_callers_read(accounts):
+    """Flips when update_account writes every field but usage (`update(model_dump(exclude={"usage"}))`)."""
+    await accounts.seed(daily_cost=1.0)
+    account = await accounts.repo.get_account("a1")                # the invite flow's read
+    await accounts.repo.increment_account_usage("a1", tokens=100, cost=0.5)
+    require(accounts.usage()["daily_cost"] == pytest.approx(1.5), "the increment landed after the read")
+    account.iam_policy = {**account.iam_policy, "u2": "member"}
+    await accounts.repo.update_account(account)
+    require(accounts.docs["a1"]["iam_policy"] == {"u1": "owner", "u2": "member"}, "the update was stored")
+    assert (accounts.usage()["daily_cost"], accounts.usage()["total_tokens"]) == (pytest.approx(1.5), 100)
+
+
 # ----------------------------------------------------------------------------------------------------- errors
 
 @pytest.mark.parametrize("method", ["get_account", "increment_account_usage"])

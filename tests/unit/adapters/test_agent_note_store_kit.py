@@ -23,6 +23,7 @@ from src.domain.task_complexity import TaskComplexity
 from src.ports.agent_note_port import AgentNotePort
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
 from tests.support.firestore_eval import EvalDb, EvalDocRef
+from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 NOTES = "eval_orchestrator_notes"
@@ -84,7 +85,6 @@ CREATE_CASES = {
 async def test_create_stores_the_note_and_returns_it_with_its_id(notes, case):
     extra = CREATE_CASES[case]
     note = await create(notes, **extra)
-    assert note.note_id == str(int(T0.timestamp() * 1000))
     expected = {"user_id": "u1", "text": "call dad", "instruction": "Remind Alex to call dad.", "created_at": T0,
                 "due": DUE, "last_fired": None, "recurrence": extra.get("recurrence")}
     if "workspace_file" in extra:
@@ -125,6 +125,18 @@ async def test_two_notes_created_a_millisecond_apart_are_both_kept(notes, monkey
     assert len(notes.docs) == 2
     assert (await notes.port.get_note("u1", a.note_id)).text == "call dad"
     assert (await notes.port.get_note("u2", b.note_id)).text == "water the garden"
+
+
+@pytest.mark.xfail(strict=True, raises=AssertionError,
+                   reason="P11-G1-2: two notes created in one millisecond overwrite each other "
+                          "(note id = creation millisecond, plain set)")
+async def test_two_notes_created_in_the_same_millisecond_are_both_kept(notes):
+    """Flips when the note id carries a uuid suffix (`f"{epoch_ms}-{uuid4().hex}"`), so ids never collide."""
+    a = await create(notes, user_id="u1", texts=DAD)
+    b = await create(notes, user_id="u2", texts=GARDEN)
+    require(a.created_at == b.created_at == T0, "both notes were created at the same pinned instant")
+    note = await notes.port.get_note("u1", a.note_id)
+    assert len(notes.docs) == 2 and note is not None and note.text == "call dad"
 
 
 # ------------------------------------------------------------------------------------------- get, delete
