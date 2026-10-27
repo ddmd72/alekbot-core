@@ -32,6 +32,7 @@ from src.domain.fact_review_reasons import (
 from src.domain.fact_review_rules import REVIEW_BATCH, QUEUE_ACCEPTS, queued_fields, queued_question
 from src.domain.fact_review_state import FactReviewState
 from src.domain.fact_write_context import as_utc
+from src.domain.language import LanguageCode
 from src.domain.pass_actor import PassActor
 from src.domain.messaging import MessageRef, session_id_for
 from src.infrastructure.agent_manifest import Intent
@@ -104,23 +105,30 @@ class Staged:
 
 async def seed_owner(
     bundle: ReviewStandIns, *, user_id: str, user_repo: Any, live_state: Any, mirror: Optional[str] = None,
+    fixed: Optional[LanguageCode] = None,
 ) -> Dict[str, Any]:
     """The owner's primary channel (a read of the live notification state) and language setting (a read of his profile)
     into the kit's stand-ins. Unseeded, a run has no channel (nothing is sent) and mirror is on. `mirror` forces mirror
-    mode on with no fixed language: the language the model reports is then read from the owner's own recent messages."""
+    mode on with no fixed language: the language the model reports is then read from the owner's own recent messages.
+    `fixed` forces mirror mode off with that language: the pass then translates into it. Both given is an error."""
+    if mirror and fixed is not None:
+        raise ValueError("mirror and fixed cannot both be forced")
     channel = await live_state.get_primary(user_id)
     if channel is not None:
         await bundle.notification_state.save_primary(user_id, channel.platform, channel.channel_id)
         await bundle.notification_state.save(user_id, channel.platform, channel.channel_id)
     profile = await user_repo.get_user(user_id)
     preferred = profile.config.preferred_language if profile is not None else None
-    follows = True if mirror else (profile.config.agent_mirror if profile is not None else True)
-    fixed = None if mirror else preferred
-    bundle.language.preferences[user_id] = (fixed, follows)
+    if fixed is not None:
+        follows, language = False, fixed
+    else:
+        follows = True if mirror else (profile.config.agent_mirror if profile is not None else True)
+        language = None if mirror else preferred
+    bundle.language.preferences[user_id] = (language, follows)
     return {
         "channel": None if channel is None else {"platform": channel.platform},
         "mirror": follows,
-        "fixed_language": fixed.value if fixed is not None else None,
+        "fixed_language": language.value if language is not None else None,
         "mirror_expected": mirror,
     }
 
@@ -221,6 +229,7 @@ async def run_once(
     account_id: str,
     requested: int,
     mirror: Optional[str],
+    fixed: Optional[LanguageCode] = None,
     clock: Callable[[], datetime] = utc_now,
 ) -> Dict[str, Any]:
     """One review run on the kit from the live state: a fresh overlay, fresh stand-ins, the live open questions and review
@@ -233,7 +242,7 @@ async def run_once(
     await bundle.store.load_account(handles.container.fact_review_store, account_id)
     if bundle.store.state(account_id) is None:
         bundle.store.seed_state(FactReviewState(account_id=account_id, owner_user_id=user_id))
-    owner = await seed_owner(bundle, user_id=user_id, user_repo=handles.user_repo, live_state=live_state, mirror=mirror)
+    owner = await seed_owner(bundle, user_id=user_id, user_repo=handles.user_repo, live_state=live_state, mirror=mirror, fixed=fixed)
     channel = await bundle.notification_state.get_primary(user_id)
     now = bundle.clock()
     staged = await stage_inputs(
@@ -261,6 +270,10 @@ async def run_once(
         "unbased_revives": [r for row in outcomes for r in row["unbased_revives"]],
         "message_language": state.message_language if state is not None else None,
         "label_languages": sorted(state.labels) if state is not None else [],
+        "translations": [
+            {"language": d["language"], "source_digest": d["source_digest"], "shown": d["text"]}
+            for d in bundle.store.quote_translation_docs()
+        ],
         "question_texts": [question_text(message) for _, message in bundle.interactive.posted],
         "stand_ins": bundle.report(),
     }
@@ -309,6 +322,10 @@ def review_summary(report: Dict[str, Any], extra: Dict[str, Any]) -> List[str]:
                 f"mirror run {number}: reported language {reported!r} (expected {expected!r}), "
                 f"label sets kept for {run.get('label_languages')}"
             )
+    for number, run in enumerate(extra.get("runs", []), 1):
+        kept = run.get("translations", [])
+        languages = sorted({t["language"] for t in kept})
+        lines.append(f"run {number}: {len(kept)} translation(s) kept ({', '.join(languages) or 'none'})")
     if report.get("spend", {}).get("aborted"):
         lines.append("RUN STOPPED by the spend meter (cap or unpriced model): the passes above are incomplete")
     return lines

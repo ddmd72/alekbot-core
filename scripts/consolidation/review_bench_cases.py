@@ -24,9 +24,11 @@ from src.domain.fact_review_frame import (
     reply_part,
     review_frame,
 )
-from src.domain.fact_review_language import CANONICAL_LABELS, fact_question_message
+from src.domain.fact_review_language import CANONICAL_LABELS, LABEL_KEYS, fact_question_message
+from src.domain.fact_review_quote_translation import QuoteTranslation, quote_digest
 from src.domain.fact_review_rules import queued_question
 from src.domain.ui_messages import UIMessage
+from src.locales.uk import UI_STRINGS as _UK_STRINGS
 
 SEED_NAMESPACE = "alekbot-review-bench"
 STALE_DAYS_AGO = 2           # the stale cases went stale this long before the run
@@ -143,7 +145,9 @@ NO_WRITE = "no_write"
 ONE_CREATE = "one_create"
 
 QUOTED = "Alex trains at the FitLife gym on Main Street."
+QUOTED_UK = "Алекс тренується в спортзалі FitLife на Мейн-стріт."   # the translation the review pass would store for QUOTED
 ECHOED = "Based on our history, you weigh 64 kg."
+UK_LABELS = {key: _UK_STRINGS[key] for key in LABEL_KEYS}              # the uk UI strings of the review's texts
 
 
 @dataclass(frozen=True)
@@ -161,13 +165,26 @@ class AnswerCase:
 def question_pair(question_id: str, quoted: str = QUOTED) -> Tuple[Tuple[str, str], Tuple[str, str]]:
     """The two history parts a sent question leaves: the frame, and the question as the model part (the production
     shapes, from a question built the production way)."""
+    question = _question(question_id, quoted)
+    return ("user", review_frame(question_id)), ("model", question_text(fact_question_message(question, CANONICAL_LABELS)))
+
+
+def _question(question_id: str, quoted: str):  # type: ignore[no-untyped-def]
     now = datetime.now(timezone.utc)
     stale = FactEntity(
         account_id="acc", created_by_user_id="u", lineage_id="L", text=quoted, type=FactType.STATE,
         state=FactState.STALE, stale_since=now,
     )
-    question = queued_question(stale, question_id, "u", "revive", at=now)
-    return ("user", review_frame(question_id)), ("model", question_text(fact_question_message(question, CANONICAL_LABELS)))
+    return queued_question(stale, question_id, "u", "revive", at=now)
+
+
+def translated_question_pair(question_id: str) -> Tuple[Tuple[str, str], Tuple[str, str]]:
+    """The two history parts a question leaves when the owner's message language is Ukrainian: the frame, and the
+    question with the uk texts and the stored fact (`QUOTED`) shown in its translation (`QUOTED_UK`)."""
+    question = _question(question_id, QUOTED)
+    translation = QuoteTranslation("uk", quote_digest(QUOTED), QUOTED_UK)
+    message = fact_question_message(question, UK_LABELS, translation, "uk")
+    return ("user", review_frame(question_id)), ("model", question_text(message))
 
 
 def answer_cases() -> Tuple[AnswerCase, ...]:
@@ -183,6 +200,7 @@ def answer_cases() -> Tuple[AnswerCase, ...]:
     q5, p5 = pair(5)
     q6, p6 = pair(6)
     q7, p7 = pair(7)
+    q9 = f"{9:02d}c4e1a7b92d4f3e8a6b05d1c7e9f3a2b"
     acknowledged = ("model", CANONICAL_LABELS[UIMessage.MEMORY_ANSWER_NOTED.value])
     return (
         AnswerCase("digit_reply", (*p1, ("user", reply_part(q1, "2")), acknowledged), NO_WRITE, question_id=q1),
@@ -208,6 +226,12 @@ def answer_cases() -> Tuple[AnswerCase, ...]:
             (*p7, ("user", not_delivered_frame(q7)), ("model", NOT_DELIVERED_REPLY)), NO_WRITE, question_id=q7,
         ),
         AnswerCase("echo_control", (("model", ECHOED), ("user", "Yes, that is right.")), NO_WRITE),
+        AnswerCase(
+            "correction_translated_quote",
+            (*translated_question_pair(q9), ("user", reply_part(q9, "3 — it's Iron Temple now")),
+             ("model", UK_LABELS[UIMessage.MEMORY_REPLY_NOTED.value])),
+            ONE_CREATE, contains="Iron Temple", question_id=q9,
+        ),
     )
 
 

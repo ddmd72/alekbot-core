@@ -237,7 +237,7 @@ Two collections expire on a different field, **`purge_after`**, which exists onl
 | Collection group | What expires |
 |---|---|
 | `<prefix>fact_review_questions` | closed memory-review questions (90 days after closing; an open question has no `purge_after`) |
-| `<prefix>fact_review_messages` | weekly-digest claims (90 days after the claim) |
+| `<prefix>fact_review_messages` | weekly-digest claims (90 days after the claim) and quote translations (180 days after they were written) |
 
 ```bash
 gcloud firestore fields ttls update purge_after --collection-group=<collection-group> \

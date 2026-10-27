@@ -13,6 +13,9 @@ nothing. G4: every case matches its rule (judged on the Stage 1 writes of the ru
 are in the report).
 
     python scripts/consolidation/test_review_answers_dryrun.py --s3-kit
+    python scripts/consolidation/test_review_answers_dryrun.py --s3-kit --case correction_translated_quote
+
+`--case NAME` (repeatable) runs only the named cases; the estimate printed first scales with their number.
 
 Output: counts and verdicts on the terminal; the full report (the windows and what was written) in
 `scripts/memory/s3_dry_run_review_answers_<stamp>.json`.
@@ -56,8 +59,20 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Stage 1 on memory-review replies, on the S3 kit (plan bench 6)")
     ap.add_argument("--user-id", default=os.getenv("DEV_USER_ID"))
     ap.add_argument("--account-id", default=os.getenv("DEV_ACCOUNT_ID"))
+    ap.add_argument("--case", action="append", default=None, metavar="NAME", choices=[c.name for c in answer_cases()],
+                    help="run only this case (repeatable; default: all)")
     add_s3_arguments(ap)
     return ap
+
+
+def selected_cases(names: Optional[List[str]]) -> List[AnswerCase]:
+    """The cases to run: those named (in the bench's order), else all."""
+    return [c for c in answer_cases() if not names or c.name in names]
+
+
+def estimate_text(cases: int) -> str:
+    """The banner's estimate: about $0.075 a case on Sonnet, $0.15 on Opus."""
+    return f"about ${cases * 0.075:.2f} on Sonnet, ${cases * 0.15:.2f} on Opus"
 
 
 def build_message(
@@ -112,14 +127,15 @@ def answers_summary(report: Dict[str, Any], extra: Dict[str, Any]) -> List[str]:
 
 
 async def run_s3_kit(handles: Any, args: Any) -> None:
-    for line in cost_banner("STAGE 1 ON MEMORY-REVIEW REPLIES, ON THE S3 KIT", "under $0.6 on Sonnet, $1.2 on Opus"):
+    cases = selected_cases(getattr(args, "case", None))
+    for line in cost_banner("STAGE 1 ON MEMORY-REVIEW REPLIES, ON THE S3 KIT", estimate_text(len(cases))):
         print(line)
     bio_facts = await biographical_facts(handles, args.account_id)
     async with kit_session(
         handles, args, args.user_id, args.account_id, BENCH, summary=answers_summary,
     ) as (kit, extra):
         extra.update({"model": handles.agent.model_name, "cases": []})
-        for case in answer_cases():
+        for case in cases:
             result = await run_case(kit, handles, case, bio_facts, args)
             extra["cases"].append(result)
             print(f"  {case.name:20} {'ok' if result['ok'] else 'FAIL'}: {result['why']}")

@@ -912,7 +912,7 @@ the code differ, the code wins and is described here. The owner's map is `docs/0
   per user `fact_review_interval_days`, no deploy needed to change it). A fact that needs the owner's answer joins a queue
   ordered by how long it has been stale, and is **current while it waits** (it keeps its past `expires_at`; the janitor skips it
   until the question is answered or times out). Code never replaces a question with a silent revive.
-- **The question mechanism.** One fact per message: "Is this still true?", the fact quoted as stored, and four options: 1 yes,
+- **The question mechanism.** One fact per message: "Is this still true?", the fact quoted as the owner is shown it (as stored, or its translation into the message language, "Quote translations" in §9), and four options: 1 yes,
   2 no longer, 3 never, 4 don't remember. One question is open at a time; the next goes out after an answer, else the next
   local day; at most 5 a day; no quiet hours in code. An answer is **only a reply to the question message** (a Slack thread
   reply, a Telegram reply), a button click (Slack, now) or the Cabinet; any other message is ordinary conversation.
@@ -977,6 +977,16 @@ the code differ, the code wins and is described here. The owner's map is `docs/0
   fallback `revive` gives twice the window the last revive gave (14 to 365 days), **every silence again**: the RFC's "never asked
   again after two silences" is dropped, because a fact is asked again only when it falls due again, and never replaced by a silent
   revive when it next needs the owner. A fallback `archive` is for a dated plan, a past `fallback_date` or noise.
+- **Quote translations (2026-10-27).** A message in a language other than English quotes the fact translated by the review
+  pass. The pass is told the language (fixed mode: the task's `language`; mirror mode: the one it reports) and returns
+  `translations` in its final report; the code keeps one only if it is one line with no `[`, link or control character, at most
+  500 characters and with the source's numbers unchanged. It is stored right after the pass in `fact_review_messages` under
+  `{account_id}:quote:{language}:{digest of the English text}` (keyed by the text, so any fact id with that text finds it;
+  `purge_after` 180 days after the write) and shown on the question, its Slack redraws and the digest while it holds; else the
+  stored English text is shown (also when a read fails). Presentation only: the fact and the question's `quoted_text` stay as
+  stored. The history pair carries the shown text, so four tokens say a quote may be translated: the final-report shape in
+  `CONSOLIDATION_LIFECYCLE`, the echo exception in `CONSOLIDATION_POLICIES`, the example `case_4_translated_quote` in
+  `CONSOLIDATION_EXAMPLES` and the marker line in `PROTOCOL_MEMORY_REVIEW_MARKERS`. The Cabinet keeps showing English.
 - **P3.** The weekly digest lists removals made by the review, a timeout or the owner, in the message language, ending "To bring
   one back, tell me in chat that it is still true." The Cabinet shows the stale facts and everything set aside in the last 30 days
   with the actor; it **cannot restore** a closed fact (the RFC's "or the Cabinet" is not built; a follow-up).
@@ -992,7 +1002,7 @@ the code differ, the code wins and is described here. The owner's map is `docs/0
 - **Janitor guard.** The janitor takes a run guard before anything is read (a small collection, 5 minutes), so two runs never
   overlap; S3's "the job is not retried" rule stays.
 - **Other collections.** `fact_review_questions` and `fact_review_messages` carry `purge_after` (a Firestore TTL policy on that
-  field deletes closed records 90 days after closing, and digest claims 90 days after the claim; nothing named `expires_at`);
+  field deletes closed records 90 days after closing, digest claims 90 days after the claim and quote translations 180 days after they were written; nothing named `expires_at`);
   `fact_review_state` and `fact_lifecycle_run` have no TTL policy (the no-TTL test lists them).
 - **Config.** `UserBotConfig.fact_review_interval_days` and the same field on the account defaults.
 

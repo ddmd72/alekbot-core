@@ -329,6 +329,27 @@ example_3b_memory_review_reply: {
             ]
         }
     }
+
+    case_4_translated_quote: {
+        conversation: '''
+        USER: [System: memory review q=rv-5d3e — Alek asked the owner about a fact he could not confirm]
+        ASSISTANT: Це досі правда? "Користувач тренується в спортзалі FitLife на Мейн-стріт." 1 Так · 2 Вже ні · 3 Ніколи · 4 Не пам'ятаю
+        USER: [Reply to memory review q=rv-5d3e] 3 — it's Iron Temple now
+        ASSISTANT: Прийнято — я це врахую.
+        '''
+
+        reasoning: "The question is in the owner's language, so its quote is the stored fact translated. A search for the user's gym training returns gym-88, \"User trains at the FitLife gym on Main Street.\": the same fact in English, so it is the quoted fact, whatever language the quote is in. It belongs to the memory review, which applies the answer: leave gym-88 untouched (no update_fact call, no invalidation, no extension). \"it's Iron Temple now\" is a correction naming the true value: create \"User trains at the Iron Temple gym\" only, as in case_1_correction."
+
+        output: {
+            "operations": [
+                {
+                    "action": "CREATE",
+                    "fact_id": "gym-iron-temple-2",
+                    "reason": "Correction in a memory-review reply whose question quoted the fact translated: the true value is a new fact; the quoted fact belongs to the review"
+                }
+            ]
+        }
+    }
 }
 
 example_4_merge_car_details: {

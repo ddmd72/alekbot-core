@@ -178,7 +178,7 @@ def test_the_checklist_reply_values_are_the_headers():
 
 def test_the_final_report_shape_has_the_keys_the_agent_reads():
     assert '{\\"operations\\": [' in LIFECYCLE
-    assert '\\"message_language\\": …, \\"labels\\": …}' in LIFECYCLE
+    assert '\\"message_language\\": …, \\"labels\\": …, \\"translations\\": …}' in LIFECYCLE
 
 
 def test_a_none_expiry_needs_evidence_or_a_reply_and_the_fallback_choice_is_stated():
