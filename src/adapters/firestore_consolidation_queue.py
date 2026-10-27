@@ -20,6 +20,13 @@ _ZOMBIE_THRESHOLD_SECONDS = 1800
 class FirestoreConsolidationQueue(ConsolidationQueue):
     """
     Firestore implementation of the ConsolidationQueue port.
+
+    Firestore mechanics (the port states the observable contract): collection
+    `EnvironmentConfig.consolidation_queue_collection` (`{prefix}consolidation_queue`), document id = `batch_id`, body
+    `ConsolidationBatch.model_dump()` written with a plain `set`. `get_pending_batches` needs the composite index
+    (user_id, status, created_at); a batch without `created_at` is therefore never returned by it, while
+    `has_open_batches` and `get_stuck_batch_user_ids` (a `select(["user_id"])` projection) still see it.
+    `increment_attempts` is a get then an update; `reset_recoverable_batches` one update per batch, no precondition.
     """
     def __init__(self, db_client: firestore.AsyncClient, env_config: EnvironmentConfig):
         self.db = db_client
