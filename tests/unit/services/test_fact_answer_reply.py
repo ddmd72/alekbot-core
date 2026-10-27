@@ -31,6 +31,7 @@ from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
+from tests.support.review_fact_updates import RecordingFactUpdates
 
 USER = "u1"
 TZ = "Europe/Lisbon"
@@ -536,7 +537,8 @@ def review_service(world: ReviewWorld, answers: FactAnswerService) -> FactReview
         notification_state=world.notification_state, channel_bindings=world.channel_bindings,
         notifications=world.notifier, session_store=world.session_store, task_queue=world.queue,
         answer_service=answers, interactive=world.interactive, alert_sink=world.sink, run_timeout_s=600,
-        clock=world.clock,
+        clock=world.clock, fact_updates=RecordingFactUpdates(world.store.adapter),
+        cabinet_url="https://cabinet.example/cabinet?tab=memory",
     )
 
 
