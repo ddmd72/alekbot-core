@@ -24,11 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.TEST_WIF_PROVIDER }}
-          service_account: ${{ secrets.TEST_SA_EMAIL }}
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -37,6 +32,28 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.TEST_WIF_PROVIDER }}
+          service_account: ${{ secrets.TEST_SA_EMAIL }}
+
+      - name: Check that federation works
+        # auth@v2 only writes the credentials file; the token exchange happens at the first call. Not continue-on-error:
+        # a rejected federation is "the run could not happen" and turns the job red.
+        run: |
+          python -c "import google.auth, google.auth.transport.requests as r; c,_=google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform']); c.refresh(r.Request()); print('auth ok')"
+
+      - name: Check that the gate is configured
+        # An empty secret makes every test skip, which would read as a green run.
+        env:
+          TEST_FIRESTORE_DATABASE: ${{ secrets.TEST_FIRESTORE_DATABASE }}
+          TEST_SA_EMAIL: ${{ secrets.TEST_SA_EMAIL }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        run: |
+          for name in TEST_FIRESTORE_DATABASE TEST_SA_EMAIL GOOGLE_CLOUD_PROJECT; do
+            if [ -z "${!name}" ]; then echo "::error::secret for $name is empty"; exit 1; fi
+          done
+
       - name: make test-cloud
         # A failed scenario must not turn the workflow red (it would email the owner): the verdict is the artifact.
         continue-on-error: true
@@ -44,10 +61,27 @@ jobs:
           TEST_FIRESTORE_DATABASE: ${{ secrets.TEST_FIRESTORE_DATABASE }}
           TEST_SA_EMAIL: ${{ secrets.TEST_SA_EMAIL }}
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
-          PYTEST_ADDOPTS: --junitxml=parity.xml -rA
+          PYTEST_ADDOPTS: --junitxml=parity.xml -rfEs
         run: |
           set -o pipefail
           make test-cloud 2>&1 | tee parity.log
+
+      - name: Redact infrastructure ids
+        # Artifacts of a public repo are downloadable and GitHub masks secrets only in the console log.
+        if: always()
+        env:
+          TEST_FIRESTORE_DATABASE: ${{ secrets.TEST_FIRESTORE_DATABASE }}
+          TEST_SA_EMAIL: ${{ secrets.TEST_SA_EMAIL }}
+          GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+        run: |
+          for f in parity.log parity.xml; do
+            [ -f "$f" ] || continue
+            for name in TEST_FIRESTORE_DATABASE TEST_SA_EMAIL GOOGLE_CLOUD_PROJECT; do
+              value="${!name}"
+              [ -n "$value" ] || continue
+              VALUE="$value" python -c "import os,sys; v=os.environ['VALUE']; p=sys.argv[1]; t=open(p,encoding='utf-8',errors='replace').read(); open(p,'w',encoding='utf-8').write(t.replace(v,'<redacted>'))" "$f"
+            done
+          done
 
       - name: Upload result
         if: always()
@@ -68,3 +102,17 @@ jobs:
             if [ -f parity.log ]; then grep -E "passed|failed|error|skipped" parity.log | tail -20; else echo "no parity.log: the run did not start"; fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+          try:
+              root = ET.parse("parity.xml").getroot()
+              suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+              total = sum(int(s.get("tests", "0")) for s in suites)
+          except Exception as exc:
+              print(f"::error::parity.xml missing or unreadable: {type(exc).__name__}")
+              sys.exit(1)
+          if total == 0:
+              print("::error::the run executed zero tests")
+              sys.exit(1)
+          PY
