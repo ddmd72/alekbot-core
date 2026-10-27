@@ -133,7 +133,7 @@ gcloud scheduler jobs describe alek-bot-dev-billing-daily-summary \
   --project=$PROJECT_ID
 
 # Fact janitor (FACT_LIFECYCLE_RFC D4): once a day, after the 09:00 billing summary, stales every fact past its
-# `expires_at`. Log-only until the main service has FACT_LIFECYCLE_SWEEP_DRY_RUN=0. 180s: one pass per account.
+# `expires_at`. Writes since 2026-10-27 (the main service has FACT_LIFECYCLE_SWEEP_DRY_RUN=0). 180s: one pass per account.
 # No retry on purpose (no --max-retry-attempts): a retry could overlap a running sweep and double its per-run cap.
 # A failed run posts a 🚨 and the next day's run catches up.
 gcloud scheduler jobs describe alek-bot-dev-fact-lifecycle-sweep \

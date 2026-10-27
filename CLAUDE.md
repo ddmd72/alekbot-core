@@ -157,7 +157,8 @@ index` (full); `codegraph status` shows index health.
   The sandbox knobs are of this kind: `SANDBOX_RENDER`, `SANDBOX_RENDER_URL` (main service); `SANDBOX_URL`,
   `SANDBOX_CALLERS_RENDER`, `SANDBOX_RECYCLE`, `SANDBOX_WORK_ROOT`, `SANDBOX_OUTPUT_ROOT`, `SANDBOX_ENGINE_USER` (render service).
   So is `FACT_LIFECYCLE_SWEEP_DRY_RUN` (main service): the fact janitor is log-only unless it is an explicit off value
-  (`0`, `false`, `no`, `off`); the deploy never sets it, S5 does, only on the owner's word.
+  (`0`, `false`, `no`, `off`); the deploy sets it to `0` (a literal in `cloudbuild-dev.yaml`), so the janitor has written since the
+  deploy of 2026-10-27. Rollback: remove the variable from that `--set-env-vars` (a deploy; `--set-env-vars` replaces every variable).
 
 ## What and Why
 
@@ -533,7 +534,7 @@ while `CONSOLIDATION_STATS_ALERTS` (`os.getenv`, default on, temporary since 202
 posts a 📊 stats line. See `decisions/sonnet55_adaptive_thinking_stall.md`.
 **Expiry and the janitor (Facts S3, deployed 2026-10-27):** the consolidator's writes carry an `expiry` (`date` / `horizon` /
 `none`) that code turns into `expires_at` in the owner's timezone (map §2.7); a daily zero-LLM janitor (`fact_lifecycle_sweep`)
-stales due facts behind a breaker and is **log-only until the owner switches it on (S5)**; never a TTL policy on the facts collection (a test scans the
+stales due facts behind a breaker and **writes since the deploy of 2026-10-27** (owner's word; rollback: remove `FACT_LIFECYCLE_SWEEP_DRY_RUN` from the deploy, which makes it log-only again); never a TTL policy on the facts collection (a test scans the
 tree). See `decisions/fact_expiry_and_janitor.md`, map §5.5.
 
 **Memory review (Facts S4, deployed 2026-10-27)** — what a stale fact becomes. The janitor (above) enqueues a `fact_review`
@@ -542,7 +543,7 @@ memory-write lease: housekeeping, timeouts in code, selection of up to 20 stale 
 with its own profile (`consolidation_review`; tools `update_fact`, `ask_owner`, `count_words` only; `FactReviewScope` refuses
 a revive, rewrite or invalidation without evidence or the owner's reply, an archive without the owner's reply, and
 `date_passed` except on an `as_history` rewrite), then the send of the next question and the weekly digest. **P2 revised
-(owner 2026-10-27; built, not deployed; the janitor stays off until it ships):** a fact whose date passed is rewritten as
+(owner 2026-10-27; deployed 2026-10-27, the janitor writes):** a fact whose date passed is rewritten as
 **history** (a version at `archival` priority, `expiry none`: happened / planned and did not happen / planned, unknown), never
 archived; archive is kept for noise, an end the owner states and the Cabinet (RFC §9 "P2 revised"). What the pass cannot
 decide becomes a **question** of a kind (`still_true`, `happened`, `renewed`, `paid`; options per kind, the answer texts
