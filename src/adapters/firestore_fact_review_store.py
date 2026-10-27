@@ -144,6 +144,17 @@ class FirestoreFactReviewStore(FactReviewStore):
             raise ValueError("account_id is required to read the account's review questions")
         return self._valid(await self._open_of_account(account_id).get())
 
+    async def timeout_histories(self, account_id: str) -> List[FactReviewQuestion]:
+        """Three equalities (`account_id`, `closed_by`, `fallback`): merged single-field indexes, no composite index."""
+        if not account_id:
+            raise ValueError("account_id is required to read the account's timeout histories")
+        query = (
+            self._questions.where(filter=FieldFilter("account_id", "==", account_id))
+            .where(filter=FieldFilter("closed_by", "==", ClosedBy.TIMEOUT.value))
+            .where(filter=FieldFilter("fallback", "==", "history"))
+        )
+        return self._valid(await query.get())
+
     async def all_open(self) -> List[FactReviewQuestion]:
         return self._valid(await self._questions.where(filter=FieldFilter("status", "in", _OPEN_VALUES)).get())
 
@@ -179,6 +190,9 @@ class FirestoreFactReviewStore(FactReviewStore):
 
     async def mark_offered(self, question_id: str, at: datetime) -> bool:
         return await self._move(question_id, lambda q: q.offered(at))
+
+    async def mark_fallback_failed(self, question_id: str) -> bool:
+        return await self._move(question_id, lambda q: q.fallback_failed())
 
     async def close(
         self,

@@ -38,6 +38,7 @@ from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
 from tests.support.review_p2_labels import RU_P2_LABELS
+from tests.support.review_fact_updates import RecordingFactUpdates
 
 USER = "u1"
 TZ = "Europe/Lisbon"            # summer time until 25 October: the world's NOW, 07:30 UTC, is 08:30 the same day there
@@ -125,6 +126,7 @@ class Rig:
             channel_bindings=world.channel_bindings, notifications=world.notifier, session_store=world.session_store,
             task_queue=world.queue, answer_service=self.answers, interactive=world.interactive, alert_sink=world.sink,
             run_timeout_s=600, clock=world.clock,
+            fact_updates=RecordingFactUpdates(world.store.adapter), cabinet_url="https://cabinet.example/cabinet?tab=memory",
         )
 
     async def run(self, mode: str = "daily") -> Dict[str, Any]:

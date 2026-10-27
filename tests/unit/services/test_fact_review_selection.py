@@ -39,6 +39,7 @@ from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
 from tests.support.review_p2_labels import PT_P2_LABELS
+from tests.support.review_fact_updates import RecordingFactUpdates
 from tests.support.review_rule_builders import question as build_question
 
 USER = "u1"
@@ -145,6 +146,7 @@ class Rig:
             channel_bindings=world.channel_bindings, notifications=world.notifier, session_store=world.session_store,
             task_queue=world.queue, answer_service=answers, interactive=world.interactive, alert_sink=world.sink,
             run_timeout_s=600, clock=clock or world.clock,
+            fact_updates=RecordingFactUpdates(world.store.adapter), cabinet_url="https://cabinet.example/cabinet?tab=memory",
         )
 
     async def run(self) -> Dict[str, Any]:
