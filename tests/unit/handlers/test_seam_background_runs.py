@@ -51,7 +51,8 @@ def fire(note_id: str) -> dict:
 ])
 async def test_a_reminder_fire_reaches_smart_with_its_budget_and_labels_and_keeps_its_history(
         monkeypatch, complexity, override):
-    """Guards: alert `worker_handler.py:1010` → `ums.py:456-459` (the user turn); tier `:1012` → `ums.py:345-348,403`
+    """Guards: alert `worker_handler.py:1009` → `ums.py:458` (the user turn's `full_text`), summary `:1010` →
+    `ums.py:457` (its `text`); tier `:1012` → `ums.py:345-348,403`
     (the budget, 2026-08-15 incident); recipient `:1013` → `ums.py:375`; `task_complexity` `:1014` → `:390`;
     `suppress_transient_retry` `:1017` → `:397`; `origin_detail` `:1020` → `:400`; `fire_key` `:1021` → `:401`;
     response summary `ums.py:445-446,460` (the model turn)."""
@@ -95,7 +96,7 @@ async def test_a_daily_review_reaches_smart_with_its_payload_writes_no_history_a
     `framing_suffix=""` `:1201` → `:377`; `thinking_effort`/`task_complexity`/`email_for_triage` `:1202-1204` →
     `:389-391`; `storage_class` `:1207` → `:394` → (coordinator spread `agent_coordinator.py:562`) →
     `html_page_generator_agent.py:187` → `agent_worker_handler.py:271` → `document_delivery_service.py:87`;
-    `origin_detail` `:1211` → `:400`."""
+    `suppress_transient_retry` `:1210` → `:397`; `origin_detail` `:1211` → `:400`."""
     world = SeamWorld(monkeypatch, email_review=ScriptedReview(EMAILS))
     await world.set_primary(*PRIMARY)
     pin_datetime(monkeypatch, worker_handler, T0)   # the alert's date is read from real time (worker_handler.py:1190)
@@ -116,6 +117,7 @@ async def test_a_daily_review_reaches_smart_with_its_payload_writes_no_history_a
     assert message.context["email_for_triage"] == EMAILS
     assert message.context["storage_class"] == "email_review"
     assert message.context["run_origin"] == "background:daily_email_review"
+    assert message.context["suppress_transient_retry"] is True
     assert "run_fire_key" not in message.context
     assert world.history("u1:C1") == []
     [body] = world.bodies("agent_execution")

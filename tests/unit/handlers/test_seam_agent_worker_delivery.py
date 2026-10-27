@@ -19,7 +19,7 @@ from src.domain.deep_research_notices import report_not_prepared_notice
 from src.services import deep_research_delivery
 from tests.support.redelivery_world import Post
 from tests.support.seam_world import (
-    ACCOUNT, OTHER_SLACK, PRIMARY, TELEGRAM, USER, SeamWorld, docx, fails, page, require, says,
+    ACCOUNT, OTHER_SLACK, PRIMARY, TELEGRAM, USER, SeamWorld, docx, fails, page, pdf, require, says,
 )
 
 QUERY = "Heat pumps in Springfield"
@@ -52,8 +52,6 @@ def document_note(history, label):
 GENERATORS = [
     pytest.param("create_html_page", "html_page_generator_agent", "heat-pumps.html",
                  "Heat pumps in Springfield.html", "text/html; charset=utf-8", id="page"),
-    pytest.param("create_pdf", "pdf_generator_agent", "heat-pumps.pdf",
-                 "Heat pumps in Springfield.pdf", "application/pdf", id="pdf"),
     pytest.param("generate_image", "image_generation_agent", "heat-pump.png",
                  "Heat pump in Springfield.png", "image/png", id="image"),
 ]
@@ -80,6 +78,26 @@ async def test_a_generated_document_reaches_the_chat_it_was_asked_in(world, inte
     assert [role for role, _, _ in history] == ["user", "model"]
     assert document_note(history, label) == key
     assert world.history("u1:C1") == []
+
+
+async def test_a_generated_pdf_and_its_file_reach_the_chat_it_was_asked_in(world):
+    """The PDF generator's two items (`pdf_generator_agent.py:228-249`): the HTML preview and the PDF, which is also
+    uploaded as a file. Guards: links `agent_worker_handler.py:258-259,281` → `ums.py:504-506`; the file
+    `agent_worker_handler.py:290-291` → `ums.py:599-601` (override), `:606` (the port of the channel's platform)."""
+    world.agent("pdf_generator_agent").play(pdf("heat-pumps", "Heat pumps in Springfield"))
+
+    await world.run(body("create_pdf", "pdf_generator_agent", TELEGRAM))
+
+    require(not world.unscripted(), "every agent call was scripted")
+    assert [label for label, _ in world.docs_to(*TELEGRAM)] == ["Heat pumps in Springfield.html",
+                                                                 "Heat pumps in Springfield.pdf"]
+    keys = world.stored_keys()
+    assert len(keys) == 2 and all(k.startswith("docs/u1/") for k in keys)
+    [upload] = world.media["telegram"].uploads
+    assert (upload.channel_id, upload.filename, upload.title) == (
+        "7001", "heat-pumps.pdf", "Heat pumps in Springfield.pdf")
+    assert world.media["slack"].uploads == []
+    assert world.posts_to(*PRIMARY) == []
 
 
 async def test_an_email_review_page_is_stored_under_the_gated_prefix(world):
@@ -111,17 +129,22 @@ async def test_a_docx_is_uploaded_to_the_telegram_chat_it_was_asked_in(world):
     assert world.channels.posts == []
 
 
-async def test_a_docx_is_uploaded_to_the_slack_channel_it_was_asked_in(world):
+@pytest.mark.parametrize("origin,resolved", [
+    pytest.param(OTHER_SLACK, "C2", id="channel"),
+    pytest.param(("slack", "U1"), "D1", id="dm-by-user-id"),
+])
+async def test_a_docx_is_uploaded_to_the_slack_channel_it_was_asked_in(world, origin, resolved):
     """Guards: `agent_worker_handler.py:224-225,238-239` → `ums.py:599-601,606,615-639` (the "📎" placeholder on the
-    origin channel, then the upload to the channel it resolved)."""
+    origin channel, then the upload to the channel it resolved: a DM opened by user id resolves to its `D…` id,
+    `ums.py:632`)."""
     world.agent("doc_planner_agent").play(docx("Tom's plan.docx", "Tom's plan"))
 
-    await world.run(body("create_document", "doc_planner_agent", OTHER_SLACK))
+    await world.run(body("create_document", "doc_planner_agent", origin))
 
     require(not world.unscripted(), "every agent call was scripted")
-    assert world.channels.posts == [Post("slack", "C2", "message", "📎")]
+    assert world.channels.posts == [Post("slack", origin[1], "message", "📎")]
     [upload] = world.media["slack"].uploads
-    assert (upload.channel_id, upload.filename) == ("C2", "Tom's plan.docx")
+    assert (upload.channel_id, upload.filename) == (resolved, "Tom's plan.docx")
     assert world.media["telegram"].uploads == []
 
 

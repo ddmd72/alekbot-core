@@ -73,7 +73,7 @@ from tests.support.redelivery_world import (
 __all__ = [
     "ACCOUNT", "BUCKET", "OTHER_SLACK", "PRIMARY", "SECRET", "T0", "TELEGRAM", "USER",
     "Delegation", "PreconditionFailed", "RecordingMedia", "SeamChannel", "SeamChannels", "SeamFactory", "SeamWorld",
-    "StandInAgent", "Step", "TaskRequest", "Upload", "docx", "fails", "page", "require", "says",
+    "StandInAgent", "Step", "TaskRequest", "Upload", "docx", "fails", "page", "pdf", "require", "says",
 ]
 
 PRIMARY = ("slack", "C1")
@@ -94,13 +94,17 @@ class SeamChannel(PostingChannel):
     `fail_post` counts these too.
 
     `send_document_link` (`notify_document_link`) records `Post(kind="doc", value=(label, url))`; `send_message` (the
-    "📎" placeholder of `notify_file_bytes` on Slack) records `Post(kind="message", value=text)`."""
+    "📎" placeholder of `notify_file_bytes` on Slack) records `Post(kind="message", value=text)` and then, as Slack's
+    `chat.postMessage` answers a DM opened by user id, turns a `U…` channel id into the `D…` one (`U1` → `D1`), which
+    `notify_file_bytes` reads back for the upload (`user_notification_service.py:629-632`)."""
 
     async def send_document_link(self, url: str, label: str) -> None:
         self._factory._post(Post(self.platform, self.channel_id, "doc", (label, url)))
 
     async def send_message(self, text: str, thread_id: Optional[str] = None) -> None:
         self._factory._post(Post(self.platform, self.channel_id, "message", text))
+        if self.platform == "slack" and self.channel_id.startswith("U"):
+            self.channel_id = "D" + self.channel_id[1:]
 
 
 class SeamChannels(PostingChannels):
@@ -176,8 +180,8 @@ def fails(error: str = "generator down") -> Respond:
 
 def page(filename: str, label: str, content_type: str = "text/html; charset=utf-8") -> Respond:
     """A generated document, the item built as `html_page_generator_agent.py:176-189` builds it; `storage_class` is the
-    agent's own read of the run context (`html_page_generator_agent.py:187`). The PDF and image generators deliver the
-    same `document` item type (`agent_worker_handler.py:140-144`)."""
+    agent's own read of the run context (`html_page_generator_agent.py:187`). The image generator delivers one item of
+    this type too (`agent_worker_handler.py:140-144`); the PDF generator delivers two (`pdf`)."""
     def respond(message: AgentMessage) -> AgentResponse:
         content = b"<html><head></head><body>" + label.encode("utf-8") + b"</body></html>"
         return AgentResponse.success(
@@ -190,6 +194,33 @@ def page(filename: str, label: str, content_type: str = "text/html; charset=utf-
                 "file_upload": False,
                 "storage_class": message.context.get("storage_class", "document"),
             })])
+    return respond
+
+
+def pdf(base_filename: str, display_name: str) -> Respond:
+    """A generated PDF, the two `document` items `pdf_generator_agent.py:228-249` builds: the HTML preview
+    (`file_upload` False) and the PDF itself (`file_upload` True, so it is also uploaded as a file,
+    `agent_worker_handler.py:283-292`). Neither carries a `storage_class`."""
+    def respond(message: AgentMessage) -> AgentResponse:
+        html = b"<html><head></head><body>" + display_name.encode("utf-8") + b"</body></html>"
+        return AgentResponse.success(
+            task_id=message.task_id, agent_id=message.recipient, result="pdf_generated",
+            delivery_items=[
+                DeliveryItem(type="document", data={
+                    "content_b64": base64.b64encode(html).decode("ascii"),
+                    "filename": f"{base_filename}.html",
+                    "content_type": "text/html; charset=utf-8",
+                    "label": f"{display_name}.html",
+                    "file_upload": False,
+                }),
+                DeliveryItem(type="document", data={
+                    "content_b64": base64.b64encode(b"%PDF-1.7 " + display_name.encode("utf-8")).decode("ascii"),
+                    "filename": f"{base_filename}.pdf",
+                    "content_type": "application/pdf",
+                    "label": f"{display_name}.pdf",
+                    "file_upload": True,
+                }),
+            ])
     return respond
 
 
