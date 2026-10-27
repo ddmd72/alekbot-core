@@ -740,9 +740,9 @@ scheduled routine that fixes survivors by PR.
 - **F1 `.github/workflows/mutation.yml`** (`Mutation survivors`): Sunday 02:00 UTC and `workflow_dispatch` (optional input `module`);
   one job per module registered in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", extra_tests=())`, `TARGETS`; tests are computed by import closure, `extra_tests` is the
   escape hatch for a test that reaches the module only through `src` or a conftest fixture;
-  CLI `python -m tests.support.mutation_targets --matrix | --tests-for <module> | --summarize DIR --out-md --out-json`). The driver gained `--report PATH` (JSON)
+  CLI `python -m tests.support.mutation_targets --matrix | --tests-for <module> | --summarize DIR --out-md --out-json | --annotations survivors.json`). The driver gained `--report PATH` (JSON)
   and `--no-fail`. Artifacts `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`), also in the step summary.
-  `survivors.md` lists every registered module, `missing` when a job produced no report and `partial (N of M)` when it was cut (the report is rewritten after each mutant). Never red because mutants survived. Registering a package's modules in `TARGETS` is part of "package done"; a unit test fails when a
+  The `summarize` job also prints the verdict as check-run annotations (a notice per module, warnings for survivors, at most 9, 4000 characters each). `survivors.md` lists every registered module, `missing` when a job produced no report and `partial (N of M)` when it was cut (the report is rewritten after each mutant). Never red because mutants survived. Registering a package's modules in `TARGETS` is part of "package done"; a unit test fails when a
   `*_equivalent_mutants.txt` file has no registered target. The local done-check (the table in `tests/CLAUDE.md`) stays, once per package.
 - **F2** `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` rewrites `tests/unit/main_boots_offline_url_map.txt`
   from the booted app (header kept, sorted); the diff in the PR is the review. Without the variable nothing is written. The implementer commits the rewritten pin, the task reviewer reads its diff (no separate approval), and a new route must also be refused or listed in `PUBLIC` of `tests/unit/web/test_every_route_refuses_anonymous.py`.
@@ -754,9 +754,9 @@ scheduled routine that fixes survivors by PR.
 - **F4 `.github/workflows/parity.yml`** (`Firestore parity`): Sunday 03:00 UTC and `workflow_dispatch`; authenticates through Workload
   Identity Federation as the test service account (`tests/cloud/conftest.py` accepts default credentials that already identify as that
   account, otherwise impersonates as before; every guard unchanged); runs `make test-cloud`; artifact `parity` (`parity.xml`,
-  `parity.log`; four values are replaced before upload: the three secrets plus `TEST_WIF_PROVIDER` and the ids inside it; a failed redaction deletes both files and skips the upload). Never red because a scenario failed, but red when a secret is empty, federation fails, zero tests ran, or `parity.xml` is missing or unreadable.
-- **F6 (outside the repo)** the Monday routine, a scheduled cloud Claude session: downloads the latest `survivors` and `parity`
-  artifacts, writes the killing assertion or proposes an `equivalent` line per survivor, opens a test-only PR. KPI: open survivors by
+  `parity.log`; four values are replaced before upload: the three secrets plus `TEST_WIF_PROVIDER` and the ids inside it; a failed redaction deletes both files and skips the upload). Never red because a scenario failed, but red when a secret is empty, federation fails, zero tests ran, or `parity.xml` is missing or unreadable. The job (named `parity`) also publishes its verdict as annotations: counts, and the names of failed tests.
+- **F6 (outside the repo)** the Monday routine, a scheduled cloud Claude session: reads the check-run annotations of the `summarize` job (mutation)
+  and the `parity` job via `GET /repos/{o}/{r}/check-runs/{job_id}/annotations` (a cloud session cannot download artifacts or job logs; artifacts stay for the owner and the Mac), writes the killing assertion or proposes an `equivalent` line per survivor, opens a test-only PR. KPI: open survivors by
   the next Monday = 0, `error` statuses = 0, growth of equivalents watched. It escalates to the owner only a survivor older than two
   weeks, in one line with a recommendation.
 - **R7** Mechanical adaptations of existing tests after a rename or a signature or constructor-argument change go in the implementer's

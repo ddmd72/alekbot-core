@@ -182,7 +182,7 @@ def summarize(reports_dir: Path, expected: Optional[List[str]] = None) -> tuple[
     return "\n".join(lines + detail) + "\n", combined
 
 
-ANNOTATION_LIMIT = 6000  # characters of one escaped annotation message
+ANNOTATION_LIMIT = 4000  # the runner truncates a message at 4096 characters after decoding, silently
 MAX_SURVIVOR_ANNOTATIONS = 9
 DESCRIPTION_LIMIT = 160
 
@@ -195,7 +195,8 @@ def _module_line(row: Dict[str, Any]) -> str:
     if row["status"] == "missing":
         return f"{row['module']}: missing"
     c = row["counts"]
-    status = f"partial ({row['done']} of {row.get('total', '?')})" if row["status"] == "partial" else "complete"
+    total = row.get("total")
+    status = f"partial ({row['done']} of {'?' if total is None else total})" if row["status"] == "partial" else "complete"
     return f"{row['module']}: {c['killed']}/{c['survived']}/{c['equivalent']}/{c['error']}, {status}"
 
 

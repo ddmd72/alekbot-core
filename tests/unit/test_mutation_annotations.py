@@ -60,7 +60,7 @@ def test_packing_limit_and_overflow_line(tmp_path):
     warnings = out[1:]
     assert 1 < len(warnings) <= 9
     for w in warnings:
-        assert len(w.split("::", 2)[2]) <= 6000
+        assert len(w.split("::", 2)[2]) <= 4000
     assert warnings[0].startswith(f"::warning title=Mutation survivors (1 of {len(warnings)})::")
     assert warnings[-1].split("%0A")[-1].startswith("… ") and "more: see the survivors artifact" in warnings[-1]
 
@@ -78,3 +78,9 @@ def test_cli_prints_the_lines(tmp_path, capsys):
     path.write_text(json.dumps(combined))
     assert mutation_targets.main(["--annotations", str(path)]) == 0
     assert capsys.readouterr().out.count("\n") == 2
+
+
+def test_partial_module_without_a_total_prints_a_question_mark(tmp_path):
+    _write(tmp_path, "a", "pkg.part", {"killed": 1, "survived": 0, "equivalent": 0, "error": 0},
+           [_outcome(1, "killed")], complete=False)
+    assert "pkg.part: 1/0/0/0, partial (1 of ?)" in _run(tmp_path)[0]

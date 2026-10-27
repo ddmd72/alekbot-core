@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   parity:
-    name: parity scenarios against the test database
+    name: parity
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -112,11 +112,12 @@ jobs:
       - name: Verdict as an annotation
         # The weekly session cannot download artifacts; it reads check-run annotations. Names only: messages can carry ids.
         if: always() && steps.redact.outcome == 'success'
+        continue-on-error: true
         run: |
           python - <<'PY'
           import xml.etree.ElementTree as ET
 
-          LIMIT = 6000
+          LIMIT = 4000  # the runner truncates a message at 4096 characters after decoding
           try:
               root = ET.parse("parity.xml").getroot()
           except Exception:
@@ -130,7 +131,7 @@ jobs:
           print(f"::notice title=Parity verdict::tests {tests}, failed {failed}, errors {errors}, skipped {skipped}")
           if failed + errors > 0:
               names = [
-                  f"{c.get('classname', '')}::{c.get('name', '')}".replace("%", "%25")
+                  f"{c.get('classname', '')}::{c.get('name', '')}".replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
                   for c in root.iter("testcase")
                   if c.find("failure") is not None or c.find("error") is not None
               ]

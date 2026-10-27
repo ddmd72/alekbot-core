@@ -120,6 +120,7 @@ jobs:
       - name: Survivors as annotations
         # The weekly session cannot download artifacts; it reads check-run annotations.
         if: always()
+        continue-on-error: true
         run: |
           if [ -f out/survivors.json ]; then
             python -m tests.support.mutation_targets --annotations out/survivors.json
