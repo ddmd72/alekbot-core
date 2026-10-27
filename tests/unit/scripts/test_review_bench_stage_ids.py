@@ -111,13 +111,12 @@ def test_a_plan_without_ids_an_empty_list_a_big_list_and_a_foreign_file_are_refu
     monkeypatch.setattr(plan_inputs, "MEMORY_DIR", tmp_path)
     (tmp_path / "plan.json").write_text(json.dumps(plan_doc()), encoding="utf-8")
     (tmp_path / "empty.txt").write_text("# nothing\n", encoding="utf-8")
-    (tmp_path / "big.txt").write_text("\n".join(f"f{i}" for i in range(REVIEW_BATCH + 1)), encoding="utf-8")
     outside = tmp_path.parent / "ids-outside.txt"
     outside.write_text("f1\n", encoding="utf-8")
     cases = [
         ("--expiry-plan", str(tmp_path / "plan.json")),
         ("--stage-ids", str(tmp_path / "empty.txt")),
-        ("--stage-ids", str(tmp_path / "big.txt")),
+        ("--max-passes", "0", "--stage-ids", str(tmp_path / "empty.txt")),
         ("--stage-ids", str(outside)),
         ("--stage-ids", str(tmp_path / "missing.txt")),
     ]
@@ -188,12 +187,15 @@ async def test_a_listed_fact_without_a_document_is_refused_before_anything_is_st
     kit.close()
 
 
-async def test_more_listed_facts_than_one_batch_is_refused(tmp_path, monkeypatch):
-    world, kit, bundle, _ = await _rig(tmp_path, monkeypatch)
+def test_more_listed_facts_than_one_batch_are_accepted_and_the_banner_counts_the_passes(tmp_path, monkeypatch):
+    monkeypatch.setattr(plan_inputs, "MEMORY_DIR", tmp_path)
+    (tmp_path / "big.txt").write_text("\n".join(f"f{i}" for i in range(REVIEW_BATCH + 1)), encoding="utf-8")
+    ap, args = _parse(tmp_path, "--stage-ids", str(tmp_path / "big.txt"), "--max-passes", "4")
 
-    with pytest.raises(ValueError, match="one review batch"):
-        await support.stage_listed(kit, [f"f{i}" for i in range(REVIEW_BATCH + 1)], None, NOW)
-    kit.close()
+    review_bench.read_staging_inputs(ap, args)
+
+    assert len(args.listed_ids) == REVIEW_BATCH + 1 and args.max_passes == 4
+    assert "in up to 4 pass(es)" in review_bench.header(args)[1]
 
 
 # ------------------------------------------------------------------------------------------------ the report
@@ -278,3 +280,191 @@ async def test_a_whole_run_on_listed_ids_reports_each_fact_and_writes_nothing_li
     assert run["cases"] == {} and run["live_staged"] == 0
     assert live_state(world) == before
     assert "listed facts:" in "\n".join(support.run_counts(run, kit))
+
+
+# ------------------------------------------------------------------------------------------------ passes and the report
+
+def _ask(fact_id, **extra):
+    from src.domain.llm import ToolCall
+    return ToolCall(name="ask_owner", args={"fact_id": fact_id, "fallback": "revive", **extra})
+
+
+async def _two_pass_run(tmp_path, monkeypatch, max_passes):
+    """Two listed facts; the scripted model asks about one fact per pass."""
+    from scripts.consolidation import s3_bench_support
+    from tests.unit.agents.test_consolidation_write_context import calls
+    from tests.unit.scripts.test_s3_dry_run_kit import metered
+
+    world = ReviewWorld()
+    tripwires(monkeypatch)
+    talk = await world.seed("Alex gives a talk at the Hamburg conference", state=FactState.ARCHIVED,
+                            valid_to=NOW - timedelta(days=1))
+    gym = await world.seed("Alex trains at the Iron Temple gym", state=FactState.INVALIDATED,
+                           valid_to=NOW - timedelta(days=1))
+    handles, args, live = await review_rig(
+        world, tmp_path, monkeypatch, metered(calls(_ask(talk))), answered(), metered(calls(_ask(gym))), answered(),
+    )
+    async with s3_bench_support.kit_session(
+        handles, args, USER, ACC, "review", with_review=True, summary=support.review_summary,
+        sidecar=lambda extra: support.listed_markdown(extra.get("runs", [])),
+    ) as (kit, extra):
+        run = await support.run_once(
+            kit, handles, live, user_id=USER, account_id=ACC, requested=0, mirror=None, clock=CLOCK,
+            listed_ids=[talk, gym], max_passes=max_passes,
+        )
+        extra["runs"] = [run]
+    return run, talk, gym
+
+
+async def test_passes_continue_over_the_overlay_until_every_listed_fact_is_decided(tmp_path, monkeypatch):
+    run, talk, gym = await _two_pass_run(tmp_path, monkeypatch, max_passes=6)
+
+    assert run["passes_run"] == 2 and run["left_undecided"] == []
+    outcomes = {row["fact_id"]: row["outcome"] for row in run["listed"]}
+    assert outcomes == {talk: "ask:still_true", gym: "ask:still_true"}
+
+
+async def test_the_pass_limit_stops_the_run_and_names_the_fact_left(tmp_path, monkeypatch):
+    run, talk, gym = await _two_pass_run(tmp_path, monkeypatch, max_passes=1)
+
+    assert run["passes_run"] == 1 and run["left_undecided"] == [gym]
+    assert "left undecided: 1" in "\n".join(support.run_counts(run, kit=_NoRows()))
+
+
+class _NoRows:
+    rows: list = []
+
+
+async def test_an_ask_run_writes_the_human_file_beside_the_json(tmp_path, monkeypatch):
+    from scripts.consolidation import s3_bench_support
+    from tests.unit.agents.test_consolidation_write_context import calls
+    from tests.unit.scripts.test_s3_dry_run_kit import metered
+
+    world = ReviewWorld()
+    tripwires(monkeypatch)
+    talk = await world.seed("Alex gives a talk at the Hamburg conference", state=FactState.ARCHIVED, valid_to=NOW)
+    handles, args, live = await review_rig(world, tmp_path, monkeypatch, metered(calls(_ask(talk))), answered())
+    monkeypatch.setattr(s3_bench_support.kit_module, "MEMORY_DIR", tmp_path)
+    async with s3_bench_support.kit_session(
+        handles, args, USER, ACC, "review", with_review=True, summary=support.review_summary,
+        sidecar=lambda extra: support.listed_markdown(extra.get("runs", [])),
+    ) as (kit, extra):
+        run = await support.run_once(
+            kit, handles, live, user_id=USER, account_id=ACC, requested=0, mirror=None, clock=CLOCK, listed_ids=[talk],
+        )
+        extra["runs"] = [run]
+
+    (row,) = run["listed"]
+    assert row["outcome"] == "ask:still_true" and row["writes"]["fallback"] == "revive"
+    (json_path,) = tmp_path.glob("s3_dry_run_review_*.json")
+    (md_path,) = tmp_path.glob("s3_dry_run_review_*_listed.md")
+    assert md_path.name == f"{json_path.stem}_listed.md"
+    md = md_path.read_text(encoding="utf-8")
+    assert "Original state: archived" in md and "Original text: Alex gives a talk" in md
+    assert "Question: still_true (fallback revive)" in md and "Reason:" in md
+
+
+async def test_the_report_shows_what_the_review_wrote_for_every_kind_of_result(tmp_path, monkeypatch):
+    """The decisions and asks of the passes (as the agent returned them) against the overlay the passes left."""
+    from scripts.consolidation import review_bench_support as sup
+    from src.domain.fact_review_ask import AskRequest
+    from src.domain.fact_review_outcome import ReviewDecision
+    from src.domain.fact_review_result import FactReviewResult
+
+    world, kit, bundle, (talk, fine, gym, studio, class_) = await _rig(
+        tmp_path, monkeypatch,
+        ("Alex gives a talk at the Hamburg conference", FactState.CURRENT),
+        ("Alex has an open parking fine", FactState.CURRENT),
+        ("Alex trains at the Iron Temple gym", FactState.CURRENT),
+        ("Alex rents a pottery studio", FactState.CURRENT),
+        ("Alex takes a pottery class", FactState.CURRENT),
+    )
+    listed = await sup.stage_listed(kit, [talk, fine, gym, studio, class_], None, NOW)
+    # the review's writes into the overlay: a history rewrite of the talk, a supersede of the fine, an archive of the gym
+    kit_doc = kit.repo.overlay_document
+    history = kit_doc(talk).model_copy(update={"id": "talk-v2", "text": "Alex gave a talk at the Hamburg conference",
+                                               "state": FactState.CURRENT, "is_current": True, "stale_since": None})
+    kit.repo.seed_document(history)
+    kit.repo.seed_document(kit_doc(talk).model_copy(update={"state": FactState.SUPERSEDED, "superseded_by": "talk-v2"}))
+    successor = kit_doc(fine).model_copy(update={"id": "fine-v2", "text": "Alex's parking fine is settled",
+                                                 "state": FactState.CURRENT, "is_current": True, "stale_since": None})
+    kit.repo.seed_document(successor)
+    kit.repo.seed_document(kit_doc(fine).model_copy(update={"state": FactState.SUPERSEDED, "superseded_by": "fine-v2"}))
+    kit.repo.seed_document(kit_doc(gym).model_copy(update={"state": FactState.ARCHIVED, "stale_since": None}))
+    results = [FactReviewResult(
+        outcomes=(
+            ReviewDecision(talk, "rewritten", "talk-v2", "evidence", as_history=True),
+            ReviewDecision(fine, "superseded", "fine-v2", None),
+            ReviewDecision(gym, "archived", gym, "reply"),
+        ),
+        asks=(AskRequest(studio, "history", question="renewed",
+                         texts={"renewed": "Alex renewed", "not_renewed": "Alex let it lapse", "not_needed": "n/a",
+                                "unknown": "unknown"}, folds=(class_,)),),
+    )]
+
+    rows = {r["fact_id"]: r for r in sup.listed_report(kit, bundle, listed, results=results)}
+
+    assert rows[talk]["outcome"] == "history"
+    assert rows[talk]["writes"] == {"new_text": "Alex gave a talk at the Hamburg conference", "written_id": "talk-v2",
+                                    "as_history": True, "basis": "evidence"}
+    assert rows[fine]["outcome"] == "supersede"
+    assert rows[fine]["writes"] == {"successor_id": "fine-v2", "successor_text": "Alex's parking fine is settled"}
+    assert rows[gym]["outcome"] == "archive" and rows[gym]["writes"] == {"basis": "reply"}
+    assert rows[studio]["writes"]["texts"]["not_renewed"] == "Alex let it lapse"
+    assert rows[studio]["writes"]["folds"] == [class_] and rows[studio]["writes"]["fallback"] == "history"
+    assert rows[class_]["outcome"] == "folded" and rows[class_]["writes"] == {"folded_into": studio}
+    assert sup.undecided(kit, listed, results) == []          # the ask and its fold count as decided
+    assert sup.undecided(kit, listed, []) == [studio, class_]   # without the result they are still stale
+    kit.close()
+
+
+def test_the_human_file_is_none_without_listed_runs():
+    assert support.listed_markdown([{"result": {}}]) is None
+
+
+def test_the_human_file_names_each_kind_of_write():
+    run = {"passes_run": 2, "left_undecided": ["fx"], "listed": [
+        {"fact_id": "f1", "original_state": "archived", "original_text": "old", "outcome": "history", "reason": "r1",
+         "writes": {"new_text": "Alex gave the talk", "as_history": True}},
+        {"fact_id": "f2", "original_state": "current", "original_text": "old", "outcome": "supersede", "reason": "r2",
+         "writes": {"successor_id": "s9", "successor_text": "new"}},
+        {"fact_id": "f3", "original_state": "invalidated", "original_text": "old", "outcome": "archive", "reason": "r3",
+         "writes": {"basis": "evidence"}},
+        {"fact_id": "f4", "original_state": "stale", "original_text": "old", "outcome": "folded", "reason": None,
+         "writes": {"folded_into": "f5"}},
+        {"fact_id": "f5", "original_state": "stale", "original_text": "old", "outcome": "ask:renewed", "reason": "r5",
+         "writes": {"question": "renewed", "fallback": "history", "noise": True, "texts": {"renewed": "yes"}, "folds": ["f4"]}},
+    ]}
+
+    md = support.listed_markdown([run])
+
+    for expected in ("2 pass(es), 1 fact(s) left undecided", "Left undecided: fx", "Text it would write: Alex gave the talk",
+                     "Successor id: s9", "Successor text: new", "Basis: evidence", "Folded into: f5",
+                     "Question: renewed (fallback history, noise)", "  - renewed: yes", "  - folds: f4"):
+        assert expected in md
+
+
+async def test_a_question_code_queued_after_two_undecided_passes_is_shown_from_the_stored_question(tmp_path, monkeypatch):
+    from scripts.consolidation import s3_bench_support
+
+    world = ReviewWorld()
+    tripwires(monkeypatch)
+    gym = await world.seed("Alex trains at the Iron Temple gym", state=FactState.INVALIDATED, valid_to=NOW)
+    handles, args, live = await review_rig(world, tmp_path, monkeypatch, answered(), answered(), answered())
+    async with s3_bench_support.kit_session(
+        handles, args, USER, ACC, "review", with_review=True, summary=support.review_summary,
+    ) as (kit, extra):
+        run = await support.run_once(
+            kit, handles, live, user_id=USER, account_id=ACC, requested=0, mirror=None, clock=CLOCK, listed_ids=[gym],
+            max_passes=3,
+        )
+        extra["runs"] = [run]
+
+    (row,) = run["listed"]
+    assert row["outcome"] == "ask:still_true" and row["writes"]["origin"] == "kept_twice"
+    assert row["reason"].startswith("kept twice: queued")
+
+
+def test_a_fact_without_a_document_or_a_decision_writes_nothing():
+    assert support._what_it_writes(None, None, None, None, None, None) == {}
+    assert support._what_it_writes(None, _doc(FactState.CURRENT), None, None, None, None) == {}
