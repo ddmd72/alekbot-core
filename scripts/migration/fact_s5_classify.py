@@ -14,8 +14,8 @@ The owner runs it; apply only on his word. What it does:
 
 A run without `--budget-usd` only estimates: no classify call is made (building an agent makes one embedding call).
 `--expect-model` is required for a dry run: an account whose agent runs another model stops the run before the estimate.
-The cap covers ALL classify runs: it is checked against classify's own lifetime ledger, so a second run starts from what
-the first spent.
+The cap covers the recorded calls of ALL classify runs, with the two exceptions under Residuals: it is checked against
+classify's own lifetime ledger, so a second run starts from what the first spent.
 
 Flags:
     --expect-model NAME   the model every account's agent must run (dry run only, required)
@@ -41,6 +41,8 @@ Residuals:
   * On a claude-sonnet-5-5 pin the Claude adapter's same-provider fallback can answer a call with claude-sonnet-5 on a 5xx,
     unnoticed here, priced at the 5.5 rate; the live consolidator behaves the same.
   * In an account with several users the first owner's agent config is used for the whole account.
+  * A call that raises is not recorded by the meter (it records only returned calls), so its cost is not in the ledger.
+  * The meter's per-call check lets one call run past the cap: the call that crosses it is still made and recorded.
 
 Usage:
     python -m scripts.migration.fact_s5_classify --expect-model NAME [--budget-usd X] [--ids-file PATH] [--user-id ID]
@@ -124,6 +126,8 @@ RESIDUALS: Final[Tuple[str, ...]] = (
     "On a claude-sonnet-5-5 pin the Claude adapter's same-provider fallback can answer a call with claude-sonnet-5 on a "
     "5xx, unnoticed here, priced at the 5.5 rate; the live consolidator behaves the same.",
     "In an account with several users the first owner's agent config is used for the whole account.",
+    "A call that raises is not recorded by the meter (it records only returned calls), so its cost is not in the ledger.",
+    "The meter's per-call check lets one call run past the cap: the call that crosses it is still made and recorded.",
 )
 
 

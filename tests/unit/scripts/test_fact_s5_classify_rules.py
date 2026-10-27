@@ -125,6 +125,9 @@ def test_the_instruction_file():
     text = raw.decode("ascii")  # ASCII only
     for needle in ("unsure", "reported_date", "n", "kinds_table", "classify_stored_facts"):
         assert needle in text
+    assert "A horizon needs no date in the content: it counts from reported_date." in text
+    assert "A fact whose reported_date is null cannot take a horizon." in text
+    assert "Never invent a date" in text
     assert "ttl_days" not in text
     assert not any(line.strip().startswith("Today:") for line in text.splitlines())
 
