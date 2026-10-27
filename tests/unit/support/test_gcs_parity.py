@@ -18,7 +18,7 @@ def test_scenarios_are_well_formed():
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.name)
 def test_scenario_on_the_fake(scenario):
-    gcs = FakeGcs(versioned={BUCKET})
+    gcs = FakeGcs(buckets={BUCKET: "versioned"})
     client = gcs.client()
     prefix = f"parity/run/{scenario.name}/"
     assert scenario.run(client, BUCKET, prefix) == scenario.expected

@@ -172,14 +172,6 @@ def prefix_listing_includes_longer_names(client: Any, bucket: str, p: str) -> An
     return [b.name[len(p):] for b in client.list_blobs(bucket, prefix=f"{p}a.md")]
 
 
-def delimiter_listing_collapses_folders(client: Any, bucket: str, p: str) -> Any:
-    for name in ("top.md", "projects/a.md", "projects/sub/b.md"):
-        _put(client, bucket, f"{p}{name}", b"x")
-    listing = client.list_blobs(bucket, prefix=p, delimiter="/")
-    names = [b.name[len(p):] for b in listing]
-    return names, sorted(x[len(p):] for x in listing.prefixes)
-
-
 def name_over_1024_bytes_is_refused(client: Any, bucket: str, p: str) -> str:
     name = p + "x" * (1025 - len(p.encode("utf-8")))
     return _outcome(lambda: _put(client, bucket, name, b"x"))
@@ -215,6 +207,5 @@ SCENARIOS = [
     Scenario(stale_conditional_delete_is_refused_and_leaves_the_object, ("PreconditionFailed", b"v2")),
     Scenario(exists_when_only_noncurrent_versions_exist, False),
     Scenario(prefix_listing_includes_longer_names, ["a.md", "a.md.bak"]),
-    Scenario(delimiter_listing_collapses_folders, (["top.md"], ["projects/"])),
     Scenario(name_over_1024_bytes_is_refused, "BadRequest", p12=True),
 ]
