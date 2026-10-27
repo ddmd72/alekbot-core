@@ -1,8 +1,10 @@
 """The real `main()` boots offline under the deploy's environment and serves the deployed surface (P9 design §5f, §5b).
 
 `main()` runs in a sealed environment shaped like the `alek-bot-dev` deploy (`tests/support/prod_env.py`), with fakes at
-the SDK boundaries only: Firestore, Cloud Tasks, Gemini embeddings, OpenAI retrieval and Google's OIDC key check. The
-patches name SDK modules and names `main` keeps, so this file survives moving the construction out of `main()` unedited.
+the SDK boundaries only: Firestore, Cloud Tasks, Gemini embeddings, OpenAI retrieval, Google's OIDC key check, aiohttp
+(Graph To Do and Gmail, installed after startup), Slack's `chat_postMessage` and the Anthropic SDK's `messages.stream`
+(scripted). `_seed_rows` gives five rows their data (P9 hand-over). The patches name SDK modules and names `main` keeps,
+so this file survives moving the construction out of `main()` unedited.
 
 `hypercorn.asyncio.serve` is replaced by a probe: with the app built and started it records what the deployed process
 would serve (log slice, `url_map`, the keyword arguments of every blueprint factory call) and sends every `/worker`
@@ -60,8 +62,6 @@ STARTUP_LINE = re.compile(r"not configured|disabled|skipped|continue without", r
 REFUSAL_BODY = re.compile(r"not configured|not ready|disabled", re.IGNORECASE)
 REFUSAL_STATUSES = frozenset({501, 503})
 
-QUICK_FAILED = "Quick response failed: 'Blueprint not found: quick_agent_v1'"
-
 # The five seeded rows (`_seed_rows`) and the outcomes `_check_seeded_rows` reads. Texts: invented universe, deep research topic.
 DR_QUERY = "Heat pumps in Springfield"
 DR_FAILED_REPLY = "The research on heat pumps in Springfield did not finish. Ask me again and I will start it over."
@@ -99,9 +99,9 @@ ENQUEUE_PAYLOADS: Dict[str, dict] = {
     "daily_email_review": {"user_id": "u1", "account_id": "a1"},
     "video_generation_polling": {"request_id": "req1", "user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "attempt": 0},
     "telegram_update": {"update": {}},
-    "email_indexing": {"job_id": "nojob001"},
-    "deep_research_failed": {"user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "query": "q", "reason": "x", "origin_platform": "slack"},
-    "deep_research_webhook_event": {"event_type": "response.cancelled", "job_id": "job1", "user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "query": "q", "origin_platform": "slack"},
+    "email_indexing": {"job_id": INDEXING_JOB_ID},
+    "deep_research_failed": {"user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "query": DR_QUERY, "reason": "x", "origin_platform": "slack"},
+    "deep_research_webhook_event": {"event_type": "response.cancelled", "job_id": "job1", "user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "query": DR_QUERY, "origin_platform": "slack"},
     "setup_microsoft_todo": {"user_id": "u1"},
     "reindex_task_list": {"user_id": "u1", "list_id": "l1"},
     "fact_review": {"user_id": "u1", "account_id": "a1", "mode": "daily"},
@@ -110,7 +110,8 @@ ENQUEUE_PAYLOADS: Dict[str, dict] = {
                            "at": "2026-10-24T09:00:00+00:00"},
 }
 
-# The pinned answer of every task type, from the boot with the deploy's environment and an empty database (P9).
+# The pinned answer of every task type, from the boot with the deploy's environment, an empty database and the rows' seed
+# (`_seed_rows`: u1's To Do and Gmail credentials, one running indexing job, the `quick` prompt profile) (P9).
 # Every row that is not a plain 200 names its cause; none of them is a configuration refusal.
 MATRIX: Dict[str, Expect] = {
     # Cloud Scheduler jobs
@@ -121,11 +122,12 @@ MATRIX: Dict[str, Expect] = {
                                          "conflicts": 0, "no_decision": 0, "breaker_tripped": 0, "review_enqueued": 0,
                                          "purge_overdue": 0, "dry_run": True}),
     "fire_due_reminders": Expect(200, {"claim_lost": 0, "enqueued": 0, "skipped": 0}),
-    "renew_all_task_subscriptions": Expect(200, {"enqueued": 0, "status": "ok"}),
+    "renew_all_task_subscriptions": Expect(200, {"enqueued": 1, "status": "ok"}),
     "repair_email_embeddings": Expect(200, {"has_more": False, "repaired": 0, "status": "ok"}),
     "start_daily_email_review": Expect(200, {"failed": 0, "started": 0}),
     "start_drive_sync": Expect(200, {"alerts": 0, "candidates": 0, "continuing": 0, "enqueued": 0, "errors": 0, "notices": 0, "skipped": 0}),
-    "start_email_indexing": Expect(200, {"skipped": 0, "started": 0}),
+    "start_email_indexing": Expect(200, {"skipped": 1, "started": 0},
+                                   log="[EmailIndexing] start_indexing_for_eligible_users: started=0, skipped=1"),
     "sweep_companion_consolidation": Expect(200, {"swept": 0}),
     "sweep_consolidation": Expect(200, {"swept": 0}),
     # enqueue sites
@@ -138,20 +140,22 @@ MATRIX: Dict[str, Expect] = {
     "agent_execution": Expect(
         200, {"agent_id": "no_such_agent_u1", "error": "Unknown recipient: no_such_agent_u1", "intent": "nothing", "status": "failed"},
         log="No route found for recipient: no_such_agent_u1"),
-    # No Gmail credentials are seeded.
-    "daily_email_review": Expect(200, {"error": "credentials unavailable"}, log="[EmailReview] no credentials for u1"),
+    # Gmail credentials are seeded (for email_indexing); the Gmail fake lists no message.
+    "daily_email_review": Expect(200, {"status": "no_emails"}, log="[Worker] daily_email_review: no emails in last 24h for u1"),
     # The xAI poll cannot connect offline: a DNS failure where there is no resolver, the socket guard where there is one.
     # Both reach the handler as the SDK's 'Connection error.', so the retry path runs; no connect may have succeeded.
     "video_generation_polling": Expect(
         200, {"attempt": 1, "status": "retry"}, log="[VideoGeneration] get_status failed, attempt=0: Connection error."),
-    # No indexing job is seeded.
-    "email_indexing": Expect(404, {"error": "job not found"}, log="load_job_for_execution: job nojob001 not found"),
-    # The notice goes through the formatter agent, whose prompt blueprint the empty database lacks.
-    "deep_research_failed": Expect(500, {"error": QUICK_FAILED}, log="[DeepResearch] notice not sent"),
-    "deep_research_webhook_event": Expect(500, {"error": QUICK_FAILED}, log="[DeepResearch] notice not sent"),
-    # No Microsoft To Do credentials are seeded; Quart's 500 page hides the exception, the log has it.
-    "setup_microsoft_todo": Expect(500, None, exception="ValueError('No MS To Do credentials for user u1')"),
-    "reindex_task_list": Expect(500, None, exception="ValueError('No MS To Do credentials for user u1')"),
+    # A running job and Gmail credentials are seeded; the Gmail fake lists no message.
+    "email_indexing": Expect(200, {"has_more": False, "status": "ok"},
+                             log=f"Indexing job {INDEXING_JOB_ID} complete: stored=0, failed=0"),
+    # The notice goes through Quick (the `quick` profile is seeded, Claude is scripted) to the origin channel.
+    "deep_research_failed": Expect(200, {"status": "ok"}, log="[Notification] Sent to slack channel=C1 user=u1 kind=deep_research"),
+    "deep_research_webhook_event": Expect(200, {"status": "ok"},
+                                          log="[Notification] Sent to slack channel=C1 user=u1 kind=deep_research"),
+    # To Do credentials are seeded; Graph is the HTTP fake's empty account.
+    "setup_microsoft_todo": Expect(200, {"status": "ok"}, log="MS To Do setup complete for user u1"),
+    "reindex_task_list": Expect(200, {"status": "ok"}, log="Reindexed 0 tasks for list l1, user u1"),
     # The seeded account has no owner: the review stops at its owner check.
     "fact_review": Expect(200, {"status": "not_owner"},
                           log="[FactReview] user u1 is not the owner of account a1 (account has no owner); nothing done"),
@@ -628,7 +632,7 @@ def _check_seeded_rows(boot: Boot) -> List[str]:
 
 CHECKS = [
     _check_startup, _check_served_app, _check_agent_task_queue, _check_url_map, _check_blueprint_calls, _check_cabinet_repository,
-    _check_seed, _check_matrix, _check_platform_workers,
+    _check_seed, _check_matrix, _check_platform_workers, _check_seeded_rows,
 ]
 
 
@@ -729,7 +733,8 @@ def test_a_configuration_refusal_is_a_problem_whatever_the_pinned_table_says(sta
     assert any(p.startswith("consolidation: a configuration refusal") for p in _check_matrix(boot))
 
 
-def test_a_pinned_cause_must_be_in_the_logs_of_its_row():
+def test_a_pinned_cause_must_be_in_the_logs_of_its_row(monkeypatch):
+    monkeypatch.setitem(MATRIX, "setup_microsoft_todo", Expect(500, None, exception="ValueError('No MS To Do credentials for user u1')"))
     boot = _matrix_boot()
     problems = _check_matrix(boot)
     assert any(p.startswith("daily_email_review: no log record contains") for p in problems)
