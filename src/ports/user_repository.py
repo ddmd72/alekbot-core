@@ -3,22 +3,28 @@ from typing import Optional
 from ..domain.user import UserProfile
 
 class UserRepository(ABC):
-    """
-    Abstract interface for User Registry operations.
-    Follows Hexagonal Architecture (Port).
+    """Port for user profiles (one record per user_id).
+
+    Holds for every method:
+    - Tenancy: user_id is global; lookups by platform identity, email or external id search all users.
+    - Legacy: complexity overrides with an empty tier are dropped on read; unknown keys are ignored on read and dropped
+      by the next create/update. A record that fails UserProfile validation otherwise: no writer produces one;
+      behaviour pending the data audit.
+    - Atomicity: create_user, update_user and unlink_platform_identity replace the whole record with no precondition;
+      of two concurrent read-change-write updates of one user only the last survives (P11-G2-4).
+      link_platform_identity checks the identity and writes in one atomic step.
+    - Errors: backend errors propagate.
     """
     
     @abstractmethod
     async def get_user(self, user_id: str) -> Optional[UserProfile]:
-        """Retrieve user by internal UUID."""
+        """The profile, or None when missing."""
         pass
     
     @abstractmethod
     async def get_user_by_platform_id(self, platform: str, platform_user_id: str) -> Optional[UserProfile]:
-        """
-        Retrieve user by platform-specific ID (e.g., Slack ID).
-        Used for identity resolution.
-        """
+        """The user whose platform_identities[platform] equals platform_user_id, or None. Used for identity
+        resolution (one user per identity)."""
         pass
     
     @abstractmethod
@@ -30,8 +36,8 @@ class UserRepository(ABC):
             email: User's email address
             
         Returns:
-            UserProfile if found, None otherwise
-            
+            UserProfile if found (exact match on the stored email), None otherwise
+
         Note:
             Used for OAuth fallback when external_user_id lookup fails.
             Prevents duplicate user creation during mixed registration flows.
@@ -83,10 +89,11 @@ class UserRepository(ABC):
             Updated UserProfile with new platform identity
 
         Raises:
-            ValueError: If user not found or identity already linked to another user
+            ValueError: If user not found or identity already linked to another user (nothing is written);
+            re-linking the same identity to the same user succeeds
 
         Note:
-            Updates UserProfile.platform_identities[platform] = platform_user_id
+            Updates UserProfile.platform_identities[platform] = platform_user_id and updated_at
             Used when user signs in via OAuth, then connects Slack/Telegram
 
         Example:
@@ -118,7 +125,7 @@ class UserRepository(ABC):
             ValueError: If user not found
 
         Note:
-            Removes UserProfile.platform_identities[platform]
+            Removes UserProfile.platform_identities[platform] (a no-op when absent); see Atomicity
             Used when user wants to disconnect Slack/Telegram
 
         Example:
@@ -140,20 +147,20 @@ class UserRepository(ABC):
     
     @abstractmethod
     async def create_user(self, user: UserProfile) -> UserProfile:
-        """Create a new user profile."""
+        """Write the profile under user_id (replaces any existing record)."""
         pass
     
     @abstractmethod
     async def update_user(self, user: UserProfile) -> UserProfile:
-        """Update existing user profile."""
+        """Write the whole profile and set updated_at; see Atomicity."""
         pass
     
     @abstractmethod
     async def delete_user(self, user_id: str) -> bool:
-        """Hard delete user profile (GDPR 'Right to be Forgotten')."""
+        """Hard delete user profile (GDPR 'Right to be Forgotten'). No caller in src/."""
         pass
 
     @abstractmethod
     async def increment_usage(self, user_id: str, tokens: int, cost: float, requests: int = 1) -> None:
-        """Atomically increment user usage and forward account-level increments."""
+        """Forward the usage to the user's account (ValueError when the user is missing). No caller in src/."""
         pass
