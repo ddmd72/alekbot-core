@@ -16,7 +16,7 @@ Two defects are pinned as strict xfails, each beside a passing control:
   error when `args.get("due")` is set and the result is None.
 """
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import pytest
 
