@@ -1,8 +1,10 @@
 """The real `main()` boots offline under the deploy's environment and serves the deployed surface (P9 design §5f, §5b).
 
 `main()` runs in a sealed environment shaped like the `alek-bot-dev` deploy (`tests/support/prod_env.py`), with fakes at
-the SDK boundaries only: Firestore, Cloud Tasks, Gemini embeddings, OpenAI retrieval and Google's OIDC key check. The
-patches name SDK modules and names `main` keeps, so this file survives moving the construction out of `main()` unedited.
+the SDK boundaries only: Firestore, Cloud Tasks, Gemini embeddings, OpenAI retrieval, Google's OIDC key check, aiohttp
+(Graph To Do and Gmail, installed after startup), Slack's `chat_postMessage` and the Anthropic SDK's `messages.stream`
+(scripted). `_seed_rows` gives five rows their data (P9 hand-over). The patches name SDK modules and names `main` keeps,
+so this file survives moving the construction out of `main()` unedited.
 
 `hypercorn.asyncio.serve` is replaced by a probe: with the app built and started it records what the deployed process
 would serve (log slice, `url_map`, the keyword arguments of every blueprint factory call) and sends every `/worker`
@@ -34,6 +36,20 @@ import quart
 import main
 from tests.support import prod_env, worker_triggers
 from tests.support.cloud_tasks_fake import FakeCloudTasksClient
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
+import anthropic
+import slack_sdk.web.async_client
+from anthropic.types import Message as AnthropicMessage
+from anthropic.types import ToolUseBlock, Usage
+
+from src.config.environment import EnvironmentConfig
+from src.domain.deep_research_notices import cancelled_notice, research_failed_notice
+from src.domain.email import IndexingJob
+from tests.support import http_boundary_fake
+from tests.support.oauth_credentials_store import creds
+from tests.support.prompt_seed import seed_agent_prompt
 
 ROOT = Path(__file__).resolve().parents[2]
 URL_MAP = Path(__file__).with_name("main_boots_offline_url_map.txt")
@@ -46,7 +62,23 @@ STARTUP_LINE = re.compile(r"not configured|disabled|skipped|continue without", r
 REFUSAL_BODY = re.compile(r"not configured|not ready|disabled", re.IGNORECASE)
 REFUSAL_STATUSES = frozenset({501, 503})
 
-QUICK_FAILED = "Quick response failed: 'Blueprint not found: quick_agent_v1'"
+# The five seeded rows (`_seed_rows`) and the outcomes `_check_seeded_rows` reads. Texts: invented universe, deep research topic.
+DR_QUERY = "Heat pumps in Springfield"
+DR_FAILED_REPLY = "The research on heat pumps in Springfield did not finish. Ask me again and I will start it over."
+DR_CANCELLED_REPLY = "The research on heat pumps in Springfield was cancelled. Ask me again whenever you like."
+DR_FAILED_SUMMARY = "Told Alex the heat pump research did not finish."
+DR_CANCELLED_SUMMARY = "Told Alex the heat pump research was cancelled."
+INDEXING_JOB_ID = "eijob001"   # 8 characters: the worker logs job_id[:8]
+_GRAPH_URL = "https://graph.microsoft.com/v1.0"
+_GMAIL_URL = "https://gmail.googleapis.com/gmail/v1/users/me"
+SEEDED_HTTP = Counter({
+    ("GET", f"{_GMAIL_URL}/messages"): 2,
+    ("GET", f"{_GRAPH_URL}/me/todo/lists/l1"): 1,
+    ("GET", f"{_GRAPH_URL}/me/todo/lists/l1/tasks"): 1,
+    ("GET", f"{_GRAPH_URL}/me/todo/lists"): 1,
+    ("POST", f"{_GRAPH_URL}/me/todo/lists"): 1,
+    ("POST", f"{_GRAPH_URL}/subscriptions"): 1,
+})
 
 
 class Expect(NamedTuple):
@@ -67,9 +99,9 @@ ENQUEUE_PAYLOADS: Dict[str, dict] = {
     "daily_email_review": {"user_id": "u1", "account_id": "a1"},
     "video_generation_polling": {"request_id": "req1", "user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "attempt": 0},
     "telegram_update": {"update": {}},
-    "email_indexing": {"job_id": "nojob001"},
-    "deep_research_failed": {"user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "query": "q", "reason": "x", "origin_platform": "slack"},
-    "deep_research_webhook_event": {"event_type": "response.cancelled", "job_id": "job1", "user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "query": "q", "origin_platform": "slack"},
+    "email_indexing": {"job_id": INDEXING_JOB_ID},
+    "deep_research_failed": {"user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "query": DR_QUERY, "reason": "x", "origin_platform": "slack"},
+    "deep_research_webhook_event": {"event_type": "response.cancelled", "job_id": "job1", "user_id": "u1", "account_id": "a1", "session_id": "u1:C1", "query": DR_QUERY, "origin_platform": "slack"},
     "setup_microsoft_todo": {"user_id": "u1"},
     "reindex_task_list": {"user_id": "u1", "list_id": "l1"},
     "fact_review": {"user_id": "u1", "account_id": "a1", "mode": "daily"},
@@ -78,7 +110,8 @@ ENQUEUE_PAYLOADS: Dict[str, dict] = {
                            "at": "2026-10-24T09:00:00+00:00"},
 }
 
-# The pinned answer of every task type, from the boot with the deploy's environment and an empty database (P9).
+# The pinned answer of every task type, from the boot with the deploy's environment, an empty database and the rows' seed
+# (`_seed_rows`: u1's To Do and Gmail credentials, one running indexing job, the `quick` prompt profile) (P9).
 # Every row that is not a plain 200 names its cause; none of them is a configuration refusal.
 MATRIX: Dict[str, Expect] = {
     # Cloud Scheduler jobs
@@ -90,11 +123,12 @@ MATRIX: Dict[str, Expect] = {
                                          "conflicts": 0, "no_decision": 0, "breaker_tripped": 0, "review_enqueued": 0,
                                          "purge_overdue": 0, "dry_run": False}),
     "fire_due_reminders": Expect(200, {"claim_lost": 0, "enqueued": 0, "skipped": 0}),
-    "renew_all_task_subscriptions": Expect(200, {"enqueued": 0, "status": "ok"}),
+    "renew_all_task_subscriptions": Expect(200, {"enqueued": 1, "status": "ok"}),
     "repair_email_embeddings": Expect(200, {"has_more": False, "repaired": 0, "status": "ok"}),
     "start_daily_email_review": Expect(200, {"failed": 0, "started": 0}),
     "start_drive_sync": Expect(200, {"alerts": 0, "candidates": 0, "continuing": 0, "enqueued": 0, "errors": 0, "notices": 0, "skipped": 0}),
-    "start_email_indexing": Expect(200, {"skipped": 0, "started": 0}),
+    "start_email_indexing": Expect(200, {"skipped": 1, "started": 0},
+                                   log="[EmailIndexing] start_indexing_for_eligible_users: started=0, skipped=1"),
     "sweep_companion_consolidation": Expect(200, {"swept": 0}),
     "sweep_consolidation": Expect(200, {"swept": 0}),
     # enqueue sites
@@ -107,20 +141,22 @@ MATRIX: Dict[str, Expect] = {
     "agent_execution": Expect(
         200, {"agent_id": "no_such_agent_u1", "error": "Unknown recipient: no_such_agent_u1", "intent": "nothing", "status": "failed"},
         log="No route found for recipient: no_such_agent_u1"),
-    # No Gmail credentials are seeded.
-    "daily_email_review": Expect(200, {"error": "credentials unavailable"}, log="[EmailReview] no credentials for u1"),
+    # Gmail credentials are seeded (for email_indexing); the Gmail fake lists no message.
+    "daily_email_review": Expect(200, {"status": "no_emails"}, log="[Worker] daily_email_review: no emails in last 24h for u1"),
     # The xAI poll cannot connect offline: a DNS failure where there is no resolver, the socket guard where there is one.
     # Both reach the handler as the SDK's 'Connection error.', so the retry path runs; no connect may have succeeded.
     "video_generation_polling": Expect(
         200, {"attempt": 1, "status": "retry"}, log="[VideoGeneration] get_status failed, attempt=0: Connection error."),
-    # No indexing job is seeded.
-    "email_indexing": Expect(404, {"error": "job not found"}, log="load_job_for_execution: job nojob001 not found"),
-    # The notice goes through the formatter agent, whose prompt blueprint the empty database lacks.
-    "deep_research_failed": Expect(500, {"error": QUICK_FAILED}, log="[DeepResearch] notice not sent"),
-    "deep_research_webhook_event": Expect(500, {"error": QUICK_FAILED}, log="[DeepResearch] notice not sent"),
-    # No Microsoft To Do credentials are seeded; Quart's 500 page hides the exception, the log has it.
-    "setup_microsoft_todo": Expect(500, None, exception="ValueError('No MS To Do credentials for user u1')"),
-    "reindex_task_list": Expect(500, None, exception="ValueError('No MS To Do credentials for user u1')"),
+    # A running job and Gmail credentials are seeded; the Gmail fake lists no message.
+    "email_indexing": Expect(200, {"has_more": False, "status": "ok"},
+                             log=f"Indexing job {INDEXING_JOB_ID} complete: stored=0, failed=0"),
+    # The notice goes through Quick (the `quick` profile is seeded, Claude is scripted) to the origin channel.
+    "deep_research_failed": Expect(200, {"status": "ok"}, log="[Notification] Sent to slack channel=C1 user=u1 kind=deep_research"),
+    "deep_research_webhook_event": Expect(200, {"status": "ok"},
+                                          log="[Notification] Sent to slack channel=C1 user=u1 kind=deep_research"),
+    # To Do credentials are seeded; Graph is the HTTP fake's empty account.
+    "setup_microsoft_todo": Expect(200, {"status": "ok"}, log="MS To Do setup complete for user u1"),
+    "reindex_task_list": Expect(200, {"status": "ok"}, log="Reindexed 0 tasks for list l1, user u1"),
     # The seeded account has no owner: the review stops at its owner check.
     "fact_review": Expect(200, {"status": "not_owner"},
                           log="[FactReview] user u1 is not the owner of account a1 (account has no owner); nothing done"),
@@ -157,6 +193,15 @@ class Boot:
     connects: List[Tuple[Any, Optional[str]]] = field(default_factory=list)
     recorded_names: List[str] = field(default_factory=list)
     probe_error: Optional[BaseException] = None
+    # What the five seeded rows left behind (`_seed_rows`, read at the end of `_probe`).
+    db: Any = None
+    http: Any = None                                                   # the HttpFake
+    slack_posts: List[Tuple[str, str]] = field(default_factory=list)   # (channel, text) of every chat_postMessage
+    claude_calls: List[dict] = field(default_factory=list)             # kwargs of every AsyncMessages.stream call
+    task_bodies: List[dict] = field(default_factory=list)
+    history: List[Tuple[str, Optional[str], Optional[str]]] = field(default_factory=list)  # (role, text, full_text) in u1:C1
+    todo_config: Any = None
+    indexing_job: Any = None
 
 
 def _main_blueprint_factories() -> List[Tuple[str, str]]:
@@ -220,6 +265,21 @@ async def _through_asgi(asgi_app: Any, path: str) -> Tuple[int, Any]:
         return response.status_code, None
 
 
+async def _seed_rows(boot: Boot) -> None:
+    """The data five rows need to answer 200: the `quick` prompt, u1's To Do and Gmail credentials and one running indexing job.
+
+    Called from `_probe`, never from `_boot`: `test_worker_redelivery_route.py` replaces `_probe` and needs the unseeded 500 rows."""
+    await seed_agent_prompt(boot.db, EnvironmentConfig(), "quick")
+    worker = boot.worker_closure["worker_handler"]
+    now = datetime.now(timezone.utc)
+    expiry = now + timedelta(hours=1)
+    for provider in ("microsoft_todo", "gmail"):
+        await worker._oauth_credentials.save_credentials(creds("u1", provider, token_expiry=expiry))
+    await worker._email_indexing._job_repo.create_job(IndexingJob(
+        job_id=INDEXING_JOB_ID, user_id="u1", account_id="a1", provider="gmail", triggered_by="scheduler",
+        status="running", started_at=now, updated_at=now))
+
+
 async def _probe(app: quart.Quart, served: Any, boot: Boot, caplog: pytest.LogCaptureFixture) -> None:
     boot.served_is_quart = isinstance(served, quart.Quart)
     boot.mcp_discovery = await _through_asgi(served, "/.well-known/oauth-authorization-server")
@@ -237,6 +297,7 @@ async def _probe(app: quart.Quart, served: Any, boot: Boot, caplog: pytest.LogCa
     await auth.account_repo.create_account(BillingAccount(account_id="a1"))
     await auth.user_repo.create_user(UserProfile(user_id="u1", account_id="a1"))
     boot.seeded = (await auth.account_repo.get_account("a1"), await auth.user_repo.get_user("u1"))
+    await _seed_rows(boot)
 
     client = app.test_client()
     bodies = worker_triggers.scheduler_task_types()
@@ -246,6 +307,12 @@ async def _probe(app: quart.Quart, served: Any, boot: Boot, caplog: pytest.LogCa
         connects = len(boot.connects)
         status, answer = await _post(client, body)
         boot.rows[task_type] = Row(status, answer, list(caplog.records[start:]), boot.connects[connects:])
+    worker = boot.worker_closure["worker_handler"]
+    boot.task_bodies = [b for c in FakeCloudTasksClient.instances for b in c.created_bodies()]
+    session = await worker._notification._session_store.load_session("u1:C1")
+    boot.history = [(m.role, p.text, p.full_text) for m in session.messages for p in m.parts]
+    boot.todo_config = await worker._task_setup._task_config.get_config("u1")
+    boot.indexing_job = await worker._email_indexing._job_repo.get_job(INDEXING_JOB_ID)
     boot.unknown = await _post(client, {"task_type": "no_such_type"})
     boot.anonymous = await _post(client, {"task_type": "fire_due_reminders"}, token=None)
 
@@ -253,6 +320,7 @@ async def _probe(app: quart.Quart, served: Any, boot: Boot, caplog: pytest.LogCa
 async def _boot(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> Boot:
     boot = Boot()
     services = prod_env.install_offline_services(monkeypatch)
+    boot.db = services.db
     monkeypatch.setattr(main, "init_telemetry", lambda *a, **k: None)
     monkeypatch.setattr(main, "build_memory_telemetry", lambda *a, **k: None)
 
@@ -279,7 +347,55 @@ async def _boot(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixtur
     monkeypatch.setattr(socket.socket, "connect", recording_connect)
     _record_blueprint_factories(monkeypatch, boot)
 
+    async def chat_post_message(self: Any, *, channel: str, text: Optional[str] = None, **kwargs: Any) -> dict:
+        boot.slack_posts.append((channel, text))
+        return {"ok": True, "channel": channel, "ts": "1700000000.000100"}
+
+    monkeypatch.setattr(slack_sdk.web.async_client.AsyncWebClient, "chat_postMessage", chat_post_message)
+
+    def scripted_stream(self: Any, **kwargs: Any) -> Any:
+        """Claude scripted at the SDK: the deliver_response answer to the deep research notice the request carries."""
+        boot.claude_calls.append(kwargs)
+        asked = _last_message_text(kwargs)
+        if cancelled_notice(DR_QUERY) in asked:
+            reply, summary = DR_CANCELLED_REPLY, DR_CANCELLED_SUMMARY
+        elif research_failed_notice(DR_QUERY) in asked:
+            reply, summary = DR_FAILED_REPLY, DR_FAILED_SUMMARY
+        else:
+            reply, summary = "UNSCRIPTED REQUEST", "unscripted"
+        body = {"full_response": reply, "response_summary": summary, "rich_content": None}
+        message = AnthropicMessage(
+            id="msg_scripted", type="message", role="assistant", model=kwargs["model"], stop_reason="tool_use",
+            content=[ToolUseBlock(type="tool_use", id="toolu_scripted", name="deliver_response",
+                                  input={"response": json.dumps(body)})],
+            usage=Usage(input_tokens=10, output_tokens=5, cache_creation_input_tokens=0, cache_read_input_tokens=0))
+
+        class Stream:
+            async def __aenter__(self) -> "Stream":
+                return self
+
+            async def __aexit__(self, *exc: Any) -> None:
+                return None
+
+            def __aiter__(self) -> "Stream":
+                return self
+
+            async def __anext__(self) -> Any:
+                raise StopAsyncIteration
+
+            async def get_final_message(self) -> AnthropicMessage:
+                return message
+
+        return Stream()
+
+    monkeypatch.setattr(anthropic.resources.messages.messages.AsyncMessages, "stream", scripted_stream)
+
     async def serve(asgi_app: Any, config: Any) -> None:
+        # After the graph is built: installed earlier, the aiohttp fake breaks google.genai while it is constructed.
+        fake = http_boundary_fake.install(monkeypatch)
+        fake.todo_empty_account()
+        fake.gmail_empty()
+        boot.http = fake
         try:
             await _probe(apps[-1], asgi_app, boot, caplog)
         except BaseException as exc:  # main() swallows what the served task raises
@@ -466,9 +582,57 @@ def _check_platform_workers(boot: Boot) -> List[str]:
     return problems
 
 
+def _last_message_text(call: dict) -> str:
+    content = call["messages"][-1]["content"]
+    if isinstance(content, str):
+        return content
+    return " ".join(block.get("text", "") for block in content if isinstance(block, dict))
+
+
+def _check_seeded_rows(boot: Boot) -> List[str]:
+    """The user-visible outcome of the five seeded rows: what crossed each boundary and what was stored."""
+    problems = []
+    if boot.http is None:
+        problems.append("no HTTP fake")
+    else:
+        problems += [f"unrouted HTTP request: {r.method} {r.url}" for r in boot.http.unrouted]
+        seen = Counter((r.method, r.url.split("?")[0]) for r in boot.http.requests)
+        if seen != SEEDED_HTTP:
+            problems.append(f"HTTP requests differ: missing {dict(SEEDED_HTTP - seen)}, extra {dict(seen - SEEDED_HTTP)}")
+    config = boot.todo_config
+    subscriptions = [(s.sub_id, s.list_id) for s in config.subscriptions] if config is not None else None
+    if config is None or config.primary_list_id != "l1" or subscriptions != [("s1", "l1")]:
+        problems.append(f"To Do config: primary list {getattr(config, 'primary_list_id', None)!r}, subscriptions {subscriptions}")
+    reindex = {"task_type": "reindex_task_list", "user_id": "u1", "list_id": "l1"}
+    renew = {"task_type": "renew_task_subscriptions", "user_id": "u1"}
+    for body in (reindex, renew):
+        if boot.task_bodies.count(body) != 1:
+            problems.append(f"{boot.task_bodies.count(body)} Cloud Tasks bodies equal {body}, wanted 1")
+    status = getattr(boot.indexing_job, "status", None)
+    if status != "completed":
+        problems.append(f"the seeded indexing job is {status!r}, not completed")
+    if boot.slack_posts != [("C1", DR_FAILED_REPLY), ("C1", DR_CANCELLED_REPLY)]:
+        problems.append(f"Slack received {boot.slack_posts}")
+    if len(boot.claude_calls) != 2:
+        problems.append(f"Claude was called {len(boot.claude_calls)} times, wanted 2")
+    else:
+        for call, notice in zip(boot.claude_calls, (research_failed_notice(DR_QUERY), cancelled_notice(DR_QUERY))):
+            if notice not in _last_message_text(call):
+                problems.append(f"a Claude request does not carry {notice!r}")
+            if "deliver_response" not in [tool.get("name") for tool in call.get("tools") or []]:
+                problems.append("a Claude request does not declare the deliver_response tool")
+    expected_history = [
+        ("user", research_failed_notice(DR_QUERY), None), ("model", DR_FAILED_SUMMARY, DR_FAILED_REPLY),
+        ("user", cancelled_notice(DR_QUERY), None), ("model", DR_CANCELLED_SUMMARY, DR_CANCELLED_REPLY),
+    ]
+    if boot.history != expected_history:
+        problems.append(f"history of u1:C1 is {boot.history}")
+    return problems
+
+
 CHECKS = [
     _check_startup, _check_served_app, _check_agent_task_queue, _check_url_map, _check_blueprint_calls, _check_cabinet_repository,
-    _check_seed, _check_matrix, _check_platform_workers,
+    _check_seed, _check_matrix, _check_platform_workers, _check_seeded_rows,
 ]
 
 
@@ -569,7 +733,8 @@ def test_a_configuration_refusal_is_a_problem_whatever_the_pinned_table_says(sta
     assert any(p.startswith("consolidation: a configuration refusal") for p in _check_matrix(boot))
 
 
-def test_a_pinned_cause_must_be_in_the_logs_of_its_row():
+def test_a_pinned_cause_must_be_in_the_logs_of_its_row(monkeypatch):
+    monkeypatch.setitem(MATRIX, "setup_microsoft_todo", Expect(500, None, exception="ValueError('No MS To Do credentials for user u1')"))
     boot = _matrix_boot()
     problems = _check_matrix(boot)
     assert any(p.startswith("daily_email_review: no log record contains") for p in problems)
@@ -647,3 +812,67 @@ def test_the_slack_worker_must_belong_to_an_adapter_that_serves_the_shared_app(m
 
     assert _check_platform_workers(worker(start_shared_app)) == []
     assert any("start_shared_app" in p for p in _check_platform_workers(worker(lambda: None)))
+
+
+# ----------------------------------------------------------------------------- the seeded rows' own tests
+
+def _seeded_http(extra: Tuple[Tuple[str, str], ...] = (), unrouted: Tuple[Tuple[str, str], ...] = ()) -> Any:
+    return SimpleNamespace(
+        requests=[SimpleNamespace(method=m, url=u) for (m, u) in [*SEEDED_HTTP.elements(), *extra]],
+        unrouted=[SimpleNamespace(method=m, url=u) for (m, u) in unrouted])
+
+
+def _claude_call(notice: str) -> dict:
+    return {"messages": [{"role": "user", "content": [{"type": "text", "text": notice}]}],
+            "tools": [{"name": "deliver_response"}]}
+
+
+_REINDEX = {"task_type": "reindex_task_list", "user_id": "u1", "list_id": "l1"}
+_RENEW = {"task_type": "renew_task_subscriptions", "user_id": "u1"}
+_HISTORY = [
+    ("user", research_failed_notice(DR_QUERY), None), ("model", DR_FAILED_SUMMARY, DR_FAILED_REPLY),
+    ("user", cancelled_notice(DR_QUERY), None), ("model", DR_CANCELLED_SUMMARY, DR_CANCELLED_REPLY),
+]
+
+
+def _seeded_boot(**overrides: Any) -> Boot:
+    """A Boot holding exactly what `_check_seeded_rows` expects; an override breaks one item."""
+    fields: Dict[str, Any] = dict(
+        http=_seeded_http(),
+        todo_config=SimpleNamespace(primary_list_id="l1", subscriptions=[SimpleNamespace(sub_id="s1", list_id="l1")]),
+        task_bodies=[dict(_REINDEX), dict(_RENEW)],
+        indexing_job=SimpleNamespace(status="completed"),
+        slack_posts=[("C1", DR_FAILED_REPLY), ("C1", DR_CANCELLED_REPLY)],
+        claude_calls=[_claude_call(research_failed_notice(DR_QUERY)), _claude_call(cancelled_notice(DR_QUERY))],
+        history=list(_HISTORY),
+    )
+    fields.update(overrides)
+    return Boot(**fields)
+
+
+def test_the_seeded_rows_pass_with_their_outcomes():
+    assert _check_seeded_rows(_seeded_boot()) == []
+
+
+@pytest.mark.parametrize("overrides", [
+    pytest.param(dict(http=None), id="no-http-fake"),
+    pytest.param(dict(http=_seeded_http(unrouted=(("GET", "https://example.test/x"),))), id="unrouted-request"),
+    pytest.param(dict(http=_seeded_http(extra=(("GET", f"{_GMAIL_URL}/messages"),))), id="extra-get"),
+    pytest.param(dict(todo_config=SimpleNamespace(primary_list_id="l1", subscriptions=[
+        SimpleNamespace(sub_id="s1", list_id="l1"), SimpleNamespace(sub_id="s2", list_id="l1")])), id="second-subscription"),
+    pytest.param(dict(task_bodies=[dict(_REINDEX), dict(_REINDEX), dict(_RENEW)]), id="second-reindex-body"),
+    pytest.param(dict(indexing_job=SimpleNamespace(status="running")), id="job-running"),
+    pytest.param(dict(slack_posts=[("C1", DR_FAILED_REPLY)]), id="slack-without-cancelled-reply"),
+    pytest.param(dict(claude_calls=[_claude_call(research_failed_notice(DR_QUERY))]), id="one-claude-call"),
+    pytest.param(dict(history=list(_HISTORY[:2])), id="history-without-second-pair"),
+])
+def test_a_seeded_row_outcome_that_is_missing_is_a_problem(overrides):
+    assert _check_seeded_rows(_seeded_boot(**overrides))
+
+
+def test_a_pinned_exception_found_in_a_row_record_is_not_a_problem(monkeypatch):
+    cause = "No MS To Do credentials for user u1"
+    monkeypatch.setitem(MATRIX, "setup_microsoft_todo", Expect(500, None, exception=f"ValueError('{cause}')"))
+    record = logging.LogRecord("root", logging.ERROR, __file__, 1, "setup failed", None, (ValueError, ValueError(cause), None))
+    problems = _check_matrix(_matrix_boot(setup_microsoft_todo=Row(500, None, [record])))
+    assert not [p for p in problems if p.startswith("setup_microsoft_todo:")]

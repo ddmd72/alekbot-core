@@ -151,7 +151,8 @@ The main service's non-web objects are built by `build_application_graph(config,
   type or payload key is added on both sides or listed in the test's allowlist with a reason.
 - **The boot test** (`tests/unit/test_main_boots_offline.py`): runs the real `main()` offline, pins the full `url_map`
   (`main_boots_offline_url_map.txt`) and the keywords of every blueprint factory call, and sends every trigger through `/worker`
-  against a pinned per-type table. `tests/unit/test_worker_triggers.py` ties the scheduler script and the enqueue sites to
+  against a pinned per-type table. Five rows are seeded in `_probe` (`_seed_rows`); seeding stays in `_probe` because
+  `test_worker_redelivery_route.py` replaces it and needs unseeded rows. `tests/unit/test_worker_triggers.py` ties the scheduler script and the enqueue sites to
   `WorkerHandler`'s branches; `tests/unit/test_main_construction_allowlist.py` limits what `main.py` may construct itself.
 - **The ledgers** (`tests/unit/composition/wiring_none_ledger.txt`, `wiring_instance_ledger.txt`; checks in `tests/support/wiring_ledger.py`):
   every `None` the walk finds and every instance count is listed with a reason; both fail **both ways** (an unlisted `None` or count,
@@ -247,6 +248,49 @@ never a condition of "done".
   mechanically, and a lock is never a reason alone: it comes only as `cross-request-by-design+lock-guarded` or `lazy-cache+lock-guarded`. A line is
   `<path>::<Class>.<method>::<key>  # <reason> <evidence, at least two words>` (the key is the dotted attribute path up to the first subscript or call,
   no line numbers). It fails both ways (a write with no line; a line whose write is gone).
+
+## Service seams (P13)
+
+- **`tests/support/seam_world.py`** is the world for a test that crosses a service seam from an entry path (`/worker`, `AgentWorkerHandler`,
+  `ConversationHandler`): the production services between the handler and the agent (`AgentCoordinator`, `UserNotificationService`,
+  `DocumentDeliveryService`, `TaskDispatchService`, `RemindersService`, `WorkerHandler`, the session store), wired as `build_application_graph`
+  wires them (the deltas are in the module docstring), with scripted stand-in agents registered in the real coordinator, recording channels,
+  media ports and Cloud Tasks client, all on one `EvalDb`. Use it; do not build a second one. Its self-test is `tests/unit/support/test_seam_world.py`.
+- **Set the primary channel and make the origin differ from it**, so a dropped `origin_channel_id` / `origin_platform` lands the result
+  somewhere else and the test sees it. Assert the outcome the boundary recorded (the channel and text posted, the history pair, the Cloud
+  Task body), not a call.
+- **A stand-in that runs out of steps is swallowed**: the coordinator turns the `RuntimeError` into a failed turn. Every pin, and every
+  control whose pass could come from an exhausted script, starts with `require(not world.unscripted(), ...)`. Strict xfails follow the
+  rules of "Redelivery and interleaving (P15)" (`require` for preconditions, the outcome assert last).
+- **The PromptBuilder and SearchEnrichment seams** run through the real Smart and Router: `tests/unit/agents/core/test_smart_prompt_enrichment_seam.py`
+  (real `PromptBuilder` over a seeded prompt store, `tests/support/prompt_seed.py`; the Smart is built with `tests/support/tool_e2e.smart_rig`).
+- Files: `tests/unit/handlers/test_seam_worker_notices.py` (worker notices and video), `test_seam_agent_worker_delivery.py`,
+  `test_seam_chat_turn.py`, `test_seam_background_runs.py`. Open defects are strict xfails with their `P13-D<n>` id
+  (`TEST_COVERAGE_SYSTEMIC_RFC.md` -> "Built (P13)").
+
+## Tool fields (P14)
+
+- **`tests/unit/agents/tool_field_ledger.txt`** has one sorted line per field a model can send to a tool that writes something:
+  `<surface>:<tool>.<path>  # <class> <evidence>`. `tests/support/tool_fields.py` `declared()` enumerates the fields from the production tool
+  declarations; `tests/unit/agents/test_every_tool_field_is_stored_or_refused.py` fails both ways (a declared field with no line, a line for
+  a field no longer declared) and checks every reference.
+- **Classes:** `stored <ref>` (the referenced test asserts the stored effect), `refused <ref>`, `noted <ref>` (not used, and named in the tool
+  result), `prompt-input <ref>` (reaches the model request and is stored nowhere), `verification <ref>` (checked, never stored),
+  `read-only <reason>` (only a tool in `READ_ONLY` or a field in `READ_ONLY_FIELDS` of `tests/support/tool_fields.py`), `defect:P14-D<n> <ref>`
+  (the declared field is itself the defect; its test is a strict xfail carrying that id). A `<ref>` is `<repo path>::<test name>`, lives in
+  the surface's own e2e file and, except for `defect:`, is not an xfail; the field's leaf name must occur in the test's body or in a module-level
+  constant or builder function it loads.
+- **Add a field:** send it in a scripted call of the surface's e2e file (a module constant, or a module-level builder when ids exist only
+  after seeding), assert its stored effect in a test there, then add the ledger line in sorted order.
+- **The harness:** `tests/support/scripted_llm.py` scripts only the model; the agent's tool loop runs for real. A script that runs out raises
+  `ScriptExhausted` (a `RuntimeError`, never an `AssertionError`, so a strict xfail does not swallow it) and counts in `unanswered`; **every test
+  ends with the two script facts**, `llm.unanswered == 0 and llm.pending() == 0` (`require` them inside a strict xfail); each e2e file has one
+  `test_the_scripted_calls_use_every_declared_field` (`unused(surface, tool, calls) == []` per tool), which a new field also fails. `tests/support/tool_e2e.smart_rig` builds a real Smart over a scripted
+  model; P13 card F uses its keywords.
+- Files: `test_consolidation_tool_fields_e2e.py`, `test_notes_agent_tool_fields_e2e.py`, `test_tasks_agent_tool_fields_e2e.py`,
+  `test_file_management_drive_tool_fields_e2e.py` (`tests/unit/agents/`), `core/test_smart_local_tools_e2e.py`,
+  `tests/unit/services/test_fact_review_tool_fields_e2e.py`. Open defects are strict xfails with their `P14-D<n>` id
+  (`TEST_COVERAGE_SYSTEMIC_RFC.md` -> "Built (P14)").
 
 ## Markers and the machine lock (P1, `tests/plugins/`)
 

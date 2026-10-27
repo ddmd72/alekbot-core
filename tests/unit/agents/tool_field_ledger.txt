@@ -1,0 +1,158 @@
+# One line per declared tool field: <surface>:<tool>.<path>  # <class> <evidence>
+# Read by test_every_tool_field_is_stored_or_refused.py (its docstring holds the classes and the rules).
+
+consolidation:count_words.text  # read-only reading tool, writes nothing
+consolidation:create_fact.content  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.context  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.context_priority  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.derived_from  # noted tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.domain  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.expiry.date  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.expiry.days  # noted tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.expiry.kind  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.metadata  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.reported_date  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.state  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.tags  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:create_fact.fact_attributes.temporal_class  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_create_fact_writes_every_attribute
+consolidation:merge_facts.fact_attributes.context  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_attributes.context_priority  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_attributes.domain  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_attributes.expiry.date  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_attributes.expiry.days  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_attributes.expiry.kind  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_attributes.metadata  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_attributes.reported_date  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_attributes.state  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_into_a_closed_fact
+consolidation:merge_facts.fact_attributes.tags  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_attributes.temporal_class  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.fact_ids  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:merge_facts.merged_content  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_merge_facts_writes_every_attribute
+consolidation:search_existing_facts.alternative_query  # read-only reading tool, writes nothing
+consolidation:search_existing_facts.keywords  # read-only reading tool, writes nothing
+consolidation:search_existing_facts.limit  # read-only reading tool, writes nothing
+consolidation:search_existing_facts.primary_query  # read-only reading tool, writes nothing
+consolidation:update_fact.fact_id  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_update_fact_content_change_writes_a_version_with_every_field
+consolidation:update_fact.updates.content  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_update_fact_content_change_writes_a_version_with_every_field
+consolidation:update_fact.updates.expiry.date  # noted tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_update_fact_supersede_and_close
+consolidation:update_fact.updates.expiry.days  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_update_fact_content_change_writes_a_version_with_every_field
+consolidation:update_fact.updates.expiry.kind  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_update_fact_content_change_writes_a_version_with_every_field
+consolidation:update_fact.updates.metadata  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_update_fact_content_change_writes_a_version_with_every_field
+consolidation:update_fact.updates.reported_date  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_update_fact_content_change_writes_a_version_with_every_field
+consolidation:update_fact.updates.state  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_update_fact_supersede_and_close
+consolidation:update_fact.updates.superseded_by  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_update_fact_supersede_and_close
+consolidation:update_fact.updates.tags  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_update_fact_content_change_writes_a_version_with_every_field
+consolidation:update_fact.updates.temporal_class  # stored tests/unit/agents/test_consolidation_tool_fields_e2e.py::test_update_fact_content_change_writes_a_version_with_every_field
+consolidation_review:ask_owner.fact_id  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.fallback  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.folds  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.noise  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.question  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.texts.happened  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.texts.not_happened  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.texts.not_needed  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.texts.not_paid  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.texts.not_renewed  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.texts.paid  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.texts.renewed  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:ask_owner.texts.unknown  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_asks_of_every_kind_store_their_questions_texts_fallbacks_and_folds
+consolidation_review:count_words.text  # read-only reading tool, writes nothing
+consolidation_review:update_fact.as_history  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_history_rewrite_of_a_routine_invoice_queues_its_digest_question
+consolidation_review:update_fact.basis.date  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_history_rewrite_of_a_routine_invoice_queues_its_digest_question
+consolidation_review:update_fact.basis.evidence_fact_id  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
+consolidation_review:update_fact.basis.kind  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
+consolidation_review:update_fact.basis.question_id  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_an_archive_on_the_owners_reply_writes_the_history_fact
+consolidation_review:update_fact.basis.quote  # verification tests/unit/services/test_fact_review_tool_fields_e2e.py::test_an_archive_on_the_owners_reply_writes_the_history_fact
+consolidation_review:update_fact.fact_id  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
+consolidation_review:update_fact.history  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_an_archive_on_the_owners_reply_writes_the_history_fact
+consolidation_review:update_fact.payment.not_paid  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_history_rewrite_of_a_routine_invoice_queues_its_digest_question
+consolidation_review:update_fact.payment.paid  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_history_rewrite_of_a_routine_invoice_queues_its_digest_question
+consolidation_review:update_fact.updates.content  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
+consolidation_review:update_fact.updates.expiry.date  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_supersede_and_a_revive_with_a_date_expiry
+consolidation_review:update_fact.updates.expiry.days  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
+consolidation_review:update_fact.updates.expiry.kind  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
+consolidation_review:update_fact.updates.metadata  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
+consolidation_review:update_fact.updates.state  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
+consolidation_review:update_fact.updates.superseded_by  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_supersede_and_a_revive_with_a_date_expiry
+consolidation_review:update_fact.updates.tags  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
+consolidation_review:update_fact.updates.temporal_class  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
+delegate:create_folder_in_drive.folder  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_create_folder
+delegate:delete_file_from_drive.file_ref  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_delete_from_drive
+delegate:list_files_in_drive.folder  # read-only reading tool, writes nothing
+delegate:manage_self_reminders.workspace_file  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
+delegate:manage_user_tasks.background  # prompt-input tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_background_reaches_the_task_agents_prompt
+delegate:move_file_in_drive.file_ref  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_move_with_folder_and_new_name
+delegate:move_file_in_drive.folder  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_move_with_folder_and_new_name
+delegate:move_file_in_drive.new_name  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_move_with_folder_and_new_name
+delegate:open_file_from_drive.file_ref  # read-only reading tool, writes nothing
+delegate:open_file_from_drive.original  # read-only reading tool, writes nothing
+delegate:save_file_to_drive.file_ref  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_save_a_chat_file_with_name_and_folder
+delegate:save_file_to_drive.folder  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_save_text_with_name_and_folder
+delegate:save_file_to_drive.name  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_save_text_with_name_and_folder
+delegate:save_file_to_drive.text  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_save_text_with_name_and_folder
+delegate:update_file_in_drive.append_text  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_update_append_text_and_replace_with_source_ref
+delegate:update_file_in_drive.file_ref  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_update_append_text_and_replace_with_source_ref
+delegate:update_file_in_drive.source_ref  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_update_append_text_and_replace_with_source_ref
+notes:create_self_reminder.complexity  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
+notes:create_self_reminder.due  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
+notes:create_self_reminder.instruction  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
+notes:create_self_reminder.recurrence  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
+notes:create_self_reminder.text  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
+notes:delete_self_reminder.note_id  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_delete_removes_the_note
+notes:update_self_reminder.clear_recurrence  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_update_with_every_field_and_workspace_file_remove
+notes:update_self_reminder.complexity  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_update_with_every_field_and_workspace_file_remove
+notes:update_self_reminder.due  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_update_with_every_field_and_workspace_file_remove
+notes:update_self_reminder.instruction  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_update_with_every_field_and_workspace_file_remove
+notes:update_self_reminder.note_id  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_update_with_every_field_and_workspace_file_remove
+notes:update_self_reminder.recurrence  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_update_with_every_field_and_workspace_file_remove
+notes:update_self_reminder.text  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_update_with_every_field_and_workspace_file_remove
+smart_local:draft_skill.body  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_a_skill_draft_stores_name_description_body_and_every_kind_of_file_change
+smart_local:draft_skill.description  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_a_skill_draft_stores_name_description_body_and_every_kind_of_file_change
+smart_local:draft_skill.files[].content  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_a_skill_draft_stores_name_description_body_and_every_kind_of_file_change
+smart_local:draft_skill.files[].from_file  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_a_skill_draft_stores_name_description_body_and_every_kind_of_file_change
+smart_local:draft_skill.files[].path  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_a_skill_draft_stores_name_description_body_and_every_kind_of_file_change
+smart_local:draft_skill.files[].remove  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_a_skill_draft_stores_name_description_body_and_every_kind_of_file_change
+smart_local:draft_skill.name  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_a_skill_draft_stores_name_description_body_and_every_kind_of_file_change
+smart_local:propose_memory_facts.facts[].source  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_proposed_facts_are_drafted_and_reach_the_session_on_save
+smart_local:propose_memory_facts.facts[].text  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_proposed_facts_are_drafted_and_reach_the_session_on_save
+smart_local:workspace.command  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+smart_local:workspace.content  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+smart_local:workspace.generation  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+smart_local:workspace.limit  # read-only view window, never stored
+smart_local:workspace.new_path  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+smart_local:workspace.new_str  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+smart_local:workspace.offset  # read-only view window, never stored
+smart_local:workspace.old_str  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+smart_local:workspace.path  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+smart_local:workspace.source  # stored tests/unit/agents/core/test_smart_local_tools_e2e.py::test_workspace_commands_land_in_the_bucket
+tasks:create_task.body  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:create_task.due_datetime  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:create_task.importance  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:create_task.recurrence.day_of_month  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:create_task.recurrence.days_of_week  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:create_task.recurrence.interval  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:create_task.recurrence.month  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:create_task.recurrence.pattern  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:create_task.reminder_datetime  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:create_task.start_datetime  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:create_task.tags  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:create_task.title  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_create_with_every_field_reaches_graph_and_the_index
+tasks:delete_task.task_ref  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_delete_removes_the_task_and_its_index_entry
+tasks:list_tasks.show_completed  # read-only reading tool, writes nothing
+tasks:search_tasks.query  # read-only reading tool, writes nothing
+tasks:search_tasks.show_completed  # read-only reading tool, writes nothing
+tasks:update_task.body  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.due_datetime  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.importance  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.is_reminder_on  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.recurrence.day_of_month  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.recurrence.days_of_week  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.recurrence.interval  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.recurrence.month  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.recurrence.pattern  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.reminder_datetime  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.start_datetime  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.status  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.tags  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.task_ref  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index
+tasks:update_task.title  # stored tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_update_with_every_field_reaches_graph_and_the_index

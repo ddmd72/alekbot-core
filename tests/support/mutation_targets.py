@@ -190,6 +190,28 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.adapters.firestore_indexed_email_repo", "tests/unit/adapters/firestore_indexed_email_repo_equivalent_mutants.txt"),
     MutationTarget("src.adapters.firestore_user_repo", "tests/unit/adapters/firestore_user_repo_equivalent_mutants.txt"),
     MutationTarget("src.adapters.firestore_notification_state_adapter", "tests/unit/adapters/firestore_notification_state_adapter_equivalent_mutants.txt"),
+    # P13 (service seams): one equivalent file each. video_generation_delivery also takes the seam file that exercises it through src/ (reviewer note).
+    MutationTarget("src.services.user_notification_service", "tests/unit/services/user_notification_service_equivalent_mutants.txt"),
+    MutationTarget("src.services.task_dispatch_service", "tests/unit/services/task_dispatch_service_equivalent_mutants.txt"),
+    MutationTarget("src.services.document_delivery_service", "tests/unit/services/document_delivery_service_equivalent_mutants.txt"),
+    MutationTarget("src.services.deep_research_delivery", "tests/unit/services/deep_research_delivery_equivalent_mutants.txt"),
+    MutationTarget("src.services.video_generation_delivery", "tests/unit/services/video_generation_delivery_equivalent_mutants.txt",
+                   extra=("tests/unit/handlers/test_seam_worker_notices.py",)),
+    MutationTarget("src.infrastructure.agent_coordinator", "tests/unit/infrastructure/agent_coordinator_equivalent_mutants.txt"),
+    MutationTarget("src.handlers.agent_worker_handler", "tests/unit/handlers/agent_worker_handler_equivalent_mutants.txt"),
+    MutationTarget("src.handlers.conversation_handler", "tests/unit/handlers/conversation_handler_equivalent_mutants.txt"),
+    MutationTarget("src.services.prompt_builder", "tests/unit/services/prompt_builder_equivalent_mutants.txt"),
+    MutationTarget("src.services.search_enrichment_service", "tests/unit/services/search_enrichment_service_equivalent_mutants.txt"),
+    MutationTarget("src.agents.core.router_agent", "tests/unit/agents/core/router_agent_equivalent_mutants.txt"),
+    # P14 (scripted-LLM tool fields): one equivalent file each, next to the e2e file that tests the module.
+    MutationTarget("src.agents.notes_agent", "tests/unit/agents/notes_agent_equivalent_mutants.txt"),
+    MutationTarget("src.agents.tasks_agent", "tests/unit/agents/tasks_agent_equivalent_mutants.txt"),
+    MutationTarget("src.agents.file_management_agent", "tests/unit/agents/file_management_agent_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.fact_management_adapter", "tests/unit/agents/fact_management_adapter_equivalent_mutants.txt"),
+    MutationTarget("src.infrastructure.fact_review_scope", "tests/unit/services/fact_review_scope_equivalent_mutants.txt"),
+    MutationTarget("src.infrastructure.memory_fact_tools", "tests/unit/agents/core/memory_fact_tools_equivalent_mutants.txt"),
+    MutationTarget("src.infrastructure.skill_tools", "tests/unit/agents/core/skill_tools_equivalent_mutants.txt"),
+    MutationTarget("src.infrastructure.workspace_tools", "tests/unit/agents/core/workspace_tools_equivalent_mutants.txt"),
 )
 
 
