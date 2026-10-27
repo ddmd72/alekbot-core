@@ -21,6 +21,15 @@ from ..utils.logger import logger
 
 
 class FirestoreTaskConfigRepository(TaskConfigPort):
+    """Firestore mechanics behind the port's contract.
+
+    Collection `EnvironmentConfig.task_config_collection` (`{prefix}task_config`), document id `user_id`, fields
+    `primary_list_id` and `subscriptions: [{sub_id, list_id, expires_at}]`. No query is issued, so no index is needed.
+    `save_config` is a plain `set` of the whole document. `set_primary_list_id_if_absent` is one Firestore transaction
+    (read, then `set` with merge so the subscriptions stay); a commit that lost to another writer aborts and the body
+    re-runs against the winner's value. A stored datetime comes back as `DatetimeWithNanoseconds` and is rebuilt as a
+    naive plain `datetime`. `_strip_tz` has no caller.
+    """
 
     def __init__(self, db_client, env_config: EnvironmentConfig) -> None:
         self.db = db_client
