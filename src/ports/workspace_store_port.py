@@ -38,7 +38,7 @@ class WorkspaceStorePort(ABC):
         self, user_id: str, path: str, data: bytes, meta: WorkspaceWriteMeta, if_generation_match: int,
     ) -> WorkspaceEntry:
         """Write a new live version; the previous one becomes noncurrent. Stamps origin, fire, restored_from and a
-        fresh write_id; customTime only under scratch/.
+        fresh write_id; a scratch/ version expires 7 days after its last write.
         Atomicity: one conditional write; of two writers holding the same generation exactly one wins.
         Idempotency: a client retry of a write that landed is success (its write_id is read back), never a conflict;
         a repeated call with the same generation is WorkspaceConflict.
@@ -49,9 +49,9 @@ class WorkspaceStorePort(ABC):
     async def delete(self, user_id: str, path: str, if_generation_match: int, meta: WorkspaceDeleteMeta) -> None:
         """Stamp `meta` (deleted_by, deleted_fire, renamed_to, a fresh delete_id; absent keys cleared) on the live
         version, then make it noncurrent (still restorable; never erased).
-        Atomicity: two requests (metadata patch, delete), both conditional on the same generation. A delete that
-        raises leaves no deleted_* stamp on a version another write makes noncurrent (P11-G4-1: not yet true when
-        that write lands between the two requests). A delete that fails for another reason may leave the stamp on the
+        Atomicity: stamp, then make noncurrent: two steps, each conditional on the generation. A delete that raises
+        leaves no deleted_* stamp on a version another write makes noncurrent (P11-G4-1: not yet true when that
+        write lands between the two steps). A delete that fails for another reason may leave the stamp on the
         still-live version (§5.3 residual; renderers ignore it on live objects).
         Idempotency: a client retry of a delete that landed is success (its delete_id is read back); a second call
         raises FileNotFoundError.

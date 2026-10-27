@@ -37,11 +37,12 @@ def test_generations_increase_per_bucket_and_metageneration_starts_at_one(gcs):
 def test_an_undeclared_bucket_is_not_found(gcs):
     bucket = gcs.client().bucket("other-test")
     blob = bucket.blob(NAME)
-    for call in (lambda: blob.upload_from_string(b"x"), blob.download_as_bytes, blob.exists, blob.delete,
+    for call in (lambda: blob.upload_from_string(b"x"), blob.download_as_bytes, blob.delete,
                  blob.patch, blob.reload, lambda: list(bucket.list_blobs())):
         with pytest.raises(NotFound):
             call()
     assert bucket.get_blob(NAME) is None            # the SDK's get_blob turns any NotFound into None
+    assert blob.exists() is False                   # and its exists() into False; the next write raises
     with pytest.raises(ValueError):
         FakeGcs(buckets={U: "archive"})
 
@@ -96,6 +97,38 @@ def test_unmodelled_or_misspelt_parameters_are_type_errors(gcs):
 
 
 # 4 ------------------------------------------------------------------------- unloaded blobs and the generation
+
+def test_parameters_after_the_name_are_keyword_only(gcs):
+    """The SDK's second positional parameter is not the generation (`blob(name, 1001)` is a chunk size there)."""
+    a = put(gcs, V, b"v1")
+    bucket = gcs.client().bucket(V)
+    for call in (lambda: bucket.blob(NAME, a.generation), lambda: bucket.get_blob(NAME, a.generation),
+                 lambda: gcs.client().list_blobs(V, "u1/"), lambda: bucket.list_blobs("u1/"),
+                 lambda: bucket.blob(NAME).delete(a.generation), lambda: bucket.blob(NAME).patch(a.generation),
+                 lambda: bucket.blob(NAME).upload_from_string(b"x", "text/plain", None)):
+        with pytest.raises(TypeError):
+            call()
+
+
+@pytest.mark.parametrize("prop", ["generation", "metageneration", "size", "time_created", "updated", "time_deleted"])
+def test_server_set_properties_are_read_only(gcs, prop):
+    blob = put(gcs, V, b"v1")
+    with pytest.raises(AttributeError):
+        setattr(blob, prop, 5)
+
+
+def test_an_upload_through_a_loaded_blob_sends_only_what_was_set_since(gcs):
+    first = gcs.client().bucket(V).blob(NAME)
+    first.metadata = {"origin": "chat"}
+    first.custom_time = FAKE_EPOCH
+    first.upload_from_string(b"v1")
+    loaded = gcs.client().bucket(V).get_blob(NAME)
+    loaded.upload_from_string(b"v2")
+    assert (gcs.live(V, NAME).metadata, gcs.live(V, NAME).custom_time) == ({}, None)
+    loaded.metadata = {"origin": "background:execute_reminder"}
+    loaded.upload_from_string(b"v3")
+    assert gcs.live(V, NAME).metadata == {"origin": "background:execute_reminder"}
+
 
 def test_a_blob_is_unloaded_until_a_response_loads_it(gcs):
     put(gcs, V, b"abc", content_type="text/markdown")
@@ -398,11 +431,12 @@ def test_signed_url_is_deterministic_recorded_and_needs_no_object(gcs):
 def test_signed_url_over_seven_days_is_refused(gcs):
     blob = gcs.client().bucket(U).blob("docs/u1/FA-0137.pdf")
     blob.generate_signed_url(version="v4", expiration=timedelta(days=7), method="GET")
+    blob.generate_signed_url(version="v4", expiration=timedelta(days=7, microseconds=500000), method="GET")  # whole seconds
     with pytest.raises(ValueError):
         blob.generate_signed_url(version="v4", expiration=timedelta(days=7, seconds=1), method="GET")
     with pytest.raises(NotImplementedError):
         blob.generate_signed_url(version="v4", expiration=300, method="GET")
-    assert len(gcs.signed_urls) == 1
+    assert len(gcs.signed_urls) == 2
 
 
 def test_install_patches_the_storage_client(gcs, monkeypatch):

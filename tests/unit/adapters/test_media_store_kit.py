@@ -131,14 +131,18 @@ async def test_signed_url_with_runtime_credentials_signs_through_iam(monkeypatch
         "runtime-sa@example.com", "access-token", timedelta(seconds=60))
 
 
-async def test_signed_url_without_ambient_credentials_lets_the_client_sign(monkeypatch, fake, store):
+async def test_signed_url_without_ambient_credentials_sends_no_iam_signer(monkeypatch, fake, store):
+    """Pins only the signing request. The real client then signs with what it holds, or raises (with no ambient
+    credentials `storage.Client()` itself would already have raised: this branch is reachable only when the client
+    was built with credentials of its own); the fake client's URL describes nothing real."""
     def no_credentials(*args, **kwargs):
         raise google.auth.exceptions.DefaultCredentialsError("none")
 
     monkeypatch.setattr(google.auth, "default", no_credentials)
-    assert await store.generate_signed_url(KEY, 60)
+    await store.generate_signed_url(KEY, 60)
     [request] = fake.signed_urls
-    assert request["service_account_email"] is None and request["expiration"] == timedelta(seconds=60)
+    assert (request["service_account_email"], request["access_token"], request["expiration"]) == (
+        None, None, timedelta(seconds=60))
 
 
 async def test_signed_url_with_an_unknown_signer_is_a_runtime_error(monkeypatch, fake, store):

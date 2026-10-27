@@ -147,6 +147,17 @@ def generation_addressed_delete_erases_that_version(client: Any, bucket: str, p:
         len(_versions(client, bucket, f"{p}a.md"))
 
 
+def delete_after_patch_through_the_same_blob_erases_the_version(client: Any, bucket: str, p: str) -> Any:
+    """The SDK loads the generation from the patch response and sends it with the delete (AGENT_WORKSPACE_RFC §5.3)."""
+    blob = _put(client, bucket, f"{p}a.md", b"v1")
+    patched = client.bucket(bucket).blob(f"{p}a.md")
+    patched.metadata = {"deleted_by": "chat"}
+    patched.patch(if_generation_match=blob.generation)
+    patched.delete(if_generation_match=blob.generation)
+    return client.bucket(bucket).get_blob(f"{p}a.md", generation=blob.generation) is None, \
+        len(_versions(client, bucket, f"{p}a.md"))
+
+
 def conditional_delete_of_a_missing_object(client: Any, bucket: str, p: str) -> str:
     return _outcome(lambda: client.bucket(bucket).blob(f"{p}never.md").delete(if_generation_match=5))
 
@@ -203,6 +214,7 @@ SCENARIOS = [
     Scenario(custom_time_moved_earlier_is_refused, "BadRequest"),
     Scenario(conditional_delete_of_live_keeps_a_readable_noncurrent_version, (True, b"v1")),
     Scenario(generation_addressed_delete_erases_that_version, (True, 0)),
+    Scenario(delete_after_patch_through_the_same_blob_erases_the_version, (True, 0)),
     Scenario(conditional_delete_of_a_missing_object, "NotFound", p12=True),
     Scenario(stale_conditional_delete_is_refused_and_leaves_the_object, ("PreconditionFailed", b"v2")),
     Scenario(exists_when_only_noncurrent_versions_exist, False),

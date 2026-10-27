@@ -54,8 +54,8 @@ class MediaStoragePort(ABC):
         Returns:
             Raw object bytes.
 
-        Errors: FileNotFoundError when the key does not exist (lifecycle: email_review/ 5 days,
-        else 30) (P11-G4-4: today the SDK's NotFound leaks); other storage errors propagate.
+        Errors: FileNotFoundError when the key does not exist (delivered objects expire)
+        (P11-G4-4: today the SDK's NotFound leaks); other storage errors propagate.
         """
 
     @abstractmethod
@@ -77,7 +77,7 @@ class MediaStoragePort(ABC):
         Returns:
             Time-limited HTTPS URL to the object.
 
-        A V4 GET URL valid `ttl_seconds`, signed as the runtime identity (IAM signBlob when the
-        credential cannot sign locally). Does not check that the object exists.
+        A time-limited GET URL, valid `ttl_seconds`, signed as the runtime identity. Does not
+        check that the object exists.
         Errors: RuntimeError when the signer's email is unknown.
         """

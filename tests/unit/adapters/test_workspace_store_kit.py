@@ -2,7 +2,8 @@
 a versioned bucket). The contract test (test_workspace_store_contract.py) already covers create, overwrite, stale
 writes, delete, exact names, isolation, the meta round-trip and the read-backs; this kit adds the axes it lacks:
 tenancy at the prefix boundary, listing contents, legacy objects, write fields, reads of old and vanished versions,
-idempotency of delete, and the stamp a failed delete leaves (P11-G4-1)."""
+idempotency of delete, and the stamp a failed delete leaves (P11-G4-1). The `put` generation precondition is held by
+the contract test (create on an existing path, stale overwrite), not by this kit."""
 import pytest
 
 from src.adapters.gcs_workspace_adapter import GcsWorkspaceAdapter

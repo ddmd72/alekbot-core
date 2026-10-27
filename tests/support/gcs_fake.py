@@ -6,17 +6,21 @@
 
 Semantics (each has a self-test in `tests/unit/support/test_gcs_fake.py`; the ones real GCS has not confirmed carry
 `# P12 verifies` and are scenarios in `tests/support/gcs_parity.py`):
-1. Buckets are declared, each "plain" or "versioned"; an operation on an undeclared bucket raises `NotFound`.
+1. Buckets are declared, each "plain" or "versioned"; an operation on an undeclared bucket raises `NotFound`
+   (`exists` answers False and `get_blob` None, as the SDK turns any NotFound into those).
    Generations strictly increase per bucket; metageneration starts at 1, +1 per patch.
 2. Plain: an overwrite or delete erases. Versioned: the old live version turns noncurrent with `time_deleted`.
 3. `if_generation_match` (the only precondition the adapters use) raises `PreconditionFailed` on a mismatch; 0 means
    "no live version" (noncurrent versions do not count).
-4. `bucket.blob(name)` is unloaded (generation, metadata, size, content_type None) until `upload_from_string`,
+4. Every parameter after the name is keyword-only (the SDK's second positional parameter is something else:
+   `blob(name, 1001)` is a chunk size there). Server-set properties (generation, metageneration, size, times) are
+   read-only. `bucket.blob(name)` is unloaded (generation, metadata, size, content_type None) until `upload_from_string`,
    `patch`, `reload` or `get_blob` loads the response's properties, `generation` included. A blob whose `generation` is
    set, by `blob(name, generation=g)` or by a loaded response, addresses that version: download, patch and exists act
    on it (noncurrent allowed) and delete ERASES it. That is the SDK trap AGENT_WORKSPACE_RFC §5.3 builds the workspace
    adapter around: a delete through the blob that was just patched or uploaded erases the version.
-5. `patch` sends only the properties set since the blob was loaded: metadata merges, a `None` value removes the key,
+5. `upload_from_string` and `patch` send only the writable properties set since the blob was loaded (an upload
+   through a loaded blob does not carry its metadata or customTime over). `patch`: metadata merges, a `None` value removes the key,
    `metadata = None` clears it; it bumps metageneration and `updated`, never the generation; `custom_time` cannot move
    earlier or be removed (`BadRequest`).
 6. A missing object: download, delete, patch, reload raise `NotFound`; `get_blob` returns None; `exists` is False (also
@@ -52,7 +56,7 @@ from google.api_core.exceptions import BadRequest, NotFound, PreconditionFailed
 __all__ = ["FakeGcs", "FakeGcsClient", "FakeBucket", "FakeBlob", "FakeVersion", "FAKE_EPOCH"]
 
 FAKE_EPOCH = datetime(2026, 10, 20, 6, 0, tzinfo=timezone.utc)
-SEVEN_DAYS = timedelta(days=7)
+SEVEN_DAYS_S = 604800
 _OPS = frozenset({"upload", "patch", "delete", "download", "get", "list", "exists"})
 _KINDS = {"plain": False, "versioned": True}
 _FIRST_GENERATION = 1001
@@ -290,7 +294,7 @@ class FakeGcsClient:
     def bucket(self, bucket_name: str) -> "FakeBucket":
         return FakeBucket(self._gcs, bucket_name)
 
-    def list_blobs(self, bucket_or_name: Any, prefix: Optional[str] = None,
+    def list_blobs(self, bucket_or_name: Any, *, prefix: Optional[str] = None,
                    versions: Optional[bool] = None) -> Iterator["FakeBlob"]:
         name = bucket_or_name if isinstance(bucket_or_name, str) else bucket_or_name.name
         found = self._gcs._run("list", lambda: self._gcs._list(name, prefix or "", bool(versions)))
@@ -302,10 +306,10 @@ class FakeBucket:
     def __init__(self, gcs: FakeGcs, name: str) -> None:
         self._gcs, self.name = gcs, name
 
-    def blob(self, blob_name: str, generation: Optional[int] = None) -> "FakeBlob":
+    def blob(self, blob_name: str, *, generation: Optional[int] = None) -> "FakeBlob":
         return FakeBlob(self, blob_name, generation=generation)
 
-    def get_blob(self, blob_name: str, generation: Optional[int] = None) -> Optional["FakeBlob"]:
+    def get_blob(self, blob_name: str, *, generation: Optional[int] = None) -> Optional["FakeBlob"]:
         blob = FakeBlob(self, blob_name, generation=generation)
         try:
             blob.reload()
@@ -313,7 +317,7 @@ class FakeBucket:
             return None
         return blob
 
-    def list_blobs(self, prefix: Optional[str] = None, versions: Optional[bool] = None) -> Iterator["FakeBlob"]:
+    def list_blobs(self, *, prefix: Optional[str] = None, versions: Optional[bool] = None) -> Iterator["FakeBlob"]:
         return FakeGcsClient(self._gcs).list_blobs(self.name, prefix=prefix, versions=versions)
 
 
@@ -324,18 +328,41 @@ class FakeBlob:
                  version: Optional[FakeVersion] = None) -> None:
         self.bucket, self.name = bucket, name
         self._gcs = bucket._gcs
-        self.generation: Optional[int] = generation
-        self.metageneration: Optional[int] = None
-        self.size: Optional[int] = None
-        self.time_created: Optional[datetime] = None
-        self.updated: Optional[datetime] = None
-        self.time_deleted: Optional[datetime] = None
+        # Server-set properties, read-only as in the SDK (assigning one is an AttributeError).
+        self._props: Dict[str, Any] = {"generation": generation, "metageneration": None, "size": None,
+                                       "time_created": None, "updated": None, "time_deleted": None}
         self._metadata: Optional[Dict[str, Optional[str]]] = None
         self._custom_time: Optional[datetime] = None
         self._content_type: Optional[str] = None
         self._changes: Set[str] = set()
         if version is not None:
             self._load(version)
+
+    # -- read-only properties ------------------------------------------------------------------------------------
+
+    @property
+    def generation(self) -> Optional[int]:
+        return self._props["generation"]
+
+    @property
+    def metageneration(self) -> Optional[int]:
+        return self._props["metageneration"]
+
+    @property
+    def size(self) -> Optional[int]:
+        return self._props["size"]
+
+    @property
+    def time_created(self) -> Optional[datetime]:
+        return self._props["time_created"]
+
+    @property
+    def updated(self) -> Optional[datetime]:
+        return self._props["updated"]
+
+    @property
+    def time_deleted(self) -> Optional[datetime]:
+        return self._props["time_deleted"]
 
     # -- writable properties -------------------------------------------------------------------------------------
 
@@ -378,27 +405,30 @@ class FakeBlob:
     # -- requests ------------------------------------------------------------------------------------------------
 
     def _load(self, v: FakeVersion) -> None:
-        self.generation, self.metageneration, self.size = v.generation, v.metageneration, len(v.data)
-        self.time_created, self.updated, self.time_deleted = v.time_created, v.updated, v.time_deleted
+        self._props = {"generation": v.generation, "metageneration": v.metageneration, "size": len(v.data),
+                       "time_created": v.time_created, "updated": v.updated, "time_deleted": v.time_deleted}
         self._metadata = dict(v.metadata) if v.metadata else None
         self._custom_time, self._content_type = v.custom_time, v.content_type
         self._changes = set()
 
-    def upload_from_string(self, data: Any, content_type: str = "text/plain", predefined_acl: Optional[str] = None,
+    def upload_from_string(self, data: Any, content_type: str = "text/plain", *, predefined_acl: Optional[str] = None,
                            if_generation_match: Optional[int] = None) -> None:
         if predefined_acl is not None:
             raise AssertionError("private bucket: predefined_acl refused")
         payload = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+        # Like the SDK, an upload sends only the writable properties set since the last load: a loaded blob's
+        # metadata and customTime do not carry over to the new version.
+        metadata = self._metadata if "metadata" in self._changes else None
+        custom_time = self._custom_time if "custom_time" in self._changes else None
         self._load(self._gcs._run("upload", lambda: self._gcs._upload(
-            self.bucket.name, self.name, payload, content_type, self._metadata, self._custom_time,
-            if_generation_match)))
+            self.bucket.name, self.name, payload, content_type, metadata, custom_time, if_generation_match)))
 
-    def patch(self, if_generation_match: Optional[int] = None) -> None:
+    def patch(self, *, if_generation_match: Optional[int] = None) -> None:
         changes = {k: getattr(self, k) for k in self._changes}
         self._load(self._gcs._run("patch", lambda: self._gcs._patch(
             self.bucket.name, self.name, self.generation, changes, if_generation_match)))
 
-    def delete(self, if_generation_match: Optional[int] = None) -> None:
+    def delete(self, *, if_generation_match: Optional[int] = None) -> None:
         self._gcs._run("delete", lambda: self._gcs._delete(self.bucket.name, self.name, self.generation,
                                                            if_generation_match))
 
@@ -407,20 +437,25 @@ class FakeBlob:
                               lambda: self._gcs._find_or_404(self.bucket.name, self.name, self.generation).data)
 
     def exists(self) -> bool:
-        return self._gcs._run("exists",
-                              lambda: self._gcs._find(self.bucket.name, self.name, self.generation) is not None)
+        def body() -> bool:
+            try:
+                return self._gcs._find(self.bucket.name, self.name, self.generation) is not None
+            except NotFound:      # the SDK's exists() turns any NotFound (an unknown bucket too) into False
+                return False
+
+        return self._gcs._run("exists", body)
 
     def reload(self) -> None:
         self._load(self._gcs._run("get", lambda: _snapshot(
             self._gcs._find_or_404(self.bucket.name, self.name, self.generation))))
 
-    def generate_signed_url(self, expiration: Any = None, method: str = "GET", version: Optional[str] = None,
+    def generate_signed_url(self, expiration: Any = None, *, method: str = "GET", version: Optional[str] = None,
                             service_account_email: Optional[str] = None, access_token: Optional[str] = None) -> str:
         """Deterministic and recorded; like the SDK it does not check that the object exists, and refuses a V4 URL
         valid over 7 days."""
         if not isinstance(expiration, timedelta):
             raise NotImplementedError("gcs_fake.generate_signed_url models a timedelta expiration only")
-        if version == "v4" and expiration > SEVEN_DAYS:
+        if version == "v4" and int(expiration.total_seconds()) > SEVEN_DAYS_S:   # the SDK's integer comparison
             raise ValueError("Max allowed expiration interval is seven days 604800")
         self._gcs.signed_urls.append({"bucket": self.bucket.name, "name": self.name, "expiration": expiration,
                                       "method": method, "version": version,

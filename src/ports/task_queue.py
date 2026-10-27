@@ -35,7 +35,7 @@ class TaskQueue(Protocol):
         ...
 
     async def create_queue_if_not_exists(self) -> None:
-        """Create the queue when get_queue answers NotFound. Synchronous gRPC on the loop: startup only. Errors raise."""
+        """Create the queue when it does not exist; a second call creates nothing. Startup only. Errors raise."""
         ...
 
     def get_queue_stats(self) -> Dict[str, Any]:
@@ -64,7 +64,8 @@ class TaskQueue(Protocol):
                           Set to 1800 for long-running research tasks (Claude deep research).
         dedup_key: names the task, so a second enqueue with the same key (a retried create whose
                    first attempt succeeded) returns the existing task's name instead of a second task.
-                   The name is `agent_execution-<sha256(key)[:32]>`; ALREADY_EXISTS returns that full name.
+                   The key names the task deterministically, namespaced by the task type; a duplicate
+                   returns that task's full name.
                    Without a key every call makes a task. The dispatch deadline is set only when given.
         """
         ...
@@ -157,6 +158,7 @@ class TaskQueue(Protocol):
             queued/running/recently completed. Callers never construct a task name
             themselves. Returns None when the enqueue was a no-op due to such a duplicate.
         Returns task name (Cloud Tasks task ID), or None on a de-duplicated no-op.
-        The name is `{task_type}-<sha256(dedup_key)[:32]>`. The body is {"task_type": task_type, **payload}.
+        A dedup key names the task deterministically, namespaced by task_type. The body is
+        {"task_type": task_type, **payload}.
         """
         ...

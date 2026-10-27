@@ -2,9 +2,10 @@
 fake (tests/support/gcs_fake.py). Run by hand (`make test-cloud`), never in `make check` / `make ci`.
 
 Reuses the `cloud` fixture (its skips and the test service account's credentials) and adds the bucket guards: the name
-comes from `TEST_GCS_BUCKET`, ends in `-test` and is neither `GCS_MEDIA_BUCKET` nor `GCS_WORKSPACE_BUCKET`. Without
-`TEST_GCS_BUCKET` every test skips (the weekly workflow does not pass it yet: P12). Each scenario writes under
-`parity/<run id>/<scenario>/` and erases every version it wrote; the bucket's 1-day lifecycle catches a crashed run.
+comes from `TEST_GCS_BUCKET`, ends in `-test`, is neither `GCS_MEDIA_BUCKET` nor `GCS_WORKSPACE_BUCKET`, and the bucket
+is versioned; the client's credentials are those of `TEST_SA_EMAIL`. Without `TEST_GCS_BUCKET` every test skips (the
+weekly workflow does not pass it yet: P12). Each scenario writes under `parity/<run id>/<scenario>/` and erases every
+version it wrote; the bucket's 1-day lifecycle catches a crashed run.
 """
 import uuid
 
@@ -27,9 +28,11 @@ def gcs_bucket(cloud):
     if bucket in {_setting("GCS_MEDIA_BUCKET"), _setting("GCS_WORKSPACE_BUCKET")}:
         pytest.fail("guard: the test bucket is a live bucket")
     client = storage.Client(project=cloud.project, credentials=cloud.credentials)
-    if client.project != cloud.project or getattr(client._credentials, "service_account_email", None) != \
-            getattr(cloud.credentials, "service_account_email", None):
+    if client.project != cloud.project or \
+            getattr(client._credentials, "service_account_email", None) != _setting("TEST_SA_EMAIL"):
         pytest.fail("guard: the constructed storage client does not use the test project and service account")
+    if not client.get_bucket(bucket).versioning_enabled:
+        pytest.fail("guard: the test bucket is not versioned (every scenario assumes versioning)")
     return client, bucket
 
 

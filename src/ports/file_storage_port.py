@@ -4,10 +4,9 @@ FileStoragePort — store and retrieve user file attachments.
 Implementations:
   GcsFileStorageAdapter — uploads to a GCS bucket under {user_id}/files/ prefix.
 
-Distinction from MediaStoragePort: both back the same private bucket (since 2026-06-01).
-MediaStoragePort stores delivered content under caller-made keys; FileStoragePort stores
-user file attachments by filename under the user's prefix, with download and duplicate
-name resolution.
+Distinction from MediaStoragePort: MediaStoragePort stores delivered content privately
+under caller-made keys; FileStoragePort stores user file attachments by filename under
+the user's prefix, with download and duplicate name resolution.
 """
 from abc import ABC, abstractmethod
 

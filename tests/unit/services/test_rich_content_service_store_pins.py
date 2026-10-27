@@ -3,6 +3,7 @@
 went private, `store()` returns the object key, and an HTML rich-content file reaches the user as that bare key."""
 from dataclasses import dataclass
 from typing import List
+from urllib.parse import urlparse
 
 import pytest
 
@@ -66,13 +67,16 @@ async def test_html_file_reaches_the_user_as_a_link(monkeypatch, fake):
     """`_store_html` returns what `store()` returns, the key `html/<uuid>-trip-notes.html` since the bucket went private,
     and ConversationHandler posts it as the link: on Slack the user gets bare text, not a link. Flips when the page
     goes through DocumentDeliveryService and `process` returns its `.link` (needs the user id: `_service()` and the
-    call change), or when the page is uploaded to the platform as a file, as on Telegram. Control:
+    call change), or when the page is uploaded to the platform as a file, as on Telegram. A link counts only when the
+    private bucket serves it: a V4 signed URL (`X-Goog-Signature`) or the app's own capability route `/f/<token>`; the
+    pre-2026-06-01 public storage URL does not open and does not count. Control:
     test_markdown_file_is_uploaded_to_the_platform."""
     platform = RecordingPlatform()
     service = _service(monkeypatch, fake, platform)
     content = RichContent("file", {"filename": "trip-notes.html", "content": PAGE}, "")
     require(content.data["content"] and content.data["filename"].endswith(".html"), "an HTML file with content")
     out = await service.process(content, "C1")
-    as_link = isinstance(out, str) and out.startswith(("https://", "http://"))
+    as_link = isinstance(out, str) and out.startswith(("https://", "http://")) and (
+        "X-Goog-Signature=" in out or urlparse(out).path.startswith("/f/"))
     as_file = out is None and any(u.filename == "trip-notes.html" for u in platform.files)
     assert as_link or as_file
