@@ -68,6 +68,8 @@ jobs:
 
       - name: Redact infrastructure ids
         # Artifacts of a public repo are downloadable and GitHub masks secrets only in the console log.
+        # On any failure both files are deleted, and the upload below runs only when this step succeeded.
+        id: redact
         if: always()
         env:
           TEST_FIRESTORE_DATABASE: ${{ secrets.TEST_FIRESTORE_DATABASE }}
@@ -75,17 +77,30 @@ jobs:
           GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
           TEST_WIF_PROVIDER: ${{ secrets.TEST_WIF_PROVIDER }}
         run: |
-          for f in parity.log parity.xml; do
-            [ -f "$f" ] || continue
-            for name in TEST_FIRESTORE_DATABASE TEST_SA_EMAIL GOOGLE_CLOUD_PROJECT TEST_WIF_PROVIDER; do
-              value="${!name}"
-              [ -n "$value" ] || continue
-              VALUE="$value" python -c "import os,sys; v=os.environ['VALUE']; p=sys.argv[1]; t=open(p,encoding='utf-8',errors='replace').read(); open(p,'w',encoding='utf-8').write(t.replace(v,'<redacted>'))" "$f"
-            done
-          done
+          python - <<'PY' || { rm -f parity.log parity.xml; exit 1; }
+          import os
+          import urllib.parse
+          from pathlib import Path
+
+          names = ("TEST_FIRESTORE_DATABASE", "TEST_SA_EMAIL", "GOOGLE_CLOUD_PROJECT", "TEST_WIF_PROVIDER")
+          values = {os.environ.get(n, "") for n in names}
+          values.add(urllib.parse.quote(os.environ.get("TEST_SA_EMAIL", ""), safe=""))
+          parts = os.environ.get("TEST_WIF_PROVIDER", "").split("/")
+          for key in ("projects", "workloadIdentityPools", "providers"):
+              if key in parts and parts.index(key) + 1 < len(parts):
+                  values.add(parts[parts.index(key) + 1])
+          values.discard("")
+          for path in (Path("parity.log"), Path("parity.xml")):
+              if not path.exists():
+                  continue
+              text = path.read_text(encoding="utf-8", errors="replace")
+              for value in sorted(values, key=len, reverse=True):
+                  text = text.replace(value, "<redacted>")
+              path.write_text(text, encoding="utf-8")
+          PY
 
       - name: Upload result
-        if: always()
+        if: always() && steps.redact.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: parity
