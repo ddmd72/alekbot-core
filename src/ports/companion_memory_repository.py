@@ -21,7 +21,11 @@ class CompanionMemoryRepository(ABC):
 
     @abstractmethod
     async def save_batch(self, records: List[CompanionRecord]) -> int:
-        """Persist records. Returns count written."""
+        """Store each record under its id (full replace); returns the count.
+
+        Atomicity: written in batches, so a failure midway leaves the earlier batches. Idempotency: a repeat with the
+        same ids stores the same records (new ids duplicate). A record without a vector is stored and never found.
+        """
 
     @abstractmethod
     async def find_nearest(
@@ -34,4 +38,9 @@ class CompanionMemoryRepository(ABC):
         """Vector search scoped to one session AND one account. Must filter by
         BOTH session_id and account_id — session_id alone is not a sufficient
         tenancy guarantee (two accounts on the same platform are not provably
-        collision-free on channel-derived session keys)."""
+        collision-free on channel-derived session keys).
+
+        Order: nearest first. Limit: at most `limit`, and nothing past a fixed similarity bound.
+        Legacy: a record that fails CompanionRecord validation is skipped (logged); a missing id takes the
+        document's id. Errors: backend errors propagate.
+        """

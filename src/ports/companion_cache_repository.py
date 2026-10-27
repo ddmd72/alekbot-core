@@ -18,11 +18,20 @@ from typing import Optional
 
 
 class CompanionCacheRepository(ABC):
+    """Cached summary of one companion session. Backend errors propagate."""
 
     @abstractmethod
     async def get_summary(self, session_id: str) -> Optional[str]:
-        """Fast read of the cached session summary. None if never written."""
+        """The cached summary of `session_id`, or None if never written.
+
+        Known defect P11-G3-4: not scoped by account. The companion memory port's tenancy rule (session_id alone is
+        not sufficient) is not applied here, so an account reads another account's summary of the same session key;
+        COMPANION_AGENTS_RFC §3 assumes one account per companion session. Which rule holds is the owner's call.
+        """
 
     @abstractmethod
     async def save_summary(self, session_id: str, account_id: str, summary: str) -> None:
-        """Overwrite the cached summary for this session (full replace, no merge)."""
+        """Replace the session's cached summary (session_id, account_id, summary, refreshed_at = server time).
+
+        Last writer wins, whatever its account (P11-G3-4).
+        """
