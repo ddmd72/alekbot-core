@@ -23,7 +23,7 @@ from src.domain.fact_lifecycle import (
     with_event,
 )
 from src.domain.fact_write_context import as_utc
-from src.domain.local_time import local_day, local_moment, local_stamp
+from src.domain.local_time import local_date, local_day, local_moment, local_stamp
 
 BATCH_SIZE: Final[int] = 25
 SYSTEM_ACCOUNT: Final[str] = "SYSTEM"
@@ -41,7 +41,8 @@ SOURCE_MODEL = "model"
 SOURCE_PINNED = "pinned"
 SOURCE_UNSURE = "unsure"
 SOURCE_FALLBACK = "fallback"
-SOURCES: Final[Tuple[str, ...]] = (SOURCE_MODEL, SOURCE_PINNED, SOURCE_UNSURE, SOURCE_FALLBACK)
+SOURCE_PAST = "past_at_report"
+SOURCES: Final[Tuple[str, ...]] = (SOURCE_MODEL, SOURCE_PINNED, SOURCE_UNSURE, SOURCE_PAST, SOURCE_FALLBACK)
 FALLBACK_MISSING = "missing"
 FALLBACK_INVALID = "invalid_expiry"
 FALLBACK_NO_REPORTED = "no_reported_date"
@@ -344,8 +345,12 @@ class Decision:
     reason: str
 
 
-def judge(fact: ScannedFact, raw: Optional[RawDecision]) -> Tuple[Optional[Decision], Optional[str]]:
-    """(decision, None) or (None, why it is unusable). Never refuses a date for being past: a due decision is a correct one."""
+def judge(
+    fact: ScannedFact, raw: Optional[RawDecision], timezone_name: str
+) -> Tuple[Optional[Decision], Optional[str]]:
+    """(decision, None) or (None, why it is unusable). A date already past by `now` is a correct decision (due), but a date
+    before the local day (in `timezone_name`) of the fact's `reported_date` was past when the owner said it: a past event,
+    `none`, source `past_at_report`."""
     if raw is None:
         return None, FALLBACK_MISSING
     if raw.unsure:
@@ -356,6 +361,10 @@ def judge(fact: ScannedFact, raw: Optional[RawDecision]) -> Tuple[Optional[Decis
         return None, FALLBACK_INVALID
     if expiry.kind is ExpiryKind.HORIZON and fact.reported_date is None:
         return None, FALLBACK_NO_REPORTED
+    if expiry.kind is ExpiryKind.DATE and expiry.on is not None and fact.reported_date is not None:
+        if expiry.on < local_date(fact.reported_date, timezone_name):
+            said = f"date {expiry.on.isoformat()}"
+            return Decision(fact.fact_id, SOURCE_PAST, EXPIRY_NONE, None, said, raw.reason), None
     return Decision(fact.fact_id, SOURCE_MODEL, expiry, None, expiry.kind.value, raw.reason), None
 
 
@@ -586,6 +595,8 @@ def _flag(decision: Decision) -> str:
         return ""
     if decision.source == SOURCE_UNSURE:
         return f"unsure (model said {decision.model_kind})"
+    if decision.source == SOURCE_PAST:
+        return f"past at report (model said {decision.model_kind})"
     if decision.source == SOURCE_FALLBACK:
         return f"fallback: {decision.code}"
     return decision.source

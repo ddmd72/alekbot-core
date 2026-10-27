@@ -18,6 +18,7 @@ from tests.support.fact_store import FACTS, FactStore
 NOW = datetime(2026, 10, 27, 12, 0, tzinfo=timezone.utc)
 LATER = NOW + timedelta(hours=1)
 REPORTED = datetime(2026, 10, 1, 9, 30, tzinfo=timezone.utc)
+TRIAL_REPORTED = datetime(2026, 4, 1, 9, 30, tzinfo=timezone.utc)
 ACC = "acc-owner-0001"
 
 CAR = "car service Nov 4, bring the logbook"
@@ -67,7 +68,7 @@ def scripted(table):
 async def seeded_store(docs=None):
     store = FactStore()
     col = store.db.collection(FACTS)
-    for doc in docs or [raw("f-car", CAR), raw("f-pipe", PIPE), raw("f-trial", TRIAL), raw("f-maria", MARIA)]:
+    for doc in docs or [raw("f-car", CAR), raw("f-pipe", PIPE), raw("f-trial", TRIAL, reported_date=TRIAL_REPORTED), raw("f-maria", MARIA)]:
         await col.document(doc["id"]).set(doc)
     return store
 
@@ -180,7 +181,7 @@ async def test_a_second_apply_of_the_same_plan_changes_nothing(tmp_path):
 
 
 async def test_a_fact_the_janitor_staled_after_the_first_apply_is_skipped_on_a_rerun(tmp_path):
-    store = await seeded_store([raw("f-trial", TRIAL), raw("f-maria", MARIA)])
+    store = await seeded_store([raw("f-trial", TRIAL, reported_date=TRIAL_REPORTED), raw("f-maria", MARIA)])
     plan = await classify_plan(store, tmp_path)
     await s5.apply_plan(store.repo, plan, FACTS, tmp_path, LATER)
     [due] = [d for d in await store.repo.find_due_facts(LATER) if d.fact_id == "f-trial"]

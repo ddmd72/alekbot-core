@@ -359,7 +359,7 @@ async def _classify_batch(
         if raw is None:
             pending[n] = problems.get(n, FALLBACK_MISSING)
             continue
-        decision, code = judge(fact, raw)
+        decision, code = judge(fact, raw, zone)
         if decision is not None:
             decisions[fact.fact_id] = decision
         else:
@@ -370,7 +370,7 @@ async def _classify_batch(
     answered, _ = read_answer(await _ask(caller, system, retry, pending), set(pending))
     for n in sorted(pending):
         fact = numbered[n]
-        decision, code = judge(fact, answered.get(n))
+        decision, code = judge(fact, answered.get(n), zone)
         decisions[fact.fact_id] = decision if decision is not None else fallback_decision(fact, str(code))
 
 
