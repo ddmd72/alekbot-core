@@ -450,13 +450,14 @@ class TestFactUpdatePortContract:
         sig = inspect.signature(FactUpdatePort.apply_fact_update)
         assert list(sig.parameters) == [
             "self", "fact_id", "update", "account_id", "context", "evidence_at", "reason", "history",
+            "expected_id",  # P2 revised final review: the document the caller read; a different first resolution is MOVED
         ]
         for name in ("fact_id", "update", "account_id"):
             assert sig.parameters[name].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
             assert sig.parameters[name].default is inspect.Parameter.empty
         assert sig.parameters["context"].kind is inspect.Parameter.KEYWORD_ONLY
         assert sig.parameters["context"].default is inspect.Parameter.empty
-        for name in ("evidence_at", "reason", "history"):
+        for name in ("evidence_at", "reason", "history", "expected_id"):
             assert sig.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
             assert sig.parameters[name].default is None
         hints = get_type_hints(FactUpdatePort.apply_fact_update)
