@@ -20,9 +20,10 @@ class TaskConfigPort(ABC):
     async def get_config(self, user_id: str) -> TaskUserConfig:
         """The user's config, or an empty TaskUserConfig when none is stored.
 
-        Every subscription's expires_at is naive UTC. Legacy: a missing primary_list_id or subscriptions reads empty;
-        a subscription without sub_id or list_id raises KeyError. Known defect P11-G3-2: a subscription without
-        expires_at reads as an aware "now", which every caller's naive comparison rejects with TypeError.
+        Every subscription's expires_at is naive UTC. A missing primary_list_id or subscriptions reads empty. A
+        subscription without sub_id or list_id: no writer produces one; behaviour pending the data audit. A
+        subscription without expires_at reads as naive UTC too (P11-G3-2: today it reads as an aware "now", which
+        every caller's naive comparison rejects with TypeError).
         """
         ...
 

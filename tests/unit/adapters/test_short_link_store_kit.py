@@ -91,10 +91,3 @@ async def test_a_code_stays_taken_after_its_link_expired_until_the_backend_remov
     assert await store.repo.resolve("ab3xk9") is None
 
 
-@pytest.mark.parametrize("missing", ["expires_at", "target_url"])
-async def test_a_document_without_its_expiry_or_target_raises_key_error(store, missing):
-    doc = {"target_url": TARGET, "expires_at": NOW + timedelta(days=1)}
-    del doc[missing]
-    store.docs["legacy1"] = doc
-    with pytest.raises(KeyError):
-        await store.repo.resolve("legacy1")

@@ -110,15 +110,6 @@ async def test_a_legacy_document_without_fields_reads_empty(store):
     assert (only_subs.primary_list_id, [s.sub_id for s in only_subs.subscriptions]) == (None, ["s1"])
 
 
-@pytest.mark.parametrize("missing", ["sub_id", "list_id"])
-async def test_a_subscription_without_its_ids_raises_key_error(store, missing):
-    entry = {"sub_id": "s1", "list_id": "L1", "expires_at": EXPIRES}
-    del entry[missing]
-    store.docs["u1"] = {"primary_list_id": "L1", "subscriptions": [entry]}
-    with pytest.raises(KeyError):
-        await store.repo.get_config("u1")
-
-
 # -------------------------------------------------------------------------- set_primary_list_id_if_absent
 
 async def test_set_primary_writes_when_absent_and_keeps_the_subscriptions(store):

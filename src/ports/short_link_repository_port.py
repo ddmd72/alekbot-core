@@ -34,5 +34,5 @@ class ShortLinkRepositoryPort(ABC):
     async def resolve(self, code: str) -> Optional[ShortLink]:
         """The stored link, or None when the code is absent or its link expired (expires_at at or before now).
 
-        Legacy: a stored link without expires_at or target_url raises KeyError.
+        A stored link without expires_at or target_url: no writer produces one; behaviour pending the data audit.
         """

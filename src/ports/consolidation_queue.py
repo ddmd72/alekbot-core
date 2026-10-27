@@ -48,7 +48,7 @@ class ConsolidationQueue(ABC):
         """Set status and facts_extracted (0 unless given); last_error only when `error` is given; PROCESSING also
         stamps processing_started_at (now).
 
-        Errors: NotFound on a missing batch."""
+        Errors: the backend's not-found error (NotFound today) on a missing batch."""
         pass
 
     @abstractmethod

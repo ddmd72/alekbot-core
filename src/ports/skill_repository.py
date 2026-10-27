@@ -38,8 +38,8 @@ class SkillRepository(ABC):
         """Write the next version and make it current, atomically. Returns the new version.
 
         Of two concurrent saves of one skill each gets its own version (no write is lost); of two concurrent saves of
-        one draft code one succeeds and the other raises SkillDraftNotFound. Legacy: a skill entry without a current
-        version cannot be saved to until it is deleted (KeyError).
+        one draft code one succeeds and the other raises SkillDraftNotFound. A skill entry without a current
+        version: no writer produces one; behaviour pending the data audit.
 
         The version and index docs carry `skill.files` as the manifest. When `draft_code` is
         set, that draft's staged files are copied into the skill's own files in the same
@@ -73,7 +73,8 @@ class SkillRepository(ABC):
         expired or corrupt.
 
         Expiry: a draft whose expiry has passed reads as None whether or not the backend has removed it yet; a naive
-        expiry is UTC; a draft with no expiry never expires.
+        expiry is UTC. A draft with no expiry: no writer produces one; behaviour
+        pending the data audit.
         """
 
     @abstractmethod

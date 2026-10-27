@@ -24,9 +24,9 @@ class CompanionCacheRepository(ABC):
     async def get_summary(self, session_id: str) -> Optional[str]:
         """The cached summary of `session_id`, or None if never written.
 
-        Known defect P11-G3-4: not scoped by account. The companion memory port's tenancy rule (session_id alone is
-        not sufficient) is not applied here, so an account reads another account's summary of the same session key;
-        COMPANION_AGENTS_RFC §3 assumes one account per companion session. Which rule holds is the owner's call.
+        Tenancy: the companion memory port's rule (session_id alone is not sufficient) would scope it by account
+        (P11-G3-4: today it is not, so an account reads another account's summary of the same session key;
+        COMPANION_AGENTS_RFC §3 assumes one account per companion session, and which rule holds is the owner's call).
         """
 
     @abstractmethod

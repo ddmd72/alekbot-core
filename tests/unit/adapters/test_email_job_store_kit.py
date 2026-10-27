@@ -123,14 +123,6 @@ async def test_get_latest_job_is_the_newest_of_this_user_and_provider(store):
     assert await store.repo.get_latest_job("u1", "yahoo") is None
 
 
-async def test_a_job_without_started_at_is_not_considered_the_latest(store):
-    await store.repo.create_job(job("dated", started=T - timedelta(days=3)))
-    raw(store, "undated", started_at=...)
-    assert (await store.repo.get_latest_job("u1", "gmail")).job_id == "dated"
-    del store.docs["dated"]
-    assert await store.repo.get_latest_job("u1", "gmail") is None
-
-
 async def test_list_jobs_is_newest_first_at_most_limit_and_only_this_users(store):
     for i in range(4):
         await store.repo.create_job(job(f"j{i}", started=T + timedelta(hours=i), provider="gmail" if i % 2 else "outlook"))

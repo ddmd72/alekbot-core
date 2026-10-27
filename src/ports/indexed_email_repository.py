@@ -95,7 +95,7 @@ class IndexedEmailRepository(ABC):
         """Set consolidated_at on the given email ids of user_id; they are not returned by get_unconsolidated_batch
         again.
 
-        Atomicity: in atomic chunks. Errors: NotFound when an id is gone (its chunk is not applied).
+        Atomicity: in atomic chunks. Errors: the backend's not-found error (NotFound today) when an id is gone (its chunk is not applied).
         """
 
     @abstractmethod
@@ -111,5 +111,5 @@ class IndexedEmailRepository(ABC):
     ) -> None:
         """Write the given non-None vectors and set embedding_pending false (also when some vectors are None).
 
-        Errors: NotFound on a missing fact.
+        Errors: the backend's not-found error (NotFound today) on a missing fact.
         """

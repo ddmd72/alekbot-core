@@ -98,10 +98,11 @@ async def test_a_naive_expiry_is_read_as_utc(store):
     assert await store.repo.get_draft("u1", "ab12") is None
 
 
-async def test_a_draft_without_expiry_never_expires_and_one_without_origin_reads_none(store):
-    raw(store, expires_at=..., origin_session_id=...)
+async def test_a_draft_created_without_an_origin_session_reads_none_for_it(store):
+    await store.repo.create_draft("u1", "ab12", draft(origin=None))
+    assert store.docs["u1:ab12"]["origin_session_id"] is None
     got = await store.repo.get_draft("u1", "ab12")
-    assert got is not None and got.origin_session_id is None and [f.model_dump() for f in got.facts] == [GYM]
+    assert got.origin_session_id is None and [f.model_dump() for f in got.facts] == [GYM]
 
 
 @pytest.mark.parametrize("facts", [[{"text": "line one\nline two", "source": "chat"}], [], None], ids=["newline", "empty", "missing"])

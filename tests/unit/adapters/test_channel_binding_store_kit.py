@@ -102,25 +102,6 @@ async def test_a_partial_companion_config_takes_the_defaults_for_every_optional_
             config.include_own_records, config.history_recent_full_turns) == (CompanionTextMode.SUMMARY, False, [], False, True, 5)
 
 
-@pytest.mark.parametrize("config,error", [
-    ({"batch_size": 25}, KeyError), ({"window_threshold": 40}, KeyError),
-    ({"window_threshold": 40, "batch_size": 25, "text_mode": "verbatim"}, ValueError),
-    ({"window_threshold": 40, "batch_size": 25, "session_domains": ["hobbies"]}, ValueError),
-], ids=["no-window", "no-batch", "unknown-text-mode", "unknown-domain"])
-async def test_a_companion_config_missing_a_required_key_or_naming_an_unknown_value_raises(store, config, error):
-    raw_binding(store, config)
-    with pytest.raises(error):
-        await store.adapter.get("C1")
-
-
-@pytest.mark.parametrize("missing", ["channel_id", "agent_type", "intent", "created_by"])
-async def test_a_document_missing_a_top_level_field_raises_key_error(store, missing):
-    raw_binding(store, None)
-    del store.docs["C1"][missing]
-    with pytest.raises(KeyError):
-        await store.adapter.get("C1")
-
-
 async def test_a_binding_belongs_to_its_channel_not_to_the_user_who_made_it(store):
     await store.adapter.save(binding("C1", created_by="u1"))
     await store.adapter.save(binding("C2", created_by="u2"))

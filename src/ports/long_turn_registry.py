@@ -29,11 +29,11 @@ class LongTurnRegistry(ABC):
     @abstractmethod
     async def heartbeat(self, turn_id: str, step: str) -> bool:
         """Record liveness (heartbeat_at = now) and the current step. Returns True when a cancel was requested (the
-        stored flag, read after the write). Errors: a turn with no record raises NotFound."""
+        stored flag, read after the write). Errors: a turn with no record raises the backend's not-found error (NotFound today)."""
 
     @abstractmethod
     async def finish(self, turn_id: str, status: LongTurnStatus) -> None:
-        """Set the status; nothing else changes (the cancel flag stays). Errors: no record raises NotFound."""
+        """Set the status; nothing else changes (the cancel flag stays). Errors: no record raises the backend's not-found error (NotFound today)."""
 
     @abstractmethod
     async def list_running(self, user_id: str) -> List[LongTurnRecord]:

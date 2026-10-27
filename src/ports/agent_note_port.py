@@ -48,7 +48,7 @@ class AgentNotePort(ABC):
         to None. Returns the note as stored after the update.
 
         Errors: ValueError, nothing written, when the note is absent or foreign, the id is empty, or text exceeds 25
-        words. Atomicity: read then update, no precondition; a note deleted between them raises NotFound.
+        words. Atomicity: read then update, no precondition; a note deleted between them raises the backend's not-found error (NotFound today).
         """
 
     @abstractmethod
@@ -164,7 +164,7 @@ class AgentNotePort(ABC):
         ``last_delivered_due == due_at`` before invoking ``notify``).
 
         Idempotent: calling twice with the same ``due_at`` is safe.
-        Errors: an absent note raises NotFound (the execute worker's retry
+        Errors: an absent note raises the backend's not-found error (NotFound today) (the execute worker's retry
         then finds the note gone and acks). An empty id is a no-op. No
         ownership check.
 

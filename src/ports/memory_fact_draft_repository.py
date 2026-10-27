@@ -22,7 +22,8 @@ class MemoryFactDraftRepository(ABC):
         """Fetch a draft. Returns None if absent, expired or corrupt.
 
         Expiry: a draft whose expiry has passed reads as None whether or not the backend has removed it yet; a naive
-        expiry is UTC. Legacy: a draft with no expiry never expires; a missing origin_session_id reads None.
+        expiry is UTC. A draft with no expiry: no writer produces one; behaviour pending the data audit. An
+        origin_session_id of None reads None.
         """
 
     @abstractmethod

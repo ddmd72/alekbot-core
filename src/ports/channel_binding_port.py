@@ -22,9 +22,9 @@ class ChannelBindingPort(ABC):
     async def get(self, channel_id: str) -> Optional[ChannelBinding]:
         """The channel's binding, or None when not bound.
 
-        companion_config: None when absent; within it a missing optional field takes the CompanionConfig default, a
-        missing window_threshold or batch_size raises KeyError, an unknown text_mode or session domain raises
-        ValueError. A missing top-level field raises KeyError.
+        companion_config: None when absent; within it a missing optional field takes the CompanionConfig default.
+        A missing window_threshold or batch_size, an unknown text_mode or session domain, or a missing top-level
+        field: no writer produces one; behaviour pending the data audit.
         """
 
     @abstractmethod

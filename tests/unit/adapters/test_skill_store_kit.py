@@ -182,12 +182,6 @@ async def test_two_concurrent_saves_of_one_draft_code_save_once_and_the_loser_fi
     assert list(store.versions()) == ["v1"] and list(store.docs(DR)) == []
 
 
-async def test_a_legacy_index_document_without_current_cannot_be_saved_to(store):
-    store.docs(SK)["u1:car-service"] = {"user_id": "u1", "account_id": "a1", "name": "car-service", "description": "d", "body": BODY}
-    with pytest.raises(KeyError):
-        await store.repo.save_version("u1", "a1", skill(), cap=20)
-
-
 # ------------------------------------------------------------------------------------- list_current, get_*
 
 def raw_index(store, key, user="u1", **over):
@@ -271,15 +265,13 @@ async def test_get_draft_is_scoped_to_the_user_and_an_expired_draft_reads_none(s
     assert await store.repo.get_draft("u1", "ab12") is None            # at the instant: expired, before the TTL sweep
 
 
-async def test_get_draft_reads_a_naive_expiry_as_utc_and_a_draft_without_expiry_never_expires(store):
+async def test_get_draft_reads_a_naive_expiry_as_utc(store):
     base = {"user_id": "u1", "name": "car-service", "description": "d", "body": BODY, "files": [], "staged": []}
     store.docs(DR)["u1:aware"] = {**base, "expires_at": NOW - timedelta(days=1)}
     store.docs(DR)["u1:naive"] = {**base, "expires_at": NOW.replace(tzinfo=None) - timedelta(days=1)}
-    store.docs(DR)["u1:never"] = dict(base)
     assert store.docs(DR)["u1:naive"]["expires_at"].tzinfo is None       # a raw document: the fake stores it as written
     assert await store.repo.get_draft("u1", "aware") is None
     assert await store.repo.get_draft("u1", "naive") is None
-    assert await store.repo.get_draft("u1", "never") is not None
 
 
 async def test_a_corrupt_draft_reads_none(store):

@@ -57,8 +57,9 @@ class TaskSearchIndex(ABC):
         Filter: `show_completed=False` excludes completed entries and entries with no status.
         `list_id`: restricts the search to one list; not supported by the current backend, and no caller passes it.
         Legacy: an entry that does not parse (missing indexed_at or status, unknown status or importance) is skipped.
-        Errors: a failing field query is logged and the other fields still answer. Known defect P11-G3-1: when every
-        field query fails the result is [] instead of the error, so the caller reports "no tasks".
+        Errors: a failing field query is logged and the other fields still answer. When every
+        field query fails the result should be the error (P11-G3-1: today it is [], which the caller reports as
+        "no tasks").
         """
         ...
 

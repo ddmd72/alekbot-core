@@ -36,7 +36,7 @@ class EmailIndexingJobRepository(ABC):
           - updated_at: always refreshed
 
         Merges `updates` into the stored job with no read and no precondition: last writer wins per field.
-        Errors: a missing job raises NotFound.
+        Errors: a missing job raises the backend's not-found error (NotFound today).
         """
 
     @abstractmethod
@@ -51,7 +51,7 @@ class EmailIndexingJobRepository(ABC):
         Last job for user+provider ordered by started_at DESC.
         Cabinet uses this to show current indexing status and enable Retry.
 
-        Tenancy: never another user's or provider's job. Legacy: a job without started_at is not considered.
+        Tenancy: never another user's or provider's job. A job without started_at: no writer produces one; behaviour pending the data audit.
         """
 
     @abstractmethod
