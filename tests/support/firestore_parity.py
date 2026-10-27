@@ -6,7 +6,8 @@ error class name). `SCENARIOS` pairs every function with its expected value: Fir
 what a backend happens to answer. Every expected value was confirmed on the test database on 2026-10-22 (except the two
 Facts S3 scenarios, range_timestamp_excludes_null_and_missing and projected_query_update_time_matches_transactional_read,
 and the Facts S4 scenarios equality_and_in_without_composite and set_merge_fields_replaces_a_map_whole: documented
-behaviour, not yet run on the test database, owner `make test-cloud` before deploy); where the
+behaviour, not yet run on the test database, owner `make test-cloud` before deploy; and P11's
+naive_datetime_filter_is_utc: the client's own encoding, run on the emulator 2026-10-27, not yet on the test database); where the
 documentation is silent (`!=` and null or another type, equality plus array-contains, the error class of a precondition on
 a deleted document, the order of several implicit inequality fields) that run is the source.
 
@@ -142,6 +143,17 @@ async def range_timestamp_excludes_null_and_missing(db: Any, col: str) -> Any:
     cut = datetime(2026, 3, 1, tzinfo=UTC)
     return {"le": await _ids(_where(c, "e", "<=", cut)), "gt": await _ids(_where(c, "e", ">", cut)),
             "le_far_future": await _ids(_where(c, "e", "<=", datetime(2100, 1, 1, tzinfo=UTC)))}
+
+
+async def naive_datetime_filter_is_utc(db: Any, col: str) -> Any:
+    """A naive filter value is the UTC instant (the client's `encode_value`), whatever the machine's zone."""
+    c = db.collection(col)
+    await _seed(c, {"t10": {"e": datetime(2026, 1, 1, 10, tzinfo=UTC)}, "t12": {"e": datetime(2026, 1, 1, 12, tzinfo=UTC)},
+                    "t14": {"e": datetime(2026, 1, 1, 14, tzinfo=UTC)}})
+    return {"ge": await _ids(_where(c, "e", ">=", datetime(2026, 1, 1, 11))),
+            "le": await _ids(_where(c, "e", "<=", datetime(2026, 1, 1, 12))),
+            "eq": await _ids(_where(c, "e", "==", datetime(2026, 1, 1, 12))),
+            "in": await _ids(_where(c, "e", "in", [datetime(2026, 1, 1, 10), datetime(2026, 1, 1, 14)]))}
 
 
 async def not_equal_missing_field(db: Any, col: str) -> Any:
@@ -595,6 +607,8 @@ SCENARIOS: List[Scenario] = [
              {"order_by": ["b", "a", "d"], "range": ["a", "d"], "is_null": ["b"], "in": ["a", "d"]}),
     Scenario("range_timestamp_excludes_null_and_missing", range_timestamp_excludes_null_and_missing,
              {"le": ["early"], "gt": ["late"], "le_far_future": ["early", "late"]}),
+    Scenario("naive_datetime_filter_is_utc", naive_datetime_filter_is_utc,
+             {"ge": ["t12", "t14"], "le": ["t10", "t12"], "eq": ["t12"], "in": ["t10", "t14"]}),
     Scenario("not_equal_missing_field", not_equal_missing_field, ["d"]),
     Scenario("not_equal_null_field", not_equal_null_field, ["d"]),
     Scenario("not_equal_other_type", not_equal_other_type, ["d", "s"]),
