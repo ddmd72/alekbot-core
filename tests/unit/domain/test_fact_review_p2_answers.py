@@ -263,3 +263,15 @@ def test_fallback_fields_still_revives_and_archives():
     stale = fact()
     assert fallback_fields(stale, asked("still_true"), NOW, "timeout")["state"] is FactState.CURRENT
     assert fallback_fields(stale, question(fallback="archive", noise=True), NOW, "timeout")["state"] is FactState.ARCHIVED
+
+
+# ------------------------------------------------------------------------------------------------ noise is archived only
+
+def test_no_longer_on_a_noise_question_archives_with_no_history_and_a_standing_fact_keeps_its_history():
+    # Arbiter (owner's rule: archive only for noise and never-true): noise is never history.
+    pottery = fact(text="The user wondered about a pottery class flyer.")
+    noise = answer_updates(A.ENDED, pottery, question(fallback="archive", noise=True), NOW, MADRID, "digit")
+    assert noise.update == ParsedFactUpdate(state=FactState.ARCHIVED) and noise.history is None
+    standing = answer_updates(A.ENDED, fact(text="The user goes to a pottery class."), asked("still_true"), NOW, MADRID, "digit")
+    assert standing.update == ParsedFactUpdate(state=FactState.ARCHIVED)
+    assert standing.history is not None and standing.history.endswith("The user goes to a pottery class.")

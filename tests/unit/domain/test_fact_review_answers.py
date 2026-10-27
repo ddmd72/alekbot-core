@@ -11,12 +11,14 @@ from src.domain.fact_expiry import Expiry
 from src.domain.fact_review_answer_change import AnswerChange
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_answers import ARCHIVE_ONLY, answer_updates, digit_answer, ended_text
+from src.domain.fact_review_options import OPTIONS
 from src.domain.fact_review_reasons import answer_reason, is_revive_reason
 from src.domain.fact_review_rules import fallback_fields, fallback_window_days
 from src.domain.interactive_binding import InteractiveBinding
 from src.domain.interactive_message import InteractiveMessage
 from src.domain.interactive_option import InteractiveOption
 from tests.support.review_rule_builders import NOW, fact, question
+from tests.unit.domain.review_p2_texts import TEXTS
 
 DAY = timedelta(days=1)
 # Reviewer edit (facts S4, T3c): an answer carries a typed update (ParsedFactUpdate, an Expiry), not the model's argument
@@ -43,7 +45,12 @@ def message(ids=("still_true", "ended", "never", "dont_know")) -> InteractiveMes
 # ------------------------------------------------------------------------------------------------ the kinds
 
 def test_the_four_kinds_are_the_four_option_ids_in_order():
-    assert [kind.value for kind in AnswerKind] == ["still_true", "ended", "never", "dont_know"]
+    # P2 revised (C2): the four S4 kinds are the still_true question's options, in order; the seven new kinds follow
+    assert [kind.value for kind in OPTIONS["still_true"]] == ["still_true", "ended", "never", "dont_know"]
+    assert [kind.value for kind in AnswerKind] == [
+        "still_true", "ended", "never", "dont_know",
+        "happened", "not_happened", "renewed", "not_renewed", "not_needed", "paid", "not_paid",
+    ]
 
 
 # ------------------------------------------------------------------------------------------------ digit_answer
@@ -195,6 +202,8 @@ def test_ended_on_a_dated_plan_archives_only():
 
 
 def test_ended_on_a_fact_whose_question_falls_back_to_archive_archives_only():
+    # Arbiter (owner's rule: archive only for noise and never-true): a question that falls back to archive asks about
+    # noise, and noise is archived with no history fact
     change = answer_updates(AnswerKind.ENDED, fact(), question(fallback="archive"), NOW, MADRID, "cabinet")
     assert change.update == ARCHIVE
     assert change.history is None
@@ -247,9 +256,17 @@ def test_an_update_carries_the_moment_of_the_answer_and_no_fallback_fields(kind)
     assert change.update == ParsedFactUpdate(state=change.update.state, expiry=change.update.expiry)
 
 
+def fitting_question(kind: AnswerKind):
+    """P2 revised (C7): an answer is applied only to a question it is an option of; the first such kind, with its texts."""
+    qkind = next(k for k, options in OPTIONS.items() if kind in options)
+    if qkind == "still_true":
+        return question()
+    return question(question=qkind, fallback="history", texts=TEXTS[qkind])
+
+
 @pytest.mark.parametrize("kind", list(AnswerKind))
 def test_an_answer_changes_neither_the_fact_nor_the_question(kind):
-    stale, q = fact(), question()
+    stale, q = fact(), fitting_question(kind)
     before = (stale.model_dump(), q.model_dump())
     answer_updates(kind, stale, q, NOW, MADRID, "digit")
     assert (stale.model_dump(), q.model_dump()) == before

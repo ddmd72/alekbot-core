@@ -5,10 +5,14 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from src.domain.entities import ExpiryKind, FactState, TemporalClass
+from src.domain.fact_expiry import EXPIRY_NONE
 from src.domain.fact_review_basis import ReviewBasis
 from src.domain.fact_update import ParsedFactUpdate
 from src.domain.fact_review_question import QuestionStatus
 from src.domain.fact_review_rules import (
+    ARCHIVE_NEEDS_REPLY,
+    DATED_PLAN_HISTORY,
+    HISTORY_WITH_REWRITE,
     REVIVE_NEEDS_BASIS,
     ask_refusal,
     basis_refusal,
@@ -30,6 +34,11 @@ def update_for(action):
         "archive": ParsedFactUpdate(state=FactState.ARCHIVED),
         "invalidate": ParsedFactUpdate(state=FactState.INVALIDATED),
         "supersede": ParsedFactUpdate(state=FactState.SUPERSEDED, superseded_by="x"),
+        # P2 revised (P2-1): a history rewrite, the one change a passed date backs
+        "history": ParsedFactUpdate(
+            content="The user drank green tea until Oct 2026.", state=FactState.CURRENT, expiry=EXPIRY_NONE,
+            as_history=True,
+        ),
     }[action]
 
 
@@ -63,15 +72,19 @@ def test_a_revive_with_no_basis_is_told_to_ask_the_owner():
 @pytest.mark.parametrize("action", ["rewrite", "invalidate", "archive"])
 def test_rewrite_invalidate_and_archive_with_no_basis_are_refused_with_the_shapes(action):
     text = refuse(action)
-    assert text.startswith(f"basis: {action} needs a basis") and "evidence_fact_id" in text and "quote" in text
-    assert ("date_passed" in text) is (action == "archive")
+    assert text.startswith(f"basis: {action} needs a basis") and "quote" in text
+    # P2 revised (P2-2, C5): an archive needs the owner's reply only; no shape names date_passed but a history rewrite's
+    assert ("evidence_fact_id" in text) is (action != "archive")
+    assert "date_passed" not in text
 
 
 # ------------------------------------------------------------------------------------------------ evidence
 
 @pytest.mark.parametrize("action", ["revive", "rewrite", "invalidate", "archive"])
 def test_a_current_fact_of_another_lineage_is_evidence_for_every_action(action):
-    assert refuse(action, evidence_basis(), evidence=OTHER()) is None
+    # P2 revised (P2-2): evidence backs every action but an archive, which needs the owner's reply
+    expected = ARCHIVE_NEEDS_REPLY if action == "archive" else None
+    assert refuse(action, evidence_basis(), evidence=OTHER()) == expected
 
 
 def test_evidence_needs_an_id():
@@ -159,33 +172,38 @@ def test_a_question_without_a_recorded_reply_backs_nothing():
 
 # ------------------------------------------------------------------------------------------------ date_passed
 
-def test_a_passed_plan_date_backs_an_archive_of_a_non_dated_fact():
-    assert refuse("archive", ReviewBasis("date_passed", on=date(2026, 10, 23))) is None
+# P2 revised (P2-2): a passed date backs only a history rewrite; the date rules below are unchanged and are now read
+# through that rewrite ("history" in update_for), where they were read through an archive.
+
+def test_a_passed_plan_date_backs_a_history_rewrite_not_an_archive_of_a_non_dated_fact():
+    # P2 revised (P2-4): an archive on a passed date is refused; the same date backs the history rewrite
+    assert refuse("archive", ReviewBasis("date_passed", on=date(2026, 10, 23))) == ARCHIVE_NEEDS_REPLY
+    assert refuse("history", ReviewBasis("date_passed", on=date(2026, 10, 23))) is None
 
 
 @pytest.mark.parametrize("on", [TODAY, date(2026, 10, 25)])
 def test_a_plan_date_of_today_or_later_has_not_passed(on):
-    assert "not before today" in refuse("archive", ReviewBasis("date_passed", on=on))
+    assert "not before today" in refuse("history", ReviewBasis("date_passed", on=on))
 
 
 def test_a_non_dated_fact_needs_the_date():
-    assert refuse("archive", ReviewBasis("date_passed")).startswith("basis.date: the plan's date (YYYY-MM-DD)")
+    assert refuse("history", ReviewBasis("date_passed")).startswith("basis.date: the plan's date (YYYY-MM-DD)")
 
 
 def test_a_dated_fact_uses_its_own_date_and_ignores_the_models():
     past = fact(**dated(date(2026, 10, 20)))
-    assert refuse("archive", ReviewBasis("date_passed", on=date(2030, 1, 1)), subject=past) is None
-    assert refuse("archive", ReviewBasis("date_passed"), subject=past) is None
+    assert refuse("history", ReviewBasis("date_passed", on=date(2030, 1, 1)), subject=past) is None
+    assert refuse("history", ReviewBasis("date_passed"), subject=past) is None
 
 
 @pytest.mark.parametrize("last_day", [TODAY, date(2026, 10, 30)])
 def test_a_dated_fact_whose_date_is_today_or_later_is_not_over(last_day):
-    assert "not before today" in refuse("archive", ReviewBasis("date_passed", on=date(2020, 1, 1)), subject=fact(**dated(last_day)))
+    assert "not before today" in refuse("history", ReviewBasis("date_passed", on=date(2020, 1, 1)), subject=fact(**dated(last_day)))
 
 
 def test_a_dated_fact_with_no_stored_date_has_no_passed_date():
     broken = fact(expiry_kind=ExpiryKind.DATE, ttl_days=None, expires_at=None)
-    assert "unknown" in refuse("archive", ReviewBasis("date_passed", on=date(2020, 1, 1)), subject=broken)
+    assert "unknown" in refuse("history", ReviewBasis("date_passed", on=date(2020, 1, 1)), subject=broken)
 
 
 def test_the_dated_facts_day_is_the_owners_not_utc():
@@ -193,23 +211,23 @@ def test_the_dated_facts_day_is_the_owners_not_utc():
     ny = fact(**dated(date(2026, 10, 24), ZoneInfo("America/New_York")))  # 25 Oct 04:00 UTC
     assert ny.expires_at == datetime(2026, 10, 25, 4, 0, tzinfo=timezone.utc)
     on_the_25th = date(2026, 10, 25)
-    assert refuse("archive", ReviewBasis("date_passed"), subject=ny, today=on_the_25th, tz="America/New_York") is None
+    assert refuse("history", ReviewBasis("date_passed"), subject=ny, today=on_the_25th, tz="America/New_York") is None
     # read in UTC the plan would end on the 25th, which is not before the 25th
-    assert "not before today" in refuse("archive", ReviewBasis("date_passed"), subject=ny, today=on_the_25th, tz="UTC")
+    assert "not before today" in refuse("history", ReviewBasis("date_passed"), subject=ny, today=on_the_25th, tz="UTC")
     # and on the 24th, New York time, it has not passed
-    assert "not before today" in refuse("archive", ReviewBasis("date_passed"), subject=ny, today=date(2026, 10, 24), tz="America/New_York")
+    assert "not before today" in refuse("history", ReviewBasis("date_passed"), subject=ny, today=date(2026, 10, 24), tz="America/New_York")
 
 
 def test_a_plan_east_of_utc_is_the_same_day_in_both_readings():
     madrid = fact(**dated(date(2026, 10, 24), ZoneInfo("Europe/Madrid")))  # 24 Oct 22:00 UTC
-    assert refuse("archive", ReviewBasis("date_passed"), subject=madrid, today=date(2026, 10, 25), tz="Europe/Madrid") is None
-    assert "not before today" in refuse("archive", ReviewBasis("date_passed"), subject=madrid, today=date(2026, 10, 24), tz="Europe/Madrid")
+    assert refuse("history", ReviewBasis("date_passed"), subject=madrid, today=date(2026, 10, 25), tz="Europe/Madrid") is None
+    assert "not before today" in refuse("history", ReviewBasis("date_passed"), subject=madrid, today=date(2026, 10, 24), tz="Europe/Madrid")
 
 
 @pytest.mark.parametrize("action", ["revive", "rewrite", "invalidate"])
-def test_a_passed_date_backs_only_an_archive(action):
+def test_a_passed_date_backs_only_a_history_rewrite(action):
     text = refuse(action, ReviewBasis("date_passed", on=date(2026, 10, 1)))
-    assert "backs only an archive" in text and "date_passed" not in text.split("needs")[1]
+    assert "backs only a history rewrite" in text and "date_passed" not in text.split("needs")[1]
 
 
 # ------------------------------------------------------------------------------------------------ history
@@ -221,17 +239,24 @@ def test_history_goes_with_an_archive_on_a_reply_for_a_standing_fact():
 @pytest.mark.parametrize("action", ["revive", "rewrite", "invalidate", "supersede"])
 def test_history_with_any_other_action_is_refused(action):
     text = refuse(action, reply_basis(), q=question(Q.ASKED, **REPLIED), evidence=OTHER(), history="it ended")
-    assert text is not None and "history goes only with an archive" in text
+    # P2 revised (C5): a rewrite sent with history is told to send as_history instead
+    if action == "rewrite":
+        assert text == HISTORY_WITH_REWRITE
+    else:
+        assert text is not None and "history goes only with an archive" in text
 
 
 def test_history_on_an_archive_with_another_basis_is_refused():
-    assert "history goes only" in refuse("archive", evidence_basis(), evidence=OTHER(), history="it ended")
-    assert "history goes only" in refuse("archive", ReviewBasis("date_passed", on=date(2026, 10, 1)), history="it ended")
+    # P2 revised (P2-4): an archive on any basis but a reply is refused before its history is read
+    assert refuse("archive", evidence_basis(), evidence=OTHER(), history="it ended") == ARCHIVE_NEEDS_REPLY
+    assert refuse("archive", ReviewBasis("date_passed", on=date(2026, 10, 1)), history="it ended") == ARCHIVE_NEEDS_REPLY
 
 
-def test_history_on_a_dated_plan_is_refused_because_a_plan_that_is_over_is_archived_only():
+def test_history_on_a_dated_plan_is_refused_because_a_plan_that_is_over_is_rewritten_as_history():
+    # P2 revised (C5, C7): a date fact that is over is rewritten as history, not archived beside a history fact; a fact
+    # whose question falls back to archive is noise and is archived only (arbiter: archive only for noise and never-true)
     q = question(Q.ASKED, **REPLIED)
-    assert "archived only" in refuse("archive", reply_basis(), q=q, subject=fact(**dated(date(2026, 10, 20))), history="it ended")
+    assert refuse("archive", reply_basis(), q=q, subject=fact(**dated(date(2026, 10, 20))), history="it ended") == DATED_PLAN_HISTORY
     assert "archived only" in refuse("archive", reply_basis(), q=question(Q.ASKED, fallback="archive", **REPLIED), history="it ended")
 
 
@@ -245,12 +270,11 @@ def test_a_basis_problem_is_reported_before_a_history_problem():
 
 # ------------------------------------------------------------------------------------------------ is_dated_plan
 
-def test_a_dated_plan_is_a_date_fact_or_one_that_falls_back_to_archive():
+def test_a_dated_plan_is_a_date_fact_only():
+    # P2 revised (C7): is_dated_plan reads the fact's expiry kind only; its question parameter is gone
     assert is_dated_plan(fact(**dated(date(2026, 10, 1))))
     assert not is_dated_plan(fact())
-    assert not is_dated_plan(fact(), question(fallback="revive"))
-    assert is_dated_plan(fact(), question(fallback="archive"))
-    assert is_dated_plan(fact(**dated(date(2026, 10, 1))), question(fallback="revive"))
+    assert not is_dated_plan(fact(expiry_kind=ExpiryKind.HORIZON))
 
 
 # ------------------------------------------------------------------------------------------------ ask_refusal
@@ -275,38 +299,46 @@ def test_a_timed_out_question_says_its_fallback_applies():
     assert "timed out" not in ask(open_question=question(Q.ASKED, asked_at=NOW - timedelta(days=14) + timedelta(seconds=1)))
 
 
+# P2 revised (P2-3, C5): history joins the fallbacks, archive goes only with noise, and fallback_date is retired for
+# every new ask (it existed to archive a horizon plan whose date passed).
+RETIRED = "ask_owner.fallback_date is retired: a plan whose date passed is asked with question happened and fallback history"
+ARCHIVE_ONLY_NOISE = (
+    "ask_owner.fallback archive: only with noise: true; a plan whose date passed is asked with question happened and "
+    "fallback history"
+)
+
+
 @pytest.mark.parametrize("bad", ["", "ask", "REVIVE", "none"])
-def test_the_fallback_is_revive_or_archive(bad):
-    assert ask(bad) == "ask_owner.fallback: revive or archive"
+def test_the_fallback_is_revive_archive_or_history(bad):
+    assert ask(bad) == "ask_owner.fallback: revive, archive or history"
 
 
 def test_a_revive_fallback_takes_no_date_and_no_noise():
-    assert "go with fallback archive only" in ask("revive", fallback_date=date(2026, 10, 1))
-    assert "go with fallback archive only" in ask("revive", noise=True)
+    assert ask("revive", fallback_date=date(2026, 10, 1)) == RETIRED
+    assert ask("revive", noise=True) == "ask_owner: noise goes with fallback archive only"
 
 
-def test_archive_is_allowed_for_a_dated_plan():
-    assert ask("archive", subject=fact(**dated(date(2026, 10, 30)))) is None
+def test_archive_on_a_dated_plan_needs_noise():
+    assert ask("archive", subject=fact(**dated(date(2026, 10, 30)))) == ARCHIVE_ONLY_NOISE
+    assert ask("archive", noise=True, subject=fact(**dated(date(2026, 10, 30)))) is None
 
 
-def test_archive_is_allowed_with_a_past_fallback_date_on_any_fact():
-    assert ask("archive", fallback_date=date(2026, 10, 23)) is None
+def test_a_past_fallback_date_is_retired_on_any_fact():
+    assert ask("archive", fallback_date=date(2026, 10, 23)) == RETIRED
 
 
-def test_archive_on_an_ordinary_fact_needs_a_date_or_noise():
-    text = ask("archive")
-    assert "only for a dated plan" in text and "use revive" in text
+def test_archive_on_an_ordinary_fact_needs_noise():
+    assert ask("archive") == ARCHIVE_ONLY_NOISE
 
 
 @pytest.mark.parametrize("given", [TODAY, date(2026, 10, 25)])
 def test_a_fallback_date_of_today_or_later_is_refused_even_on_a_dated_plan(given):
-    text = ask("archive", fallback_date=given, subject=fact(**dated(date(2026, 10, 30))))
-    assert "must be before today" in text and TODAY.isoformat() in text
+    assert ask("archive", fallback_date=given, subject=fact(**dated(date(2026, 10, 30)))) == RETIRED
 
 
-def test_today_is_the_owners_day():
+def test_a_fallback_date_is_retired_whatever_the_owners_day():
+    # no ask rule reads the day any more: a fallback date is retired whatever the day and the owner's zone
     late = datetime(2026, 10, 23, 23, 30, tzinfo=timezone.utc)  # 23 Oct in UTC, 24 Oct 01:30 in Europe/Madrid
-    assert "must be before today (2026-10-23)" in ask("archive", fallback_date=date(2026, 10, 23), now=late, tz="UTC")
-    assert ask("archive", fallback_date=date(2026, 10, 22), now=late, tz="UTC") is None
-    assert ask("archive", fallback_date=date(2026, 10, 23), now=late, tz="Europe/Madrid") is None
-    assert "must be before today (2026-10-24)" in ask("archive", fallback_date=date(2026, 10, 24), now=late, tz="Europe/Madrid")
+    for given in (date(2026, 10, 22), date(2026, 10, 23), date(2026, 10, 24)):
+        for tz in ("UTC", "Europe/Madrid"):
+            assert ask("archive", fallback_date=given, now=late, tz=tz) == RETIRED

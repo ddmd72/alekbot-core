@@ -387,7 +387,9 @@ class TestUndigestedSince:
     async def _state(self, world: ReviewWorld):
         return await world.review_store.get_state(ACC)
 
-    async def test_a_review_pass_that_archives_a_fact_marks_the_account(self):
+    async def test_a_review_pass_that_sets_a_fact_aside_marks_the_account(self):
+        # P2 revised (P2-2): evidence backs no archive; the pass sets the fact aside by an invalidation it backs, which
+        # marks the account the same way (pass_set_aside)
         world = ReviewWorld()
         await world.seed_state(account_id=ACC)
         fact = await stale(world, "Alex keeps a weight log", NOW - timedelta(days=3))
@@ -395,13 +397,13 @@ class TestUndigestedSince:
         r = Rig(world)
 
         async def play(task: FactReviewTask, scope: FactReviewScope) -> None:
-            result = await scope.update_fact({"fact_id": fact, "updates": {"state": "archived"}, "basis": on(proof)})
+            result = await scope.update_fact({"fact_id": fact, "updates": {"state": "invalidated"}, "basis": on(proof)})
             assert result["status"] == "updated", result
 
         r.agent.play = play
         await r.run()
 
-        assert world.docs[fact]["state"] == "archived"
+        assert world.docs[fact]["state"] == "invalidated"
         assert (await self._state(world)).undigested_since == NOW
 
     async def test_a_review_pass_that_only_revives_marks_nothing(self):

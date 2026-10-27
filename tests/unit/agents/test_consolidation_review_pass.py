@@ -28,6 +28,7 @@ from src.ports.llm_port import AgentExecutionContext, LLMPort, LLMResponse, Prov
 from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
+from tests.support.review_p2_labels import RU_P2_LABELS
 from tests.support.review_rule_builders import question as build_question
 
 TZ = "Europe/Lisbon"
@@ -50,6 +51,7 @@ RU_LABELS = {
     "memory_digest_footer": "Чтобы вернуть один, скажите в чате, что это всё ещё так.",
     "memory_digest_archived": "это уже не так",
     "memory_digest_invalidated": "этого никогда не было",
+    **RU_P2_LABELS,  # P2 revised (C11): the set is the 28 label keys
 }
 
 
@@ -184,18 +186,24 @@ async def test_the_agent_takes_the_review_task(world):
 ])
 async def test_each_outcome_is_returned_from_the_scope(world, updates, outcome):
     fact, ev = await _stale(world, "lives in Porto"), await _evidence(world)
+    questions = ()
     if updates == "supersede":
         call = {"fact_id": fact, "updates": {"state": "superseded", "superseded_by": ev}}
+    elif outcome == "archived":
+        # P2 revised (P2-4): the review archives only on the owner's reply to the fact's question
+        questions = (build_question(QuestionStatus.ASKED, fact_id=fact, account_id=ACC, user_id=USER,
+                                    reply_text="I left Porto", reply_at=NOW - timedelta(hours=2)),)
+        call = {"fact_id": fact, "updates": updates, "basis": {"kind": "reply", "question_id": "q1", "quote": "left Porto"}}
     else:
         call = {"fact_id": fact, "updates": updates, "basis": _on(ev)}
     agent = _agent(world, [_tools(("update_fact", call)), REPORT])
 
-    response = await _run(agent, await _task(world, fact))
+    response = await _run(agent, await _task(world, fact, questions=questions))
 
     assert response.status == AgentStatus.SUCCESS, response.error
     (decided,) = response.result["outcomes"]
     assert decided["fact_id"] == fact and decided["outcome"] == outcome
-    assert decided["basis_kind"] == (None if updates == "supersede" else "evidence")
+    assert decided["basis_kind"] == (None if updates == "supersede" else "reply" if outcome == "archived" else "evidence")
     assert world.docs[decided["written_id"]]["state"] in ("current", outcome)
     assert response.result["asks"] == [] and response.result["kept"] == []
 
@@ -208,7 +216,9 @@ async def test_asks_are_returned_and_nothing_is_written(world):
     response = await _run(agent, await _task(world, fact, kept))
 
     assert response.status == AgentStatus.SUCCESS, response.error
-    assert response.result["asks"] == [{"fact_id": fact, "fallback": "revive", "fallback_date": None, "noise": False}]
+    # P2 revised (C8): an ask carries its question kind, texts and folds
+    assert response.result["asks"] == [{"fact_id": fact, "fallback": "revive", "fallback_date": None, "noise": False,
+                                         "question": "still_true", "texts": {}, "folds": []}]
     assert response.result["outcomes"] == [] and response.result["kept"] == [kept]
     assert {fid: world.docs[fid] for fid in (fact, kept)} == before
 
@@ -262,7 +272,8 @@ async def test_a_payload_without_a_review_task_is_a_failure(world):
 
 async def test_the_owners_zone_and_the_review_label_reach_the_write_context(world):
     fact, ev = await _stale(world, "lives in Porto"), await _evidence(world)
-    agent = _agent(world, [_tools(("update_fact", {"fact_id": fact, "updates": {"state": "archived"}, "basis": _on(ev)})),
+    # P2 revised (P2-2): evidence backs no archive; the write is an invalidation it backs
+    agent = _agent(world, [_tools(("update_fact", {"fact_id": fact, "updates": {"state": "invalidated"}, "basis": _on(ev)})),
                            REPORT])
     recorder = RecordingUpdates(world.store.adapter)
     agent._fact_updates = recorder

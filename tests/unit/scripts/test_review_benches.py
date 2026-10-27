@@ -190,13 +190,21 @@ TALK = cases.stale_cases(NOW)[0]
 UNDECIDABLE = next(c for c in cases.stale_cases(NOW) if c.key == "undecidable")
 
 
+TALK_HISTORY = (
+    "Alex planned to give a talk at the Hamburg conference on 15 October 2026; whether it took place is unknown."
+)
+
+
 def review_script(*extra: ToolCall):
-    """The model: archive the plan on its passed date, ask about the undecidable fact (plus `extra`), then report."""
-    archive = ToolCall(name="update_fact", args={
-        "fact_id": TALK.fact_id, "updates": {"state": "archived"}, "basis": {"kind": "date_passed", "date": "2026-10-15"},
+    """The model: rewrite the plan as history on its passed date (P2 revised: a passed date backs a history rewrite, no
+    archive), ask about the undecidable fact (plus `extra`), then report."""
+    history = ToolCall(name="update_fact", args={
+        "fact_id": TALK.fact_id, "as_history": True,
+        "updates": {"state": "current", "content": TALK_HISTORY, "expiry": {"kind": "none"}},
+        "basis": {"kind": "date_passed", "date": "2026-10-15"},
     })
     ask = ToolCall(name="ask_owner", args={"fact_id": UNDECIDABLE.fact_id, "fallback": "revive"})
-    return metered(calls(archive, ask, *extra))
+    return metered(calls(history, ask, *extra))
 
 
 async def seed_live(world: ReviewWorld) -> None:
@@ -284,7 +292,10 @@ async def test_the_run_stages_the_cases_in_the_overlay_decides_them_and_queues_t
 
     plan = kit.repo.overlay_document(TALK.fact_id)
     asked = kit.repo.overlay_document(UNDECIDABLE.fact_id)
-    assert plan.state is FactState.ARCHIVED
+    # P2 revised (P2-1): the plan is closed as superseded by its history version, a current fact in the same lineage
+    assert plan.state is FactState.SUPERSEDED
+    history = kit.repo.overlay_document(plan.superseded_by)
+    assert (history.state, history.text, history.lineage_id) == (FactState.CURRENT, TALK_HISTORY, plan.lineage_id)
     assert (asked.state, asked.stale_since) == (FactState.CURRENT, None)        # queued: current while it waits
     assert asked.lifecycle_events[-1]["reason"].startswith(queued_reason(""))
     assert run["batch"] == min(REVIEW_BATCH, run["legacy"] + run["live_staged"] + len(run["cases"]))

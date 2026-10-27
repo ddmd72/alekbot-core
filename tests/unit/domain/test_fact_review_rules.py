@@ -443,9 +443,10 @@ def test_a_date_on_a_revive_question_is_refused_by_the_record():
 
 # ------------------------------------------------------------------------------------------------ kept_twice_fallback
 
-def test_silence_archives_a_dated_plan_and_keeps_every_other_fact():
-    assert kept_twice_fallback(fact(expiry_kind=ExpiryKind.DATE, ttl_days=None)) == "archive"
+def test_silence_writes_a_dated_plan_as_history_and_keeps_every_other_fact():
+    # P2 revised (C6): silence on a dated plan kept twice writes it as history, never an archive
+    assert kept_twice_fallback(fact(expiry_kind=ExpiryKind.DATE, ttl_days=None)) == "history"
     assert kept_twice_fallback(fact(expiry_kind=ExpiryKind.HORIZON)) == "revive"
     assert kept_twice_fallback(fact(expiry_kind=ExpiryKind.NONE, ttl_days=None, expires_at=None)) == "revive"
     assert kept_twice_fallback(fact(expiry_kind=None, ttl_days=14)) == "revive"  # a legacy plan: the model archives it
-    assert kept_twice_fallback(fact(expiry_kind="date")) == "archive"  # a stored kind is a string
+    assert kept_twice_fallback(fact(expiry_kind="date")) == "history"  # a stored kind is a string

@@ -50,6 +50,12 @@ class FactReviewStore(ABC):
         queue order is `queue_order`'s. No transaction."""
 
     @abstractmethod
+    async def timeout_histories(self, account_id: str) -> List[FactReviewQuestion]:
+        """The account's questions closed by a timeout with the fallback `history`: `account_id ==`, `closed_by == "timeout"`
+        and `fallback == "history"`, served by merging single-field indexes (no composite index). Unordered, no transaction;
+        one that no longer validates is skipped (ERROR), as in the other list reads."""
+
+    @abstractmethod
     async def all_open(self) -> List[FactReviewQuestion]:
         """Every open question of every account: `status in [queued, pending, asked, unanswered]`. Unordered. No
         transaction."""
@@ -77,6 +83,11 @@ class FactReviewStore(ABC):
     async def mark_offered(self, question_id: str, at: datetime) -> bool:
         """`offered(at)`, in a transaction over the question. False: no such question, or it has no reply the review
         has not been shown."""
+
+    @abstractmethod
+    async def mark_fallback_failed(self, question_id: str) -> bool:
+        """`fallback_failed()`, in a transaction over the question: its history fallback was tried and not written, so
+        `fallback_attempts` grows by one and the question stays open. False: no such question, or it is closed."""
 
     @abstractmethod
     async def close(

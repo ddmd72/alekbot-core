@@ -18,6 +18,7 @@ from src.domain.exceptions import FactBornDueError, FactWriteConflict
 from src.domain.fact_answer_result import AnswerResult
 from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_language import LABEL_KEYS, fact_question_message
+from src.domain.fact_review_options import OPTIONS
 from src.domain.fact_review_question import ClosedBy, FactReviewQuestion, QuestionStatus
 from src.domain.fact_review_reasons import answer_reason
 from src.domain.fact_review_rules import fallback_window_days
@@ -159,6 +160,15 @@ async def test_each_answer_on_each_open_question_is_applied_and_closes_it(kind, 
 
     result = await service(world).apply(ACC, USER, "q1", kind, source, world.now)
 
+    if kind not in OPTIONS["still_true"]:
+        # P2 revised (P2-3 "Answers fit their question"): an answer that is no option of this still_true question is
+        # not applied, before any write; the fact, the question and the store stay as they were
+        assert result is AnswerResult.NOT_APPLIED
+        assert world.docs[fact]["state"] == "stale" and set(world.docs) == before
+        stored = stored_question(world)
+        assert (stored["status"], stored.get("closed_by"), stored.get("answer")) == (status.value, None, None)
+        assert (await day_row(world)).answers_not_applied == 1
+        return
     assert result is AnswerResult.APPLIED
     assert world.docs[fact]["state"] == EXPECTED_STATE[kind]
     stored = stored_question(world)

@@ -309,19 +309,21 @@ async def test_an_unanswered_scope_refusal_posts_the_alert(world):
     assert world.docs[outside]["state"] == "stale"
 
 
-def _archive(fact_id):
+def _invalidate(fact_id, evidence_id):
+    # P2 revised (P2-2): a passed date no longer backs an archive; the closing write is an invalidation on evidence
     return ("update_fact", {
-        "fact_id": fact_id, "updates": {"state": "archived"}, "basis": {"kind": "date_passed", "date": "2026-10-01"},
+        "fact_id": fact_id, "updates": {"state": "invalidated"},
+        "basis": {"kind": "evidence", "evidence_fact_id": evidence_id},
     })
 
 
-async def test_an_archive_sent_again_after_it_was_written_posts_no_alert(world):
-    fact = await _stale(world, "plays tennis on Sundays")
-    agent = _agent(world, [_tools(_archive(fact)), _tools(_archive(fact)), _REPORT])
+async def test_a_closing_write_sent_again_after_it_was_written_posts_no_alert(world):
+    fact, evidence = await _stale(world, "plays tennis on Sundays"), await world.seed("never played tennis")
+    agent = _agent(world, [_tools(_invalidate(fact, evidence)), _tools(_invalidate(fact, evidence)), _REPORT])
 
     _, scope, _ = await _review(world, agent, [fact])
 
-    assert [(d.fact_id, d.outcome) for d in scope.decisions()] == [(fact, "archived")]
+    assert [(d.fact_id, d.outcome) for d in scope.decisions()] == [(fact, "invalidated")]
     assert _alerts(world) == []
     assert (await _day(world)).review_refusals == 1          # the repeat was refused (scope) and is still counted
 

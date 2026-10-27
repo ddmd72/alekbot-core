@@ -49,6 +49,7 @@ _E164_PATTERN = re.compile(r"^\+[1-9]\d{6,14}$")
 
 # How many questions one request of answers may name.
 MAX_BULK_ANSWERS = 50
+MALFORMED_ANSWER = "each answer needs a question_id and one of that question's options"
 
 
 def create_user_cabinet_blueprint(
@@ -870,7 +871,7 @@ def create_user_cabinet_blueprint(
             return jsonify({"error": "Memory review not configured"}), 501
         try:
             entries = await fact_answer_service.review_queue(g.account_id, g.user_id)
-            options = await fact_answer_service.answer_options(g.user_id)
+            options = await fact_answer_service.answer_options(g.user_id, {e.question for e in entries})
             return jsonify({
                 "questions": [
                     {
@@ -881,10 +882,12 @@ def create_user_cabinet_blueprint(
                         "waiting_since": e.waiting_since.isoformat(),
                         "asked_at": e.asked_at.isoformat() if e.asked_at else None,
                         "status": e.place,
+                        "kind": e.question,
+                        "group": "invoices" if e.delivery == "digest" else "questions",
+                        "options": [{"answer": kind.value, "label": label} for kind, label in options[e.question]],
                     }
                     for e in entries
                 ],
-                "options": [{"answer": kind.value, "label": label} for kind, label in options],
             }), 200
         except Exception as e:
             logger.error(f"Error listing review questions: {e}", exc_info=True)
@@ -900,21 +903,23 @@ def create_user_cabinet_blueprint(
         raw_items = body.get("answers") if isinstance(body, dict) else None
         if not isinstance(raw_items, list) or not 1 <= len(raw_items) <= MAX_BULK_ANSWERS:
             return jsonify({"error": f"answers must be a list of 1 to {MAX_BULK_ANSWERS} items"}), 400
-        items = []
         for raw in raw_items:
-            question_id = raw.get("question_id") if isinstance(raw, dict) else None
-            kind = deciding_answer(raw.get("answer")) if isinstance(raw, dict) else None
-            if not isinstance(question_id, str) or not question_id or kind is None:
-                return jsonify({"error": "each answer needs a question_id and an answer of still_true, ended or never"}), 400
-            items.append((question_id, kind))
+            if not (isinstance(raw, dict) and isinstance(raw.get("question_id"), str) and raw["question_id"]
+                    and isinstance(raw.get("answer"), str)):
+                return jsonify({"error": MALFORMED_ANSWER}), 400
+        items = [(raw["question_id"], raw["answer"]) for raw in raw_items]
         if len({question_id for question_id, _ in items}) != len(items):
             return jsonify({"error": "a question may be answered once per request"}), 400
         try:
             named = await fact_review_store.get_questions([question_id for question_id, _ in items])
             if holds_other_users_question(named, g.account_id, g.user_id):
                 return jsonify({"error": "Not authorized"}), 403
+            by_id = {q.question_id: q for q in named}
+            kinds = [deciding_answer(answer, by_id.get(question_id)) for question_id, answer in items]
+            if any(kind is None for kind in kinds):
+                return jsonify({"error": MALFORMED_ANSWER}), 400
             results = []
-            for question_id, kind in items:
+            for (question_id, _), kind in zip(items, kinds):
                 try:
                     outcome = (await fact_answer_service.apply(
                         g.account_id, g.user_id, question_id, kind, "cabinet", datetime.now(timezone.utc),

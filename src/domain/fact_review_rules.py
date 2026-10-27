@@ -586,10 +586,22 @@ DATED_PLAN_HISTORY: Final[str] = (
     "history: a fact of expiry kind date is rewritten as history (as_history: true with content), not archived beside a "
     "history fact"
 )
+# A question that falls back to archive asks about noise (P2-4; a stored S4 one, about a plan set aside): when it is over it
+# is archived, never history.
+NOISE_ARCHIVED_ONLY: Final[str] = (
+    "history: a fact whose question falls back to archive is noise and is archived only; leave history out"
+)
 NOT_EVIDENCE: Final[str] = "{place} names a fact this pass rewrote as history on date_passed; that is no evidence"
 _PAYMENT_KEYS: Final[tuple[str, ...]] = ("paid", "not_paid")
 # Why a fold may not join an ask (`fold_refusal`).
 FoldRefusal = Literal["self", "not_in_batch", "taken"]
+
+
+def archived_only(fact: FactEntity, question: FactReviewQuestion) -> bool:
+    """Whether the owner's "No longer" archives the fact with no history fact beside it: a dated plan (`is_dated_plan`,
+    an S4 question about one) or noise (the question falls back to archive, `fallback_sets_aside`). Only a standing fact
+    gets its history (S4-D27)."""
+    return is_dated_plan(fact) or fallback_sets_aside(question)
 
 
 def is_dated_plan(fact: FactEntity) -> bool:
@@ -755,7 +767,7 @@ def basis_refusal(
         else _reply_refusal(subject or fact, basis, question) if basis.kind == "reply"
         else _date_passed_refusal(fact, basis, today, tz)
     )
-    return refusal or _history_refusal(action, fact, basis, history)
+    return refusal or _history_refusal(action, fact, basis, question, history)
 
 
 def _usable_fact_refusal(
@@ -819,13 +831,18 @@ def _date_passed_refusal(fact: FactEntity, basis: ReviewBasis, today: date, tz: 
     return None
 
 
-def _history_refusal(action: ReviewAction, fact: FactEntity, basis: ReviewBasis, history: Optional[str]) -> Optional[str]:
+def _history_refusal(
+    action: ReviewAction, fact: FactEntity, basis: ReviewBasis, question: Optional[FactReviewQuestion],
+    history: Optional[str],
+) -> Optional[str]:
     if history is None:
         return None
     if action != "archive" or basis.kind != "reply":
         return _HISTORY_ONLY_WITH_ARCHIVE
     if is_dated_plan(fact):
         return DATED_PLAN_HISTORY
+    if question is not None and fallback_sets_aside(question):
+        return NOISE_ARCHIVED_ONLY
     if not history.strip():
         return "history: one sentence in the past tense saying it ended"
     return None

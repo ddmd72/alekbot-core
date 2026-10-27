@@ -227,3 +227,12 @@ def test_the_horizon_expiry_of_an_ordinary_rewrite_is_untouched_by_the_history_r
 
 def test_a_revive_with_no_basis_is_still_told_to_ask():
     assert refuse("revive").startswith("nothing here says it still holds")
+
+
+def test_history_beside_the_archive_of_a_noise_fact_is_refused():
+    from src.domain.fact_review_rules import NOISE_ARCHIVED_ONLY
+    noise = question(QuestionStatus.ASKED, fallback="archive", noise=True, **REPLIED)
+    assert refuse("archive", reply_basis(), q=noise, history="It ended.") == NOISE_ARCHIVED_ONLY
+    assert refuse("archive", reply_basis(), q=noise) is None
+    standing = question(QuestionStatus.ASKED, **REPLIED)
+    assert refuse("archive", reply_basis(), q=standing, history="It ended.") is None

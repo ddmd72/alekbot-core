@@ -174,7 +174,8 @@ def test_the_task_payload_encoder_writes_dates_and_plain_enums():
         cls=_DomainEncoder,
     ))
     assert wire == {"on": "2026-10-24", "colour": "red",
-                    "decision": {"fact_id": "f", "outcome": "revived", "written_id": "f", "basis_kind": None}}
+                    "decision": {"fact_id": "f", "outcome": "revived", "written_id": "f", "basis_kind": None,
+                                 "as_history": False}}  # P2 revised (C8): ReviewDecision.as_history
 
 
 def test_the_task_payload_encoder_still_refuses_what_it_does_not_know():

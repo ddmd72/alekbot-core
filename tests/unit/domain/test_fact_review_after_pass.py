@@ -99,9 +99,12 @@ def test_the_result_round_trips_through_its_plain_form():
     encoded = encode_review_result(result)
 
     assert encoded == {
-        "outcomes": [{"fact_id": "f1", "outcome": "revived", "written_id": "f1", "basis_kind": "evidence"}],
-        "asks": [{"fact_id": "f2", "fallback": "archive", "fallback_date": NOW.date(), "noise": True}],
-        "kept": ["f3"], "message_language": "pt", "labels": {"k": "v"}, "translations": [],
+        # P2 revised (C8): a decision carries as_history, an ask its question, texts and folds, the result its invoices
+        "outcomes": [{"fact_id": "f1", "outcome": "revived", "written_id": "f1", "basis_kind": "evidence",
+                      "as_history": False}],
+        "asks": [{"fact_id": "f2", "fallback": "archive", "fallback_date": NOW.date(), "noise": True,
+                  "question": "still_true", "texts": {}, "folds": []}],
+        "kept": ["f3"], "message_language": "pt", "labels": {"k": "v"}, "translations": [], "invoices": [],
     }
     assert decode_review_result(encoded) == result
 

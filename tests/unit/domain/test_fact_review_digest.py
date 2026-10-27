@@ -145,7 +145,7 @@ def test_an_answer_sets_the_fact_aside_by_its_kind_and_the_questions_fallback(ki
 # ------------------------------------------------------------------------------------------------ the texts
 
 def test_the_state_words_are_label_keys_with_canonical_english_texts():
-    assert {ARCHIVED, INVALIDATED} <= LABEL_KEYS and len(LABEL_KEYS) == 15
+    assert {ARCHIVED, INVALIDATED} <= LABEL_KEYS and len(LABEL_KEYS) == 28  # P2 revised (C11): 15 + 13
     assert (CANONICAL_LABELS[ARCHIVED], CANONICAL_LABELS[INVALIDATED]) == ("no longer true", "never was true")
     assert check_labels(dict(CANONICAL_LABELS)) is None
 

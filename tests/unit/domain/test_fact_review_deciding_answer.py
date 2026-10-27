@@ -18,4 +18,7 @@ def test_anything_else_is_not_an_answer(raw):
 
 
 def test_dont_know_is_the_one_answer_a_batch_cannot_carry():
-    assert set(DECIDING_ANSWERS) == set(AnswerKind) - {AnswerKind.DONT_KNOW}
+    # P2 revised (C2): DECIDING_ANSWERS maps each question kind to its own deciding answers; together they are every
+    # answer but dont_know, and no kind's list holds it
+    assert {kind for answers in DECIDING_ANSWERS.values() for kind in answers} == set(AnswerKind) - {AnswerKind.DONT_KNOW}
+    assert all(AnswerKind.DONT_KNOW not in answers for answers in DECIDING_ANSWERS.values())

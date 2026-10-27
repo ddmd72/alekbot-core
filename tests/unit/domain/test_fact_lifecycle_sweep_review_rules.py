@@ -170,10 +170,10 @@ def test_the_segments_come_in_the_plans_order_with_every_figure_of_a_segment_sho
     text = review_segments(full, 2, QuestionStanding(queued=6, unanswered=1))
     assert text == (
         " | review: reviewed 5; counted on their own: revived 1, rewritten 1, archived 1, invalidated 0, superseded 0,"
-        " kept 2, queued 3"
+        " kept 2, queued 3, to history 0, folded 0"
         " | questions sent 4, answered by digit 2, by button 0, in the Cabinet 1, by reply 1, timed out 1,"
         " queue 6, unanswered 1, due_waiting 2"
-        " | review failed 1, refusals 2"
+        " | review failed 1, refusals 2, fallbacks not applied 0"
         " | replies not recorded 3"
         " | enqueued 1"
     )

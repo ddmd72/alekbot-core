@@ -15,7 +15,7 @@ from .fact_review_options import OPTIONS, options_of, text_key
 from .fact_review_question import UNKNOWN_TEXT, AnswerSource, FactReviewQuestion, QuestionKind
 from .fact_review_reasons import FallbackActor, answer_reason, fallback_reason, history_reason
 from .fact_review_rules import (
-    confirmed_expiry, fallback_fields, fallback_sets_aside, fallback_writes_history, is_dated_plan,
+    archived_only, confirmed_expiry, fallback_fields, fallback_sets_aside, fallback_writes_history,
 )
 from .fact_update import ParsedFactUpdate
 from .fact_write_context import FactWriteContext, as_utc, reviews_stored_memory
@@ -216,8 +216,8 @@ def answer_updates(
     (`AnswerChange` says why two shapes).
     `still_true`: current again, keeping the fact's own decision when it is permanent or a date still ahead
     (`confirmed_expiry`), else for the window a silence would give, counted from now.
-    `ended`: archived; a standing fact also gets its `ended_text` as a history fact, a dated plan (`is_dated_plan`) is
-    archived only. `never`: invalidated, nothing new. `dont_know`: the question's fallback now, as the owner's
+    `ended`: archived; a standing fact also gets its `ended_text` as a history fact, a dated plan or noise
+    (`archived_only`) is archived only. `never`: invalidated, nothing new. `dont_know`: the question's fallback now, as the owner's
     (`history_fallback` for `history`, else `fallback_fields`). P2-3: `happened`, `not_happened`, `not_needed`, `paid`
     and `not_paid` write their text (`written_text`) as history; `renewed` rewrites the fact to its text, current, with
     the window a confirmation gives (`confirmed_expiry`); `not_renewed` rewrites it to its text with expiry `none`. The
@@ -234,7 +234,7 @@ def answer_updates(
         update = ParsedFactUpdate(state=FactState.CURRENT, expiry=confirmed_expiry(fact, now, tz))
     elif kind is AnswerKind.ENDED:
         update = ARCHIVE_ONLY
-        history = None if is_dated_plan(fact) else ended_text(fact.text, now, tz)
+        history = None if archived_only(fact, question) else ended_text(fact.text, now, tz)
     elif kind in _HISTORY_ANSWERS:
         update = ParsedFactUpdate(
             state=FactState.CURRENT, content=written_text(question, text_key(kind), fact.text, now, tz),

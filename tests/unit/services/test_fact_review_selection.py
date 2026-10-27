@@ -38,6 +38,8 @@ from src.services.owner_timezone_resolver import OwnerTimezoneResolver
 from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
+from tests.support.review_p2_labels import PT_P2_LABELS
+from tests.support.review_fact_updates import RecordingFactUpdates
 from tests.support.review_rule_builders import question as build_question
 
 USER = "u1"
@@ -64,6 +66,7 @@ PT_LABELS = {
     UIMessage.MEMORY_DIGEST_FOOTER.value: "Para recuperar um, diga-me no chat que ainda é verdade.",
     UIMessage.MEMORY_DIGEST_ARCHIVED.value: "já não é verdade",
     UIMessage.MEMORY_DIGEST_INVALIDATED.value: "nunca foi verdade",
+    **PT_P2_LABELS,  # P2 revised (C11): the set is the 28 label keys
 }
 
 
@@ -143,6 +146,7 @@ class Rig:
             channel_bindings=world.channel_bindings, notifications=world.notifier, session_store=world.session_store,
             task_queue=world.queue, answer_service=answers, interactive=world.interactive, alert_sink=world.sink,
             run_timeout_s=600, clock=clock or world.clock,
+            fact_updates=RecordingFactUpdates(world.store.adapter), cabinet_url="https://cabinet.example/cabinet?tab=memory",
         )
 
     async def run(self) -> Dict[str, Any]:
@@ -665,8 +669,9 @@ class TestTimedOutCandidates:
         ev = await evidence(world, "Alex returned the last library book and closed the card")
         r = Rig(world, service_class=WithCandidates)
 
+        # P2 revised (P2-2): a standing fact a neighbour shows ended is superseded by it, never archived on evidence
         async def play(task: FactReviewTask, scope: FactReviewScope) -> None:
-            result = await scope.update_fact({"fact_id": fact, "updates": {"state": "archived"}, "basis": on(ev)})
+            result = await scope.update_fact({"fact_id": fact, "updates": {"state": "superseded", "superseded_by": ev}})
             assert result["status"] == "updated", result
 
         r.agent.play = play
@@ -674,9 +679,9 @@ class TestTimedOutCandidates:
 
         question = await stored_question(world, "qt")
         assert question.closed_by is ClosedBy.REVIEW and question.answer_source is None
-        assert world.docs[fact]["state"] == "archived"
+        assert world.docs[fact]["state"] == "superseded"
         row = await day_row(world)
-        assert (row.timed_out, row.archived_by_review, row.closed_by_reply) == (0, 1, 0)
+        assert (row.timed_out, row.superseded, row.closed_by_reply) == (0, 1, 0)
 
 
 # ------------------------------------------------------------------------------------------------ step 15: the revive alert
