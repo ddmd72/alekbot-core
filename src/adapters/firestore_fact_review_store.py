@@ -8,6 +8,10 @@ values, `fallback_date` as an ISO date string and every datetime as an aware UTC
 `{prefix}fact_review_messages/{user_id}:digest:{iso_week}`: the weekly digest's claim (`user_id`, `kind` = `digest`,
 `claimed_at`), created once; a release deletes it. `iso_week` is the domain's `iso_week_of(day)`.
 
+`{prefix}fact_review_messages/{account_id}:quote:{language}:{source_digest}`: a quote translation (`account_id`, `kind` =
+`quote`, `language`, `source_digest`, `text`, `written_at`, `purge_after` = `written_at + QUOTE_TRANSLATION_RETENTION`, the
+collection's TTL policy, active since 2026-10-26); `purge_overdue` counts them with the digest claims.
+
 TTL: the collections' Firestore TTL policies are on the field `purge_after`, which exists only in storage. It is
 written at serialisation: on a closed question as `closed_at + QUESTION_RETENTION` (an open question has none), and on a
 digest claim as `claimed_at + QUESTION_RETENTION`. A read ignores it. `purge_overdue` counts the documents whose
@@ -36,6 +40,7 @@ from ..config.environment import EnvironmentConfig
 from ..domain.exceptions import QuestionTransitionError
 from ..domain.fact_review_answer_kind import AnswerKind
 from ..domain.fact_review_question_close import QuestionClose
+from ..domain.fact_review_quote_translation import QUOTE_TRANSLATION_RETENTION, QuoteTranslation
 from ..domain.fact_review_question import (
     OPEN_STATUSES, QUESTION_RETENTION, AnswerSource, ClosedBy, FactReviewQuestion, QuestionStatus,
 )
@@ -339,6 +344,52 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def release_digest(self, user_id: str, day: date) -> None:
         await self._digest_ref(user_id, day).delete()
 
+    # ------------------------------------------------------------------------------------------------ quote translations
+
+    async def set_quote_translations(self, account_id: str, translations: Sequence[QuoteTranslation], at: datetime) -> None:
+        if not account_id:
+            raise ValueError("account_id is required for a quote translation")
+        if at.tzinfo is None:
+            raise ValueError("at must be timezone-aware")
+        if not translations:
+            return
+        documents = [
+            (self._quote_ref(account_id, t.language, t.source_digest), {
+                "account_id": account_id, "kind": "quote", "language": t.language, "source_digest": t.source_digest,
+                "text": t.text, "written_at": at, _TTL_FIELD: at + QUOTE_TRANSLATION_RETENTION,
+            })
+            for t in translations
+        ]
+
+        async def body(transaction: Any) -> None:
+            for ref, document in documents:
+                transaction.set(ref, document)
+
+        await self._in_transaction(body, f"quote translations of account {account_id[:8]}")
+
+    async def get_quote_translations(
+        self, account_id: str, language: str, digests: Sequence[str],
+    ) -> Dict[str, QuoteTranslation]:
+        if not account_id:
+            raise ValueError("account_id is required for a quote translation")
+        wanted = list(dict.fromkeys(d for d in digests if d))
+        if not wanted:
+            return {}
+        found: Dict[str, QuoteTranslation] = {}
+        async for snap in self._db.get_all([self._quote_ref(account_id, language, d) for d in wanted]):
+            if not snap.exists:
+                continue
+            data = snap.to_dict() or {}
+            try:
+                if data.get("kind") != "quote" or data.get("account_id") != account_id or data.get("language") != language:
+                    raise ValueError("not this account's quote translation")
+                record = QuoteTranslation(language=data["language"], source_digest=data["source_digest"], text=data["text"])
+            except (ValueError, KeyError, TypeError):
+                logger.error(f"❌ [FactReviewStore] quote translation {snap.id[-24:]} no longer validates and is skipped")
+                continue
+            found[record.source_digest] = record
+        return found
+
     # ------------------------------------------------------------------------------------------------ expiry
 
     async def purge_overdue(self, before: datetime) -> int:
@@ -401,6 +452,9 @@ class FirestoreFactReviewStore(FactReviewStore):
         if not user_id:
             raise ValueError("user_id is required for the digest claim")
         return self._messages.document(f"{user_id}:digest:{iso_week_of(day)}")
+
+    def _quote_ref(self, account_id: str, language: str, digest: str) -> Any:
+        return self._messages.document(f"{account_id}:quote:{language}:{digest}")
 
     async def _mark(self, account_id: str, change: StateChange, create: bool = False) -> bool:
         """Read the account's state and write `change(state)`, each field replaced whole, in one transaction. A

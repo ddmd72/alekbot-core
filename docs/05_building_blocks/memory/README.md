@@ -87,7 +87,7 @@ reply, a Cabinet click) are applied by code, not by a model (§5.6).
 | Janitor line mark | `{prefix}fact_lifecycle_lines` (`environment.py:523-529`), doc id = the UTC day | claims the day's single 🧹 ops line; never read as an account row; **no TTL policy** | the janitor (§5.5) |
 | Janitor run guard | `{prefix}fact_lifecycle_run`, one document `sweep` | `run_owner`, `run_until`: at most one janitor run at a time (an expired guard stays until the next run takes it over); **no TTL policy** | the janitor (§5.5) |
 | Review questions | `{prefix}fact_review_questions`, doc id = the question id | one question per fact: its status, the quoted text, the queue place, the message it was posted as, the owner's reply and answer (§5.6); a closed one carries `purge_after` for a TTL policy | the review service, `FactAnswerService` (§5.6) |
-| Review messages | `{prefix}fact_review_messages`, doc id `{user_id}:digest:{iso_week}` | the claim that lets one weekly digest go out per ISO week; carries `purge_after` | the review service (§5.6) |
+| Review messages | `{prefix}fact_review_messages`, doc id `{user_id}:digest:{iso_week}` or `{account_id}:quote:{language}:{source_digest}` | the claim that lets one weekly digest go out per ISO week, and the quote translations (a stored fact's text as shown in a message language, §5.6); both carry `purge_after` | the review service (§5.6) |
 | Review state | `{prefix}fact_review_state`, doc id = account id | when the review last ran or failed, the offers per fact, the current question and today's send count, the digest marks, the alert marks, the message language and its labels; **no TTL policy** | the janitor (its enqueue and alert marks), the review service, `FactAnswerService` (§5.6) |
 
 ### 1.3 The actors
@@ -1125,7 +1125,7 @@ question, today's count under 5); append the pair to the session (user part `[Sy
 about a fact he could not confirm]`, model part the question, `text == full_text`, raising when not stored); post; store the
 message reference; mark `asked`. A pair that cannot be appended puts the question back at the front; a post that fails appends a
 second pair (`[System: memory review q=<id> not delivered — …]` and `(not delivered)`) and puts it back, and that day sends no more.
-The message is code-built: "Is this still true?", the fact quoted as stored, and the four options
+The message is code-built: "Is this still true?", the fact quoted as the owner is shown it (translated into the message language when the review stored a translation, else as stored), and the four options
 `1 — Yes   2 — No longer   3 — Never   4 — Don't remember`, then a hint that a reply in words works too.
 
 **The language of the message.** The owner's response-language setting decides: a fixed language gives that language
@@ -1136,8 +1136,21 @@ es. For any other language the review model returns them in its report and they 
 exact 15 keys, one line each, within the length limits, no digit, `[` or URL, no control or invisible characters, four
 distinct option labels of at most four words); a set that fails is not used, the UI language is, and `labels_fallback` is
 counted. A passed set is cached in the state per language, with a digest of the English texts it translates, so a set written
-for other texts is ignored. The digits mean the same in every language. Facts are always quoted as stored, and each platform's
-adapter escapes whatever its markup would read as control syntax.
+for other texts is ignored. The digits mean the same in every language. Each platform's adapter escapes whatever its markup would read as control syntax.
+
+**The fact in the message language (quote translations).** Stored facts are English. A message in another language quotes
+the fact translated by the review pass: the pass is told the language (fixed mode: the task's `language`; mirror mode: the
+language it reports from the owner's messages) and returns `translations`, one per listed fact, in its final report (no
+call, no effect on any outcome). The code keeps a translation only if it is one line, has no `[`, link or control character,
+is at most 500 characters and keeps the source's numbers exactly (the multiset of digit runs); a fact whose own text has a
+link or `[` is never translated. A kept one is stored right after the pass (before the closes) under
+`{account_id}:quote:{language}:{digest of the English text}`, so the same text under any fact id finds it; it expires 180 days
+after it was written. Presentation only: the fact, its id and the question's `quoted_text` stay as stored. The question, its
+Slack redraws (after a click, a refused click, a close) and the weekly digest all show the translation when one is stored for
+the lines' language (`shown_language`) and still passes the checks, else the stored English text; a failed read shows English
+too. The pair appended to the history carries the shown text, so the consolidator reads a translated quote: its echo-trap
+exception says the quote may be the stored fact translated (same fact), and Smart's memory-review marker line says the
+quote is in the message's language. The Cabinet keeps showing the English text. English messages read no translation.
 
 **How the owner answers.** Only a *reply to the question message* counts (a Slack thread reply on the question's message, a
 Telegram reply to its message), or a click, or the Cabinet. Any other message is ordinary conversation and the question stays
@@ -1189,7 +1202,7 @@ short, arbitrary time, and never archives a lasting one.
 **The weekly digest.** When the review or an answer sets a fact aside (archive or invalidate), the state records
 `undigested_since`. At the end of a review run (after a failed pass too), if something is undigested and the last digest is at
 least 7 days old (or there is none), the run claims the owner's ISO week and sends one message by `notify_raw`, as literal
-text (stored fact text is shown, never obeyed, and nothing is written to history): a header, one line per fact quoted as stored
+text (stored fact text is shown, never obeyed, and nothing is written to history): a header, one line per fact as the owner is shown it (its translation when one is stored, else as stored)
 with its state in words ("no longer true" for an archive, "never was true" for an invalidation), and the footer "To bring one
 back, tell me in chat that it is still true." The digest lists only removals made by the review, a timeout or the owner (the
 last trail entry's actor), at most 50, read from the facts closed since the last digest (the first digest looks 30 days back).
@@ -1526,8 +1539,8 @@ Log lines, in pipeline order:
 | `scripts/validation/inspect_consolidation.py` | prints the queue and recent facts |
 | the five benches (stage 1 classification, cluster audit, decomposition, directive review in `scripts/consolidation/`, and the email bench `scripts/email/test_consolidation_dryrun.py`) with `--s3-kit` (`scripts/consolidation/s3_dry_run_kit.py`, `scripts/consolidation/s3_bench_support.py`) | the **model dry run of the S3 prompts** (deploy step M, owner-run on the Mac, cap $30): each bench runs the pass its gate reads, on the real agent and adapter over a no-write store |
 | `scripts/migration/fact_s3_stamp_legacy_stale.py` | deploy step 6a: stamps `stale_since` on stale facts that have none (dry run first; `--apply` writes) |
-| `scripts/consolidation/test_review_answers_dryrun.py --s3-kit` | step M bench 6: Stage 1 on windows with the real history shapes of a question and a reply (a digit, words, a correction, a bare digit with no marker, a not-delivered pair): the quoted fact must be left alone and only a correction's true value recorded (gate G4) |
-| `scripts/consolidation/test_review_dryrun.py --s3-kit --stage N --runs R [--mirror CODE]` | step M bench 7: the real `FactReviewService.run` on the kit over the owner's live stale facts, `N` more live facts staled in the kit's overlay, and seeded cases (a plan whose date passed, a revive with no basis, two stale duplicates, an undecidable fact, three replies in words); no stale fact, question, message or counter is written live (gates G5 and G6; `--mirror` checks the language the review reports) |
+| `scripts/consolidation/test_review_answers_dryrun.py --s3-kit` | step M bench 6: Stage 1 on windows with the real history shapes of a question and a reply (a digit, words, a correction, a bare digit with no marker, a not-delivered pair): the quoted fact must be left alone and only a correction's true value recorded (gate G4); `--case NAME` runs one case, e.g. `correction_translated_quote` (the question quoted in Ukrainian) |
+| `scripts/consolidation/test_review_dryrun.py --s3-kit --stage N --runs R [--mirror CODE]` | step M bench 7: the real `FactReviewService.run` on the kit over the owner's live stale facts, `N` more live facts staled in the kit's overlay, and seeded cases (a plan whose date passed, a revive with no basis, two stale duplicates, an undecidable fact, three replies in words); no stale fact, question, message or counter is written live (gates G5 and G6; `--mirror` checks the language the review reports; `--fixed CODE` runs fixed mode and lists the translations the pass kept) |
 
 The `scripts/consolidation/` benches run the real agent against live reads: fact writes are intercepted and the cache
 refresh is stubbed, but the model calls are real (paid) and may be recorded in the account's billing counters (the

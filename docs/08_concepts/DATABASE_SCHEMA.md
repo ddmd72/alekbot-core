@@ -62,7 +62,7 @@ Account usage counters written before 2026-07-28 are inflated. For historical co
 | `{p}fact_lifecycle_daily` | fact-lifecycle numbers per account and UTC day | `{account_id}:{YYYY-MM-DD}` | `src/config/environment.py` |
 | `{p}fact_lifecycle_lines` | one mark per UTC day: the daily ops line was claimed | `{YYYY-MM-DD}` | `src/config/environment.py` |
 | `{p}fact_review_questions` | memory-review questions, one per fact | question id | `src/adapters/firestore_fact_review_store.py` |
-| `{p}fact_review_messages` | memory-review message claims (the weekly digest) | `{user_id}:digest:{iso_week}` | same |
+| `{p}fact_review_messages` | memory-review message claims (the weekly digest) and quote translations (a stored fact's text as shown in a message language) | `{user_id}:digest:{iso_week}`, `{account_id}:quote:{language}:{source_digest}` | same |
 | `{p}fact_review_state` | memory-review state per account | `account_id` | same |
 | `{p}domain_email_facts_v1` | valuable emails as facts, four vectors, the same search path as facts | `{user_id}_{email_id}` | `IndexedEmail`, `src/domain/email.py` |
 

@@ -270,11 +270,14 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     Intent.REVIEW_STALE_FACTS` → `_handle_review_stale_facts`). It is never sent by a user message: `FactReviewService` (under the
     account's memory-write lease) routes it. Owner's map `docs/05_building_blocks/memory/README.md` §5.6.
     - **Task and message.** The payload is a `FactReviewTask` (`domain/fact_review_task.py`: items with versions and neighbours,
-      open questions, `mirror`, `owner_messages`) in its one plain-data form (`encode_review_task` / `decode_review_task`). The
+      open questions, `mirror`, `owner_messages`, and `language`, the fixed message language, only when not mirrored) in its one plain-data form (`encode_review_task` / `decode_review_task`). The
       prompt is `consolidation_review` (profile over `CONSOLIDATION_TAXONOMY` and `CONSOLIDATION_LIFECYCLE`; no fallback: a build
       failure is `AgentResponse.failure`); no baseline conversation, no standing directives. The message (`_build_review_message`)
       is code-built from `fact_view` (`domain/search.py`, the one view Stage 2a and the search hits use too); in mirror mode it
       carries `owner_messages` and the request to report `message_language` and, for a language without UI strings, `labels`.
+      Both modes ask for `translations` (the content of every listed fact, one line, numbers unchanged, translated into the message
+      language; `_TRANSLATIONS_RULE`): in mirror mode when `message_language` is not `en`, in fixed mode (`_fixed_translation_instruction`)
+      when `task.language` is a code other than `en`; a fixed-language task in English or with no language asks for none.
     - **Tools and loop.** `_get_tool_declarations("review")` gives `update_fact` (with `basis` and `history`, no `reported_date`),
       `ask_owner(fact_id, fallback, fallback_date?, noise?)` and `count_words`; no search, create or merge.
       `_run_consolidation_loop(pass_kind="review", max_turns=CONSOLIDATION.review_max_turns (15), review_scope=…)` sends the first
@@ -295,7 +298,9 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
       answers them (`PassActor.one_result_per_fact`).
     - **Result.** The scope's outcomes (`revived`, `rewritten`, `archived`, `invalidated`, `superseded`), asks and kept ids, plus
       `message_language` and `labels` read from the final report through `parse_message_language` / `check_labels` (None when
-      malformed). The agent writes no question and posts or appends nothing: `FactReviewService` queues the asks, sends the questions
+      malformed), and `translations` read through `report_translations` (`domain/fact_review_quote_translation.py`: one line, no `[`,
+      link or control character, at most 500 characters, the source's digit runs unchanged; refusals are logged by fact id, never
+      by text; the language is the task's fixed one or the reported one). The agent writes no question and posts or appends nothing: `FactReviewService` queues the asks, sends the questions
       and applies timeouts, and `FactAnswerService` applies the owner's answers (no model).
     - **The queue and the answer path (outside the agent).** A fact the pass asks about is made current under its precondition and
       gets a `queued` question (`FactReviewQuestion`, `fact_review_questions`); questions go out one at a time through
@@ -305,7 +310,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     - **The echo-trap exception, narrowed.** `Domain_Scope.memory_review_reply` in `CONSOLIDATION_POLICIES` is the one definition: a
       USER message that begins `[Reply to memory review q=<id>]` answers a question the earlier pair `[System: memory review q=<id> …]`
       framed; the quoted fact belongs to the review, and Stage 1 records only what the answer adds (a correction's true value). The
-      other echo-trap lines refer to it; do not restate it in a token. A bare digit with no marker is read by the ordinary rules.
+      other echo-trap lines refer to it; do not restate it in a token. The quote in that pair may be the stored fact translated into the
+      message language (it is the same fact; `case_4_translated_quote` in `example_3b`). A bare digit with no marker is read by the ordinary rules.
 - DeepResearch (async, provider-agnostic, intent `deep_research`) — `create_interaction()` returns
   ACK (job_id); result delivered by adapter. **Default Claude** (`ClaudeDeepResearchRunnerAgent`,
   `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+

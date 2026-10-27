@@ -8,7 +8,7 @@
 - **Every question closes through one method** that clears the current slot, releases the next question and re-renders a Slack message without its buttons.
 - **Interactive messages are one platform-neutral model** (prompt, quote, options, binding) with adapters: Slack buttons through `/slack/interactivity` (signature checked on the raw bytes before anything is parsed, the work done in a Cloud Task), plain text with digits on Telegram. A click is routed by its binding's kind.
 - **The owner sees what was set aside**: a weekly digest (literal text, only removals made by the review, a timeout or the owner) and, in the Cabinet, the stale facts, everything set aside in 30 days with its actor, and the question list. The Cabinet cannot restore a closed fact; the chat can.
-- Records expire by a TTL policy on `purge_after` (closed questions and digest claims, 90 days); the state document and the janitor's run guard have none. No field is named `expires_at`.
+- Records expire by a TTL policy on `purge_after` (closed questions and digest claims, 90 days; quote translations, 180 days); the state document and the janitor's run guard have none. No field is named `expires_at`.
 
 **Rejected.**
 - Questions written by the review model, several per message, answered by number: partial answers are ambiguous and model-written text can restate the fact differently from how it is stored. One fact per message needs one digit, and code quotes the fact as stored.

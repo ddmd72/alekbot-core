@@ -192,6 +192,11 @@ class RecordingReviewStore(FirestoreFactReviewStore):
         data = self.memory.collection(self._env.fact_review_state_collection).docs.get(account_id)
         return state_from(data) if data is not None else None
 
+    def quote_translation_docs(self) -> List[Dict[str, Any]]:
+        """The quote translations the run stored (the messages collection's `kind == "quote"` documents), as copies."""
+        docs = self.memory.collection(self._env.fact_review_messages_collection).docs.values()
+        return [copy.deepcopy(d) for d in docs if d.get("kind") == "quote"]
+
     async def _in_transaction(self, body: Any, what: str) -> Any:
         transaction = self.memory.transaction()
         try:
