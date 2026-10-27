@@ -937,6 +937,12 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
 - **Not covered.** `open_file`, `delete_file` and `search_files_in_drive` (not drive mutations; P11 and the drive search suites); `use_skill` and `cancel_long_turn` (read or cancel); the cross-intent fields of the flat
   delegate `context` (the meta-test checks each intent's own schema, not the union); undeclared keys in general (D1 is pinned because it is the §1.3.5 shape; a generic "every unknown key is noted" rule is a product
   decision); a bad value of a declared field beyond D2-D5.
+- **Drive specialist (2026-10-27, DRIVE_SPECIALIST_RFC).** The seven Smart-era drive intents left the manifest, so card G moved: `test_file_management_drive_tool_fields_e2e.py` was replaced by
+  `test_drive_agent_tool_fields_e2e.py` (Smart → `work_with_drive_files` → the real `DriveAgent`, its local tools, `DriveOperations` and `UserDriveService`; 16 tests), which proves each stored effect and
+  refusal the old card proved through the tool that now carries it. A seventh surface, `drive` (the specialist's twelve tools and `report_to_orchestrator`), and the delegate field
+  `work_with_drive_files.file_contents[]` replace the old intents' fields: 170 declared fields, 142 `stored`, 3 `noted`, 4 `prompt-input` (the three report fields reach Smart's request and are
+  stored nowhere), 1 `verification`, 20 `read-only`. The old "a save with both a file and text" refusal has no successor shape (a copy and a text save are two tools); the new card refuses an
+  unknown `file_contents` item and a copy of a `drive:` ref instead.
 - **The two deep-research `MATRIX` rows are 200** (matrix card M; see "Built (P9)").
 - **Mutation.** Eight modules are registered, each with an empty equivalent file next to the e2e file that tests it: `notes_agent`, `tasks_agent`, `file_management_agent`, `fact_management_adapter`, `fact_review_scope`,
   `memory_fact_tools`, `skill_tools`, `workspace_tools` (`consolidation_agent` already was). Every one is reached through `tests/` imports, so `--tests-for` needs no `extra` for them.
