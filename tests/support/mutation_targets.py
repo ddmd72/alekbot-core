@@ -27,11 +27,17 @@ class MutationTarget:
     module: str
     equivalent: Optional[str]
     operators: str = "default"
-    extra_tests: tuple[str, ...] = ()  # added to the computed selection, in case the import closure misses one
+    graph_group: bool = False  # the production-graph tests are added to the computed selection (they reach it through src/)
+    extra: tuple[str, ...] = ()  # hand-added tests: one that reaches the module only through src/ or a conftest fixture
 
     @property
     def slug(self) -> str:
         return self.module.replace(".", "-")
+
+    @property
+    def extra_tests(self) -> tuple[str, ...]:
+        """Computed at access time: the graph group (wiring targets) plus the hand-added `extra`."""
+        return (*(graph_tests() if self.graph_group else ()), *self.extra)
 
     @property
     def tests(self) -> tuple[str, ...]:
@@ -86,10 +92,8 @@ def _import_graph(root: Path) -> _ImportGraph:
     return _GRAPHS[key]
 
 
-def tests_for(module: str, root: Path = REPO_ROOT) -> tuple[str, ...]:
-    """Every tests/unit/**/test_*.py whose imports reach `module` through modules under tests/ only (never through src/)."""
-    graph = _import_graph(root)
-    reached = {name for name, (_, imports) in graph.items() if module in imports}
+def _closure(graph: _ImportGraph, seeds: Set[str]) -> Set[str]:
+    reached = {name for name, (_, imports) in graph.items() if imports & seeds}
     changed = True
     while changed:
         changed = False
@@ -97,6 +101,10 @@ def tests_for(module: str, root: Path = REPO_ROOT) -> tuple[str, ...]:
             if name not in reached and imports & reached:
                 reached.add(name)
                 changed = True
+    return reached
+
+
+def _unit_tests(graph: _ImportGraph, reached: Set[str]) -> tuple[str, ...]:
     found = []
     for name in reached:
         rel = graph[name][0]
@@ -105,18 +113,30 @@ def tests_for(module: str, root: Path = REPO_ROOT) -> tuple[str, ...]:
     return tuple(sorted(found))
 
 
-_WIRING_EXTRA = (
-    "tests/unit/test_main_boots_offline.py",
-    "tests/unit/test_worker_triggers.py",
-    "tests/unit/composition/test_application_graph_wiring.py",
-    "tests/unit/composition/test_application_graph_values.py",
-    "tests/unit/test_main_wiring_values.py",
-)
+def tests_for(module: str, root: Path = REPO_ROOT) -> tuple[str, ...]:
+    """Every tests/unit/**/test_*.py whose imports reach `module` through modules under tests/ only (never through src/)."""
+    graph = _import_graph(root)
+    return _unit_tests(graph, _closure(graph, {module}))
+
+
+# What builds or boots the production graph. A test reaches the wiring modules through these (and then through src/,
+# which tests_for never follows), so a test that imports any of them belongs to every wiring target.
+# tests.support.worker_triggers is kept for parity with the P9 hand list (an existing test requires its file); it reads
+# source from disk, so it cannot kill a wiring mutant.
+GRAPH_ROOTS = frozenset({"tests.support.prod_graph", "tests.support.worker_triggers", "main", "src.composition.application_graph"})
+
+
+def graph_tests(root: Path = REPO_ROOT) -> tuple[str, ...]:
+    """Every tests/unit/**/test_*.py that reaches a GRAPH_ROOTS module through imports under tests/."""
+    graph = _import_graph(root)
+    return _unit_tests(graph, _closure(graph, set(GRAPH_ROOTS)))
+
+
 _WIRING_EQUIVALENT = "tests/unit/composition/wiring_equivalent_mutants.txt"
 
 TARGETS: tuple[MutationTarget, ...] = (
     *(
-        MutationTarget(module, _WIRING_EQUIVALENT, "wiring", _WIRING_EXTRA)
+        MutationTarget(module, _WIRING_EQUIVALENT, "wiring", graph_group=True)
         for module in (
             "src.composition.application_graph",
             "main",
