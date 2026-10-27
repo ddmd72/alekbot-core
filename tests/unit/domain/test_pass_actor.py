@@ -40,6 +40,8 @@ ROWS = {
     "backstop": (False, True, CONSOLIDATION_ACCEPTS, False, RefusalWording.CLEANUP),
     "review": (False, False, STALE_OR_CURRENT, True, RefusalWording.REVIEW),
     "owner": (False, False, STALE_OR_CURRENT, False, RefusalWording.REVIEW),
+    # P2 revised (C9): a question's history fallback written on silence takes the owner's row.
+    "timeout": (False, False, STALE_OR_CURRENT, False, RefusalWording.REVIEW),
 }
 
 

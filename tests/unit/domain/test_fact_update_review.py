@@ -351,6 +351,7 @@ def test_the_closing_reason_column_is_the_plans():
     assert {a: a.closing_reason for a in PassActor} == {
         PassActor.STAGE1: "model", PassActor.EMAIL: "model", PassActor.STAGE2A: "model", PassActor.STAGE2B: "model",
         PassActor.CLUSTER: "model", PassActor.BACKSTOP: "directive cap", PassActor.REVIEW: None, PassActor.OWNER: None,
+        PassActor.TIMEOUT: None,  # P2 revised: the owner's row, whose writes always carry their reason
     }
 
 

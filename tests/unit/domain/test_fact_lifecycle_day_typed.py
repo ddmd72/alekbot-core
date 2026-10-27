@@ -14,6 +14,8 @@ S4_COUNTERS = (
     "answered_by_digit answered_by_button answered_in_cabinet answers_not_applied closed_by_reply timed_out "
     "review_failed review_refusals replies_in_words already_answered reply_intake_failed labels_fallback"
 ).split()
+# P2 revised (contract C12): the history rewrites, the folded parts of a plan, the history fallbacks that did not land.
+P2_COUNTERS = ["to_history", "folded", "fallbacks_not_applied"]
 
 
 def snapshot(**over) -> SweepSnapshot:
@@ -24,7 +26,7 @@ def snapshot(**over) -> SweepSnapshot:
 
 
 def test_the_counters_are_the_s3_one_and_the_s4_ones_of_plan_2_2():
-    assert [c.value for c in CounterField] == ["expiry_tool_errors", *S4_COUNTERS]
+    assert [c.value for c in CounterField] == ["expiry_tool_errors", *S4_COUNTERS, *P2_COUNTERS]
     assert all(c == c.value and isinstance(c, str) for c in CounterField)
 
 

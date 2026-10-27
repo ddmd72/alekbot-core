@@ -313,7 +313,11 @@ def test_a_closed_question_that_was_never_posted_is_not_delivered():
 def test_the_statuses_and_closers_are_the_ones_the_plan_names():
     assert [s.value for s in QuestionStatus] == ["queued", "pending", "asked", "unanswered", "closed"]
     assert [c.value for c in ClosedBy] == ["review", "timeout", "owner", "resolved_elsewhere"]
-    assert [a.value for a in AnswerKind] == ["still_true", "ended", "never", "dont_know"]
+    assert [a.value for a in AnswerKind] == [
+        "still_true", "ended", "never", "dont_know",
+        # P2 revised (C2): the answers of the happened, renewed and paid questions, appended in this order
+        "happened", "not_happened", "renewed", "not_renewed", "not_needed", "paid", "not_paid",
+    ]
 
 
 def test_the_timeout_is_fourteen_days_and_the_retention_ninety():

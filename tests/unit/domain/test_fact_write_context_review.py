@@ -28,7 +28,8 @@ OTHER_ACTORS = [a for a in PassActor if a not in REVIEW_ACTORS]
 
 
 def test_the_review_actors_are_the_rows_that_reach_a_stale_fact():
-    assert REVIEW_ACTORS == [PassActor.REVIEW, PassActor.OWNER]
+    # P2 revised (C9): TIMEOUT takes the owner's row, so it reaches a stale fact too.
+    assert REVIEW_ACTORS == [PassActor.REVIEW, PassActor.OWNER, PassActor.TIMEOUT]
 
 
 # --- reported_date_for_update ----------------------------------------------------------------------------------------
