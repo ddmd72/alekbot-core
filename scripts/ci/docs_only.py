@@ -4,6 +4,7 @@ This module is the one place that defines "documentation". Fail safe: anything n
 recognised as docs, and an empty list, means "not docs-only" (run everything).
 Usage: git diff --no-renames --name-only A...B | python scripts/ci/docs_only.py   ->  true | false
 (--no-renames is required: a rename otherwise lists only the new path, hiding the old code path.)
+Known gap: a test that reads a root `*.md` or a `CLAUDE.md` is not detected by the meta-test (none today).
 `--doc-reading-tests` prints the unit tests that read documentation, which a docs-only run still executes.
 """
 import sys

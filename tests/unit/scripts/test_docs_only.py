@@ -82,12 +82,32 @@ def test_cli_lists_the_doc_reading_tests():
 # What "reads documentation": a path joined with the docs tree, a markdown glob, or a tree walk that names ".md".
 _JOINS_DOCS = re.compile(r"""/\s*["']docs[/"']""")
 _GLOBS_MD = re.compile(r"""glob\(\s*["'][^"']*\*\.md""")
+_CALL_JOINS_DOCS = re.compile(r"""(?:\bPath\(|joinpath\(|os\.path\.join\()[^)\n]*?["']docs[/"']""")
 _WALKS_MD = re.compile(r"""os\.walk""")
 _NAMES_MD = re.compile(r"""["']\.md["']""")
 
 
 def _reads_docs(text: str) -> bool:
-    return bool(_JOINS_DOCS.search(text) or _GLOBS_MD.search(text) or (_WALKS_MD.search(text) and _NAMES_MD.search(text)))
+    return bool(
+        _JOINS_DOCS.search(text)
+        or _CALL_JOINS_DOCS.search(text)
+        or _GLOBS_MD.search(text)
+        or (_WALKS_MD.search(text) and _NAMES_MD.search(text))
+    )
+
+
+@pytest.mark.parametrize("snippet", [
+    'Path(ROOT, "docs", "x.md").read_text()',
+    'ROOT.joinpath("docs", "x.md")',
+    'os.path.join(ROOT, "docs")',
+    'Path(__file__).parent / "docs/x.md"',
+])
+def test_the_scan_detects_each_way_of_naming_the_docs_tree(snippet):
+    assert _reads_docs(snippet)
+
+
+def test_the_scan_ignores_a_docstring_mention():
+    assert not _reads_docs('"""RFC: docs/10_rfcs/X.md section 4"""')
 
 
 def test_every_test_that_reads_docs_is_in_doc_reading_tests():

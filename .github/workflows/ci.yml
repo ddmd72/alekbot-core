@@ -76,9 +76,13 @@ jobs:
       - name: Doc-reading tests
         # Docs-only change: the tests that read documentation still run (scripts/ci/docs_only.py: DOC_READING_TESTS).
         if: steps.changes.outputs.docs_only == 'true'
+        env:
+          RUN_SLOW_TESTS: "1"
         run: |
+          TESTS=$(python scripts/ci/docs_only.py --doc-reading-tests)
+          [ -n "$TESTS" ] || { echo "no doc-reading tests listed"; exit 1; }
+          python -m pytest $TESTS -q -p no:cacheprovider
           echo "::notice title=docs-only::make ci skipped: only documentation changed; doc-reading tests ran"
-          python -m pytest $(python scripts/ci/docs_only.py --doc-reading-tests) -q -p no:cacheprovider
 
       - name: make ci
         # make ci = ruff check src/ and the root entry points + mypy (domain/ports) + the unit suite once (slow tests, coverage gate)
@@ -176,7 +180,7 @@ jobs:
         run: make test-timing
 
       - name: Notify Slack (pass/fail)
-        if: always()
+        if: always() && steps.changes.outputs.docs_only != 'true'
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           STATUS: ${{ job.status }}
