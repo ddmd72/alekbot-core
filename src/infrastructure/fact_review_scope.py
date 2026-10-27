@@ -199,6 +199,7 @@ class FactReviewScope:
                 as_history=update.as_history,
             ),
             history=history,
+            expected_id=self._left[lineage].id,
         )
         if not outcome.written:
             # An expiry refusal is about the update itself; any other may be the fact having changed outside the review.

@@ -930,6 +930,7 @@ class WriteRecorder(FactManagementPort, FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
+        expected_id: Optional[str] = None,
     ) -> FactUpdateOutcome:
         # The report row shows what was sent; a typed update sends no model JSON, so its decision is shown as written.
         reported = update.reported_date.isoformat() if update.reported_date is not None else None
@@ -937,6 +938,7 @@ class WriteRecorder(FactManagementPort, FactUpdatePort):
             context, update.expiry, reported,
             self._inner.apply_fact_update(  # type: ignore[attr-defined]  # checked when built
                 fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history,
+                expected_id=expected_id,
             ),
         )
 

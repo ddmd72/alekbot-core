@@ -139,6 +139,7 @@ class FactAnswerService(ChoiceHandlerPort):
                 outcome = await self._fact_updates.apply_fact_update(
                     stored.fact.id, change.update, account_id, context=context,
                     evidence_at=change.evidence_at, reason=change.reason, history=change.history,
+                    expected_id=stored.fact.id,
                 )
                 if outcome.refusal is UpdateRefusal.CONFLICT:
                     logger.warning(f"[FactAnswer] question {question_id}: the write conflicted; nothing written")

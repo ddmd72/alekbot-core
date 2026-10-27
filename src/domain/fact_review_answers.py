@@ -10,7 +10,7 @@ from .entities import ContextPriority, FactEntity, FactState, TemporalClass
 from .fact_expiry import EXPIRY_NONE
 from .fact_lifecycle import compute_expiry, lifecycle_event, walked_to_unseen_text, with_event
 from .fact_review_answer_change import AnswerChange
-from .fact_review_answer_kind import AnswerKind
+from .fact_review_answer_kind import HISTORY_ANSWERS, AnswerKind
 from .fact_review_options import OPTIONS, options_of, text_key
 from .fact_review_question import UNKNOWN_TEXT, AnswerSource, FactReviewQuestion, QuestionKind
 from .fact_review_reasons import FallbackActor, answer_reason, fallback_reason, history_reason
@@ -37,10 +37,6 @@ DECIDING_ANSWERS: Final[Mapping[QuestionKind, Tuple[AnswerKind, ...]]] = Mapping
     kind: tuple(answer for answer in options if answer is not AnswerKind.DONT_KNOW) for kind, options in OPTIONS.items()
 })
 _ANY_DECIDING: Final[frozenset[AnswerKind]] = frozenset(a for answers in DECIDING_ANSWERS.values() for a in answers)
-# The owner's answers that write one of the question's texts as history (P2-3).
-_HISTORY_ANSWERS: Final[frozenset[AnswerKind]] = frozenset({
-    AnswerKind.HAPPENED, AnswerKind.NOT_HAPPENED, AnswerKind.NOT_NEEDED, AnswerKind.PAID, AnswerKind.NOT_PAID,
-})
 
 # English whatever the process locale: the text is written into a stored fact.
 _MONTHS: Final[tuple[str, ...]] = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -235,7 +231,7 @@ def answer_updates(
     elif kind is AnswerKind.ENDED:
         update = ARCHIVE_ONLY
         history = None if archived_only(fact, question) else ended_text(fact.text, now, tz)
-    elif kind in _HISTORY_ANSWERS:
+    elif kind in HISTORY_ANSWERS:
         update = ParsedFactUpdate(
             state=FactState.CURRENT, content=written_text(question, text_key(kind), fact.text, now, tz),
             expiry=EXPIRY_NONE, as_history=True,

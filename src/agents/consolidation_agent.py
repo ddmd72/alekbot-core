@@ -758,9 +758,11 @@ class _TrackingFactUpdates(_TrackingFactManagement, FactUpdatePort):
         evidence_at: Optional[datetime] = None,
         reason: Optional[str] = None,
         history: Optional[str] = None,
+        expected_id: Optional[str] = None,
     ) -> FactUpdateOutcome:
         outcome = await self._typed.apply_fact_update(
-            fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history
+            fact_id, update, account_id, context=context, evidence_at=evidence_at, reason=reason, history=history,
+            expected_id=expected_id,
         )
         if outcome.written:
             self._record_update(outcome.written_id, update.content, outcome.history_fact_id, history)

@@ -35,7 +35,7 @@ from ..domain.fact_review_language import language_to_store
 from ..domain.fact_review_invoice import InvoiceRequest
 from ..domain.fact_review_question import ClosedBy, FactReviewQuestion
 from ..domain.fact_review_quote_translation import QuoteTranslation
-from ..domain.fact_review_reasons import superseded_reason
+from ..domain.fact_review_reasons import fallback_reason, superseded_reason
 from ..domain.fact_review_result import decode_review_result
 from ..domain.fact_review_rules import (
     QUEUE_ACCEPTS,
@@ -49,6 +49,7 @@ from ..domain.fact_review_rules import (
     fallback_fields,
     fallback_sets_aside,
     fallback_writes_history,
+    history_fallback_gives_up,
     kept_twice,
     kept_twice_fields,
     kept_twice_question,
@@ -116,8 +117,6 @@ if TYPE_CHECKING:
     from .user_notification_service import UserNotificationService
 
 _MARGIN_S = LEASE_MARGIN.total_seconds()
-# A history fallback that fails this many times closes its question `resolved_elsewhere` (C9).
-_MAX_FALLBACK_ATTEMPTS = 3
 _SENDER = "fact_review_service"
 # The consolidation agent's task name (`Intent.REVIEW_STALE_FACTS`; a literal, as ConsolidationService's own task names,
 # because services do not import infrastructure).
@@ -507,7 +506,13 @@ class FactReviewService:
         for question in due_timeouts(questions, now):
             stored = await self._asked_fact(account_id, question, "timed out")
             if stored is None:
-                if await self._answer_service.close_question(question, ClosedBy.RESOLVED_ELSEWHERE):
+                if await self._silence_already_written(account_id, question):
+                    # The fallback landed and its close did not (a crash between): close it as the timeout it was, so
+                    # the digest still lists the silence.
+                    if await self._answer_service.close_question(question, ClosedBy.TIMEOUT):
+                        await self._note_set_aside(account_id, now)
+                        logger.info(f"[FactReview] question {question.question_id} timed out; its history was already written")
+                elif await self._answer_service.close_question(question, ClosedBy.RESOLVED_ELSEWHERE):
                     logger.info(f"[FactReview] question {question.question_id} timed out; its fact was settled elsewhere")
                 continue
             if timeout_candidate(stored.fact, question, await self._nearest(user_id, account_id, stored.fact)):
@@ -548,6 +553,20 @@ class FactReviewService:
         if queued:
             logger.info(f"[FactReview] {len(queued)} facts of account {account_id[:8]} kept twice: queued for the owner")
         return _StepResult(counts={CounterField.QUEUED: len(queued)} if queued else {})
+
+    async def _silence_already_written(self, account_id: str, question: FactReviewQuestion) -> bool:
+        """Whether the question's fact moved on because this question's own `history` fallback wrote it: the version it now
+        resolves to ends with the timeout fallback's trail reason (`fallback_reason(qid, "history", "timeout")`)."""
+        if not fallback_writes_history(question):
+            return False
+        try:
+            stored = await self._repo.resolve_current(question.fact_id, account_id, REVIEW_ACCEPTS)
+        except FactResolutionError:
+            return False
+        if stored is None or not stored.fact.lifecycle_events:
+            return False
+        last = stored.fact.lifecycle_events[-1].get("reason")
+        return last == fallback_reason(question.question_id, "history", "timeout")
 
     async def _settle_digest(self, account_id: str, questions: Sequence[FactReviewQuestion], now: datetime) -> None:
         """Housekeeping of the Cabinet-only questions (`delivery == "digest"`, P2-2): one unanswered `DIGEST_QUESTION_DAYS`
@@ -963,6 +982,7 @@ class FactReviewService:
             outcome = await self._fact_updates.apply_fact_update(
                 fact.id, change.update, account_id, context=FactWriteContext.for_pass(PassActor.TIMEOUT, zone, None),
                 evidence_at=change.evidence_at, reason=change.reason,
+                expected_id=fact.id,
             )
         except Exception as exc:
             logger.warning(
@@ -987,7 +1007,7 @@ class FactReviewService:
         attempt after the first (the spec stores no previous refusal) or at the third attempt, so it cannot loop; else the
         store counts the attempt and the question stays open for the next run."""
         attempts = question.fallback_attempts
-        if (refusal is not None and attempts >= 1) or attempts + 1 >= _MAX_FALLBACK_ATTEMPTS:
+        if history_fallback_gives_up(question, refusal is not None):
             await self._answer_service.close_question(question, ClosedBy.RESOLVED_ELSEWHERE)
             logger.warning(f"[FactReview] question {question.question_id}: the history fallback failed {attempts + 1} times; closed")
         elif not await self._review_store.mark_fallback_failed(question.question_id):
