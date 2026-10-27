@@ -1,9 +1,12 @@
 """The review pass's tool declarations (Facts S4 plan §3.5, T6b): three tools, every property described, no `reported_date`,
 the horizon counted from now, and no constraint advertised that the review's parsers would turn into a refusal."""
 
+from typing import get_args
+
 import pytest
 
 from src.agents.consolidation_agent import ConsolidationAgent
+from src.domain.fact_review_question import TEXT_KEYS, QuestionFallback, QuestionKind
 
 _CONSTRAINTS = ("enum", "minimum", "maximum", "exclusiveMinimum", "pattern", "minItems", "maxItems", "additionalProperties",
                 "minLength", "maxLength", "format")
@@ -54,7 +57,10 @@ def test_no_review_tool_advertises_a_constraint_its_parser_would_refuse(tool):
 
 def test_the_review_update_takes_basis_and_history_and_no_reported_date():
     params = review_tools()["update_fact"]["parameters"]
-    assert set(params["properties"]) == {"fact_id", "updates", "basis", "history"}
+    # P2 revised (P2-1, P2-2): as_history (a boolean) and payment (the two invoice texts) join the review's update
+    assert set(params["properties"]) == {"fact_id", "updates", "basis", "history", "as_history", "payment"}
+    assert params["properties"]["as_history"]["type"] == "boolean"
+    assert set(params["properties"]["payment"]["properties"]) == {"paid", "not_paid"}
     assert set(params["properties"]["updates"]["properties"]) == {
         "content", "tags", "metadata", "temporal_class", "state", "superseded_by", "expiry",
     }
@@ -89,10 +95,15 @@ def test_the_expiry_says_a_horizon_counts_from_now_and_n_is_at_least_two():
 
 def test_ask_owner_takes_a_fact_and_its_fallback_and_no_question_text():
     params = review_tools()["ask_owner"]["parameters"]
-    assert set(params["properties"]) == {"fact_id", "fallback", "fallback_date", "noise"}
+    # P2 revised (P2-3, C8): the ask gives its kind, the texts code writes and its folds; fallback_date is retired
+    assert set(params["properties"]) == {"fact_id", "question", "texts", "fallback", "folds", "noise"}
     assert params["required"] == ["fact_id", "fallback"]
-    assert "revive" in params["properties"]["fallback"]["description"]
-    assert "archive" in params["properties"]["fallback"]["description"]
+    for fallback in get_args(QuestionFallback):
+        assert fallback in params["properties"]["fallback"]["description"]
+    for kind in get_args(QuestionKind):
+        assert kind in params["properties"]["question"]["description"]
+    assert set(params["properties"]["texts"]["properties"]) == {key for keys in TEXT_KEYS.values() for key in keys}
+    assert params["properties"]["folds"]["items"]["type"] == "string"
     assert params["properties"]["noise"]["type"] == "boolean"
 
 

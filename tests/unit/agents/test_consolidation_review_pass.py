@@ -324,12 +324,16 @@ async def test_the_message_has_no_budget_and_asks_for_no_question_text(world):
     text = _user_text(agent)
     assert text.startswith("SYSTEM MAINTENANCE — STALE FACT REVIEW")
     assert "Every listed fact gets exactly one outcome." in text
-    assert ("<fact_id> | neighbour_says=<id|none> | reply=<yes|no|over|never|unclear|none> | dated_plan_passed=<bool> | "
-            "outcome=<…>") in text
+    # P2 revised (P2-7 checklist, outcome_order (3)): the history column replaces dated_plan_passed, and a passed date
+    # is rewritten as history before any archive, which only the owner's reply backs
+    assert ("<fact_id> | neighbour_says=<id|none> | reply=<yes|no|over|never|unclear|none> | "
+            "history=<evidence|own_text|ask|none> | outcome=<…>") in text
     header = text.split("Facts under review:")[0]
     order = ["(1) a current fact states the same thing: supersede it by that fact",
              "(2) the reply or evidence says it still holds: revive it with that basis",
-             "(3) it is over: archive it (basis reply, evidence or date_passed); it was never true: invalidate it",
+             "(3) its date has passed: rewrite it as history (basis evidence or reply, or date_passed when its own text "
+             "already reports the outcome); otherwise, when the owner's reply says it is over: archive it; it was never "
+             "true: invalidate it",
              "(4) anything else: ask_owner"]
     assert all(step in header for step in order)
     assert [header.index(step) for step in order] == sorted(header.index(step) for step in order)
@@ -391,8 +395,8 @@ async def test_each_fact_line_is_built_from_the_view_with_versions_neighbours_an
     (neighbour,) = line["neighbours"]
     assert neighbour["fact_id"] == near and neighbour["content"] == "joined a tennis club"
     assert neighbour["reported"] == "2026-10-22"
-    assert line["question"] == {
-        "question_id": "q1", "asked_on": open_question.asked_at.astimezone(ZoneInfo(TZ)).date().isoformat(),
+    assert line["question"] == {  # P2 revised (C, _review_line): the question's kind follows its id
+        "question_id": "q1", "kind": "still_true", "asked_on": open_question.asked_at.astimezone(ZoneInfo(TZ)).date().isoformat(),
         "fallback": "revive", "timed_out": False, "reply": "still do", "reply_at": "2026-10-22T08:30:00+01:00",
     }
 
