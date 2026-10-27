@@ -374,3 +374,26 @@ def test_main_refuses_a_file_whose_successor_is_missing(monkeypatch, tmp_path, s
     with pytest.raises(SystemExit):
         decisions_script.main(["--decisions", str(tmp_path / "d.json"), "--apply"])
     assert real.docs["class"]["state"] == "archived" and not list(tmp_path.glob("fact_p2_*.json"))
+
+
+async def test_the_action_carries_the_listed_fact_as_expected_id_and_a_moved_chain_is_skipped(store, tmp_path, monkeypatch):
+    seen = {}
+    real = store.adapter.apply_fact_update
+
+    async def watch(fact_id, update, account_id, **kw):
+        seen[fact_id] = kw.get("expected_id")
+        return await real(fact_id, update, account_id, **kw)
+
+    monkeypatch.setattr(store.adapter, "apply_fact_update", watch)
+    await _run(store, tmp_path, _d("gym", "revive"))
+    assert seen == {"gym": "gym"}
+
+    async def moved(fact_id, update, account_id, **kw):
+        return FactUpdateOutcome.refused(fact_id, UpdateRefusal.MOVED, "moved on")
+
+    monkeypatch.setattr(store.adapter, "apply_fact_update", moved)
+    counts = await _run(store, tmp_path, _d("fine", "invalidate"))
+
+    assert counts["skipped_changed"] == 1 and counts["failed"] == 0
+    report = json.loads((tmp_path / "fact_p2_owner_decisions_2026-10-28_applied.json").read_text(encoding="utf-8"))
+    assert report["details"] == {"fine": "moved"}

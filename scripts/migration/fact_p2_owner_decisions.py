@@ -28,8 +28,8 @@ fact whose last trail entry is already the owner's decision is left alone (`alre
 writes nothing. A fact of another account than the file names, of the SYSTEM account, or in another state is counted and
 left alone.
 
-Not done: card B's `expected_id` guard is not in this branch; each write relies on the scan's `update_time` for the
-reopen and on the adapter's own conflict handling for the action.
+The action is written with `expected_id` = the listed fact: if its chain has moved on to a newer version, the adapter
+refuses (MOVED) and the fact is skipped and listed, never followed to the newer document.
 
 Reads GOOGLE_CLOUD_PROJECT and FIRESTORE_DATABASE from the environment or the repo's .env.
 
@@ -205,11 +205,14 @@ async def write_one(
         outcome = await port.apply_fact_update(
             decision.fact_id, update_of(decision), decision.account_id,
             context=FactWriteContext.for_pass(PassActor.OWNER, zone, None), evidence_at=now, reason=owner_decided_reason(),
+            expected_id=decision.fact_id,   # the document he decided on: a chain that moved on is refused, not followed
         )
     except Exception as exc:  # the type only: a message may carry document content
         return FAILED, type(exc).__name__
     if outcome.refusal is UpdateRefusal.CONFLICT:
         return CHANGED, "conflict"
+    if outcome.refusal is UpdateRefusal.MOVED:
+        return CHANGED, "moved"   # the fact has a newer version than the one he decided on
     if outcome.refusal is not None:
         return FAILED, outcome.refusal.value
     return APPLIED, None
