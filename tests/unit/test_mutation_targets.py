@@ -303,4 +303,9 @@ def test_non_wiring_targets_do_not_get_the_graph_group():
     for target in TARGETS:
         if target.operators != "wiring":
             assert target.extra_tests == ()
-            assert set(target.tests) == set(computed_tests_for(target.module))
+    plain = next(t for t in TARGETS if t.operators != "wiring")
+    assert "x" in mutation_targets.MutationTarget(plain.module, None, extra=("x",)).tests
+
+
+def test_service_container_values_test_is_still_selected_by_the_graph_group():
+    assert "tests/unit/composition/test_service_container_values.py" in mutation_targets.graph_tests()

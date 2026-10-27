@@ -28,6 +28,7 @@ class MutationTarget:
     equivalent: Optional[str]
     operators: str = "default"
     graph_group: bool = False  # the production-graph tests are added to the computed selection (they reach it through src/)
+    extra: tuple[str, ...] = ()  # hand-added tests: one that reaches the module only through src/ or a conftest fixture
 
     @property
     def slug(self) -> str:
@@ -35,8 +36,8 @@ class MutationTarget:
 
     @property
     def extra_tests(self) -> tuple[str, ...]:
-        """Computed at access time: the graph group for a wiring target, nothing for the others."""
-        return graph_tests() if self.graph_group else ()
+        """Computed at access time: the graph group (wiring targets) plus the hand-added `extra`."""
+        return (*(graph_tests() if self.graph_group else ()), *self.extra)
 
     @property
     def tests(self) -> tuple[str, ...]:
@@ -120,10 +121,9 @@ def tests_for(module: str, root: Path = REPO_ROOT) -> tuple[str, ...]:
 
 # What builds or boots the production graph. A test reaches the wiring modules through these (and then through src/,
 # which tests_for never follows), so a test that imports any of them belongs to every wiring target.
-# tests.support.worker_triggers reads the enqueue sites of the whole tree and imports main's constants dynamically (importlib).
-GRAPH_ROOTS = frozenset(
-    {"tests.support.prod_graph", "tests.support.prod_env", "tests.support.worker_triggers", "main", "src.composition.application_graph"}
-)
+# tests.support.worker_triggers is kept for parity with the P9 hand list (an existing test requires its file); it reads
+# source from disk, so it cannot kill a wiring mutant.
+GRAPH_ROOTS = frozenset({"tests.support.prod_graph", "tests.support.worker_triggers", "main", "src.composition.application_graph"})
 
 
 def graph_tests(root: Path = REPO_ROOT) -> tuple[str, ...]:

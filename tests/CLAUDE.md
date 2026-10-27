@@ -172,8 +172,8 @@ python -m tests.support.semantic_mutants --module src.adapters.firestore_repo \
 ```
 
 The test list is computed, not hand-written: `python -m tests.support.mutation_targets --tests-for <src.module>` prints every `tests/unit`
-test file that reaches the module through imports (it follows imports only through `tests/` modules, never through `src/`). `extra_tests` (computed, not listed: the wiring targets get `graph_tests()`, every unit test reaching `prod_graph`, `prod_env`, `worker_triggers`, `main` or `application_graph`) is the escape hatch for a test that reaches the module only through `src` (e.g. via `main`) or only through a conftest fixture
-(conftests are never followed). For a registered target `--tests-for <m>` prints the full list (computed + `extra_tests`); it exits 2 with a message when no unit test reaches the module.
+test file that reaches the module through imports (it follows imports only through `tests/` modules, never through `src/`). The six wiring targets also get the graph group `graph_tests()` (every unit test reaching `prod_graph`, `worker_triggers`, `main` or `application_graph`). `extra` is the escape hatch for a test that reaches the module only through `src` or only through a conftest fixture
+(conftests are never followed). For a registered target `--tests-for <m>` prints the full list (computed closure + graph group + `extra`); it exits 2 with a message when no unit test reaches the module.
 
 Statuses: killed, survived, equivalent, and `error` (the selected tests never loaded the module, or the run could not tell; exit 2;
 not a pass). `except-success` skips handlers that only log and already return the success value. Slow tests run in the mutant
@@ -182,7 +182,7 @@ children (`RUN_SLOW_TESTS=1`).
 A survivor means the tests do not notice that defect: write the assertion that does. `--equivalent` takes
 `key  # reason` lines (the 8-hex key in the report) and is the reviewer's tool, never the implementer's.
 
-Registering a package's modules in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", graph_group=False)` in `TARGETS`)
+Registering a package's modules in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", graph_group=False, extra=())` in `TARGETS`)
 is part of "package done"; a unit test fails when a `*_equivalent_mutants.txt` file has no registered target. The driver takes
 `--report PATH` (JSON) and `--no-fail` (exit 0 whatever survived). The `Mutation survivors` workflow (`.github/workflows/mutation.yml`,
 Sunday 02:00 UTC and `workflow_dispatch` with an optional `module`) runs one job per registered module with `--report --no-fail` and

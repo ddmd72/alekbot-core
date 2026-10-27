@@ -738,8 +738,8 @@ deferral); what drops is the friction a gate adds to every feature change, and t
 without his attention. Everything that can run in the cloud runs in the cloud; the two weekly workflows never report to Slack (the CI, timing and PII-gate notifications are unchanged); artifacts are read by a
 scheduled routine that fixes survivors by PR.
 - **F1 `.github/workflows/mutation.yml`** (`Mutation survivors`): Sunday 02:00 UTC and `workflow_dispatch` (optional input `module`);
-  one job per module registered in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", extra_tests=())`, `TARGETS`; tests are computed by import closure, `extra_tests` is the
-  escape hatch for a test that reaches the module only through `src` or a conftest fixture;
+  one job per module registered in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", graph_group=False, extra=())`, `TARGETS`; tests are computed by import closure, the six wiring targets add the graph group (`graph_tests()`),
+  `extra` is the escape hatch for a test that reaches the module only through `src` or a conftest fixture;
   CLI `python -m tests.support.mutation_targets --matrix | --tests-for <module> | --summarize DIR --out-md --out-json | --annotations survivors.json`). The driver gained `--report PATH` (JSON)
   and `--no-fail`. Artifacts `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`), also in the step summary.
   The `summarize` job also prints the verdict as check-run annotations (a notice per module, warnings for survivors, at most 9, 4000 characters each). `survivors.md` lists every registered module, `missing` when a job produced no report and `partial (N of M)` when it was cut (the report is rewritten after each mutant). Never red because mutants survived. Registering a package's modules in `TARGETS` is part of "package done"; a unit test fails when a
