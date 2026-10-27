@@ -29,7 +29,9 @@ from src.domain.fact_review_ask import AskRequest
 from src.domain.fact_review_frame import question_text
 from src.domain.fact_review_outcome import ReviewDecision
 from src.domain.fact_review_result import FactReviewResult, decode_review_result
-from src.domain.fact_review_reasons import is_revive_reason, is_rewrite_reason, queued_reason
+from src.domain.fact_review_reasons import (
+    history_reason, is_revive_reason, is_rewrite_reason, queued_reason,
+)
 from src.domain.fact_review_rules import REVIEW_BATCH, QUEUE_ACCEPTS, queued_fields, queued_question
 from src.domain.fact_review_state import FactReviewState
 from src.domain.fact_write_context import as_utc
@@ -351,12 +353,13 @@ async def stage_inputs(
 
 def unbased_revives(events: Sequence[Dict[str, Any]]) -> List[str]:
     """The reasons of the review's moves of a fact back to current that name no basis: a revive on evidence or on the
-    owner's reply is `revived on …`; a rewrite and a queueing (the fact waits for its question) are not revives."""
+    owner's reply is `revived on …`; a rewrite, a queueing (the fact waits for its question) and a history fact born
+    beside an archive (`history of <id>`) are no revives."""
     return [
         str(e.get("reason")) for e in events
         if e.get("actor") == REVIEW_PASS and e.get("to") == "current"
         and not (is_revive_reason(e.get("reason")) or is_rewrite_reason(e.get("reason"))
-                 or str(e.get("reason", "")).startswith(queued_reason("")))
+                 or str(e.get("reason", "")).startswith((queued_reason(""), history_reason(""))))
     ]
 
 

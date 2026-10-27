@@ -1,8 +1,8 @@
 # RFC: Fact lifecycle — expiry decided by content, a daily janitor, a periodic review pass, owner questions, real versions
 
-**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2 is built** (2026-10-23, on the S2–S5 branch, not deployed; see "S2 as built" in §9); **S3 is built** (2026-10-23, on the S2–S5 branch, not deployed; see "S3 as built" in §9); **S4 is built** (2026-10-26, on the S2–S5 branch, not deployed; see "S4 as built" in §9); S5 is not built.
+**Status:** Accepted for implementation (owner, 2026-10-21): rev 2, independent review applied, owner confirmations in §8. S1 is live; **S2, S3 and S4 were deployed 2026-10-27** (the real versions and lease, expiry decided from content, the review, owner questions and digest are on; the janitor is log-only; see "S2 as built", "S3 as built", "S4 as built" in §9); **S5's classify script is built, not run** (see "S5 as built" in §9); the janitor stays log-only until the owner's word. **P2 revised by the owner (2026-10-27):** a fact whose date has passed is no longer archived without a question; what happened, and what was only intended, becomes history, and archive is kept for noise and what was never true. The review change this needs is not built; the janitor is not switched on before it ships.
 Rev 1 had owner decisions Q1–Q4; two adversarial reviews (code paths; rollout and steady state) and a binding
-arbitration produced this revision. Slice S1 (§9) is merged and deployed; S2 is built and deploys with S3–S5; the rest is not built.
+arbitration produced this revision. Slice S1 (§9) is merged and deployed; S2–S4 are deployed (2026-10-27) with the janitor log-only; S5's classify is built and not yet run, and switching the janitor on is a later, separate step.
 **Supersedes, once accepted:** `DELIBERATE_FACT_MANAGEMENT_RFC.md` §2.2 axis 2 "Lifecycle Transitions", §4.4 (default
 TTL by class), §4.5 (state transition rules), §5.3 "Update Modes", §7.1 `FactLifecycleService`. The rest of that RFC
 (taxonomy, tools, cognitive process) stays in force.
@@ -1029,6 +1029,78 @@ by the "set aside lately" list and the digest. `vector` is read by the review's 
   ttl_days`; while the janitor writes and after that day's run, a current fact past its `expires_at` belongs to an open question.
 - Follow-ups outside S4: a call note that carries an answer to a question; a Cabinet "bring back" for a closed fact; Telegram
   inline keyboards on the same port; Smart sending interactive blocks through it.
+
+**S5 as built (2026-10-27).** Classify, the audit's expiry classes and the bench 7 fix are built; classify has not been run, and the
+janitor is still log-only.
+
+- *The script.* `scripts/migration/fact_s5_classify.py`, owner-run, with its pure rules in `fact_s5_classify_rules.py`. Two modes.
+  **Dry run** (the default) scans the current facts (reads only), checks the live prompt (below), asks the live consolidation
+  agent, and writes the owner's report and a replay plan under `scripts/memory/`; it writes nothing to the database. **Apply**
+  (`--apply <plan>`) reads a plan, makes no model call and costs nothing. Scope: a current fact with an account that is not
+  `SYSTEM` and no `expiry_kind`; a fact decided since the 2026-10-27 switch is `already_decided`; an account whose owner cannot be
+  resolved is skipped. A filtered mode (`--ids-file`) applies the same rules to the listed ids, for the documents an old revision
+  rewrote in a rollback window and for the facts apply skipped because they changed after the scan.
+- *Why one structured call and not the tool loop.* The consolidation tool path applies rules classify must not: born-due
+  refuses a past `date` and floors a due horizon, and the `reported_date` rules clamp or ignore the field. The facts classify
+  exists to find are already due, so the tool path would refuse them or invent an `expires_at`. Classify makes one single-turn
+  call per batch of 25 through the live agent's own call path (its provider, model pin and failover), with a JSON response
+  schema; the facts are numbered inside the batch and the model answers by number. The answer goes through the tool's own
+  parser and `compute_expiry`, so no rule has a second copy. The agent has no cross-provider failover, so a response served by
+  a fallback is a stop. `--expect-model` is required: the run refuses unless every account's agent runs that model.
+- *The instruction.* A tracked text file next to the script, outside `prompts_snapshot/` (a file inside would be drift for the
+  snapshot check and deleted by the next pull; nothing is uploaded). The system prompt is the taxonomy's `temporal_classes` and
+  `expiry` blocks verbatim, then the instruction. Before the estimate the script reads the live `CONSOLIDATION_TAXONOMY` token
+  and refuses to run unless it equals the snapshot file, so "the text the live consolidator follows" is checked at every run. A
+  missing instruction file or a block not found exactly once stops the run before any call. The plan records the digests.
+- *What it writes.* Per fact, one field-masked in-place write of `expiry_kind`, `ttl_days`, `expires_at` (computed from the stored
+  `reported_date` in the owner's zone; this also clears the legacy `ttl_days` of date and none facts) and one `lifecycle_events`
+  entry `current → current`, actor `migration`, reason `expiry classified at S5 (<source>)`, which no S4 reader takes for a revive
+  or a window. `reported_date`, `state`, text and vectors stay untouched, and so does `last_updated` (§7.3 says "only"; the
+  field has no reader in `src/`). Directives, principles and `mindset` facts get `none` by code, with no model call. No lease:
+  a precondition per document, as the janitor and the Cabinet write.
+- *A date already past when stated.* A `date` answer before the local day of the fact's `reported_date` becomes `none` in
+  code, source `past_at_report`: the fact recorded something already over when it was said (the taxonomy's "past event →
+  none"), not a plan. The instruction says so too; the first dry run had 4 such answers among 45 dates.
+- *Unsure → none.* A decision flagged `unsure` becomes `none` in code, whatever kind was sent. An answer that is missing, repeated or
+  refused by the parser is asked again once for those facts only; still unusable it becomes `none` with a code
+  (`missing`, `invalid_expiry`, `no_reported_date`). Every such decision shows in the report's flag column and in the summary.
+- *Stop rules.* A call that raises is repeated once, and a second raise stops the run; so does a fallback-served response and a
+  budget refusal. Facts not yet decided are **not** written as `none`: they are listed as not decided (ready for `--ids-file`), the
+  failing batch is listed apart, and the plan holds only what was decided. A `none` written for an outage would be a real
+  decision that the scope rule then protects.
+- *Cost.* Without `--budget-usd` the run only estimates. The cap is lifetime over classify's own ledger (all its runs), with no
+  default. The estimate on the live volume (about 500 facts to the model, 21 batches) is about $2–4 on Opus 5.5 and $1–2 on
+  Sonnet 5.5, against the $4.5–7 the tool loop was estimated at.
+- *Apply is an exact replay.* The whole plan is validated before the first write; each entry's fields are checked through the
+  domain (`stored_expiry`, `expiry_refusal`). The scan records each document's change token and apply writes under it, the recorded
+  fields and not a recomputation: what the owner read is what is written. A fact gone, no longer current or changed since is
+  `skipped_changed` and listed for `--ids-file`; a re-run of the same plan reports `already_applied` and writes nothing; an
+  unreadable document is `failed` (its type only) and the loop goes on.
+- *Dry run, then the review dry run.* The review dry run of §7 step 3b is bench 7 of the model dry run. Its G5 detector no longer
+  counts the history fact of an "ended" answer as a revive without a basis (`unbased_revives` excludes the domain's own
+  `history_reason("")` prefix, next to the queued prefix it already excluded). Bench 7 stages a sample, not the whole set of
+  facts that classify would make due; the janitor's pool cap bounds the first live wave to at most 50 facts, oldest expiry first.
+- *The audit.* `python -m scripts.data_audit.run facts` gains `check_expiry` beside `check_fact`, with five classes:
+  `current_without_expiry_kind`, `pinned_expiry_not_none`, `current_with_stale_since`,
+  `horizon_not_counted_from_reported_date` and `current_past_expiry_not_waiting`. Two flags set when they are judged.
+  `--expiry-required` (after classify is applied) makes a current fact without `expiry_kind` a violation; without it the fact is
+  counted. `--janitor-ran-at <time>` (while the janitor writes, after that day's run) judges a current fact past its `expires_at`
+  that no open question holds. A run whose pool cap deferred facts, or whose breaker held an account back, lists those facts in
+  that class too, so the report asks to compare the count with that run's `deferred` and breaker. The horizon rule is relaxed to
+  `expires_at >= reported_date + ttl_days`: the cleanup floor and a re-mention make it later by design; earlier is the defect.
+- *Deltas from the text above* (each decided by the arbiter): (1) §7.3's "classify mode of the review pass" is a standalone script
+  with one structured call. (2) The scope is the current facts with no `expiry_kind`. (3) Directives, principles and `mindset`
+  get `none` written by code. (4) Documents with no `account_id` and accounts with no resolvable owner are skipped as well.
+  (5) `last_updated` is not written. (6) The trail entry has the shape above. (7) Unsure → `none`, but no answer at all → not
+  decided and the run stops. (8) The instruction suspends the two "Today" date rules and sends no Today: classify decides as of
+  `reported_date` (the born-due exemption of owner decision 3), so a plan whose date has passed keeps `date` and falls to the S4
+  review. (9) The live taxonomy must equal the snapshot. (10) A fact changed since the scan is listed and re-classified by the
+  owner with `--ids-file`, not automatically. (11) The cost figure above replaces the RFC's. (12) The audit's "no current fact past
+  `expires_at`" takes the S4 form, judged only with `--janitor-ran-at`. (13) The horizon invariant is `>=`. (14) "`reported_date`
+  distribution unchanged" is not an audit class (no baseline); the apply test pins that apply writes no `reported_date`. (15) The
+  missing-expiry class is a violation only with `--expiry-required`. (16) Bench 7 stages a sample (see above). (17) Switching
+  the janitor on is a separate change, made only on the owner's word. (18) Classify has no throttle of its own; the janitor's pool
+  cap feeds the review at most 50 facts at a time.
 
 **Documentation (owner, 2026-10-21).** Before S2, an owner's map of memory, `docs/05_building_blocks/memory/README.md`,
 on the pattern of the drive building block: a §0 question index, a plain-English walk-through of a fact's life from

@@ -62,8 +62,8 @@ make logs-tail         # Live tail logs
 make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — see Debugging below)
 ```
 
-**Which test command to run when** (while editing, before a commit, before a push, before calling work done, the mutation
-done-check): the table in `tests/CLAUDE.md` § Running is the one place that says it.
+**Which test command to run when** (while editing, before a commit, before a push, before calling work done): the table
+in `tests/CLAUDE.md` § Running is the one place that says it.
 
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/ main.py indexer_main.py job_main.py relay_main.py sandbox_main.py` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
@@ -88,7 +88,7 @@ and `make ci` runs everything once. Locally `--durations=25` is an advisory repo
 coverage; it selects by executed Python lines, so it can miss a test whose input is a data file or code run in a child
 process: an intermediate commit adds the tests of any data folder it touched, and **`make check` once before a push is mandatory** (`tests/CLAUDE.md`). **One full suite at a time on a
 machine:** a session with `-n` (or 2000+ tests) takes `fcntl.flock` on a file in the temp dir, prints the holder and
-waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that rise, or are lowered per the rule in `tests/CLAUDE.md` (reason line + reviewer OK) (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; every package is done when `python -m tests.support.semantic_mutants` leaves every mutant killed or ruled equivalent by the reviewer. Lint scope is `src/` and the root entry points (default high-signal ruleset: pyflakes + pycodestyle
+waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that rise, or are lowered per the rule in `tests/CLAUDE.md` (reason line + reviewer OK) (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; mutation testing is the weekly cloud run only (`Mutation survivors`, owner decision 2026-10-27): a package registers its modules in `tests/support/mutation_targets.py` and runs no local mutation pass (`tests/CLAUDE.md`). Lint scope is `src/` and the root entry points (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 
@@ -531,12 +531,12 @@ user parts `p.consolidation_text or p.text` (`consolidation_text` is legacy, see
 **Loop alerts:** a pass that hits the turn cap without a final report posts a 🚨 ops alert (`AlertSinkPort`);
 while `CONSOLIDATION_STATS_ALERTS` (`os.getenv`, default on, temporary since 2026-10-20) is on, every pass
 posts a 📊 stats line. See `decisions/sonnet55_adaptive_thinking_stall.md`.
-**Expiry and the janitor (Facts S3, built, ships with S5):** the consolidator's writes carry an `expiry` (`date` / `horizon` /
+**Expiry and the janitor (Facts S3, deployed 2026-10-27):** the consolidator's writes carry an `expiry` (`date` / `horizon` /
 `none`) that code turns into `expires_at` in the owner's timezone (map §2.7); a daily zero-LLM janitor (`fact_lifecycle_sweep`)
-stales due facts behind a breaker and is **log-only until S5**; never a TTL policy on the facts collection (a test scans the
+stales due facts behind a breaker and is **log-only until the owner switches it on (S5)**; never a TTL policy on the facts collection (a test scans the
 tree). See `decisions/fact_expiry_and_janitor.md`, map §5.5.
 
-**Memory review (Facts S4, built, ships with S5)** — what a stale fact becomes. The janitor (above) enqueues a `fact_review`
+**Memory review (Facts S4, deployed 2026-10-27)** — what a stale fact becomes. The janitor (above) enqueues a `fact_review`
 task per account (daily by default, `fact_review_interval_days`, log-only mode too). `FactReviewService` runs it under the
 memory-write lease: housekeeping, timeouts in code, selection of up to 20 stale facts, one pass of the consolidation agent
 with its own profile (`consolidation_review`; tools `update_fact`, `ask_owner`, `count_words` only; `FactReviewScope` refuses
