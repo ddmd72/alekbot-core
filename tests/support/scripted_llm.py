@@ -162,5 +162,5 @@ def tool_results(llm: Any) -> List[Tuple[str, Any]]:
 
 def first_user_text(llm: Any) -> str:
     """The text of the first user message of the first request ("" when it has none)."""
-    first = next(m for m in llm.requests[0].messages if m.role == "user")
-    return "".join(p.text or "" for p in first.parts)
+    first = next((m for m in llm.requests[0].messages if m.role == "user"), None)
+    return "".join(p.text or "" for p in first.parts) if first is not None else ""

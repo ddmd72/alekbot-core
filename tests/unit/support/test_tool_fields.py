@@ -45,6 +45,7 @@ def test_declared_contains_the_fields_of_every_surface():
         "notes:create_self_reminder.complexity",
         "tasks:update_task.recurrence.days_of_week",
         "smart_local:draft_skill.files[].from_file",
+        "smart_local:propose_memory_facts.facts[].source",
         "delegate:save_file_to_drive.text",
         "delegate:manage_self_reminders.workspace_file",
         "delegate:open_file_from_drive.original",
