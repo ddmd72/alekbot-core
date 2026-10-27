@@ -355,8 +355,7 @@ async def _boot(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixtur
     def scripted_stream(self: Any, **kwargs: Any) -> Any:
         """Claude scripted at the SDK: the deliver_response answer to the deep research notice the request carries."""
         boot.claude_calls.append(kwargs)
-        content = kwargs["messages"][-1]["content"]
-        asked = content if isinstance(content, str) else " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+        asked = _last_message_text(kwargs)
         if cancelled_notice(DR_QUERY) in asked:
             reply, summary = DR_CANCELLED_REPLY, DR_CANCELLED_SUMMARY
         elif research_failed_notice(DR_QUERY) in asked:
