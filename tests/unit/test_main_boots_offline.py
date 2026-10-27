@@ -84,10 +84,11 @@ MATRIX: Dict[str, Expect] = {
     # Cloud Scheduler jobs
     "billing_daily_summary": Expect(200, {"reported": 0}),
     "email_indexing_watchdog": Expect(200, {"marked_failed": 0, "status": "ok"}),
-    # The janitor under the deploy's environment: log-only (no FACT_LIFECYCLE_SWEEP_DRY_RUN), an empty store.
+    # The janitor under the deploy's environment: writing (FACT_LIFECYCLE_SWEEP_DRY_RUN=0, the owner's switch of
+    # 2026-10-27), an empty store.
     "fact_lifecycle_sweep": Expect(200, {"accounts": 0, "due": 0, "staled": 0, "would_stale": 0, "deferred": 0,
                                          "conflicts": 0, "no_decision": 0, "breaker_tripped": 0, "review_enqueued": 0,
-                                         "purge_overdue": 0, "dry_run": True}),
+                                         "purge_overdue": 0, "dry_run": False}),
     "fire_due_reminders": Expect(200, {"claim_lost": 0, "enqueued": 0, "skipped": 0}),
     "renew_all_task_subscriptions": Expect(200, {"enqueued": 0, "status": "ok"}),
     "repair_email_embeddings": Expect(200, {"has_more": False, "repaired": 0, "status": "ok"}),
