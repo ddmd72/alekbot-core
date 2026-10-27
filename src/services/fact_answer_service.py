@@ -285,7 +285,7 @@ class FactAnswerService(ChoiceHandlerPort):
     async def answer_options(self, user_id: str) -> List[Tuple[AnswerKind, str]]:
         """The answers a click on the Cabinet can give, each with its label in the user's UI language."""
         labels = await self._texts.ui_labels(user_id)
-        return [(kind, labels[OPTION_KEYS[kind]]) for kind in DECIDING_ANSWERS]
+        return [(kind, labels[OPTION_KEYS[kind]]) for kind in DECIDING_ANSWERS["still_true"]]
 
     async def close_question(
         self,

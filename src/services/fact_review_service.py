@@ -44,8 +44,8 @@ from ..domain.fact_review_rules import (
     fallback_fields,
     fallback_sets_aside,
     kept_twice,
-    kept_twice_fallback,
     kept_twice_fields,
+    kept_twice_question,
     offered,
     queued_fields,
     queued_question,
@@ -502,7 +502,7 @@ class FactReviewService:
             return _StepResult()
         def build(stored: FactEntity, question_id: str) -> Tuple[FactReviewQuestion, Dict[str, Any]]:
             return (
-                queued_question(stored, question_id, user_id, kept_twice_fallback(stored), at=now),
+                kept_twice_question(stored, question_id, user_id, at=now),
                 kept_twice_fields(stored, question_id, now),
             )
 
