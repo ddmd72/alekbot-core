@@ -15,26 +15,54 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify the change
+        # A change of documentation only (docs/, root *.md, CLAUDE.md files, .github/*.md) skips install and `make ci`.
+        # scripts/ci/docs_only.py is the one place that defines "docs"; an empty or unknown diff runs everything.
+        # Runs before setup-python: the runner's python3, stdlib only.
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          FILES=""
+          if [ "$EVENT" = "pull_request" ]; then
+            FILES=$(git diff --name-only "origin/$BASE_REF...HEAD" || true)
+          elif [ -n "$BEFORE" ] && [ "${BEFORE#*[!0]}" != "$BEFORE" ]; then
+            FILES=$(git diff --name-only "$BEFORE" "$SHA" || true)
+          fi
+          echo "docs_only=$(printf '%s\n' "$FILES" | python3 scripts/ci/docs_only.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Docs-only change
+        if: steps.changes.outputs.docs_only == 'true'
+        run: 'echo "::notice title=docs-only::make ci skipped: only documentation changed"'
 
       - uses: actions/setup-python@v5
+        if: steps.changes.outputs.docs_only != 'true'
         with:
           python-version: "3.13"
           cache: pip
 
       - name: Install dependencies
+        if: steps.changes.outputs.docs_only != 'true'
         run: pip install -r requirements.txt
 
       - name: Cache ffmpeg
         # The media extractor tests run the real ffmpeg/ffprobe (they skip without them). A pinned static
         # build from the Actions cache, not apt: `apt-get update` took 31-39 min on 2026-10-22 (normally 16 s).
         id: ffmpeg-cache
+        if: steps.changes.outputs.docs_only != 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ffmpeg
           key: ffmpeg-autobuild-2026-10-22-13-06-n8.1.3-gpl
 
       - name: Install ffmpeg
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        if: steps.changes.outputs.docs_only != 'true' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
         # BtbN may prune the pinned tag; then fall back to apt (and cache nothing) instead of failing every run.
         timeout-minutes: 15
         run: |
@@ -48,6 +76,7 @@ jobs:
           fi
 
       - name: Put ffmpeg on PATH
+        if: steps.changes.outputs.docs_only != 'true'
         run: echo "$HOME/.cache/ffmpeg/bin" >> "$GITHUB_PATH"
 
       - name: make ci
@@ -55,6 +84,7 @@ jobs:
         # + the offline G2 end to end.
         # No secrets: the unit suite mocks all I/O at the port/SDK boundary.
         # A hung test otherwise holds the job for GitHub's 6 h default.
+        if: steps.changes.outputs.docs_only != 'true'
         timeout-minutes: 30
         run: |
           set -o pipefail
@@ -63,7 +93,7 @@ jobs:
       - name: Failure summary as an annotation
         # Job logs are served from blob storage that a cloud session cannot reach; check-run annotations are read
         # through the API. One annotation carries the failure lines and the tail of the output.
-        if: failure()
+        if: failure() && steps.changes.outputs.docs_only != 'true'
         run: |
           {
             grep -E "FAILED|ERROR|Error:|threshold|floor|Required test coverage|make(\[[0-9]+\])?: \*\*\*" ci-output.log | tail -60
@@ -74,7 +104,7 @@ jobs:
 
       - name: Coverage per layer as a notice
         # The runner's per-layer table, on green runs too: the floors are calibrated on it (scripts/check_coverage_layers.py).
-        if: always()
+        if: always() && steps.changes.outputs.docs_only != 'true'
         run: |
           awk '/^layer +statements/{f=1} f&&/^$/{exit} f' ci-output.log | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}' > layers.txt
           [ -s layers.txt ] && echo "::notice title=Coverage per layer::$(cat layers.txt)" || true
