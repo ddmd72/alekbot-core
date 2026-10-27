@@ -3,7 +3,7 @@
 Which language: the response-language setting decides. Fixed -> that language; mirror -> the language the last review
 pass reported from the owner's recent messages. The texts: UI strings for uk/en/fr/es; for any other language the review
 model's translation of `CANONICAL_LABELS`, kept only if `check_labels` passes. There is no word table in code, and the
-digits 1-4 mean the same in every language."""
+digits number the options of the question's kind (`fact_review_options.OPTIONS`), the same in every language."""
 import hashlib
 import json
 import re
@@ -13,7 +13,8 @@ from typing import Final, List, Literal, Mapping, Optional, Tuple
 
 from .fact_review_answer_kind import AnswerKind
 from .fact_review_answers import option_id
-from .fact_review_question import FACT_QUESTION_KIND, FactReviewQuestion
+from .fact_review_options import OPTIONS, options_of
+from .fact_review_question import FACT_QUESTION_KIND, FactReviewQuestion, QuestionKind
 from .fact_review_state import FactReviewState
 from .interactive_binding import InteractiveBinding
 from .interactive_message import InteractiveMessage
@@ -32,14 +33,28 @@ from .ui_messages import UIMessage
 MAX_TEXT_CHARS: Final[int] = 120  # the question line, the hint, the acknowledgements, the closed note, the digest lines
 MAX_OPTION_WORDS: Final[int] = 4
 
-# The label of each answer's option, in the order the options are offered (the digits 1-4).
+# The label of each answer's option, in `AnswerKind` order; a question offers its kind's options (`options_of`).
 OPTION_KEYS: Final[Mapping[AnswerKind, str]] = MappingProxyType({
     AnswerKind.STILL_TRUE: UIMessage.MEMORY_OPTION_STILL_TRUE.value,
     AnswerKind.ENDED: UIMessage.MEMORY_OPTION_ENDED.value,
     AnswerKind.NEVER: UIMessage.MEMORY_OPTION_NEVER.value,
     AnswerKind.DONT_KNOW: UIMessage.MEMORY_OPTION_DONT_KNOW.value,
+    AnswerKind.HAPPENED: UIMessage.MEMORY_OPTION_HAPPENED.value,
+    AnswerKind.NOT_HAPPENED: UIMessage.MEMORY_OPTION_NOT_HAPPENED.value,
+    AnswerKind.RENEWED: UIMessage.MEMORY_OPTION_RENEWED.value,
+    AnswerKind.NOT_RENEWED: UIMessage.MEMORY_OPTION_NOT_RENEWED.value,
+    AnswerKind.NOT_NEEDED: UIMessage.MEMORY_OPTION_NOT_NEEDED.value,
+    AnswerKind.PAID: UIMessage.MEMORY_OPTION_PAID.value,
+    AnswerKind.NOT_PAID: UIMessage.MEMORY_OPTION_NOT_PAID.value,
 })
 _QUESTION: Final[str] = UIMessage.MEMORY_REVIEW_QUESTION.value
+# The question line of each kind.
+QUESTION_KEYS: Final[Mapping[QuestionKind, str]] = MappingProxyType({
+    "still_true": _QUESTION,
+    "happened": UIMessage.MEMORY_REVIEW_QUESTION_HAPPENED.value,
+    "renewed": UIMessage.MEMORY_REVIEW_QUESTION_RENEWED.value,
+    "paid": UIMessage.MEMORY_REVIEW_QUESTION_PAID.value,
+})
 _HINT: Final[str] = UIMessage.MEMORY_REPLY_HINT.value
 _TEXT_KEYS: Final[tuple[str, ...]] = (
     _QUESTION, _HINT,
@@ -47,8 +62,10 @@ _TEXT_KEYS: Final[tuple[str, ...]] = (
     UIMessage.MEMORY_FACT_CHANGED.value,
     UIMessage.MEMORY_QUESTION_CLOSED.value, UIMessage.MEMORY_DIGEST_HEADER.value, UIMessage.MEMORY_DIGEST_FOOTER.value,
     UIMessage.MEMORY_DIGEST_ARCHIVED.value, UIMessage.MEMORY_DIGEST_INVALIDATED.value,
+    UIMessage.MEMORY_DIGEST_HISTORY_HEADER.value, UIMessage.MEMORY_DIGEST_INVOICES_HEADER.value,
+    UIMessage.MEMORY_DIGEST_INVOICES_CABINET.value,
 )
-LABEL_KEYS: Final[frozenset[str]] = frozenset((*OPTION_KEYS.values(), *_TEXT_KEYS))
+LABEL_KEYS: Final[frozenset[str]] = frozenset((*OPTION_KEYS.values(), *QUESTION_KEYS.values(), *_TEXT_KEYS))
 
 
 def is_review_text(message: UIMessage) -> bool:
@@ -73,6 +90,19 @@ CANONICAL_LABELS: Final[Mapping[str, str]] = MappingProxyType({
     UIMessage.MEMORY_DIGEST_FOOTER.value: "To bring one back, tell me in chat that it is still true.",
     UIMessage.MEMORY_DIGEST_ARCHIVED.value: "no longer true",
     UIMessage.MEMORY_DIGEST_INVALIDATED.value: "never was true",
+    QUESTION_KEYS["happened"]: "Did this happen?",
+    QUESTION_KEYS["renewed"]: "Was this renewed?",
+    QUESTION_KEYS["paid"]: "Was this paid?",
+    OPTION_KEYS[AnswerKind.HAPPENED]: "It happened",
+    OPTION_KEYS[AnswerKind.NOT_HAPPENED]: "It did not",
+    OPTION_KEYS[AnswerKind.RENEWED]: "Renewed",
+    OPTION_KEYS[AnswerKind.NOT_RENEWED]: "Not renewed",
+    OPTION_KEYS[AnswerKind.NOT_NEEDED]: "No longer needed",
+    OPTION_KEYS[AnswerKind.PAID]: "Paid",
+    OPTION_KEYS[AnswerKind.NOT_PAID]: "Not paid",
+    UIMessage.MEMORY_DIGEST_HISTORY_HEADER.value: "Recorded as history without your answer:",
+    UIMessage.MEMORY_DIGEST_INVOICES_HEADER.value: "Invoices with no payment confirmation:",
+    UIMessage.MEMORY_DIGEST_INVOICES_CABINET.value: "Mark the paid ones in the Cabinet:",
 })
 
 
@@ -214,20 +244,22 @@ def check_labels(labels: object) -> Optional[str]:
     """Why a model-written label set may not be used, or None when it may.
 
     It must be a mapping of exactly `LABEL_KEYS`, each a text of one line with no digit (the options are numbered by the message),
-    no `[`, no control or format character (a bidi override could move the digits) and no URL. The four option labels are at most `MAX_OPTION_WORDS` words and `MAX_LABEL_CHARS`
-    characters (the bound an option takes, so a set that passes can always be posted) and differ from each other; every
-    other text is at most `MAX_TEXT_CHARS` characters."""
+    no `[`, no control or format character (a bidi override could move the digits) and no URL. Every option label is at most `MAX_OPTION_WORDS` words and `MAX_LABEL_CHARS`
+    characters (the bound an option takes, so a set that passes can always be posted), and the options of one question
+    kind differ from each other; every other text is at most `MAX_TEXT_CHARS` characters."""
     if not isinstance(labels, Mapping):
         return "the labels are not an object"
     if set(labels) != LABEL_KEYS:
         return "the labels are not exactly the expected keys"
+    option_keys = set(OPTION_KEYS.values())
     for key in sorted(LABEL_KEYS):
-        problem = _text_problem(labels[key], key in OPTION_KEYS.values())
+        problem = _text_problem(labels[key], key in option_keys)
         if problem is not None:
             return f"{key}: {problem}"
-    options = [str(labels[key]).strip().casefold() for key in OPTION_KEYS.values()]
-    if len(set(options)) != len(options):
-        return "the four option labels must differ"
+    for kind, answers in OPTIONS.items():
+        options = [str(labels[OPTION_KEYS[answer]]).strip().casefold() for answer in answers]
+        if len(set(options)) != len(options):
+            return f"the option labels of a {kind} question must differ"
     return None
 
 
@@ -258,16 +290,18 @@ def fact_question_message(
     translation: Optional[QuoteTranslation] = None,
     language: Optional[str] = None,
 ) -> InteractiveMessage:
-    """The one message that asks the owner about a fact: the question line, the fact as the owner is shown it (its
-    translation into `language` when it has one that holds, else as stored), the four options in the
-    order of `AnswerKind` (digits 1-4; each option's id is its answer) and the hint on how to reply. `labels` holds every
+    """The one message that asks the owner about a fact: the question line of its kind (`QUESTION_KEYS`), the fact as the
+    owner is shown it (its translation into `language` when it has one that holds, else as stored), the options of its
+    kind (`options_of`, digits from 1; each option's id is its answer) and the hint on how to reply. `labels` holds every
     key of `LABEL_KEYS`, from the UI strings or a label set that passed `check_labels`."""
     missing: List[str] = sorted(LABEL_KEYS - labels.keys())
     if missing:
         raise ValueError(f"the labels lack: {', '.join(missing)}")
-    options = tuple(InteractiveOption(id=option_id(kind), label=labels[key]) for kind, key in OPTION_KEYS.items())
+    options = tuple(
+        InteractiveOption(id=option_id(kind), label=labels[OPTION_KEYS[kind]]) for kind in options_of(question)
+    )
     return InteractiveMessage(
-        prompt=labels[_QUESTION],
+        prompt=labels[QUESTION_KEYS[question.question]],
         quote=shown_quote(question.quoted_text, translation, language),
         options=options,
         binding=InteractiveBinding(kind=FACT_QUESTION_KIND, id=question.question_id),
