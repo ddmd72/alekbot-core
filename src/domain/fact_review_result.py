@@ -8,6 +8,7 @@ from typing import Any, Dict, Mapping, Optional, Tuple, get_args
 
 from .fact_review_ask import AskRequest
 from .fact_review_outcome import ReviewDecision, ReviewOutcome
+from .fact_review_quote_translation import QuoteTranslation
 
 _OUTCOMES = frozenset(get_args(ReviewOutcome))
 
@@ -16,13 +17,15 @@ _OUTCOMES = frozenset(get_args(ReviewOutcome))
 class FactReviewResult:
     """`outcomes`: one per batch fact the pass wrote, in batch order. `asks`: the held asks, each naming its batch fact.
     `kept`: the ids of the batch facts with neither. `message_language` and `labels`: as the pass's final report gave
-    them (mirror mode only), None when absent."""
+    them (mirror mode only), None when absent. `translations`: the validated translations of the batch facts' texts into
+    the message language (empty when none was wanted or given)."""
 
     outcomes: Tuple[ReviewDecision, ...] = ()
     asks: Tuple[AskRequest, ...] = ()
     kept: Tuple[str, ...] = ()
     message_language: Optional[str] = None
     labels: Optional[Mapping[str, str]] = None
+    translations: Tuple[QuoteTranslation, ...] = ()
 
 
 def encode_review_result(result: FactReviewResult) -> Dict[str, Any]:
@@ -34,6 +37,7 @@ def encode_review_result(result: FactReviewResult) -> Dict[str, Any]:
         "kept": list(result.kept),
         "message_language": result.message_language,
         "labels": dict(result.labels) if result.labels is not None else None,
+        "translations": [asdict(t) for t in result.translations],
     }
 
 
@@ -47,7 +51,8 @@ def decode_review_result(raw: Optional[Mapping[str, Any]]) -> FactReviewResult:
     try:
         outcomes = tuple(ReviewDecision(**entry) for entry in raw.get("outcomes") or ())
         asks = tuple(AskRequest(**entry) for entry in raw.get("asks") or ())
-    except TypeError as error:
+        translations = tuple(QuoteTranslation(**entry) for entry in raw.get("translations") or ())
+    except (TypeError, ValueError) as error:
         raise ValueError(f"the review result is not valid: {error}") from error
     unknown = sorted({d.outcome for d in outcomes} - _OUTCOMES)
     if unknown:
@@ -61,4 +66,4 @@ def decode_review_result(raw: Optional[Mapping[str, Any]]) -> FactReviewResult:
     language = raw.get("message_language")
     if language is not None and not isinstance(language, str):
         raise ValueError("the review result's message_language is a text")
-    return FactReviewResult(outcomes, asks, kept, language, dict(labels) if labels is not None else None)
+    return FactReviewResult(outcomes, asks, kept, language, dict(labels) if labels is not None else None, translations)

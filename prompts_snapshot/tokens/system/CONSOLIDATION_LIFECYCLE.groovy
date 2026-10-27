@@ -85,5 +85,5 @@ rule Stale_Fact_Review() {
 
     refusals: "A refused call wrote nothing: fix what the refusal names and send the call again, or leave the fact. When the refusal says the fact changed outside the review, leave it."
 
-    final_report: "After your last call, end with one JSON object: {\"operations\": [{\"fact_id\": \"<id>\", \"outcome\": \"<outcome>\"}], \"message_language\": …, \"labels\": …}. Give message_language and labels only when the message's LANGUAGE section asks for them, exactly as it says."
+    final_report: "After your last call, end with one JSON object: {\"operations\": [{\"fact_id\": \"<id>\", \"outcome\": \"<outcome>\"}], \"message_language\": …, \"labels\": …, \"translations\": …}. Give message_language, labels and translations only when the message's LANGUAGE or TRANSLATIONS section asks for them, exactly as it says."
 }

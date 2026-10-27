@@ -18,6 +18,14 @@ from .fact_review_state import FactReviewState
 from .interactive_binding import InteractiveBinding
 from .interactive_message import InteractiveMessage
 from .interactive_option import MAX_LABEL_CHARS, InteractiveOption
+from .fact_review_quote_translation import (
+    FRAME_CHARS,
+    INVISIBLE_CATEGORIES,
+    URL_PATTERN,
+    QuoteTranslation,
+    shown_quote,
+    translations_wanted,
+)
 from .language import LanguageCode
 from .ui_messages import UIMessage
 
@@ -78,11 +86,11 @@ def labels_digest() -> str:
 LabelSource = Literal["ui", "model", "fallback"]
 
 _CODE = re.compile(r"[a-z]{2}")
-_URL = re.compile(r"(?i)[a-z][a-z0-9+.\-]*://|www\.")
+_URL = URL_PATTERN
 # `[` would imitate a history frame (`[System:`, `[Reply to memory review`). What a platform reads as control syntax in
 # a text is that platform's adapter to escape, not a rule of the label.
-_FORBIDDEN = frozenset("[")
-_INVISIBLE = frozenset({"Cc", "Cf"})  # control and format characters: bidi overrides, zero-width spaces
+_FORBIDDEN = FRAME_CHARS
+_INVISIBLE = INVISIBLE_CATEGORIES  # control and format characters: bidi overrides, zero-width spaces
 
 
 def parse_message_language(raw: object) -> Optional[str]:
@@ -137,6 +145,29 @@ def review_labels(
     return source, ui_strings_language(code) or ui_language, None
 
 
+def fixed_message_language(
+    preferred: Optional[LanguageCode], agent_mirror: bool, system_default: LanguageCode,
+) -> Optional[str]:
+    """The fixed message language (preferred, else the system default), or None in mirror mode."""
+    if agent_mirror:
+        return None
+    return (preferred or system_default).value
+
+
+def translation_language(mirror: bool, fixed: Optional[str], reported: object) -> Optional[str]:
+    """The language a pass's translations are in: mirror -> the language the report gave; fixed -> the fixed language.
+    None unless `translations_wanted` for it."""
+    code = parse_message_language(reported if mirror else fixed)
+    return code if translations_wanted(code) else None
+
+
+def shown_language(code: str, state: Optional[FactReviewState], ui_language: LanguageCode) -> str:
+    """The language the review's lines in `code` are actually in: the strings language of `review_labels` when it names
+    one, else `code` (model labels)."""
+    _, strings_language, _ = review_labels(code, state, ui_language)
+    return strings_language.value if strings_language is not None else code
+
+
 def message_language(
     preferred: Optional[LanguageCode],
     agent_mirror: bool,
@@ -149,8 +180,9 @@ def message_language(
     Fixed (`agent_mirror` False): the owner's language, else the system default; always one of uk/en/fr/es. Mirror: the
     language the last pass reported from his messages (`state.message_language`, read through `parse_message_language`;
     any language), and until there is one the UI language."""
-    if not agent_mirror:
-        return (preferred or system_default).value
+    fixed = fixed_message_language(preferred, agent_mirror, system_default)
+    if fixed is not None:
+        return fixed
     reported = parse_message_language(state.message_language) if state is not None else None
     return reported or ui_language.value
 
@@ -220,8 +252,14 @@ def _text_problem(value: object, is_option: bool) -> Optional[str]:
     return None
 
 
-def fact_question_message(question: FactReviewQuestion, labels: Mapping[str, str]) -> InteractiveMessage:
-    """The one message that asks the owner about a fact: the question line, the fact as stored, the four options in the
+def fact_question_message(
+    question: FactReviewQuestion,
+    labels: Mapping[str, str],
+    translation: Optional[QuoteTranslation] = None,
+    language: Optional[str] = None,
+) -> InteractiveMessage:
+    """The one message that asks the owner about a fact: the question line, the fact as the owner is shown it (its
+    translation into `language` when it has one that holds, else as stored), the four options in the
     order of `AnswerKind` (digits 1-4; each option's id is its answer) and the hint on how to reply. `labels` holds every
     key of `LABEL_KEYS`, from the UI strings or a label set that passed `check_labels`."""
     missing: List[str] = sorted(LABEL_KEYS - labels.keys())
@@ -230,7 +268,7 @@ def fact_question_message(question: FactReviewQuestion, labels: Mapping[str, str
     options = tuple(InteractiveOption(id=option_id(kind), label=labels[key]) for kind, key in OPTION_KEYS.items())
     return InteractiveMessage(
         prompt=labels[_QUESTION],
-        quote=question.quoted_text,
+        quote=shown_quote(question.quoted_text, translation, language),
         options=options,
         binding=InteractiveBinding(kind=FACT_QUESTION_KIND, id=question.question_id),
         reply_hint=labels[_HINT],

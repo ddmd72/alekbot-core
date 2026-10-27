@@ -4,6 +4,7 @@ messages when it is.
 
 `FactReviewTask` is the domain shape; `encode_review_task` and `decode_review_task` are its one form as plain data, the
 form the agent task's payload carries."""
+import re
 from typing import Any, Dict, Final, Iterable, List, Mapping, Optional, Sequence, Self, Tuple
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -83,6 +84,8 @@ def questions_about(facts: Iterable[FactEntity], questions: Iterable[FactReviewQ
 def _text_only(fact: FactEntity) -> FactEntity:
     return fact.model_copy(update=dict(_NO_VECTORS))
 
+_LANGUAGE_CODE = re.compile(r"[a-z]{2}")  # `fact_review_language` imports this module, so its parser cannot be used here
+
 
 class FactReviewTask(BaseModel):
     """`items`: the batch, as read when the pass began. `questions`: the open questions about its facts. `mirror`: the
@@ -98,6 +101,14 @@ class FactReviewTask(BaseModel):
     mirror: bool
     owner_messages: Tuple[str, ...] = ()
     now: Optional[AwareDatetime] = None
+    language: Optional[str] = None  # the fixed message language the pass translates into, given only when it does not mirror
+
+    @field_validator("language", mode="after")
+    @classmethod
+    def _a_language_code(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and _LANGUAGE_CODE.fullmatch(value) is None:
+            raise ValueError("the language is two lowercase ASCII letters")
+        return value
 
     @field_validator("owner_messages", mode="after")
     @classmethod
@@ -108,6 +119,12 @@ class FactReviewTask(BaseModel):
     def _owner_messages_belong_to_mirror_mode(self) -> Self:
         if self.owner_messages and not self.mirror:
             raise ValueError("owner messages are given only when the language mirrors the owner")
+        return self
+
+    @model_validator(mode="after")
+    def _a_fixed_language_excludes_mirror(self) -> Self:
+        if self.language is not None and self.mirror:
+            raise ValueError("a fixed language is given only when the language does not mirror the owner")
         return self
 
     @property

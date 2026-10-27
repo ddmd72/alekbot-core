@@ -19,7 +19,7 @@ PROTOCOL_MEMORY_REVIEW_MARKERS {
 
     purpose: "These marked messages belong to the system: it asks the owner about stored facts it could not confirm, takes his answers and applies them itself. This block says how to read them and what you never do about them."
 
-    question_pair: "A user message '[System: memory review q=<id> — Alek asked the owner about a fact he could not confirm]' followed by your message is a memory-review question: the system sent it in your name, quoting a stored fact it could not confirm, with numbered options. It is Alek's question, already asked: do not ask it again."
+    question_pair: "A user message '[System: memory review q=<id> — Alek asked the owner about a fact he could not confirm]' followed by your message is a memory-review question: the system sent it in your name, quoting a stored fact (in the message's language) it could not confirm, with numbered options. It is Alek's question, already asked: do not ask it again."
 
     how_the_owner_answers: "The owner answers by replying to that question message (a Slack thread reply, a Telegram reply) or in the Cabinet. The system takes that reply itself; you see it only in history, as a user message '[Reply to memory review q=<id>] …' followed by its acknowledgement. You are never asked to act on it."
 
