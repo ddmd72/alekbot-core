@@ -530,7 +530,7 @@ Effort is realistic working days, after both reviews. Gate: `check` = `make chec
 | P12 | **Cloud gate, full** (§4): lease, render step, explicit-database scripts, missing index definitions, GCS bucket, paused queue, WIF for the post-merge job; every H2 kit against the real adapters; precondition tests | cloud | 2–3 | fake ≠ Firestore across all kits | 2 (revised 2026-10-27: lease document and render gate dropped; see "Rules revised") |
 | P13 | **Service seams**: handler-level tests that run the **real** `UserNotificationService`, `TaskDispatchService`, `AgentCoordinator`, `SearchEnrichmentService` and `PromptBuilder` over H1 and port fakes for each entry path (worker task types, `ConversationHandler`, `AgentWorkerHandler`), asserting the observable outcome (which channel, which history entry); mutation operator: drop one forwarded kwarg | check | 2 | parameter coupling between services (§1.4 item 6) | 2 |
 | P14 | **Scripted-LLM end to end** for every agent that writes state through tools (Consolidation, Notes, Tasks, Smart's local tools `propose_memory_facts` / `draft_skill` / `workspace`, FileManagement drive mutations): a scripted tool call that uses every declared field, asserted on the final store state; a generic check that every declared tool field changes stored state or is refused — nothing accepted and dropped. **P9 hand-over:** the two deep-research rows of the boot test's `MATRIX` (`deep_research_failed`, `deep_research_webhook_event`, 500 until the formatter's prompt blueprint is seeded) must become 200 here; the other three belong to P15 (list in the "Built (P9)" note). | check | 1.5 | tools that report success after dropping input (§1.3.5) | 2 |
-| P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 |
+| P15 | **Redelivery and interleaving**: each `/worker` task type run twice, sequentially and concurrently (`asyncio.gather`), on H1, asserting one user-visible effect, or documented as idempotent by construction; a gather-interleaving test for each shared mutable singleton (agent instances, factory caches, ledgers). **P9 hand-over:** three reasoned non-200 rows of the boot test's `MATRIX` must become 200 here: `setup_microsoft_todo` and `reindex_task_list` (500 until To Do credentials are seeded) and `email_indexing` (404 "job not found" until an indexing job is seeded); the two deep-research rows belong to P14 (list in the "Built (P9)" note). | check | 1.5 | §1.4 items 1, 4, 5; the 3.6× billing class | 2 | (part built 2026-10-27; see "Built (P15, part 1)")
 | P16 | **Clock suite**: a pinned clock and a table of instants (both 2026 DST transitions in Europe/Berlin, Europe/Helsinki, America/New_York; month end; UTC midnight) through every function that matches an hour or a day boundary (daily review, billing rotation, drive monthly budgets, reminder `due`, Cabinet 24h cap, scratch 7-day TTL) | check | 0.5 | §1.4 item 7 and its class | 2 | (built 2026-10-27; see "Built (P16)")
 | P17 | **Provider contracts, consumer side** (§4a): recorded fixtures first; `contracts/` subsets (extracted, aliased, converted, authored; internal APIs); WebSocket event schemas + recorded transcripts; Stainless param-type validation; transport-level conformance tests per provider; the helpers and meta-tests; `ADAPTER_WIRE_TESTING.md` amended; then the low-coverage adapters: `gmail_provider_adapter`, `slack/http_adapter`, `slack/response_channel`, `microsoft/todo_adapter`, `gcp_task_queue`, Telegram, Twilio, Cloudflare SFU, Google OAuth, the four voice files | check | 10–15 | mocks that disagree with the provider | 2 (revised 2026-10-27: only with a regeneration command per recorded fixture; see "Rules revised") |
 | P18 | **Reality checks** (§4a): spec-drift workflow, `provider-contract-review` skill + monthly routine, `make contract-probe` for the sandboxed providers | sched | 2–3 + owner sandbox setup | contracts that disagree with reality | 3 |
@@ -761,6 +761,37 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
   monthly drive budgets in UTC (documented).
 - **Not covered:** the drive's `_search_v2_alerts` and `_sweep_orphans`; the To Do `update_task` path; the owner's choice whether an ambiguous wall
   time should be refused.
+
+**Built (P15, part 1, 2026-10-27).** Redelivery and interleaving. Test-only: no `src/` change. Files and deviations:
+- **Route claim.** `tests/unit/test_worker_redelivery_route.py` (on main): the claim through main's `/worker` route; before it, dropping `delivery=`
+  left every test green.
+- **HTTP boundary.** `tests/support/http_boundary_fake.py` (self-test `tests/unit/support/test_http_boundary_fake.py`): one fake of the aiohttp
+  surface the To Do, Gmail and Slack webhook adapters use. `install(monkeypatch)`; exact-path routes (query ignored, `prefix=True` opt-in); an
+  unrouted URL fails loudly and is recorded; `raise_for_status` raises with a real `aiohttp.RequestInfo`; `json()` raises `ContentTypeError` on a
+  non-JSON body unless `content_type=None`; form bodies are recorded. Presets: an empty To Do account, Gmail, the Slack webhook. Later P15 cards build on it.
+- **Payload fields.** `tests/support/worker_payload_fields.py` + `tests/unit/test_worker_payload_fields.py`: every `/worker` producer (enqueue
+  sites, Scheduler bodies, the queued Slack event) against every consumer read. Required keys are written by every producer, every read key is
+  written by every producer, every written key is read. Allowlists `UNREAD_BY_DESIGN` (queued Slack `enqueued_at`) and `UNWRITTEN_BY_DESIGN`
+  (video `provider`: Grok-only by `VIDEO_GENERATION_RFC.md` decision #8; the queued Slack event's absent `task_type`) fail both ways. The producer
+  tests are `slow` (they parse all of `src/`).
+- **Interleaving tests.** `asyncio.Event` gates; each test asserts its gate was reached, and each defect has a passing control. Factory, delegation
+  engine, `$consolidate`: `tests/unit/composition/test_user_agent_factory_interleaving.py`,
+  `tests/unit/infrastructure/test_delegation_engine_gather_interleaving.py`, `tests/unit/handlers/test_consolidate_command_interleaving.py`.
+  Caches and breaker: `tests/unit/services/test_prompt_cache_interleaving.py`, `tests/unit/services/test_channel_binding_interleaving.py`,
+  `tests/unit/agents/test_breaker_stale_success_interleaving.py`.
+- **Defects pinned as strict xfails** (the id is in each reason; the fix removes the marker):
+  - P15-S1: a lazy agent built while an unlocked eviction runs stays registered and untracked.
+  - P15-S1b: an admin cache reset during a build in progress is undone by the build's cache write.
+  - P15-S2: a cache write-back after an invalidation brings back the old value (prompt assembly, channel binding).
+  - P15-S3: `$consolidate` overwrites messages appended meanwhile.
+  - P15-S4: after an eviction the next delegation of the same turn to an eager specialist gets "Unknown recipient".
+  - P15-S5: a cancelled child in the delegation gather crashes the turn (tool batch and fan-out).
+  - P15-S6: resolved file text is written into the model's own tool-call args.
+  - P15-S7: a stale success closes a tripped provider breaker.
+- **Known limit.** The nested `context` dict of `agent_execution` is not checked per key: producers forward a runtime dict and the consumer passes
+  the whole dict to the agent.
+- **Waits for the owner (not built):** per-type double runs, retry after a partial effect, the agent instance-state meta-test, and the three
+  `MATRIX` rows of the P9 hand-over.
 
 **Rules revised (owner, 2026-10-27).** The owner reviewed the programme: every package stays and is built now (no "on touch"
 deferral); what drops is the friction a gate adds to every feature change, and the programme must stay manageable over years

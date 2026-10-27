@@ -47,6 +47,8 @@ tests/
   `docs/how_to/ADAPTER_WIRE_TESTING.md`: mock the SDK object, not the port, and pin the wire format. Line coverage
   produced by a `MagicMock` SDK is not evidence of behaviour: a reviewer does not accept it as the adapter's test, although the
   floor still counts it.
+- **The aiohttp boundary has one fake.** A test that needs the HTTP surface the To Do, Gmail and Slack webhook adapters use takes
+  `tests/support/http_boundary_fake.py` (`install(monkeypatch)`, exact-path routes, unrouted URLs fail loudly), never a new fake.
 - **No test calls a real LLM**, and no unit test touches the network (below). A test that needs the real service is an
   integration test and lives in `tests/integration/`.
 - One test class per service or agent. `@pytest.mark.requirement("REQ-XXX")` for business requirements.
@@ -126,10 +128,13 @@ The main service's non-web objects are built by `build_application_graph(config,
   A test that needs the deploy's values uses this, never a hand-made `config` dict.
 - **The fixture** (`prod_graph`, imported from `tests/support/prod_graph.py`): the built and started graph over the H1 fake and a recording Cloud Tasks
   client, with one user's eager and lazy agents built. Use it for any "is X wired in production" question.
-- **Which tests are slow, and what that means for you.** Only the tests that build the graph (each builds it, starts it and builds one user's
-  eager and every lazy agent) or boot `main()` (and send every trigger) are `slow`; the guards that read source (the execution-context test,
-  the main.py construction allowlist, the checker self-tests) are not. A forgotten dependency therefore shows up as an unledgered `None`
+- **Which tests are slow, and what that means for you.** The tests that build the graph (each builds it, starts it and builds one user's
+  eager and every lazy agent) or boot `main()` (and send every trigger) are `slow`; most source-reading guards are fast (the execution-context
+  test, the main.py construction allowlist, the checker self-tests); a guard that parses all of `src/` is `slow` (the enqueue-site tests of
+  `test_worker_triggers.py` and `test_worker_payload_fields.py`). A forgotten dependency therefore shows up as an unledgered `None`
   in `make ci` or with `RUN_SLOW_TESTS=1`, **not in `make check`**; a bare `pytest <file>` skips those tests silently.
+- **Producer and consumer payloads** (`tests/unit/test_worker_payload_fields.py`) tie every `/worker` producer to its consumer's reads: a new task
+  type or payload key is added on both sides or listed in the test's allowlist with a reason.
 - **The boot test** (`tests/unit/test_main_boots_offline.py`): runs the real `main()` offline, pins the full `url_map`
   (`main_boots_offline_url_map.txt`) and the keywords of every blueprint factory call, and sends every trigger through `/worker`
   against a pinned per-type table. `tests/unit/test_worker_triggers.py` ties the scheduler script and the enqueue sites to
