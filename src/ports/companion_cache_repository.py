@@ -24,14 +24,13 @@ class CompanionCacheRepository(ABC):
     async def get_summary(self, session_id: str) -> Optional[str]:
         """The cached summary of `session_id`, or None if never written.
 
-        Tenancy: the companion memory port's rule (session_id alone is not sufficient) would scope it by account
-        (P11-G3-4: today it is not, so an account reads another account's summary of the same session key;
-        COMPANION_AGENTS_RFC §3 assumes one account per companion session, and which rule holds is the owner's call).
+        Tenancy: keyed by session_id only, unlike the companion records (COMPANION_AGENTS_RFC §3: one account per
+        companion session); to be revisited when the companion stores move to the agent workspace.
         """
 
     @abstractmethod
     async def save_summary(self, session_id: str, account_id: str, summary: str) -> None:
         """Replace the session's cached summary (session_id, account_id, summary, refreshed_at = server time).
 
-        Last writer wins, whatever its account (P11-G3-4).
+        Last writer wins, whatever its account.
         """

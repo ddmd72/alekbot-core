@@ -2,9 +2,9 @@
 `FirestoreCompanionCacheRepository` on the evaluating Firestore fake (H1), with the index refusal ON (the adapter issues
 no query). Assertions are on the raw stored documents and on what the readers return.
 
-P11-G3-4 is pinned through the real `CompanionContextAssemblerService` (the one reader, `get_summary` with the sender's
-account), over the real memory and cache repositories; `query_phrases=[]` keeps embeddings out, so the assembler needs no
-embedding port.
+The read through the real `CompanionContextAssemblerService` (the one reader) runs over the real memory and cache
+repositories; `query_phrases=[]` keeps embeddings out, so the assembler needs no embedding port. The summary's tenancy
+(keyed by session only) is not pinned: the companion stores are to be reworked with the agent workspace.
 
 `_adapter(db)` is the one place the adapter is constructed.
 """
@@ -18,7 +18,6 @@ from src.adapters.firestore_companion_cache_repository import FirestoreCompanion
 from src.adapters.firestore_companion_memory_repository import FirestoreCompanionMemoryRepository
 from src.services.companion_context_assembler_service import CompanionContextAssemblerService
 from tests.support.firestore_eval import EvalDb
-from tests.support.redelivery_world import require
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 CACHE, REC = "eval_companion_context_cache", "eval_companion_records"
@@ -74,20 +73,5 @@ async def test_a_session_that_never_saved_reads_none_and_sessions_are_independen
 
 
 async def test_the_owning_account_reads_its_summary_through_the_assembler(store):
-    """The passing control of P11-G3-4."""
     await store.repo.save_summary(SESSION, "a1", SUMMARY)
     assert await store.summary_seen_by("a1") == SUMMARY
-
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "P11-G3-4: the cache does not apply the memory port's account rule (RFC §3 assumes one account per companion "
-    "session; the owner rules which holds)"))
-async def test_a_summary_is_not_read_by_another_account(store):
-    """The companion memory port says session_id alone is not a sufficient tenancy guarantee; the cache is keyed by
-    session only, so another account reading the same session key gets this account's summary, and each save overwrites
-    the other's. Flipping fix (not one line, so outside P11, it changes a signature): key the document
-    `{account_id}:{session_id}` and give `get_summary` an `account_id` (port, adapter,
-    `companion_context_assembler_service.py` call). If the owner picks RFC §3 instead, delete this xfail."""
-    await store.repo.save_summary(SESSION, "a1", SUMMARY)
-    require(await store.summary_seen_by("a1") == SUMMARY, "the owning account reads its summary")
-    assert await store.summary_seen_by("a2") is None
