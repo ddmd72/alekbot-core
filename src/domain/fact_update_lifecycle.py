@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from .entities import ExpiryKind, FactEntity, FactState
+from .entities import ContextPriority, ExpiryKind, FactEntity, FactState
 from .exceptions import FactExpiryError
 from .fact_expiry import EXPIRY_SHAPES, NOTHING_WRITTEN, Expiry
 from .fact_lifecycle import (
@@ -14,7 +14,7 @@ from .fact_lifecycle import (
 )
 from .fact_review_reasons import is_rewrite_reason, superseded_reason
 from .fact_review_rules import STAYS_STALE_REFUSAL, review_action
-from .fact_update import ParsedFactUpdate
+from .fact_update import AS_HISTORY_SAME_TEXT, ParsedFactUpdate
 from .fact_update_plan import FactUpdatePlan
 from .fact_write_context import (
     FactWriteContext, as_utc, decide_expiry, reported_date_for_update, review_horizon, reviews_stored_memory,
@@ -53,9 +53,17 @@ def finish_fact_update(
     (ValueError); `evidence_at` moves a revive's `reported_date` (the later of the two) and nothing else. Every other
     pass ignores `evidence_at`.
 
+    A history rewrite (`update.as_history`, P2-1) is theirs alone (a timeout writes as the owner's row): any other pass
+    gets ValueError. It must be a rewrite to a different text (AS_HISTORY_SAME_TEXT); its version is `archival`.
+
     Raises FactExpiryError, whose text is what the model reads; nothing has been written at that point.
     """
     now = as_utc(now)
+    if update.as_history and not reviews_stored_memory(context):
+        raise ValueError(
+            f"as_history: only the review, the owner and a timeout rewrite a fact as history, not {context.actor}; "
+            "nothing was written"
+        )
     if reviews_stored_memory(context):
         return _finish_review(plan, current, update, context, now, evidence_at, reason)
     reported, date_note = reported_date_for_update(
@@ -82,6 +90,8 @@ def _finish_review(
     action = review_action(current, update)
     if action is None:
         raise ValueError(STAYS_STALE_REFUSAL)
+    if update.as_history and action != "rewrite":
+        raise ValueError(AS_HISTORY_SAME_TEXT)
     # Only a revive rests on evidence or an answer that may move the date (plan §2.1); a rewrite or a close keeps it.
     reported, date_note = reported_date_for_update(
         context, update.reported_date, current.reported_date, action == "rewrite", now,
@@ -132,10 +142,13 @@ def _review_version(
 ) -> Tuple[FactUpdatePlan, Optional[str]]:
     """A rewrite: a current version (whatever the stored state was), `reported_date` stored, the review horizon. Its own
     entry leads to current with the rewrite's reason (`is_rewrite_reason`, never a revive's), so the window a later
-    silence doubles counts from it."""
+    silence doubles counts from it. A history rewrite (`as_history`) needs a text other than the stored one and is
+    `archival`: out of the baseline cache, found by every search."""
     version = plan.version_fact
     if version is None:
         raise ValueError("a version plan carries its version document")
+    if update.as_history and version.text == current.text:
+        raise ValueError(AS_HISTORY_SAME_TEXT)
     if not is_rewrite_reason(reason):
         raise ValueError(f"a rewrite's trail reason must be a rewrite reason, not {reason!r}")
     pinned = expiry_pinned(version.domain, version.type, version.tags)
@@ -149,6 +162,8 @@ def _review_version(
         "stale_since": None,
         "lifecycle_events": with_event(current.lifecycle_events, entry),
     }
+    if update.as_history:
+        changes["context_priority"] = ContextPriority.ARCHIVAL
     return dataclasses.replace(plan, version_fact=version.model_copy(update=changes)), note
 
 

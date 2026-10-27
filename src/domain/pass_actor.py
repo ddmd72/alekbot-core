@@ -27,6 +27,8 @@ class PassActor(StrEnum):
     BACKSTOP = "backstop"
     REVIEW = "review"
     OWNER = "owner"
+    # A question's history fallback written on silence (P2-3): the owner's row, under its own label in the trail.
+    TIMEOUT = "timeout"
 
     @property
     def model_dates(self) -> bool:
@@ -118,4 +120,5 @@ _ROWS: Final[Dict[PassActor, _Row]] = {
     PassActor.BACKSTOP: _BACKSTOP,
     PassActor.REVIEW: _REVIEW,
     PassActor.OWNER: _OWNER,
+    PassActor.TIMEOUT: _OWNER,
 }
