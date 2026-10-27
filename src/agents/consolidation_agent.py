@@ -61,6 +61,7 @@ from ..domain.fact_review_quote_translation import MAX_TRANSLATION_CHARS, report
 from ..domain.fact_review_question import FactReviewQuestion
 from ..domain.fact_review_result import FactReviewResult, encode_review_result
 from ..domain.fact_review_task import FactReviewTask, ReviewItem, decode_review_task
+from ..domain.fact_words import MAX_FACT_WORDS, word_count
 from ..domain.fact_tool_result import STATUS_CREATED, STATUS_MERGED, STATUS_UPDATED, outcome_of
 from ..ports.fact_lifecycle_counters_port import FactLifecycleCountersPort
 from ..infrastructure.agent_config import CONSOLIDATION
@@ -147,8 +148,8 @@ _BASIS_SCHEMA: Dict[str, Any] = {
     "description": (
         "Why the change is right, one of three kinds: {kind: evidence, evidence_fact_id} another current fact shows it; "
         "{kind: reply, question_id, quote} the owner's reply to this fact's question; {kind: date_passed, date?} the "
-        "plan's date is over. A revive, a rewrite and an invalidation need evidence or reply; an archive needs evidence, "
-        "reply or date_passed."
+        "fact's date is over and its own text reports the outcome. A revive, a rewrite and an invalidation need "
+        "evidence or reply; an archive needs reply; a history rewrite (as_history) takes evidence, reply or date_passed."
     ),
     "properties": {
         "kind": {"type": "string", "description": "evidence, reply or date_passed"},
@@ -172,8 +173,9 @@ _BASIS_SCHEMA: Dict[str, Any] = {
 _REVIEW_UPDATE_SCHEMA: Dict[str, Any] = {
     "name": "update_fact",
     "description": (
-        "Decide one fact of the batch: revive it (state CURRENT with an expiry), rewrite its text, archive, invalidate "
-        "or supersede it, with the basis for the change. One result per fact in this pass."
+        "Decide one fact of the batch: revive it (state CURRENT with an expiry), rewrite its text, rewrite it as history "
+        "(as_history), archive, invalidate or supersede it, with the basis for the change. One result per fact in this "
+        "pass."
     ),
     "parameters": {
         "type": "object",
@@ -204,7 +206,10 @@ _REVIEW_UPDATE_SCHEMA: Dict[str, Any] = {
                     },
                     "superseded_by": {
                         "type": "string",
-                        "description": "with state SUPERSEDED: id of the current fact that replaces this one; required then",
+                        "description": (
+                            "with state SUPERSEDED: id of the current fact that replaces this one, or of a listed fact "
+                            "this pass made current; required then"
+                        ),
                     },
                     "expiry": _REVIEW_EXPIRY_SCHEMA,
                 },
@@ -214,11 +219,45 @@ _REVIEW_UPDATE_SCHEMA: Dict[str, Any] = {
                 "type": "string",
                 "description": (
                     "with an archive whose basis is the owner's reply that it ended: one sentence in the past tense "
-                    "saying it ended, kept as a new fact beside the archived one; not for a dated plan"
+                    "saying it ended, kept as a new fact beside the archived one; not for a fact of expiry kind date "
+                    "(rewrite it with as_history)"
                 ),
+            },
+            "as_history": {
+                "type": "boolean",
+                "description": (
+                    "true: rewrite this fact as history, with updates {state: CURRENT, content: <the history text, past "
+                    "tense>, expiry: {kind: none}} and basis evidence, reply or date_passed"
+                ),
+            },
+            "payment": {
+                "type": "object",
+                "description": (
+                    "with an as_history rewrite of a routine invoice received and not confirmed paid: the two history "
+                    "texts code keeps for the owner's later answer"
+                ),
+                "properties": {
+                    "paid": {"type": "string", "description": "the history text if it was paid"},
+                    "not_paid": {"type": "string", "description": "the history text if it was not paid"},
+                },
+                "required": ["paid", "not_paid"],
             },
         },
         "required": ["fact_id", "updates"],
+    },
+}
+
+_ASK_TEXT_PROPERTIES: Dict[str, Any] = {
+    "happened": {"type": "string", "description": "the fact written if the owner says it happened"},
+    "not_happened": {"type": "string", "description": "the fact written if the owner says it did not happen"},
+    "renewed": {"type": "string", "description": "the current fact written if the owner says it was renewed"},
+    "not_renewed": {"type": "string", "description": "the current fact written if the owner says it was not renewed"},
+    "not_needed": {"type": "string", "description": "the fact written if the owner says it is no longer needed"},
+    "paid": {"type": "string", "description": "the fact written if the owner says it was paid"},
+    "not_paid": {"type": "string", "description": "the fact written if the owner says it was not paid"},
+    "unknown": {
+        "type": "string",
+        "description": "the fact written if the owner does not remember or does not answer: the outcome is unknown",
     },
 }
 
@@ -226,22 +265,37 @@ _ASK_OWNER_SCHEMA: Dict[str, Any] = {
     "name": "ask_owner",
     "description": (
         "Ask the owner about one fact of the batch when nothing here decides it. Code writes the question and sends it "
-        "later; you say only what happens if he does not answer. An asked fact takes no other result in this pass."
+        "later; you give its kind, the texts code writes for each answer, and what happens if he does not answer. An "
+        "asked or folded fact takes no other result in this pass."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "fact_id": {"type": "string", "description": "id of the batch fact to ask about"},
+            "question": {"type": "string", "description": "still_true (the default), happened, renewed or paid"},
+            "texts": {
+                "type": "object",
+                "description": (
+                    "the facts code writes for each answer, by key: happened -> happened, not_happened, unknown; "
+                    "renewed -> renewed, not_renewed, not_needed, unknown; paid -> paid, not_paid, unknown; none for "
+                    "still_true. One line each, English, at most 40 words"
+                ),
+                "properties": _ASK_TEXT_PROPERTIES,
+            },
             "fallback": {
                 "type": "string",
                 "description": (
-                    "what happens when the owner does not answer: revive or archive; archive only for a fact of expiry "
-                    "kind date, with a past fallback_date, or with noise"
+                    "what happens when the owner does not answer: history (its unknown text is written) for happened, "
+                    "renewed and paid; revive for still_true; archive only with noise"
                 ),
             },
-            "fallback_date": {
-                "type": "string",
-                "description": "with fallback archive: YYYY-MM-DD, the day of the plan, before today",
+            "folds": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "ids of other batch facts that are parts of the same plan; code closes them in favour of this fact "
+                    "once the question is queued"
+                ),
             },
             "noise": {
                 "type": "boolean",
@@ -256,7 +310,8 @@ _ASK_OWNER_SCHEMA: Dict[str, Any] = {
 _COUNT_WORDS_DESCRIPTION = "Count words in a text string. Call this BEFORE create_fact or update_fact to verify content is ≤40 words. Returns exact word_count, within_limit flag, and excess words if any."
 _REVIEW_COUNT_WORDS_DESCRIPTION = (
     "Count words in a text string. Call this BEFORE an update_fact that rewrites a fact's content to verify the new "
-    "content is ≤40 words. Returns exact word_count, within_limit flag, and excess words if any."
+    "content is ≤40 words (ask_owner texts need no call: code checks them). Returns exact word_count, within_limit flag, "
+    "and excess words if any."
 )
 
 
@@ -460,14 +515,16 @@ _REVIEW_HEADER = (
     "of these that applies:\n"
     "(1) a current fact states the same thing: supersede it by that fact;\n"
     "(2) the reply or evidence says it still holds: revive it with that basis (rewrite its text if the text changed);\n"
-    "(3) it is over: archive it (basis reply, evidence or date_passed); it was never true: invalidate it;\n"
+    "(3) its date has passed: rewrite it as history (basis evidence or reply, or date_passed when its own text already "
+    "reports the outcome); otherwise, when the owner's reply says it is over: archive it; it was never true: invalidate "
+    "it;\n"
     "(4) anything else: ask_owner.\n"
     "A fact whose question is open or timed out is not asked again; when nothing decides it, its outcome is leave.\n"
-    "Code writes and sends any question later; ask_owner only says what happens if he does not answer.\n"
+    "Code writes and sends any question later; ask_owner gives its kind, the texts for each answer and what happens if he does not answer.\n"
     "Every listed fact gets exactly one outcome.\n"
     "Before any call, write one line per listed fact, in the order listed: "
-    "<fact_id> | neighbour_says=<id|none> | reply=<yes|no|over|never|unclear|none> | dated_plan_passed=<bool> | "
-    "outcome=<…>.\n\n"
+    "<fact_id> | neighbour_says=<id|none> | reply=<yes|no|over|never|unclear|none> | history=<evidence|own_text|ask|none> "
+    "| outcome=<…>.\n\n"
     "Each fact shows `expiry` (the decision it carries, null when none is recorded), `due` (the day a horizon fell due), "
     "`reported` (the day the owner last said it), `stale_since`, its earlier `versions`, its `neighbours` (the current "
     "facts nearest to it) and, when the owner was asked about it, its `question` with any `reply`.\n\n"
@@ -476,8 +533,11 @@ _REVIEW_HEADER = (
 
 
 _TRANSLATIONS_RULE = (
-    "`translations` is one object, {\"<fact_id>\": \"<text>\", …}, with an entry for every listed fact (its fact_id exactly "
-    "as in its line): its content as listed (not as you rewrote it), translated into that language for the owner to read. "
+    "`translations` is one object, {\"<key>\": \"<text>\", …}: an entry for every listed fact under its fact_id exactly "
+    "as in its line (its content as listed, not as you rewrote it), and an entry for every text you wrote in this pass "
+    "under \"<fact_id>:<text key>\": \"<fact_id>:history\" for the content of a rewrite, \"<fact_id>:<key>\" for each "
+    "ask_owner text (happened, not_happened, unknown, renewed, not_renewed, not_needed, paid, not_paid) and each payment "
+    "text (paid, not_paid); each translated into that language for the owner to read. "
     f"Translate only: add nothing, drop nothing, no quote marks around it, one line, at most {MAX_TRANSLATION_CHARS} "
     "characters. Keep every number, amount and date exactly as written (digits are allowed here; month and weekday names "
     "are translated); write people's and place names as that language usually spells them. Leave out a fact whose content "
@@ -539,6 +599,7 @@ def _review_line(item: ReviewItem, question: Optional[FactReviewQuestion], tz: s
     if question is not None:
         line["question"] = {
             "question_id": question.question_id,
+            "kind": question.question,
             "asked_on": local_date(question.asked_at, tz).isoformat() if question.asked_at else None,
             "fallback": question.fallback,
             "timed_out": question.is_timed_out(now),
@@ -1407,7 +1468,8 @@ class ConsolidationAgent(BaseAgent):
         language, labels = _reported_language(report) if task.mirror else (None, None)
         target = translation_language(task.mirror, task.language, report.get("message_language"))
         translations, refused = report_translations(
-            report.get("translations"), target, {item.fact.id: item.fact.text for item in task.items},
+            report.get("translations"), target,
+            {**{item.fact.id: item.fact.text for item in task.items}, **scope.written_texts()},
         )
         for why in refused:
             logger.warning(f"⚠️ [ConsolidationAgent] Review translation refused: {why}")
@@ -1418,6 +1480,7 @@ class ConsolidationAgent(BaseAgent):
             message_language=language,
             labels=labels,
             translations=translations,
+            invoices=tuple(scope.invoices()),
         )
         total_duration = time.time() - start_time
         logger.info(
@@ -2214,12 +2277,12 @@ class ConsolidationAgent(BaseAgent):
 
                 elif tool_call.name == "count_words":
                     text = tool_call.args.get("text", "")
-                    word_count = len(text.split())
+                    words = word_count(text)
                     result = {
-                        "word_count": word_count,
-                        "limit": 40,
-                        "within_limit": word_count <= 40,
-                        "excess": max(0, word_count - 40),
+                        "word_count": words,
+                        "limit": MAX_FACT_WORDS,
+                        "within_limit": words <= MAX_FACT_WORDS,
+                        "excess": max(0, words - MAX_FACT_WORDS),
                     }
                     return ToolResponse(
                         name=tool_call.name,
