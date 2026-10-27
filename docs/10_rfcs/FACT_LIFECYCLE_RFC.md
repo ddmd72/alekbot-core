@@ -1403,25 +1403,39 @@ certificate awaited).
   `review`): **re-opened** (owner, decided), by the reopen script after the token upload; the next daily review decides them
   under the new rule.
 - *The reopen script, as built* (`scripts/migration/fact_p2_reopen_archives.py`, owner-run, the
-  `fact_s3_stamp_legacy_stale.py` pattern). It is general, not limited to the two: the selection is exactly one of
-  `--ids-file` (ids under `scripts/memory/`) or `--all-archived` (every `archived` fact of the non-`SYSTEM` accounts, or of
-  `--account` only). A selected fact that is missing, not `archived` or of the `SYSTEM` account is counted and left alone.
-  Dry run by default (counts on stdout; ids, text and the last trail entry to the gitignored `scripts/memory/`). `--apply`
-  writes, per fact, under the scanned `update_time` (a changed document is `skipped_changed`): `lifecycle_fields(STALE)`,
-  `last_updated = now`, `stale_since` (the stored one restored, an archive keeps it; else the moment of its `valid_to`, then of
-  its last trail entry, then now) and one trail entry `{from: archived, to: stale, actor: migration, reason: "reopened under
-  P2 revised"}`. With `--expiry-plan` (a classify plan under `scripts/memory/`) it also writes the plan's `expiry_kind`,
+  `fact_s3_stamp_legacy_stale.py` pattern). It is general, not limited to the two, and takes only the owner's reviewed list:
+  `--ids-file` (ids under `scripts/memory/`). A listed fact in state `archived` or `invalidated` is reopened; one that is
+  missing, in any other state (`not_closed`) or of the `SYSTEM` account is counted and left alone. Dry run by default (counts
+  on stdout; ids, state, text and the last trail entry to the gitignored `scripts/memory/`). `--apply` writes, per fact, under
+  the scanned `update_time` (a changed document is `skipped_changed`): `lifecycle_fields(STALE)`, `last_updated = now`,
+  `stale_since` (the stored one restored, a closed fact keeps it; else the moment of its `valid_to`, then of its last trail
+  entry, then now) and one trail entry `{from: <its real state>, to: stale, actor: migration, reason: "reopened under P2
+  revised"}`. With `--expiry-plan` (a classify plan under `scripts/memory/`) it also writes the plan's `expiry_kind`,
   `ttl_days` and `expires_at` in the same preconditioned write; a fact absent from the plan is reopened without and listed
   (`without_expiry`). Text and vectors are never touched. A second `--apply` reopens nothing.
+- *The owner-decisions script, as built* (`scripts/migration/fact_p2_owner_decisions.py`, owner-run): for a re-review in which
+  the owner decided each fact himself. Its input (`--decisions`, a file under `scripts/memory/`) is a JSON list of `{fact_id,
+  account_id, action, text?, successor_id?}`, `action` one of `history` (the text as a history version: `as_history`, `none`,
+  `archival`), `current` (the text as a current fact, `none`, its stored priority), `supersede` (closed in favour of
+  `successor_id`, which must be current or written earlier in the same run), `invalidate`, or `revive` (current again, text
+  unchanged, `none`). The whole file is validated before anything is written (an unknown action, a missing or bad text by
+  `written_text_problem`, a duplicate fact, an unusable successor refuse the file). Per fact, in file order: it is reopened to
+  `stale` by the reopen script's own function under the scanned `update_time`, then the action is one typed write through
+  `FactUpdatePort` as the owner, with one reason, `owner decided on review` (`owner_decided_reason`; a rewrite for every
+  reader, never a revive), and `expected_id` = the listed fact, so a chain that moved on to a newer version is refused (MOVED)
+  and the fact is skipped and listed, never followed. Dry run by default (counts on stdout; id, action, old and new text and
+  state to `scripts/memory/`); `--apply` writes. A changed fact is skipped and listed; a failure never stops the run; a fact
+  whose reopen landed and whose action did not stays `stale` and is `resumed` by the next run without a second reopen; a fact
+  whose last trail entry is already the owner's decision is `already_decided`, so a second `--apply` writes nothing. A fact of
+  another account than the file names, of the `SYSTEM` account or in another state is counted and left alone.
 - *A re-review of closed facts* (owner, decided 2026-10-27; planned, not run): every archived fact and every invalidated fact
   that is not a directive is looked at again under the new rule. The mechanism: (1) a dry run first, which writes nothing: the
   classify script with `--include-closed --ids-file` decides an expiry for the listed closed facts and writes a plan, and
   bench 7 with `--stage-ids` (the same ids, staged stale in the kit's overlay in any state), `--expiry-plan` and
   `--max-passes` shows what the review would write for each and writes a human `_listed.md` (original state and text,
-  outcome, the text or question it would write); (2) the owner reads it; (3) the reopen script with `--ids-file` and
-  `--expiry-plan` reopens what he keeps, and the daily review decides those facts as stale. Residual: the reopen script
-  reopens `archived` facts only; an invalidated fact on the list is counted `not_archived` and left alone, so reopening one
-  needs a change to the script.
+  outcome, the text or question it would write); (2) the owner reads it; (3) either the reopen script with `--ids-file` and
+  `--expiry-plan` reopens what he keeps and the daily review decides those facts as stale, or, for the facts he decided
+  himself, the owner-decisions script writes his decision for each.
 - *Labels.* The 13 new labels go through `CANONICAL_LABELS`, `check_labels` and the LANGUAGE section, so `labels_digest()`
   changes and every cached model label set is ignored until the next pass writes one (UI language meanwhile,
   `labels_fallback` counted): one-time, expected.
@@ -1434,9 +1448,13 @@ certificate awaited).
   `fallback_attempts` above 0, fallback `history`, or an answer outside the S4 four):
   - **digest** ones are deleted (their facts are already history, "payment not confirmed");
   - **closed** ones get `closed_by: resolved_elsewhere`, no `answer` and no `answer_source` (`purge_after` kept; the digest
-    and the Cabinet read closed records);
-  - **open** chat ones get fallback `revive`, `noise` false and no `fallback_date`, so the old code treats them as S4
+    and the Cabinet read closed records), and the fallback fields of an open one (a closed `history` fallback is no S4 value);
+  - **open and sent** ones (`pending`, `asked`, `unanswered`: their message went out with P2 options) are **closed**
+    `resolved_elsewhere` (`closed_at` and a 90-day `purge_after` stamped at apply), never converted: the old code would read
+    the owner's digit with S4 meanings ("3" → never) and invalidate a real event;
+  - **open and `queued`** ones get fallback `revive`, `noise` false and no `fallback_date`, so the old code treats them as S4
     questions; their facts stay current while they wait, as in S4.
+  It is run once more after the traffic switch, since the P2 code may write records between the first run and the switch.
   History versions already written stay (plain current facts with `none`, `archival`).
 
 **P2-7. What changes.**
@@ -1474,14 +1492,16 @@ certificate awaited).
   `web/user_cabinet_app.py` and the Cabinet page (per-question options, bulk bar per kind, the invoices group),
   `ports/fact_review_store.py` and `adapters/firestore_fact_review_store.py` (the new fields, `timeout_histories`,
   `mark_fallback_failed`), D10 counters `to_history`, `folded`, `fallbacks_not_applied` in the 🧹 review segment, the bench 7
-  detector and turn bar, `review_bench_cases.py` (the `plan_date_passed` case), the reopen script, the rollback script.
+  detector and turn bar, `review_bench_cases.py` (the `plan_date_passed` case), the reopen script, the owner-decisions script, the rollback script; `expected_id` on
+  `FactUpdatePort.apply_fact_update`.
 - *New tests:* each basis × `as_history` (allowed, refused, per writer); every model archive not on a reply refused;
   `date_passed` only with `as_history`; a history rewrite is a version with `archival`, `none`, empty metadata, no context,
   `reported_date` and `created_at` kept and the original superseded in one transaction; the history version's metadata
   vector is computed from the new text (not the plan's metadata); each trail reason and its
   `is_rewrite_reason` / `is_revive_reason` / `gives_window_reason` reading; ask with each kind (texts required, exact keys,
   ≤ 40 words by `word_count`, fallback `history`); folds superseded only after a queued ask, none after a failed queue; the
-  batch tie-break; each digit, button and Cabinet answer per kind, and `not_applied` for a misfit; silence writes the
+  batch order; every answer of every kind through chat, Slack and the Cabinet, and `not_applied` for an answer that is not
+  an option of its question; silence writes the
   `unknown` text under `timeout`; a raising timeout write leaves the question open with `fallback_attempts + 1` and the run
   goes on, a typed refusal after the first attempt or the third attempt closes it `resolved_elsewhere`, and no second question
   follows; "don't remember" writes it under `owner`; kept-twice texts dated at write time and chosen by `origin`; a
@@ -1534,8 +1554,24 @@ translated; a code-built kept-twice text is the only English residual).
 - **Noise answered "No longer" is archived only** (`archived_only`: a dated plan, or a question that falls back to archive):
   no history fact beside it, and a `history` text beside a reply archive of such a fact is refused. A standing fact keeps its
   S4 history fact.
-- **The reopen script is general** (P2-6): `--ids-file` or `--all-archived`, optional `--expiry-plan`.
-- **The rollback script strips the five keys from every question document**, P2 or not (P2-6).
+- **The reopen script is general** (P2-6): `--ids-file` only (the owner's reviewed list), facts in state `archived` or
+  `invalidated` (the trail's `from` is the real state; any other state is `not_closed`), optional `--expiry-plan`.
+- **The owner-decisions script** (P2-6): the owner's own decision per closed fact (`history`, `current`, `supersede`,
+  `invalidate`, `revive`), reopened and then written as the owner with `owner decided on review` and `expected_id`.
+- **The rollback script strips the five keys from every question document**, P2 or not, closes the sent P2 questions
+  `resolved_elsewhere` and converts only the `queued` ones; it is run again after the traffic switch (P2-6).
+- **Typed writes take `expected_id`**, the exact document the caller decided on: a first resolution to another document is
+  refused MOVED and nothing is written. The review's writes, the owner's answers, the timeout's history and the
+  owner-decisions script pass it, so an answer racing a timeout can no longer overwrite the history the timeout wrote (or
+  the other way round).
+- **A timeout whose history version landed is still closed `timeout`**: when the question's fact moved on and the version it
+  resolves to ends with this question's own timeout reason (a crash between the write and the close), the question is closed
+  `timeout`, not `resolved_elsewhere`, so the digest keeps its "recorded as history" line. The give-up rule
+  (`history_fallback_gives_up`) is in the domain.
+- **An ask text equal to the fact's stored text is refused** ("the same as the fact's stored text; write what the answer makes
+  true").
+- **Classify `--include-closed`** (with `--ids-file`) also classifies the listed archived and invalidated facts, for the
+  re-review's expiry plan.
 - **Bench 7** reads P2: `G5_MAX_TURNS = 12` of the review's 15; the `plan_date_passed` case expects a `happened` question
   (or a history on evidence), never an archive and never a `date_passed` history; `--stage-ids PATH` stages exactly the listed
   facts, in any state, as stale copies in the kit's overlay (no seeded cases), `--expiry-plan` gives them a classify plan's
