@@ -7,7 +7,6 @@ the chat-file store on the GCS fake. Assertions are on the drive's tree and byte
 reached, and on the tool result the model was told. Every declared field of the five intents is sent by a scripted
 call (module constants; the last test checks them against the declarations).
 """
-from types import SimpleNamespace
 from typing import Any, List, Optional, Tuple
 
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
@@ -116,14 +115,6 @@ def with_ref(context: dict, ref: str, **over: Any) -> dict:
     return {**context, "file_ref": ref, **over}
 
 
-def results_of(llm: Any) -> List[Tuple[str, Any]]:
-    """The tool results the model was told, once each, in order. All recorded requests alias the engine's one growing
-    message list, so card A's `tool_results` (the last message of each request) would repeat the last result: read the
-    final request message by message with the same decoding."""
-    final = llm.requests[-1]
-    return tool_results(SimpleNamespace(requests=[SimpleNamespace(messages=[m]) for m in final.messages]))
-
-
 def consumed(llm: Any) -> bool:
     return llm.unanswered == 0 and llm.pending() == 0
 
@@ -139,7 +130,7 @@ async def test_save_text_with_name_and_folder():
     assert response.status == AgentStatus.SUCCESS
     assert world.drive.files() == ["Projects/Garden/shed-plan.md"]
     assert world.content("Projects/Garden/shed-plan.md") == PLAN_TEXT.encode()
-    (_, told), = results_of(llm)
+    (_, told), = tool_results(llm)
     assert "Saved [Drive: Projects/Garden/shed-plan.md" in told
     assert consumed(llm)
 
@@ -217,7 +208,7 @@ async def test_a_save_with_both_a_file_and_text_is_refused_and_nothing_is_writte
 
     await world.run(llm)
 
-    (_, told), = results_of(llm)
+    (_, told), = tool_results(llm)
     assert 'exactly one of "file_ref"' in told
     assert world.drive.files() == [] and world.drive.writes() == []
     assert consumed(llm)
@@ -230,7 +221,7 @@ async def test_a_move_with_neither_folder_nor_new_name_is_refused_and_nothing_mo
 
     await world.run(llm)
 
-    (_, told), = results_of(llm)
+    (_, told), = tool_results(llm)
     assert "Give a destination folder, a new name, or both" in told
     assert world.drive.files() == ["Inbox/boiler-warranty.md"] and world.drive.writes() == []
     assert consumed(llm)

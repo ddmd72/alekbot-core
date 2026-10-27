@@ -6,8 +6,7 @@ A real `SmartResponseAgent` (card A's `smart_rig`) over a scripted `LLMPort`; it
 session history and the tool result the model received. Every declared field of the three tools is sent by a scripted
 call (the calls are module constants; the last test checks them against the declarations).
 """
-from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict
 
 from src.adapters.firestore_memory_fact_draft_repository import FirestoreMemoryFactDraftRepository
 from src.adapters.firestore_skill_repository import FirestoreSkillRepository
@@ -45,10 +44,10 @@ SKILL_NAME = "morning-briefing"
 OLD_FILE = "references/old.md"
 OLD_TEXT = "Last year's list of news sources.\n"
 NEW_FILE = "references/topics.md"
-NEW_TEXT = "Springfield news, weather, and the library opening hours.\n"
+NEW_TEXT = "Springfield news and the weather in Springfield.\n"
 SOURCES_FILE = "references/sources.md"
 SOURCES_REF = "workspace:scratch/sources.md"
-SOURCES_TEXT = "Example Library notice board, the Springfield town page.\n"
+SOURCES_TEXT = "The Springfield town page.\n"
 DRAFT = {
     "name": SKILL_NAME,
     "description": "Use when the owner asks for the morning briefing.",
@@ -108,15 +107,6 @@ class World:
         return self.db.collection(collection).docs
 
 
-def results_of(llm: Any) -> List[Tuple[str, Any]]:
-    """The tool results the model was told, once each, in order. The engine appends every tool turn to the one message
-    list it sends, so all recorded requests alias the final transcript and card A's `tool_results` (the last message of
-    each request) would repeat the last result once per request. The final request holds every tool turn: read it
-    message by message with the same decoding."""
-    final = llm.requests[-1]
-    return tool_results(SimpleNamespace(requests=[SimpleNamespace(messages=[m]) for m in final.messages]))
-
-
 def _script_consumed(llm: Any) -> bool:
     return llm.unanswered == 0 and llm.pending() == 0
 
@@ -130,7 +120,7 @@ async def test_proposed_facts_are_drafted_and_reach_the_session_on_save():
     response = await world.agent(llm).execute(smart_message("Remember the data from these two scans."))
 
     assert response.status == AgentStatus.SUCCESS
-    (result_name, result), = results_of(llm)
+    (result_name, result), = tool_results(llm)
     assert result_name == "propose_memory_facts" and "The proposal was created" in result
     drafts = world.docs(ENV.memory_fact_drafts_collection)
     assert len(drafts) == 1
@@ -169,7 +159,7 @@ async def test_a_skill_draft_stores_name_description_body_and_every_kind_of_file
     response = await world.agent(llm).execute(smart_message("Make a skill of the morning briefing."))
 
     assert response.status == AgentStatus.SUCCESS
-    (result_name, result), = results_of(llm)
+    (result_name, result), = tool_results(llm)
     assert result_name == "draft_skill" and "The draft was created" in result
     drafts = world.docs(ENV.skill_drafts_collection)
     assert len(drafts) == 1
@@ -210,7 +200,7 @@ async def test_workspace_commands_land_in_the_bucket():
     response = await world.agent(llm).execute(smart_message("Keep the garden shed notes in the workspace."))
 
     assert response.status == AgentStatus.SUCCESS
-    results = results_of(llm)
+    results = tool_results(llm)
     assert [name for name, _ in results] == ["workspace"] * 9
     texts = [result for _, result in results]
     created, viewed, replaced, copied, renamed, history, restored, version_view, deleted = texts
