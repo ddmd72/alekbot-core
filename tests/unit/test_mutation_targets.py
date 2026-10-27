@@ -249,3 +249,58 @@ def test_usage_lists_every_mode(capsys):
         mutation_targets.main([])
     err = capsys.readouterr().err
     assert "--matrix" in err and "--summarize" in err and "--tests-for" in err
+
+
+_P9_FILES = {
+    "tests/unit/test_main_boots_offline.py",
+    "tests/unit/test_worker_triggers.py",
+    "tests/unit/composition/test_application_graph_wiring.py",
+    "tests/unit/composition/test_application_graph_values.py",
+    "tests/unit/test_main_wiring_values.py",
+}
+_WIRING = [t for t in TARGETS if t.operators == "wiring"]
+
+
+def test_the_graph_group_contains_the_p9_files():
+    assert _P9_FILES <= set(mutation_targets.graph_tests())
+
+
+def test_service_container_target_includes_its_values_tests():
+    target = next(t for t in TARGETS if t.module == "src.composition.service_container")
+    assert {
+        "tests/unit/composition/test_service_container_values.py",
+        "tests/unit/composition/test_application_graph_values.py",
+    } <= set(target.tests)
+
+
+def test_every_prod_graph_user_is_in_every_wiring_target():
+    users = {
+        p.relative_to(REPO_ROOT).as_posix()
+        for p in (REPO_ROOT / "tests/unit").rglob("test_*.py")
+        if p != Path(__file__) and "tests.support.prod_graph" in p.read_text(encoding="utf-8")
+    }
+    assert users and len(_WIRING) == 6
+    for target in _WIRING:
+        assert users <= set(target.tests), target.module
+
+
+def test_graph_tests_follow_a_support_module_that_imports_main(tmp_path):
+    for rel, body in {
+        "tests/__init__.py": "",
+        "tests/support/__init__.py": "",
+        "tests/support/boot.py": "import main\n",
+        "tests/unit/__init__.py": "",
+        "tests/unit/test_boots.py": "from tests.support import boot\n",
+        "tests/unit/test_other.py": "import json\n",
+    }.items():
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+    assert mutation_targets.graph_tests(tmp_path) == ("tests/unit/test_boots.py",)
+
+
+def test_non_wiring_targets_do_not_get_the_graph_group():
+    for target in TARGETS:
+        if target.operators != "wiring":
+            assert target.extra_tests == ()
+            assert set(target.tests) == set(computed_tests_for(target.module))
