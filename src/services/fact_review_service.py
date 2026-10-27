@@ -27,11 +27,12 @@ from ..domain.fact_lifecycle_day import CounterField, counter_day
 from ..domain.fact_review_after_pass import after_pass
 from ..domain.fact_review_ask import AskRequest
 from ..domain.fact_review_digest import (
-    DIGEST_LIMIT, digest_day, digest_facts, digest_message, digest_since, pass_set_aside,
+    DIGEST_LIMIT, digest_day, digest_facts, digest_since, pass_set_aside,
 )
 from ..domain.fact_review_frame import NOT_DELIVERED_REPLY, not_delivered_frame, question_text, review_frame
 from ..domain.fact_review_language import language_to_store
 from ..domain.fact_review_question import ClosedBy, FactReviewQuestion
+from ..domain.fact_review_quote_translation import QuoteTranslation
 from ..domain.fact_review_result import decode_review_result
 from ..domain.fact_review_rules import (
     QUEUE_ACCEPTS,
@@ -657,8 +658,8 @@ class FactReviewService:
         listed = digest_facts(closed)
         if not listed:
             return 0
-        labels = await self._texts.labels_for(user_id, account_id)
-        if not await self._notifications.notify_raw(user_id, account_id, digest_message(labels, listed), literal=True):
+        text = await self._texts.digest_for(user_id, account_id, listed)
+        if not await self._notifications.notify_raw(user_id, account_id, text, literal=True):
             return None
         return len(listed)
 
@@ -709,7 +710,8 @@ class FactReviewService:
         until: datetime,
     ) -> Optional[AgentResponse]:
         """Step 10: the prefetch (§3.4), then the lease budget read now; less than the margin left defers the run (as
-        `ConsolidationService`) and routes nothing (None). Else `offers` (+1 per stale batch fact) and `offered_at` (each
+        `ConsolidationService`) and routes nothing (None). The task carries the fixed message language the pass translates
+        into (not in mirror mode). Else `offers` (+1 per stale batch fact) and `offered_at` (each
         reply shown) are written and the agent task is routed inside `RequestContext`, its timeout the budget. A
         coordinator exception is the pass's failure (logged, a failed response): the failure rule, not a 5xx. The pass
         is told whether the language mirrors the owner (`mirror`); the agent words its own request."""
@@ -750,18 +752,21 @@ class FactReviewService:
         now: datetime,
     ) -> FactReviewTask:
         """The prefetch: per fact its lineage and nearest current facts, the open questions about the batch, and in
-        mirror mode the owner's recent messages. `now` is the run's instant, which the pass then uses too."""
+        mirror mode the owner's recent messages, else (fixed language) the language the pass translates into, none when it
+        cannot be read (the pass then translates nothing). `now` is the run's instant, which the pass then uses too."""
         items: List[ReviewItem] = []
         for fact in batch:
             lineage = await self._repo.get_lineage(account_id, fact.lineage_id)
             items.append(review_item(fact, lineage, await self._nearest(user_id, account_id, fact)))
         mirror = await self._texts.mirrors(user_id)
+        language = None if mirror else await self._texts.pass_language(user_id)
         return FactReviewTask(
             items=tuple(items),
             questions=questions_about(batch, questions),
             mirror=mirror,
             owner_messages=await self._owner_messages(user_id) if mirror else (),
             now=now,
+            language=language,
         )
 
     async def _owner_messages(self, user_id: str) -> Tuple[str, ...]:
@@ -797,11 +802,14 @@ class FactReviewService:
         """Step 11, over what `after_pass` decides: the decided facts' questions close `review` (`answer_service`,
         which releases the next when one was current); the undecided timed-out candidates get their fallback (`_fallbacks`,
         as in step 6); every ask is queued (`_queue`, as in step 7); then the `offers` entries of the decided and the queued facts go (`offers_removed`); the reported language and labels go to the state (`language_to_store`).
-        Each fact write is marked through `writes.wrote()` as it lands. None (nothing routed) does nothing."""
+        The pass's quote translations are stored first (`_store_translations`, best effort), so a later failure of the
+        step does not lose them. Each fact write is marked through `writes.wrote()` as it lands. None (nothing routed)
+        does nothing."""
         if response is None:
             return _StepResult()
         result = decode_review_result(response.result)
         plan = after_pass(batch, await self._review_store.questions_for_account(account_id), result, now)
+        await self._store_translations(account_id, result.translations, now)
         counts = dict(plan.counts)
         revived = list(plan.revived)
         for question in plan.closes:
@@ -904,6 +912,21 @@ class FactReviewService:
             logger.warning(f"[FactReview] question {question_id} for fact {fact_id[:8]} exists; not created again")
             return False
         return True
+
+    async def _store_translations(
+        self, account_id: str, translations: Sequence[QuoteTranslation], now: datetime,
+    ) -> None:
+        """Keep the pass's translations before anything else of the step can fail. Best effort: a failed write is a
+        WARNING with the count and the error type (never a text); the owner then sees the stored text."""
+        if not translations:
+            return
+        try:
+            await self._review_store.set_quote_translations(account_id, translations, now)
+        except Exception as exc:
+            logger.warning(
+                f"[FactReview] {len(translations)} quote translations of account {account_id[:8]} not stored: "
+                f"{type(exc).__name__}"
+            )
 
     async def _store_language(self, account_id: str, reported: Optional[str], labels: Any) -> None:
         state = await self._review_store.get_state(account_id)

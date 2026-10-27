@@ -9,7 +9,8 @@ This table is the one place that says which test command to run when. Other docs
 | When | Command | What it runs |
 |---|---|---|
 | While editing | `pytest <path>::<test>` or `make test-affected` | the tests you name, or the unit tests testmon selects for your diff (it can miss a test whose input is a data file or code in a child process) |
-| Before every commit | `make check`, once (not after every edit) | lint + mypy + the unit suite without `slow` tests + the offline G2 test |
+| An intermediate commit | `make test-affected` + the tests of the files you changed; **when the commit touches a data file or code run in a child process, also that folder's tests** (e.g. `pytest tests/unit/prompts` for `prompts_snapshot/`) | what testmon selects, plus the tests it cannot see |
+| Before a push | `make check`, **once per push**, on the branch head (not per commit; owner, 2026-10-27) | lint + mypy + the unit suite without `slow` tests + the offline G2 test |
 | Before you call a package done, and whenever you report coverage | `make ci` | everything in `make check` + `slow` tests + the coverage gates (per file and per layer); CI runs exactly this on every PR |
 | Mutation check, by hand, optional | `python -m tests.support.semantic_mutants --module <m> --tests $(python -m tests.support.mutation_targets --tests-for <m>) [--operators wiring] [--equivalent <file>]` | one module's mutants; nobody has to run it: the weekly run is the only mutation pass ("Mutation check" below; wiring command in "The production graph") |
 | Only when the task needs them | `make test-integration`, `make test-e2e-all` | some integration tests and all e2e tests call real services |
@@ -183,8 +184,12 @@ Statuses: killed, survived, equivalent, and `error` (the selected tests never lo
 not a pass). `except-success` skips handlers that only log and already return the success value. Slow tests run in the mutant
 children (`RUN_SLOW_TESTS=1`).
 
-A survivor means the tests do not notice that defect: write the assertion that does (the Monday routine does it from the weekly report).
-`--equivalent` takes `key  # reason` lines (the 8-hex key in the report) and is the reviewer's tool, never the implementer's.
+A survivor means the tests do not notice that defect: write the assertion that does (the Monday routine does it from the weekly
+report). Run that new test on the **unmutated** code first: it passes → `test-gap` (the code was right, a check was missing); it
+fails → `code-bug` (a real defect in current code; the weekly routine has no `src/` authority, so it pins it as a strict xfail
+`MUT-D<n>` and tells the owner). Each survivor's class goes into the owner's mutation ledger (kept outside this repository; the
+`delivery` skill names it), so the mutants' yield in real defects is measurable. `--equivalent` takes `key  # reason` lines (the
+8-hex key in the report) and is the reviewer's tool, never the implementer's.
 
 Registering a package's modules in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", graph_group=False, extra=())` in `TARGETS`)
 is part of "package done" (the run itself is not); a unit test fails when a `*_equivalent_mutants.txt` file has no registered target. The driver takes
@@ -240,7 +245,7 @@ never a condition of "done".
   `SANDBOX_TEST_IMAGE` is set. `requirement("REQ-XXX")`: ties a test to a business requirement. `performance`: manual
   benchmarks against real Firestore.
 - **`make test-affected` selects by executed Python lines**, so it can miss a test whose input is a data file or code run
-  in a child process; `make check` before a commit is mandatory. It passes `-n`, so it takes the one-suite lock and waits behind another session's
+  in a child process; so an intermediate commit adds the tests of any data folder it touched, and `make check` before a push is mandatory (once per push, not per commit). It passes `-n`, so it takes the one-suite lock and waits behind another session's
   full run.
 - **One full suite at a time** — a session with `-n`, or with 2000+ tests, takes a `flock` on
   `$TMPDIR/alekbot-pytest-suite.lock` (`tests/plugins/suite_lock.py`), prints the holder every 30 s while it waits and

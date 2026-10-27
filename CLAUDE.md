@@ -47,7 +47,7 @@ plain unauthenticated `curl http://localhost:8080/worker ...` works with no toke
 ## Commands
 
 ```bash
-make check             # Local pre-commit gate: ruff lint + mypy --strict (domain/ports) + unit/architecture tests, no slow tests, no coverage
+make check             # Local pre-push gate (once per push, not per commit): ruff lint + mypy --strict (domain/ports) + unit/architecture tests, no slow tests, no coverage
 make typecheck         # mypy --strict on src/domain + src/ports only
 make check-types       # mypy (lenient) on src/adapters — informational, prints an error count, never fails
 make test              # All tests (the unit/architecture suite excludes `slow` tests; they run in `make ci`)
@@ -62,11 +62,12 @@ make logs-tail         # Live tail logs
 make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — see Debugging below)
 ```
 
-**Which test command to run when** (while editing, before a commit, before calling work done): the table in `tests/CLAUDE.md` § Running is the one place that says it.
+**Which test command to run when** (while editing, before a commit, before a push, before calling work done): the table
+in `tests/CLAUDE.md` § Running is the one place that says it.
 
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/ main.py indexer_main.py job_main.py relay_main.py sandbox_main.py` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
-informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite (which excludes `slow` tests; they run in `make ci`); it is the local pre-commit gate. CI (`.github/workflows/ci.yml`) runs
+informational, `mypy-adapters.ini`, see `decisions/mypy_scoped_rollout.md`) before the unit suite (which excludes `slow` tests; they run in `make ci`); it is the local pre-push gate, run once per push (intermediate commits use `make test-affected` plus the tests of any data folder they touch). CI (`.github/workflows/ci.yml`) runs
 `make ci` (the same plus slow tests and the coverage gate) on every push/PR (posting ✅/❌ to Slack). Docs-only PRs skip it (also a push to `main` and the `timing` job) but still run the doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`; that file defines "docs": every file under `docs/`, root `*.md`, `.github/**/*.md`, `CLAUDE.md` anywhere except under `src/skills/`). Two weekly cloud workflows, `Mutation survivors` and `Firestore parity`, write artifacts that a scheduled routine reads, never Slack (`tests/CLAUDE.md` § Running). The full unit/architecture suite (~13 300 tests) is green
 and **safe to run in full** (any historical "don't run the full suite" warning was a since-fixed
 chunker infinite loop, not a standing hazard). `make test-unit` / `make check` run it in parallel
@@ -85,7 +86,7 @@ coverage on (setup + call + teardown) is skipped unless `RUN_SLOW_TESTS=1`, whic
 and `make ci` runs everything once. Locally `--durations=25` is an advisory report. `make test-affected` runs
 `pytest --testmon` once, seeds `.testmondata` from the main checkout in a new worktree, and never combines testmon with
 coverage; it selects by executed Python lines, so it can miss a test whose input is a data file or code run in a child
-process: **`make check` before a commit is mandatory** (`tests/CLAUDE.md`). **One full suite at a time on a
+process: an intermediate commit adds the tests of any data folder it touched, and **`make check` once before a push is mandatory** (`tests/CLAUDE.md`). **One full suite at a time on a
 machine:** a session with `-n` (or 2000+ tests) takes `fcntl.flock` on a file in the temp dir, prints the holder and
 waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that rise, or are lowered per the rule in `tests/CLAUDE.md` (reason line + reviewer OK) (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; mutation testing is the weekly cloud run only (`Mutation survivors`, owner decision 2026-10-27): a package registers its modules in `tests/support/mutation_targets.py` and runs no local mutation pass (`tests/CLAUDE.md`). Lint scope is `src/` and the root entry points (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not

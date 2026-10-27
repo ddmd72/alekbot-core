@@ -1,4 +1,6 @@
 """FactQuestionTexts: the language and the texts of what the memory review says to the owner (Facts S4 plan §3.17).
+The fact a question or the digest quotes is shown in the review's translation into the lines' language when one is stored,
+else as stored.
 
 The one place the language I/O of the memory review lives: the owner's language setting, the system default, the
 account's review state and the UI language are read here, and every decision over them is a domain call in
@@ -8,16 +10,21 @@ acknowledgement is in the language of its question.
 
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Callable, Mapping, Optional, Tuple
+from typing import Callable, Dict, Mapping, Optional, Sequence, Tuple
 
+from ..domain.entities import FactEntity
 from ..domain.fact_lifecycle_day import CounterField, counter_day
+from ..domain.fact_review_digest import digest_message
 from ..domain.fact_review_language import (
     LABEL_KEYS,
     fact_question_message,
+    fixed_message_language,
     is_review_text,
     message_language,
     review_labels,
+    shown_language,
 )
+from ..domain.fact_review_quote_translation import QuoteTranslation, quote_digest, translations_wanted
 from ..domain.fact_review_question import FactReviewQuestion
 from ..domain.fact_review_state import FactReviewState
 from ..domain.interactive_message import InteractiveMessage
@@ -80,9 +87,27 @@ class FactQuestionTexts:
             raise
         return agent_mirror
 
+    async def pass_language(self, user_id: str) -> Optional[str]:
+        """The fixed message language the review pass translates into, or None in mirror mode (the pass reports the
+        language itself) or when the setting cannot be read (a WARNING; the pass then translates nothing)."""
+        try:
+            preferred, agent_mirror = await self._language.get_preference(user_id)
+        except Exception as exc:
+            logger.warning(
+                "[FactQuestionTexts] the language setting of user %s not read; the pass translates nothing: %s",
+                user_id[:8], type(exc).__name__,
+            )
+            return None
+        return fixed_message_language(preferred, agent_mirror, self._system_default)
+
     async def labels_for(self, user_id: str, account_id: str) -> Mapping[str, str]:
         """Every text of `LABEL_KEYS` in the message language, from the source `review_labels` names."""
         code, state, ui_language = await self._read(user_id, account_id)
+        return await self._labels(code, state, ui_language, account_id)
+
+    async def _labels(
+        self, code: str, state: Optional[FactReviewState], ui_language: LanguageCode, account_id: str,
+    ) -> Mapping[str, str]:
         source, language, cached = review_labels(code, state, ui_language)
         if cached is not None:
             return MappingProxyType(dict(cached))
@@ -102,7 +127,28 @@ class FactQuestionTexts:
 
     async def message_for(self, question: FactReviewQuestion, user_id: str, account_id: str) -> InteractiveMessage:
         """The message that asks the owner about the question's fact, in the message language."""
-        return fact_question_message(question, await self.labels_for(user_id, account_id))
+        return (await self.question_and_labels(question, user_id, account_id))[0]
+
+    async def question_and_labels(
+        self, question: FactReviewQuestion, user_id: str, account_id: str,
+    ) -> Tuple[InteractiveMessage, Mapping[str, str]]:
+        """The question's message and the label set it was built from, over one read of the state: the fact is shown
+        in the review's translation into the lines' language (`shown_language`) when one is stored, else as stored.
+        Counts one fallback at most, like `labels_for`."""
+        code, state, ui_language = await self._read(user_id, account_id)
+        labels = await self._labels(code, state, ui_language, account_id)
+        language = shown_language(code, state, ui_language)
+        found = await self._translations(account_id, language, [question.quoted_text])
+        message = fact_question_message(question, labels, found.get(quote_digest(question.quoted_text)), language)
+        return message, labels
+
+    async def digest_for(self, user_id: str, account_id: str, facts: Sequence[FactEntity]) -> str:
+        """The weekly digest's text: each fact in its translation into the lines' language when one is stored, else as stored."""
+        code, state, ui_language = await self._read(user_id, account_id)
+        labels = await self._labels(code, state, ui_language, account_id)
+        language = shown_language(code, state, ui_language)
+        found = await self._translations(account_id, language, [fact.text for fact in facts])
+        return digest_message(labels, facts, found, language)
 
     async def text(self, user_id: str, account_id: str, message: UIMessage) -> str:
         """One text of the review (an acknowledgement, the closed note, a digest line) from the same source as
@@ -127,6 +173,23 @@ class FactQuestionTexts:
             )
             raise
         return message_language(preferred, agent_mirror, self._system_default, state, ui_language), state, ui_language
+
+    async def _translations(
+        self, account_id: str, language: str, texts: Sequence[str],
+    ) -> Dict[str, QuoteTranslation]:
+        """The stored translations of `texts` into `language`, by `quote_digest`; none for English or when the read
+        fails (a WARNING): the owner then sees the stored text."""
+        if not translations_wanted(language) or not texts:
+            return {}
+        try:
+            return await self._review_store.get_quote_translations(
+                account_id, language, [quote_digest(text) for text in texts],
+            )
+        except Exception as exc:
+            logger.warning(
+                "[FactQuestionTexts] quote translations of account %s not read: %s", account_id[:8], type(exc).__name__,
+            )
+            return {}
 
     async def _count_fallback(self, account_id: str) -> None:
         try:

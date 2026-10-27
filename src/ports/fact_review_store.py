@@ -19,13 +19,18 @@ The state marks each write exactly their fields, validated as the whole state th
 state document. Only `mark_enqueued` creates a missing state document; every other mark answers False for an account
 with none and writes nothing. Each raises ValueError for an empty `account_id`, or for a value the state does not
 validate, before anything is written.
+
+The quote translations (`set_quote_translations`, `get_quote_translations`) are presentation records of the review: a
+stored fact's text as shown in a message language, keyed by the account, the language and the digest of the English
+text (`quote_digest`), not by a fact document. They expire `QUOTE_TRANSLATION_RETENTION` after they are written.
 """
 from abc import ABC, abstractmethod
 from datetime import date, datetime
-from typing import List, Mapping, Optional, Sequence
+from typing import Dict, List, Mapping, Optional, Sequence
 
 from ..domain.fact_review_answer_kind import AnswerKind
 from ..domain.fact_review_question_close import QuestionClose
+from ..domain.fact_review_quote_translation import QuoteTranslation
 from ..domain.fact_review_question import AnswerSource, ClosedBy, FactReviewQuestion
 from ..domain.fact_review_state import FactReviewState
 from ..domain.messaging import MessageRef
@@ -217,9 +222,24 @@ class FactReviewStore(ABC):
         """Drop the claim of the ISO week of `day`, so that week's digest may be claimed again; no claim is no error.
         Raises ValueError for an empty `user_id` or a `datetime` as `day`."""
 
+    # ------------------------------------------------------------------------------------------------ quote translations
+
+    @abstractmethod
+    async def set_quote_translations(self, account_id: str, translations: Sequence[QuoteTranslation], at: datetime) -> None:
+        """Store each translation as the account's one for its (language, source text), an earlier one replaced, written `at`
+        and expiring QUOTE_TRANSLATION_RETENTION after it. Empty: nothing written. ValueError for an empty account_id or a naive `at`."""
+
+    @abstractmethod
+    async def get_quote_translations(
+        self, account_id: str, language: str, digests: Sequence[str],
+    ) -> Dict[str, QuoteTranslation]:
+        """The account's stored translations into `language` of the texts with these `quote_digest`s, by digest, in one batch
+        read. Missing ones are left out; a stored one that does not validate is left out and logged as ERROR. ValueError for an
+        empty account_id."""
+
     # ------------------------------------------------------------------------------------------------ expiry
 
     @abstractmethod
     async def purge_overdue(self, before: datetime) -> int:
-        """How many closed questions and digest claims are past their expiry at `before` and still stored: what the
+        """How many closed questions, digest claims and quote translations are past their expiry at `before` and still stored: what the
         store's own expiry has not removed yet. Raises ValueError for a naive `before`."""

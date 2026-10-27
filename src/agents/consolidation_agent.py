@@ -55,7 +55,9 @@ from ..domain.consolidation_pass_stats import (
 from ..domain.fact_review_ask import parse_ask_owner
 from ..domain.fact_review_language import (
     CANONICAL_LABELS, MAX_LABEL_CHARS, MAX_OPTION_WORDS, MAX_TEXT_CHARS, check_labels, parse_message_language,
+    translation_language,
 )
+from ..domain.fact_review_quote_translation import MAX_TRANSLATION_CHARS, report_translations, translations_wanted
 from ..domain.fact_review_question import FactReviewQuestion
 from ..domain.fact_review_result import FactReviewResult, encode_review_result
 from ..domain.fact_review_task import FactReviewTask, ReviewItem, decode_review_task
@@ -473,9 +475,31 @@ _REVIEW_HEADER = (
 )
 
 
+_TRANSLATIONS_RULE = (
+    "`translations` is one object, {\"<fact_id>\": \"<text>\", …}, with an entry for every listed fact (its fact_id exactly "
+    "as in its line): its content as listed (not as you rewrote it), translated into that language for the owner to read. "
+    f"Translate only: add nothing, drop nothing, no quote marks around it, one line, at most {MAX_TRANSLATION_CHARS} "
+    "characters. Keep every number, amount and date exactly as written (digits are allowed here; month and weekday names "
+    "are translated); write people's and place names as that language usually spells them. Leave out a fact whose content "
+    "has a link or `[`. Translations are written only in the final report: they need no call and change no outcome."
+)
+
+
+def _fixed_translation_instruction(language: Optional[str]) -> Optional[str]:
+    """The review's translation request in fixed mode: the facts translated into the owner's fixed language (None when
+    that is English or none: nothing to translate)."""
+    if not translations_wanted(language):
+        return None
+    return (
+        "TRANSLATIONS — in your final report (its JSON object), give `translations` in the language with ISO 639-1 code "
+        f"`{language}`. " + _TRANSLATIONS_RULE
+    )
+
+
 def _review_language_instruction() -> str:
-    """The review's language request (mirror mode only, Facts S4 §3.17): the language of `owner_messages`, and for a
-    language without UI strings the labels translated from `CANONICAL_LABELS`."""
+    """The review's language request (mirror mode only, Facts S4 §3.17): the language of `owner_messages`, for a
+    language without UI strings the labels translated from `CANONICAL_LABELS`, and, when that language is not en, the
+    translations of every listed fact into it."""
     return (
         "LANGUAGE — in your final report (its JSON object), give `message_language`: the ISO 639-1 code (two letters) of "
         "the language the owner writes in, read from owner_messages. If it is not uk, en, fr or es, also give `labels`: "
@@ -483,6 +507,8 @@ def _review_language_instruction() -> str:
         f"at most {MAX_TEXT_CHARS} characters; each of the four option labels at most {MAX_OPTION_WORDS} words and "
         f"{MAX_LABEL_CHARS} characters, all four different.\n"
         f"{json.dumps(dict(CANONICAL_LABELS), ensure_ascii=False)}"
+        "\nIf message_language is not en, also give `translations` (TRANSLATIONS below), in that language.\n"
+        "TRANSLATIONS — " + _TRANSLATIONS_RULE
     )
 
 
@@ -528,7 +554,7 @@ def _report_object(text: str) -> Optional[Dict[str, Any]]:
 
     Documented exception to the "no regex fallbacks" rule (CLAUDE.md, Agent Output Format Standards): every write is
     done through the tools by this point, so the report's operations are cosmetic, and a parse retry would re-bill a whole
-    turn; an unread review report only leaves `message_language` and `labels` unset."""
+    turn; an unread review report only leaves `message_language`, `labels` and `translations` unset."""
     fenced = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fenced:
         return _json_object(fenced.group(1))
@@ -1318,8 +1344,8 @@ class ConsolidationAgent(BaseAgent):
 
         One review loop under the `consolidation_review` prompt; its `update_fact` and `ask_owner` go to a
         `FactReviewScope` over the run's tracker (the typed port read now, so a port installed after construction is
-        the one that writes). Result: the scope's outcomes, asks and kept facts, and the `message_language` and `labels`
-        of the final report (None when absent or malformed). The agent writes no question, and posts and appends nothing.
+        the one that writes). Result: the scope's outcomes, asks and kept facts, the `message_language` and `labels`
+        of the final report (None when absent or malformed) and its `translations` (those that pass validation). The agent writes no question, and posts and appends nothing.
         """
         try:
             task = decode_review_task(message.payload)
@@ -1351,7 +1377,7 @@ class ConsolidationAgent(BaseAgent):
         now = task.now or self._now()
         tracker = _TrackingFactUpdates(self._fact_management, self._fact_updates)
         scope = FactReviewScope(task.batch, account_id, zone, now, self._repo, tracker)
-        language_instruction = _review_language_instruction() if task.mirror else None
+        language_instruction = _review_language_instruction() if task.mirror else _fixed_translation_instruction(task.language)
         report: Dict[str, Any] = {}
         try:
             await self._run_consolidation_loop(
@@ -1379,17 +1405,24 @@ class ConsolidationAgent(BaseAgent):
 
         # The language is asked for in mirror mode only (§3.17); a fixed-mode report's language is not read.
         language, labels = _reported_language(report) if task.mirror else (None, None)
+        target = translation_language(task.mirror, task.language, report.get("message_language"))
+        translations, refused = report_translations(
+            report.get("translations"), target, {item.fact.id: item.fact.text for item in task.items},
+        )
+        for why in refused:
+            logger.warning(f"⚠️ [ConsolidationAgent] Review translation refused: {why}")
         result = FactReviewResult(
             outcomes=tuple(scope.decisions()),
             asks=tuple(scope.asks()),
             kept=tuple(f.id for f in scope.kept()),
             message_language=language,
             labels=labels,
+            translations=translations,
         )
         total_duration = time.time() - start_time
         logger.info(
             f"✅ [ConsolidationAgent] review_stale_facts done: {len(task.items)} facts, {len(result.outcomes)} decided, "
-            f"{len(result.asks)} asked in {total_duration:.1f}s"
+            f"{len(result.asks)} asked, {len(result.translations)} translated in {total_duration:.1f}s"
         )
         return AgentResponse.success(
             task_id=message.task_id,
@@ -2046,14 +2079,16 @@ class ConsolidationAgent(BaseAgent):
         now: datetime,
     ) -> str:
         """The review pass's user message (Facts S4 §3.4): the header, one JSON line per batch fact (its `fact_view`, its
-        earlier versions, its nearest current facts and its open question), then, in mirror mode, the owner's messages
-        and the language instruction. No question budget and no question text: code writes and sends the questions."""
+        earlier versions, its nearest current facts and its open question), then, in mirror mode, the owner's messages,
+        and the language or translation instruction when there is one. No question budget and no question text: code writes and sends the questions."""
         lines = [_REVIEW_HEADER, ""]
         for i, item in enumerate(batch.items, 1):
             lines.append(f"{i}. {json.dumps(_review_line(item, batch.question_for(item.fact.id), timezone, now), ensure_ascii=False)}")
-        if language_instruction is not None:
+        if batch.mirror:
             lines += ["", f"owner_messages (his latest messages, oldest first, verbatim): "
-                          f"{json.dumps(list(owner_messages), ensure_ascii=False)}", "", language_instruction]
+                          f"{json.dumps(list(owner_messages), ensure_ascii=False)}"]
+        if language_instruction is not None:
+            lines += ["", language_instruction]
         return "\n".join(lines)
     
     async def _execute_fact_management_tools(
