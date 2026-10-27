@@ -88,6 +88,8 @@ backend below is retained in this document as historical context — code has be
   send named `notify_document_link()` for each (e.g. "Round 1 — raw research", "Round 2 — verified report");
   (2) enqueue `create_html_page` Cloud Task → `HtmlPageGeneratorAgent` → styled HTML page → GCS link → user channel.
   Single-pass mode (second pass disabled): one upload labelled "Research report (raw)" + HTML page.
+  **Delta (2026-10-27):** the live paths (Cloud Run Job, OpenAI webhook) still upload the raw files but post no
+  link to them; owner ruling: the links are not wanted, the opt-in drive copy of the HTML report replaces them.
 - **Cognitive process:** `DEEP_RESEARCH_COGNITIVE_PROCESS.groovy` — 4-phase protocol:
   Phase 0 (topic map) → Phase 1 (execute by dimension) → Phase 2 (counter-search verification)
   → Phase 3 (gap audit) → FINAL OUTPUT. Single uninterrupted session.

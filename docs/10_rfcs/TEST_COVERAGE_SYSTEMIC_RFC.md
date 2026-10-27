@@ -903,8 +903,8 @@ prints counts only. S5 adds the expiry invariants; other entities join with thei
     the test becomes a pin of `"high"` and `TASK_COMPLEXITY_EXECUTION_SETTINGS_RFC.md:117` is corrected.
 - **Found, not carded.**
   - F-1: no live deep-research path posts the raw report links. `DEEP_RESEARCH_RFC.md:85-90` says each raw round file gets a link; `deliver_deep_research` posts one only when it gets `notification=`, and the OpenAI
-    webhook (`worker_handler.py:662-675`) and the Cloud Run Job (`job_main.py:271-286`) pass none, though both upload the raw files. An open owner question: the RFC text is stale or the link was lost in the move to
-    Jobs and webhooks. Neither pinned nor fixed.
+    webhook (`worker_handler.py:662-675`) and the Cloud Run Job (`job_main.py:271-286`) pass none, though both upload the raw files. Owner ruling (2026-10-27): the links were lost in
+    the move to Jobs and webhooks, and are no longer wanted (the opt-in drive copy of the report replaces them); not pinned. `DEEP_RESEARCH_RFC.md` carries the delta.
   - F-2: D2's mechanism also sends a background Smart turn's FileManagement receipts to primary/last-active, not to the run's channel.
   - F-3: the `execute_deep_research_claude` branches of `AgentWorkerHandler` have no producer in `src/`.
   - F-4: P9-D4 seen again (`AgentWorkerHandler.task_queue` is annotated `TaskDispatchService` and gets the raw queue).
