@@ -19,6 +19,15 @@ from ..utils.logger import logger
 
 
 class FirestoreEmailJobRepository(EmailIndexingJobRepository):
+    """Firestore mechanics behind the port's contract.
+
+    Collection `EnvironmentConfig.email_indexing_jobs_collection` (`{prefix}email_indexing_jobs_v1`), document id
+    job_id. Composite indexes (config/firestore.indexes.json): (user_id, started_at desc),
+    (user_id, provider, started_at desc) and (provider, user_id, started_at desc) for the two newest-first reads,
+    (status, updated_at) for the stale query. `update_job` is a plain document `update` (no precondition); a datetime
+    subclass in `updates` is rewritten as a plain datetime first. Reads rebuild every date field as a naive plain
+    datetime (Firestore returns `DatetimeWithNanoseconds`).
+    """
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
         self.db = db_client

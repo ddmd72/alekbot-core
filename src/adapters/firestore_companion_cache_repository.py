@@ -22,6 +22,12 @@ from ..utils.logger import logger
 
 
 class FirestoreCompanionCacheRepository(CompanionCacheRepository):
+    """Firestore mechanics behind the port's contract.
+
+    Collection `EnvironmentConfig.companion_context_cache_collection`, document id = session_id, fields session_id,
+    account_id, summary, refreshed_at (`SERVER_TIMESTAMP`); `save_summary` is a plain `set` (no merge). No query is
+    issued, so no index is needed.
+    """
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
         self.db = db_client

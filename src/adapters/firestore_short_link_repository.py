@@ -23,6 +23,14 @@ from ..utils.logger import logger
 
 
 class FirestoreShortLinkRepository(ShortLinkRepositoryPort):
+    """Firestore mechanics behind the port's contract.
+
+    Collection `{firestore_collection_prefix}short_links` (no `EnvironmentConfig` property), document id = the code,
+    fields target_url and expires_at. `create_if_absent` is one `create` (AlreadyExists = the code is taken). A
+    Firestore TTL policy on `expires_at` is meant to reclaim old documents (the deployment README's TTL table does not
+    list this collection: whether the policy exists is unverified); the sweep lags, so `resolve` re-checks the expiry
+    itself. No query is issued, so no index is needed.
+    """
 
     def __init__(self, db_client: AsyncClient, env_config: EnvironmentConfig) -> None:
         self._collection = db_client.collection(

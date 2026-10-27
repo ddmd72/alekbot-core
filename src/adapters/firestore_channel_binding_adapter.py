@@ -15,6 +15,12 @@ from ..utils.logger import logger
 
 
 class FirestoreChannelBindingAdapter(ChannelBindingPort):
+    """Firestore mechanics behind the port's contract.
+
+    Collection `{firestore_collection_prefix}channel_bindings` (no `EnvironmentConfig` property), document id
+    `channel_id`, every `save` writes the whole document (all fields, `companion_config` as a dict of plain values or
+    null; `session_domains` as enum values). No query is issued, so no index is needed.
+    """
 
     def __init__(self, db_client, env_config: EnvironmentConfig):
         self._collection = db_client.collection(
