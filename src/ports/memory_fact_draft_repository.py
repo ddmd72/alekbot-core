@@ -5,16 +5,29 @@ from ..domain.memory_fact import MemoryFactDraft
 
 
 class MemoryFactDraftRepository(ABC):
-    """Proposed memory facts awaiting the owner's `$memory save` (MEMORY_FACT_CONFIRMATION_RFC)."""
+    """Proposed memory facts awaiting the owner's `$memory save` (MEMORY_FACT_CONFIRMATION_RFC).
+
+    Tenancy: the user_id is part of the key; another user's code is absent. Backend errors propagate.
+    """
 
     @abstractmethod
     async def create_draft(self, user_id: str, code: str, draft: MemoryFactDraft) -> bool:
-        """Create a draft keyed by `{user_id}:{code}`. Returns False if that code already exists."""
+        """Create a draft keyed by (user_id, code); it expires 7 days after creation.
+
+        Returns False when that code exists for the user; the stored draft is then unchanged.
+        """
 
     @abstractmethod
     async def get_draft(self, user_id: str, code: str) -> Optional[MemoryFactDraft]:
-        """Fetch a draft. Returns None if absent, expired or corrupt."""
+        """Fetch a draft. Returns None if absent, expired or corrupt.
+
+        Expiry: a draft whose expiry has passed reads as None whether or not the backend has removed it yet; a naive
+        expiry is UTC. Legacy: a draft with no expiry never expires; a missing origin_session_id reads None.
+        """
 
     @abstractmethod
     async def delete_draft(self, user_id: str, code: str) -> None:
-        """Delete a draft; a missing draft is not an error."""
+        """Delete a draft; a missing draft is not an error.
+
+        There is no consume-once read: two concurrent readers both see the draft until one deletes it.
+        """
