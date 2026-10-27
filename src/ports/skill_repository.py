@@ -7,19 +7,28 @@ from ..domain.skill import Skill
 
 
 class SkillRepository(ABC):
+    """Custom (per-user) skills and their drafts.
+
+    Holds for every method: tenancy is by user_id (a foreign user's id reaches nothing); backend errors propagate
+    (SkillService.list_skills alone degrades to the system skills).
+    """
 
     @abstractmethod
     async def list_current(self, user_id: str) -> List[Skill]:
-        """The user's skills at their current version (with file manifests), sorted by name.
-        Corrupt entries are skipped."""
+        """The user's skills at their current version (with file manifests), sorted by name, no limit.
+
+        Legacy: an entry without a current version, or one that fails Skill validation, is skipped (logged).
+        """
 
     @abstractmethod
     async def get_current(self, user_id: str, name: str) -> Optional[Skill]:
-        """One skill at its current version, with its file manifest. None if absent or corrupt."""
+        """One skill at its current version, with its file manifest. None if absent, or if the entry has no current
+        version or fails Skill validation."""
 
     @abstractmethod
     async def get_file(self, user_id: str, name: str, sha256: str) -> Optional[str]:
-        """Content of one of the skill's stored files, by hash. None if absent."""
+        """Content of one of the skill's stored files, by hash. None if absent. Not checked against the skill's
+        current manifest."""
 
     @abstractmethod
     async def save_version(
@@ -28,6 +37,10 @@ class SkillRepository(ABC):
         draft_code: Optional[str] = None,
     ) -> int:
         """Write the next version and make it current, atomically. Returns the new version.
+
+        Of two concurrent saves of one skill each gets its own version (no write is lost); of two concurrent saves of
+        one draft code one succeeds and the other raises SkillDraftNotFound. Legacy: a skill entry without a current
+        version cannot be saved to until it is deleted (KeyError).
 
         The version and index docs carry `skill.files` as the manifest. When `draft_code` is
         set, that draft's staged files are copied into the skill's own files in the same
@@ -48,19 +61,33 @@ class SkillRepository(ABC):
         """Create a draft keyed by `{user_id}:{code}`. Returns False if that code already exists.
 
         `staged` maps sha256 → content for files the skill does not already hold; they are
-        stored with the draft (written before the draft doc) and copied on save.
+        stored with the draft (written before the draft doc) and copied on save. On a code collision the staged
+        files of the repeated call stay stored beside the existing draft (content-addressed, harmless).
+
+        Idempotency: a repeat returns False and the stored draft is unchanged. Expiry: the draft and every staged
+        file expire 30 days after creation.
         """
 
     @abstractmethod
     async def get_draft(self, user_id: str, code: str) -> Optional[Skill]:
         """Fetch a draft by `{user_id}:{code}`, with its manifest. Returns None if absent,
-        expired or corrupt."""
+        expired or corrupt.
+
+        Expiry: a draft whose expiry has passed reads as None whether or not the backend has removed it yet; a naive
+        expiry is UTC; a draft with no expiry never expires.
+        """
 
     @abstractmethod
     async def get_draft_files(self, user_id: str, code: str) -> Dict[str, str]:
         """The draft's staged files, sha256 → content. Raises SkillFileMissing when any staged
-        file is gone, SkillDraftNotFound when the draft itself is gone."""
+        file is gone, SkillDraftNotFound when the draft itself is gone. Expiry of the draft is not checked here
+        (callers call get_draft first)."""
 
     @abstractmethod
     async def delete_skill(self, user_id: str, name: str) -> bool:
-        """Delete all versions, files and the index doc for a skill. Returns False if it doesn't exist."""
+        """Delete all versions, files and the index doc for a skill. Returns False if it doesn't exist.
+
+        Atomicity: deleted in batches with the skill's own entry last, so a failure midway leaves the skill listed
+        and a repeat finishes the job. Drafts of that name are not touched (a later save of such a draft raises
+        SkillFileMissing for files it inherited).
+        """
