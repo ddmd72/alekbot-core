@@ -14,7 +14,12 @@ DONE = "done"
 
 
 class FirestoreTaskClaimStore(TaskClaimStore):
-    """Claim docs `{holder, attempt, state, created_at, expires_at}`; expires_at is also the Firestore TTL field."""
+    """Claim docs `{holder, attempt, state, created_at, expires_at}`; expires_at is also the Firestore TTL field.
+
+    Collection `{prefix}worker_task_dedup`, shared with the DedupStore marks. A claim is a `create`, else a rewrite under
+    a `last_update_time` precondition; mark_done and release are preconditioned on the holder's read. A naive
+    `expires_at` is read as UTC (defensive: the client returns aware values).
+    """
 
     def __init__(self, db_client: AsyncClient, collection_name: str, ttl_seconds: int = 3600):
         self.db_client = db_client

@@ -16,11 +16,12 @@ class EphemeralStore(ABC):
     Holds for every method:
     - Tenancy: none. A key is global; callers namespace keys (`voice_one_call:{user_id}`) and check a stored `user_id`
       themselves where it matters (`voice_web_call_app._owned`).
-    - Expiry: a value is live while now < its `expires_at` (set time + ttl_s, UTC). An expired value reads as absent.
-      Expired documents are deleted lazily, by a read or by the collection's TTL policy on `expires_at`.
+    - Expiry: a value expires ttl_s seconds after its set; it is live up to and including that instant and expired once
+      now is past it. An expired value reads as absent and is removed lazily.
     - Consistency: a completed write is seen by every later read, from any instance. The late-answer handshake
       (result first, abandon check second, and the reverse) relies on this.
-    - Legacy: a stored document without `expires_at` or `value` raises KeyError on every read (no writer produces one).
+    - Legacy: an entry stored without an expiry raises KeyError on every read and is kept; one without a value that has
+      expired reads as absent (no writer produces either).
     - Errors: backend errors propagate; nothing is swallowed.
     """
 
@@ -37,7 +38,8 @@ class EphemeralStore(ABC):
     async def get(self, key: str) -> Optional[Dict[str, Any]]:
         """The live value of `key`, or None when it is absent or expired.
 
-        Expired: the document is also deleted, with no precondition.
+        Expired: the entry is also removed, unconditionally (a value set by another caller in between can be removed
+        with it).
         """
 
     @abstractmethod
@@ -46,10 +48,10 @@ class EphemeralStore(ABC):
 
     @abstractmethod
     async def get_and_delete(self, key: str) -> Optional[Dict[str, Any]]:
-        """Read and remove `key` in one transaction. Of concurrent callers on one key, exactly one gets the live value
+        """Read and remove `key` atomically. Of concurrent callers on one key, exactly one gets the live value
         and every other gets None. This backs the single-use ticket, the parked callback (Twilio retries) and the late
         delegation answer (posted exactly once); a plain get()-then-delete() would be a TOCTOU race between callers.
 
-        Expired: the document is removed and None is returned. Absent: None, and nothing is written.
-        Errors: backend errors propagate; a transaction that aborts on every attempt raises ValueError (the SDK's).
+        Expired: the entry is removed and None is returned. Absent: None, and nothing is written.
+        Errors: backend errors propagate; contention that never resolves raises ValueError (the SDK's).
         """

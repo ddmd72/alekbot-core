@@ -10,10 +10,9 @@ from abc import ABC, abstractmethod
 
 class TaskClaimStore(ABC):
     """A lease on one Cloud Tasks task (key = the task name, `[A-Za-z0-9_-]`, never containing `:`), held by one
-    delivery attempt. It shares `{prefix}worker_task_dedup` with the DedupStore marks; the key spaces are disjoint.
+    delivery attempt. It may share storage with the DedupStore marks; the key spaces are disjoint.
 
-    - Expiry: a claim is expired when now >= its `expires_at` (UTC; a naive value is UTC; a missing or non-datetime
-      value counts as expired).
+    - Expiry: a claim is expired when now >= its expiry (a missing or non-datetime expiry counts as expired).
     - Tenancy: none (task names are global).
     - Legacy: a claim without `state`, or with an unknown one, is treated as running (taken over).
     """
@@ -26,8 +25,7 @@ class TaskClaimStore(ABC):
         Duplicate: the task is done. Taken over: an expired claim, or any running claim
         (its holder is another process or a dead attempt). The same ``attempt`` finding its own claim
         (SDK retry of a landed write) is True. Store errors raise.
-        Atomicity: create, else a rewrite under a last_update_time precondition; of concurrent takers exactly one
-        gets True.
+        Atomicity: of concurrent takers exactly one gets True.
         """
 
     @abstractmethod

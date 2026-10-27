@@ -2,8 +2,9 @@
 `FirestoreEphemeralStore` on the evaluating Firestore fake (H1), with the index refusal ON (the store makes no query
 today; the refusal guards a future one). Assertions are on the raw stored documents and on what readers return.
 
-The one-call marker claim is the caller's (`VoiceCallSetupService.claim`, a get-then-set): it runs over the real store
-here, because the port promises no conditional write.
+The one-call marker claim is the caller's (`VoiceCallSetupService.claim`, a get-then-set): it is pinned over this
+store in `tests/unit/services/test_voice_call_setup_service_store_pins.py`, because the port promises no conditional
+write.
 
 `store` is the one fixture that selects the backend.
 """
@@ -16,7 +17,6 @@ import pytest
 import src.adapters.firestore_ephemeral_store as ephemeral_module
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.ports.ephemeral_store import EphemeralStore
-from src.services.voice_call_setup_service import VoiceCallSetupService
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
 from tests.support.firestore_eval import EvalDb, EvalDocRef
 from tests.support.redelivery_world import require
@@ -87,16 +87,18 @@ async def test_an_expired_value_reads_as_absent_and_is_deleted(store, monkeypatc
     assert TICKET_KEY not in store.docs
 
 
-async def test_a_value_one_second_before_expiry_is_live(store, monkeypatch):
+@pytest.mark.parametrize("seconds", [299, 300], ids=["one_second_before", "at_expiry"])
+async def test_a_value_is_live_up_to_its_expiry_instant(store, monkeypatch, seconds):
     await store.store.set(TICKET_KEY, TICKET, ttl_s=300)
-    at(monkeypatch, 299)
+    at(monkeypatch, seconds)
     assert await store.store.get(TICKET_KEY) == TICKET
     assert TICKET_KEY in store.docs
 
 
 async def test_get_of_an_absent_key_is_none_and_writes_nothing(store):
+    clock = store.db._clock
     assert await store.store.get(TICKET_KEY) is None
-    assert store.docs == {} and store.col.versions == {}
+    assert store.docs == {} and store.col.versions == {} and store.db._clock == clock
 
 
 # ----------------------------------------------------------------------------------------------------- delete
@@ -127,7 +129,8 @@ async def test_get_and_delete_of_an_expired_value_consumes_it_and_returns_none(s
 
 async def test_get_and_delete_of_an_absent_key_is_none_and_writes_nothing(store):
     assert await store.store.get_and_delete(TICKET_KEY) is None
-    assert store.docs == {} and store.col.versions == {}     # no write stamp: nothing was committed
+    # no write stamp on the key: nothing was written (an empty transaction commit still takes a DB-wide stamp in the fake)
+    assert store.docs == {} and store.col.versions == {}
 
 
 async def test_two_concurrent_get_and_delete_exactly_one_wins(store, monkeypatch):
@@ -196,6 +199,13 @@ async def test_a_legacy_document_without_expires_at_raises_on_read(store, method
     assert store.docs[TICKET_KEY] == {"value": TICKET}
 
 
+@pytest.mark.parametrize("method", ["get", "get_and_delete"])
+async def test_an_expired_legacy_document_without_value_reads_as_absent(store, method):
+    store.docs[TICKET_KEY] = {"expires_at": T0 - timedelta(seconds=1)}
+    assert await getattr(store.store, method)(TICKET_KEY) is None
+    assert store.docs == {}
+
+
 # ---------------------------------------------------------------------------------------------------- errors
 
 @pytest.mark.parametrize("method", ["get", "set", "delete", "get_and_delete"])
@@ -217,19 +227,9 @@ async def test_a_backend_error_propagates(store, monkeypatch, method):
 
 async def test_a_transaction_aborted_on_every_attempt_raises_value_error(store):
     await store.store.set(TICKET_KEY, TICKET, ttl_s=300)
-    before = dict(store.docs[TICKET_KEY])
     for _ in range(5):      # every attempt: another transaction rewrites the document after this one read it
         store.db.interfere_on_txn_read(TICKETS, TICKET_KEY, {"value": dict(TICKET)}, after_read=True)
     with pytest.raises(ValueError):
         await store.store.get_and_delete(TICKET_KEY)
-    assert store.docs[TICKET_KEY] == before
-
-
-# --------------------------------------------------------------------- the one-call marker claim (the caller's)
-
-async def test_a_claim_while_a_live_marker_exists_is_refused(store):
-    setup = VoiceCallSetupService(store.store, None, None)
-    results = [await setup.claim("u1", {"call_id": "c1"}, ttl_s=300),
-               await setup.claim("u1", {"call_id": "c2"}, ttl_s=300)]
-    assert results == [True, False]
-    assert store.docs[MARKER_KEY]["value"]["call_id"] == "c1"
+    assert TICKET_KEY in store.docs                 # not consumed
+    assert await store.store.get(TICKET_KEY) == TICKET

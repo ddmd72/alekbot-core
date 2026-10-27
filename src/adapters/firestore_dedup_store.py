@@ -13,6 +13,13 @@ class FirestoreDedupStore(DedupStore):
     
     Session: 2026-02-09 Telegram Integration Phase 3
     Purpose: Platform-agnostic dedup store (Telegram, Slack, future platforms)
+
+    Documents `{created_at: epoch float, expires_at: aware datetime}`; `expires_at` is the TTL policy field. The 48 h
+    daily-review marks and the 72 h OpenAI webhook claims share `{prefix}worker_task_dedup` with the TaskClaimStore
+    claims (claim keys never contain `:`, mark keys always do); the 1 h Telegram inline marks live in
+    `{prefix}event_dedup`. A claim is a `create` (AlreadyExists = taken); an expired, unpurged mark is rewritten under a
+    `last_update_time` precondition. An empty or None key is never marked (no caller passes one); a naive `expires_at`
+    is read as UTC (defensive: the client returns aware values).
     """
 
     def __init__(self, db_client: AsyncClient, collection_name: str, ttl_seconds: int = 3600):

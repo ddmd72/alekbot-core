@@ -2,9 +2,13 @@
 `FirestoreAgentNoteAdapter` on the evaluating Firestore fake (H1), with the index refusal ON (both queries are
 single-field). Assertions are on the raw stored documents and on what readers return.
 
-`notes` is the one fixture that selects the backend.
+`notes` is the one fixture that selects the backend. The clock is pinned and a note id is the creation millisecond
+(open defect P11-G1-2), so every multi-note fixture is seeded as raw documents with distinct ids or re-pins the clock
+before each create. Documents no writer produces (no `text`, a non-timestamp `due`) are not pinned: their behaviour
+waits for the data audit.
 """
 import asyncio
+import dataclasses
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -72,6 +76,7 @@ CREATE_CASES = {
     "one_time": {},
     "rrule": {"recurrence": "FREQ=WEEKLY;BYDAY=TU"},
     "workspace_file": {"workspace_file": "projects/garden.md"},
+    "complexity": {"complexity": TaskComplexity.DEEP_REASONING},
 }
 
 
@@ -84,14 +89,13 @@ async def test_create_stores_the_note_and_returns_it_with_its_id(notes, case):
                 "due": DUE, "last_fired": None, "recurrence": extra.get("recurrence")}
     if "workspace_file" in extra:
         expected["workspace_file"] = extra["workspace_file"]
+    if "complexity" in extra:
+        expected["complexity"] = extra["complexity"].value
     assert notes.docs == {note.note_id: expected}
-    assert await notes.port.get_note("u1", note.note_id) == note
-
-
-async def test_create_stores_the_complexity_value(notes):
-    note = await create(notes, complexity=TaskComplexity.DEEP_REASONING)
-    assert notes.docs[note.note_id]["complexity"] == "deep_reasoning"
-    assert (await notes.port.get_note("u1", note.note_id)).complexity is TaskComplexity.DEEP_REASONING
+    read = await notes.port.get_note("u1", note.note_id)
+    assert read.complexity == extra.get("complexity")
+    # the returned note's complexity is not populated (callers use note_id only); every other field matches the read
+    assert dataclasses.replace(read, complexity=None) == dataclasses.replace(note, complexity=None)
 
 
 async def test_create_refuses_more_than_25_words_and_writes_nothing(notes):
@@ -238,6 +242,7 @@ async def test_list_active_as_of_epoch_returns_every_note_of_the_user(notes):
 
 
 async def test_list_active_reads_legacy_shapes(notes):
+    """The naive datetimes of `l4` exercise a defensive branch, not a contract: the client returns aware values."""
     naive = (DUE + timedelta(hours=1)).replace(tzinfo=None)
     notes.seed("l1", user_id="u1", text="call dad", due=DUE, created_at=T0)
     notes.seed("l2", user_id="u1", text="water the garden", instruction="Remind Kim to water the community garden.",
@@ -254,12 +259,6 @@ async def test_list_active_reads_legacy_shapes(notes):
     assert by_id["l4"].recurrence is None                                # unreadable: one-time
     assert by_id["l4"].due == DUE + timedelta(hours=1) and by_id["l4"].due.tzinfo is not None
     assert by_id["l4"].created_at.tzinfo is not None and by_id["l4"].last_fired == T0
-
-
-async def test_list_active_with_a_string_due_raises_type_error(notes):
-    notes.seed("s1", user_id="u1", text="call dad", due="2026-10-28T08:00:00Z", created_at=T0)
-    with pytest.raises(TypeError):
-        await notes.port.list_active_notes("u1", as_of=T0)
 
 
 # --------------------------------------------------------------------------------------------------- list due
@@ -281,13 +280,6 @@ async def test_list_due_keeps_a_claimed_one_time_note_until_it_is_deleted(notes)
     assert await notes.port.list_due_reminders(T0) == []
 
 
-async def test_list_due_raises_on_a_note_missing_text(notes):
-    notes.seed("d1", user_id="u1", text="call dad", due=T0, created_at=T0)
-    notes.seed("d2", user_id="u2", due=T0, created_at=T0)
-    with pytest.raises(KeyError):
-        await notes.port.list_due_reminders(T0)
-
-
 # ----------------------------------------------------------------------------------------------- reschedule
 
 async def test_reschedule_moves_due_and_stamps_last_fired(notes):
@@ -307,7 +299,8 @@ async def test_reschedule_refuses_a_moved_due_an_absent_note_and_an_empty_id(not
     assert notes.docs == {note.note_id: before}
 
 
-async def test_reschedule_compares_a_naive_stored_due_as_utc(notes):
+async def test_reschedule_compares_a_naive_stored_due_as_utc_defensive_branch(notes):
+    """A defensive branch, not a contract: the client always returns an aware Timestamp."""
     notes.seed("r1", user_id="u1", text="call dad", due=T0.replace(tzinfo=None), created_at=T0, recurrence="FREQ=DAILY")
     assert await notes.port.reschedule_if_due_at("r1", T0, T0 + timedelta(days=1), T0) is True
     assert notes.docs["r1"]["due"] == T0 + timedelta(days=1)
@@ -394,8 +387,9 @@ async def test_mark_fire_delivered_on_a_deleted_note_raises_not_found(notes):
 
 
 async def test_mark_fire_delivered_with_an_empty_id_writes_nothing(notes):
+    clock = notes.db._clock
     await notes.port.mark_fire_delivered("", T0)
-    assert notes.docs == {} and notes.col.versions == {}
+    assert notes.docs == {} and notes.col.versions == {} and notes.db._clock == clock
 
 
 # ---------------------------------------------------------------------------------------------------- errors

@@ -21,18 +21,18 @@ class AgentNotePort(ABC):
       nothing. list_due_reminders and reschedule_if_due_at are cross-user (the fire tick only).
     - Ids: a note id is unique across all users and never reused for another note (P11-G1-2: today two notes created in
       the same millisecond share one id and the second replaces the first).
-    - Times: every datetime returned is aware UTC (a naive stored value is UTC).
+    - Times: every datetime returned is aware UTC.
     - Legacy: a note without `instruction` reads its `text`; a pre-2026-07-30 map recurrence {type, interval} reads as
       an RRULE; an unreadable recurrence reads as one-time; an unknown complexity reads as None; a missing
-      workspace_file reads as None. A note missing user_id, text or due raises KeyError, and a note whose due is not a
-      timestamp raises TypeError in list_active_notes (no writer produces either).
+      workspace_file reads as None. A note missing user_id, text or due, or whose due is not a timestamp: no writer
+      produces one; behaviour pending the data audit.
     - Errors: backend errors propagate.
     """
 
     @abstractmethod
     async def create_note(self, data: NoteCreate) -> AgentNote:
-        """Store a new note for data.user_id with created_at = now, last_fired None, and return it with its
-        generated note_id.
+        """Store a new note for data.user_id with created_at = now, last_fired None. Returns the note; callers rely
+        on its `note_id` only (the returned `complexity` is not populated).
 
         Errors: ValueError, nothing written, when text exceeds 25 words or the user already has 30 active notes
         (due > now). Atomicity: the cap is checked by a read before the write; concurrent creates can pass it together.

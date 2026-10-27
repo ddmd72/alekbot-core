@@ -67,8 +67,9 @@ async def test_a_non_datetime_expires_at_counts_as_expired(shared):
     assert shared.docs[TASK]["attempt"] == "a2"
 
 
-async def test_a_naive_expires_at_is_utc(shared):
-    """Seeded raw: the client never returns a naive value, the store still reads one as UTC."""
+async def test_a_naive_expires_at_is_read_as_utc_defensive_branch(shared):
+    """A defensive branch, not a contract: the client always returns an aware Timestamp; a naive value exists only
+    when a test seeds one into the fake."""
     shared.docs[TASK] = {"holder": "p-old", "attempt": "a1", "state": "done",
                          "expires_at": (T0 + timedelta(minutes=5)).replace(tzinfo=None)}
     assert await shared.claims.try_claim(TASK, "a2") is False
