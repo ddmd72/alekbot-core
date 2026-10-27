@@ -757,15 +757,17 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # update path only, which never searches; the search service is the adapter's constructor argument, at the
     # system defaults.
     _answer_search_config = SearchConfig()
+    # One adapter instance for both services: the answer service's owner writes, the review's history fallbacks and folds.
+    _review_fact_updates = container.create_fact_management_adapter(SearchEnrichmentService(
+        repository=container.repository,
+        embedding_service=container.embedding_service,
+        keyword_limit=_answer_search_config.DEFAULT_KEYWORD_LIMIT,
+        phrase_one_limit=_answer_search_config.DEFAULT_PHRASE_ONE_LIMIT,
+        phrase_two_limit=_answer_search_config.DEFAULT_PHRASE_TWO_LIMIT,
+        total_limit=_answer_search_config.DEFAULT_SEMANTIC_SEARCH_LIMIT,
+    )) if agent_task_queue else None
     _fact_answer_service = FactAnswerService(
-        fact_updates=container.create_fact_management_adapter(SearchEnrichmentService(
-            repository=container.repository,
-            embedding_service=container.embedding_service,
-            keyword_limit=_answer_search_config.DEFAULT_KEYWORD_LIMIT,
-            phrase_one_limit=_answer_search_config.DEFAULT_PHRASE_ONE_LIMIT,
-            phrase_two_limit=_answer_search_config.DEFAULT_PHRASE_TWO_LIMIT,
-            total_limit=_answer_search_config.DEFAULT_SEMANTIC_SEARCH_LIMIT,
-        )),
+        fact_updates=_review_fact_updates,
         repo=container.repository,
         review_store=container.fact_review_store,
         counters=container.fact_lifecycle_counters,
@@ -804,7 +806,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         interactive=_interactive,
         alert_sink=_alert_webhook,
         run_timeout_s=CONSOLIDATION_CFG.timeout_ms / 1000,
-    ) if (_fact_answer_service is not None and agent_task_queue is not None and _alert_webhook is not None) else None
+        fact_updates=_review_fact_updates,
+        cabinet_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/cabinet?tab=memory",
+    ) if (_fact_answer_service is not None and _review_fact_updates is not None and agent_task_queue is not None
+          and _alert_webhook is not None) else None
 
     # Worker handler — dispatches Cloud Tasks to appropriate handlers
     # Cloud Tasks is at-least-once: claims keyed by task name stop a redelivered task
