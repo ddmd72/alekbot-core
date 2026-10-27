@@ -63,6 +63,27 @@ def at(monkeypatch, delta: timedelta) -> None:
     pin_datetime(monkeypatch, note_module, T0 + delta)
 
 
+def io_trace(monkeypatch) -> list:
+    """Every document read and write attempt, in order, as ("read" | "write", doc id): the race tests require from it
+    that the interleaving they force actually happened (a serial run fails that require). Transaction commits are not
+    writes through a reference, so a transactional race shows as the loser's extra read after its abort."""
+    events: list = []
+
+    def wrap(name, kind):
+        real = getattr(EvalDocRef, name)
+
+        async def traced(self, *args, **kwargs):
+            events.append((kind, self.id))
+            return await real(self, *args, **kwargs)
+
+        monkeypatch.setattr(EvalDocRef, name, traced)
+
+    wrap("get", "read")
+    for name in ("set", "create", "update", "delete"):
+        wrap(name, "write")
+    return events
+
+
 async def create(notes: Notes, user_id="u1", due=DUE, texts=DAD, **extra):
     return await notes.port.create_note(NoteCreate(user_id=user_id, due=due, **texts, **extra))
 
@@ -220,13 +241,15 @@ async def test_update_refuses_foreign_absent_empty_overlong_and_writes_nothing(n
     assert notes.docs == {note.note_id: before}
 
 
-async def test_update_of_a_note_deleted_meanwhile_raises_not_found(notes):
+async def test_update_of_a_note_deleted_meanwhile_raises_not_found(notes, monkeypatch):
     note = await create(notes)
     notes.col.yield_on_get = True     # both read the note; the delete lands first, the update finds it gone
+    events = io_trace(monkeypatch)
     deleted, updated = await asyncio.gather(
         notes.port.delete_note(note.note_id, "u1"),
         notes.port.update_note(NoteUpdate(note_id=note.note_id, user_id="u1", text="call dad tonight")),
         return_exceptions=True)
+    require([kind for kind, _ in events][:2] == ["read", "read"], "both read the note before either wrote")
     assert deleted is True
     assert isinstance(updated, NotFound)
     assert notes.docs == {}
@@ -318,12 +341,14 @@ async def test_reschedule_compares_a_naive_stored_due_as_utc_defensive_branch(no
     assert notes.docs["r1"]["due"] == T0 + timedelta(days=1)
 
 
-async def test_two_concurrent_reschedules_exactly_one_wins(notes):
+async def test_two_concurrent_reschedules_exactly_one_wins(notes, monkeypatch):
     note = await create(notes, due=T0, recurrence="FREQ=DAILY")
     notes.col.yield_on_get = True     # both transactions read the same due; the second commit aborts and re-reads
+    events = io_trace(monkeypatch)
     results = await asyncio.gather(
         notes.port.reschedule_if_due_at(note.note_id, T0, T0 + timedelta(days=1), T0),
         notes.port.reschedule_if_due_at(note.note_id, T0, T0 + timedelta(days=2), T0 + timedelta(seconds=1)))
+    require(events.count(("read", note.note_id)) >= 3, "both read the due before a commit, the loser re-read after its abort")
     assert sorted(results) == [False, True]
     winner = results.index(True)
     stored = notes.docs[note.note_id]
@@ -357,11 +382,13 @@ async def test_claim_one_time_refuses_foreign_moved_absent(notes, case):
     assert notes.docs == {note.note_id: before}
 
 
-async def test_two_concurrent_one_time_claims_exactly_one_wins(notes):
+async def test_two_concurrent_one_time_claims_exactly_one_wins(notes, monkeypatch):
     note = await create(notes, due=T0)
-    notes.col.yield_on_get = True
+    notes.col.yield_on_get = True     # both transactions read the unclaimed note; the second commit aborts and re-reads
+    events = io_trace(monkeypatch)
     results = await asyncio.gather(notes.port.claim_one_time_if_due_at(note.note_id, "u1", T0, T0),
                                    notes.port.claim_one_time_if_due_at(note.note_id, "u1", T0, T0))
+    require(events.count(("read", note.note_id)) >= 3, "both read the note before a commit, the loser re-read after its abort")
     assert sorted(results) == [False, True]
     assert notes.docs[note.note_id]["last_fired"] == T0
 

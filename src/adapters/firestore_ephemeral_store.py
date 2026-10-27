@@ -26,7 +26,8 @@ from ..ports.ephemeral_store import EphemeralStore
 class FirestoreEphemeralStore(EphemeralStore):
     """Collection `{prefix}voice_tickets`, document `{value, expires_at}`; the collection's TTL policy on `expires_at`
     deletes what nobody reads back. A read deletes an expired document with no precondition; `get_and_delete` is one
-    transaction (an always-aborted one raises the SDK's ValueError)."""
+    transaction (an always-aborted one raises the SDK's ValueError). A document without `expires_at` raises KeyError on
+    a read (no writer produces one)."""
 
     def __init__(self, db_client, collection: str) -> None:
         self._db = db_client

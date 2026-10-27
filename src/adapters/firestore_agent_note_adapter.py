@@ -36,7 +36,8 @@ from ..utils.logger import logger
 
 class FirestoreAgentNoteAdapter(AgentNotePort):
     """Collection `{prefix}orchestrator_notes`, no TTL. Queries: `user_id ==` (list_active_notes, filtered and sorted in
-    code) and `due <=` (list_due_reminders), both single-field. The conditional fire methods are one transaction each;
+    code) and `due <=` (list_due_reminders), both single-field. The conditional fire methods are one transaction each
+(a read-modify-write with the precondition, e.g. on `due`);
     a naive stored datetime is read as UTC (defensive: the client returns aware values)."""
 
     MAX_NOTES_PER_USER = 30

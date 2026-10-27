@@ -16,8 +16,8 @@ class DedupStore(ABC):
     Holds for every method:
     - Tenancy: none; keys are global and namespaced by callers (`daily_review:{user}:{date}`, `openai_deep_research:{job}`,
       `telegram::{update_id}`).
-    - Legacy: a mark without a datetime `expires_at` is live for the reader's TTL from its `created_at` (epoch seconds);
-      a mark with neither field is expired.
+    - Legacy: a mark without an expiry is live for the reader's TTL from its creation time; a mark with neither is
+      expired.
     - Errors: backend errors propagate.
     """
 

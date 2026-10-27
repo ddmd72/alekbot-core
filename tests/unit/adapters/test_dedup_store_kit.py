@@ -15,6 +15,7 @@ mark released between the expired read and the rewrite gives way (False).
 import asyncio
 import time
 from datetime import timedelta
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -81,20 +82,39 @@ async def test_a_live_mark_is_refused_and_left_unchanged(stores):
     assert stores.docs()[DAILY_KEY] == before
 
 
+def at_epoch_too(monkeypatch, delta: timedelta) -> None:
+    """Move both clocks the store reads: `datetime.now` and the `time.time()` of its legacy created_at fallback, so a
+    store that judged liveness by its own TTL from created_at would answer differently from one that reads expires_at."""
+    at(monkeypatch, delta)
+    monkeypatch.setattr(dedup_module, "time", SimpleNamespace(time=lambda: (T0 + delta).timestamp()))
+
+
 async def test_liveness_follows_the_docs_own_expires_at_across_writers(stores, monkeypatch):
     """A reader with a shorter TTL than the writer's still sees the mark live until the mark's own expires_at."""
+    at_epoch_too(monkeypatch, timedelta(0))
     one_hour_reader = FirestoreDedupStore(stores.db, SHARED, ttl_seconds=TELEGRAM_TTL)
     await stores.daily.try_mark_processed(DAILY_KEY)
     await stores.webhook.try_mark_processed(WEBHOOK_KEY)
-    at(monkeypatch, timedelta(hours=2))
+    at_epoch_too(monkeypatch, timedelta(hours=2))
     assert await one_hour_reader.is_duplicate(DAILY_KEY) is True
     assert await one_hour_reader.try_mark_processed(DAILY_KEY) is False
-    at(monkeypatch, timedelta(hours=49))
+    at_epoch_too(monkeypatch, timedelta(hours=49))
     assert await stores.daily.is_duplicate(WEBHOOK_KEY) is True
     assert await stores.daily.try_mark_processed(WEBHOOK_KEY) is False
 
 
+async def test_a_reader_with_a_longer_ttl_sees_a_short_mark_expire_on_its_own_expires_at(stores, monkeypatch):
+    """The converse: a 1 h mark read by a 48 h-TTL store is expired after 2 h."""
+    at_epoch_too(monkeypatch, timedelta(0))
+    long_reader = FirestoreDedupStore(stores.db, EVENTS, ttl_seconds=DAILY_TTL)
+    await stores.telegram.try_mark_processed(TELEGRAM_KEY)
+    at_epoch_too(monkeypatch, timedelta(hours=2))
+    assert await long_reader.is_duplicate(TELEGRAM_KEY) is False
+    assert await long_reader.try_mark_processed(TELEGRAM_KEY) is True
+
+
 async def test_concurrent_claims_of_a_missing_mark_exactly_one_wins(stores):
+    stores.db.collection(SHARED).yield_on_get = True     # a claim that read before writing would let every caller through
     results = await asyncio.gather(*(stores.webhook.try_mark_processed(WEBHOOK_KEY) for _ in range(4)))
     assert sorted(results) == [False, False, False, True]
     assert list(stores.docs()) == [WEBHOOK_KEY]

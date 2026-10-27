@@ -21,7 +21,7 @@ class AgentNotePort(ABC):
       nothing. list_due_reminders and reschedule_if_due_at are cross-user (the fire tick only).
     - Ids: a note id is unique across all users and never reused for another note (P11-G1-2: today two notes created in
       the same millisecond share one id and the second replaces the first).
-    - Times: every datetime returned is aware UTC.
+    - Times: every datetime read back from the store is aware UTC.
     - Legacy: a note without `instruction` reads its `text`; a pre-2026-07-30 map recurrence {type, interval} reads as
       an RRULE; an unreadable recurrence reads as one-time; an unknown complexity reads as None; a missing
       workspace_file reads as None. A note missing user_id, text or due, or whose due is not a timestamp: no writer
@@ -65,8 +65,9 @@ class AgentNotePort(ABC):
         """
         Return all notes for the user where due > as_of (not yet fired).
         Ordered by created_at ASC (oldest first → stable order in prompt).
-        No limit (the 30-note cap bounds it). An `as_of` in the past returns
-        every note of the user, including fired one-time notes awaiting deletion.
+        No limit (the 30-note cap bounds it). An `as_of` before every due (the
+        epoch) returns every note of the user, including fired one-time notes
+        awaiting deletion.
         """
 
     @abstractmethod
@@ -94,8 +95,7 @@ class AgentNotePort(ABC):
         it). Caller MUST treat False as "skip — someone else owns it".
 
         Idempotency primitive — replaces the unconditional ``reschedule``
-        method. Implemented via Firestore transaction with read-modify-write
-        precondition on ``due``.
+        method.
 
         No ownership check. Absent note or empty id: False. Of concurrent
         callers with the same ``expected_due`` exactly one gets True.

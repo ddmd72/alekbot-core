@@ -20,6 +20,7 @@ from src.adapters.firestore_dedup_store import FirestoreDedupStore
 from src.adapters.firestore_task_claim_store import FirestoreTaskClaimStore
 from src.ports.task_claim_store import TaskClaimStore
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
+from tests.support.redelivery_world import require
 from tests.support.firestore_eval import EvalDb, EvalDocRef
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
@@ -47,6 +48,26 @@ class Shared:
 def at(monkeypatch, delta: timedelta = timedelta(0)) -> None:
     for module in (claim_module, dedup_module):
         pin_datetime(monkeypatch, module, T0 + delta)
+
+
+def io_trace(monkeypatch) -> list:
+    """Every document read and write attempt, in order, as ("read" | "write", doc id): the race tests require from it
+    that the interleaving they force actually happened (a serial run fails that require)."""
+    events: list = []
+
+    def wrap(name, kind):
+        real = getattr(EvalDocRef, name)
+
+        async def traced(self, *args, **kwargs):
+            events.append((kind, self.id))
+            return await real(self, *args, **kwargs)
+
+        monkeypatch.setattr(EvalDocRef, name, traced)
+
+    wrap("get", "read")
+    for name in ("set", "create", "update", "delete"):
+        wrap(name, "write")
+    return events
 
 
 @pytest.fixture
@@ -96,17 +117,23 @@ async def test_mark_done_restarts_the_window_from_the_finish(shared, monkeypatch
     assert await shared.claims.try_claim(TASK, "a2") is False
 
 
-async def test_mark_done_lost_to_a_takeover_changes_nothing(shared):
+async def test_mark_done_lost_to_a_takeover_changes_nothing(shared, monkeypatch):
     assert await shared.claims.try_claim(TASK, "a1") is True
     shared.col.yield_on_get = True      # both read the a1 claim; the takeover writes first, mark_done's precondition fails
+    events = io_trace(monkeypatch)
     await asyncio.gather(shared.claims.try_claim(TASK, "a2"), shared.claims.mark_done(TASK, "a1"))
+    # the takeover's create meets the a1 claim, then both read it before either writes
+    require([kind for kind, _ in events][:3] == ["write", "read", "read"], "both read the a1 claim before either wrote")
     assert shared.docs[TASK]["attempt"] == "a2" and shared.docs[TASK]["state"] == "running"
 
 
-async def test_release_lost_to_a_takeover_keeps_the_new_claim(shared):
+async def test_release_lost_to_a_takeover_keeps_the_new_claim(shared, monkeypatch):
     assert await shared.claims.try_claim(TASK, "a1") is True
     shared.col.yield_on_get = True      # both read the a1 claim; the takeover writes first, release's precondition fails
+    events = io_trace(monkeypatch)
     await asyncio.gather(shared.claims.try_claim(TASK, "a2"), shared.claims.release(TASK, "a1"))
+    # the takeover's create meets the a1 claim, then both read it before either writes
+    require([kind for kind, _ in events][:3] == ["write", "read", "read"], "both read the a1 claim before either wrote")
     assert shared.docs[TASK]["attempt"] == "a2" and shared.docs[TASK]["state"] == "running"
 
 

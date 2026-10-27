@@ -49,9 +49,10 @@ class Accounts:
         return self.docs[account_id]["usage"]
 
     async def seed(self, account_id: str = "a1", daily_cost: float = 1.0, reset_at=T0, **fields) -> BillingAccount:
-        usage = AccountUsageStats(total_tokens=0, total_cost=daily_cost, total_requests=3, daily_tokens=0,
+        # every cost counter distinct, so a misread transform result cannot pass for the daily one
+        usage = AccountUsageStats(total_tokens=0, total_cost=40.0, total_requests=3, daily_tokens=0,
                                   daily_cost=daily_cost, daily_reset_at=reset_at, monthly_tokens=0,
-                                  monthly_cost=daily_cost, monthly_reset_at=reset_at)
+                                  monthly_cost=12.0, monthly_reset_at=reset_at)
         account = BillingAccount(account_id=account_id, usage=usage, iam_policy={"u1": "owner"},
                                  created_at=T0, updated_at=T0, **fields)
         return await self.repo.create_account(account)
@@ -61,6 +62,27 @@ class Accounts:
 def accounts(monkeypatch):
     pin_datetime(monkeypatch, account_module, T0)
     return Accounts()
+
+
+def io_trace(monkeypatch) -> list:
+    """Every document read and write attempt, in order, as ("read" | "write", doc id): the race tests require from it
+    that the interleaving they force actually happened (a serial run fails that require). Transaction commits are not
+    writes through a reference, so a transactional race shows as the loser's extra read after its abort."""
+    events: list = []
+
+    def wrap(name, kind):
+        real = getattr(EvalDocRef, name)
+
+        async def traced(self, *args, **kwargs):
+            events.append((kind, self.id))
+            return await real(self, *args, **kwargs)
+
+        monkeypatch.setattr(EvalDocRef, name, traced)
+
+    wrap("get", "read")
+    for name in ("set", "create", "update", "delete"):
+        wrap(name, "write")
+    return events
 
 
 def test_the_adapter_implements_the_port():
@@ -135,11 +157,13 @@ async def test_an_increment_whose_write_reports_no_transforms_estimates_from_the
     assert accounts.usage()["daily_cost"] == pytest.approx(1.5)
 
 
-async def test_concurrent_increments_get_disjoint_slices_and_cross_once(accounts):
+async def test_concurrent_increments_get_disjoint_slices_and_cross_once(accounts, monkeypatch):
     await accounts.seed(daily_cost=4.0)
     accounts.db.collection(ACCOUNTS).yield_on_get = True     # every caller pre-reads 4.0 before any update lands
+    events = io_trace(monkeypatch)
     results = await asyncio.gather(*(accounts.repo.increment_account_usage("a1", tokens=10, cost=0.4)
                                      for _ in range(5)))
+    require([kind for kind, _ in events][:5] == ["read"] * 5, "every caller read before any increment landed")
     slices = sorted((r.daily_cost_before, r.daily_cost_after) for r in results)
     assert slices[0][0] == pytest.approx(4.0) and slices[-1][1] == pytest.approx(6.0)
     assert all(a[1] == pytest.approx(b[0]) for a, b in zip(slices, slices[1:]))
@@ -172,18 +196,18 @@ async def test_increment_of_an_absent_account_raises_and_writes_nothing(accounts
     assert accounts.docs == {}
 
 
-async def test_an_account_deleted_before_the_rotation_transaction_raises(accounts):
+async def test_an_account_deleted_before_the_rotation_transaction_raises(accounts, monkeypatch):
     await accounts.seed(daily_cost=1.0, reset_at=T0 - timedelta(days=1))
     accounts.db.collection(ACCOUNTS).yield_on_get = True
-    deleted = []
+    events = io_trace(monkeypatch)
 
     async def delete_meanwhile():
         await accounts.db.collection(ACCOUNTS).document("a1").delete()
-        deleted.append(True)
 
     increment, _ = await asyncio.gather(accounts.repo.increment_account_usage("a1", tokens=10, cost=0.1),
                                         delete_meanwhile(), return_exceptions=True)
-    require(deleted == [True], "the delete landed between the pre-read and the rotation transaction")
+    require([kind for kind, _ in events][:3] == ["read", "write", "read"],
+            "the delete landed between the pre-read and the rotation transaction's read")
     assert isinstance(increment, ValueError)
     assert accounts.docs == {}
 
@@ -214,6 +238,7 @@ async def test_update_account_keeps_usage_counted_since_the_callers_read(account
     """Flips when update_account writes every field but usage (`update(model_dump(exclude={"usage"}))`)."""
     await accounts.seed(daily_cost=1.0)
     account = await accounts.repo.get_account("a1")                # the invite flow's read
+    require(account.usage.daily_cost == pytest.approx(1.0), "the read predates the increment")
     await accounts.repo.increment_account_usage("a1", tokens=100, cost=0.5)
     require(accounts.usage()["daily_cost"] == pytest.approx(1.5), "the increment landed after the read")
     account.iam_policy = {**account.iam_policy, "u2": "member"}

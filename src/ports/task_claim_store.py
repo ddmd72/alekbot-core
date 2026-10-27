@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 
 class TaskClaimStore(ABC):
     """A lease on one Cloud Tasks task (key = the task name, `[A-Za-z0-9_-]`, never containing `:`), held by one
-    delivery attempt. It may share storage with the DedupStore marks; the key spaces are disjoint.
+    delivery attempt. Its key space is disjoint from the DedupStore marks'.
 
     - Expiry: a claim is expired when now >= its expiry (a missing or non-datetime expiry counts as expired).
     - Tenancy: none (task names are global).
@@ -32,13 +32,13 @@ class TaskClaimStore(ABC):
     async def mark_done(self, key: str, attempt: str) -> None:
         """Mark the task finished, only if ``attempt`` still holds the claim.
 
-        Restarts the expiry: a done claim is a duplicate for ttl seconds from the finish. Lost to a takeover
-        (precondition failed): changes nothing, no error.
+        Restarts the expiry: a done claim is a duplicate for ttl seconds from the finish. Lost to a takeover:
+        changes nothing, no error.
         """
 
     @abstractmethod
     async def release(self, key: str, attempt: str) -> None:
         """Delete the claim so a retry runs, only if ``attempt`` still holds it.
 
-        Lost to a takeover: changes nothing, no error. Errors other than the lost precondition raise.
+        Lost to a takeover: changes nothing, no error. Other errors raise.
         """

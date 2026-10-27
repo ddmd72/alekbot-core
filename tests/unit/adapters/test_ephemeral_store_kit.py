@@ -176,7 +176,15 @@ async def test_late_answer_is_claimed_once_in_either_order(store, order):
         await _relay_keeps_the_answer(store.store, claims)
     else:
         store.col.yield_on_get = True
-        await asyncio.gather(_relay_keeps_the_answer(store.store, claims), _relay_abandons(store.store, claims))
+        trace = []
+
+        async def traced(name, flow):
+            trace.append(("start", name))
+            await flow(store.store, claims)
+            trace.append(("end", name))
+
+        await asyncio.gather(traced("keep", _relay_keeps_the_answer), traced("abandon", _relay_abandons))
+        require([event for event, _ in trace[:2]] == ["start", "start"], "the two relay flows overlapped")
     assert [c["output"] for c in claims if c is not None] == ["the garden meeting is on Thursday"]
     assert "voice_delegation_result:t1:call1" not in store.docs
 
@@ -189,14 +197,6 @@ async def test_keys_are_global(store):
     await store.store.set(MARKER_KEY, {"in_flight": True, "call_id": "c2"}, ttl_s=300)
     assert await store.store.get(MARKER_KEY) == {"in_flight": True, "call_id": "c2"}
     assert list(store.docs) == [MARKER_KEY]
-
-
-@pytest.mark.parametrize("method", ["get", "get_and_delete"])
-async def test_a_legacy_document_without_expires_at_raises_on_read(store, method):
-    store.docs[TICKET_KEY] = {"value": dict(TICKET)}
-    with pytest.raises(KeyError):
-        await getattr(store.store, method)(TICKET_KEY)
-    assert store.docs[TICKET_KEY] == {"value": TICKET}
 
 
 @pytest.mark.parametrize("method", ["get", "get_and_delete"])

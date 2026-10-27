@@ -20,8 +20,8 @@ class EphemeralStore(ABC):
       now is past it. An expired value reads as absent and is removed lazily.
     - Consistency: a completed write is seen by every later read, from any instance. The late-answer handshake
       (result first, abandon check second, and the reverse) relies on this.
-    - Legacy: an entry stored without an expiry raises KeyError on every read and is kept; one without a value that has
-      expired reads as absent (no writer produces either).
+    - Legacy: an entry stored without an expiry: no writer produces one; behaviour pending the data audit. One without a
+      value that has expired reads as absent.
     - Errors: backend errors propagate; nothing is swallowed.
     """
 
@@ -53,5 +53,5 @@ class EphemeralStore(ABC):
         delegation answer (posted exactly once); a plain get()-then-delete() would be a TOCTOU race between callers.
 
         Expired: the entry is removed and None is returned. Absent: None, and nothing is written.
-        Errors: backend errors propagate; contention that never resolves raises ValueError (the SDK's).
+        Errors: backend errors propagate; contention that never resolves raises.
         """
