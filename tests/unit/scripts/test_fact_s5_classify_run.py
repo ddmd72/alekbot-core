@@ -24,6 +24,7 @@ INSTRUCTION_TEXT = (ROOT / "scripts" / "migration" / "fact_s5_classify_instructi
 FACTS = "eval_domain_facts"
 NOW = datetime(2026, 10, 27, 12, 0, tzinfo=timezone.utc)
 REPORTED = datetime(2026, 10, 1, 9, 30, tzinfo=timezone.utc)
+TRIAL_REPORTED = datetime(2026, 4, 1, 9, 30, tzinfo=timezone.utc)
 OWNER_ACC = "acc-owner-0001"
 OTHER_ACC = "acc-other-0002"
 ORPHAN_ACC = "acc-orphan-0003"
@@ -76,7 +77,7 @@ async def seed(db, docs):
 
 def standard_docs():
     return [
-        raw("f-car", CAR), raw("f-conf", CONF), raw("f-pipe", PIPE), raw("f-guitar", GUITAR), raw("f-trial", TRIAL),
+        raw("f-car", CAR), raw("f-conf", CONF), raw("f-pipe", PIPE), raw("f-guitar", GUITAR), raw("f-trial", TRIAL, reported_date=TRIAL_REPORTED),
         raw("f-maria", MARIA), raw("f-rule", RULE, domain="AGENT_DIRECTIVE"),
         raw("f-system", SYSTEM_TEXT, account="SYSTEM"), raw("f-decided", DECIDED_TEXT, expiry_kind="none"),
         raw("f-orphan", ORPHAN_TEXT, account=ORPHAN_ACC), raw("f-noacc", "no account text", account=""),
@@ -242,6 +243,18 @@ async def test_unsure_is_none_and_the_report_says_what_the_model_said(tmp_path):
     report = (tmp_path / "fact_s5_classify_20261027T120000Z_report.md").read_text(encoding="utf-8")
     row = next(line for line in report.split("\n") if CAR in line)
     assert "unsure (model said date)" in row and "no real date" in row
+
+
+async def test_a_date_before_the_reported_day_becomes_none_with_its_flag(tmp_path):
+    db = await standard_db()
+    table = {**ANSWERS, CAR: {"kind": "date", "date": "2026-09-20", "reason": "already over"}}   # reported 2026-10-01
+    result, _ = await run(db, scripted(table), tmp_path)
+    entry = by_fact(plan_of(tmp_path))["f-car"]
+    assert entry["source"] == "past_at_report" and entry["fields"] == {"expiry_kind": "none", "ttl_days": None, "expires_at": None}
+    report = (tmp_path / "fact_s5_classify_20261027T120000Z_report.md").read_text(encoding="utf-8")
+    row = next(line for line in report.split("\n") if CAR in line)
+    assert "past at report (model said date 2026-09-20)" in row
+    assert result["by_source"]["past_at_report"] == 1
 
 
 async def test_unsure_on_a_horizon_type_fact_is_flagged_and_none(tmp_path):

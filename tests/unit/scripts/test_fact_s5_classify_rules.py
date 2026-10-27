@@ -33,7 +33,7 @@ from scripts.migration.fact_s5_classify_rules import (
     fact_line,
     fallback_decision,
     is_pinned,
-    judge,
+    judge as judge_in_zone,
     pinned_decision,
     plan_document,
     plan_entry,
@@ -63,6 +63,12 @@ RULES_PY = ROOT / "scripts" / "migration" / "fact_s5_classify_rules.py"
 
 BERLIN_TZ = timezone(timedelta(hours=2))
 NOW = datetime(2026, 10, 27, 12, 0, tzinfo=timezone.utc)
+
+
+def judge(fact, raw, zone=BERLIN):
+    return judge_in_zone(fact, raw, zone)
+
+
 REPORTED = datetime(2026, 10, 1, 9, 30, tzinfo=timezone.utc)
 
 
@@ -128,6 +134,8 @@ def test_the_instruction_file():
     assert "A horizon needs no date in the content: it counts from reported_date." in text
     assert "A fact whose reported_date is null cannot take a horizon." in text
     assert "Never invent a date" in text
+    assert "A date that was already past on its reported_date is a past event: {kind: none}." in text
+    assert "whose date passed after its reported_date keeps {kind: date}" in text
     assert "ttl_days" not in text
     assert not any(line.strip().startswith("Today:") for line in text.splitlines())
 
@@ -299,7 +307,7 @@ def test_judge_date_horizon_none():
 
 
 def test_judge_does_not_refuse_a_date_in_the_past():
-    decision, code = judge(scanned(), RawDecision("date", "2019-01-02", None, False, "long gone"))
+    decision, code = judge(scanned(reported_date=datetime(2018, 12, 1, tzinfo=timezone.utc)), RawDecision("date", "2019-01-02", None, False, "long gone"))
     assert code is None and decision.expiry.on == date(2019, 1, 2)
 
 
@@ -347,7 +355,7 @@ def test_planned_fields_for_a_horizon_and_none():
 
 
 def test_a_date_long_before_now_is_planned_and_its_row_is_due_now():
-    fact = scanned()
+    fact = scanned(reported_date=datetime(2025, 1, 1, tzinfo=timezone.utc))
     decision, _ = judge(fact, RawDecision("date", "2025-03-01", None, False, "an old plan"))
     fields = planned_fields(decision, fact, BERLIN)
     row = report_row(fact, decision, fields, BERLIN, NOW)
@@ -533,7 +541,7 @@ def test_already_applied_compares_expires_at_in_utc():
 # ---- report and summary -----------------------------------------------------------------------------------------------
 
 def decided_rows():
-    due = scanned("due", text="a trip | long\nago")
+    due = scanned("due", text="a trip | long\nago", reported_date=datetime(2024, 12, 1, tzinfo=timezone.utc))
     soon = scanned("soon", text="b horizon fact")
     quiet = scanned("quiet", text="a stable fact")
     d_due, _ = judge(due, RawDecision("date", "2025-01-01", None, False, "old plan"))
@@ -552,7 +560,7 @@ def test_report_row_columns():
         "account", "text", "domain", "type", "temporal_class", "reported", "decision", "expires_at", "due_now", "reason", "flag",
     ]
     assert due["account"] == "acc-1234" and due["decision"] == "date 2025-01-01" and due["due_now"] is True
-    assert due["expires_at"] == "2025-01-02 Thu 00:00 CET" and due["reported"] == "2026-10-01 Thu"
+    assert due["expires_at"] == "2025-01-02 Thu 00:00 CET" and due["reported"] == "2024-12-01 Sun"
     assert due["flag"] == "" and due["reason"] == "old plan"
     assert soon["decision"] == "horizon 90 d" and soon["due_now"] is False and soon["expires_at"].startswith("2026-12-30")
     assert quiet["decision"] == "none" and quiet["expires_at"] == "" and quiet["flag"] == "pinned" and quiet["due_now"] is False
@@ -605,7 +613,7 @@ def test_summary_counts_on_a_mixed_set():
     )
     assert result["decided"] == 5
     assert result["by_kind"] == {"date": 1, "horizon": 1, "none": 3}
-    assert result["by_source"] == {"model": 2, "pinned": 1, "unsure": 1, "fallback": 1}
+    assert result["by_source"] == {"model": 2, "pinned": 1, "unsure": 1, "past_at_report": 0, "fallback": 1}
     assert result["fallback_by_code"] == {"no_reported_date": 1}
     assert result["due_now"] == 1
     assert result["skipped"] == {"system_account": 2, "already_decided": 1}
@@ -668,3 +676,44 @@ def test_the_module_imports_only_stdlib_and_src_domain():
 def rules_stdlib():
     import sys
     return set(sys.stdlib_module_names)
+
+
+# ---- a date already past when stated ----------------------------------------------------------------------------------
+
+def test_a_date_before_the_reported_local_day_is_a_past_event():
+    fact = scanned(reported_date=datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc))
+    decision, code = judge(fact, RawDecision("date", "2026-10-09", None, False, "it took place"))
+    assert code is None
+    assert decision.source == rules.SOURCE_PAST == "past_at_report" and decision.expiry == EXPIRY_NONE
+    assert decision.model_kind == "date 2026-10-09" and decision.reason == "it took place"
+    fields = planned_fields(decision, fact, BERLIN)
+    assert fields == {"expiry_kind": ExpiryKind.NONE, "ttl_days": None, "expires_at": None}
+    row = report_row(fact, decision, fields, BERLIN, NOW)
+    assert row["flag"] == "past at report (model said date 2026-10-09)" and row["decision"] == "none"
+    assert trail_reason(decision.source, decision.code) == "expiry classified at S5 (past_at_report)"
+    assert not is_revive_reason("expiry classified at S5 (past_at_report)")
+
+
+def test_a_date_on_or_after_the_reported_local_day_is_kept():
+    fact = scanned(reported_date=datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc))
+    for day in ("2026-10-10", "2026-10-11"):
+        decision, _ = judge(fact, RawDecision("date", day, None, False, ""))
+        assert decision.source == SOURCE_MODEL and decision.expiry.on.isoformat() == day
+
+
+def test_the_reported_day_is_read_in_the_owner_zone():
+    at_utc_midnight = scanned(reported_date=UTC_MIDNIGHT.utc)             # 2026-10-27 00:00 UTC
+    # In New York it is still the 26th, so the 26th is the reported day and is kept; in Helsinki it is the 27th.
+    assert judge(at_utc_midnight, RawDecision("date", "2026-10-26", None, False, ""), "America/New_York")[0].source == SOURCE_MODEL
+    assert judge(at_utc_midnight, RawDecision("date", "2026-10-26", None, False, ""), HELSINKI)[0].source == rules.SOURCE_PAST
+
+
+def test_a_past_at_report_entry_survives_the_plan_and_the_apply_checks():
+    fact = scanned()
+    decision = Decision("f1", rules.SOURCE_PAST, EXPIRY_NONE, None, "date 2020-01-01", "")
+    entry = plan_entry(decision, fact, planned_fields(decision, fact, BERLIN))
+    [back] = read_plan(json.loads(json.dumps(build_doc([entry]))), "facts")
+    assert back == entry and back.source == "past_at_report"
+    mine = lifecycle_event(NOW, FactState.CURRENT, FactState.CURRENT, "migration", trail_reason(entry.source, entry.code))
+    assert already_applied(entry, stored_fact(entry, [mine]))
+    assert summary([decision], {"f1": planned_fields(decision, fact, BERLIN)}, [], [], NOW)["by_source"]["past_at_report"] == 1
