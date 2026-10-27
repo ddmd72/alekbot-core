@@ -10,9 +10,9 @@ owner would read them (gate G6).
 """
 import uuid
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, AbstractSet, Callable, Dict, List, Optional, Sequence
+from typing import Any, AbstractSet, Callable, Dict, List, Mapping, Optional, Sequence
 
 from scripts.consolidation.review_bench_cases import (
     FactCase,
@@ -23,7 +23,7 @@ from scripts.consolidation.review_bench_cases import (
 )
 from scripts.consolidation.review_kit_stand_ins import ReviewStandIns, build_review_service
 from scripts.consolidation.s3_dry_run_kit import DryRunKit
-from src.domain.entities import FactEntity
+from src.domain.entities import FactEntity, FactState
 from src.domain.fact_lifecycle import expiry_pinned
 from src.domain.fact_review_frame import question_text
 from src.domain.fact_review_reasons import is_revive_reason, is_rewrite_reason, queued_reason
@@ -38,7 +38,7 @@ from src.infrastructure.agent_manifest import Intent
 # What the gates read.
 REVIEW_TASK = Intent.REVIEW_STALE_FACTS     # the payload task the service routes
 REVIEW_PASS = PassActor.REVIEW.value        # the pass label in the kit's report (the actor of the pass)
-G5_MAX_TURNS = 13                           # of the review's 15
+G5_MAX_TURNS = 12                          # of the review's 15
 
 # Plan §8's two reference points (a batch of 2 facts, a batch of 20), at the upper figure of each range, as dollars: the
 # review's cost is near-linear in the batch. Sonnet / Opus, per run.
@@ -95,10 +95,11 @@ class Staged:
     live: List[str]              # live facts staged by the bench
     cases: Dict[str, str]        # case key -> fact id
     questions: Dict[str, str]    # case key -> question id (the reply cases)
+    listed: Dict[str, str] = field(default_factory=dict)   # `--stage-ids`: fact id -> its state before it was staged stale
 
     @property
     def batch(self) -> int:
-        return min(REVIEW_BATCH, self.legacy + len(self.live) + len(self.cases))
+        return min(REVIEW_BATCH, self.legacy + len(self.live) + len(self.cases) + len(self.listed))
 
 
 async def seed_owner(
@@ -154,14 +155,76 @@ async def _ask_about(
     return question_id
 
 
+async def stage_listed(
+    kit: DryRunKit, ids: Sequence[str], plan: Optional[Mapping[str, Mapping[str, Any]]], now: datetime,
+) -> Dict[str, str]:
+    """`--stage-ids`: each fact in `ids`, in ANY state, becomes a current copy in the kit's overlay (the live store is
+    untouched) with the plan's expiry fields when it has an entry, then is staled with the janitor's fields at `now`.
+    Returns id -> the state it had. A fact with no document raises ValueError before anything is staged."""
+    if len(set(ids)) > REVIEW_BATCH:
+        raise ValueError(f"--stage-ids names {len(set(ids))} facts: one review batch holds {REVIEW_BATCH}")
+    originals: Dict[str, FactEntity] = {}
+    for fact_id in dict.fromkeys(ids):
+        stored = await kit.repo.get_fact_by_id(fact_id)
+        if stored is None:
+            raise ValueError(f"fact {fact_id} has no document: it cannot be staged")
+        originals[fact_id] = stored
+    for fact_id, stored in originals.items():
+        update: Dict[str, Any] = {
+            "state": FactState.CURRENT, "is_current": True, "valid_to": None, "stale_since": None, "superseded_by": None,
+        }
+        update.update((plan or {}).get(fact_id, {}))
+        kit.repo.seed_document(FactEntity.model_validate({**stored.model_dump(), **update}))
+    await kit.stage_stale(list(originals), at=now)
+    return {fact_id: stored.state.value for fact_id, stored in originals.items()}
+
+
+def _chosen_outcome(doc: Optional[FactEntity], asked: Optional[str]) -> str:
+    """What the review chose for a listed fact, from its final overlay document and the question asked about it."""
+    if asked is not None:
+        return f"ask:{asked}"
+    if doc is None or doc.state is FactState.STALE:
+        return "left stale"
+    if doc.state is not FactState.CURRENT:
+        return {"archived": "archive", "invalidated": "invalidate", "superseded": "supersede"}[doc.state.value]
+    reason = (doc.lifecycle_events[-1].get("reason") if doc.lifecycle_events else None)
+    if is_rewrite_reason(reason):
+        return "history" if str(reason).startswith("rewritten as history") else "rewrite"
+    return "revive" if is_revive_reason(reason) else "current"
+
+
+def listed_report(kit: DryRunKit, bundle: ReviewStandIns, listed: Mapping[str, str]) -> List[Dict[str, Any]]:
+    """Per listed fact: id, its state before staging, text, the outcome the review chose and the reason line on the
+    fact's trail (code-built from the basis the model named; the review's tools carry no free-text reason)."""
+    questions = {q.fact_id: q for q in bundle.store.questions()}
+    rows: List[Dict[str, Any]] = []
+    for fact_id, original in listed.items():
+        doc = kit.repo.overlay_document(fact_id)
+        asked = questions.get(fact_id)
+        last = doc.lifecycle_events[-1] if doc is not None and doc.lifecycle_events else {}
+        rows.append({
+            "fact_id": fact_id, "original_state": original, "text": doc.text if doc is not None else None,
+            "outcome": _chosen_outcome(doc, asked.question if asked is not None else None),
+            "final_state": doc.state.value if doc is not None else None,
+            "actor": last.get("actor"), "reason": last.get("reason"),
+        })
+    return rows
+
+
 async def stage_inputs(
     kit: DryRunKit, bundle: ReviewStandIns, *, user_id: str, account_id: str, requested: int, now: datetime,
-    channel: Optional[str],
+    channel: Optional[str], listed_ids: Optional[Sequence[str]] = None,
+    expiry_plan: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Staged:
     """The run's input: the live stale facts as they are, the seeded cases (documents in the overlay, staled with the
     janitor's fields at the moment each went stale; the reply cases also asked and answered), and `requested` live
-    facts staled at `now`, the review's clock. Nothing is written live."""
+    facts staled at `now`, the review's clock. Nothing is written live.
+
+    With `listed_ids` (`--stage-ids`) the input is exactly those facts (any state, with the plan's expiry): no seeded
+    case and no other live fact is staged; the live stale facts still come first by age."""
     legacy = len(await kit.repo.get_stale_facts(account_id))
+    if listed_ids is not None:
+        return Staged(legacy, [], {}, {}, await stage_listed(kit, listed_ids, expiry_plan, now))
     stale, replies = stale_cases(now), reply_cases(now)
     cases: Dict[str, str] = {}
     questions: Dict[str, str] = {}
@@ -228,6 +291,8 @@ async def run_once(
     mirror: Optional[str],
     fixed: Optional[LanguageCode] = None,
     clock: Callable[[], datetime] = utc_now,
+    listed_ids: Optional[Sequence[str]] = None,
+    expiry_plan: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """One review run on the kit from the live state: a fresh overlay, fresh stand-ins, the live open questions and review
     state loaded, the owner's channel and language seeded, the input staged, then `FactReviewService.run` (daily)."""
@@ -244,7 +309,7 @@ async def run_once(
     now = bundle.clock()
     staged = await stage_inputs(
         kit, bundle, user_id=user_id, account_id=account_id, requested=requested, now=now,
-        channel=channel.channel_id if channel is not None else None,
+        channel=channel.channel_id if channel is not None else None, listed_ids=listed_ids, expiry_plan=expiry_plan,
     )
     service = build_review_service(
         kit, bundle, agent=handles.agent, account_repo=handles.account_repo, user_repo=handles.user_repo,
@@ -253,7 +318,9 @@ async def run_once(
     result = await service.run(user_id, account_id, "daily")
     outcomes = await run_outcomes(kit, staged.cases)
     state = bundle.store.state(account_id)
+    listed_rows = {"listed": listed_report(kit, bundle, staged.listed)} if listed_ids is not None else {}
     return {
+        **listed_rows,
         "result": result,
         "owner": owner,
         "batch": staged.batch,
@@ -283,7 +350,9 @@ def run_counts(run: Dict[str, Any], kit: DryRunKit) -> List[str]:
     rows = kit.rows[run["rows"][0]:run["rows"][1]]
     actions = Counter(f"{r['action']}:{r['status']}" for r in rows)
     questions = Counter(q["status"] for q in run["stand_ins"]["questions"])
+    listed = Counter(row["outcome"] for row in run.get("listed", []))
     return [
+        *(["listed facts: " + ", ".join(f"{k} {v}" for k, v in sorted(listed.items()))] if "listed" in run else []),
         f"run {run['result'].get('status')}: batch {run['batch']} of {run['legacy']} stale + {run['live_staged']} staged "
         f"+ {len(run['cases'])} cases",
         "writes: " + (", ".join(f"{k} {v}" for k, v in sorted(actions.items())) or "none"),

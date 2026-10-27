@@ -16,7 +16,12 @@ platform and the notifier are the kit's stand-ins; the agent is the kit-installe
     python scripts/consolidation/test_review_dryrun.py --s3-kit --stage 4 --runs 1 --fixed uk
 
 `--stage N` is a ceiling: one batch holds at most 20 facts, so the live facts staged are what is left after the live stale
-facts and the seeded cases. `--runs R` replays the same input R times, each from the live state (the model's dispersion).
+facts and the seeded cases. `--stage-ids PATH` replaces all of that staging: exactly the facts listed in the file (ids, one per line, a file under
+scripts/memory/) are staged stale in the kit's overlay, in ANY state (archived, invalidated, current), with `--expiry-plan
+PLAN` (a classify plan JSON under scripts/memory/) applying each fact's expiry fields to its staged copy. The report then
+has `listed`: per fact its id, original state, text, the outcome chosen (ask:<kind>, history, revive, rewrite, archive,
+invalidate, supersede, left stale) and the reason line of its trail (code-built from the basis the model named).
+`--runs R` replays the same input R times, each from the live state (the model's dispersion).
 `--mirror CODE` turns mirror mode on with no fixed language and checks the language the review reports from the owner's own
 recent messages against CODE (it is the owner's messages that decide, not the flag).
 `--fixed CODE` (uk, en, fr, es; not with `--mirror`) turns mirror mode off with that fixed language: the pass then
@@ -38,6 +43,7 @@ from typing import Any, List, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from scripts.consolidation.plan_inputs import SelectionError, read_expiry_plan, read_ids  # noqa: E402
 from scripts.consolidation.review_bench_support import (  # noqa: E402
     cost_banner,
     estimate_usd,
@@ -60,6 +66,11 @@ def build_parser() -> argparse.ArgumentParser:
     language.add_argument("--mirror", default=None, metavar="CODE", help="mirror mode on; the language expected from his messages")
     language.add_argument("--fixed", default=None, choices=[c.value for c in LanguageCode],
                           help="mirror mode off, with this fixed language (the pass translates into it)")
+    ap.add_argument("--stage-ids", type=Path, default=None, metavar="PATH",
+                    help="stage exactly the facts listed in this file (ids, one per line, under scripts/memory/; any state) "
+                         "as stale in the kit's overlay; no seeded case, no other live fact")
+    ap.add_argument("--expiry-plan", type=Path, default=None, metavar="PLAN",
+                    help="with --stage-ids: a classify plan JSON under scripts/memory/; its expiry fields go on the staged copies")
     ap.add_argument("--user-id", default=os.getenv("DEV_USER_ID"))
     ap.add_argument("--account-id", default=os.getenv("DEV_ACCOUNT_ID"))
     add_s3_arguments(ap)
@@ -67,9 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def header(args: Any) -> List[str]:
-    estimate = estimate_usd(REVIEW_BATCH, args.runs)
+    listed = getattr(args, "listed_ids", None)
+    estimate = estimate_usd(len(listed) if listed is not None else REVIEW_BATCH, args.runs)
+    staging = f"--stage-ids {len(listed)} fact(s)" if listed is not None else f"--stage {args.stage}"
     return cost_banner(
-        f"MEMORY REVIEW ON THE S3 KIT: {args.runs} run(s), --stage {args.stage}, up to {REVIEW_BATCH} facts a batch",
+        f"MEMORY REVIEW ON THE S3 KIT: {args.runs} run(s), {staging}, up to {REVIEW_BATCH} facts a batch",
         f"about ${estimate['sonnet']:.2f} on Sonnet, ${estimate['opus']:.2f} on Opus",
     )
 
@@ -85,6 +98,7 @@ async def run_s3_kit(handles: Any, live_state: Any, args: Any) -> None:
             run = await run_once(
                 kit, handles, live_state, user_id=args.user_id, account_id=args.account_id, requested=args.stage,
                 mirror=args.mirror, fixed=LanguageCode(args.fixed) if args.fixed else None,
+                listed_ids=getattr(args, "listed_ids", None), expiry_plan=getattr(args, "plan", None),
             )
             extra["runs"].append(run)
             print(f"\n  run {number}")
@@ -99,6 +113,22 @@ async def main_s3_kit(args: Any) -> None:
     await run_s3_kit(handles, FirestoreNotificationStateAdapter(handles.db, handles.config["ENVIRONMENT_CONFIG"]), args)
 
 
+def read_staging_inputs(ap: argparse.ArgumentParser, args: Any) -> None:
+    """`--stage-ids` / `--expiry-plan` files into `args.listed_ids` and `args.plan` (a refusal ends the run before any spend)."""
+    args.listed_ids, args.plan = None, None
+    if args.expiry_plan is not None and args.stage_ids is None:
+        ap.error("--expiry-plan goes with --stage-ids")
+    try:
+        if args.stage_ids is not None:
+            args.listed_ids = read_ids(args.stage_ids)
+            if not args.listed_ids or len(args.listed_ids) > REVIEW_BATCH:
+                ap.error(f"--stage-ids names {len(args.listed_ids)} facts: one review batch holds 1 to {REVIEW_BATCH}")
+        if args.expiry_plan is not None:
+            args.plan = read_expiry_plan(args.expiry_plan)
+    except (SelectionError, OSError) as exc:
+        ap.error(str(exc))
+
+
 def main(argv: Optional[List[str]] = None) -> None:
     load_env()
     ap = build_parser()
@@ -109,6 +139,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         ap.error("set DEV_USER_ID / DEV_ACCOUNT_ID in the dotenv file")
     if args.runs < 1 or args.stage < 0:
         ap.error("--runs is at least 1 and --stage at least 0")
+    read_staging_inputs(ap, args)
     asyncio.run(main_s3_kit(args))
 
 
