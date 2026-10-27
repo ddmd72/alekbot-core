@@ -9,6 +9,7 @@
 - From S4 the janitor also enqueues the account's review (log-only mode too) and raises the review's alerts; the rules are in `fact_review_and_owner_questions.md`.
 - **No Firestore TTL policy on the facts collection, and none on the two lifecycle collections.** A TTL policy deletes documents whose field has passed; an `expires_at` here is a decision to stale a fact, so a policy would erase the owner's memory on the day it expired. A test walks the tree and fails on such a policy for these collections; the docs state the rule in words and never spell the command.
 - Owner rule for S5 and S4: when unsure, keep the fact.
+- **S5 classify** (the one-time expiry decision for the facts stored before the switch): a standalone owner-run script, not a pass of the consolidation agent. One structured call per batch of 25 through the live consolidation agent, with the taxonomy's `temporal_classes` and `expiry` blocks verbatim plus a reviewable instruction file kept outside the prompt snapshot. When unsure the fact gets `none`. A dry run writes a report the owner reads; apply then replays that plan exactly, under the change token recorded at the scan, and skips a fact changed since. The janitor stays log-only until the owner's word.
 
 **Rejected.**
 - Deleting or archiving an expired fact: a review decides what an expired fact is now (S4), and a wrong horizon must be reversible.
@@ -16,5 +17,7 @@
 - Refusing a due horizon on cleanup passes: 467 of 563 live facts have a `reported_date` older than 90 days, so almost every Stage 2a rewrite would have been refused; the floor sends the fact to review soon instead.
 - A janitor lease: per fact the `update_time` precondition makes a double write a conflict. Only the per-run cap could be exceeded by two overlapping runs, and the short run guard (a document taken in a transaction, no fencing of single writes) closes that.
 - A Scheduler retry: a retry after the 180 s deadline could overlap a running sweep.
+- Classify through the consolidation tool loop: its born-due rule refuses a past `date` and its cleanup floor invents an `expires_at` for a due horizon, and its `reported_date` rules move a field classify must leave alone; those are exactly the facts classify exists to find.
+- The classify instruction as a prompt-snapshot token: `snapshot_pull --check` would report it as drift, and the next pull would delete it as a file gone from the store.
 
 **Revise when** a second janitor writer appears, the run takes longer than the 5-minute guard, or the pool cap of 50 proves too low or high after the S5 log-only period.

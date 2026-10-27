@@ -62,8 +62,8 @@ make logs-tail         # Live tail logs
 make fetch-logs [K=300] # Pull last K logs to alek_debug.log (grep locally — see Debugging below)
 ```
 
-**Which test command to run when** (while editing, before a commit, before a push, before calling work done, the mutation
-done-check): the table in `tests/CLAUDE.md` § Running is the one place that says it.
+**Which test command to run when** (while editing, before a commit, before a push, before calling work done): the table
+in `tests/CLAUDE.md` § Running is the one place that says it.
 
 Lint + format via `ruff` (`make lint` / `make format`, config in `ruff.toml`). `make check` runs
 `ruff check src/ main.py indexer_main.py job_main.py relay_main.py sandbox_main.py` and `mypy --strict` on `src/domain` + `src/ports` (`mypy.ini`; adapters stay
@@ -88,7 +88,7 @@ and `make ci` runs everything once. Locally `--durations=25` is an advisory repo
 coverage; it selects by executed Python lines, so it can miss a test whose input is a data file or code run in a child
 process: an intermediate commit adds the tests of any data folder it touched, and **`make check` once before a push is mandatory** (`tests/CLAUDE.md`). **One full suite at a time on a
 machine:** a session with `-n` (or 2000+ tests) takes `fcntl.flock` on a file in the temp dir, prints the holder and
-waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that rise, or are lowered per the rule in `tests/CLAUDE.md` (reason line + reviewer OK) (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; every package is done when `python -m tests.support.semantic_mutants` leaves every mutant killed or ruled equivalent by the reviewer. Lint scope is `src/` and the root entry points (default high-signal ruleset: pyflakes + pycodestyle
+waits up to `PYTEST_LOCK_TIMEOUT_S` (1800); `PYTEST_SUITE_LOCK=0` turns it off. **Test rules (P2, 2026-10-22), in `tests/CLAUDE.md`:** fakes with semantics over call assertions; `tests/unit/` is offline (a network guard refuses non-loopback `connect()`, a tripwire refuses `google.auth.default` and non-local gRPC channels); `make ci` enforces per-layer branch-coverage floors that rise, or are lowered per the rule in `tests/CLAUDE.md` (reason line + reviewer OK) (`scripts/check_coverage_layers.py`) and a shrinking allowlist of src modules no test imports; mutation testing is the weekly cloud run only (`Mutation survivors`, owner decision 2026-10-27): a package registers its modules in `tests/support/mutation_targets.py` and runs no local mutation pass (`tests/CLAUDE.md`). Lint scope is `src/` and the root entry points (default high-signal ruleset: pyflakes + pycodestyle
 errors). `ruff format` exists as a dev convenience but is not enforced in CI — the codebase is not
 mass-reformatted.
 
@@ -531,24 +531,33 @@ user parts `p.consolidation_text or p.text` (`consolidation_text` is legacy, see
 **Loop alerts:** a pass that hits the turn cap without a final report posts a 🚨 ops alert (`AlertSinkPort`);
 while `CONSOLIDATION_STATS_ALERTS` (`os.getenv`, default on, temporary since 2026-10-20) is on, every pass
 posts a 📊 stats line. See `decisions/sonnet55_adaptive_thinking_stall.md`.
-**Expiry and the janitor (Facts S3, built, ships with S5):** the consolidator's writes carry an `expiry` (`date` / `horizon` /
+**Expiry and the janitor (Facts S3, deployed 2026-10-27):** the consolidator's writes carry an `expiry` (`date` / `horizon` /
 `none`) that code turns into `expires_at` in the owner's timezone (map §2.7); a daily zero-LLM janitor (`fact_lifecycle_sweep`)
-stales due facts behind a breaker and is **log-only until S5**; never a TTL policy on the facts collection (a test scans the
+stales due facts behind a breaker and is **log-only until the owner switches it on (S5)**; never a TTL policy on the facts collection (a test scans the
 tree). See `decisions/fact_expiry_and_janitor.md`, map §5.5.
 
-**Memory review (Facts S4, built, ships with S5)** — what a stale fact becomes. The janitor (above) enqueues a `fact_review`
+**Memory review (Facts S4, deployed 2026-10-27)** — what a stale fact becomes. The janitor (above) enqueues a `fact_review`
 task per account (daily by default, `fact_review_interval_days`, log-only mode too). `FactReviewService` runs it under the
 memory-write lease: housekeeping, timeouts in code, selection of up to 20 stale facts, one pass of the consolidation agent
 with its own profile (`consolidation_review`; tools `update_fact`, `ask_owner`, `count_words` only; `FactReviewScope` refuses
-a revive, rewrite or invalidation without evidence or the owner's reply), then the send of the next question and the weekly
-digest. What the pass cannot decide becomes a **question**, one fact per message, written by code (never a model), one at a
-time, at most 5 a day, to the primary chat only. The fact is **current while its question waits**; the janitor skips it and
+a revive, rewrite or invalidation without evidence or the owner's reply, an archive without the owner's reply, and
+`date_passed` except on an `as_history` rewrite), then the send of the next question and the weekly digest. **P2 revised
+(owner 2026-10-27; built, not deployed; the janitor stays off until it ships):** a fact whose date passed is rewritten as
+**history** (a version at `archival` priority, `expiry none`: happened / planned and did not happen / planned, unknown), never
+archived; archive is kept for noise, an end the owner states and the Cabinet (RFC §9 "P2 revised"). What the pass cannot
+decide becomes a **question** of a kind (`still_true`, `happened`, `renewed`, `paid`; options per kind, the answer texts
+written by the pass at ask time), one fact per message, written by code (never a model), one at a time, at most 5 a day, to
+the primary chat only. A routine invoice with no payment confirmation is not asked in chat: it becomes "payment not
+confirmed" history and a **digest question**, listed in the weekly digest and answered in bulk in the Cabinet; a fine or a
+debt is asked `paid`. The fact is **current while its question waits**; the janitor skips it and
 counts it in the *pool* (stale + waiting facts, capped at 50). An answer is only a reply to the question message, a Slack
 button (`POST /slack/interactivity`: signature checked on the raw bytes first, the work done by the `interactive_choice` task)
 or a Cabinet click, applied by `FactAnswerService` (no model, no lease, same preconditions); words are read by the review once.
-Silence for 14 days applies the question's fallback (a revive gets twice the last window, 14 to 365 days). Closed
-questions and digest claims carry `purge_after` for a Firestore TTL policy; never `expires_at`. The 15 message texts are UI
-strings (uk, en, fr, es) or model-written under code checks. Text the bot did not write (a stored fact, a translated
+Silence for 14 days applies the question's fallback: revive (twice the last window, 14 to 365 days), archive (noise only),
+or history (the question's "unknown" text written through the typed path under the `timeout` actor and listed in the
+digest; a failed write is retried on the next runs, at most 3 attempts, then the question closes `resolved_elsewhere`).
+Closed questions and digest claims carry `purge_after` for a Firestore TTL policy; never `expires_at`. The 28 message texts are UI
+strings (uk, en, fr, es) or model-written under code checks; every text the pass writes is translated like the quotes. Text the bot did not write (a stored fact, a translated
 acknowledgement) is sent literally (`send_literal`, `notify_raw(literal=True)`). **Cloud Tasks names dedupe only while a task is
 queued or running and for about an hour after**: a name like `fact-review:<account>:<local date>` merges runs that start close
 together; "once per local day" for close runs only. The daily rhythm comes from `review_due`, not from the name. See

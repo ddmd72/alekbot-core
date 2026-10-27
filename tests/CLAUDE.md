@@ -12,8 +12,7 @@ This table is the one place that says which test command to run when. Other docs
 | An intermediate commit | `make test-affected` + the tests of the files you changed; **when the commit touches a data file or code run in a child process, also that folder's tests** (e.g. `pytest tests/unit/prompts` for `prompts_snapshot/`) | what testmon selects, plus the tests it cannot see |
 | Before a push | `make check`, **once per push**, on the branch head (not per commit; owner, 2026-10-27) | lint + mypy + the unit suite without `slow` tests + the offline G2 test |
 | Before you call a package done, and whenever you report coverage | `make ci` | everything in `make check` + `slow` tests + the coverage gates (per file and per layer); CI runs exactly this on every PR |
-| Package done-check (RFC §5) | `python -m tests.support.semantic_mutants --module <m> --tests $(python -m tests.support.mutation_targets --tests-for <m>) --equivalent <file>` (the test list is computed, see "Mutation check") | every mutant killed or ruled equivalent by the reviewer |
-| Wiring done-check (P9) | `python -m tests.support.semantic_mutants --module <src.composition.X or main> --operators wiring --equivalent tests/unit/composition/wiring_equivalent_mutants.txt --tests <the P9 test files>` | the command is spelled out in "The production graph" below; about 9-10 s per mutant |
+| Mutation check, by hand, optional | `python -m tests.support.semantic_mutants --module <m> --tests $(python -m tests.support.mutation_targets --tests-for <m>) [--operators wiring] [--equivalent <file>]` | one module's mutants; nobody has to run it: the weekly run is the only mutation pass ("Mutation check" below; wiring command in "The production graph") |
 | Only when the task needs them | `make test-integration`, `make test-e2e-all` | some integration tests and all e2e tests call real services |
 | Fake against the real thing (P5) | `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pytest tests/unit/support/test_firestore_parity.py`, and `make test-cloud` | the parity scenarios on the Firestore emulator, and on the test database (see below) |
 | Docs-only PR | (automatic) | `make ci` is skipped (F3; also on a push to `main` and in the `timing` job; dependencies are still installed, the PII gate and the CI Slack notice still run). Docs: every file under `docs/` (any extension), `CLAUDE.md` anywhere except under `src/skills/` (nothing there is docs), root `*.md`, `.github/**/*.md`. The doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`) still run; the meta-test is an equality check (fails when an unlisted test reads docs and when a listed one stops). Known gap: a test reading a root `*.md` or a `CLAUDE.md` is not detected |
@@ -151,8 +150,8 @@ The main service's non-web objects are built by `build_application_graph(config,
     instance of the class) or `Class.attr*` (any instance may be None; refused on adapter, service, handler and composition classes);
   - `wiring_instance_ledger.txt`: `<module.Class> <count>  # <reason> <evidence>`; a count above 1 names where each instance is built.
 - **Mutation** (`wire-drop` replaces one argument or dict value with `None`; `call-skip` drops one `attach_*`, `register_*` or `set_*`
-  call). The done-check for the builder and `main.py`, one run per module, in the background (a full set of about 950 mutants takes about
-  2.5-3 hours; each mutant runs the graph tests in a child process):
+  call). The weekly run covers the builder and `main.py` (registered targets). By hand and optional, one run per module, in the background
+  (a full set of about 950 mutants takes about 2.5-3 hours; each mutant runs the graph tests in a child process):
   ```bash
   for m in src.composition.application_graph main src.composition.service_container src.composition.user_agent_factory \
            src.composition.slack_adapter_factory src.composition.telegram_adapter_factory; do
@@ -166,10 +165,10 @@ The main service's non-web objects are built by `build_application_graph(config,
   an enqueue literal in dead code; the rollback env switches; the wiring of `indexer_main`, `job_main`, `relay_main`; a secret that is
   empty in Secret Manager; the four env reads made at import time, before the seal. They are listed in the RFC's "Built (P9)" note.
 
-## Mutation check: the done-criterion for a package
+## Mutation check: the weekly run
 
-Every package ends with this check: it is done when every mutant of its modules is killed by its tests or
-ruled equivalent by the reviewer. Mutants: a dropped `order_by`/`where`/`select` field/`model_dump` field/dict key of a
+Mutation testing is the weekly cloud run, nothing else (owner decision 2026-10-27: mutant hunting during normal work only adds cost). Between
+runs the code lives with its survivors; no package waits for a clean local pass. The driver below stays as a tool anyone may run by hand. Mutants: a dropped `order_by`/`where`/`select` field/`model_dump` field/dict key of a
 written document/write/forwarded keyword, a flipped sort direction, an `except` that returns success.
 
 ```bash
@@ -185,20 +184,20 @@ Statuses: killed, survived, equivalent, and `error` (the selected tests never lo
 not a pass). `except-success` skips handlers that only log and already return the success value. Slow tests run in the mutant
 children (`RUN_SLOW_TESTS=1`).
 
-A survivor means the tests do not notice that defect: write the assertion that does. Run that new test on the
-**unmutated** code first: it passes → `test-gap` (the code was right, a check was missing); it fails → `code-bug` (a real
-defect in current code: fix it in the same task, under the reviewer rule; a run with no `src/` authority, such as the
-weekly routine, pins it as a strict xfail `MUT-D<n>` instead). Each survivor's class goes into the owner's mutation
-ledger (kept outside this repository; the `delivery` skill names it), so the mutants' yield in real defects is measurable. `--equivalent` takes
-`key  # reason` lines (the 8-hex key in the report) and is the reviewer's tool, never the implementer's.
+A survivor means the tests do not notice that defect: write the assertion that does (the Monday routine does it from the weekly
+report). Run that new test on the **unmutated** code first: it passes → `test-gap` (the code was right, a check was missing); it
+fails → `code-bug` (a real defect in current code; the weekly routine has no `src/` authority, so it pins it as a strict xfail
+`MUT-D<n>` and tells the owner). Each survivor's class goes into the owner's mutation ledger (kept outside this repository; the
+`delivery` skill names it), so the mutants' yield in real defects is measurable. `--equivalent` takes `key  # reason` lines (the
+8-hex key in the report) and is the reviewer's tool, never the implementer's.
 
 Registering a package's modules in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", graph_group=False, extra=())` in `TARGETS`)
-is part of "package done"; a unit test fails when a `*_equivalent_mutants.txt` file has no registered target. The driver takes
+is part of "package done" (the run itself is not); a unit test fails when a `*_equivalent_mutants.txt` file has no registered target. The driver takes
 `--report PATH` (JSON) and `--no-fail` (exit 0 whatever survived). The `Mutation survivors` workflow (`.github/workflows/mutation.yml`,
 Sunday 02:00 UTC and `workflow_dispatch` with an optional `module`) runs one job per registered module with `--report --no-fail` and
 uploads `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`). `survivors.md` lists every registered module: `missing` when a job produced no report (baseline failed, timed out), `partial (N of M)` when the job was cut; the report is rewritten after each mutant. The verdict is also printed as check-run annotations (≤ 10 per step, 4000 chars each) for the cloud reader. Survivors are read by the Monday routine (a
-scheduled cloud session), which writes the killing assertion or proposes an `equivalent` line, as a test-only PR. The local run above
-stays as the done-check, once per package.
+scheduled cloud session), which writes the killing assertion or proposes an `equivalent` line, as a test-only PR. A local run is optional and
+never a condition of "done".
 
 ## Clock tests (P16)
 
@@ -210,6 +209,30 @@ stays as the done-check, once per package.
 - Example zones are Europe/Berlin, Europe/Helsinki and America/New_York.
 - A new test with a DST or month boundary uses this harness. Open defects are strict xfails with their `P16-D<n>` id
   (`TEST_COVERAGE_SYSTEMIC_RFC.md` -> "Built (P16)").
+
+## Redelivery and interleaving (P15)
+
+- **`tests/support/redelivery_world.py`** is the world for any handler-level redelivery test: the real `WorkerHandler`, claim store, note
+  store, `UserNotificationService`, `RemindersService` and `GcpTaskQueue` on one `EvalDb`, a scripted agent turn and recording channels, plus
+  `deliver`, `deliver_twice` (two task names the claim does not merge, in sequence or under `asyncio.gather`; `names=None` sends Scheduler
+  bodies), `deliver_with_retry` (a retry is delivered only when Cloud Tasks would: a raise, `>= 500` or `429`) and `Rendezvous`. Use it; do not
+  build a second one.
+- **Inside a strict `xfail(raises=AssertionError)` every precondition uses `require(cond, what)` or `Twice.reraise()`** (they raise
+  `PreconditionFailed`, which is not the expected failure), never a bare `assert`: a bare `assert` precondition would turn a broken setup into a
+  silent XFAIL. Only the outcome assertion is a bare `assert`. A gathered pin takes `require(rv.met and not rv.stalled, ...)` as its race evidence.
+  The exception: when the flipping fix keeps the losing delivery away from the race point (a lease, so it never reads), `rv.met` would flip with the
+  fix, and the precondition is `twice.overlapped and rv.reached.is_set() and not rv.stalled` (P15-D5, first test of
+  `test_worker_redelivery_chains.py`).
+- **A gathered test forces its interleaving and asserts that it happened.** `collection.yield_on_get = True` interleaves document reads only; a
+  query never yields, so a race whose read is a query takes a `Rendezvous` (or an `asyncio.Event` gate). A serial run must fail the assertion that
+  the interleaving happened.
+- **Agent instance state** (`tests/unit/agents/test_agent_request_state_meta.py`): agent instances are per-user singletons serving concurrent
+  executions, so a write to shared state outside `__init__` (`self.*`, class state, module-level names) in any class under `src/` that derives from
+  `BaseAgent` needs a line in `tests/unit/agents/agent_instance_writes_allowlist.txt` with a reason (`constructor-only`, `lazy-cache`,
+  `cross-request-by-design`, `port-call`, `dead-write`, `defect:<id>`) and evidence; `constructor-only`, `lazy-cache` and the lock are checked
+  mechanically, and a lock is never a reason alone: it comes only as `cross-request-by-design+lock-guarded` or `lazy-cache+lock-guarded`. A line is
+  `<path>::<Class>.<method>::<key>  # <reason> <evidence, at least two words>` (the key is the dotted attribute path up to the first subscript or call,
+  no line numbers). It fails both ways (a write with no line; a line whose write is gone).
 
 ## Markers and the machine lock (P1, `tests/plugins/`)
 

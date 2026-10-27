@@ -1,0 +1,18 @@
+// One-time classify of stored facts (Facts S5). Read together with the temporal_classes and expiry blocks above.
+classify_stored_facts {
+
+    task: "Each fact below is already stored in the owner's memory and has no expiry decision. Give each one the expiry it should have had when it was stored, decided from its content with the answers, the precedence rule and the kinds_table above. You only record decisions: nothing is created, rewritten, merged, discarded or retired."
+
+    as_of: [
+        "Decide each fact as of its reported_date, the day the owner last stated it. Today's date plays no part.",
+        "Of the date_rules, only the range, month and year rule applies here. The rules that compare a date with Today, that ask you to DISCARD, to rewrite a fact as history, or to lengthen a horizon so that it ends after Today do not apply.",
+        "A planned event, deadline or validity whose date passed after its reported_date keeps {kind: date} with its own last day. A date that was already past on its reported_date is a past event: {kind: none}. A horizon is the number of days you would have given on its reported_date.",
+        "A decision that is already due is a correct answer: the system then hands that fact to the memory review, which decides what it is now."
+    ]
+
+    unsure: "When you are not sure which answer fits, or a date answer would need a date the content does not state or clearly imply, answer {kind: none} with unsure: true. A horizon needs no date in the content: it counts from reported_date. Never invent a date the content does not state or clearly imply."
+
+    fields: "Each fact has a number n, its text, domain, temporal_class, tags, metadata, context, reported_date and created_at (local days in the owner's timezone). Dates in the text, tags and metadata are content. A fact whose reported_date is null cannot take a horizon."
+
+    answer: "Exactly one decision per fact, by its number n: kind (date, horizon or none); date (YYYY-MM-DD, with kind date only: the last day the fact holds); days (a whole number from 1 to 36500, with kind horizon only); unsure (true or false); reason (one short line in English: the kinds_table row that applies and the words of the fact that decide it)."
+}
