@@ -21,6 +21,10 @@ scripts/memory/) are staged stale in the kit's overlay, in ANY state (archived, 
 PLAN` (a classify plan JSON under scripts/memory/) applying each fact's expiry fields to its staged copy. The report then
 has `listed`: per fact its id, original state, text, the outcome chosen (ask:<kind>, history, revive, rewrite, archive,
 invalidate, supersede, left stale) and the reason line of its trail (code-built from the basis the model named).
+The batches run one after another (the overlay keeps earlier results) until no listed fact is left stale, at most
+`--max-passes N` (default 6); one budget (the kit's cap) covers the whole run. The report names the passes run and any
+fact left; a human file `<report name>_listed.md` lists each fact's original state and text, outcome, the text or question
+it would write, and the reason.
 `--runs R` replays the same input R times, each from the live state (the model's dispersion).
 `--mirror CODE` turns mirror mode on with no fixed language and checks the language the review reports from the owner's own
 recent messages against CODE (it is the owner's messages that decide, not the flag).
@@ -45,7 +49,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from scripts.consolidation.plan_inputs import SelectionError, read_expiry_plan, read_ids  # noqa: E402
 from scripts.consolidation.review_bench_support import (  # noqa: E402
+    DEFAULT_MAX_PASSES,
     cost_banner,
+    listed_markdown,
     estimate_usd,
     review_summary,
     run_counts,
@@ -69,6 +75,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--stage-ids", type=Path, default=None, metavar="PATH",
                     help="stage exactly the facts listed in this file (ids, one per line, under scripts/memory/; any state) "
                          "as stale in the kit's overlay; no seeded case, no other live fact")
+    ap.add_argument("--max-passes", type=int, default=DEFAULT_MAX_PASSES, metavar="N",
+                    help="with --stage-ids: at most this many review passes over the staged facts (each the normal batch)")
     ap.add_argument("--expiry-plan", type=Path, default=None, metavar="PLAN",
                     help="with --stage-ids: a classify plan JSON under scripts/memory/; its expiry fields go on the staged copies")
     ap.add_argument("--user-id", default=os.getenv("DEV_USER_ID"))
@@ -79,8 +87,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def header(args: Any) -> List[str]:
     listed = getattr(args, "listed_ids", None)
-    estimate = estimate_usd(len(listed) if listed is not None else REVIEW_BATCH, args.runs)
-    staging = f"--stage-ids {len(listed)} fact(s)" if listed is not None else f"--stage {args.stage}"
+    passes = min(getattr(args, "max_passes", 1), -(-len(listed) // REVIEW_BATCH)) if listed is not None else 1
+    estimate = estimate_usd(min(len(listed), REVIEW_BATCH) if listed is not None else REVIEW_BATCH, args.runs * passes)
+    staging = (f"--stage-ids {len(listed)} fact(s) in up to {getattr(args, 'max_passes', 1)} pass(es)"
+               if listed is not None else f"--stage {args.stage}")
     return cost_banner(
         f"MEMORY REVIEW ON THE S3 KIT: {args.runs} run(s), {staging}, up to {REVIEW_BATCH} facts a batch",
         f"about ${estimate['sonnet']:.2f} on Sonnet, ${estimate['opus']:.2f} on Opus",
@@ -92,6 +102,7 @@ async def run_s3_kit(handles: Any, live_state: Any, args: Any) -> None:
         print(line)
     async with kit_session(
         handles, args, args.user_id, args.account_id, BENCH, with_review=True, summary=review_summary,
+        sidecar=lambda extra: listed_markdown(extra.get("runs", [])),
     ) as (kit, extra):
         extra.update({"model": handles.agent.model_name, "stage": args.stage, "mirror": args.mirror, "fixed": args.fixed, "runs": []})
         for number in range(1, args.runs + 1):
@@ -99,6 +110,7 @@ async def run_s3_kit(handles: Any, live_state: Any, args: Any) -> None:
                 kit, handles, live_state, user_id=args.user_id, account_id=args.account_id, requested=args.stage,
                 mirror=args.mirror, fixed=LanguageCode(args.fixed) if args.fixed else None,
                 listed_ids=getattr(args, "listed_ids", None), expiry_plan=getattr(args, "plan", None),
+                max_passes=getattr(args, "max_passes", DEFAULT_MAX_PASSES),
             )
             extra["runs"].append(run)
             print(f"\n  run {number}")
@@ -116,13 +128,15 @@ async def main_s3_kit(args: Any) -> None:
 def read_staging_inputs(ap: argparse.ArgumentParser, args: Any) -> None:
     """`--stage-ids` / `--expiry-plan` files into `args.listed_ids` and `args.plan` (a refusal ends the run before any spend)."""
     args.listed_ids, args.plan = None, None
+    if args.max_passes < 1:
+        ap.error("--max-passes is at least 1")
     if args.expiry_plan is not None and args.stage_ids is None:
         ap.error("--expiry-plan goes with --stage-ids")
     try:
         if args.stage_ids is not None:
             args.listed_ids = read_ids(args.stage_ids)
-            if not args.listed_ids or len(args.listed_ids) > REVIEW_BATCH:
-                ap.error(f"--stage-ids names {len(args.listed_ids)} facts: one review batch holds 1 to {REVIEW_BATCH}")
+            if not args.listed_ids:
+                ap.error("--stage-ids names no fact")
         if args.expiry_plan is not None:
             args.plan = read_expiry_plan(args.expiry_plan)
     except (SelectionError, OSError) as exc:

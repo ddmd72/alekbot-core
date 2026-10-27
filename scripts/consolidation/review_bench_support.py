@@ -25,7 +25,10 @@ from scripts.consolidation.review_kit_stand_ins import ReviewStandIns, build_rev
 from scripts.consolidation.s3_dry_run_kit import DryRunKit
 from src.domain.entities import FactEntity, FactState
 from src.domain.fact_lifecycle import expiry_pinned
+from src.domain.fact_review_ask import AskRequest
 from src.domain.fact_review_frame import question_text
+from src.domain.fact_review_outcome import ReviewDecision
+from src.domain.fact_review_result import FactReviewResult, decode_review_result
 from src.domain.fact_review_reasons import is_revive_reason, is_rewrite_reason, queued_reason
 from src.domain.fact_review_rules import REVIEW_BATCH, QUEUE_ACCEPTS, queued_fields, queued_question
 from src.domain.fact_review_state import FactReviewState
@@ -96,6 +99,7 @@ class Staged:
     cases: Dict[str, str]        # case key -> fact id
     questions: Dict[str, str]    # case key -> question id (the reply cases)
     listed: Dict[str, str] = field(default_factory=dict)   # `--stage-ids`: fact id -> its state before it was staged stale
+    listed_texts: Dict[str, str] = field(default_factory=dict)   # ... and its text as staged
 
     @property
     def batch(self) -> int:
@@ -161,8 +165,6 @@ async def stage_listed(
     """`--stage-ids`: each fact in `ids`, in ANY state, becomes a current copy in the kit's overlay (the live store is
     untouched) with the plan's expiry fields when it has an entry, then is staled with the janitor's fields at `now`.
     Returns id -> the state it had. A fact with no document raises ValueError before anything is staged."""
-    if len(set(ids)) > REVIEW_BATCH:
-        raise ValueError(f"--stage-ids names {len(set(ids))} facts: one review batch holds {REVIEW_BATCH}")
     originals: Dict[str, FactEntity] = {}
     for fact_id in dict.fromkeys(ids):
         stored = await kit.repo.get_fact_by_id(fact_id)
@@ -193,22 +195,124 @@ def _chosen_outcome(doc: Optional[FactEntity], asked: Optional[str]) -> str:
     return "revive" if is_revive_reason(reason) else "current"
 
 
-def listed_report(kit: DryRunKit, bundle: ReviewStandIns, listed: Mapping[str, str]) -> List[Dict[str, Any]]:
-    """Per listed fact: id, its state before staging, text, the outcome the review chose and the reason line on the
-    fact's trail (code-built from the basis the model named; the review's tools carry no free-text reason)."""
+DEFAULT_MAX_PASSES = 6
+
+
+def _pass_results(service: Any, start: int) -> List[FactReviewResult]:
+    """The results of the review passes the service routed so far (from `start`), as the agent returned them."""
+    return [
+        decode_review_result(response.result) for response in service._coordinator.responses[start:]
+        if getattr(response, "result", None) is not None
+    ]
+
+
+def undecided(kit: DryRunKit, listed: Mapping[str, str], results: Sequence[FactReviewResult]) -> List[str]:
+    """The listed facts the review has not decided yet: still stale in the overlay and neither asked nor folded into an ask."""
+    taken = {fold for result in results for ask in result.asks for fold in (ask.fact_id, *ask.folds)}
+    return [
+        fact_id for fact_id in listed
+        if fact_id not in taken and (doc := kit.repo.overlay_document(fact_id)) is not None and doc.state is FactState.STALE
+    ]
+
+
+def _what_it_writes(
+    kit: DryRunKit, doc: Optional[FactEntity], decision: Optional[ReviewDecision], ask: Optional[AskRequest],
+    stored: Optional[Any], folded_into: Optional[str],
+) -> Dict[str, Any]:
+    """What the review would write for one listed fact: the new text of a rewrite or history (where happened / did not
+    happen / unknown is visible), an ask's kind with every pre-written text, the fallback and the folds, a supersede's
+    successor, an archive's or invalidate's basis."""
+    if folded_into is not None:
+        return {"folded_into": folded_into}
+    if ask is not None or stored is not None:   # no ask: a question code queued for a fact left undecided twice
+        question: Dict[str, Any] = {
+            "question": ask.question if ask is not None else stored.question,
+            "texts": dict(ask.texts) if ask is not None else dict(stored.texts),
+            "fallback": ask.fallback if ask is not None else stored.fallback,
+            "fallback_date": ask.fallback_date.isoformat() if ask is not None and ask.fallback_date is not None else None,
+            "noise": ask.noise if ask is not None else stored.noise, "folds": list(ask.folds) if ask is not None else [],
+        }
+        if stored is not None:
+            question.update({"delivery": stored.delivery, "origin": stored.origin, "stored_texts": dict(stored.texts)})
+        return question
+    if decision is not None and decision.outcome in ("rewritten", "revived"):
+        written = kit.repo.overlay_document(decision.written_id)
+        return {
+            "new_text": written.text if written is not None else None, "written_id": decision.written_id,
+            "as_history": decision.as_history, "basis": decision.basis_kind,
+        }
+    if doc is None:
+        return {}
+    if doc.state is FactState.SUPERSEDED:
+        successor = kit.repo.overlay_document(doc.superseded_by) if doc.superseded_by else None
+        return {"successor_id": doc.superseded_by, "successor_text": successor.text if successor is not None else None}
+    if doc.state in (FactState.ARCHIVED, FactState.INVALIDATED):
+        return {"basis": decision.basis_kind if decision is not None else None}
+    return {}
+
+
+def listed_report(
+    kit: DryRunKit, bundle: ReviewStandIns, listed: Mapping[str, str], texts: Optional[Mapping[str, str]] = None,
+    results: Sequence[FactReviewResult] = (),
+) -> List[Dict[str, Any]]:
+    """Per listed fact: id, state before staging, original text, the outcome the review chose, WHAT it would write (the
+    new text, the question with its texts, fallback and folds, the successor, the basis) and the code-built reason line
+    of the fact's trail."""
     questions = {q.fact_id: q for q in bundle.store.questions()}
+    decisions = {d.fact_id: d for result in results for d in result.outcomes}
+    asks = {a.fact_id: a for result in results for a in result.asks}
+    folded = {fold: ask.fact_id for result in results for ask in result.asks for fold in ask.folds}
     rows: List[Dict[str, Any]] = []
     for fact_id, original in listed.items():
         doc = kit.repo.overlay_document(fact_id)
         asked = questions.get(fact_id)
         last = doc.lifecycle_events[-1] if doc is not None and doc.lifecycle_events else {}
+        decision = decisions.get(fact_id)
+        if fact_id in folded:
+            outcome = "folded"
+        elif asked is None and decision is not None and decision.outcome in ("rewritten", "revived"):
+            outcome = "revive" if decision.outcome == "revived" else ("history" if decision.as_history else "rewrite")
+        else:
+            outcome = _chosen_outcome(doc, asked.question if asked is not None else None)
         rows.append({
-            "fact_id": fact_id, "original_state": original, "text": doc.text if doc is not None else None,
-            "outcome": _chosen_outcome(doc, asked.question if asked is not None else None),
-            "final_state": doc.state.value if doc is not None else None,
+            "fact_id": fact_id, "original_state": original,
+            "original_text": (texts or {}).get(fact_id, doc.text if doc is not None else None),
+            "text": doc.text if doc is not None else None,
+            "outcome": outcome, "final_state": doc.state.value if doc is not None else None,
+            "writes": _what_it_writes(kit, doc, decision, asks.get(fact_id), asked, folded.get(fact_id)),
             "actor": last.get("actor"), "reason": last.get("reason"),
         })
     return rows
+
+
+def listed_markdown(runs: Sequence[Mapping[str, Any]]) -> Optional[str]:
+    """The human file of a `--stage-ids` run: one block per fact, per run. None when no run listed facts."""
+    runs = [run for run in runs if "listed" in run]
+    if not runs:
+        return None
+    lines = ["# Listed facts: what the review would write", ""]
+    for number, run in enumerate(runs, 1):
+        left = run.get("left_undecided", [])
+        lines += [f"## Run {number}: {run.get('passes_run', 1)} pass(es), {len(left)} fact(s) left undecided", ""]
+        if left:
+            lines += ["Left undecided: " + ", ".join(left), ""]
+        for row in run["listed"]:
+            lines += [f"### {row['fact_id']}", "", f"- Original state: {row['original_state']}",
+                      f"- Original text: {row['original_text']}", f"- Outcome: {row['outcome']}"]
+            writes = row.get("writes") or {}
+            if "new_text" in writes:
+                lines.append(f"- Text it would write: {writes['new_text']}")
+            if "question" in writes:
+                lines.append(f"- Question: {writes['question']} (fallback {writes['fallback']}"
+                             + (", noise" if writes.get("noise") else "") + ")")
+                lines += [f"  - {key}: {text}" for key, text in writes["texts"].items()]
+                if writes["folds"]:
+                    lines.append("  - folds: " + ", ".join(writes["folds"]))
+            for key in ("successor_id", "successor_text", "folded_into", "basis"):
+                if writes.get(key) is not None:
+                    lines.append(f"- {key.replace('_', ' ').capitalize()}: {writes[key]}")
+            lines += [f"- Reason: {row['reason']}", ""]
+    return "\n".join(lines)
 
 
 async def stage_inputs(
@@ -224,7 +328,9 @@ async def stage_inputs(
     case and no other live fact is staged; the live stale facts still come first by age."""
     legacy = len(await kit.repo.get_stale_facts(account_id))
     if listed_ids is not None:
-        return Staged(legacy, [], {}, {}, await stage_listed(kit, listed_ids, expiry_plan, now))
+        states = await stage_listed(kit, listed_ids, expiry_plan, now)
+        texts = {fact_id: kit.repo.overlay_document(fact_id).text for fact_id in states}   # type: ignore[union-attr]
+        return Staged(legacy, [], {}, {}, states, texts)
     stale, replies = stale_cases(now), reply_cases(now)
     cases: Dict[str, str] = {}
     questions: Dict[str, str] = {}
@@ -293,6 +399,7 @@ async def run_once(
     clock: Callable[[], datetime] = utc_now,
     listed_ids: Optional[Sequence[str]] = None,
     expiry_plan: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    max_passes: int = DEFAULT_MAX_PASSES,
 ) -> Dict[str, Any]:
     """One review run on the kit from the live state: a fresh overlay, fresh stand-ins, the live open questions and review
     state loaded, the owner's channel and language seeded, the input staged, then `FactReviewService.run` (daily)."""
@@ -316,9 +423,21 @@ async def run_once(
     )
     first_row, first_pass, first_post = len(kit.rows), len(kit.passes), len(kit.sink.posts)
     result = await service.run(user_id, account_id, "daily")
+    passes_run = 1
+    results = _pass_results(service, 0) if listed_ids is not None else []
+    while listed_ids is not None and result.get("status") == "completed" and passes_run < max_passes:
+        if not undecided(kit, staged.listed, results):
+            break
+        result = await service.run(user_id, account_id, "daily")   # the next batch over the overlay, which keeps the results
+        passes_run += 1
+        results = _pass_results(service, 0)
     outcomes = await run_outcomes(kit, staged.cases)
     state = bundle.store.state(account_id)
-    listed_rows = {"listed": listed_report(kit, bundle, staged.listed)} if listed_ids is not None else {}
+    left = undecided(kit, staged.listed, results) if listed_ids is not None else []
+    listed_rows = {
+        "listed": listed_report(kit, bundle, staged.listed, staged.listed_texts, results),
+        "passes_run": passes_run, "max_passes": max_passes, "left_undecided": left,
+    } if listed_ids is not None else {}
     return {
         **listed_rows,
         "result": result,
@@ -353,6 +472,8 @@ def run_counts(run: Dict[str, Any], kit: DryRunKit) -> List[str]:
     listed = Counter(row["outcome"] for row in run.get("listed", []))
     return [
         *(["listed facts: " + ", ".join(f"{k} {v}" for k, v in sorted(listed.items()))] if "listed" in run else []),
+        *([f"review passes: {run['passes_run']} of at most {run['max_passes']}; left undecided: {len(run['left_undecided'])}"]
+          if "left_undecided" in run else []),
         f"run {run['result'].get('status')}: batch {run['batch']} of {run['legacy']} stale + {run['live_staged']} staged "
         f"+ {len(run['cases'])} cases",
         "writes: " + (", ".join(f"{k} {v}" for k, v in sorted(actions.items())) or "none"),
