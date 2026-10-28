@@ -183,7 +183,8 @@ class DriveAgent(BaseAgent):
             self._ops.preflight(user_id),
             builder.build_for_agent(
                 agent_type=AGENT_TYPE, user_id=user_id, account_id=context.get("account_id"),
-                include_biographical=False, include_directives=False) if builder is not None else no_builder(),
+                include_biographical=False, include_directives=False,
+                include_location=False) if builder is not None else no_builder(),
             return_exceptions=True)
         if isinstance(preflight_result, BaseException):
             raise preflight_result

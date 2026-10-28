@@ -121,6 +121,7 @@ class PromptBuilder(PromptBuilderPort):
         conversation_history: Optional[List[dict]] = None,
         include_biographical: bool = True,
         include_directives: bool = True,
+        include_location: bool = True,
         kb_preamble: bool = False,
         agent_notes: Optional[List[dict]] = None,
         extra_static_blocks: Optional[List[str]] = None,
@@ -203,7 +204,7 @@ class PromptBuilder(PromptBuilderPort):
 
         _cfg = getattr(self, "config", None)
         user_timezone = _cfg.timezone if _cfg else "UTC"
-        user_location = getattr(_cfg, "location", None) if _cfg else None
+        user_location = getattr(_cfg, "location", None) if _cfg and include_location else None
 
         return await self.assembly_service.assemble(
             agent_type=agent_type,
