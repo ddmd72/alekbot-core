@@ -56,6 +56,7 @@ from src.agents.infrastructure.billing_agent import BillingAgent
 from src.agents.infrastructure.logger_agent import LoggerAgent
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
+from src.composition.drive_note_setup import command_drive_note_service
 from src.composition.service_container import ServiceContainer
 from src.composition.slack_adapter_factory import SlackAdapterFactory
 from src.composition.telegram_adapter_factory import TelegramAdapterFactory
@@ -466,6 +467,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         system_default_language=_system_lang,
         notification_service=notification_service,
     )
+    # The drive-note receipt posted from a call is rendered in the owner's UI language (DRIVE_FILE_NOTES_RFC §4.9).
+    notification_service.attach_localization(_localization, _language_service)
 
     # DocumentDeliveryService — GCS-backed, used by both async (AgentWorkerHandler)
     # and sync (ConversationHandler) document delivery paths.
@@ -911,6 +914,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         skill_service=container.skill_service,
         memory_fact_service=container.memory_fact_service,
         fact_answers=_fact_answer_service,
+        drive_note_service=command_drive_note_service(container.drive_note_service, container.drive_notes_enabled),
         long_turn_service=long_turn_service,
         doc_delivery_service=doc_delivery_service,
         worker_queue=agent_task_queue,
@@ -974,6 +978,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                 skill_service=container.skill_service,
                 memory_fact_service=container.memory_fact_service,
                 fact_answers=_fact_answer_service,
+                drive_note_service=command_drive_note_service(container.drive_note_service,
+                                                              container.drive_notes_enabled),
                 task_queue=agent_task_queue,
                 long_turn_service=long_turn_service,
                 doc_delivery_service=doc_delivery_service,

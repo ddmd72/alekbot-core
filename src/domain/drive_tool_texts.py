@@ -9,7 +9,7 @@ search intent's name prefix and the "query is not read" clause go.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 SEARCH_DRIVE = "search_drive"
 SEARCH_DELETED = "search_deleted_recordings_and_notes"
@@ -95,8 +95,9 @@ def _tool(name: str, description: str, required: List[str], **params: str) -> Di
     return {"name": name, "description": description, "parameters": schema}
 
 
-def drive_tool_declarations() -> List[Dict[str, Any]]:
-    """The twelve drive tools and the terminal tool, in a fixed order (the cacheable prefix stays stable)."""
+def drive_tool_declarations(extra: Sequence[Dict[str, Any]] = ()) -> List[Dict[str, Any]]:
+    """The twelve drive tools, then `extra` (the note tools, in their own fixed order), then the terminal tool: a fixed
+    order, so each cacheable prefix stays stable (design Δ16). No `extra` is today's list byte for byte."""
     return [
         _tool(SEARCH_DRIVE, "Find files and folders on the drive by what they are, their names, dates, places and what "
               "is written in them.", [], query=QUERY, folder=SEARCH_FOLDER, kind=KIND, date_from=DATE_FROM,
@@ -124,6 +125,7 @@ def drive_tool_declarations() -> List[Dict[str, Any]]:
               new_content_ref=NEW_CONTENT_REF),
         _tool(DELETE_DRIVE_ITEM, "Delete a file or a whole folder (recoverable from the recycle bin); the user gets a "
               "notice.", ["file_ref"], file_ref=FILE_REF),
+        *extra,
         _tool(REPORT_TOOL, "Finish: what you did, in one or two sentences. The system delivers every result to the "
               "orchestrator.", [], note=NOTE, question=QUESTION, not_done=NOT_DONE),
     ]

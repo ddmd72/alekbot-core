@@ -100,11 +100,12 @@ MIGRATION_LINE = ("The index is being migrated to a new search format: only name
 # -- Smart protocol, `drive_specialist` block (§25.5.7) ------------------------------------------------------------
 PROTOCOL_TIERS_LINE = (
     "Drive results say how each file matched. 'About' and 'mentioned in' are exact: the file's own name, details, "
-    "place or text holds the words, in their spellings and word forms. 'By translation' and 'labelled' are the "
-    "index's automatic words — passage keywords with their source quote, type, topic and life-area words — and may "
-    "be wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word forms were "
-    "searched; other languages only where the index wrote them. The coverage line says what the search could not see. When a word is held by no file, the result counts "
-    "the files that match the other words, so you can tell whether the word was phrasing or the subject."
+    "place, text or the owner's note holds the words, in their spellings and word forms. 'By translation' and "
+    "'labelled' are the index's automatic words — passage keywords with their source quote, type, topic and life-area "
+    "words — and may be wrong or incomplete. 'Related by meaning only' lines are guesses. Other spellings and word "
+    "forms were searched; other languages only where the index wrote them. The coverage line says what the search "
+    "could not see. When a word is held by no file, the result counts the files that match the other words, so you "
+    "can tell whether the word was phrasing or the subject."
 )
 
 

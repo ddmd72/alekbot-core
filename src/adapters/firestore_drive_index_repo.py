@@ -84,6 +84,7 @@ from ..domain.drive_index import (
     ContentClass, DocumentBrief, DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase,
     ErrorCategory, LeaseLost, Priority, Reason, RecordState, Scope, TriageVerdict, record_key,
 )
+from ..domain.drive_note_check import NoteCheck
 from ..domain.drive_index_lean import (
     RECORD_LEAN_FIELDS, ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of,
 )
@@ -224,6 +225,13 @@ def _dt_map(value: Any) -> Dict[str, datetime]:
     return {str(k): v for k, v in ((k, _dt(v)) for k, v in (value or {}).items()) if v is not None}
 
 
+def _note_checks(value: Any) -> Tuple[NoteCheck, ...]:
+    """The owner-notes archive checks (DRIVE_FILE_NOTES_RFC §3.4): a list of maps, `last_seen_at` a timestamp."""
+    return tuple(NoteCheck(note_id=str(v.get("note_id", "")), item_id=str(v.get("item_id", "")),
+                           why=str(v.get("why", "")), last_seen_at=_dt(v.get("last_seen_at")))
+                 for v in (value or ()) if v.get("note_id") and v.get("item_id"))
+
+
 _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     "facets": lambda v: dict(v or {}),
     "content_class": ContentClass,
@@ -247,6 +255,7 @@ _RECORD_READERS: Dict[str, Callable[[Any], Any]] = {
     # §27 (transcripts)
     "transcript_wake_at": _dt, "transcript_languages": _strs, "transcript_hold": _optional(str),
     "mirror_retry_at": _dt,       # §27.9.4
+    "owner_life_areas": _strs,    # DRIVE_FILE_NOTES_RFC §3.3
 }
 
 _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
@@ -262,6 +271,12 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "described_count": int, "described_grew_at": _dt,
     "migration_alerted": bool, "stall_alerted": bool, "fallback_alerted_day": str,
     "purge_keep_transcripts": bool,
+    # DRIVE_FILE_NOTES_RFC §3.4: the notes step's watermark pair, pass end and space-pass cursor
+    "notes_applied_at": _dt, "notes_scanned_at": _dt, "notes_space_at": _dt, "notes_paging": bool,
+    "notes_tick_at": _dt,
+    "notes_merge_version": int,
+    # owner notes (DRIVE_FILE_NOTES_RFC §3.4, §7.4)
+    "note_checks": _note_checks, "notes_audited_at": _dt, "notes_audit_after_at": _dt, "notes_audit_after_id": str,
 }
 
 

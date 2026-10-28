@@ -75,6 +75,9 @@ from src.composition.drive_indexing_setup import (
     build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue, build_place_lookup,
 )
 from src.composition.drive_model_setup import build_drive_mirror, build_drive_models, build_drive_transcription
+from src.composition.drive_note_setup import (
+    DRIVE_NOTES_ENABLED_ENV, build_drive_note_lifecycle, build_drive_note_repository, drive_notes_switch_on,
+)
 from src.composition.memory_telemetry_setup import build_memory_telemetry
 from src.composition.prompt_assembly_setup import build_prompt_assembly_service
 from src.config.environment import EnvironmentConfig
@@ -155,6 +158,13 @@ def build_app() -> Quart:
         enabled=transcribe_on and transcripts is not None, repo=index_repo, mirror_repo=mirror_repo, drive=drive,
         users=users, account_repo=account_repo, profile_repo=profile_repo, assembly_service=assembly_service,
     )
+    # The owner's notes (DRIVE_FILE_NOTES_RFC §5.1, §7): the tick merges them into the records, makes the archive checks
+    # and runs the daily audit. DRIVE_NOTES_ENABLED (part A's optional kill switch, os.getenv, default on) off gives the
+    # tick no store and no lifecycle: it does no notes work and saves a zero notes merge version, so turning it on again
+    # re-reads every note (§3.6, §5.5). One store instance for the tick's `notes=` and the lifecycle.
+    notes_on = drive_notes_switch_on(os.environ.get(DRIVE_NOTES_ENABLED_ENV))
+    note_repo = build_drive_note_repository(db, env_config) if notes_on else None
+    note_lifecycle = build_drive_note_lifecycle(enabled=notes_on, notes=note_repo, index=index_repo, drive=drive)
     indexing = DriveIndexingService(
         drive=drive,
         repo=index_repo,
@@ -177,6 +187,8 @@ def build_app() -> Quart:
         mirror=mirror.mirror,
         localization=mirror.localization,
         language=mirror.language,
+        notes=note_repo,
+        note_lifecycle=note_lifecycle,
     )
 
     app.register_blueprint(create_indexer_worker_blueprint(indexing, gate))

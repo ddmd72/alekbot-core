@@ -20,7 +20,7 @@ steps:
       - "--service-account=alek-main@$PROJECT_ID.iam.gserviceaccount.com"
       - "--image=gcr.io/$PROJECT_ID/alek-bot-dev:latest"
       - "--region=us-central1"
-      - "--set-env-vars=APP_ENV=development,SLACK_MODE=http,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,FIRESTORE_DATABASE=us-production,OAUTH_REDIRECT_URI=$_OAUTH_REDIRECT_URI,ENABLE_HTML_RENDERER=true,ENABLE_GROUNDING_ATTRIBUTION=false,DEBUG_PROMPTS=true,GCS_MEDIA_BUCKET=alek-media-dev,SYSTEM_DEFAULT_LANGUAGE=uk,MCP_RESOURCE_URI=$_SERVICE_URL/mcp,TRACING_BACKEND=both,LOGFIRE_CAPTURE_CONTENT=true,BIGQUERY_PROMPT_DATASET=alek_observability_dev,VOICE_RELAY_STREAM_URL=$_VOICE_RELAY_URL,DRIVE_INDEXER_URL=$_INDEXER_URL,DRIVE_TRANSCRIBE_USD_CAP=$_DRIVE_TRANSCRIBE_USD_CAP,DRIVE_TRANSCRIBE_ENABLED=$_DRIVE_TRANSCRIBE_ENABLED,SANDBOX_RENDER=$_SANDBOX_RENDER,SANDBOX_RENDER_URL=$_SANDBOX_RENDER_URL,FACT_LIFECYCLE_SWEEP_DRY_RUN=0"
+      - "--set-env-vars=APP_ENV=development,SLACK_MODE=http,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUD_RUN_SERVICE_URL=$_SERVICE_URL,FIRESTORE_DATABASE=us-production,OAUTH_REDIRECT_URI=$_OAUTH_REDIRECT_URI,ENABLE_HTML_RENDERER=true,ENABLE_GROUNDING_ATTRIBUTION=false,DEBUG_PROMPTS=true,GCS_MEDIA_BUCKET=alek-media-dev,SYSTEM_DEFAULT_LANGUAGE=uk,MCP_RESOURCE_URI=$_SERVICE_URL/mcp,TRACING_BACKEND=both,LOGFIRE_CAPTURE_CONTENT=true,BIGQUERY_PROMPT_DATASET=alek_observability_dev,VOICE_RELAY_STREAM_URL=$_VOICE_RELAY_URL,DRIVE_INDEXER_URL=$_INDEXER_URL,DRIVE_TRANSCRIBE_USD_CAP=$_DRIVE_TRANSCRIBE_USD_CAP,DRIVE_TRANSCRIBE_ENABLED=$_DRIVE_TRANSCRIBE_ENABLED,SANDBOX_RENDER=$_SANDBOX_RENDER,SANDBOX_RENDER_URL=$_SANDBOX_RENDER_URL,FACT_LIFECYCLE_SWEEP_DRY_RUN=0,DRIVE_NOTES_ENABLED=$_DRIVE_NOTES_ENABLED"
       - "--min-instances=0"
       - "--max-instances=1"
       - "--memory=2Gi"
@@ -122,6 +122,10 @@ steps:
   #   _DRIVE_TRANSCRIBE_ENABLED (default "off") and _DRIVE_TRANSCRIBE_USD_CAP (default empty) come from the deploy-only
   #   .env keys DRIVE_TRANSCRIBE_ENABLED_DEV / DRIVE_TRANSCRIBE_USD_CAP_DEV (Makefile). The cap rides on the MAIN
   #   service too: the Cabinet shows the effective cap (service_container.py).
+  # DRIVE_NOTES_ENABLED is the owner-notes kill switch (DRIVE_FILE_NOTES_RFC §3.6), read by BOTH services: the same
+  #   substitution _DRIVE_NOTES_ENABLED (default "on", the code default) from the deploy-only .env key
+  #   DRIVE_NOTES_ENABLED_DEV (Makefile) sets it on the main service and the indexer, so they switch and roll back
+  #   together and a switch survives the next deploy (XC-7).
   # DRIVE_INDEXER_URL is this service's own URL (continuations and nudge re-queues come back here, and
   #   the /worker gate pins the token audience to it). Empty on the first pass of the two-pass first
   #   deploy (Makefile, _INDEXER_URL): the service still starts and /worker answers 503.
@@ -143,7 +147,7 @@ steps:
       - "--min-instances=0"
       - "--max-instances=1"
       - "--timeout=1800"
-      - "--set-env-vars=APP_ENV=development,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,DRIVE_INDEXER_URL=$_INDEXER_URL,DRIVE_UPGRADE_PASS=$_DRIVE_UPGRADE_PASS,DRIVE_TRANSCRIBE_ENABLED=$_DRIVE_TRANSCRIBE_ENABLED,DRIVE_TRANSCRIBE_USD_CAP=$_DRIVE_TRANSCRIBE_USD_CAP"
+      - "--set-env-vars=APP_ENV=development,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,DRIVE_INDEXER_URL=$_INDEXER_URL,DRIVE_UPGRADE_PASS=$_DRIVE_UPGRADE_PASS,DRIVE_TRANSCRIBE_ENABLED=$_DRIVE_TRANSCRIBE_ENABLED,DRIVE_TRANSCRIBE_USD_CAP=$_DRIVE_TRANSCRIBE_USD_CAP,DRIVE_NOTES_ENABLED=$_DRIVE_NOTES_ENABLED"
       - "--set-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,MICROSOFT_TODO_CLIENT_ID=MICROSOFT_TODO_CLIENT_ID:latest,MICROSOFT_TODO_CLIENT_SECRET=MICROSOFT_TODO_CLIENT_SECRET:latest,SERVICE_ACCOUNT_EMAIL=SERVICE_ACCOUNT_EMAIL:latest,ANTHROPIC_API_KEY=ANTHROPIC_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,BILLING_SLACK_WEBHOOK_URL=BILLING_SLACK_WEBHOOK_URL:latest,DRIVE_INVOKER_SA_EMAIL=DRIVE_INVOKER_SA_EMAIL:latest,OIDC_TRANSITION_SA_EMAILS=OIDC_TRANSITION_SA_EMAILS:latest"
       # RFC Δ21. Ingress internal: the only caller is Cloud Tasks on drive-sync-dev, which counts as
       # internal (same project, default run.app URL). No internet request can reach the service or
@@ -338,6 +342,8 @@ options:
 # Defaults for substitutions a manual `gcloud builds submit` may leave out (the Makefile always passes them).
 substitutions:
   _DRIVE_UPGRADE_PASS: "on"
+  # Owner notes (DRIVE_FILE_NOTES_RFC §3.6): ON, as the code's default; both services get the same value.
+  _DRIVE_NOTES_ENABLED: "on"
   # Transcription (RFC §27.13): OFF unless the deploy-only .env key says otherwise, so a manual `gcloud builds submit`
   # without the Makefile deploys OFF, never an empty value. The cap's empty default means the $20 monthly maximum.
   _DRIVE_TRANSCRIBE_ENABLED: "off"

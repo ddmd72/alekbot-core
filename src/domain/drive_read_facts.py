@@ -15,3 +15,4 @@ class ReadFacts:
     image: bool = False                  # an image card
     coverage_incomplete: bool = False    # the coverage line names something not searched
     building: bool = False               # the index is still being built or rebuilt
+    owner_note: bool = False             # a card, or an opened file's own block, carries the owner's note

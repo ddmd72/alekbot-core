@@ -555,6 +555,7 @@ async def build_world(args: argparse.Namespace, gold: Sequence[Mapping[str, Any]
     from src.services.dry_run_workspace import DryRunWorkspace
 
     from .dry_run_drive import DriveOpLog, DryRunDriveOperations
+    from .dry_run_drive_notes import DryRunDriveNotes
     from .enrichment_snapshot import EnrichmentSnapshot
     from .index_cache import load_or_build
     from .parse_cache import ParseCache
@@ -568,6 +569,9 @@ async def build_world(args: argparse.Namespace, gold: Sequence[Mapping[str, Any]
     dry_run = DryRunDriveOperations(drive_log, annotate=annotate_drive_read)
     dry_run.install()
     restore.append(dry_run.uninstall)
+    note_dry_run = DryRunDriveNotes(drive_log)   # the notes' writes go through DriveNoteService, not DriveOperations
+    note_dry_run.install()
+    restore.append(note_dry_run.uninstall)
     drive = g3_drive(args.tree, args.tree_g3, args.tree_v2)
     validate_ab_gold(gold, drive.paths())
     user_id, account_id = os.environ["DEV_USER_ID"], os.environ["DEV_ACCOUNT_ID"]

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Sequence, Tuple
 
 from . import drive_answer_texts as t
+from .agent import DeliveryItem
 from .drive_collected_result import CollectedResult
 from .drive_line import DriveLine
 from .drive_op import DriveOp
@@ -41,6 +42,9 @@ class DriveAnswer:
     files: List[Dict[str, Any]] = field(default_factory=list)
     drive_context: List[Dict[str, str]] = field(default_factory=list)
     reading: Tuple[str, ...] = ()
+    # The note changes' history lines and the owner's receipts, from the collector on every status (design Δ7).
+    note_context: List[str] = field(default_factory=list)
+    delivery_items: List[DeliveryItem] = field(default_factory=list)
 
 
 _CLASS_STATUS = {
@@ -140,7 +144,8 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
             out.append(t.RESULT_HEAD.format(handle=block.handle, step=block.step, kind=block.kind))
         out.append(block.outcome.text)
     return DriveAnswer(text="\n".join(out), status=status, files=collector.files(),
-                       drive_context=collector.drive_context(), reading=tuple(reading))
+                       drive_context=collector.drive_context(), reading=tuple(reading),
+                       note_context=collector.note_context(), delivery_items=collector.delivery_items())
 
 
 def reading_lines(blocks: Sequence[CollectedResult]) -> List[str]:
@@ -158,6 +163,8 @@ def reading_lines(blocks: Sequence[CollectedResult]) -> List[str]:
         add(t.R_PASSAGE)
     if any(s.facts.accuracy for s in searches):
         add(t.R_ACCURACY, t.R_ACCURACY_FIND, t.R_ACCURACY_VALUE)
+    if any(b.outcome.facts.owner_note for b in blocks):
+        add(t.R_OWNER_NOTE)
     if any(s.facts.scan for s in searches):
         add(t.R_SCAN)
     if any(b.outcome.facts.inaccessible for b in blocks):

@@ -12,6 +12,7 @@ from enum import Enum, IntEnum
 from typing import Any, Mapping, Optional, Tuple
 
 from .drive_enrichment import DriveProfile, PhotoObject
+from .drive_note_check import NoteCheck
 
 POLICY_VERSION = 3                            # 2: the Slice 2+4 kinds admitted (§24.1); 3: audio and video admitted
                                               # for transcription (§27.3); re-plans EVERY record (113/113 for the owner), not only media: structure
@@ -417,6 +418,19 @@ class DriveIndexRecord:
     mirrored_digest: str = ""
     mirror_retry_at: Optional[datetime] = None
     mirror_held_digest: str = ""
+    # -- owner notes (DRIVE_FILE_NOTES_RFC §3.3): a denormalized copy of the owner's note bound to this item, rebuilt
+    # from the note store by the tick (`drive_note_merge.with_owner_note`); the note store is the record. Plain fields,
+    # neutral defaults (Δ47's rollback invariant): a record without a note keeps a byte-identical card (G5). The copy
+    # carries the note's id and version and the NOTE_MERGE_VERSION it was merged under (0: no note).
+    owner_note_id: str = ""
+    owner_note_version: int = 0
+    owner_note_text: str = ""
+    owner_doc_type: str = ""                  # "" or one drive_labels.DOC_TYPES value
+    owner_life_areas: Tuple[str, ...] = ()    # 0-3 drive_labels.LIFE_DOMAINS values, the owner's order
+    owner_note_merge_version: int = 0
+    # set by the planner's `_build` on a record it creates; `_commit` looks the item's note up by its binding key in the
+    # same write and clears it, found or not (§5.1 a). Always False once written.
+    note_lookup_due: bool = False
 
     @property
     def stale(self) -> bool:
@@ -480,6 +494,35 @@ class DriveSyncState:
     stall_alerted: bool = False               # the rebuild stalled for DESCRIBED_STALL_AFTER: alerted once
     fallback_alerted_day: str = ""            # "YYYY-MM-DD" the fallback alert was posted for
     purge_keep_transcripts: bool = False      # §27.8 b: the running purge keeps the stored transcripts
+    # -- owner notes (DRIVE_FILE_NOTES_RFC §3.4, §5.1 b): the notes step's state, purged with the sync state (each is
+    # re-derivable: a purge re-reads every note). The watermark is the (updated_at, note_id) pair of the last note the
+    # step processed; `notes_paging`: the last page was full, so the next one starts strictly after that pair (the
+    # core's pair cursor); otherwise a new pass starts `NOTE_WATERMARK_SKEW_S` before the earlier of the watermark and
+    # `notes_scanned_at` (when the last pass ended), so a late-visible commit is caught and a full skew window is never
+    # re-read twice (`drive_note_merge.notes_query_start`). `notes_merge_version` != NOTE_MERGE_VERSION resets the
+    # watermark (§5.5). `notes_space` is the embedding space the user's note vectors were last moved to; while it
+    # differs from the service's space, a re-embed pass pages through the notes from (`notes_space_at`,
+    # `notes_space_id`).
+    notes_applied_at: Optional[datetime] = None
+    notes_applied_id: str = ""
+    notes_paging: bool = False
+    notes_scanned_at: Optional[datetime] = None
+    notes_merge_version: int = 0
+    notes_space: str = ""
+    notes_space_at: Optional[datetime] = None
+    notes_space_id: str = ""
+    # when code with notes support last ran the notes step: a `last_success_at` after it means a tick without that
+    # support ran (a rolled-back revision), and the next notes step re-reads every note (plan Default B12)
+    notes_tick_at: Optional[datetime] = None
+    # owner notes (docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md §3.4, §7.1, §7.4): the archive checks of records with a note that
+    # left the index, folded in at every save and worked at the round end; and the daily audit's clock. Both die with
+    # the state on a purge, which is right: a purge archives nothing, and the audit is the backstop.
+    note_checks: Tuple[NoteCheck, ...] = ()
+    notes_audited_at: Optional[datetime] = None
+    # the audit pass cursor (§7.4): the (snapshot_at, note_id) of the last note a pass tried; "" = no pass running. A pass
+    # cut by its item-call share resumes after it, and `notes_audited_at` is stamped when the pass ends
+    notes_audit_after_at: Optional[datetime] = None
+    notes_audit_after_id: str = ""
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""

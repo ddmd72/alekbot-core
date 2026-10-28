@@ -50,6 +50,10 @@ _MATCH_FILE_DATE = 'date "{word}"'
 _MATCH_KIND = 'kind "{word}"'
 _MATCH_CAPTURE = 'capture "{word}"'          # §26.3: detected by code (`cp:`); a model's (`cpa:`) is "(automatic)"
 _MATCH_AUTOMATIC = '{field} "{word}" (automatic)'
+# the owner's note (DRIVE_FILE_NOTES_RFC §6.1): his own words, exact; a skeleton match adds the script note
+_MATCH_NOTE_WORD = 'owner\'s note "{word}"'
+_MATCH_NOTE_TYPE = 'owner\'s note: type "{word}"'
+_MATCH_NOTE_AREA = 'owner\'s note: life area "{word}"'
 _NOT_MATCHED = "not matched"
 _AUTOMATIC_FIELD = {
     AboutField.TOPIC_WORD: "topic", AboutField.DOMAIN_WORD: "life area", AboutField.VALIDITY_WORD: "validity",
@@ -92,6 +96,9 @@ def _word_in(text: str, prefix: str, keys: Sequence[str]) -> str:
 
 def _about_text(source: AboutSource, keys: Sequence[str]) -> str:
     field, printed = source.field, source.printed
+    if field is AboutField.OWNER_NOTE:
+        template = {"type": _MATCH_NOTE_TYPE, "area": _MATCH_NOTE_AREA}.get(source.detail, _MATCH_NOTE_WORD)
+        return template.format(word=printed)
     if field is AboutField.ENTITY_FORM:
         kind = source.detail if source.detail and source.detail != "other" else "entity"
         return _MATCH_ENTITY_FORM.format(type=kind, word=printed, printed=source.in_file)

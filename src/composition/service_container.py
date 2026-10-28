@@ -57,12 +57,18 @@ from ..adapters.microsoft import OneDriveAdapter
 from ..adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.drive_mirror_repository import DriveMirrorRepository
+from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
 from ..services.user_drive_service import UserDriveService
 from ..adapters.firestore_user_repo import FirestoreUserRepository
 from ..services.drive_search_service import DriveSearchService
 from .drive_indexing_setup import build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue
+from .drive_note_setup import (
+    DRIVE_NOTES_ENABLED_ENV, add_drive_note_deleted_source, build_drive_note_repository, build_drive_note_service,
+    drive_notes_switch_on,
+)
+from ..services.drive_note_service import DriveNoteService
 from ..services.task_indexing_service import TaskIndexingService
 from ..adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from ..adapters.gcs_workspace_adapter import GcsWorkspaceAdapter
@@ -218,6 +224,26 @@ class ServiceContainer:
                 transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
                 mirror=self.drive_mirror_repo,
             )
+
+        # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.4): on the same drive pair, with its own uncached user
+        # repository (the indexing switch for the receipt's status). Built whatever the kill switch says: off stops
+        # writes (no tool), reads keep answering (§3.6). Never handed to the memory side (§1.4 anti-goal). One note
+        # store for the process: the service and the deleted-files source share `drive_note_repo`.
+        self.drive_note_repo: Optional[DriveNoteRepository] = None
+        self.drive_note_service: Optional[DriveNoteService] = None
+        self.drive_notes_enabled: bool = drive_notes_switch_on(os.getenv(DRIVE_NOTES_ENABLED_ENV))
+        if self.user_drive is not None and self.drive_index_repo is not None:
+            self.drive_note_repo = build_drive_note_repository(db_client, env_config)
+            self.drive_note_service = build_drive_note_service(
+                db_client, env_config, notes=self.drive_note_repo, drive=self.user_drive, index=self.drive_index_repo,
+                embeddings=self.embedding_service, users=FirestoreUserRepository(db_client, env_config, account_repo),
+                nudge_queue=self.drive_task_queue,
+            )
+            # Owner notes on deleted files join the same deleted-files section (§6.4, §0.3); a read, so added whatever
+            # DRIVE_NOTES_ENABLED says (§3.6). The search service is built under the same condition above.
+            if self.drive_search_service is not None:
+                add_drive_note_deleted_source(self.drive_search_service, self.drive_note_repo, self.embedding_service,
+                                              embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE)
 
         self.notes_adapter = FirestoreAgentNoteAdapter(db_client, env_config)
         self.recurrence_adapter = DateutilRecurrenceAdapter()
@@ -465,6 +491,8 @@ class ServiceContainer:
             "memory_fact_service": self.memory_fact_service,
             "lifecycle_counters": self.fact_lifecycle_counters,
             "workspace_service": self.workspace_service,
+            "drive_note_service": self.drive_note_service,
+            "drive_notes_enabled": self.drive_notes_enabled,
         }
 
     def create_fact_management_adapter(

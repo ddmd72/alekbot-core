@@ -11,6 +11,8 @@ Public interface:
     AboutSource         (field, detail, printed, source_class) of one about key; recomputed at render time
     KeyedRecord         the record attributes the keyer reads (Protocol)
     RecordKeyInputs     a frozen carrier of those attributes
+    effective_doc_type(rec), effective_life_areas(rec)   the owner's classifiers over the profile's, read at key and
+                        render time (DRIVE_FILE_NOTES_RFC §5.4, D7); the stored profile is never changed
 """
 from __future__ import annotations
 
@@ -43,6 +45,9 @@ class AboutField(str, Enum):
     VISIBLE_TEXT_NUMBER = "visible_text_number"
     CAPTURE = "capture"                   # the capture's names (§26.3); `detail` is the capture value
     SCENE_LABEL = "scene_label"           # a scene label's names (D40); `detail` is the label
+    # the owner's note on the item (DRIVE_FILE_NOTES_RFC §5.4): `e:` / `v:` / `y:` / `m:` keys (About) and `ex:` / `exl:`
+    # skeletons (By translation); `detail` is "type" / "area" (a classifier name), "number", "date" or "word"
+    OWNER_NOTE = "owner_note"
 
 
 @dataclass(frozen=True)
@@ -99,6 +104,15 @@ class KeyedRecord(Protocol):
     @property
     def capture_source(self) -> str: ...
 
+    @property
+    def owner_note_text(self) -> str: ...
+
+    @property
+    def owner_doc_type(self) -> str: ...
+
+    @property
+    def owner_life_areas(self) -> Tuple[str, ...]: ...
+
 
 @dataclass(frozen=True)
 class RecordKeyInputs:
@@ -116,3 +130,23 @@ class RecordKeyInputs:
     visible_text: str = ""
     capture: str = ""                  # §26.3: a drive_capture.Capture value, or ""
     capture_source: str = ""           # a drive_capture.CaptureSource value, or ""
+    # DRIVE_FILE_NOTES_RFC §5.4: the record's copy of the owner's note; empty by default, so the golden record emits
+    # no note keys and `golden_digest` stays pinned
+    owner_note_text: str = ""
+    owner_doc_type: str = ""
+    owner_life_areas: Tuple[str, ...] = ()
+
+
+def effective_doc_type(rec: KeyedRecord) -> str:
+    """The doc type search groups and reads by (D7): the owner's when he gave one, else the profile's ("" without
+    either)."""
+    if rec.owner_doc_type:
+        return rec.owner_doc_type
+    return rec.profile.doc_type if rec.profile is not None else ""
+
+
+def effective_life_areas(rec: KeyedRecord) -> Tuple[str, ...]:
+    """The life areas search groups and reads by (D7): the owner's when he gave any, else the profile's."""
+    if rec.owner_life_areas:
+        return tuple(rec.owner_life_areas)
+    return tuple(rec.profile.life_domains) if rec.profile is not None else ()

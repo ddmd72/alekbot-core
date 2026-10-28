@@ -12,16 +12,22 @@ answers (§4.10 rule 2); the relay never posts to chat.
 
 tell_alek (§4.15.2): an errand the caller is not waiting for. The commission says so, and
 Alek's whole answer is posted to chat — it is the only place the caller will see the outcome.
+
+Drive notes (DRIVE_FILE_NOTES_RFC §4.9, D18): on both paths, a note receipt or an erase request in Smart's answer is
+posted to chat through UserNotificationService.notify_drive_note_receipt, independent of the answer copy. A failed
+post is logged at ERROR and never fails the answer (the note is stored).
 """
 import asyncio
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
 
-from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, AgentStatus
+from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, AgentStatus, DeliveryItem
+from ..domain.drive_note import DRIVE_NOTE_ERASE_DELIVERY, DRIVE_NOTE_RECEIPT_DELIVERY
 from ..domain.delegation_timestamp import strip_delegation_timestamp
 from ..domain.llm import MessagePart
 from ..domain.messaging import SmartResponse
 from ..domain.result_links import build_link_copy
 from ..domain.retry_policy import NO_RETRY_POLICY
+from ..domain.turn_identity import TURN_ID_CONTEXT_KEY
 from ..infrastructure.agent_manifest import Intent
 from ..utils.logger import logger
 from .base_agent import BaseAgent
@@ -83,6 +89,7 @@ class AlekGatewayAgent(BaseAgent):
         user_id = message.context.get("user_id")
         account_id = message.context.get("account_id")
         errand = message.payload.get("intent") == Intent.TELL_ALEK
+        origin = "voice:tell_alek" if errand else "voice:ask_alek"
         text = _commission(
             message.payload.get("query", ""),
             message.payload.get("reasoning"),
@@ -99,7 +106,9 @@ class AlekGatewayAgent(BaseAgent):
             context={
                 **message.context,
                 "current_message_parts": [MessagePart(text=text)],
-                "run_origin": "voice:tell_alek" if errand else "voice:ask_alek",
+                "run_origin": origin,
+                # The call's turn (LelikAgent fixed it per delegation); this message's own id when it came without one.
+                TURN_ID_CONTEXT_KEY: message.context.get(TURN_ID_CONTEXT_KEY) or f"{origin}:{message.task_id}",
             },
             # Explicit, so Smart's own 300 s config cap does not cut an answer the relay abandoned.
             timeout_ms=ASK_ALEK_TIMEOUT_MS,
@@ -134,4 +143,32 @@ class AlekGatewayAgent(BaseAgent):
                 except Exception as exc:
                     # The spoken answer matters more than its chat copy.
                     logger.error(f"[AlekGateway] chat copy failed for {(user_id or '')[:8]}: {exc}", exc_info=True)
+        await self._post_drive_note_items(user_id, account_id, response.delivery_items,
+                                          _ERRAND_POST_TIMEOUT_S if errand else _ANSWER_COPY_TIMEOUT_S)
         return AgentResponse.success(task_id=message.task_id, agent_id=self.agent_id, result=answer)
+
+    async def _post_drive_note_items(self, user_id: Optional[str], account_id: Optional[str],
+                                     items: Sequence[DeliveryItem], timeout_s: float) -> None:
+        """Each drive-note receipt and erase request goes to chat (§4.9): the owner sees what was stored at once. The
+        posts run in order under ONE `timeout_s` for all of them (final review C-M10): on `ask_alek` they hold the
+        caller's answer, so several notes never add one wait each. An item not posted in time is logged at ERROR."""
+        notes = [item for item in items or () if item.type in (DRIVE_NOTE_RECEIPT_DELIVERY, DRIVE_NOTE_ERASE_DELIVERY)]
+        if not notes:
+            return
+        posted = 0
+
+        async def post_all() -> None:
+            nonlocal posted
+            for item in notes:
+                try:
+                    await self._notifications.notify_drive_note_receipt(user_id or "", account_id or "", item)
+                except Exception as exc:
+                    logger.error(f"[AlekGateway] drive note {item.type} post failed for {(user_id or '')[:8]}: "
+                                 f"{exc}", exc_info=True)
+                posted += 1
+
+        try:
+            await asyncio.wait_for(post_all(), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            logger.error(f"[AlekGateway] drive note posts timed out for {(user_id or '')[:8]}: "
+                         f"{len(notes) - posted} of {len(notes)} not posted")

@@ -119,6 +119,7 @@ Connect your drive in the Cabinet. Then:
 - "Write this down as a note" — I create a text file (md, txt, csv, json, html and similar) in your drive
 - "What's in Meetings?" — I browse your folders
 - "Find the lease contract", "photos from Rome last August", "all my spreadsheets" — I search your drive by name (typos and transliteration are fine), type, date, folder and where a photo was taken. Turn on "Search my drive" in the Cabinet first
+- "This one is the bathroom repair invoice from Reformas Exemplo", "it's an invoice, not a receipt" — I keep what you tell me about that file or folder with it (never on the drive itself, never in memory) and search then finds the file by it; you see exactly what was kept, and "add the IVA amount", "undo that", "forget what I said about it" or "erase its history" work too. What you said about a file you deleted is kept: ask me to "search in deleted files" to find it; to erase all of them with their history, type `$drive-notes erase-all`
 - "What's the notice period in my lease?", "how much was the March electricity bill?", "find invoice INV-2024-417" — I answer from what is written in your documents, and I read scans, screenshots and photographed receipts too; I tell you which file the answer came from
 - Recordings (audio and video) on your drive, once transcription is on for you: I find them by what was said and open their transcript; the recording itself comes as a link when you ask for it
 - Once transcription is on, transcripts of recordings that were deleted stay in the Archive of the `_Transcripts` folder on your drive: ask me to "search in deleted files" and I find them by what was said
@@ -199,6 +200,7 @@ Commands (type these to me directly):
 - `$skill list` — see your saved skills
 - `$skill save <code>` — confirm a skill I just drafted (the code comes with the draft)
 - `$skill delete <name>` — remove one of your skills
+- `$drive-notes erase-all` — erase all your drive notes and their history for good (I send a code to confirm)
 
 Built-in skills everyone has: one that walks you through creating your own skill, and one that
 maps the competencies of a profession into a Domain Manifest (e.g. to design an agent or a
