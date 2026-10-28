@@ -16,3 +16,5 @@ class ReadFacts:
     coverage_incomplete: bool = False    # the coverage line names something not searched
     building: bool = False               # the index is still being built or rebuilt
     owner_note: bool = False             # a card, or an opened file's own block, carries the owner's note
+    excerpts: bool = False               # a passages result returned passage text (§28.3 A13)
+    low_accuracy_image: bool = False     # a card below 90% whose text is not known to be born-digital (§28 OQ-A2)

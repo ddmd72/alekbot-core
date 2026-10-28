@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from .agent import DeliveryItem
+from .drive_excerpt_context_plan import ContextPlan
+from .drive_excerpt_result import ExcerptResult
 from .drive_op import MUTATING_OPS, DriveOp
 from .drive_outcome_class import OutcomeClass
 from .drive_read_facts import ReadFacts
@@ -38,6 +40,11 @@ class DriveOutcome:
     # A note change: its text-free history line and its receipt (or erase request) for the owner's chat.
     note_context: Tuple[str, ...] = ()
     delivery: Tuple[DeliveryItem, ...] = ()
+    # A passages call (USER_DRIVE_INDEXING_RFC §28.3 A10, A11): its typed result and the context plan its text
+    # printed, for the run's ledger; `request_text` is the search query or the passages question (the Searched line).
+    excerpts: Optional[ExcerptResult] = None
+    excerpt_plan: Optional[ContextPlan] = None
+    request_text: str = ""
 
     @property
     def is_change(self) -> bool:

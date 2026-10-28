@@ -26,6 +26,7 @@ Public interface:
     settle(detected, model) -> (capture, source)   the deterministic answer wins; ("", "") when neither has one
     file_capture(kind, ...) -> (capture, source)   a file's capture from everything known; non-PDF, non-image kinds are digital (Δ79)
     CAPTURE_LABELS                              capture -> the words the card and the rendered line use
+    IMAGE_TEXT_CAPTURES, born_digital(capture)  text read from an image vs software-made text (§28 OQ-A2)
 """
 from __future__ import annotations
 
@@ -53,6 +54,15 @@ CAPTURE_LABELS: Mapping[str, str] = {
     Capture.SCAN.value: "scan", Capture.DOCUMENT_PHOTO.value: "photo of a document",
     Capture.SCREENSHOT.value: "screenshot", Capture.DIGITAL.value: "digital",
 }
+
+
+# §28 OQ-A2: the text is a reading of an image. `_SCAN_CAPTURES` in drive_operations (R_SCAN) stays apart.
+IMAGE_TEXT_CAPTURES = frozenset({Capture.SCAN.value, Capture.DOCUMENT_PHOTO.value, Capture.SCREENSHOT.value})
+
+
+def born_digital(capture: str) -> bool:
+    """The text is software-made (§28 OQ-A2); an image reading and an unknown capture ("") are not."""
+    return capture == Capture.DIGITAL.value
 
 
 @dataclass(frozen=True)

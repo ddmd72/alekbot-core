@@ -68,7 +68,9 @@ _LINES = {
     # Final review F5-4: the retry fires when the file asked for is not shown, not only on zero results
     "dates: a date-filtered search that misses the file is retried without the filter":
         "If a date-filtered search does not show the file asked for, search again without the filter.",
-    "shortened passage: open before quoting (review E minor)": "Before quoting more than it shows, open the file.",
+    # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13): more than a card's window is asked for as the file's passages
+    "shortened passage: ask for its passages before quoting more (§28 A13)":
+        "For more than it shows, ask for the file's passages on that point",
 }
 
 
@@ -85,7 +87,7 @@ _HOMES = {
     "document authority vs memory": 1,
     "version families: never pick silently": 1,
     "dates: a date-filtered search that misses the file is retried without the filter": 0,
-    "shortened passage: open before quoting (review E minor)": 1,
+    "shortened passage: ask for its passages before quoting more (§28 A13)": 1,
 }
 
 

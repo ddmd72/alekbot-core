@@ -242,12 +242,32 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     `--record` writes no bars while Smart fails a hard check. **Before/after:** before = G3 on `main` with the Firestore
     prompts, after = G3 on the branch with `--prompts-from-snapshot`, both at the same `--repeats`; compare the two
     reports `scripts/memory/drive_g3/g3_<stamp>.json` (`scores`, `wall_p50_s`). `specialist_ab` has
-    `--compare <report> --compare-design today` and no `--prompts-from-snapshot` (it needs the uploaded `drive` profile).
+    `--compare <report> --compare-design today` and `--prompts-from-snapshot` (the branch's prompt files, no upload first).
+  - **Passages** (`find_passages(question, folder, file_refs)` and `read_passages(file_ref, passages)`; USER_DRIVE_INDEXING_RFC
+    §28, built, not deployed; `DriveOp.PASSAGES`, a read, not in `MUTATING_OPS`): the stored chunks nearest the question
+    (vector kNN of the question, RRF with a lexical rank over the 30 nearest; `DriveSearchService.excerpts` /
+    `excerpt_range`), whole chunks, ≤ 10 per call and 24 000 characters, adjacent ones merged into a run. The specialist
+    sees them in full (`_seen`), judges only whether they suffice, and never writes the answer. Code keeps a per-run chunk
+    ledger (`ExcerptLedger`); the answer to Smart prints every passage once in one block `[Result r…: passages]` (head
+    lines outside the nonce wrapper, `[passages i–j]` markers inside), after a `Searched:` line that replaces the
+    specialist's note on passage runs. Folder notes and each file's own note and description ride with the passages
+    (`EXCERPT_FOLDER_NOTES_CHARS_MAX` caps the folder notes). Low-accuracy values: passages for born-digital files, an
+    open for image text or an unknown capture (`ReadFacts.low_accuracy_image`, `R_ACCURACY_IMAGE`). Code:
+    `src/domain/drive_excerpt*.py`, `drive_excerpts.py`, `drive_content_gate.py`; `drive_operations.py`
+    `find_passages` / `read_passages`; `drive_tools.py`.
+  - **The content write gate** (`decisions/drive_content_write_gate.md`): `content_gate_applies(context)` is
+    `not interactive_delivery` (set only by `ConversationHandler`), so a reminder, the daily review, any `notify` run, a
+    call and a run with no origin are gated; a chat turn is not. `DriveToolRun.run` refuses a change (any `MUTATING_OPS`
+    op and the note writers) in a step after the first one whose passages reached the model (`write_refused`); a change
+    co-emitted with the first passages read is not refused. The refusal is `REFUSED` (never settled by a later call),
+    text `WRITE_AFTER_PASSAGES`, and one INFO line `[DriveAgent] <kind> refused: passages were read in step N of this run`.
   - **Logs** (`make fetch-logs`, then `grep '\[DriveAgent\]\|\[DriveOperations\]' alek_debug.log`): one
     `[DriveAgent] user=<8> status=<status> model=<model> ops=<op>:<class>,… turns=N ms=…` line per commission, where
     `model=` is the model that ran (read from the execution's billing ledger, so a cross-provider failover shows the
     fallback model; models joined by `+`; the failover itself is the `llm_fallback claude→openai` WARNING); one
-    `[DriveOperations] <op>: <ref or folder>` line per operation; a turn-cap exit is
+    `[DriveOperations] <op>: <ref or folder>` line per operation; `[DriveOperations] opened: <ref> chars=<n>` per whole-file open; one
+    `[DriveSearch] user=<8> status=… mode=excerpts|excerpt_range scope=… files=… repeated=… no_text=…` line per passages call
+    (counts, no text), next to the search's `mode=query|filter` line; a turn-cap exit is
     `ERROR [DriveAgent] user=<8> hit the turn limit (6) without a report; tools per turn: …`. `prompt_content` records
     the request's model, so it cannot show a failover.
   - **Owner notes** (`DRIVE_FILE_NOTES_RFC.md` rev 3.3, specialist RFC §9; built on `feat/drive-notes`): `notes`

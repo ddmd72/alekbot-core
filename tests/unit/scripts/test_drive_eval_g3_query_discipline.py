@@ -104,9 +104,10 @@ def test_a_turn_cap_run_is_its_own_category_and_a_hard_failure():
 # token word for word and were removed.
 def test_the_all_is_still_a_find_reading_line_is_said_once():
     # Smart's half of the "all is still a find" rule reaches Smart as a reading line (§5.7, §7.3)
+    # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13): R_ALL loses "everything about" (a content need now, §28.2)
     assert re.sub(r"\s+", " ", t.R_ALL).count(
-        '"All", "every", "everything about" is still a find: answer from the cards; do not open files or compute '
-        "totals unless the user asked for a total or a value.") == 1
+        '"All" and "every" are still a find: answer from the cards; do not open files or compute totals unless the '
+        "user asked for a total or a value.") == 1
 
 
 def test_the_manifest_query_text_ends_with_the_discipline_sentence():

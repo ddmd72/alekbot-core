@@ -30,7 +30,7 @@ from src.domain.drive_outcome_class import OutcomeClass
 from src.infrastructure.drive_operations import DriveOperations
 
 STUB_TEXT = "Done: '{op}' accepted and completed successfully."   # G3's STUB_RESULT wording, per operation
-_NOT_LOGGED = frozenset({"self", "context", "user_id", "wait_s"})
+_NOT_LOGGED = frozenset({"self", "context", "user_id", "wait_s", "shown", "shown_folders", "described_files"})
 
 
 class DryRunError(RuntimeError):

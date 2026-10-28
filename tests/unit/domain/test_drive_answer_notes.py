@@ -105,8 +105,10 @@ def test_get_note_is_a_read_block_under_its_own_kind():
 
 def test_drive_tool_declarations_without_extra_is_today_s_list():
     assert tt.drive_tool_declarations() == tt.drive_tool_declarations(())
+    # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A3): the two passages tools are declared right after open_drive_file
     assert [d["name"] for d in tt.drive_tool_declarations()] == [
-        tt.SEARCH_DRIVE, tt.SEARCH_DELETED, tt.LIST_FOLDER, tt.OPEN_DRIVE_FILE, tt.GET_RECORDING_LINK,
+        tt.SEARCH_DRIVE, tt.SEARCH_DELETED, tt.LIST_FOLDER, tt.OPEN_DRIVE_FILE, tt.FIND_PASSAGES, tt.READ_PASSAGES,
+        tt.GET_RECORDING_LINK,
         tt.COPY_FILE_TO_DRIVE, tt.SAVE_TEXT_FILE, tt.CREATE_FOLDER, tt.MOVE_FILE, tt.APPEND_TO_FILE,
         tt.REPLACE_FILE_CONTENT, tt.DELETE_DRIVE_ITEM, tt.REPORT_TOOL]
 

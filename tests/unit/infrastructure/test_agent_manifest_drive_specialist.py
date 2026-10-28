@@ -11,8 +11,12 @@ from src.infrastructure.agent_registry import AgentRegistry, ExecutionMode
 
 DESCRIPTION = DRIVE_SPECIALIST.capability_descriptions[Intent.WORK_WITH_DRIVE_FILES]
 FIELD = DRIVE_SPECIALIST.context_schemas[Intent.WORK_WITH_DRIVE_FILES]["file_contents"]
-FIND_RULE = ("A find ('find', 'show me', 'do I have', 'where is', 'which files', 'everything about X') is answered from "
-             "the search results alone; ask to open a file only when the user wants something written inside it.")
+# Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13): the find keeps its file words without "everything about X", and "ask to
+# open a file only when…" became the self-contained content-need sentence.
+FIND_RULE = ("A find ('find', 'show me', 'do I have', 'where is', 'which files') is answered from the search results "
+             "alone; for what the files say, write the user's need so it reads without the conversation — the folder or "
+             "file by name, the full question — never how to get it; the drive assistant returns the passages that bear "
+             "on it.")
 OLD_NAMES = ("search_files_in_drive", "save_file_to_drive", "list_files_in_drive", "open_file_from_drive",
              "move_file_in_drive", "create_folder_in_drive", "update_file_in_drive", "delete_file_from_drive",
              "drive_query", "drive_folder", "drive_kind", "drive_date_from", "drive_date_to", "drive_deleted",
@@ -47,6 +51,7 @@ def test_smart_and_quick_are_offered_the_intent_and_the_specialist_is_offered_no
 def test_the_description_is_one_paragraph_with_the_find_rule_and_todays_rules():
     assert "\n" not in DESCRIPTION
     assert FIND_RULE in DESCRIPTION
+    assert "everything about" not in DESCRIPTION   # §28.3 A13: "everything about X" is a content need, not a find
     for anchor in ("before saying a file is not there", "to remember, save, keep or put a FILE anywhere, use this intent",
                    "propose_memory_facts", "delivered document key", "the words to find as the user wrote them",
                    "rewriting with new text is not available", "recoverable from its recycle bin",

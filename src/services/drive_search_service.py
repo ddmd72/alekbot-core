@@ -21,6 +21,8 @@ call at search time (D19, D28). Decisions that need no I/O are in `drive_tiers`,
 Public interface:
     DriveSearchService(repo, embeddings, users, drive, *, embedding_space, clock, nonce, monotonic, transcribe_cap_usd)
     await search(user_id, request) -> DriveSearchResult
+    await excerpts(user_id, request, *, shown=frozenset()) -> ExcerptResult   # find_passages (§28.3 A4-A8, A18)
+    await excerpt_range(user_id, request) -> ExcerptResult    # read_passages: one file's passages by number (§28.3 A7)
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
     await access_note(user_id, *, item_id=None, path=None) -> Optional[str]   # list/open on a 404 (§26.2, Δ55)
     await search_deleted(user_id, drive_query) -> str          # `drive_deleted`: archived transcripts (§27.9.11) and
@@ -41,15 +43,27 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
-from ..domain.drive_card import card_text
+from ..domain.drive_accuracy import scorable
+from ..domain.drive_card import card_text, note_line
 from ..domain.drive_enrich_plan import COVERAGE_COUNTERS, GAP_HELD, GAP_NO_PASSAGES, GAP_WAITING
 from ..domain.drive_enrichment import USD_CAPS, HintItem, JobState, UsageClass
+from ..domain.drive_excerpt_chunk import ExcerptChunk, display_number, stored_index
+from ..domain.drive_excerpt_context import ExcerptContext, file_description
+from ..domain.drive_excerpt_file import ExcerptFile
+from ..domain.drive_excerpt_file_context import FileContext
+from ..domain.drive_excerpt_folder_note import FolderNote
+from ..domain.drive_excerpt_range_request import ExcerptRangeRequest
+from ..domain.drive_excerpt_request import ExcerptRequest
+from ..domain.drive_excerpt_result import ExcerptResult
+from ..domain.drive_excerpt_selection import Selection
+from ..domain.drive_excerpts import rank_excerpts, select_excerpts
 from ..domain.drive_index import (
-    KEYS_VERSION, MIGRATION_GATE_KEY, POLICY_VERSION, DriveIndexRecord, DriveSyncState, EpochPhase, Priority,
-    RecordState, Scope, inaccessible,
+    KEYS_VERSION, MIGRATION_GATE_KEY, POLICY_VERSION, DriveChunk, DriveIndexRecord, DriveSyncState, EpochPhase,
+    Priority, RecordState, Scope, inaccessible,
 )
 from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_index_params import (
+    EXCERPT_RANGE_MAX, EXCERPTS_CHARS_MAX, EXCERPTS_LEXICAL_WINDOW,
     ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS,
     ARCHIVE_QUERY_MAX, DELETED_SHOW_MAX, GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
     NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
@@ -83,7 +97,7 @@ from ..domain.drive_tiers import (
     WHERE_HINT, Allowance, FileKeys, FileMatch, allowances, chunks_needing_text, classify,
     meaning_scores, name_query_keys, related_floor, size_band, source_scores,
 )
-from ..domain.user_drive import DriveConnection, DriveItem, DriveItemNotFoundError, parse_drive_ref
+from ..domain.user_drive import DriveConnection, DriveItem, DriveItemNotFoundError, make_drive_ref, parse_drive_ref
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY, DriveMirrorRepository
 from ..ports.embedding_service import EmbeddingService
@@ -282,6 +296,51 @@ class _Ancestry:
 class _Folder:
     record: DriveIndexRecord
     path: str
+
+
+_SELECT_ROUNDS = 3        # passages: re-selections once read texts are longer than their spans (a table header)
+_NO_TEXT_LISTED = 10      # passages: paths named on the no-text line (the count is the whole)
+
+
+@dataclass
+class _ExcerptStats:
+    """Counts for the one `[DriveSearch] mode=excerpts` line (no text)."""
+    mode: str = "excerpts"
+    scope: str = "all"            # gate | all | files | folder-memory | folder-wide | range
+    hits: int = 0                 # kNN hits, or chunk vectors read in memory, before the fence
+    candidates: int = 0           # fenced and visible
+    keyed: int = 0                # the nearest chunks whose keys were read for the lexical vote
+    reads: int = 0                # get_chunks calls for texts
+
+
+@dataclass
+class _ExcerptPool:
+    """One passages call's candidates: fenced, visible chunk hits with their cosine distance and span size, and the
+    records and chains of their files; the in-scope files with no indexed text."""
+    knn: List[Tuple[ChunkId, float]] = field(default_factory=list)
+    spans: Dict[ChunkId, int] = field(default_factory=dict)
+    records: Dict[str, DriveIndexRecord] = field(default_factory=dict)
+    chains: Dict[str, Tuple[str, Tuple[str, ...]]] = field(default_factory=dict)
+    no_text: List[str] = field(default_factory=list)
+    folder_path: str = ""
+
+    def add(self, chunk: DriveChunk, distance: float, rec: DriveIndexRecord,
+            chain: Tuple[str, Tuple[str, ...]]) -> None:
+        cid = (chunk.item_id, chunk.generation, chunk.index)
+        self.knn.append((cid, distance))
+        self.spans[cid] = max(chunk.char_end - chunk.char_start, 1)
+        self.records[rec.item_id] = rec
+        self.chains[rec.item_id] = chain
+
+
+def _readable(rec: DriveIndexRecord) -> bool:
+    return not rec.is_folder and rec.indexed_generation is not None and rec.chunk_count > 0
+
+
+def _copy_hash(rec: DriveIndexRecord) -> Optional[str]:
+    """The `_collapse` copy rule: a non-empty content hash that is not an empty file's."""
+    digest = rec.content_hash
+    return digest if digest and not digest.endswith(":0") else None
 
 
 
@@ -1089,6 +1148,333 @@ class DriveSearchService:
             return int(state.counters.get(COVERAGE_COUNTERS[gap], 0))
 
         return count(GAP_WAITING), count(GAP_HELD), count(GAP_NO_PASSAGES)
+
+    # ------------------------------------------------------------------------------------------
+    # Passages (§28.3 A4-A8, A18): find_passages and read_passages
+    # ------------------------------------------------------------------------------------------
+
+    async def excerpts(self, user_id: str, request: ExcerptRequest, *,
+                       shown: FrozenSet[ChunkId] = frozenset()) -> ExcerptResult:
+        """The indexed passages nearest the question (A4), in scope (A5: `file_refs`, else `folder`, else the whole
+        drive), selected new-only against `shown` (A6), with the "where it comes from" context (A18). The search's
+        gate first; vectors in another embedding space answer `wrong_space` (plan D-P4: nothing to rank)."""
+        started = self._monotonic()
+        stats = _ExcerptStats()
+        result = await self._excerpts(user_id, request, shown, stats)
+        self._log_excerpts(user_id, result, stats, started)
+        return result
+
+    async def excerpt_range(self, user_id: str, request: ExcerptRangeRequest) -> ExcerptResult:
+        """One file's passages by display number (A7): its readable generation only, at most EXCERPT_RANGE_MAX chunks
+        and EXCERPTS_CHARS_MAX characters (the first always), `continue_at` naming the first passage left out. Reads
+        no vector, so only the search's gate applies, not the embedding space."""
+        started = self._monotonic()
+        stats = _ExcerptStats(mode="excerpt_range", scope="range")
+        result = await self._excerpt_range(user_id, request, stats)
+        self._log_excerpts(user_id, result, stats, started)
+        return result
+
+    def _log_excerpts(self, user_id: str, result: ExcerptResult, stats: _ExcerptStats, started: float) -> None:
+        ms = round((self._monotonic() - started) * 1000)
+        chunks = sum(len(f.chunks) for f in result.files)
+        chars = sum(len(c.text) for f in result.files for c in f.chunks)
+        logger.info(
+            f"[DriveSearch] user={user_id[:8]} status={result.status} mode={stats.mode} scope={stats.scope} "
+            f"hits={stats.hits} candidates={stats.candidates} keyed={stats.keyed} selected={chunks} "
+            f"files={len(result.files)} repeated={len(result.repeated)} no_text={result.no_text} "
+            f"continue_at={result.continue_at} chars={chars} reads={stats.reads} building={result.building} "
+            f"awaiting_rebuild={result.awaiting_rebuild} wrong_space={result.wrong_space} ms={ms}")
+
+    async def _excerpt_gate(self, user_id: str,
+                            request: Union[ExcerptRequest, ExcerptRangeRequest]) -> Union[ExcerptResult, DriveSyncState]:
+        """The search's gate sequence (§10.1 step 0, D30), answered with the search's statuses and flags."""
+        profile, state, connection = await asyncio.gather(
+            self._users.get_user(user_id), self._repo.get_sync_state(user_id), self._drive.connection(user_id))
+        enabled = bool(profile is not None and profile.config.drive_indexing_enabled)
+        gate = search_gate(enabled, state, connection, self._clock())
+        if gate.status != STATUS_OK:
+            return ExcerptResult(status=gate.status, request=request, other_drive=gate.other_drive)
+        if gate.rebuilding or state is None or not state.root_item_id:
+            return ExcerptResult(status=STATUS_OK, request=request, building=True)
+        if MIGRATION_GATE_KEY not in state.applied_versions:
+            return ExcerptResult(status=STATUS_OK, request=request, building=True, awaiting_rebuild=True)
+        return state
+
+    async def _excerpts(self, user_id: str, request: ExcerptRequest, shown: FrozenSet[ChunkId],
+                        stats: _ExcerptStats) -> ExcerptResult:
+        gated = await self._excerpt_gate(user_id, request)
+        if isinstance(gated, ExcerptResult):
+            stats.scope = "gate"
+            return gated
+        state = gated
+        if not state.cards_in_space(self._space):
+            stats.scope = "gate"
+            return ExcerptResult(status=STATUS_OK, request=request, wrong_space=True)
+        ancestry = _Ancestry(self._repo, user_id, state.root_item_id)
+        scoped, building = await asyncio.gather(self._excerpt_scope(user_id, request, ancestry, stats),
+                                                self._building(user_id, state))
+        if isinstance(scoped, ExcerptResult):
+            return replace(scoped, building=building)
+        pool = scoped
+        stats.candidates = len(pool.knn)
+        files, selection = await self._excerpt_files(user_id, request.question, pool, shown, stats)
+        return ExcerptResult(
+            status=STATUS_OK, request=request, files=files, repeated=selection.repeated,
+            no_text=len(pool.no_text), no_text_paths=tuple(pool.no_text[:_NO_TEXT_LISTED]), building=building,
+            folder_path=pool.folder_path, context=self._excerpt_context(files, pool.records, pool.chains, ancestry))
+
+    async def _excerpt_scope(self, user_id: str, request: ExcerptRequest, ancestry: _Ancestry,
+                             stats: _ExcerptStats) -> Union[ExcerptResult, _ExcerptPool]:
+        """A5: `file_refs` (they take precedence over a folder), a folder, or the whole drive."""
+        if request.file_refs:
+            stats.scope = "files"
+            return await self._refs_pool(user_id, request, ancestry, stats)
+        if request.folder:
+            found = await self._resolve_folder(user_id, request.folder, ancestry)
+            if isinstance(found, DriveSearchResult):
+                return ExcerptResult(
+                    status=found.status, request=request, folder_path=found.folder_path or "",
+                    folder_candidates=tuple(c.path for c in found.cards) if found.status == STATUS_AMBIGUOUS_FOLDER
+                    else (), folder_lookup_truncated=found.folder_lookup_truncated,
+                    folder_not_indexed=found.folder_not_indexed)
+            if hides_descendants(found.record):   # nothing below it is indexed
+                return ExcerptResult(status=STATUS_OK, request=request, folder_path=found.path,
+                                     folder_not_indexed=True)
+            return await self._folder_pool(user_id, request, found, ancestry, stats)
+        stats.scope = "all"
+        vector = await self._question_vector(request.question)
+        hits = await self._repo.find_nearest_chunks(user_id, vector, CHUNK_FETCH)
+        pool = _ExcerptPool()
+        await self._hits_pool(user_id, hits, ancestry, pool, stats)
+        return pool
+
+    async def _question_vector(self, question: str) -> List[float]:
+        return await self._embeddings.get_embedding(question, task_type="RETRIEVAL_QUERY")
+
+    async def _refs_pool(self, user_id: str, request: ExcerptRequest, ancestry: _Ancestry,
+                         stats: _ExcerptStats) -> _ExcerptPool:
+        """Each named file's readable generation, its chunk vectors by index, cosine in memory. A ref that names no
+        visible file with indexed text is counted on the no-text line."""
+        named = [(ref, parse_drive_ref(ref) or "") for ref in request.file_refs]
+        found, vector = await asyncio.gather(self._repo.get_records(user_id, [i for _, i in named if i]),
+                                             self._question_vector(request.question))
+        await ancestry.load(found.values())
+        pool = _ExcerptPool()
+        readable: List[Tuple[DriveIndexRecord, Tuple[str, Tuple[str, ...]]]] = []
+        for ref, item_id in named:
+            rec = found.get(item_id)
+            chain = ancestry.chain(rec) if rec is not None else None
+            if rec is None or chain is None or not _readable(rec):
+                pool.no_text.append(chain[0] if chain is not None else ref)
+                continue
+            readable.append((rec, chain))
+        await self._excerpt_memory_pool(user_id, vector, readable, pool, stats)
+        return pool
+
+    async def _folder_pool(self, user_id: str, request: ExcerptRequest, folder: _Folder, ancestry: _Ancestry,
+                           stats: _ExcerptStats) -> _ExcerptPool:
+        """The search's walk: a complete one whose Σ chunk_count fits FOLDER_INMEM_CHUNKS ranks in memory; past that
+        bound, the user-wide kNN at FETCH_MAX kept to the walked files; an incomplete walk, the same kNN kept by
+        ancestry. The no-text line counts the walked files only when the walk is complete."""
+        (walked, complete), vector = await asyncio.gather(self._walk(user_id, folder.record),
+                                                          self._question_vector(request.question))
+        ancestry.seed([folder.record, *walked])
+        pool = _ExcerptPool(folder_path=folder.path)
+        if not complete:
+            stats.scope = "folder-wide"
+            hits = await self._repo.find_nearest_chunks(user_id, vector, FETCH_MAX)
+            await self._hits_pool(user_id, hits, ancestry, pool, stats, folder_id=folder.record.item_id)
+            return pool
+        readable: List[Tuple[DriveIndexRecord, Tuple[str, Tuple[str, ...]]]] = []
+        for rec in walked:
+            if rec.is_folder:
+                continue
+            chain = ancestry.chain(rec)
+            if chain is None:
+                continue
+            if _readable(rec):
+                readable.append((rec, chain))
+            else:
+                pool.no_text.append(chain[0])
+        if sum(rec.chunk_count for rec, _ in readable) <= FOLDER_INMEM_CHUNKS:
+            stats.scope = "folder-memory"
+            await self._excerpt_memory_pool(user_id, vector, readable, pool, stats)
+            return pool
+        stats.scope = "folder-wide"
+        hits = await self._repo.find_nearest_chunks(user_id, vector, FETCH_MAX)
+        await self._hits_pool(user_id, hits, ancestry, pool, stats, known=dict((r.item_id, (r, c)) for r, c in readable))
+        return pool
+
+    async def _excerpt_memory_pool(self, user_id: str, vector: List[float],
+                           readable: Sequence[Tuple[DriveIndexRecord, Tuple[str, Tuple[str, ...]]]], pool: _ExcerptPool,
+                           stats: _ExcerptStats) -> None:
+        """Chunk vectors of the readable generation by index, no text and no keys, ranked by cosine in memory."""
+        for start in range(0, len(readable), _WALK_PARALLEL):
+            batch = readable[start:start + _WALK_PARALLEL]
+            rows = await asyncio.gather(*(self._repo.get_chunks_with_vectors(
+                user_id, rec.item_id, int(rec.indexed_generation or 0), range(rec.chunk_count), text=False,
+                terms=False) for rec, _ in batch))
+            for (rec, chain), row in zip(batch, rows):
+                for chunk, chunk_vector in row:
+                    stats.hits += 1
+                    if chunk_vector and _fenced(rec, chunk.generation):
+                        pool.add(chunk, cosine_distance(vector, chunk_vector), rec, chain)
+
+    async def _hits_pool(self, user_id: str, hits: Sequence[Tuple[DriveChunk, float]], ancestry: _Ancestry,
+                         pool: _ExcerptPool, stats: _ExcerptStats, *, folder_id: Optional[str] = None,
+                         known: Optional[Mapping[str, Tuple[DriveIndexRecord, Tuple[str, Tuple[str, ...]]]]] = None
+                         ) -> None:
+        """`find_nearest_chunks` is not fenced (port): every hit's record is read and the hit kept only for its
+        readable generation and a visible file (inside `folder_id` when given). `known`: the complete walk's readable
+        files with their chains; hits outside them are out of scope and cost no read."""
+        stats.hits = len(hits)
+        if known is not None:
+            resolved = dict(known)
+        else:
+            recs = await self._repo.get_records(user_id, sorted({chunk.item_id for chunk, _ in hits}))
+            await ancestry.load(recs.values())
+            resolved = {}
+            for item_id, rec in recs.items():
+                chain = ancestry.chain(rec)
+                if chain is not None and (folder_id is None or folder_id in chain[1]):
+                    resolved[item_id] = (rec, chain)
+        for chunk, distance in hits:
+            entry = resolved.get(chunk.item_id)
+            if entry is not None and _fenced(entry[0], chunk.generation):
+                pool.add(chunk, distance, *entry)
+
+    async def _excerpt_files(self, user_id: str, question: str, pool: _ExcerptPool, shown: FrozenSet[ChunkId],
+                             stats: _ExcerptStats) -> Tuple[Tuple[ExcerptFile, ...], Selection]:
+        """A4 rank, A6 select, texts by one `get_chunks` per file generation. Selection runs on span sizes first;
+        a read text longer than its span (a continued table's header) re-runs it, at most _SELECT_ROUNDS times."""
+        concepts = query_concepts(question).concepts
+        nearest = [cid for cid, _ in sorted(pool.knn, key=lambda hit: hit[1])][:EXCERPTS_LEXICAL_WINDOW]
+        keys = await self._repo.get_chunk_keys(user_id, nearest) if nearest and concepts else {}
+        stats.keyed = len(nearest) if concepts else 0
+        ranked = rank_excerpts(pool.knn, keys, concepts)
+        hashes = {item_id: _copy_hash(rec) for item_id, rec in pool.records.items()}
+        noted = frozenset(item_id for item_id, rec in pool.records.items() if rec.owner_note_id)
+        sizes = dict(pool.spans)
+        texts: Dict[ChunkId, DriveChunk] = {}
+        absent: Set[ChunkId] = set()
+        selection = Selection()
+        for _ in range(_SELECT_ROUNDS):
+            selection = select_excerpts(ranked, sizes, shown=shown, hashes=hashes, noted=noted)
+            missing = [key for key in selection.chunks if key not in texts]
+            if not missing:
+                break
+            read = await self._excerpt_texts(user_id, missing, stats)
+            texts.update(read)
+            absent.update(key for key in missing if key not in read)
+            keeper_of = {copy: keeper for keeper, copies in selection.also_at.items() for copy in copies}
+            for cid in ranked:
+                keeper = keeper_of.get(cid[0], cid[0])
+                key = (keeper, int(pool.records[keeper].indexed_generation or 0), cid[2])
+                if key in texts:
+                    sizes[cid] = len(texts[key].text)
+            ranked = [cid for cid in ranked if cid not in absent]
+        chosen = [key for key in selection.chunks if key in texts]
+        by_file: Dict[str, List[DriveChunk]] = {}
+        for key in chosen:
+            by_file.setdefault(key[0], []).append(texts[key])
+        files = tuple(self._excerpt_file(pool.records[item_id], pool.chains[item_id], chunks,
+                                         [pool.chains[c][0] for c in selection.also_at.get(item_id, ())
+                                          if c in pool.chains])
+                      for item_id, chunks in by_file.items())
+        return files, selection
+
+    async def _excerpt_texts(self, user_id: str, keys: Sequence[ChunkId],
+                             stats: _ExcerptStats) -> Dict[ChunkId, DriveChunk]:
+        by_file: Dict[Tuple[str, int], Set[int]] = {}
+        for item_id, generation, index in keys:
+            by_file.setdefault((item_id, generation), set()).add(index)
+        groups = sorted(by_file.items())
+        out: Dict[ChunkId, DriveChunk] = {}
+        for start in range(0, len(groups), _READ_PARALLEL):
+            part = groups[start:start + _READ_PARALLEL]
+            rows = await asyncio.gather(*(self._repo.get_chunks(user_id, item_id, generation, sorted(indexes))
+                                          for (item_id, generation), indexes in part))
+            stats.reads += len(part)
+            for row in rows:
+                for chunk in row:
+                    out[(chunk.item_id, chunk.generation, chunk.index)] = chunk
+        return out
+
+    @staticmethod
+    def _excerpt_file(rec: DriveIndexRecord, chain: Tuple[str, Tuple[str, ...]], chunks: Sequence[DriveChunk],
+                      also_at: Sequence[str] = ()) -> ExcerptFile:
+        """The file's identity from its record (as a search card's), its marks and its chunks in index order."""
+        return ExcerptFile(
+            item_id=rec.item_id, ref=make_drive_ref(rec.item_id), name=rec.name, path=chain[0], kind=rec.kind,
+            generation=int(rec.indexed_generation or 0), chunk_count=rec.chunk_count, size_bytes=rec.size_bytes,
+            modified_at=rec.modified_at, web_url=rec.web_url, stale=rec.stale, truncated=rec.truncated,
+            capture=rec.capture, card_accuracy=rec.card_accuracy if scorable(rec) else None,
+            content_hash=rec.content_hash, also_at=tuple(also_at),
+            chunks=tuple(ExcerptChunk(c.item_id, c.generation, c.index, c.text, c.char_start, c.char_end)
+                         for c in sorted(chunks, key=lambda c: c.index)))
+
+    @staticmethod
+    def _excerpt_context(files: Sequence[ExcerptFile], records: Mapping[str, DriveIndexRecord],
+                         chains: Mapping[str, Tuple[str, Tuple[str, ...]]], ancestry: _Ancestry) -> ExcerptContext:
+        """A18 from what is already loaded: each shown file's ancestor ids (its chain), description and own note;
+        each noted ancestor folder from the ancestry cache (no read). Copies show the keeper's chain only; a chain
+        broken by an unrecorded ancestor shows its known part."""
+        contexts: List[FileContext] = []
+        folders: Dict[str, FolderNote] = {}
+        for file in files:
+            rec = records[file.item_id]
+            path, ancestors = chains[file.item_id]
+            contexts.append(FileContext(item_id=file.item_id, path=path, ancestors=ancestors,
+                                        description=file_description(rec), own_note=note_line(rec)))
+            for folder_id in ancestors:
+                folder = ancestry.cache.get(folder_id)
+                if folder_id in folders or folder is None:
+                    continue
+                line = note_line(folder)
+                chain = ancestry.chain(folder, require_card=False) if line else None
+                if chain is not None:
+                    folders[folder_id] = FolderNote(item_id=folder_id, path=chain[0], depth=len(chain[1]) + 1,
+                                                    line=line)
+        return ExcerptContext(files=tuple(contexts), folders=folders)
+
+    async def _excerpt_range(self, user_id: str, request: ExcerptRangeRequest, stats: _ExcerptStats) -> ExcerptResult:
+        gated = await self._excerpt_gate(user_id, request)
+        if isinstance(gated, ExcerptResult):
+            stats.scope = "gate"
+            return gated
+        state = gated
+        ancestry = _Ancestry(self._repo, user_id, state.root_item_id)
+        item_id = parse_drive_ref(request.file_ref) or ""
+        found, building = await asyncio.gather(self._repo.get_records(user_id, [item_id]),
+                                               self._building(user_id, state))
+        rec = found.get(item_id)
+        chain: Optional[Tuple[str, Tuple[str, ...]]] = None
+        if rec is not None:
+            await ancestry.load([rec])
+            chain = ancestry.chain(rec)
+        if rec is None or chain is None or not _readable(rec):
+            return ExcerptResult(status=STATUS_OK, request=request, no_text=1, building=building,
+                                 no_text_paths=(chain[0] if chain is not None else request.file_ref,))
+        first = stored_index(request.first)
+        last = min(stored_index(request.last), rec.chunk_count - 1, first + EXCERPT_RANGE_MAX - 1)
+        generation = int(rec.indexed_generation or 0)
+        rows = await self._repo.get_chunks(user_id, item_id, generation, list(range(first, last + 1))) \
+            if first <= last else []
+        stats.reads = 1 if first <= last else 0
+        stats.hits = stats.candidates = len(rows)
+        kept: List[DriveChunk] = []
+        chars = 0
+        continue_at: Optional[int] = None
+        for chunk in sorted(rows, key=lambda c: c.index):
+            if kept and chars + len(chunk.text) > EXCERPTS_CHARS_MAX:
+                continue_at = display_number(chunk.index)
+                break
+            kept.append(chunk)
+            chars += len(chunk.text)
+        files = (self._excerpt_file(rec, chain, kept),) if kept else ()
+        return ExcerptResult(status=STATUS_OK, request=request, files=files, building=building,
+                             continue_at=continue_at,
+                             context=self._excerpt_context(files, {item_id: rec}, {item_id: chain}, ancestry))
 
     # ------------------------------------------------------------------------------------------
     # Filter-only listings (§10.1, unchanged)

@@ -24,10 +24,13 @@ def test_find_is_answered_from_the_results_and_files_open_only_for_their_content
 
 def test_the_moved_guidance_is_in_the_skill():
     smart = _smart()
+    # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13): a total over a table still opens the file, a value or a comparison
+    # uses passages, and more than a card's window is asked for as the file's passages, not opened.
     for line in ("'About' and 'mentioned in' are exact", "'Related by meaning only' lines are guesses",
                  "so you can tell whether the word was phrasing or the subject",
                  "\"Coverage: complete\" makes a not-found reliable", "never say a document does not exist",
-                 "For sums, totals and comparisons, open the file", "never pick silently",
-                 "a document is authoritative", "Before quoting more than it shows, open the file.",
+                 "For a total or a count over a table, open the file", "for a value or a point compared, use passages",
+                 "never pick silently", "a document is authoritative",
+                 "For more than it shows, ask for the file's passages on that point",
                  "quote the passage and say it is an excerpt"):
         assert line in smart, line

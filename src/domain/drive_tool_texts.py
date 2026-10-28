@@ -24,6 +24,9 @@ APPEND_TO_FILE = "append_to_file"
 REPLACE_FILE_CONTENT = "replace_file_content"
 DELETE_DRIVE_ITEM = "delete_drive_item"
 REPORT_TOOL = "report_to_orchestrator"
+# USER_DRIVE_INDEXING_RFC §28.3 A3: the passages tools; their declarations come with the tools.
+FIND_PASSAGES = "find_passages"
+READ_PASSAGES = "read_passages"
 
 _FOLDER = "a folder path such as 'Contracts/2026', or a folder's drive: ref"
 
@@ -76,6 +79,21 @@ APPEND_REF = "Optional: the drive: ref of the text file; empty uses the item's t
 TARGET_REF = "The drive: ref of the file whose whole content is replaced."
 NEW_CONTENT_REF = ("The file whose content goes in: a chat file name from a [File: …] label, a delivered document key, "
                    "a workspace:<path> file, a skill: file, or another drive: file.")
+# USER_DRIVE_INDEXING_RFC §28.3 A3, A5, A7: the passages tools' fields.
+PASSAGES_QUESTION = (
+    "The full question the passages should answer, self-contained and in the language of the commission: what is "
+    "asked about which file or subject ('What does Tom's plan say happens after the first review?'), not key words. "
+    "You may reword it for a second try (other words, the documents' language)."
+)
+PASSAGES_FOLDER = (f"Optional: only files in this folder and its subfolders: {_FOLDER}. Empty searches the whole "
+                   "drive.")
+PASSAGES_FILE_REFS = ("Optional: only these files: their drive: refs, comma-separated, at most 10, from a card, a "
+                      "passages head line, the commission or the state block. When given, folder is not used. Empty: "
+                      "not limited to files.")
+PASSAGES_FILE_REF = "The file's drive: ref, from a card or a passages head line's id."
+PASSAGES_RANGE = ("The passage numbers to read: one number or a range such as 6-8, numbered as head lines number them "
+                  "('passages i–j of N'); at most 10. The passages after a run i–j start at j+1; a cut result says "
+                  "where it continues.")
 NOTE = ("At most two sentences on what you searched, opened or changed. Never a file's content, never whether the files "
         "answer the question, never that something is complete or missing.")
 QUESTION = ("Optional: only when the orchestrator must ask the user which file is meant; name the candidates by path. "
@@ -96,7 +114,7 @@ def _tool(name: str, description: str, required: List[str], **params: str) -> Di
 
 
 def drive_tool_declarations(extra: Sequence[Dict[str, Any]] = ()) -> List[Dict[str, Any]]:
-    """The twelve drive tools, then `extra` (the note tools, in their own fixed order), then the terminal tool: a fixed
+    """The fourteen drive tools, then `extra` (the note tools, in their own fixed order), then the terminal tool: a fixed
     order, so each cacheable prefix stays stable (design Δ16). No `extra` is today's list byte for byte."""
     return [
         _tool(SEARCH_DRIVE, "Find files and folders on the drive by what they are, their names, dates, places and what "
@@ -109,6 +127,14 @@ def drive_tool_declarations(extra: Sequence[Dict[str, Any]] = ()) -> List[Dict[s
         _tool(OPEN_DRIVE_FILE, "Open a drive file for the orchestrator: its text, the image or PDF itself, or a "
               "recording's transcript; a video is sent to the user's chat instead. You do not see what is opened.",
               ["file_ref"], file_ref=OPEN_REF),
+        _tool(FIND_PASSAGES, "Read what the files say about a question: the indexed passages nearest it, verbatim "
+              "excerpts numbered per file, shown to you in full and delivered to the orchestrator. For what is "
+              "written inside files; to find which files there are use search_drive, for a whole file "
+              "open_drive_file.", ["question"], question=PASSAGES_QUESTION, folder=PASSAGES_FOLDER,
+              file_refs=PASSAGES_FILE_REFS),
+        _tool(READ_PASSAGES, "Read one file's passages by number: the ones around or after a passage you were shown, "
+              "or where a cut result continues. Shown to you in full and delivered to the orchestrator.",
+              ["file_ref", "passages"], file_ref=PASSAGES_FILE_REF, passages=PASSAGES_RANGE),
         _tool(GET_RECORDING_LINK, "A link to a recording itself, only when the user asks for the recording, not its "
               "content.", ["file_ref"], file_ref=RECORDING_REF),
         _tool(COPY_FILE_TO_DRIVE, "Keep a copy of a file on the drive; never overwrites, the result states the name "

@@ -76,8 +76,9 @@ def test_the_delegate_surface_is_the_context_schema_smart_declares():
 def test_the_drive_surface_is_the_specialists_tool_list():
     names = [d["name"] for d in SURFACES["drive"]()]
     assert names == [
-        "search_drive", "search_deleted_recordings_and_notes", "list_folder", "open_drive_file", "get_recording_link",
-        "copy_file_to_drive", "save_text_file", "create_folder", "move_file", "append_to_file", "replace_file_content",
+        # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A3): the two passages tools come right after open_drive_file
+        "search_drive", "search_deleted_recordings_and_notes", "list_folder", "open_drive_file", "find_passages",
+        "read_passages", "get_recording_link", "copy_file_to_drive", "save_text_file", "create_folder", "move_file", "append_to_file", "replace_file_content",
         "delete_drive_item", "report_to_orchestrator",
     ]
     assert "drive:report_to_orchestrator" not in READ_ONLY            # its fields are the orchestrator's prompt input

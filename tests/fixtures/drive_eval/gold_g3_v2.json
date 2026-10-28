@@ -217,7 +217,7 @@
     "07.05.2031"
    ]
   ],
-  "note": "Card accuracy (§26.4, D36): the scan's card carries a misread birth date, so its accuracy is under 90 %. A question about a VALUE in the file: Smart checks the file (opens it) before answering, and the answer says 2031."
+  "note": "Card accuracy (§26.4, D36): the scan's card carries a misread birth date, so its accuracy is under 90 %. A question about a VALUE in the file: Smart checks the file (opens it) before answering, and the answer says 2031. Re-judged for answer from content (USER_DRIVE_INDEXING_RFC §28.2, OQ-A2): must_open stays, because the file is a scan and its passages are the same reading the card was graded on, so a value below 90 % is opened, not read from passages."
  },
  {
   "id": "v2-card-value-opens-ru",
@@ -236,7 +236,7 @@
     "07 05 2021"
    ]
   ],
-  "note": "The same card, another value it prints (the issue date, in Russian): the card's accuracy is under 90 % because of a different, misread value, so only the accuracy rule makes Smart open the file."
+  "note": "The same card, another value it prints (the issue date, in Russian): the card's accuracy is under 90 % because of a different, misread value, so only the accuracy rule makes Smart open the file. Re-judged for answer from content (USER_DRIVE_INDEXING_RFC §28.2, OQ-A2): must_open stays, because the file is a scan and its passages are the same reading the card was graded on, so a value below 90 % is opened, not read from passages."
  },
  {
   "id": "v2-card-find-no-open",

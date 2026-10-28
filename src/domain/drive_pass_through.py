@@ -6,7 +6,8 @@ read reaches the orchestrator verbatim, in run order, whatever the specialist's 
 change to the engine's fold: the collector also keeps the `drive_context` entries the engine would drop for a local
 tool co-emitted with the terminal tool.
 
-It also remembers the searches already run, so an identical `search_drive` is not run again (§5.4).
+It also remembers the searches already run, so an identical `search_drive` is not run again (§5.4), and keeps the
+run's passages ledger (USER_DRIVE_INDEXING_RFC §28.3 A11): every passage retrieved reaches the orchestrator once.
 
 `CollectedResult`, the value type it holds, is in drive_collected_result.py.
 """
@@ -16,6 +17,8 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from .agent import DeliveryItem
 from .drive_collected_result import CollectedResult
+from .drive_excerpt_context_plan import ContextPlan
+from .drive_excerpt_ledger import ExcerptLedger
 from .drive_outcome import DriveOutcome
 
 SearchKey = Tuple[str, ...]
@@ -34,6 +37,7 @@ class PassThroughCollector:
         self._results: List[CollectedResult] = []
         self._searches: Dict[SearchKey, str] = {}
         self.repeats_skipped = 0
+        self.ledger = ExcerptLedger()
 
     @property
     def results(self) -> Tuple[CollectedResult, ...]:
@@ -42,6 +46,8 @@ class PassThroughCollector:
     def add(self, step: int, kind: str, outcome: DriveOutcome) -> CollectedResult:
         result = CollectedResult(handle=f"r{len(self._results) + 1}", step=step, kind=kind, outcome=outcome)
         self._results.append(result)
+        if outcome.excerpts is not None and outcome.excerpts.files:
+            self.ledger.add(outcome.excerpts, outcome.excerpt_plan or ContextPlan.EMPTY)
         return result
 
     def earlier_search(self, key: SearchKey) -> Optional[str]:

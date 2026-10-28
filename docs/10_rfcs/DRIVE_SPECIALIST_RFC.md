@@ -729,7 +729,7 @@ descriptions are specialist-owned constants in `src/domain/drive_tool_texts.py`.
 `save_text_file` and `append_to_file` are always declared; without a matching item the handler refuses with no service
 call, and the refusal is classed `not_possible` (§7.2). `OUTPUT_FORMAT_DRIVE` describes `not_done` next to `question`.
 
-**Proposed, not built:** `USER_DRIVE_INDEXING_RFC.md` §28 (answer from content, 2026-10-28) adds the read tools `find_passages` and `read_passages`, which the specialist sees in full; it amends §2.3.11, §5.8 (A′), §6 and `execute_as_given` for reads (§28.3 lists each), and, by the owner's decision of 2026-10-28 (OQ-A1), §2.2 row 1: a run that is not a chat turn (a background run or a call) refuses its changes for the rest of the run once it has read passages (§28.3 A14).
+**Built, not deployed:** `USER_DRIVE_INDEXING_RFC.md` §28 (answer from content, 2026-10-28) adds the read tools `find_passages` and `read_passages`, which the specialist sees in full; it amends §2.3.11, §5.8 (A′), §6 and `execute_as_given` for reads (§28.3 lists each), and, by the owner's decision of 2026-10-28 (OQ-A1), §2.2 row 1: a run that is not a chat turn (a background run or a call) refuses its changes for the rest of the run once it has read passages (§28.3 A14).
 
 ### 8.2 Shape check (`feedback_llm_tool_shape_crud`; common requests, read from names and parameters alone)
 

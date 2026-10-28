@@ -6,24 +6,33 @@
     <step>. done: <today's text>      one line per mutating call, in run order
     <step>. not done: <today's text>
     Reading: <line>                   zero or more, chosen by code from the blocks (§7.3)
-    Specialist note: <≤ 300 characters>
+    Specialist note: <≤ 300 characters>   on a run that retrieved passages, the Searched line instead (§28.3 A12)
     [Result r1, step 1: search]
     <verbatim block>
     …
+    [Result r2, r4: passages]         every passage the run retrieved, once, from the collector's ledger (§28.3 A11)
+    <the consolidated block>
+    <the language line>
 
 The status is set by code from the outcome classes, never by the model; the model's `question` and `not_done` can only
 lower it (§7.1). "What to do" is today's message of the operation that decided the status.
+
+Passages (USER_DRIVE_INDEXING_RFC §28.3 A11-A13): a passages call whose passages the ledger holds prints no block of
+its own; its facts still choose the reading lines. A passages call that returned no passage keeps its per-call block
+(its text is a state: nothing matched, rebuilding, which folder).
 
 `DriveStatus` (drive_status.py) and `DriveReport` (drive_report.py) are the two other value types of this contract.
 """
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Sequence, Tuple
 
 from . import drive_answer_texts as t
 from .agent import DeliveryItem
 from .drive_collected_result import CollectedResult
+from .drive_excerpt_render import searched_line
 from .drive_line import DriveLine
 from .drive_op import DriveOp
 from .drive_outcome_class import OutcomeClass
@@ -63,13 +72,25 @@ _DONE = frozenset({OutcomeClass.OK})
 _CORRECTABLE = frozenset({OutcomeClass.REQUEST_ERROR, OutcomeClass.NOT_POSSIBLE})
 
 
+def _default_nonce() -> str:
+    return secrets.token_hex(8)
+
+
 def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut: bool = False,
                    drive_line: DriveLine = DriveLine.CONNECTED,
-                   search_line: SearchLine = SearchLine.ON) -> DriveAnswer:
+                   search_line: SearchLine = SearchLine.ON,
+                   nonce: Callable[[], str] = _default_nonce) -> DriveAnswer:
     """`cut`: the soft deadline, an engine exception or the turn limit ended the run before its report (§7.2: the
     status is then `unfinished` whatever finished). A correctable error the model fixed is left out of the status and
     of the read blocks, but a change's op line is never dropped (§7.2). `search_line` is the preflight's: when it is not
-    `on`, no search ran and the answer holds reads only, today's search state text is the state line (X6)."""
+    `on`, no search ran and the answer holds reads only, today's search state text is the state line (X6). `nonce`
+    gives each file of the passages block its wrapper's nonce.
+
+    On a run that retrieved passages the report's free text (note, question, not_done) is withheld (§28.3 A12;
+    owner 2026-10-28): the model wrote it after reading file text and it is not wrapped, so an instruction planted in
+    a file could reach the orchestrator through it. Status and "What to do" then come from code facts only."""
+    if collector.ledger:
+        report = DriveReport()
     settled = _settled(collector.results)
     results = [r for r in collector.results if r.handle not in settled]
     all_changes = [r for r in collector.results if r.outcome.is_change]
@@ -123,6 +144,8 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
         state_line = _preflight_search_text(search_line)
     blocks = _read_blocks(reads)
     reading = reading_lines([b for b in blocks if b.outcome.op is not DriveOp.SEARCH] if by_change else blocks)
+    passages = [r for r in collector.results if _in_ledger(r)]
+    printed = [b for b in blocks if not _in_ledger(b)]
 
     out = [t.STATUS_HEAD.format(status=status.value), t.WHAT_TO_DO.format(line=line)]
     if state_line and state_line != line:
@@ -132,10 +155,14 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
                    else t.OP_RUNNING if r.outcome.cls is OutcomeClass.STILL_RUNNING else t.OP_NOT_DONE)
         out.append(t.OP_LINE.format(step=r.step, verdict=verdict, text=r.outcome.text))
     out.extend(t.READING_PREFIX + line for line in reading)
-    if report.note:
+    if collector.ledger:
+        searched = searched_line(collector.results)
+        if searched:
+            out.append(searched)
+    elif report.note:
         out.append(t.NOTE_PREFIX + report.note[: t.NOTE_MAX_CHARS])
     change_steps = sorted({r.step for r in changes})
-    for block in blocks:
+    for block in printed:
         later = [s for s in change_steps if s > block.step]
         if later and block.kind == t.KIND_LISTING:
             out.append(t.RESULT_HEAD_BEFORE.format(handle=block.handle, step=block.step, kind=block.kind,
@@ -143,6 +170,11 @@ def compose_answer(collector: PassThroughCollector, report: DriveReport, *, cut:
         else:
             out.append(t.RESULT_HEAD.format(handle=block.handle, step=block.step, kind=block.kind))
         out.append(block.outcome.text)
+    if collector.ledger:
+        out.append(t.RESULT_HEAD_PASSAGES.format(handles=", ".join(r.handle for r in passages),
+                                                 kind=t.KIND_PASSAGES))
+        out.append(collector.ledger.block(nonce=nonce))
+        out.append(t.LANGUAGE_LINE)
     return DriveAnswer(text="\n".join(out), status=status, files=collector.files(),
                        drive_context=collector.drive_context(), reading=tuple(reading),
                        note_context=collector.note_context(), delivery_items=collector.delivery_items())
@@ -159,10 +191,14 @@ def reading_lines(blocks: Sequence[CollectedResult]) -> List[str]:
     cards = sum(s.facts.cards for s in searches)
     if cards:
         add(t.R_FIND, t.R_TIERS, t.R_TRUST, t.R_RELATED, t.R_COVERAGE, t.R_MANY, t.R_ALL)
+    if any(b.outcome.facts.excerpts for b in blocks):
+        add(t.R_EXCERPTS)
     if any(s.facts.passage for s in searches):
         add(t.R_PASSAGE)
     if any(s.facts.accuracy for s in searches):
         add(t.R_ACCURACY, t.R_ACCURACY_FIND, t.R_ACCURACY_VALUE)
+    if any(s.facts.low_accuracy_image for s in searches):
+        add(t.R_ACCURACY_IMAGE)
     if any(b.outcome.facts.owner_note for b in blocks):
         add(t.R_OWNER_NOTE)
     if any(s.facts.scan for s in searches):
@@ -209,6 +245,13 @@ def _settled(results: Sequence[CollectedResult]) -> set[str]:
             queue.remove(earlier)
             dropped.add(earlier.handle)
     return dropped
+
+
+def _in_ledger(r: CollectedResult) -> bool:
+    """A passages call whose passages the ledger holds (the collector's own test): the consolidated block prints them."""
+    excerpts = r.outcome.excerpts
+    return (r.outcome.op is DriveOp.PASSAGES and excerpts is not None
+            and any(file.chunks for file in excerpts.files))
 
 
 def _read_blocks(reads: Sequence[CollectedResult]) -> List[CollectedResult]:

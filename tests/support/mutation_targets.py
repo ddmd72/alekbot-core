@@ -241,6 +241,13 @@ TARGETS: tuple[MutationTarget, ...] = (
                    extra=(_NOTE_E2E, _NOTE_CHAIN)),
     MutationTarget("src.domain.drive_note_view", "tests/unit/domain/drive_note_view_equivalent_mutants.txt",
                    extra=(_NOTE_E2E, _NOTE_CHAIN)),
+    # Answer from content (USER_DRIVE_INDEXING_RFC §28): header-only equivalent files.
+    MutationTarget("src.domain.drive_excerpts", "tests/unit/domain/drive_excerpts_equivalent_mutants.txt"),
+    MutationTarget("src.domain.drive_excerpt_request", "tests/unit/domain/drive_excerpt_request_equivalent_mutants.txt"),
+    MutationTarget("src.domain.drive_excerpt_render", "tests/unit/domain/drive_excerpt_render_equivalent_mutants.txt"),
+    MutationTarget("src.domain.drive_excerpt_ledger", "tests/unit/domain/drive_excerpt_ledger_equivalent_mutants.txt"),
+    MutationTarget("src.domain.drive_content_gate", "tests/unit/domain/drive_content_gate_equivalent_mutants.txt"),
+    MutationTarget("src.domain.drive_excerpt_context", "tests/unit/domain/drive_excerpt_context_equivalent_mutants.txt"),
 )
 
 

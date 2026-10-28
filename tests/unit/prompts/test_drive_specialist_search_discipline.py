@@ -51,7 +51,8 @@ def test_the_manifest_find_sentence_uses_the_skills_words():
     import src.infrastructure.agent_manifest as manifest
 
     source = Path(manifest.__file__).read_text(encoding="utf-8")
-    assert "A find ('find', 'show me', 'do I have', 'where is', 'which files', 'everything about X') is" in source
+    # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13): the find sentence keeps its file words without "everything about X"
+    assert "A find ('find', 'show me', 'do I have', 'where is', 'which files') is" in source
     assert "(one language, no synonyms or translations)" in source
 
 
