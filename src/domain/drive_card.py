@@ -3,6 +3,10 @@ Card text and its hash (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §8.5, §25.2.7)
 `name | kind | ... | key facets`; no path, so a folder rename touches no descendant. CARD_VERSION 3 carries the
 profile and the photo fields; no lead text but for machine text, so card kNN and chunk kNN no longer vote on one signal.
 CARD_VERSION 4 adds the capture (§26.3) and drops the brief's doc type (Δ64), and a photograph's scene labels (D40).
+
+The owner's note (DRIVE_FILE_NOTES_RFC §5.3, D7) is a segment right after `name | kind` in every branch, with no
+CARD_VERSION bump (the G5 precedent): `_joined` drops an empty segment, so a record without a note keeps a byte-identical
+card text and hash. `note_line(rec)` is the same note as the search card renders it, on its own line.
 """
 from __future__ import annotations
 
@@ -159,6 +163,42 @@ def _joined(parts: List[str]) -> str:
     return " | ".join(p for p in parts if p)
 
 
+def _label(value: str) -> str:
+    """A label value as words ("bank_statement" -> "bank statement"), as the deleted-files lines show it (part C)."""
+    return value.replace("_", " ")
+
+
+def _owner_parts(text: str, doc_type: str, life_areas: Tuple[str, ...]) -> List[str]:
+    out = [text] if text else []
+    if doc_type:
+        out.append(f"type {_label(doc_type)}")
+    if life_areas:
+        out.append("life areas " + ", ".join(_label(a) for a in life_areas))
+    return out
+
+
+def owner_segment(rec: DriveIndexRecord) -> str:
+    """DRIVE_FILE_NOTES_RFC §5.3: `noted by the owner: <text>; type <doc_type>; life areas <a>, <b>`, each part only when
+    present (a classifier-only note reads `noted by the owner: type contract`, never an empty quote); "" without a note.
+    The owner's words outrank the model's, so the segment sits right after `name | kind`."""
+    parts = _owner_parts(rec.owner_note_text, rec.owner_doc_type, tuple(rec.owner_life_areas))
+    return "noted by the owner: " + "; ".join(parts) if parts else ""
+
+
+def owner_note_line(text: str, doc_type: str, life_areas: Tuple[str, ...]) -> str:
+    """The rendered note (§6.2): `noted by the owner: «<text>» (type contract; life areas home)`, or `noted by the owner:
+    type contract` for a classifier-only note; "" for no note. One renderer for search cards and the open header."""
+    labels = _owner_parts("", doc_type, tuple(life_areas))
+    if text:
+        return f"noted by the owner: «{text}»" + (f" ({'; '.join(labels)})" if labels else "")
+    return "noted by the owner: " + "; ".join(labels) if labels else ""
+
+
+def note_line(rec: DriveIndexRecord) -> str:
+    """`owner_note_line` of the record's copy of the note ("" for a record without one)."""
+    return owner_note_line(rec.owner_note_text, rec.owner_doc_type, tuple(rec.owner_life_areas))
+
+
 def _transcript_segment(rec: DriveIndexRecord) -> str:
     """§27.8 (a): the transcript line of a transcribed media record; none for every other kind and for a media
     record without a transcript, so no existing card's text (and no `card_hash`) changes (G5)."""
@@ -167,8 +207,11 @@ def _transcript_segment(rec: DriveIndexRecord) -> str:
     return card_segment(rec) or ""
 
 
-def card_text(rec: DriveIndexRecord) -> str:
-    """§25.2.7 (CARD_VERSION 4: §26.3's capture), each segment only when present:
+def card_text(rec: DriveIndexRecord, *, owner: bool = True) -> str:
+    """§25.2.7 (CARD_VERSION 4: §26.3's capture), each segment only when present; the owner's note segment
+    (`owner_segment`, DRIVE_FILE_NOTES_RFC §5.3) right after `name | kind` (a collapsed folder: after its label) in every
+    branch, and a profiled file's doc type left out when the owner gave one (never shown twice). `owner=False` leaves
+    the segment out: the search card renders the note on its own line (§6.2), the card hash and embedding keep it.
     - profiled file: `name | kind | capture | doc_type | what_it_is | title | entities (as printed) | topics |
       topics_native | facets`;
     - text file without a profile: `name | kind | capture | brief (no doc type, Δ64) | facets`;
@@ -178,27 +221,31 @@ def card_text(rec: DriveIndexRecord) -> str:
       appended (§27.8 a, no CARD_VERSION bump, G5);
     - collapsed folder with a README profile: `name | label | what_it_is | title | topics`; without, its Slice 1
       card."""
+    seg = owner_segment(rec) if owner else ""
     if rec.is_folder:
         if rec.scope is Scope.OPAQUE_ROOT:
             p = rec.profile
             extra = [p.what_it_is, p.title, ", ".join(p.topics)] if p is not None else []
-            return _joined([rec.name, _opaque_label(rec), *extra])
-        return f"{rec.name} | folder"
+            return _joined([rec.name, _opaque_label(rec), seg, *extra])
+        # the plain folder: the exact Slice 1 text without a note (an empty name included), the segment after it
+        return f"{rec.name} | folder | {seg}" if seg else f"{rec.name} | folder"
     kind = _KIND_LABEL.get(rec.kind, "file")
     if rec.reason is Reason.MACHINE_TEXT:
-        return _joined([rec.name, kind, _MACHINE_TEXT, rec.lead_text, _transcript_segment(rec)])
+        return _joined([rec.name, kind, seg, _MACHINE_TEXT, rec.lead_text, _transcript_segment(rec)])
     if rec.triage_verdict is TriageVerdict.PHOTO and rec.state is not RecordState.PENDING:
-        return _joined([rec.name, kind, rec.photo_description, rec.photo_scene,
+        return _joined([rec.name, kind, seg, rec.photo_description, rec.photo_scene,
                         ", ".join(scene_label_text(label) for label in rec.photo_scene_labels),
                         ", ".join(o.name for o in rec.photo_objects if o.name), rec.visible_text, *_key_facets(rec)])
     p = rec.profile
     if p is not None:
-        # an entity as the file prints it, never only the profiler's spelling of it (xc F1)
-        return _joined([rec.name, kind, _capture_segment(rec), p.doc_type, p.what_it_is, p.title,
+        # an entity as the file prints it, never only the profiler's spelling of it (xc F1); the profile's doc type
+        # only when the owner gave none (D7: the owner's type is in the segment, and the stored profile is untouched)
+        return _joined([rec.name, kind, seg, _capture_segment(rec), "" if rec.owner_doc_type else p.doc_type,
+                        p.what_it_is, p.title,
                         ", ".join(e.printed or e.name for e in p.entities if e.printed or e.name),
                         ", ".join(p.topics),
                         ", ".join(p.topics_native), *_key_facets(rec), _transcript_segment(rec)])
-    return _joined([rec.name, kind, _capture_segment(rec), *_brief_segments(rec.brief), *_key_facets(rec),
+    return _joined([rec.name, kind, seg, _capture_segment(rec), *_brief_segments(rec.brief), *_key_facets(rec),
                     _transcript_segment(rec)])
 
 

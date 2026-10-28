@@ -83,7 +83,8 @@ def _world(monkeypatch):
         _LAZY_AGENT_IDS=UserAgentFactory._LAZY_AGENT_IDS, coordinator=coordinator, prompt_content_store=None,
         quota_service=None, context_builder=context_builder, file_conversion_service=conversion,
         file_storage=MagicMock(), notification_service=notifier, user_drive_service=drive,
-        localization=localization, language_service=None, drive_search_service=None, alert_sink=None)
+        localization=localization, language_service=None, drive_search_service=None,
+        drive_note_service=None, drive_notes_enabled=True, alert_sink=None)
     fake._drive_operations = lambda c: UserAgentFactory._drive_operations(fake, c)
     factory = _Factory(fake)
     coordinator.set_agent_factory(factory)

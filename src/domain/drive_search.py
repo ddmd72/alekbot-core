@@ -31,7 +31,7 @@ from datetime import date, datetime, time, timezone
 from typing import Callable, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from .drive_accuracy import scorable
-from .drive_card import taken_at
+from .drive_card import note_line, taken_at
 from .drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope, TriageVerdict, inaccessible
 from .drive_index_params import ACCESS_LOSS_TTL, WRAPPER_TAG_GAP_MAX
 from .drive_index_policy import Admission, admission, kind_of
@@ -202,6 +202,9 @@ class DriveSearchCard:
     capture_source: str = ""
     scene_labels: Tuple[str, ...] = ()   # a photograph's scene labels (D40): its `scene:` line
     card_accuracy: Optional[int] = None  # 0-100 (§26.4): its `card accuracy: N%` line; None for a photo or an undescribed file
+    # DRIVE_FILE_NOTES_RFC §6.2: the owner's note as one rendered line (`drive_card.note_line`), "" for none; printed
+    # right after the summary, which is then `card_text(rec, owner=False)`, so the render cut never spends on the note
+    owner_note: str = ""
 
     def drive_item(self) -> DriveItem:
         """The Step 1 item, built only now that a path is derived (§3.1)."""
@@ -495,7 +498,9 @@ def is_not_read_yet(rec: DriveIndexRecord, admitted: Optional[FrozenSet[str]] = 
 
 
 def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> DriveSearchCard:
-    """A record the bot cannot open (§26.2) keeps a readable generation it had, shown stale (Δ52)."""
+    """A record the bot cannot open (§26.2) keeps a readable generation it had, shown stale (Δ52). The owner's note
+    line comes from the record (DRIVE_FILE_NOTES_RFC §6.2), so every call site renders it; each passes
+    `card_text(rec, owner=False)` as the summary."""
     closed = inaccessible(rec)
     return DriveSearchCard(
         ref=make_drive_ref(rec.item_id), item_id=rec.item_id, name=rec.name, path=path, kind=rec.kind,
@@ -505,7 +510,7 @@ def make_card(rec: DriveIndexRecord, path: str, summary: str, nonce: str) -> Dri
         stale=rec.stale or (closed and rec.indexed_generation is not None), truncated=rec.truncated,
         content_hash=rec.content_hash, nonce=nonce, date_source=date_source(rec), valid_until=rec.valid_until,
         inaccessible=closed, capture=rec.capture, capture_source=rec.capture_source, card_accuracy=rec.card_accuracy if scorable(rec) else None,
-        scene_labels=rec.photo_scene_labels,
+        scene_labels=rec.photo_scene_labels, owner_note=note_line(rec),
     )
 
 
@@ -577,7 +582,8 @@ def _day(value: Optional[datetime]) -> str:
 def _card_body(card: DriveSearchCard) -> str:
     dated = f"{_day(card.effective_date)} ({card.date_source})" if card.effective_date and card.date_source \
         else _day(card.effective_date)
-    lines = [card.summary, f"path: {card.path or '/'}", f"date: {dated}"]
+    lines = [card.summary, *([card.owner_note] if card.owner_note else []), f"path: {card.path or '/'}",
+             f"date: {dated}"]
     if card.valid_until is not None:
         lines.append(VALID_UNTIL_LINE.format(iso=card.valid_until.date().isoformat()))
     captured = capture_line(card)

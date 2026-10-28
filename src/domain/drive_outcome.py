@@ -4,7 +4,9 @@
 or error, byte for byte), whether today's code answered it as a success, the outcome class the answer's status is
 built from, the drive items touched (the `drive_context` entries), the vision file, and the facts about a read that
 decide the reading lines (§7.3). FileManagementAgent maps it back to today's AgentResponse; the drive specialist feeds
-it to the pass-through collector. Its parts live beside it: `DriveOp` (drive_op.py), `OutcomeClass`
+it to the pass-through collector. A note tool's outcome (specialist RFC §9.2) also carries the note's history line
+(`note_context`, `[Drive note: <path> ref=… v<n>]`) and the receipt or erase request for the owner (`delivery`), so both
+reach the answer from the collector on every exit, a cut run included (design Δ7). Its parts live beside it: `DriveOp` (drive_op.py), `OutcomeClass`
 (drive_outcome_class.py), `ReadFacts` (drive_read_facts.py).
 """
 from __future__ import annotations
@@ -12,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from .agent import DeliveryItem
 from .drive_op import MUTATING_OPS, DriveOp
 from .drive_outcome_class import OutcomeClass
 from .drive_read_facts import ReadFacts
@@ -32,6 +35,9 @@ class DriveOutcome:
     # The text is a file's content (opened text, a transcript, a recording link): the drive specialist's model sees a
     # stand-in, the orchestrator the text (DRIVE_SPECIALIST_RFC §6).
     body: bool = False
+    # A note change: its text-free history line and its receipt (or erase request) for the owner's chat.
+    note_context: Tuple[str, ...] = ()
+    delivery: Tuple[DeliveryItem, ...] = ()
 
     @property
     def is_change(self) -> bool:

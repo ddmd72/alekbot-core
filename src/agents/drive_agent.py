@@ -28,11 +28,13 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, 
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..agents.base_agent import BaseAgent
-from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse, DeliveryItem
+from ..domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentResponse
 from ..domain.drive_answer import DriveAnswer, compose_answer
 from ..domain.drive_file_content_item import FileContentItem
 from ..domain.drive_file_contents import parse_file_contents
 from ..domain.drive_line import DriveLine
+from ..domain.drive_note import is_owner_turn
+from ..domain.drive_note_tool_texts import drive_note_tool_declarations
 from ..domain.drive_pass_through import PassThroughCollector
 from ..domain.drive_preflight import DrivePreflight
 from ..domain.drive_report import DriveReport
@@ -43,6 +45,7 @@ from ..domain.run_deadline import CURRENT_RUN_DEADLINE
 from ..domain.turn_clock import CURRENT_TURN_CLOCK
 from ..infrastructure.agent_config import DRIVE
 from ..infrastructure.delegation_engine import DelegationEngine, DelegationResult
+from ..infrastructure.drive_note_tools import DRIVE_NOTE_CONTEXT_KEY, DriveNoteToolRun, note_provenance
 from ..infrastructure.drive_tools import DriveToolRun
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.llm_port import AgentExecutionContext
@@ -51,6 +54,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from ..infrastructure.drive_operations import DriveOperations
     from ..ports.prompt_builder_port import PromptBuilderPort
+    from ..services.drive_note_service import DriveNoteService
 
 AGENT_TYPE = "drive"
 ALERT_TIMEOUT_S = 5.0   # the turn-cap alert never holds the answer back: a hanging sink must not turn it into a timeout (X9)
@@ -140,9 +144,13 @@ class DriveAgent(BaseAgent):
         clock: Callable[[], datetime] = _utcnow,
         monotonic: Callable[[], float] = time.monotonic,
         alert_sink: Optional[AlertSinkPort] = None,
+        notes: Optional["DriveNoteService"] = None,
+        notes_enabled: bool = True,
     ) -> None:
         """`thinking` is the user's `agent_thinking["drive"]`; None takes DRIVE.thinking_effort. `alert_sink` takes the
-        one ops alert of a turn-cap exit without a report (None = log only)."""
+        one ops alert of a turn-cap exit without a report (None = log only). `notes` and `notes_enabled` are injected
+        by composition (REQ-ARCH-17, the DRIVE_NOTES_ENABLED switch): the note tools are declared when the service is
+        present and the switch is on; the ten writers only on an owner turn (DRIVE_SPECIALIST_RFC §9.1)."""
         super().__init__(config)
         self._set_execution_context(execution_context)
         self._llm = execution_context.provider
@@ -154,6 +162,8 @@ class DriveAgent(BaseAgent):
         self._clock = clock
         self._monotonic = monotonic
         self._alert_sink = alert_sink
+        self._notes = notes
+        self._notes_enabled = notes_enabled
 
     @property
     def operations(self) -> "DriveOperations":
@@ -191,7 +201,7 @@ class DriveAgent(BaseAgent):
         preflight = preflight_result
         if preflight.drive is DriveLine.NOT_CONFIGURED:   # answered at once, no LLM call (§7.2)
             return self._answer(message, compose_answer(collector, DriveReport(), drive_line=preflight.drive),
-                                collector, started, turns=0, delivery_items=[])
+                                collector, started, turns=0)
         if isinstance(prompt_result, BaseException):
             if not isinstance(prompt_result, Exception):
                 raise prompt_result
@@ -207,12 +217,20 @@ class DriveAgent(BaseAgent):
         still_running = asyncio.Event()
         run = DriveToolRun(self._ops, collector, items, context, user_id, deadline=deadline,
                            on_still_running=still_running.set, clock=self._monotonic)
+        local_tools = dict(run.handlers)
+        declarations = drive_tool_declarations()
+        if self._notes is not None and self._notes_enabled and user_id:   # no user, no note tool (Δ12)
+            writes = is_owner_turn(context)
+            note_run = DriveNoteToolRun(run, self._notes, self._ops, context, user_id,
+                                        str(context.get("account_id") or ""), note_provenance(context), writes=writes)
+            local_tools.update(note_run.handlers)
+            declarations = drive_tool_declarations(extra=drive_note_tool_declarations(writes=writes))
         state = render_state(context, items, preflight, self._clock(), self._user_timezone)
         boundary = "" if PROMPT_CACHE_BOUNDARY in prompt else f"\n\n{PROMPT_CACHE_BOUNDARY}"
         base = LLMRequest(
             model_name=self.model_name, system_instruction=f"{prompt}{boundary}\n\n{state}",
             messages=[Message(role="user", parts=[MessagePart(text=self._commission(message.payload))])],
-            tools=drive_tool_declarations(), thinking=self.thinking, max_tokens=DRIVE.max_tokens,
+            tools=declarations, thinking=self.thinking, max_tokens=DRIVE.max_tokens,
         )
 
         tools_per_turn: List[List[str]] = []   # tool names only, for the turn-cap log and alert
@@ -230,7 +248,7 @@ class DriveAgent(BaseAgent):
 
         engine = asyncio.ensure_future(DelegationEngine(self.coordinator).execute(
             call_llm=call_llm, base_request=base, context=dict(context), max_turns=DRIVE.max_turns,
-            terminal_tool=REPORT_TOOL, calling_agent_id=self.agent_id, local_tools=run.handlers,
+            terminal_tool=REPORT_TOOL, calling_agent_id=self.agent_id, local_tools=local_tools,
             use_turn_clock=False, allow_delegation=False))
         stop = asyncio.ensure_future(still_running.wait())
         outcome: Optional[DelegationResult] = None
@@ -260,8 +278,7 @@ class DriveAgent(BaseAgent):
         report = DriveReport.of(outcome.terminal_tool_args if outcome else None, outcome.text if outcome else "")
         answer = compose_answer(collector, report, cut=cut, drive_line=preflight.drive,
                                 search_line=preflight.search)
-        return self._answer(message, answer, collector, started, turns=run.step,
-                            delivery_items=list(outcome.delivery_items) if outcome else [])
+        return self._answer(message, answer, collector, started, turns=run.step)
 
     async def _report_turn_cap(self, user_id: str, tools_per_turn: Sequence[Sequence[str]]) -> None:
         """The turn limit ended the run without a report: ERROR log, and one best-effort ops alert. Tool names only."""
@@ -294,7 +311,7 @@ class DriveAgent(BaseAgent):
         return "\n\n".join([text, _STRAY_HEADER + "\n" + "\n".join(stray)]) if stray else text
 
     def _answer(self, message: AgentMessage, answer: DriveAnswer, collector: PassThroughCollector, started: float, *,
-                turns: int, delivery_items: List[DeliveryItem]) -> AgentResponse:
+                turns: int) -> AgentResponse:
         """One log line per commission, no file names (§5.1), and the success that carries the answer (§7)."""
         ops = ",".join(f"{r.outcome.op.value}:{r.outcome.cls.value}" for r in collector.results)
         logger.info("[DriveAgent] user=%s status=%s model=%s ops=%s turns=%s ms=%s",
@@ -303,8 +320,13 @@ class DriveAgent(BaseAgent):
         metadata: Dict[str, Any] = {"drive_status": answer.status.value}
         if answer.files:
             metadata["file_data"] = answer.files
+        history: Dict[str, Any] = {}
+        if answer.drive_context:
+            history["drive_context"] = answer.drive_context
+        if answer.note_context:
+            history[DRIVE_NOTE_CONTEXT_KEY] = answer.note_context
+        # Receipts come from the collector, not the engine: a cut run has no engine result (design Δ7).
         return AgentResponse.success(
             task_id=message.task_id, agent_id=self.agent_id, result=answer.text, metadata=metadata,
-            history_context={"drive_context": answer.drive_context} if answer.drive_context else None,
-            delivery_items=delivery_items,
+            history_context=history or None, delivery_items=list(answer.delivery_items),
         )

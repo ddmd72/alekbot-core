@@ -198,7 +198,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     alternative words is not a list of searches, and synonyms and translations are not searched (RFC rev 4.5 #7,
     `execute_as_given` in `COGNITIVE_PROCESS_DRIVE`; Smart's side: "one language, no synonyms or translations" in the
     commission). G3 fails a case run above 3 search calls (`SEARCH_CALL_CEILING`): an eval check, not a production cap. Prompt: profile `drive`, blueprint `drive_agent_v1`, tokens
-    `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH`, `OUTPUT_FORMAT_DRIVE` (all non-overridable),
+    `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH`, `PROTOCOL_DRIVE_NOTES` (branch), `OUTPUT_FORMAT_DRIVE` (all non-overridable),
     `include_biographical=False`, `include_directives=False`, `include_location=False`; no fallback prompt. The tokens are one
     procedure, each rule once (RFC §0.0.2 rows 8-9); answering, quoting and computing rules are Smart-side reading lines.
     `date_from`/`date_to` filter the file's own date; a date written inside a document goes in `query` with the subject.
@@ -250,9 +250,18 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     `[DriveOperations] <op>: <ref or folder>` line per operation; a turn-cap exit is
     `ERROR [DriveAgent] user=<8> hit the turn limit (6) without a report; tools per turn: …`. `prompt_content` records
     the request's model, so it cannot show a failover.
+  - **Owner notes** (`DRIVE_FILE_NOTES_RFC.md` rev 3.3, specialist RFC §9; built on `feat/drive-notes`): `notes`
+    (`DriveNoteService`) and `notes_enabled` (`DRIVE_NOTES_ENABLED`) are injected by composition. With both and a user,
+    `DriveNoteToolRun` (`src/infrastructure/drive_note_tools.py`) runs on the same `DriveToolRun` (collector, step,
+    deadline, ordering lock): `get_note` always, the ten writers only when `is_owner_turn(message.context)` (never the
+    payload), each re-checked per call; each tool is one service call. Writes go under `asyncio.shield` in a task
+    `DriveOperations.keep_alive` holds; a write the deadline cuts is `NOTE_STILL_RUNNING` and posts its receipt late
+    (`post_late_note_receipt`). Receipts and `drive_note_context` come from the collector (`answer.delivery_items`,
+    `history_context`), never from the engine. Op lines carry no note words; only `get_note`'s block does, wrapped.
   - **Tests:** the twelve tools are a P14 tool-field surface (`drive`, `delegate:work_with_drive_files`,
     `tests/support/tool_fields.py`), e2e card `tests/unit/agents/test_drive_agent_tool_fields_e2e.py`; the modules run
-    in the weekly mutation job (`tests/support/mutation_targets.py`).
+    in the weekly mutation job (`tests/support/mutation_targets.py`). The note tools are the surface `drive_notes`
+    (`get_note` read-only), e2e card `tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py`.
 - Notes / Proactive Self-Reminders (PERFORMANCE, OpenAI, intent `manage_self_reminders`) — deferred
   instructions the system writes to itself that fire autonomously as new conversations. Two-field model:
   `text` (≤15-word label) + `instruction` (self-contained execution context). Optional `workspace_file`

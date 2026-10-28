@@ -61,6 +61,12 @@ class UIMessage(Enum):
     MEMORY_SAVED = "memory_saved"
     MEMORY_DRAFT_NOT_FOUND = "memory_draft_not_found"
     MEMORY_UNAVAILABLE = "memory_unavailable"
+    # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.8): the `$drive-notes` command's own replies (part C). The
+    # request, erased and partial replies are part A's DRIVE_NOTE_ERASE_* strings, rendered by drive_note_receipt.
+    DRIVE_NOTES_USAGE = "drive_notes_usage"
+    DRIVE_NOTES_UNAVAILABLE = "drive_notes_unavailable"
+    DRIVE_NOTES_NONE = "drive_notes_none"
+    DRIVE_NOTES_NO_SUCH_REQUEST = "drive_notes_no_such_request"
     # Long-running turns (LONG_RUNNING_TURNS_RFC §3, §5.3–5.7).
     LONG_TURN_NOTICE = "long_turn_notice"
     LATE_ANSWER_PREFIX = "late_answer_prefix"
@@ -130,3 +136,29 @@ class UIMessage(Enum):
     MEMORY_DIGEST_HISTORY_HEADER = "memory_digest_history_header"
     MEMORY_DIGEST_INVOICES_HEADER = "memory_digest_invoices_header"
     MEMORY_DIGEST_INVOICES_CABINET = "memory_digest_invoices_cabinet"
+    # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.6, §4.8): the receipt's header per outcome, its classifier,
+    # searchability and undo lines, and the erase request and outcome. Rendered by `domain.drive_note_receipt` only;
+    # placeholders `{path}`, `{version}`, `{doc_type}`, `{areas}`, `{versions}`, `{count}`, `{minutes}`, `{erased}`,
+    # `{left}`. The note's own text is never a template: the renderer appends it byte for byte.
+    DRIVE_NOTE_SAVED = "drive_note_saved"
+    DRIVE_NOTE_UNCHANGED = "drive_note_unchanged"
+    DRIVE_NOTE_CLEARED = "drive_note_cleared"
+    DRIVE_NOTE_NOTHING_TO_CLEAR = "drive_note_nothing_to_clear"
+    DRIVE_NOTE_RESTORED = "drive_note_restored"
+    DRIVE_NOTE_REDONE = "drive_note_redone"
+    DRIVE_NOTE_RESTORED_EMPTY = "drive_note_restored_empty"
+    DRIVE_NOTE_UNDO_REPEATED = "drive_note_undo_repeated"
+    DRIVE_NOTE_TYPE = "drive_note_type"
+    DRIVE_NOTE_AREAS = "drive_note_areas"
+    DRIVE_NOTE_UNDO_HINT = "drive_note_undo_hint"
+    DRIVE_NOTE_STATUS_SOON = "drive_note_status_soon"
+    DRIVE_NOTE_STATUS_INDEXING_OFF = "drive_note_status_indexing_off"
+    DRIVE_NOTE_STATUS_NOT_INDEXED = "drive_note_status_not_indexed"
+    DRIVE_NOTE_STATUS_NO_CARD = "drive_note_status_no_card"
+    DRIVE_NOTE_STATUS_ARCHIVED = "drive_note_status_archived"
+    DRIVE_NOTE_STATUS_OTHER_DRIVE = "drive_note_status_other_drive"
+    DRIVE_NOTE_ERASE_REQUEST = "drive_note_erase_request"
+    DRIVE_NOTE_ERASE_ALL_REQUEST = "drive_note_erase_all_request"
+    DRIVE_NOTE_ERASED = "drive_note_erased"
+    DRIVE_NOTE_ERASE_PARTIAL = "drive_note_erase_partial"
+    DRIVE_NOTE_ERASE_ALL_PARTIAL = "drive_note_erase_all_partial"

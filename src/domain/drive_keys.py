@@ -18,7 +18,10 @@ Public interface:
     match_spans(text, keys) -> ((start, end), ...)    where any of a concept's word keys occurs in `text`
     name_keys_v2(name), query_name_keys_v2(query)     name keys v2 (NAME_KEYS_V2) and the name stream's query keys
     name_word_concepts(query) -> (Concept, ...)       a query left with no concept, its words searched by name (xc F2)
+    note_keys(text, doc_type, life_areas) -> (key, ...)   the owner note's keys (DRIVE_FILE_NOTES_RFC §5.4), at most
+                                               NOTE_KEYS_MAX; a record's copy of the note leads its about keys
     index_tables_digest(), golden_digest()     version pins: the tables, and the rules' output on a fixed fixture
+    note_keys_digest()                         the note keyer's pin, per NOTE_MERGE_VERSION (never in the two above)
     FUNCTION_WORDS, GENERIC_WORDS, TIME_WORDS, NAME_KEYS_V2
 
 Families (§25.2.4, review M8): native-script forms and the spellings a file prints are `w:` (chunks, names) and `e:`
@@ -31,6 +34,10 @@ A photo object's phrases are `pe:` and a photo's visible-text numbers `pn:`: aut
 its prefix alone. The D31 tables name the profile's own doc type (`lw:`) and life areas (`dw:`) in four languages. A
 file's capture (§26.3, Δ58) is keyed by the CAPTURE_NAMES table as phrases, like the `k:` table: `cp:` when code
 detected it (verified), `cpa:` when a model said it (automatic); a query word emits both, as it emits `k:`.
+The owner's note (DRIVE_FILE_NOTES_RFC §5.4, D7) reuses the existing families under `AboutField.OWNER_NOTE` (no new
+family, so no KEYS_VERSION bump): its classifier names and words are `e:` (exact: the owner's own words), the words'
+skeletons `ex:` / `exl:`, its numbers and dates `v:` / `y:` / `m:` by the profile's own recipe. The owner's doc type
+and life areas override the profile's in the `l:` grouping keys, and the D31 names of an overridden field are left out.
 """
 from __future__ import annotations
 
@@ -50,6 +57,7 @@ from .drive_enrichment import DriveProfile, Grade, GradedField, KeyValue, PhotoO
 from .drive_index import TriageVerdict
 from .drive_index_params import (
     ABOUT_KEYS_PER_RECORD, CONCEPT_KEYS_MAX, ENTITY_FORMS_MAX, MAX_CONCEPTS, NAME_MIN_TRIGRAMS, NAME_QUERY_KEYS_MAX,
+    NOTE_KEYS_MAX,
     PHOTO_OBJECT_FORMS_MAX, PHOTO_OBJECTS_MAX, PHOTO_SCENE_LABELS_MAX, PHRASE_RUN_MAX, PROFILE_DATES_MAX, PROFILE_ENTITIES_MAX,
     PROFILE_KEY_VALUES_MAX, PROFILE_WORD_LIST_MAX, QUERY_TERM_CHARS, WORD_KEYS_PER_CHUNK,
 )
@@ -57,7 +65,9 @@ from .drive_key_forms import (
     FORM_TABLES, SHORT_WORD_LETTERS, Token, is_short_function_word, primary, query_skeletons, scan, skeleton_key,
     token_forms, token_spans,
 )
-from .drive_key_sources import AboutField, AboutSource, KeyedRecord, RecordKeyInputs
+from .drive_key_sources import (
+    AboutField, AboutSource, KeyedRecord, RecordKeyInputs, effective_doc_type, effective_life_areas,
+)
 from .drive_labels import (
     CAPTURE_NAMES, DOC_TYPE_NAMES, KIND_WORDS, LIFE_DOMAIN_NAMES, PHOTO_KIND_WORDS, SCENE_NAMES,
     capture_names_digest, label_names_digest, scene_names_digest,
@@ -68,7 +78,7 @@ from .drive_name_keys import _is_cyrillic, _strip_accents, _trigrams
 __all__ = [
     "FUNCTION_WORDS", "GENERIC_WORDS", "NAME_KEYS_V2", "TIME_WORDS", "about_keys_capped", "about_keys_of", "about_sources",
     "all_forms", "family_keys", "fetch_batches", "golden_digest", "index_tables_digest", "match_spans",
-    "name_keys_v2", "name_match_v2", "name_word_concepts", "phrase_keys", "query_concepts", "query_name_keys_v2", "source_class_of_about_key",
+    "name_keys_v2", "name_match_v2", "name_word_concepts", "note_keys", "note_keys_digest", "phrase_keys", "query_concepts", "query_name_keys_v2", "source_class_of_about_key",
     "source_class_of_name_key", "source_class_of_word_key", "token_forms", "token_spans", "word_form_keys",
     "word_keys", "word_keys_capped",
 ]
@@ -379,12 +389,19 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
         native, skel = _phrase_items(text, last)
         add([prefix + s for s in native] + (_skel_keys(skel) if skeletons else []), field, detail, text, in_file)
 
+    # the owner's note first (DRIVE_FILE_NOTES_RFC §5.4): the record cap keeps the earliest keys, so it never cuts them
+    items.extend(_note_items(rec.owner_note_text, rec.owner_doc_type, rec.owner_life_areas)[0])
     profile = rec.profile
     lab = KeyFamily.LABEL.value
-    if profile is not None:
+    # D7: the owner's doc type and life areas override the profile's in the grouping keys, also on a record with no
+    # profile; without them the profile's are emitted exactly as before (a profile's "" type included)
+    if rec.owner_doc_type:
+        add([f"{lab}type:{rec.owner_doc_type}"], AboutField.LABEL, "type", rec.owner_doc_type)
+    elif profile is not None:
         add([f"{lab}type:{profile.doc_type}"], AboutField.LABEL, "type", profile.doc_type)
-        for domain in profile.life_domains:
-            add([f"{lab}domain:{domain}"], AboutField.LABEL, "domain", domain)
+    for domain in (rec.owner_life_areas if rec.owner_life_areas
+                   else profile.life_domains if profile is not None else ()):
+        add([f"{lab}domain:{domain}"], AboutField.LABEL, "domain", domain)
     if rec.valid_until is not None:
         add([f"{lab}valid"], AboutField.LABEL, "valid", rec.valid_until.isoformat()[:10])
 
@@ -436,9 +453,11 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
         items.extend(_date_items(eff.year, eff.month, AboutField.EFFECTIVE_DATE, "", eff.isoformat()[:10]))
 
     if profile is not None:
-        # D31: the fixed names of the profile's own doc type and life areas join the model's words (after them)
-        type_names = DOC_TYPE_NAMES.get(profile.doc_type, ())
-        domain_names = [n for d in profile.life_domains for n in LIFE_DOMAIN_NAMES.get(d, ())]
+        # D31: the fixed names of the profile's own doc type and life areas join the model's words (after them); a field
+        # the owner overrode has none (his names are `e:` keys already, DRIVE_FILE_NOTES_RFC §5.4)
+        type_names = () if rec.owner_doc_type else DOC_TYPE_NAMES.get(profile.doc_type, ())
+        domain_names = [] if rec.owner_life_areas else [n for d in profile.life_domains
+                                                        for n in LIFE_DOMAIN_NAMES.get(d, ())]
         lists = [(KeyFamily.LABEL_WORD.value, [*profile.label_words[:PROFILE_WORD_LIST_MAX], *type_names],
                   AboutField.LABEL_WORD),
                  (KeyFamily.TOPIC_WORD.value, list(profile.topic_words[:PROFILE_WORD_LIST_MAX]),
@@ -473,10 +492,107 @@ def _about_items(rec: KeyedRecord) -> List[_Item]:
     return items
 
 
+# -- the owner's note (DRIVE_FILE_NOTES_RFC §5.4) -------------------------------------------------------------------
+
+def _note_items(text: str, doc_type: str, life_areas: Sequence[str]) -> Tuple[List[_Item], bool]:
+    """The owner note's about keys with their sources, in the order its cap keeps, and whether NOTE_KEYS_MAX cut some
+    (§5.4, review I5, I6):
+    1. the owner's classifier names (DOC_TYPE_NAMES, LIFE_DOMAIN_NAMES) as `e:` phrases, native forms only, no
+       skeletons (as the D31 names), detail "type" / "area": at most ~85 keys, never cut;
+    2. numbers and dates by the profile's own recipe, found as the query finds them (`query_term_spans`): a value's
+       maximal forms as `v:` (never a fragment: "1 250,00" keys v:1250.00 and v:1250, not v:250) and an id's unspaced
+       form; a year 1900-2099 also `y:`; a date `v:` ISO plus `y:` and `m:`; a month-year span `y:` and `m:YYYY-MM`.
+       A short id with letters ("ред3") is left to the words, as the query leaves it (review m1);
+    3. each content word (function, generic and time words removed, as the query removes them; a hyphen compound is
+       one word) as its own phrase: `e:` native forms and its `ex:` / `exl:` skeleton.
+    Past NOTE_KEYS_MAX distinct keys the tail is cut: only the last words' keys, the words staying in the card text."""
+    items: List[_Item] = []
+    note = AboutField.OWNER_NOTE
+
+    def add(keys: Iterable[str], detail: str, printed: str) -> None:
+        for key in keys:
+            items.append((key, AboutSource(note, detail, printed, source_class_of_about_key(key))))
+
+    type_names = DOC_TYPE_NAMES.get(doc_type, ()) if doc_type else ()
+    area_names = [n for a in life_areas for n in LIFE_DOMAIN_NAMES.get(a, ())]
+    for detail, names in (("type", type_names), ("area", area_names)):
+        for name in names:
+            native, _ = _phrase_items(name)
+            add([_E + form for form in native], detail, name)
+    text = text or ""
+    if text:
+        spans = query_term_spans(text)
+        dates = [(s, e) for s, e, _, cat in spans if cat == "date"]
+        months = [(s, e, ym) for s, e, ym in _month_year_spans(text) if not any(_overlaps((s, e), d) for d in dates)]
+        consumed: List[Span] = []
+        for start, end, forms, category in spans:
+            printed = text[start:end].strip()
+            if not forms:
+                continue
+            if category == "date":
+                for iso in forms:
+                    add([_V + iso], "date", iso)
+                    try:
+                        year, month = int(iso[:4]), int(iso[5:7])
+                    except ValueError:
+                        continue
+                    items.extend(_date_items(year, month, note, "date", iso))
+                consumed.append((start, end))
+                continue
+            if any(_overlaps((start, end), (ms, me)) for ms, me, _ in months):
+                consumed.append((start, end))   # a year inside "March 2024": the month-year keys it
+                continue
+            if category == "id" and any(ch.isalpha() for ch in forms[0]) and len(forms[0]) <= _SHORT_ID_CHARS:
+                continue   # "ред3": words, as the query reads it (review m1)
+            values = dict.fromkeys([*forms, *(_unspaced_id_forms(printed) if category == "id" else [])])
+            add([_V + f for f in values], "number", printed)
+            add([_Y + f for f in forms if len(f) == 4 and f.isdigit() and _year_ok(int(f))], "number", printed)
+            consumed.append((start, end))
+        for start, end, ym in months:
+            items.extend(_date_items(int(ym[:4]), int(ym[5:]), note, "date", text[start:end].strip()))
+            consumed.append((start, end))
+        toks = scan(text)
+        i = 0
+        while i < len(toks):   # the query's own word loop (`query_concepts`), so a word keys as a query word reads
+            first, j = i, i
+            if toks[i].compound:
+                while j + 1 < len(toks) and toks[j].end < toks[i].compound_end:
+                    j += 1
+            if toks[i].compound_kind == "alnum" and all(token_forms(t.text) for t in toks[first:j + 1]):
+                j = first
+            word = toks[i].compound if j > first else toks[i].text
+            span = (toks[i].start, toks[j].end)
+            i = j + 1
+            if any(_overlaps(span, c) for c in consumed) or _is_removable(word) or not token_forms(word):
+                continue
+            native, skel = _phrase_items(word)
+            add([_E + form for form in native] + _skel_keys(skel), "word", text[span[0]:span[1]])   # as written
+    kept: Dict[str, None] = {}
+    out: List[_Item] = []
+    cut = False
+    for key, source in items:
+        if key not in kept:
+            if len(kept) >= NOTE_KEYS_MAX:
+                cut = True
+                continue
+            kept[key] = None
+        out.append((key, source))
+    return out, cut
+
+
+def note_keys(text: str, doc_type: str = "", life_areas: Sequence[str] = ()) -> Tuple[str, ...]:
+    """The owner note's keys (§5.4): classifier names first, then numbers and dates, then words, at most NOTE_KEYS_MAX.
+    The note store's `keys` and a noted record's leading about keys."""
+    return tuple(dict.fromkeys(key for key, _ in _note_items(text, doc_type, life_areas)[0]))
+
+
 def about_keys_capped(rec: KeyedRecord) -> Tuple[Tuple[str, ...], bool]:
-    """The record's about keys and whether ABOUT_KEYS_PER_RECORD cut some (the earliest entries are kept)."""
+    """The record's about keys and whether a cap cut some: ABOUT_KEYS_PER_RECORD (the earliest entries are kept), or
+    the note's own NOTE_KEYS_MAX (its last words, DRIVE_FILE_NOTES_RFC §5.4)."""
     keys = list(dict.fromkeys(key for key, _ in _about_items(rec)))
-    return tuple(keys[:ABOUT_KEYS_PER_RECORD]), len(keys) > ABOUT_KEYS_PER_RECORD
+    note_cut = bool(rec.owner_note_text) and _note_items(rec.owner_note_text, rec.owner_doc_type,
+                                                          rec.owner_life_areas)[1]
+    return tuple(keys[:ABOUT_KEYS_PER_RECORD]), len(keys) > ABOUT_KEYS_PER_RECORD or note_cut
 
 
 def about_keys_of(rec: KeyedRecord) -> Tuple[str, ...]:
@@ -783,5 +899,30 @@ def golden_digest() -> str:
                               key_values=(KeyValue("invoice_number", "INV-2024/0012", "INV-2024/0012"),),
                               label_words=("receipt", "квитанции")))
     out.append(about_keys_of(rec))
+    return hashlib.sha256(repr(out).encode("utf-8")).hexdigest()
+
+
+# Fixed owner notes in four languages (DRIVE_FILE_NOTES_RFC §5.4): their keys, and a noted record's about keys and
+# grouping overrides, are pinned per NOTE_MERGE_VERSION by their own test. Kept out of the two digests above on purpose:
+# a change here shapes only noted records, which a NOTE_MERGE_VERSION bump re-merges (§5.5, N9).
+_NOTE_GOLDEN: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = (
+    ("Типовой договор подряда (образец): сумма 1.048,45 EUR, оплата до 30.10.2026", "contract", ("home", "finance")),
+    ("Дозвіл на садовий сарай, рішення отримано: жовтень 2026", "", ("home",)),
+    ("The hardware shop's invoice FA-0137 for the front-door lock, September 2026; Wi-Fi router ред3", "invoice", ()),
+    ("Factura de Pinturas Exemplo por la pintura, 680,00 EUR, año 2026", "", ("finance", "home", "family")),
+    ("", "contract", ()),
+)
+
+
+def note_keys_digest() -> str:
+    """SHA-256 over the note keyer's output on `_NOTE_GOLDEN`, and over one noted record's about keys (a profile typed
+    `invoice` overridden by the owner's `contract`). A test pins it per NOTE_MERGE_VERSION."""
+    out: List[object] = [note_keys(text, doc_type, areas) for text, doc_type, areas in _NOTE_GOLDEN]
+    rec = RecordKeyInputs(kind="pdf", owner_note_text=_NOTE_GOLDEN[0][0], owner_doc_type="contract",
+                          owner_life_areas=("home",),
+                          profile=DriveProfile("t", "w", "ru", "invoice", life_domains=("finance",),
+                                               label_words=("invoice", "счёт")))
+    out.append(about_keys_of(rec))
+    out.append((effective_doc_type(rec), effective_life_areas(rec)))
     return hashlib.sha256(repr(out).encode("utf-8")).hexdigest()
 

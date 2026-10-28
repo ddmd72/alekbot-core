@@ -5,13 +5,14 @@ the drive evals (`scripts/validation/drive_eval/`), which build the specialist o
 production builds it over the user's.
 
 Public interface:
-    build_drive_specialist(user_id, *, context_builder, prompt_builder, user_config, operations, alert_sink)
-        -> DriveAgent
+    build_drive_specialist(user_id, *, context_builder, prompt_builder, user_config, operations, alert_sink,
+                           notes=None, notes_enabled=True) -> DriveAgent
 
 Provider, tier and fallback come from AgentContextBuilder ("drive": claude BALANCED, failover openai PERFORMANCE);
 thinking is the user's `agent_thinking["drive"]` when set (DriveAgent applies DRIVE.thinking_effort, "medium",
 otherwise). `alert_sink` is the ops sink the consolidation agent gets: it takes the one 🚨 line of a turn-cap exit
-without a report. The drive state (connected, search on or off) is read by the agent through `operations.preflight`.
+without a report. `notes` is the user's DriveNoteService (None: no note tool) and `notes_enabled` the
+DRIVE_NOTES_ENABLED switch, both injected by the factory (REQ-ARCH-17). The drive state (connected, search on or off) is read by the agent through `operations.preflight`.
 """
 from __future__ import annotations
 
@@ -26,10 +27,12 @@ if TYPE_CHECKING:
     from ..domain.user import UserBotConfig
     from ..infrastructure.drive_operations import DriveOperations
     from ..ports.alert_sink import AlertSinkPort
+    from ..services.drive_note_service import DriveNoteService
 
 
 def build_drive_specialist(user_id: str, *, context_builder: Any, prompt_builder: Any, user_config: "UserBotConfig",
-                           operations: "DriveOperations", alert_sink: Optional["AlertSinkPort"]) -> DriveAgent:
+                           operations: "DriveOperations", alert_sink: Optional["AlertSinkPort"],
+                           notes: Optional["DriveNoteService"] = None, notes_enabled: bool = True) -> DriveAgent:
     return DriveAgent(
         config=AgentConfig(
             agent_id=f"{DRIVE_SPECIALIST.agent_id}_{user_id}",
@@ -43,4 +46,6 @@ def build_drive_specialist(user_id: str, *, context_builder: Any, prompt_builder
         user_timezone=user_config.timezone,
         thinking=user_config.get_thinking_for_agent(DRIVE_SPECIALIST.agent_type),
         alert_sink=alert_sink,
+        notes=notes,
+        notes_enabled=notes_enabled,
     )

@@ -22,6 +22,8 @@ Public interface (one call = one operation; `context` is the caller's message co
     async delete(context, user_id, ref, *, wait_s) -> DriveOutcome
     async preflight(user_id) -> DrivePreflight           the specialist's state block (§5.3)
     async folder_path(user_id, folder) -> folder         a write tool's drive: folder ref → its path (§8)
+    keep_alive(task)                                     hold a task that must outlive its caller (a note write)
+    post_late_note_receipt(user_id, account_id, item)    a note receipt whose write landed after the answer (Δ10)
 
 The `_Transcripts` guard, root protection, never-overwrite, append-only and the move rules stay in UserDriveService.
 This module imports no UserDrivePort and no adapter; services are constructor-injected (REQ-ARCH-14: type-only
@@ -40,6 +42,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Mapping, Optio
 
 import aiofiles
 
+from ..domain.agent import DeliveryItem
+from ..domain.drive_card import owner_note_line
 from ..domain.drive_index_policy import TRANSCRIBED_KINDS, kind_of
 from ..domain.drive_op import DriveOp
 from ..domain.drive_outcome import DriveOutcome
@@ -84,6 +88,7 @@ from ..utils.logger import exc_brief, logger
 
 if TYPE_CHECKING:
     from ..ports.language_service_port import LanguageServicePort
+    from ..services.drive_note_service import DriveNoteService
     from ..services.drive_search_service import DriveSearchService
     from ..services.file_conversion_service import FileConversionService
     from ..services.localization_service import LocalizationService
@@ -146,8 +151,12 @@ class DriveOperations:
         localization: Optional["LocalizationService"] = None,
         language_service: Optional["LanguageServicePort"] = None,
         drive_search: Optional["DriveSearchService"] = None,
+        drive_notes: Optional["DriveNoteService"] = None,
     ) -> None:
+        """`drive_notes` gives an opened file the owner's note as its own block (DRIVE_FILE_NOTES_RFC §6.2); the drive id
+        comes from `drive_service.connection`, so this module reads no port (DRIVE_SPECIALIST_RFC §9.3 B8)."""
         self._drive = drive_service
+        self._drive_notes = drive_notes
         self._drive_search = drive_search
         self._localization = localization
         self._language = language_service
@@ -181,6 +190,42 @@ class DriveOperations:
     @property
     def configured(self) -> bool:
         return self._drive is not None
+
+    # ------------------------------------------------------------------
+    # Tasks that outlive their caller (the drive specialist's note writes)
+    # ------------------------------------------------------------------
+
+    def keep_alive(self, task: "asyncio.Task[Any]") -> None:
+        """Hold `task` until it ends: a note write runs under `asyncio.shield` and must finish (and post its late
+        receipt) after the execution that started it is gone; this per-user object outlives it."""
+        self._shielded.add(task)
+        task.add_done_callback(self._shielded.discard)
+
+    def post_late_note_receipt(self, user_id: str, account_id: str, item: DeliveryItem, *, call: bool = True,
+                               channel_id: Optional[str] = None, platform: Optional[str] = None) -> None:
+        """Post a note receipt (or erase request) whose write landed after the specialist's answer was built
+        (DRIVE_FILE_NOTES_RFC §4.5 layer 5, design Δ10): through the notification service's note-receipt path, the
+        same one the call path uses. `call=False` is a chat turn: the receipt goes to the run's origin channel
+        (`channel_id`, `platform`) with chat wording. Scheduled and held here; never raises (the note is stored whatever happens)."""
+        if self._notification is None:
+            logger.error("DriveOperations: no notification service: a late drive note %s for %s is not posted",
+                         item.type, user_id[:8])
+            return
+        notification = self._notification
+
+        async def post() -> None:
+            try:
+                await notification.notify_drive_note_receipt(
+                    user_id, account_id, item, call=call, channel_id_override=channel_id, platform_override=platform)
+            except Exception as exc:
+                logger.error("DriveOperations: late drive note %s for %s failed: %s", item.type, user_id[:8],
+                             type(exc).__name__)
+
+        logger.info("DriveOperations: drive note %s landed after the answer for %s: posting it late", item.type,
+                    user_id[:8])
+        task = asyncio.ensure_future(post())
+        self._notices.add(task)
+        task.add_done_callback(self._notices.discard)
 
     # ------------------------------------------------------------------
     # Reads
@@ -734,6 +779,7 @@ class DriveOperations:
         archived = await self._archived_transcript_of(user_id, ref, item)
         if archived is not None:
             return _ok(DriveOp.OPEN, archived, [item], body=True)
+        note = await self._note_line_of(user_id, item.item_id)
         mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
         # Vision caps and unsupported formats are decided on metadata, before any download (§4.6).
         if mime.startswith("image/") and mime not in VISION_IMAGE_MIME_TYPES:
@@ -748,11 +794,14 @@ class DriveOperations:
             link = item.web_url or "(no link available)"
             body = wrap_untrusted(f"{drive_label(item)}\nLink to the original recording: {link}",
                                   nonce=secrets.token_hex(8), ref=item.ref, path=item.path)
-            return _ok(DriveOp.OPEN, f"{REFERENCE_REMINDER}\n{body}", [item], body=True)
+            # the owner's note in its own block (§6.2): nothing inside a file's wrapper can pass for it
+            return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER}\n{body}", item, note), [item], body=True,
+                       owner_note=bool(note))
         if recording and self._drive_search is not None:
             transcript = await self._transcript_of(user_id, item)
             if transcript is not None:
-                return _ok(DriveOp.OPEN, transcript, [item], body=True)
+                return _ok(DriveOp.OPEN, self._with_note(transcript, item, note), [item], body=True,
+                           owner_note=bool(note))
         try:
             if vision_cap is not None:
                 if item.size_bytes > vision_cap:
@@ -763,9 +812,9 @@ class DriveOperations:
                 async with aiofiles.open(tmp_path, "wb") as f:
                     await f.write(data)
                 # The model reads an attached PDF or image natively: the reminder travels with it (D2).
-                return _ok(DriveOp.OPEN, f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} is "
-                                         f"attached. You can see and analyse it directly.",
-                           [item], file_data={"path": tmp_path, "mime_type": mime})
+                return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} is "
+                                                         f"attached. You can see and analyse it directly.", item, note),
+                           [item], file_data={"path": tmp_path, "mime_type": mime}, owner_note=bool(note))
             if mime.startswith("video/"):
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
                 if not self._notification:
@@ -777,16 +826,49 @@ class DriveOperations:
                     channel_id_override=context.get("origin_channel_id"),
                     platform_override=context.get("origin_platform"),
                 )
-                return _ok(DriveOp.OPEN, f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} has "
-                                         f"been sent to the user as a file.", [item])
+                return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} has "
+                                                         f"been sent to the user as a file.", item, note), [item],
+                           owner_note=bool(note))
         except DriveFileTooLargeError as e:
             return _ok(DriveOp.OPEN, f"'{item.path}' is {format_size(item.size_bytes)}; files above "
                                      f"{format_size(e.limit_bytes)} cannot be opened yet.", [item])
         content = await self._conversion_service.resolve_content(ref, user_id)
-        # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11).
+        # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11). The owner's note
+        # (§6.2) is its own block after it, so a file whose text starts with `noted by the owner:` cannot pass for it.
         wrapped = wrap_untrusted(f"{drive_label(item)}\n{content}", nonce=secrets.token_hex(8),
                                  ref=item.ref, path=item.path)
-        return _ok(DriveOp.OPEN, f"{REFERENCE_REMINDER}\n{wrapped}", [item], body=True)
+        return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}", item, note), [item], body=True,
+                   owner_note=bool(note))
+
+    async def _note_line_of(self, user_id: str, item_id: str) -> str:
+        """The owner's note on the item as a search card renders it (DRIVE_FILE_NOTES_RFC §6.2): the store's current
+        note, by binding on the connected drive (one connection read, one note read). "" without one, without the note
+        service or the drive, or on any failure: the open goes on without the line."""
+        if self._drive_notes is None or self._drive is None:
+            return ""
+        try:
+            connection = await self._drive.connection(user_id)
+            if not connection.connected:
+                return ""
+            # a credential stored before the drive id was read has none: the sync state's (D-I3), as the service does
+            drive_id = connection.drive_id or await self._drive_notes.drive_id_for_connection(user_id, connection)
+            if not drive_id:
+                return ""
+            note = await self._drive_notes.note_for_item(user_id, drive_id, item_id)
+        except Exception as exc:
+            logger.warning("DriveOperations: note lookup failed: %s", exc_brief(exc))
+            return ""
+        if note is None:
+            return ""
+        return owner_note_line(note.text, note.doc_type, tuple(note.life_areas))
+
+    @staticmethod
+    def _with_note(text: str, item: DriveItem, line: str) -> str:
+        """`text` followed by the note line in its own wrapper (the note is data, never instructions, §6.3)."""
+        if not line:
+            return text
+        return text + "\n" + wrap_untrusted(f"{drive_label(item)}\n{line}", nonce=secrets.token_hex(8), ref=item.ref,
+                                            path=item.path)
 
     # ------------------------------------------------------------------
     # Writes and receipts
@@ -832,9 +914,9 @@ class DriveOperations:
 # ----------------------------------------------------------------------
 
 def _ok(op: DriveOp, text: str, items: Sequence[DriveItem], *,
-        file_data: Optional[Dict[str, Any]] = None, body: bool = False) -> DriveOutcome:
+        file_data: Optional[Dict[str, Any]] = None, body: bool = False, owner_note: bool = False) -> DriveOutcome:
     return DriveOutcome(op=op, cls=OutcomeClass.OK, text=text, success=True, items=tuple(items), file_data=file_data,
-                        body=body)
+                        body=body, facts=ReadFacts(owner_note=owner_note) if owner_note else ReadFacts())
 
 
 def _fail(op: DriveOp, text: str, cls: OutcomeClass, *, inaccessible: bool = False) -> DriveOutcome:
@@ -870,6 +952,7 @@ def _search_facts(result: DriveSearchResult) -> ReadFacts:
         cards=len(cards),
         passage=any(c.passage for c in cards),
         accuracy=any(c.card_accuracy is not None for c in cards),
+        owner_note=any(c.owner_note for c in cards),
         scan=any(c.capture in _SCAN_CAPTURES for c in cards),
         inaccessible=any(c.inaccessible for c in cards),
         image=any(c.kind == "image" for c in cards),

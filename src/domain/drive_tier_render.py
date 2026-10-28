@@ -39,6 +39,7 @@ _HEADINGS = {MatchTier.MENTIONED: MENTIONED_HEADING, MatchTier.TRANSLATED: TRANS
 _GROUP_WORD = {MatchTier.ABOUT: "matching", MatchTier.MENTIONED: "mentioning", MatchTier.TRANSLATED: "translated",
                MatchTier.LABELLED: "labelled"}
 _RELATED_CARD_CHARS = 300
+_RELATED_NOTE_CHARS = 120     # DRIVE_FILE_NOTES_RFC §6.2: a Related card's note line, cut
 _CUT_LINE = "Shortened to fit: fewer files are shown as cards; their counts and folders are above."
 _EXPIRED_LINE = "{count} more {files} with these words already expired."
 _NOTHING = "No matching files or folders."
@@ -160,6 +161,8 @@ def _no_passages_note(tiered: TieredResult) -> Optional[str]:
 
 def card_body(card: DriveSearchCard) -> str:
     lines = [_cut(card.summary, CARD_RENDER_MAX)]
+    if card.owner_note:
+        lines.append(card.owner_note)          # DRIVE_FILE_NOTES_RFC §6.2: after the summary, outside its cut
     if card.sources:
         lines.append(MATCHED_LINE.format(sources="; ".join(card.sources)))
     lines.extend(card.not_matched)
@@ -200,6 +203,7 @@ def _related_body(card: DriveSearchCard) -> str:
     day = _day(card)
     tail = f" | {day}" if day else ""
     body = _cut(card.summary, _RELATED_CARD_CHARS - len(tail)) + tail
+    body += f"\n{_cut(card.owner_note, _RELATED_NOTE_CHARS)}" if card.owner_note else ""
     body += f"\n{SIMILAR_NAME}" if card.similar_name else ""
     accuracy = accuracy_line(card)         # §26.4: a Related card is opened, and answers a value question, like any
     body += f"\n{accuracy}" if accuracy else ""

@@ -83,11 +83,15 @@ class DriveToolRun:
 
     # -- running one call ------------------------------------------------------------------------------------------
 
-    async def _run(self, op: DriveOp, kind: str, call: _Call, *, change: bool,
-                   prep: Optional[Callable[[], Awaitable[None]]] = None) -> CollectedResult:
+    async def run(self, op: DriveOp, kind: str, call: _Call, *, change: bool, ordered: Optional[bool] = None,
+                  running_text: str = STILL_RUNNING,
+                  prep: Optional[Callable[[], Awaitable[None]]] = None) -> CollectedResult:
         """The call's collected result. `step` is read before any await: the call belongs to the turn that emitted
-        it. `prep` (changes only) is a read the call needs first, e.g. a destination folder's lookup: it runs inside
-        the order lock but before `started`, so a cut during it is "not started", never "still running"."""
+        it. `ordered` (default: `change`) takes the per-execution ordering lock, so the call runs in emission order
+        with the batch's changes: `get_note` is a read that takes it (specialist RFC §9.2). `running_text` is what a
+        change cancelled after it started is recorded with (the note tools pass their own, design Δ10). `prep`
+        (changes only) is a read the call needs first, e.g. a destination folder's lookup: it runs inside the order
+        lock but before `started`, so a cut during it is "not started", never "still running"."""
         step = self.step
         if self.left() <= 0:
             return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED))
@@ -105,17 +109,23 @@ class DriveToolRun:
                     outcome = await call()
                     if outcome.cls is OutcomeClass.STILL_RUNNING:
                         self._ran_on = True
+            elif ordered:
+                async with self._order:
+                    if self.left() <= 0:   # queued behind the batch past the deadline
+                        return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED))
+                    outcome = await asyncio.wait_for(call(), timeout=max(0.001, self.left()))
             else:
                 outcome = await asyncio.wait_for(call(), timeout=max(0.001, self.left()))
         except asyncio.TimeoutError:
             outcome = _not_finished(op, t.DID_NOT_FINISH)
         except asyncio.CancelledError:
             # Cancelled while queued behind the batch's order lock: it never started. A change cancelled once started
-            # runs on under DriveOperations' shield (which arms the late-failure notice): still running, today's text,
-            # never "not done" (a re-commission would repeat an append). A read just did not finish.
+            # runs on under its shield (DriveOperations' arms the late-failure notice; a note write's posts its
+            # receipt late): still running, never "not done" (a re-commission would repeat an append). A read just
+            # did not finish.
             if change and started:
                 self._collector.add(step, kind, DriveOutcome(
-                    op=op, cls=OutcomeClass.STILL_RUNNING, text=STILL_RUNNING, success=True))
+                    op=op, cls=OutcomeClass.STILL_RUNNING, text=running_text, success=True))
             else:
                 self._collector.add(step, kind, _not_finished(
                     op, (t.NOT_STARTED_BEHIND if self._ran_on else t.NOT_STARTED) if change else t.DID_NOT_FINISH))
@@ -124,6 +134,12 @@ class DriveToolRun:
         if outcome.cls is OutcomeClass.STILL_RUNNING and self._on_still_running is not None:
             self._on_still_running()
         return result
+
+    _run = run   # the drive tools' own name for it
+
+    def record(self, op: DriveOp, kind: str, outcome: DriveOutcome) -> CollectedResult:
+        """Record an outcome decided before any service call (a refusal of the request's shape), in this step."""
+        return self._collector.add(self.step, kind, outcome)
 
     def _wait_s(self) -> float:
         return max(MUTATION_WAIT_MIN_S, min(MUTATION_WAIT_MAX_S, self.left() - MUTATION_WAIT_MARGIN_S))

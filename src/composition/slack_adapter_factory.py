@@ -68,6 +68,7 @@ class SlackAdapterFactory:
         skill_service=None,
         memory_fact_service=None,
         fact_answers=None,
+        drive_note_service=None,
         long_turn_service=None,
         doc_delivery_service=None,
         worker_queue=None,
@@ -134,6 +135,7 @@ class SlackAdapterFactory:
             skill_service=skill_service,
             memory_fact_service=memory_fact_service,
             fact_answers=fact_answers,
+            drive_note_service=drive_note_service,   # `$drive-notes` (DRIVE_FILE_NOTES_RFC §4.8)
             long_turn_service=long_turn_service,
             doc_delivery_service=doc_delivery_service,
         )

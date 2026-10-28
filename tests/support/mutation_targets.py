@@ -136,6 +136,8 @@ _WIRING_EQUIVALENT = "tests/unit/composition/wiring_equivalent_mutants.txt"
 
 _DRIVE_E2E = "tests/unit/agents/test_drive_agent_tool_fields_e2e.py"
 _DRIVE_AGENT = "tests/unit/agents/test_drive_agent.py"
+_NOTE_E2E = "tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py"
+_NOTE_CHAIN = "tests/unit/infrastructure/test_drive_note_chain.py"
 
 TARGETS: tuple[MutationTarget, ...] = (
     *(
@@ -226,6 +228,19 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.domain.drive_pass_through", "tests/unit/domain/drive_pass_through_equivalent_mutants.txt"),
     MutationTarget("src.domain.drive_file_contents", "tests/unit/domain/drive_file_contents_equivalent_mutants.txt",
                    extra=(_DRIVE_E2E, _DRIVE_AGENT)),
+    # Drive file notes (DRIVE_FILE_NOTES design §5): header-only equivalent files; the note e2e and chain tests reach them through src/.
+    MutationTarget("src.services.drive_note_service", "tests/unit/services/drive_note_service_equivalent_mutants.txt",
+                   extra=(_NOTE_E2E, _NOTE_CHAIN)),
+    MutationTarget("src.adapters.firestore_drive_note_repo", "tests/unit/adapters/firestore_drive_note_repo_equivalent_mutants.txt",
+                   extra=(_NOTE_E2E, _NOTE_CHAIN)),
+    MutationTarget("src.infrastructure.drive_note_tools", "tests/unit/infrastructure/drive_note_tools_equivalent_mutants.txt",
+                   extra=(_NOTE_E2E, _NOTE_CHAIN)),
+    MutationTarget("src.domain.drive_note_change", "tests/unit/domain/drive_note_change_equivalent_mutants.txt",
+                   extra=(_NOTE_E2E, _NOTE_CHAIN)),
+    MutationTarget("src.domain.drive_note_tool_texts", "tests/unit/domain/drive_note_tool_texts_equivalent_mutants.txt",
+                   extra=(_NOTE_E2E, _NOTE_CHAIN)),
+    MutationTarget("src.domain.drive_note_view", "tests/unit/domain/drive_note_view_equivalent_mutants.txt",
+                   extra=(_NOTE_E2E, _NOTE_CHAIN)),
 )
 
 

@@ -188,7 +188,7 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | PdfGenerator | BALANCED | `create_pdf` | HTML+CSS → Puppeteer → PDF |
 | HtmlPageGenerator | PERFORMANCE (**Grok**) | `create_html_page` | full HTML+CSS+JS; Unsplash placeholders |
 | FileManagement | zero-LLM | `open_file`, `delete_file` | chat uploads, delivered documents, `skill:` / `workspace:` refs; opens a `drive:` ref leniently |
-| Drive (`DriveAgent`) | BALANCED (Claude `claude-sonnet-5-5`, adaptive thinking medium; fallback OpenAI `gpt-6.1-sol` only when Claude is the primary; a global `provider_preference: openai` moves it to the rejected `gpt-6-luna`, so pin `agent_providers["drive"]="claude"`) | `work_with_drive_files` | the user's drive: one commission, local CRUD tools over the user's `DriveOperations`; every read reaches Smart verbatim |
+| Drive (`DriveAgent`) | BALANCED (Claude `claude-sonnet-5-5`, adaptive thinking medium; fallback OpenAI `gpt-6.1-sol` only when Claude is the primary; a global `provider_preference: openai` moves it to the rejected `gpt-6-luna`, so pin `agent_providers["drive"]="claude"`) | `work_with_drive_files` | the user's drive: one commission, local CRUD tools over the user's `DriveOperations`; every read reaches Smart verbatim; the owner's file notes (branch) |
 | Notes / Self-Reminders | PERFORMANCE (OpenAI) | `manage_self_reminders` | autonomous deferred firing; optional code-bound `workspace_file` |
 | Tasks | — | `manage_user_tasks` | MicrosoftToDo (GoogleTasks frozen) |
 | Consolidation | PERFORMANCE (Claude) | — | background memory formation (see below) |
@@ -852,6 +852,26 @@ lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/d
 `python -m scripts.validation.drive_eval` (G1/G2, v1 bars), `… drive_eval.search_v2_eval` (v2 families, offline by
 default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run` (owner-run, paid, `--max-usd` required, a hard stop; bars in `bars_g3.json`, not recorded yet, so a run without `--record` ends "no bars"; drive writes stubbed by the class-level `dry_run_drive.DryRunDriveOperations`; `--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier` run the branch's prompt files and pick the specialist; `--record` writes no bars while Smart fails a hard check). **Before/after:** before = G3 on `main` with the Firestore prompts, after = G3 on the branch with `--prompts-from-snapshot`, both at the same `--repeats`; compare the two reports `scripts/memory/drive_g3/g3_<stamp>.json` (`scores`, `wall_p50_s`). The drive specialist eval `… drive_eval.specialist_ab` (owner-run, paid, `--max-usd`; `--replay-commissions` runs the specialist alone; `--compare <report> --compare-design today`; no `--prompts-from-snapshot`, so it needs the uploaded `drive` profile). Decisions:
 `decisions/drive_*.md`.
+
+**Owner notes on drive files** (`docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` rev 3.3, D1–D21; built on `feat/drive-notes`, not
+deployed; the owner's map `docs/05_building_blocks/user_drive/README.md` §4.24; `decisions/drive_file_notes.md`) — what the
+owner says or confirms a file or folder is, kept bot-side in `{prefix}drive_notes` (SCD2 `versions/v<n>`; never on the drive,
+never in memory, never purged with the index). **Written only inside the drive specialist:** Smart has no note tool and puts
+a note's words in the `work_with_drive_files` query (`file_contents` is "never a note's words"). `DriveAgent` declares
+`get_note` whenever `DriveNoteService` is wired, `DRIVE_NOTES_ENABLED` is on and there is a user, and the ten writers
+(`create_note`, `add_to_note`, `replace_note_text`, `set_note_type`, `clear_note_type`, `add_life_areas`,
+`remove_life_areas`, `delete_note`, `undo_note`, `erase_note`) only on an owner turn (`is_owner_turn`: `interactive_delivery`,
+or `run_origin` exactly `voice:ask_alek` / `voice:tell_alek`), re-checked per call; rules in the non-overridable token
+`PROTOCOL_DRIVE_NOTES`. No tool replaces more than its name says; a change that would empty a note is refused;
+`replace_note_text` needs a `get_note` read in the same run (`CHANGED_SINCE_READ`). One write loop in the core
+(`_write(compose)`: composed inside the conflict retry, identical = no-op, append and undo re-run safe); writes run under
+`asyncio.shield` in a task `DriveOperations.keep_alive` holds; ≤ 10 per specialist run. The receipt (stored words verbatim,
+sent literally) and `[Drive note: <path> ref=… v<n>]` ride the specialist's pass-through collector, so a cut run keeps them;
+a write that lands after the answer posts its receipt late (`notify_drive_note_receipt`); on a call the Alek gateway posts
+it. The indexer merges a copy into the card (`noted by the owner: …`, About via `AboutField.OWNER_NOTE`, no version bump);
+a confirmed-gone file's note is archived and found only by `search_deleted_recordings_and_notes` (`drive_note:` ref).
+Erase needs a code (`$drive-notes erase <code>`, `$drive-notes erase-all`). `DRIVE_NOTES_ENABLED` (`os.getenv`, default on;
+deploy-only `DRIVE_NOTES_ENABLED_DEV` → both services) off: no note tool, no command, no indexer notes work; reads go on.
 
 **Per-channel sessions** — `session_id = f"{user_id}:{channel_id}"`, deterministic; each channel (Slack
 C.../D..., Telegram chat_id) has its own session/history/consolidation stream (a DM is just channel D...).

@@ -89,6 +89,7 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 | `INDEXER_URL_DEV` | `_INDEXER_URL` → `DRIVE_INDEXER_URL` (both services) | no trailing slash; `make deploy` refuses when empty unless `DRIVE_FIRST_PASS=1`. Two-pass, below |
 | `DRIVE_TRANSCRIBE_ENABLED_DEV` | `_DRIVE_TRANSCRIBE_ENABLED` → `DRIVE_TRANSCRIBE_ENABLED` | **required**, exactly `on` or `off` (below) |
 | `DRIVE_TRANSCRIBE_USD_CAP_DEV` | `_DRIVE_TRANSCRIBE_USD_CAP` | optional; can only lower the $20 monthly cap (below) |
+| `DRIVE_NOTES_ENABLED_DEV` | `_DRIVE_NOTES_ENABLED` → `DRIVE_NOTES_ENABLED` (both services) | optional; empty = `on`; `off` is the notes kill switch (Standing levers) |
 | `SANDBOX_RENDER_DEV`, `SANDBOX_RENDER_URL_DEV`, `SANDBOX_RENDER_SA_DEV`, `SANDBOX_RENDER_CALLERS_DEV` | `_SANDBOX_RENDER*` | see Sandbox render service |
 
 `DRIVE_FIRST_PASS=1` is a command-line flag for the indexer's first pass only; never put it in `.env`.
@@ -494,6 +495,13 @@ the fix is deployed forward; if one is unavoidable, follow it with an explicit `
 - Transcription: the user's flag off (`scripts/infrastructure/drive_transcribe_flag.py --user USER --off --apply`) stops
   that user's new work and the mirror folder; the kill switch off (`DRIVE_TRANSCRIBE_ENABLED_DEV=off`, redeploy) stops it
   for everyone and freezes in-flight batches. There is no mirror-only switch.
+
+**Drive notes** (`docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` §3.6). Stop every note write: `DRIVE_NOTES_ENABLED_DEV=off` in `.env`
+and `make deploy` (it echoes `_DRIVE_NOTES_ENABLED=` before it submits). One substitution sets the main service and the
+indexer together: no note tool for the drive specialist, the `$drive-notes` commands answer "not available", and the
+indexer does no notes work. Reads go on (the open header, the deleted-files search, copies already in cards). Never use
+the local name `DRIVE_NOTES_ENABLED` for the deploy, and never set it by hand with `services update` (`--set-env-vars`
+replaces it at the next deploy).
 
 **Sandbox render.** Back to in-process: `SANDBOX_RENDER_DEV=inprocess` (or empty) and `make deploy`; the render service can
 stay up unused. **Hard stop:** remove the caller's `roles/run.invoker` binding on the render service. Never empty

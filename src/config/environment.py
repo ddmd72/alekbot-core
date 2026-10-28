@@ -449,6 +449,23 @@ class EnvironmentConfig:
         """
         return f"{self.firestore_collection_prefix}drive_transcript_mirror"
 
+    @property
+    def drive_notes_collection(self) -> str:
+        """
+        The owner's notes on drive items, one document per noted item with a `versions` subcollection
+        (DRIVE_FILE_NOTES_RFC §3.1, §3.2). Durable: no purge deletes it; an account deletion must.
+        Dev: development_drive_notes
+        """
+        return f"{self.firestore_collection_prefix}drive_notes"
+
+    @property
+    def drive_note_erase_requests_collection(self) -> str:
+        """
+        Pending drive-note erase requests under `{user_id}:{code}`, short-lived (a TTL policy on `expires_at`;
+        DRIVE_FILE_NOTES_RFC §4.8). Dev: development_drive_note_erase_requests
+        """
+        return f"{self.firestore_collection_prefix}drive_note_erase_requests"
+
     # --- Infrastructure Collections (Stable) ---
 
     @property

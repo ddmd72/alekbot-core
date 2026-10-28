@@ -21,6 +21,7 @@ from uuid import uuid4
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.llm import ToolCall
 from ..domain.messaging import session_id_for
+from ..domain.turn_identity import TURN_ID_CONTEXT_KEY
 from ..domain.voice_delegation_outcome import VoiceDelegationOutcome
 from ..domain.voice_provider_profile import VoiceProviderProfile
 from ..infrastructure.agent_manifest import LELIK
@@ -126,6 +127,9 @@ class LelikAgent(BaseAgent):
             "user_id": user_id,
             "account_id": account_id,
             self.coordinator.CALL_CHAIN_KEY: [self._descriptor.agent_id],
+            # One delegation of the call is one owner turn: fixed here, so a tell_alek Cloud Task carries the same id
+            # on a redelivery (the drive-note undo guard, DRIVE_FILE_NOTES_RFC §4.2).
+            TURN_ID_CONTEXT_KEY: f"voice:{uuid4().hex}",
         }
         channel = await self._persona.primary_channel(user_id)
         if channel is not None:

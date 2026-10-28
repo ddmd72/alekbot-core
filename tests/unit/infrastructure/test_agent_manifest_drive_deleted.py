@@ -4,7 +4,7 @@ two features must share one description and no other intent may use the name."""
 
 # Every search_files_in_drive field description names its intent (test_agent_manifest_drive_search.py), the shared one too.
 SHARED = ("search_files_in_drive: true only when the user explicitly asks about deleted or removed files: searches "
-          "transcripts of deleted recordings and your notes on deleted files. Never for an ordinary search.")
+          "transcripts of deleted recordings and the owner's notes on deleted files. Never for an ordinary search.")
 
 
 def test_description_says_explicitly():

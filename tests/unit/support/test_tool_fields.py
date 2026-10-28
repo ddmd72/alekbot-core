@@ -50,10 +50,13 @@ def test_declared_contains_the_fields_of_every_surface():
         "delegate:manage_self_reminders.workspace_file",
         "drive:save_text_file.text_item",
         "drive:search_drive.query",
+        "drive_notes:create_note.life_areas",
+        "drive_notes:get_note.item_ref",
     ):
         assert key in keys, key
     assert "smart_local:draft_skill.files[]" not in keys            # an array of objects has no path of its own
-    assert IN_SCOPE == ("consolidation", "consolidation_review", "notes", "tasks", "smart_local", "drive", "delegate")
+    assert IN_SCOPE == ("consolidation", "consolidation_review", "notes", "tasks", "smart_local", "drive", "drive_notes",
+                        "delegate")
 
 
 def test_every_read_only_tool_and_field_is_declared():

@@ -1,8 +1,8 @@
 """What the G3 eval can swap without touching Firestore: the prompt files and the specialist's model.
 
-`--prompts-from-snapshot`: the drive specialist's prompt (three tokens, a blueprint, a profile) and Smart's edited
+`--prompts-from-snapshot`: the drive specialist's prompt (four tokens, a blueprint, a profile) and Smart's edited
 `PROTOCOL_AGENT_SELECTION` exist only as files in `prompts_snapshot/` until the owner uploads them. The overlays of the
-consolidation dry-run kit (`scripts/consolidation/s3_dry_run_kit.py`, the one implementation) serve exactly those six
+consolidation dry-run kit (`scripts/consolidation/s3_dry_run_kit.py`, the one implementation) serve exactly those seven
 files from the snapshot and every other id from the real repositories; nothing is written (the overlays are read only).
 
 `--specialist-provider` / `--specialist-tier`: applied to a COPY of the user config the eval hands to
@@ -19,7 +19,8 @@ from scripts.consolidation.s3_dry_run_kit import (
 SPECIALIST_AGENT_TYPE = "drive"   # DRIVE_SPECIALIST.agent_type
 
 OVERLAY_TOKEN_IDS: Tuple[str, ...] = (
-    "COGNITIVE_PROCESS_DRIVE", "PROTOCOL_DRIVE_SEARCH", "OUTPUT_FORMAT_DRIVE", "PROTOCOL_AGENT_SELECTION")
+    "COGNITIVE_PROCESS_DRIVE", "PROTOCOL_DRIVE_SEARCH", "PROTOCOL_DRIVE_NOTES", "OUTPUT_FORMAT_DRIVE",
+    "PROTOCOL_AGENT_SELECTION")
 OVERLAY_BLUEPRINT_IDS: Tuple[str, ...] = ("drive_agent_v1",)
 OVERLAY_PROFILE_IDS: Tuple[str, ...] = ("drive",)
 
@@ -28,7 +29,7 @@ PROMPTS_SNAPSHOT = "snapshot"
 
 
 def overlay_files(snapshot_dir: Path = SNAPSHOT_DIR) -> Tuple[Path, ...]:
-    """The six snapshot files the overlay serves (a token lives under `system/` or `user/`)."""
+    """The seven snapshot files the overlay serves (a token lives under `system/` or `user/`)."""
     root = Path(snapshot_dir)
     files = []
     for token_id in OVERLAY_TOKEN_IDS:

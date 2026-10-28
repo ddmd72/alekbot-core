@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from .agent import DeliveryItem
 from .drive_collected_result import CollectedResult
 from .drive_outcome import DriveOutcome
 
@@ -56,6 +57,15 @@ class PassThroughCollector:
         for result in self._results:
             entries.extend(result.outcome.drive_context())
         return entries
+
+    def note_context(self) -> List[str]:
+        """Every note change's history line, in run order, no deduplication (specialist RFC §9.1, design Δ7)."""
+        return [line for r in self._results for line in r.outcome.note_context]
+
+    def delivery_items(self) -> List[DeliveryItem]:
+        """Every note receipt and erase request, in run order, no deduplication (design Δ7: the collector, not the
+        engine's fold, so a cut run keeps the receipt of a note it stored)."""
+        return [item for r in self._results for item in r.outcome.delivery]
 
     def files(self) -> List[Dict[str, Any]]:
         """Every vision file, in run order (§6: several files reach the orchestrator as a list)."""

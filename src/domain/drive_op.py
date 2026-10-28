@@ -17,7 +17,11 @@ class DriveOp(str, Enum):
     APPEND = "append"
     REPLACE = "replace"
     DELETE = "delete"
+    # The owner's notes on drive items (specialist RFC §9.2): a read, a change of the note, an erase request.
+    NOTE_READ = "note_read"
+    NOTE_WRITE = "note_write"
+    NOTE_ERASE = "note_erase"
 
 
 MUTATING_OPS = frozenset({DriveOp.COPY, DriveOp.SAVE_TEXT, DriveOp.CREATE_FOLDER, DriveOp.MOVE, DriveOp.APPEND,
-                          DriveOp.REPLACE, DriveOp.DELETE})
+                          DriveOp.REPLACE, DriveOp.DELETE, DriveOp.NOTE_WRITE, DriveOp.NOTE_ERASE})

@@ -23,6 +23,8 @@ src.adapters.firestore_consolidation_queue.FirestoreConsolidationQueue 1  # by-d
 src.adapters.firestore_dedup_store.FirestoreDedupStore 3  # by-design three stores on three TTLs: worker daily-review marks (application_graph.py WorkerHandler), deep-research webhook claims, Telegram update dedup
 src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
+src.adapters.firestore_drive_note_repo.FirestoreDriveNoteRepository 1  # by-design single instance
+src.adapters.firestore_ephemeral_store.FirestoreEphemeralStore 1  # by-design single instance
 src.adapters.firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter 1  # by-design single instance
 src.adapters.firestore_email_job_repo.FirestoreEmailJobRepository 1  # by-design single instance
 src.adapters.firestore_fact_lifecycle_counters.FirestoreFactLifecycleCounters 1  # by-design single instance, held by the ServiceContainer (Facts S3, FACT_LIFECYCLE_RFC D10); the consolidator adds to it, the janitor shares it (application_graph.py FactLifecycleSweepService)
@@ -43,7 +45,7 @@ src.adapters.firestore_skill_repository.FirestoreSkillRepository 1  # by-design 
 src.adapters.firestore_task_claim_store.FirestoreTaskClaimStore 1  # by-design single instance
 src.adapters.firestore_task_config_repository.FirestoreTaskConfigRepository 1  # by-design single instance
 src.adapters.firestore_task_search_index.FirestoreTaskSearchIndex 1  # by-design single instance
-src.adapters.firestore_user_repo.FirestoreUserRepository 2  # by-design the graph's user_repo plus a second stateless one inside DriveSearchService (service_container.py:211)
+src.adapters.firestore_user_repo.FirestoreUserRepository 2  # by-design the graph's user_repo plus one uncached one shared by DriveSearchService and the note service (service_container.py drive_users)
 src.adapters.firestore_whitelist_repo.FirestoreWhitelistRepository 1  # by-design single instance
 src.adapters.gcp_task_queue.GcpTaskQueue 3  # by-design agent-tasks queue (application_graph.py), drive-sync queue (drive_indexing_setup.py:65), Slack intake queue (slack_adapter_factory.py:149)
 src.adapters.gcs_file_storage_adapter.GcsFileStorageAdapter 1  # by-design single instance
@@ -69,7 +71,7 @@ src.adapters.playwright_html_renderer.PlaywrightHtmlRenderer 1  # by-design sing
 src.adapters.prompt_v3.firestore_agent_profile_repository.FirestoreAgentProfileRepository 1  # by-design single instance
 src.adapters.prompt_v3.firestore_blueprint_repository.FirestoreBlueprintRepository 1  # by-design single instance
 src.adapters.prompt_v3.firestore_token_repository.FirestoreTokenRepository 1  # by-design single instance
-src.adapters.security.composite_adapter.CompositeAdapter 3  # by-design assembly service, memory fact service, skill service each get their own (service_container.py:384,392, prompt_assembly_setup.py:29)
+src.adapters.security.composite_adapter.CompositeAdapter 3  # by-design assembly service, memory fact service, and one shared by the skill and note services (service_container.py shared_security_port, prompt_assembly_setup.py:29)
 src.adapters.security.regex_adapter.RegexSecurityAdapter 3  # by-design one inside each of the three CompositeAdapters, stateless
 src.adapters.slack.channel_history.SlackChannelHistorySource 1  # by-design single instance
 src.adapters.slack.http_adapter.HTTPModeAdapter 1  # by-design single instance
@@ -107,6 +109,8 @@ src.services.configuration_service.ConfigurationService 1  # by-design single in
 src.services.consolidation_service.ConsolidationService 1  # by-design single instance
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
+src.services.drive_note_deleted_search.DriveNoteDeletedSearch 1  # by-design single instance
+src.services.drive_note_service.DriveNoteService 1  # by-design single instance
 src.services.drive_search_service.DriveSearchService 1  # by-design single instance
 src.services.drive_sync_scheduler_service.DriveSyncSchedulerService 1  # by-design single instance
 src.services.email_embedding_repair_service.EmailEmbeddingRepairService 1  # by-design single instance

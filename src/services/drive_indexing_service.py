@@ -11,7 +11,7 @@ Public interface:
     DriveIndexingService(drive, repo, embeddings, queue, users, place_of, embedding_space, *, extractors=None,
                          triage=None, profiler=None, passages=None, upgrade_pass=True, transcripts=None,
                          transcribe_enabled=False, transcribe_cap_usd=TRANSCRIBE_USD_PER_MONTH, mirror_repo=None,
-                         mirror=None, localization=None, language=None, clock, monotonic)
+                         mirror=None, localization=None, language=None, note_lifecycle=None, clock, monotonic)
     await tick(user_id, nudge=None) -> TickResult
 
 `extractors` maps `drive_extraction.PARSER` / `READER` to their ContentExtractorPort and `triage` is the
@@ -67,6 +67,32 @@ the work-off (after a complete round), only for a user whose transcription is on
 `MirrorHost`, within its own budgets and window (`_Budget.mirror_stop`). While the user has mirror work it can do now
 (`_mirror_ready`, Δ209, Δ217) the content classes, enrichment and extraction stop MIRROR_RESERVE_S earlier. Mirror work
 never asks for a continuation; its counters join the tick line (`mirror={...}`).
+
+The owner's notes (DRIVE_FILE_NOTES_RFC §5.1, §5.5; plan part B): `notes` is the DriveNoteRepository (None: the
+DRIVE_NOTES_ENABLED kill switch is off, or nothing is wired; then none of this runs). The note store is the record; each
+index record carries a copy (`drive_note_merge.with_owner_note`), written by two entries, both through `_commit`:
+(a) `_lookup_notes`, in `_commit` itself, for every record the planner created (`note_lookup_due`): the note found by
+its binding key is merged in the same write, an archived one re-activated first; (b) `_notes_step`, once every tick,
+after observe and before the work-off — or before observe when the round was left incomplete (the last tick's observe
+used its start budget, so its step never ran): the notes changed since the watermark (`changed_since`, paged, the pair cursor kept in
+the sync state) reconcile their records, an erase stub is deleted once its record's copy is cleared, then the vector
+repair and the space pass re-embed note vectors. One note count per tick gates both (a user without notes pays one
+read). The notes step also runs while the access gate is closed (the access-loss grace and the D30 rebuild gate,
+`_notes_gated`), re-embedding the changed cards at once, so a cleared or erased note never outlives its owner's
+command in a record copy, its keys or a card vector. A note-store failure never ends the tick: the step is skipped, a
+lookup that failed resets the watermark (`_TickNotes.rescan`). The step starts only inside the start budget and stops
+starting its stub deletes, card batches and embeddings NOTE_STEP_S after it began (a bounded number of other calls may
+still start), so the §7.1 deadline sum is unchanged (`drive_note_merge.NOTE_STEP_S`).
+
+Owner notes' lifecycle (docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md §7.1, §7.4, §7.5; plan part C): `note_lifecycle` is the
+DriveNoteLifecycle, built only with the notes kill switch on. With it, every delete site's why (`_mirror_notices`, the
+transcript mirror's hook) also notices each named record that carries a note (`owner_note_id`) in the tick's
+`_TickNotes` (part B's class), and `_commit` turns into a check only a noticed record it really deletes. `_save_state`
+folds the checks into the state at every save, the error paths' saves included, and never into a purging state (a purge
+archives nothing). At the start of the work-off (a complete round) the round end works the checks within the item-call
+budget, then the daily audit runs within NOTE_AUDIT_CALL_SHARE of the calls left, then the snapshot refresh of the
+noted records this tick renamed, moved or saw edited (`_apply`'s hook, and `note_snapshot_due` for B's merge entries).
+Without it, none of this runs.
 """
 from __future__ import annotations
 
@@ -132,11 +158,20 @@ from ..domain.drive_index_planner import (
     parent_scope, plan_observation, readme_read, reembed_in_space, reextraction_due, released, schedule,
     stale_versions, structure_stale, triage_due, triaged, with_card, with_retry, without_card,
 )
-from ..domain.drive_keys import word_form_keys, word_keys_capped
+from ..domain.drive_keys import about_keys_capped, word_form_keys, word_keys_capped
 from ..domain import drive_mirror_plan as mirror_versions
 from ..domain.drive_mirror import GONE, UNKNOWN, UNSTORED, DeletionNotice, MirrorRoot
 from ..domain.drive_mirror_plan import local_day, mirror_plan
 from ..domain.drive_mirror_render import MirrorStrings
+from ..domain.drive_note import ONEDRIVE_PROVIDER_KEY, DriveNote, NoteState, binding_parts_of, note_embedding_text
+from ..domain.drive_note_merge import (
+    NOTE_EMBED_PER_TICK, NOTE_MERGE_VERSION, NOTE_PAGE, NOTE_STEP_S, NOTE_STUB_HOLD_MAX, NoteView, note_view, notes_query_start,
+    record_binding_key, with_owner_note,
+)
+from ..domain.drive_note_check import NoteCheck
+from ..domain.drive_note_lifecycle import (
+    NOTE_AUDIT_CALL_SHARE, NOTE_ROUND_END_CALL_SHARE, call_share, checks_of, fold_checks, record_moved, snapshot_stale,
+)
 from ..domain.language import LanguageCode
 from ..domain.ui_messages import UIMessage
 from ..domain.drive_profile import (
@@ -172,6 +207,7 @@ from ..domain.user_drive import (
 from ..ports.content_extractor_port import ContentExtractorPort
 from ..ports.document_profiler_port import DocumentProfilerPort
 from ..ports.drive_index_repository import DriveIndexRepository
+from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.embedding_service import EmbeddingService
 from ..ports.image_triage_port import ImageTriagePort
@@ -183,11 +219,13 @@ from ..ports.user_repository import UserRepository
 from ..utils.logger import exc_brief, logger
 
 if TYPE_CHECKING:   # REQ-ARCH-22: a service never imports another at run time; the stage is injected
+    from .drive_note_lifecycle import DriveNoteLifecycle
     from .drive_transcript_mirror import DriveTranscriptMirror
     from .drive_transcript_stage import DriveTranscriptStage
     from .localization_service import LocalizationService
 
 _DUE_PAGE = 100
+NOTE_EMBED_REFUSED_HOLD = timedelta(hours=24)   # final review D-M3: how long a refused note version is skipped
 def _last_months(now: datetime, count: int) -> List[str]:
     """`count` month keys, this month first, stepping through month starts (never `now - 31 days`, which skips a month)."""
     first = now.astimezone(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -511,6 +549,59 @@ class _Mirror:
 
 # Per tick: None outside a tick or with no mirror repository wired (no root ids, no marks).
 _TICK_MIRROR: ContextVar[Optional[_Mirror]] = ContextVar("drive_tick_mirror", default=None)
+
+
+@dataclass
+class _TickNotes:
+    """The tick's owner-notes work (DRIVE_FILE_NOTES_RFC §5.1, §7). Part B's merge fields: `drive_id` the binding keys
+    are built for (the connection's, else the sync state's; kept current by observe); `count` the user's notes, read
+    once at its first use (the per-tick gate: a user without notes pays that one read); `rescan`: a lookup by binding key
+    failed, so records were written without their notes — the next save resets the notes watermark and the notes step
+    re-merges every note; `more`: the notes step left a full page (a continuation).
+
+    Part C's lifecycle fields: `lifecycle` — the notes lifecycle is wired (no check is collected without it);
+    `last_seen_at` — the state's `observed_as_of` at the tick's start (the last round that saw the items), the
+    `last_seen_at` a check carries; `noticed` — the noted records a delete site named, by item id, until its `_commit`
+    decides which really left; `pending` — the checks of the records that left, by note id, the round end taking out the
+    ones it finished; `moved` (§7.5) — notes whose record this tick renamed, moved or saw with new content (note id ->
+    item id), refreshed at the round end, not saved (a snapshot is "last known").
+
+    Two folds, one site each: B's `onto` (through `_fold_tick_notes` / `_notes_onto`) at the final and error saves; C's
+    checks by `checks_onto` through `_note_checks_onto` in `_save_state`, at every save. Never a third."""
+    drive_id: str
+    count: Optional[int] = None
+    rescan: bool = False
+    more: bool = False
+    # part C (§7)
+    lifecycle: bool = False
+    last_seen_at: Optional[datetime] = None
+    noticed: Dict[str, NoteCheck] = field(default_factory=dict)
+    pending: Dict[str, NoteCheck] = field(default_factory=dict)
+    dropped_logged: bool = False
+    moved: Dict[str, str] = field(default_factory=dict)
+
+    def onto(self, state: DriveSyncState) -> DriveSyncState:
+        """B's part of what every sync-state save of the tick carries (the error paths' saves included): a failed
+        lookup's re-read."""
+        if not self.rescan:
+            return state
+        return replace(state, notes_applied_at=None, notes_applied_id="", notes_paging=False)
+
+    def checks_onto(self, state: DriveSyncState) -> DriveSyncState:
+        """The state a save writes, with the tick's pending checks folded in (§3.4: at every save, the error paths'
+        too). A purging state gets none: a purge archives nothing and deletes the state with its checks."""
+        if not self.pending or state.purging:
+            return state
+        folded, dropped = fold_checks(state.note_checks, list(self.pending.values()))
+        if dropped and not self.dropped_logged:
+            self.dropped_logged = True
+            logger.warning(f"[DriveIndex] {state.user_id[:8]} has more note checks than the state keeps; {dropped} "
+                           f"dropped (the daily notes audit catches them)")
+        return replace(state, note_checks=folded)
+
+
+# Per tick: None outside a tick, or with neither the note store nor the note lifecycle wired.
+_TICK_NOTES: ContextVar[Optional[_TickNotes]] = ContextVar("drive_tick_notes", default=None)
 # What makes the tick read the marked records again for its counters: it changed a marking itself (review of S1)
 _MARK_CHANGES = ("inaccessible", "inaccessible_folders", "inaccessible_rechecked", "access_regained")
 
@@ -570,6 +661,8 @@ class DriveIndexingService:
                  mirror: Optional["DriveTranscriptMirror"] = None,
                  localization: Optional["LocalizationService"] = None,
                  language: Optional[LanguageServicePort] = None,
+                 notes: Optional[DriveNoteRepository] = None,
+                 note_lifecycle: Optional["DriveNoteLifecycle"] = None,
                  clock: Callable[[], datetime] = _utcnow, monotonic: Callable[[], float] = time.monotonic) -> None:
         if mirror is not None and (mirror_repo is None or localization is None or language is None):
             raise ValueError("the transcript mirror step needs the mirror repository, the localization service and "
@@ -609,6 +702,14 @@ class DriveIndexingService:
         # the step could not start (its UI language or strings unreadable), per user: the same ladder, held off the
         # reserve only (`_note_step_unavailable`; process memory only)
         self._mirror_step_holds: Dict[str, Tuple[int, datetime]] = {}
+        # the owner-note store (DRIVE_FILE_NOTES_RFC §5.1): read and lifecycle-written by the tick, never the owner's
+        # words; None: the DRIVE_NOTES_ENABLED kill switch is off (composition), and no notes work runs
+        self._notes = notes
+        # owner notes' round-end checks and daily audit (DRIVE_FILE_NOTES_RFC §7); None: the kill switch is off
+        self._note_lifecycle = note_lifecycle
+        # a note version the embedder refused (HTTP 400): skipped by the vector repair and the space pass until the
+        # hold ends (process memory only; a restart tries it once more), keyed (user, note id, version)
+        self._note_embed_holds: Dict[Tuple[str, str, int], datetime] = {}
         self._clock = clock
         self._monotonic = monotonic
         self._gate_checked: Dict[str, float] = {}
@@ -649,8 +750,11 @@ class DriveIndexingService:
                 return await self._purge(user_id, state, action, enabled, summary, cont)
             if action is AccessAction.RECORD_LOSS:
                 if state.access_lost_at is None:
-                    await self._save_state(replace(state, access_lost_at=now))
+                    state = replace(state, access_lost_at=now)
+                    await self._save_state(state)
                     logger.warning(f"[DriveIndex] access lost for {user_id[:8]}; grace period started")
+                # the index keeps its cards for the grace: the owner's note commands still reach them (core review §5)
+                await self._notes_gated(user_id, state, connection, cont)
                 return TickResult("access_lost")
             if MIGRATION_GATE_KEY not in state.applied_versions:
                 # D30: built by v1, never upgraded. No tick work until the owner's rebuild purges it; the fan-out
@@ -663,6 +767,8 @@ class DriveIndexingService:
                 else:
                     self._migration_warned.add(user_id)
                     logger.warning(line)
+                # no index work, but a cleared or erased note must not outlive the command in a record (core review §5)
+                await self._notes_gated(user_id, state, connection, cont)
                 return TickResult("awaiting_migration")
             if action is AccessAction.RESUME_AFTER_REGAIN:
                 state = replace(state, access_lost_at=None)
@@ -684,6 +790,10 @@ class DriveIndexingService:
         budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
         self._gate_checked[user_id] = budget.started   # the gate just read the flag
         state = replace(state, continuation_enqueued_at=None)
+        if self._notes is None and state.notes_merge_version:
+            # the kill switch is off (DRIVE_FILE_NOTES_RFC §3.6): the zero merge version, applied before `_Saved`, so the
+            # error paths' saves carry it too and the first tick with the store on again re-reads every note
+            state = replace(state, notes_merge_version=0)
         saved = _Saved(state)
         models = _Models(state, saved=saved)
         spend = _Spend(now, await self._repo.get_model_usage(user_id, month_key(now)),
@@ -695,10 +805,17 @@ class DriveIndexingService:
         if transcription.on:
             transcription.host = _TickHost(self, user_id, budget, models, summary, transcription)
         transcription_token = _TICK_TRANSCRIPTION.set(transcription)
+        # The tick's note context: when the note store (part B) OR the lifecycle (part C) is wired — B's own code checks
+        # `self._notes` itself (`_lookup_notes`, `_notes_step`), so a lifecycle without a store merges nothing
+        notes_token = _TICK_NOTES.set(
+            _TickNotes(drive_id=(connection.drive_id if connection is not None else "") or state.drive_id,
+                       lifecycle=self._note_lifecycle is not None, last_seen_at=state.observed_as_of)
+            if self._notes is not None or self._note_lifecycle is not None else None)
         try:
             return await self._run_spending(user_id, state, nudge, now, enabled, budget, summary, cont, saved,
                                             models, spend, connection)
         finally:
+            _TICK_NOTES.reset(notes_token)
             _TICK_MIRROR.reset(mirror_token)
             _TICK_TRANSCRIPTION.reset(transcription_token)
             _TICK_CLOSED.reset(closed_token)
@@ -762,9 +879,17 @@ class DriveIndexingService:
             # the roots first, before any observation: a read error ends the tick (systemic), never "no roots" (Δ205)
             _TICK_MIRROR.set(await self._start_mirror(user_id, state, connection))
             _TICK_CLOSED.set(await self._start_marks(user_id, state))
+            # entry (b) of the note merge (DRIVE_FILE_NOTES_RFC §5.1 b), once per tick: after observe, before the
+            # work-off; but first when the round was left incomplete (read before `_observe` resets it), because then
+            # the last tick's observe used the start budget and its notes step never ran (re-review item 4)
+            notes_first = not state.round_complete
+            if notes_first:
+                state = await self._notes_step(user_id, state, budget, summary)
             if nudge is not None:
                 await self._observe_nudge(user_id, state, nudge, now, budget, summary)
             state = await self._observe(user_id, state, now, budget, summary, saved)
+            if not notes_first:
+                state = await self._notes_step(user_id, state, budget, summary)
             if state.round_complete:
                 state = await self._work_off(user_id, state, now, budget, summary, models)
             more = await self._has_more(user_id, state, now, upgrade_wrote=summary.get("upgraded", 0) > 0,
@@ -789,9 +914,9 @@ class DriveIndexingService:
                                                     if not k.startswith(("profile_", "passages_", "coverage_"))},
                                                  **job_counts})
             progressed = any(v for k, v in summary.items() if k != "pages")
-            state = replace(models.onto(state), continuation_enqueued_at=now if more else None, last_error=None,
-                            systemic_failures=0,
-                            last_success_at=now if (progressed or not more) else state.last_success_at)
+            state = _notes_onto(replace(models.onto(state), continuation_enqueued_at=now if more else None,
+                                        last_error=None, systemic_failures=0,
+                                        last_success_at=now if (progressed or not more) else state.last_success_at))
             await self._save_state(state)
             transcription = _TICK_TRANSCRIPTION.get()
             self._log(user_id, "continued" if more else "done", summary, budget, models, spend,
@@ -811,7 +936,8 @@ class DriveIndexingService:
         except DriveReauthRequired:
             flagged = await self._drive.flag_reconnect(user_id)
             logger.warning(f"[DriveIndex] refresh rejected for {user_id[:8]} (flag set now: {flagged})")
-            await self._save_state(replace(models.onto(saved.state), last_error=ErrorCategory.RECONNECT_NEEDED))
+            await self._save_state(_notes_onto(replace(models.onto(saved.state),
+                                                       last_error=ErrorCategory.RECONNECT_NEEDED)))
             return TickResult("access_lost", summary, models.cost)
         except (DriveThrottled, LLMRateLimitError, LLMUnavailableError) as exc:
             delay = _backoff_s(state.systemic_failures)
@@ -820,9 +946,9 @@ class DriveIndexingService:
                 delay = retry_after if state.systemic_failures == 0 else max(retry_after, delay)
             logger.warning(f"[DriveIndex] throttled for {user_id[:8]}: {exc}; continuing in {delay}s")
             cont.request(delay)
-            await self._save_state(replace(models.onto(saved.state), last_error=ErrorCategory.THROTTLED,
-                                           continuation_enqueued_at=now,
-                                           systemic_failures=state.systemic_failures + 1))
+            await self._save_state(_notes_onto(replace(models.onto(saved.state), last_error=ErrorCategory.THROTTLED,
+                                                       continuation_enqueued_at=now,
+                                                       systemic_failures=state.systemic_failures + 1)))
             return TickResult("throttled", summary, models.cost)
         except Exception as exc:
             category = ErrorCategory.PROVIDER_ERROR if isinstance(exc, (DriveAccessDenied, ValueError)) \
@@ -830,9 +956,9 @@ class DriveIndexingService:
             delay = _backoff_s(state.systemic_failures)
             logger.error(f"[DriveIndex] tick failed for {user_id[:8]}: {exc}; continuing in {delay}s", exc_info=True)
             cont.request(delay)
-            await self._save_state(replace(models.onto(saved.state), last_error=category,
-                                           continuation_enqueued_at=now,
-                                           systemic_failures=state.systemic_failures + 1))
+            await self._save_state(_notes_onto(replace(models.onto(saved.state), last_error=category,
+                                                       continuation_enqueued_at=now,
+                                                       systemic_failures=state.systemic_failures + 1)))
             return TickResult("error", summary, models.cost)
 
     async def _counters(self, user_id: str, *, marked: Optional[Sequence[DriveIndexRecord]] = None,
@@ -922,6 +1048,9 @@ class DriveIndexingService:
                 raise _DriveSwitched()
             state = self._enter_epoch(state, page)
             state = replace(state, drive_id=page.drive_id or state.drive_id, root_item_id=page.root_item_id)
+            notes = _TICK_NOTES.get()
+            if notes is not None and state.drive_id:
+                notes.drive_id = state.drive_id   # the drive the index is of: the one its binding keys name
             await self._apply(user_id, self._ctx(user_id, state, now), list(page.changes), budget, summary)
             state = replace(state, cursor=page.cursor)
             if page.complete:
@@ -988,6 +1117,9 @@ class DriveIndexingService:
                 plan = replace(plan, upsert=schedule(plan.upsert, ctx.now, first_seen=False))
             if plan.delete_item_id is not None and existing is not None:
                 gone.update(self._mirror_notices([existing], GONE if change.deleted else UNSTORED))
+            elif (existing is not None and existing.owner_note_id and plan.upsert is not None
+                  and plan.upsert.item_id == existing.item_id and record_moved(existing, plan.upsert)):
+                note_snapshot_due(existing.owner_note_id, existing.item_id)   # notes RFC §7.5
             self._fold(plan, cache, writes, deletes, collects)
         await self._observe_closed_children(user_id, ctx, changes, cache, writes, deletes)
         # a delete re-upserted later in the page left `deletes` (`_fold`): `_commit` drops its notice with it
@@ -1091,12 +1223,14 @@ class DriveIndexingService:
         if before:
             dropped = {w.item_id for w in writes if drops_readable(before.get(w.item_id), w)}
             collects = (collects or set()) | dropped if dropped else collects
+        noticed = _take_noticed()   # notes RFC §7.1: the noted records this commit's caller named
         if not writes and not deletes and not collects:
             return
         _fence()
         await self._recheck_gate(user_id)
         for item_id in sorted(collects or ()):
             await self._collect(user_id, item_id, None)
+        writes = await self._lookup_notes(user_id, writes)   # entry (a) of the note merge (DRIVE_FILE_NOTES_RFC §5.1 a)
         ctx = self._enrich_ctx()
         tctx = self._transcript_ctx()
         # every write's plans: the transcript job's (§27.3), then the keys, enrichment jobs and queue fields (§25.4.9)
@@ -1112,10 +1246,18 @@ class DriveIndexingService:
             await self._clear_root_marks(user_id, mirror, writes)
         if deletes:
             await self._repo.delete_records(user_id, sorted(deletes))
+            _note_deleted(noticed, deletes)   # a check only for a record that really left (notes RFC §7.1)
 
     def _mirror_notices(self, records: Iterable[DriveIndexRecord], why: str) -> Dict[str, str]:
         """The deletes the mirror must hear of (§27.9.4), with their why: a record the mirror has written a file or a
-        folder for (`mirrored_digest`), or a mirror root's own record. Pure; `_commit` keeps the ones it deletes."""
+        folder for (`mirrored_digest`), or a mirror root's own record. `_commit` keeps the ones it deletes.
+
+        Every delete site passes its why here, so this is also where an owner note hears of its record's possible delete
+        (DRIVE_FILE_NOTES_RFC §7.1): each record with `owner_note_id` is noticed with the why; `_commit` turns into checks
+        only the noticed records it really deletes (a delete re-upserted later in the page, a rescope child that stays,
+        an upgrade page's untouched record report nothing)."""
+        records = list(records)
+        _note_notices(records, why)
         mirror = _TICK_MIRROR.get()
         roots = mirror.root_ids if mirror is not None else frozenset()
         return {r.item_id: why for r in records if r.mirrored_digest or r.item_id in roots}
@@ -1163,6 +1305,434 @@ class DriveIndexingService:
             mirror.gone_ids.discard(root_id)
 
     # ------------------------------------------------------------------------------------------
+    # Owner notes: the copy on the record (DRIVE_FILE_NOTES_RFC §5.1, §5.5; plan part B)
+    # ------------------------------------------------------------------------------------------
+
+    async def _notes_count(self, user_id: str, tick: _TickNotes) -> int:
+        """The user's note documents (stubs included), read once per tick: the gate of both entries."""
+        if tick.count is None:
+            tick.count = await self._notes.count(user_id) if self._notes is not None else 0
+        return tick.count
+
+    async def _lookup_notes(self, user_id: str, writes: List[DriveIndexRecord]) -> List[DriveIndexRecord]:
+        """Entry (a) (§5.1 a, review I2): every record this commit creates (`note_lookup_due`, set by the planner's
+        `_build`) looks up the owner's note by its binding key, in the same write: every way a record comes into
+        existence (onboarding after a purge, a recycle-bin restore, a re-listing, an opened folder, a parent created by
+        `_resolve_step`) ends in `_commit`. An `active` note is merged; an `archived` one is re-activated first (§7.2: the
+        same item id on the same drive came back) and merged; a cleared note that had been archived only loses its stamp
+        (core contract §6), so a later undo returns it active. Every flagged record leaves with the flag cleared, found
+        or not. A user without notes pays the tick's one count. A note-store failure never ends the tick or holds the
+        write back: the records are written without their notes and the next save resets the watermark (`rescan`), so
+        the notes step re-merges every note."""
+        if not any(w.note_lookup_due for w in writes):
+            return writes
+        flagged = {w.item_id for w in writes if w.note_lookup_due}
+        cleared = [replace(w, note_lookup_due=False) if w.note_lookup_due else w for w in writes]
+        tick = _TICK_NOTES.get()
+        if self._notes is None or tick is None:
+            return cleared
+        if not tick.drive_id:
+            tick.rescan = True   # no drive id yet (no page seen, no connection): the notes step merges once it is known
+            return cleared
+        drive_id = tick.drive_id
+        try:
+            if not await self._notes_count(user_id, tick):
+                return cleared
+            keys = [record_binding_key(drive_id, item_id) for item_id in sorted(flagged)]
+            found = await self._notes.find_by_match_keys(user_id, keys)
+        except (LeaseLost, _OptedOut):
+            raise
+        except Exception as exc:
+            tick.rescan = True
+            logger.error(f"[DriveIndex] note lookup failed for {user_id[:8]} ({len(flagged)} new records): "
+                         f"{exc_brief(exc)}; written without their notes, the notes step re-reads every note")
+            return cleared
+        by_item: Dict[str, DriveNote] = {}
+        for note in found:   # lowest note id first, as `find_bound`; the key is exact, the parts are checked anyway
+            parts = binding_parts_of(note)
+            if (parts is not None and parts.provider_key == ONEDRIVE_PROVIDER_KEY and parts.drive_id == drive_id
+                    and parts.item_id in flagged):
+                by_item.setdefault(parts.item_id, note)
+        out: List[DriveIndexRecord] = []
+        for rec in cleared:
+            note = by_item.get(rec.item_id)
+            if note is not None:
+                note = await self._reactivated(user_id, note, tick)
+                view = note_view(note, drive_id=drive_id)
+                if view is not None:
+                    rec = with_owner_note(rec, view)
+                    if snapshot_stale(note.snapshot, rec):   # notes RFC §7.5: refreshed from the record at the round end
+                        note_snapshot_due(note.note_id, rec.item_id)
+            out.append(rec)
+        return out
+
+    async def _reactivated(self, user_id: str, note: DriveNote, tick: _TickNotes) -> DriveNote:
+        """§7.2 and core contract §6: an archived note, or a cleared one stamped `archived_at`, whose item is indexed
+        again is re-activated (a cleared one stays cleared). The returned copy is the note as now stored (the merge's
+        input); a failed write leaves it as it was (logged; the next record write or the watermark catches up)."""
+        archived = note.state == NoteState.ARCHIVED.value
+        if note.erase_pending or not (archived or (note.state == NoteState.CLEARED.value
+                                                   and note.archived_at is not None)):
+            return note
+        if self._notes is None:
+            return note
+        _fence()
+        try:
+            done = await self._notes.reactivate(user_id, note.note_id, bound_at=self._clock())
+        except Exception as exc:
+            tick.rescan = True
+            logger.error(f"[DriveIndex] note re-activation failed for {user_id[:8]} note={note.note_id}: "
+                         f"{exc_brief(exc)}")
+            return note
+        if not done:
+            return note
+        logger.info(f"[DriveIndex] note re-activated for {user_id[:8]} note={note.note_id} "
+                    f"({'archived' if archived else 'cleared, unstamped'})")
+        return note.model_copy(update={"state": NoteState.ACTIVE.value if archived else note.state,
+                                       "archived_at": None})
+
+    async def _notes_step(self, user_id: str, state: DriveSyncState, budget: _Budget, summary: Dict[str, int], *,
+                          gated: bool = False) -> DriveSyncState:
+        """Entry (b) (§5.1 b): one page of the notes changed since the watermark reconciles the records of their items
+        (merged or cleared), erase stubs are deleted once their records' copies are gone, the watermark (a pair, with
+        its paging flag) advances to the last processed note, and the vector repair, the changed page's notes in
+        another space and the space pass re-embed up to NOTE_EMBED_PER_TICK note vectors. A `NOTE_MERGE_VERSION`
+        change resets the watermark first (§5.5); so does a tick by code without notes support since the last notes
+        step (`notes_tick_at` older than `last_success_at`: a rolled-back revision, plan Default B12), and the kill
+        switch off saves `notes_merge_version = 0` for the same re-read when it is on again. A full page asks for a
+        continuation. Starts only inside the start budget; past NOTE_STEP_S after it began no stub delete, card batch
+        or note embedding starts, and only a bounded number of calls may still start (the merge's record read and
+        commit, a card drop's read and commit); work left over stays pending: a stub's watermark, a note's
+        `embedding_pending`, a card dropped to card work.
+        `gated` (the access gate is closed) or an incomplete round (no due loop follows): the changed cards are
+        embedded here. A note-store failure skips the rest of the step (logged); an index-store failure ends the tick
+        like any record write."""
+        if self._notes is None:
+            # the kill switch is off (§3.6): no note-store call; a zero merge version makes the first tick with the
+            # store on re-read every note, so records created meanwhile get their notes (review Important 2)
+            return replace(state, notes_merge_version=0) if state.notes_merge_version else state
+        tick = _TICK_NOTES.get()
+        if tick is None:
+            return state
+        if tick.rescan:
+            state, tick.rescan = tick.onto(state), False
+        if (state.notes_tick_at is not None and state.last_success_at is not None
+                and state.last_success_at > state.notes_tick_at and state.notes_merge_version):
+            logger.warning(f"[DriveIndex] a tick without notes support ran for {user_id[:8]} since the last notes step "
+                           f"(a rolled-back revision): every note is merged again")
+            state = replace(state, notes_merge_version=0)
+        state = replace(state, notes_tick_at=self._clock())   # this code ran the step: the stamp the detector reads
+        if not budget.time_left() or not tick.drive_id:
+            return state
+        stop = budget.elapsed() + NOTE_STEP_S
+        try:
+            count = await self._notes_count(user_id, tick)
+        except (LeaseLost, _OptedOut):
+            raise
+        except Exception as exc:
+            logger.error(f"[DriveIndex] note count failed for {user_id[:8]}: {exc_brief(exc)}; notes step skipped")
+            return state
+        if not count:
+            # nothing to merge or move: the versions stand; a first note is read from the start of the store
+            return replace(state, notes_merge_version=NOTE_MERGE_VERSION, notes_space=self._space,
+                           notes_space_at=None, notes_space_id="")
+        if state.notes_merge_version != NOTE_MERGE_VERSION:
+            logger.info(f"[DriveIndex] note merge version {state.notes_merge_version} -> {NOTE_MERGE_VERSION} for "
+                        f"{user_id[:8]}: every note is merged again")
+            state = replace(state, notes_applied_at=None, notes_applied_id="", notes_paging=False,
+                            notes_scanned_at=None, notes_merge_version=NOTE_MERGE_VERSION)
+        after, after_id = notes_query_start(state)
+        scanned = self._clock()   # the pass's end is when the read was made, so the skew keeps its whole margin
+        try:
+            page = await self._notes.changed_since(user_id, after, NOTE_PAGE, after_note_id=after_id)
+        except (LeaseLost, _OptedOut):
+            raise
+        except Exception as exc:
+            logger.error(f"[DriveIndex] notes read failed for {user_id[:8]}: {exc_brief(exc)}; notes step skipped")
+            return state
+        held: Optional[int] = None
+        if page:
+            held = await self._merge_notes(user_id, page, tick.drive_id, summary, budget, stop,
+                                           inline=gated or not state.round_complete)
+        if held is None:
+            if page:
+                last = page[-1]
+                state = replace(state, notes_applied_at=last.updated_at, notes_applied_id=last.note_id)
+            full = len(page) >= NOTE_PAGE
+            state = replace(state, notes_paging=full, notes_scanned_at=None if full else scanned)
+            tick.more = tick.more or full
+        elif held > 0:
+            # a stub left (the step's time ran out, or its delete failed): the watermark stops right before it and the
+            # next tick continues strictly after that pair; the notes before it are done
+            last = page[held - 1]
+            state = replace(state, notes_applied_at=last.updated_at, notes_applied_id=last.note_id, notes_paging=True)
+            tick.more = True
+        if budget.elapsed() < stop:
+            state = await self._repair_note_vectors(user_id, state, budget, stop, summary, page)
+        return state
+
+    async def _merge_notes(self, user_id: str, page: Sequence[DriveNote], drive_id: str, summary: Dict[str, int],
+                           budget: _Budget, stop: float, *, inline: bool) -> Optional[int]:
+        """One page of changed notes onto the records of their items, in one record read and one commit. A note bound
+        to another drive or provider touches nothing here (dormant, D16). A note that is not `active` clears a copy
+        only if the copy is its own (another note's copy of the same item is left to that note). Records that do not
+        exist are skipped (entry a merges them when they appear). `inline`: the changed cards are embedded now
+        (`_inline_cards`). Each erase stub is deleted after the commit, once its record's copy is cleared or it has no
+        record on this drive, none after `stop`. Returns the page position of the first stub left (out of time, or a
+        failed delete), else None: the caller holds the watermark before it. A stub whose delete fails and that is older
+        than NOTE_STUB_HOLD_MAX is logged at ERROR and passed (it holds no content), so it never holds the notes more
+        than a page behind it for good."""
+        if self._notes is None:
+            return None
+        per_item: Dict[str, List[Tuple[str, Optional[NoteView]]]] = {}
+        stubs: List[Tuple[int, DriveNote]] = []
+        snapshots: Dict[str, DriveNote] = {}   # the active notes of the page by id, for the §7.5 snapshot check
+        for index, note in enumerate(page):
+            if note.erase_pending:
+                stubs.append((index, note))
+            parts = binding_parts_of(note)
+            if parts is None or parts.provider_key != ONEDRIVE_PROVIDER_KEY or parts.drive_id != drive_id:
+                continue
+            view = note_view(note, drive_id=drive_id)
+            if view is not None:
+                snapshots[note.note_id] = note
+            per_item.setdefault(parts.item_id, []).append((note.note_id, view))
+        recs = await self._repo.get_records(user_id, sorted(per_item)) if per_item else {}
+        await self._revive_page(user_id, page, recs, drive_id, per_item, snapshots)
+        now = self._clock()
+        writes: List[DriveIndexRecord] = []
+        for item_id, entries in per_item.items():
+            rec = recs.get(item_id)
+            if rec is None:
+                continue
+            new = rec
+            for note_id, view in entries:
+                if view is not None:
+                    new = with_owner_note(new, view)
+                elif new.owner_note_id in ("", note_id):
+                    new = with_owner_note(new, None)
+            merged = snapshots.get(new.owner_note_id)
+            if merged is not None and snapshot_stale(merged.snapshot, new):   # notes RFC §7.5, at the round end
+                note_snapshot_due(merged.note_id, new.item_id)
+            if new != rec or _note_copy_stale(new):
+                writes.append(_card_rescheduled(new, now))
+        if writes:
+            await self._commit(user_id, writes, set())
+            _inc(summary, "notes_merged", len(writes))
+            if inline:
+                await self._inline_cards(user_id, [w.item_id for w in writes], now, summary, budget, stop)
+        for index, stub in stubs:
+            if budget.elapsed() >= stop:
+                return index   # NOTE_STEP_S: no stub delete starts past the step's window
+            _fence()
+            try:
+                if await self._notes.delete_stub(user_id, stub.note_id):
+                    _inc(summary, "note_stubs_deleted")
+            except Exception as exc:
+                if stub.updated_at is not None and now - stub.updated_at > NOTE_STUB_HOLD_MAX:
+                    # a stub that fails for a day would hold every later note: it is left (contentless) and passed
+                    logger.error(f"[DriveIndex] erase stub {stub.note_id} of {user_id[:8]} still not deleted after "
+                                 f"{NOTE_STUB_HOLD_MAX} ({exc_brief(exc)}); skipped, the watermark passes it")
+                    continue
+                logger.error(f"[DriveIndex] erase stub {stub.note_id} of {user_id[:8]} not deleted: {exc_brief(exc)}; "
+                             f"the watermark stops before it")
+                return index
+        return None
+
+    async def _revive_page(self, user_id: str, page: Sequence[DriveNote], recs: Mapping[str, DriveIndexRecord],
+                           drive_id: str, per_item: Dict[str, List[Tuple[str, Optional[NoteView]]]],
+                           snapshots: Dict[str, DriveNote]) -> None:
+        """§7.2 on the notes step's re-read (final review L-I1): an archived note, or a cleared one stamped
+        `archived_at`, bound to this drive whose record exists and is not deleting has its file back — the same item
+        id on the same drive — but entry (a) never re-activated it (the lookup failed, the kill switch was off, or a
+        rolled-back revision created the record). It is re-activated here and its view merged with the page. A
+        failed write leaves it as it was (`_reactivated` logs it and asks for the re-read)."""
+        tick = _TICK_NOTES.get()
+        if tick is None:
+            return
+        for note in page:
+            if note.erase_pending or not (note.state == NoteState.ARCHIVED.value or (
+                    note.state == NoteState.CLEARED.value and note.archived_at is not None)):
+                continue
+            parts = binding_parts_of(note)
+            if parts is None or parts.provider_key != ONEDRIVE_PROVIDER_KEY or parts.drive_id != drive_id:
+                continue
+            rec = recs.get(parts.item_id)
+            if rec is None or rec.state == RecordState.DELETING:
+                continue
+            revived = await self._reactivated(user_id, note, tick)
+            view = note_view(revived, drive_id=drive_id)
+            per_item[parts.item_id] = [(nid, view if nid == note.note_id else v)
+                                       for nid, v in per_item.get(parts.item_id, [])]
+            if view is not None:
+                snapshots[note.note_id] = revived
+
+    async def _inline_cards(self, user_id: str, item_ids: Sequence[str], now: datetime, summary: Dict[str, int],
+                            budget: _Budget, stop: float) -> None:
+        """No due loop follows (the access gate is closed, or the round is not complete): the existing cards whose text
+        a merge changed are embedded at once, EMBED_IN_FLIGHT at a time and none started past `stop`, so a cleared or erased
+        note is gone from the card vector too (core review §5, review Important 3). A card the embedder cannot make
+        now, or one left when the step's window ends, is dropped instead (it comes back as card work): no vector of the
+        old text survives."""
+        fresh = await self._repo.get_records(user_id, list(item_ids))
+        # only a stored vector can hold an old note's text: a record without a card waits for its card work in class
+        # order (an onboarding's first cards are never embedded here, ahead of it)
+        due = [r for r in fresh.values() if r.has_card and card_eligible(r) and r.card_hash != card_hash(r)]
+        for start in range(0, len(due), EMBED_IN_FLIGHT):
+            if budget.elapsed() >= stop:
+                await self._drop_stale_cards(user_id, due[start:], now, "the notes step's window ended")
+                return
+            try:
+                await self._embed_cards(user_id, due[start:start + EMBED_IN_FLIGHT], now, summary)
+            except (LeaseLost, _OptedOut):
+                raise
+            except Exception as exc:
+                await self._drop_stale_cards(user_id, due[start:], now, exc_brief(exc))
+                return
+
+    async def _drop_stale_cards(self, user_id: str, recs: Sequence[DriveIndexRecord], now: datetime,
+                                why: str) -> None:
+        left = await self._repo.get_records(user_id, [r.item_id for r in recs])
+        dropped = [without_card(r, now) for r in left.values() if r.has_card and r.card_hash != card_hash(r)]
+        if dropped:
+            await self._commit(user_id, dropped, set())
+        logger.warning(f"[DriveIndex] cards of changed notes for {user_id[:8]} not embedded now ({why}); "
+                       f"{len(dropped)} stale cards dropped to card work")
+
+    async def _repair_note_vectors(self, user_id: str, state: DriveSyncState, budget: _Budget, stop: float,
+                                   summary: Dict[str, int], page: Sequence[DriveNote] = ()) -> DriveSyncState:
+        """§5.1 b step 5: note vectors whose embedding failed at write (`embedding_pending`) are embedded; then the
+        notes of the changed page whose vector is in another space than the service's (a note the main service wrote
+        in its old space after `notes_space` was stamped, review Minor 6); then, while `notes_space` is not the
+        service's space, the space pass pages through every note from its own cursor and moves them. All share
+        NOTE_EMBED_PER_TICK, and none starts past `stop`. `set_vector` stores only over the version that was embedded
+        (a newer write keeps its own). The pass stops at a note it did not embed (a failure, or the window's end), so
+        none is left behind; when it reaches the end, `notes_space` is stamped."""
+        if self._notes is None:
+            return state
+
+        def off_space(note: DriveNote) -> bool:
+            return (not note.erase_pending and note.state != NoteState.CLEARED.value and not note.content.is_empty
+                    and note.embedding_space != self._space)
+
+        try:
+            pending = [n for n in await self._notes.embedding_pending(user_id, NOTE_EMBED_PER_TICK)
+                       if not n.erase_pending and not n.content.is_empty]
+            seen = {n.note_id for n in pending}
+            changed = [n for n in page if off_space(n) and n.note_id not in seen]
+            first = (pending + changed)[:NOTE_EMBED_PER_TICK]
+            done = await self._embed_notes(user_id, first, summary, budget, stop)
+            left = NOTE_EMBED_PER_TICK - len(first)
+            if state.notes_space == self._space or left <= 0 or done < len(first) or budget.elapsed() >= stop:
+                return state
+            space_page = await self._notes.changed_since(user_id, state.notes_space_at, NOTE_PAGE,
+                                                         after_note_id=state.notes_space_id)
+            todo: List[Tuple[int, DriveNote]] = []
+            end = len(space_page)   # the notes before `end` are done once their embeddings are stored
+            for i, note in enumerate(space_page):
+                if off_space(note):
+                    if len(todo) >= left:
+                        end = i
+                        break
+                    todo.append((i, note))
+            moved = await self._embed_notes(user_id, [n for _, n in todo], summary, budget, stop)
+        except (LeaseLost, _OptedOut):
+            raise
+        except Exception as exc:
+            logger.error(f"[DriveIndex] note vector repair failed for {user_id[:8]}: {exc_brief(exc)}")
+            return state
+        if moved < len(todo):
+            end = todo[moved][0]   # not embedded (a failure, the window's end): the cursor stops before that note
+        if end == len(space_page) and len(space_page) < NOTE_PAGE:
+            logger.info(f"[DriveIndex] note vectors of {user_id[:8]} are in {self._space}")
+            return replace(state, notes_space=self._space, notes_space_at=None, notes_space_id="")
+        if end == 0:
+            return state
+        last = space_page[end - 1]
+        return replace(state, notes_space_at=last.updated_at, notes_space_id=last.note_id)
+
+    async def _embed_notes(self, user_id: str, notes: Sequence[DriveNote], summary: Dict[str, int], budget: _Budget,
+                           stop: float) -> int:
+        """Embed each note's text (`note_embedding_text`, as the main service does) and store it under the version
+        that was embedded; no embedding starts past `stop` (NOTE_STEP_S). Returns how many of `notes`, in order, were
+        handled before the first failure or the window's end (a stored or refused `set_vector` both count: a newer
+        version keeps its own vector); the rest stay as they are (pending, or in the old space) for the next tick."""
+        if self._notes is None:
+            return 0
+        handled = 0
+        for note in notes:
+            if budget.elapsed() >= stop:
+                return handled
+            name = note.snapshot.name if note.snapshot is not None else ""
+            hold = self._note_embed_holds.get((user_id, note.note_id, note.current_version))
+            if hold is not None and hold > self._clock():
+                handled += 1                     # D-M3: refused before; it waits out its hold, the rest go on
+                continue
+            try:
+                vector = await self._embeddings.get_embedding(note_embedding_text(note.content, name),
+                                                              "RETRIEVAL_DOCUMENT")
+            except LLMClientError as exc:
+                if exc.http_status != 400:
+                    logger.warning(f"[DriveIndex] note embedding failed for {user_id[:8]} note={note.note_id}: "
+                                   f"{exc_brief(exc)}; tried again next tick")
+                    return handled
+                # a definite refusal of this note's text (as for cards, §8.2): this version backs off alone, so one
+                # note the embedder always refuses never blocks the repair and the space pass (final review D-M3)
+                self._note_embed_holds[(user_id, note.note_id, note.current_version)] = (
+                    self._clock() + NOTE_EMBED_REFUSED_HOLD)
+                logger.warning(f"[DriveIndex] note embedding refused for {user_id[:8]} note={note.note_id} "
+                               f"v{note.current_version}: {exc_brief(exc)}; held for {NOTE_EMBED_REFUSED_HOLD}")
+                _inc(summary, "note_vectors_refused")
+                handled += 1
+                continue
+            except Exception as exc:
+                logger.warning(f"[DriveIndex] note embedding failed for {user_id[:8]} note={note.note_id}: "
+                               f"{exc_brief(exc)}; tried again next tick")
+                return handled
+            _fence()
+            if await self._notes.set_vector(user_id, note.note_id, [float(x) for x in vector], self._space,
+                                            expected_version=note.current_version):
+                _inc(summary, "note_vectors")
+            handled += 1
+        return handled
+
+    async def _notes_gated(self, user_id: str, state: DriveSyncState, connection: Optional[DriveConnection],
+                           cont: _Continuation) -> None:
+        """The notes step of a tick whose access gate is closed (the access-loss grace, the D30 rebuild gate; core review
+        §5): no other work runs, but the owner's clear, undo and erase must still reach the record copy, its keys and the
+        card vector (`gated`: cards re-embedded here). Its own start budget; the state is saved only when the step
+        changed something besides its `notes_tick_at` stamp and its pass end (a gated tick never advances
+        `last_success_at`, so the rollback detector needs no stamp from it); a full page asks for a continuation. With the kill switch off only the zero merge version is saved. Nothing here ends
+        the tick but the lease."""
+        if self._notes is None:
+            if state.notes_merge_version:
+                await self._save_state(replace(state, notes_merge_version=0))
+            return
+        budget = _Budget(started=self._monotonic(), monotonic=self._monotonic)
+        tick = _TickNotes(drive_id=(connection.drive_id if connection is not None else "") or state.drive_id)
+        token = _TICK_NOTES.set(tick)
+        summary: Dict[str, int] = {}
+        try:
+            after = _fold_tick_notes(tick, await self._notes_step(user_id, state, budget, summary, gated=True))
+            # the step's own bookkeeping alone (its stamp, a pass end with nothing new) is no reason to write: an older
+            # pass end only re-reads a little more next time, idempotently
+            if replace(after, notes_tick_at=state.notes_tick_at, notes_scanned_at=state.notes_scanned_at) != state:
+                await self._save_state(after)
+            if tick.more:
+                cont.request()
+            if summary:
+                logger.info(f"[DriveIndex] notes behind the closed gate for {user_id[:8]}: {summary}")
+        except LeaseLost:
+            raise
+        except _OptedOut:
+            logger.info(f"[DriveIndex] indexing turned off during the notes step of {user_id[:8]}; dropped")
+        except Exception as exc:
+            logger.error(f"[DriveIndex] notes step behind the closed gate failed for {user_id[:8]}: {exc_brief(exc)}",
+                         exc_info=True)
+        finally:
+            _TICK_NOTES.reset(token)
+
+    # ------------------------------------------------------------------------------------------
     # Work off (only after a complete round, RFC Δ15)
     # ------------------------------------------------------------------------------------------
 
@@ -1174,6 +1744,8 @@ class DriveIndexingService:
         cheap steps right after the sweep, and its extraction step right after the due loop. With the mirror step
         wired as well (§27.9.5): it runs last, whatever class the due loop stopped at, and while the user has mirror
         work it can do now the steps before it leave it MIRROR_RESERVE_S (Δ209, `_mirror_ready`, decided here once)."""
+        if self._note_lifecycle is not None:
+            state = await self._notes_round_end(user_id, state, budget, summary)
         if _transcribing() and await self._mirror_ready(user_id):
             budget.mirror_reserve = MIRROR_RESERVE_S
         if state.epoch_phase is EpochPhase.SWEEPING:
@@ -1199,6 +1771,52 @@ class DriveIndexingService:
         return state
 
     # -- the transcript mirror's step (§27.9.5; plan Task 21C) ---------------------------------------------------
+
+    async def _notes_round_end(self, user_id: str, state: DriveSyncState, budget: _Budget,
+                               summary: Dict[str, int]) -> DriveSyncState:
+        """Owner notes at the round end (DRIVE_FILE_NOTES_RFC §5.1 c, §7.1, §7.4): the archive checks — the stored
+        ones and this tick's, folded — within the item-call budget, then the daily audit. Cheap: no share of the start
+        budget beyond their item calls. The finished checks leave the accumulator too, so a later save does not put them
+        back."""
+        lifecycle = self._note_lifecycle
+        acc = _TICK_NOTES.get()
+        if lifecycle is None or acc is None:
+            return state
+        if not budget.item_call_allowed():
+            # final review D-M2: no item call is left (the work-off began past the start budget, or the calls are
+            # spent), so neither step could read anything: skip both rather than read up to 1 000 / 10 000 documents
+            # for nothing. The pending checks stay in the accumulator and every save folds them.
+            _inc(summary, "note_round_end_skipped")
+            return state
+        state = replace(state, note_checks=fold_checks(state.note_checks, list(acc.pending.values()))[0])
+
+        def taker(share: float) -> Callable[[], bool]:
+            """One step's item calls: at most `share` of those left now (`call_share`), each also within the budget.
+            The rest stays for the tick's own probes, parent lookups, re-listings and access re-checks."""
+            left = [call_share(budget.item_calls, share)]
+
+            def take() -> bool:
+                if left[0] <= 0 or not budget.item_call_allowed():
+                    return False
+                budget.item_calls -= 1
+                left[0] -= 1
+                return True
+
+            return take
+
+        # §7.1 and D-C20: the round end first, within NOTE_ROUND_END_CALL_SHARE of the calls left; then §7.4 the audit,
+        # within NOTE_AUDIT_CALL_SHARE of what the round end left
+        state, done, counts = await lifecycle.round_end(user_id, state, take_item_call=taker(NOTE_ROUND_END_CALL_SHARE),
+                                                        fence=_fence)
+        for note_id in done:
+            acc.pending.pop(note_id, None)
+        state, audited = await lifecycle.audit(user_id, state, take_item_call=taker(NOTE_AUDIT_CALL_SHARE),
+                                               fence=_fence)
+        moved, acc.moved = dict(acc.moved), {}
+        refreshed = await lifecycle.refresh_moved(user_id, state, moved, fence=_fence)
+        for key, value in (*counts.items(), *audited.items(), *refreshed.items()):
+            _inc(summary, key, value)
+        return state
 
     def _mirror_wired(self) -> bool:
         return self._mirror is not None and _TICK_MIRROR.get() is not None
@@ -3864,6 +4482,9 @@ class DriveIndexingService:
     async def _has_more(self, user_id: str, state: DriveSyncState, now: datetime, *,
                         upgrade_wrote: bool = False, models: Optional[_Models] = None,
                         idle: Optional[Set[str]] = None) -> bool:
+        notes = _TICK_NOTES.get()
+        if notes is not None and notes.more:
+            return True   # the notes step left a full page (DRIVE_FILE_NOTES_RFC §5.1 b step 4)
         if not state.round_complete or state.epoch_phase is EpochPhase.SWEEPING:
             return True
         if models is not None and await self._enrichment_waiting(user_id, now, models, idle):
@@ -3879,7 +4500,7 @@ class DriveIndexingService:
 
     async def _save_state(self, state: DriveSyncState) -> None:
         _fence()
-        await self._repo.save_sync_state(state, _owner())
+        await self._repo.save_sync_state(_note_checks_onto(state), _owner())
 
     def _upgrade_due(self, state: DriveSyncState) -> bool:
         """The version constants or the embedding space differ from what the index was last verified under."""
@@ -4196,6 +4817,76 @@ def _card_rescheduled(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     if card_eligible(rec) and rec.card_hash != card_hash(rec) and (rec.due_at is None or rec.due_at > now):
         return schedule(rec, now, first_seen=not rec.has_card)
     return rec
+
+
+def _note_copy_stale(rec: DriveIndexRecord) -> bool:
+    """A noted record whose derived fields do not show its copy of the note: its about keys are not the keyer's over
+    it, or its card is not the card of its text and nothing has it due (a record written while the merge code was
+    rolled back keeps the copy but loses its keys and its card segment). A re-merge rewrites it (§5.5)."""
+    if not rec.owner_note_id:
+        return False
+    if about_keys_capped(rec)[0] != rec.about_keys:
+        return True
+    return card_eligible(rec) and rec.has_card and rec.card_hash != card_hash(rec) and rec.due_at is None
+
+
+def _fold_tick_notes(notes: _TickNotes, state: DriveSyncState) -> DriveSyncState:
+    """B's fold of the tick's notes accumulator into a save (`onto`). Part C's archive checks are folded by C's own
+    `_note_checks_onto` in `_save_state`, not here."""
+    return notes.onto(state)
+
+
+def _notes_onto(state: DriveSyncState) -> DriveSyncState:
+    """The tick's notes accumulator folded into a sync-state save (DRIVE_FILE_NOTES_RFC §3.4): every save of the tick
+    that writes its final or error state carries it."""
+    notes = _TICK_NOTES.get()
+    return _fold_tick_notes(notes, state) if notes is not None else state
+
+
+def _note_notices(records: Sequence[DriveIndexRecord], why: str) -> None:
+    """Owner notes (DRIVE_FILE_NOTES_RFC §7.1): every record a delete site names that carries a note is noticed with the
+    site's why, for the coming `_commit` to decide; nothing without the notes lifecycle wired."""
+    acc = _TICK_NOTES.get()
+    if acc is None or not acc.lifecycle:
+        return
+    for check in checks_of(records, why, acc.last_seen_at):
+        acc.noticed[check.item_id] = check
+
+
+def _take_noticed() -> Dict[str, NoteCheck]:
+    """The records noticed since the last commit (by item id), handed to this commit; the accumulator starts afresh."""
+    acc = _TICK_NOTES.get()
+    if acc is None or not acc.noticed:
+        return {}
+    noticed, acc.noticed = acc.noticed, {}
+    return noticed
+
+
+def _note_deleted(noticed: Mapping[str, NoteCheck], deletes: Set[str]) -> None:
+    """The checks of the noticed records this commit deleted, pending for the round end (§7.1), in the order the delete
+    sites named them (the feed's)."""
+    acc = _TICK_NOTES.get()
+    if acc is None:
+        return
+    for item_id, check in noticed.items():
+        if item_id in deletes:
+            acc.pending[check.note_id] = check
+
+
+def note_snapshot_due(note_id: str, item_id: str) -> None:
+    """Owner notes (DRIVE_FILE_NOTES_RFC §7.5): the note's snapshot should be refreshed from its record at this tick's
+    round end. `_apply` calls it for a noted record that was renamed, moved or edited; part B's merge entries call it
+    when the record they merge a note into differs from the note's snapshot (`drive_note_lifecycle.snapshot_stale`).
+    Nothing without the notes lifecycle wired."""
+    acc = _TICK_NOTES.get()
+    if acc is not None and acc.lifecycle and note_id and item_id:
+        acc.moved[note_id] = item_id
+
+
+def _note_checks_onto(state: DriveSyncState) -> DriveSyncState:
+    """Every save's note checks (§3.4): `_TickNotes.checks_onto`, or the state unchanged outside a tick."""
+    acc = _TICK_NOTES.get()
+    return acc.checks_onto(state) if acc is not None else state
 
 
 def _fence() -> None:

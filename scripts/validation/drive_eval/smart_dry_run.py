@@ -85,6 +85,7 @@ from src.services.dry_run_workspace import DryRunWorkspace
 from scripts.validation.drive_intent_text_scan_logic import OLD_INTENTS
 
 from .dry_run_drive import DriveOpLog, DryRunDriveOperations
+from .dry_run_drive_notes import DryRunDriveNotes
 from .fixture_drive import FixtureDrive
 from .g3_overrides import (
     PROMPTS_FIRESTORE, PROMPTS_SNAPSHOT, install_snapshot_prompts, run_setup, setup_line, specialist_config)
@@ -640,6 +641,8 @@ async def _run(args: argparse.Namespace) -> int:
     drive_log = DriveOpLog()
     dry_run = DryRunDriveOperations(drive_log, annotate=annotate_drive_read)
     dry_run.install()
+    note_dry_run = DryRunDriveNotes(drive_log)   # the notes' writes go through DriveNoteService, not DriveOperations
+    note_dry_run.install()
     try:
         db = firestore.AsyncClient(database=os.getenv("FIRESTORE_DATABASE", "us-production"))
         settings = load_settings()
@@ -756,6 +759,7 @@ async def _run(args: argparse.Namespace) -> int:
             stopped = stop_reason(meter, [])
         print(f"spent ${meter.spent:.4f} of --max-usd {args.max_usd}")
     finally:
+        note_dry_run.uninstall()
         dry_run.uninstall()
     model = ",".join(sorted(models))
     table = score(rows)
