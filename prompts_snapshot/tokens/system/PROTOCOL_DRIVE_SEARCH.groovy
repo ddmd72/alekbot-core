@@ -2,10 +2,10 @@
 category: protocol
 class: protocols
 metadata:
-  description: DriveAgent — the procedure on the drive in order (search, read the result,
-    search again only when, open, change); the former drive search skill's specialist rules
-    and the Step 1 rules, rewritten as one procedure (DRIVE_SPECIALIST_RFC §5.2, §5.7, §2.3.11;
-    owner 2026-10-28)
+  description: DriveAgent — the procedure on the drive in order (search, read the
+    result, search again only when, open, change); the former drive search skill's
+    specialist rules and the Step 1 rules, rewritten as one procedure (DRIVE_SPECIALIST_RFC
+    §5.2, §5.7, §2.3.11; owner 2026-10-28)
   override_by:
   - SYSTEM
   - AGENT
