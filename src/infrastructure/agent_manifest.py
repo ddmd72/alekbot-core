@@ -580,7 +580,7 @@ DRIVE_SPECIALIST = AgentDescriptor(
             "place; deleted files only when the user asks about them (transcripts of deleted recordings and the notes "
             "on deleted files). Use it when the answer may be in the user's files, and before saying a file is not "
             "there. "
-            "A find ('find', 'do I have', 'where is', 'which files') is answered from the search results alone; ask to "
+            "A find ('find', 'show me', 'do I have', 'where is', 'which files', 'everything about X') is answered from the search results alone; ask to "
             "open a file only when the user wants something written inside it. "
             "It also opens files (a recording opens as its transcript; the recording itself comes as a link when the "
             "user asks for it), lists folders, keeps a copy of a chat file, a document you delivered, a workspace copy "
@@ -590,7 +590,7 @@ DRIVE_SPECIALIST = AgentDescriptor(
             "Chat files and documents you produce are temporary: to remember, save, keep or put a FILE anywhere, use "
             "this intent (facts from a document go to memory only through propose_memory_facts, when the user asks). "
             "Write query as a natural-language instruction with the full picture: what the user wants, the words to "
-            "find as the user wrote them, every drive: ref, [File: …] label and delivered document key it points at, "
+            "find as the user wrote them (one language, no synonyms or translations), every drive: ref, [File: …] label and delivered document key it points at, "
             "and the facts from this conversation it needs. "
             'File contents to save or append: context={"file_contents": [<one item per file>]}. '
             "Returns a status and a 'What to do:' line (follow it), then every result verbatim; images and PDFs come "
