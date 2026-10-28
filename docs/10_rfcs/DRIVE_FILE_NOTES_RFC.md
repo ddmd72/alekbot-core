@@ -160,7 +160,7 @@ Binding. Recorded, not reopened.
 | D17 | **Indexing off: writing allowed. Disconnected: new notes and edits refused; delete, undo and erase allowed.** Amended by D21: edits by `drive_note:` ref are allowed too. |
 | D18 | **A call with Lelik counts as chat**, as a voice memo in chat does: a note may be written from a call. Lelik forwards it to Alek through `ask_alek` / `tell_alek`; the receipt goes to chat (§4.9). |
 | D19 | **No Cabinet page for notes** — later, maybe never. |
-| D20 | **The note is not shown in folder listings** (`list_files_in_drive`); it is shown in search cards and when a file is opened. **Notes on files the bot cannot open (§26.2) are refused**, with the copy instruction. |
+| D20 | **The note is not shown in folder listings** (`list_files_in_drive`); it is shown in search cards and when a file is opened. *(Amended 2026-10-28, USER_DRIVE_INDEXING_RFC §28.3 A18, not built: also in passages results, a file's own note and the notes of its ancestor folders, as display only; D8's no-inheritance stands.)* **Notes on files the bot cannot open (§26.2) are refused**, with the copy instruction. |
 | D21 | **Amends D17 (rev 3.2).** A note that is archived, or bound to another (no longer connected) drive, can still be edited (`set`), undone, cleared and erased through its `drive_note:` ref; none of these needs the live file, and the note stays archived or bound to its drive. The one thing refused is creating a NEW note for a file that no longer exists or is not on the connected drive. |
 
 ---
