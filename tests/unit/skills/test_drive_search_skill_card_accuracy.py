@@ -1,10 +1,7 @@
 """The drive-search skill's "Card accuracy" section (USER_DRIVE_INDEXING_RFC §26.4, D36): verbatim from the RFC (line
-wraps aside), one copy of each sentence, the 90% bar only in the skill text."""
+wraps aside), one copy of each sentence, now Smart's reading lines. Reviewer (owner decision 2026-10-28): the
+specialist's token copy is no longer pinned; its wording is tuned on evals."""
 import re
-from pathlib import Path
-
-
-ROOT = Path(__file__).resolve().parents[3]
 
 
 def _flat(text: str) -> str:
@@ -20,28 +17,12 @@ SCAN = ("For a scan or a photo of a document, the file's text is a reading of th
         "user, say where you read it.")
 
 
-def _token() -> str:
-    """The specialist's PROTOCOL_DRIVE_SEARCH token, flattened; the token writes the skill's double quotes and backticks
-    as single quotes (it is one double-quoted string per line)."""
-    text = (ROOT / "prompts_snapshot" / "tokens" / "system" / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(
-        encoding="utf-8").split("\n---\n", 1)[1]
-    return _flat(text)
-
-
-def _as_token_text(line: str) -> str:
-    return line.replace('"', "'").replace("`", "'")
-
-
 def test_the_section_is_there_with_its_rule_lines():
     """Reviewer edit at the cut (DRIVE_SPECIALIST_RFC §5.7, §7.3): the heading went with the skill; each rule line is
-    Smart's reading line, verbatim, and the specialist's token carries the lines it opens by (the paragraph, the find
-    rule and the 90% rule, verbatim; the scan line is Smart's only)."""
+    Smart's reading line, verbatim. Reviewer (owner decision 2026-10-28): the assertions that the specialist's token
+    carries the paragraph, the find rule and the 90% rule verbatim, and not the scan line, were removed."""
     from src.domain import drive_answer_texts as t
     assert (t.R_ACCURACY, t.R_ACCURACY_FIND, t.R_ACCURACY_VALUE, t.R_SCAN) == (PARAGRAPH, FIND, VALUE, SCAN)
-    token = _token()
-    for line in (PARAGRAPH, FIND, VALUE):
-        assert _as_token_text(line) in token, line
-    assert "say where you read it" not in token
 
 
 # Reviewer: test_the_inaccessible_file_bullet_is_the_sections_last_and_stands_once retired at the cut. The section and

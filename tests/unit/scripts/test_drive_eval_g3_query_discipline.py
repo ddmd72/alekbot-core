@@ -1,5 +1,6 @@
 """G3 harness after the 2026-10-19 run: v2 cases isolated from the owner's memory and mail, the D29 detector reading all
-four renderings, turn-cap runs as their own category; and the drive-search skill's query-discipline lines."""
+four renderings, turn-cap runs as their own category; and Smart's half of the former drive-search skill's query
+discipline (the specialist's token half is not pinned: owner decision 2026-10-28, its wording is tuned on evals)."""
 import json
 import re
 from pathlib import Path
@@ -17,7 +18,6 @@ from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.delegation_engine import ToolResult
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
-_TOKENS = Path(__file__).resolve().parents[3] / "prompts_snapshot" / "tokens" / "system"
 
 
 def _tc(intent, context=None):
@@ -99,22 +99,10 @@ def test_a_turn_cap_run_is_its_own_category_and_a_hard_failure():
 
 # -- the skill's query discipline -----------------------------------------------------------------------------------
 
-def _skill() -> str:
-    """The specialist's half of the former skill: the PROTOCOL_DRIVE_SEARCH token (DRIVE_SPECIALIST_RFC §5.2, §5.7)."""
-    body = (_TOKENS / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(encoding="utf-8").split("\n---\n", 1)[1]
-    return re.sub(r"\s+", " ", body)
-
-
-def test_the_skill_states_the_query_discipline():
-    body = _skill()
-    for line in (
-        "Every word in query must match a file (all words, strict).",   # the field is the tool's parameter now
-        "in ONE language, as the user wrote them. No synonym lists, no translations, no extra words, not the user's own name.",
-        "run at most ONE more search (dropping that word); then answer from what you have.",
-        "A value question opens the file (when the card is under 90%) even if the card looks unrelated to the user; "
-        "a find question never opens it.",
-    ):
-        assert body.count(line) == 1, line
+# Reviewer (owner decision 2026-10-28): test_the_skill_states_the_query_discipline kept only its Smart-side check (the
+# reading line in src/domain/drive_answer_texts.py); its four PROTOCOL_DRIVE_SEARCH sentences pinned the specialist's
+# token word for word and were removed.
+def test_the_all_is_still_a_find_reading_line_is_said_once():
     # Smart's half of the "all is still a find" rule reaches Smart as a reading line (§5.7, §7.3)
     assert re.sub(r"\s+", " ", t.R_ALL).count(
         '"All", "every", "everything about" is still a find: answer from the cards; do not open files or compute '

@@ -1,6 +1,9 @@
 """The drive specialist's prompt files in the snapshot mirror (DRIVE_SPECIALIST_RFC §5.2, §10.1): they parse as the
-upload script reads them, the profile and blueprint fit together, the tokens name only the specialist's tools and
-parameters (no Smart-era intent or field), and the decided rules are present word for word."""
+upload script reads them and round-trip, the profile and blueprint fit together, the tokens name only the specialist's
+tools and parameters (no Smart-era intent or field) and carry no Cyrillic.
+
+Reviewer (owner decision 2026-10-28): the tokens are rewritten while they are tuned on evals, so these checks are
+structural only; no test here pins their wording."""
 import os
 import re
 
@@ -32,6 +35,17 @@ def test_each_token_parses_with_the_mirrors_frontmatter(name):
     assert doc["content"].strip()
 
 
+@pytest.mark.parametrize("name", TOKENS)
+def test_each_token_round_trips_through_the_serializer(name):
+    doc = _token(name)
+    assert serializer.token_from_file(serializer.token_to_file(doc)) == doc
+
+
+@pytest.mark.parametrize("name", TOKENS)
+def test_each_token_has_no_cyrillic(name):
+    assert not re.search("[\u0400-\u04ff]", _read("tokens", "system", f"{name}.groovy")), name
+
+
 def test_the_profile_and_the_blueprint_fit_together():
     profile = serializer.doc_from_yaml(_read("profiles", "drive.yaml"))
     blueprint = serializer.doc_from_yaml(_read("blueprints", "drive_agent_v1.yaml"))
@@ -56,10 +70,10 @@ def test_tokens_name_no_smart_era_intent_or_field(name):
         assert word not in body, word
 
 
-_BLOCK_KEYS = {"does_not_own", "execute_as_given", "drive_search", "what_the_drive_holds", "find_or_value",
-               "writing_the_search", "reading_the_results", "card_accuracy", "when_nothing_is_found",
-               "answering_from_documents", "deleted_files", "plain_text"}
-_STATE_KEYS = {"drive_state", "user_message", "file_contents"}
+_STATE_KEYS = {"drive_state", "user_message", "file_contents"}   # the drive_state block the agent's code renders
+# A key of the token's own structure (`name {`, `name: "…"`, `name: [`) is the token's, not a tool or a parameter.
+# Reviewer (owner decision 2026-10-28): read from the tokens instead of a fixed list, so a rewrite may rename its blocks.
+_KEY = re.compile(r'(?m)^\s*([a-z]+(?:_[a-z]+)+)\s*(?:\{|:\s*["\[])')
 
 
 def test_every_identifier_in_the_tokens_is_a_tool_a_parameter_or_a_block_key():
@@ -68,26 +82,10 @@ def test_every_identifier_in_the_tokens_is_a_tool_a_parameter_or_a_block_key():
     params = {p for d in declarations for p in d["parameters"]["properties"]}
     body = "\n".join(_token(name)["content"] for name in TOKENS)
     identifiers = set(re.findall(r"(?<![\w.])[a-z]+(?:_[a-z]+)+(?![\w])", body))
-    assert identifiers - tools - params - _BLOCK_KEYS - _STATE_KEYS == set()
+    block_keys = set(_KEY.findall(body))
+    assert identifiers - tools - params - block_keys - _STATE_KEYS == set()
 
 
-def test_the_decided_rules_are_word_for_word():
-    search = _token("PROTOCOL_DRIVE_SEARCH")["content"]
-    assert ("A recording may be audio or video (.webm is video). Dates in file names appear as YYYY-MM-DD: search "
-            "the date in that form too. When a search does not find a recording, listing its media folder is a valid "
-            "fallback.") in search
-    assert "in ONE language, as the user wrote them. No synonym lists, no translations" in search   # no variant re-search
-    process = _token("COGNITIVE_PROCESS_DRIVE")["content"]
-    assert "never open a file to confirm a search result" in process
-    assert "execute_as_given" in process and "report_to_orchestrator comes in a later turn" in process
-    output = _token("OUTPUT_FORMAT_DRIVE")["content"]
-    assert "never that something is complete or that nothing else exists" in output
-
-
-def test_a_missing_file_contents_item_is_not_reported_as_not_done():
-    """I4: the designed recovery is the code's refusal (NOT_ATTACHED), so the model must call the tool, not report."""
-    search = _token("PROTOCOL_DRIVE_SEARCH")["content"]
-    assert ("When the commission asks for a text to be written and drive_state lists no item, do not write it "
-            "yourself: call the tool with text_item t1; the system refuses and tells the orchestrator how to attach "
-            "the text.") in search
-    assert "has no item for a text it asks you to write, report it as not_done" not in search
+# Reviewer: test_the_decided_rules_are_word_for_word and test_a_missing_file_contents_item_is_not_reported_as_not_done
+# retired: each pinned sentences of the specialist's tokens word for word (owner decision 2026-10-28). The code's
+# refusal of a missing file_contents item stays pinned by tests/unit/agents/test_drive_agent_missing_item.py.
