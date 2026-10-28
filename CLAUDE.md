@@ -718,14 +718,17 @@ field, `file_contents` (texts to save or append, bound by code, never retyped). 
 work in its own loop (≤ 6 turns, 150 s soft deadline under the caller's budget) through local CRUD tools
 (`search_drive`, `search_deleted_recordings_and_notes`, `list_folder`, `open_drive_file`, `get_recording_link`,
 `copy_file_to_drive`, `save_text_file`, `create_folder`, `move_file`, `append_to_file`, `replace_file_content`,
-`delete_drive_item`, `report_to_orchestrator`), each calling one method of the user's `DriveOperations`
+`delete_drive_item`, `find_passages`, `read_passages`, `report_to_orchestrator`), each calling one method of the user's `DriveOperations`
 (`src/infrastructure/drive_operations.py`, FileManagement's former drive code, one instance per user shared with
 FileManagement: lock, shield, receipts and late-failure notices such as `🗑️ Deleted from the drive: {path}` and
 `⚠️ Deleting {path} did not complete.` (`src/locales/*.py`), both sent literally through `send_literal`, so a path is never
 formatted, linked or read as a mention). Code builds the answer: `Drive result: <status>`, a
 "What to do" line, op lines, reading lines, then every read block verbatim in run order (vision files as a list); the
 specialist's model never sees an opened body (a plain-text final reply beside `report_to_orchestrator` fills an empty
-report note). The 8 drive intents it replaced are gone (a stale text naming one gets
+report note). **Answer from content** (RFC §28, built, not deployed): a content question is served by `find_passages` /
+`read_passages` (the stored chunks nearest the question, verbatim, one consolidated block to Smart; the specialist sees them
+in full); on a run that is not a chat turn (reminder, `notify`, call, no origin) a change is refused once passages were read
+(`decisions/drive_content_write_gate.md`). The 8 drive intents it replaced are gone (a stale text naming one gets
 the coordinator's unknown-intent refusal). **Searches per commission:** no cap in production (the owner dropped a
 3-search cap): ≤ 6 turns, one re-search after a "Without X" line, an identical search skipped by code. A subject is
 searched once, in the user's words; synonyms and translations are not searched (a list of alternatives is not a list of
@@ -850,7 +853,7 @@ photo's place and coordinates rounded to 3 decimals as a prior (D39) and returns
 D40). The migration gate key is now `accuracy`; the rebuild runs with no initial-build reset, under the monthly caps. Opt-out purges at once;
 lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/drive_index_rebuild.py`. Evals:
 `python -m scripts.validation.drive_eval` (G1/G2, v1 bars), `… drive_eval.search_v2_eval` (v2 families, offline by
-default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run` (owner-run, paid, `--max-usd` required, a hard stop; bars in `bars_g3.json`, not recorded yet, so a run without `--record` ends "no bars"; drive writes stubbed by the class-level `dry_run_drive.DryRunDriveOperations`; `--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier` run the branch's prompt files and pick the specialist; `--record` writes no bars while Smart fails a hard check). **Before/after:** before = G3 on `main` with the Firestore prompts, after = G3 on the branch with `--prompts-from-snapshot`, both at the same `--repeats`; compare the two reports `scripts/memory/drive_g3/g3_<stamp>.json` (`scores`, `wall_p50_s`). The drive specialist eval `… drive_eval.specialist_ab` (owner-run, paid, `--max-usd`; `--replay-commissions` runs the specialist alone; `--compare <report> --compare-design today`; no `--prompts-from-snapshot`, so it needs the uploaded `drive` profile). Decisions:
+default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run` (owner-run, paid, `--max-usd` required, a hard stop; bars in `bars_g3.json`, not recorded yet, so a run without `--record` ends "no bars"; drive writes stubbed by the class-level `dry_run_drive.DryRunDriveOperations`; `--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier` run the branch's prompt files and pick the specialist; `--record` writes no bars while Smart fails a hard check). **Before/after:** before = G3 on `main` with the Firestore prompts, after = G3 on the branch with `--prompts-from-snapshot`, both at the same `--repeats`; compare the two reports `scripts/memory/drive_g3/g3_<stamp>.json` (`scores`, `wall_p50_s`). The drive specialist eval `… drive_eval.specialist_ab` (owner-run, paid, `--max-usd`; `--replay-commissions` runs the specialist alone; `--compare <report> --compare-design today`; `--prompts-from-snapshot` runs the branch's prompt files). Decisions:
 `decisions/drive_*.md`.
 
 **Owner notes on drive files** (`docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` rev 3.3, D1–D21; built on `feat/drive-notes`, not

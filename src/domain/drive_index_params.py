@@ -261,3 +261,17 @@ TRANSCRIPT_OPEN_MAX_CHARS = 60_000          # G19: not an RFC name; the most an 
 # keyer (`drive_keys`) can read it without importing `drive_note` (which imports the keyer); `drive_note` re-exports it.
 # Deliberately NOT in `drive_keys.index_tables_digest`: it shapes only noted records, which NOTE_MERGE_VERSION re-merges.
 NOTE_KEYS_MAX = 320
+# §28.9 answer from content: the drive specialist's passages (find_passages, read_passages). A folder ranks in memory
+# up to FOLDER_INMEM_CHUNKS, as search's folder path does (plan D-P2).
+EXCERPTS_K = 10                             # new chunks per find
+EXCERPTS_CHARS_MAX = 24_000                 # characters per call: passages are content, not RESULT_CHARS_MAX
+EXCERPTS_PER_FILE_MAX = 8                   # leaves room for a second file's best chunk
+EXCERPTS_LEXICAL_WINDOW = 30                # the vector-nearest chunks whose word keys vote (A4)
+EXCERPTS_RRF_K = 60                         # the k of src/domain/rrf.py; fractional ranks, so computed apart (D-P3)
+EXCERPT_RANGE_MAX = 10                      # chunks per read_passages
+EXCERPT_FILE_REFS_MAX = 10                  # files per scoped find
+CARD_ACCURACY_TRUST = 90                    # OQ-A2: a value is trusted from a card at this accuracy or more
+# §28.3 A18, OQ-A3: the "where it comes from" lines of passages. The cap counts folder notes only, a guard against a
+# deep tree of long notes; a file's own note and description sit outside it.
+EXCERPT_FOLDER_NOTES_CHARS_MAX = 4_000
+EXCERPT_DESCRIPTION_CHARS = 200             # a file's what-it-is line, cut at a word boundary

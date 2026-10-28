@@ -27,6 +27,14 @@ On a machine with a local proxy (127.0.0.1:8888), set NO_PROXY='*' or the provid
         --max-usd 3 --compare scripts/memory/drive_g3/specialist_ab_<stage1>.json --compare-design today
     NO_PROXY='*' venv/bin/python -m scripts.validation.drive_eval.specialist_ab --replay-commissions <report.json> \\
         --max-usd 1
+
+Answer from content (USER_DRIVE_INDEXING_RFC §28.5, plan S2.6): `--gold gold_specialist_afc.json` runs the branch's
+prompt files (`--prompts-from-snapshot`) on the invented Acme `R&D` documents, each case under its `origin` (chat,
+background, call or fallback: the context the specialist reads), and reports per case the opens, the passage chunks that
+reached Smart, reference-point recall, writes that reached the stub, gate refusals counted from the run's own recorded
+outcomes (the `WRITE_AFTER_PASSAGES` line), stop reasons and follow-ups, and per family and origin in the markdown.
+`--owner-notes` applies the invented owner notes after the cached index is loaded (never part of the cache key).
+`--replay-gold-commissions` replays the gold's own `commission` texts (the method-dictating ones) on the specialist.
 """
 from __future__ import annotations
 
@@ -35,14 +43,21 @@ import asyncio
 import inspect
 import json
 import os
+import re
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from src.agents.base_agent import BaseAgent
+from src.domain.drive_answer_texts import WRITE_AFTER_PASSAGES
+from src.domain.drive_note_tool_texts import NOTE_WRITE_TOOLS
+from src.domain.drive_tool_texts import (
+    APPEND_TO_FILE, COPY_FILE_TO_DRIVE, CREATE_FOLDER, DELETE_DRIVE_ITEM, FIND_PASSAGES, MOVE_FILE, READ_PASSAGES,
+    REPLACE_FILE_CONTENT, SAVE_TEXT_FILE)
 from src.domain.llm import Message, MessagePart
 from src.domain.session import Session
 from src.domain.user_drive import parse_drive_ref
@@ -55,12 +70,27 @@ from .fixture_drive import item_id_for
 from .smart_dry_run import (
     REMOVED_DRIVE_INTENTS, DryRunDispatch, answer_ok, goes_to_drive, interactive_turn_clock, wall_p50)
 
+# the families of gold_specialist_afc.json (plan §5 S2); a case's `kind` is its family
+AFC_FAMILIES = ("knowledge", "value_in_content", "everything_about", "follow_up", "whole_file", "method_dictating",
+                "injection_on_topic", "low_accuracy")
+CONTENT_FAMILIES = frozenset({"knowledge", "value_in_content", "everything_about", "follow_up", "whole_file",
+                              "method_dictating", "injection_on_topic"})   # the families the 0.90 recall bar covers
+RECALL_BAR = 0.90   # plan §5 S2: reference-point recall in what reaches Smart over the content families
+ORIGINS = ("chat", "background", "call", "fallback")
+# the context a run carries, as the specialist reads it (origin_label in drive_agent.py; the A14 gate)
+ORIGIN_CONTEXT: Dict[str, Dict[str, Any]] = {
+    "chat": {"interactive_delivery": True}, "background": {"run_origin": "background:reminder"},
+    "call": {"run_origin": "voice:ask_alek"}, "fallback": {}}
+PASSAGE_OPS = frozenset({FIND_PASSAGES, READ_PASSAGES})
+WRITE_TOOLS = frozenset({COPY_FILE_TO_DRIVE, SAVE_TEXT_FILE, CREATE_FOLDER, MOVE_FILE, APPEND_TO_FILE,
+                         REPLACE_FILE_CONTENT, DELETE_DRIVE_ITEM, *NOTE_WRITE_TOOLS})
+_PASSAGE_HEAD = re.compile(r"passages (\d+)[\u2013-](\d+) of \d+\]")
 KINDS = frozenset({"content", "value_file_word", "value_no_file_word", "find", "find_then_open", "translit",
                    "lead_in_results", "lead_in_opened_text", "versions", "batch_move", "vague_change", "save_text",
                    "deleted_search", "transcript", "recording_link", "photo", "negative_memory", "negative_web",
-                   "negative_reminder"})
-GOLD_KEYS = frozenset({"drive", "answer_must_include", "must_open", "must_not_open", "opened_any",
-                       "ops_must_include", "ops_forbidden", "intents_must_include"})
+                   "negative_reminder", *AFC_FAMILIES})
+GOLD_KEYS = frozenset({"drive", "answer_must_include", "answer_must_not_include", "must_open", "must_not_open",
+                       "opened_any", "ops_must_include", "ops_forbidden", "intents_must_include", "no_writes"})
 SMART_TYPE, SPECIALIST_TYPE = "smart_response", "drive"
 LATENCY_BAR = 1.25   # p50 after ≤ p50 before × 1.25 (§12)
 
@@ -98,6 +128,7 @@ def validate_ab_gold(gold: Sequence[Mapping[str, Any]], paths: Optional[Sequence
             problems.append(f"{cid}: turns must be a non-empty list of texts")
         if case.get("kind") not in KINDS:
             problems.append(f"{cid}: unknown kind {case.get('kind')!r}")
+        problems += afc_case_problems(case)
         g = case.get("gold")
         if not isinstance(g, dict) or "drive" not in g:
             problems.append(f"{cid}: gold must be an object with 'drive'")
@@ -125,10 +156,40 @@ def validate_ab_gold(gold: Sequence[Mapping[str, Any]], paths: Optional[Sequence
             problems += [f"{cid}: opened_any path not on the fixture drive: {p}" for p in g.get("opened_any") or []
                          if p not in known]
         if not (g.get("answer_must_include") or g.get("ops_must_include") or g.get("ops_forbidden")
-                or g.get("intents_must_include") or g.get("opened_any") or not g["drive"]):
+                or g.get("intents_must_include") or g.get("opened_any") or not g["drive"] or g.get("no_writes")
+                or g.get("must_open") or g.get("must_not_open") or case.get("reference_points")):
             problems.append(f"{cid}: gold checks nothing")
     if problems:
         raise AbError("malformed specialist eval gold: " + "; ".join(problems))
+
+
+def _point_ok(point: Any) -> bool:
+    if isinstance(point, str):
+        return bool(point.strip())
+    return isinstance(point, list) and bool(point) and all(isinstance(w, str) and w.strip() for w in point)
+
+
+def afc_case_problems(case: Mapping[str, Any]) -> List[str]:
+    """The checks on the fields of the answer-from-content gold (all optional on an older case): `family` equals `kind`,
+    `origin` is one of ORIGINS, `reference_points` are texts (or lists of alternatives), `commission` a text."""
+    cid, problems = case.get("id"), []
+    if "family" in case and case["family"] != case.get("kind"):
+        problems.append(f"{cid}: family {case['family']!r} must equal kind {case.get('kind')!r}")
+    if "origin" in case and case["origin"] not in ORIGINS:
+        problems.append(f"{cid}: origin must be one of {list(ORIGINS)}")
+    points = case.get("reference_points")
+    if points is not None and not (isinstance(points, list) and points and all(_point_ok(x) for x in points)):
+        problems.append(f"{cid}: reference_points must be a non-empty list of texts or lists of alternatives")
+    if "commission" in case and not (isinstance(case["commission"], str) and case["commission"].strip()):
+        problems.append(f"{cid}: commission must be a text")
+    cites = case.get("cites")
+    if cites is not None and not (isinstance(cites, list) and cites and all(isinstance(x, str) and x for x in cites)):
+        problems.append(f"{cid}: cites must be a non-empty list of paths")
+    return problems
+
+
+def needs_owner_notes(gold: Sequence[Mapping[str, Any]]) -> bool:
+    return any(c.get("needs_owner_notes") for c in gold)
 
 
 # -- what ran ----------------------------------------------------------------------------------------------------------
@@ -216,6 +277,9 @@ def check_case(case: Mapping[str, Any], answer: str, ops: Sequence[Mapping[str, 
     if groups and not (answer_ok(answer, groups) or answer_ok(spaced, groups)):
         missing = [grp for grp in groups if not any(w.casefold() in spaced.casefold() for w in grp)]
         failures.append(f"answer lacks {missing}")
+    present = [w for w in g.get("answer_must_not_include") or [] if w.casefold() in spaced.casefold()]
+    if present:
+        failures.append(f"answer holds {present}")
     opened = drive_opens(ops)
     if g.get("must_open") and not opened:
         failures.append("no file was opened")
@@ -276,10 +340,125 @@ def answer_text(response: Any) -> str:
     return str(getattr(result, "text", result))
 
 
+# -- answer from content: per-case metrics ------------------------------------------------------------------------------------
+
+def _squash(text: str) -> str:
+    return " ".join(text.replace("\u00a0", " ").replace("\u202f", " ").split()).casefold()
+
+
+def point_found(point: Any, haystack: str) -> bool:
+    """A reference point (a text, or a list of alternatives) in `haystack`, case and spacing aside."""
+    alternatives = [point] if isinstance(point, str) else list(point)
+    return any(_squash(a) in haystack for a in alternatives)
+
+
+def passage_chunks(text: str) -> int:
+    """The distinct passage chunks a text delivers: each head line `[… passages i–j of N]` counts j - i + 1 once."""
+    return sum(int(j) - int(i) + 1 for i, j in {m.groups() for m in _PASSAGE_HEAD.finditer(text)})
+
+
+def afc_metrics(ops: Sequence[Mapping[str, Any]], delivered: str, trace: Mapping[str, Sequence[str]],
+                points: Sequence[Any] = (), answer: str = "", points_in_answer: bool = False,
+                follow_ups: int = 0) -> Dict[str, Any]:
+    """What one run did, from the op log, the text that reached Smart (`delivered`: the specialist's answers) and the
+    specialist's own LLM turns (`trace`: finish reasons and tool names). Gate refusals are COUNTED, not inferred: the
+    specialist's refused write is recorded in its outcomes as the `WRITE_AFTER_PASSAGES` line, which code puts in the
+    answer Smart receives. `unrecorded_writes` = attempted write tool calls neither executed (stub) nor refused."""
+    haystack = _squash(delivered + ("\n" + answer if points_in_answer else ""))
+    found = [p for p in points if point_found(p, haystack)]
+    attempted = sum(1 for t in trace.get("tools", ()) if t in WRITE_TOOLS)
+    reached = sum(1 for o in ops if o.get("stubbed"))
+    refused = delivered.count(WRITE_AFTER_PASSAGES)
+    finish = Counter(trace.get("finish", ()))
+    return {
+        "opens": len(drive_opens(ops)), "passage_calls": sum(1 for o in ops if o["op"] in PASSAGE_OPS),
+        "passage_chunks": passage_chunks(delivered), "points_total": len(points), "points_found": len(found),
+        "recall": round(len(found) / len(points), 4) if points else None,
+        "missing_points": [p for p in points if p not in found],
+        "attempted_writes": attempted, "writes_reached_stub": reached, "gate_refusals": refused,
+        "unrecorded_writes": max(0, attempted - reached - refused),
+        "stop_reasons": dict(finish), "max_tokens_stops": finish.get("max_tokens", 0), "follow_ups": follow_ups}
+
+
+def afc_failures(case: Mapping[str, Any], metrics: Mapping[str, Any], delivered: str, *, answer_known: bool = True
+                 ) -> List[str]:
+    """The bars of plan §5 S2 that one run can fail by itself (the 0.90 aggregate is `afc_summary`'s)."""
+    failures: List[str] = []
+    in_answer = bool(case.get("reference_in_answer"))
+    if metrics["points_total"] and metrics["points_found"] == 0 and (answer_known or not in_answer):
+        failures.append("no reference point reached Smart")
+    cites = case.get("cites")
+    if cites and not any(c.casefold() in delivered.casefold() for c in cites):
+        failures.append(f"what reached Smart cites none of {cites}")
+    if (case.get("gold") or {}).get("no_writes"):
+        if metrics["writes_reached_stub"]:
+            failures.append(f"{metrics['writes_reached_stub']} write(s) reached the stub")
+        if metrics["unrecorded_writes"]:
+            failures.append(f"{metrics['unrecorded_writes']} attempted write(s) neither refused by the gate nor stubbed")
+    return failures
+
+
+def origin_context(origin: str) -> Dict[str, Any]:
+    """The context keys of a run's origin (ORIGIN_CONTEXT): a copy."""
+    if origin not in ORIGIN_CONTEXT:
+        raise AbError(f"unknown origin {origin!r}")
+    return dict(ORIGIN_CONTEXT[origin])
+
+
+class SpecialistTrace:
+    """The drive specialist's own LLM turns: each response's finish reason and the tools it called. Installed over
+    BaseAgent._call_llm after the meter (the meter sees every call too)."""
+
+    def __init__(self) -> None:
+        self.finish: List[str] = []
+        self.tools: List[str] = []
+
+    def mark(self) -> Tuple[int, int]:
+        return len(self.finish), len(self.tools)
+
+    def since(self, mark: Tuple[int, int]) -> Dict[str, List[str]]:
+        return {"finish": self.finish[mark[0]:], "tools": self.tools[mark[1]:]}
+
+    def install(self) -> Callable[[], None]:
+        original = BaseAgent._call_llm
+        trace = self
+
+        async def traced(agent: BaseAgent, request: Any, turn: int = 0, **kwargs: Any) -> Any:
+            response = await original(agent, request, turn, **kwargs)
+            if agent.config.agent_type == SPECIALIST_TYPE:
+                reason = getattr(response, "finish_reason", None)
+                trace.finish.append(str(getattr(reason, "value", reason) or "unreported"))
+                trace.tools.extend(str(c.name) for c in (getattr(response, "tool_calls", None) or []))
+            return response
+
+        BaseAgent._call_llm = traced   # type: ignore[method-assign]
+
+        def uninstall() -> None:
+            BaseAgent._call_llm = original   # type: ignore[method-assign]
+        return uninstall
+
+
+@dataclass
+class RecordingDispatch(DryRunDispatch):
+    """DryRunDispatch that also keeps the text each drive commission returned to Smart (`delivered`)."""
+
+    async def __call__(self, engine: Any, tool_call: Any, context: Dict[str, Any], *args: Any, **kwargs: Any) -> Any:
+        result = await super().__call__(engine, tool_call, context, *args, **kwargs)
+        if self.calls and self.calls[-1].get("intent") == Intent.WORK_WITH_DRIVE_FILES:
+            self.calls[-1]["delivered"] = str(getattr(result, "result_str", "") or "")   # appended just before returning
+        return result
+
+
+def delivered_text(calls: Sequence[Mapping[str, Any]]) -> str:
+    return "\n".join(str(c.get("delivered", "")) for c in calls if c.get("intent") == Intent.WORK_WITH_DRIVE_FILES)
+
+
 async def run_case(case: Mapping[str, Any], *, smart: Any, dispatcher: DryRunDispatch, drive_log: Any, meter: Meter,
                    sessions: InMemorySessions, user_id: str, account_id: str, repeat: int = 0,
-                   request_context: Optional[Callable[[], Any]] = None) -> Dict[str, Any]:
-    """One case (all its turns): the row of the report."""
+                   request_context: Optional[Callable[[], Any]] = None, trace: Optional[SpecialistTrace] = None
+                   ) -> Dict[str, Any]:
+    """One case (all its turns): the row of the report. `origin` (default chat) is the context the run carries; a
+    case with a `family` also reports the answer-from-content metrics (`afc`)."""
     from src.domain.agent import AgentIntent, AgentMessage
     from src.domain.turn_clock import CURRENT_TURN_CLOCK
 
@@ -288,6 +467,8 @@ async def run_case(case: Mapping[str, Any], *, smart: Any, dispatcher: DryRunDis
     dispatcher.isolate = bool(case.get("isolate"))
     session_id = f"{user_id}:drive_specialist_eval:{case['id']}:{repeat}"
     mark = meter.mark()
+    trace_mark = trace.mark() if trace is not None else (0, 0)
+    origin = str(case.get("origin") or "chat")
     started = time.monotonic()
     answer, error = "", ""
     turn_rows: List[Dict[str, Any]] = []
@@ -296,8 +477,8 @@ async def run_case(case: Mapping[str, Any], *, smart: Any, dispatcher: DryRunDis
         msg = AgentMessage.create(
             sender="drive_specialist_eval", recipient=smart.agent_id, intent=AgentIntent.QUERY, payload={"text": text},
             context={"user_id": user_id, "account_id": account_id, "session_id": session_id,
-                     "current_message_parts": [MessagePart(text=text)], "interactive_delivery": True})
-        token = CURRENT_TURN_CLOCK.set(interactive_turn_clock())
+                     "current_message_parts": [MessagePart(text=text)], **origin_context(origin)})
+        token = CURRENT_TURN_CLOCK.set(interactive_turn_clock()) if origin == "chat" else None
         turn_started = time.monotonic()
         try:
             if request_context is not None:
@@ -306,7 +487,8 @@ async def run_case(case: Mapping[str, Any], *, smart: Any, dispatcher: DryRunDis
             else:
                 response = await smart.execute(msg)
         finally:
-            CURRENT_TURN_CLOCK.reset(token)
+            if token is not None:
+                CURRENT_TURN_CLOCK.reset(token)
         answer = answer_text(response)
         if meter.capped:
             error = "cost cap reached inside the case"
@@ -322,7 +504,16 @@ async def run_case(case: Mapping[str, Any], *, smart: Any, dispatcher: DryRunDis
     failures = check_case(case, answer, ops, calls) if not error else [error]
     usage = usage_summary(meter.since(mark))
     commissions = [c for c in calls if c["intent"] == Intent.WORK_WITH_DRIVE_FILES]
+    afc: Dict[str, Any] = {}
+    if case.get("family"):
+        delivered = delivered_text(calls)
+        afc = afc_metrics(ops, delivered, trace.since(trace_mark) if trace is not None else {},
+                          case.get("reference_points") or (), answer, bool(case.get("reference_in_answer")),
+                          follow_ups=max(0, len(commissions) - 1))
+        if not error:
+            failures = failures + afc_failures(case, afc, delivered)
     return {
+        **({"family": case["family"], "origin": origin, "afc": afc} if afc else {}),
         "id": case["id"], "kind": case["kind"], "repeat": repeat, "correct": not failures, "failures": failures,
         "wall_s": wall, "round_trips": len(commissions),
         "drive_statuses": [c.get("drive_status", "") for c in commissions],
@@ -369,6 +560,38 @@ def summary(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
             "smart_llm_calls": sum(int(r.get("smart_llm_calls", 0)) for r in rows),
             "specialist_llm_calls": sum(int(r.get("specialist_llm_calls", 0)) for r in rows),
             "usd": round(sum(float(r.get("usd", 0.0)) for r in rows), 4)}
+
+
+def afc_summary(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Per family and per origin, and the 0.90 recall over the content families (plan §5 S2); {} without afc rows."""
+    afc_rows = [r for r in rows if r.get("afc")]
+    if not afc_rows:
+        return {}
+    families: Dict[str, Dict[str, Any]] = {}
+    origins: Dict[str, Dict[str, Any]] = {}
+    for r in afc_rows:
+        m = r["afc"]
+        f = families.setdefault(r["family"], {"cases": 0, "correct": 0, "opens": 0, "points_found": 0,
+                                              "points_total": 0, "passage_chunks": 0})
+        f["cases"] += 1
+        f["correct"] += bool(r.get("correct"))
+        for k in ("opens", "points_found", "points_total", "passage_chunks"):
+            f[k] += int(m[k])
+        o = origins.setdefault(r["origin"], {"cases": 0, "stop_reasons": Counter(), "max_tokens_stops": 0,
+                                             "follow_ups": 0, "gate_refusals": 0, "writes_reached_stub": 0,
+                                             "attempted_writes": 0})
+        o["cases"] += 1
+        o["stop_reasons"].update(m["stop_reasons"])
+        for k in ("max_tokens_stops", "follow_ups", "gate_refusals", "writes_reached_stub", "attempted_writes"):
+            o[k] += int(m[k])
+    for o in origins.values():
+        o["stop_reasons"] = dict(o["stop_reasons"])
+    found = sum(r["afc"]["points_found"] for r in afc_rows if r["family"] in CONTENT_FAMILIES)
+    total = sum(r["afc"]["points_total"] for r in afc_rows if r["family"] in CONTENT_FAMILIES)
+    recall = round(found / total, 4) if total else None
+    return {"families": families, "origins": origins, "content_recall": recall,
+            "recall_ok": recall is not None and recall + 1e-9 >= RECALL_BAR,
+            "max_tokens_review": any(o["max_tokens_stops"] for o in origins.values())}
 
 
 def compare(before: Sequence[Mapping[str, Any]], after: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -427,6 +650,24 @@ def markdown(rows: Sequence[Mapping[str, Any]], meta: Mapping[str, Any],
     unpriced = sorted({m for r in rows for m in r["unpriced_models"]})
     if unpriced:
         lines.append(f"Unpriced in billing.py (charged at the fallback rate for the stop): {', '.join(unpriced)}")
+    afc = afc_summary(rows)
+    if afc:
+        lines += ["", "| family | cases | correct | opens | passage chunks | reference points |", "|---|---|---|---|---|---|"]
+        for name, f in sorted(afc["families"].items()):
+            lines.append(f"| {name} | {f['cases']} | {f['correct']} | {f['opens']} | {f['passage_chunks']} "
+                         f"| {f['points_found']}/{f['points_total']} |")
+        lines += ["", "| origin | cases | stop reasons | max_tokens stops | follow-ups | attempted writes | gate refusals "
+                      "| writes at the stub |", "|---|---|---|---|---|---|---|---|"]
+        for name, o in sorted(afc["origins"].items()):
+            lines.append(f"| {name} | {o['cases']} | {o['stop_reasons'] or '-'} | {o['max_tokens_stops']} "
+                         f"| {o['follow_ups']} | {o['attempted_writes']} | {o['gate_refusals']} "
+                         f"| {o['writes_reached_stub']} |")
+        recall = afc["content_recall"]
+        lines.append(f"Reference-point recall over the content families: "
+                     f"{'n/a' if recall is None else f'{recall:.3f}'} (bar {RECALL_BAR}): "
+                     + ("met" if afc["recall_ok"] else "**missed**"))
+        if afc["max_tokens_review"]:
+            lines.append("**A max_tokens stop occurred: A15's budget review is triggered.**")
     if comparison is not None:
         b, a = comparison["before"], comparison["after"]
         lines += ["", "| | cases | correct | wall s | wall p50 s | Smart calls | spec calls | $ |",
@@ -473,6 +714,18 @@ def _args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser.add_argument("--replay-timezone", default="", help="override the user timezone in the specialist's state")
     parser.add_argument("--rebuild-index", action="store_true",
                         help="build the fixture index even when scripts/memory/drive_g3/cache/ holds a matching one")
+    parser.add_argument("--prompts-from-snapshot", action="store_true",
+                        help="serve the drive specialist's prompt files and Smart's PROTOCOL_AGENT_SELECTION from "
+                             "prompts_snapshot/ (the \"after\", before any upload); default: the Firestore prompts")
+    parser.add_argument("--specialist-provider", choices=("claude", "openai"), default=None,
+                        help="the drive specialist's provider, in memory only (default: the user's config)")
+    parser.add_argument("--specialist-tier", choices=("eco", "balanced", "performance"), default=None,
+                        help="the drive specialist's tier, in memory only (default: the user's config)")
+    parser.add_argument("--owner-notes", type=Path, default=None,
+                        help="owner notes to apply in memory after the cached index loads (owner_notes_afc.json); "
+                             "required by a gold with needs_owner_notes cases")
+    parser.add_argument("--replay-gold-commissions", action="store_true",
+                        help="replay the gold's own `commission` texts on the specialist only (no Smart)")
     return parser.parse_args(argv)
 
 
@@ -531,6 +784,8 @@ class World:
     user_id: str
     account_id: str
     restore: List[Callable[[], None]]
+    trace: Optional[SpecialistTrace] = None
+    setup: Optional[Mapping[str, str]] = None
 
 
 async def build_world(args: argparse.Namespace, gold: Sequence[Mapping[str, Any]]) -> World:
@@ -557,13 +812,20 @@ async def build_world(args: argparse.Namespace, gold: Sequence[Mapping[str, Any]
     from .dry_run_drive import DriveOpLog, DryRunDriveOperations
     from .dry_run_drive_notes import DryRunDriveNotes
     from .enrichment_snapshot import EnrichmentSnapshot
+    from .g3_overrides import (
+        PROMPTS_FIRESTORE, PROMPTS_SNAPSHOT, install_snapshot_prompts, run_setup, setup_line, specialist_config)
     from .index_cache import load_or_build
+    from .owner_notes_overlay import apply_owner_notes, load_owner_notes
     from .parse_cache import ParseCache
     from .runner import EvalClock, _EnabledUsers
     from .search_v2_eval import index_v2
     from .smart_dry_run import DryRunSkills, RecordingMemoryFacts, annotate_drive_read, g3_drive
     from .specialist_fixture import build_drive_fixture
 
+    owner_notes_path = getattr(args, "owner_notes", None)
+    if needs_owner_notes(gold) and owner_notes_path is None:
+        raise AbError("the gold has cases that need the owner notes: pass --owner-notes "
+                      "tests/fixtures/drive_eval/owner_notes_afc.json")
     restore: List[Callable[[], None]] = [disable_billing_writes()]
     drive_log = DriveOpLog()
     dry_run = DryRunDriveOperations(drive_log, annotate=annotate_drive_read)
@@ -590,6 +852,8 @@ async def build_world(args: argparse.Namespace, gold: Sequence[Mapping[str, Any]
                                       rebuild=args.rebuild_index)
     if facts["misses"]:
         raise AbError(f"the enrichment snapshot misses {facts['misses']}: re-record it (dump_enrichment.py)")
+    if owner_notes_path is not None:   # after the cache: a note change never costs a rebuild (plan CTX.5)
+        print(f"owner notes: {apply_owner_notes(repo, load_owner_notes(owner_notes_path))} record(s) noted")
     search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock,
                                 embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE)
     db = firestore.AsyncClient(database=os.getenv("FIRESTORE_DATABASE", "us-production"))
@@ -603,6 +867,12 @@ async def build_world(args: argparse.Namespace, gold: Sequence[Mapping[str, Any]
         registry.register(descriptor)
     factory = UserAgentFactory(config=settings, env_config=env_config, coordinator=AgentCoordinator(registry=registry),
                                user_repo=user_repo, account_repo=account_repo, **container.agent_services())
+    from_snapshot = bool(getattr(args, "prompts_from_snapshot", False))
+    provider, tier = getattr(args, "specialist_provider", None), getattr(args, "specialist_tier", None)
+    setup = run_setup(PROMPTS_SNAPSHOT if from_snapshot else PROMPTS_FIRESTORE, provider, tier)
+    if from_snapshot:
+        install_snapshot_prompts(container.assembly_service)   # before any agent or prompt is built
+    print(setup_line(setup))
     agents = await factory.ensure_agents_for_user(user_id)
     smart = agents["smart_agent"]
     if smart.skill_service is not None:
@@ -616,12 +886,12 @@ async def build_world(args: argparse.Namespace, gold: Sequence[Mapping[str, Any]
     if args.smart_model:
         pin_smart_model(smart, args.smart_model, container.registry)
     user_context = agents["_user_context"]
-    config = user_context.user_profile.config
-    if args.replay_timezone:
+    config = specialist_config(user_context.user_profile.config, provider, tier)
+    if getattr(args, "replay_timezone", ""):
         config = config.model_copy(update={"timezone": args.replay_timezone})
     fixture = build_drive_fixture(user_id, drive, search, user_config=config,
                                   prompt_builder=user_context.prompt_builder, context_builder=container.context_builder)
-    dispatcher = DryRunDispatch(DelegationEngine.dispatch, fixture.engine, frozenset(_READ_ONLY_INTENTS))
+    dispatcher = RecordingDispatch(DelegationEngine.dispatch, fixture.engine, frozenset(_READ_ONLY_INTENTS))
     original_dispatch = DelegationEngine.dispatch
 
     async def guarded(self: Any, tool_call: Any, context: Dict[str, Any], *a: Any, **kw: Any) -> ToolResult:
@@ -634,7 +904,9 @@ async def build_world(args: argparse.Namespace, gold: Sequence[Mapping[str, Any]
     restore.append(undo_dispatch)
     meter = Meter(max_usd=args.max_usd)
     restore.append(meter.install())
-    return World(smart, fixture, dispatcher, drive_log, sessions, meter, user_id, account_id, restore)
+    trace = SpecialistTrace()
+    restore.append(trace.install())   # after the meter: undone first, so the meter restores the original
+    return World(smart, fixture, dispatcher, drive_log, sessions, meter, user_id, account_id, restore, trace, setup)
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -647,7 +919,7 @@ async def _run(args: argparse.Namespace) -> int:
         async def one(case: Mapping[str, Any], *, repeat: int) -> Dict[str, Any]:
             return await run_case(case, smart=world.smart, dispatcher=world.dispatcher, drive_log=world.drive_log,
                                   meter=world.meter, sessions=world.sessions, user_id=world.user_id,
-                                  account_id=world.account_id, repeat=repeat,
+                                  account_id=world.account_id, repeat=repeat, trace=getattr(world, "trace", None),
                                   request_context=lambda: RequestContext(user_id=world.user_id,
                                                                          account_id=world.account_id))
         rows, stopped = await run_all(cases, args.repeats, run_one=one, meter=world.meter)
@@ -658,7 +930,7 @@ async def _run(args: argparse.Namespace) -> int:
     meta = {"stamp": datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S"),
             "smart_model": args.smart_model or "owner config", "max_usd": args.max_usd,
             "spent": round(world.meter.spent, 6), "stopped": stopped, "cases": [c["id"] for c in cases],
-            "repeats": args.repeats}
+            "repeats": args.repeats, "setup": getattr(world, "setup", None)}
     json_path, md_path = write_report(rows, meta, comparison)
     print(markdown(rows, meta, comparison))
     print(f"report: {json_path}\n        {md_path}")
@@ -671,7 +943,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     load_dotenv(_REPO / ".env")
     try:
         args = _args(argv)
-        if args.replay_commissions is not None:
+        if args.replay_commissions is not None or args.replay_gold_commissions:
             from .specialist_replay import run_replay
             return asyncio.run(run_replay(args))
         return asyncio.run(_run(args))

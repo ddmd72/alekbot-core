@@ -10,6 +10,10 @@ Public interface (one call = one operation; `context` is the caller's message co
     configured -> bool                                   a drive service is wired
     async search(context, user_id, *, query, folder, kind, date_from, date_to) -> DriveOutcome
     async search_deleted(context, user_id, query) -> DriveOutcome
+    async find_passages(context, user_id, *, question, folder, file_refs, shown, shown_folders, described_files)
+                                                         the passages nearest a question (USER_DRIVE_INDEXING_RFC §28.3)
+    async read_passages(context, user_id, *, file_ref, passages, shown_folders, described_files)
+                                                         one file's passages by number (§28.3 A7)
     async list_folder(context, user_id, folder) -> DriveOutcome
     async open(context, user_id, ref, *, original=False) -> DriveOutcome      drive ref, or a stored file (lenient)
     async fetch_stored(context, user_id, ref) -> DriveOutcome                 chat file, delivered key, skill:, workspace:
@@ -38,12 +42,17 @@ import os
 import secrets
 import tempfile
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Mapping, Optional, Sequence, Set
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, FrozenSet, Mapping, Optional, Sequence, Set
 
 import aiofiles
 
 from ..domain.agent import DeliveryItem
 from ..domain.drive_card import owner_note_line
+from ..domain.drive_excerpt_render import render_excerpts
+from ..domain.drive_excerpt_request import excerpt_request, range_request
+from ..domain.drive_excerpt_result import ExcerptResult
+from ..domain.drive_index_lean import ChunkId
+from ..domain.drive_index_params import CARD_ACCURACY_TRUST
 from ..domain.drive_index_policy import TRANSCRIBED_KINDS, kind_of
 from ..domain.drive_op import DriveOp
 from ..domain.drive_outcome import DriveOutcome
@@ -54,7 +63,7 @@ from ..domain.drive_search import (
     STATUS_FOLDER_NOT_FOUND, DriveSearchResult, render_results, request_from_fields, require_search_terms,
     wrap_untrusted,
 )
-from ..domain.drive_capture import Capture
+from ..domain.drive_capture import Capture, born_digital
 from ..domain.drive_line import DriveLine
 from ..domain.drive_preflight import DrivePreflight
 from ..domain.drive_search_line import SearchLine
@@ -101,6 +110,7 @@ NOT_CONNECTED = ("The user's drive is not connected or its access expired. "
 GONE = "That item is no longer on the drive (deleted or moved out). List again."
 NAME_TAKEN = "A file with that name already exists there."
 NOT_CONFIGURED = "The drive is not configured."
+NO_SEARCH = "Drive search is not available on this deployment."
 STILL_RUNNING = ("The drive operation is still running and may complete. Check with a listing "
                  "before retrying; a notice follows for deletes and replaces.")
 # Safety margin under Telegram's 50MB bot-API document cap (Slack's own limit is far higher). video_generation/ files
@@ -176,12 +186,13 @@ class DriveOperations:
 
     # Every public coroutine is classified here, so a new one cannot be added unclassified (a test pins it). A wrapper
     # that must treat reads and mutations differently (a dry run) reads these sets.
-    READ_METHODS = frozenset({"search", "search_deleted", "list_folder", "open", "fetch_stored", "preflight",
-                              "folder_path"})
+    READ_METHODS = frozenset({"search", "search_deleted", "find_passages", "read_passages", "list_folder", "open",
+                              "fetch_stored", "preflight", "folder_path"})
     MUTATION_METHODS = frozenset({"copy", "save_text", "create_folder", "move", "append", "replace", "delete"})
     # The `DriveOp` each method that returns a `DriveOutcome` reports.
     OP_OF: Mapping[str, DriveOp] = {
-        "search": DriveOp.SEARCH, "search_deleted": DriveOp.SEARCH, "list_folder": DriveOp.LIST,
+        "search": DriveOp.SEARCH, "search_deleted": DriveOp.SEARCH, "find_passages": DriveOp.PASSAGES,
+        "read_passages": DriveOp.PASSAGES, "list_folder": DriveOp.LIST,
         "open": DriveOp.OPEN, "fetch_stored": DriveOp.OPEN, "copy": DriveOp.COPY, "save_text": DriveOp.SAVE_TEXT,
         "create_folder": DriveOp.CREATE_FOLDER, "move": DriveOp.MOVE, "append": DriveOp.APPEND,
         "replace": DriveOp.REPLACE, "delete": DriveOp.DELETE,
@@ -246,7 +257,7 @@ class DriveOperations:
             result = await self._drive_search.search(user_id, request)
             return DriveOutcome(op=DriveOp.SEARCH, cls=_search_class(result), text=render_results(result),
                                 success=True, items=tuple(card.drive_item() for card in result.cards),
-                                facts=_search_facts(result))
+                                facts=_search_facts(result), request_text=request.query or "")
         return await self._call(DriveOp.SEARCH, context, user_id, run, label="")
 
     async def search_deleted(self, context: Mapping[str, Any], user_id: str, query: Any = None) -> DriveOutcome:
@@ -260,6 +271,41 @@ class DriveOperations:
             return DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK if items else OutcomeClass.NOT_FOUND,
                                 text=f"{REFERENCE_REMINDER}\n{text}", success=True, items=tuple(items))
         return await self._call(DriveOp.SEARCH, context, user_id, run, label="")
+
+    async def find_passages(self, context: Mapping[str, Any], user_id: str, *, question: Any, folder: Any = None,
+                            file_refs: Any = None, shown: FrozenSet[ChunkId] = frozenset(),
+                            shown_folders: FrozenSet[str] = frozenset(),
+                            described_files: FrozenSet[str] = frozenset()) -> DriveOutcome:
+        """The indexed passages nearest `question` (USER_DRIVE_INDEXING_RFC §28.3 A4-A6): within `file_refs`, else
+        `folder`, else the whole drive; only chunks not in `shown` (the run's ledger), the ones that ranked again listed
+        by id. `shown_folders` / `described_files` are the context the reader has already seen (A18). The result
+        carries its typed passages for the run's ledger (A11)."""
+        async def run() -> DriveOutcome:
+            if self._drive_search is None:
+                return _fail(DriveOp.PASSAGES, NO_SEARCH, OutcomeClass.FAILED)
+            try:
+                request = excerpt_request(question, folder, file_refs)
+            except ValueError as e:
+                return _fail(DriveOp.PASSAGES, str(e), OutcomeClass.REQUEST_ERROR)
+            result = await self._drive_search.excerpts(user_id, request, shown=shown)
+            return _passages(result, shown_folders, described_files, request_text=request.question)
+        return await self._call(DriveOp.PASSAGES, context, user_id, run, label="")
+
+    async def read_passages(self, context: Mapping[str, Any], user_id: str, *, file_ref: Any, passages: Any,
+                            shown_folders: FrozenSet[str] = frozenset(),
+                            described_files: FrozenSet[str] = frozenset()) -> DriveOutcome:
+        """One file's passages by display number (§28.3 A7), delivered whole: chunks already shown included."""
+        async def run() -> DriveOutcome:
+            if self._drive_search is None:
+                return _fail(DriveOp.PASSAGES, NO_SEARCH, OutcomeClass.FAILED)
+            try:
+                request = range_request(file_ref, passages)
+            except ValueError as e:
+                return _fail(DriveOp.PASSAGES, str(e), OutcomeClass.REQUEST_ERROR)
+            result = await self._drive_search.excerpt_range(user_id, request)
+            return _passages(result, shown_folders, described_files, request_text="")
+        return await self._call(DriveOp.PASSAGES, context, user_id, run, label=str(file_ref or ""),
+                                ref=str(file_ref or ""))
 
     async def list_folder(self, context: Mapping[str, Any], user_id: str, folder: Any = None) -> DriveOutcome:
         """A folder path or a `drive:` folder ref, as search returns them (§26.2, Δ55)."""
@@ -833,6 +879,8 @@ class DriveOperations:
             return _ok(DriveOp.OPEN, f"'{item.path}' is {format_size(item.size_bytes)}; files above "
                                      f"{format_size(e.limit_bytes)} cannot be opened yet.", [item])
         content = await self._conversion_service.resolve_content(ref, user_id)
+        # §28.7's trigger for serving opens from stored chunks: how large the live opens are.
+        logger.info("[DriveOperations] opened: %s chars=%d", item.ref, len(content))
         # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11). The owner's note
         # (§6.2) is its own block after it, so a file whose text starts with `noted by the owner:` cannot pass for it.
         wrapped = wrap_untrusted(f"{drive_label(item)}\n{content}", nonce=secrets.token_hex(8),
@@ -928,6 +976,34 @@ def _path_error_class(text: str) -> OutcomeClass:
     return OutcomeClass.NOT_FOUND if text.startswith("No folder") else OutcomeClass.REFUSED
 
 
+def _passages(result: ExcerptResult, shown_folders: FrozenSet[str], described_files: FrozenSet[str], *,
+              request_text: str) -> DriveOutcome:
+    """A passages call's outcome (§28.3 A10, A11): the rendered text the reader sees, the typed result and the context
+    plan for the run's ledger, the files for `drive_context`, the facts the reading lines are chosen from."""
+    rendered = render_excerpts(result, nonce=lambda: secrets.token_hex(8), shown_folders=shown_folders,
+                               described_files=described_files)
+    return DriveOutcome(op=DriveOp.PASSAGES, cls=_excerpt_class(result), text=rendered.text, success=True,
+                        items=tuple(f.drive_item() for f in result.files),
+                        facts=ReadFacts(excerpts=bool(result.files), owner_note=rendered.plan.has_owner_line,
+                                        building=result.building or result.awaiting_rebuild),   # as search's
+                        excerpts=result, excerpt_plan=rendered.plan, request_text=request_text)
+
+
+def _excerpt_class(result: ExcerptResult) -> OutcomeClass:
+    """§7.2 for a passages result, as `_search_class`: vectors in another space answer as rebuilding (plan D-P4)."""
+    if result.awaiting_rebuild or result.wrong_space or (result.status == STATUS_DISCONNECTED and result.other_drive):
+        return OutcomeClass.REBUILDING
+    if result.status == STATUS_DISABLED:
+        return OutcomeClass.INDEXING_OFF
+    if result.status == STATUS_DISCONNECTED:
+        return OutcomeClass.NOT_CONNECTED
+    if result.status == STATUS_FOLDER_NOT_FOUND:
+        return OutcomeClass.NOT_FOUND
+    if result.status == STATUS_AMBIGUOUS_FOLDER:
+        return OutcomeClass.OK   # candidate folders are shown: content the reader acts on
+    return OutcomeClass.OK if result.files else OutcomeClass.NOT_FOUND
+
+
 def _search_class(result: DriveSearchResult) -> OutcomeClass:
     """§7.2, from the typed result: the gate's states, then cards or none."""
     if result.awaiting_rebuild or (result.status == STATUS_DISCONNECTED and result.other_drive):
@@ -954,6 +1030,9 @@ def _search_facts(result: DriveSearchResult) -> ReadFacts:
         accuracy=any(c.card_accuracy is not None for c in cards),
         owner_note=any(c.owner_note for c in cards),
         scan=any(c.capture in _SCAN_CAPTURES for c in cards),
+        # §28 OQ-A2: below the trust bar and not known to be born-digital (an image reading, or no capture recorded)
+        low_accuracy_image=any(c.card_accuracy is not None and c.card_accuracy < CARD_ACCURACY_TRUST
+                               and not born_digital(c.capture) for c in cards),
         inaccessible=any(c.inaccessible for c in cards),
         image=any(c.kind == "image" for c in cards),
         coverage_incomplete=incomplete or bool(result.envelope.unread or result.envelope.not_read_yet

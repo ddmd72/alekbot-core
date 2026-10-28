@@ -11,8 +11,9 @@ def _flat(text: str) -> str:
 PARAGRAPH = ("A described file's result carries `card accuracy: N%`. 100% — everything in this card is confirmed by the "
              "file's own text; you can trust the card fully. The lower, the more likely the card's values contain errors.")
 FIND = "\"Find\", \"which files\", \"do I have\": answer from the cards at any accuracy. Never open files for this."
+# Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13, OQ-A2): below 90% Smart asks for the file's passages on the value.
 VALUE = ("A question about a value in a file — a number, a date, an amount, an expiry: answer from the card when its "
-         "accuracy is 90% or more. Below that, open the file and check the value before answering.")
+         "accuracy is 90% or more. Below that, ask for the file's passages on that value.")
 SCAN = ("For a scan or a photo of a document, the file's text is a reading of the image; when a value matters to the "
         "user, say where you read it.")
 
@@ -36,6 +37,7 @@ def test_each_rule_sentence_has_one_copy():
     """Retargeted at the cut: the section's sentences reach Smart as reading lines (DRIVE_SPECIALIST_RFC §5.7, §7.3)."""
     from src.domain import drive_answer_texts as t
     body = _flat("\n".join(v for k, v in vars(t).items() if k.startswith("R_") and isinstance(v, str)))
-    for sentence in ("answer from the cards at any accuracy", "open the file and check the value before answering",
+    # Reviewer (§28.3 A13, OQ-A2): the 90% rule's sentence is "ask for the file's passages on that value" now
+    for sentence in ("answer from the cards at any accuracy", "ask for the file's passages on that value",
                      "say where you read it"):
         assert body.count(sentence) == 1, sentence

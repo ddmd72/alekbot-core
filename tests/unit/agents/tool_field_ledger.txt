@@ -88,12 +88,17 @@ drive:copy_file_to_drive.folder  # stored tests/unit/agents/test_drive_agent_too
 drive:copy_file_to_drive.source_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_copy_a_chat_file_with_file_name_and_folder
 drive:create_folder.folder  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_create_folder
 drive:delete_drive_item.file_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_delete_from_drive_posts_a_literal_receipt
+drive:find_passages.file_refs  # read-only reading tool, writes nothing
+drive:find_passages.folder  # read-only reading tool, writes nothing
+drive:find_passages.question  # read-only reading tool, writes nothing
 drive:get_recording_link.file_ref  # read-only reading tool, writes nothing
 drive:list_folder.folder  # read-only reading tool, writes nothing
 drive:move_file.file_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_move_with_folder_and_new_name
 drive:move_file.folder  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_move_with_folder_and_new_name
 drive:move_file.new_name  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_move_with_folder_and_new_name
 drive:open_drive_file.file_ref  # read-only reading tool, writes nothing
+drive:read_passages.file_ref  # read-only reading tool, writes nothing
+drive:read_passages.passages  # read-only reading tool, writes nothing
 drive:replace_file_content.new_content_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_replace_with_a_chat_file_posts_a_literal_receipt
 drive:replace_file_content.target_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_replace_with_a_chat_file_posts_a_literal_receipt
 drive:report_to_orchestrator.not_done  # prompt-input tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_the_report_not_done_reaches_smart_as_not_possible

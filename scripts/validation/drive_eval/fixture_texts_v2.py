@@ -20,6 +20,8 @@ from typing import List, Optional
 
 from src.domain.drive_enrichment import DriveProfile, KeyValue, ProfileDate, ProfileEntity
 
+from . import fixture_texts_afc
+
 # -- health ----------------------------------------------------------------------------------------------------------
 
 LAB_REPORT_ES = [
@@ -321,5 +323,5 @@ BULK_PROFILES = {"invoice_2024": _invoice_2024_profile, "g3_injected_note": _g3_
 
 
 def bulk_profile(template: str, n: int) -> Optional[DriveProfile]:
-    build = BULK_PROFILES.get(template)
+    build = {**BULK_PROFILES, **fixture_texts_afc.PROFILES}.get(template)   # the afc eval's profiles (plan S2.6)
     return build(n) if build is not None else None

@@ -25,7 +25,8 @@ def test_the_description_offers_content_search():
     for phrase in ("what is written inside (a subject, a phrase, a number, an amount)", "scans"):
         assert phrase in smart, phrase
     assert "what is written in them" in _DESCRIPTION
-    assert t.R_PASSAGE.startswith("A passage is a window cut from the file around what matched.")
+    # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13): the card's window is named "a search window"
+    assert t.R_PASSAGE.startswith("A card's passage is a search window cut from the file around what matched.")
 
 
 def test_content_words_go_into_drive_query():

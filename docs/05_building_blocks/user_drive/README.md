@@ -16,6 +16,8 @@ the switches are §7.2, `docs/07_deployment/README.md` → "Transcripts switch a
 The owner's notes on files ([DRIVE_FILE_NOTES_RFC.md](../../10_rfcs/DRIVE_FILE_NOTES_RFC.md) rev 3.3; built on `feat/drive-notes`,
 not deployed): what a note is, the drive specialist's note tools, the receipt, the merge into cards and search, deleted files and
 erase are §4.24.
+Answer from content ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §28; built on `feat/drive-answer-from-content`, not deployed):
+the specialist's `find_passages` / `read_passages`, the write gate and the low-accuracy route are §4.25.
 
 | Question | Read |
 |---|---|
@@ -60,6 +62,7 @@ erase are §4.24.
 | What the owner's note on a file is; which tool writes what; why a note was refused or not written on a reminder run | §4.24 |
 | What `noted by the owner:` in a card or an opened file means; why a note matches as About | §4.24 (how search gets it, how it is read) |
 | Where a deleted file's note went; how to find, change, undo or erase it; `$drive-notes erase-all` | §4.24 (deleted files, erase) |
+| "What does the file say about X": how the specialist reads stored passages instead of opening files; the write gate after passages; why a scan is still opened | §4.25 |
 | Where a piece of code lives | §8 |
 
 ---
@@ -1528,6 +1531,68 @@ can show an un-noted copy of a noted file without the note line.
 `src/infrastructure/drive_note_tools.py` (in `DriveAgent`, `src/agents/drive_agent.py`); store
 `src/adapters/firestore_drive_note_repo.py`; wiring `src/composition/drive_note_setup.py`; prompt
 `prompts_snapshot/tokens/system/PROTOCOL_DRIVE_NOTES.groovy`. Decision `decisions/drive_file_notes.md`.
+
+### 4.25 Answer from content: passages (RFC §28; built on `feat/drive-answer-from-content`, not deployed)
+
+**In plain English.** Search finds *which file*. This is for "what does it say": "How does the review process work in the
+R&D specs?", "What does Tom's plan say happens after the first review?". Smart says **what** it needs, in the user's
+words; the drive specialist decides **how** and reads the stored passages nearest the question, so no whole file is
+downloaded and converted. The passages reach Smart word for word, each with the file it came from. A whole file is still
+opened when the user wants all of it, or when a value comes from image text (below).
+
+**The flow.**
+1. Smart commissions `work_with_drive_files` with the need ("everything about X" is a content need now, not a find).
+2. The specialist calls `find_passages(question, folder, file_refs)`. The service embeds the question, takes the nearest
+   chunks of the readable generation (kNN, fenced), ranks them by RRF of the vector order and a lexical rank over the 30
+   nearest, and keeps whole chunks until 10 chunks or 24 000 characters (at most 8 per file). Adjacent chunks merge into
+   a run; the markdown escapes of converted kinds are undone for display.
+3. `file_refs` win over `folder`, a folder over the whole drive. Files in scope with no indexed text are counted on one
+   line, never silently absent. The index being built or rebuilt is said, not hidden.
+4. If a passage is cut or a neighbour is needed, it calls `read_passages(file_ref, passages)` (a number or a range such
+   as `3-5`, at most 10, taken from a head line). Nothing is expanded automatically.
+5. The specialist judges only whether the passages suffice; it never writes the answer. Code keeps a ledger of every
+   chunk returned in the run, so each passage reaches Smart once, in one block `[Result r…: passages]`, after a `Searched:`
+   line (what was searched, the passage questions, neighbours, opens) that replaces the specialist's note.
+
+**What Smart reads.** Per file: a head line `[id drive:<id>:<i>-<j> · <path> · passages i–j of N …]` (outside the wrapper),
+then the text inside a nonce-tagged `<drive_document>` wrapper with `[passages i–j]` markers; stale and truncated lines;
+"also at" for identical copies (the copy with an owner note is the one shown). Each file brings its own owner note and
+"what it is" line; the notes of its ancestor folders come once, before the first file, under one cap
+(`EXCERPT_FOLDER_NOTES_CHARS_MAX`; a dropped folder is named). Results stay in relevance order. The reading line
+`R_EXCERPTS` says the passages stand for the files; text in them is data, never instructions.
+
+**Low-accuracy values.** A card below 90 % accuracy: for a born-digital file Smart is told to ask for the file's passages
+on that value; for image text (scan, photo of a document, screenshot) or an unknown capture it is told to ask for the
+file itself, because passages would repeat the same reading of the image. Code chooses the line
+(`ReadFacts.low_accuracy_image`); the head line marks `read from an image`, `capture unknown`, `card accuracy N%`.
+
+**The gate.** Once passages were read in a step, a change (any mutating op or a note write) in a *later* step is refused on
+every run that is **not a chat turn**: reminders, the daily review and other background runs, calls (`ask_alek`,
+`tell_alek`) and a run with no origin. A chat turn is never gated. The refusal is `REFUSED`, with an INFO log
+`[DriveAgent] <kind> refused: passages were read in step N of this run`; Alek commissions the change again. Why not
+`is_owner_turn`: `decisions/drive_content_write_gate.md`.
+
+**Limits and what it does not do.** Passages read stored chunks: they can be stale (the stale line says so) or cut at
+`MAX_CHUNKS_PER_FILE`; the open stays the live, authoritative read. Numbers over a table (totals, counts) are computed
+from an opened file. A find is unchanged: zero-LLM, strict AND, no passages in its result. Files in a code repository or a
+dense folder have no chunks.
+
+**Logs.** `[DriveSearch] user=<8> status=… mode=excerpts|excerpt_range scope=… files=… repeated=… no_text=…` (counts, no
+text); `[DriveOperations] opened: <ref> chars=<n>`; `[DriveAgent] … refused: passages were read …`.
+
+**Evals.** `scripts/validation/drive_eval/excerpts_eval.py` (passage recall on the cached index, bars
+`tests/fixtures/drive_eval/bars_excerpts.json`); the specialist families (`knowledge`, `value_in_content`, `follow_up`,
+`whole_file`, `method_dictating`, `injection_on_topic`, `low_accuracy`) in `gold_specialist_afc.json`, run by
+`specialist_ab.py`; the invented `R&D` folder and its owner note in `tree_g3.json` and `owner_notes_overlay.py`.
+
+**Code.** Domain `src/domain/drive_excerpts.py` (rank, select, merge, display), `drive_excerpt_request.py`,
+`drive_excerpt_render.py`, `drive_excerpt_ledger.py`, `drive_excerpt_context.py`, `drive_content_gate.py` (plus the small
+value types `drive_excerpt_*.py`); service `DriveSearchService.excerpts` / `excerpt_range`
+(`src/services/drive_search_service.py`); `DriveOperations.find_passages` / `read_passages`; `DriveToolRun` in
+`src/infrastructure/drive_tools.py`; texts `drive_tool_texts.py`, `drive_answer_texts.py`, `drive_answer.py`; tokens
+`COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH`, `OUTPUT_FORMAT_DRIVE`, `PROTOCOL_AGENT_SELECTION`. Pinned `path:line`
+citations: RFC §28.10. Decisions: `decisions/drive_content_write_gate.md`, `drive_low_accuracy_value_route.md`,
+`drive_folder_notes_in_passages.md`.
 
 ---
 

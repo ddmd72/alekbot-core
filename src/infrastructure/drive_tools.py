@@ -16,6 +16,11 @@ to choose its next step: search results and listings in full, a stand-in for an 
 - A `search_drive` identical to one already run in this commission is not run again (§5.4).
 - `save_text_file` / `append_to_file` name a `file_contents` item; code writes that item's text (§4.2). An unknown
   item is refused before any service call.
+- `find_passages` / `read_passages` (USER_DRIVE_INDEXING_RFC §28.3 A3): reads, shown to the model in full. A find
+  passes the run's ledger (chunks shown, folders shown, files described), so it returns new passages only and prints
+  no context line twice; a range read passes only the two context sets (a named range is delivered whole).
+- The write gate (§28.3 A14, OQ-A1): on a run that is not a chat turn, a change (a note write included) in a step
+  after the one whose passages text reached the model is refused; a change co-emitted with that read runs.
 """
 
 import asyncio
@@ -25,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Mapping, Optio
 from ..domain import drive_answer_texts as t
 from ..domain import drive_tool_texts as tools
 from ..domain.drive_collected_result import CollectedResult
+from ..domain.drive_content_gate import content_gate_applies, write_refused
 from ..domain.drive_file_content_item import FileContentItem
 from ..domain.drive_op import DriveOp
 from ..domain.drive_outcome import DriveOutcome
@@ -65,6 +71,8 @@ class DriveToolRun:
         self._clock = clock
         self._order = asyncio.Lock()
         self._ran_on = False   # a change answered still-running: later changes of this run do not start
+        self._gated = content_gate_applies(context)   # not a chat turn: changes stop once passages were read (A14)
+        self._passages_step: Optional[int] = None   # the first step whose passages text reached the model
         self.step = 0
 
     def left(self) -> float:
@@ -74,7 +82,8 @@ class DriveToolRun:
     def handlers(self) -> Dict[str, LocalToolHandler]:
         return {
             tools.SEARCH_DRIVE: self._search, tools.SEARCH_DELETED: self._search_deleted,
-            tools.LIST_FOLDER: self._list, tools.OPEN_DRIVE_FILE: self._open, tools.GET_RECORDING_LINK: self._link,
+            tools.LIST_FOLDER: self._list, tools.OPEN_DRIVE_FILE: self._open, tools.FIND_PASSAGES: self._find_passages,
+            tools.READ_PASSAGES: self._read_passages, tools.GET_RECORDING_LINK: self._link,
             tools.COPY_FILE_TO_DRIVE: self._copy, tools.SAVE_TEXT_FILE: self._save_text,
             tools.CREATE_FOLDER: self._create_folder, tools.MOVE_FILE: self._move,
             tools.APPEND_TO_FILE: self._append, tools.REPLACE_FILE_CONTENT: self._replace,
@@ -91,8 +100,13 @@ class DriveToolRun:
         with the batch's changes: `get_note` is a read that takes it (specialist RFC §9.2). `running_text` is what a
         change cancelled after it started is recorded with (the note tools pass their own, design Δ10). `prep`
         (changes only) is a read the call needs first, e.g. a destination folder's lookup: it runs inside the order
-        lock but before `started`, so a cut during it is "not started", never "still running"."""
+        lock but before `started`, so a cut during it is "not started", never "still running". A change after the
+        step that read passages is refused on a run that is not a chat turn (§28.3 A14)."""
         step = self.step
+        if change and write_refused(gated=self._gated, step=step, passages_step=self._passages_step):
+            logger.info("[DriveAgent] %s refused: passages were read in step %s of this run", kind, self._passages_step)
+            return self._collector.add(step, kind, DriveOutcome(
+                op=op, cls=OutcomeClass.REFUSED, text=t.WRITE_AFTER_PASSAGES, success=False))
         if self.left() <= 0:
             return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED))
         started = False
@@ -205,6 +219,30 @@ class DriveToolRun:
             return self._no_ref(tc, DriveOp.OPEN, "file_ref", "the recording")
         result = await self._run(DriveOp.OPEN, t.KIND_LINK, lambda: self._ops.open(
             self._context, self._user_id, ref, original=True), change=False)
+        return self._seen(tc, result)
+
+    async def _find_passages(self, tc: ToolCall) -> ToolResult:
+        args = tc.args or {}
+        ledger = self._collector.ledger
+        result = await self._run(DriveOp.PASSAGES, t.KIND_PASSAGES, lambda: self._ops.find_passages(
+            self._context, self._user_id, question=args.get("question"), folder=args.get("folder"),
+            file_refs=args.get("file_refs"), shown=ledger.keys(), shown_folders=ledger.folders_shown(),
+            described_files=ledger.files_described()), change=False)
+        return self._passages_seen(tc, result)
+
+    async def _read_passages(self, tc: ToolCall) -> ToolResult:
+        args = tc.args or {}
+        ledger = self._collector.ledger
+        result = await self._run(DriveOp.PASSAGES, t.KIND_PASSAGES, lambda: self._ops.read_passages(
+            self._context, self._user_id, file_ref=args.get("file_ref"), passages=args.get("passages"),
+            shown_folders=ledger.folders_shown(), described_files=ledger.files_described()), change=False)
+        return self._passages_seen(tc, result)
+
+    def _passages_seen(self, tc: ToolCall, result: CollectedResult) -> ToolResult:
+        """The model reads the passages in full; from this step on the run has read file content (A14)."""
+        excerpts = result.outcome.excerpts
+        if excerpts is not None and excerpts.files:
+            self._passages_step = result.step if self._passages_step is None else min(self._passages_step, result.step)
         return self._seen(tc, result)
 
     # -- changes ---------------------------------------------------------------------------------------------------

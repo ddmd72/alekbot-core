@@ -15,9 +15,11 @@ _spec = importlib.util.spec_from_file_location("snapshot_serializer", ROOT / "fi
 ser = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ser)
 
+# Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13): the rule gains the content-need exemption after the find's quoting rule.
 QUERY_LANGUAGE = ('query_language: "Always English — regardless of the user\'s input language — except the words to '
                   'find on the drive in work_with_drive_files: quote the user\'s own few key words, in ONE language, as '
-                  'the user wrote them — no synonym lists, no translations, no extra words."')
+                  'the user wrote them — no synonym lists, no translations, no extra words. That quoting is for a find; '
+                  'for what the files say (a content need), write the self-contained request in the user\'s language."')
 KNOWLEDGE_BASE = ('knowledge_base: "The drive holds the user\'s own documents; memory holds facts about the user. When '
                   'the answer may be written in a document they keep (a contract term, an amount, a date, a booking, '
                   'a receipt, meeting notes), search the drive even if they did not ask for a file. One question can '
@@ -61,7 +63,10 @@ def test_the_block_names_the_intent_and_keeps_todays_two_lines_verbatim():
     for name, body in _bodies().items():
         block = _block(body)
         keys = re.findall(r"^\s*(\w+):", block[len("drive_specialist {"):], re.M)
-        assert keys == ["intent", "knowledge_base", "untrusted"], (name, keys)
+        # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13): the block gains two few-shot pairs (context yes, method no);
+        # their wording is not pinned, their shape is.
+        assert keys == ["intent", "knowledge_base", "untrusted", "examples",
+                        "good_query", "bad_query", "note", "good_query", "bad_query", "note"], (name, keys)
         assert 'intent: "work_with_drive_files"' in block
         assert KNOWLEDGE_BASE in block and UNTRUSTED in block
 

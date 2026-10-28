@@ -21,6 +21,8 @@ class DriveOp(str, Enum):
     NOTE_READ = "note_read"
     NOTE_WRITE = "note_write"
     NOTE_ERASE = "note_erase"
+    # Both passages tools, a read (USER_DRIVE_INDEXING_RFC §28.3 A3): not in MUTATING_OPS.
+    PASSAGES = "passages"
 
 
 MUTATING_OPS = frozenset({DriveOp.COPY, DriveOp.SAVE_TEXT, DriveOp.CREATE_FOLDER, DriveOp.MOVE, DriveOp.APPEND,

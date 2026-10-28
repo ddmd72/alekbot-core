@@ -37,7 +37,8 @@ from .runner import EVAL_USER
 class EvalUserSearch:
     """The index the eval built under EVAL_USER, asked as that user whoever asks (the dry run's Smart is the owner).
     With `off` set, `search` answers as for a user whose drive search is off (a drive-off case, final review F5-6),
-    and so does `search_state`, the specialist's state-block line: production reads one flag for both. Every other
+    and so do `search_state`, the specialist's state-block line, and `excerpts` / `excerpt_range`, the passages reads:
+    production reads one flag for all of them. Every other
     DriveSearchService method (search_deleted, access_note, transcript_text, archived_text, …) is forwarded with
     EVAL_USER in place of the caller's id: an unforwarded method once failed every deleted-files search in the spike
     (spike report, index cache note)."""
@@ -59,6 +60,25 @@ class EvalUserSearch:
             return SearchLine.OFF
         state: SearchLine = await self._search.search_state(EVAL_USER)
         return state
+
+    async def excerpts(self, user_id: str, request: Any, **kwargs: Any) -> Any:
+        """find_passages' read: gated like `search` (production gates it with the same flag, `_excerpt_gate`), so a
+        drive-off case gets the `disabled` answer, not the real index (answer from content, plan S2.6 follow-up)."""
+        if self.off:
+            return self._disabled(request)
+        return await self._search.excerpts(EVAL_USER, request, **kwargs)
+
+    async def excerpt_range(self, user_id: str, request: Any) -> Any:
+        """read_passages' read: the same gate."""
+        if self.off:
+            return self._disabled(request)
+        return await self._search.excerpt_range(EVAL_USER, request)
+
+    @staticmethod
+    def _disabled(request: Any) -> Any:
+        from src.domain.drive_excerpt_result import ExcerptResult
+        from src.domain.drive_search import STATUS_DISABLED
+        return ExcerptResult(status=STATUS_DISABLED, request=request)
 
     def __getattr__(self, name: str) -> Any:
         target = getattr(self._search, name)

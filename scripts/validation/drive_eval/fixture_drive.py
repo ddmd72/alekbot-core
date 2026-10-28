@@ -37,7 +37,7 @@ from src.domain.user_drive import (
 )
 from src.ports.user_drive_port import UserDrivePort
 
-from . import fixture_texts
+from . import fixture_texts, fixture_texts_afc
 from .mini_pdf import text_pdf
 
 ROOT_ID = "fx-root"
@@ -61,11 +61,17 @@ TEMPLATES: Mapping[str, str] = {
     "lead_factura_fk": fixture_texts.LEAD_FACTURA_FK_TEMPLATE,
     "lead_garage_rental": fixture_texts.LEAD_GARAGE_RENTAL_TEMPLATE,
     "lead_normas": fixture_texts.LEAD_NORMAS_TEMPLATE,
+    # tree_g3.json only (plan S2.6): the invented Acme R&D documents of the "answer from content" eval
+    **fixture_texts_afc.TEMPLATES,
 }
 
 
 def render_template(name: str, n: int, file_name: str) -> bytes:
     text = TEMPLATES[name].format(n=n)
+    if name in fixture_texts_afc.SCAN_PDF_TEMPLATES:
+        return fixture_texts_afc.scan_pdf(text.splitlines())
+    if file_name.lower().endswith(".docx"):
+        return fixture_texts_afc.docx_from_lines(text.splitlines())
     if file_name.lower().endswith(".pdf"):
         return text_pdf(text.splitlines())
     return text.encode("utf-8")

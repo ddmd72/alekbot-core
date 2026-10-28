@@ -1,0 +1,6 @@
+{
+  "note": "Invented owner notes for the answer-from-content eval (plan CTX.5), applied in memory AFTER the cached index is loaded (scripts/validation/drive_eval/owner_notes_overlay.py): a note change costs no rebuild. Path -> the owner's words, document type (a drive_labels.DOC_TYPES value or empty) and life areas (drive_labels.LIFE_DOMAINS). Planning/Tom's plan.docx deliberately has no note.",
+  "notes": [
+    {"path": "R&D", "text": "Acme specifications; the review process lives here", "doc_type": "", "life_areas": ["work"]}
+  ]
+}

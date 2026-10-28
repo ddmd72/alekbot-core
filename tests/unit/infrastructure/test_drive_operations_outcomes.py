@@ -160,8 +160,10 @@ async def test_read_facts_come_from_the_cards(ops, search):
         envelope=DriveSearchEnvelope(building=True),
         tiered=TieredResult(concepts=("lease",), coverage=CoverageFacts(not_read_yet=2)))
     out = await ops.search(CTX, "u1", query="lease")
+    # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13, OQ-A2): the first card scores 80% with no capture recorded, so its
+    # text is not known to be born-digital and low_accuracy_image is set
     assert out.facts == ReadFacts(cards=2, passage=True, accuracy=True, scan=True, inaccessible=True, image=True,
-                                  coverage_incomplete=True, building=True)
+                                  coverage_incomplete=True, building=True, low_accuracy_image=True)
 
 
 async def test_plain_cards_carry_no_triggers(ops, search):

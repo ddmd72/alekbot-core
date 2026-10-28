@@ -5,8 +5,8 @@ A surface is a list of tool declarations, built by the production builder each t
 - `consolidation`, `consolidation_review`: `ConsolidationAgent._get_tool_declarations` for the two pass kinds;
 - `notes`, `tasks`: the agents' `_TOOL_DECLARATIONS`;
 - `smart_local`: Smart's three local writing tools (`propose_memory_facts`, `draft_skill`, `workspace`);
-- `drive`: the drive specialist's twelve tools and its terminal tool (`drive_tool_declarations`, DRIVE_SPECIALIST_RFC
-  §8.1);
+- `drive`: the drive specialist's fourteen tools and its terminal tool (`drive_tool_declarations`, DRIVE_SPECIALIST_RFC
+  §8.1; the two passages tools of USER_DRIVE_INDEXING_RFC §28.3 A3);
 - `drive_notes`: the drive specialist's eleven note tools on an owner turn, `get_note` and the ten writers
   (`drive_note_tool_declarations(writes=True)`, DRIVE_SPECIALIST_RFC §9.2);
 - `delegate`: the `context` schema Smart's `delegate_to_specialist` declares for one intent, built through the real
@@ -72,7 +72,7 @@ READ_ONLY: FrozenSet[str] = frozenset({
     "consolidation:search_existing_facts", "consolidation:count_words", "consolidation_review:count_words",
     "tasks:list_tasks", "tasks:search_tasks",
     "drive:search_drive", "drive:search_deleted_recordings_and_notes", "drive:list_folder", "drive:open_drive_file",
-    "drive:get_recording_link", "drive_notes:get_note",
+    "drive:get_recording_link", "drive:find_passages", "drive:read_passages", "drive_notes:get_note",
 })
 READ_ONLY_FIELDS: FrozenSet[str] = frozenset({"smart_local:workspace.offset", "smart_local:workspace.limit"})
 
