@@ -108,6 +108,25 @@ drive:search_drive.date_to  # read-only reading tool, writes nothing
 drive:search_drive.folder  # read-only reading tool, writes nothing
 drive:search_drive.kind  # read-only reading tool, writes nothing
 drive:search_drive.query  # read-only reading tool, writes nothing
+drive_notes:add_life_areas.item_ref  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_add_life_areas_adds_to_the_stored_areas_in_order
+drive_notes:add_life_areas.life_areas  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_add_life_areas_adds_to_the_stored_areas_in_order
+drive_notes:add_to_note.item_ref  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_add_to_note_appends_the_words_to_the_stored_text
+drive_notes:add_to_note.text  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_add_to_note_appends_the_words_to_the_stored_text
+drive_notes:clear_note_type.item_ref  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_clear_note_type_empties_the_stored_type_and_keeps_the_words
+drive_notes:create_note.doc_type  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_create_note_stores_the_text_the_type_and_the_areas_on_the_file
+drive_notes:create_note.item_ref  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_create_note_stores_the_text_the_type_and_the_areas_on_the_file
+drive_notes:create_note.life_areas  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_create_note_stores_the_text_the_type_and_the_areas_on_the_file
+drive_notes:create_note.text  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_create_note_stores_the_text_the_type_and_the_areas_on_the_file
+drive_notes:delete_note.item_ref  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_delete_note_clears_the_stored_note_and_undo_note_restores_it
+drive_notes:erase_note.item_ref  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_erase_note_stores_a_request_and_a_code_for_the_owner_and_erases_nothing
+drive_notes:get_note.item_ref  # read-only reading tool, writes nothing
+drive_notes:remove_life_areas.item_ref  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_remove_life_areas_removes_only_the_named_area
+drive_notes:remove_life_areas.life_areas  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_remove_life_areas_removes_only_the_named_area
+drive_notes:replace_note_text.item_ref  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_replace_note_text_after_a_read_replaces_the_stored_text_and_keeps_type_and_areas
+drive_notes:replace_note_text.text  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_replace_note_text_after_a_read_replaces_the_stored_text_and_keeps_type_and_areas
+drive_notes:set_note_type.doc_type  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_set_note_type_changes_the_stored_type_and_keeps_the_words
+drive_notes:set_note_type.item_ref  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_set_note_type_changes_the_stored_type_and_keeps_the_words
+drive_notes:undo_note.item_ref  # stored tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py::test_delete_note_clears_the_stored_note_and_undo_note_restores_it
 notes:create_self_reminder.complexity  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
 notes:create_self_reminder.due  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
 notes:create_self_reminder.instruction  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored

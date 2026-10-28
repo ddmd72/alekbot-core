@@ -21,6 +21,7 @@ from src.domain.drive_index import (
     ContentClass, DocumentBrief, DriveIndexRecord, DriveSyncState, EpochPhase, ErrorCategory, Reason, RecordState,
     Scope, TriageVerdict,
 )
+from src.domain.drive_note_check import NoteCheck
 
 T = datetime(2026, 10, 11, 12, 30, 15, 123456, tzinfo=timezone.utc)
 
@@ -85,7 +86,10 @@ def full_record() -> DriveIndexRecord:
         transcript_speakers=3, transcript_languages=("uk", "en"), transcript_body_version=1,
         transcript_truncated=True,
         # §27.9.4 (the mirror queue, Δ217): the flag, the stamped digest and a held record's hold
-        mirror_due=True, mirrored_digest="md1", mirror_retry_at=T + timedelta(hours=10), mirror_held_digest="mh1")
+        mirror_due=True, mirrored_digest="md1", mirror_retry_at=T + timedelta(hours=10), mirror_held_digest="mh1",
+        # DRIVE_FILE_NOTES_RFC §3.3: the record's copy of the owner's note (part B review verdict, joint for A, B, C)
+        owner_note_id="N1", owner_note_version=2, owner_note_text="Рахунок підрядника, 1.048,45 EUR", owner_doc_type="contract",
+        owner_life_areas=("home", "finance"), owner_note_merge_version=1, note_lookup_due=True)
 
 
 def full_state() -> DriveSyncState:
@@ -101,7 +105,14 @@ def full_state() -> DriveSyncState:
         triage_images_used=12, upgrade_parked_month="2026-10",
         model_backoff_by_agent={"drive_reader": T + timedelta(minutes=20), "drive_profiler": T + timedelta(minutes=5)},
         described_count=7, described_grew_at=T - timedelta(hours=2), migration_alerted=True, stall_alerted=True,
-        fallback_alerted_day="2026-10-09", purge_keep_transcripts=True)
+        fallback_alerted_day="2026-10-09", purge_keep_transcripts=True,
+        # DRIVE_FILE_NOTES_RFC §3.4: the notes step's state (part B review verdict, plus the rollback stamp)
+        notes_applied_at=T - timedelta(minutes=4), notes_applied_id="N7", notes_paging=True,
+        notes_scanned_at=T - timedelta(minutes=3), notes_merge_version=1, notes_space="old/768",
+        notes_space_at=T - timedelta(minutes=2), notes_space_id="N3", notes_tick_at=T - timedelta(minutes=1),
+        # §3.4, §7.1, §7.4: the archive checks, the audit's clock and pass cursor (part C review verdict)
+        note_checks=(NoteCheck("n1", "I1", "gone", T),), notes_audited_at=T, notes_audit_after_at=T,
+        notes_audit_after_id="n1")
 
 
 def stored(value):

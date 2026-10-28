@@ -40,7 +40,7 @@ def _factory(**over) -> SimpleNamespace:
     fields = dict(context_builder=context_builder, file_conversion_service=MagicMock(), file_storage=MagicMock(),
                   notification_service=MagicMock(), user_drive_service=MagicMock(), localization=MagicMock(),
                   language_service=MagicMock(), drive_search_service=MagicMock(), notes_provider=None,
-                  alert_sink=AsyncMock(name="ops_alert_sink"))
+                  drive_note_service=None, drive_notes_enabled=True, alert_sink=AsyncMock(name="ops_alert_sink"))
     fields.update(over)
     fake = SimpleNamespace(**fields)
     fake._drive_operations = lambda ctx: UserAgentFactory._drive_operations(fake, ctx)

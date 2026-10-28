@@ -7,6 +7,8 @@ A surface is a list of tool declarations, built by the production builder each t
 - `smart_local`: Smart's three local writing tools (`propose_memory_facts`, `draft_skill`, `workspace`);
 - `drive`: the drive specialist's twelve tools and its terminal tool (`drive_tool_declarations`, DRIVE_SPECIALIST_RFC
   §8.1);
+- `drive_notes`: the drive specialist's eleven note tools on an owner turn, `get_note` and the ten writers
+  (`drive_note_tool_declarations(writes=True)`, DRIVE_SPECIALIST_RFC §9.2);
 - `delegate`: the `context` schema Smart's `delegate_to_specialist` declares for one intent, built through the real
   `BaseAgent._build_delegate_tool_declaration`, for `work_with_drive_files` (its one field `file_contents`, the text a
   model writes into a file through the specialist), `manage_self_reminders` and `manage_user_tasks` (wrapped as
@@ -27,6 +29,7 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Set
 from src.agents import notes_agent, tasks_agent
 from src.agents.base_agent import BaseAgent
 from src.agents.consolidation_agent import ConsolidationAgent
+from src.domain.drive_note_tool_texts import drive_note_tool_declarations
 from src.domain.drive_tool_texts import drive_tool_declarations
 from src.infrastructure.agent_manifest import DRIVE_SPECIALIST, NOTES, TASKS, AgentDescriptor, Intent
 from src.infrastructure.memory_fact_tools import build_propose_memory_facts_tool_declaration
@@ -58,6 +61,7 @@ SURFACES: Dict[str, Callable[[], List[Dict[str, Any]]]] = {
     "smart_local": lambda: [build_propose_memory_facts_tool_declaration(), build_draft_skill_tool_declaration(),
                             build_workspace_tool_declaration()],
     "drive": drive_tool_declarations,
+    "drive_notes": lambda: drive_note_tool_declarations(writes=True),
     "delegate": _delegate,
 }
 IN_SCOPE = tuple(SURFACES)
@@ -68,7 +72,7 @@ READ_ONLY: FrozenSet[str] = frozenset({
     "consolidation:search_existing_facts", "consolidation:count_words", "consolidation_review:count_words",
     "tasks:list_tasks", "tasks:search_tasks",
     "drive:search_drive", "drive:search_deleted_recordings_and_notes", "drive:list_folder", "drive:open_drive_file",
-    "drive:get_recording_link",
+    "drive:get_recording_link", "drive_notes:get_note",
 })
 READ_ONLY_FIELDS: FrozenSet[str] = frozenset({"smart_local:workspace.offset", "smart_local:workspace.limit"})
 

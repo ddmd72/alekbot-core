@@ -12,8 +12,10 @@ import pytest
 
 from src.agents.drive_agent import DriveAgent, origin_label, render_state, soft_deadline
 from src.domain import drive_tool_texts as tt
-from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus, DeliveryItem
+from src.domain import drive_note_tool_texts as nt
+from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.drive_file_content_item import FileContentItem
+from src.domain.drive_note import DRIVE_NOTE_RECEIPT_DELIVERY, NoteReceipt
 from src.domain.drive_line import DriveLine
 from src.domain.drive_op import DriveOp
 from src.domain.drive_outcome import DriveOutcome
@@ -27,9 +29,10 @@ from src.domain.run_deadline import CURRENT_RUN_DEADLINE
 from src.domain.turn_clock import CURRENT_TURN_CLOCK, TurnClock
 from src.domain.user_drive import DriveItem, MoveOutcome
 from src.infrastructure.agent_config import DRIVE
-from src.infrastructure.delegation_engine import DelegationEngine, DelegationResult
+from src.infrastructure.delegation_engine import DelegationEngine
 from src.infrastructure.drive_operations import DriveOperations
 from src.ports.llm_port import AgentExecutionContext
+from src.services.drive_note_service import DriveNoteService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from tests.support.scripted_llm import calls, script
@@ -239,12 +242,27 @@ async def test_several_vision_files_reach_the_orchestrator_as_a_list(ops, prompt
     assert [f["path"] for f in resp.metadata["file_data"]] == ["/tmp/a.jpg", "/tmp/b.pdf"]
 
 
-async def test_delivery_items_are_forwarded(ops, prompts, monkeypatch):
-    item = DeliveryItem(type="message", data={"text": "receipt"})
-    monkeypatch.setattr(DelegationEngine, "execute", AsyncMock(return_value=DelegationResult(
-        text="", total_tokens=0, terminal_tool_args={"note": "n"}, delivery_items=[item])))
-    resp = await _agent(ops, prompts).execute(_msg())
-    assert resp.delivery_items == [item]
+async def test_the_receipt_of_a_note_stored_before_the_run_was_cut_reaches_the_answer(ops, prompts):
+    # Design Δ7: delivery items come from the pass-through collector, not the engine's fold; a cut run has no engine
+    # result, so this is the path that must still carry the receipt of a note stored before the cut.
+    async def slow(*a, **k):
+        await asyncio.sleep(5)
+    ops.search.side_effect = slow
+    receipt = NoteReceipt(action="create", note_id="n1", ref="drive:f1", path="Inbox/lease.pdf", version=1,
+                          text="signed in March", status="not_indexed", state="active")
+    notes = AsyncMock(spec=DriveNoteService)
+    notes.create.return_value = receipt
+    agent = _agent(ops, prompts, notes=notes)
+    agent._call_llm, _ = script(calls((nt.CREATE_NOTE, {"item_ref": "drive:f1", "text": "signed in March"})),
+                                 calls((tt.SEARCH_DRIVE, {"query": "lease"})))
+    token = CURRENT_RUN_DEADLINE.set(time.monotonic() + DRIVE.run_deadline_margin_s + 0.3)
+    try:
+        resp = await agent.execute(_msg())
+    finally:
+        CURRENT_RUN_DEADLINE.reset(token)
+    assert resp.metadata["drive_status"] == "unfinished"
+    notes.create.assert_awaited_once()
+    assert [(i.type, i.data) for i in resp.delivery_items] == [(DRIVE_NOTE_RECEIPT_DELIVERY, receipt.delivery_data())]
 
 
 async def test_turns_exhausted_without_a_report_still_answers(ops, prompts):

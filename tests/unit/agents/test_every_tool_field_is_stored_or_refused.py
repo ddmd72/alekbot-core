@@ -58,6 +58,7 @@ NOTES_FILE = "tests/unit/agents/test_notes_agent_tool_fields_e2e.py"
 TASKS_FILE = "tests/unit/agents/test_tasks_agent_tool_fields_e2e.py"
 SMART_FILE = "tests/unit/agents/core/test_smart_local_tools_e2e.py"
 DRIVE_FILE = "tests/unit/agents/test_drive_agent_tool_fields_e2e.py"
+DRIVE_NOTES_FILE = "tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py"
 # Keyed by `<surface>:<tool>` first, then by `<surface>`.
 SURFACE_FILES: Dict[str, str] = {
     "consolidation": CONSOLIDATION_FILE,
@@ -68,6 +69,7 @@ SURFACE_FILES: Dict[str, str] = {
     "delegate:manage_user_tasks": TASKS_FILE,
     "smart_local": SMART_FILE,
     "drive": DRIVE_FILE,
+    "drive_notes": DRIVE_NOTES_FILE,
     "delegate:work_with_drive_files": DRIVE_FILE,
 }
 

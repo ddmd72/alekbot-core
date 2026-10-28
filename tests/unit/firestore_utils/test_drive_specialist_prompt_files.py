@@ -10,10 +10,16 @@ import re
 import pytest
 
 from firestore_utils import snapshot_serializer as serializer
+from src.domain.drive_note import NOTE_REF_PREFIX
+from src.domain.drive_note_tool_texts import drive_note_tool_declarations
 from src.domain.drive_tool_texts import drive_tool_declarations
+from src.domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
+from src.infrastructure.agent_manifest import Intent
 
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "prompts_snapshot")
-TOKENS = ("COGNITIVE_PROCESS_DRIVE", "PROTOCOL_DRIVE_SEARCH", "OUTPUT_FORMAT_DRIVE")
+# Reviewer edit (U2-8, DRIVE_SPECIALIST_RFC §9.3 A1): the notes change adds PROTOCOL_DRIVE_NOTES to the drive profile
+# (order 25, non-overridable), so it is one of the specialist's prompt files and every check here applies to it.
+TOKENS = ("COGNITIVE_PROCESS_DRIVE", "PROTOCOL_DRIVE_SEARCH", "PROTOCOL_DRIVE_NOTES", "OUTPUT_FORMAT_DRIVE")
 
 
 def _read(*parts):
@@ -54,7 +60,10 @@ def test_the_profile_and_the_blueprint_fit_together():
     assert set(profile["tokens"]) == set(TOKENS)
     assert all(t["non_overridable"] for t in profile["tokens"].values())
     classes = [_token(name)["class"] for name in sorted(TOKENS, key=lambda n: profile["tokens"][n]["order"])]
-    assert classes == blueprint["class_order"] == ["cognitive_process", "protocols", "output_format"]
+    # two protocols tokens now (search, then notes): the profile's order still walks the blueprint's classes in order
+    assert classes == ["cognitive_process", "protocols", "protocols", "output_format"]
+    assert list(dict.fromkeys(classes)) == blueprint["class_order"] == ["cognitive_process", "protocols",
+                                                                        "output_format"]
 
 
 _SMART_ERA = ("drive_query", "drive_folder", "drive_kind", "drive_date", "drive_deleted", "search_files_in_drive",
@@ -74,16 +83,24 @@ _STATE_KEYS = {"drive_state", "user_message", "file_contents"}   # the drive_sta
 # A key of the token's own structure (`name {`, `name: "…"`, `name: [`) is the token's, not a tool or a parameter.
 # Reviewer (owner decision 2026-10-28): read from the tokens instead of a fixed list, so a rewrite may rename its blocks.
 _KEY = re.compile(r'(?m)^\s*([a-z]+(?:_[a-z]+)+)\s*(?:\{|:\s*["\[])')
+# Reviewer edit (U2-8): the note rules name, on purpose, the note ref's prefix and what the specialist must tell apart
+# from a note without having it (DRIVE_FILE_NOTES_RFC §4.1; U2 re-home list U2-8: "not propose_memory_facts; reminders
+# go to manage_self_reminders"; a call's commission comes through ask_alek / tell_alek). Each is taken from its real
+# declaration, so a rename breaks this test, not the prompt.
+_REF_PREFIXES = {NOTE_REF_PREFIX.rstrip(":")}
+_NAMED_ELSEWHERE = {PROPOSE_MEMORY_FACTS_TOOL, Intent.MANAGE_SELF_REMINDERS, Intent.ASK_ALEK,
+                    Intent.TELL_ALEK}
 
 
 def test_every_identifier_in_the_tokens_is_a_tool_a_parameter_or_a_block_key():
-    declarations = drive_tool_declarations()
+    # Reviewer edit (U2-8): the note tools are the specialist's own (U2 design §4.3), declared by drive_note_tool_texts
+    declarations = drive_tool_declarations(extra=drive_note_tool_declarations(writes=True))
     tools = {d["name"] for d in declarations}
     params = {p for d in declarations for p in d["parameters"]["properties"]}
     body = "\n".join(_token(name)["content"] for name in TOKENS)
     identifiers = set(re.findall(r"(?<![\w.])[a-z]+(?:_[a-z]+)+(?![\w])", body))
     block_keys = set(_KEY.findall(body))
-    assert identifiers - tools - params - block_keys - _STATE_KEYS == set()
+    assert identifiers - tools - params - block_keys - _STATE_KEYS - _REF_PREFIXES - _NAMED_ELSEWHERE == set()
 
 
 # Reviewer: test_the_decided_rules_are_word_for_word and test_a_missing_file_contents_item_is_not_reported_as_not_done

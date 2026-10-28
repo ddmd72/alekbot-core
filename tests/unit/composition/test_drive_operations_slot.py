@@ -21,7 +21,7 @@ def _ctx() -> _UserContext:
 def _factory(**over) -> SimpleNamespace:
     fields = dict(file_conversion_service=MagicMock(), file_storage=MagicMock(), notification_service=MagicMock(),
                   user_drive_service=MagicMock(), localization=MagicMock(), language_service=MagicMock(),
-                  drive_search_service=MagicMock())
+                  drive_search_service=MagicMock(), drive_note_service=None)
     fields.update(over)
     fake = SimpleNamespace(**fields)
     fake._drive_operations = lambda ctx: UserAgentFactory._drive_operations(fake, ctx)

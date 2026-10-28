@@ -1,5 +1,5 @@
 """G3 can run the branch's prompt files and pick the specialist's provider (scripts/validation/drive_eval/g3_overrides.py):
-the overlay serves exactly the six snapshot files and every other id from the real repositories, a run without the flag
+the overlay serves exactly the seven snapshot files and every other id from the real repositories, a run without the flag
 wraps nothing, the provider and tier override changes a copy only, and the report says which setup ran."""
 
 import pytest
@@ -96,13 +96,13 @@ def service() -> PromptAssemblyService:
     return PromptAssemblyService(live, Blueprints(), Profiles(), AllowAll(), None, None)   # type: ignore[arg-type]
 
 
-def test_every_overlay_id_is_a_file_of_the_snapshot_and_there_are_six():
+def test_every_overlay_id_is_a_file_of_the_snapshot_and_there_are_seven():
     files = g3.overlay_files(SNAP)
-    assert len(files) == 6 and all(f.is_file() for f in files)
+    assert len(files) == 7 and all(f.is_file() for f in files)
     assert {f.stem for f in files} == {*g3.OVERLAY_TOKEN_IDS, "drive_agent_v1", "drive"}
 
 
-async def test_the_overlay_serves_the_six_ids_from_the_snapshot_and_every_other_id_from_the_real_repositories():
+async def test_the_overlay_serves_the_seven_ids_from_the_snapshot_and_every_other_id_from_the_real_repositories():
     svc = service()
     svc._assembled_cache["warm"] = "stale prompt"   # type: ignore[attr-defined]
 
@@ -115,7 +115,7 @@ async def test_the_overlay_serves_the_six_ids_from_the_snapshot_and_every_other_
     assert (await svc.token_repo.get(TokenId("PROTOCOL_QUICK_AGENT_SELECTION"))).content == "from firestore"
     drive = await svc.profile_repo.get_agent_profile("drive")
     assert drive.blueprint_id == "drive_agent_v1" and sorted(drive.tokens) == [
-        "COGNITIVE_PROCESS_DRIVE", "OUTPUT_FORMAT_DRIVE", "PROTOCOL_DRIVE_SEARCH"]
+        "COGNITIVE_PROCESS_DRIVE", "OUTPUT_FORMAT_DRIVE", "PROTOCOL_DRIVE_NOTES", "PROTOCOL_DRIVE_SEARCH"]
     assert (await svc.profile_repo.get_agent_profile("smart")).blueprint_id == "smart_firestore"
     assert (await svc.blueprint_repo.get("drive_agent_v1")).id == "drive_agent_v1"
     assert (await svc.blueprint_repo.get("other_v1")).id == "other_v1"

@@ -29,9 +29,10 @@ CLIENT_PARAMS: frozenset = frozenset({"db", "client", "firestore_client", "stora
 # derives from a call of one of these (or of a local subclass), directly or through a name or attribute assigned from it,
 # a fixture that returns it, or a parameter annotated with it. `EvalDb` is `tests/support/firestore_eval.py` (and the
 # drive suites' own copy in `tests/unit/adapters/firestore_drive_eval_fakes.py`); `NameAwareDb` is that copy with
-# document-name awareness; `FactStore` wraps an `EvalDb`; `FakeGcs` is `tests/support/gcs_fake.py`; `FailingTasksClient` is the
-# Cloud Tasks client of `tests/support/redelivery_world.py`.
-CLIENT_FAKES: frozenset = frozenset({"EvalDb", "NameAwareDb", "FactStore", "FakeGcs", "FailingTasksClient"})
+# document-name awareness; `NoteDb` is that copy with the drive notes' versions subcollection
+# (`tests/unit/adapters/firestore_drive_note_fakes.py`); `FactStore` wraps an `EvalDb`; `FakeGcs` is `tests/support/gcs_fake.py`;
+# `FailingTasksClient` is the Cloud Tasks client of `tests/support/redelivery_world.py`.
+CLIENT_FAKES: frozenset = frozenset({"EvalDb", "NameAwareDb", "NoteDb", "FactStore", "FakeGcs", "FailingTasksClient"})
 
 # Names that stand for a mock. A construction whose arguments derive from one of these and from no fake is refused, and so is a
 # helper that assigns one to an attribute of the store (`adapter._client = MagicMock()`); `patch(target)` and `patch.object(o, n)`
@@ -119,6 +120,7 @@ KITS: Dict[str, Tuple[str, ...]] = {
     # reference and the adapter; the index repository's parity suite does the same for the v2 methods)
     _STORE + "firestore_drive_mirror_repo.FirestoreDriveMirrorRepository": (_A + "test_drive_mirror_repo_contract.py",),
     _STORE + "firestore_drive_index_repo.FirestoreDriveIndexRepository": (_A + "test_drive_index_v2_parity.py",),
+    _STORE + "firestore_drive_note_repo.FirestoreDriveNoteRepository": (_A + "test_drive_note_repo_contract.py",),
 }
 
 ALLOWLIST_FILE = REPO / "tests" / "unit" / "adapters" / "stateful_store_allowlist.txt"
