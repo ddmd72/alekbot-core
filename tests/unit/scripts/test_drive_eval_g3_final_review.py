@@ -3,7 +3,8 @@
 - only a successful search counts as searched: a refused call (no words, a bad filter) is not a search;
 - `date_in_query` holds only when the case's ISO date is one of drive_query's exact terms: a dropped date is a miss;
 - the negatives have a bar too (the Wilson upper bound of the recorded negative rate), and bars without it are refused;
-- a case run never makes more than SEARCH_CALL_CEILING search calls;
+- a case run over SEARCH_CALL_CEILING search calls is reported in search_discipline, never a hard failure (owner,
+  2026-10-28, specialist era);
 - a case run as a user whose drive search is off searches at most once (no retry after the off result)."""
 import json
 from pathlib import Path
@@ -11,8 +12,8 @@ from pathlib import Path
 import pytest
 
 from scripts.validation.drive_eval.smart_dry_run import (
-    SEARCH_CALL_CEILING, AsEvalUser, G3Error, expectation_met, hard_failures, judge, make_g3_bars, score, searched,
-    validate_g3, wilson_upper_bound,
+    SEARCH_CALL_CEILING, AsEvalUser, G3Error, expectation_met, hard_failures, judge, make_g3_bars, score, search_discipline,
+    searched, validate_g3, wilson_upper_bound,
 )
 from src.domain.drive_search import STATUS_DISABLED, DriveSearchRequest
 
@@ -92,9 +93,12 @@ def _row(ops, **kw):
     return {"id": "c1", "repeat": 0, "calls": [], "ops": ops, **kw}
 
 
-def test_more_search_calls_than_the_ceiling_is_a_hard_failure():
-    assert hard_failures([_row([_search(query="a")] * SEARCH_CALL_CEILING)]) == []
-    assert hard_failures([_row([_search(query="a")] * (SEARCH_CALL_CEILING + 1))])
+def test_more_search_calls_than_the_ceiling_is_reported_not_failed():
+    at = [_row([_search(query="a")] * SEARCH_CALL_CEILING)]
+    over = [_row([_search(query="a")] * (SEARCH_CALL_CEILING + 1))]
+    assert hard_failures(at) == [] and hard_failures(over) == []
+    assert search_discipline(at)["cases_over_search_ceiling"] == 0
+    assert search_discipline(over)["cases_over_search_ceiling"] == 1
 
 
 def test_a_repeated_search_after_drive_search_was_off_is_a_hard_failure():

@@ -1,14 +1,16 @@
 """G3 under Search v2 (USER_DRIVE_INDEXING_RFC §25.7): each case run counts its searches, opens and folder listings;
-hard checks with no tolerance — the incident-shaped case makes at most 2 searches, 2 opens and 1 listing and names the
-right files; a time-span case puts the span in the date fields; after a result with a D29 line Smart searches again
-at most once; no case run crawls (more than NO_CRAWL_DRIVE_CALLS drive reads). The answer check is scored as a rate."""
+hard checks with no tolerance — the incident-shaped case makes at most 2 opens and 1 listing and names the right files;
+a time-span case puts the span in the date fields; no case run crawls (more than NO_CRAWL_DRIVE_CALLS opens plus
+listings). Search counts (the incident case's 2 searches, re-searches after a D29 line) are reported in
+search_discipline, not failed (owner, 2026-10-28, specialist era). The answer check is scored as a rate."""
 import json
 from pathlib import Path
 
 import pytest
 
 from scripts.validation.drive_eval.smart_dry_run import (
-    NO_CRAWL_DRIVE_CALLS, G3Error, answer_ok, drive_counts, hard_failures, score, validate_g3,
+    D29_RESEARCH_MAX, NO_CRAWL_DRIVE_CALLS, G3Error, answer_ok, drive_counts, hard_failures, score, search_discipline,
+    validate_g3,
 )
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
@@ -46,7 +48,7 @@ def test_drive_counts_split_searches_opens_and_listings():
 
 @pytest.mark.parametrize("calls, fails", [
     ([search(query="rome"), open_(), open_()], False),
-    ([search(query="rome"), search(query="рим"), search(query="roma")], True),
+    ([search(query="rome"), search(query="рим"), search(query="roma")], False),   # searches: reported (owner 2026-10-28)
     ([search(query="rome"), open_(), open_(), open_()], True),
     ([search(query="rome"), listing(), listing()], True),
 ])
@@ -70,17 +72,25 @@ def test_a_time_span_case_needs_the_span_in_the_date_fields():
     assert any("date fields" in f for f in hard_failures([bad]))
 
 
-def test_after_a_d29_line_smart_searches_again_at_most_once():
+def test_re_searches_after_a_d29_line_are_reported_not_failed():
     once = _row([search(query="dog vaccination", d29=True), search(query="vaccination")])
     twice = _row([search(query="dog vaccination", d29=True), search(query="vaccination", d29=True),
                   search(query="dog")])
-    assert hard_failures([once]) == []
-    assert any("D29" in f for f in hard_failures([twice]))
+    assert hard_failures([once]) == [] and hard_failures([twice]) == []
+    assert search_discipline([once])["cases_over_d29_research_max"] == 0
+    report = search_discipline([twice])
+    assert report["research_after_d29"] == D29_RESEARCH_MAX + 1 and report["cases_over_d29_research_max"] == 1
 
 
 def test_no_case_run_crawls():
-    calls = [search(query="a")] + [open_(f"drive:{i}") for i in range(NO_CRAWL_DRIVE_CALLS)]
-    assert any("crawl" in f for f in hard_failures([_row(calls)]))
+    # the bar counts opens plus listings together (searches do not count): one over it, mixed, crawled; at it, not
+    opens = NO_CRAWL_DRIVE_CALLS // 2
+    over = [search(query="a")] + [open_(f"drive:{i}") for i in range(opens)] + [
+        listing() for _ in range(NO_CRAWL_DRIVE_CALLS + 1 - opens)]
+    at = [search(query="a")] + [open_(f"drive:{i}") for i in range(opens)] + [
+        listing() for _ in range(NO_CRAWL_DRIVE_CALLS - opens)]
+    assert any("crawl" in f for f in hard_failures([_row(over)]))
+    assert not any("crawl" in f for f in hard_failures([_row(at)]))
 
 
 @pytest.mark.parametrize("answer, groups, ok", [
