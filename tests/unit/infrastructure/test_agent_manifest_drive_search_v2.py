@@ -33,13 +33,10 @@ def test_no_new_field_and_no_mode():
 def test_the_capability_names_document_types_and_the_tiers():
     # Reviewer edit at the cut: Smart's one drive intent offers the document-type search in the RFC's words
     # (DRIVE_SPECIALIST_RFC §4.1, "by what a file is"), the searcher's `query` names the types (D25), and the tiers
-    # reach both halves: the specialist's token and Smart's tiers reading line (§5.7, §7.3)
-    from pathlib import Path
+    # reach both halves: the specialist's token and Smart's tiers reading line (§5.7, §7.3). Reviewer (owner decision
+    # 2026-10-28): only Smart's half is pinned now; the token's wording is tuned on evals.
     from src.domain import drive_answer_texts as t
     from src.infrastructure.agent_manifest import DRIVE_SPECIALIST
     assert "by what a file is" in DRIVE_SPECIALIST.capability_descriptions[Intent.WORK_WITH_DRIVE_FILES]
     assert "'tickets', 'receipts', 'contracts'" in _SCHEMA["query"]
-    token = (Path(__file__).resolve().parents[3] / "prompts_snapshot" / "tokens" / "system"
-             / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(encoding="utf-8")
     assert "'Related by meaning only' lines are guesses" in t.R_TIERS
-    assert "'Related by meaning only' lines are guesses" in token

@@ -33,23 +33,10 @@ def _drive_block(body):
     raise AssertionError("drive_specialist block is not closed")
 
 
-def _token_body():
-    """The specialist's half of the former drive-search skill: the PROTOCOL_DRIVE_SEARCH token's content."""
-    from pathlib import Path
-    return (Path(_ROOT) / "prompts_snapshot" / "tokens" / "system" / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(
-        encoding="utf-8").split("\n---\n", 1)[1]
-
-
 def _reading_lines():
     """Smart's half: every reading line a drive answer can carry (src/domain/drive_answer_texts.py)."""
     from src.domain import drive_answer_texts as t
     return "\n".join(v for k, v in vars(t).items() if k.startswith("R_") and isinstance(v, str))
-
-
-def _skill_body():
-    # the drive-search system skill is gone (DRIVE_SPECIALIST_RFC §5.7): its rules are the specialist's
-    # PROTOCOL_DRIVE_SEARCH token and Smart's reading lines (src/domain/drive_answer_texts.py)
-    return "\n".join([_token_body(), _reading_lines()])
 
 
 def test_smarts_profile_assigns_this_token():

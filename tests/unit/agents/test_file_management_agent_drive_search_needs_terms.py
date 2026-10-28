@@ -60,8 +60,7 @@ async def test_name_words_or_any_filter_is_enough(search, payload):
 def test_the_query_field_description_says_it_is_required_and_what_goes_in_it():
     # Reviewer edit at the cut (DRIVE_SPECIALIST_RFC §7.6, §8.1): the field is the specialist's `search_drive.query`;
     # field names become parameter names, and the intent prefix and the "`query` field is not read" clause go (§7.6).
-    # Today's intent sentence on filter-only requests moves to the specialist's PROTOCOL_DRIVE_SEARCH, renamed.
-    from pathlib import Path
+    # Reviewer (owner decision 2026-10-28): the PROTOCOL_DRIVE_SEARCH assertion went (no specialist-token wording pins).
     from src.domain import drive_tool_texts as tt
     text = tt.QUERY
     assert "REQUIRED unless the request is filter-only" in text
@@ -72,9 +71,6 @@ def test_the_query_field_description_says_it_is_required_and_what_goes_in_it():
     assert "A file format goes in kind" in text
     assert "goes in date_from / date_to, not in the words" in text
     assert "no type words" not in text.lower() and "Dates written inside the document go in query" not in text
-    token = (Path(__file__).resolve().parents[3] / "prompts_snapshot" / "tokens" / "system"
-             / "PROTOCOL_DRIVE_SEARCH.groovy").read_text(encoding="utf-8").split("\n---\n", 1)[1]
-    assert "query is required unless the request is filter-only" in token
 
 
 def test_the_eval_refuses_what_the_agent_refuses():

@@ -7,10 +7,10 @@ from tests.unit.firestore_utils.test_protocol_drive_guidance import _drive_block
 
 
 def _block():
-    # the rules these tests pin are the specialist's PROTOCOL_DRIVE_SEARCH token and Smart's reading lines now
-    # (DRIVE_SPECIALIST_RFC §5.7)
-    from tests.unit.firestore_utils.test_protocol_drive_guidance import _skill_body
-    return _skill_body()
+    # the rules these tests pin are Smart's reading lines (DRIVE_SPECIALIST_RFC §5.7). Reviewer (owner decision
+    # 2026-10-28): the specialist's PROTOCOL_DRIVE_SEARCH half is no longer read; its wording is tuned on evals.
+    from tests.unit.firestore_utils.test_protocol_drive_guidance import _reading_lines
+    return _reading_lines()
 
 
 def test_sums_open_the_file_then_compute_from_the_opened_text():
@@ -21,8 +21,8 @@ def test_sums_open_the_file_then_compute_from_the_opened_text():
 
 def test_the_dates_line_is_the_retry_rule_only():
     block = _block()
-    # final review F5-4: the retry fires when a date-filtered search does not show the file, not only on zero results
-    assert "If a date-filtered search does not show the file asked for, search again without the filter." in block
+    # Reviewer (owner decision 2026-10-28): the retry sentence (final review F5-4) lives only in the specialist's token,
+    # so its positive assertion went; the date subtleties stay out of Smart's reading lines.
     for subtlety in ("the model read", "document's own date", "file's date", "drive_date_from"):
         assert subtlety not in block, subtlety
 
