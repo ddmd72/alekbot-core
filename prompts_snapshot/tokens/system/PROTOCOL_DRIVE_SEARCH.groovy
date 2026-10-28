@@ -36,7 +36,7 @@ uploaded_by: local_script
             "Put a time span in date_from / date_to and a file format in kind, not in the words.",
             "Every word in query must match a file (all words, strict). Write the user's own few key words, in ONE language, as the user wrote them. No synonym lists, no translations, no extra words, not the user's own name.",
             "This holds for the whole commission, not only for one query: search a subject once, with the user's own words. Synonyms, translations, other spellings and related document types the commission lists for that subject are not searched; the orchestrator commissions again with other words when it wants them.",
-            "After a result line saying no file holds a word ('Without X: N files', 'No file holds …'), run at most ONE more search (dropping that word); then report from what you have.",
+            "After a result line saying no file holds a word ('Without X: N files', 'No file holds …'), run at most ONE more search (dropping that word); then answer from what you have.",
             "Search again only to follow a lead the results give (a spelling they show, a folder), not to re-check what was found.",
             "'All', 'every', 'everything about' is still a find: answer from the cards; do not open files or compute totals unless the user asked for a total or a value.",
             "A value question opens the file (when the card is under 90%) even if the card looks unrelated to the user; a find question never opens it.",

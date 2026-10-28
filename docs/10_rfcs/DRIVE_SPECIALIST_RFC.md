@@ -34,6 +34,7 @@ The body above is not rewritten; where it differs from these lines, these lines 
 | 4 | The new modules (`drive_operations`, `drive_tools`, `drive_agent`, `drive_answer`, `drive_pass_through`, `drive_file_contents`) are registered for the weekly mutation run (`tests/support/mutation_targets.py`). |
 | 5 | The G3 eval (`smart_dry_run.py`) can run the branch's prompt files before any upload and pick the specialist's provider and tier (`--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier`). |
 | 6 | G3's `--record` writes no bars while today's Smart fails a hard check (verdict "regression", nothing recorded); a before/after comparison is read from the two reports. |
+| 7 | The drive-search skill's search discipline reaches both sides again (G3 found the specialist fanning out one search per synonym or translation Smart listed): Smart's `query_language` exception and the manifest ask for the user's own few key words in one language (§4.1, §4.3 blocks updated); the find sentence regains 'show me' and 'everything about X'; the specialist's tokens state that a subject is searched once with the user's words and that a list of alternatives is not a list of searches (§2.3.11). No cap was added. |
 
 ### 0.0.1 rev 4.3 → rev 4.4 (deltas from the cross-cutting review round of the implementation plan)
 
@@ -285,7 +286,7 @@ Intent.WORK_WITH_DRIVE_FILES: (
     "written inside (a subject, a phrase, a number, an amount), type, date, folder, photo details and place; deleted "
     "files only when the user asks about them (transcripts of deleted recordings and the notes on deleted files). Use it "
     "when the answer may be in the user's files, and before saying a file is not there. "
-    "A find ('find', 'do I have', 'where is', 'which files') is answered from the search results alone; ask to open a "
+    "A find ('find', 'show me', 'do I have', 'where is', 'which files', 'everything about X') is answered from the search results alone; ask to open a "
     "file only when the user wants something written inside it. "
     "It also opens files (a recording opens as its transcript; the recording itself comes as a link when the user asks "
     "for it), lists folders, keeps a copy of a chat file, a document you delivered, a workspace copy or a skill file, "
@@ -350,7 +351,7 @@ context_schemas={Intent.WORK_WITH_DRIVE_FILES: {
 Line 26, edited in place, so the exception sits where the rule sits (research 03 A.2: with the exception only in the
 description, the generic rule wins: nearly all Tasks commissions were English):
 ```
-query_language: "Always English — regardless of the user's input language — except the words to find on the drive in work_with_drive_files: quote them as the user wrote them."
+query_language: "Always English — regardless of the user's input language — except the words to find on the drive in work_with_drive_files: quote the user's own few key words, in ONE language, as the user wrote them — no synonym lists, no translations, no extra words."
 ```
 
 Lines 111–119, the block:

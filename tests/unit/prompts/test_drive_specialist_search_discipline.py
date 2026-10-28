@@ -23,11 +23,9 @@ def test_the_whole_commission_searches_a_subject_once():
     assert text.index("not the user's own name.") < text.index("This holds for the whole commission")
 
 
-def test_d29_rule_reports_instead_of_answering():
+def test_d29_rule_moves_verbatim_from_the_skill():
     text = _token("PROTOCOL_DRIVE_SEARCH")
-    assert "then report from what you have." in text
-    assert "then answer from what you have." not in text
-
+    assert "then answer from what you have." in text   # RFC §7.6: skill sentences move word for word
 
 def test_parallel_searches_are_for_different_subjects():
     text = _token("COGNITIVE_PROCESS_DRIVE")
