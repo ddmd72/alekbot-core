@@ -23,14 +23,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 
-from src.agents.file_management_agent import FileManagementAgent
-from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.drive_card import effective_date
 from src.domain.drive_index_params import TICK_DEADLINE_S
 from src.domain.email import OAuthCredentials
 from src.domain.user_drive import DriveNotConnectedError, DriveResyncRequired, DriveThrottled
-from src.infrastructure.agent_manifest import Intent
-from src.ports.file_storage_port import FileStoragePort
+from src.domain.drive_outcome_class import OutcomeClass
+from src.infrastructure.drive_operations import DriveOperations
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.services.drive_indexing_service import _PER_ITEM_ERRORS
 from src.services.file_conversion_service import FileConversionService
@@ -234,37 +232,30 @@ class TestTransportErrors:
         assert logged and "SECRETISH" not in logged
         assert "SECRETISH" not in str(exc.value)   # the tick logs the exception text too
 
-    @pytest.mark.parametrize("intent,payload", [
-        (Intent.LIST_FILES_IN_DRIVE, {"folder": ""}),
-        (Intent.DELETE_FILE_FROM_DRIVE, {"file_ref": "drive:X!1"}),   # a shielded mutation: never "still running"
+    @pytest.mark.parametrize("method,args,kwargs", [
+        ("list_folder", ("",), {}),
+        ("delete", ("drive:X!1",), {"wait_s": 100.0}),   # a shielded mutation: never "still running"
     ], ids=["read", "mutation"])
     @pytest.mark.parametrize("error,answer", [
         (aiohttp.ServerDisconnectedError(), "Drive operation failed: OSError."),
         (asyncio.TimeoutError(), "Drive operation failed: TimeoutError."),
     ], ids=["transport", "timeout"])
-    async def test_step1_caller_answers_failed_not_disconnected(self, intent, payload, error, answer):
-        # Real adapter → real UserDriveService → FileManagementAgent (the Step 1 chain).
+    async def test_step1_caller_answers_failed_not_disconnected(self, method, args, kwargs, error, answer):
+        # Real adapter → real UserDriveService → DriveOperations (the Step 1 chain, moved there at the cut).
         adapter = _adapter()
         localization = MagicMock()
         language = AsyncMock()
-        agent = FileManagementAgent(
-            config=AgentConfig(agent_id="file_management_agent_u1", agent_type="file_management",
-                               capabilities={}, metadata={}),
-            conversion_service=AsyncMock(spec=FileConversionService), storage=AsyncMock(spec=FileStoragePort),
-            notification=AsyncMock(), drive_service=UserDriveService(adapter), localization=localization,
-            language_service=language,
+        ops = DriveOperations(
+            conversion_service=AsyncMock(spec=FileConversionService), notification=AsyncMock(),
+            drive_service=UserDriveService(adapter), localization=localization, language_service=language,
         )
-        msg = MagicMock(spec=AgentMessage)
-        msg.task_id = "t1"
-        msg.intent = AgentIntent.QUERY
-        msg.payload = {"intent": intent, **payload}
-        msg.context = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
+        context = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
         with patch("aiohttp.ClientSession", return_value=_session([error])):
-            resp = await agent.execute(msg)
-        assert resp.status == AgentStatus.FAILED
-        assert resp.error.startswith("Drive operation failed")
-        assert resp.error == answer
-        assert "not connected" not in resp.error
+            outcome = await getattr(ops, method)(context, "u1", *args, **kwargs)
+        assert outcome.cls is OutcomeClass.FAILED and not outcome.success
+        assert outcome.text.startswith("Drive operation failed")
+        assert outcome.text == answer
+        assert "not connected" not in outcome.text
 
 
 # -- A bounded per-call timeout ---------------------------------------------------

@@ -121,9 +121,9 @@ class TestFetchBinary:
         mock_conversion.resolve_bytes = AsyncMock(return_value=b"\x89PNG\r\n\x1a\n")
         msg = _make_message(Intent.OPEN_FILE, file_ref="photo.png")
 
-        with patch("src.agents.file_management_agent.tempfile") as mock_tempfile, \
-             patch("src.agents.file_management_agent.aiofiles") as mock_aiofiles, \
-             patch("src.agents.file_management_agent.os") as mock_os:
+        with patch("src.infrastructure.drive_operations.tempfile") as mock_tempfile, \
+             patch("src.infrastructure.drive_operations.aiofiles") as mock_aiofiles, \
+             patch("src.infrastructure.drive_operations.os") as mock_os:
             mock_tempfile.mkstemp.return_value = (5, "/tmp/photo_abc.png")
             mock_aio_ctx = AsyncMock()
             mock_aiofiles.open.return_value.__aenter__ = mock_aio_ctx
@@ -142,9 +142,9 @@ class TestFetchBinary:
         mock_conversion.resolve_bytes = AsyncMock(return_value=b"%PDF-1.4")
         msg = _make_message(Intent.OPEN_FILE, file_ref="document.pdf")
 
-        with patch("src.agents.file_management_agent.tempfile") as mock_tempfile, \
-             patch("src.agents.file_management_agent.aiofiles") as mock_aiofiles, \
-             patch("src.agents.file_management_agent.os") as mock_os:
+        with patch("src.infrastructure.drive_operations.tempfile") as mock_tempfile, \
+             patch("src.infrastructure.drive_operations.aiofiles") as mock_aiofiles, \
+             patch("src.infrastructure.drive_operations.os") as mock_os:
             mock_tempfile.mkstemp.return_value = (5, "/tmp/doc_abc.pdf")
             mock_aio_ctx = AsyncMock()
             mock_aiofiles.open.return_value.__aenter__ = mock_aio_ctx

@@ -346,7 +346,9 @@ def build_tool_turn(response: "LLMResponse", tool_results: List[Any]) -> List[Me
     Args:
         response: LLMResponse with tool_calls and raw_content.
         tool_results: List of tuples, one per tool call in execution order.
-            Each tuple: (ToolCall, result_string) or (ToolCall, result_string, file_data_dict).
+            Each tuple: (ToolCall, result_string) or (ToolCall, result_string, file_data), where
+            file_data is one file dict or a list of them (several vision files of one tool
+            result, in order: one file part each, right after its tool_response).
 
     Returns:
         List of Message objects to append to the conversation history.
@@ -371,8 +373,8 @@ def build_tool_turn(response: "LLMResponse", tool_results: List[Any]) -> List[Me
         if tc.thought_signature:
             tool_response["tool_use_id"] = tc.thought_signature
         tool_parts.append(MessagePart(tool_response=tool_response))
-        if file_data:
-            tool_parts.append(MessagePart(file_data=file_data))
+        files = file_data if isinstance(file_data, list) else [file_data] if file_data else []
+        tool_parts.extend(MessagePart(file_data=f) for f in files if f)
     messages.append(Message(role="user", parts=tool_parts))
     return messages
 

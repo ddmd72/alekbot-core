@@ -59,6 +59,8 @@ class QuickResponseAgent(BaseAgent):
     """
 
     _descriptor = QUICK_RESPONSE
+    # The specialists it runs (the drive specialist) finish inside its own timeout (DRIVE_SPECIALIST_RFC §5.6).
+    SETS_RUN_DEADLINE = True
 
     CONTEXT_WINDOW = QUICK.context_window
     MAX_DELEGATION_TURNS = QUICK.max_delegation_turns

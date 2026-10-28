@@ -187,7 +187,8 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | DocGenerator | BALANCED | `generate_docx_code` (internal) | Node.js script → DOCX |
 | PdfGenerator | BALANCED | `create_pdf` | HTML+CSS → Puppeteer → PDF |
 | HtmlPageGenerator | PERFORMANCE (**Grok**) | `create_html_page` | full HTML+CSS+JS; Unsplash placeholders |
-| FileManagement | zero-LLM | `open_file`, `delete_file`, 7 × `*_drive`, `search_files_in_drive` | GCS uploads + the user's drive and its opt-in index |
+| FileManagement | zero-LLM | `open_file`, `delete_file` | chat uploads, delivered documents, `skill:` / `workspace:` refs; opens a `drive:` ref leniently |
+| Drive (`DriveAgent`) | BALANCED (Claude `claude-sonnet-5-5`, adaptive thinking medium; fallback OpenAI `gpt-6.1-sol` only when Claude is the primary; a global `provider_preference: openai` moves it to the rejected `gpt-6-luna`, so pin `agent_providers["drive"]="claude"`) | `work_with_drive_files` | the user's drive: one commission, local CRUD tools over the user's `DriveOperations`; every read reaches Smart verbatim |
 | Notes / Self-Reminders | PERFORMANCE (OpenAI) | `manage_self_reminders` | autonomous deferred firing; optional code-bound `workspace_file` |
 | Tasks | — | `manage_user_tasks` | MicrosoftToDo (GoogleTasks frozen) |
 | Consolidation | PERFORMANCE (Claude) | — | background memory formation (see below) |
@@ -711,22 +712,41 @@ in **bytes** — NAME_MAX is 255 bytes and a Cyrillic character costs 2. See
 lives at most 5 minutes per provider key, so a disconnect reaches every instance within 5 minutes. The model and
 history see only `drive:<opaque id>` refs and `[Drive: …]` labels with decoded paths — no provider name. Graph
 paths came back raw in the spike; the adapter unquotes (no-op on raw) and strips both `/drive/root:` and
-`/drives/<id>/root:` prefixes. Seven Step 1 drive intents on `FILE_MANAGEMENT` (`save_file_to_drive`, `list_files_in_drive`,
-`open_file_from_drive`, `move_file_in_drive`, `create_folder_in_drive`, `update_file_in_drive`,
-`delete_file_from_drive`), store in the name; mutations refuse a ref from the other store, reads are lenient;
-`save_file_to_drive` refuses a `drive:` source and also writes text the bot composed (`text`+`name`: md/txt/csv/json/yaml/html/svg/xml, UTF-8, ≤ 5 MiB, RFC §4.7.1). `FILE_MANAGEMENT.prefetch_file_ref=False` (the coordinator no longer
-pre-downloads its `file_ref`; a `DriveNotConnectedError` during another specialist's pre-fetch logs WARNING).
+`/drives/<id>/root:` prefixes. **Smart reaches the drive through one intent, `work_with_drive_files`
+(`docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`, `decisions/drive_specialist.md`):** a natural-language commission plus one
+field, `file_contents` (texts to save or append, bound by code, never retyped). The `DriveAgent` specialist does the
+work in its own loop (≤ 6 turns, 150 s soft deadline under the caller's budget) through local CRUD tools
+(`search_drive`, `search_deleted_recordings_and_notes`, `list_folder`, `open_drive_file`, `get_recording_link`,
+`copy_file_to_drive`, `save_text_file`, `create_folder`, `move_file`, `append_to_file`, `replace_file_content`,
+`delete_drive_item`, `report_to_orchestrator`), each calling one method of the user's `DriveOperations`
+(`src/infrastructure/drive_operations.py`, FileManagement's former drive code, one instance per user shared with
+FileManagement: lock, shield, receipts and late-failure notices such as `🗑️ Deleted from the drive: {path}` and
+`⚠️ Deleting {path} did not complete.` (`src/locales/*.py`), both sent literally through `send_literal`, so a path is never
+formatted, linked or read as a mention). Code builds the answer: `Drive result: <status>`, a
+"What to do" line, op lines, reading lines, then every read block verbatim in run order (vision files as a list); the
+specialist's model never sees an opened body (a plain-text final reply beside `report_to_orchestrator` fills an empty
+report note). The 8 drive intents it replaced are gone (a stale text naming one gets
+the coordinator's unknown-intent refusal). **Searches per commission:** no cap in production (the owner dropped a
+3-search cap): ≤ 6 turns, one re-search after a "Without X" line, an identical search skipped by code. A subject is
+searched once, in the user's words; synonyms and translations are not searched (a list of alternatives is not a list of
+searches, RFC rev 4.5 #7, `execute_as_given` in `COGNITIVE_PROCESS_DRIVE`). G3 fails a case run with more than 3 search
+calls (`SEARCH_CALL_CEILING`): an eval check, not a production cap. Store rules: mutations refuse a ref from the other store, reads are lenient;
+copying refuses a `drive:` source; a composed text is md/txt/csv/json/yaml/html/svg/xml, UTF-8, ≤ 5 MiB (RFC §4.7.1).
+`prefetch_file_ref=False` on both FileManagement and the specialist (a `DriveNotConnectedError` during another
+specialist's pre-fetch logs WARNING).
 `UserDriveService`: case-insensitive folders, saves never overwrite (same bytes → existing, else suffixed name,
 NFC-normalized comparison), append-only text edits, root protected, a move into the folder's own subtree and a rename
 onto a taken name ("A file with that name already exists there.") refused. Mutations of one user run one at a time under
-`asyncio.shield`; the agent has a 120 s timeout and waits 100 s, otherwise answers success-shaped "still running"
+`asyncio.shield`; a mutation waits at most 100 s (clamped to the specialist's deadline), otherwise answers success-shaped "still running"
 (check with a listing) — never a false "failed", but a provider `TimeoutError` inside a mutation is a failure;
-delete/replace post a localised `notify_raw` receipt, or a "did not complete" notice if they fail after "still running" was answered. Vision only for JPEG/PNG/GIF/WebP and PDF (HEIC refused). Refs
+delete/replace post a localised `notify_raw` receipt, or a "did not complete" notice if they fail after "still running" was answered;
+a still-running move, copy, save or append gets no later message, and a later change in the same commission is
+`not started: an earlier change in this request is still running`. Vision only for JPEG/PNG/GIF/WebP and PDF (HEIC refused). Refs
 survive turns via `history_context["drive_context"]` (full_text only, never consolidated). Provider search does not
 work inside the App Folder (spike A6), so finding files goes through our own index (below). The `Trivial_Exclusions`
 line that keeps file operations out of memory was applied to the live `CONSOLIDATION_TAXONOMY` on 2026-10-10 (dry
 run: leaks 3/3 → 1/3; RFC §4.12). Step 2 Slice 1 (metadata), Slice 2+4 (content, scans and images) and Search v2 are live (2026-10-14);
-§26 (card accuracy, capture, inaccessible files) is proposed; one extraction path (Slice 3), long audio/video transcripts and full editing are not.
+§26 (card accuracy, capture, inaccessible files) was deployed on 2026-10-19 (PRs #81–#84); one extraction path (Slice 3), long audio/video transcripts and full editing are not.
 - **Deep research copies (opt-in, 2026-10-14).** The Cabinet switch "Copy deep research reports to my drive"
   (`UserBotConfig.drive_copy_deep_research`, default off, `/api/drive/deep-research-copy`) is the consent. Only deep
   research reports are kept (no morning issues or email reviews; the media bucket's TTL is unchanged). Every deep
@@ -771,7 +791,7 @@ to the file (`failed` at 3); an edited reader-read file is re-read at most once 
 before any content work. Text passes a machine-text gate, is chunked (generation-fenced) and embedded. Audio and video
 are metadata-only unless the user's transcription is on (next paragraph). No rollback to the Slice 1 revision.
 
-**Transcripts of recordings (RFC §27; T1 live since 2026-10-21 for the owner only, $10 cap; the mirror folder T2 live since 2026-10-21 (owner); the summary T3 is not built).**
+**Transcripts of recordings (RFC §27; T1 live since 2026-10-21 for the owner only, cap lowered to $10 by `DRIVE_TRANSCRIBE_USD_CAP_DEV` under the code's $20; the mirror folder T2 live since 2026-10-21 (owner); the summary T3 is not built).**
 Audio and video are `Admission.TRANSCRIBE` (`POLICY_VERSION` 3; structure decisions compare `STRUCTURE_POLICY_SINCE` = 2, so the bump redoes no folder work).
 Not an extractor chain link: a **job with its own states on the record** (`transcript_state`: `none ready working waiting current held parked failed`), advanced by
 `DriveTranscriptStage` on the indexer across ticks — probe the Graph download URL, cut audio-only Opus windows (≈ 30 min, 60 s overlap) with ffmpeg in the
@@ -782,14 +802,14 @@ the indexer's kill switch `DRIVE_TRANSCRIBE_ENABLED` (a Cloud Build substitution
 (`transcribe` class, `TRANSCRIBE_USD_PER_MONTH` $20, no initial-build share): a whole file's estimate is **reserved** before its first window and settled at
 collection in the reservation's month; a file that does not fit is parked whole until next month; an optional `DRIVE_TRANSCRIBE_USD_CAP_DEV` can only lower the
 cap. Billing keeps the held `gemini-3.8-flash` price (≈ $0.16/audio hour, ≈ 125 h/month until 2027). No `prompt_content`/Logfire row per window (a batch is not a
-call). `open_file_from_drive` on a transcribed recording returns the transcript (`original: true` → a link). Rollout: the rollout notes (ops); levers: `docs/07_deployment/README.md` →
+call). Opening a transcribed recording returns the transcript (`get_recording_link` → a link). Rollout: the rollout notes (ops); levers: `docs/07_deployment/README.md` →
 "Standing levers"; the owner's map `docs/05_building_blocks/user_drive/README.md` §4.23; decision `decisions/drive_transcripts_t1.md`.
-**Mirror folder T2 (RFC §27.9, Δ183–Δ244; built on `feat/drive-transcripts-t2`, not deployed).** The indexer writes each transcript as `<name>.md` into a bot-owned
+**Mirror folder T2 (RFC §27.9, Δ183–Δ244; live since 2026-10-21, owner).** The indexer writes each transcript as `<name>.md` into a bot-owned
 **`_Transcripts`** folder at the App Folder root (D49: the same name in every language; fixed `_README.md`, `Archive`, `Long paths`), reconciled by `DriveTranscriptMirror`
 (ports only) as the **last step of `_work_off`**, with its own op/read/stamp budgets and a 45 s reserved tail. State lives in two collections **no purge deletes**:
 `{prefix}drive_mirror_roots` (which folder is the bot's, cursors, holds, loss marks) and the ledger `{prefix}drive_transcript_mirror` (key has no drive id; reads filter `drive_id`). **D48:** a deleted
 recording's file moves, after a complete round and 1 h, to `_Transcripts/Archive/<day>/`; the bot never deletes it, its store entry stays pinned
-(`delete_user_transcripts_except` keeps pinned keys in every purge), and only `search_files_in_drive` with `drive_deleted` reaches it (ledger-backed, works with drive search off). **Owner ruling 2026-10-21 (Δ241):** every `.md` in `_Transcripts`, active or archived, belongs to the bot and is overwritten by it (a rename or move inside is moved back; a custom version = copy elsewhere; deleting an archived file = forget, moving it out = the owner's copy; detached files keep a pinned copy and are overwritten the same way, Δ243). No mirror-only off switch: the stop lever is the user's flag or the kill switch, which also stops transcription.
+(`delete_user_transcripts_except` keeps pinned keys in every purge), and only the deleted-files search (`search_deleted_recordings_and_notes`) reaches it (ledger-backed, works with drive search off). **Owner ruling 2026-10-21 (Δ241):** every `.md` in `_Transcripts`, active or archived, belongs to the bot and is overwritten by it (a rename or move inside is moved back; a custom version = copy elsewhere; deleting an archived file = forget, moving it out = the owner's copy; detached files keep a pinned copy and are overwritten the same way, Δ243). No mirror-only off switch: the stop lever is the user's flag or the kill switch, which also stops transcription.
 **OQ-T10:** an indexing opt-out deletes nothing on the drive. Writes use `conflictBehavior=fail` with an intent recorded first and are checked to end under the current root; chat drive
 writes into the folder are refused (`UserDriveService` guard). Unexpected errors are charged per file and park it. **Deploy gate: the Δ217 composite indexes must be `READY`** before the
 T2 revision ships (a missing one leaves the owner's mirror idle; the tick goes on, Δ236, and no purge waits on one, Δ237). Rollback needs the queue paused and `_Transcripts` moved out of the App Folder. Scripts: `drive_transcript_sweep.py`
@@ -803,33 +823,34 @@ per-job states, a newest-first queue and per-agent backoff. Budgets are dollars 
 $3, profile $4, passages $20) in `{prefix}drive_model_usage` (kept by a purge) after a one-time $40 initial build.
 One normaliser (`drive_keys.py`) keys words as form sets (`w:`), one transliteration skeleton per word (`x:`/`xl:`,
 translation only), number terms (`n:`), entities (`e:` printed / `ef:` index spelling), D31 label names (`lw:`/`dw:`)
-and automatic words; a `KEYS_VERSION` bump re-keys from stored text. `search_files_in_drive` (SYNC) →
+and automatic words; a `KEYS_VERSION` bump re-keys from stored text. The specialist's `search_drive` →
 `DriveSearchService`: per query word, about / name / word / hint key streams; strict AND (an absent word blocks, with
 the D29 "Without X: N files" line; one lowest-idf word and >30 % common words may be missed, numbers never); files in
 tiers About / Mentioned in (exact), By translation / Labelled (automatic), Related by meaning only (≤ 3, relative
 z-floor `Z_RELATED` 2.5, uncalibrated); a coverage line names what was not searched or described; results in a
-nonce-tagged `<drive_document>` wrapper; reads only `drive_query` (a time span goes in the date fields). A sync state
+nonce-tagged `<drive_document>` wrapper; reads only the tool's `query` (a time span goes in the date fields). A sync state
 built by v1 (no `keys` in `applied_versions`) is gated (D30): no tick work, search answers "being rebuilt"; the rollout
-rebuilds every user (rollout notes, ops). Smart's drive guidance (incl. the `tiers` line and
-"find is answered from the results; open a file only for its contents") is the system skill `drive-search`
-(`src/skills/smart/drive-search/SKILL.md`, D32), loaded before the first drive search; the `drive_specialist` block of
-`PROTOCOL_AGENT_SELECTION` keeps only when to search the drive, the pointer and the untrusted-text line. Not in
-`SearchEnrichmentService`. **Files the bot cannot open** (RFC §26.2, D33; built on `feat/drive-card-accuracy`, not
-deployed): an item with its own permission list lacking the app's entry is listed by delta but 404s on every id call, so
+rebuilds every user (rollout notes, ops). The former `drive-search` skill (D32) is split by who
+acts on it (DRIVE_SPECIALIST_RFC §5.7): the search mechanics are the specialist's token `PROTOCOL_DRIVE_SEARCH`; the
+rules Smart needs to answer (tiers, find vs value, the 90 % rule, versions, document vs memory) reach Smart as reading
+lines code selects from the blocks (`src/domain/drive_answer_texts.py`, the `R_*` texts, chosen by
+`drive_answer.reading_lines`: changing one is a code deploy, while `PROTOCOL_DRIVE_SEARCH` is a Firestore upload); the `drive_specialist` block of `PROTOCOL_AGENT_SELECTION` keeps the intent, when
+to use the drive and the untrusted-text line, and `query_language` exempts the words to find. Not in
+`SearchEnrichmentService`. **Files the bot cannot open** (RFC §26.2, D33; deployed 2026-10-19, PRs #81–#84): an item with its own permission list lacking the app's entry is listed by delta but 404s on every id call, so
 `get_change` raises on a 404 (never a deletion) and the tick marks the record `inaccessible_since` (card and readable
 generation kept, no content work), re-reads it by id on an observation (≤ 1/h) or every 7 days, and only a tombstone
 deletes it; search shows an access line, list/open answer from the index (`access_note`), and the main service's fan-out
 sends one localized notice with the paths as an attached file (`inaccessible_notified_since` is fan-out-only, never in
-the tick's record writes). **Capture, accuracy, scene labels** (RFC §26.3–§26.13, D34–D40; same branch): every text-bearing
+the tick's record writes). **Capture, accuracy, scene labels** (RFC §26.3–§26.13, D34–D40; same deploy): every text-bearing
 file records how it was made (`capture`: scan / document photo / screenshot / digital, decided by code from the PDF's
 structure where it can, else by the model; keyed `cp:`/`cpa:`); each profiled card carries one `card accuracy: N%`
-(values graded `in_text` / `in_text_as` / `not_in_text`, nothing dropped, score never in the card text), and Smart's 90 %
-rule (open the file for a value below it, never for a find) lives only in the `drive-search` skill; triage gets the
+(values graded `in_text` / `in_text_as` / `not_in_text`, nothing dropped, score never in the card text), and the 90 %
+rule (open the file for a value below it, never for a find) is in `PROTOCOL_DRIVE_SEARCH` and in Smart's reading line; triage gets the
 photo's place and coordinates rounded to 3 decimals as a prior (D39) and returns `scene_labels` from a fixed 32 (`sl:`,
 D40). The migration gate key is now `accuracy`; the rebuild runs with no initial-build reset, under the monthly caps. Opt-out purges at once;
 lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/drive_index_rebuild.py`. Evals:
 `python -m scripts.validation.drive_eval` (G1/G2, v1 bars), `… drive_eval.search_v2_eval` (v2 families, offline by
-default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run` (owner-run, `bars_g3.json`). Decisions:
+default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run` (owner-run, paid, `--max-usd` required, a hard stop; bars in `bars_g3.json`, not recorded yet, so a run without `--record` ends "no bars"; drive writes stubbed by the class-level `dry_run_drive.DryRunDriveOperations`; `--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier` run the branch's prompt files and pick the specialist; `--record` writes no bars while Smart fails a hard check). **Before/after:** before = G3 on `main` with the Firestore prompts, after = G3 on the branch with `--prompts-from-snapshot`, both at the same `--repeats`; compare the two reports `scripts/memory/drive_g3/g3_<stamp>.json` (`scores`, `wall_p50_s`). The drive specialist eval `… drive_eval.specialist_ab` (owner-run, paid, `--max-usd`; `--replay-commissions` runs the specialist alone; `--compare <report> --compare-design today`; no `--prompts-from-snapshot`, so it needs the uploaded `drive` profile). Decisions:
 `decisions/drive_*.md`.
 
 **Per-channel sessions** — `session_id = f"{user_id}:{channel_id}"`, deterministic; each channel (Slack
@@ -1169,6 +1190,9 @@ the local file** — far faster and cheaper than repeated remote `gcloud logging
   `make logs-job`; `make logs-execution EXECUTION=<name>`
 - Drive indexer (`alek-bot-indexer-dev`, the `[DriveIndex]` tick lines): `make fetch-logs-indexer [K]` →
   `alek_debug_indexer.log`; `make logs-indexer`
+- Drive specialist (main service): `make fetch-logs`, then `grep '\[DriveAgent\]\|\[DriveOperations\]' alek_debug.log`
+  (one `[DriveAgent] user=<8> status= model= ops= turns= ms=` line per commission; the lines are listed in
+  `src/agents/CLAUDE.md` → Drive → Logs)
 
 ### Step 2 — Two data sources. Pick by what you need; do NOT conflate them.
 

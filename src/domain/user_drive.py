@@ -234,6 +234,11 @@ def drive_label(item: DriveItem) -> str:
     return f"[Drive: {item.path} ({format_size(item.size_bytes)}) ref={item.ref}]"
 
 
+# The one sentence a move with neither a folder nor a new name is refused with: UserDriveService raises it, and the
+# drive specialist's move tool says it before any call (DRIVE_SPECIALIST_RFC §8.1).
+MOVE_NEEDS_TARGET = "Give a destination folder, a new name, or both"
+
+
 def drive_context_entry(item: DriveItem) -> Dict[str, str]:
     """One entry of the `drive_context` history block (§4.3)."""
     return {"path": item.path or "/", "ref": item.ref}

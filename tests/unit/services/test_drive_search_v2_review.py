@@ -67,8 +67,10 @@ def test_m2_time_words_in_four_languages_are_not_concepts():
 
 
 def test_m2_the_date_fields_say_they_bound_the_expiry_date_for_what_expires():
-    from src.domain.drive_search_texts import DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION
-    for text in (DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION):
+    # Reviewer edit at the cut: the date fields are the specialist's `search_drive.date_from` / `date_to`, their texts
+    # drive_tool_texts' (DRIVE_SPECIALIST_RFC §7.6, §8.1); the Smart-era constants are deleted
+    from src.domain.drive_tool_texts import DATE_FROM, DATE_TO
+    for text in (DATE_FROM, DATE_TO):
         assert "For what expires, it bounds the expiry date." in text
 
 

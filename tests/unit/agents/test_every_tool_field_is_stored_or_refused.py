@@ -1,6 +1,6 @@
 """Every declared tool field is stored, refused or allowlisted (TEST_COVERAGE_SYSTEMIC_RFC §5 P14, §1.3.5 as a rule).
 
-`tests/support/tool_fields.py` `declared()` lists every field a model can send to a tool that writes something (the six
+`tests/support/tool_fields.py` `declared()` lists every field a model can send to a tool that writes something (the seven
 P14 surfaces). The ledger `tool_field_ledger.txt` has one sorted line per declared field:
 
     <surface>:<tool>.<path>  # <class> <evidence>
@@ -57,7 +57,7 @@ REVIEW_FILE = "tests/unit/services/test_fact_review_tool_fields_e2e.py"
 NOTES_FILE = "tests/unit/agents/test_notes_agent_tool_fields_e2e.py"
 TASKS_FILE = "tests/unit/agents/test_tasks_agent_tool_fields_e2e.py"
 SMART_FILE = "tests/unit/agents/core/test_smart_local_tools_e2e.py"
-DRIVE_FILE = "tests/unit/agents/test_file_management_drive_tool_fields_e2e.py"
+DRIVE_FILE = "tests/unit/agents/test_drive_agent_tool_fields_e2e.py"
 # Keyed by `<surface>:<tool>` first, then by `<surface>`.
 SURFACE_FILES: Dict[str, str] = {
     "consolidation": CONSOLIDATION_FILE,
@@ -67,9 +67,8 @@ SURFACE_FILES: Dict[str, str] = {
     "tasks": TASKS_FILE,
     "delegate:manage_user_tasks": TASKS_FILE,
     "smart_local": SMART_FILE,
-    **{f"delegate:{intent}": DRIVE_FILE for intent in (
-        "save_file_to_drive", "list_files_in_drive", "open_file_from_drive", "move_file_in_drive",
-        "create_folder_in_drive", "update_file_in_drive", "delete_file_from_drive")},
+    "drive": DRIVE_FILE,
+    "delegate:work_with_drive_files": DRIVE_FILE,
 }
 
 READ_ONLY_CLASS = "read-only"

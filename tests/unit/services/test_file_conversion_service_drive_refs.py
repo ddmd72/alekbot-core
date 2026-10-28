@@ -48,7 +48,7 @@ class TestDriveRefs:
     async def test_folder_is_not_readable(self, svc, drive):
         drive.get_item.return_value = _item(0, name="Docs", mime="", folder=True)
         out = await svc.resolve_content("drive:i1", "u1")
-        assert "folder" in out and "list_files_in_drive" in out
+        assert "folder" in out and "List the folder to see what is inside." in out
         drive.download.assert_not_called()
 
     async def test_bytes_over_cap_raise_before_download(self, svc, drive):

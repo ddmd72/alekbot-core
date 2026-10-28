@@ -419,6 +419,20 @@ before step 1.
 
 ---
 
+## The drive specialist (`work_with_drive_files`)
+
+Smart reaches the drive through one LLM specialist (`docs/10_rfcs/DRIVE_SPECIALIST_RFC.md` §10, §13;
+`decisions/drive_specialist.md`). It adds no service, secret or Cloud Build substitution: the specialist runs in the main
+service on the Claude and OpenAI keys it already has, so the ordinary `make deploy` is the whole code change.
+
+Its prompt lives in Firestore like every other agent's (tokens `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH`,
+`OUTPUT_FORMAT_DRIVE`, blueprint `drive_agent_v1`, profile `drive`). There is no fallback prompt: a missing `drive`
+profile fails every commission with "PromptBuilder failed" (`preload_cache("drive")` only warns at startup). The owner
+uploads the prompt layer before the release whose code needs it ("Every deploy" below), and `PROTOCOL_AGENT_SELECTION`,
+which names `work_with_drive_files`, goes up right before that release, not earlier.
+
+---
+
 ## Every deploy
 
 - **`make deploy`** builds and deploys every unit. Deploy is manual by choice
@@ -448,6 +462,11 @@ before step 1.
 (`gcloud run services describe alek-bot-dev --region=us-central1 --project=<PROJECT_ID> --format='value(status.traffic[0].revisionName)'`);
 roll back with `gcloud run services update-traffic alek-bot-dev --region=us-central1 --project=<PROJECT_ID> --to-revisions=<prev>=100`.
 A release that changes stored data, indexes or prompts has its own rollback order in its rollout notes (ops).
+
+**Roll back the drive specialist.** Revert the merge, and restore `PROTOCOL_AGENT_SELECTION` right before the revert's
+release, never earlier: a protocol restored first runs the new code with the old text. The order is standing text in
+`DRIVE_SPECIALIST_RFC.md` §13 (summarised in `decisions/drive_specialist.md` § Rollback); the one-off commands with the
+release's own values are in its rollout notes (ops).
 
 **The `:latest` trap.** After a failed deploy or a traffic rollback, `:latest` still points at the new image. Every
 `gcloud run services update`, and every Makefile target that wraps it (warm/cold, `claude-`/`openai-`/`dr-rollback` and

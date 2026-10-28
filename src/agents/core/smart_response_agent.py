@@ -96,6 +96,8 @@ class SmartResponseAgent(BaseAgent):
     """
 
     _descriptor = SMART_RESPONSE
+    # The specialists it runs (the drive specialist) finish inside its own timeout (DRIVE_SPECIALIST_RFC §5.6).
+    SETS_RUN_DEADLINE = True
 
     CONTEXT_WINDOW = SMART.context_window
     MAX_DELEGATION_TURNS = SMART.max_delegation_turns

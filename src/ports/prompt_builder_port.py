@@ -32,6 +32,7 @@ class PromptBuilderPort(ABC):
         conversation_history: Optional[List[Dict[str, Any]]] = None,
         include_biographical: bool = True,
         include_directives: bool = True,
+        include_location: bool = True,
         kb_preamble: bool = False,
         agent_notes: Optional[List[Dict[str, Any]]] = None,
         extra_static_blocks: Optional[List[str]] = None,

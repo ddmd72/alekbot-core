@@ -74,7 +74,7 @@ class TestFilterOnlyHonesty:
                                    matched_total=0, matched_at_least=True, folder_path="Archive")
         text = render_results(result)
         assert "No matching files or folders" not in text and "match the filters" not in text
-        assert "does not mean there are none" in text and "list_files_in_drive" in text
+        assert "does not mean there are none" in text and "Browse the folder, or narrow the dates." in text
 
     def test_an_uncapped_filter_only_zero_still_says_no_matches(self):
         result = DriveSearchResult(status=STATUS_OK, request=DriveSearchRequest(kind="pdf"), matched_total=0)

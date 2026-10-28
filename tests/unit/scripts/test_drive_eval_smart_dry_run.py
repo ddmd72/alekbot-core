@@ -10,9 +10,11 @@ import pytest
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive, item_id_for
 from scripts.validation.drive_eval.runner import EVAL_USER, EvalClock, _EnabledUsers, index_fixture
 from scripts.validation.drive_eval.smart_dry_run import (
-    STUB_RESULT, AsEvalUser, DryRunDispatch, G3Error, fixture_engine, judge, make_g3_bars, score, searched,
+    STUB_RESULT, AsEvalUser, DryRunDispatch, G3Error, annotate_drive_read, judge, make_g3_bars, score, searched,
     validate_g3,
 )
+from scripts.validation.drive_eval.dry_run_drive import DriveOpLog, DryRunDriveOperations
+from scripts.validation.drive_eval.specialist_fixture import build_drive_fixture
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.llm import ToolCall
 from src.infrastructure.delegation_engine import DelegationEngine, ToolResult
@@ -68,9 +70,11 @@ async def setup():
         real_calls.append((engine, tool_call.args["intent"]))
         return ToolResult(name=tool_call.name, result_str="real result")
 
-    dispatcher = DryRunDispatch(real_dispatch, fixture_engine(OWNER, drive, search), frozenset({"search_memory",
-                                                                                                "open_file"}))
-    return dispatcher, real_calls, drive
+    # the drive side after the move (DRIVE_SPECIALIST_RFC §12): FileManagement (and, with a model, the specialist) on
+    # one fixture DriveOperations
+    fixture = build_drive_fixture(OWNER, drive, search)
+    dispatcher = DryRunDispatch(real_dispatch, fixture.engine, frozenset({"search_memory", "open_file"}))
+    return dispatcher, real_calls, fixture
 
 
 def _call(intent, **context):
@@ -82,35 +86,41 @@ async def _dispatch(dispatcher, call):
 
 
 async def test_a_drive_search_runs_against_the_fixture_index(setup):
-    dispatcher, real_calls, _ = setup
-    result = await _dispatch(dispatcher, _call("search_files_in_drive", drive_query="Scan_0012"))
-    assert not result.failed and "Scan_0012.pdf" in result.result_str and "<drive_document" in result.result_str
-    assert result.history_context["drive_context"]
-    assert dispatcher.calls == [{"intent": "search_files_in_drive", "context": {"drive_query": "Scan_0012"},
-                                 "route": "fixture", "failed": False}]
-    assert searched(dispatcher.calls) and real_calls == []
+    dispatcher, real_calls, fixture = setup
+    log = DriveOpLog()
+    with DryRunDriveOperations(log, annotate=annotate_drive_read):
+        result = await fixture.operations.search({"user_id": OWNER}, OWNER, query="Scan_0012")
+    assert result.success and "Scan_0012.pdf" in result.text and "<drive_document" in result.text
+    assert result.drive_context()
+    assert log.entries == [{"op": "search", "args": {"query": "Scan_0012"}, "outcome": "ok", "stubbed": False}]
+    assert searched(log.entries) and real_calls == []
 
 
 @pytest.mark.slow
 async def test_list_and_open_from_the_drive_run_on_the_fixture(setup):
-    dispatcher, real_calls, _ = setup
-    listing = await _dispatch(dispatcher, _call("list_files_in_drive", folder="Contracts"))
-    assert "Договор_ред1.docx" in listing.result_str and not listing.failed
-    ref = f"drive:{item_id_for('Contracts/Договор_ред1.docx')}"
-    opened = await _dispatch(dispatcher, _call("open_file", file_ref=ref))
+    dispatcher, real_calls, fixture = setup
+    log = DriveOpLog()
+    with DryRunDriveOperations(log):
+        listing = await fixture.operations.list_folder({"user_id": OWNER}, OWNER, "Contracts")
+        assert "Договор_ред1.docx" in listing.text and listing.success
+        ref = f"drive:{item_id_for('Contracts/Договор_ред1.docx')}"
+        opened = await _dispatch(dispatcher, _call("open_file", file_ref=ref))
     assert not opened.failed and dispatcher.calls[-1]["route"] == "fixture"
-    assert not searched(dispatcher.calls) and real_calls == []
+    assert not searched(log.entries) and real_calls == []
 
 
 async def test_other_reads_go_to_smarts_own_engine_and_writes_never_run(setup):
     dispatcher, real_calls, _ = setup
     memory = await _dispatch(dispatcher, _call("search_memory"))
     chat_file = await _dispatch(dispatcher, _call("open_file", file_ref="report.docx"))
-    saved = await _dispatch(dispatcher, _call("save_file_to_drive", text="x", name="n.md"))
+    tasks = await _dispatch(dispatcher, _call("manage_user_tasks", action="add"))
+    # a removed drive intent goes to Smart's own engine (the coordinator's unknown-intent refusal), never a stub
+    await _dispatch(dispatcher, _call("save_file_to_drive", text="x", name="n.md"))
     assert memory.result_str == chat_file.result_str == "real result"
-    assert real_calls == [("smart-engine", "search_memory"), ("smart-engine", "open_file")]
-    assert saved.result_str == STUB_RESULT.format(intent="save_file_to_drive")
-    assert [c["route"] for c in dispatcher.calls] == ["real", "real", "stub"]
+    assert real_calls == [("smart-engine", "search_memory"), ("smart-engine", "open_file"),
+                          ("smart-engine", "save_file_to_drive")]
+    assert tasks.result_str == STUB_RESULT.format(intent="manage_user_tasks")
+    assert [c["route"] for c in dispatcher.calls] == ["real", "real", "stub", "removed"]
 
 
 async def test_the_index_is_searched_as_the_eval_user():

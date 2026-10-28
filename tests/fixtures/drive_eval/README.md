@@ -32,7 +32,7 @@ first owner-reviewed run records `bars.json`, and later changes must not fall be
 
 An item's `content` names a file in `files/` (its size becomes that file's length); `thumbnail` names the provider
 rendition the drive serves for every size (an image item's own bytes when it has none). A generate entry's
-`content_template` (`vault_note`, `invoice_2024`; `g3_injected_note` on the G3 overlay only) renders each bulk file from `fixture_texts.py` when the drive serves
+`content_template` (`vault_note`, `invoice_2024`; `g3_injected_note` and the four `lead_*` templates of the drive specialist eval, DRIVE_SPECIALIST_RFC §15, on the G3 overlay only) renders each bulk file from `fixture_texts.py` when the drive serves
 it (a one-page PDF with a text layer for `.pdf` names), so the 600 invoices and 800 notes are never committed. Every
 file the indexer would read has bytes (`test_drive_eval_fixture_files.py`).
 
@@ -106,6 +106,18 @@ the v1 column of the report and the "every v1-passing case" guard.
 tree_v2): the incident-shaped "everything about Rome" (at most 2 searches, 2 opens, 1 listing, and the answer names
 the photos and the booking), time spans that belong in the date fields, D29 cases (at most one search after a "No file
 holds" line), and set queries; `answer_must_include` lists the words a right answer holds (one of each group).
+
+## The drive specialist eval (DRIVE_SPECIALIST_RFC §12, §15)
+
+`gold_specialist_ab.json` drives `specialist_ab.py` (Smart and the drive specialist end to end) and its replay
+(`--replay-commissions`, the specialist alone on a report's commissions): 26 cases over tree + tree_g3 + tree_v2, one
+or more turns each (`turns`; "find, then open the second" is two). A case's `gold` checks the answer
+(`answer_must_include`), the drive operation log of the run — `must_open` / `must_not_open` / `opened_any`,
+`ops_must_include` and `ops_forbidden` name DriveOperations methods and their keyword parameters (`move` with
+`folder`, `save_text`, `search_deleted`, `open` with `original`; writes are stubbed, so their arguments are what is
+checked) — and Smart's delegations (`intents_must_include`, `drive`). The validator refuses an operation or a parameter
+DriveOperations does not have, and a removed drive intent. The four `lead_*` files of the G3 overlay serve the lead
+cases.
 
 ## §26, D39 and D40 additions (RFC §26.8 Eval)
 

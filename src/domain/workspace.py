@@ -72,7 +72,7 @@ def parse_workspace_path(raw: object, *, allow_folder: bool = False) -> str:
     text = str(raw if raw is not None else "").strip()
     if text.startswith("drive:"):
         raise WorkspaceRefused(
-            f"'{text}' is on the user's drive, not in the workspace; open it with open_file_from_drive",
+            f"'{text}' is on the user's drive, not in the workspace; open it through work_with_drive_files",
             reason="wrong_store",
         )
     if text.startswith("skill:"):

@@ -5,6 +5,8 @@
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §27.9 (design), §27.16 (rows Δ183–Δ244), §27.19 ("T2 as built");
 owner's map [user_drive/README.md](../../05_building_blocks/user_drive/README.md) §4.23; rollout notes (ops); T1 record [drive_transcripts_t1.md](drive_transcripts_t1.md).
 
+**Since DRIVE_SPECIALIST_RFC:** Smart no longer holds the drive intents. `search_files_in_drive` is gone; the drive specialist (`work_with_drive_files`, [drive_specialist.md](drive_specialist.md)) searches with `search_drive`, and `drive_deleted` became its tool `search_deleted_recordings_and_notes`. The text below is kept as decided.
+
 ## Decision
 
 1. **A mirror folder (D42, revised).** For a user with both transcription switches on, the indexer writes one `<source name>.md` per transcript into a

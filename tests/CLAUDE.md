@@ -288,7 +288,7 @@ never a condition of "done".
   `test_the_scripted_calls_use_every_declared_field` (`unused(surface, tool, calls) == []` per tool), which a new field also fails. `tests/support/tool_e2e.smart_rig` builds a real Smart over a scripted
   model; P13 card F uses its keywords.
 - Files: `test_consolidation_tool_fields_e2e.py`, `test_notes_agent_tool_fields_e2e.py`, `test_tasks_agent_tool_fields_e2e.py`,
-  `test_file_management_drive_tool_fields_e2e.py` (`tests/unit/agents/`), `core/test_smart_local_tools_e2e.py`,
+  `test_drive_agent_tool_fields_e2e.py` (`tests/unit/agents/`), `core/test_smart_local_tools_e2e.py`,
   `tests/unit/services/test_fact_review_tool_fields_e2e.py`. Open defects are strict xfails with their `P14-D<n>` id
   (`TEST_COVERAGE_SYSTEMIC_RFC.md` -> "Built (P14)").
 

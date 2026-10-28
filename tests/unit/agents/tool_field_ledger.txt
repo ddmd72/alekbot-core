@@ -76,23 +76,38 @@ consolidation_review:update_fact.updates.state  # stored tests/unit/services/tes
 consolidation_review:update_fact.updates.superseded_by  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_supersede_and_a_revive_with_a_date_expiry
 consolidation_review:update_fact.updates.tags  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
 consolidation_review:update_fact.updates.temporal_class  # stored tests/unit/services/test_fact_review_tool_fields_e2e.py::test_a_rewrite_with_every_update_field_writes_a_version_and_its_reason
-delegate:create_folder_in_drive.folder  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_create_folder
-delegate:delete_file_from_drive.file_ref  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_delete_from_drive
-delegate:list_files_in_drive.folder  # read-only reading tool, writes nothing
 delegate:manage_self_reminders.workspace_file  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
 delegate:manage_user_tasks.background  # prompt-input tests/unit/agents/test_tasks_agent_tool_fields_e2e.py::test_background_reaches_the_task_agents_prompt
-delegate:move_file_in_drive.file_ref  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_move_with_folder_and_new_name
-delegate:move_file_in_drive.folder  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_move_with_folder_and_new_name
-delegate:move_file_in_drive.new_name  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_move_with_folder_and_new_name
-delegate:open_file_from_drive.file_ref  # read-only reading tool, writes nothing
-delegate:open_file_from_drive.original  # read-only reading tool, writes nothing
-delegate:save_file_to_drive.file_ref  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_save_a_chat_file_with_name_and_folder
-delegate:save_file_to_drive.folder  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_save_text_with_name_and_folder
-delegate:save_file_to_drive.name  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_save_text_with_name_and_folder
-delegate:save_file_to_drive.text  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_save_text_with_name_and_folder
-delegate:update_file_in_drive.append_text  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_update_append_text_and_replace_with_source_ref
-delegate:update_file_in_drive.file_ref  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_update_append_text_and_replace_with_source_ref
-delegate:update_file_in_drive.source_ref  # stored tests/unit/agents/test_file_management_drive_tool_fields_e2e.py::test_update_append_text_and_replace_with_source_ref
+delegate:work_with_drive_files.file_contents[].name  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_save_text_without_file_name_uses_the_items_name_and_inbox
+delegate:work_with_drive_files.file_contents[].target  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_append_the_commissions_item_by_file_ref_and_by_the_items_target
+delegate:work_with_drive_files.file_contents[].text  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_save_text_writes_the_commissions_item_with_file_name_and_folder
+drive:append_to_file.file_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_append_the_commissions_item_by_file_ref_and_by_the_items_target
+drive:append_to_file.text_item  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_append_the_commissions_item_by_file_ref_and_by_the_items_target
+drive:copy_file_to_drive.file_name  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_copy_a_chat_file_with_file_name_and_folder
+drive:copy_file_to_drive.folder  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_copy_a_chat_file_with_file_name_and_folder
+drive:copy_file_to_drive.source_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_copy_a_chat_file_with_file_name_and_folder
+drive:create_folder.folder  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_create_folder
+drive:delete_drive_item.file_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_delete_from_drive_posts_a_literal_receipt
+drive:get_recording_link.file_ref  # read-only reading tool, writes nothing
+drive:list_folder.folder  # read-only reading tool, writes nothing
+drive:move_file.file_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_move_with_folder_and_new_name
+drive:move_file.folder  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_move_with_folder_and_new_name
+drive:move_file.new_name  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_move_with_folder_and_new_name
+drive:open_drive_file.file_ref  # read-only reading tool, writes nothing
+drive:replace_file_content.new_content_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_replace_with_a_chat_file_posts_a_literal_receipt
+drive:replace_file_content.target_ref  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_replace_with_a_chat_file_posts_a_literal_receipt
+drive:report_to_orchestrator.not_done  # prompt-input tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_the_report_not_done_reaches_smart_as_not_possible
+drive:report_to_orchestrator.note  # prompt-input tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_the_report_note_reaches_smart
+drive:report_to_orchestrator.question  # prompt-input tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_the_report_question_reaches_smart_as_the_status_and_what_to_do
+drive:save_text_file.file_name  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_save_text_writes_the_commissions_item_with_file_name_and_folder
+drive:save_text_file.folder  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_save_text_writes_the_commissions_item_with_file_name_and_folder
+drive:save_text_file.text_item  # stored tests/unit/agents/test_drive_agent_tool_fields_e2e.py::test_save_text_writes_the_commissions_item_with_file_name_and_folder
+drive:search_deleted_recordings_and_notes.query  # read-only reading tool, writes nothing
+drive:search_drive.date_from  # read-only reading tool, writes nothing
+drive:search_drive.date_to  # read-only reading tool, writes nothing
+drive:search_drive.folder  # read-only reading tool, writes nothing
+drive:search_drive.kind  # read-only reading tool, writes nothing
+drive:search_drive.query  # read-only reading tool, writes nothing
 notes:create_self_reminder.complexity  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
 notes:create_self_reminder.due  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored
 notes:create_self_reminder.instruction  # stored tests/unit/agents/test_notes_agent_tool_fields_e2e.py::test_create_with_every_field_and_a_workspace_file_is_stored

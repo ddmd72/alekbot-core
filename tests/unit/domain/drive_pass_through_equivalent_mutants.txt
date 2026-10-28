@@ -1,0 +1,1 @@
+# Mutants a reviewer ruled equivalent for src.domain.drive_pass_through: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check). None yet.

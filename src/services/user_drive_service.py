@@ -21,7 +21,9 @@ from ..domain.user_drive import (
     DEFAULT_INBOX_FOLDER,
     MAX_DRIVE_APPEND_FILE_BYTES,
     MAX_DRIVE_DOWNLOAD_BYTES,
+    MOVE_NEEDS_TARGET,
     DeleteOutcome,
+    DriveConnection,
     DriveItem,
     DriveItemNotFoundError,
     DriveMirrorWriteRefused,
@@ -73,6 +75,10 @@ class UserDriveService:
     @property
     def display_name(self) -> str:
         return self._drive.display_name
+
+    async def connection(self, user_id: str) -> DriveConnection:
+        """The user's connection as the gate reads it (the drive specialist's preflight, DRIVE_SPECIALIST_RFC §5.3)."""
+        return await self._drive.connection(user_id)
 
     async def resolve_folder(self, user_id: str, path: Optional[str], *, create: bool) -> FolderResolution:
         resolution, _ = await self._resolve(user_id, path, create=create)
@@ -144,7 +150,7 @@ class UserDriveService:
         ref is refused; a folder the provider does not find raises DriveItemNotFoundError."""
         folder = await self._drive.get_item(user_id, folder_id)
         if not folder.is_folder:
-            raise DrivePathError(f"'{folder.path}' is a file, not a folder; open it with open_file_from_drive")
+            raise DrivePathError(f"'{folder.path}' is a file, not a folder; open it instead.")
         children = await self._drive.list_children(user_id, folder.item_id)
         ordered = sorted(children, key=lambda i: (not i.is_folder, i.name.casefold()))
         return ListOutcome(folder=folder, items=ordered[:LIST_LIMIT], truncated=len(ordered) > LIST_LIMIT)
@@ -157,7 +163,7 @@ class UserDriveService:
 
     async def move(self, user_id: str, item_id: str, folder: Optional[str], new_name: Optional[str]) -> MoveOutcome:
         if not (folder and folder.strip()) and not (new_name and new_name.strip()):
-            raise DrivePathError("Give a destination folder, a new name, or both")
+            raise DrivePathError(MOVE_NEEDS_TARGET)
         new_name = new_name.strip() if new_name and new_name.strip() else None
         if new_name is not None:
             _require_valid_name(new_name)

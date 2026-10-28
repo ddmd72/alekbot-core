@@ -46,14 +46,14 @@ def test_declared_contains_the_fields_of_every_surface():
         "tasks:update_task.recurrence.days_of_week",
         "smart_local:draft_skill.files[].from_file",
         "smart_local:propose_memory_facts.facts[].source",
-        "delegate:save_file_to_drive.text",
+        "delegate:work_with_drive_files.file_contents[].text",
         "delegate:manage_self_reminders.workspace_file",
-        "delegate:open_file_from_drive.original",
+        "drive:save_text_file.text_item",
+        "drive:search_drive.query",
     ):
         assert key in keys, key
-    assert "delegate:search_files_in_drive.drive_query" not in keys  # not P14's: search writes nothing
     assert "smart_local:draft_skill.files[]" not in keys            # an array of objects has no path of its own
-    assert IN_SCOPE == ("consolidation", "consolidation_review", "notes", "tasks", "smart_local", "delegate")
+    assert IN_SCOPE == ("consolidation", "consolidation_review", "notes", "tasks", "smart_local", "drive", "delegate")
 
 
 def test_every_read_only_tool_and_field_is_declared():
@@ -65,13 +65,19 @@ def test_every_read_only_tool_and_field_is_declared():
 
 def test_the_delegate_surface_is_the_context_schema_smart_declares():
     by_name = {d["name"]: d for d in SURFACES["delegate"]()}
-    assert sorted(by_name) == sorted([
-        "save_file_to_drive", "list_files_in_drive", "open_file_from_drive", "move_file_in_drive",
-        "create_folder_in_drive", "update_file_in_drive", "delete_file_from_drive",
-        "manage_self_reminders", "manage_user_tasks",
-    ])
-    assert by_name["open_file_from_drive"]["parameters"]["properties"]["original"]["type"] == "boolean"
+    assert sorted(by_name) == sorted(["work_with_drive_files", "manage_self_reminders", "manage_user_tasks"])
+    assert by_name["work_with_drive_files"]["parameters"]["properties"]["file_contents"]["type"] == "array"
     assert by_name["manage_user_tasks"]["parameters"]["properties"]["background"]["type"] == "string"
+
+
+def test_the_drive_surface_is_the_specialists_tool_list():
+    names = [d["name"] for d in SURFACES["drive"]()]
+    assert names == [
+        "search_drive", "search_deleted_recordings_and_notes", "list_folder", "open_drive_file", "get_recording_link",
+        "copy_file_to_drive", "save_text_file", "create_folder", "move_file", "append_to_file", "replace_file_content",
+        "delete_drive_item", "report_to_orchestrator",
+    ]
+    assert "drive:report_to_orchestrator" not in READ_ONLY            # its fields are the orchestrator's prompt input
 
 
 def test_unused_lists_what_no_call_sends():

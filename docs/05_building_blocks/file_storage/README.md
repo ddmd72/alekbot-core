@@ -181,7 +181,7 @@ returns an `ExtractionOutcome` (`text`, `no_text`, `unsupported`, `too_large`, `
 implementations are chained per kind by `EXTRACTOR_CHAINS`: `SubprocessContentExtractor` (`parser`) runs markitdown
 with the Phase 0 allowlist and the RTF, EML, ODF and VTT readers in a child process under memory, CPU and wall-clock
 limits, and `DriveReaderRunner` (`reader`) sends what the parser cannot read (scans, images, broken-font PDFs) to the
-document reader agent. Chat uploads, `open_file` and `open_file_from_drive` keep the path above until Slice 3 moves
+document reader agent. Chat uploads, `open_file` and opened drive files keep the path above until Slice 3 moves
 them onto the port; until then, the same file can read differently in chat and in a search window.
 
 ### 2.3 Specialist File Injection
@@ -387,12 +387,12 @@ MessagePart for LLM vision.
 
 **Two stores, two lifetimes.** Chat attachments (this document) live in GCS for 90 days and are addressed by
 file name. The user's **drive** (`UserDrivePort`, OneDrive App Folder; `docs/10_rfcs/USER_DRIVE_RFC.md`) is the
-long-term area: the same agent serves seven more intents (`save_file_to_drive`, `list_files_in_drive`,
-`open_file_from_drive`, `move_file_in_drive`, `create_folder_in_drive`, `update_file_in_drive`,
-`delete_file_from_drive`), addressed by `drive:<opaque id>` refs. "Remember this file" copies an attachment
-from GCS to the drive (Inbox by default). The coordinator never pre-fetches a drive ref
-(`prefetch_file_ref=False`); the agent opens it itself. Finding a drive file by name, kind, date, folder or
-place is an eighth intent, `search_files_in_drive`, served from an opt-in index (Step 2):
+long-term area, reached through one intent, `work_with_drive_files`: the drive specialist (`DriveAgent`,
+`docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`) works on it through the user's `DriveOperations` (this agent's former drive
+code, shared with it), addressed by `drive:<opaque id>` refs. "Remember this file" copies an attachment from GCS to
+the drive (Inbox by default). `open_file` still opens a `drive:` ref leniently, through the same `DriveOperations`.
+The coordinator never pre-fetches a drive ref for this agent or the specialist (`prefetch_file_ref=False`). Finding a
+drive file by name, kind, date, folder or place is the specialist's search, served from an opt-in index (Step 2):
 [../user_drive/README.md](../user_drive/README.md). Deployment prerequisites: `docs/07_deployment/README.md` →
 One-time project setup (OneDrive App Folder) and Deploy units (Drive indexer).
 
@@ -450,7 +450,7 @@ Vision override (force complexity >= 7) uses refined logic:
 
 - LLM-powered file management: "find my PDFs from last month", "list all documents"
 - File metadata indexing (name, type, date, size) in Firestore
-- `search_files` intent over the GCS uploads (the drive has its own, `search_files_in_drive`)
+- `search_files` intent over the GCS uploads (the drive has its own search, in the drive specialist)
 - Per-user storage quota tracking
 
 ---

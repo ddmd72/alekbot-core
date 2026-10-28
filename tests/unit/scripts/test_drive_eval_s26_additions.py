@@ -22,7 +22,6 @@ from src.domain.drive_enrichment import DriveProfile, ProfileDate
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionRequest, ExtractionStatus, TriageImage
 from src.domain.drive_index import TriageVerdict
 from src.domain.user_drive import DriveItemNotFoundError
-from src.infrastructure.agent_manifest import Intent
 
 from ..services.drive_content_fakes import FakeExtractor
 
@@ -185,12 +184,14 @@ def test_validate_g3_refuses_a_contradiction_and_a_flag_that_is_not_true():
             validate_g3(base + [bad])
 
 
-def _run(*intents, **flags):
-    return dict(id="x", repeat=0, calls=[{"intent": i, "context": {}} for i in intents], **flags)
+def _run(*ops, **flags):
+    """A case run: its drive operations as drive operation log entries (dry_run_drive.DriveOpLog)."""
+    return dict(id="x", repeat=0, calls=[], ops=[{"op": o, "args": {}, "outcome": "ok", "stubbed": False} for o in ops],
+                **flags)
 
 
 def test_a_value_question_on_a_low_accuracy_card_must_open_the_file_and_a_find_must_not():
-    search, opened = Intent.SEARCH_FILES_IN_DRIVE, Intent.OPEN_FILE_FROM_DRIVE
+    search, opened = "search", "open"   # DriveOperations.search / .open
     assert hard_failures([_run(search, opened, must_open=True)]) == []
     assert any("not opened" in f for f in hard_failures([_run(search, must_open=True)]))
     assert hard_failures([_run(search, must_not_open=True)]) == []

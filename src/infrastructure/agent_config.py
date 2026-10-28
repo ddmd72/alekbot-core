@@ -431,6 +431,28 @@ TASKS = TasksAgentConfig()
 
 
 # ---------------------------------------------------------------------------
+# DriveAgent (src/agents/drive_agent.py) — the drive specialist (DRIVE_SPECIALIST_RFC §5.1, §5.6)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DriveAgentConfig:
+    max_tokens: int = 4096            # tool calls and a short report; thinking counts toward it on Claude
+    max_turns: int = 6                # one commission: read, read, write, answer (§2.3.7)
+    # The hard timeout around execute() is a backstop only: the soft deadline ends every run first and returns the
+    # answer from the collector (§5.6).
+    timeout_ms: int = 180_000
+    soft_deadline_s: float = 150.0
+    turn_clock_margin_s: float = 15.0   # under the caller's turn clock: now + clock.call_timeout() − this
+    run_deadline_margin_s: float = 20.0  # under the caller's own timeout (CURRENT_RUN_DEADLINE) − this
+    call_timeout_s: int = 120         # one LLM call at most; clamped to the time left (§5.6)
+    # claude-sonnet-5-5 adaptive thinking, effort medium (owner decision 2026-10-22). A user's agent_thinking wins.
+    thinking_effort: str = "medium"
+
+
+DRIVE = DriveAgentConfig()
+
+
+# ---------------------------------------------------------------------------
 # DocPlannerAgent (src/agents/doc_planner_agent.py)
 # ---------------------------------------------------------------------------
 

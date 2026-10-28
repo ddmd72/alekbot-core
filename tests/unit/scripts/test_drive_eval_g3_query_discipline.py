@@ -1,5 +1,6 @@
 """G3 harness after the 2026-10-19 run: v2 cases isolated from the owner's memory and mail, the D29 detector reading all
-four renderings, turn-cap runs as their own category; and the drive-search skill's query-discipline lines."""
+four renderings, turn-cap runs as their own category; and Smart's half of the former drive-search skill's query
+discipline (the specialist's token half is not pinned: owner decision 2026-10-28, its wording is tuned on evals)."""
 import json
 import re
 from pathlib import Path
@@ -8,13 +9,15 @@ from types import SimpleNamespace
 import pytest
 
 from scripts.validation.drive_eval import smart_dry_run as g3
-from src.adapters.filesystem_skill_loader import load_system_skills
+from src.domain import drive_answer_texts as t
 from src.domain import drive_search_texts as T
+from src.domain.drive_op import DriveOp
+from src.domain.drive_outcome import DriveOutcome
+from src.domain.drive_outcome_class import OutcomeClass
 from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.delegation_engine import ToolResult
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
-_SKILLS = Path(__file__).resolve().parents[3] / "src" / "skills" / "smart"
 
 
 def _tc(intent, context=None):
@@ -71,9 +74,9 @@ async def test_isolation_leaves_other_reads_and_other_cases_alone():
 async def test_every_rendering_of_the_absent_word_line_is_a_d29(line):
     text = "Results.\n" + line.format(word="vaccination") + "\nWithout ..."
     assert g3.is_d29(text)
-    d = _dispatch(_Real(text), False)
-    await d(object(), _tc(Intent.SEARCH_FILES_IN_DRIVE, {"drive_query": "x"}), {})
-    assert d.calls[0].get("d29") is True
+    # the mark moved from Smart's dispatch to the drive operation log (DryRunDriveOperations' annotate hook)
+    outcome = DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text=text, success=True)
+    assert g3.annotate_drive_read("search", outcome) == {"d29": True}
 
 
 def test_other_lines_are_not_a_d29():
@@ -96,27 +99,20 @@ def test_a_turn_cap_run_is_its_own_category_and_a_hard_failure():
 
 # -- the skill's query discipline -----------------------------------------------------------------------------------
 
-def _skill() -> str:
-    body = next(s for s in load_system_skills(_SKILLS) if s.name == "drive-search").body
-    return re.sub(r"\s+", " ", body)
-
-
-def test_the_skill_states_the_query_discipline():
-    body = _skill()
-    for line in (
-        "Every word in `drive_query` must match a file (all words, strict).",
-        "in ONE language, as the user wrote them. No synonym lists, no translations, no extra words, not the user's own name.",
-        "run at most ONE more search (dropping that word); then answer from what you have.",
+# Reviewer (owner decision 2026-10-28): test_the_skill_states_the_query_discipline kept only its Smart-side check (the
+# reading line in src/domain/drive_answer_texts.py); its four PROTOCOL_DRIVE_SEARCH sentences pinned the specialist's
+# token word for word and were removed.
+def test_the_all_is_still_a_find_reading_line_is_said_once():
+    # Smart's half of the "all is still a find" rule reaches Smart as a reading line (§5.7, §7.3)
+    assert re.sub(r"\s+", " ", t.R_ALL).count(
         '"All", "every", "everything about" is still a find: answer from the cards; do not open files or compute '
-        "totals unless the user asked for a total or a value.",
-        "A value question opens the file (when the card is under 90%) even if the card looks unrelated to the user; "
-        "a find question never opens it.",
-    ):
-        assert body.count(line) == 1, line
+        "totals unless the user asked for a total or a value.") == 1
 
 
 def test_the_manifest_query_text_ends_with_the_discipline_sentence():
-    assert T.DRIVE_QUERY_DESCRIPTION.endswith("All words must match: use the user's few key words in one language.")
+    # Reviewer edit at the cut: the field text is the specialist's `search_drive.query` (DRIVE_SPECIALIST_RFC §7.6)
+    from src.domain import drive_tool_texts as tt
+    assert tt.QUERY.endswith("All words must match: use the user's few key words in one language.")
 
 
 # -- Smart runs as an interactive turn: under the turn clock -----------------------------------------------------------

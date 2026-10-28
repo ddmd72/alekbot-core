@@ -90,5 +90,5 @@ two differ by the interpreter, native libraries and the tracing bookkeeping itse
 ## Not covered yet
 
 `memory.pressure` (a census on crossing 85% of the limit instead of after a long turn), payload size for
-non-OpenAI providers, named contributors for caches, and leftover `/tmp` files created by `open_file_from_drive`
+non-OpenAI providers, named contributors for caches, and leftover `/tmp` files created by opening a drive image or PDF
 (the `tmp_mb` figure shows the effect; the files are not yet deleted).

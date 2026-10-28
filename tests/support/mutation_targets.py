@@ -134,6 +134,9 @@ def graph_tests(root: Path = REPO_ROOT) -> tuple[str, ...]:
 
 _WIRING_EQUIVALENT = "tests/unit/composition/wiring_equivalent_mutants.txt"
 
+_DRIVE_E2E = "tests/unit/agents/test_drive_agent_tool_fields_e2e.py"
+_DRIVE_AGENT = "tests/unit/agents/test_drive_agent.py"
+
 TARGETS: tuple[MutationTarget, ...] = (
     *(
         MutationTarget(module, _WIRING_EQUIVALENT, "wiring", graph_group=True)
@@ -212,6 +215,17 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.infrastructure.memory_fact_tools", "tests/unit/agents/core/memory_fact_tools_equivalent_mutants.txt"),
     MutationTarget("src.infrastructure.skill_tools", "tests/unit/agents/core/skill_tools_equivalent_mutants.txt"),
     MutationTarget("src.infrastructure.workspace_tools", "tests/unit/agents/core/workspace_tools_equivalent_mutants.txt"),
+    # The drive specialist (DRIVE_SPECIALIST_RFC): one equivalent file each, holding a header comment the driver skips. The
+    # e2e card and the agent tests reach the tools, the answer and the commission parser only through src/ (DriveAgent).
+    MutationTarget("src.infrastructure.drive_operations", "tests/unit/infrastructure/drive_operations_equivalent_mutants.txt"),
+    MutationTarget("src.infrastructure.drive_tools", "tests/unit/infrastructure/drive_tools_equivalent_mutants.txt",
+                   extra=(_DRIVE_E2E, _DRIVE_AGENT, "tests/unit/infrastructure/test_drive_specialist_chain.py")),
+    MutationTarget("src.agents.drive_agent", "tests/unit/agents/drive_agent_equivalent_mutants.txt"),
+    MutationTarget("src.domain.drive_answer", "tests/unit/domain/drive_answer_equivalent_mutants.txt",
+                   extra=(_DRIVE_E2E, _DRIVE_AGENT)),
+    MutationTarget("src.domain.drive_pass_through", "tests/unit/domain/drive_pass_through_equivalent_mutants.txt"),
+    MutationTarget("src.domain.drive_file_contents", "tests/unit/domain/drive_file_contents_equivalent_mutants.txt",
+                   extra=(_DRIVE_E2E, _DRIVE_AGENT)),
 )
 
 

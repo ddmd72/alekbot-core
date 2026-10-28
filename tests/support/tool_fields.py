@@ -5,9 +5,12 @@ A surface is a list of tool declarations, built by the production builder each t
 - `consolidation`, `consolidation_review`: `ConsolidationAgent._get_tool_declarations` for the two pass kinds;
 - `notes`, `tasks`: the agents' `_TOOL_DECLARATIONS`;
 - `smart_local`: Smart's three local writing tools (`propose_memory_facts`, `draft_skill`, `workspace`);
+- `drive`: the drive specialist's twelve tools and its terminal tool (`drive_tool_declarations`, DRIVE_SPECIALIST_RFC
+  §8.1);
 - `delegate`: the `context` schema Smart's `delegate_to_specialist` declares for one intent, built through the real
-  `BaseAgent._build_delegate_tool_declaration`, for the 7 Step-1 drive intents, `manage_self_reminders` and
-  `manage_user_tasks` (wrapped as `{"name": <intent>, "parameters": <that context schema>}`).
+  `BaseAgent._build_delegate_tool_declaration`, for `work_with_drive_files` (its one field `file_contents`, the text a
+  model writes into a file through the specialist), `manage_self_reminders` and `manage_user_tasks` (wrapped as
+  `{"name": <intent>, "parameters": <that context schema>}`).
 
 A field path is `<surface>:<tool>.<path>`: an object with `properties` recurses (`updates.expiry.kind`); an array of
 objects has no path of its own, its items' properties become `name[].child` (`files[].path`); anything else is a leaf
@@ -24,20 +27,15 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Set
 from src.agents import notes_agent, tasks_agent
 from src.agents.base_agent import BaseAgent
 from src.agents.consolidation_agent import ConsolidationAgent
-from src.infrastructure.agent_manifest import FILE_MANAGEMENT, NOTES, TASKS, AgentDescriptor, Intent
+from src.domain.drive_tool_texts import drive_tool_declarations
+from src.infrastructure.agent_manifest import DRIVE_SPECIALIST, NOTES, TASKS, AgentDescriptor, Intent
 from src.infrastructure.memory_fact_tools import build_propose_memory_facts_tool_declaration
 from src.infrastructure.skill_tools import build_draft_skill_tool_declaration
 from src.infrastructure.workspace_tools import build_workspace_tool_declaration
 
-# The intents whose `context` fields reach a store (search_files_in_drive is not P14's: it writes nothing).
+# The intents whose `context` fields reach a store.
 DELEGATE_INTENTS: Dict[str, AgentDescriptor] = {
-    Intent.SAVE_FILE_TO_DRIVE: FILE_MANAGEMENT,
-    Intent.LIST_FILES_IN_DRIVE: FILE_MANAGEMENT,
-    Intent.OPEN_FILE_FROM_DRIVE: FILE_MANAGEMENT,
-    Intent.MOVE_FILE_IN_DRIVE: FILE_MANAGEMENT,
-    Intent.CREATE_FOLDER_IN_DRIVE: FILE_MANAGEMENT,
-    Intent.UPDATE_FILE_IN_DRIVE: FILE_MANAGEMENT,
-    Intent.DELETE_FILE_FROM_DRIVE: FILE_MANAGEMENT,
+    Intent.WORK_WITH_DRIVE_FILES: DRIVE_SPECIALIST,
     Intent.MANAGE_SELF_REMINDERS: NOTES,
     Intent.MANAGE_USER_TASKS: TASKS,
 }
@@ -59,13 +57,18 @@ SURFACES: Dict[str, Callable[[], List[Dict[str, Any]]]] = {
     "tasks": lambda: copy.deepcopy(tasks_agent._TOOL_DECLARATIONS),
     "smart_local": lambda: [build_propose_memory_facts_tool_declaration(), build_draft_skill_tool_declaration(),
                             build_workspace_tool_declaration()],
+    "drive": drive_tool_declarations,
     "delegate": _delegate,
 }
 IN_SCOPE = tuple(SURFACES)
 
+# The drive specialist's terminal tool (`drive:report_to_orchestrator`) is not here: it writes no store, but its fields
+# become the answer the orchestrator's model reads, so each is a `prompt-input` line with a test.
 READ_ONLY: FrozenSet[str] = frozenset({
     "consolidation:search_existing_facts", "consolidation:count_words", "consolidation_review:count_words",
-    "tasks:list_tasks", "tasks:search_tasks", "delegate:list_files_in_drive", "delegate:open_file_from_drive",
+    "tasks:list_tasks", "tasks:search_tasks",
+    "drive:search_drive", "drive:search_deleted_recordings_and_notes", "drive:list_folder", "drive:open_drive_file",
+    "drive:get_recording_link",
 })
 READ_ONLY_FIELDS: FrozenSet[str] = frozenset({"smart_local:workspace.offset", "smart_local:workspace.limit"})
 

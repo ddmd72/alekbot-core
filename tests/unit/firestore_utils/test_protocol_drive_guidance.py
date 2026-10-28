@@ -33,11 +33,10 @@ def _drive_block(body):
     raise AssertionError("drive_specialist block is not closed")
 
 
-def _skill_body():
-    # the drive rules now live in the drive-search system skill, not in the protocol token (owner decision 2026-10-14)
-    from pathlib import Path
-    from src.adapters.filesystem_skill_loader import load_system_skills
-    return next(s for s in load_system_skills(Path(_ROOT) / "src" / "skills" / "smart") if s.name == "drive-search").body
+def _reading_lines():
+    """Smart's half: every reading line a drive answer can carry (src/domain/drive_answer_texts.py)."""
+    from src.domain import drive_answer_texts as t
+    return "\n".join(v for k, v in vars(t).items() if k.startswith("R_") and isinstance(v, str))
 
 
 def test_smarts_profile_assigns_this_token():
@@ -73,14 +72,32 @@ _LINES = {
 }
 
 
+# Reviewer edit at the cut: each line's home is the half of the former skill that acts on it (DRIVE_SPECIALIST_RFC
+# §5.7): the copies in Smart's reading lines, once each where Smart acts on the rule, none where only the specialist does.
+# Reviewer (owner decision 2026-10-28): the specialist's token half is no longer counted; its wording is tuned on evals.
+_HOMES = {
+    "index_as_of / stale: open before quoting": 0,                     # freshness: the specialist opens
+    "building: never say it does not exist": 1,
+    "unread / truncated / names only: say what was not searched": 1,
+    "folder card: search or list within it": 1,
+    "tiers: how each file matched": 1,
+    "sums and totals: open, then compute (review E-M2)": 1,
+    "document authority vs memory": 1,
+    "version families: never pick silently": 1,
+    "dates: a date-filtered search that misses the file is retried without the filter": 0,
+    "shortened passage: open before quoting (review E minor)": 1,
+}
+
+
 def test_every_protocol_line_is_said_once():
-    # only the search trigger stays in the protocol block; every other line is said once in the skill body
+    # only the search trigger stays in the protocol block; every other line is said once in Smart's reading lines
+    # where Smart acts on it
     block = _drive_block(ser.token_from_file(_text())["content"])
-    body = _skill_body()
     trigger = "search when the answer may be in the user's documents"
     assert block.count(_LINES[trigger]) == 1
-    rest = {line: phrase for line, phrase in _LINES.items() if line != trigger}
-    assert {line: body.count(phrase) for line, phrase in rest.items()} == {line: 1 for line in rest}
+    assert set(_HOMES) == set(_LINES) - {trigger}
+    reading = _reading_lines()
+    assert {line: reading.count(_LINES[line]) for line in _HOMES} == _HOMES
 
 
 def test_the_block_does_not_restate_the_tool_contract():

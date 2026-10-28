@@ -1,51 +1,56 @@
 """G3 under Search v2 (USER_DRIVE_INDEXING_RFC §25.7): each case run counts its searches, opens and folder listings;
-hard checks with no tolerance — the incident-shaped case makes at most 2 searches, 2 opens and 1 listing and names the
-right files; a time-span case puts the span in the date fields; after a result with a D29 line Smart searches again
-at most once; no case run crawls (more than NO_CRAWL_DRIVE_CALLS drive reads). The answer check is scored as a rate."""
+hard checks with no tolerance — the incident-shaped case makes at most 2 opens and 1 listing and names the right files;
+a time-span case puts the span in the date fields; no case run crawls (more than NO_CRAWL_DRIVE_CALLS opens plus
+listings). Search counts (the incident case's 2 searches, re-searches after a D29 line) are reported in
+search_discipline, not failed (owner, 2026-10-28, specialist era). The answer check is scored as a rate."""
 import json
 from pathlib import Path
 
 import pytest
 
 from scripts.validation.drive_eval.smart_dry_run import (
-    NO_CRAWL_DRIVE_CALLS, G3Error, answer_ok, drive_counts, hard_failures, score, validate_g3,
+    D29_RESEARCH_MAX, NO_CRAWL_DRIVE_CALLS, G3Error, answer_ok, drive_counts, hard_failures, score, search_discipline,
+    validate_g3,
 )
 
 _DIR = Path(__file__).resolve().parents[2] / "fixtures" / "drive_eval"
 
 
-def _call(intent, failed=False, d29=False, **context):
-    return {"intent": intent, "context": context, "route": "fixture", "failed": failed, "d29": d29}
+def _op(op, outcome="ok", d29=False, **args):
+    """One drive operation log entry (dry_run_drive.DriveOpLog): reads as they ran; G3's annotate adds `d29`."""
+    return {"op": op, "args": args, "outcome": outcome, "stubbed": False, **({"d29": True} if d29 else {})}
 
 
-def search(**kw):
-    return _call("search_files_in_drive", **kw)
+def search(failed=False, d29=False, **kw):
+    return _op("search", "request_error" if failed else "ok", d29=d29, **kw)   # a refused search: request_error
 
 
 def open_(ref="drive:x"):
-    return _call("open_file_from_drive", file_ref=ref)
+    return _op("open", ref=ref)
 
 
 def listing():
-    return _call("list_files_in_drive", folder="Travel")
+    return _op("list_folder", folder="Travel")
 
 
 def _row(calls, **case):
-    return {"id": case.pop("id", "c"), "set": "positive", "category": "find", "repeat": 0, "calls": calls,
+    return {"id": case.pop("id", "c"), "set": "positive", "category": "find", "repeat": 0, "calls": [], "ops": calls,
             "answer": case.pop("answer", ""), **case}
 
 
 def test_drive_counts_split_searches_opens_and_listings():
-    calls = [search(drive_query="rome"), search(failed=True), open_(), _call("open_file", file_ref="drive:y"),
-             _call("open_file", file_ref="chat:z"), listing(), _call("search_web", query="rome")]
+    # Smart's open_file on a drive: ref is DriveOperations.open; on a chat file it is fetch_stored, not a drive open;
+    # Smart's own search_web is not a drive operation at all
+    calls = [search(query="rome"), search(failed=True), open_(), _op("open", ref="drive:y"),
+             _op("fetch_stored", ref="chat:z"), listing()]
     assert drive_counts(calls) == {"searches": 1, "opens": 2, "listings": 1}   # a refused search never ran
 
 
 @pytest.mark.parametrize("calls, fails", [
-    ([search(drive_query="rome"), open_(), open_()], False),
-    ([search(drive_query="rome"), search(drive_query="рим"), search(drive_query="roma")], True),
-    ([search(drive_query="rome"), open_(), open_(), open_()], True),
-    ([search(drive_query="rome"), listing(), listing()], True),
+    ([search(query="rome"), open_(), open_()], False),
+    ([search(query="rome"), search(query="рим"), search(query="roma")], False),   # searches: reported (owner 2026-10-28)
+    ([search(query="rome"), open_(), open_(), open_()], True),
+    ([search(query="rome"), listing(), listing()], True),
 ])
 def test_the_incident_case_is_bounded(calls, fails):
     row = _row(calls, incident=True, answer="Your hotel booking and 12 photos",
@@ -54,30 +59,38 @@ def test_the_incident_case_is_bounded(calls, fails):
 
 
 def test_the_incident_case_must_name_the_right_files():
-    row = _row([search(drive_query="rome")], incident=True, answer="Nothing about Rome was found.",
+    row = _row([search(query="rome")], incident=True, answer="Nothing about Rome was found.",
                answer_must_include=[["booking", "hotel"], ["photo"]])
     assert any("answer" in f for f in hard_failures([row]))
 
 
 def test_a_time_span_case_needs_the_span_in_the_date_fields():
-    good = _row([search(drive_query="receipts", drive_date_from="2026-02-01", drive_date_to="2026-05-31")],
+    good = _row([search(query="receipts", date_from="2026-02-01", date_to="2026-05-31")],
                 time_span=True)
-    bad = _row([search(drive_query="receipts February to May 2026")], time_span=True)
+    bad = _row([search(query="receipts February to May 2026")], time_span=True)
     assert hard_failures([good]) == []
     assert any("date fields" in f for f in hard_failures([bad]))
 
 
-def test_after_a_d29_line_smart_searches_again_at_most_once():
-    once = _row([search(drive_query="dog vaccination", d29=True), search(drive_query="vaccination")])
-    twice = _row([search(drive_query="dog vaccination", d29=True), search(drive_query="vaccination", d29=True),
-                  search(drive_query="dog")])
-    assert hard_failures([once]) == []
-    assert any("D29" in f for f in hard_failures([twice]))
+def test_re_searches_after_a_d29_line_are_reported_not_failed():
+    once = _row([search(query="dog vaccination", d29=True), search(query="vaccination")])
+    twice = _row([search(query="dog vaccination", d29=True), search(query="vaccination", d29=True),
+                  search(query="dog")])
+    assert hard_failures([once]) == [] and hard_failures([twice]) == []
+    assert search_discipline([once])["cases_over_d29_research_max"] == 0
+    report = search_discipline([twice])
+    assert report["research_after_d29"] == D29_RESEARCH_MAX + 1 and report["cases_over_d29_research_max"] == 1
 
 
 def test_no_case_run_crawls():
-    calls = [search(drive_query="a")] + [open_(f"drive:{i}") for i in range(NO_CRAWL_DRIVE_CALLS)]
-    assert any("crawl" in f for f in hard_failures([_row(calls)]))
+    # the bar counts opens plus listings together (searches do not count): one over it, mixed, crawled; at it, not
+    opens = NO_CRAWL_DRIVE_CALLS // 2
+    over = [search(query="a")] + [open_(f"drive:{i}") for i in range(opens)] + [
+        listing() for _ in range(NO_CRAWL_DRIVE_CALLS + 1 - opens)]
+    at = [search(query="a")] + [open_(f"drive:{i}") for i in range(opens)] + [
+        listing() for _ in range(NO_CRAWL_DRIVE_CALLS - opens)]
+    assert any("crawl" in f for f in hard_failures([_row(over)]))
+    assert not any("crawl" in f for f in hard_failures([_row(at)]))
 
 
 @pytest.mark.parametrize("answer, groups, ok", [
@@ -119,20 +132,24 @@ def test_validate_refuses_malformed_v2_fields():
 
 
 async def test_the_dispatch_marks_a_search_whose_result_has_a_d29_line():
-    from scripts.validation.drive_eval.smart_dry_run import DryRunDispatch
-    from src.infrastructure.delegation_engine import ToolResult
+    """The mark moved from Smart's dispatch to the drive operation log (DryRunDriveOperations' annotate hook)."""
+    from unittest.mock import MagicMock
 
-    class Call:
-        name = "delegate_to_specialist"
+    from scripts.validation.drive_eval.dry_run_drive import DriveOpLog, DryRunDriveOperations
+    from scripts.validation.drive_eval.smart_dry_run import annotate_drive_read
+    from src.domain.drive_op import DriveOp
+    from src.domain.drive_outcome import DriveOutcome
+    from src.domain.drive_outcome_class import OutcomeClass
+    from src.infrastructure.drive_operations import DriveOperations
 
-        def __init__(self, query):
-            self.args = {"intent": "search_files_in_drive", "context": {"drive_query": query}}
+    class Searching(DriveOperations):
+        async def search(self, context, user_id, *, query=None, folder=None, kind=None, date_from=None, date_to=None):
+            text = 'No file holds "vaccination".' if "vaccination" in str(query) else "ok"
+            return DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text=text, success=True)
 
-    async def fixture_dispatch(engine, tool_call, context, *a, **kw):
-        text = 'No file holds "vaccination".' if "vaccination" in tool_call.args["context"]["drive_query"] else "ok"
-        return ToolResult(name=tool_call.name, result_str=text)
-
-    dispatch = DryRunDispatch(fixture_dispatch, fixture=None, read_only=frozenset())
-    await dispatch(None, Call("dog vaccination"), {})
-    await dispatch(None, Call("dog"), {})
-    assert dispatch.calls[0].get("d29") is True and "d29" not in dispatch.calls[1]
+    log = DriveOpLog()
+    ops = Searching(conversion_service=MagicMock())
+    with DryRunDriveOperations(log, cls=Searching, annotate=annotate_drive_read):
+        await ops.search({}, "u", query="dog vaccination")
+        await ops.search({}, "u", query="dog")
+    assert log.entries[0].get("d29") is True and "d29" not in log.entries[1]

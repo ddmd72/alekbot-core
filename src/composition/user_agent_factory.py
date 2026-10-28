@@ -92,6 +92,9 @@ from ..agents.pdf_generator_agent import PdfGeneratorAgent
 from ..agents.html_page_generator_agent import HtmlPageGeneratorAgent
 from ..agents.help_agent import HelpAgent
 from ..agents.file_management_agent import FileManagementAgent
+from ..agents.drive_agent import DriveAgent
+from ..infrastructure.drive_operations import DriveOperations
+from .drive_specialist_build import build_drive_specialist
 from ..agents.domain_researcher_agent import DomainResearcherAgent
 from ..agents.image_generation_agent import ImageGenerationAgent
 from ..agents.video_generation_agent import VideoGenerationAgent
@@ -138,6 +141,9 @@ class _UserContext:
     user_profile: UserProfile
     prompt_builder: UserPromptBuilder
     history_summary_service: Optional[HistorySummaryService] = None
+    # The user's one DriveOperations (DRIVE_SPECIALIST_RFC §5.5): FileManagement and the drive specialist share its
+    # per-user mutation lock, shielded tasks and late-failure notices. Built on first use by _drive_operations().
+    drive_operations: Optional[DriveOperations] = None
 
 
 class UserAgentFactory(AgentFactoryPort):
@@ -630,15 +636,10 @@ class UserAgentFactory(AgentFactoryPort):
         # Preload prompt assembly cache (warm-up optimization, non-critical)
         if self.assembly_service and hasattr(self.assembly_service, "preload_cache"):
             try:
-                preload_coros = [
-                    self.assembly_service.preload_cache("quick", account_id, user_id),
-                    self.assembly_service.preload_cache("smart", account_id, user_id),
-                ]
-                if self.notes_provider:
-                    preload_coros.append(
-                        self.assembly_service.preload_cache("notes", account_id, user_id)
-                    )
-                await asyncio.gather(*preload_coros)
+                await asyncio.gather(*(
+                    self.assembly_service.preload_cache(agent_type, account_id, user_id)
+                    for agent_type in self._preload_agent_types()
+                ))
             except Exception as e:
                 logger.warning(f"Failed to preload prompt cache for user {user_id[:8]}: {e}")
 
@@ -665,6 +666,16 @@ class UserAgentFactory(AgentFactoryPort):
         }
         self._cache[user_id] = cached
         return cached
+
+    def _preload_agent_types(self) -> List[str]:
+        """The prompts warmed when a user's agents are built. The drive specialist is lazy, but Smart uses the drive
+        often (DRIVE_SPECIALIST_RFC §1), so its prompt is warmed with Smart's wherever a drive path exists."""
+        types = ["quick", "smart"]
+        if self.notes_provider:
+            types.append("notes")
+        if self.file_conversion_service is not None:
+            types.append("drive")
+        return types
 
     async def _load_user_profile(self, user_id: str) -> UserProfile:
         user_profile = await self.user_repo.get_user(user_id)
@@ -859,6 +870,21 @@ class UserAgentFactory(AgentFactoryPort):
             user_id=user_id,
         )
 
+    def _drive_operations(self, ctx: _UserContext) -> Optional[DriveOperations]:
+        """The user's one DriveOperations, built on first use and memoised in the user's context (§5.5). Every builder
+        that touches the drive reads it here; builders run under the user's creation lock, so it is built once. None
+        when the deployment has no file conversion (no chat files, no drive)."""
+        if ctx.drive_operations is None and self.file_conversion_service is not None:
+            ctx.drive_operations = DriveOperations(
+                conversion_service=self.file_conversion_service,
+                drive_service=self.user_drive_service,
+                drive_search=self.drive_search_service,
+                notification=self.notification_service,
+                localization=self.localization,
+                language_service=self.language_service,
+            )
+        return ctx.drive_operations
+
     def _build_file_management(
         self, user_id: str, ctx: _UserContext,
     ) -> Optional[FileManagementAgent]:
@@ -878,6 +904,24 @@ class UserAgentFactory(AgentFactoryPort):
             localization=self.localization,
             language_service=self.language_service,
             drive_search=self.drive_search_service,
+            drive_operations=self._drive_operations(ctx),
+        )
+
+    def _build_drive(self, user_id: str, ctx: _UserContext) -> Optional[DriveAgent]:
+        """The drive specialist (DRIVE_SPECIALIST_RFC §5.1), on the user's shared DriveOperations (§5.5). None when the
+        deployment has no file conversion: then FileManagement is not built either. With conversion but no drive
+        service, the specialist is built and answers "The drive is not configured." with no LLM call (§7.2)."""
+        operations = self._drive_operations(ctx)
+        if operations is None:
+            logger.info("[UserAgentFactory] No file conversion configured, skipping the drive specialist")
+            return None
+        return build_drive_specialist(
+            user_id,
+            context_builder=self.context_builder,
+            prompt_builder=ctx.prompt_builder,
+            user_config=ctx.user_profile.config,
+            operations=operations,
+            alert_sink=self.alert_sink,   # the ops sink consolidation gets: a turn-cap exit posts one 🚨 line
         )
 
     def _build_domain_researcher(self, user_id: str, ctx: _UserContext) -> DomainResearcherAgent:
@@ -1052,6 +1096,7 @@ class UserAgentFactory(AgentFactoryPort):
         "deep_research": _build_deep_research,
         "claude_deep_research_runner": _build_claude_runner,
         "file_management": _build_file_management,
+        "drive": _build_drive,
         "domain_researcher": _build_domain_researcher,
         "image_generation": _build_image_generation,
         "video_generation": _build_video_generation,
@@ -1069,6 +1114,7 @@ class UserAgentFactory(AgentFactoryPort):
         "deep_research": "deep_research_agent",
         "claude_deep_research_runner": "claude_deep_research_runner",
         "file_management": "file_management_agent",
+        "drive": "drive_agent",
         "domain_researcher": "domain_researcher_agent",
         "image_generation": "image_generation_agent",
         "video_generation": "video_generation_agent",

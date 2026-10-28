@@ -23,7 +23,7 @@ Public interface:
     await search(user_id, request) -> DriveSearchResult
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
     await access_note(user_id, *, item_id=None, path=None) -> Optional[str]   # list/open on a 404 (§26.2, Δ55)
-    await search_deleted(user_id, drive_query) -> str          # `drive_deleted`: archived transcripts (§27.9.11)
+    await search_deleted(user_id, drive_query) -> str          # the deleted-files search: archived transcripts (§27.9.11)
     await archived_text(user_id, mirror_item_id, ...) -> Optional[str]   # opening a file of the bot's `_Transcripts`
 
 Files the bot cannot open (§26.2, D33): their cards say so in the `index:` line (drive_search.index_line), the coverage
@@ -57,6 +57,7 @@ from ..domain.drive_index_planner import month_key
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_keys import fetch_batches, name_match_v2, query_concepts, query_name_keys_v2
 from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
+from ..domain.drive_search_line import SearchLine, search_line
 from ..domain.drive_search_texts import ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER
 from ..domain.drive_search import (
     INACCESSIBLE_COUNTER, MAX_CHAIN_DEPTH, REFERENCE_REMINDER, wrap_untrusted, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
@@ -329,6 +330,14 @@ class DriveSearchService:
             f"visible={stats.visible} filtered={stats.filtered} collapsed={stats.collapsed} "
             f"returned={stats.returned} building={result.envelope.building} ms={ms}")
         return result
+
+    async def search_state(self, user_id: str) -> SearchLine:
+        """The drive specialist's `search` line (DRIVE_SPECIALIST_RFC §5.3): the same flag, sync state and connection a
+        search reads first, read now and in parallel; no stream runs."""
+        profile, state, connection = await asyncio.gather(
+            self._users.get_user(user_id), self._repo.get_sync_state(user_id), self._drive.connection(user_id))
+        enabled = bool(profile is not None and profile.config.drive_indexing_enabled)
+        return search_line(enabled, state, connection, self._clock())
 
     async def _search(self, user_id: str, request: DriveSearchRequest, stats: _Stats) -> DriveSearchResult:
         # §10.1 step 0: the flag, the sync state and the credentials, all read now, in parallel.
@@ -1382,8 +1391,8 @@ class DriveSearchService:
         self._deleted_sources.append(source)
 
     async def search_deleted(self, user_id: str, drive_query: str) -> Tuple[str, List[DriveItem]]:
-        """`search_files_in_drive` with `drive_deleted`: the heading `Deleted files (N):` and one wrapped entry per hit,
-        for Smart, and the drive files the shown refs open (so "open the second one" works next turn). Runs before (and
+        """The deleted-files search: the heading `Deleted files (N):` and one wrapped entry per hit,
+        for the orchestrator, and the drive files the shown refs open (so "open the second one" works next turn). Runs before (and
         without) the index gate: with drive search off it still answers from the ledger. An empty query lists the
         newest. Speech is other people's: entries go inside the nonce wrapper, never logged."""
         concepts = query_concepts(drive_query or "").concepts

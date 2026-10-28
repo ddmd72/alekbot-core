@@ -29,6 +29,7 @@ from ..domain.exceptions import (
     TRANSIENT_RETRY_TYPES,
 )
 from ..domain.retry_policy import DEFAULT_RETRY_POLICY, NO_RETRY_POLICY, RetryPolicy
+from ..domain.run_deadline import CURRENT_RUN_DEADLINE
 from ..domain.turn_clock import CURRENT_TURN_CLOCK
 from ..domain.llm import LLMResponse as _LLMResponse
 from ..domain.local_time import local_stamp
@@ -182,6 +183,10 @@ class BaseAgent(ABC):
     # See domain/retry_policy.py and
     # docs/04_solution_strategy/decisions/typed_retry_policy.md.
     RETRY_POLICY: ClassVar[RetryPolicy] = DEFAULT_RETRY_POLICY
+
+    # An orchestrator (Smart, Quick) publishes its own deadline in CURRENT_RUN_DEADLINE for the specialists it runs,
+    # and clears it when it runs without a timeout (DRIVE_SPECIALIST_RFC §5.6). Specialists leave it False.
+    SETS_RUN_DEADLINE: ClassVar[bool] = False
 
     # Same-provider retry budget for a transient FAILOVER error hit on a
     # provider-locked multi-turn transcript (see ``_call_llm`` transcript
@@ -670,21 +675,28 @@ class BaseAgent(ABC):
         - if both None, execute without timeout (routing agents)
         """
         timeout_ms = message.timeout_ms if message.timeout_ms is not None else self.config.timeout_ms
-
-        if timeout_ms is None:
-            return await self.execute(message)
-
-        timeout_seconds = timeout_ms / 1000
-
+        deadline_token = None
+        if self.SETS_RUN_DEADLINE:
+            deadline_token = CURRENT_RUN_DEADLINE.set(
+                None if timeout_ms is None else time.monotonic() + timeout_ms / 1000)
         try:
-            return await asyncio.wait_for(
-                self.execute(message),
-                timeout=timeout_seconds
-            )
-        except asyncio.TimeoutError:
-            raise asyncio.TimeoutError(
-                f"Agent {self.agent_id} exceeded timeout of {timeout_seconds}s"
-            )
+            if timeout_ms is None:
+                return await self.execute(message)
+
+            timeout_seconds = timeout_ms / 1000
+
+            try:
+                return await asyncio.wait_for(
+                    self.execute(message),
+                    timeout=timeout_seconds
+                )
+            except asyncio.TimeoutError:
+                raise asyncio.TimeoutError(
+                    f"Agent {self.agent_id} exceeded timeout of {timeout_seconds}s"
+                )
+        finally:
+            if deadline_token is not None:
+                CURRENT_RUN_DEADLINE.reset(deadline_token)
     
     # ---------------------------------------------------------------------- #
     # Lifecycle hooks                                                        #
@@ -714,6 +726,16 @@ class BaseAgent(ABC):
             logger.info(f"✅ [{self.agent_id}] done ({char_count} chars, {token_count} tokens)")
         else:
             logger.info(f"✅ [{self.agent_id}] done ({char_count} chars)")
+
+    def _execution_models(self) -> List[str]:
+        """The models that served this execution's billed calls, in first-use order: the open TokenLedger's legs.
+
+        Keyed by the model that ran (``_call_llm`` adds under the fallback model after a cross-provider failover),
+        so a log line built from it names what ran, not what was configured. Empty outside a billing scope
+        (``process()`` opens one) or before any call was billed.
+        """
+        ledger = _EXECUTION_LEDGER.get()
+        return list(ledger.by_model) if ledger is not None else []
 
     async def _flush_billing(self) -> None:
         """Durably record this execution's usage. No-op if quota_service/account_id

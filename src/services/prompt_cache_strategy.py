@@ -35,10 +35,12 @@ class PromptCacheStrategy(PromptCacheStrategyPort):
       Claude, but that is still one LLM call when nothing is delegated.
       Cache write would not be amortized → pay the +25% surcharge for nothing. Skipped.
     - WebSearch: single LLM call with native grounding, no follow-up.
+    - Drive specialist: multi-turn (search, then report); the prefix is ~8 k tokens and the cache holds across the
+      several commissions of one Smart turn (DRIVE_SPECIALIST_RFC §5.1 cost check).
     """
 
-    CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "smart", "quick", "websearch"})
-    MULTI_TURN_AGENTS: frozenset = frozenset({"consolidation", "smart"})
+    CACHEABLE_AGENTS: frozenset = frozenset({"consolidation", "smart", "quick", "websearch", "drive"})
+    MULTI_TURN_AGENTS: frozenset = frozenset({"consolidation", "smart", "drive"})
 
     def resolve(
         self, agent_type: str, capabilities: ProviderCapabilities

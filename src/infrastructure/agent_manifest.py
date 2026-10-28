@@ -30,9 +30,6 @@ To add a new specialist agent:
 """
 
 from ..domain.companion_config import CompanionConfig
-from ..domain.drive_search_texts import (
-    DRIVE_DATE_FROM_DESCRIPTION, DRIVE_DATE_TO_DESCRIPTION, DRIVE_DELETED_DESCRIPTION, DRIVE_KIND_DESCRIPTION, DRIVE_QUERY_DESCRIPTION,
-)
 from ..domain.voice_errand import TELL_ALEK_INTENT
 from .agent_registry import AgentDescriptor, ExecutionMode, FanoutSpec
 
@@ -76,20 +73,13 @@ class Intent:
     CREATE_HTML_PAGE = "create_html_page"
     # User-facing guide — returns what the system can do for the end user
     USER_GUIDE = "user_guide"
-    # File storage — retrieve and manage user file attachments
+    # File storage — retrieve and manage user file attachments (chat files, delivered documents, skill and
+    # workspace refs; open_file also opens a drive: ref, leniently)
     OPEN_FILE           = "open_file"
     DELETE_FILE         = "delete_file"
-    # The user's drive — long-term file area (USER_DRIVE_RFC §3, §4.4). The store is in the name.
-    # Search runs over our own index of the drive (USER_DRIVE_INDEXING_RFC §10): the provider's
-    # search does not work inside the App Folder (USER_DRIVE_RFC §7, A6).
-    SEARCH_FILES_IN_DRIVE  = "search_files_in_drive"
-    SAVE_FILE_TO_DRIVE     = "save_file_to_drive"
-    LIST_FILES_IN_DRIVE    = "list_files_in_drive"
-    OPEN_FILE_FROM_DRIVE   = "open_file_from_drive"
-    MOVE_FILE_IN_DRIVE     = "move_file_in_drive"
-    CREATE_FOLDER_IN_DRIVE = "create_folder_in_drive"
-    UPDATE_FILE_IN_DRIVE   = "update_file_in_drive"
-    DELETE_FILE_FROM_DRIVE = "delete_file_from_drive"
+    # The user's drive — long-term file area (USER_DRIVE_RFC), through one LLM specialist (DRIVE_SPECIALIST_RFC §4.1):
+    # Smart commissions, DriveAgent works through its own tools (the 8 drive intents it replaced are gone).
+    WORK_WITH_DRIVE_FILES  = "work_with_drive_files"
     # Domain research — interactive competency stack definition for agent construction
     DOMAIN_RESEARCH     = "domain_research"
     # Text language tutor — companion agent, bound-channel only (RFC docs/10_rfcs/COMPANION_AGENTS_RFC.md §7/§9)
@@ -532,18 +522,11 @@ FILE_MANAGEMENT = AgentDescriptor(
     capabilities={
         Intent.OPEN_FILE: ExecutionMode.SYNC,
         Intent.DELETE_FILE:        ExecutionMode.SYNC,
-        Intent.SAVE_FILE_TO_DRIVE:     ExecutionMode.SYNC,
-        Intent.LIST_FILES_IN_DRIVE:    ExecutionMode.SYNC,
-        Intent.OPEN_FILE_FROM_DRIVE:   ExecutionMode.SYNC,
-        Intent.MOVE_FILE_IN_DRIVE:     ExecutionMode.SYNC,
-        Intent.CREATE_FOLDER_IN_DRIVE: ExecutionMode.SYNC,
-        Intent.UPDATE_FILE_IN_DRIVE:   ExecutionMode.SYNC,
-        Intent.DELETE_FILE_FROM_DRIVE: ExecutionMode.SYNC,
-        Intent.SEARCH_FILES_IN_DRIVE:  ExecutionMode.SYNC,
     },
     # Reads files itself; the coordinator must not download a `file_ref` first (USER_DRIVE_RFC §4.4).
     prefetch_file_ref=False,
-    description="File storage archivist: chat files (temporary) and the user's drive (long-term file area)",
+    description="File storage archivist: chat files and delivered documents (temporary); drive work is the drive "
+                "specialist's",
     capability_descriptions={
         Intent.OPEN_FILE: (
             "Open a file the user uploaded earlier and return its raw content. "
@@ -556,67 +539,8 @@ FILE_MANAGEMENT = AgentDescriptor(
         ),
         Intent.DELETE_FILE: (
             "Delete a chat file ([File: ...] label) from storage. A drive file ([Drive: ...] label) "
-            "is deleted with delete_file_from_drive instead. "
+            "is deleted through work_with_drive_files instead. "
             'Requires: context={"file_ref": "<filename>"}'
-        ),
-        Intent.SAVE_FILE_TO_DRIVE: (
-            "Keep a file on the user's drive, their long-term file area. Chat attachments ([File: ...]) and "
-            "documents you produced are temporary; to remember, save, keep or put a FILE anywhere, always use "
-            "this intent (facts from a document go to memory only through the propose_memory_facts tool, when the user asks). Also writes a new text file you composed (note, list, "
-            "CSV, JSON, SVG...). Saves to Inbox unless the user named a folder. "
-            "Never overwrites: the reply states the name actually used. "
-            'Requires exactly one source: context={"file_ref": "<ref from [File: ...] or a delivered document>"} '
-            'or {"text": "<full content>", "name": "<name with extension>"}; optional '
-            '"folder" ONLY when the user named one; with file_ref, optional "name" for a clear file name.'
-        ),
-        Intent.LIST_FILES_IN_DRIVE: (
-            "List a folder on the user's drive (folders first). Results are [Drive: ...] labels with refs. "
-            'Optional context={"folder": "<path or drive:<id> ref of a folder>"}; omit for the top level.'
-        ),
-        Intent.OPEN_FILE_FROM_DRIVE: (
-            "Open a file from the user's drive and return its content (text, or the image/PDF itself); a "
-            "transcribed recording returns its transcript. "
-            'Requires: context={"file_ref": "drive:<id> from a [Drive: ...] label"}; optional '
-            '"original": true ONLY when the user asks for the recording itself (it comes as a link).'
-        ),
-        Intent.MOVE_FILE_IN_DRIVE: (
-            "Move and/or rename a file or folder already on the user's drive. A chat file is not on the drive: "
-            "use save_file_to_drive for it. "
-            'Requires: context={"file_ref": "drive:<id>"} plus "folder" and/or "new_name".'
-        ),
-        Intent.CREATE_FOLDER_IN_DRIVE: (
-            "Create a folder (and missing parents) on the user's drive. "
-            'Requires: context={"folder": "<path>"}'
-        ),
-        Intent.UPDATE_FILE_IN_DRIVE: (
-            "Change a file on the user's drive in one of two safe ways: append text at the end of a text file "
-            '("append_text"), or replace the whole content with another file ("source_ref", e.g. a new version '
-            "the user sent or a document you just produced; the user gets a notice with old and new size). "
-            "Rewriting a file with new text is not available. "
-            'Requires: context={"file_ref": "drive:<id>"} plus exactly one of "append_text" or "source_ref".'
-        ),
-        Intent.DELETE_FILE_FROM_DRIVE: (
-            "Delete a file or a whole folder from the user's drive (recoverable from its recycle bin); the user "
-            "gets a notice with what was deleted. "
-            'Requires: context={"file_ref": "drive:<id>"}'
-        ),
-        Intent.SEARCH_FILES_IN_DRIVE: (
-            "Find files and folders on the user's drive by name (exact, partial, transliterated or misspelled), "
-            "type, date, folder, photo details and place, by what a document is (a ticket, a receipt, a contract, "
-            "what expires) and by what is written inside documents, scans and screenshots: a subject, a phrase, a "
-            "number or an amount. Use it when the answer may be in the user's files, and before saying a file is "
-            "not there. Returns cards with drive:<id> refs for open_file_from_drive, grouped by how they matched "
-            "(about, mentioned in, by translation, labelled, related by meaning), each with what matched and, for "
-            "a passage match, the passage; and says what the search covered and how fresh the index is. "
-            "drive_query is required unless the request is filter-only: for filter-only requests (\"files I saved "
-            "this week\", \"all my spreadsheets\") leave drive_query empty and set only the filters. "
-            "Set drive_deleted to true only when the user explicitly asks about deleted or removed files: it then "
-            "searches transcripts of deleted recordings and the notes on deleted files, instead of the ordinary "
-            "search; an empty drive_query lists the newest. Never for an ordinary search. "
-            'Context: {"drive_query": "<the subject, a document type or purpose, or words, a number or an amount to '
-            'find inside>", "drive_folder": "<path or drive:<id>>", '
-            '"drive_kind": "<type>", "drive_date_from": "YYYY-MM-DD", "drive_date_to": "YYYY-MM-DD", '
-            '"drive_deleted": "true"}'
         ),
     },
     context_schemas={
@@ -630,44 +554,63 @@ FILE_MANAGEMENT = AgentDescriptor(
         Intent.DELETE_FILE: {
             "file_ref": "Filename of the file to delete (e.g. 'report.docx')",
         },
-        Intent.SAVE_FILE_TO_DRIVE: {
-            "file_ref": "Ref of the file to keep: name from a [File: ...] label, or a delivered document key. Not with text",
-            "text": "save_file_to_drive only: full content of a new text file you wrote. Not with file_ref",
-            "folder": "Optional. Folder path on the drive, only if the user named one (e.g. 'Meetings/2026')",
-            "name": ("Optional with file_ref (extension kept from the source if omitted). Required with text: "
-                     "must end in .md .txt .csv .json .yaml .yml .html .svg or .xml"),
-        },
-        Intent.LIST_FILES_IN_DRIVE: {"folder": ("Optional. Folder path on the drive, or a folder's drive:<id> ref; omit "
-                                                "for the top level")},
-        Intent.OPEN_FILE_FROM_DRIVE: {
-            "file_ref": "drive:<id> ref from a [Drive: ...] label",
-            "original": {"type": "boolean", "description": ("open_file_from_drive only: set true only when the user "
-                                                            "asks for the recording itself, not its content")},
-        },
-        Intent.MOVE_FILE_IN_DRIVE: {
-            "file_ref": "drive:<id> ref of the file or folder",
-            "folder": "Optional. Destination folder path",
-            "new_name": "Optional. New name, extension included for files",
-        },
-        Intent.CREATE_FOLDER_IN_DRIVE: {"folder": "Folder path to create, e.g. 'Contracts/2026'"},
-        Intent.UPDATE_FILE_IN_DRIVE: {
-            "file_ref": "drive:<id> ref of the file to change",
-            "append_text": "Optional. Text to add at the end (text files only)",
-            "source_ref": "Optional. Ref of a file whose content replaces the whole file",
-        },
-        Intent.DELETE_FILE_FROM_DRIVE: {"file_ref": "drive:<id> ref of the file or folder"},
-        # Field names no other intent uses: the delegate tool keeps the first description seen per name
-        # (base_agent._build_delegate_tool_declaration), USER_DRIVE_INDEXING_RFC §10.4.
-        Intent.SEARCH_FILES_IN_DRIVE: {
-            "drive_query": DRIVE_QUERY_DESCRIPTION,   # Search v2 texts (USER_DRIVE_INDEXING_RFC §25.13.6, D25)
-            "drive_folder": (
-                "search_files_in_drive: optional folder to search within, with its subfolders: a drive:<id> ref "
-                "of a folder or its path, e.g. 'Contracts/2026'. Omit to search the whole drive"
-            ),
-            "drive_kind": DRIVE_KIND_DESCRIPTION,
-            "drive_date_from": DRIVE_DATE_FROM_DESCRIPTION,
-            "drive_date_to": DRIVE_DATE_TO_DESCRIPTION,
-            "drive_deleted": DRIVE_DELETED_DESCRIPTION,   # shared with the owner-notes RFC §6.4 (one surface)
+    },
+    internal=False,
+)
+
+
+# The user's drive through one LLM specialist (DRIVE_SPECIALIST_RFC §4, §5.1). Smart and Quick see one intent and
+# one field; the specialist works through local tools over the user's DriveOperations and delegates nothing.
+DRIVE_SPECIALIST = AgentDescriptor(
+    agent_id="drive_agent",
+    agent_type="drive",
+    eager=False,
+    capabilities={Intent.WORK_WITH_DRIVE_FILES: ExecutionMode.SYNC},
+    allowed_intents=frozenset(),   # local tools only (§5.4)
+    # The specialist resolves refs itself; the coordinator must not download a `file_ref` first (§5.1).
+    prefetch_file_ref=False,
+    description="The user's drive: finds, opens, keeps, moves, changes and deletes files (DRIVE_SPECIALIST_RFC.md)",
+    capability_descriptions={
+        # One paragraph: _build_delegate_tool_declaration renders each intent as one line (§4.1). No notes
+        # sentence until the drive file notes ship (§9.5).
+        Intent.WORK_WITH_DRIVE_FILES: (
+            "The user's drive: their own long-term files (documents, scans, photos, recordings). "
+            "Finding files is part of it: by name (exact, partial, transliterated or misspelled), by what a file is or "
+            "what is written inside (a subject, a phrase, a number, an amount), type, date, folder, photo details and "
+            "place; deleted files only when the user asks about them (transcripts of deleted recordings and the notes "
+            "on deleted files). Use it when the answer may be in the user's files, and before saying a file is not "
+            "there. "
+            "A find ('find', 'show me', 'do I have', 'where is', 'which files', 'everything about X') is answered from the search results alone; ask to "
+            "open a file only when the user wants something written inside it. "
+            "It also opens files (a recording opens as its transcript; the recording itself comes as a link when the "
+            "user asks for it), lists folders, keeps a copy of a chat file, a document you delivered, a workspace copy "
+            "or a skill file, saves a text you composed, moves and renames, creates folders, appends text to a text "
+            "file, replaces a file's content with another file (the user gets a notice; rewriting with new text is not "
+            "available) and deletes (recoverable from its recycle bin; the user gets a notice). "
+            "Chat files and documents you produce are temporary: to remember, save, keep or put a FILE anywhere, use "
+            "this intent (facts from a document go to memory only through propose_memory_facts, when the user asks). "
+            "Write query as a natural-language instruction with the full picture: what the user wants, the words to "
+            "find as the user wrote them (one language, no synonyms or translations), every drive: ref, [File: …] label and delivered document key it points at, "
+            "and the facts from this conversation it needs. "
+            'File contents to save or append: context={"file_contents": [<one item per file>]}. '
+            "Returns a status and a 'What to do:' line (follow it), then every result verbatim; images and PDFs come "
+            "attached."
+        ),
+    },
+    context_schemas={
+        Intent.WORK_WITH_DRIVE_FILES: {
+            "file_contents": {
+                "type": "array",
+                "description": (
+                    "work_with_drive_files only: the content of text files, one item per file, each exactly as it "
+                    "goes into the file (text you composed or the user gave): a new text file as {\"name\": \"<file "
+                    "name with extension>\", \"text\": \"<full content>\"}, or text to add at the end of a text file "
+                    "as {\"target\": \"<drive: ref of that file>\", \"text\": \"<text to add>\"}. Only what is "
+                    "written into a file's content. Leave it out when no file content is written."
+                ),
+                "items": {"type": "object", "properties": {
+                    "name": {"type": "string"}, "target": {"type": "string"}, "text": {"type": "string"}}},
+            },
         },
     },
     internal=False,
@@ -937,6 +880,7 @@ ALL_DESCRIPTORS = [
     HTML_PAGE_GENERATOR,
     HELP,
     FILE_MANAGEMENT,
+    DRIVE_SPECIALIST,
     DOMAIN_RESEARCHER,
     TUTOR,
     IMAGE_GENERATION,

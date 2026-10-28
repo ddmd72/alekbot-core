@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Mapping, Optional, Set, Union
 
 from ..domain.agent import AgentStatus, DeliveryItem
 from ..domain.messaging import SmartResponse
@@ -44,7 +44,9 @@ class ToolResult:
     structured_data: Any = None
     history_context: Optional[Dict[str, Any]] = None
     delivery_items: List[DeliveryItem] = field(default_factory=list)
-    file_data: Optional[Dict[str, Any]] = None
+    # One vision file, or several in order (the drive specialist opens several files in one commission,
+    # DRIVE_SPECIALIST_RFC §6); build_tool_turn appends one file part per file after the tool_response.
+    file_data: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None
     # A non-success outcome (rejection, exception, max retries, missing intent, a fan-out whose
     # primary section errored). Additive: existing callers don't read it, so their behaviour
     # is unchanged; LelikAgent reads it to skip posting a chat copy of a link found in an error string.
@@ -192,6 +194,7 @@ class DelegationEngine:
         retry_backoff: float = 1.0,
         local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
         use_turn_clock: bool = False,
+        allow_delegation: bool = True,
     ) -> DelegationResult:
         """Run the delegation loop, wrapped in a ``delegation.loop`` tracing span.
 
@@ -217,6 +220,7 @@ class DelegationEngine:
                 retry_backoff=retry_backoff,
                 local_tools=local_tools,
                 use_turn_clock=use_turn_clock,
+                allow_delegation=allow_delegation,
             )
 
     async def _execute_loop(
@@ -233,6 +237,7 @@ class DelegationEngine:
         retry_backoff: float = 1.0,
         local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
         use_turn_clock: bool = False,
+        allow_delegation: bool = True,
     ) -> DelegationResult:
         """Run the delegation loop.
 
@@ -266,6 +271,10 @@ class DelegationEngine:
                             on the orchestrator's reserve and stomp its
                             ``clock.step``. Only the orchestrator that owns the
                             clock (SmartResponseAgent) passes True.
+            allow_delegation: False for an agent with local tools only (the drive
+                              specialist, DRIVE_SPECIALIST_RFC §5.4): delegate_to_specialist
+                              is not declared, so a stray call gets the unknown-tool answer
+                              and never reaches the coordinator.
         """
         history = list(base_request.messages)
         total_tokens = 0
@@ -373,6 +382,7 @@ class DelegationEngine:
                             retry_backoff=retry_backoff,
                             local_tools=local,
                             terminal_tool=terminal_tool,
+                            allow_delegation=allow_delegation,
                         )
                         # Nobody reads a sibling's result: the answer is already written.
                         # A local tool (use_skill) must not leave a body in history that was never followed.
@@ -431,6 +441,7 @@ class DelegationEngine:
                 retry_backoff=retry_backoff,
                 local_tools=local,
                 terminal_tool=terminal_tool,
+                allow_delegation=allow_delegation,
             )
             if clock is None:
                 tool_results = await batch
@@ -648,6 +659,7 @@ class DelegationEngine:
         retry_backoff: float,
         local_tools: Optional[Mapping[str, LocalToolHandler]] = None,
         terminal_tool: Optional[str] = None,
+        allow_delegation: bool = True,
     ) -> List[ToolResult]:
         """Dispatch all tool calls in one parallel batch via asyncio.gather.
 
@@ -663,7 +675,8 @@ class DelegationEngine:
             "⚡ [DelegationEngine] Parallel execution: %s call(s)",
             len(tool_calls),
         )
-        declared = {DELEGATE_TOOL_NAME, *local_tools, *([terminal_tool] if terminal_tool else [])}
+        declared = {*([DELEGATE_TOOL_NAME] if allow_delegation else []), *local_tools,
+                    *([terminal_tool] if terminal_tool else [])}
         tasks = [
             self._dispatch_local(tc, local_tools[tc.name]) if tc.name in local_tools
             else self._unknown_tool(tc, declared) if tc.name not in declared

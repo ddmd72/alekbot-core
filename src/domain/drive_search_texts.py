@@ -90,46 +90,12 @@ FOOTER_NO_CONJUNCTION_SEARCHED = "No searched file matches all of: {terms}."    
 
 # A sync state not rebuilt under v2 (D30, xc XC-1): no stream runs, nothing is stated absent
 REBUILDING_LINE = ("The index is being rebuilt for a new search format, so nothing could be searched yet: this "
-                   "result says nothing about what the drive holds. Browse folders with list_files_in_drive, or "
-                   "search again later.")
+                   "result says nothing about what the drive holds. Browse the folders, or search again later.")
 
 # Superseded by D30 (P6 review M3): v2 has no migration mode and never renders this line; a state not rebuilt under v2
 # is not searched and answers REBUILDING_LINE (XC-1). Kept only because the frozen core pins it; drop it with that pin.
 MIGRATION_LINE = ("The index is being migrated to a new search format: only names, meaning and filters were "
                   "searched.")
-
-# -- agent manifest (D25, §25.5.7) ---------------------------------------------------------------------------------
-DRIVE_QUERY_DESCRIPTION = (
-    "search_files_in_drive: REQUIRED unless the request is filter-only; the `query` field is not read for search. "
-    "The subject in the user's words (any language): the words of a file or folder name, a place, a person, a topic, "
-    "a document type or purpose ('tickets', 'receipts', 'contracts', 'what expires'), or what to find inside (a "
-    "phrase, a number, an amount, an id). For 'everything about X' put X. A file format goes in drive_kind ('photos', "
-    "'PDF', 'spreadsheet'); a time span ('last year', '2023–2024') goes in drive_date_from / drive_date_to, not in "
-    "the words. Leave EMPTY only for filter-only requests. All words must match: use the user's few key words in "
-    "one language."
-)
-# One description for the deleted-files flag, shared with DRIVE_FILE_NOTES_RFC §6.4: the delegate tool keeps the first
-# description per field name, so both features must read the same text (USER_DRIVE_INDEXING_RFC §27.9.11).
-DRIVE_DELETED_DESCRIPTION = (
-    "search_files_in_drive: true only when the user explicitly asks about deleted or removed files: searches transcripts of deleted "
-    "recordings and your notes on deleted files. Never for an ordinary search."
-)
-DRIVE_KIND_DESCRIPTION = (
-    "search_files_in_drive: optional file type. A family covers every format of its kind: "
-    "spreadsheet (xlsx, xls, ods, csv), document (docx, doc, odt, rtf, pdf, markdown, text), word (docx, doc), "
-    "presentation (pptx, ppt, odp), photo (any image). Or one kind: pdf, docx, xlsx, markdown, text, csv, image, video, "
-    "audio, archive, code, folder, or a file extension such as 'jpg'. Other words are refused"
-)
-DRIVE_DATE_FROM_DESCRIPTION = (
-    "search_files_in_drive: optional earliest date, YYYY-MM-DD, inclusive: a photo's taken date, otherwise the date "
-    "written in the document when the index found one, otherwise the file's date. Use it for a time span the user "
-    "gives. For what expires, it bounds the expiry date."
-)
-DRIVE_DATE_TO_DESCRIPTION = (                                    # §25.5.7's date wording, added to §25.13.6
-    "search_files_in_drive: optional latest date, YYYY-MM-DD, inclusive (the whole day counts): a photo's taken date, "
-    "otherwise the date written in the document when the index found one, otherwise the file's date. Use it for a "
-    "time span the user gives. For what expires, it bounds the expiry date."
-)
 
 # -- Smart protocol, `drive_specialist` block (§25.5.7) ------------------------------------------------------------
 PROTOCOL_TIERS_LINE = (
