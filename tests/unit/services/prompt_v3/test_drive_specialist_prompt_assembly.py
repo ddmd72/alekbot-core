@@ -47,13 +47,20 @@ def _service():
                                  security_port=_AllowAll(), formatter=ContextFormatter(), bio_formatter=bio)
 
 
+def _first_line(name):
+    """A token body's first line, read from its snapshot file: a position mark that follows any rewording."""
+    return _token(name).content.strip().splitlines()[0].strip()
+
+
 async def test_the_drive_prompt_assembles_in_class_order():
     prompt = await _service().assemble(agent_type="drive", user_id="u1", account_id=None)
     static = prompt.split(PROMPT_CACHE_BOUNDARY)[0]
     assert static.lstrip().startswith("class DriveAgent extends Agent {")
-    assert "output_format {\n\n        output_format" not in static   # a token body is not wrapped in its class twice
-    marks = ["The drive assistant: a precise executor", "drive_search {", "End every commission with one "
-             "report_to_orchestrator call."]
+    for cls in ("cognitive_process", "protocols", "output_format"):   # a token body is not wrapped in its class twice
+        assert f"{cls} {{\n\n        {cls}" not in static
+    marks = ["    cognitive_process {", _first_line("COGNITIVE_PROCESS_DRIVE"),
+             "    protocols {", _first_line("PROTOCOL_DRIVE_SEARCH"),
+             "    output_format {", _first_line("OUTPUT_FORMAT_DRIVE")]
     positions = [static.index(m) for m in marks]
     assert positions == sorted(positions)
     assert PROMPT_CACHE_BOUNDARY in prompt
