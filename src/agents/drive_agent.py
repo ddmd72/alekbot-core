@@ -271,11 +271,18 @@ class DriveAgent(BaseAgent):
             return
         try:
             await asyncio.wait_for(self._alert_sink.post(
-                f"🚨 Drive specialist hit the turn limit without a report | model {self.model_name} | "
+                f"🚨 Drive specialist hit the turn limit without a report | model {self._served_models()} | "
                 f"turns {len(tools_per_turn)}/{DRIVE.max_turns} | user {user_id[:8]}\n{sequence}"),
                 timeout=ALERT_TIMEOUT_S)
         except Exception as exc:
             logger.warning("[DriveAgent] ops alert delivery failed: %s", exc)
+
+    def _served_models(self) -> str:
+        """The model(s) that ran this commission, from the billing ledger (keyed by the model that served each call,
+        so a cross-provider failover shows as the fallback model; several models joined by "+", in first-use order).
+        The configured model when nothing was billed: no LLM call ran, or no billing scope is open (`execute` called
+        outside `process`)."""
+        return "+".join(self._execution_models()) or self.model_name
 
     @staticmethod
     def _commission(payload: Mapping[str, Any]) -> str:
@@ -290,7 +297,7 @@ class DriveAgent(BaseAgent):
         """One log line per commission, no file names (§5.1), and the success that carries the answer (§7)."""
         ops = ",".join(f"{r.outcome.op.value}:{r.outcome.cls.value}" for r in collector.results)
         logger.info("[DriveAgent] user=%s status=%s model=%s ops=%s turns=%s ms=%s",
-                    str(message.context.get("user_id"))[:8], answer.status.value, self.model_name, ops, turns,
+                    str(message.context.get("user_id"))[:8], answer.status.value, self._served_models(), ops, turns,
                     int((self._monotonic() - started) * 1000))
         metadata: Dict[str, Any] = {"drive_status": answer.status.value}
         if answer.files:
