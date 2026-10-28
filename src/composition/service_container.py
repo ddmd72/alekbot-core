@@ -209,7 +209,7 @@ class ServiceContainer:
 
         # Drive search (USER_DRIVE_INDEXING_RFC §10.1): over the index, on the main service. The opt-in
         # flag is read from Firestore on every search, never from the agent cache, so the service gets
-        # its own (uncached) user repository.
+        # an uncached user repository.
         self.drive_search_service: Optional[DriveSearchService] = None
         # One uncached user repository and one stateless security port, shared by the drive search and the note service
         # (and, for the port, the skill service below): built once, injected.
@@ -229,8 +229,8 @@ class ServiceContainer:
                 mirror=self.drive_mirror_repo,
             )
 
-        # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.4): on the same drive pair, with its own uncached user
-        # repository (the indexing switch for the receipt's status). Built whatever the kill switch says: off stops
+        # Owner notes on drive files (DRIVE_FILE_NOTES_RFC §4.4): on the same drive pair, sharing the search's uncached
+        # user repository (the indexing switch for the receipt's status). Built whatever the kill switch says: off stops
         # writes (no tool), reads keep answering (§3.6). Never handed to the memory side (§1.4 anti-goal). One note
         # store for the process: the service and the deleted-files source share `drive_note_repo`.
         self.drive_note_repo: Optional[DriveNoteRepository] = None
