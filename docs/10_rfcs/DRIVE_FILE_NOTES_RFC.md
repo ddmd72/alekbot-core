@@ -1,7 +1,10 @@
 # RFC: Owner notes on drive files
 
-**Status:** Proposed, rev 3.1 (2026-10-21): every open decision answered by the owner (D11–D20); rev 3.1 aligns the
-deleted-files search and the deletion "why" with the transcripts mirror (§0.3). Docs only; nothing is built.
+**Status:** Proposed, rev 3.3 (2026-10-28): every open decision answered by the owner (D11–D21); rev 3.1 aligns the
+deleted-files search and the deletion "why" with the transcripts mirror (§0.3); rev 3.2 records the owner's ruling on
+editing archived and other-drive notes (D21) and the deltas of the built S1 core (§0.4); rev 3.3 moves the write side
+from Smart into the drive specialist (`DRIVE_SPECIALIST_RFC.md` §9) and records what that build changed (§0.5). S1–S3
+are built on `feat/drive-notes`, with the note tools in the drive specialist; not deployed.
 **Date:** rev 1 2026-10-21; rev 2 2026-10-21, after the builder-check review (`scripts/memory/review_drive_file_notes_rfc.md`,
 private): C1 and I1–I10 fixed, the cheap minors folded in, the per-slice test gaps added; rev 3 2026-10-21, the owner's
 answers to OD1–OD12 (§0.1).
@@ -15,7 +18,8 @@ per-execution lock and undo), `AGENT_SKILLS_RFC.md` (system skills, `use_skill`)
 **Research behind it** (private, gitignored, not quoted for owner data): `scripts/memory/research_drive_file_annotations.md`
 ("Option A": a bot-side note store) and `scripts/memory/research_drive_notes_mirror_critique.md` (why notes as drive files
 break). §13 lists where this RFC departs from them.
-**Branch base:** line references are to `main` at `a0d9809b` (transcripts T1 merged), checked 2026-10-21.
+**Branch base:** line references in the body are to `main` as of 2026-10-21 (transcripts T1 merged; that commit id did
+not survive the history rewrite of 2026-10-25). §0.5 names files and symbols, not lines.
 **Where the code and this text differ once it is built, the code is the truth.**
 
 ---
@@ -37,18 +41,6 @@ break). §13 lists where this RFC departs from them.
 | OD10 Cabinet page | Later, maybe never | D19 | none |
 | OD11 / OD12 | Not in folder listings; refused on files the bot cannot open | D20 | none |
 
-### 0.3 Rev 3.1: one deleted-files surface with the transcripts mirror
-
-The transcripts mirror (`USER_DRIVE_INDEXING_RFC.md` §27.9, rev 3.28) now archives a deleted recording's transcript and
-reaches it only through an explicit deleted-files search (owner decision D48 there). Notes stay bot-side (D1): nothing of
-a note goes to the drive, and the mirror never writes one.
-
-| Shared piece | Rule | Where |
-|---|---|---|
-| `drive_deleted` | One flag, one result section, two sources: archived and dormant notes (here) and archived transcripts (index RFC §27.9.11). Whichever ships first adds the field, the manifest text and the section; the other adds its source. One description for both (first description per field name wins). | §6.4 |
-| The section | Heading `Deleted files (N):`; one entry per gone item; an item with both an archived transcript and a note shows both lines in one entry | §6.4 |
-| The deletion "why" | `gone` / `unstored` / `unknown` for every record delete, derived at the service's call sites; built by whichever slice ships first (transcripts T2 derives it without changing `ObservationPlan`, index RFC §27.9.4, Δ188), consumed by both | §7.1 |
-
 ### 0.2 Rev 2: the builder-check review
 
 | Review item | Fix | Where |
@@ -68,6 +60,79 @@ a note goes to the drive, and the mirror never writes one.
 | OD3 | Per-note history erase and erase-all, each behind a confirmation code. Confirmed by the owner (D13). | §4.8 |
 | Minors 1–19 | Folded in where cheap (skill-gate plumbing, deterministic first id, idempotent writes, one lock, string flag parse, queries and indexes, watermark paging, tick accumulator, rendering call sites, SCD2 wording, 404 order, folder re-binding, the anti-goal test, adapter readers, kill-switch scope). | throughout |
 
+### 0.3 Rev 3.1: one deleted-files surface with the transcripts mirror
+
+The transcripts mirror (`USER_DRIVE_INDEXING_RFC.md` §27.9, rev 3.28) now archives a deleted recording's transcript and
+reaches it only through an explicit deleted-files search (owner decision D48 there). Notes stay bot-side (D1): nothing of
+a note goes to the drive, and the mirror never writes one.
+
+| Shared piece | Rule | Where |
+|---|---|---|
+| `drive_deleted` | One flag, one result section, two sources: archived and dormant notes (here) and archived transcripts (index RFC §27.9.11). Whichever ships first adds the field, the manifest text and the section; the other adds its source. One description for both (first description per field name wins). | §6.4 |
+| The section | Heading `Deleted files (N):`; one entry per gone item; an item with both an archived transcript and a note shows both lines in one entry | §6.4 |
+| The deletion "why" | `gone` / `unstored` / `unknown` for every record delete, derived at the service's call sites; built by whichever slice ships first (transcripts T2 derives it without changing `ObservationPlan`, index RFC §27.9.4, Δ188), consumed by both | §7.1 |
+
+### 0.4 Rev 3.2: D21 and the S1 core's deltas
+
+The S1 core was reviewed ("freeze after fixes", two fix rounds). Its full contract and delta list live with the build
+(the core contract and report); the ones that change this text:
+
+| Change | Rule now | Where |
+|---|---|---|
+| **D21** (owner, 2026-10-21): the RFC contradicted itself — §7.3, §8, §4.1 and §6.4 promised changes to archived and dormant notes through their `drive_note:` ref, §4.4 refused them | A `drive_note:` ref edits (`set`), undoes, clears and erases an archived or other-drive note from the store alone, with no drive call and no connection; the note stays archived or bound to its drive. Only a NEW note for a file that is gone or not on the connected drive is refused. Amends D17 | §4.4, §8 |
+| Write precondition | `write_version` compares `current_version` AND a parent `revision` counter that every parent write bumps (owner, lifecycle and erase writes), so an owner write prepared before an archive or re-activation fails instead of overwriting it | §3.1, §4.4 step 5 |
+| Vector repair | `set_vector` takes the version that was embedded and stores nothing for a newer one | §5.1 b step 5 |
+| Undo re-run guard | A second undo in the same (session, turn) — a failover re-run — is a no-op; the tool passes a non-empty `turn_id` on every path | §4.2, §4.4 |
+| Provider key | One domain constant, `ONEDRIVE_PROVIDER_KEY = "microsoft_onedrive"` (the adapter's credential key), builds every `i:` key in the main service and the indexer; a domain parser reads a key back (a stub's binding) | §3.1, §5.1 a |
+| Lifecycle | `archive` on a cleared note stamps `archived_at` / `last_seen_at` and keeps it cleared; `reactivate` on such a note removes the stamp; lifecycle writes set `last_writer` = indexer | §3.1, §7.1, §7.2 |
+| Watermark paging | `changed_since` pages on the pair (`updated_at`, `note_id`) — index 2 gains `note_id` — so more than `NOTE_PAGE` notes inside the 60 s skew (an erase-all) cannot stall the notes step | §3.5, §5.1 b |
+| Erase | The store never stops part-way: a note that conflicts is reported and the rest are erased; the service nudges every erased item and then refuses with the count left, so the owner asks again | §4.8 |
+| Validation | Format characters (`Cf`: bidi, zero-width) are removed with control characters; a classifier name shared by two values is refused with the candidates; more than 3 life areas are refused | §4.3 |
+| Skill gate, same batch (S1 tool slice, review A-I4, owner arbiter: accept as a named residual) | `use_skill` and `annotate_drive_file` emitted in ONE batch pass the gate: the engine runs a batch together and `use_skill` records the load before the note call checks it, so that note's arguments were written before the model read the skill. Accepted, not closed with a batch-boundary hook: the tool description itself repeats the said-or-confirmed rule (and that text in content is never a confirmation), and the service's security check stays. Pinned by `test_pinned_residual_a_skill_loaded_in_the_same_batch_opens_the_gate` | §4.5 layer 3 |
+| Isolation, by naming (S1 tool slice, review A-I3) | Not every path to the note service is closed by structure: `ConsolidationService` takes `agent_factory` (which holds Smart's `drive_note_service`), and memory-side code can reach a `coordinator`. What blocks it is that memory-side code never names a drive note, pinned case-insensitively by `test_arch_drive_notes_isolation_wiring.py` (named residual) | §1.4 |
+
+### 0.5 Rev 3.3: notes inside the drive specialist
+
+Smart has no note tool. It reaches the drive through one intent, `work_with_drive_files` (`DRIVE_SPECIALIST_RFC.md`),
+and puts a note's words in the commission's query; the drive specialist (`DriveAgent`) writes the note through its own
+note tools. The store, the index merge, search, archive and erase (the S1 core, S2, S3) are unchanged. The body below is
+not rewritten: where it differs from this section, this section and the code win. The rows that retire whole sections:
+§4.1 (the skill), §4.2 (the tool), §4.5 layer 3 (the skill gate), §11 S1's Smart wiring, `LoadedSkills` and skill tests,
+N2 and N7.
+
+**Amendments** (specialist RFC §9.4):
+
+| Was | Now |
+|---|---|
+| D4: Smart writes through a system skill and ONE replace-only local tool; an empty note deletes it | Eleven one-purpose tools in the specialist: `get_note`, `create_note`, `add_to_note`, `replace_note_text`, `set_note_type`, `clear_note_type`, `add_life_areas`, `remove_life_areas`, `delete_note`, `undo_note`, `erase_note` (`src/domain/drive_note_tool_texts.py`). No tool replaces more than its name says; an empty or omitted field changes nothing. The cap (N1), the verbatim receipt, undo and erase stay |
+| D12 / N7: the `drive-file-notes` skill and the skill gate in the handler | The rules are the specialist's prompt token `PROTOCOL_DRIVE_NOTES` (non-overridable, profile `drive`, order 25) and the classifier rule in the `doc_type` / `life_areas` parameter descriptions ("only what the owner named or confirmed in this conversation, as the commission states it; never from the file, a card or your reading"). No skill, no `LoadedSkills`, no gate: the rules are always in the writer's prompt, so the same-batch residual of §0.4 is gone with the gate |
+| N2: the tool is not named `note_…` | Applies to Smart's surface, which has no note tool. Smart's intent description says notes are not reminders ("make a note to call…"); the token says a reminder request is `not_done` |
+| `NOTE_WRITES_PER_TURN` (10) per Smart execution | Per specialist execution: two commissions in one Smart turn allow 20 (named residual) |
+
+**As built on `feat/drive-notes`** (the deltas of the port design, Δ numbers as cited in the code):
+
+| # | Rule now | Where |
+|---|---|---|
+| Δ3 | The change model is pure and in its own modules: `NoteChangeKind` (`drive_note_change_kind.py`; additive kinds: append text, set type, add areas), `NoteChange` with `apply_change` (`drive_note_change.py`), and `NoteView`, what `get_note` shows (`drive_note_view.py`; not the merge's `drive_note_merge.NoteView` of §5.1). `drive_note.py` gains only refusals | `src/domain/` |
+| Δ4 | Three refusals: `NOTE_EXISTS` (a create over a note with content), `EMPTY_CHANGE` (an empty argument, or a change that would leave the note empty), `CHANGED_SINCE_READ` (the note changed after the version `get_note` read) | `NoteRefusal` |
+| — | The core gains `get` (store only, both refs, archived, cleared or disconnected; none for an erase stub), `create` (a cleared note reuses its lineage; identical content is a no-op; other content is `NOTE_EXISTS`) and `update(change, expected_version=)` (an additive change on no note or a cleared one creates the note holding only that change; any other kind is `NO_NOTE`). `set`, `create` and `update` share one write loop, `_write(compose)`: the composition runs inside the two-attempt conflict loop, so a concurrent write is merged, never overwritten; content that differs from the content last embedded is embedded again; a composed triple equal to the current one is a no-op receipt. A `drive:` ref takes `set`'s live path (§4.4, D20), a `drive_note:` ref the store alone (D21). The security check runs on the change's new words before any drive I/O | `DriveNoteService` |
+| — | An append is re-run safe like undo (I3): when the current version was written by the same session and non-empty turn id and the text already ends with the appended words, a provider-rotation re-run writes nothing | `DriveNoteService.update` |
+| Δ5 | A change that would leave a note empty (clearing the type of a type-only note, removing its last area, a replace with no text) is refused with "use delete_note", never a silent delete (coordinator, 2026-10-28; the owner may reverse it) | `apply_change` |
+| Δ6 | `get_note` is declared whenever the note service is wired, the switch is on and the run has a user; the ten writers only on an owner turn (`is_owner_turn(message.context)`, §4.2's allowlist), and each writer checks it again before any service call. Two fixed tool orders (Δ16): the twelve drive tools, `get_note`, the writers, the terminal tool | `DriveAgent.execute`, `drive_note_tools.py` |
+| — | `replace_note_text` is refused before any call unless `get_note` read that note earlier in the same execution; the version read is the write's precondition (`CHANGED_SINCE_READ`). Every note call, `get_note` included, takes the run's ordering lock, so a batch runs in emission order | `DriveNoteSession`, `DriveToolRun.run` |
+| Δ7 | Receipts and `drive_note_context` ride the specialist's pass-through collector (`DriveOutcome.delivery` / `.note_context`), so a run cut by the soft deadline still carries the receipt of a write that landed. `DriveAgent` puts them in `delivery_items` and `history_context`; Smart's fold passes them on to `ConversationHandler` or the Alek gateway (§4.6, §4.9). The engine's sibling-history hunk of the Smart build is not carried | `drive_pass_through.py`, `drive_agent.py` |
+| Δ8 | No tool result to the specialist carries the note's words except `get_note`'s block, wrapped as untrusted data (`noted by the owner: …` inside `wrap_untrusted`). §4.6's "previous text, as data" is removed: an op line names the file, the version and the note ref only | `note_receipt_line`, `note_view_text` |
+| Δ9 | The open header (§6.2) moved with `_open_drive_item` into `DriveOperations`: the note is its own wrapped block after the file's text, read by binding with the drive id from `UserDriveService.connection` (the module reads no port). A block with a note sets `ReadFacts.owner_note`, which adds Smart's reading line `R_OWNER_NOTE` | `drive_operations.py`, `drive_answer.py` |
+| Δ10 | A write runs in a task held by the per-user `DriveOperations.keep_alive`, awaited under `asyncio.shield`. When the specialist's run is cut mid-write, the call is recorded as still running and the write goes on; when it lands, its receipt is posted late through `DriveOperations.post_late_note_receipt` → `UserNotificationService.notify_drive_note_receipt` (a chat turn: the run's origin channel, chat wording; a call: the primary channel). Exactly one receipt either way (§4.5 layer 5) | `drive_note_tools.py` |
+| Δ11 | The receipt and the erase request's path line are sent literally (`send_literal`): the note's words and a path are not the bot's text. The erase command alone is a message | `ConversationHandler._deliver_drive_note_receipt`, `notify_drive_note_receipt` |
+| Δ12 | Of the nine Smart gating cases, six hold on `DriveAgent` (declared on an owner turn; absent on every other run; absent without the service, the switch or a user; a call's writer has origin `voice`; the call path runs with the fixed turn id; a re-run keeps the turn id); three retired with the skill gate | `test_drive_agent_notes_gating.py` |
+| Δ13 | The deployment README holds only the standing lever (the kill switch); the one-off rollout steps of §11 live in the rollout notes (ops) | `docs/07_deployment/README.md` |
+| Δ14 | Examples come from the invented universe: the bathroom repair invoice from Reformas Exemplo | `capabilities.py` |
+| Δ19 / Δ20 | `R_ACCURACY` and the token's accuracy line stay verbatim; "not part of `card accuracy`" is carried by the owner-note line. The tiers line names the owner's note ("place, text or the owner's note holds the words") | `drive_answer_texts.py`, `PROTOCOL_TIERS_LINE`, `PROTOCOL_DRIVE_SEARCH` |
+| §9.5 | Smart's side: the `work_with_drive_files` description says files carry the owner's notes, what a note may hold, and to put a note's words in the query; the `file_contents` description says "Never a note's words" | `agent_manifest.py` |
+| — | The deleted-files search (§6.4) is the specialist's `search_deleted_recordings_and_notes` tool, not a `drive_deleted` field; its ref lines are tool-neutral ("this ref works only with the note tools") | `drive_note_render.py` |
+| Δ1 | The notes plan on `plan/drive-notes-assembled` is superseded and not carried; its commit ids were rewritten on 2026-10-25 (its code head is `9132d5c4`, the reviewer's test edits `c198bbe4`) | — |
+
 ---
 
 ## Owner decisions
@@ -79,7 +144,7 @@ Binding. Recorded, not reopened.
 | D1 | **Nothing goes to the drive.** Notes are internal, possibly sensitive records "under the hood". Never the item's `description` or any other metadata (files get shared and their metadata travels with them), never a `Notes/` folder, never a projection file. |
 | D2 | **Storage: a separate Firestore collection `{prefix}drive_notes`**, the email-facts pattern: SCD2 versions (`valid_from` / `valid_to` / `is_current`, as `FactEntity`) for history and undo, its own vector(s) and exact keys. **Not** the memory facts collection (the consolidator and the biographical cache must never see notes) and **not** a drive-index collection (those are disposable: a rebuild, an opt-out and an access-loss purge delete them). |
 | D3 | **Notes are durable.** They survive an index rebuild, indexing opt-out, a drive disconnect and a provider switch. They are deleted only on the owner's explicit command, and on account deletion. |
-| D4 | **Smart writes notes through a system skill** (loaded on demand, like `drive-search`) **and ONE local tool that replaces the note**: replace-only, an empty note deletes it, a cap of about 80–100 words (this RFC picks and justifies the number, N1), a verbatim receipt, undo = restore the previous version. |
+| D4 | **Smart writes notes through a system skill** (loaded on demand, like `drive-search`) **and ONE local tool that replaces the note**: replace-only, an empty note deletes it, a cap of about 80–100 words (this RFC picks and justifies the number, N1), a verbatim receipt, undo = restore the previous version. **Amended in rev 3.3 (§0.5):** eleven one-purpose note tools in the drive specialist; no tool replaces more than its name says; the cap, the receipt and undo stay. |
 | D5 | ~~Interactive chat turns only. Not voice (Lelik's `ask_alek` / `tell_alek`), not background runs.~~ **Amended by D18:** owner turns only — a chat message, or a call with Lelik; never background runs (reminders, the daily review, `/worker`). |
 | D6 | **Classifiers:** life area and document type, from the existing fixed enums (`LIFE_DOMAINS`, `DOC_TYPES`), as exact keys. Everything else is free text: people, dates and places reach search through the note's words and its embedding. |
 | D7 | **The index merges the note into the file's card while the file exists**, as a top owner segment that outranks the model's guesses. The owner's doc type and life areas override the profile's **at read time**; the stored profile is never changed; notes are excluded from card accuracy. No `CARD_VERSION` bump (the G5 precedent). Avoid a `KEYS_VERSION` / `index_tables_digest` bump (the research proposes reusing the `e:` family under a new `AboutField.OWNER_NOTE` in the About tier; verified in §5.4). |
@@ -87,15 +152,16 @@ Binding. Recorded, not reopened.
 | D9 | **A note whose file is gone is archived** (a state plus when the file was last seen). The default drive search **never** returns archived notes; only an explicit "search in deleted files" request does (otherwise search returns irrelevant old things forever). |
 | D10 | **Voice and speaker recognition are out of scope** (a separate future feature). |
 | D11 | **No owner-words check.** A valid flow is: the bot asks or proposes ("is this the estimate?") and the owner confirms in chat ("yes"); that writes the note. Later the bot may propose notes on its own initiative too. What guards against a steered note is §4.5. |
-| D12 | **Classifiers are allowed when the owner names or confirms them**, the same rule as the text. The skill gate stays. |
+| D12 | **Classifiers are allowed when the owner names or confirms them**, the same rule as the text. The skill gate stays. **Amended in rev 3.3 (§0.5):** the gate is met by the specialist's static prompt (`PROTOCOL_DRIVE_NOTES`) and the parameter descriptions; there is no skill. |
 | D13 | **Permanent deletion behind a confirmation code**, per note and for all notes. A normal delete keeps the history and is undoable. |
 | D14 | **No change to consolidation now.** The owner's sentence describing a file stays an ordinary chat message. Backlog: the consolidator should learn to keep file-describing sentences out of memory (separate work, §16). |
 | D15 | **A file is identified only by the current provider's item id.** A provider switch, another drive, or a file deleted and uploaded again is a **migration** (possibly LLM-assisted, a separate future feature): a deliberate boundary, not a gap. No content-key re-binding in v1. The content key stays in the note's snapshot, as data for that migration. |
 | D16 | **The deleted-files search also shows dormant notes** (bound to a drive that is not connected), labelled. |
-| D17 | **Indexing off: writing allowed. Disconnected: new notes and edits refused; delete, undo and erase allowed.** |
+| D17 | **Indexing off: writing allowed. Disconnected: new notes and edits refused; delete, undo and erase allowed.** Amended by D21: edits by `drive_note:` ref are allowed too. |
 | D18 | **A call with Lelik counts as chat**, as a voice memo in chat does: a note may be written from a call. Lelik forwards it to Alek through `ask_alek` / `tell_alek`; the receipt goes to chat (§4.9). |
 | D19 | **No Cabinet page for notes** — later, maybe never. |
 | D20 | **The note is not shown in folder listings** (`list_files_in_drive`); it is shown in search cards and when a file is opened. **Notes on files the bot cannot open (§26.2) are refused**, with the copy instruction. |
+| D21 | **Amends D17 (rev 3.2).** A note that is archived, or bound to another (no longer connected) drive, can still be edited (`set`), undone, cleared and erased through its `drive_note:` ref; none of these needs the live file, and the note stays archived or bound to its drive. The one thing refused is creating a NEW note for a file that no longer exists or is not on the connected drive. |
 
 ---
 
@@ -141,7 +207,8 @@ belongs to, that a PDF the profiler typed `invoice` is in fact a `contract`. Tod
 - A note on the drive in any form (D1).
 - The consolidator, the biographical cache, `SearchEnrichmentService` or the remote MCP server's `get_user_context`
   reading `{prefix}drive_notes`. Structural: none of them is given the repository, and an architecture test enforces it
-  (§11 S1).
+  (§11 S1). Named residual (§0.4): the consolidation service is given the agent factory, which can lead to the note
+  service; memory-side code never naming a drive note is what blocks it, and a test pins that.
 - A note written by a run the owner did not start (a reminder, the daily review, `/worker`), and a write the owner
   does not see at once (§4.5: owner turns only, a verbatim receipt on every path).
 - A note silently lost: replace keeps the previous version; delete keeps the history; archive keeps the note.
@@ -151,6 +218,10 @@ belongs to, that a PDF the profiler typed `invoice` is in fact a `contract`. Tod
 ---
 
 ## 2. How it works, in one page
+
+**Rev 3.3:** the write side below is Smart's former local tool. Now Smart commissions the drive specialist
+(`work_with_drive_files`, the note's words in the query) and the specialist calls one note tool per edit kind; the
+service, the receipt and everything after the write are as drawn (§0.5).
 
 ```
 Owner in chat (or on a call with Lelik → ask_alek / tell_alek → Smart):
@@ -300,6 +371,9 @@ write and leaves nothing half-done.
 
 ### 4.1 The skill — `src/skills/smart/drive-file-notes/SKILL.md`
 
+**Retired in rev 3.3 (§0.5).** The rules below live on, re-voiced for the specialist, in its prompt token
+`PROTOCOL_DRIVE_NOTES`, with one tool per edit kind instead of "replace, never append". Kept as the record of the rules.
+
 A system skill (loaded at startup by `load_system_skill_bundle`; a malformed one fails startup). Its description:
 "Use before the first call of `annotate_drive_file` in a conversation: when the user tells you what a drive file or
 folder is, what it relates to, or that its type is wrong." It holds:
@@ -335,6 +409,10 @@ The `drive-search` skill gains the reading side (§6.2). `PROTOCOL_AGENT_SELECTI
 and the tool description are the pointers (memory rule: no duplication of capability text in protocol tokens).
 
 ### 4.2 The tool — `annotate_drive_file`
+
+**Retired in rev 3.3 (§0.5).** Replaced by the drive specialist's eleven note tools. What carries over: the owner-turn
+allowlist (`is_owner_turn`, `OWNER_TURN_RUN_ORIGINS` in `src/domain/drive_note.py`), the liberal classifier input,
+`NOTE_WRITES_PER_TURN`, the shield and the no-op re-run rule. Kept as the record of the reasoning.
 
 `src/infrastructure/drive_note_tools.py`: `build_annotate_drive_file_tool_declaration()` and
 `make_annotate_drive_file_handler(...)`, served by `DelegationEngine(local_tools=)` like `propose_memory_facts`
@@ -408,9 +486,11 @@ Constructor ports: `DriveNoteRepository`, `UserDrivePort`, `DriveIndexRepository
 receipt is localized by `ConversationHandler`). No other service is imported (REQ-ARCH-22).
 
 The handler routes a call to one of four methods: a non-empty triple → `set`; an empty triple → `clear`;
-`undo = true` → `undo`; `erase = true` → `request_erase` (§4.8). **Only `set` touches the drive.** `clear`, `undo` and `erase` (§4.8) resolve the note from the
-store alone, so they work on archived and dormant notes and while the drive is disconnected (D3: a note is deleted on
-the owner's command, in every state):
+`undo = true` → `undo`; `erase = true` → `request_erase` (§4.8). **Only `set` by a `drive:` ref touches the drive**
+(it creates or replaces the note of a live item). A `set` by a `drive_note:` ref edits that existing note without
+touching the drive (D21), and `clear`, `undo` and `erase` (§4.8) resolve the note from the store alone, so all of them
+work on archived and dormant notes and while the drive is disconnected (D3: a note is deleted on the owner's command,
+in every state; D21: it is changed on his command too):
 - a `drive_note:<note_id>` ref is the note itself;
 - a `drive:<id>` ref resolves by the ref key `r:{id}` (`find_by_match_keys`, no drive id needed). One active, cleared
   or archived note → that note. Several (the same item id on two drives, practically never) → the one bound to the
@@ -472,11 +552,13 @@ note, and did he see what was stored"**:
 2. **The owner's explicit confirmation, by skill rule** (D11, D12). The skill (§4.1) allows a write only for a note the
    owner said or confirmed in this conversation ("is this the estimate?" — "yes"), and says that text inside a file, an
    email or a result is never a confirmation. It is a rule the model follows, not a check code makes.
-3. **Skill gate** (N7): the handler refuses ("load the drive-file-notes skill first") until `drive-file-notes` was
+3. **Skill gate** (N7; **retired in rev 3.3**, §0.5: the rules are always in the specialist's prompt): the handler refuses ("load the drive-file-notes skill first") until `drive-file-notes` was
    loaded in this conversation — in this execution through `use_skill`, or earlier, as seen by `visible_skill_names`
    (`src/domain/skill.py:324`). `make_use_skill_handler` keeps its `loaded_now` set private (`skill_tools.py:56`), so it
    gains a parameter: a `LoadedSkills` set object Smart creates per execution and passes to both handlers. Rule 2 is
-   then always in context when a note is written. The cost is one extra round trip per conversation at most.
+   then in context when a note is written, except for a note emitted in the same batch as the `use_skill` call that
+   loads it (named residual, §0.4; the tool description repeats the rule). The cost is one extra round trip per
+   conversation at most.
 4. **Security check**: `SecurityPort.validate(text, context="drive_note_user_…", zone=TrustZone.UNTRUSTED)`, the same
    call `MemoryFactService._check` makes (`memory_fact_service.py:79-92`); blocked or flagged is refused.
 5. **A verbatim receipt on every path** (§4.6, §4.9): the owner sees exactly what was stored, at once, in the chat —
@@ -498,7 +580,8 @@ belongs in a standing directive, not a file card.
 
 - **Tool result to Smart** (`ToolResult`): `SYSTEM: Note saved on <path> (version 3). The owner sees the stored note in
   a receipt: do not repeat it; say one short line. <searchability sentence>.` The previous text, if any, follows inside
-  a nonce-tagged wrapper (it is data). Failures are `failed=True` with the reason and what to do.
+  a nonce-tagged wrapper (it is data). Failures are `failed=True` with the reason and what to do. **Rev 3.3 (§0.5,
+  Δ8):** the specialist's op line carries no note words (no previous text); Smart gets the op line in the drive answer.
 - **Receipt**: a `DeliveryItem(type=DRIVE_NOTE_RECEIPT_DELIVERY)` (`"drive_note_receipt"`, `src/domain/drive_note.py`)
   with `{action, path, text, doc_type, life_areas, version, previous_text, status}`. A classifier-only note renders
   its classifiers with no empty quote; a delete says "history kept; undo possible". The erase request is a second type,
@@ -537,12 +620,16 @@ so it never runs on one model call or one paste. Both forms use a confirmation c
   the count of his notes and `` `$drive-notes erase-all <code>` ``.
 - **Pasting the command** (`ConversationHandler._handle_drive_notes_command`, before any LLM call, own notes only, like
   `$skill`) calls `DriveNoteService.erase(user_id, code)`. It deletes every version and leaves per note a contentless
-  stub: only `note_id`, `user_id`, `account_id`, `state = cleared`, `erase_pending = true`, `match_keys` and
-  `updated_at` (bumped). Text, classifiers, `keys`, `note_vector`, `snapshot`, `binding` and `last_writer` are gone at
+  stub: only `note_id`, `user_id`, `account_id`, `state = cleared`, `erase_pending = true`, `match_keys`,
+  `revision` and `updated_at` (both bumped). Text, classifiers, `keys`, `note_vector`, `snapshot`, `binding` and `last_writer` are gone at
   once. The stub exists only so the indexer's notes step sees the change (§5.1 b), clears the record's copy and then
   deletes the stub: a document that is simply deleted never appears in a `changed_since` query, so the copy on the
   record would outlive the note. With indexing off there is no copy (the opt-out purged the index) and the stubs are
-  deleted at once. The reply confirms the count erased.
+  deleted at once. The reply confirms the count erased. **Partial erase** (rev 3.2): the code is spent when it is
+  redeemed, so the store never stops part-way. A note it could not erase (a concurrent write that outlasted its
+  retries, or a store error on that note) is reported and the rest are erased, nudged (or their stubs deleted); the
+  reply then says how many were erased and how many could not be erased right now, and the owner asks again (a new
+  request lists what is left).
 - A wrong, expired or someone else's code: "no such erase request"; nothing happens.
 - Requested on a call, the erase code is posted to the chat like a receipt (§4.9); the owner pastes it there.
 
@@ -770,7 +857,9 @@ repositories for every lifecycle row of §8.
 **Duplicates.** `_collapse` (`drive_search_service.py:989-1005`) decides on lean records and keeps the first shown copy
 of identical files. With the lean `owner_note_id` (§3.3), a group whose copies include a noted record makes that record
 the representative, so the note is shown and the others go to `also_at`. (With a note-only match the noted copy is the
-only one in About anyway.)
+only one in About anyway.) **Named residual (plan part B, Default B16):** the filter-only listing (a
+`drive_kind` / date listing with no query words) folds identical copies by its own rule, first ranked copy first, so it
+can show an un-noted copy with the noted one's path in `also_at`, and its note line is then not shown.
 
 ### 6.2 The card and the skill
 
@@ -786,9 +875,12 @@ applies unchanged.
 
 `open_file_from_drive` (`FileManagementAgent`) adds the same line to the opened file's header, read by binding
 (`find_bound`, one read), so Smart sees the current note before it replaces it. `list_files_in_drive` lines are not
-changed (D20).
+changed (D20). **Rev 3.3 (§0.5, Δ9):** the specialist's `open_drive_file` (`DriveOperations`) shows the note as its own
+wrapped block after the file's text; listings still never show it.
 
-The `drive-search` skill gains, under "Reading the results" and "Card accuracy":
+**Rev 3.3:** the `drive-search` skill is gone (drive specialist); the reading rule is Smart's reading line
+`R_OWNER_NOTE` and the owner-note bullet of `PROTOCOL_DRIVE_SEARCH`, the card-accuracy line is unchanged (Δ19), and the
+deleted-files rule is the specialist's tool. As planned here, the `drive-search` skill gained, under "Reading the results" and "Card accuracy":
 - "A `noted by the owner:` line is what the user told you about the file. It outranks the card's own description and
   type, and it is not part of `card accuracy`."
 - "100% — everything in this card *except the owner's note* is confirmed by the file's own text."
@@ -806,6 +898,9 @@ search cards, the open header, the deleted-files results, and the previous text 
 owner's words, but Smart reads it as a fact about a file, never as an instruction.
 
 ### 6.4 The deleted-files search (`drive_deleted`)
+
+**Rev 3.3:** the surface is the drive specialist's tool `search_deleted_recordings_and_notes`; the search and render
+below are as built, the ref line reads "this ref works only with the note tools" (§0.5).
 
 **Surface.** A new context field `drive_deleted` on `search_files_in_drive` (FILE_MANAGEMENT,
 `agent_manifest.py:516-661`), declared in `context_schemas` **and** in the capability description; the name is used by
@@ -936,7 +1031,7 @@ whenever the noted item itself is observed (named residual).
 | Index rebuild (`drive_index_rebuild.py`) | Untouched (purge ≠ planner delete). | Onboarding re-creates records; entry (a) merges every note. |
 | Indexing opt-out | Kept, dormant (no tick runs). Tool writes still allowed (status `indexing_off`). | Search is off; `drive_deleted` still works. |
 | Opt back in | Untouched. | Onboarding merges (entry a). |
-| Drive disconnected (access lost) | Kept. New notes and edits refused until reconnected; **delete, undo and erase still work** (no Graph call, §4.4). | The index keeps cards (with notes) for the 30-day grace; after the purge, nothing until reconnect. |
+| Drive disconnected (access lost) | Kept. **Clear, undo and erase allowed by either ref** (`drive:` through the ref key `r:`, or `drive_note:`), **edits by the `drive_note:` ref** (no Graph call, §4.4, D21); a new note refused until reconnected. | The index keeps cards (with notes) for the 30-day grace; after the purge, nothing until reconnect. |
 | Reconnect, same drive | Bindings still valid (same item ids). | Records re-created after a purge get their notes (entry a). |
 | A different drive connected | Old-drive notes dormant (§7.3, D15); never re-bound, not even a file with the same content. Changeable, undoable and deletable by their `drive_note:` ref. | Dormant notes appear only in `drive_deleted` (D16). |
 | Provider switch | Document ids unchanged; dormant, as above. Moving them is a future migration (D15). | As above. |
@@ -979,7 +1074,7 @@ whenever the noted item itself is observed (named residual).
 |---|---|
 | Drive not connected / Graph error resolving the item | `set` refused, nothing stored; the reason in the tool result. Delete, undo and erase are unaffected (no Graph call). |
 | The `get_change` confirming an absence fails | The check stays for the next round end; nothing is archived on an error. |
-| The skills store fails (`skills == []`) | The skill gate fails closed: notes unavailable for that turn (§4.2). |
+| The skills store fails (`skills == []`) | (Retired in rev 3.3 with the skill gate: the specialist's rules are in its prompt.) |
 | Security check blocks or flags | Refused, logged at WARNING with the patterns, not the text. |
 | Concurrent write (precondition failed) | Retried once from the lookup, then refused ("try again"). |
 | Embedding fails at write | Stored with `embedding_pending`; the indexer re-embeds; the deleted-files search loses only its meaning fallback for it. |
@@ -992,6 +1087,9 @@ whenever the noted item itself is observed (named residual).
 | Kill switch off | No writes anywhere (§3.6); reads keep working; merged copies stay until the next merge. |
 | The receipt post fails on a call | Logged at ERROR; the note is stored and the answer returns; the next search card shows it (§4.9). |
 | An erase code expires or is pasted twice | "No such erase request"; nothing erased (atomic `get_and_delete`). |
+| A note conflicts or hits a store error during an erase | Reported, never raised by the store: the rest are erased and nudged; the owner is told how many are left and asks again (§4.8). A missing index is logged at ERROR, a transient error at WARNING. |
+| A corrupt note document during an erase-all (named residual) | Its `ValidationError` aborts the rest of the erase after the code is spent, and the notes already erased are not nudged. Bounded: those are content-free stubs already, and their `updated_at` bump puts them in the next `changed_since`, so the nudge is only latency. Failing loudly on corrupt data is intended. |
+| `delete_stub` fails during an erase with indexing off (named residual) | The outage stops the stub loop and the owner sees "try again" instead of the partial-erase counts. The leftover stubs hold no content and are harmless. |
 
 ---
 
@@ -1023,7 +1121,7 @@ Tests (new files):
   item, a cleared note reused; **two concurrent first writes give one lineage** (deterministic id, must-not-exist
   precondition) and a taken deterministic id falls back to a random one; precondition conflict retried once; **an
   identical write is a no-op with no new version**; classifier-only write and its receipt; a proposed note confirmed by "yes" is written (no
-  owner-words check, D11); security reject; `set` refused when not connected; **clear and undo work while disconnected and on dormant and archived notes,
+  owner-words check, D11); security reject; `set` by a `drive:` ref refused when not connected (a `drive_note:` ref edits from the store, D21); **clear and undo work while disconnected and on dormant and archived notes,
   by `drive:` (ref key) and by `drive_note:` refs, with no Graph call**; the 404 order (inaccessible from the record
   first, then not found); **clear empties `text`, classifiers, `keys` and `note_vector`**; embedding failure → pending;
   nudge failure never fails the write; searchability statuses; `NOTES_PER_USER_MAX`; logs carry no text.
@@ -1131,18 +1229,22 @@ Tests:
 
 ### Owner steps and rollout
 
-1. Create indexes 1–5 (`gcloud firestore indexes composite create … config/firestore.indexes.json`), the vector
-   index (the script) and the TTL policy on `expires_at` of `{prefix}drive_note_erase_requests` before the deploy;
-   wait for `READY`.
-2. Deploy the main service and the indexer (the indexer after the main service, as today).
-3. Live check: note one file in chat, see the receipt, search for a note word, delete the file in OneDrive, search
-   again (absent), search deleted files (present), restore from the recycle bin, search again (present).
-4. Rollback: the kill switch; merged copies on records are harmless to old code (plain fields, `merge=True` writes;
-   old `card_text` ignores them, so noted cards re-embed once on the old code). On the roll-forward the
-   `notes_merge_version` mismatch re-merges every note (§5.5).
+The one-off steps (indexes and the vector index before the code, the TTL policy on the erase requests, the prompt
+uploads, the kill-switch value, the live check, the rollback commands) are in the rollout notes (ops), not here. What
+stays true of any rollout: the composites must be `READY` before the code that queries them; the kill switch
+`DRIVE_NOTES_ENABLED` (one deploy-only key drives the main service and the indexer together) is the first lever and
+stops every write (§3.6); merged copies on records are harmless to old code (plain fields, `merge=True` writes; old
+`card_text` ignores them, so noted cards re-embed once on the old code); on the roll-forward the `notes_merge_version`
+mismatch re-merges every note (§5.5).
 
-Docs at build time: README `docs/05_building_blocks/user_drive/README.md` (a new §4.24 and the key table), CLAUDE.md
-(the User Drive paragraph, one line), `decisions/drive_file_notes.md`, `docs/07_deployment/README.md` (the indexes).
+Docs at build time (rev 3.3): `docs/05_building_blocks/user_drive/README.md` §4.24, root `CLAUDE.md` (one paragraph),
+`decisions/drive_file_notes.md`, `docs/07_deployment/README.md` (the standing lever only).
+
+**Rev 3.3:** the S1 files `src/skills/smart/drive-file-notes/SKILL.md`, the Smart wiring and the shared `LoadedSkills`
+set are not built; the note tools are `src/infrastructure/drive_note_tools.py` and `src/domain/drive_note_tool_texts.py`
+in the drive specialist, with `PROTOCOL_DRIVE_NOTES` as their rules. The S1 tests of the skill, the skill gate and the
+Smart gating are replaced by the specialist's (`test_drive_agent_notes_gating.py`, `test_drive_note_tools_specialist.py`,
+`test_drive_agent_note_tool_fields_e2e.py`, `test_drive_note_chain.py`).
 
 ---
 
@@ -1184,12 +1286,12 @@ Engineering choices that remain the builder's are N1–N9 (§14).
 | # | Decision | Reason |
 |---|---|---|
 | N1 | **Cap: 80 words and 600 characters.** | One to three sentences say what a file is. Each extra word dilutes the card vector, where the note sits beside the file's own description, and costs keys under the 600-key record cap. Measured: 183–197 word keys for a 65-content-word Russian or Ukrainian note, ≈ 240 for a noun-dense 80-word one, plus up to ≈ 85 classifier names; `NOTE_KEYS_MAX` 320 holds nearly all of it and leaves ≥ 280 keys for the file's own. 100 words would push a Cyrillic note to ≈ 300 word keys alone. 600 characters keep the note line short enough to show beside a 700-character card. The lower end of D4's range, because overflow is refused, not cut. |
-| N2 | Tool name `annotate_drive_file`; skill `drive-file-notes`. | "Note" is NotesAgent's word (self-reminders); a `note_…` tool would draw reminder requests. The collection keeps the owner's name `drive_notes`. |
+| N2 | Tool name `annotate_drive_file`; skill `drive-file-notes`. **Rev 3.3:** applies to Smart's surface, which has no note tool; the specialist's tools are named `*_note` (§0.5). | "Note" is NotesAgent's word (self-reminders); a `note_…` tool would draw reminder requests. The collection keeps the owner's name `drive_notes`. |
 | N3 | Watermark on server timestamps, not a counter document. | §5.1. |
 | N4 | One lineage per item; a cleared note is reused. | Undo and history stay continuous; the lookup by binding returns at most one note. |
 | N5 | Binding and lifecycle changes update the parent document in place; only the owner's words are versioned. | SCD2 records what the owner said; where the file is now is a fact about the drive. |
 | N6 | The deleted-files search reads the note store in memory (≤ 1 000) and never the index. | Archived notes have no records; a small set needs no key streams; default search stays untouched. |
-| N7 | Skill gate in the handler. | Rule 2 of §4.5 is then always in context; kept by the owner with D11. |
+| N7 | Skill gate in the handler. **Retired in rev 3.3** (§0.5). | Rule 2 of §4.5 is then always in context; kept by the owner with D11. |
 | N8 | `owner_turn` as an explicit allowlist of two `run_origin` values, separate from `interactive_delivery`. | Admitting calls (D18) must not open `draft_skill` or `propose_memory_facts`, whose confirmation commands are chat-shaped. |
 | N9 | `NOTE_MERGE_VERSION` outside `CURRENT_VERSIONS` and the key digests. | It shapes only noted records; a bump re-merges a few hundred records, never the whole drive. |
 
@@ -1203,7 +1305,7 @@ Engineering choices that remain the builder's are N1–N9 (§14).
 | `NOTE_KEYS_MAX` | 320 (classifiers ≈ ≤ 85 first, never cut) | `drive_note.py` |
 | `NOTE_PAGE` | 200 | `drive_note_merge.py` |
 | `ERASE_CODE_TTL` | 10 min | `drive_note.py` |
-| `NOTE_WRITES_PER_TURN` | 10 | `drive_note.py` |
+| `NOTE_WRITES_PER_TURN` | 10 per specialist execution (rev 3.3) | `drive_note.py` |
 | `NOTES_PER_USER_MAX` | 5 000 | `drive_note.py` |
 | `NOTE_WATERMARK_SKEW_S` | 60 | `drive_note_merge.py` |
 | `NOTE_EMBED_PER_TICK` | 20 | `drive_note_merge.py` |

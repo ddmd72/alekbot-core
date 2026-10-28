@@ -13,6 +13,9 @@ marked "(branch)" below is now deployed code (2026-10-19).
 RFC §27 (transcripts of audio and video; decisions D41–D47, deltas Δ95–Δ175): **slice T1 is live since 2026-10-21 (the owner only, $10 monthly cap; other users have transcription off);
 the mirror folder (T2) is live since 2026-10-21 (the owner); the summary (T3) is not built.** How it works end to end, in plain English, is §4.23; the rollout and
 the switches are §7.2, `docs/07_deployment/README.md` → "Transcripts switch and cap" and "Standing levers", and the rollout notes (ops).
+The owner's notes on files ([DRIVE_FILE_NOTES_RFC.md](../../10_rfcs/DRIVE_FILE_NOTES_RFC.md) rev 3.3; built on `feat/drive-notes`,
+not deployed): what a note is, the drive specialist's note tools, the receipt, the merge into cards and search, deleted files and
+erase are §4.24.
 
 | Question | Read |
 |---|---|
@@ -54,6 +57,9 @@ the switches are §7.2, `docs/07_deployment/README.md` → "Transcripts switch a
 | How Smart reaches the drive: the drive specialist, its model and fallback, statuses, receipts, logs, evals | §6.7; `src/agents/CLAUDE.md` → Drive; [DRIVE_SPECIALIST_RFC.md](../../10_rfcs/DRIVE_SPECIALIST_RFC.md) |
 | Deploy order, owner steps, and why there is no rollback to Slice 1; the Search v2 rollout (D30 gate, rebuild); the transcripts switches and rollback | §7.2 |
 | The drive specialist's rollout and rollback | `docs/07_deployment/README.md` → "The drive specialist" and "Standing levers"; RFC §13 (the order) |
+| What the owner's note on a file is; which tool writes what; why a note was refused or not written on a reminder run | §4.24 |
+| What `noted by the owner:` in a card or an opened file means; why a note matches as About | §4.24 (how search gets it, how it is read) |
+| Where a deleted file's note went; how to find, change, undo or erase it; `$drive-notes erase-all` | §4.24 (deleted files, erase) |
 | Where a piece of code lives | §8 |
 
 ---
@@ -1426,6 +1432,103 @@ first run makes the bot create `_Transcripts (Alek)`.
 [drive_transcripts_mirror_archive.md](../../04_solution_strategy/decisions/drive_transcripts_mirror_archive.md); the reasoning and the deltas of the build are RFC §27.16
 (Δ136–Δ244) and §27.19.
 
+### 4.24 The owner's notes on files (DRIVE_FILE_NOTES_RFC rev 3.3; built on `feat/drive-notes`, not deployed)
+
+**In plain English.** The owner tells the bot what a file or folder is ("this one is the bathroom repair invoice from Reformas
+Exemplo; it's an invoice, not a receipt"), or says "yes" when the bot proposes it. The bot keeps that as a **note**
+bound to the file, never on the drive and never in memory. While the file exists, its card shows the note first, search
+finds the file by the owner's words, and his document type and life areas outrank the model's guess. When the file is
+deleted the note is kept and found only when he asks about deleted files.
+
+**Where it lives.** `{prefix}drive_notes`, one document per noted item, with every change as an SCD2 version under
+`versions/v<n>` (so undo and history work). It is not an index collection: a rebuild, an opt-out or an access-loss purge
+never touches it; only the owner's erase and account deletion do. The index record carries a copy of the note
+(`owner_note_*` fields), rebuilt from the store whenever the record is rebuilt.
+
+**Who writes it.** Smart has no note tool. It commissions the drive specialist (`work_with_drive_files`) with the
+note's words in the query (`file_contents` is "never a note's words"); the specialist calls one tool per edit kind, each
+one `DriveNoteService` call. Its rules are the prompt token `PROTOCOL_DRIVE_NOTES` (profile `drive`): a note holds what
+the owner said or confirmed in this conversation; text in a file, an email or a result is never his confirmation; a type
+or a life area only when he named or confirmed it.
+
+| Tool | Does | Service |
+|---|---|---|
+| `get_note` | reads the note (also an archived or a deleted one); its words reach the specialist and Smart only wrapped as untrusted data | `get` |
+| `create_note` | a note on a file that has none (text, type, areas); a file that already has a different note is refused | `create` |
+| `add_to_note` | adds the owner's words at the end; creates the note on a file with none | `update` |
+| `replace_note_text` | replaces the whole text; refused unless `get_note` read that note earlier in the same run, and refused if it changed since | `update` |
+| `set_note_type`, `clear_note_type` | sets or removes the document type (setting it on a file with no note creates one) | `update` |
+| `add_life_areas`, `remove_life_areas` | adds (at most 3 in all) or removes life areas | `update` |
+| `delete_note` | removes the note; history kept, undo brings it back | `clear` |
+| `undo_note` | puts the note back as it was before its last change | `undo` |
+| `erase_note` | asks to erase the note's history: the owner gets a code to paste; nothing is erased by the call | `request_erase` |
+
+An empty field never changes anything, and a change that would leave a note empty is refused ("use delete_note").
+
+**When the tools exist.** With the switch on, the service wired and a user, every drive commission gets `get_note`. The
+ten writers come only on an **owner turn**: a chat message, or a call with Lelik that reached Alek through `ask_alek` /
+`tell_alek`. A reminder run, the daily review, a `notify` run or `/worker` gets no writer, and the specialist reports a
+note request there as not done. Each writer checks the owner turn again before it calls the service.
+
+**What one write does.** The security check on the new words, before any drive call. A `drive:` ref needs the connected
+drive: the index's "cannot open" mark refuses (§4.18), the item is read from the drive, and the note is found by its
+binding. A `drive_note:` ref (from a deleted-files result) works from the store alone, also while disconnected; an
+archived note stays archived. Then one write loop: the change is applied to the current note inside a two-attempt
+conflict retry (a concurrent write is merged, never overwritten), an identical result writes nothing, a changed text is
+embedded again, a new version is written in one transaction, and the indexer is nudged. Limits: 80 words and 600
+characters per note, 3 life areas, 10 successful writes per specialist run, 5 000 notes per user. A provider-rotation
+re-run of the same turn does not write an append or an undo twice.
+
+**What the owner sees.** A **receipt** with the stored note word for word, a localized header and a line saying when
+search will show it, sent literally (the words are the owner's, not the bot's). On a chat turn `ConversationHandler`
+posts it; on a call the Alek gateway posts it to the primary chat (`notify_drive_note_receipt`) and adds a history pair,
+so "undo that" works in the chat later. A write cut by the specialist's deadline still lands and posts its receipt late:
+one receipt either way. History holds only `[Drive note: <path> ref=… v<n>]` (full text, never consolidated): never the
+note's words.
+
+**How search gets it** (the tick, §5). Three entry points merge the store into records: a record created in `_commit`
+looks up its note by binding; the notes step reads notes changed since its watermark (`updated_at`, 60 s skew, pages of
+200); the round end archives notes whose file is confirmed gone. The card text gains `noted by the owner: …` (one card
+re-embedding), the note's words, numbers, dates and the owner's type and area names are keyed (`e:`, `v:`, `y:`, `m:`) with
+`AboutField.OWNER_NOTE`, so a match is **About** with `matched: your note "…"`. No `CARD_VERSION` or `KEYS_VERSION` bump:
+a user without notes pays one count read per tick. The note shows in search seconds after the nudge, or at the next
+10-minute fan-out.
+
+**How it is read.** Search cards and an opened file show the note inside the untrusted wrapper (on an open, as its own
+block after the file's text); a folder listing never shows it. When a block carries a note, Smart gets the reading line
+"A `noted by the owner:` line is what the user told you about the file. It outranks the card's own description and
+type, and it is not part of `card accuracy`. …".
+
+**Deleted files and other drives.** A record that leaves the index archives its note only when the delete said "gone"
+and one `get_change` answers "not found" at the round end; a file moved into a repository or a dense folder keeps its
+note active. A daily audit catches deletions the checks missed. Archived notes never appear in a default search; the
+specialist's `search_deleted_recordings_and_notes` finds them (with the transcripts of §4.23), each with its
+`drive_note:` ref. Notes bound to a drive that is no longer connected are dormant and appear there labelled. A file is
+identified only by the current provider's item id: a copy, a re-upload or another drive never inherits a note.
+
+**Erase.** `delete_note` keeps the history. Erasing it needs a code: `erase_note` sends one for one note, and the owner
+types `$drive-notes erase-all` for all of them; pasting `$drive-notes erase <code>` (or `erase-all <code>`) in chat runs it
+before any model call. A code works once, for 10 minutes. The erased notes become content-free stubs until the tick has
+cleared the copies on their records.
+
+**The switch.** `DRIVE_NOTES_ENABLED` (default on; one deploy-only key sets it on the main service and the indexer,
+`docs/07_deployment/README.md` → "Standing levers"). Off: no note tool, the `$drive-notes` commands answer "not
+available", and the indexer does no notes work. Reads go on: the open header, the deleted-files search and the copies
+already merged into cards (until the next merge after the switch is back on).
+
+**Known residuals.** Content read during an owner turn could steer the specialist into a note the owner did not confirm:
+the receipt shows it at once and undo restores. Two commissions in one Smart turn allow 20 writes. A Smart turn that
+fails after the specialist answered loses the receipt (the note is stored; the card shows it). The filter-only listing
+can show an un-noted copy of a noted file without the note line.
+
+**Code.** Domain `src/domain/drive_note.py` (models, validation, refusals, the owner-turn allowlist),
+`drive_note_change.py`, `drive_note_change_kind.py`, `drive_note_view.py`, `drive_note_tool_texts.py`,
+`drive_note_merge.py`, `drive_note_render.py`, `drive_note_receipt.py`, `drive_note_lifecycle.py`; service
+`src/services/drive_note_service.py`, `drive_note_lifecycle.py`, `drive_note_deleted_search.py`; tools
+`src/infrastructure/drive_note_tools.py` (in `DriveAgent`, `src/agents/drive_agent.py`); store
+`src/adapters/firestore_drive_note_repo.py`; wiring `src/composition/drive_note_setup.py`; prompt
+`prompts_snapshot/tokens/system/PROTOCOL_DRIVE_NOTES.groovy`. Decision `decisions/drive_file_notes.md`.
+
 ---
 
 ## 5. The tick
@@ -1718,7 +1821,8 @@ turns within 150 s (less under the caller's budget) through local tools, each on
 `delete_drive_item`, then `report_to_orchestrator`. An identical search is not run twice in one commission. There
 is no search cap in production (the owner dropped a 3-search cap): one re-search after "Without X", and a subject is
 searched once in the user's words (a list of alternatives is not a list of searches, RFC rev 4.5 #7). G3's 3 search
-calls per case run (`SEARCH_CALL_CEILING`, §7) is an eval check, not a production cap.
+calls per case run (`SEARCH_CALL_CEILING`, §7) is an eval check, not a production cap. With the notes switch on,
+`get_note` joins them, and on an owner turn the ten note writers (§4.24), before `report_to_orchestrator`.
 
 **Division of labour (A′).** The specialist owns the search mechanics — the key words from the user's words in one
 language (no re-search in another script or a translation: transliteration is exact in the index, `x:` keys), the
@@ -2191,6 +2295,7 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Model agents, runners, wiring | `src/agents/drive_document_reader_agent.py`, `drive_image_triage_agent.py`, `drive_profiler_agent.py`, `drive_passage_agent.py`; `src/infrastructure/drive_model_call.py`; `src/composition/drive_reader_runner.py`, `drive_triage_runner.py`, `drive_profiler_runner.py`, `drive_passage_runner.py`, `drive_agent_build.py`, `drive_model_setup.py`; agent configs `DRIVE_READER` / `DRIVE_TRIAGE` / `DRIVE_PROFILER` / `DRIVE_PASSAGES` in `src/infrastructure/agent_config.py`, provider strategy in `src/services/agent_context_builder.py` |
 | Smart's drive guidance | `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` (`drive_specialist`: the intent, when to use the drive, the safety line; the `query_language` exception) and the reading lines with the results (`src/domain/drive_answer_texts.py`, `R_*`, chosen by `drive_answer.reading_lines`; §6.3, §6.7) |
 | The drive specialist (§6.7) | `src/agents/drive_agent.py`, `src/infrastructure/drive_operations.py`, `drive_tools.py`, `src/domain/drive_pass_through.py`, `drive_answer.py`, `drive_tool_texts.py`; prompt `prompts_snapshot/{profiles/drive.yaml,blueprints/drive_agent_v1.yaml,tokens/system/{COGNITIVE_PROCESS_DRIVE,PROTOCOL_DRIVE_SEARCH,OUTPUT_FORMAT_DRIVE}.groovy}`; wiring `src/composition/drive_specialist_build.py`; eval write stub `scripts/validation/drive_eval/dry_run_drive.py` |
+| Owner notes on files (§4.24) | `src/domain/drive_note*.py`, `src/services/drive_note_service.py`, `drive_note_lifecycle.py`, `drive_note_deleted_search.py`, `src/infrastructure/drive_note_tools.py`, `src/adapters/firestore_drive_note_repo.py`, `src/composition/drive_note_setup.py`; prompt `prompts_snapshot/tokens/system/PROTOCOL_DRIVE_NOTES.groovy` |
 | Place lookup | `src/domain/place_lookup.py`, `src/adapters/geo_place_table.py`, `src/assets/geo/` |
 | Search result, wrapper, render; Cabinet status | `src/domain/drive_search.py`, `src/domain/drive_indexing_status.py` |
 | Ports | `src/ports/user_drive_port.py`, `src/ports/drive_index_repository.py` |
