@@ -19,6 +19,7 @@ Public interface:
     generation_started(rec, now) / indexed(rec, *, outcome, generation, chunk_count, now)
     deferred(rec, until, now, *, maintenance=False) / next_month_start(now) -> datetime
     demoted(rec, reason, now, *, outcome=None, chunk_count=0) / content_retry(rec, reason, now)
+    content_requeued(rec, now) -> DriveIndexRecord; FAILED_REASONS                 (the owner's requeue script)
     triaged(rec, result, now) -> DriveIndexRecord;  attempt_crashed(rec, now) -> bool
     month_key(now) / usage_now(state, now) / with_usage(state, now, *, pages=0, images=0)
     model_available(state, now) / model_outage(state, now) / model_recovered(state)
@@ -993,6 +994,23 @@ def demoted(rec: DriveIndexRecord, reason: Reason, now: datetime, *, outcome: Op
 
 _FAILED_REASONS = frozenset({Reason.EXTRACT_TIMEOUT, Reason.EXTRACT_MEMORY, Reason.EXTRACT_ERROR,
                              Reason.DOWNLOAD_ERROR, Reason.EMBED_TIMEOUT})
+FAILED_REASONS = _FAILED_REASONS   # public: the per-file failures an owner may requeue (content_requeued)
+
+
+def content_requeued(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """The owner's requeue of a `failed` content read (scripts/infrastructure/drive_content_requeue.py): a failed outcome
+    stands until the content version or EXTRACTION_VERSION moves (_outcome_stands), so a fix of the failure's cause
+    never reaches it. Pending again with its attempts, started attempt, quiet period, deferral and charged outages
+    cleared, and `extraction_version` 0 (reextraction_due), so the outcome no longer stands and a readable generation
+    of this content version does not count as indexed; due at once in class 3, like the bot's other re-reads (§12.3).
+    The readable generation, the card and every other field are kept. Raises on any other record."""
+    if rec.state is not RecordState.FAILED or rec.reason not in _FAILED_REASONS:
+        raise ValueError(f"item {rec.item_id} is not failed with a per-file reason")
+    pending = replace(reextraction_due(rec), state=RecordState.PENDING, reason=None, attempts=0,
+                      attempt_started_at=None, dirty_since=None, defer_until=None, defer_priority=None,
+                      model_outages=0)
+    done = schedule(pending, now, first_seen=not rec.has_card)
+    return done if done.due_at is None else replace(done, priority=int(Priority.MAINTENANCE))
 
 
 def content_retry(rec: DriveIndexRecord, reason: Reason, now: datetime) -> DriveIndexRecord:
