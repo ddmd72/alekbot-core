@@ -199,7 +199,9 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     `execute_as_given` in `COGNITIVE_PROCESS_DRIVE`; Smart's side: "one language, no synonyms or translations" in the
     commission). G3 fails a case run above 3 search calls (`SEARCH_CALL_CEILING`): an eval check, not a production cap. Prompt: profile `drive`, blueprint `drive_agent_v1`, tokens
     `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH`, `OUTPUT_FORMAT_DRIVE` (all non-overridable),
-    `include_biographical=False`, `include_directives=False`; no fallback prompt.
+    `include_biographical=False`, `include_directives=False`, `include_location=False`; no fallback prompt. The tokens are one
+    procedure, each rule once (RFC §0.0.2 rows 8-9); answering, quoting and computing rules are Smart-side reading lines.
+    `date_from`/`date_to` filter the file's own date; a date written inside a document goes in `query` with the subject.
   - **What Smart gets back:** always `AgentResponse.success` (the engine's "Correct your input" suffix never reaches a
     drive answer): `Drive result: <status>`, a "What to do" line, one op line per change, reading lines (the former
     `drive-search` skill's Smart-side rules, selected by code from the blocks: the `R_*` texts of

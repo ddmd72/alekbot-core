@@ -1,6 +1,6 @@
 # RFC: The user drive through one specialist (`work_with_drive_files`)
 
-**Status:** Accepted (owner, 2026-10-22), rev 4.5 (§0.0.2); built on branch `feat/drive-specialist`; deployed: no.
+**Status:** Accepted (owner, 2026-10-22), rev 4.5 (§0.0.2, rows 8-9 of 2026-10-28); built on branch `feat/drive-specialist`; deployed: no.
 Rev 2 applied the rulings on the three rev 1 reviews, rev 3 the scoped re-review of rev 2, rev 4 the live A/B of a
 spike and the owner's decisions on it, rev 4.3 the deltas that the implementation plan recorded against the real code,
 rev 4.4 the deltas accepted in the cross-cutting review round of that plan (§0, §15), rev 4.5 the deltas of the port.
@@ -36,6 +36,8 @@ The body above is not rewritten; where it differs from these lines, these lines 
 | 5 | The G3 eval (`smart_dry_run.py`) can run the branch's prompt files before any upload and pick the specialist's provider and tier (`--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier`). |
 | 6 | G3's `--record` writes no bars while today's Smart fails a hard check (verdict "regression", nothing recorded); a before/after comparison is read from the two reports. |
 | 7 | The drive-search skill's search discipline reaches both sides again (G3 found the specialist fanning out one search per synonym or translation Smart listed): Smart's `query_language` exception and the manifest ask for the user's own few key words in one language (§4.1, §4.3 blocks updated); the find sentence regains 'show me' and 'everything about X'; the specialist's tokens state that a subject is searched once with the user's words and that a list of alternatives is not a list of searches (§2.3.11). No cap was added. |
+| 8 | The specialist's prompt is rewritten as one procedure with each rule once (task, searching, results, again, opening, changes, then the report): owner decision 2026-10-28 lifts §7.6's "skill sentences move verbatim" for the specialist. Rules about answering, quoting and computing stay Smart-side reading lines. `date_from` / `date_to` filter the file's own date; a date written inside a document goes in `query` with the subject. |
+| 9 | The specialist's prompt carries no user location: `build_for_agent(include_location=False)` (default `True`, as `include_directives`), passed by `DriveAgent`. |
 
 ### 0.0.1 rev 4.3 → rev 4.4 (deltas from the cross-cutting review round of the implementation plan)
 

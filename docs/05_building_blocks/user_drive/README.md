@@ -1695,7 +1695,8 @@ again in this conversation", and where to browse instead.
 documents) is split by who acts on each rule: the search mechanics are the specialist's token `PROTOCOL_DRIVE_SEARCH`;
 the rules Smart needs to answer reach Smart as **reading lines** (`src/domain/drive_answer_texts.py`, the `R_*`
 texts, chosen by `drive_answer.reading_lines`; changing one is a code deploy, while `PROTOCOL_DRIVE_SEARCH` is a
-Firestore upload), chosen by code from the blocks of each answer (the
+Firestore upload; owner 2026-10-28: the specialist's three tokens are one procedure with each rule once, no longer the skill's sentences
+verbatim, and its prompt carries no user location), chosen by code from the blocks of each answer (the
 tiers paragraph with a search block, the passage rule with a passage, the 90 % rule with a card accuracy, the scan line
 with a scan, the bot-cannot-open bullet, photos, versions with two or more cards, the not-found bullets, and for an
 opened file the numbers rule, document vs memory and "the drive assistant did not read this file"). The
