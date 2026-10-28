@@ -83,9 +83,11 @@ class DriveToolRun:
 
     # -- running one call ------------------------------------------------------------------------------------------
 
-    async def _run(self, op: DriveOp, kind: str, call: _Call, *, change: bool) -> CollectedResult:
+    async def _run(self, op: DriveOp, kind: str, call: _Call, *, change: bool,
+                   prep: Optional[Callable[[], Awaitable[None]]] = None) -> CollectedResult:
         """The call's collected result. `step` is read before any await: the call belongs to the turn that emitted
-        it."""
+        it. `prep` (changes only) is a read the call needs first, e.g. a destination folder's lookup: it runs inside
+        the order lock but before `started`, so a cut during it is "not started", never "still running"."""
         step = self.step
         if self.left() <= 0:
             return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED))
@@ -97,6 +99,8 @@ class DriveToolRun:
                         return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED_BEHIND))
                     if self.left() <= 0:   # queued behind the batch past the deadline
                         return self._collector.add(step, kind, _not_finished(op, t.NOT_STARTED))
+                    if prep is not None:
+                        await prep()
                     started = True
                     outcome = await call()
                     if outcome.cls is OutcomeClass.STILL_RUNNING:
@@ -192,8 +196,17 @@ class DriveToolRun:
     async def _folder(self, folder: Any) -> Any:
         return await self._ops.folder_path(self._user_id, folder) if folder else folder
 
-    async def _change(self, tc: ToolCall, op: DriveOp, call: _Call) -> ToolResult:
-        return self._seen(tc, await self._run(op, op.value, call, change=True))
+    async def _change(self, tc: ToolCall, op: DriveOp, call: Callable[[Any], Awaitable[DriveOutcome]],
+                      folder: Any = None) -> ToolResult:
+        """`call` receives the destination folder resolved by `_folder`, which runs before the run counts as started."""
+        resolved: list = []
+
+        async def prep() -> None:
+            resolved.append(await self._folder(folder))
+
+        async def started_call() -> DriveOutcome:
+            return await call(resolved[0])
+        return self._seen(tc, await self._run(op, op.value, started_call, change=True, prep=prep))
 
     def _refuse(self, tc: ToolCall, op: DriveOp, text: str, cls: OutcomeClass) -> ToolResult:
         """A refusal decided before any service call (an unknown item, a request shape), recorded like an outcome."""
@@ -222,10 +235,10 @@ class DriveToolRun:
         if not source.strip():
             return self._no_ref(tc, DriveOp.COPY, "source_ref", "the file to keep")
 
-        async def call() -> DriveOutcome:
-            return await self._ops.copy(self._context, self._user_id, source, folder=await self._folder(
-                args.get("folder")), file_name=args.get("file_name"), wait_s=self._wait_s())
-        return await self._change(tc, DriveOp.COPY, call)
+        async def call(folder: Any) -> DriveOutcome:
+            return await self._ops.copy(self._context, self._user_id, source, folder=folder,
+                                        file_name=args.get("file_name"), wait_s=self._wait_s())
+        return await self._change(tc, DriveOp.COPY, call, args.get("folder"))
 
     async def _save_text(self, tc: ToolCall) -> ToolResult:
         args = tc.args or {}
@@ -233,19 +246,18 @@ class DriveToolRun:
         if item is None:
             return self._no_item(tc, DriveOp.SAVE_TEXT, args.get("text_item"))
 
-        async def call() -> DriveOutcome:
+        async def call(folder: Any) -> DriveOutcome:
             return await self._ops.save_text(self._context, self._user_id, item.text,
                                              file_name=args.get("file_name") or item.name,
-                                             folder=await self._folder(args.get("folder")), wait_s=self._wait_s())
-        return await self._change(tc, DriveOp.SAVE_TEXT, call)
+                                             folder=folder, wait_s=self._wait_s())
+        return await self._change(tc, DriveOp.SAVE_TEXT, call, args.get("folder"))
 
     async def _create_folder(self, tc: ToolCall) -> ToolResult:
         folder = (tc.args or {}).get("folder")
 
-        async def call() -> DriveOutcome:
-            return await self._ops.create_folder(self._context, self._user_id, await self._folder(folder),
-                                                 wait_s=self._wait_s())
-        return await self._change(tc, DriveOp.CREATE_FOLDER, call)
+        async def call(resolved: Any) -> DriveOutcome:
+            return await self._ops.create_folder(self._context, self._user_id, resolved, wait_s=self._wait_s())
+        return await self._change(tc, DriveOp.CREATE_FOLDER, call, folder)
 
     async def _move(self, tc: ToolCall) -> ToolResult:
         args = tc.args or {}
@@ -257,10 +269,10 @@ class DriveToolRun:
         if _is_bare_path(ref):
             return self._path_given(tc, DriveOp.MOVE, "file_ref", "the file to move")
 
-        async def call() -> DriveOutcome:
-            return await self._ops.move(self._context, self._user_id, ref, folder=await self._folder(folder),
+        async def call(resolved: Any) -> DriveOutcome:
+            return await self._ops.move(self._context, self._user_id, ref, folder=resolved,
                                         new_name=new_name, wait_s=self._wait_s())
-        return await self._change(tc, DriveOp.MOVE, call)
+        return await self._change(tc, DriveOp.MOVE, call, folder)
 
     async def _append(self, tc: ToolCall) -> ToolResult:
         args = tc.args or {}
@@ -271,7 +283,7 @@ class DriveToolRun:
         if _is_bare_path(ref):
             return self._path_given(tc, DriveOp.APPEND, "file_ref", "the text file to add to")
 
-        async def call() -> DriveOutcome:
+        async def call(_folder: Any) -> DriveOutcome:
             return await self._ops.append(self._context, self._user_id, ref, item.text, wait_s=self._wait_s())
         return await self._change(tc, DriveOp.APPEND, call)
 
@@ -281,7 +293,7 @@ class DriveToolRun:
         if _is_bare_path(target):
             return self._path_given(tc, DriveOp.REPLACE, "target_ref", "the file to replace")
 
-        async def call() -> DriveOutcome:
+        async def call(_folder: Any) -> DriveOutcome:
             return await self._ops.replace(self._context, self._user_id, target, source, wait_s=self._wait_s())
         return await self._change(tc, DriveOp.REPLACE, call)
 
@@ -290,7 +302,7 @@ class DriveToolRun:
         if _is_bare_path(ref):
             return self._path_given(tc, DriveOp.DELETE, "file_ref", "the item to delete")
 
-        async def call() -> DriveOutcome:
+        async def call(_folder: Any) -> DriveOutcome:
             return await self._ops.delete(self._context, self._user_id, ref, wait_s=self._wait_s())
         return await self._change(tc, DriveOp.DELETE, call)
 
