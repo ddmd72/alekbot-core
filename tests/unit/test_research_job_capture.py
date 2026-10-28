@@ -10,6 +10,7 @@ Mock boundary: the google.cloud.bigquery SDK (injected into sys.modules).
 import sys
 from unittest.mock import MagicMock
 
+import google.cloud
 import pytest
 
 import job_main
@@ -31,6 +32,10 @@ def fake_bigquery(monkeypatch):
     bq.TimePartitioningType = MagicMock(DAY="DAY")
 
     monkeypatch.setitem(sys.modules, "google.cloud.bigquery", bq)
+    # The adapter does `from google.cloud import bigquery`, which reads the package
+    # attribute before sys.modules: once any test in this process has imported the
+    # real module, only patching the attribute too makes the fake what it resolves.
+    monkeypatch.setattr(google.cloud, "bigquery", bq, raising=False)
     return bq, client
 
 
