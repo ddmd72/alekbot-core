@@ -3,8 +3,8 @@ category: cognitive_process
 class: cognitive_process
 metadata:
   description: DriveAgent — who it is, what it gets and returns, and the first decision
-    (what the commission asks); refs and errors (DRIVE_SPECIALIST_RFC §5.2, §5.8; rewritten
-    as one procedure, owner 2026-10-28)
+    (what the commission asks); refs and errors (DRIVE_SPECIALIST_RFC §5.2, §5.8;
+    rewritten as one procedure, owner 2026-10-28)
   override_by:
   - SYSTEM
   - AGENT
