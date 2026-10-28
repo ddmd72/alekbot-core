@@ -14,7 +14,7 @@ T2 (the mirror folder with D48's archive and D49's `_Transcripts`, the deleted-f
 designed in §26 and **built (slices S1–S6) and deployed 2026-10-19** (PRs #81–#84; the owner's index rebuilt, gate key
 `accuracy` applied); §26 states what that release changed.
 **Answer from content** (the drive specialist retrieves, reads and passes to Smart the passages nearest a content request;
-Smart says what, the specialist decides how; owner questions OQ-A1–OQ-A2 resolved 2026-10-28, OQ-A3 open) is designed in §28 (rev 3.32, 2026-10-28) and **not built**.
+Smart says what, the specialist decides how; owner questions OQ-A1–OQ-A3 resolved 2026-10-28) is designed in §28 (rev 3.32, 2026-10-28) and **not built**.
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
 Replaces that RFC's §5 "Step 2" placeholder.
 **Precedents reused:** email index ([GMAIL_EMAIL_INDEXING_RFC.md](GMAIL_EMAIL_INDEXING_RFC.md), `IndexedEmail`),
@@ -5574,8 +5574,8 @@ that text, and where they disagree with an older paragraph the row wins. No mode
 *Proposed, not built. Serves G2 (§1, "a clause, an amount or a date inside a document, with the file it came from")
 and the third query type of the owner decisions of 2026-10-11 (Smart uses the documents as a knowledge base), from the
 stored chunks, through the drive specialist (`DRIVE_SPECIALIST_RFC.md`). Search (§25) is unchanged: zero-LLM, strict
-AND, the same result text. A1–A18 are this section's design decisions; owner questions OQ-A1–OQ-A2 were resolved by
-the owner on 2026-10-28 (§28.6; rev 3.32 applies them to A10, A13, A14 and §28.2); OQ-A3 (A18's cap) is open. Concept fixed by the owner on
+AND, the same result text. A1–A18 are this section's design decisions; owner questions OQ-A1–OQ-A3 were resolved by
+the owner on 2026-10-28 (§28.6; rev 3.32 applies them to A10, A13, A14, A18 and §28.2). Concept fixed by the owner on
 2026-10-28: Smart says **what**, the specialist decides **how**. Code citations are to `main` at `9a57cd25`. Every
 example is invented; every parameter is an initial value, to be set by the S3 eval.*
 
@@ -5838,11 +5838,13 @@ already holds (no new read past the ancestor records visibility loads anyway, no
   print once per run (the ledger remembers what was shown; a folder dropped by the cap is not shown and may print in a
   later round). Smart's consolidated block (A11) re-plans over the whole ledger once: each noted folder's line right
   before the first file under it, files in A11's order.
-- **The cap.** Never dropped: each file's head, its own note and its description. Folder lines are dropped whole, never
+- **The cap (OQ-A3).** It counts folder notes only. Never dropped: each file's head, its own note and its description,
+  which are bounded per file and sit outside the cap. Folder lines are dropped whole, never
   cut, farthest first: by the fewest levels from the folder down to a shown file under it (a folder above two shown
   branches takes its smallest distance), then nearer the root first, then by path. Dropped folders are named on one
-  code line, `Folder notes not shown (limit): "…"` (the reader can `get_note` one). `EXCERPT_CONTEXT_CHARS_MAX` and
-  what it covers are §28.9's; **what the cap covers is pending an owner decision** (OQ-A3, §28.6).
+  code line, `Folder notes not shown (limit): "…"` (the reader can `get_note` one). The cap is one
+  parameter, `EXCERPT_FOLDER_NOTES_CHARS_MAX` (§28.9): a guard against a deep tree of long notes, not a budget a
+  typical answer reaches, since each folder prints once per answer.
 - Copies collapse to one keeper (a noted one preferred, `drive_search_service.py:1035-1036`); the context shows the
   keeper's chain.
 
@@ -5925,8 +5927,8 @@ opaque ancestor hides, the folder memory path and the wide path, `file_refs`, th
 awaiting rebuild), identical copies. A18 (domain): the description gate (a template profile of a short note
 omitted, the machine-text label shown, a profile of an older version omitted, the brief as fallback, none); the cap
 (farthest-first across two branches, a shared folder at its smallest distance, the tie order, a note dropped whole and
-never cut, own notes and descriptions never dropped, the "not shown" line, folders without a note silent; both OQ-A3
-branches); no owner line inside a wrapper and no description outside one; `<drive_document` in a note and `«` in a path
+never cut, own notes and descriptions never dropped, the "not shown" line, folders without a note silent; file lines
+outside the cap); no owner line inside a wrapper and no description outside one; `<drive_document` in a note and `«` in a path
 escaped. A18 (service, a counting fake): the ancestor notes cost no extra `get_records` call on the wide and
 `file_refs` paths; a broken chain shows its known part; a copy shows the keeper's chain only. The domain modules join `tests/support/mutation_targets.py`. No adapter change, no
 wire test. Eval: `scripts/validation/drive_eval/runner.py` gains passage recall (each G2 case's `expected_substring`
@@ -5978,7 +5980,7 @@ Smart lines never meet the old specialist. **Rollback:** the backed-up tokens, t
 change, no rebuild, no migration. Before the upload, scan stored skills, reminders and workspace files for
 commissions that dictate "open … verbatim" (a model imitates such text).
 
-### 28.6 Owner questions (OQ-A1, OQ-A2 resolved 2026-10-28; OQ-A3 open)
+### 28.6 Owner questions (OQ-A1–OQ-A3 resolved 2026-10-28)
 
 - **OQ-A1 → resolved (owner, 2026-10-28): the gate on background runs only**, where background means every run that is
   not a chat turn (reminders, the daily review and other `notify` runs, and calls: `ask_alek`, `tell_alek`); a chat turn
@@ -5986,12 +5988,10 @@ commissions that dictate "open … verbatim" (a model imitates such text).
 - **OQ-A2 → resolved (owner, 2026-10-28): passages for born-digital files, an open for scans.** "Scan" is any text not
   known to be born-digital: `capture` scan, document photo, screenshot, or none recorded. A10, A13 and §28.2 state how
   code and the tokens apply it.
-- **OQ-A3 What A18's cap covers — pending an owner decision.** *Mechanism:* the "where it comes from" lines of a render
-  (per round, and once in Smart's block) are capped at `EXCERPT_CONTEXT_CHARS_MAX`; only folder notes are ever dropped
-  (whole, farthest first). *Options:* (a) the cap counts **folder notes only**; every file's own note and description
-  are always shown outside it; (b) the cap counts **the whole context** (folder notes plus file lines), so with many
-  files little or no room is left for folder notes. *Recommendation:* (a). The code has one switch,
-  `EXCERPT_CONTEXT_CAP_COVERS` (`folder_notes` | `whole_context`), §28.9.
+- **OQ-A3 What A18's cap covers — resolved 2026-10-28: folder notes only.** Every file's own note and description are
+  always shown, outside the cap. The tree is aggregated per answer, so the cap is a guard, not a budget; the owner asked
+  for one simple setting to raise, lower or effectively remove it: `EXCERPT_FOLDER_NOTES_CHARS_MAX`, §28.9. Results stay
+  in relevance order (a flat list with each folder's note once), not regrouped as a tree.
 
 *As asked:* OQ-A1 (A14): passages put on-topic document text in front of a model that holds delete, move, replace and
 note-write tools, in background runs too; options were the gate always (recommended), no gate, the gate on background
@@ -6056,7 +6056,6 @@ Engineering decisions taken here: A1–A18, each with its reason above. The para
 | `FOLDER_INMEM_CHUNKS` (existing, reused) | 2 000 | above it, a folder uses the wide kNN, as in search |
 | follow-ups per commission | 2 (1 on a call or background run) | prompt rule (A15) |
 | card accuracy trusted for a value | 90 % | OQ-A2; today a number in texts only, a named constant from S2 |
-| `EXCERPT_CONTEXT_CHARS_MAX` | 2 000 | A18's cap on the "where it comes from" lines of one render |
-| `EXCERPT_CONTEXT_CAP_COVERS` | `folder_notes` (recommended) | OQ-A3, pending the owner: `folder_notes` or `whole_context` |
+| `EXCERPT_FOLDER_NOTES_CHARS_MAX` | 4 000 | A18's cap on the folder notes of one render (OQ-A3); one branch six folders deep with full notes fits whole; raise it to remove the cap in practice |
 | `EXCERPT_DESCRIPTION_CHARS` | 200 | a file's what-it-is line, cut at a word boundary (A18) |
 | specialist turns, `max_tokens` | 6, 4096 | unchanged (`DriveAgentConfig`) |
