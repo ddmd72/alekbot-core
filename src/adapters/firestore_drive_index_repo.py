@@ -571,6 +571,46 @@ def stored_bytes(value: Any) -> int:
     return 64   # a sentinel such as DELETE_FIELD, or a transform
 
 
+_INDEX_ENTRY_FIXED_BYTES = 32   # Firestore's per-entry constant (storage-size rules)
+_DOC_NAME_FIXED_BYTES = 16
+
+
+def _field_path_bytes(path: str) -> int:
+    """A field path: the UTF-8 bytes of its segments + 1 per segment."""
+    return sum(len(seg.encode("utf-8")) + 1 for seg in path.split("."))
+
+
+def index_entry_bytes(doc_name: str, data: Mapping[str, Any]) -> int:
+    """An upper estimate of the bytes of the single-field index entries a whole-document set creates (RFC Δ245).
+    Firestore counts them toward a commit's size ("Transaction too big") besides the request bytes. Storage-size
+    rule (https://firebase.google.com/docs/firestore/storage-size): an index entry = document name size + field path
+    size + field value size + 32 bytes, the name being its path segments' UTF-8 bytes + 1 each + 16. A scalar field
+    has two entries (ascending, descending), an array element one (array-contains), a map is counted by dotted path,
+    a `Vector` none. Value sizes are `stored_bytes`, which leans high; the exemptions in
+    config/firestore.indexes.json are deliberately ignored."""
+    name = sum(len(seg.encode("utf-8")) + 1 for seg in doc_name.split("/")) + _DOC_NAME_FIXED_BYTES
+    per_entry = name + _INDEX_ENTRY_FIXED_BYTES
+
+    def walk(prefix: str, value: Any) -> int:
+        if isinstance(value, Vector):
+            return 0
+        if isinstance(value, Mapping):
+            return sum(walk(f"{prefix}.{k}", v) for k, v in value.items())
+        if isinstance(value, (list, tuple)):
+            return sum(per_entry + _field_path_bytes(prefix) + stored_bytes(v) for v in value)
+        return 2 * (per_entry + _field_path_bytes(prefix) + stored_bytes(value))
+
+    return sum(walk(str(k), v) for k, v in data.items())
+
+
+def _write_bytes(write: Tuple[Any, Dict[str, Any]]) -> int:
+    """Request bytes plus index-entry bytes of one (reference, data) write. A reference without a string `path`
+    (a test double) names its document by nothing, the fixed 16 bytes standing in."""
+    ref, data = write
+    path = getattr(ref, "path", "")
+    return stored_bytes(data) + index_entry_bytes(path if isinstance(path, str) else "", data)
+
+
 def byte_batches(writes: Sequence[Any], size_of: Callable[[Any], int]) -> List[List[Any]]:
     """Consecutive batches of at most RECORD_WRITE_BATCH writes and WRITE_BATCH_BYTES estimated bytes (Firestore
     refuses a request over 10 MiB; a v2 chunk is about 25-35 KB, so 400 of them would pass it). A single write over
@@ -1016,7 +1056,7 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
             data = chunk_to_doc(chunk)
             data[CHUNK_VECTOR] = Vector([float(x) for x in vector])
             writes.append((self._chunk_ref(chunk.user_id, chunk.item_id, chunk.generation, chunk.index), data))
-        await self._set_in_batches(writes)   # by bytes too: a v2 chunk carries up to 900 keys (§25.2.6)
+        await self._set_in_batches(writes)   # by bytes too: a v2 chunk carries up to WORD_KEYS_PER_CHUNK keys, each an index entry (§25.2.6, RFC Δ245)
 
     async def delete_chunks_except(self, user_id: str, item_id: str, keep_generation: Optional[int]) -> int:
         """Equality filters only (single-field indexes); the generation is compared here. An item holds at most a
@@ -1124,8 +1164,8 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
 
     async def _set_in_batches(self, writes: Sequence[Tuple[Any, Dict[str, Any]]], *,
                               merge: bool = False) -> None:
-        """(reference, data) pairs as whole-document sets (or merges of the listed fields), in byte-sized batches."""
-        for part in byte_batches(writes, lambda w: stored_bytes(w[1])):
+        """(reference, data) pairs as whole-document sets (or merges of the listed fields), in batches bounded by request plus index-entry bytes."""
+        for part in byte_batches(writes, _write_bytes):
             batch = self._db.batch()
             for ref, data in part:
                 if merge:

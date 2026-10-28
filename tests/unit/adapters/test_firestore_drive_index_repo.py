@@ -11,8 +11,11 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 from google.cloud.firestore_v1.vector import Vector
 
-from src.adapters.firestore_drive_index_repo import CARD_DISTANCE, RECORD_FIELDS, STATE_FIELDS, state_to_doc
+from src.adapters.firestore_drive_index_repo import (
+    _DOC_OVERHEAD_BYTES, CARD_DISTANCE, RECORD_FIELDS, STATE_FIELDS, _write_bytes, state_to_doc,
+)
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, Priority
+from src.domain.drive_index_params import RECORD_WRITE_BATCH, WRITE_BATCH_BYTES
 
 from tests.unit.adapters.firestore_drive_fakes import (
     NOW, PROJECTION, RECS, STATES, TS_MIN, Db, executed, make_repo, rec_doc, snap,
@@ -159,8 +162,24 @@ class TestRecordWrites:
 
     @pytest.mark.slow
     async def test_writes_are_batched_at_record_write_batch(self, repo, db):
-        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id=f"i{n}") for n in range(401)])
-        assert [b.set.call_count for b in db.batches] == [400, 1]
+        """Both caps bind record writes (RFC Δ245): RECORD_WRITE_BATCH, and WRITE_BATCH_BYTES over request plus
+        index-entry bytes. A default record's ~140 indexed fields put the byte cap below 400 records a commit."""
+        records = [DriveIndexRecord(user_id="u", item_id=f"i{n}") for n in range(401)]
+        await repo.upsert_records(records)
+        written = [c.args for b in db.batches for c in b.set.call_args_list]
+        assert [ref.doc_id for ref, _ in written] == [f"u:i{n}" for n in range(401)]   # all, once, in order
+        sizes = [[_write_bytes(c.args) + _DOC_OVERHEAD_BYTES for c in b.set.call_args_list] for b in db.batches]
+        assert len(sizes) >= 2
+        for n, batch in enumerate(sizes):
+            assert len(batch) <= RECORD_WRITE_BATCH and sum(batch) <= WRITE_BATCH_BYTES
+            if n + 1 < len(sizes):   # closed only because the next write would not fit
+                assert sum(batch) + sizes[n + 1][0] > WRITE_BATCH_BYTES
+
+    @pytest.mark.slow
+    async def test_record_count_cap_holds_when_bytes_do_not_bind(self, repo, db):
+        with patch("src.adapters.firestore_drive_index_repo.WRITE_BATCH_BYTES", 10 ** 12):
+            await repo.upsert_records([DriveIndexRecord(user_id="u", item_id=f"i{n}") for n in range(401)])
+        assert [b.set.call_count for b in db.batches] == [RECORD_WRITE_BATCH, 1]
 
     async def test_due_without_priority_is_refused_before_any_write(self, repo, db):
         ok = DriveIndexRecord(user_id="u", item_id="a", due_at=NOW, priority=0)
