@@ -211,6 +211,10 @@ class ServiceContainer:
         # flag is read from Firestore on every search, never from the agent cache, so the service gets
         # its own (uncached) user repository.
         self.drive_search_service: Optional[DriveSearchService] = None
+        # One uncached user repository and one stateless security port, shared by the drive search and the note service
+        # (and, for the port, the skill service below): built once, injected.
+        drive_users = FirestoreUserRepository(db_client, env_config, account_repo)
+        shared_security_port = CompositeAdapter(adapters=[RegexSecurityAdapter()], strategy="worst_case")
         # The transcription kill switch as the indexer sees it (os.getenv: an optional knob, not a secret): the Cabinet
         # shows the transcription disclosure only while it is on (same values as indexer_main.transcribe_enabled).
         self.drive_transcribe_switch_on: bool = (
@@ -218,7 +222,7 @@ class ServiceContainer:
         if self.user_drive is not None and self.drive_index_repo is not None:
             self.drive_search_service = DriveSearchService(
                 repo=self.drive_index_repo, embeddings=self.embedding_service,
-                users=FirestoreUserRepository(db_client, env_config, account_repo), drive=self.user_drive,
+                users=drive_users, drive=self.user_drive,
                 embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
                 # the Cabinet shows the transcription cap the indexer applies: the optional knob only lowers it (T-R3)
                 transcribe_cap_usd=effective_monthly_cap(os.getenv("DRIVE_TRANSCRIBE_USD_CAP")),
@@ -236,7 +240,7 @@ class ServiceContainer:
             self.drive_note_repo = build_drive_note_repository(db_client, env_config)
             self.drive_note_service = build_drive_note_service(
                 db_client, env_config, notes=self.drive_note_repo, drive=self.user_drive, index=self.drive_index_repo,
-                embeddings=self.embedding_service, users=FirestoreUserRepository(db_client, env_config, account_repo),
+                embeddings=self.embedding_service, users=drive_users, security_port=shared_security_port,
                 nudge_queue=self.drive_task_queue,
             )
             # Owner notes on deleted files join the same deleted-files section (§6.4, §0.3); a read, so added whatever
@@ -405,13 +409,12 @@ class ServiceContainer:
             )
             if self.file_storage else None
         )
-        # A second stateless CompositeAdapter instance is deliberate here: the assembly
-        # service's own CompositeAdapter is a local inside build_prompt_assembly_service and
-        # _init_assembly_service may return None — widening its return for skills would couple two
-        # unrelated features.
+        # The shared stateless port (built with the drive wiring above), not the assembly service's: that one is a
+        # local inside build_prompt_assembly_service and _init_assembly_service may return None — widening its
+        # return for skills would couple two unrelated features.
         self.skill_service = SkillService(
             repository=skill_repository,
-            security_port=CompositeAdapter(adapters=[RegexSecurityAdapter()], strategy="worst_case"),
+            security_port=shared_security_port,
             system_skills=system_skills,
             file_conversion=self.file_conversion_service,
         )
