@@ -1,6 +1,6 @@
 # RFC: The user drive through one specialist (`work_with_drive_files`)
 
-**Status:** Proposed, rev 4.4 (2026-10-22): rev 2 applied the rulings on the three rev 1 reviews, rev 3 the scoped
+**Status:** Proposed, rev 4.5 (see §0.0.2; rev 4.4, 2026-10-22): rev 2 applied the rulings on the three rev 1 reviews, rev 3 the scoped
 re-review of rev 2, rev 4 the live A/B of a spike and the owner's decisions on it, rev 4.3 the deltas that the
 implementation plan recorded against the real code, rev 4.4 the deltas accepted in the cross-cutting review round of
 that plan (§0, §15). Nothing is merged.
@@ -21,6 +21,19 @@ report, the owner's ruling of 2026-10-22 or the arbiter decided it.
 ---
 
 ## 0. Changes
+
+### 0.0.2 rev 4.4 → rev 4.5 (deltas of the port onto the current `main`)
+
+The body above is not rewritten; where it differs from these lines, these lines and the code win.
+
+| # | Change |
+|---|---|
+| 1 | Receipts and late-failure notices are sent literally: `DriveOperations._receipt` calls `notify_raw(..., literal=True)` (`src/infrastructure/drive_operations.py`), `main`'s owner rule for text the bot did not write (the path is the user's or the model's text). |
+| 2 | A plain-text final reply of the specialist beside `report_to_orchestrator` is the report's note when the note is empty (`DriveReport.of(args, plain_text)`, `src/domain/drive_report.py`); `DelegationEngine` now carries the text written beside a terminal call. |
+| 3 | P14: the specialist's twelve tools are a tool-field surface (`drive` and `delegate:work_with_drive_files` in `tests/support/tool_fields.py`), covered by the e2e card `tests/unit/agents/test_drive_agent_tool_fields_e2e.py`; FileManagement's drive card is retired. |
+| 4 | The new modules (`drive_operations`, `drive_tools`, `drive_agent`, `drive_answer`, `drive_pass_through`, `drive_file_contents`) are registered for the weekly mutation run (`tests/support/mutation_targets.py`). |
+| 5 | The G3 eval (`smart_dry_run.py`) can run the branch's prompt files before any upload and pick the specialist's provider and tier (`--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier`). |
+| 6 | G3's `--record` writes no bars while today's Smart fails a hard check (verdict "regression", nothing recorded); a before/after comparison is read from the two reports. |
 
 ### 0.0.1 rev 4.3 → rev 4.4 (deltas from the cross-cutting review round of the implementation plan)
 

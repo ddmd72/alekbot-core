@@ -26,6 +26,14 @@ specialist".
    `workspace:` refs, the lenient `drive:` open through `DriveOperations`).
 7. **The evals stub drive writes at the DriveOperations class** (`scripts/validation/drive_eval/dry_run_drive.py`),
    installed before any agent is built, and refuse to run while a public method is unclassified.
+8. **Text the bot did not write is sent literally.** Receipts and late-failure notices go out through
+   `DriveOperations._receipt` with `notify_raw(..., literal=True)` (the path is the user's or the model's text). A
+   plain-text final reply of the specialist beside `report_to_orchestrator` becomes the report's note when the note is
+   empty.
+9. **Tests.** The specialist's twelve tools are a P14 tool-field surface (`drive`, `delegate:work_with_drive_files`)
+   with an e2e card; the modules run in the weekly mutation job. G3 can run the branch's prompt files before any
+   upload and pick the specialist's provider; its `--record` writes no bars while Smart fails a hard check, so a
+   before/after comparison is read from the two reports.
 
 ## Alternatives rejected
 

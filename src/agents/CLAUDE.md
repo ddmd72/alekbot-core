@@ -186,13 +186,15 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     line through `alert_sink`, the ops sink the consolidation agent gets; the sol fallback covers provider errors on
     the first call only. Every tool calls one method of the user's `DriveOperations` (`src/infrastructure/drive_operations.py`:
     FileManagement's former drive code — error mapping, per-user lock, shield, still-running, receipts, late-failure
-    notices keyed on `DriveOp`), built once per user by the factory and shared with FileManagement. An identical
+    notices keyed on `DriveOp`; receipts and notices go out literally, `notify_raw(literal=True)`), built once per user by
+    the factory and shared with FileManagement. An identical
     search in one commission is not re-run. Prompt: profile `drive`, blueprint `drive_agent_v1`, tokens
     `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH`, `OUTPUT_FORMAT_DRIVE` (all non-overridable),
     `include_biographical=False`, `include_directives=False`; no fallback prompt.
   - **What Smart gets back:** always `AgentResponse.success` (the engine's "Correct your input" suffix never reaches a
     drive answer): `Drive result: <status>`, a "What to do" line, one op line per change, reading lines (the former
-    `drive-search` skill's Smart-side rules, selected by code from the blocks), the specialist's note, then every read
+    `drive-search` skill's Smart-side rules, selected by code from the blocks), the specialist's note (a plain-text final reply beside `report_to_orchestrator` fills it when the report's note is
+    empty), then every read
     block verbatim in run order. The specialist's model sees search cards and listings in full but only a stand-in for
     an opened file; images and PDFs reach Smart as a `file_data` list. `history_context["drive_context"]` is one flat
     list (no dedup), so Smart's fold stores today's shape.
@@ -220,7 +222,12 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   - **Gotchas:** a `still_running` mutation ends the commission; the status is set by code, the model can only lower
     it (`question` → `ambiguous`, `not_done` → `not_possible`). The evals stub drive writes at the DriveOperations
     class (`scripts/validation/drive_eval/dry_run_drive.py`), never at `DelegationEngine.dispatch`: the specialist's
-    tools do not pass through it.
+    tools do not pass through it. G3 (`smart_dry_run.py`) can run the branch's prompt files before any upload and pick
+    the specialist's provider and tier (`--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier`); its
+    `--record` writes no bars while Smart fails a hard check (compare two reports instead).
+  - **Tests:** the twelve tools are a P14 tool-field surface (`drive`, `delegate:work_with_drive_files`,
+    `tests/support/tool_fields.py`), e2e card `tests/unit/agents/test_drive_agent_tool_fields_e2e.py`; the modules run
+    in the weekly mutation job (`tests/support/mutation_targets.py`).
 - Notes / Proactive Self-Reminders (PERFORMANCE, OpenAI, intent `manage_self_reminders`) — deferred
   instructions the system writes to itself that fire autonomously as new conversations. Two-field model:
   `text` (≤15-word label) + `instruction` (self-contained execution context). Optional `workspace_file`

@@ -720,9 +720,10 @@ work in its own loop (≤ 6 turns, 150 s soft deadline under the caller's budget
 `copy_file_to_drive`, `save_text_file`, `create_folder`, `move_file`, `append_to_file`, `replace_file_content`,
 `delete_drive_item`, `report_to_orchestrator`), each calling one method of the user's `DriveOperations`
 (`src/infrastructure/drive_operations.py`, FileManagement's former drive code, one instance per user shared with
-FileManagement: lock, shield, receipts, late-failure notices). Code builds the answer: `Drive result: <status>`, a
+FileManagement: lock, shield, receipts and late-failure notices, both sent literally). Code builds the answer: `Drive result: <status>`, a
 "What to do" line, op lines, reading lines, then every read block verbatim in run order (vision files as a list); the
-specialist's model never sees an opened body. The 8 drive intents it replaced are gone (a stale text naming one gets
+specialist's model never sees an opened body (a plain-text final reply beside `report_to_orchestrator` fills an empty
+report note). The 8 drive intents it replaced are gone (a stale text naming one gets
 the coordinator's unknown-intent refusal). Store rules: mutations refuse a ref from the other store, reads are lenient;
 copying refuses a `drive:` source; a composed text is md/txt/csv/json/yaml/html/svg/xml, UTF-8, ≤ 5 MiB (RFC §4.7.1).
 `prefetch_file_ref=False` on both FileManagement and the specialist (a `DriveNotConnectedError` during another
@@ -841,7 +842,7 @@ photo's place and coordinates rounded to 3 decimals as a prior (D39) and returns
 D40). The migration gate key is now `accuracy`; the rebuild runs with no initial-build reset, under the monthly caps. Opt-out purges at once;
 lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/drive_index_rebuild.py`. Evals:
 `python -m scripts.validation.drive_eval` (G1/G2, v1 bars), `… drive_eval.search_v2_eval` (v2 families, offline by
-default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run` (owner-run, `bars_g3.json`, `--max-usd` hard stop; drive writes stubbed by the class-level `dry_run_drive.DryRunDriveOperations`), the drive specialist eval `… drive_eval.specialist_ab` (owner-run, paid, `--max-usd`; `--replay-commissions` runs the specialist alone). Decisions:
+default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run` (owner-run, `bars_g3.json`, `--max-usd` hard stop; drive writes stubbed by the class-level `dry_run_drive.DryRunDriveOperations`; `--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier` run the branch's prompt files and pick the specialist; `--record` writes no bars while Smart fails a hard check), the drive specialist eval `… drive_eval.specialist_ab` (owner-run, paid, `--max-usd`; `--replay-commissions` runs the specialist alone). Decisions:
 `decisions/drive_*.md`.
 
 **Per-channel sessions** — `session_id = f"{user_id}:{channel_id}"`, deterministic; each channel (Slack

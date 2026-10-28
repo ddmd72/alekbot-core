@@ -1723,7 +1723,10 @@ commissions again).
 specialist note, then **every read block verbatim** in run order (`[Result r1, step 1: search]`, a listing labelled
 "before the changes in steps …"). The specialist's model sees search cards and listings in full but only a stand-in
 for an opened file, so nothing is retyped; images and PDFs reach Smart as a `file_data` list. `drive_context` refs
-are one flat list per commission, so history keeps today's shape (RFC §7.4).
+are one flat list per commission, so history keeps today's shape (RFC §7.4). A plain-text final reply written beside
+`report_to_orchestrator` is the note when the report's own note is empty. Receipts of a delete or replace and the
+late-failure notices are sent literally (`DriveOperations._receipt`, `notify_raw(..., literal=True)`): the path is text
+the bot did not write.
 
 **Who else touches the drive.** FileManagement's `open_file` on a `drive:` ref (the lenient read, the same
 `DriveOperations`); the deep-research copy (`UserDriveService.save` directly); the coordinator's `file_ref` prefetch
@@ -1732,7 +1735,14 @@ drive through Smart.
 
 **Evals.** G3 (`smart_dry_run`) and the specialist eval (`specialist_ab`, `--replay-commissions` for the specialist
 alone) run the production specialist on the fixture drive; every drive write is stubbed at the `DriveOperations`
-class before any agent is built (`dry_run_drive.py`), and the metrics read the drive operation log.
+class before any agent is built (`dry_run_drive.py`), and the metrics read the drive operation log. G3 can run the
+branch's prompt files before any upload and pick the specialist's provider and tier (`--prompts-from-snapshot`,
+`--specialist-provider`, `--specialist-tier`); its `--record` writes no bars while today's Smart fails a hard check, so
+a before/after comparison is read from the two reports.
+
+**Tests.** The twelve tools are a P14 tool-field surface (`drive`, `delegate:work_with_drive_files` in
+`tests/support/tool_fields.py`) with the e2e card `tests/unit/agents/test_drive_agent_tool_fields_e2e.py`; the modules
+are registered for the weekly mutation run.
 
 ### 6.4 Two queries, end to end
 

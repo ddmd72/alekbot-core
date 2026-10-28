@@ -422,126 +422,14 @@ before step 1.
 ## The drive specialist (`work_with_drive_files`)
 
 Smart reaches the drive through one LLM specialist (`docs/10_rfcs/DRIVE_SPECIALIST_RFC.md` §10, §13;
-`decisions/drive_specialist.md`). No new service, secret or Cloud Build substitution: the specialist runs in the main
-service, on the Claude and OpenAI keys it already has. The change is prompts, the owner's stored texts and the
-deploy; the order matters. Agents prepare the files and may run the dry runs; every `--apply`, upload and deploy is the
-owner's. Every eval command below runs with `NO_PROXY='*'` on a machine with a local proxy (127.0.0.1:8888), or the
-provider SDKs fail TLS; every paid eval passes `--max-usd` (a hard stop).
+`decisions/drive_specialist.md`). It adds no service, secret or Cloud Build substitution: the specialist runs in the main
+service on the Claude and OpenAI keys it already has, so the ordinary `make deploy` is the whole code change.
 
-**Before the build — the pre-build check (RFC §12).** The spike's stage 1 rerun with the Sonnet specialist (`--max-usd
-3`). If it misses the bar (correctness at parity, p50 case wall time ≤ today's × 1.25), the build stops and the owner
-decides; changing the specialist's effort (`low` is the first lever) is his call. Prompt caching is not checked here:
-the spike prototype is not cached. It is checked after the deploy (below): the second turn of a commission shows
-`cache_read_tokens > 0` (`drive` is in `PromptCacheStrategy.CACHEABLE_AGENTS` and `MULTI_TURN_AGENTS`; before that
-change the spike showed `cached: 0` on every specialist call).
-
-**O0 — which model serves the specialist (before O1).** The model is not only the tier default: the per-user
-`agent_providers["drive"]`, then the **global** `provider_preference`, then the strategy default (`claude`) decide the
-provider (`AgentContextBuilder.resolve_provider_name`). A `provider_preference` of `openai` puts the specialist on
-`gpt-6-luna`, the model the RFC (§15.3, §15.5) rejected as too weak, and its fallback is then also `openai`. Read the
-owner's `provider_preference`, `agent_providers` and `agent_tiers` (read-only). If the preference is `openai` and
-`agent_providers` has no `drive` entry, set `agent_providers["drive"]="claude"` before the deploy. On 2026-10-22 the
-read showed an empty preference and no `drive` entry, so the strategy default `claude` applies and nothing is needed
-today; the step stays as a check, because the setting can change. The `[DriveAgent]` log line carries `model=<served
-model>` so the answer is visible after the deploy (step 11).
-
-**Before the deploy — the owner's stored texts (RFC §10 step 6).** Texts that name a removed intent cost a rejected
-call after the cut; rewritten intent-free ("find it on the drive", "save it to the drive") they work with the old
-code and the new, so this step can land days early and survives a revert.
-1. `venv/bin/python -m scripts.validation.drive_intent_text_scan` — read-only; writes `report.md`, `backup.json`
-   (each hit's full text and version) and every custom skill as `skills/<name>.v<n>.md` under
-   `scripts/memory/drive_intent_scan_<stamp>/`. It scans **only the owner** and reads the `agent_directive` and `preference` facts and the workspace's
-   `projects/`, `references/`, `scratch/` and the text files of `files/`.
-2. Rewrite each hit intent-free: the custom skills that name a removed intent
-   (and any unsaved draft the scan found) as new versions — prepare
-   `scripts/memory/drive_intent_scan_<stamp>/rewrite/<name>.md`, and the new text of every other hit as
-   `rewrite/others/<store>__<key>.txt`; check them with `--check-rewrites` (no old intent, drive-only field or
-   `drive-search` left; the owner's side-by-side `rewrite/DIFF.md` is not checked), then
-   `python scripts/skills/seed_custom_skill.py --user <USER_ID> --account <ACCOUNT_ID> --file <rewrite>.md`; a skill
-   that also carries files, and every `skill_file` hit, is redrafted in chat (`draft_skill`, `$skill save`:
-   `seed_custom_skill.py` keeps the current files and `--check-rewrites` does not read them; only the step-3 rescan
-   catches a file). Reminders, directives, workspace files
-   and overrides: edit each in place through its own surface (Smart's reminder and workspace tools, the Cabinet).
-3. Rerun the scan: no hit left.
-
-**The prompts (RFC §10.1).**
-4. Back up the prompt layer: `PY=venv/bin/python; $PY firestore_utils/backup_prompt_layer.py` (into `scripts/memory/`).
-   This is the restore point of the rollback. (`$PY` is the repo's interpreter, defined here once for the commands below.)
-5. Drift check: `python firestore_utils/snapshot_pull.py --check`. A `snapshot_pull.py` run by another session before
-   the upload overwrites the branch's mirror files; re-apply them from the branch if it happened.
-6. Dry run (an agent may run it): `python firestore_utils/snapshot_upload.py <files>` for
-   `prompts_snapshot/tokens/system/{COGNITIVE_PROCESS_DRIVE,PROTOCOL_DRIVE_SEARCH,OUTPUT_FORMAT_DRIVE}.groovy`,
-   `prompts_snapshot/blueprints/drive_agent_v1.yaml`, `prompts_snapshot/profiles/drive.yaml` and
-   `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`.
-7. Apply, in this order: the specialist's five files first (additive: the running revision never reads them), then
-   `PROTOCOL_AGENT_SELECTION` **right before the deploy** (it names `work_with_drive_files`, which the running revision
-   does not have). Two commands, each with its own dry run first (the step-6 dry run lists six files, so adding
-   `--apply` to it would apply the protocol early; the per-document typed confirmation is the only other guard):
-   ```bash
-   $PY firestore_utils/snapshot_upload.py --apply \
-     prompts_snapshot/tokens/system/COGNITIVE_PROCESS_DRIVE.groovy prompts_snapshot/tokens/system/PROTOCOL_DRIVE_SEARCH.groovy \
-     prompts_snapshot/tokens/system/OUTPUT_FORMAT_DRIVE.groovy prompts_snapshot/blueprints/drive_agent_v1.yaml \
-     prompts_snapshot/profiles/drive.yaml                                  # the five new documents; every line is (new)
-   # ... then, immediately before step 8:
-   $PY firestore_utils/snapshot_upload.py --apply prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy
-   ```
-
-**The deploy.**
-8. `make deploy`, then `$admin_cache_reset`. The prompt template is cached for 24 h per instance and the reset is
-   process-local (it resets the instance that serves the command); a deploy starts fresh instances anyway, so after a
-   deploy the reset is a belt for the instance it lands on, and a reset meant to undo a protocol upload without a
-   deploy reaches only that one instance.
-9. `snapshot_pull.py`, commit the mirror on a branch and open a PR (the `main` ruleset refuses direct pushes).
-10. G3 "after" (`NO_PROXY='*' venv/bin/python -m scripts.validation.drive_eval.smart_dry_run --repeats N --max-usd 3`,
-    the same `N` as the step-0 "before"), and the specialist eval against the spike's stage-1 report
-    (`NO_PROXY='*' venv/bin/python -m scripts.validation.drive_eval.specialist_ab --smart-model gpt-6.1-sol --max-usd 3
-    --compare <report> --compare-design today`); watch the `[DriveAgent]` log line (status, ops, turns, ms) and the
-    turn-limit 🚨 ops alert for a few days. The agent-level harness test
-    (`tests/unit/scripts/test_drive_eval_dry_run_drive.py::test_every_write_tool_of_the_specialist_is_stubbed_in_the_dry_run`)
-    is green on the branch before either eval runs.
-11. **O6 live smoke (once, after the deploy).** Send one real message that needs the drive (for example "list my drive
-    Inbox"). Then check the `[DriveAgent] ... status= model=` line in the logs (`make fetch-logs`, grep locally):
-    the status is `ok` and the model is the Claude specialist model, not `gpt-6-luna`. Then `prompt_content` in
-    BigQuery for `agent_type=drive`: the model, and `cache_read_tokens > 0` on the second turn. A missing profile upload
-    shows here too: with no `drive` profile `preload_cache("drive")` only warns and every commission then fails
-    "PromptBuilder failed".
-
-**Rollback (RFC §13), in the forward order.** The revert of the merge restores the mirror file itself, so it comes
-first; the protocol is restored right before the deploy of the revert, never earlier. `PY=venv/bin/python`.
-1. On a branch, `git revert -m 1 <merge>` (a merge commit needs `-m 1`). This brings back the old
-   `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`; the step-4 backup JSON is the cross-check.
-2. Dry run, then apply, from that working tree, **just before step 3**:
-   ```bash
-   $PY firestore_utils/snapshot_upload.py prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy          # the diff must undo the drive block and the exception
-   $PY firestore_utils/snapshot_upload.py --apply prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy  # owner
-   ```
-3. `make deploy` from the revert tree (the deploy reads the working tree, not git).
-4. `$admin_cache_reset`. It is process-local, so after a deploy it is a belt for the instance it lands on; it is never run
-   before the revert is live: it would make the warm instance of the new revision rebuild every user's prompt from the
-   old protocol while it runs the new code (`use_skill drive-search` is unknown, `applies_to: search_files_in_drive`
-   names a removed intent) for every drive turn until the revert ships.
-5. Open the PR of the revert branch (the `main` ruleset refuses a direct push; CI runs on it), then `snapshot_pull.py`
-   and commit the mirror in a PR.
-6. Texts written after the deploy: `$PY -m scripts.validation.drive_intent_text_scan --include-new` finds `work_with_drive_files` in reminders,
-   the workspace, skills and directives; back up and rewrite each intent-free (a stale one costs one self-corrected
-   rejected call). The drive, the index and the receipts are written by the same code in both versions; the new drive
-   tokens can stay. If the drive notes change was built on top, revert it first.
-
-**If the deploy fails after step 7:** do not rely on a reset: the reset reaches one instance, and any old-revision
-instance that cold-started since step 7 keeps a template built on the new protocol for up to 24 h. Restore the protocol
-as in rollback step 2 (from the mirror file of the commit before the merge:
-`git show <merge>^1:prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy > prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`,
-dry run, `--apply`), then redeploy the **current** image as a new revision (fresh instances):
-`gcloud run services update <SERVICE> --region=us-central1 --project=<PROJECT_ID> --update-env-vars=REDEPLOY_AT=$(date +%s)`
-(a new revision of the same image; names from `.env`). To retry the deploy instead, first
-`git checkout -- prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy`, then rerun step 7's second
-`--apply` immediately before `make deploy`: the restored old protocol must not meet the new code.
-
-Two windows are accepted, each costing at most **two** self-corrected calls per drive turn: between step 7 and the new
-revision serving, a cold instance of the old revision builds Smart's prompt with the new protocol
-(`work_with_drive_files`, which it does not have); in a rollback, between restoring the protocol and the revert going
-live (deploy the revert from its branch to keep it short), the new code runs with the old protocol: `use_skill
-drive-search` finds no skill, and `applies_to: search_files_in_drive` invites a removed intent.
+Its prompt lives in Firestore like every other agent's (tokens `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH`,
+`OUTPUT_FORMAT_DRIVE`, blueprint `drive_agent_v1`, profile `drive`). There is no fallback prompt: a missing `drive`
+profile fails every commission with "PromptBuilder failed" (`preload_cache("drive")` only warns at startup). The owner
+uploads the prompt layer before the release whose code needs it ("Every deploy" below), and `PROTOCOL_AGENT_SELECTION`,
+which names `work_with_drive_files`, goes up right before that release, not earlier.
 
 ---
 
@@ -574,6 +462,10 @@ drive-search` finds no skill, and `applies_to: search_files_in_drive` invites a 
 (`gcloud run services describe alek-bot-dev --region=us-central1 --project=<PROJECT_ID> --format='value(status.traffic[0].revisionName)'`);
 roll back with `gcloud run services update-traffic alek-bot-dev --region=us-central1 --project=<PROJECT_ID> --to-revisions=<prev>=100`.
 A release that changes stored data, indexes or prompts has its own rollback order in its rollout notes (ops).
+
+**Roll back the drive specialist.** Revert the merge, and restore `PROTOCOL_AGENT_SELECTION` right before the revert's
+release, never earlier: a protocol restored first runs the new code with the old text. Order and commands are in the
+release's rollout notes (ops).
 
 **The `:latest` trap.** After a failed deploy or a traffic rollback, `:latest` still points at the new image. Every
 `gcloud run services update`, and every Makefile target that wraps it (warm/cold, `claude-`/`openai-`/`dr-rollback` and
