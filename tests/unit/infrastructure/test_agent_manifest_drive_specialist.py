@@ -11,8 +11,8 @@ from src.infrastructure.agent_registry import AgentRegistry, ExecutionMode
 
 DESCRIPTION = DRIVE_SPECIALIST.capability_descriptions[Intent.WORK_WITH_DRIVE_FILES]
 FIELD = DRIVE_SPECIALIST.context_schemas[Intent.WORK_WITH_DRIVE_FILES]["file_contents"]
-FIND_RULE = ("A find ('find', 'do I have', 'where is', 'which files') is answered from the search results alone; ask "
-             "to open a file only when the user wants something written inside it.")
+FIND_RULE = ("A find ('find', 'show me', 'do I have', 'where is', 'which files', 'everything about X') is answered from "
+             "the search results alone; ask to open a file only when the user wants something written inside it.")
 OLD_NAMES = ("search_files_in_drive", "save_file_to_drive", "list_files_in_drive", "open_file_from_drive",
              "move_file_in_drive", "create_folder_in_drive", "update_file_in_drive", "delete_file_from_drive",
              "drive_query", "drive_folder", "drive_kind", "drive_date_from", "drive_date_to", "drive_deleted",

@@ -16,7 +16,8 @@ ser = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(ser)
 
 QUERY_LANGUAGE = ('query_language: "Always English — regardless of the user\'s input language — except the words to '
-                  'find on the drive in work_with_drive_files: quote them as the user wrote them."')
+                  'find on the drive in work_with_drive_files: quote the user\'s own few key words, in ONE language, as '
+                  'the user wrote them — no synonym lists, no translations, no extra words."')
 KNOWLEDGE_BASE = ('knowledge_base: "The drive holds the user\'s own documents; memory holds facts about the user. When '
                   'the answer may be written in a document they keep (a contract term, an amount, a date, a booking, '
                   'a receipt, meeting notes), search the drive even if they did not ask for a file. One question can '
