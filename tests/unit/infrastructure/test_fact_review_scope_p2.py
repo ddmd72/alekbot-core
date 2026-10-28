@@ -5,6 +5,7 @@ from datetime import timedelta
 
 import pytest
 
+from src.adapters import fact_management_adapter
 from src.domain.entities import ExpiryKind
 from src.domain.fact_review_batch import ReviewBatch
 from src.domain.fact_review_invoice import InvoiceRequest
@@ -13,6 +14,7 @@ from src.domain.fact_review_rules import (
     ASK_OWNER_PLACE, NOT_EVIDENCE, UPDATE_FACT_PLACE, asked_refusal, confirmed_expiry, fold_refusal,
 )
 from src.infrastructure.fact_review_scope import RENEWAL_EXPIRY_NOTE, FactReviewScope
+from tests.support.clock_instants import pin_datetime
 from tests.support.fact_kit import ACC
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
@@ -202,7 +204,8 @@ async def test_a_later_write_without_payment_withdraws_the_invoice_and_its_texts
 
 # ------------------------------------------------------------------------------------------------ the renewal
 
-async def test_the_expiry_of_a_renewal_on_a_reply_is_the_confirmed_window_set_by_code(world):
+async def test_the_expiry_of_a_renewal_on_a_reply_is_the_confirmed_window_set_by_code(world, monkeypatch):
+    pin_datetime(monkeypatch, fact_management_adapter, world.now)  # the writer counts the horizon from its own clock
     fact = await horizon(world, "Gym membership valid until Oct 20, 2026")
     waiting = build_question(
         QuestionStatus.ASKED, question_id="q1", account_id=ACC, fact_id=fact, question="renewed",
@@ -228,7 +231,7 @@ async def test_the_expiry_of_a_renewal_on_a_reply_is_the_confirmed_window_set_by
     control_scope = await scope_of(world, control)
     await control_scope.update_fact({
         "fact_id": control, "updates": {"state": "current", "expiry": {"kind": "horizon", "days": expected.days}},
-        "basis": {"kind": "evidence", "evidence_fact_id": await world.seed("Still goes to the gym")},
+        "basis": {"kind": "evidence", "evidence_fact_id": await world.seed("Still goes to the gym", reported_date=world.now)},
     })
     sent_directly = world.docs[control_scope.decisions()[0].written_id]
     assert written["expires_at"].date() == sent_directly["expires_at"].date()  # the same window as when it is sent as such
