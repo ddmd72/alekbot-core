@@ -1,9 +1,9 @@
 # RFC: The user drive through one specialist (`work_with_drive_files`)
 
-**Status:** Proposed, rev 4.5 (see §0.0.2; rev 4.4, 2026-10-22): rev 2 applied the rulings on the three rev 1 reviews, rev 3 the scoped
-re-review of rev 2, rev 4 the live A/B of a spike and the owner's decisions on it, rev 4.3 the deltas that the
-implementation plan recorded against the real code, rev 4.4 the deltas accepted in the cross-cutting review round of
-that plan (§0, §15). Nothing is merged.
+**Status:** Accepted (owner, 2026-10-22), rev 4.5 (§0.0.2); built on branch `feat/drive-specialist`; deployed: no.
+Rev 2 applied the rulings on the three rev 1 reviews, rev 3 the scoped re-review of rev 2, rev 4 the live A/B of a
+spike and the owner's decisions on it, rev 4.3 the deltas that the implementation plan recorded against the real code,
+rev 4.4 the deltas accepted in the cross-cutting review round of that plan (§0, §15), rev 4.5 the deltas of the port.
 **Related:** `USER_DRIVE_RFC.md` (Step 1 operations, `drive:` refs, the mutation lock and shield §4.13, receipts §4.10),
 `USER_DRIVE_INDEXING_RFC.md` (Search v2 §25, the `drive-search` skill D32, inaccessible files §26.2, transcripts §27),
 `DRIVE_FILE_NOTES_RFC.md` rev 3.2 (notes; the notes change amends D4, D12 and N2 there, §9), `AGENT_SKILLS_RFC.md`,
@@ -15,7 +15,8 @@ that plan (§0, §15). Nothing is merged.
 the live A/B reports of the spike branch `spike/drive-specialist` (`scripts/memory/drive_g3/specialist_ab_*`,
 `specialist_replay_*`, private). Where this RFC differs from a
 report, the owner's ruling of 2026-10-22 or the arbiter decided it.
-**Branch base:** `main` at `1e553d83` (after PR #132). Line references are to that commit; re-check them when building.
+**Branch base:** `main` after PR #132, a commit from before the history rewrite of 2026-10-25 (its hash is gone). Line
+references are to that base and have drifted since; look a symbol up by name, not by line.
 **Where the code and this text differ once it is built, the code is the truth.**
 
 ---
@@ -143,7 +144,7 @@ Sources: plan A = `drive-specialist-A.md` §7; plan B = `drive-specialist-B.md` 
 | R2 I9: "put a FILE anywhere" vs the workspace | Not ruled; today's wording is kept verbatim |
 | R2 I6, second half: "an email attachment cannot be saved" | Not ruled; stays a backlog item (Appendix A) |
 | R2 I4, second half: a zero-hit line for the deleted search | A new string; the tool's description and Smart's already name what that search covers |
-| R3 M14: the base is behind `main` | `1e553d83` is `main` after PR #132, newer than `4439d181` |
+| R3 M14: the base is behind `main` | The base is `main` after PR #132, newer than the commit R3 read (both hashes are gone since the 2026-10-25 history rewrite) |
 
 ---
 
@@ -393,7 +394,7 @@ drive_specialist {
 | Config | `DriveAgentConfig(max_tokens=4096, max_turns=6, timeout_ms=180_000)` in `agent_config.py` |
 | Cost | ≈ **$0.05 per commission** in the final probe ($0.24 of Sonnet for 5 commissions, `billing.py:203`: $2 / $10 per M). The probe read nothing from cache; the static prefix is cacheable at 0.05×. `"drive"` joins `CACHEABLE_AGENTS` and `MULTI_TURN_AGENTS` (the last-message breakpoint); the pre-build check verifies `cache_read_tokens > 0` on the second turn of a commission |
 | Latency (measured) | with a luna specialist: median drive-turn wall time equal to today, a simple find or save +5–10 s (§15.1); with Sonnet the specialist time fell to 38 s from luna's 91 s over 5 cases (§15.5), so the turn is expected faster; the stage-1 rerun measures it |
-| Logging | Overrides `_on_agent_start` (the default logs the commission's first 60 characters). One line per commission: `[DriveAgent] user=<8> status=… model=<resolved model> ops=search:ok,move:ok turns=N ms=…` (`model=` shows which model ran, for owner step O0 and the live smoke check, §10.1). `DriveOperations` keeps today's per-op line (`<op>: <file_ref or folder>`) as a logger call, so the move does not settle the log item of Appendix A. Failed ops are logged at WARNING as today's `_on_agent_error` did |
+| Logging | Overrides `_on_agent_start` (the default logs the commission's first 60 characters). One line per commission: `[DriveAgent] user=<8> status=… model=<model that ran> ops=search:ok,move:ok turns=N ms=…`. `model=` is read from the execution's billing ledger (`TokenLedger.by_model`, keyed by the model that served each call), so a cross-provider failover shows as the fallback model, several models are joined by `+`, and the configured model appears only when no call was billed; it serves owner step O0 and the live smoke check (§10.1). `prompt_content` records the request's model and the primary provider even after a failover, so it cannot show one. `DriveOperations` keeps today's per-op line (`<op>: <file_ref or folder>`) as a logger call, so the move does not settle the log item of Appendix A. Failed ops are logged at WARNING as today's `_on_agent_error` did |
 
 ### 5.2 Prompt (Firestore; no fallback prompt)
 
@@ -741,7 +742,7 @@ call, and the refusal is classed `not_possible` (§7.2). `OUTPUT_FORMAT_DRIVE` d
 The frozen core (`src/domain/drive_note.py`, the port, both repositories, `DriveNoteService`) and a Smart-wired build
 (the `annotate_drive_file` local tool in `smart_response_agent.py`, the open-header note in `file_management_agent.py`,
 the engine's sibling-history hunk, the `$drive-notes` commands, the `drive-file-notes` skill) are on
-`plan/drive-notes-assembled` (`ce314e50`); the plan is `docs/superpowers/plans/2026-10-22-drive-notes.md` there. This
+`plan/drive-notes-assembled`; the plan is `docs/superpowers/plans/2026-10-22-drive-notes.md` there. This
 RFC ships first. The notes change then **removes the Smart-wired commits** and rebuilds part A inside the specialist
 (§9.3); parts B and C rebase almost mechanically.
 
@@ -842,7 +843,7 @@ One feature branch, one PR, merged when fully green. Every step is a commit that
 | 4 | **The cut**, one commit: remove the 8 intents from `FILE_MANAGEMENT` and `Intent`; delete `src/skills/smart/drive-search/`; the protocol edit (mirror + `firestore_utils/uploads/PROTOCOL_AGENT_SELECTION.json`, pinned equal); §4.4 and §7.6 wording; `smart_dry_run.py`'s intent reads (`:101-108, 304-383`) and its metrics (`drive_status` instead of `failed`, `:331,345,383`) rewritten together with its 9 importing test files; FileManagement drive tests re-targeted to `DriveOperations` / the tools | reviewer verdicts applied in this commit (§11.2) |
 | 5 | `drive_routing_probe.py` and `drive_query_vocabulary.py` read the specialist's tool calls; docs: root `CLAUDE.md` roster (new row, FileManagement row), `src/agents/CLAUDE.md`, `docs/05_building_blocks/user_drive/README.md`, `NEW_AGENT_PLAYBOOK.md` stale token name, decision record `decisions/drive_specialist.md`, which records the residual "for a few turns after the deploy, a stale skill copy in history can cause one rejected call to a removed intent, which Smart self-corrects from today's unknown-intent error" | green |
 | 6 | **[OWNER], before the deploy:** run the scan over the owner's custom skills, stored reminder instructions, standing directives, workspace files (`projects/`, `references/`, `scratch/` and the text files in `files/`), `domain=preference` facts and user/account prompt overrides; only the owner is scanned, and a `skill_file` hit is redrafted in chat; **back up** every hit to `scripts/memory/` (skills with their version numbers); rewrite each hit so it names **no intent** ("find it on the drive", "save it to the drive"), as a new skill version where the store is versioned. **Patterns:** the 8 intent names; the 13 field names (`drive_query`, `drive_folder`, `drive_kind`, `drive_date_from`, `drive_date_to`, `drive_deleted`, `original`, `append_text`, `source_ref`, `new_name`, `folder`, `text`, `file_ref` next to a drive intent); `drive-search` (a skill that says "load drive-search first" fails after the cut); and `work_with_drive_files` (used again for §13). Intent-free text works with the old code and the new, so it can land first and survives a revert | — |
-| 7 | **[OWNER]** prompt upload (§10.1), deploy, `$admin_cache_reset`, one live smoke message (a find), a check of the `[DriveAgent] status= model=` line and of `prompt_content` for `agent_type=drive` (model, cache reads), G3 "after" | — |
+| 7 | **[OWNER]** prompt upload (§10.1), deploy, `$admin_cache_reset`, one live smoke message (a find), a check of the `[DriveAgent] status= model=` line (the model that ran, failover included) and of `prompt_content` for `agent_type=drive` (cache reads; its model column is the request's, so it cannot show a failover), G3 "after" | — |
 | 8 | The notes change (§9), separate | per the plan |
 
 Unchanged callers: Lelik and the Alek gateway reach the drive through Smart (the chain through Router and Smart to
@@ -895,7 +896,7 @@ DocPlanner, PdfGenerator and HtmlPageGenerator still resolves `drive:` refs copi
 
 ### 11.2 Existing tests that go to a reviewer (reviewer rule; the implementer never edits them)
 
-57 test files name the old intents, `FileManagementAgent` or the `drive-search` skill (grep at `1e553d83`; 68 when
+57 test files name the old intents, `FileManagementAgent` or the `drive-search` skill (grep at the branch base; 68 when
 field-name pins are counted).
 
 | Group | Files (approx.) | Why they change |
@@ -936,8 +937,8 @@ A 1-repeat probe gives the real number first; anything above $3 needs the owner'
 ## 13. Rollback
 
 1. `git revert -m 1 <merge>` on a branch (commits reach `main` through a PR).
-2. **[OWNER]** Restore `PROTOCOL_AGENT_SELECTION` from the §10.1 step 1 backup with `snapshot_upload.py --apply`, of the
-   restored mirror file, just before the deploy and from that tree.
+2. **[OWNER]** Upload the mirror file of `PROTOCOL_AGENT_SELECTION` that the revert restored (`snapshot_upload.py` dry run,
+   then `--apply`), just before the deploy and from that tree; the §10.1 step 1 backup is the cross-check, not the source.
 3. `make deploy` from the reverted tree.
 4. `$admin_cache_reset`, so no instance keeps a template built from the new protocol. The reset comes after the deploy,
    not in the restore block. Between the restore and the reset, up to two self-corrected calls are possible.

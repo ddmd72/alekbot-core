@@ -11,7 +11,7 @@ the owner's index rebuilt, gate key `accuracy` applied).** S1 files the bot cann
 §4.20, S6 the location prior and scene labels §4.21, S5 the owner scripts and the eval additions §4.22. Everything
 marked "(branch)" below is now deployed code (2026-10-19).
 RFC §27 (transcripts of audio and video; decisions D41–D47, deltas Δ95–Δ175): **slice T1 is live since 2026-10-21 (the owner only, $10 monthly cap; other users have transcription off);
-the mirror folder (T2: built on `feat/drive-transcripts-t2`, not deployed) and the summary (T3, not built).** How it works end to end, in plain English, is §4.23; the rollout and
+the mirror folder (T2) is live since 2026-10-21 (the owner); the summary (T3) is not built.** How it works end to end, in plain English, is §4.23; the rollout and
 the switches are §7.2, `docs/07_deployment/README.md` → "Transcripts switch and cap" and "Standing levers", and the rollout notes (ops).
 
 | Question | Read |
@@ -42,16 +42,18 @@ the switches are §7.2, `docs/07_deployment/README.md` → "Transcripts switch a
 | How quality is measured (G1, G2, OCR, G3), the live checks, logs, indexes | §7 |
 | Why a given file was not indexed: which record fields and log lines answer it | §7.1 |
 | A file or folder "the bot cannot open"; why it was not deleted; the chat notice with the attached list; how it heals | §4.18 (deployed 2026-10-19) |
-| How a file's capture (scan, photo of a document, screenshot, digital) is decided; why a mixed PDF has none; why "scans" finds files | §4.19 (branch) |
-| What `card accuracy: N%` is, how a value is graded, why a value can be searchable but never exact, when Smart opens a file anyway; what changes when a weight changes | §4.20 (branch) |
-| What triage is told about a photo's place; what a `scene:` line is; why "sunsets" finds a photo | §4.21 (branch) |
-| How the owner reviews low-accuracy cards, measures vocabulary misses, rebuilds a user, and what the eval now checks | §4.22 (branch), §7.2 |
+| How a file's capture (scan, photo of a document, screenshot, digital) is decided; why a mixed PDF has none; why "scans" finds files | §4.19 (deployed 2026-10-19) |
+| What `card accuracy: N%` is, how a value is graded, why a value can be searchable but never exact, when Smart opens a file anyway; what changes when a weight changes | §4.20 (deployed 2026-10-19) |
+| What triage is told about a photo's place; what a `scene:` line is; why "sunsets" finds a photo | §4.21 (deployed 2026-10-19) |
+| How the owner reviews low-accuracy cards, measures vocabulary misses, rebuilds a user, and what the eval now checks | §4.22 (deployed 2026-10-19), §7.2 |
 | Smart said "N documents could not be read": what counts, and how to find which and why | §7.1 (could not be read) |
 | Why a recording is searchable by what was said; how it is transcribed, what it costs, why it waits; who can switch it on | §4.23 |
 | A recording shows "transcript: none" or sits in "waiting": which state it is in and why | §4.23 (states) |
 | What `_Transcripts` is, why a file appears, moves or vanishes there, what the archive is, how to find a deleted recording's transcript; why the bot refuses to write into the folder | §4.23 (the mirror folder) |
 | The mirror looks stuck: which counters, the status script, the errors and what each does | §4.23 (errors), §7 (mirror operations) |
+| How Smart reaches the drive: the drive specialist, its model and fallback, statuses, receipts, logs, evals | §6.7; `src/agents/CLAUDE.md` → Drive; [DRIVE_SPECIALIST_RFC.md](../../10_rfcs/DRIVE_SPECIALIST_RFC.md) |
 | Deploy order, owner steps, and why there is no rollback to Slice 1; the Search v2 rollout (D30 gate, rebuild); the transcripts switches and rollback | §7.2 |
+| The drive specialist's rollout and rollback | `docs/07_deployment/README.md` → "The drive specialist" and "Standing levers"; RFC §13 (the order) |
 | Where a piece of code lives | §8 |
 
 ---
@@ -90,7 +92,7 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   Two switches must both be on: the indexer's kill switch (`DRIVE_TRANSCRIBE_ENABLED`, off by default) and the user's own flag
   (`drive_transcribe_enabled`, off by default, set by the owner's script). The T2 mirror folder (live since 2026-10-21, owner) writes the
   transcripts to `_Transcripts` on the drive (§4.23); there is no summary yet (T3).
-- **T2 read side (built on the T2 branch, not deployed; RFC §27.9.8, §27.9.11).** Chat drive writes are refused under, into
+- **T2 read side (live since 2026-10-21 with T2; RFC §27.9.8, §27.9.11).** Chat drive writes are refused under, into
   or over the bot's `_Transcripts` folder (the Step 1 guard in `UserDriveService`; the agent answers one localized line).
   The deleted-files search (the specialist's `search_deleted_recordings_and_notes`) searches the transcripts of
   deleted recordings from the mirror ledger, even with drive search off; a default search never returns an archived
@@ -1344,7 +1346,7 @@ audio still running at the provider (it will be billed) and releases the rest.
 
 **After the first live run (2026-10-21).** A window's output cap has a 4 096-token floor and each window reserves its own worst case, so short windows are bounded too (Δ174, T-R26); a short answer that finished normally (`STOP`, audio ending in silence) is resent once for free and a second one is accepted, so such recordings no longer fail (Δ175, T-R27; a very short window always costs two purchases, cents).
 
-#### The mirror folder (T2, RFC §27.9; built on `feat/drive-transcripts-t2`, not deployed)
+#### The mirror folder (T2, RFC §27.9; live since 2026-10-21, owner)
 
 **In plain English.** With transcription on, the bot also writes each transcript as a Markdown file into a folder it owns on the drive, so the
 owner can read a transcript on his phone without asking the bot. The folder is **`_Transcripts`** at the App Folder root (D49: the underscore says
@@ -1528,7 +1530,7 @@ words. No query-time model, no modes, no new fields (D19, D28): one query embedd
    either, generic words ("todo", "files") are searched as name words by the name stream alone, never by content and
    never with a D29 line; an empty request is refused with a correction (RFC Δ36).
 
-**Filters.** `drive_kind` takes a format (`pdf`, `xlsx`, …), an extension, a plural or a family: `spreadsheet`,
+**Filters.** `kind` takes a format (`pdf`, `xlsx`, …), an extension, a plural or a family: `spreadsheet`,
 `document` (docx, doc, odt, rtf, pdf, **markdown, text** — v2 added the last two, D23), `word`, `presentation`,
 `photo`; an unknown value is refused. A single kind filters the about stream through its own composite; a family is
 post-filtered (a family in an `array-contains-any` would pass Firestore's 30-disjunction limit), and the kNN pages run
@@ -1536,7 +1538,7 @@ one query per member kind. Date and folder filters are post-filters; date-only b
 ([decision](../../04_solution_strategy/decisions/drive_date_filters_utc_days.md)). The `capped` hedge stays: a full
 page that a filter thinned is never reported as "no match". **For an expiry query the date fields bound the expiry
 date**: a concept covered by validity words (`lv:`) runs on `valid_until` from today (`find_expiring`, soonest first),
-and expired files are counted on one line unless `drive_date_from` is set.
+and expired files are counted on one line unless `date_from` is set.
 
 **Embedding space (RFC Δ25).** While the index's vectors are in another space than the query's, the kNN pages are
 skipped and the coverage line says the index is being refreshed: the key streams and filters still run.
@@ -1691,7 +1693,9 @@ again in this conversation", and where to browse instead.
 **Smart's drive guidance moved with the drive specialist** (DRIVE_SPECIALIST_RFC §5.7, §7.3; §6.7). The former
 `drive-search` system skill (D32: find or answer, writing the search, reading the results, not found, answering from
 documents) is split by who acts on each rule: the search mechanics are the specialist's token `PROTOCOL_DRIVE_SEARCH`;
-the rules Smart needs to answer reach Smart as **reading lines**, chosen by code from the blocks of each answer (the
+the rules Smart needs to answer reach Smart as **reading lines** (`src/domain/drive_answer_texts.py`, the `R_*`
+texts, chosen by `drive_answer.reading_lines`; changing one is a code deploy, while `PROTOCOL_DRIVE_SEARCH` is a
+Firestore upload), chosen by code from the blocks of each answer (the
 tiers paragraph with a search block, the passage rule with a passage, the 90 % rule with a card accuracy, the scan line
 with a scan, the bot-cannot-open bullet, photos, versions with two or more cards, the not-found bullets, and for an
 opened file the numbers rule, document vs memory and "the drive assistant did not read this file"). The
@@ -1704,11 +1708,16 @@ Before the specialist, a place-name query was answered from the search results w
 
 Smart sends one commission, `work_with_drive_files`: what the user wants, the words to find as the user wrote them,
 every `drive:` ref, `[File: …]` label and delivered document key, and `file_contents` for texts to save or append. The
-`DriveAgent` (Claude `claude-sonnet-5-5`, adaptive thinking medium; fallback OpenAI `gpt-6.1-sol`) runs at most 6
+`DriveAgent` (Claude `claude-sonnet-5-5`, adaptive thinking medium; fallback OpenAI `gpt-6.1-sol`, only when Claude is
+the primary; a global `provider_preference: openai` moves it to the rejected `gpt-6-luna`, so pin
+`agent_providers["drive"]="claude"`) runs at most 6
 turns within 150 s (less under the caller's budget) through local tools, each one `DriveOperations` call:
 `search_drive`, `search_deleted_recordings_and_notes`, `list_folder`, `open_drive_file`, `get_recording_link`,
 `copy_file_to_drive`, `save_text_file`, `create_folder`, `move_file`, `append_to_file`, `replace_file_content`,
-`delete_drive_item`, then `report_to_orchestrator`. An identical search is not run twice in one commission.
+`delete_drive_item`, then `report_to_orchestrator`. An identical search is not run twice in one commission. There
+is no search cap in production (the owner dropped a 3-search cap): one re-search after "Without X", and a subject is
+searched once in the user's words (a list of alternatives is not a list of searches, RFC rev 4.5 #7). G3's 3 search
+calls per case run (`SEARCH_CALL_CEILING`, §7) is an eval check, not a production cap.
 
 **Division of labour (A′).** The specialist owns the search mechanics — the key words from the user's words in one
 language (no re-search in another script or a translation: transliteration is exact in the index, `x:` keys), the
@@ -1725,8 +1734,11 @@ specialist note, then **every read block verbatim** in run order (`[Result r1, s
 for an opened file, so nothing is retyped; images and PDFs reach Smart as a `file_data` list. `drive_context` refs
 are one flat list per commission, so history keeps today's shape (RFC §7.4). A plain-text final reply written beside
 `report_to_orchestrator` is the note when the report's own note is empty. Receipts of a delete or replace and the
-late-failure notices are sent literally (`DriveOperations._receipt`, `notify_raw(..., literal=True)`): the path is text
-the bot did not write.
+late-failure notices are sent literally (`DriveOperations._receipt`, `notify_raw(..., literal=True)` → `send_literal`):
+the path is text the bot did not write, so it is never formatted, linked or read as a mention. They read, for example,
+`🗑️ Deleted from the drive: {path}` and `⚠️ Deleting {path} did not complete.` (`src/locales/*.py`). A still-running
+move, copy, save or append gets no later message; a later change in the same commission is `not started: an earlier
+change in this request is still running`.
 
 **Who else touches the drive.** FileManagement's `open_file` on a `drive:` ref (the lenient read, the same
 `DriveOperations`); the deep-research copy (`UserDriveService.save` directly); the coordinator's `file_ref` prefetch
@@ -1738,7 +1750,14 @@ alone) run the production specialist on the fixture drive; every drive write is 
 class before any agent is built (`dry_run_drive.py`), and the metrics read the drive operation log. G3 can run the
 branch's prompt files before any upload and pick the specialist's provider and tier (`--prompts-from-snapshot`,
 `--specialist-provider`, `--specialist-tier`); its `--record` writes no bars while today's Smart fails a hard check, so
-a before/after comparison is read from the two reports.
+a before/after comparison is read from two reports: **before** = G3 on `main` (Firestore prompts), **after** = G3 on
+the branch with `--prompts-from-snapshot`, both at the same `--repeats`; compare
+`scripts/memory/drive_g3/g3_<stamp>.json` (`scores`, `wall_p50_s`). `bars_g3.json` is not recorded yet, so a run
+without `--record` ends with "no bars". `specialist_ab` has `--compare <report> --compare-design today` for its own
+before/after and no `--prompts-from-snapshot`, so it needs the uploaded `drive` profile.
+
+**Logs:** the `[DriveAgent]` line per commission and the `[DriveOperations]` line per operation, on the main service
+(§7, "Logs").
 
 **Tests.** The twelve tools are a P14 tool-field surface (`drive`, `delegate:work_with_drive_files` in
 `tests/support/tool_fields.py`) with the e2e card `tests/unit/agents/test_drive_agent_tool_fields_e2e.py`; the modules
@@ -1845,7 +1864,7 @@ searched file holds …"), and Smart would search again with the subject alone. 
 an `n:` number term and meets the document's own date in any of five languages); the date fields hold a **time span
 the user gives** ("last year", "2023–2024"; a span left in the words is removed as time words and named in the ignored
 list). The token's `dates` line keeps the retry rule: "If a date-filtered search does not show the file asked for,
-search again without the filter." `drive_date_from` / `drive_date_to` say what they match: "a photo's taken date,
+search again without the filter." `date_from` / `date_to` say what they match: "a photo's taken date,
 otherwise the date written in the document when the index found one, otherwise the file's date"; for what expires they
 bound the expiry date ([decision](../../04_solution_strategy/decisions/drive_document_date_effective_date.md)).
 
@@ -1908,7 +1927,12 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   with `mode` (`query`, `filter`, `awaiting_rebuild`), `scope`, `content`, `concepts`, `ignored`, `common`,
   `absent`, the tier totals (`about`, `mentioned`, `translated`, `labelled`, `related`), the stream counts (`card`,
   `chunk`, `hint`, `name`, `*_queries`, `tested`), the meaning pools (`pool_card`, `pool_chunk`, `pool_hint`),
-  `band`, `coverage`, `chars`, `returned`, `building` and `ms`.
+  `band`, `coverage`, `chars`, `returned`, `building` and `ms`. The drive specialist logs there too:
+  `grep '\[DriveAgent\]\|\[DriveOperations\]' alek_debug.log` gives one `[DriveAgent] user=<8> status=… model=…
+  ops=<op>:<class>,… turns=N ms=…` line per commission (`model=` is the model that ran, read from the billing ledger, so
+  a failover shows the fallback model; the failover itself is the `llm_fallback claude→openai` WARNING), one
+  `[DriveOperations] <op>: <ref or folder>` line per operation, and on a turn-cap exit an ERROR `[DriveAgent] user=<8>
+  hit the turn limit (6) without a report; tools per turn: …` line.
 - **Alerts.** The fan-out posts to the ops sink when a user's index is stale (no clean tick since the last success or
   since the sync state was created, or an overdue edit, for `STALE_ALERT_AFTER` = 2 h), once per incident. On a lost
   grant it posts one reconnect notice to the user: the flag is set before sending and lowered only when no send was
@@ -1942,8 +1966,10 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   offline with fake embeddings (RFC Δ45). `--record` re-records the bars; do that only for a deliberate change, and
   review the misses it prints first. `tests/integration/test_drive_g2_end_to_end.py` runs every text-layer G2 case
   through the real parser with scripted models and bag-of-words embeddings (`make test-integration`).
-- **G3** (does Smart search the drive when it should; owner-run, cents per run).
-  `python -m scripts.validation.drive_eval.smart_dry_run [--record] --repeats 3` runs the real Smart on
+- **G3** (does Smart search the drive when it should; owner-run, paid: $1–4 per 3-repeat run with Smart and the
+  Sonnet specialist, so a 1-repeat probe first; DRIVE_SPECIALIST_RFC §12).
+  `python -m scripts.validation.drive_eval.smart_dry_run [--record] --repeats 3 --max-usd 3` (`--max-usd` is required,
+  a hard stop) runs the real Smart on
   `gold_g3.json` with the drive reads answered from the fixture index (`tree.json` plus the G3-only overlay
   `tree_g3.json`). It measures the search-initiated rate — a search counts only when it ran (a refused call is not
   a search) — barred from below on the positives and from above on the negatives (chit-chat, memory, web, general:
@@ -1959,7 +1985,7 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   `fetch_url` or any drive mutation. Search v2 (RFC §25.7) adds `gold_g3_v2.json` and counts searches, opens and
   listings per case run: an incident-shaped case ("everything about Rome") may make at most 2 searches, 2 opens and
   1 listing and must name the right files; a time-span case must put the span in the date fields; after a "No file
-  holds" (D29) result Smart may search once more; no case run may make more than 6 drive reads ("no crawl"). The
+  holds" (D29) result the specialist may search once more; no case run may make more than 6 drive reads ("no crawl"). The
   dry run's index is built from the recorded enrichment, like the search eval's.
 - **Search v2 eval** (offline, no model call; RFC §25.7). `venv/bin/python -m scripts.validation.drive_eval.search_v2_eval`
   indexes `tree.json` plus the overlay `tree_v2.json` with the real tick and parser and the recorded enrichment
@@ -2162,7 +2188,7 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Model ports | `src/ports/content_extractor_port.py`, `src/ports/image_triage_port.py`, `src/ports/document_profiler_port.py`, `src/ports/passage_hint_port.py` |
 | Parser (sandboxed child) | `src/adapters/subprocess_content_extractor.py`, `src/adapters/drive_parser/child.py`, `readers.py`; `src/utils/document_hardening.py`; the `driveparser` user and the world-writable check in `Dockerfile` |
 | Model agents, runners, wiring | `src/agents/drive_document_reader_agent.py`, `drive_image_triage_agent.py`, `drive_profiler_agent.py`, `drive_passage_agent.py`; `src/infrastructure/drive_model_call.py`; `src/composition/drive_reader_runner.py`, `drive_triage_runner.py`, `drive_profiler_runner.py`, `drive_passage_runner.py`, `drive_agent_build.py`, `drive_model_setup.py`; agent configs `DRIVE_READER` / `DRIVE_TRIAGE` / `DRIVE_PROFILER` / `DRIVE_PASSAGES` in `src/infrastructure/agent_config.py`, provider strategy in `src/services/agent_context_builder.py` |
-| Smart's drive guidance | `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` (`drive_specialist`: the intent, when to use the drive, the safety line; the `query_language` exception) and the reading lines with the results (§6.7) |
+| Smart's drive guidance | `prompts_snapshot/tokens/system/PROTOCOL_AGENT_SELECTION.groovy` (`drive_specialist`: the intent, when to use the drive, the safety line; the `query_language` exception) and the reading lines with the results (`src/domain/drive_answer_texts.py`, `R_*`, chosen by `drive_answer.reading_lines`; §6.3, §6.7) |
 | The drive specialist (§6.7) | `src/agents/drive_agent.py`, `src/infrastructure/drive_operations.py`, `drive_tools.py`, `src/domain/drive_pass_through.py`, `drive_answer.py`, `drive_tool_texts.py`; prompt `prompts_snapshot/{profiles/drive.yaml,blueprints/drive_agent_v1.yaml,tokens/system/{COGNITIVE_PROCESS_DRIVE,PROTOCOL_DRIVE_SEARCH,OUTPUT_FORMAT_DRIVE}.groovy}`; wiring `src/composition/drive_specialist_build.py`; eval write stub `scripts/validation/drive_eval/dry_run_drive.py` |
 | Place lookup | `src/domain/place_lookup.py`, `src/adapters/geo_place_table.py`, `src/assets/geo/` |
 | Search result, wrapper, render; Cabinet status | `src/domain/drive_search.py`, `src/domain/drive_indexing_status.py` |
@@ -2170,8 +2196,8 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Adapters | `src/adapters/microsoft/onedrive_adapter.py`, `src/adapters/firestore_drive_index_repo.py`, `src/adapters/in_memory_drive_index_repo.py` |
 | Services | `src/services/drive_indexing_service.py`, `drive_search_service.py`, `drive_sync_scheduler_service.py`, `user_drive_service.py` |
 | Wiring, indexer routes | `src/composition/drive_indexing_setup.py`, `indexer_main.py`, `src/web/indexer_worker_app.py` |
-| Agent, manifest | `src/agents/file_management_agent.py`, `src/infrastructure/agent_manifest.py` |
-| Transcripts (§4.23; RFC §27) | domain `src/domain/drive_transcript.py` (types), `drive_transcript_job.py` (job and batch documents), `drive_transcript_plan.py` (state table, budget, cap), `drive_transcript_windows.py`, `drive_transcript_stitch.py`, `drive_transcript_render.py`, `drive_transcript_time.py`; `src/domain/batch_transcription.py`; ports `media_audio_port.py`, `batch_transcription_port.py`; adapters `drive_parser/media.py`, `media_extractor.py`, `media_launch.py`, `gemini_batch_adapter.py`; `src/agents/drive_transcriber_agent.py`; `src/composition/drive_transcript_runner.py`, `drive_model_setup.py` (`build_drive_transcription`); `src/services/drive_transcript_stage.py`; tick hooks in `drive_indexing_service.py`; open: `file_management_agent.py`, `DriveSearchService.transcript_text` |
+| Agent, manifest | `src/agents/drive_agent.py` (the specialist, row above), `src/agents/file_management_agent.py` (`open_file`, `delete_file`), `src/infrastructure/agent_manifest.py` |
+| Transcripts (§4.23; RFC §27) | domain `src/domain/drive_transcript.py` (types), `drive_transcript_job.py` (job and batch documents), `drive_transcript_plan.py` (state table, budget, cap), `drive_transcript_windows.py`, `drive_transcript_stitch.py`, `drive_transcript_render.py`, `drive_transcript_time.py`; `src/domain/batch_transcription.py`; ports `media_audio_port.py`, `batch_transcription_port.py`; adapters `drive_parser/media.py`, `media_extractor.py`, `media_launch.py`, `gemini_batch_adapter.py`; `src/agents/drive_transcriber_agent.py`; `src/composition/drive_transcript_runner.py`, `drive_model_setup.py` (`build_drive_transcription`); `src/services/drive_transcript_stage.py`; tick hooks in `drive_indexing_service.py`; open: `src/infrastructure/drive_operations.py` (`_transcript_of`), `DriveSearchService.transcript_text` |
 | Deep research copies (§1.1) | `src/domain/deep_research_drive_copy.py`, `src/services/deep_research_drive_copy_service.py`, `AgentWorkerHandler._copy_deep_research_report`, `deliver_deep_research` (the marker), `/api/drive/deep-research-copy` |
 | Eval and checks | `scripts/validation/drive_eval/` (`runner.py`, `smart_dry_run.py`, `live_check.py`, `make_fixtures.py`; Search v2: `search_v2_eval.py`, `v2_metrics.py`, `dump_enrichment.py`, `enrichment_*.py`, `v1_baseline.py`, `scale_calibrate.py`, `make_fixtures_v2.py`), `scripts/validation/drive_model_check.py`, `tests/fixtures/drive_eval/`, `tests/integration/test_drive_g2_end_to_end.py` |
 | Ops and spike scripts | `scripts/infrastructure/drive_index_rebuild.py` (`--all-users`, `--hints-only`), `drive_initial_build_reset.py`, `drive_index_smoke.py`, `create_drive_vector_indexes.sh`, `deploy_firestore_indexes.py`, `drive_extract_s1.py` (S1), `drive_chunk_knn_cost.py` (S3); `scripts/onedrive/probe_renditions.py` (S0g) |

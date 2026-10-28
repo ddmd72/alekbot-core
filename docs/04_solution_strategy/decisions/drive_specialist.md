@@ -14,14 +14,18 @@ specialist".
    `file_contents` (texts to save or append, bound by code, never retyped). The 8 drive intents, their 13 fields, the
    `drive-search` system skill and the skill pointer in `PROTOCOL_AGENT_SELECTION` are gone in the same change. No
    switch, no side-by-side period.
-3. **`DriveAgent`, an LLM specialist** (`claude-sonnet-5-5`, adaptive thinking medium; fallback `gpt-6.1-sol`) runs
+3. **`DriveAgent`, an LLM specialist** (`claude-sonnet-5-5`, adaptive thinking medium; fallback `gpt-6.1-sol`, only when Claude is the primary) runs
    the commission in its own `DelegationEngine` loop (≤ 6 turns, 150 s soft deadline) through local CRUD tools, each
    calling one method of the user's `DriveOperations` — FileManagement's drive code moved, one instance per user shared
    with FileManagement (lock, shield, receipts, late-failure notices keyed on `DriveOp`).
 4. **Pass-through:** every read block reaches Smart verbatim, in run order; the specialist's model never sees an opened
    body. Code builds the answer (status, "What to do", op lines, reading lines); the model can only lower a status.
 5. **Division of labour A′:** the specialist owns search mechanics and the opens the commission asks for; Smart owns
-   content judgement and re-commissions with what opened files name. No variant re-search (one language, as today).
+   content judgement and re-commissions with what opened files name. No variant re-search (one language, as today):
+   a subject is searched once in the user's words, a list of alternatives is not a list of searches (RFC rev 4.5 #7).
+   No search cap in production (the owner dropped a 3-search cap, RFC §2.2): ≤ 6 turns, one re-search after a
+   "Without X" line, identical searches skipped by code. G3's limit of 3 search calls per case run
+   (`SEARCH_CALL_CEILING`) is an eval check, not a production cap.
 6. **`open_file` / `delete_file` stay on a slimmed FileManagement** (chat files, delivered documents, `skill:` and
    `workspace:` refs, the lenient `drive:` open through `DriveOperations`).
 7. **The evals stub drive writes at the DriveOperations class** (`scripts/validation/drive_eval/dry_run_drive.py`),
@@ -33,7 +37,9 @@ specialist".
 9. **Tests.** The specialist's twelve tools are a P14 tool-field surface (`drive`, `delegate:work_with_drive_files`)
    with an e2e card; the modules run in the weekly mutation job. G3 can run the branch's prompt files before any
    upload and pick the specialist's provider; its `--record` writes no bars while Smart fails a hard check, so a
-   before/after comparison is read from the two reports.
+   before/after comparison is read from two reports: before = G3 on `main` with the Firestore prompts, after = G3 on
+   the branch with `--prompts-from-snapshot`, both at the same `--repeats`; compare
+   `scripts/memory/drive_g3/g3_<stamp>.json` (`scores`, `wall_p50_s`).
 
 ## Alternatives rejected
 
@@ -56,8 +62,11 @@ specialist".
   after a revert.
 - **Cross-cut review (2026-10-22).** A batch cut by `still_running` reports its change as still running ("may complete"),
   not as "did not finish"; a change after a still-running outcome is "not started". A path where a `drive:` ref is needed
-  is a correctable `file_ref is required` error, not a "chat file" hint. The model that serves the specialist is logged
-  (`model=`) and checked before the deploy (the global `provider_preference` can override the tier default). The drive
+  is a correctable `file_ref is required` error, not a "chat file" hint. The `[DriveAgent]` line's `model=` names the
+  model that ran, read from the execution's billing ledger, so a cross-provider failover shows the fallback model
+  (`prompt_content` records the request's model and cannot show one). The provider is checked before the deploy: a
+  global `provider_preference: openai` moves the specialist to OpenAI BALANCED = `gpt-6-luna` (rejected, RFC §15.5);
+  pin `agent_providers["drive"]="claude"`. The drive
   agent type is prompt-cached. The turn-cap alert is bounded to 5 s. An `unfinished` answer tells Smart not to
   commission the same request again in this turn; there is no hard third-call refusal.
 - **Latency.** Each drive commission adds the specialist's turns; the bar is p50 of the drive-turn wall time after ≤
@@ -76,7 +85,8 @@ specialist".
 
 ## Rollback
 
-In the forward order: `git revert -m 1 <merge>` on a branch (it restores the mirror file of `PROTOCOL_AGENT_SELECTION`), then
+The full order is RFC §13 (standing text); the one-off commands with a release's own values are in its rollout notes
+(ops). In short, in the forward order: `git revert -m 1 <merge>` on a branch (it restores the mirror file of `PROTOCOL_AGENT_SELECTION`), then
 `snapshot_upload.py` dry run and `--apply` of that one file just before `make deploy` from that tree (the pre-upload
 backup is the cross-check), `$admin_cache_reset`, a PR of the revert, `snapshot_pull.py`. The reset never runs before the
 revert is live. The window between the restored protocol and the revert going live costs up to two self-corrected calls

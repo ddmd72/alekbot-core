@@ -464,8 +464,9 @@ roll back with `gcloud run services update-traffic alek-bot-dev --region=us-cent
 A release that changes stored data, indexes or prompts has its own rollback order in its rollout notes (ops).
 
 **Roll back the drive specialist.** Revert the merge, and restore `PROTOCOL_AGENT_SELECTION` right before the revert's
-release, never earlier: a protocol restored first runs the new code with the old text. Order and commands are in the
-release's rollout notes (ops).
+release, never earlier: a protocol restored first runs the new code with the old text. The order is standing text in
+`DRIVE_SPECIALIST_RFC.md` §13 (summarised in `decisions/drive_specialist.md` § Rollback); the one-off commands with the
+release's own values are in its rollout notes (ops).
 
 **The `:latest` trap.** After a failed deploy or a traffic rollback, `:latest` still points at the new image. Every
 `gcloud run services update`, and every Makefile target that wraps it (warm/cold, `claude-`/`openai-`/`dr-rollback` and

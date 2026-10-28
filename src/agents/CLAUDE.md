@@ -173,8 +173,11 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `prefetch_file_ref=False` on its descriptor (the coordinator does not pre-download its `file_ref`). The 8 drive
   intents it held until DRIVE_SPECIALIST_RFC are gone; their code is `DriveOperations`.
 - Drive (`DriveAgent`, BALANCED = Claude `claude-sonnet-5-5`, adaptive thinking medium; fallback OpenAI at
-  PERFORMANCE = `gpt-6.1-sol`; intent `work_with_drive_files`, SYNC, lazy) — the user's drive through one LLM
-  specialist (`docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`, `decisions/drive_specialist.md`).
+  PERFORMANCE = `gpt-6.1-sol`, only when Claude is the primary; intent `work_with_drive_files`, SYNC, lazy) — the
+  user's drive through one LLM specialist (`docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`, `decisions/drive_specialist.md`).
+  Per user: provider `agent_providers["drive"]` → `provider_preference` → `claude`, tier `agent_tiers["drive"]` →
+  BALANCED, thinking `agent_thinking["drive"]` → `medium`. A global `provider_preference: openai` moves the specialist
+  to OpenAI BALANCED = `gpt-6-luna`, the model RFC §15.5 rejected: pin `agent_providers["drive"]="claude"`.
   - **What Smart sends:** a natural-language commission (the user's words to find as written, every `drive:` ref,
     `[File: …]` label and delivered document key) plus one field, `file_contents` (one item per text to save or
     append; bound by code to `t1`, `t2` …, never retyped). `PROTOCOL_AGENT_SELECTION` exempts the words to find from
@@ -186,14 +189,22 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     line through `alert_sink`, the ops sink the consolidation agent gets; the sol fallback covers provider errors on
     the first call only. Every tool calls one method of the user's `DriveOperations` (`src/infrastructure/drive_operations.py`:
     FileManagement's former drive code — error mapping, per-user lock, shield, still-running, receipts, late-failure
-    notices keyed on `DriveOp`; receipts and notices go out literally, `notify_raw(literal=True)`), built once per user by
+    notices keyed on `DriveOp`; receipts and notices such as `🗑️ Deleted from the drive: {path}` and
+    `⚠️ Deleting {path} did not complete.` (`src/locales/*.py`) go out literally, `notify_raw(literal=True)` →
+    `send_literal`, so a path is never formatted, linked or read as a mention), built once per user by
     the factory and shared with FileManagement. An identical
-    search in one commission is not re-run. Prompt: profile `drive`, blueprint `drive_agent_v1`, tokens
+    search in one commission is not re-run (code skips it). No search cap in production (the owner dropped a 3-search
+    cap): ≤ 6 turns, one re-search after a "Without X" line. A subject is searched once, in the user's words; a list of
+    alternative words is not a list of searches, and synonyms and translations are not searched (RFC rev 4.5 #7,
+    `execute_as_given` in `COGNITIVE_PROCESS_DRIVE`; Smart's side: "one language, no synonyms or translations" in the
+    commission). G3 fails a case run above 3 search calls (`SEARCH_CALL_CEILING`): an eval check, not a production cap. Prompt: profile `drive`, blueprint `drive_agent_v1`, tokens
     `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH`, `OUTPUT_FORMAT_DRIVE` (all non-overridable),
     `include_biographical=False`, `include_directives=False`; no fallback prompt.
   - **What Smart gets back:** always `AgentResponse.success` (the engine's "Correct your input" suffix never reaches a
     drive answer): `Drive result: <status>`, a "What to do" line, one op line per change, reading lines (the former
-    `drive-search` skill's Smart-side rules, selected by code from the blocks), the specialist's note (a plain-text final reply beside `report_to_orchestrator` fills it when the report's note is
+    `drive-search` skill's Smart-side rules, selected by code from the blocks: the `R_*` texts of
+    `src/domain/drive_answer_texts.py`, chosen by `drive_answer.reading_lines`; changing one is a code deploy, changing
+    `PROTOCOL_DRIVE_SEARCH` a Firestore upload), the specialist's note (a plain-text final reply beside `report_to_orchestrator` fills it when the report's note is
     empty), then every read
     block verbatim in run order. The specialist's model sees search cards and listings in full but only a stand-in for
     an opened file; images and PDFs reach Smart as a `file_data` list. `history_context["drive_context"]` is one flat
@@ -219,12 +230,24 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     HtmlPageGenerator still arrives raw (wrapper in Slice 3, RFC Δ35). Text in drive results and opened files is data
     (the `untrusted` line of `PROTOCOL_AGENT_SELECTION`, re-voiced in `COGNITIVE_PROCESS_DRIVE`; G3's injected case
     bars any act on it). Building block: `docs/05_building_blocks/user_drive/README.md` §6.
-  - **Gotchas:** a `still_running` mutation ends the commission; the status is set by code, the model can only lower
-    it (`question` → `ambiguous`, `not_done` → `not_possible`). The evals stub drive writes at the DriveOperations
+  - **Gotchas:** a `still_running` mutation ends the commission: a later change in it is `not started: an earlier
+    change in this request is still running`, and a still-running move, copy, save or append gets no later message
+    (only delete and replace post a receipt or a "did not complete" notice). The status is set by code, the model can
+    only lower it (`question` → `ambiguous`, `not_done` → `not_possible`). The evals stub drive writes at the DriveOperations
     class (`scripts/validation/drive_eval/dry_run_drive.py`), never at `DelegationEngine.dispatch`: the specialist's
     tools do not pass through it. G3 (`smart_dry_run.py`) can run the branch's prompt files before any upload and pick
     the specialist's provider and tier (`--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier`); its
-    `--record` writes no bars while Smart fails a hard check (compare two reports instead).
+    `--record` writes no bars while Smart fails a hard check. **Before/after:** before = G3 on `main` with the Firestore
+    prompts, after = G3 on the branch with `--prompts-from-snapshot`, both at the same `--repeats`; compare the two
+    reports `scripts/memory/drive_g3/g3_<stamp>.json` (`scores`, `wall_p50_s`). `specialist_ab` has
+    `--compare <report> --compare-design today` and no `--prompts-from-snapshot` (it needs the uploaded `drive` profile).
+  - **Logs** (`make fetch-logs`, then `grep '\[DriveAgent\]\|\[DriveOperations\]' alek_debug.log`): one
+    `[DriveAgent] user=<8> status=<status> model=<model> ops=<op>:<class>,… turns=N ms=…` line per commission, where
+    `model=` is the model that ran (read from the execution's billing ledger, so a cross-provider failover shows the
+    fallback model; models joined by `+`; the failover itself is the `llm_fallback claude→openai` WARNING); one
+    `[DriveOperations] <op>: <ref or folder>` line per operation; a turn-cap exit is
+    `ERROR [DriveAgent] user=<8> hit the turn limit (6) without a report; tools per turn: …`. `prompt_content` records
+    the request's model, so it cannot show a failover.
   - **Tests:** the twelve tools are a P14 tool-field surface (`drive`, `delegate:work_with_drive_files`,
     `tests/support/tool_fields.py`), e2e card `tests/unit/agents/test_drive_agent_tool_fields_e2e.py`; the modules run
     in the weekly mutation job (`tests/support/mutation_targets.py`).
