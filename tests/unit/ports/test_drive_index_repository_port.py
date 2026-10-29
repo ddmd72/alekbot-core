@@ -16,6 +16,7 @@ _EXPECTED = {
     "get_chunks_with_vectors",   # folder-scoped chunk ranking in memory (§10.1 Folder; arbiter-accepted delta)
     "readable_chunk_total", "chunks_page", "delete_user_chunks",
     "chunk_capped", "count_unread",   # chunk-cap release (§5.4) and `unread` (§10.2): CORE-DELTA 2, arbiter-accepted
+    "count_capped",   # the fan-out's cap alert (§5.4, drive_cap_alert): files held by each per-user cap
     # Search v2 (§25.13.1): abstract from Part 0, stubbed in both adapters until P2
     "find_by_about_keys", "find_expiring", "find_chunks_by_word_keys", "get_chunk_keys", "find_hints_by_keys",
     "get_hint_keys", "find_nearest_hints", "get_hints", "get_hints_with_vectors", "write_hints",
