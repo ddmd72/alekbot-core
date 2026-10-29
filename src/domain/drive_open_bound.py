@@ -13,34 +13,17 @@ Public interface:
 """
 from __future__ import annotations
 
-from typing import List
-
 from .drive_excerpt_context import quoted
 from .drive_index_params import OPEN_MAX_CHARS
 from .drive_open_bound_text import BoundText
-from .drive_open_texts import (
-    CUT_INDEXED, CUT_NOT_INDEXED, CUT_STALE, REFUSAL, REFUSAL_TRUNCATED, STAND_IN_CUT, STAND_IN_CUT_STALE_TAIL, WHY,
-)
-from .drive_text_extent import ExtentState, ExtentWhy, TextExtent
+from .drive_open_cut import cut_line, head_at_paragraph, stand_in_cut  # noqa: F401  (public interface)
+from .drive_open_texts import REFUSAL, REFUSAL_TRUNCATED
+from .drive_text_extent import ExtentState, TextExtent
 
 
 def refuses(extent: TextExtent, cap: int = OPEN_MAX_CHARS) -> bool:
     """A truncated file is refused whatever its indexed length (L2); a stale or unindexed one is never refused (L1)."""
     return extent.state is ExtentState.PAGEABLE and (extent.text_chars > cap or extent.truncated)
-
-
-def head_at_paragraph(text: str, room: int) -> str:
-    """Whole paragraphs only; a first paragraph larger than `room` is cut at `room`."""
-    room = max(0, room)
-    kept: List[str] = []
-    size = 0
-    for paragraph in text.split("\n\n"):
-        added = len(paragraph) + (2 if kept else 0)
-        if size + added > room:
-            break
-        kept.append(paragraph)
-        size += added
-    return "\n\n".join(kept) if kept else text[:room]
 
 
 def bound(text: str, extent: TextExtent, cap: int = OPEN_MAX_CHARS) -> BoundText:
@@ -57,19 +40,3 @@ def path_subject(path: str) -> str:
 def refusal_text(path: str, extent: TextExtent) -> str:
     template = REFUSAL_TRUNCATED if extent.truncated else REFUSAL
     return template.format(path=quoted(path), chars=f"{extent.text_chars:,}", passages=f"{extent.passages:,}")
-
-
-def cut_line(subject: str, cut: BoundText, extent: TextExtent) -> str:
-    numbers = dict(subject=subject, chars=f"{cut.chars:,}", kept=f"{cut.kept:,}")
-    if extent.state is ExtentState.PAGEABLE:
-        return CUT_INDEXED.format(**numbers)
-    if extent.state is ExtentState.STALE:
-        return CUT_STALE.format(passages=f"{extent.passages:,}", **numbers)
-    return CUT_NOT_INDEXED.format(why=WHY[extent.why or ExtentWhy.UNKNOWN], **numbers)
-
-
-def stand_in_cut(handle: str, label: str, cut: BoundText, ref: str, extent: TextExtent) -> str:
-    text = STAND_IN_CUT.format(handle=handle, label=label, kept=f"{cut.kept:,}", chars=f"{cut.chars:,}")
-    if extent.state is ExtentState.STALE:
-        text += STAND_IN_CUT_STALE_TAIL.format(ref=ref)
-    return text
