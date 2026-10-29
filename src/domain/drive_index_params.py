@@ -65,6 +65,8 @@ MAX_SHEET_ROWS = 5_000
 CARD_LEAD_CHARS = 2_000
 CHUNK_FETCH = 300
 FOLDER_INMEM_CHUNKS = 2_000
+KNN_ITEM_IDS_MAX = 30                       # item ids per scoped kNN (Firestore `in` limit); a folder past
+                                            # FOLDER_INMEM_CHUNKS is searched in batches of this many files (RFC Δ246)
 QUERY_TERM_CHARS = 1000                     # the search extracts query terms from at most this many characters of
                                             # drive_query, cut at a word boundary (no length cap upstream; arbiter R2 S-m1)
 MODEL_EXTRACT_DENSITY = 200                 # chars per page below which a PDF is routed to the reader (§9)

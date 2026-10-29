@@ -121,7 +121,8 @@ def test_the_hint_vector_entries_and_no_kind_hint_keys_composite():
     hints = _declared("development_drive_index_hints")
     vectors = [i for i in hints if i[-1] == ("hint_vector", "VECTOR")]
     assert vectors == [[("user_id", "ASCENDING"), ("hint_vector", "VECTOR")],
-                       [("user_id", "ASCENDING"), ("kind", "ASCENDING"), ("hint_vector", "VECTOR")]]
+                       [("user_id", "ASCENDING"), ("kind", "ASCENDING"), ("hint_vector", "VECTOR")],
+                       [("user_id", "ASCENDING"), ("item_id", "ASCENDING"), ("hint_vector", "VECTOR")]]   # Δ246
     assert not any(("hint_keys", "CONTAINS") in i and ("kind", "ASCENDING") in i for i in hints)
 
 

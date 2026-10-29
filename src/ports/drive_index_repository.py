@@ -209,6 +209,13 @@ class DriveIndexRepository(ABC):
         `text`, `content_terms`, `word_keys` and `keys_version` may be empty: windows are read with `get_chunks`."""
 
     @abstractmethod
+    async def find_nearest_chunks_in(self, user_id: str, vector: Sequence[float], limit: int,
+                                     item_ids: Sequence[str]) -> List[Tuple[DriveChunk, float]]:
+        """`find_nearest_chunks` restricted to the chunks of `item_ids` (at most KNN_ITEM_IDS_MAX distinct; more is a
+        ValueError, logged, never a silent cut: the caller batches; none returns []). No kind filter: the caller
+        picks the ids, kinds included (RFC Δ246). Not fenced; the same projection as `find_nearest_chunks`."""
+
+    @abstractmethod
     async def find_chunks_by_term(self, user_id: str, term: str, limit: int,
                                   kind: Optional[str] = None) -> List[DriveChunk]:
         """Chunks whose `content_terms` contain `term` (one array-contains query), ordered by
@@ -309,6 +316,12 @@ class DriveIndexRepository(ABC):
     async def find_nearest_hints(self, user_id: str, vector: Sequence[float], limit: int,
                                  kind: Optional[str] = None) -> List[Tuple[DriveHintLean, float]]:
         """Hint kNN under the user (+ kind) pre-filter; (hint, cosine distance), nearest first."""
+
+    @abstractmethod
+    async def find_nearest_hints_in(self, user_id: str, vector: Sequence[float], limit: int,
+                                    item_ids: Sequence[str]) -> List[Tuple[DriveHintLean, float]]:
+        """`find_nearest_hints` restricted to the hint documents of `item_ids` (at most KNN_ITEM_IDS_MAX distinct; more
+        is a ValueError, logged; none returns []). No kind filter (RFC Δ246)."""
 
     @abstractmethod
     async def get_hints(self, user_id: str, item_id: str, generation: int) -> List[DriveHintDoc]:

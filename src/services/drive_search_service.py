@@ -67,7 +67,7 @@ from ..domain.drive_index_lean import ChunkId
 from ..domain.drive_index_params import (
     EXCERPT_RANGE_MAX, EXCERPTS_CHARS_MAX, EXCERPTS_LEXICAL_WINDOW,
     ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS,
-    ARCHIVE_QUERY_MAX, DELETED_SHOW_MAX, GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
+    ARCHIVE_QUERY_MAX, DELETED_SHOW_MAX, GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, KNN_ITEM_IDS_MAX, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
     NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
     OPEN_MAX_CHARS, TRANSCRIBE_USD_PER_MONTH, WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
@@ -170,7 +170,8 @@ class _Stats:
     """Counts after each stage, for the one summary line per search (§10.1, §25.5.7)."""
     mode: str = "query"
     scope: str = "all"
-    content: str = "off"             # off | wide (user-wide streams) | memory (a folder's chunks in memory)
+    content: str = "off"             # off | wide (user-wide streams) | memory (a folder's chunks in memory) |
+                                     # folder-knn (user-wide key streams, kNN over the folder's files; RFC Δ246)
     concepts: int = 0
     ignored: int = 0
     common: int = 0
@@ -310,7 +311,8 @@ _NO_TEXT_LISTED = 10      # passages: paths named on the no-text line (the count
 class _ExcerptStats:
     """Counts for the one `[DriveSearch] mode=excerpts` line (no text)."""
     mode: str = "excerpts"
-    scope: str = "all"            # gate | all | files | folder-memory | folder-wide | range
+    scope: str = "all"            # gate | all | files | folder-memory | folder-scoped (kNN over the walked files,
+                                  # RFC Δ246) | folder-wide (incomplete walk) | range
     hits: int = 0                 # kNN hits, or chunk vectors read in memory, before the fence
     candidates: int = 0           # fenced and visible
     keyed: int = 0                # the nearest chunks whose keys were read for the lexical vote
@@ -780,7 +782,8 @@ class DriveSearchService:
                            use_cards: bool, members: Sequence[Optional[str]], stats: _Stats) -> None:
         """A folder whose subtree fits FOLDER_INMEM_CARDS (§25.5.5): its records' about and name keys in memory, and
         its chunks' word keys, hint documents and vectors while they fit FOLDER_INMEM_CHUNKS; past that the user-wide
-        word, hint and kNN streams run under the folder post-filter."""
+        word and hint key streams run under the folder post-filter, and the chunk and hint kNN over the folder's
+        readable files only (RFC Δ246)."""
         for rec in subtree:
             pool.add(rec)
         name_keys = [k for c in concepts for k in (*name_query_keys(c), *concept_trigrams(c))]
@@ -805,7 +808,7 @@ class DriveSearchService:
         readable = [r for r in subtree if r.indexed_generation is not None and r.chunk_count > 0
                     and ancestry.chain(r) is not None]
         if sum(r.chunk_count for r in readable) > FOLDER_INMEM_CHUNKS:
-            stats.content = "wide"
+            stats.content = "folder-knn"
             words, hints = await asyncio.gather(asyncio.gather(*(self._word_hits(user_id, c, stats) for c in concepts)),
                                                 asyncio.gather(*(self._hint_hits(user_id, c, stats) for c in concepts)))
             for i, (chunks, full) in enumerate(words):
@@ -822,7 +825,7 @@ class DriveSearchService:
                 pool.hits[i].full |= full
                 pool.hits[i].unchecked |= full
             if vector is not None:
-                await self._knn_vectors(user_id, vector, members, pool, stats)
+                await self._scoped_knn_vectors(user_id, vector, members, readable, pool, stats)
             return
         stats.content = "memory"
         for start in range(0, len(readable), _WALK_PARALLEL):
@@ -856,14 +859,40 @@ class DriveSearchService:
                 pool.items_read.update((d.item_id, d.generation) for d, _ in docs)
         stats.chunk, stats.hint = len(pool.chunk_knn), len(pool.hint_knn)
 
-    async def _knn_vectors(self, user_id: str, vector: List[float], members: Sequence[Optional[str]], pool: _Pool,
-                           stats: _Stats) -> None:
+    async def _scoped_knn_vectors(self, user_id: str, vector: List[float], members: Sequence[Optional[str]],
+                                  readable: Sequence[DriveIndexRecord], pool: _Pool, stats: _Stats) -> None:
+        """The meaning streams of a folder past FOLDER_INMEM_CHUNKS whose walk is complete (RFC Δ246): chunk and hint
+        kNN over the folder's readable files only, one per member kind as the user-wide streams run (the kind picks
+        the files from the walked records; the query has no kind filter), each the files' top CHUNK_FETCH /
+        HINT_FETCH. A user-wide top-K kept to the folder lost the folder's chunks whenever closer ones lay outside."""
+        gate = asyncio.Semaphore(_WALK_PARALLEL)
+        groups = [[r.item_id for r in readable if k is None or r.kind == k] for k in members]
         chunks, hints = await asyncio.gather(
-            asyncio.gather(*(self._repo.find_nearest_chunks(user_id, vector, CHUNK_FETCH, k) for k in members)),
-            asyncio.gather(*(self._repo.find_nearest_hints(user_id, vector, HINT_FETCH, k) for k in members)))
+            asyncio.gather(*(self._nearest_in(self._repo.find_nearest_chunks_in, user_id, vector, CHUNK_FETCH, ids,
+                                              gate) for ids in groups)),
+            asyncio.gather(*(self._nearest_in(self._repo.find_nearest_hints_in, user_id, vector, HINT_FETCH, ids,
+                                              gate) for ids in groups)))
         pool.chunk_knn = [((c.item_id, c.generation, c.index), d) for page in chunks for c, d in page]
         pool.hint_knn = [((h.item_id, h.generation, h.index), d) for page in hints for h, d in page]
         stats.chunk, stats.hint = len(pool.chunk_knn), len(pool.hint_knn)
+
+    @staticmethod
+    async def _nearest_in(find: Callable[[str, List[float], int, Sequence[str]], Awaitable[List[Tuple[Any, float]]]],
+                          user_id: str, vector: List[float], limit: int, item_ids: Sequence[str],
+                          gate: asyncio.Semaphore) -> List[Tuple[Any, float]]:
+        """kNN over a known set of files (RFC Δ246): one query per KNN_ITEM_IDS_MAX ids (Firestore's `in` limit), at
+        most _WALK_PARALLEL in flight under `gate`. Each batch's top `limit` holds every one of the set's top `limit`
+        that lies in it, so the union, sorted by distance and cut at `limit`, is the set's top `limit` exactly."""
+        ids = list(dict.fromkeys(item_ids))
+
+        async def batch(part: Sequence[str]) -> List[Tuple[Any, float]]:
+            async with gate:
+                return await find(user_id, vector, limit, part)
+
+        pages = await asyncio.gather(*(batch(ids[i:i + KNN_ITEM_IDS_MAX])
+                                       for i in range(0, len(ids), KNN_ITEM_IDS_MAX)))
+        merged = sorted((hit for page in pages for hit in page), key=lambda hit: hit[1])
+        return merged[:limit]
 
     # -- records, fence, visibility -------------------------------------------------------------
 
@@ -1315,8 +1344,9 @@ class DriveSearchService:
     async def _folder_pool(self, user_id: str, request: ExcerptRequest, folder: _Folder, ancestry: _Ancestry,
                            stats: _ExcerptStats) -> _ExcerptPool:
         """The search's walk: a complete one whose Σ chunk_count fits FOLDER_INMEM_CHUNKS ranks in memory; past that
-        bound, the user-wide kNN at FETCH_MAX kept to the walked files; an incomplete walk, the same kNN kept by
-        ancestry. The no-text line counts the walked files only when the walk is complete."""
+        bound, a kNN over the walked readable files only, their top CHUNK_FETCH (RFC Δ246); an incomplete walk, the
+        user-wide kNN at FETCH_MAX kept by ancestry. The no-text line counts the walked files only when the walk is
+        complete."""
         (walked, complete), vector = await asyncio.gather(self._walk(user_id, folder.record),
                                                           self._question_vector(request.question))
         ancestry.seed([folder.record, *walked])
@@ -1341,8 +1371,9 @@ class DriveSearchService:
             stats.scope = "folder-memory"
             await self._excerpt_memory_pool(user_id, vector, readable, pool, stats)
             return pool
-        stats.scope = "folder-wide"
-        hits = await self._repo.find_nearest_chunks(user_id, vector, FETCH_MAX)
+        stats.scope = "folder-scoped"
+        hits = await self._nearest_in(self._repo.find_nearest_chunks_in, user_id, vector, CHUNK_FETCH,
+                                      [rec.item_id for rec, _ in readable], asyncio.Semaphore(_WALK_PARALLEL))
         await self._hits_pool(user_id, hits, ancestry, pool, stats, known=dict((r.item_id, (r, c)) for r, c in readable))
         return pool
 

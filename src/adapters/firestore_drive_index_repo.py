@@ -90,8 +90,8 @@ from ..domain.drive_index_lean import (
     RECORD_LEAN_FIELDS, ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of,
 )
 from ..domain.drive_index_params import (
-    CONCEPT_KEYS_MAX, KEYED_DELETE_BATCH, NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH, TRANSCRIPT_DOC_BYTES,
-    WRITE_BATCH_BYTES,
+    CONCEPT_KEYS_MAX, KEYED_DELETE_BATCH, KNN_ITEM_IDS_MAX, NAME_QUERY_KEYS_MAX, RECORD_WRITE_BATCH,
+    TRANSCRIPT_DOC_BYTES, WRITE_BATCH_BYTES,
 )
 from ..domain.drive_transcript import (
     JobWindow, Segment, StitchedTranscript, StoredTranscript, TranscriptBatch, TranscriptJob, WindowSpec,
@@ -540,6 +540,16 @@ def _query_keys(keys: Sequence[str], method: str) -> List[str]:
     if len(wanted) > CONCEPT_KEYS_MAX:
         logger.error(f"[DriveIndex] {method} refused: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
         raise ValueError(f"{method}: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
+    return wanted
+
+
+def _knn_item_ids(item_ids: Sequence[str], method: str) -> List[str]:
+    """The distinct item ids of one scoped kNN (`item_id in [...]`), in order. More than KNN_ITEM_IDS_MAX (Firestore's
+    `in` limit) is refused, logged, never cut: the caller batches (RFC Δ246)."""
+    wanted = list(dict.fromkeys(item_ids))
+    if len(wanted) > KNN_ITEM_IDS_MAX:
+        logger.error(f"[DriveIndex] {method} refused: {len(wanted)} distinct item ids, at most {KNN_ITEM_IDS_MAX}")
+        raise ValueError(f"{method}: {len(wanted)} distinct item ids, at most {KNN_ITEM_IDS_MAX}")
     return wanted
 
 
@@ -1109,6 +1119,23 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
             hits.append((chunk_from_doc(data), float(data[CHUNK_DISTANCE])))
         return hits
 
+    async def find_nearest_chunks_in(self, user_id: str, vector: Sequence[float], limit: int,
+                                     item_ids: Sequence[str]) -> List[Tuple[DriveChunk, float]]:
+        """`user_id ==` and `item_id in [...]` before `find_nearest` (composite user_id, item_id, vector; RFC Δ246):
+        the scan reads only those files' chunks."""
+        wanted = _knn_item_ids(item_ids, "find_nearest_chunks_in")
+        if not wanted:
+            return []
+        query = self._user_chunks(user_id).where(filter=FieldFilter("item_id", "in", wanted))
+        nearest = query.select([*STREAM_FIELDS, CHUNK_DISTANCE]).find_nearest(
+            vector_field=CHUNK_VECTOR, query_vector=Vector([float(x) for x in vector]), limit=limit,
+            distance_measure=DistanceMeasure.COSINE, distance_result_field=CHUNK_DISTANCE)
+        hits: List[Tuple[DriveChunk, float]] = []
+        for snap in await nearest.get():
+            data = snap.to_dict()
+            hits.append((chunk_from_doc(data), float(data[CHUNK_DISTANCE])))
+        return hits
+
     async def find_chunks_by_term(self, user_id: str, term: str, limit: int,
                                   kind: Optional[str] = None) -> List[DriveChunk]:
         """One `array_contains` per term, never `array_contains_any`: a shared query returns its first matches by
@@ -1397,6 +1424,23 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         if kind is not None:
             query = query.where(filter=FieldFilter("kind", "==", kind))
         # as find_nearest_cards: under a projection the distance comes back only when its name is selected too
+        nearest = query.select([*HINT_LEAN_FIELDS, HINT_DISTANCE]).find_nearest(
+            vector_field=HINT_VECTOR, query_vector=Vector([float(x) for x in vector]), limit=limit,
+            distance_measure=DistanceMeasure.COSINE, distance_result_field=HINT_DISTANCE)
+        hits: List[Tuple[DriveHintLean, float]] = []
+        for snap in await nearest.get():
+            data = snap.to_dict()
+            hits.append((hint_lean_from_doc(data), float(data[HINT_DISTANCE])))
+        return hits
+
+    async def find_nearest_hints_in(self, user_id: str, vector: Sequence[float], limit: int,
+                                    item_ids: Sequence[str]) -> List[Tuple[DriveHintLean, float]]:
+        """`user_id ==` and `item_id in [...]` before `find_nearest` (composite user_id, item_id, hint_vector; RFC
+        Δ246)."""
+        wanted = _knn_item_ids(item_ids, "find_nearest_hints_in")
+        if not wanted:
+            return []
+        query = self._user_hints(user_id).where(filter=FieldFilter("item_id", "in", wanted))
         nearest = query.select([*HINT_LEAN_FIELDS, HINT_DISTANCE]).find_nearest(
             vector_field=HINT_VECTOR, query_vector=Vector([float(x) for x in vector]), limit=limit,
             distance_measure=DistanceMeasure.COSINE, distance_result_field=HINT_DISTANCE)

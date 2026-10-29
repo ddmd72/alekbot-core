@@ -1713,8 +1713,12 @@ words. No query-time model, no modes, no new fields (D19, D28): one query embedd
    folders come back as candidates, never guessed; a folder that hides its contents (a repository, generated files,
    a dense or deleting folder) says its contents are not indexed and points to listing it. A subtree of up
    to `FOLDER_INMEM_CARDS` (1 000) records is matched in memory over its records' about keys, its chunks' word keys
-   (up to 2 000 chunks), its hint documents and its vectors; a larger one runs the user-wide streams with a folder
-   post-filter.
+   (up to 2 000 chunks), its hint documents and its vectors. Past 2 000 chunks (`FOLDER_INMEM_CHUNKS`) the word and
+   hint key streams run user-wide with a folder post-filter, while the chunk and hint kNN run over the walked readable
+   files only (`find_nearest_chunks_in` / `find_nearest_hints_in`: `item_id in` batches of 30, at most 16 in flight,
+   the union's top K kept by distance, so exactly the folder's top K; log `content=folder-knn`; RFC Δ246). A larger
+   subtree (an incomplete walk) runs the user-wide streams with a folder post-filter. Passages (`find_passages`) take
+   the same scoped kNN past the bound (their top `CHUNK_FETCH`, log `scope=folder-scoped`).
 4. **Query concepts** (`drive_keys.query_concepts`, §6.1) → **streams** (§6.1) → **document frequency and
    allowances** → **candidates and coverage** → **tiers** (§6.2) → **Related** (§6.2) → **render** (§6.3).
 5. **No concept left** (empty, punctuation, or only function, generic and time words) with a filter is a

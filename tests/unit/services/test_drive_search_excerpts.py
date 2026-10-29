@@ -42,6 +42,7 @@ class CountingRepo(InMemoryDriveIndexRepository):
         super().__init__()
         self.calls: Counter = Counter()
         self.knn_limits: List[int] = []
+        self.scoped_knn: List[tuple] = []   # (limit, item ids) per kNN over a set of files (RFC Δ246)
         self.record_reads: List[tuple] = []
 
     async def get_records(self, user_id, item_ids):
@@ -51,6 +52,10 @@ class CountingRepo(InMemoryDriveIndexRepository):
     async def find_nearest_chunks(self, user_id, vector, limit, kind=None):
         self.knn_limits.append(limit)
         return await super().find_nearest_chunks(user_id, vector, limit, kind)
+
+    async def find_nearest_chunks_in(self, user_id, vector, limit, item_ids):
+        self.scoped_knn.append((limit, tuple(item_ids)))
+        return await super().find_nearest_chunks_in(user_id, vector, limit, item_ids)
 
     async def get_chunks_with_vectors(self, user_id, item_id, generation, indexes, **kw):
         self.calls["vectors"] += 1
@@ -216,14 +221,20 @@ async def test_a_folder_that_fits_ranks_in_memory(w):
     assert [f.item_id for f in result.files] == [plan] and result.folder_path == "R&D"
 
 
-async def test_a_folder_past_the_chunk_bound_uses_the_wide_knn_kept_to_the_walk(w):
+async def test_a_folder_past_the_chunk_bound_runs_the_knn_over_the_walked_files_only(w, monkeypatch):
+    """RFC Δ246: past FOLDER_INMEM_CHUNKS with a complete walk, one kNN over the walked readable files at CHUNK_FETCH
+    (not the user-wide kNN at FETCH_MAX kept to the walk); no vectors are read in memory."""
     rd = w.folder("R&D")
     plan = w.doc("Tom's plan.docx", ["The review is held weekly."], [0.3], parent=rd)
     w.set(plan, chunk_count=2_001)   # Σ chunk_count > FOLDER_INMEM_CHUNKS
     w.doc("menu.md", ["Lunch options near the office."], [0.0], kind="md")
+    log = MagicMock()
+    monkeypatch.setattr(search_mod, "logger", log)
     result = await w.find(folder="R&D")
-    assert w.repo.knn_limits == [FETCH_MAX] and w.repo.calls["vectors"] == 0
+    assert w.repo.knn_limits == [] and w.repo.scoped_knn == [(CHUNK_FETCH, (plan,))] and w.repo.calls["vectors"] == 0
     assert [f.item_id for f in result.files] == [plan]
+    lines = [c[0][0] for c in log.info.call_args_list if "[DriveSearch]" in c[0][0]]
+    assert len(lines) == 1 and " scope=folder-scoped " in lines[0], lines
 
 
 async def test_an_incomplete_walk_keeps_the_wide_hits_by_ancestry(w):
