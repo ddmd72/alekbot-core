@@ -14,6 +14,7 @@ from src.domain.drive_mirror import (
 )
 from src.domain.drive_search import REFERENCE_REMINDER
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
+from src.domain.drive_transcript_render import render_body
 from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import DriveOperations
 from src.ports.drive_index_repository import DriveIndexRepository
@@ -165,9 +166,19 @@ async def test_a_recording_without_a_mirror_file_cuts_without_a_path(search, ind
     index.get_records.return_value = {"s2": DriveIndexRecord(user_id="u1", item_id="s2", name="x.m4a",
                                                              state=RecordState.INDEXED, transcript_state="current",
                                                              transcript_key="k2")}
-    index.get_transcript.return_value = _stored(*_long())
+    stored = _stored(*_long())
+    index.get_transcript.return_value = stored
     text = await search.transcript_text("u1", "s2")
-    assert "[Transcript cut at" in text and "The full text is in" not in text
+    # RFC §29.10: a live transcript the index cannot page gets the open bound's cut line, not the archived note;
+    # with no mirror file the line names no path
+    assert "[Transcript cut at" not in text and "The full text is in" not in text
+    inner = text.split('<drive_document nonce="nonce0001" ref="drive:s2" path="">\n', 1)[1]
+    shown, sep, line = inner.rpartition("\n\n[Cut by the system: ")
+    full = render_body(stored.transcript)
+    assert sep and full.startswith(shown) and 0 < len(shown) < len(full)
+    assert line == (f"the transcript is {len(full):,} characters; only the first {len(shown):,} are above. The rest "
+                    f"cannot be read now: the file has no indexed text (the index holds no text for it).]\n"
+                    f'</drive_document nonce="nonce0001">')
 
 
 async def test_a_broken_ledger_chain_falls_back_to_the_items_own_path(agent, index, mirror):

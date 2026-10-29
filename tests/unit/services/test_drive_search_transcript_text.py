@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 from src.domain.drive_index import DriveIndexRecord, RecordState
 from src.domain.drive_search import REFERENCE_REMINDER
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
+from src.domain.drive_transcript_render import render_body
 from src.ports.drive_index_repository import DriveIndexRepository
 from src.services.drive_search_service import DriveSearchService
 
@@ -48,9 +49,20 @@ async def test_wrapper_neutralises_lookalike_tags():
 
 
 async def test_transcript_text_capped_with_note():
-    svc, _ = _service(_rec(), _stored(*["word " * 200] * 400))
+    # RFC §29.10: a live transcript the index cannot page (no chunks on its record) is bounded with the open bound's
+    # first cut line (§29.7), not the archived "[Transcript cut at" note, which pointed at a search that cannot work.
+    stored = _stored(*["word " * 200] * 400)
+    svc, _ = _service(_rec(), stored)
     text = await svc.transcript_text("u", "a1")
-    assert "[Transcript cut at" in text and len(text) < 61_000
+    assert len(text) < 61_000 and "[Transcript cut at" not in text and "Search for a passage" not in text
+    inner = text.split('<drive_document nonce="nonce0001" ref="drive:a1" path="">\n', 1)[1]
+    shown, sep, line = inner.rpartition("\n\n[Cut by the system: ")
+    full = render_body(stored.transcript)
+    assert sep and full.startswith(shown) and full[len(shown):len(shown) + 2] == "\n\n"   # cut at a paragraph boundary
+    assert 0 < len(shown) < len(full)
+    assert line == (f"the transcript is {len(full):,} characters; only the first {len(shown):,} are above. The rest "
+                    f"cannot be read now: the file has no indexed text (the index holds no text for it).]\n"
+                    f'</drive_document nonce="nonce0001">')
 
 
 async def test_stub_open_says_none():
