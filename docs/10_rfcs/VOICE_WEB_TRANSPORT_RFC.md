@@ -254,9 +254,15 @@ sound from Lelik, detected by an `AnalyserNode` on a separate `MediaStreamSource
 remote track — the `<audio>` element stays the sole playback path, so a suspended
 `AudioContext` (iOS lock screen, Siri) can never silence Lelik. Reaching `connected` on the
 RTCPeerConnection does not stop it — only actual voice does, since the WebRTC connection can be
-live for a second or more before Lelik's audio starts. Two safety nets: if no analyser could be
-created, ringback stops at Live; otherwise it is capped at 8 s past Live
+live for a second or more before Lelik's audio starts. Two safety nets: if no detector could be
+started, ringback stops at Live; otherwise it is capped at 8 s past Live
 (`RINGBACK_LIVE_CAP_MS`) even if detection never fires.
+*Amended 2026-10-29:* a second detector runs beside the analyser — the receiver's own
+`audioLevel` from `RTCRtpReceiver.getStats()` (`inbound-rtp`), polled on the same 50 ms timer; the
+louder of the two is compared with the same threshold and sustain. On a live web call the
+analyser alone stopped hearing Lelik: his first audio left the relay about a second after Live, yet
+the tone rang over it until the 8 s cap. The stats level comes from the WebRTC stack, not Web
+Audio, so it does not share the tap's failure modes.
 
 **Dispatch filler.** Live logs showed 12 s of dead air between a delegation being dispatched and
 the watchdog's own `_WAITING_NOTE` (which only fires `_silence_timeout_s` later). A new
