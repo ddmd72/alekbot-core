@@ -101,8 +101,9 @@ class IntegrationReconnectService:
         return summary
 
     async def _gmail(self, user_id: str) -> int:
-        assert self._email is not None
         email = self._email
+        if email is None:   # the sweep visits Gmail only when the store is wired; its caller logs the raise
+            raise RuntimeError("Gmail reconnect check without an indexing-state store")
         state = await email.get_indexing_state(user_id, GMAIL_PROVIDER)
         if state is None:
             return 0
@@ -120,8 +121,9 @@ class IntegrationReconnectService:
         return await self._notice(user_id, Integration.GMAIL, flag)
 
     async def _todo(self, user_id: str) -> int:
-        assert self._task_config is not None
         task_config = self._task_config
+        if task_config is None:   # the sweep visits To Do only when the store is wired; its caller logs the raise
+            raise RuntimeError("To Do reconnect check without a task config store")
         config = await task_config.get_config(user_id)
 
         async def flag(value: bool) -> None:
