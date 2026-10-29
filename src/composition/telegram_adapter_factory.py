@@ -7,10 +7,8 @@ RichContentService fully wired, then injects it into TelegramWebhookAdapter
 as ConversationHandlerPort.
 """
 from typing import Optional
-from telegram import Bot
 
 from ..adapters.telegram.webhook_adapter import TelegramWebhookAdapter
-from ..adapters.telegram.media_adapter import TelegramMediaAdapter
 from ..handlers.conversation_handler import ConversationHandler
 from ..infrastructure.agent_coordinator import AgentCoordinator
 from .user_agent_factory import UserAgentFactory
@@ -29,8 +27,8 @@ class TelegramAdapterFactory:
     """
     Factory for creating TelegramWebhookAdapter with full dependency wiring.
 
-    Injects RichContentService (with html_renderer) into ConversationHandler
-    so widget rich content is rendered to PNG and sent as Telegram photos.
+    Injects the RichContentService built by the application graph into ConversationHandler
+    (the same instance the notification service uses).
     """
 
     @staticmethod
@@ -61,10 +59,11 @@ class TelegramAdapterFactory:
         task_queue=None,
         long_turn_service=None,
         doc_delivery_service=None,
-        rich_content_service: Optional[RichContentService] = None,
+        *,
+        rich_content_service: RichContentService,
     ) -> TelegramWebhookAdapter:
         """
-        Create TelegramWebhookAdapter with RichContentService wired in.
+        Create TelegramWebhookAdapter around the given RichContentService.
 
         Args:
             token:               Telegram bot token
@@ -79,7 +78,8 @@ class TelegramAdapterFactory:
             consolidation_config: Optional consolidation config
             consolidation_service: Optional shared ConsolidationService; its consolidate_now serves `$consolidate`
             audio_service:       Optional audio transcription port
-            html_renderer:       Optional HtmlRendererPort for widget → PNG
+            html_renderer:       Optional HtmlRendererPort (the widget renderer lives in rich_content_service)
+            rich_content_service: The platform's RichContentService (built once by the application graph, shared with the notification service)
             task_queue:          Optional TaskQueue — set, updates are handed off to a
                                  Cloud Task instead of processed inline (see
                                  TelegramWebhookAdapter.__init__)
@@ -87,13 +87,6 @@ class TelegramAdapterFactory:
         Returns:
             TelegramWebhookAdapter ready to handle webhook requests
         """
-        if rich_content_service is None:   # the application graph passes the one it also registers on the notification service
-            # Bot instance for media delivery (TelegramMediaAdapter): python-telegram-bot Bot objects are stateless HTTP clients.
-            rich_content_service = RichContentService(
-                media_port=TelegramMediaAdapter(bot=Bot(token)),
-                html_renderer=html_renderer,
-            )
-
         conversation_handler = ConversationHandler(
             coordinator=coordinator,
             agent_factory=agent_factory,
