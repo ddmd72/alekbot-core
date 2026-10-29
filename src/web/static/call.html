@@ -543,7 +543,9 @@
       const AUDIBLE_RMS_THRESHOLD = 0.02;
       const AUDIBLE_SUSTAIN_MS = 150;
       const AUDIBLE_POLL_MS = 50;
-      const RINGBACK_LIVE_CAP_MS = 8000;
+      // Lelik's first audio leaves the relay about a second after Live (live log, 2026-10-29);
+      // the cap is the guarantee when neither detector hears him. Was 8 s: rang over his reply.
+      const RINGBACK_LIVE_CAP_MS = 2500;
 
       // One AudioContext for the page's lifetime (iOS requires it to be created — or, if
       // already created, resumed — synchronously inside a user-gesture handler; a call page
@@ -609,9 +611,19 @@
           source.connect(analyser);
           return analyser;
         } catch (e) {
-          // Analysis unavailable — the Live-time fallback below stops ringback instead.
+          // Analysis unavailable — the receiver's own audio level still detects Lelik.
           return null;
         }
+      }
+
+      function inboundAudioLevel(report) {
+        // The receiver's decoded audio level (0..1, linear, like the analyser's RMS), computed by
+        // the WebRTC stack itself — no Web Audio involved.
+        let level = 0;
+        report.forEach((s) => {
+          if (s.type === "inbound-rtp" && typeof s.audioLevel === "number") level = Math.max(level, s.audioLevel);
+        });
+        return level;
       }
 
       function stopAudibleMonitor() {
@@ -622,19 +634,41 @@
         audibleAboveSince = null;
       }
 
-      function startAudibleMonitor(track) {
+      function startAudibleMonitor(track, receiver) {
         if (!ringActive) return; // ringback already stopped — nothing to watch for anymore
         if (audibleMonitorTimer) return; // already watching
+        // Two independent signals; the louder one counts: the Web Audio tap on the track and the
+        // receiver's own audio level from getStats(). The tap alone stopped hearing Lelik on live
+        // calls (2026-10-29: one or two rings over his first reply, until the cap below).
         const analyser = buildRemoteAnalyser(track);
-        if (!analyser) return;
-        const data = new Float32Array(analyser.fftSize);
+        const canStat = !!(receiver && receiver.getStats);
+        if (!analyser && !canStat) return;
+        const data = analyser ? new Float32Array(analyser.fftSize) : null;
+        let statsLevel = 0;
+        let statsBusy = false;
         audibleMonitorTimer = setInterval(() => {
-          analyser.getFloatTimeDomainData(data);
-          let sumSquares = 0;
-          for (let i = 0; i < data.length; i++) sumSquares += data[i] * data[i];
-          const rms = Math.sqrt(sumSquares / data.length);
+          let level = statsLevel;
+          if (analyser) {
+            analyser.getFloatTimeDomainData(data);
+            let sumSquares = 0;
+            for (let i = 0; i < data.length; i++) sumSquares += data[i] * data[i];
+            level = Math.max(level, Math.sqrt(sumSquares / data.length));
+          }
+          if (canStat && !statsBusy) {
+            // Read on this poll, used on the next: one getStats() in flight at a time.
+            statsBusy = true;
+            receiver
+              .getStats()
+              .then((report) => {
+                statsLevel = inboundAudioLevel(report);
+              })
+              .catch(() => {})
+              .finally(() => {
+                statsBusy = false;
+              });
+          }
           const now = performance.now();
-          if (rms > AUDIBLE_RMS_THRESHOLD) {
+          if (level > AUDIBLE_RMS_THRESHOLD) {
             if (audibleAboveSince === null) audibleAboveSince = now;
             if (now - audibleAboveSince >= AUDIBLE_SUSTAIN_MS) {
               stopRingback();
@@ -874,7 +908,7 @@
             // The sole playback path for Lelik's voice — independent of audioCtx.
             remoteAudio.srcObject = new MediaStream([ev.track]);
             // A separate tap on the same track, for ringback's audible-detection only.
-            startAudibleMonitor(ev.track);
+            startAudibleMonitor(ev.track, ev.receiver);
           };
           const tx = pc.addTransceiver(localStream.getAudioTracks()[0], { direction: "sendonly" });
 
@@ -951,7 +985,7 @@
           statusTimer = setInterval(pollStatus, 2000);
 
           // Ringback safety net: if nothing ever started watching for Lelik's first sound
-          // (analyser creation failed, or AudioContext unavailable/blocked), don't ring
+          // (neither the analyser nor the receiver's stats are available), don't ring
           // indefinitely — stop right now that the call is confirmed live. Otherwise cap it:
           // ringback must never keep playing more than RINGBACK_LIVE_CAP_MS past Live even if
           // audible detection never fires for some other reason.
