@@ -189,7 +189,7 @@ class World:
         return render_results(await self.search_svc.search(U, DriveSearchRequest(query=word)))
 
     async def deleted(self, word: str = WORD) -> str:
-        return (await self.search_svc.search_deleted(U, word))[0]
+        return (await self.search_svc.search_deleted(U, word)).text
 
     def carriers(self, note_id: str) -> List[str]:
         return sorted(item for (user, item), rec in self.repo.records.items()
