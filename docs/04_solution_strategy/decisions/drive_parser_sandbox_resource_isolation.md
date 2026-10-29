@@ -94,3 +94,13 @@ behind the same port. The first image build must confirm that `useradd` creates 
 that the world-writable check passes (neither was built locally). The limits stay placeholders until spike S1
 measures the Phase 0 bomb set on the indexer, as the `driveparser` user
 (`scripts/infrastructure/drive_extract_s1.py`).
+
+## Process limit and log content (hardening)
+
+The document child gets `RLIMIT_NPROC` 256 (`EXTRACT_NPROC_LIMIT`), the media child's value, when it runs as the
+unprivileged user (root ignores the limit; a dev user's own processes would count against it). The document child
+spawns no process and pins its numeric libraries to one thread, so the bound only stops a fork bomb.
+
+Logs carry no content of the drive: the tick's catch-all logs the exception class, a message digest and the frames
+(`exc_brief`), not the message; a failed Graph call logs the status and the enum-like `error` / `innerError` codes,
+not the response body (a body or a message can quote a file name or transcript text).

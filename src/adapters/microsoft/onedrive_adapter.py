@@ -646,7 +646,8 @@ class OneDriveAdapter(UserDrivePort):
                                 raise DrivePathTooLong("Drive path is too long")
                             logger.error(f"Drive {method} {_where(path)} failed (400): {code}/{inner}")
                             raise _BadRequest(f"Drive {method} failed (400)", code)
-                        logger.error(f"Drive {method} {_where(path)} failed ({status}): {body[:300]}")
+                        code, inner = _error_codes(body)    # the body's free text can quote a file name
+                        logger.error(f"Drive {method} {_where(path)} failed ({status}): {code}/{inner}")
                         raise ValueError(f"Drive {method} failed ({status})")
                     return dict(await resp.json())
             except asyncio.TimeoutError as exc:
