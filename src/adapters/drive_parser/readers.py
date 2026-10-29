@@ -11,7 +11,8 @@ markitdown's allowlisted converters (Phase 0, `src/utils/document_hardening.buil
 MSG and HTML; charset detection for the
 text kinds, VTT/SRT reduced to cue text; `striprtf` for RTF; the stdlib `email` parser for EML; ODF `content.xml`
 through `defusedxml`; XLSX/XLS/CSV/ODS as Markdown tables capped at MAX_SHEET_ROWS rows per sheet (the chunker
-repeats the header row, §8.3). Password-protected PDF/Office/EPUB/ODF → `encrypted`.
+repeats the header row, §8.3). Password-protected PDF/Office/EPUB/ODF → `encrypted`. An EPUB that is a plain tar
+(an Apple Books `.epub.pkgf` package) is repacked as an EPUB ZIP in memory first (`epub_package`).
 
 Parser@2 (§25.3, D23, review thresholds): HTML pages, and Markdown or text files that are HTML (`html_text.text_is_html`:
 a document marker or tags over 30 % outside code), go through `html_text.html_page_text` — the content landmark,
@@ -40,10 +41,11 @@ import zipfile
 from contextlib import contextmanager
 from dataclasses import replace
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, NamedTuple, Optional, Sequence, Tuple
-from typing import Iterator, Union
+from typing import BinaryIO, Iterator, Union
 
 from src.adapters.drive_parser.capture import pdf_capture_signals
 from src.adapters.drive_parser.child import is_memory_failure
+from src.adapters.drive_parser.epub_package import PackageError, epub_zip_from_tar, is_tar_package
 from src.adapters.drive_parser.html_text import html_page_text, text_is_html
 from src.domain.drive_capture import CaptureSignals
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, PdfSplitFailed, failure_label
@@ -105,9 +107,12 @@ def read_content(path: str, kind: str) -> ExtractionOutcome:
     if reader is None:
         return ExtractionOutcome(status=ExtractionStatus.UNSUPPORTED, detail=f"no reader for kind {kind}")
     try:
-        if kind in _ZIP_KINDS:
-            _check_container(path, kind)
-        result = reader(path, kind)
+        if kind == "epub" and is_tar_package(path):
+            result: Union[_Read, _PageRead] = _read_epub_package(path)
+        else:
+            if kind in _ZIP_KINDS:
+                _check_container(path, kind)
+            result = reader(path, kind)
     except ArchiveTooLargeError as exc:
         return ExtractionOutcome(status=ExtractionStatus.TOO_LARGE, detail=str(exc))
     except _Encrypted as exc:
@@ -253,15 +258,19 @@ def markdown_table(rows: Sequence[Sequence[Any]]) -> Tuple[str, bool]:
 # -- readers --------------------------------------------------------------------------------------------------------
 
 def _read_markitdown(path: str, kind: str, *, charset: Optional[str] = None) -> str:
+    with open(path, "rb") as fh:
+        return _convert(fh, kind, path, charset=charset)
+
+
+def _convert(stream: BinaryIO, kind: str, local_path: Optional[str], *, charset: Optional[str] = None) -> str:
     from markitdown import StreamInfo
     from markitdown import converters
 
     class_name, extension, mimetype = MARKITDOWN_CONVERTERS[kind]
     converter = getattr(converters, class_name)()
-    info = StreamInfo(extension=extension, mimetype=mimetype, charset=charset, local_path=path,
-                      filename=os.path.basename(path))
-    with open(path, "rb") as fh:
-        return str(converter.convert(fh, info).markdown or "")
+    info = StreamInfo(extension=extension, mimetype=mimetype, charset=charset, local_path=local_path,
+                      filename=os.path.basename(local_path) if local_path else None)
+    return str(converter.convert(stream, info).markdown or "")
 
 
 def _read_pdf(path: str, kind: str) -> _Read:
@@ -317,6 +326,17 @@ def _page_count(reader: Any) -> int:
 
 def _read_converter(path: str, kind: str) -> _Read:
     return _read_markitdown(path, kind), 0, False
+
+
+def _read_epub_package(path: str) -> _Read:
+    """An Apple Books package (§5.1): its tar repacked as an EPUB ZIP in memory, then the EPUB path, DRM check
+    included. The ZIP caps were applied to the tar's headers by the repack."""
+    package = epub_zip_from_tar(path)
+    with zipfile.ZipFile(package) as archive:
+        if _epub_encrypted(archive, archive.namelist()):
+            raise _Encrypted("EPUB DRM")
+    package.seek(0)
+    return _convert(package, "epub", None), 0, False
 
 
 def _read_html(path: str, kind: str) -> _PageRead:
@@ -545,7 +565,7 @@ def _deterministic(exc: Exception) -> bool:
     times). Nesting too deep for the parser, a container that is not one, XML with a DTD or entities."""
     from defusedxml import DefusedXmlException
 
-    return isinstance(exc, (RecursionError, zipfile.BadZipFile, _WrongContainer, DefusedXmlException))
+    return isinstance(exc, (RecursionError, zipfile.BadZipFile, _WrongContainer, PackageError, DefusedXmlException))
 
 
 def _ole_streams(path: str) -> FrozenSet[str]:
