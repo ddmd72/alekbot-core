@@ -269,3 +269,6 @@ class TaskUserConfig:
 
     primary_list_id: Optional[str] = None
     subscriptions: List[TaskSubscriptionConfig] = field(default_factory=list)
+    # R1 (SECRETS_AT_REST_RFC §6.2, F2): the one reconnect notice of this lost grant was sent. A set primary_list_id is
+    # the past connection (D-P5: a deliberate disconnect resets the whole config, so it needs no mark).
+    reconnect_notified: bool = False

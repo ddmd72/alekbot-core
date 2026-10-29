@@ -475,7 +475,10 @@ class DriveSyncState:
     last_error: Optional[ErrorCategory] = None
     systemic_failures: int = 0                # consecutive ticks ended by a systemic error (backoff, §8.2)
     stale_alerted: bool = False
-    reconnect_notified: bool = False          # the fan-out told the user once (RFC Δ6)
+    reconnect_notified: bool = False          # the fan-out told the user once (RFC Δ6; R1 too, SECRETS_AT_REST_RFC §6.2)
+    # R1 (SECRETS_AT_REST_RFC §6.2, F1): the user disconnected the drive on purpose, so a missing grant is not a loss;
+    # set by the Cabinet's disconnect, cleared by a consent; written only by update_sync_flags
+    disconnected_by_user_at: Optional[datetime] = None
     counters: Mapping[str, int] = field(default_factory=dict)
     # model work (§24.7, §24.8): an outage defers only model work; usage is counted per calendar month (UTC)
     model_backoff_until: Optional[datetime] = None

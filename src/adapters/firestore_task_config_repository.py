@@ -10,7 +10,7 @@ set_primary_list_id_if_absent: Firestore transaction for safe concurrent writes.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from google.cloud import firestore
 
@@ -24,7 +24,8 @@ class FirestoreTaskConfigRepository(TaskConfigPort):
     """Firestore mechanics behind the port's contract.
 
     Collection `EnvironmentConfig.task_config_collection` (`{prefix}task_config`), document id `user_id`, fields
-    `primary_list_id` and `subscriptions: [{sub_id, list_id, expires_at}]`. No query is issued, so no index is needed.
+    `primary_list_id`, `subscriptions: [{sub_id, list_id, expires_at}]` and `reconnect_notified`. The only query is
+    `list_user_ids`, a projection over the whole collection, so no index is needed.
     `save_config` is a plain `set` of the whole document. `set_primary_list_id_if_absent` is one Firestore transaction
     (read, then `set` with merge so the subscriptions stay); a commit that lost to another writer aborts and the body
     re-runs against the winner's value. A stored datetime comes back as `DatetimeWithNanoseconds` and is rebuilt as a
@@ -80,12 +81,14 @@ class FirestoreTaskConfigRepository(TaskConfigPort):
         return TaskUserConfig(
             primary_list_id=data.get("primary_list_id"),
             subscriptions=subs,
+            reconnect_notified=bool(data.get("reconnect_notified", False)),
         )
 
     def _from_domain(self, config: TaskUserConfig) -> Dict[str, Any]:
         return {
             "primary_list_id": config.primary_list_id,
             "subscriptions": [self._sub_to_dict(s) for s in config.subscriptions],
+            "reconnect_notified": config.reconnect_notified,
         }
 
     # ------------------------------------------------------------------
@@ -136,3 +139,11 @@ class FirestoreTaskConfigRepository(TaskConfigPort):
         result = await _txn(transaction)
         logger.info(f"📋 TaskConfig primary_list_id for user {user_id[:8]}: {result[:8]}")
         return result
+
+    # ------------------------------------------------------------------
+    # TaskConfigPort — list_user_ids
+    # ------------------------------------------------------------------
+
+    async def list_user_ids(self) -> List[str]:
+        """Every document id of the collection (one per user), read with a one-field projection."""
+        return sorted([snap.id async for snap in self.collection.select(["primary_list_id"]).stream()])

@@ -5,9 +5,10 @@ See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §2.1.2.
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 from src.domain.email import IndexedEmail, IndexingState
+from src.domain.reconnect_policy import Cleared
 
 
 class IndexedEmailRepository(ABC):
@@ -59,10 +60,25 @@ class IndexedEmailRepository(ABC):
 
     @abstractmethod
     async def update_indexing_state(self, state: IndexingState) -> None:
-        """Write all three cursors (an upsert); last writer wins.
+        """Write all three cursors (an upsert); last writer wins. The R1 fields are never written here.
 
         Called only after each chunk completes successfully (idempotent retry guarantee).
         """
+
+    @abstractmethod
+    async def set_reconnect_flags(
+        self, user_id: str, provider: str, *,
+        reconnect_notified: Optional[bool] = None,
+        disconnected_by_user_at: Union[datetime, Cleared, None] = None,
+    ) -> None:
+        """Field-level update of the R1 fields of the indexing state (SECRETS_AT_REST_RFC §6.2, F1/F2): None leaves a
+        field as stored, `Cleared.MARK` empties the mark. The cursors are untouched; a missing state is left missing
+        (no past connection, nothing for R1 to see). The only writer of these two fields."""
+
+    @abstractmethod
+    async def list_indexing_user_ids(self, provider: str) -> List[str]:
+        """The users that have an indexing state for `provider`, sorted (R1 lists users from the feature store, never
+        from the credential store)."""
 
     @abstractmethod
     async def clear_indexing_state(self, user_id: str, provider: str) -> None:

@@ -10,10 +10,11 @@ import asyncio
 import math
 from dataclasses import replace
 from datetime import date, datetime, timezone
-from typing import AbstractSet, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union
 
 from ..domain.drive_cap_alert import CapCounts
 from ..domain.drive_enrichment import DriveHintDoc, EnrichJob, InitialBuild, JobState, ModelUsageMonth
+from ..domain.reconnect_policy import Cleared
 from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, LeaseLost, Reason, RecordState
 from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of
 from ..domain.drive_index_params import CONCEPT_KEYS_MAX, KNN_ITEM_IDS_MAX
@@ -38,7 +39,7 @@ def _cosine_distance(a: Sequence[float], b: Sequence[float]) -> float:
 
 # The fan-out's flags: only update_sync_flags writes them (the Firestore adapter's _FLAGS)
 _FLAG_FIELDS = ("stale_alerted", "reconnect_notified", "migration_alerted", "stall_alerted", "fallback_alerted_day",
-                "card_cap_alerted", "chunk_cap_alerted")
+                "card_cap_alerted", "chunk_cap_alerted", "disconnected_by_user_at")
 
 
 def _fence(current: Optional[DriveSyncState], owner: Optional[str], user_id: str) -> None:
@@ -95,7 +96,8 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
                                 stall_alerted: Optional[bool] = None,
                                 fallback_alerted_day: Optional[str] = None,
                                 card_cap_alerted: Optional[bool] = None,
-                                chunk_cap_alerted: Optional[bool] = None) -> None:
+                                chunk_cap_alerted: Optional[bool] = None,
+                                disconnected_by_user_at: Union[datetime, Cleared, None] = None) -> None:
         current = self.states.get(user_id)
         if current is None:
             return
@@ -103,7 +105,11 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
                  "migration_alerted": migration_alerted, "stall_alerted": stall_alerted,
                  "fallback_alerted_day": fallback_alerted_day, "card_cap_alerted": card_cap_alerted,
                  "chunk_cap_alerted": chunk_cap_alerted}
-        self.states[user_id] = replace(current, **{k: v for k, v in given.items() if v is not None})
+        changes: Dict[str, Any] = {k: v for k, v in given.items() if v is not None}
+        if disconnected_by_user_at is not None:
+            changes["disconnected_by_user_at"] = None if disconnected_by_user_at is Cleared.MARK \
+                else disconnected_by_user_at
+        self.states[user_id] = replace(current, **changes)
 
     async def delete_sync_state(self, user_id: str, owner: Optional[str] = None) -> None:
         async with self._lock:

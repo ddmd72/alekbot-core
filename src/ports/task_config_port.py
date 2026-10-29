@@ -6,6 +6,7 @@ Single implementation: FirestoreTaskConfigRepository.
 """
 
 from abc import ABC, abstractmethod
+from typing import List
 
 from ..domain.task import TaskUserConfig
 
@@ -42,5 +43,13 @@ class TaskConfigPort(ABC):
 
         Atomicity: of concurrent callers the first commit wins and every caller returns that value. The stored
         subscriptions are kept.
+        """
+        ...
+
+    @abstractmethod
+    async def list_user_ids(self) -> List[str]:
+        """Every user with a stored config, sorted (R1 lists users from the feature store, SECRETS_AT_REST_RFC §6.2).
+
+        A listed user's config may be empty (a disconnect stores an empty config).
         """
         ...

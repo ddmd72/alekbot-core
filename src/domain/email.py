@@ -163,6 +163,11 @@ class IndexingState:
     indexed_through: Optional[datetime] = None          # None = incremental never run
     oldest_indexed_through: Optional[datetime] = None   # None = backfill never run
     cursor_reindex: Optional[datetime] = None           # None = reindex never run
+    # R1 (SECRETS_AT_REST_RFC §6.2, F1/F2): written only by `IndexedEmailRepository.set_reconnect_flags`, never by
+    # `update_indexing_state` (which owns the cursors). The once-per-transition notice flag, and the deliberate
+    # disconnect mark (a consent clears both).
+    reconnect_notified: bool = False
+    disconnected_by_user_at: Optional[datetime] = None
 
 
 class IndexingJob(BaseModel):
