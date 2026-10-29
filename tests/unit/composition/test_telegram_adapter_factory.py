@@ -19,11 +19,10 @@ def test_factory_forwards_skill_service_to_conversation_handler():
     (Task 8), mirroring SlackAdapterFactory's wiring."""
     sentinel_skill_service = MagicMock(name="skill_service")
 
-    with patch("src.composition.telegram_adapter_factory.Bot"), \
-         patch("src.composition.telegram_adapter_factory.TelegramMediaAdapter"), \
-         patch("src.composition.telegram_adapter_factory.TelegramWebhookAdapter"), \
+    with patch("src.composition.telegram_adapter_factory.TelegramWebhookAdapter"), \
          patch("src.composition.telegram_adapter_factory.ConversationHandler") as mock_handler:
         TelegramAdapterFactory.create_adapter(
+            rich_content_service=MagicMock(),
             token="123:abc",
             webhook_secret="secret",
             dedup_store=MagicMock(),
@@ -41,11 +40,10 @@ def test_factory_forwards_skill_service_to_conversation_handler():
 def test_factory_defaults_skill_service_to_none():
     """Omitting skill_service must not break construction — default is None,
     matching ConversationHandler's own default."""
-    with patch("src.composition.telegram_adapter_factory.Bot"), \
-         patch("src.composition.telegram_adapter_factory.TelegramMediaAdapter"), \
-         patch("src.composition.telegram_adapter_factory.TelegramWebhookAdapter"), \
+    with patch("src.composition.telegram_adapter_factory.TelegramWebhookAdapter"), \
          patch("src.composition.telegram_adapter_factory.ConversationHandler") as mock_handler:
         TelegramAdapterFactory.create_adapter(
+            rich_content_service=MagicMock(),
             token="123:abc",
             webhook_secret="secret",
             dedup_store=MagicMock(),

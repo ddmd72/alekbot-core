@@ -600,7 +600,9 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     the moment Alek answers (RFC §4.10 rule 2). When BOTH are empty, it falls back to
     `domain/result_links.build_link_copy(answer.text)` — the same shared builder `LelikAgent.delegate`
     uses for every other specialist — so a plain-text answer with bare URLs still gets a bare-anchor
-    copy instead of silently posting nothing. Wrapped in `asyncio.wait_for(...,
+    copy instead of silently posting nothing. A `file` / `widget` rich content goes through the platform's
+    `RichContentService.deliver`, so it arrives as a real file/image, as in a chat turn (until 2026-10-29 only
+    its fallback line arrived, `decisions/rich_content_one_delivery_path.md`). Wrapped in `asyncio.wait_for(...,
     _ANSWER_COPY_TIMEOUT_S=5.0)`, same as Lelik's own copy; failure (including a timeout) is logged,
     not raised, because the spoken answer matters more than its chat copy. `VoiceSessionService`'s
     late-answer note (a different mechanism, in `services/`) names the request it answers and uses

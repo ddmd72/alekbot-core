@@ -86,8 +86,6 @@ from ..domain.channel_binding import ChannelBinding
 from ..domain.session_mode import SessionMode
 
 _MEMORY_CODE = re.compile(r"[0-9a-f]{4}")   # secrets.token_hex(2): the only shape a memory draft code has
-# Content types that require external fetch + platform upload (not Block Kit)
-_MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file", "widget"})
 
 
 @dataclass
@@ -207,26 +205,11 @@ class ConversationHandler(ConversationHandlerPort):
         thread_id: Optional[str],
     ) -> None:
         """
-        Route rich content to the appropriate delivery path:
-          - map_image / file → RichContentService (convert + upload or GCS URL)
-          - table and others → ResponseChannel.send_rich_content (Block Kit / fallback)
-
-        When RichContentService.process() returns a URL (e.g. HTML → GCS),
-        the URL is sent as a plain message so Slack unfurls it as a preview.
+        Route rich content to the appropriate delivery path (RichContentService.deliver owns the
+        routing; without the service every type goes to ResponseChannel.send_rich_content).
         """
-        if content.content_type in _MEDIA_CONTENT_TYPES and self._rich_content_service:
-            channel_id = getattr(response_channel, "channel_id", None)
-            if channel_id:
-                url = await self._rich_content_service.process(content, channel_id)
-                if url:
-                    await response_channel.send_message(url, thread_id=thread_id)
-            else:
-                logger.warning(
-                    "ConversationHandler: response_channel has no channel_id — "
-                    "falling back to send_rich_content for type '%s'",
-                    content.content_type,
-                )
-                await response_channel.send_rich_content(content, thread_id=thread_id)
+        if self._rich_content_service:
+            await self._rich_content_service.deliver(content, response_channel, thread_id)
         else:
             await response_channel.send_rich_content(content, thread_id=thread_id)
 

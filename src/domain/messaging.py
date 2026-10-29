@@ -51,6 +51,10 @@ class MessageContext:
     language: str = "uk"  # Effective UI language (RFC: MULTILINGUAL_SUPPORT_RFC.md §13.3)
 
 
+# Rich-content types delivered as a real file/image (fetch + platform upload), not by the channel's Block Kit renderer.
+MEDIA_CONTENT_TYPES = frozenset({"weather_image", "map_image", "file", "widget"})
+
+
 @dataclass
 class RichContent:
     """
