@@ -15,7 +15,7 @@ from typing import AbstractSet, Dict, FrozenSet, List, Mapping, Optional, Sequen
 from ..domain.drive_enrichment import DriveHintDoc, EnrichJob, InitialBuild, JobState, ModelUsageMonth
 from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, LeaseLost, Reason, RecordState
 from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of
-from ..domain.drive_index_params import CONCEPT_KEYS_MAX
+from ..domain.drive_index_params import CONCEPT_KEYS_MAX, KNN_ITEM_IDS_MAX
 from ..domain.drive_search import is_not_read_yet, is_unread
 from ..domain.drive_transcript import (
     StoredTranscript, TranscriptBatch, TranscriptJob, WindowTranscript, batch_doc_id, batch_url_fields,
@@ -294,6 +294,13 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         scored.sort(key=lambda pair: pair[1])
         return scored[:limit]
 
+    async def find_nearest_chunks_in(self, user_id: str, vector: Sequence[float], limit: int,
+                                     item_ids: Sequence[str]) -> List[Tuple[DriveChunk, float]]:
+        wanted = set(_knn_item_ids(item_ids, "find_nearest_chunks_in"))
+        scored = [(c, _cosine_distance(vector, v)) for c, v in self._user_chunks(user_id) if c.item_id in wanted]
+        scored.sort(key=lambda pair: pair[1])
+        return scored[:limit]
+
     async def find_chunks_by_term(self, user_id: str, term: str, limit: int,
                                   kind: Optional[str] = None) -> List[DriveChunk]:
         return [c for c, _ in self._user_chunks(user_id, kind) if term in c.content_terms][:limit]
@@ -389,6 +396,13 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
     async def find_nearest_hints(self, user_id: str, vector: Sequence[float], limit: int,
                                  kind: Optional[str] = None) -> List[Tuple[DriveHintLean, float]]:
         scored = [(h, _cosine_distance(vector, v)) for h, v in self._user_hints(user_id, kind)]
+        scored.sort(key=lambda pair: pair[1])   # stable: equal distances keep the key order
+        return [(_hint_lean(h), d) for h, d in scored[:limit]]
+
+    async def find_nearest_hints_in(self, user_id: str, vector: Sequence[float], limit: int,
+                                    item_ids: Sequence[str]) -> List[Tuple[DriveHintLean, float]]:
+        wanted = set(_knn_item_ids(item_ids, "find_nearest_hints_in"))
+        scored = [(h, _cosine_distance(vector, v)) for h, v in self._user_hints(user_id) if h.item_id in wanted]
         scored.sort(key=lambda pair: pair[1])   # stable: equal distances keep the key order
         return [(_hint_lean(h), d) for h, d in scored[:limit]]
 
@@ -636,6 +650,16 @@ def _query_keys(keys: Sequence[str], method: str) -> List[str]:
     if len(wanted) > CONCEPT_KEYS_MAX:
         logger.error(f"[DriveIndex] {method} refused: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
         raise ValueError(f"{method}: {len(wanted)} distinct keys, at most {CONCEPT_KEYS_MAX}")
+    return wanted
+
+
+def _knn_item_ids(item_ids: Sequence[str], method: str) -> List[str]:
+    """The distinct item ids of one scoped kNN, in order; more than KNN_ITEM_IDS_MAX is refused and logged, as the
+    Firestore adapter does (Firestore's `in` limit; never a silent cut)."""
+    wanted = list(dict.fromkeys(item_ids))
+    if len(wanted) > KNN_ITEM_IDS_MAX:
+        logger.error(f"[DriveIndex] {method} refused: {len(wanted)} distinct item ids, at most {KNN_ITEM_IDS_MAX}")
+        raise ValueError(f"{method}: {len(wanted)} distinct item ids, at most {KNN_ITEM_IDS_MAX}")
     return wanted
 
 
