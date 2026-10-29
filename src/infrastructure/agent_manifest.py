@@ -30,7 +30,7 @@ To add a new specialist agent:
 """
 
 from ..domain.companion_config import CompanionConfig
-from ..domain.voice_errand import TELL_ALEK_INTENT
+from ..domain.voice_errand import SEND_TO_CHAT_INTENT
 from .agent_registry import AgentDescriptor, ExecutionMode, FanoutSpec
 
 
@@ -86,8 +86,9 @@ class Intent:
     TUTOR_CHAT          = "tutor_chat"
     # Alek as a specialist — internal, named only by LELIK's allowlist (VOICE_COMPANION_RFC §4.7)
     ASK_ALEK            = "ask_alek"
-    # An errand for Alek: runs in the background, the result goes to chat (VOICE_COMPANION_RFC §4.15.2)
-    TELL_ALEK           = TELL_ALEK_INTENT
+    # Something for the caller's chat: Lelik's own tool `send_to_chat`, run as an errand through Alek in the
+    # background (VOICE_COMPANION_RFC §4.15.2, revised 2026-10-29); never an intent of delegate_to_specialist
+    SEND_TO_CHAT        = SEND_TO_CHAT_INTENT
     # Image generation/editing via grok-imagine-image-2.0
     GENERATE_IMAGE      = "generate_image"
     EDIT_IMAGE          = "edit_image"
@@ -842,8 +843,10 @@ LELIK = AgentDescriptor(
     internal=True,  # never a delegation target; the voice webhooks and /voice/delegate reach it directly
     capabilities={},
     description="Voice companion - places the callback, holds the call, delegates like any agent (VOICE_COMPANION_RFC.md)",
-    # VOICE_COMPANION_RFC §4.15: a fast lookup of his own; anything deeper — and every errand — is Alek's.
-    allowed_intents=frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_WEB_LIGHT, Intent.ASK_ALEK, Intent.TELL_ALEK}),
+    # VOICE_COMPANION_RFC §4.15: a fast lookup of his own; anything deeper — and every action — is Alek's.
+    # send_to_chat is not here: it is a tool of its own in the session (LelikAgent.session_config), not an
+    # intent of delegate_to_specialist (§4.15.2, revised 2026-10-29).
+    allowed_intents=frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_WEB_LIGHT, Intent.ASK_ALEK}),
 )
 
 
@@ -852,24 +855,18 @@ ALEK = AgentDescriptor(
     agent_type="alek",
     eager=False,
     internal=True,  # offered only to allowlists that name it (Lelik); never to Smart/Quick
-    # tell_alek is ASYNC (§4.15.2): a Cloud Task, because Cloud Run throttles the CPU of anything left
+    # send_to_chat is ASYNC (§4.15.2): a Cloud Task, because Cloud Run throttles the CPU of anything left
     # running after the response is sent. The gateway posts the outcome to chat itself.
-    capabilities={Intent.ASK_ALEK: ExecutionMode.SYNC, Intent.TELL_ALEK: ExecutionMode.ASYNC},
+    capabilities={Intent.ASK_ALEK: ExecutionMode.SYNC, Intent.SEND_TO_CHAT: ExecutionMode.ASYNC},
     dispatch_deadline_s=720,  # ASK_ALEK_TIMEOUT_MS (600 s) + 2 min overhead, as the generators
     description="Alek — the user's full exocortex, through the Router",
     capability_descriptions={
         Intent.ASK_ALEK: (
-            "Alek, the user's full exocortex, answering in writing. Holds what you do not: mail, "
-            "documents, tasks and reminders, calendar, memory beyond your snapshot, the web, and any "
-            "action in the world. Slow: tens of seconds. He does not hear the call, so put the whole "
-            "question in query."
+            "A question or an action for Alek; he answers you. Takes tens of seconds."
         ),
-        Intent.TELL_ALEK: (
-            "An errand for Alek, done in the background while you carry on: set or change a "
-            "reminder or task, save something, send the caller links or a document in the chat, "
-            "any action in the world. The caller does not wait for it; Alek reports the outcome "
-            "in the chat. Use it when nothing you say next depends on the result — otherwise it "
-            "is a question for ask_alek."
+        # The description of Lelik's send_to_chat tool (LelikAgent.session_config reads it from here).
+        Intent.SEND_TO_CHAT: (
+            "Put something into the caller's chat: Alek finds or makes it and posts it there. You will not hear back."
         ),
     },
 )

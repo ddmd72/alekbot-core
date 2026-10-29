@@ -10,7 +10,7 @@ written: only ConversationHandler writes history.
 ask_alek: reading-shaped answers (links, tables) are copied to chat here, the moment Alek
 answers (§4.10 rule 2); the relay never posts to chat.
 
-tell_alek (§4.15.2): an errand the caller is not waiting for. The commission says so, and
+send_to_chat (§4.15.2, revised 2026-10-29): Lelik's channel tool, run here as an errand the caller is not waiting for. The commission says so, and
 Alek's whole answer is posted to chat — it is the only place the caller will see the outcome.
 
 Drive notes (DRIVE_FILE_NOTES_RFC §4.9, D18): on both paths, a note receipt or an erase request in Smart's answer is
@@ -82,14 +82,14 @@ class AlekGatewayAgent(BaseAgent):
         self._notifications = notification_service
 
     async def can_handle(self, message: AgentMessage) -> bool:
-        # DELEGATE: a tell_alek errand arrives through the Cloud Task worker (AgentWorkerHandler).
+        # DELEGATE: a send_to_chat errand arrives through the Cloud Task worker (AgentWorkerHandler).
         return message.intent in (AgentIntent.QUERY, AgentIntent.DELEGATE) and bool(message.payload.get("query"))
 
     async def execute(self, message: AgentMessage) -> AgentResponse:
         user_id = message.context.get("user_id")
         account_id = message.context.get("account_id")
-        errand = message.payload.get("intent") == Intent.TELL_ALEK
-        origin = "voice:tell_alek" if errand else "voice:ask_alek"
+        errand = message.payload.get("intent") == Intent.SEND_TO_CHAT
+        origin = "voice:send_to_chat" if errand else "voice:ask_alek"
         text = _commission(
             message.payload.get("query", ""),
             message.payload.get("reasoning"),

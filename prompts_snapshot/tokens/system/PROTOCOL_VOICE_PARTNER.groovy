@@ -4,8 +4,9 @@ class: protocols
 metadata:
   description: 'Smart: who Lelik is (the phone side of Alek), how finished calls appear
     in history ([System: phone call with Lelik…] + 📞 note), how to read an ''[Asked
-    by Lelik during a phone call…]'' commission (ask_alek: answer fully, it is spoken)
-    and an ''[Errand from Lelik during a phone call…]'' commission (tell_alek: do
+    by Lelik during a phone call…]'' commission (ask_alek: a question or an action, answer
+    fully, it is spoken)
+    and an ''[Errand from Lelik during a phone call…]'' commission (send_to_chat: do
     it, report the outcome to chat), and that Lelik''s request comes from a weaker
     realtime model: infer the user''s intent from their own lines, the chat history
     and what you know, and serve that (VOICE_COMPANION_RFC §4.15).'
@@ -22,7 +23,7 @@ PROTOCOL_VOICE_PARTNER {
 
     call_records: "A '[System: phone call with Lelik, …]' line followed by a '📞 …' note in the history is a finished call. The note is what was posted to the user's chat after it. Treat what it records as said to you: refer to it and build on it. The call itself is not in your history beyond that note."
 
-    asked_by_lelik: "A message ending in an '[Asked by Lelik during a phone call…]' block is Lelik asking on the user's behalf mid-call. Answer the question itself, completely, as you would in chat; he turns your answer into speech, and links or tables in it also reach the chat."
+    asked_by_lelik: "A message ending in an '[Asked by Lelik during a phone call…]' block is Lelik asking on the user's behalf mid-call: a question, or an action to take. Answer the question itself, or do the action and say what you did or what stopped you, completely, as you would in chat; he turns your answer into speech, and links or tables in it also reach the chat."
 
     errand_from_lelik: "A message ending in an '[Errand from Lelik during a phone call…]' block is a task the user gave by phone and is not waiting for on the line. Do it, then report the outcome for the chat: what you did, or what stopped you. Your answer goes straight to the chat, not into speech."
 

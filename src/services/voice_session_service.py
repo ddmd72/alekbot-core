@@ -9,7 +9,7 @@ from typing import AsyncIterator, Awaitable, Callable, Dict, List, NamedTuple, O
 from src.domain.llm import build_persona_anchor
 from src.domain.request_context import RequestContext
 from src.domain.voice_audio_frame import AudioFrame
-from src.domain.voice_errand import is_errand
+from src.domain.voice_errand import delegation_arguments, is_errand
 from src.domain.voice_call_buffer import VoiceCallBuffer, VoiceTurnSegment
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.domain.voice_provider_profile import LEGACY_VOICE_SESSION
@@ -115,7 +115,7 @@ class _CallState:
     # Delegation task -> realtime call_id, while the relay still waits for its answer. What is left
     # here when the call ends is abandoned, so the main service posts those answers to chat.
     pending_delegations: Dict[asyncio.Task, str] = field(default_factory=dict)
-    # tell_alek errands (RFC §4.15.2): tracked for teardown only. They are not "delegations" —
+    # send_to_chat errands (RFC §4.15.2): tracked for teardown only. They are not "delegations" —
     # nothing waits for them, so no dispatch filler, no waiting notes, no abandon.
     errands: Set[asyncio.Task] = field(default_factory=set)
 
@@ -604,6 +604,8 @@ class VoiceSessionService:
         dispatched_at = state.caller_turns
         if not isinstance(arguments, dict):
             arguments = {}
+        # The session's two tools run as one kind of delegation: send_to_chat becomes its errand intent here.
+        arguments = delegation_arguments(payload.get("name"), arguments)
         logger.info(f"voice call {ticket}: delegation {payload.get('call_id')} dispatched ({arguments.get('intent')})")
         # Tracked, never fire-and-forget (RUF006): the call's teardown cancels what is left.
         task = asyncio.ensure_future(self._run_delegation(

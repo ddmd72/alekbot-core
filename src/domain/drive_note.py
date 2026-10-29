@@ -84,7 +84,7 @@ ERASE_SCOPE_ONE = "one"
 ERASE_SCOPE_ALL = "all"
 # §4.2 (D5 as amended by D18, N8): the run origins that are an owner turn besides a chat message. An explicit list,
 # never a prefix match: a future `voice:` origin is out until it is added on purpose.
-OWNER_TURN_RUN_ORIGINS: FrozenSet[str] = frozenset({"voice:ask_alek", "voice:tell_alek"})
+OWNER_TURN_RUN_ORIGINS: FrozenSet[str] = frozenset({"voice:ask_alek", "voice:send_to_chat"})
 
 # §4.4 step 7: how soon the note shows in search (the receipt's searchability line)
 STATUS_SOON = "soon"                 # a record whose card will carry the note within minutes
@@ -111,7 +111,7 @@ class NoteAction(str, Enum):
 
 class NoteOrigin(str, Enum):
     CHAT = "chat"            # a chat message (a voice memo in chat included)
-    VOICE = "voice"          # a call with Lelik, through ask_alek / tell_alek (D18)
+    VOICE = "voice"          # a call with Lelik, through ask_alek / send_to_chat (D18)
     INDEXER = "indexer"      # lifecycle writes by the tick (never a version)
 
 

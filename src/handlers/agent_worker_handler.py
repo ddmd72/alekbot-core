@@ -120,7 +120,7 @@ class AgentWorkerHandler:
 
         try:
             # A Cloud Task carries no RequestContext, and multi-tenant reads (the Router's memory
-            # search, Firestore repos) resolve user and account from it: without it a tell_alek
+            # search, Firestore repos) resolve user and account from it: without it a send_to_chat
             # errand ran with 0 memory facts (UAT 2026-09-29).
             async with RequestContext(user_id=user_id, account_id=context.get("account_id")):
                 response = await self._coordinator.route_message(message)
@@ -160,7 +160,7 @@ class AgentWorkerHandler:
                     Intent.GENERATE_IMAGE, Intent.EDIT_IMAGE,
                 ):
                     await self._notify_docx_failure(context, response.error)
-                elif intent == Intent.TELL_ALEK:
+                elif intent == Intent.SEND_TO_CHAT:
                     await self._notify_errand_failure(context, query)
 
                 return {
@@ -180,7 +180,7 @@ class AgentWorkerHandler:
             if intent == Intent.EXECUTE_DEEP_RESEARCH_CLAUDE:
                 await self._notify_failure(context)
             # An errand nobody waits for on the line must not fail silently (VOICE_COMPANION_RFC §4.15.2).
-            elif intent == Intent.TELL_ALEK:
+            elif intent == Intent.SEND_TO_CHAT:
                 await self._notify_errand_failure(context, query)
             raise
 
@@ -344,7 +344,7 @@ class AgentWorkerHandler:
         )
 
     async def _notify_errand_failure(self, context: Dict[str, Any], query: str) -> None:
-        """A phone-call errand for Alek (tell_alek) did not complete. On success the gateway
+        """A phone-call errand for Alek (send_to_chat) did not complete. On success the gateway
         posts the outcome itself; a failure is reported here, without the error text."""
         if not self._notification:
             return
