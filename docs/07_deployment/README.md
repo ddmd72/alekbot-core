@@ -492,10 +492,13 @@ the fix is deployed forward; if one is unavoidable, follow it with an explicit `
 - Rebuild one user: `venv/bin/python scripts/infrastructure/drive_index_rebuild.py --user <USER_ID>` (dry run; `--apply`
   marks the sync state `purging` under the user's lease, refused while a tick runs). The next tick purges and re-onboards.
   `--all-users` visits every sync state; `--hints-only` deletes hint documents only.
-- Re-read failed files of one user after a fix of the failure's cause:
-  `venv/bin/python scripts/infrastructure/drive_content_requeue.py --user <USER_ID> [--reason extract_error] [--kind <kind>]`
-  (dry run: counts by kind and reason; `--apply` makes those `failed` records due again under the user's lease, refused
-  while a tick runs). The next tick reads them; no `EXTRACTION_VERSION` bump, so the rest of the drive is not re-read.
+- Re-read files of one user after a fix:
+  `venv/bin/python scripts/infrastructure/drive_content_requeue.py --user <USER_ID> [--reason extract_error | --truncated | --no-text] [--kind <kind>]`
+  (dry run: counts by kind and selection, how many stay held, how many go to the reader and are billed; `--apply` makes
+  the selected records due again under the user's lease, refused while a tick runs). `--reason`: `failed` records with
+  that reason; `--truncated`: indexed records whose text was cut by an older chunk cap; `--no-text`: images with a `text`
+  verdict the reader got no text from. The next tick reads them; no `EXTRACTION_VERSION` bump, so the rest of the drive
+  is not re-read.
 - Transcription: the user's flag off (`scripts/infrastructure/drive_transcribe_flag.py --user USER --off --apply`) stops
   that user's new work and the mirror folder; the kill switch off (`DRIVE_TRANSCRIBE_ENABLED_DEV=off`, redeploy) stops it
   for everyone and freezes in-flight batches. There is no mirror-only switch.
