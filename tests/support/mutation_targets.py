@@ -261,6 +261,9 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.composition.cipher_setup", "tests/unit/composition/cipher_setup_equivalent_mutants.txt"),
     MutationTarget("src.adapters.firestore_mcp_client_repository",
                    "tests/unit/adapters/firestore_mcp_client_repository_equivalent_mutants.txt"),
+    # Secrets at rest, slice S3: the credential store; header-only equivalent file.
+    MutationTarget("src.adapters.firestore_credential_store",
+                   "tests/unit/adapters/firestore_credential_store_equivalent_mutants.txt"),
 )
 
 
