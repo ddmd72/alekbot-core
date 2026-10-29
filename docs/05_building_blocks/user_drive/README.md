@@ -2201,11 +2201,16 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   epoch 1. Project and credentials from the environment / ADC, collections from `APP_ENV`. The purge shows as the
   indexer's `index purged` line. Turning indexing off and on again also rebuilds, but a quick off/on can find the
   index still there and keep it.
-- **Re-read failed files.** `scripts/infrastructure/drive_content_requeue.py --user <user_id> [--reason extract_error]
-  [--kind <kind>]` (dry run: counts by kind and reason, no names) / `--apply`: under the user's lease, each record `failed`
-  with that reason becomes pending with its attempts reset (`content_requeued`, class 3); the next tick reads it again.
-  A failed outcome otherwise stands until the file or `EXTRACTION_VERSION` changes, so this is how a fix of the cause
-  reaches files that already failed, without re-reading the drive.
+- **Re-read failed, truncated or textless files.** `scripts/infrastructure/drive_content_requeue.py --user <user_id>
+  [--reason extract_error | --truncated | --no-text] [--kind <kind>]` (dry run: counts by kind and selection, how many
+  stay held and how many go to the reader, no names) / `--apply`: under the user's lease, each selected record becomes
+  pending, due in class 3, card, chunks and readable generation kept until the new read commits. One selection per run:
+  records `failed` with that reason, attempts reset (`content_requeued`); `--truncated`, indexed records whose text was
+  cut (an older chunk cap), read again under today's caps; `--no-text`, images whose `text` verdict holds but which the
+  reader got no text from (a rendition over the vision cap before the step-down), read by the reader again with no
+  second triage (`content_reread`, `rereadable`). Any outcome otherwise stands until the file or `EXTRACTION_VERSION`
+  changes, so this is how a fix reaches files read before it, without re-reading the drive. A re-read is a normal read:
+  a reader read is billed, and a longer text that no longer fits the user's chunk cap is demoted `user_chunk_cap`.
 - **Smoke.** `scripts/infrastructure/drive_index_smoke.py <user_id>` runs every repository read once against live
   Firestore (record and chunk queries) and names any missing index; it writes nothing.
 - **Mirror operations (T2, live since 2026-10-21).**

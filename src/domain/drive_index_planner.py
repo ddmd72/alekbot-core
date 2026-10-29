@@ -20,6 +20,7 @@ Public interface:
     deferred(rec, until, now, *, maintenance=False) / next_month_start(now) -> datetime
     demoted(rec, reason, now, *, outcome=None, chunk_count=0) / content_retry(rec, reason, now)
     content_requeued(rec, now) -> DriveIndexRecord; FAILED_REASONS                 (the owner's requeue script)
+    rereadable(rec) -> bool / content_reread(rec, now) -> DriveIndexRecord         (the same script, §5.4, §24.5)
     triaged(rec, result, now) -> DriveIndexRecord;  attempt_crashed(rec, now) -> bool
     month_key(now) / usage_now(state, now) / with_usage(state, now, *, pages=0, images=0)
     model_available(state, now) / model_outage(state, now) / model_recovered(state)
@@ -611,9 +612,7 @@ def content_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
     if (rec.state is not RecordState.PENDING or rec.card_capped or inaccessible(rec) or _indexed_now(rec)
             or _held(rec, now)):
         return False   # an inaccessible record holds its content work until the bot can read it again (§26.2)
-    adm = admission(rec.kind)   # a TRANSCRIBE kind never reaches the index step (§27.3, Δ95)
-    return adm is Admission.CONTENT or (adm is Admission.TRIAGE
-                                        and valid_verdict(rec, rec.content_version) is TriageVerdict.TEXT)
+    return _content_read(rec)   # a TRANSCRIBE kind never reaches the index step (§27.3, Δ95)
 
 
 def triage_due(rec: DriveIndexRecord, now: Optional[datetime] = None) -> bool:
@@ -1006,6 +1005,44 @@ def content_requeued(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     The readable generation, the card and every other field are kept. Raises on any other record."""
     if rec.state is not RecordState.FAILED or rec.reason not in _FAILED_REASONS:
         raise ValueError(f"item {rec.item_id} is not failed with a per-file reason")
+    return _read_again(rec, now)
+
+
+def rereadable(rec: DriveIndexRecord) -> bool:
+    """A content outcome that stands (_outcome_stands) although a later fix would read the file better, so only the
+    owner's re-read reaches it (content_reread):
+    - `indexed` and `truncated` (§5.4): its text was cut, e.g. by an older MAX_CHUNKS_PER_FILE;
+    - `metadata_only` with no_text, an image whose `text` verdict still holds (§24.5): the reader got no text from it,
+      e.g. because its rendition was over the vision cap before the rendition step-down.
+    Only a file whose content the index step reads (_content_read): a transcribed recording is never one."""
+    if rec.is_folder or not _content_read(rec):
+        return False
+    if rec.state is RecordState.INDEXED:
+        return rec.truncated and rec.indexed_generation is not None
+    return (rec.state is RecordState.METADATA_ONLY and rec.reason is Reason.NO_TEXT
+            and admission(rec.kind) is Admission.TRIAGE)
+
+
+def content_reread(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
+    """The owner's re-read of a `rereadable` record (scripts/infrastructure/drive_content_requeue.py), the same move as
+    content_requeued (§8.2, §12.3): pending, `extraction_version` 0, due at once in class 3. A truncated record keeps
+    its readable generation and its card, served until the new generation commits (§7.4), which the chunk cap then
+    counts in place of the old one (§5.4). An image keeps its `text` verdict, so it goes to the reader again and is not
+    triaged (or billed for triage) again (§24.5). Raises on any other record."""
+    if not rereadable(rec):
+        raise ValueError(f"item {rec.item_id} is neither a truncated read nor a text image with no text")
+    return _read_again(rec, now)
+
+
+def _content_read(rec: DriveIndexRecord) -> bool:
+    """The index step reads this record's content once it is pending (content_due): a content kind, or an image with a
+    valid `text` verdict."""
+    adm = admission(rec.kind)
+    return adm is Admission.CONTENT or (adm is Admission.TRIAGE
+                                        and valid_verdict(rec, rec.content_version) is TriageVerdict.TEXT)
+
+
+def _read_again(rec: DriveIndexRecord, now: datetime) -> DriveIndexRecord:
     pending = replace(reextraction_due(rec), state=RecordState.PENDING, reason=None, attempts=0,
                       attempt_started_at=None, dirty_since=None, defer_until=None, defer_priority=None,
                       model_outages=0)
