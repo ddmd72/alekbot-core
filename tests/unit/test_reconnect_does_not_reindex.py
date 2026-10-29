@@ -1,0 +1,337 @@
+"""I8, "a reconnect does not re-index" (SECRETS_AT_REST_RFC §6.2, §8 I8; I4 on the indexer path).
+
+After the credential cutover the new store starts empty: every integration reads "not connected" until the user
+consents once. This file drives that consent through the real chain and asserts what the feature stores hold after it.
+
+Real: the oauth blueprint's callbacks, `GoogleOAuthService`, `FirestoreCredentialStore` + `AesGcmTestCipher`,
+`FirestoreIndexedEmailRepository`, `FirestoreTaskConfigRepository`, `FirestoreTaskSearchIndex`, `TaskSetupService`,
+`OneDriveAdapter.connection`, `DriveIndexingService` over `InMemoryDriveIndexRepository`, `GcpTaskQueue` over
+`tests/support/cloud_tasks_fake.py` (the main service's worker queue); all Firestore on one `EvalDb`.
+Fakes: HTTP through `tests/support/http_boundary_fake.py` (token endpoints, Google userinfo, Graph `/me`, approot); the
+drive's I/O through `FakeContentDrive` with `connection()` delegated to the real adapter; To Do's Graph subscription
+lifecycle (`GraphSubscriptions`, subscriptions with an expiry). The drive tick's own continuation queue is the drive
+harness's `FakeQueue` (the indexer's queue, not the worker queue).
+
+Outcomes by integration:
+- Gmail holds: a consent writes only the credential and enqueues no indexing.
+- Drive holds within the grace: the same drive resumes from the stored cursor, nothing purged. Another drive purges by
+  design (drive switch). A reconnect over 30 days after the loss purges (expired), and the next ticks rebuild the index
+  from scratch: a paid rebuild (card embeddings, content and enrichment work again).
+- To Do: an active subscription is kept and nothing is re-read; a lapsed one is registered again and the primary list is
+  re-read once (`reindex_task_list`), an upsert that deletes nothing (Q3, accepted).
+- I4: a cipher that fails on decrypt makes the tick raise; no loss is recorded, nothing is purged.
+"""
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from typing import Any, List
+from unittest.mock import Mock
+
+import pytest
+from quart import Quart
+
+from src.adapters.firestore_credential_store import FirestoreCredentialStore
+from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
+from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
+from src.adapters.firestore_task_search_index import FirestoreTaskSearchIndex
+from src.adapters.gcp_task_queue import GcpTaskQueue
+from src.adapters.microsoft import OneDriveAdapter
+from src.domain.drive_index_params import ACCESS_LOSS_TTL
+from src.domain.email import IndexingState
+from src.domain.task import TaskSubscriptionConfig, TaskUserConfig
+from src.ports.task_lifecycle_port import TaskLifecyclePort
+from src.services.google_oauth_service import GMAIL_SCOPES, GoogleOAuthService
+from src.services.task_setup_service import TaskSetupService
+from src.web.oauth_app import create_oauth_blueprint
+from tests.support import http_boundary_fake
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.support.cloud_tasks_fake import FakeCloudTasksClient
+from tests.support.firestore_eval import EvalDb
+from tests.unit.services.test_drive_indexing_service import World as DriveWorld
+
+USER = "u"   # the drive harness's user
+GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
+USERINFO = "https://www.googleapis.com/oauth2/v3/userinfo"
+MS_TOKEN = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+GRAPH_ME = "https://graph.microsoft.com/v1.0/me"
+APPROOT = "https://graph.microsoft.com/v1.0/me/drive/special/approot"
+ENV = SimpleNamespace(
+    credentials_collection="eval_credentials", domain_email_facts_collection="eval_email_facts",
+    email_indexing_state_collection="eval_email_state", task_config_collection="eval_task_config",
+    task_search_index_collection="eval_task_search")
+INDEXED_THROUGH = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
+OLDEST = datetime(2026, 1, 3, 8, 0, tzinfo=timezone.utc)
+
+
+class FailingDecrypt(AesGcmTestCipher):
+    """Encrypts; decrypt fails while `failing` is set (a KMS outage or a lost permission)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.failing = False
+
+    async def decrypt(self, ciphertext: str, *, aad: str) -> str:
+        if self.failing:
+            raise RuntimeError("KMS decrypt unavailable")
+        return await super().decrypt(ciphertext, aad=aad)
+
+
+class GraphSubscriptions(TaskLifecyclePort):
+    """To Do's Graph lifecycle with semantics: the primary list exists, a subscription lives three days."""
+
+    def __init__(self) -> None:
+        self.live: dict = {}
+        self.registered: List[str] = []
+
+    async def ensure_primary_list(self, user_id: str) -> str:
+        return "l1"
+
+    async def register_subscription(self, user_id: str, list_id: str, notification_url_base: str):
+        sub_id = f"s{len(self.registered) + 1}"
+        self.registered.append(sub_id)
+        sub = TaskSubscriptionConfig(sub_id=sub_id, list_id=list_id,
+                                     expires_at=datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=3))
+        self.live[sub_id] = sub
+        return sub
+
+    async def renew_subscription(self, user_id: str, sub_id: str):
+        raise AssertionError("no renewal in a consent")
+
+    async def delete_subscription(self, user_id: str, sub_id: str) -> None:
+        self.live.pop(sub_id, None)
+
+
+class World:
+    def __init__(self, monkeypatch) -> None:
+        monkeypatch.setattr(FakeCloudTasksClient, "instances", [])
+        monkeypatch.setattr("google.cloud.tasks_v2.CloudTasksClient", FakeCloudTasksClient)
+        self.http = http_boundary_fake.install(monkeypatch)
+        self.db = EvalDb()
+        self.cipher = FailingDecrypt()
+        self.store = FirestoreCredentialStore(self.db, ENV, cipher=self.cipher)
+        self.email = FirestoreIndexedEmailRepository(self.db, ENV)
+        self.task_config = FirestoreTaskConfigRepository(self.db, ENV)
+        self.search_index = FirestoreTaskSearchIndex(self.db, ENV)
+        self.queue = GcpTaskQueue("p", "us-central1", "worker-q", "https://svc.example.test")
+        self.graph = GraphSubscriptions()
+        self.task_setup = TaskSetupService(
+            lifecycle=self.graph, task_config=self.task_config, tasks_provider=None, oauth_credentials=self.store,
+            task_search_index=self.search_index, task_queue=self.queue,
+            notification_url_base="https://svc.example.test")
+        session_service = Mock()
+        session_service.verify_access_token = Mock(return_value={"sub": USER})
+        self.app = Quart("test_reconnect_does_not_reindex")
+        self.app.register_blueprint(create_oauth_blueprint(
+            auth_service=Mock(), session_service=session_service, auth_registry=Mock(),
+            auth_config=SimpleNamespace(oauth_redirect_uri="https://example.test/auth/callback",
+                                        gmail_oauth_redirect_uri="https://example.test/auth/connect-gmail/callback"),
+            gmail_oauth_service=GoogleOAuthService("cid", "csecret", scopes=GMAIL_SCOPES),
+            oauth_credentials_port=self.store, ms_todo_client_id="ms-cid", ms_todo_client_secret="ms-csecret",
+            ms_todo_redirect_uri="https://example.test/auth/connect-microsoft-todo/callback",
+            onedrive_redirect_uri="https://example.test/auth/connect-onedrive/callback",
+            task_queue=self.queue))
+        self.http.route("POST", GOOGLE_TOKEN, body={"access_token": "at-g", "refresh_token": "rt-g",
+                                                    "expires_in": 3600})
+        self.http.route("POST", MS_TOKEN, body={"access_token": "at-m", "refresh_token": "rt-m", "expires_in": 3600,
+                                                "scope": "Files.ReadWrite.AppFolder offline_access User.Read"})
+        self.http.route("GET", USERINFO, body={"sub": "sub-g", "email": "user@example.com"})
+        self.http.route("GET", GRAPH_ME, body={"id": "sub-m", "mail": "user@example.test"})
+        self.approot("d1")
+
+    def approot(self, drive_id: str) -> None:
+        self.http.route("GET", APPROOT, body={"id": "R!1", "parentReference": {"driveId": drive_id}})
+
+    def bodies(self) -> List[dict]:
+        return [b for c in FakeCloudTasksClient.instances for b in c.created_bodies()]
+
+    def docs(self, name: str) -> dict:
+        return {k: dict(v) for k, v in self.db.collection(name).docs.items()}
+
+    async def consent(self, path: str, state_cookie: str, user_cookie: str):
+        async with self.app.test_client() as client:
+            client.set_cookie("localhost", state_cookie, "st-1")
+            client.set_cookie("localhost", user_cookie, USER)
+            return await client.get(f"{path}?code=c-1&state=st-1")
+
+
+@pytest.fixture
+def world(monkeypatch) -> World:
+    return World(monkeypatch)
+
+
+# ------------------------------------------------------------------------------------------------ Gmail
+
+async def test_gmail_a_consent_writes_only_the_credential_and_enqueues_no_indexing(world):
+    await world.email.update_indexing_state(IndexingState(user_id=USER, provider="gmail",
+                                                          indexed_through=INDEXED_THROUGH,
+                                                          oldest_indexed_through=OLDEST))
+    world.db.collection(ENV.domain_email_facts_collection).docs["e1"] = {"user_id": USER, "subject": "Invoice FA-0137"}
+    emails_before = world.docs(ENV.domain_email_facts_collection)
+    assert await world.store.is_connected(USER, "gmail") is False
+
+    resp = await world.consent("/auth/connect-gmail/callback", "gmail_oauth_state", "gmail_connect_user_id")
+
+    assert resp.headers["Location"] == "/cabinet?gmail_connected=1"
+    assert [d["kind"] for d in world.docs(ENV.credentials_collection).values()] == ["gmail"]
+    assert not [b for b in world.bodies() if b["task_type"] in ("email_indexing", "start_email_indexing")]
+    state = await world.email.get_indexing_state(USER, "gmail")
+    naive = (INDEXED_THROUGH.replace(tzinfo=None), OLDEST.replace(tzinfo=None))   # the repo reads naive UTC back
+    assert (state.indexed_through.replace(tzinfo=None), state.oldest_indexed_through.replace(tzinfo=None)) == naive
+    assert world.docs(ENV.domain_email_facts_collection) == emails_before
+    assert world.http.unrouted == []
+
+
+# ------------------------------------------------------------------------------------------------ Drive
+
+class Drive:
+    """The drive harness, its connection read through the real OneDriveAdapter over the new store; before `cutover()`
+    the index is built as the old store left it (connected to drive d1)."""
+
+    def __init__(self, world: World) -> None:
+        self.w = DriveWorld()
+        self.adapter = OneDriveAdapter(oauth_credentials=world.store, client_id="ms-cid", client_secret="ms-csecret")
+        self.cursors: List[Any] = []
+        real_changes = self.w.drive.get_changes
+
+        async def recording_changes(user_id, cursor):
+            self.cursors.append(cursor)
+            return await real_changes(user_id, cursor)
+
+        self.w.drive.get_changes = recording_changes
+
+    def cutover(self) -> None:
+        self.w.drive.connection = self.adapter.connection
+        self.cursors.clear()
+
+    async def built(self) -> Any:
+        self.w.drive.add("a.pdf")
+        self.w.drive.add("b.pdf")
+        await self.w.settle()
+        state = await self.w.repo.get_sync_state(USER)
+        assert state.drive_id == "d1" and state.cursor and state.cursor.startswith("delta:")
+        return state
+
+
+async def _onedrive_consent(world: World):
+    return await world.consent("/auth/connect-onedrive/callback", "drive_oauth_state", "drive_connect_user_id")
+
+
+async def test_drive_no_credential_records_the_loss_and_keeps_the_index(world):
+    drive = Drive(world)
+    await drive.built()
+    records = len(drive.w.repo.records)
+    drive.cutover()
+    assert (await drive.w.tick()).status == "access_lost"
+    state = await drive.w.repo.get_sync_state(USER)
+    assert state.access_lost_at is not None
+    assert len(drive.w.repo.records) == records and drive.w.carded()
+
+
+async def test_drive_same_drive_consent_resumes_from_the_stored_cursor(world):
+    drive = Drive(world)
+    stored = await drive.built()
+    records = dict(drive.w.repo.records)
+    drive.cutover()
+    await drive.w.tick()
+    assert (await drive.w.repo.get_sync_state(USER)).access_lost_at is not None
+
+    resp = await _onedrive_consent(world)
+    assert resp.headers["Location"] == "/cabinet?drive_connected=1"
+    assert (await world.store.get_credentials(USER, "microsoft_onedrive")).drive_id == "d1"
+    result = await drive.w.tick()
+
+    assert result.status not in ("purged", "purging", "access_lost")
+    assert drive.cursors and drive.cursors[0] == stored.cursor
+    after = await drive.w.repo.get_sync_state(USER)
+    assert after.access_lost_at is None and after.epoch == stored.epoch and not after.purging
+    assert set(drive.w.repo.records) == set(records)
+
+
+async def test_drive_another_drive_consent_purges_by_switch(world):
+    drive = Drive(world)
+    await drive.built()
+    drive.cutover()
+    await drive.w.tick()
+    world.approot("d2")
+
+    await _onedrive_consent(world)
+    result = await drive.w.tick()
+
+    assert result.status in ("purged", "purging")
+    assert drive.w.repo.records == {}
+
+
+async def test_drive_a_reconnect_past_the_grace_purges_as_expired(world):
+    """Over 30 days after the loss: the index is purged (expired) and the next ticks rebuild it, a paid rebuild."""
+    drive = Drive(world)
+    await drive.built()
+    drive.cutover()
+    await drive.w.tick()
+    drive.w.clock.advance(ACCESS_LOSS_TTL.total_seconds() + 60)
+
+    result = await drive.w.tick()
+
+    assert result.status == "purged"
+    assert drive.w.repo.records == {} and await drive.w.repo.get_sync_state(USER) is None
+
+
+async def test_drive_a_failing_decrypt_raises_and_records_no_loss(world):
+    """I4: the indexer reads the connection before any decision (drive_indexing_service.py tick), so a KMS failure is
+    a failed tick, never "not connected": no loss mark, no purge."""
+    drive = Drive(world)
+    await drive.built()
+    drive.cutover()
+    await _onedrive_consent(world)
+    await drive.w.tick()
+    records = dict(drive.w.repo.records)
+    tasks = len(drive.w.queue.tasks)
+    world.cipher.failing = True
+
+    with pytest.raises(RuntimeError, match="KMS decrypt unavailable"):
+        await drive.w.tick()
+
+    state = await drive.w.repo.get_sync_state(USER)
+    assert state.access_lost_at is None and not state.purging
+    assert drive.w.repo.records == records and len(drive.w.queue.tasks) == tasks
+    assert await world.store.is_connected(USER, "microsoft_onedrive") is True
+
+
+# ------------------------------------------------------------------------------------------------ To Do
+
+async def _todo_consent_and_setup(world: World):
+    resp = await world.consent("/auth/connect-microsoft-todo/callback", "microsoft_todo_oauth_state",
+                               "microsoft_todo_connect_user_id")
+    assert resp.headers["Location"] == "/cabinet?microsoft_todo_connected=1"
+    setups = [b for b in world.bodies() if b["task_type"] == "setup_microsoft_todo"]
+    assert setups == [{"task_type": "setup_microsoft_todo", "user_id": USER}]
+    await world.task_setup.setup(USER)
+
+
+async def _seed_todo(world: World, expires_at: datetime) -> dict:
+    await world.task_config.save_config(USER, TaskUserConfig(
+        primary_list_id="l1", subscriptions=[TaskSubscriptionConfig(sub_id="s0", list_id="l1", expires_at=expires_at)]))
+    world.db.collection(ENV.task_search_index_collection).docs["u:t1"] = {"user_id": USER, "list_id": "l1",
+                                                                          "title": "Renew the library card"}
+    return world.docs(ENV.task_search_index_collection)
+
+
+async def test_todo_an_active_subscription_is_kept_and_nothing_is_re_read(world):
+    index = await _seed_todo(world, datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=2))
+
+    await _todo_consent_and_setup(world)
+
+    assert not [b for b in world.bodies() if b["task_type"] == "reindex_task_list"]
+    assert world.graph.registered == []
+    assert [s.sub_id for s in (await world.task_config.get_config(USER)).subscriptions] == ["s0"]
+    assert world.docs(ENV.task_search_index_collection) == index
+
+
+async def test_todo_a_lapsed_subscription_re_reads_the_list_once_and_deletes_nothing(world):
+    index = await _seed_todo(world, datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1))
+
+    await _todo_consent_and_setup(world)
+
+    reindex = [b for b in world.bodies() if b["task_type"] == "reindex_task_list"]
+    assert reindex == [{"task_type": "reindex_task_list", "user_id": USER, "list_id": "l1"}]
+    assert world.graph.registered == ["s1"]
+    assert [s.sub_id for s in (await world.task_config.get_config(USER)).subscriptions] == ["s1"]
+    assert world.docs(ENV.task_search_index_collection) == index
