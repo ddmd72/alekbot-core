@@ -4,7 +4,9 @@ import asyncio
 import os
 import shutil
 import socket
+import sys
 import tempfile
+import urllib.request
 
 import google.auth
 import grpc
@@ -77,6 +79,13 @@ class TestSocketGuard:
         with pytest.raises(SocketConnectBlockedError, match=PUBLIC_IP):
             requests.get(f"http://{PUBLIC_IP}/", timeout=2)  # plain http: no TLS, no CA bundle involved
 
+    def test_the_grpc_proxy_variable_is_removed_too(self, monkeypatch):
+        """gRPC's C-core reads grpc_proxy before https_proxy, through sockets the socket guard never sees."""
+        monkeypatch.setenv("grpc_proxy", "http://127.0.0.1:9")
+        monkeypatch.setenv("GRPC_PROXY", "http://127.0.0.1:9")
+        network_guard.install(monkeypatch)
+        assert "grpc_proxy" not in os.environ and "GRPC_PROXY" not in os.environ
+
     def test_create_connection_to_a_public_address_raises(self):
         with pytest.raises(SocketConnectBlockedError):
             socket.create_connection((PUBLIC_IP, 443), timeout=1)
@@ -146,6 +155,53 @@ class TestSocketGuard:
         finally:
             server.close()
             await server.wait_closed()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="urllib consults the macOS system proxy only on darwin")
+class TestSystemProxyCannotTunnelOut:
+    """A local intercepting proxy set as the macOS system proxy (scutil --proxy) is read by urllib.request.getproxies()
+    when no proxy variable is set, and requests, httpx, aiohttp and urllib all follow it to an allowed loopback port.
+    A loopback listener stands in for that proxy: it must never be connected to."""
+
+    @pytest.fixture
+    def stand_in_proxy(self, monkeypatch):
+        server = _listener()
+        server.setblocking(False)
+        url = "http://127.0.0.1:%d" % server.getsockname()[1]
+        monkeypatch.setattr(urllib.request, "getproxies_macosx_sysconf", lambda: {"http": url, "https": url})
+        network_guard.install(monkeypatch)
+        yield server
+        try:
+            with pytest.raises(BlockingIOError):
+                server.accept()  # nothing ever connected to the stand-in proxy
+        finally:
+            server.close()
+
+    def test_requests_does_not_follow_the_system_proxy(self, stand_in_proxy):
+        import requests
+
+        with pytest.raises(SocketConnectBlockedError, match=PUBLIC_IP):
+            requests.get(f"http://{PUBLIC_IP}/", timeout=2)
+
+    def test_httpx_does_not_follow_the_system_proxy(self, stand_in_proxy):
+        import httpx
+
+        with pytest.raises(SocketConnectBlockedError, match=PUBLIC_IP):
+            httpx.get(f"http://{PUBLIC_IP}/", timeout=2)
+
+    def test_urllib_does_not_follow_the_system_proxy(self, stand_in_proxy):
+        with pytest.raises(SocketConnectBlockedError, match=PUBLIC_IP):  # a RuntimeError: urllib does not wrap it in URLError
+            urllib.request.urlopen(f"http://{PUBLIC_IP}/", timeout=2)
+
+    def test_a_test_that_rewrites_the_environment_still_gets_no_proxy(self, stand_in_proxy, monkeypatch):
+        """prod_env.seal() empties os.environ after the guard: a NO_PROXY set by the caller does not survive it."""
+        import httpx
+
+        monkeypatch.delenv("NO_PROXY", raising=False)
+        monkeypatch.delenv("no_proxy", raising=False)
+        assert urllib.request.getproxies() == {}
+        with pytest.raises(SocketConnectBlockedError, match=PUBLIC_IP):
+            httpx.get(f"http://{PUBLIC_IP}/", timeout=2)
 
 
 class TestGrpcTripwire:
