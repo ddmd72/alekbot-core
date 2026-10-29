@@ -72,6 +72,19 @@ class TestServiceContainerWiring:
         assert container.email_indexing_service is not None
         assert container.email_indexing_service._oauth is container.oauth_credentials
 
+    def test_email_indexing_service_gets_the_ops_alert_sink(self, monkeypatch, fake_config):
+        """A classifier failure alerts through the ops webhook the container was given."""
+        monkeypatch.setenv("APP_ENV", "test")
+        webhook = MagicMock(name="alert_webhook")
+        built = ServiceContainer(
+            config=fake_config,
+            db_client=MagicMock(),
+            env_config=EnvironmentConfig(),
+            account_repo=AsyncMock(spec=AccountRepository),
+            alert_webhook=webhook,
+        )
+        assert built.email_indexing_service._alert_sink is webhook
+
     def test_email_search_service_has_oauth_port(self, container):
         """Same structural guard for the sibling EmailSearchService."""
         assert container.email_search_service is not None

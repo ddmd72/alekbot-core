@@ -93,6 +93,9 @@ class EmailClassificationResult:
     fact: Optional[str]        # Self-contained fact sentence; becomes IndexedEmail.text
     tags: List[str]
     valuable_type: str = "confirmed_event"  # "confirmed_event" | "biographical_signal"
+    # Set only by a classifier failure (parse_error | max_turns | exception): the email was
+    # never judged, so it must not be read as noise.
+    failure: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

@@ -177,7 +177,7 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
                             logger.error(
                                 f"💥 classify_batch: parse_error after {parse_retries} attempts"
                             )
-                            return self._all_failed(emails)
+                            return self._all_failed(emails, "parse_error")
                         # Retry: send bad response + correction back to the LLM
                         history.append(
                             Message(role="model", parts=[MessagePart(text=raw)])
@@ -258,7 +258,7 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
             logger.warning(
                 f"⚠️ classify_batch: MAX_TURNS={MAX_TURNS} reached without final classification"
             )
-            return self._all_failed(emails)
+            return self._all_failed(emails, "max_turns")
 
         except (LLMUnavailableError, LLMRateLimitError) as exc:
             # Transient — let Cloud Tasks retry the whole page instead of silently
@@ -270,7 +270,7 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
             raise
         except Exception as exc:
             logger.error(f"💥 EmailClassificationAgent.classify_batch failed: {exc}")
-            return self._all_failed(emails)
+            return self._all_failed(emails, type(exc).__name__)
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -425,6 +425,7 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
     @staticmethod
     def _all_failed(
         emails: List[EmailMetadata],
+        failure: str,
     ) -> List[EmailClassificationResult]:
         return [
             EmailClassificationResult(
@@ -433,6 +434,7 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
                 category=None,
                 fact=None,
                 tags=[],
+                failure=failure,
             )
             for e in emails
         ]

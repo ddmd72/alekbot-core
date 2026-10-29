@@ -24,6 +24,7 @@ from ..domain.email import (
     IndexingState,
     OAuthCredentials,
 )
+from ..ports.alert_sink import AlertSinkPort
 from ..ports.email_exclusions_port import EmailExclusionsPort
 from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
 from ..ports.email_provider_port import EmailProviderPort
@@ -56,6 +57,7 @@ class EmailIndexingService:
         classifier: EmailClassifierPort,
         embedding: EmbeddingService,
         oauth: Optional[OAuthCredentialsPort],
+        alert_sink: Optional[AlertSinkPort] = None,
     ):
         self._gmail = gmail
         self._email_repo = email_repo
@@ -64,6 +66,7 @@ class EmailIndexingService:
         self._classifier = classifier
         self._embedding = embedding
         self._oauth = oauth
+        self._alert_sink = alert_sink
         logger.info("📧 EmailIndexingService initialized")
 
     # ------------------------------------------------------------------
@@ -415,6 +418,12 @@ class EmailIndexingService:
                 valuable = [
                     c for c in classifications if c.valuable and c.fact
                 ]
+                failed = [c for c in classifications if c.failure]
+                if failed:
+                    job.emails_failed += len(failed)
+                    await self._alert_classifier_failure(
+                        job.job_id, job.user_id, len(failed), failed[0].failure
+                    )
 
                 # 4. Fetch full content for ALL valuable emails (attachment filenames).
                 #    Always re-fetches regardless of what was already fetched during
@@ -564,6 +573,20 @@ class EmailIndexingService:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    async def _alert_classifier_failure(
+        self, job_id: str, user_id: str, count: int, failure: Optional[str]
+    ) -> None:
+        """One ops alert per failed page; best effort, no email content."""
+        if self._alert_sink is None:
+            return
+        try:
+            await self._alert_sink.post(
+                f"🚨 Email classifier failed: job={job_id[:8]} user={user_id[:8]} "
+                f"page_emails={count} failure={failure}"
+            )
+        except Exception as exc:
+            logger.warning(f"⚠️ classifier-failure alert not delivered ({type(exc).__name__})")
 
     async def _finalize_cursor(
         self,
