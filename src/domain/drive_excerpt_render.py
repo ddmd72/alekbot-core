@@ -9,7 +9,7 @@ note outside the wrapper; the file's description first inside it.
 
 Public interface:
     render_excerpts(result, *, nonce, shown_folders, described_files) -> RenderedExcerpts   one call's tool result
-    render_block(files, context, *, nonce) -> str       the consolidated block the ledger builds for the orchestrator
+    render_block(files, context, *, nonce, pages, matched) -> str   the consolidated block the ledger builds for the orchestrator
     searched_line(results) -> str                       A12: what a passages run did, from the collector
     head_line(file, run) -> str                         one run's `[id <ref>:<i>-<j> · <path> · passages i–j of N]`
 """
@@ -25,6 +25,8 @@ from .drive_excerpt_context import ExcerptContext, folder_line, plan_context, qu
 from .drive_excerpt_context_plan import ContextPlan
 from .drive_excerpt_file import ExcerptFile
 from .drive_excerpt_file_context import FileContext
+from .drive_excerpt_page import PageSpan, last_page_start
+from .drive_index_lean import ChunkId
 from .drive_excerpt_range_request import ExcerptRangeRequest
 from .drive_excerpt_rendered import RenderedExcerpts
 from .drive_excerpt_request import ExcerptRequest
@@ -44,6 +46,9 @@ from .user_drive import make_drive_ref
 OPENING_FIND = "Passages nearest to the question: excerpts of the indexed text, not whole files."
 OPENING_RANGE = "Passages read by number: excerpts of the indexed text, not whole files."
 OPENING_BLOCK = "Passages retrieved for this request: excerpts of the files' indexed text, not whole files."
+OPENING_BLOCK_PAGES = "Pages read in order: the files' indexed text, a page at a time, not whole files."
+OPENING_BLOCK_MIXED = ("Passages retrieved for this request and pages read in order: excerpts of the files' indexed "
+                       "text, not whole files; each file's \"pages read\" line says which is which.")
 SCOPE_FOLDER = "Searched only within the requested folder and its subfolders."
 SCOPE_FILES = "Searched only within the requested files."
 BUILDING = "The index is still being built: some files may not be in it yet."
@@ -67,8 +72,25 @@ DROPPED = "Folder notes not shown (limit): {paths}"
 SEARCHED_WHOLE_DRIVE = "the whole drive"
 SEARCHED_FOLDER = "folder {path}"
 SEARCHED_FILES = "files {paths}"
-SEARCHED_PARTS = ("{scope}", "passage questions: {questions}", "neighbours: {neighbours}", "opened: {opened}",
-                  "searches: {searches}")
+PAGE_NEXT = ("Page: passages {first}–{last} of {total} of {path}, indexed text version {version}. "
+             "Next page: " + READ_PASSAGES + " passages=\"from {next}\".")
+PAGE_END = "Page: passages {first}–{last} of {total} of {path}, indexed text version {version}: the end of the file."
+PAGE_END_TRUNCATED = ("Page: passages {first}–{last} of {total} of {path}, indexed text version {version}: the end "
+                      "of the indexed text. The file goes on past it; that part cannot be read.")
+PAGE_STALE = " The file changed after this version was indexed."
+PAGE_PAST_END = ("{path} has {total} passages (indexed text version {version}); passage {first} is past the end. "
+                 "The last page starts at passage {last_page}.")
+PAGES_READ = "pages read: passages {ranges} of {total}, indexed text version {version}"
+PAGES_READ_NEXT = "; next page: from {next}"
+PAGES_READ_END = "; the end of the file"
+PAGES_READ_END_TRUNCATED = "; the end of the indexed text: the file goes on past it, and that part cannot be read"
+NEAREST = " · nearest the question: {numbers}"
+PAGES_READ_STALE = "; the file changed after this version was indexed"
+SEARCHED_PAGE_NEXT = "{path} passages {first}–{last} (next: from {next})"
+SEARCHED_PAGE_END = "{path} passages {first}–{last} (the end)"
+SEARCHED_PAGE_PAST_END = "{path} from passage {first} (past the end)"
+SEARCHED_PARTS = ("{scope}", "passage questions: {questions}", "neighbours: {neighbours}", "pages: {pages}",
+                  "opened: {opened}", "searches: {searches}")
 
 
 def _low_accuracy(file: ExcerptFile) -> bool:
@@ -91,7 +113,8 @@ def head_line(file: ExcerptFile, run: ExcerptRun) -> str:
                        total=file.chunk_count, marks=_marks(file))
 
 
-def _file_block(file: ExcerptFile, nonce: str, plan: ContextPlan, context: Optional[FileContext]) -> List[str]:
+def _file_block(file: ExcerptFile, nonce: str, plan: ContextPlan, context: Optional[FileContext],
+                pages_line: str = "") -> List[str]:
     """Folder lines, head lines and the file's own note outside the wrapper (code and the owner's words); the
     description, the text and the file's state lines inside it."""
     described = context is not None and file.item_id in plan.described
@@ -111,6 +134,7 @@ def _file_block(file: ExcerptFile, nonce: str, plan: ContextPlan, context: Optio
         body.append(ALSO_AT.format(paths="; ".join(file.also_at)))
     own_note = [escape_text(context.own_note)] if described and context is not None and context.own_note else []
     return [*(folder_line(note) for note in plan.before.get(file.item_id, ())),
+            *([pages_line] if pages_line else []),
             *(head_line(file, run) for run in runs), *own_note,
             wrap_untrusted("\n".join(body), nonce=nonce, ref=file.ref, path=file.path)]
 
@@ -127,11 +151,11 @@ def _planned(files: Sequence[ExcerptFile], context: ExcerptContext, *, shown_fol
 
 
 def _files(files: Sequence[ExcerptFile], nonce: Callable[[], str], plan: ContextPlan,
-           by_id: Mapping[str, FileContext]) -> List[str]:
+           by_id: Mapping[str, FileContext], pages_line: Callable[[ExcerptFile], str] = lambda f: "") -> List[str]:
     out: List[str] = []
     for file in files:
         if file.chunks:
-            out.extend(_file_block(file, nonce(), plan, by_id.get(file.item_id)))
+            out.extend(_file_block(file, nonce(), plan, by_id.get(file.item_id), pages_line(file)))
     return out
 
 
@@ -179,19 +203,74 @@ def render_excerpts(result: ExcerptResult, *, nonce: Callable[[], str], shown_fo
                                     described_files=described_files)
     blocks = _files(result.files, nonce, plan, by_id)
     if not blocks and not result.repeated:
-        out.append(NO_PASSAGES)
+        out.append(page_past_end(result.page) if result.page is not None and result.page.past_end else NO_PASSAGES)
     out.extend(dropped)
     out.extend(blocks)
-    if result.continue_at is not None:
+    if result.page is not None:
+        if not result.page.past_end:
+            out.append(page_line(result.page))
+    elif result.continue_at is not None:
         out.append(CONTINUE.format(number=result.continue_at))
     return RenderedExcerpts(text="\n".join(out), plan=plan)
 
 
-def render_block(files: Sequence[ExcerptFile], context: ExcerptContext, *, nonce: Callable[[], str]) -> str:
+def page_past_end(page: PageSpan) -> str:
+    return PAGE_PAST_END.format(path=quoted(page.path or "/"), total=page.total, version=page.version,
+                                first=page.first, last_page=last_page_start(page.total))
+
+
+def page_line(page: PageSpan) -> str:
+    """The code line after a page's blocks (§29.7): where the page stands and where the next one starts."""
+    numbers = dict(first=page.first, last=page.last, total=page.total, path=quoted(page.path or "/"),
+                   version=page.version, next=page.next)
+    text = (PAGE_END_TRUNCATED if page.end and page.truncated else PAGE_END if page.end else PAGE_NEXT).format(**numbers)
+    return text + (PAGE_STALE if page.stale else "")
+
+
+def _runs(numbers: Sequence[int]) -> str:
+    runs: List[List[int]] = []
+    for n in sorted(set(numbers)):
+        if runs and n == runs[-1][1] + 1:
+            runs[-1][1] = n
+        else:
+            runs.append([n, n])
+    return ", ".join(str(a) if a == b else f"{a}–{b}" for a, b in runs)
+
+
+def _pages_read(spans: Sequence[PageSpan], matched_numbers: Sequence[int]) -> str:
+    """One file's `pages read` line (§29.7): merged ranges, the latest page's continuation, the matched chunks."""
+    delivered = [n for sp in spans if not sp.past_end for n in range(sp.first, sp.last + 1)]
+    latest = spans[-1]
+    text = PAGES_READ.format(ranges=_runs(delivered), total=latest.total, version=latest.version)
+    if latest.end:
+        text += PAGES_READ_END_TRUNCATED if latest.truncated else PAGES_READ_END
+    else:
+        text += PAGES_READ_NEXT.format(next=latest.next)
+    if matched_numbers:
+        text += NEAREST.format(numbers=_runs(matched_numbers))
+    if latest.stale:
+        text += PAGES_READ_STALE
+    return text
+
+
+def render_block(files: Sequence[ExcerptFile], context: ExcerptContext, *, nonce: Callable[[], str],
+                 pages: Optional[Mapping[Tuple[str, int], Sequence[PageSpan]]] = None,
+                 matched: FrozenSet[ChunkId] = frozenset()) -> str:
     """Every file once, in the order given, each in its own wrapper (A11); the context re-planned over the whole
-    run, so each noted folder prints once, right before the first file under it."""
+    run, so each noted folder prints once, right before the first file under it. With page spans (§29.6 L11-L12) the
+    opening follows the mix and a paged file gets its `pages read` line; without, the output is the find-only block."""
     dropped, plan, by_id = _planned(files, context, shown_folders=frozenset(), described_files=frozenset())
-    return "\n".join([REFERENCE_REMINDER, OPENING_BLOCK, *dropped, *_files(files, nonce, plan, by_id)])
+    spans = {key: value for key, value in (pages or {}).items() if value}
+
+    def pages_line(file: ExcerptFile) -> str:
+        own = spans.get((file.item_id, file.generation))
+        if not own:
+            return ""
+        numbers = [display_number(i) for (item, gen, i) in matched if item == file.item_id and gen == file.generation]
+        return _pages_read(own, numbers)
+
+    opening = OPENING_BLOCK if not spans else OPENING_BLOCK_MIXED if matched else OPENING_BLOCK_PAGES
+    return "\n".join([REFERENCE_REMINDER, opening, *dropped, *_files(files, nonce, plan, by_id, pages_line)])
 
 
 # -- A12 the Searched line ------------------------------------------------------------------------------------------
@@ -213,10 +292,21 @@ def _neighbours(result: ExcerptResult, request: ExcerptRangeRequest, items_path:
     return f"{quoted(path)} passages {request.first}–{request.last}"
 
 
+def _page_entry(result: ExcerptResult, request: ExcerptRangeRequest, items_path: str) -> str:
+    page = result.page
+    path = quoted((page.path if page is not None and page.path else "") or items_path or request.file_ref)
+    if page is None or page.past_end:
+        return SEARCHED_PAGE_PAST_END.format(path=path, first=request.first)
+    if page.end:
+        return SEARCHED_PAGE_END.format(path=path, first=page.first, last=page.last)
+    return SEARCHED_PAGE_NEXT.format(path=path, first=page.first, last=page.last, next=page.next)
+
+
 def searched_line(results: Sequence[CollectedResult]) -> str:
     scopes: List[str] = []
     questions: List[str] = []
     neighbours: List[str] = []
+    pages: List[str] = []
     opened: List[str] = []
     searches: List[str] = []
 
@@ -229,7 +319,11 @@ def searched_line(results: Sequence[CollectedResult]) -> str:
         if outcome.op is DriveOp.PASSAGES and outcome.excerpts is not None:
             excerpts = outcome.excerpts
             if isinstance(excerpts.request, ExcerptRangeRequest):
-                add(neighbours, _neighbours(excerpts, excerpts.request, outcome.items[0].path if outcome.items else ""))
+                items_path = outcome.items[0].path if outcome.items else ""
+                if excerpts.request.page:
+                    add(pages, _page_entry(excerpts, excerpts.request, items_path))
+                else:
+                    add(neighbours, _neighbours(excerpts, excerpts.request, items_path))
             else:
                 add(scopes, _scope(excerpts))
                 add(questions, quoted(outcome.request_text or excerpts.request.question))
@@ -239,6 +333,6 @@ def searched_line(results: Sequence[CollectedResult]) -> str:
         elif outcome.op is DriveOp.SEARCH and outcome.request_text:
             add(searches, quoted(outcome.request_text))
     values = {"scope": ", ".join(scopes), "questions": " | ".join(questions), "neighbours": "; ".join(neighbours),
-              "opened": ", ".join(opened), "searches": " | ".join(searches)}
+              "pages": "; ".join(pages), "opened": ", ".join(opened), "searches": " | ".join(searches)}
     parts = [part.format(**values) for part, key in zip(SEARCHED_PARTS, values) if values[key]]
     return answer_texts.SEARCHED_PREFIX + "; ".join(parts) if parts else ""
