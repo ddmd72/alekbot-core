@@ -25,7 +25,7 @@ The sandbox render service has its own image (`Dockerfile.sandbox`) and is built
 | `alek-bot-dev` | Cloud Run service | us-central1 | 1800s | min=0, max=1 | ~30 (Slack, Telegram, LLM providers, OAuth, etc. — see cloudbuild-dev.yaml) | `logs`, `fetch-logs`, `logs-tail` |
 | `alek-research-job-dev` | Cloud Run Job | us-central1 | task-timeout 18000s | on-demand (no min/max-instances — Jobs run to completion) | `ANTHROPIC_API_KEY`, `SERVICE_ACCOUNT_EMAIL` | `logs-job`, `fetch-logs-job`, `list-jobs`, `logs-execution`, `cancel-job` |
 | `alek-voice-relay-dev` | Cloud Run service | us-central1 | **3600s** | min=0, max=1 | `OPENAI_API_KEY`, `XAI_API_KEY`, `BILLING_SLACK_WEBHOOK_URL` | `logs-relay`, `fetch-logs-relay` |
-| `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL`, `BILLING_SLACK_WEBHOOK_URL`, `DRIVE_INVOKER_SA_EMAIL`, `OIDC_TRANSITION_SA_EMAILS` | `logs-indexer`, `fetch-logs-indexer` |
+| `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL`, `BILLING_SLACK_WEBHOOK_URL`, `DRIVE_INVOKER_SA_EMAIL`, `OIDC_TRANSITION_SA_EMAILS`, `KMS_CRYPTO_KEY` | `logs-indexer`, `fetch-logs-indexer` |
 | `alek-bot-sandbox-render-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 300s | min=0, max=3 | **none** (zero-role identity, no secret) | (see Sandbox render service) |
 
 `cloudbuild-dev.yaml` deploys the queue and the indexer after the main service, and the sandbox steps after the indexer, so a
@@ -320,15 +320,17 @@ a stronger-model review, not verdicts.
 A false positive is overridden with the PR label `pii-ok` (create it once). PRs from forks get no secrets and fail.
 
 **Stored-secrets encryption (`docs/10_rfcs/SECRETS_AT_REST_RFC.md`).** The main service mounts two more secrets and refuses to
-start without either (locally too).
+start without either (locally too); the indexer mounts `KMS_CRYPTO_KEY` and refuses to start without it (it refreshes OneDrive
+tokens through the credential store, `decisions/credential_store_cutover.md`).
 1. A Cloud KMS key ring and one software key with purpose `ENCRYPT_DECRYPT`, automatic rotation every 90 days, data-access
    audit logs on for Cloud KMS. Its full resource name is the secret `KMS_CRYPTO_KEY`
    (`projects/<PROJECT_ID>/locations/<LOCATION>/keyRings/<KEY_RING>/cryptoKeys/<KEY>`).
 2. `SECRET_DIGEST_KEY`: at least 32 random bytes as hex (`openssl rand -hex 32`, stored with `printf '%s'`), the key of the
    verify-only digests. Changing it invalidates every digested value still in flight (MCP codes live ~10 minutes).
-3. Grant `roles/cloudkms.cryptoKeyEncrypterDecrypter` **on the key** (not the project) to the runtime service account, and to the
-   developer's own identity: local runs use the real key, with no fallback cipher. Both secrets also need
-   `secretmanager.secretAccessor` for the runtime account.
+3. Grant `roles/cloudkms.cryptoKeyEncrypterDecrypter` **on the key** (not the project) to the **main service's** and the **indexer's**
+   service accounts (each service runs under its own identity), and to the developer's own identity: local runs use the real key,
+   with no fallback cipher. The relay, sandbox and deep-research job get no key grant. `KMS_CRYPTO_KEY` needs
+   `secretmanager.secretAccessor` for both accounts, `SECRET_DIGEST_KEY` for the main service's.
 Keep the digest key's value out of tracked files and chat; it is not derivable from the KMS key.
 
 ---

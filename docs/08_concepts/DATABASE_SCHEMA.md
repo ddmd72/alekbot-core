@@ -45,7 +45,7 @@ drive. This page says where to look, so it does not copy field lists that would 
 | `{p}domain_accounts_v2` | tenant: tier, IAM policy, account defaults, usage counters, cost alert limit | `account_id` | `BillingAccount`, `src/domain/billing.py` |
 | `{p}domain_whitelist_v1` | the emails and domains allowed in (chat and Cabinet) | `config` (single document) | `src/adapters/firestore_whitelist_repo.py` |
 | `{p}domain_invite_codes_v1` | invite and self-link codes | the code | `InviteCode`, `src/domain/invite_code.py` |
-| `{p}oauth_credentials` | provider OAuth tokens (Gmail, Microsoft) | `{user_id}_{provider}` | `OAuthCredentials`, `src/domain/email.py` |
+| `{p}credentials` | integration grants (Gmail, Google Tasks, Microsoft To Do, OneDrive): account identity and plaintext operational fields, tokens and account label as one `CipherPort` ciphertext | `{user_id}:{credential_id}` | `OAuthCredentials`, `src/domain/email.py`; `FirestoreCredentialStore`; `decisions/credential_store_cutover.md`. The plaintext `{p}oauth_credentials` is never read (deleted after the cutover) |
 | `{p}channel_bindings` | a channel bound to an agent (companion channels) | `channel_id` | `ChannelBinding`, `src/domain/channel_binding.py` |
 
 Account usage counters written before 2026-07-28 are inflated. For historical cost, use BigQuery `prompt_content`, not
