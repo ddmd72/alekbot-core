@@ -12,8 +12,6 @@ from slack_bolt.async_app import AsyncApp
 
 from ..adapters.slack.base import SlackAdapter
 from ..adapters.slack.http_adapter import HTTPModeAdapter
-from ..adapters.slack.media_adapter import SlackMediaAdapter
-from ..adapters.gcs_media_adapter import GcsMediaAdapter
 from ..adapters.gcp_task_queue import GcpTaskQueue
 from ..adapters.firestore_session_store import FirestoreSessionStore
 from ..config.environment import EnvironmentConfig
@@ -72,7 +70,8 @@ class SlackAdapterFactory:
         long_turn_service=None,
         doc_delivery_service=None,
         worker_queue=None,
-        rich_content_service: Optional[RichContentService] = None,
+        *,
+        rich_content_service: RichContentService,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -91,6 +90,7 @@ class SlackAdapterFactory:
             consolidation_config: Optional consolidation config
             consolidation_service: Optional shared ConsolidationService; its consolidate_now serves `$consolidate`
             audio_service: Optional audio transcription service
+            rich_content_service: The platform's RichContentService (built once by the application graph, shared with the notification service)
             worker_queue: The main task queue; a button press on an interactive message is queued on it as a `/worker` task
 
         Returns:
@@ -99,14 +99,6 @@ class SlackAdapterFactory:
         logger.info("🏭 Creating Slack adapter: http")
 
         # Create ConversationHandler here (composition root)
-        if rich_content_service is None:   # the application graph passes the one it also registers on the notification service
-            gcs_bucket = config.get("GCS_MEDIA_BUCKET", "")
-            rich_content_service = RichContentService(
-                media_port=SlackMediaAdapter(app_client=app.client, bot_token=config.get("SLACK_BOT_TOKEN", "")),
-                storage_port=GcsMediaAdapter(bucket_name=gcs_bucket) if gcs_bucket else None,
-                html_renderer=html_renderer,
-            )
-
         # Channel history source for bound channel sessions (Slack API)
         channel_history_source = SlackChannelHistorySource(
             slack_client=app.client,

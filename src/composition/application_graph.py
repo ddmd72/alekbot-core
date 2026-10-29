@@ -5,13 +5,12 @@
 """
 import asyncio
 import os
-
-from telegram import Bot
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
 from anthropic import AsyncAnthropic
 from slack_bolt.async_app import AsyncApp
+from telegram import Bot
 from twilio.rest import Client as TwilioClient
 
 from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
