@@ -80,7 +80,9 @@ function-scoped fixtures, while module/session fixture setup and import-time cod
 `connect()` to anything but `127.0.0.1`/`::1`/a unix socket refused (`pytest-socket`; creating and binding sockets
 stays allowed, so asyncio loops and loopback servers work) and with a tripwire on `google.auth.default`,
 `grpc.secure_channel` and `grpc.aio.secure_channel` unless the target is localhost (Firestore talks through gRPC's
-own sockets, which the socket guard does not see). The offline G2 test gets the same guard from
+own sockets, which the socket guard does not see). Since loopback is allowed, the guard also removes every proxy source a client
+could tunnel out through: the proxy variables (`HTTP(S)_PROXY`, `ALL_PROXY`, `GRPC_PROXY`, both cases) and urllib's system-proxy lookup
+(`getproxies_macosx_sysconf`, the Mac's `scutil --proxy`, e.g. a local intercepting proxy; it holds after a test rewrites `os.environ`). The offline G2 test gets the same guard from
 `-p tests.plugins.network_guard` in `make test-g2-offline`. When it fires: use a fake, a loopback server, or move the
 test to `tests/integration/`. Do not disable the guard in a unit test. **Out of scope, by decision:** subprocess
 children (drive parser, sandbox engine, ffmpeg).
