@@ -45,6 +45,9 @@ class DriveOutcome:
     excerpts: Optional[ExcerptResult] = None
     excerpt_plan: Optional[ContextPlan] = None
     request_text: str = ""
+    # A deleted-files search whose entries carry stored transcript text: the model read file content, as after passages
+    # (the write gate arms on it; `excerpts` stays None because that text is not a typed passage result).
+    stored_text_shown: bool = False
 
     @property
     def is_change(self) -> bool:

@@ -80,7 +80,8 @@ class World:
             self.notes.notes[("u1", note.note_id)] = note
 
     async def search(self, query):
-        return await self.svc.search_deleted("u1", query)
+        found = await self.svc.search_deleted("u1", query)
+        return found.text, found.items
 
 
 @pytest.fixture

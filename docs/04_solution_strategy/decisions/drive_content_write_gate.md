@@ -9,6 +9,11 @@
 **Decision:** `find_passages` and `read_passages` put on-topic document text, chosen by meaning, in front of a model that
 holds delete, move, replace and note-write tools. On a run that is **not a chat turn**, a change is refused once passage
 text was returned to the model in an earlier step of the run.
+- **What arms the gate:** the typed result of `find_passages` / `read_passages` with at least one file, and the result of
+  `search_deleted_recordings_and_notes` when at least one entry carries a transcript passage (`DeletedSearchResult.has_passage`
+  from `DriveSearchService.search_deleted`, `DriveOutcome.stored_text_shown`; the same step rule). A deleted-files search
+  with no passage (names, paths, notes only) does not arm it. Ordinary `search_drive` snippets do not: the owner accepts
+  that residual risk.
 - **Predicate:** `content_gate_applies(context) = not context.get("interactive_delivery")`. That key is set only by
   `ConversationHandler`, the same test that makes `origin_label` say `chat`. So reminders, the daily review, every other
   `notify` run, calls (`ask_alek`, `tell_alek`) and a run with **no origin at all** are gated (fail-closed); a chat turn is
