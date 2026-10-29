@@ -29,6 +29,8 @@ def wired(monkeypatch):
     monkeypatch.delenv(PARSER_USER_ENV, raising=False)
     for key, value in {"GOOGLE_CLOUD_PROJECT": "p", "APP_ENV": "development", "GEMINI_API_KEY": "k",
                        "DRIVE_INDEXER_URL": "https://indexer.example.invalid",
+                       # the cipher's key name (SECRETS_AT_REST_RFC §2.6, I6); build_cipher calls no KMS API
+                       "KMS_CRYPTO_KEY": "projects/example-project/locations/global/keyRings/ring-a/cryptoKeys/key-a",
                        "MICROSOFT_TODO_CLIENT_ID": "cid", "MICROSOFT_TODO_CLIENT_SECRET": "sec",
                        "SERVICE_ACCOUNT_EMAIL": "sa@example.invalid", "ANTHROPIC_API_KEY": "ak"}.items():
         monkeypatch.setenv(key, value)
