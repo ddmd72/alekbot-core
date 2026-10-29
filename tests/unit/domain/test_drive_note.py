@@ -297,7 +297,7 @@ def test_the_erase_request_carries_only_the_command_and_counts():
 @pytest.mark.parametrize("context,expected", [
     ({"interactive_delivery": True}, True),
     ({"run_origin": "voice:ask_alek"}, True),
-    ({"run_origin": "voice:tell_alek"}, True),
+    ({"run_origin": "voice:send_to_chat"}, True),
     ({"run_origin": "voice:something_new"}, False),     # an allowlist, never a prefix
     ({"run_origin": "background:reminder"}, False),
     ({"run_origin": None}, False),

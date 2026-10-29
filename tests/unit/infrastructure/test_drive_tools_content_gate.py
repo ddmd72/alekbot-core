@@ -39,9 +39,9 @@ CHAT = {"user_id": "u1", "account_id": "a1", "interactive_delivery": True, "run_
 REMINDER = {"user_id": "u1", "account_id": "a1", "run_origin": "background:reminder"}
 DAILY_REVIEW = {"user_id": "u1", "account_id": "a1", "run_origin": "background:daily_email_review"}
 ASK_ALEK = {"user_id": "u1", "account_id": "a1", "run_origin": "voice:ask_alek"}
-TELL_ALEK = {"user_id": "u1", "account_id": "a1", "run_origin": "voice:tell_alek"}
+SEND_TO_CHAT = {"user_id": "u1", "account_id": "a1", "run_origin": "voice:send_to_chat"}
 NO_ORIGIN = {"user_id": "u1", "account_id": "a1"}
-GATED = [REMINDER, DAILY_REVIEW, ASK_ALEK, TELL_ALEK, NO_ORIGIN]
+GATED = [REMINDER, DAILY_REVIEW, ASK_ALEK, SEND_TO_CHAT, NO_ORIGIN]
 
 ITEMS = (FileContentItem("t1", "Review closed.", name="review.md", target="drive:item-1"),)
 # Each change tool, its arguments and the DriveOperations method it would call.
@@ -85,7 +85,7 @@ async def _call(run, name, **args):
     return await run.handlers[name](ToolCall(name=name, args=args))
 
 
-@pytest.mark.parametrize("context", GATED, ids=["reminder", "daily_review", "ask_alek", "tell_alek", "no_origin"])
+@pytest.mark.parametrize("context", GATED, ids=["reminder", "daily_review", "ask_alek", "send_to_chat", "no_origin"])
 @pytest.mark.parametrize("name, args, method, op", CHANGES, ids=[c[0] for c in CHANGES])
 async def test_a_later_change_after_passages_is_refused_off_chat(context, name, args, method, op):
     ops = _ops()
@@ -100,7 +100,7 @@ async def test_a_later_change_after_passages_is_refused_off_chat(context, name, 
     assert seen.result_str == f"[{refused.handle}]\n{t.WRITE_AFTER_PASSAGES}"   # the model is told it was not done
 
 
-@pytest.mark.parametrize("context", GATED, ids=["reminder", "daily_review", "ask_alek", "tell_alek", "no_origin"])
+@pytest.mark.parametrize("context", GATED, ids=["reminder", "daily_review", "ask_alek", "send_to_chat", "no_origin"])
 async def test_a_range_read_closes_the_gate_as_a_find_does(context):
     ops = _ops()
     run, collector = _run(ops, context)
@@ -144,7 +144,7 @@ async def test_a_later_passages_read_does_not_reopen_an_earlier_step():
     ops.move.assert_not_called()
 
 
-@pytest.mark.parametrize("context", GATED, ids=["reminder", "daily_review", "ask_alek", "tell_alek", "no_origin"])
+@pytest.mark.parametrize("context", GATED, ids=["reminder", "daily_review", "ask_alek", "send_to_chat", "no_origin"])
 async def test_a_run_that_read_no_passage_text_keeps_its_writes(context):
     ops = _ops(NOTHING)
     run, collector = _run(ops, context)
@@ -246,7 +246,7 @@ def _deleted(*, passage: bool) -> DriveOutcome:
                              + ("[00:30] the meeting moved to Thursday" if passage else ""))
 
 
-@pytest.mark.parametrize("context", GATED, ids=["reminder", "daily_review", "ask_alek", "tell_alek", "no_origin"])
+@pytest.mark.parametrize("context", GATED, ids=["reminder", "daily_review", "ask_alek", "send_to_chat", "no_origin"])
 async def test_a_deleted_search_that_returned_a_passage_closes_the_gate_off_chat(context):
     ops = _ops()
     ops.search_deleted.return_value = _deleted(passage=True)

@@ -143,11 +143,11 @@ def test_handlers_follow_the_writes_switch():
 
 @pytest.mark.parametrize("context,expected", [
     ({"interactive_delivery": True, "session_id": "s1", TURN_ID_CONTEXT_KEY: "t1"}, ("chat", "s1", "t1")),
-    ({"run_origin": "voice:tell_alek", "session_id": "call", TURN_ID_CONTEXT_KEY: "v9"}, ("voice", "call", "v9")),
+    ({"run_origin": "voice:send_to_chat", "session_id": "call", TURN_ID_CONTEXT_KEY: "v9"}, ("voice", "call", "v9")),
     ({"run_origin": "voice:ask_alek", "session_id": "call", TURN_ID_CONTEXT_KEY: "v8"}, ("voice", "call", "v8")),
     ({"run_origin": "voice:unknown", "session_id": "s2", TURN_ID_CONTEXT_KEY: "t2"}, ("chat", "s2", "t2")),
     ({"interactive_delivery": True, "session_id": "s1"}, ("chat", "s1", "")),
-], ids=["chat", "tell_alek", "ask_alek", "unknown_voice_origin_counts_as_chat", "no_turn_id"])
+], ids=["chat", "send_to_chat", "ask_alek", "unknown_voice_origin_counts_as_chat", "no_turn_id"])
 def test_note_provenance(context, expected):
     provenance = note_provenance(context)
     assert (provenance.origin, provenance.session_id, provenance.turn_id) == expected
@@ -356,7 +356,7 @@ async def test_a_writer_on_a_run_that_is_not_an_owner_turn_is_refused_even_with_
     service = _service()
     context = {"user_id": U, "account_id": ACC, "run_origin": "background:reminder", TURN_ID_CONTEXT_KEY: "t9"}
     notes, _, collector = _tools(service, context=context, writes=True)     # declared by mistake
-    await _call(notes, tool, item_ref="drive:a", interactive_delivery=True, run_origin="voice:tell_alek", **args)
+    await _call(notes, tool, item_ref="drive:a", interactive_delivery=True, run_origin="voice:send_to_chat", **args)
     assert service.mock_calls == []
     outcome = collector.results[0].outcome
     assert (outcome.cls, outcome.text) == (OutcomeClass.REFUSED, nt.NOT_OWNER_TURN)

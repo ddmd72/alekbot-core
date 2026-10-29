@@ -153,7 +153,7 @@ FAILURES = [
                  "Document creation did not complete — generator down.", id="page"),
     pytest.param("create_document", "doc_planner_agent",
                  "Document creation did not complete — generator down.", id="docx"),
-    pytest.param("tell_alek", "alek_agent",
+    pytest.param("send_to_chat", "alek_agent",
                  "An errand the user gave during a phone call with Lelik did not complete. "
                  "Tell them it failed and what it was: q", id="errand"),
 ]

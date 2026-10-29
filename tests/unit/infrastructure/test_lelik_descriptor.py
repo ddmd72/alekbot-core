@@ -27,6 +27,6 @@ def test_lelik_allowlist_is_the_fast_specialists():
 def test_alek_is_an_internal_sync_specialist():
     assert ALEK in ALL_DESCRIPTORS
     assert ALEK.internal is True and ALEK.eager is False
-    # tell_alek (§4.15.2) is an errand: a Cloud Task, the outcome goes to chat.
-    assert ALEK.capabilities == {Intent.ASK_ALEK: ExecutionMode.SYNC, Intent.TELL_ALEK: ExecutionMode.ASYNC}
+    # send_to_chat (§4.15.2) is an errand: a Cloud Task, the outcome goes to chat.
+    assert ALEK.capabilities == {Intent.ASK_ALEK: ExecutionMode.SYNC, Intent.SEND_TO_CHAT: ExecutionMode.ASYNC}
     assert ALEK.capability_descriptions[Intent.ASK_ALEK]

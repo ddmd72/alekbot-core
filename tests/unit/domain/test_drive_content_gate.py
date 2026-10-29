@@ -12,7 +12,7 @@ class TestWhoIsGated:
         {"run_origin": "background:reminder"},
         {"run_origin": "background:daily_email_review"},
         {"run_origin": "voice:ask_alek"},
-        {"run_origin": "voice:tell_alek"},
+        {"run_origin": "voice:send_to_chat"},
         {},                                                   # no origin: fail-closed
         {"interactive_delivery": False, "run_origin": "chat"},
         {"interactive_delivery": None},

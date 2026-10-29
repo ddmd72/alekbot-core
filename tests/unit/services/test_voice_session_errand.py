@@ -1,4 +1,4 @@
-"""tell_alek errands in the relay (VOICE_COMPANION_RFC §4.15.2).
+"""send_to_chat errands in the relay (VOICE_COMPANION_RFC §4.15.2).
 
 Only an acknowledgement comes back, in well under a second. An errand is not waited for: it is
 never abandoned at hang-up, and the acknowledgement is still handed to the model as the tool
@@ -66,7 +66,7 @@ def _notes(session):
 
 @pytest.mark.asyncio
 async def test_an_errand_ack_reaches_the_model_and_nothing_else_is_said():
-    session, control = await _call("tell_alek", _slow_ack)
+    session, control = await _call("send_to_chat", _slow_ack)
 
     session.submit_tool_result.assert_awaited_once_with("c1", _ACK)
     control.abandon_delegation.assert_not_awaited()
@@ -78,6 +78,6 @@ async def test_an_errand_still_in_flight_at_hang_up_is_not_abandoned():
     async def never(**_):
         await asyncio.sleep(10)
 
-    _, control = await _call("tell_alek", never, seconds=0.2)
+    _, control = await _call("send_to_chat", never, seconds=0.2)
 
     control.abandon_delegation.assert_not_awaited()

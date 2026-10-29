@@ -18,10 +18,10 @@ def test_lelik_has_a_light_search_and_both_alek_intents_but_no_full_web_search()
     assert LELIK.intent_fanout == {}
 
 
-def test_tell_alek_is_an_async_errand_on_the_alek_gateway():
-    assert ALEK.capabilities[Intent.TELL_ALEK] is ExecutionMode.ASYNC
+def test_send_to_chat_is_an_async_errand_on_the_alek_gateway():
+    assert ALEK.capabilities[Intent.SEND_TO_CHAT] is ExecutionMode.ASYNC
     assert ALEK.capabilities[Intent.ASK_ALEK] is ExecutionMode.SYNC
-    assert ALEK.capability_descriptions[Intent.TELL_ALEK]
+    assert ALEK.capability_descriptions[Intent.SEND_TO_CHAT]
     # Outlasts the gateway's own 600 s ceiling on the Cloud Task.
     assert ALEK.dispatch_deadline_s and ALEK.dispatch_deadline_s > 600
 

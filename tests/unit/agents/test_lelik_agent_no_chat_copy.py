@@ -1,7 +1,7 @@
 """Lelik's own lookups post nothing to chat (VOICE_COMPANION_RFC §4.15.3, owner 2026-09-29).
 
 The automatic link copy of §4.10 rule 2 filled the chat with every search's links. When the
-caller wants something in chat, Lelik hands it to Alek (tell_alek).
+caller wants something in chat, Lelik hands it to Alek (send_to_chat).
 """
 from unittest.mock import AsyncMock, MagicMock
 

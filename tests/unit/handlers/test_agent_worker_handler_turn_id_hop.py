@@ -1,4 +1,4 @@
-"""The tell_alek worker hop keeps the call's turn id (core contract §6; review part A I2): the Cloud Task body is the
+"""The send_to_chat worker hop keeps the call's turn id (core contract §6; review part A I2): the Cloud Task body is the
 JSON of the delegation context (GcpTaskQueue's `_DomainEncoder`), AgentWorkerHandler passes that context to the Alek
 gateway, and the gateway routes the same `turn_id` to Router → Smart on every delivery — so a retried errand meets the
 undo re-run guard with the id of its first attempt."""
@@ -12,7 +12,7 @@ from src.domain.messaging import SmartResponse
 from src.domain.turn_identity import TURN_ID_CONTEXT_KEY
 from src.handlers.agent_worker_handler import AgentWorkerHandler
 
-_PAYLOAD = {"task_type": "agent_execution", "agent_id": "alek_agent", "intent": "tell_alek",
+_PAYLOAD = {"task_type": "agent_execution", "agent_id": "alek_agent", "intent": "send_to_chat",
             "query": "note the PDF from yesterday as the contractor's invoice",
             "context": {"user_id": "u1", "account_id": "a1", "session_id": "u1:D9", "origin_channel_id": "D9",
                         "origin_platform": "slack", TURN_ID_CONTEXT_KEY: "voice:x",

@@ -101,9 +101,9 @@ async def test_unknown_generation_is_missing(store):
 
 
 async def test_write_meta_round_trips(store):
-    await store.put("u1", P, b"a", WorkspaceWriteMeta(origin="voice:tell_alek", fire=F, restored_from=55), 0)
+    await store.put("u1", P, b"a", WorkspaceWriteMeta(origin="voice:send_to_chat", fire=F, restored_from=55), 0)
     [e] = await store.list("u1", P)
-    assert (e.origin, e.fire, e.restored_from) == ("voice:tell_alek", F, 55)
+    assert (e.origin, e.fire, e.restored_from) == ("voice:send_to_chat", F, 55)
     assert e.write_id
 
 

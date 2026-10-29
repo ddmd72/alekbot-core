@@ -1,5 +1,5 @@
 """On a call, the Alek gateway posts Smart's drive-note receipts and erase requests to chat (DRIVE_FILE_NOTES_RFC §4.9,
-D18): on ask_alek and on tell_alek, each such item through notify_drive_note_receipt, independent of the answer copy;
+D18): on ask_alek and on send_to_chat, each such item through notify_drive_note_receipt, independent of the answer copy;
 a failed post is logged and the answer still returns; no item, no post."""
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -35,7 +35,7 @@ def _agent(items):
     return agent, notifications
 
 
-@pytest.mark.parametrize("intent", ["ask_alek", "tell_alek"])
+@pytest.mark.parametrize("intent", ["ask_alek", "send_to_chat"])
 async def test_each_note_item_is_posted_on_both_paths(intent):
     agent, notifications = _agent([RECEIPT, OTHER, ERASE])
     response = await agent.execute(_message(intent))
@@ -55,7 +55,7 @@ async def test_a_failed_post_is_logged_and_the_answer_still_returns():
     agent, notifications = _agent([RECEIPT, ERASE])
     notifications.notify_drive_note_receipt.side_effect = [RuntimeError("slack down"), None]
     with patch("src.agents.alek_gateway_agent.logger") as log:
-        response = await agent.execute(_message("tell_alek"))
+        response = await agent.execute(_message("send_to_chat"))
     assert response.status == AgentStatus.SUCCESS and response.result.text == "Noted."
     assert notifications.notify_drive_note_receipt.await_count == 2
     assert any("drive_note_receipt" in c.args[0] for c in log.error.call_args_list)
@@ -63,5 +63,5 @@ async def test_a_failed_post_is_logged_and_the_answer_still_returns():
 
 async def test_no_note_item_no_post():
     agent, notifications = _agent([OTHER])
-    await agent.execute(_message("tell_alek"))
+    await agent.execute(_message("send_to_chat"))
     notifications.notify_drive_note_receipt.assert_not_called()

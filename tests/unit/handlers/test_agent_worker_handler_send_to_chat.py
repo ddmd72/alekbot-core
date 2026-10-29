@@ -1,4 +1,4 @@
-"""tell_alek through the Cloud Task worker (VOICE_COMPANION_RFC §4.15.2).
+"""send_to_chat through the Cloud Task worker (VOICE_COMPANION_RFC §4.15.2).
 
 On success the gateway has already posted the outcome to chat, so the worker adds nothing. On
 failure — a failed response or an exception — the worker tells the user the errand did not
@@ -13,7 +13,7 @@ from src.domain.notification_kind import NotificationKind
 from src.handlers.agent_worker_handler import AgentWorkerHandler
 
 _CONTEXT = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "D9", "origin_platform": "slack"}
-_PAYLOAD = {"task_type": "agent_execution", "agent_id": "alek_agent", "intent": "tell_alek",
+_PAYLOAD = {"task_type": "agent_execution", "agent_id": "alek_agent", "intent": "send_to_chat",
             "query": "[Sep 28, 10:20 UTC] Set a reminder to leave for the airport at 13:30",
             "context": _CONTEXT}
 

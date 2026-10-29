@@ -53,7 +53,7 @@ async def test_a_late_receipt_on_a_chat_turn_without_an_origin_channel_falls_to_
     assert kwargs == {"call": False, "channel_id_override": None, "platform_override": None}
 
 
-@pytest.mark.parametrize("origin", ["voice:ask_alek", "voice:tell_alek"])
+@pytest.mark.parametrize("origin", ["voice:ask_alek", "voice:send_to_chat"])
 async def test_a_late_receipt_on_a_call_keeps_the_call_path_and_ignores_any_origin_channel(origin):
     notification = await _cut_write({**OWNER, "run_origin": origin, "origin_channel_id": "C1",
                                      "origin_platform": "slack"})
