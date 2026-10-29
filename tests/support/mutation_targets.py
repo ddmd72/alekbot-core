@@ -254,6 +254,13 @@ TARGETS: tuple[MutationTarget, ...] = (
     # reaches the module only through src/ (DriveSyncSchedulerService).
     MutationTarget("src.domain.drive_cap_alert", "tests/unit/domain/drive_cap_alert_equivalent_mutants.txt",
                    extra=("tests/unit/services/test_drive_sync_scheduler_cap_alert.py",)),
+    # Secrets at rest (SECRETS_AT_REST_RFC, slice S1): the KMS cipher, the keyed digest, the fail-closed setup and the MCP
+    # store over them; header-only equivalent files.
+    MutationTarget("src.adapters.gcp_kms_cipher_adapter", "tests/unit/adapters/gcp_kms_cipher_adapter_equivalent_mutants.txt"),
+    MutationTarget("src.domain.secret_digest", "tests/unit/domain/secret_digest_equivalent_mutants.txt"),
+    MutationTarget("src.composition.cipher_setup", "tests/unit/composition/cipher_setup_equivalent_mutants.txt"),
+    MutationTarget("src.adapters.firestore_mcp_client_repository",
+                   "tests/unit/adapters/firestore_mcp_client_repository_equivalent_mutants.txt"),
 )
 
 

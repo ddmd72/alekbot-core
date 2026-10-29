@@ -94,6 +94,10 @@ THRESHOLDS: Dict[str, float] = {
     # Facts S4 (T5d): the Slack signature check and the route that takes a button press.
     "src/adapters/slack/signature.py":              100.0,
     "src/adapters/slack/interactivity_route.py":    100.0,
+    # Secrets at rest S1 (P7): the KMS cipher, the keyed digest and the fail-closed key setup.
+    "src/adapters/gcp_kms_cipher_adapter.py":       100.0,
+    "src/domain/secret_digest.py":                  100.0,
+    "src/composition/cipher_setup.py":              100.0,
 }
 
 
