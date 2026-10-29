@@ -19,6 +19,7 @@ from src.composition.service_container import ServiceContainer
 from src.config.environment import EnvironmentConfig
 from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 
 
 @pytest.fixture
@@ -49,6 +50,7 @@ def container(monkeypatch, fake_config):
     db_client = MagicMock(name="firestore_db_client")
     account_repo = AsyncMock(spec=AccountRepository)
     return ServiceContainer(
+        cipher=AesGcmTestCipher(),
         config=fake_config,
         db_client=db_client,
         env_config=env_config,
@@ -77,6 +79,7 @@ class TestServiceContainerWiring:
         monkeypatch.setenv("APP_ENV", "test")
         webhook = MagicMock(name="alert_webhook")
         built = ServiceContainer(
+            cipher=AesGcmTestCipher(),
             config=fake_config,
             db_client=MagicMock(),
             env_config=EnvironmentConfig(),
@@ -164,6 +167,7 @@ class TestPromptCaptureFlag:
         monkeypatch.setenv("APP_ENV", "test")
         cfg = {**fake_config, **overrides}
         return ServiceContainer(
+            cipher=AesGcmTestCipher(),
             config=cfg,
             db_client=MagicMock(),
             env_config=EnvironmentConfig(),
@@ -208,6 +212,7 @@ class TestThresholdResolverWiring:
         resolver = AsyncMock()
 
         container = ServiceContainer(
+            cipher=AesGcmTestCipher(),
             config=fake_config, db_client=db_client, env_config=env_config,
             account_repo=account_repo, threshold_resolver=resolver,
         )

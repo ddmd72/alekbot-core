@@ -8,6 +8,7 @@ from src.config.environment import EnvironmentConfig
 from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 
 
 class TestSchedulerBuilderPassThrough:
@@ -38,6 +39,6 @@ class TestContainerDriveIndexRepositoryConcrete:
             "CONSOLIDATION": ConsolidationSettings(), "GCS_MEDIA_BUCKET": "",
             "MICROSOFT_TODO_CLIENT_ID": "cid", "MICROSOFT_TODO_CLIENT_SECRET": "sec",
         }
-        c = ServiceContainer(config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
+        c = ServiceContainer(cipher=AesGcmTestCipher(), config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
                              account_repo=AsyncMock(spec=AccountRepository))
         assert isinstance(c.drive_index_repo, FirestoreDriveIndexRepository)
