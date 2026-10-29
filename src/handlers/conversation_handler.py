@@ -38,7 +38,7 @@ from ..domain.exceptions import (
 from ..domain.drive_note import (
     DRIVE_NOTE_ERASE_DELIVERY, DRIVE_NOTE_RECEIPT_DELIVERY, DriveNoteRefused, NoteRefusal,
 )
-from ..domain.drive_history import DRIVE_CONTEXT_KEY, drive_history_lines
+from ..domain.history_context_block import history_context_block
 from ..domain.drive_note_receipt import render_drive_note_erase, render_drive_note_erased, render_drive_note_receipt
 from ..domain.memory_fact import (
     MEMORY_PREVIEW_DELIVERY,
@@ -1458,23 +1458,11 @@ class ConversationHandler(ConversationHandlerPort):
         for ctx_key, ctx_value in (response.metadata or {}).items():
             if ctx_key == SKILL_CONTEXT_KEY:
                 continue  # raw block + stub, below
-            if ctx_key == DRIVE_CONTEXT_KEY and ctx_value:
-                # One readable line per file, not JSON: the JSON repeated files and named no operation.
-                drive_lines = drive_history_lines(ctx_value)
-                if drive_lines:
-                    response_text = response_text + "\n\n" + "\n".join(drive_lines)
-                    logger.info("💾 [History] %s appended to full_text: %d lines", ctx_key, len(drive_lines))
-            elif ctx_key.endswith("_context") and ctx_value:
-                context_block = json.dumps(
-                    {ctx_key: ctx_value},
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
+            # The drive's key renders as one readable line per file, the others as JSON (history_context_block).
+            context_block = history_context_block(ctx_key, ctx_value)
+            if context_block:
                 response_text = response_text + "\n\n" + context_block
-                logger.info(
-                    "💾 [History] %s appended to full_text: %d chars",
-                    ctx_key, len(context_block)
-                )
+                logger.info("💾 [History] %s appended to full_text: %d chars", ctx_key, len(context_block))
 
         # Skill bodies: raw block in full_text (json.dumps would escape the markdown), one
         # neutral stub per skill in the summary. Runs after the async summary has resolved,

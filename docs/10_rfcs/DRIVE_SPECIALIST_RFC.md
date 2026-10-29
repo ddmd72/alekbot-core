@@ -674,8 +674,12 @@ blocks, where today the whole skill body rode in history.
   the handler renders the turn's entries as one line per file, deduplicated, operations combined, the ref kept:
   `[Drive: Health/lab-report.pdf ref=drive:abc123 — searched for "lab report" (2 files); read passages 3–5]`.
   The JSON block it replaced repeated a file once per operation and named none, so a later turn misread where an
-  answer came from. FileManagement's entries carry no operation and render as the file and its ref; so does the older
-  flat shape. Other `*_context` keys keep their JSON block.
+  answer came from. FileManagement's open_file of a drive ref builds its entries with the same helper ("opened whole",
+  or "open answered without its content"); its delete refuses a drive ref, so it has none. An entry without `op` (the
+  older flat shape) renders as the file and its ref. Other `*_context` keys keep their JSON block; one function
+  renders every key (`src/domain/history_context_block.py`), and the evals that seed history
+  (`drive_routing_probe.py`, `drive_eval/specialist_ab.py`) call it too. A delete names no file in either path: its
+  outcome touches no item that stays.
 - Smart reads the refs and its own reply (which names files by path) and passes refs in the next commission. Ordinals
   ("the second one") point at Smart's reply, so Smart resolves them.
 - Opened text and cards stay out of history, as today. No status key is added (only `*_context` keys persist).

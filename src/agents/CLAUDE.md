@@ -212,7 +212,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     an opened file; images and PDFs reach Smart as a `file_data` list. `history_context["drive_context"]` is one flat
     list (no dedup) of `{path, ref}` entries that also name the operation (`drive_history.history_entries`);
     ConversationHandler renders the turn's entries into full_text as one `[Drive: <path> ref=… — <what was done>]`
-    line per file (`drive_history_lines`), never JSON, never in the summary.
+    line per file (`drive_history_lines` via `history_context_block`), never JSON, never in the summary;
+    FileManagement's open_file builds its entries with the same helper.
   - **Search** (`search_drive` → `DriveSearchService` over the opt-in index; USER_DRIVE_INDEXING_RFC §10.4, §24.10,
     Search v2 §25.5): parameters `query`, `folder`, `kind`, `date_from`, `date_to`, described in
     `domain/drive_tool_texts.py`. `query` is the subject in the user's words (a name, place, person, topic, a document
