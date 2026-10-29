@@ -236,6 +236,17 @@ class EnvironmentConfig:
         return f"{prefix}oauth_credentials"
 
     @property
+    def credentials_collection(self) -> str:
+        """
+        Integration credentials (Gmail, Google Tasks, Microsoft To Do, OneDrive). Doc id = {user_id}:{credential_id};
+        tokens and the account label are one CipherPort ciphertext (SECRETS_AT_REST_RFC §2.3). A new collection: the
+        old plaintext `oauth_credentials` is never read (§2.7).
+        Dev: development_credentials
+        """
+        prefix = self.firestore_collection_prefix
+        return f"{prefix}credentials"
+
+    @property
     def mcp_oauth_clients_collection(self) -> str:
         """
         MCP OAuth clients (RFC 7591 DCR-registered clients). Doc id = client_id; client_secret is CipherPort
