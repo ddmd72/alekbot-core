@@ -61,6 +61,7 @@ class TelegramAdapterFactory:
         task_queue=None,
         long_turn_service=None,
         doc_delivery_service=None,
+        rich_content_service: Optional[RichContentService] = None,
     ) -> TelegramWebhookAdapter:
         """
         Create TelegramWebhookAdapter with RichContentService wired in.
@@ -86,16 +87,12 @@ class TelegramAdapterFactory:
         Returns:
             TelegramWebhookAdapter ready to handle webhook requests
         """
-        # Bot instance for media delivery (TelegramMediaAdapter).
-        # TelegramWebhookAdapter creates its own Bot from the same token — that is fine,
-        # python-telegram-bot Bot objects are stateless HTTP clients.
-        bot = Bot(token)
-
-        media_adapter = TelegramMediaAdapter(bot=bot)
-        rich_content_service = RichContentService(
-            media_port=media_adapter,
-            html_renderer=html_renderer,
-        )
+        if rich_content_service is None:   # the application graph passes the one it also registers on the notification service
+            # Bot instance for media delivery (TelegramMediaAdapter): python-telegram-bot Bot objects are stateless HTTP clients.
+            rich_content_service = RichContentService(
+                media_port=TelegramMediaAdapter(bot=Bot(token)),
+                html_renderer=html_renderer,
+            )
 
         conversation_handler = ConversationHandler(
             coordinator=coordinator,

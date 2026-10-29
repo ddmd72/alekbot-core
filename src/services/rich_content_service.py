@@ -32,7 +32,7 @@ from typing import Optional
 from ..ports.platform_media_port import PlatformMediaPort
 from ..ports.media_storage_port import MediaStoragePort
 from ..ports.html_renderer_port import HtmlRendererPort, HtmlRenderError
-from ..domain.messaging import RichContent
+from ..domain.messaging import MEDIA_CONTENT_TYPES as _MEDIA_CONTENT_TYPES, ResponseChannel, RichContent
 from ..utils.logger import logger
 
 
@@ -72,6 +72,36 @@ class RichContentService:
                 content.content_type,
             )
             return None
+
+    async def deliver(
+        self,
+        content: RichContent,
+        response_channel: ResponseChannel,
+        thread_id: Optional[str] = None,
+    ) -> None:
+        """
+        Route one rich-content item to the right delivery path (chat turns and background notifications alike):
+          - media types (file, widget, ...) → process() on the channel's id (convert + upload, or GCS URL)
+          - table and others → ResponseChannel.send_rich_content (Block Kit / fallback)
+
+        When process() returns a URL (e.g. HTML → GCS), the URL is sent as a plain message so
+        Slack unfurls it as a preview.
+        """
+        if content.content_type not in _MEDIA_CONTENT_TYPES:
+            await response_channel.send_rich_content(content, thread_id=thread_id)
+            return
+        channel_id = getattr(response_channel, "channel_id", None)
+        if not channel_id:
+            logger.warning(
+                "RichContentService: response_channel has no channel_id — "
+                "falling back to send_rich_content for type '%s'",
+                content.content_type,
+            )
+            await response_channel.send_rich_content(content, thread_id=thread_id)
+            return
+        url = await self.process(content, channel_id)
+        if url:
+            await response_channel.send_message(url, thread_id=thread_id)
 
     # ------------------------------------------------------------------
     # Private handlers

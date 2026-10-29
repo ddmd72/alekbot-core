@@ -72,6 +72,7 @@ class SlackAdapterFactory:
         long_turn_service=None,
         doc_delivery_service=None,
         worker_queue=None,
+        rich_content_service: Optional[RichContentService] = None,
     ) -> SlackAdapter:
         """
         Create appropriate Slack adapter based on environment configuration.
@@ -98,17 +99,13 @@ class SlackAdapterFactory:
         logger.info("🏭 Creating Slack adapter: http")
 
         # Create ConversationHandler here (composition root)
-        media_adapter = SlackMediaAdapter(
-            app_client=app.client,
-            bot_token=config.get("SLACK_BOT_TOKEN", ""),
-        )
-        gcs_bucket = config.get("GCS_MEDIA_BUCKET", "")
-        storage_adapter = GcsMediaAdapter(bucket_name=gcs_bucket) if gcs_bucket else None
-        rich_content_service = RichContentService(
-            media_port=media_adapter,
-            storage_port=storage_adapter,
-            html_renderer=html_renderer,
-        )
+        if rich_content_service is None:   # the application graph passes the one it also registers on the notification service
+            gcs_bucket = config.get("GCS_MEDIA_BUCKET", "")
+            rich_content_service = RichContentService(
+                media_port=SlackMediaAdapter(app_client=app.client, bot_token=config.get("SLACK_BOT_TOKEN", "")),
+                storage_port=GcsMediaAdapter(bucket_name=gcs_bucket) if gcs_bucket else None,
+                html_renderer=html_renderer,
+            )
 
         # Channel history source for bound channel sessions (Slack API)
         channel_history_source = SlackChannelHistorySource(

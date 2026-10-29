@@ -24,7 +24,7 @@ from ..domain.drive_note_receipt import (
 )
 from ..domain.language import LanguageCode
 from ..domain.llm import Message, MessagePart
-from ..domain.messaging import SmartResponse, session_id_for
+from ..domain.messaging import MEDIA_CONTENT_TYPES, RichContent, SmartResponse, session_id_for
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import NotifyResult
 from ..domain.request_context import RequestContext
@@ -41,6 +41,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from ..domain.notification import NotificationChannel
     from .localization_service import LocalizationService
+    from .rich_content_service import RichContentService
 
 
 class MessageRouter(Protocol):
@@ -88,6 +89,9 @@ class UserNotificationService:
         self._platform_media: Dict[str, PlatformMediaPort] = {}
         if platform_media is not None:
             self._platform_media[_SLACK] = platform_media
+        # One RichContentService per platform: a `file` / `widget` item Smart returns on a background path is delivered
+        # as the real file/image through it, exactly as in a chat turn. Registered with register_platform_rich_content.
+        self._platform_rich_content: Dict[str, "RichContentService"] = {}
         self._session_store: Optional[SessionStore] = session_store
         # The drive-note receipt posted from a call (DRIVE_FILE_NOTES_RFC §4.9) is rendered here, in the owner's UI
         # language; without localization it is not posted (logged).
@@ -104,6 +108,30 @@ class UserNotificationService:
     def register_platform_media(self, platform: str, port: PlatformMediaPort) -> None:
         """The media port `notify_file_bytes` uses for channels of `platform` ("slack", "telegram")."""
         self._platform_media[platform] = port
+
+    def register_platform_rich_content(self, platform: str, service: "RichContentService") -> None:
+        """The rich-content delivery `notify` / `notify_answer_copy` use for channels of `platform` ("slack", "telegram")."""
+        self._platform_rich_content[platform] = service
+
+    async def _send_rich_content(self, response_channel, platform: str, content: RichContent) -> None:
+        """Deliver one rich-content item the way a chat turn does. Without a registered service every type goes to the
+        channel's own renderer, which shows only a table: a media type then degrades to its fallback text, so that
+        gap is logged."""
+        service = self._platform_rich_content.get(platform)
+        if service is None:
+            if content.content_type in MEDIA_CONTENT_TYPES:
+                logger.warning(
+                    f"[Notification] No rich-content service for platform={platform}: "
+                    f"'{content.content_type}' goes out as fallback text, not as a file"
+                )
+            await response_channel.send_rich_content(content)
+            return
+        # A Slack channel id stored as a user id (U...) becomes the DM channel (D...) when a message is sent; an
+        # upload needs the real one. The answer text normally went first; when none did, open the DM with a marker.
+        if (platform == _SLACK and content.content_type in MEDIA_CONTENT_TYPES
+                and str(getattr(response_channel, "channel_id", "")).startswith("U")):
+            await response_channel.send_message("📎")
+        await service.deliver(content, response_channel)
 
     async def save_channel(self, user_id: str, platform: str, channel_id: str) -> None:
         """
@@ -369,7 +397,7 @@ class UserNotificationService:
         try:
             await self._send_answer_text(response_channel, channel_info, f"{CALL_NOTE_PREFIX}{answer.text}", answer.link_list or [])
             if answer.structured_data:
-                await response_channel.send_rich_content(answer.structured_data)
+                await self._send_rich_content(response_channel, channel_info.platform, answer.structured_data)
         except Exception as exc:
             logger.error(f"[Notification] Answer copy failed for {user_id[:8]}: {exc}", exc_info=True)
 
@@ -563,7 +591,7 @@ class UserNotificationService:
 
             if rich_content:
                 sent = True
-                await response_channel.send_rich_content(rich_content)
+                await self._send_rich_content(response_channel, channel_info.platform, rich_content)
 
             return NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS, sent=sent)
 
