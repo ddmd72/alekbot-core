@@ -4,7 +4,8 @@ After the credential cutover the new store starts empty: every integration reads
 consents once. This file drives that consent through the real chain and asserts what the feature stores hold after it.
 
 Real: the oauth blueprint's callbacks, `GoogleOAuthService`, `FirestoreCredentialStore` + `AesGcmTestCipher`,
-`FirestoreIndexedEmailRepository`, `FirestoreTaskConfigRepository`, `FirestoreTaskSearchIndex`, `TaskSetupService`,
+`FirestoreIndexedEmailRepository`, `FirestoreTaskConfigRepository`, `FirestoreTaskSearchIndex`, `TaskSetupService` (its task
+delivered through the real `WorkerHandler` dispatch),
 `OneDriveAdapter.connection`, `DriveIndexingService` over `InMemoryDriveIndexRepository`, `GcpTaskQueue` over
 `tests/support/cloud_tasks_fake.py` (the main service's worker queue); all Firestore on one `EvalDb`.
 Fakes: HTTP through `tests/support/http_boundary_fake.py` (token endpoints, Google userinfo, Graph `/me`, approot); the
@@ -17,8 +18,10 @@ Outcomes by integration:
 - Drive holds within the grace: the same drive resumes from the stored cursor, nothing purged. Another drive purges by
   design (drive switch). A reconnect over 30 days after the loss purges (expired), and the next ticks rebuild the index
   from scratch: a paid rebuild (card embeddings, content and enrichment work again).
-- To Do: an active subscription is kept and nothing is re-read; a lapsed one is registered again and the primary list is
-  re-read once (`reindex_task_list`), an upsert that deletes nothing (Q3, accepted).
+- To Do: a consent re-subscribes whatever the stored subscription says (active or lapsed): the stored one is dropped,
+  one is registered and the primary list is re-read exactly once (`reindex_task_list`), an upsert that deletes nothing.
+  A stored "active" subscription may have been dropped by Graph with the old consent, so trusting it would lose the
+  changes made during the gap. The renewal sweep still keeps an active subscription.
 - I4: a cipher that fails on decrypt makes the tick raise; no loss is recorded, nothing is purged.
 """
 from datetime import datetime, timedelta, timezone
@@ -40,6 +43,7 @@ from src.domain.email import IndexingState
 from src.domain.task import TaskSubscriptionConfig, TaskUserConfig
 from src.ports.task_lifecycle_port import TaskLifecyclePort
 from src.services.google_oauth_service import GMAIL_SCOPES, GoogleOAuthService
+from src.handlers.worker_handler import WorkerHandler
 from src.services.task_setup_service import TaskSetupService
 from src.web.oauth_app import create_oauth_blueprint
 from tests.support import http_boundary_fake
@@ -298,40 +302,51 @@ async def test_drive_a_failing_decrypt_raises_and_records_no_loss(world):
 # ------------------------------------------------------------------------------------------------ To Do
 
 async def _todo_consent_and_setup(world: World):
+    """The consent, then the task it enqueued, delivered through the real WorkerHandler dispatch."""
     resp = await world.consent("/auth/connect-microsoft-todo/callback", "microsoft_todo_oauth_state",
                                "microsoft_todo_connect_user_id")
     assert resp.headers["Location"] == "/cabinet?microsoft_todo_connected=1"
     setups = [b for b in world.bodies() if b["task_type"] == "setup_microsoft_todo"]
     assert setups == [{"task_type": "setup_microsoft_todo", "user_id": USER}]
-    await world.task_setup.setup(USER)
+    worker = WorkerHandler(agent_worker_handler=None, email_indexing_service=None, notification_service=None,
+                           consolidation_service=None, coordinator=None, agent_factory=None,
+                           indexed_email_repo=None, user_repo=None, task_setup=world.task_setup)
+    assert await worker.handle(setups[0]) == ({"status": "ok"}, 200)
 
 
 async def _seed_todo(world: World, expires_at: datetime) -> dict:
-    await world.task_config.save_config(USER, TaskUserConfig(
-        primary_list_id="l1", subscriptions=[TaskSubscriptionConfig(sub_id="s0", list_id="l1", expires_at=expires_at)]))
+    old = TaskSubscriptionConfig(sub_id="s0", list_id="l1", expires_at=expires_at)
+    world.graph.live["s0"] = old
+    await world.task_config.save_config(USER, TaskUserConfig(primary_list_id="l1", subscriptions=[old]))
     world.db.collection(ENV.task_search_index_collection).docs["u:t1"] = {"user_id": USER, "list_id": "l1",
                                                                           "title": "Renew the library card"}
     return world.docs(ENV.task_search_index_collection)
 
 
-async def test_todo_an_active_subscription_is_kept_and_nothing_is_re_read(world):
-    index = await _seed_todo(world, datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=2))
-
-    await _todo_consent_and_setup(world)
-
-    assert not [b for b in world.bodies() if b["task_type"] == "reindex_task_list"]
-    assert world.graph.registered == []
-    assert [s.sub_id for s in (await world.task_config.get_config(USER)).subscriptions] == ["s0"]
-    assert world.docs(ENV.task_search_index_collection) == index
-
-
-async def test_todo_a_lapsed_subscription_re_reads_the_list_once_and_deletes_nothing(world):
-    index = await _seed_todo(world, datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1))
+@pytest.mark.parametrize("prior", ["active", "lapsed"])
+async def test_todo_a_consent_re_registers_once_and_re_reads_once_deleting_nothing(world, prior):
+    """A consent is a new grant: a stored subscription, even one that still reads active, is not trusted (Graph may
+    have dropped it with the old consent), so changes made during the gap are read once."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    index = await _seed_todo(world, now + timedelta(days=2) if prior == "active" else now - timedelta(days=1))
 
     await _todo_consent_and_setup(world)
 
     reindex = [b for b in world.bodies() if b["task_type"] == "reindex_task_list"]
     assert reindex == [{"task_type": "reindex_task_list", "user_id": USER, "list_id": "l1"}]
-    assert world.graph.registered == ["s1"]
-    assert [s.sub_id for s in (await world.task_config.get_config(USER)).subscriptions] == ["s1"]
+    assert world.graph.registered == ["s1"] and set(world.graph.live) == {"s1"}
+    config = await world.task_config.get_config(USER)
+    assert config.primary_list_id == "l1" and [s.sub_id for s in config.subscriptions] == ["s1"]
     assert world.docs(ENV.task_search_index_collection) == index
+
+
+async def test_todo_the_renewal_path_still_keeps_an_active_subscription(world):
+    """Only the consent re-subscribes: after it, the sweep's ensure_subscriptions keeps the live one, reads nothing."""
+    await _seed_todo(world, datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1))
+    await _todo_consent_and_setup(world)
+    before = len(world.bodies())
+
+    await world.task_setup.ensure_subscriptions(USER)
+
+    assert world.graph.registered == ["s1"] and world.bodies()[before:] == []
+    assert [s.sub_id for s in (await world.task_config.get_config(USER)).subscriptions] == ["s1"]
