@@ -53,6 +53,8 @@ EMBED_FILE_BUDGET_S = 180
 MODEL_FILE_BUDGET_S = 600                   # §24.3: windows done by then are indexed, the rest `truncated`
 FILE_START_MARGIN_S = 60
 MAX_DOWNLOAD_BYTES = 45 * 1024 * 1024       # Step 1 drive cap
+MAX_PDF_DOWNLOAD_BYTES = 100 * 1024 * 1024  # indexer only; chat/open keeps MAX_DRIVE_DOWNLOAD_BYTES
+                                            # (decisions/drive_indexer_pdf_download_cap.md)
 MAX_SHEET_DOWNLOAD_BYTES = 10 * 1024 * 1024 # XLSX/XLS (Phase 0 amplification)
 MAX_TEXT_CHARS = 2_000_000
 CHUNK_CHARS = 2_400

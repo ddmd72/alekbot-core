@@ -11,7 +11,7 @@ import pytest
 from src.adapters import subprocess_content_extractor as module
 from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
 from src.domain.drive_extraction import PARSER, ExtractionRequest, ExtractionStatus, PdfSplitFailed
-from src.domain.drive_index_params import MAX_TEXT_CHARS
+from src.domain.drive_index_params import MAX_DOWNLOAD_BYTES, MAX_PDF_DOWNLOAD_BYTES, MAX_TEXT_CHARS
 from src.ports.content_extractor_port import ContentExtractorPort
 from tests.unit.adapters.drive_extraction_fixtures import encrypt_pdf, make_docx, make_member_bomb, make_pdf
 
@@ -135,6 +135,28 @@ async def test_file_over_the_sniffed_kinds_cap_is_too_large_without_a_child(tmp_
         fh.truncate(11 * 1024 * 1024)                       # sparse: over the 10 MiB sheet cap
     extractor = SubprocessContentExtractor(child_module="no.such.module")
     outcome = await extractor.extract(_request(path, "xlsx"))
+    assert outcome.status is ExtractionStatus.TOO_LARGE
+
+
+def _sparse(tmp_path, name, size):
+    path = tmp_path / name
+    with open(path, "wb") as fh:
+        fh.truncate(size)
+    return path
+
+
+async def test_a_pdf_between_the_chat_cap_and_the_pdf_cap_reaches_the_child(tmp_path):
+    size = (MAX_DOWNLOAD_BYTES + MAX_PDF_DOWNLOAD_BYTES) // 2
+    outcome = await _stub(tmp_path).extract(_request(_sparse(tmp_path, "large.pdf", size), "pdf"))
+    # the stub child answered (it has no behaviour for "pdf"): the size check let the file through
+    assert (outcome.status, outcome.detail) == (ExtractionStatus.ERROR, "stub has no behaviour 'pdf'")
+
+
+async def test_a_download_sniffed_as_another_kind_keeps_that_kinds_cap(tmp_path):
+    # a .pdf name downloaded under the PDF cap whose bytes are a docx: refused before any child
+    size = (MAX_DOWNLOAD_BYTES + MAX_PDF_DOWNLOAD_BYTES) // 2
+    extractor = SubprocessContentExtractor(child_module="no.such.module")
+    outcome = await extractor.extract(_request(_sparse(tmp_path, "large.pdf", size), "docx"))
     assert outcome.status is ExtractionStatus.TOO_LARGE
 
 

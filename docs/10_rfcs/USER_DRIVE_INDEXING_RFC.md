@@ -1274,7 +1274,7 @@ substitutions (deploy-substitution trap).
 | `EXTRACT_WALL_TIMEOUT` | 120 s | S1 |
 | `RLIMIT_AS` / `RLIMIT_CPU` | placeholders | Set by S1 for the chosen host |
 | `EMBED_IN_FLIGHT` / `EMBED_FILE_BUDGET` | 4 / 180 s | Caps the indexer's share of the shared Gemini quota; a 429 ends the tick |
-| Download cap | 45 MB (Step 1), XLSX 10 MB | Step 1 §4.6 |
+| Download cap | 45 MB (Step 1), XLSX 10 MB; the indexer's PDF 100 MiB (2026-10-29) | Step 1 §4.6; `decisions/drive_indexer_pdf_download_cap.md` |
 | ZIP container caps | 100 MiB inflated, 10 000 members | Phase 0 pre-filter, not a memory bound |
 | `MAX_TEXT_CHARS` | 2 000 000 | Extractor-output memory bound |
 | `CHUNK_CHARS` / `CHUNK_OVERLAP` | 2 400 / 240 | ≈ 600 tokens, far below the 8 192-token embedding limit |
@@ -2205,7 +2205,7 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
 | `DOWNLOAD_TIMEOUT_S` / `EXTRACT_WALL_TIMEOUT_S` / `EMBED_FILE_BUDGET_S` | 120 / 120 / 180 s | §7.1 deadline sum; S1 may revise the parser's |
 | `MODEL_FILE_BUDGET_S` | 600 s | Fits the §7.1 deadline sum with the other per-file budgets |
 | `TICK_FILE_BUDGET` | 50 | Index runs per tick |
-| `MAX_DOWNLOAD_BYTES` / `MAX_SHEET_DOWNLOAD_BYTES` | 45 MiB / 10 MiB | Step 1 cap; sheets amplify most (Phase 0) |
+| `MAX_DOWNLOAD_BYTES` / `MAX_SHEET_DOWNLOAD_BYTES` / `MAX_PDF_DOWNLOAD_BYTES` | 45 MiB / 10 MiB / 100 MiB | Step 1 cap; sheets amplify most (Phase 0); the PDF cap is the indexer's only, measured (`decisions/drive_indexer_pdf_download_cap.md`) |
 | `MAX_TEXT_CHARS` / `MAX_SHEET_ROWS` | 2 000 000 / 5 000 | Text and table bounds |
 | `CHUNK_CHARS` / `CHUNK_OVERLAP` / `MAX_CHUNKS_PER_FILE` / `MAX_CHUNKS_PER_USER` | 2 400 / 240 / 400 / 50 000 | §8.4, §5.4 |
 | `CARD_LEAD_CHARS` | 2 000 | Lead text in the card |

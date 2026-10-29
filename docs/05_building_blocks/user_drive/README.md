@@ -265,7 +265,8 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   (`Admission.TRANSCRIBE`): not parsed, never in the content classes, handled by the transcript stage (§4.23).
   Everything else (`doc`, `ppt`, `mhtml`, iWork, archives, code, …) is `metadata_only` (reason `kind_not_admitted`) with a card.
   (Structure decisions compare against `STRUCTURE_POLICY_SINCE` = 2, so the version 3 bump re-reads no README and re-probes no folder.) A content kind over its
-  download cap (45 MiB; 10 MiB for XLSX/XLS) is `metadata_only / too_large` before any download. Dot-names,
+  download cap (`size_cap`: 100 MiB for a PDF, 10 MiB for XLSX/XLS, 45 MiB for the rest; indexer only, chat/open keeps 45 MiB,
+  [decision](../../04_solution_strategy/decisions/drive_indexer_pdf_download_cap.md)) is `metadata_only / too_large` before any download. Dot-names,
   secret-shaped names (`id_rsa*`, `*.kdbx`, a non-Keynote `*.key`, …) and remote/package/malware items keep a card
   with their reason and are never read. OS and lock artefacts (`~$*`, `.~lock.*#`, `Thumbs.db`, `desktop.ini`,
   `.DS_Store`, `*.tmp`) keep a record but get no card and no name keys (`os_artifact`, RFC Δ32). A dot-folder, a
@@ -395,7 +396,7 @@ Design: RFC §24 (it overrides older RFC text where they disagree). Decisions:
    ▼                                                                                       ▼
  3 RUN START can_start_file (deadline) → generation_started (persisted before the download)
    ▼
- 4 FETCH     download_to_file (45 MiB / 10 MiB cap) or, for an image, the 2048-px rendition → sniff_kind
+ 4 FETCH     download_to_file (size_cap: PDF 100 / sheets 10 / rest 45 MiB) or, for an image, the 2048-px rendition → sniff_kind
    ▼
  5 EXTRACT   chain_for(kind): parser (child process) ──model_route?──► reader (10-page windows, 4 in flight)
    │         outcome_step: TEXT │ DEMOTE │ RETRY │ WAIT_MONTH            (budgets and outage checked first)
@@ -773,7 +774,7 @@ doubling. The Cabinet shows each class's dollars this month (what its cap paid) 
 its own line (§7).
 
 **Large files: what is read and how it is marked.** Take a 600-page PDF.
-- Over 45 MiB (likely for a 600-page scan): `metadata_only / too_large` from the size in the listing, never
+- Over 100 MiB (the indexer's PDF cap; other kinds stop at 45 MiB): `metadata_only / too_large` from the size in the listing, never
   downloaded; its name card is searchable, it counts as "could not be read" (§7.1).
 - With a good text layer: the parser reads every page until `MAX_TEXT_CHARS` (2 M characters); the chunker keeps the
   first `MAX_CHUNKS_PER_FILE` (400) chunks of about 2 400 characters each, so roughly the first 860 000 characters
@@ -917,7 +918,7 @@ HtmlPageGenerator reaches them without the wrapper until Slice 3
 once (behind any tick already running: the queue runs one at a time); uploaded any other way, it arrives in the delta
 feed at the next fan-out tick, every 10 minutes (minutes 3, 13, …). 2. *Classified* `pending`, content due in class 2;
 first sight has no quiet period. 3. In the same tick, after the delta round completes: card headroom, then the run
-budget (50 runs, 8-minute start budget, the worst case must fit the 30-minute deadline). 4. Download (≤ 45 MiB) →
+budget (50 runs, 8-minute start budget, the worst case must fit the 30-minute deadline). 4. Download (≤ 100 MiB for a PDF) →
 sniff → the parser finds no text or under 200 characters a page → the model hold (the reader dollars left, the outage
 backoff, the re-read cooldown, chunk headroom) → the reader transcribes it in 10-page windows and returns the brief →
 text gate → chunks → embeddings → commit → the card (name, kind, brief, lead text). 5. **Smart can find its text from the moment that run commits** —
