@@ -54,6 +54,14 @@ in the account settings. That side is not visible to us.
   user is in the chat at that moment and sees the failure. Flagging there would also suppress the
   background notice, which is the only one that tells them what to do.
 
+## Update (R1, secrets at rest S2)
+
+Two flags, two paths. A refresh the provider rejects (`invalid_grant`) sets `needs_reconnect` on the credential, as
+above. A credential that is simply absent while the Gmail indexing state shows a past connection takes the R1 path:
+the notice flag lives on the indexing state (`reconnect_notified`, written as one field), and a deliberate Cabinet
+disconnect marks the state so R1 skips it. Neither flag is derived from the other. See
+[reconnect_notice_r1.md](reconnect_notice_r1.md).
+
 ## Update 2026-10-22
 
 The flag write (and every token refresh write) now goes through `OAuthCredentialsPort.update_credentials`, which

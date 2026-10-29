@@ -286,14 +286,17 @@ stale `running` jobs.
   only on the False→True transition (a reconnect or successful refresh clears it implicitly).
   `/api/gmail/status` returns the flag and the Cabinet shows **Reconnect Gmail**. Until 2026-10-10
   a revoked grant failed silently while the Cabinet said "Connected". See
-  `decisions/gmail_grant_revoked_reconnect.md`.
+  `decisions/gmail_grant_revoked_reconnect.md`. **R1:** a feature state that shows a past connection (Gmail indexing
+  state, drive sync state, To Do config with a primary list) with no credential also shows Reconnect and sends one
+  notice, unless the user disconnected on purpose; the hourly `reconnect_notice_sweep` lists users from the feature
+  stores (`decisions/reconnect_notice_r1.md`).
 - **`WorkerHandler`** dispatches `/worker` Cloud Tasks by `task_type`:
   `agent_execution`, `email_indexing`, `email_indexing_watchdog`, `start_email_indexing`,
   `consolidation`, `sweep_consolidation`, `companion_consolidation`, `sweep_companion_consolidation`,
   `deep_research_failed`, `deep_research_webhook_event`, `fire_due_reminders`,
   `execute_reminder`, `setup_microsoft_todo`, `reindex_task_list`, `renew_task_subscriptions`,
   `renew_all_task_subscriptions`, `start_daily_email_review`, `daily_email_review`,
-  `billing_daily_summary`, `fact_lifecycle_sweep`, `fact_review`, `interactive_choice`, `repair_email_embeddings`, `start_drive_sync`. Full reference:
+  `billing_daily_summary`, `fact_lifecycle_sweep`, `fact_review`, `interactive_choice`, `repair_email_embeddings`, `start_drive_sync`, `reconnect_notice_sweep`. Full reference:
   `docs/07_deployment/SCHEDULERS.md`.
   `WorkerHandler` is the only dispatcher: `telegram_update` and a queued Slack event (no `task_type`; `event` +
   `session_id`) go to the adapters attached by the builder (`build_application_graph`);
