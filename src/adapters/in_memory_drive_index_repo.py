@@ -12,6 +12,7 @@ from dataclasses import replace
 from datetime import date, datetime, timezone
 from typing import AbstractSet, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
+from ..domain.drive_cap_alert import CapCounts
 from ..domain.drive_enrichment import DriveHintDoc, EnrichJob, InitialBuild, JobState, ModelUsageMonth
 from ..domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, LeaseLost, Reason, RecordState
 from ..domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean, lean_of
@@ -36,7 +37,8 @@ def _cosine_distance(a: Sequence[float], b: Sequence[float]) -> float:
 
 
 # The fan-out's flags: only update_sync_flags writes them (the Firestore adapter's _FLAGS)
-_FLAG_FIELDS = ("stale_alerted", "reconnect_notified", "migration_alerted", "stall_alerted", "fallback_alerted_day")
+_FLAG_FIELDS = ("stale_alerted", "reconnect_notified", "migration_alerted", "stall_alerted", "fallback_alerted_day",
+                "card_cap_alerted", "chunk_cap_alerted")
 
 
 def _fence(current: Optional[DriveSyncState], owner: Optional[str], user_id: str) -> None:
@@ -91,13 +93,16 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
                                 reconnect_notified: Optional[bool] = None, migration_alerted: Optional[bool] = None,
                                 stall_alerted: Optional[bool] = None,
-                                fallback_alerted_day: Optional[str] = None) -> None:
+                                fallback_alerted_day: Optional[str] = None,
+                                card_cap_alerted: Optional[bool] = None,
+                                chunk_cap_alerted: Optional[bool] = None) -> None:
         current = self.states.get(user_id)
         if current is None:
             return
         given = {"stale_alerted": stale_alerted, "reconnect_notified": reconnect_notified,
                  "migration_alerted": migration_alerted, "stall_alerted": stall_alerted,
-                 "fallback_alerted_day": fallback_alerted_day}
+                 "fallback_alerted_day": fallback_alerted_day, "card_cap_alerted": card_cap_alerted,
+                 "chunk_cap_alerted": chunk_cap_alerted}
         self.states[user_id] = replace(current, **{k: v for k, v in given.items() if v is not None})
 
     async def delete_sync_state(self, user_id: str, owner: Optional[str] = None) -> None:
@@ -205,6 +210,12 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
                    if r.state is RecordState.METADATA_ONLY and r.reason is Reason.USER_CHUNK_CAP]
         refused.sort(key=lambda r: (r.card_rank, -(r.modified_at.timestamp() if r.modified_at else 0.0), r.item_id))
         return refused[:limit]
+
+    async def count_capped(self, user_id: str) -> CapCounts:
+        recs = self._user(user_id)
+        return CapCounts(card=sum(1 for r in recs if r.card_capped),
+                         chunk=sum(1 for r in recs
+                                   if r.state is RecordState.METADATA_ONLY and r.reason is Reason.USER_CHUNK_CAP))
 
     async def inaccessible_records(self, user_id: str, limit: int, *, lean: bool = False) -> List[DriveIndexRecord]:
         marked = [r for r in self._user(user_id) if r.inaccessible_since is not None]

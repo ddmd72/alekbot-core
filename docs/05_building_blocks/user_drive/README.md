@@ -134,7 +134,7 @@ HTML, with no indexer change.
 Cabinet  PUT /api/drive/indexing {"enabled": true|false}
            → UserBotConfig.drive_indexing_enabled + drive_sync task (toggle key)
 Cloud Scheduler every 10 min (minutes 3, 13, …) → main /worker start_drive_sync
-           → DriveSyncSchedulerService: one drive_sync task per user (tick key), staleness alert, reconnect notice
+           → DriveSyncSchedulerService: one drive_sync task per user (tick key), staleness alert, cap alert, reconnect notice
 Step 1 mutation (save, move, delete, …) → UserDriveService → drive_sync task (nudge key, item ids)
 
 Cloud Tasks queue drive-sync-dev (max-concurrent-dispatches=1)
@@ -188,7 +188,7 @@ Deploy units, queue, scheduler job and the two-pass first deploy: [docs/07_deplo
 | `DocumentProfilerPort` (Search v2) | `DriveProfilerRunner` | one text file's profile (§4.17) |
 | `PassageHintPort` (Search v2) | `DrivePassageRunner` | keywords and questions with evidence quotes per chunk (§4.17) |
 | `TaskQueue` | `GcpTaskQueue` (second instance) | bound to `drive-sync-dev` and the indexer's `/worker`; built only when `DRIVE_INDEXER_URL` is set |
-| `AlertSinkPort` | `SlackWebhookAdapter` (the ops sink) | the fan-out's staleness alert |
+| `AlertSinkPort` | `SlackWebhookAdapter` (the ops sink) | the fan-out's ops alerts (staleness, cap, Search v2) |
 | `MediaAudioPort` (§27) | `SubprocessMediaExtractor` (`drive_parser/media*.py`) | `probe(url)` and `extract_windows(url, windows)`: audio-only Opus windows of a recording, in the parser sandbox (§4.23) |
 | `BatchTranscriptionPort` (§27) | `GeminiBatchAdapter` | upload a window, submit/poll/collect a batch, delete the provider file; the only batch boundary |
 
@@ -252,7 +252,7 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   type for the profiler and passages), the coverage counters `coverage_waiting` / `coverage_held` /
   `coverage_no_passages` and the job-state counts the tick stores (so a search runs no count query), the rebuild's
   `described_count` / `described_grew_at`, and the alert flags `migration_alerted`, `stall_alerted`,
-  `fallback_alerted_day`; v1's `usage_month`, `model_pages_used` and `triage_images_used` are retired and left
+  `fallback_alerted_day`, and the cap alert's `card_cap_alerted` / `chunk_cap_alerted`; v1's `usage_month`, `model_pages_used` and `triage_images_used` are retired and left
   unread (the usage documents above replace them). The fan-out creates
   a minimal one for a user with indexing on, a working grant and none yet, so staleness covers ticks that never land
   (RFC Δ28).
@@ -2140,6 +2140,13 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   grant it posts one reconnect notice to the user: the flag is set before sending and lowered only when no send was
   attempted (`NotifyResult.sent`), so the next fan-out retries a notice that never left, and one cut off after it left
   is lost, never repeated. A missing drive prompt or a model outage has no alert of its own: ERROR lines only.
+  **Cap alert** (`drive_cap_alert`): files held by a per-user cap — the card cap (`card_capped`) and the chunk cap
+  (`metadata_only / user_chunk_cap`), each on its own — post one ops alert with the count when the cap goes from no
+  held file to some, through the flags `card_cap_alerted` / `chunk_cap_alerted` (written only by `update_sync_flags`
+  after the post, like `stale_alerted`); a cap that holds none again lowers its flag without a post, so the next
+  incident alerts again. Counted on each fan-out pass for a user with indexing on by `count_capped`: two count
+  aggregations with equality filters only, served by the single-field indexes (no composite index). The tick keeps no
+  running count of held files (its `capped` is a per-tick event count on the log line). No user-facing message.
 - **Cabinet.** `/api/drive/status` reads the indexing block in its own try: on failure it logs ERROR and leaves the
   block out, so Connect, Disconnect and Reconnect always show. The block carries `available` (a drive queue is
   wired; the switch is hidden when false unless search is on), `access_lost_at` and `index_kept` (the "kept about 30
