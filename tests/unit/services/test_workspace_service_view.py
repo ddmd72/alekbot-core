@@ -151,11 +151,11 @@ class TestHistory:
     async def test_file(self):
         svc, store = _svc()
         store.seed(USER, P, "v1")
-        store.seed(USER, P, "v2", origin="voice:tell_alek")
+        store.seed(USER, P, "v2", origin="voice:send_to_chat")
         r = await svc.run(_call(), "history", {"path": P})
         lines = r.text.splitlines()
         assert lines[0] == f"history of workspace:{P} — 2 versions"
-        assert lines[1].endswith("voice:tell_alek · current") and "replaced" in lines[2]
+        assert lines[1].endswith("voice:send_to_chat · current") and "replaced" in lines[2]
 
     async def test_folder(self):
         svc, store = _svc()

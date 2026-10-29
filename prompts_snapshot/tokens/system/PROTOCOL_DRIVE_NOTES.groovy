@@ -66,7 +66,7 @@ uploaded_by: local_script
             "'My notes' alone may mean reminders: ask which in question.",
         ]
 
-        on_a_call: "A commission from a phone call (ask_alek or tell_alek): the caller's own lines in it are the user's words. Write what they say or confirm, never Lelik's wording alone. The receipt goes to the chat."
+        on_a_call: "A commission from a phone call (ask_alek or send_to_chat): the caller's own lines in it are the user's words. Write what they say or confirm, never Lelik's wording alone. The receipt goes to the chat."
 
         receipts: "The system posts the stored note word for word; do not repeat it."
 

@@ -1,4 +1,4 @@
-"""tell_alek — an errand from a phone call (VOICE_COMPANION_RFC §4.15.2).
+"""send_to_chat — an errand from a phone call (VOICE_COMPANION_RFC §4.15.2).
 
 The caller is not waiting for it: the commission says so, and Alek's whole answer is posted to
 chat, links or not — it is the only place the caller sees the outcome. The errand reaches the
@@ -13,7 +13,7 @@ from src.domain.agent import AgentIntent, AgentMessage, AgentResponse, AgentStat
 from src.domain.messaging import SmartResponse
 
 
-def _message(intent_name="tell_alek", agent_intent=AgentIntent.DELEGATE):
+def _message(intent_name="send_to_chat", agent_intent=AgentIntent.DELEGATE):
     return AgentMessage.create(
         sender="worker", recipient="alek_agent_u1", intent=agent_intent,
         payload={"query": "[Sep 28, 10:20 UTC] Remind the user when to leave for the airport",

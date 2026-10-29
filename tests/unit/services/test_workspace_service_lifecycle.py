@@ -73,13 +73,13 @@ class TestRename:
     async def test_moves_and_records_where_it_went(self):
         svc, store = _svc()
         store.seed(USER, P, "state")
-        r = await svc.run(_call(origin="voice:tell_alek"), "rename", {"path": P, "new_path": Q})
+        r = await svc.run(_call(origin="voice:send_to_chat"), "rename", {"path": P, "new_path": Q})
         [dst] = store.versions_of(USER, Q)
         assert r.text == f"renamed workspace:{P} to workspace:{Q} · generation {dst.generation}"
         assert dict(r.generations) == {P: None, Q: dst.generation}
-        assert store.live_text(USER, Q) == "state" and dst.origin == "voice:tell_alek"
+        assert store.live_text(USER, Q) == "state" and dst.origin == "voice:send_to_chat"
         [src] = store.versions_of(USER, P)
-        assert (src.live, src.renamed_to, src.deleted_by) == (False, Q, "voice:tell_alek")
+        assert (src.live, src.renamed_to, src.deleted_by) == (False, Q, "voice:send_to_chat")
 
     async def test_rename_is_not_cap_checked(self):
         svc, store = _svc()

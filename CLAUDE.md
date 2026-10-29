@@ -197,8 +197,8 @@ Full per-agent detail (mechanics, intents, tiers, gotchas) lives in
 | Compute | ECO | `compute_*` | Gemini `code_execution` sandbox, compute-only |
 | ImageGeneration | ECO default (**Grok**-only) | `generate_image`, `edit_image` | grok-imagine-image-2.0 (Aurora) via `ImageGenerationPort`; ASYNC, delivers as document |
 | Tutor | BALANCED (OpenAI `gpt-6-luna`) | `tutor_chat` | bound-channel-only companion; text language tutor, session-scoped memory (RFC `COMPANION_AGENTS_RFC.md`, roster detail in `src/agents/CLAUDE.md`) |
-| Lelik | n/a — session is OpenAI Realtime in the relay | internal; allowlist `search_memory`, `search_web_light`, `ask_alek`, `tell_alek` | voice companion: callback, session config, delegation via `/voice/delegate` |
-| Alek gateway | zero-LLM | `ask_alek` (SYNC), `tell_alek` (ASYNC errand) — internal | Lelik's route to Router → Smart; question: links copy to chat; errand: full outcome to chat |
+| Lelik | n/a — session is OpenAI Realtime in the relay | internal; allowlist `search_memory`, `search_web_light`, `ask_alek`; own tool `send_to_chat` | voice companion: callback, session config, delegation via `/voice/delegate` |
+| Alek gateway | zero-LLM | `ask_alek` (SYNC), `send_to_chat` (ASYNC errand) — internal | Lelik's route to Router → Smart; question or action: answer to Lelik, links copy to chat; `send_to_chat`: full outcome to chat |
 | WebSearchLight | ECO (Gemini flash-lite) | `search_web_light` (internal, Lelik only) | one grounded lookup, ~2 s, spoken answer |
 | lelik_summarizer | ECO | none (not manifest-registered) | end-of-call transcript → plain-text summary; run by `CompanionExtractorRunner`, same slot `tutor_extractor` fills; no provider fallback by decision (a lost note is alerted, `src/agents/CLAUDE.md`) |
 | DriveDocumentReader | ECO (OpenAI `gpt-6-luna`, or Claude by `agent_providers`; fallback Gemini `gemini-3.8-flash`) | none (indexer only) | PDF window or image → verbatim text + brief; `ContentExtractorPort` via `DriveReaderRunner` |
@@ -221,7 +221,7 @@ chat-since notes live only in the run's own transcript, never in history. A retr
 is `running` but not live in this process is reported lost. Telegram updates go via `/worker`
 `task_type=telegram_update` (a named Cloud Task: the update id is its dedup), not inline; Slack's lock releases at the mark.
 Smart sees its running jobs and can cancel one, per `PROTOCOL_LONG_TURNS`. The two-phase timeout
-path is retired. Not in scope: `ask_alek`/`tell_alek`/notifications stay unclocked (RFC §7
+path is retired. Not in scope: `ask_alek`/`send_to_chat`/notifications stay unclocked (RFC §7
 deferred; see `decisions/long_running_turns.md`).
 
 **Public landing** — `/` serves `src/web/static/landing.html` to visitors without a session (it is the
@@ -415,12 +415,17 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
   every reply is started by the relay after appending the text path's `build_persona_anchor` as a
   `system` item. Anchors are never deleted, because a failed delete is a call-ending provider error
   (RFC §5.2). Lelik's own lookups post nothing to chat (auto link copy withdrawn 2026-09-29).
-- **Two search depths, questions vs errands** (VOICE_COMPANION_RFC §4.15, 2026-09-29).
+- **Two search depths; a worker and a channel** (VOICE_COMPANION_RFC §4.15, 2026-09-29; delta 2026-10-29).
   - Lelik's own lookup is `search_web_light`: one grounded Gemini ECO call, ~2 s. The full
     `search_web` with Maps fan-out (11–15 s) left his allowlist; deeper research goes to Alek.
-  - `ask_alek` is a question: SYNC, and Lelik hosts the wait. `tell_alek` is an errand: ASYNC, so
-    it runs as a **Cloud Task**, not a background task in the route, because Cloud Run throttles the
-    CPU once a response is sent.
+  - `ask_alek` is a question or an action (a reminder, a task, saving something): SYNC, Lelik hosts
+    the wait and says the answer or confirms the action.
+  - `send_to_chat(request)` is a second top-level tool of the session, not an intent of
+    `delegate_to_specialist` (it replaced the `tell_alek` intent, owner 2026-10-29: Lelik picked it
+    when the caller wanted the answer by voice; `decisions/lelik_send_to_chat.md`). The relay maps it
+    to the internal `send_to_chat` intent (`domain/voice_errand.delegation_arguments`), an errand:
+    ASYNC, so it runs as a **Cloud Task**, not a background task in the route, because Cloud Run
+    throttles the CPU once a response is sent. Lelik does not hear back.
     - Alek posts the errand's whole outcome to chat.
     - `AgentWorkerHandler` reports a failed errand (`_notify_errand_failure`).
   - Smart's `PROTOCOL_VOICE_PARTNER` (`lelik_request_quality`) tells Alek that Lelik's request comes
@@ -428,8 +433,8 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
     chat history, and serve that.
 - **Two agents, deliberately not one.** `LelikAgent` is a standard delegating agent (Slice 2), not a
   call-placer only: three entry points — `execute()` places the callback, `session_config()` builds
-  the realtime session's instructions + tool declaration (over `LELIK.allowed_intents`, the same
-  `_build_delegate_tool_declaration` Smart/Tutor use), `delegate()` runs one `delegate_to_specialist`
+  the realtime session's instructions + two tools (`delegate_to_specialist` over `LELIK.allowed_intents`, the same
+  `_build_delegate_tool_declaration` Smart/Tutor use, and `send_to_chat`), `delegate()` runs one `delegate_to_specialist`
   call from the live session through `DelegationEngine.dispatch` (made public for this second caller).
   `LelikSummarizerAgent` (ECO) turns the end-of-call transcript into a short note written as Lelik
   himself (first person, his `VOICE_*_LELIK` tokens, humour and emojis, up to 60 words; revised
@@ -625,7 +630,7 @@ A loaded body is persisted as a raw `[Skill "<name>" v<n>]` block in `full_text`
 in the summary, so it lives until history tiering; after that the model can reload it with
 `use_skill`.
 **Authoring (delivery B):** on interactive turns only (`ConversationHandler` sets
-`agent_context["interactive_delivery"]`; background paths — `notify`, `ask_alek`, `tell_alek`,
+`agent_context["interactive_delivery"]`; background paths — `notify`, `ask_alek`, `send_to_chat`,
 `/worker` — never set it), Smart also gets `draft_skill`: it stores an immutable draft and returns
 a `skill_preview` delivery, which `ConversationHandler` alone delivers in order — the verbatim
 `SKILL.md` as a file, each file the model wrote as its own file (at most 5, delivery C), a change
@@ -661,7 +666,7 @@ writer), the same-fire line (a re-run of a reminder fire is told the version fro
 warnings, one `[Workspace]` log line per command. `GcsWorkspaceAdapter` puts under generation preconditions and deletes
 as a metadata patch + delete of the **live** object through a fresh blob under `if_generation_match` — never a
 generation-addressed delete, which erases the version — and reads back `write_id` / `delete_id` on a 412. Every object
-carries its `origin` (`chat`, `background:<task_type>`, `voice:ask_alek|tell_alek`) and, on reminder runs, the fire key
+carries its `origin` (`chat`, `background:<task_type>`, `voice:ask_alek|send_to_chat`) and, on reminder runs, the fire key
 `reminder:<note_id>@<due_at>` — context keys `run_origin` / `run_fire_key` set by `notify(origin_detail=, fire_key=)`,
 the Alek gateway, or derived from `interactive_delivery`; origin and history serve debugging and undo, not protection
 (D17: no "data only" framing, injection is the fingerprint's class-B work). Reminders gain one optional code-bound field
@@ -868,7 +873,7 @@ a note's words in the `work_with_drive_files` query (`file_contents` is "never a
 `get_note` whenever `DriveNoteService` is wired, `DRIVE_NOTES_ENABLED` is on and there is a user, and the ten writers
 (`create_note`, `add_to_note`, `replace_note_text`, `set_note_type`, `clear_note_type`, `add_life_areas`,
 `remove_life_areas`, `delete_note`, `undo_note`, `erase_note`) only on an owner turn (`is_owner_turn`: `interactive_delivery`,
-or `run_origin` exactly `voice:ask_alek` / `voice:tell_alek`), re-checked per call; rules in the non-overridable token
+or `run_origin` exactly `voice:ask_alek` / `voice:send_to_chat`), re-checked per call; rules in the non-overridable token
 `PROTOCOL_DRIVE_NOTES`. No tool replaces more than its name says; a change that would empty a note is refused;
 `replace_note_text` needs a `get_note` read in the same run (`CHANGED_SINCE_READ`). One write loop in the core
 (`_write(compose)`: composed inside the conflict retry, identical = no-op, append and undo re-run safe); writes run under

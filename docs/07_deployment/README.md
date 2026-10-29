@@ -294,7 +294,7 @@ limit) it samples every second.
 
 ### Cloud Tasks queues
 
-- Slack events go to `alek-bot-tasks-{env}`; Telegram updates (`telegram_update`), `tell_alek` errands and other agent
+- Slack events go to `alek-bot-tasks-{env}`; Telegram updates (`telegram_update`), `send_to_chat` errands and other agent
   tasks go to `agent-tasks-{env}` (us-central1) and share its 5 concurrent dispatch slots. `dispatch_deadline` is set per
   task, not on the queue.
 - Attempt logging on the agent queue, so a redelivery can be told from a retry:

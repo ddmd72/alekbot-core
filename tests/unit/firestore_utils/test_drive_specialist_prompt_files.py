@@ -85,11 +85,11 @@ _STATE_KEYS = {"drive_state", "user_message", "file_contents"}   # the drive_sta
 _KEY = re.compile(r'(?m)^\s*([a-z]+(?:_[a-z]+)+)\s*(?:\{|:\s*["\[])')
 # Reviewer edit (U2-8): the note rules name, on purpose, the note ref's prefix and what the specialist must tell apart
 # from a note without having it (DRIVE_FILE_NOTES_RFC §4.1; U2 re-home list U2-8: "not propose_memory_facts; reminders
-# go to manage_self_reminders"; a call's commission comes through ask_alek / tell_alek). Each is taken from its real
+# go to manage_self_reminders"; a call's commission comes through ask_alek / send_to_chat). Each is taken from its real
 # declaration, so a rename breaks this test, not the prompt.
 _REF_PREFIXES = {NOTE_REF_PREFIX.rstrip(":")}
 _NAMED_ELSEWHERE = {PROPOSE_MEMORY_FACTS_TOOL, Intent.MANAGE_SELF_REMINDERS, Intent.ASK_ALEK,
-                    Intent.TELL_ALEK}
+                    Intent.SEND_TO_CHAT}
 
 
 def test_every_identifier_in_the_tokens_is_a_tool_a_parameter_or_a_block_key():

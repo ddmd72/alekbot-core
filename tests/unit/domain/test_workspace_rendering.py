@@ -179,7 +179,7 @@ class TestListing:
             _e(path="projects/garden-shed.md", generation=105, size=10, live=False),
             _e(path=P, generation=111, size=2150, origin="background:execute_reminder",
                updated=datetime(2026, 10, 20, 6, tzinfo=UTC)),
-            _e(path="projects/summer-trip.md", generation=104, size=1024, origin="voice:tell_alek",
+            _e(path="projects/summer-trip.md", generation=104, size=1024, origin="voice:send_to_chat",
                updated=datetime(2026, 10, 2, 8, tzinfo=UTC)),
             _e(path="projects/old.md", generation=102, live=False),
             _e(path="projects/gone.md", generation=103, live=False),
@@ -188,7 +188,7 @@ class TestListing:
             "workspace:projects/ — 3 files\n"
             "  projects/morning-briefing.md · 2.1 KB · 2026-10-20 · background:execute_reminder\n"
             "  projects/garden-shed.md · 4.2 KB · 2026-10-18 · chat\n"
-            "  projects/summer-trip.md · 1.0 KB · 2026-10-02 · voice:tell_alek\n"
+            "  projects/summer-trip.md · 1.0 KB · 2026-10-02 · voice:send_to_chat\n"
             "(2 deleted files in this folder — history projects/ lists them)"
         )
 

@@ -7,12 +7,17 @@ a realtime session in the relay process, so there are three entry points, not on
 execute() places the callback (§4.6), session_config() feeds the session at pickup
 (§4.8), delegate() runs one tool call from the live session through DelegationEngine.
 
+The session has two tools (§4.15.2, revised 2026-10-29): delegate_to_specialist over
+LELIK.allowed_intents, and send_to_chat, a channel rather than a worker — the caller's chat. The
+relay turns a send_to_chat call into the errand intent of the same name (domain/voice_errand.py),
+so delegate() runs both the same way.
+
 execute() does not catch originate_call failures: the webhook's own try/except releases
 the ticket and one-call marker.
 
 delegate() posts nothing to chat (VOICE_COMPANION_RFC §4.15.3, owner decision 2026-09-29): the
 automatic link copy of §4.10 rule 2 filled the chat with every search's links. When the caller
-wants something in chat, Lelik hands it to Alek (tell_alek), who decides what is worth posting.
+wants something in chat, Lelik calls send_to_chat, and Alek decides what is worth posting.
 """
 from typing import TYPE_CHECKING, Any, Dict, List
 from urllib.parse import urlencode
@@ -22,9 +27,10 @@ from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
 from ..domain.llm import ToolCall
 from ..domain.messaging import session_id_for
 from ..domain.turn_identity import TURN_ID_CONTEXT_KEY
+from ..domain.voice_errand import SEND_TO_CHAT, SEND_TO_CHAT_REQUEST
 from ..domain.voice_delegation_outcome import VoiceDelegationOutcome
 from ..domain.voice_provider_profile import VoiceProviderProfile
-from ..infrastructure.agent_manifest import LELIK
+from ..infrastructure.agent_manifest import ALEK, LELIK, Intent
 from ..infrastructure.delegation_engine import DelegationEngine, normalize_delegate_context
 from ..ports.prompt_builder_port import PromptBuilderPort
 from ..ports.telephony_port import TelephonyPort
@@ -109,6 +115,8 @@ class LelikAgent(BaseAgent):
         )
         available = self.coordinator.get_available_intents_for(self._descriptor) if self.coordinator else []
         tools = [self._build_delegate_tool_declaration(available)] if available else []
+        if self.coordinator and self.coordinator.get_execution_mode(Intent.SEND_TO_CHAT) is not None:
+            tools.append(_send_to_chat_tool_declaration())
         return {"instructions": instructions, "tools": tools, "voice": self._voice_profile.session.to_dict()}
 
     async def delegate(
@@ -127,7 +135,7 @@ class LelikAgent(BaseAgent):
             "user_id": user_id,
             "account_id": account_id,
             self.coordinator.CALL_CHAIN_KEY: [self._descriptor.agent_id],
-            # One delegation of the call is one owner turn: fixed here, so a tell_alek Cloud Task carries the same id
+            # One delegation of the call is one owner turn: fixed here, so a send_to_chat Cloud Task carries the same id
             # on a redelivery (the drive-note undo guard, DRIVE_FILE_NOTES_RFC §4.2).
             TURN_ID_CONTEXT_KEY: f"voice:{uuid4().hex}",
         }
@@ -148,3 +156,22 @@ class LelikAgent(BaseAgent):
             self.agent_id,
         )
         return VoiceDelegationOutcome(text=result.result_str, failed=bool(result.failed))
+
+
+def _send_to_chat_tool_declaration() -> Dict[str, Any]:
+    """Lelik's own channel tool, declared beside delegate_to_specialist in the neutral shape the realtime
+    adapters wrap. Its description is the errand intent's, from the manifest (one source)."""
+    return {
+        "name": SEND_TO_CHAT,
+        "description": ALEK.capability_descriptions[Intent.SEND_TO_CHAT],
+        "parameters": {
+            "type": "object",
+            "properties": {
+                SEND_TO_CHAT_REQUEST: {
+                    "type": "string",
+                    "description": "What to put into the chat, in full: Alek does not hear the call.",
+                },
+            },
+            "required": [SEND_TO_CHAT_REQUEST],
+        },
+    }

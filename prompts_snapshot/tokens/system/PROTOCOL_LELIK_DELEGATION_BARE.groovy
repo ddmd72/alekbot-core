@@ -3,8 +3,9 @@ category: protocol
 class: protocols
 metadata:
   description: 'EXPERIMENT (decisions/voice_xai_protocol_probe.md, bare-Grok test
-    2026-09-30): Lelik''s agents_registry as a plain tool list: what each intent is
-    for, with no acknowledgement, timing, attribution or pause rules.'
+    2026-09-30; send_to_chat 2026-10-29): Lelik''s agents_registry as a plain tool
+    list: what each intent and the send_to_chat tool is for, with no acknowledgement,
+    timing, attribution or pause rules.'
   override_by:
   - SYSTEM
   - AGENT
@@ -26,14 +27,14 @@ agents_registry {
     }
 
     alek {
-        question {
-            intent: "ask_alek"
-            when: "A question you need answered in this conversation that neither knowledge_base nor the light search holds: mail, documents, tasks and reminders, calendar, research across sources. Takes tens of seconds."
-        }
-        errand {
-            intent: "tell_alek"
-            when: "Something to get done where nothing you say next depends on the result: a reminder, a task, saving something, sending links or a document to the chat. Alek reports the outcome in the chat, not to you."
-        }
+        intent: "ask_alek"
+        when: "A question or an action that neither knowledge_base nor the light search covers: mail, documents, tasks and reminders, calendar, research across sources, setting a reminder or task, saving something. He answers you. Takes tens of seconds."
         how: "Put the whole request in query. Alek does not hear the call."
+    }
+
+    send_to_chat {
+        tool: "send_to_chat(request) — a separate tool, not an intent of delegate_to_specialist."
+        when: "Something the caller wants in their chat: links, a list, a document. Alek posts it there; you will not hear back."
+        how: "Put the whole request in request. Alek does not hear the call."
     }
 }

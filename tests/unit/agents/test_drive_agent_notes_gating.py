@@ -3,7 +3,7 @@
 
 The six cases of the retired Smart gate, re-homed on `DriveAgent`: `get_note` whenever the service is present, the switch
 is on and there is a user; the ten writers only on an owner turn (a chat message, or a call with Lelik whose
-`run_origin` is exactly voice:ask_alek / voice:tell_alek); never on a reminder, the daily review, /worker or an unknown
+`run_origin` is exactly voice:ask_alek / voice:send_to_chat); never on a reminder, the daily review, /worker or an unknown
 origin. A writer's provenance carries the origin, the session and the turn id the entry point fixed; the receipt and the
 history line come out of the answer; a provider-rotation re-run keeps the turn id. Synthetic data only."""
 import inspect
@@ -43,7 +43,7 @@ NOTE_WRITERS = [name for name in nt.NOTE_TOOLS if name != nt.GET_NOTE]
 
 CHAT = {"interactive_delivery": True}
 CALL_ASK = {"run_origin": "voice:ask_alek"}
-CALL_TELL = {"run_origin": "voice:tell_alek"}
+CALL_TELL = {"run_origin": "voice:send_to_chat"}
 
 
 def _receipt(version: int = 1) -> NoteReceipt:
@@ -91,7 +91,7 @@ def _declared(seen: List[LLMRequest]) -> List[str]:
 
 # -- 1. declared on an owner turn -----------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("context", [CHAT, CALL_ASK, CALL_TELL], ids=["chat", "ask_alek", "tell_alek"])
+@pytest.mark.parametrize("context", [CHAT, CALL_ASK, CALL_TELL], ids=["chat", "ask_alek", "send_to_chat"])
 async def test_the_eleven_note_tools_are_declared_and_served_on_an_owner_turn(context):
     service = _service()
     response, seen = await _run(_agent(service), ((nt.CREATE_NOTE, CREATE),), **context)

@@ -11,6 +11,7 @@ from src.domain.lelik_context import LelikContext
 from src.domain.notification import NotificationChannel
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import LELIK
+from src.infrastructure.agent_registry import ExecutionMode
 
 
 def _agent(channel=None, available=None):
@@ -60,18 +61,33 @@ async def test_session_config_builds_the_lelik_prompt_over_persona_context():
 @pytest.mark.asyncio
 async def test_session_config_carries_the_shared_delegate_tool_over_lelik_allowlist():
     agent, _, _, coordinator = _agent()
+    # The errand intent is registered (the Alek gateway is), so send_to_chat sits beside the delegate tool
+    # (VOICE_COMPANION_RFC §4.15.2, revised 2026-10-29); this test is about the delegate tool.
+    coordinator.get_execution_mode.return_value = ExecutionMode.ASYNC
     config = await agent.session_config(user_id="u1", account_id="a1")
     coordinator.get_available_intents_for.assert_called_once_with(LELIK)
-    [tool] = config["tools"]
-    assert tool["name"] == "delegate_to_specialist"
+    assert [t["name"] for t in config["tools"]] == ["delegate_to_specialist", "send_to_chat"]
+    tool = config["tools"][0]
     assert "- search_memory: memory" in tool["description"]
     assert "- search_web: web" in tool["description"]
+    assert "send_to_chat" not in tool["description"]
 
 
 @pytest.mark.asyncio
 async def test_no_available_intents_means_no_tools():
-    agent, *_ = _agent(available=[])
+    agent, _, _, coordinator = _agent(available=[])
+    coordinator.get_execution_mode.return_value = None  # the registry knows no errand intent either
     assert (await agent.session_config(user_id="u1", account_id="a1"))["tools"] == []
+
+
+@pytest.mark.asyncio
+async def test_no_available_intents_means_no_delegate_tool_even_beside_send_to_chat():
+    # The two tools are gated independently (decisions/lelik_send_to_chat.md): an empty allowlist never yields an
+    # empty delegate_to_specialist, whatever send_to_chat's own gate says.
+    agent, _, _, coordinator = _agent(available=[])
+    coordinator.get_execution_mode.return_value = ExecutionMode.ASYNC
+    tools = (await agent.session_config(user_id="u1", account_id="a1"))["tools"]
+    assert [t["name"] for t in tools] == ["send_to_chat"]
 
 
 @pytest.mark.asyncio

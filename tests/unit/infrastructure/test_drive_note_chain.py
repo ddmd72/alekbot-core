@@ -5,7 +5,7 @@ A note written through the drive specialist reaches the owner on both owner path
     on the real `DriveNoteService` (in-memory note store) → `create_note` → the receipt rides the answer to
     `ConversationHandler`, which posts it literally; `drive_note_context` is one entry deep in `full_text`, and no
     note words enter history;
-  - a `tell_alek` CALL: the gateway posts the receipt through `UserNotificationService` (literally, primary channel,
+  - a `send_to_chat` CALL: the gateway posts the receipt through `UserNotificationService` (literally, primary channel,
     call wording in the history pair);
   - a reminder run declares no writer.
 Smart and the specialist are scripted LLMs. Synthetic data only: the bathroom-repair invoice."""
@@ -154,10 +154,10 @@ def _en(message):
     return en.UI_STRINGS[message.value]
 
 
-async def test_a_tell_alek_call_posts_the_receipt_through_the_gateway_literally_with_call_wording():
+async def test_a_send_to_chat_call_posts_the_receipt_through_the_gateway_literally_with_call_wording():
     world = NoteWorld()
     response = await world.run(specialist([(nt.CREATE_NOTE, {"item_ref": "drive:a", "text": REPAIR})]),
-                               run_origin="voice:tell_alek")
+                               run_origin="voice:send_to_chat")
     items = [i for i in response.delivery_items if i.type == DRIVE_NOTE_RECEIPT_DELIVERY]
     assert len(items) == 1
 
@@ -183,7 +183,7 @@ async def test_a_tell_alek_call_posts_the_receipt_through_the_gateway_literally_
     from src.domain.agent import AgentIntent, AgentMessage
     message = AgentMessage.create(
         sender="coordinator", recipient=f"alek_agent_{U}", intent=AgentIntent.QUERY,
-        payload={"query": "keep the bathroom repair invoice on the file", "intent": "tell_alek"},
+        payload={"query": "keep the bathroom repair invoice on the file", "intent": "send_to_chat"},
         context={"user_id": U, "account_id": ACC, "session_id": f"{U}:D1"})
 
     await gateway.execute(message)

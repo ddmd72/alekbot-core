@@ -36,5 +36,13 @@ async def test_the_specialist_and_file_management_read_refs_themselves():
 
 def test_lelik_reaches_the_drive_only_through_alek():
     assert Intent.WORK_WITH_DRIVE_FILES not in LELIK.allowed_intents
-    assert {Intent.ASK_ALEK, Intent.TELL_ALEK} <= LELIK.allowed_intents
-    assert set(ALEK.capabilities) == {Intent.ASK_ALEK, Intent.TELL_ALEK}
+    # A question or an action goes through ask_alek (allowlisted); the chat errand through Lelik's send_to_chat tool,
+    # which runs as the gateway's own intent (VOICE_COMPANION_RFC §4.15.2, revised 2026-10-29).
+    assert Intent.ASK_ALEK in LELIK.allowed_intents
+    assert set(ALEK.capabilities) == {Intent.ASK_ALEK, Intent.SEND_TO_CHAT}
+    registry = AgentRegistry()
+    for descriptor in ALL_DESCRIPTORS:
+        registry.register(descriptor)
+    reachable = {registry.get_agent_for_intent(i).agent_id for i in LELIK.allowed_intents | {Intent.SEND_TO_CHAT}}
+    assert DRIVE_SPECIALIST.agent_id not in reachable and FILE_MANAGEMENT.agent_id not in reachable
+    assert registry.get_agent_for_intent(Intent.SEND_TO_CHAT) is ALEK

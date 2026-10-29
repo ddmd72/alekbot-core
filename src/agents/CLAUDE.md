@@ -531,8 +531,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   delegating agent**, not just a call originator: it has **no `Intent` of its own** (`capabilities={}`),
   so it is still unreachable via `delegate_to_specialist` or `AgentCoordinator` and `can_handle()`
   still returns `False` unconditionally — but its `LELIK` descriptor now carries `allowed_intents=
-  {search_memory, search_web_light, ask_alek, tell_alek}` and no fan-out (revised 2026-09-29,
-  RFC §4.15; it was `search_web` + Maps fan-out), the same shape Tutor's descriptor has. Three entry points, one instance:
+  {search_memory, search_web_light, ask_alek}` and no fan-out (revised 2026-09-29, RFC §4.15; it was
+  `search_web` + Maps fan-out; `tell_alek` left it 2026-10-29 for the `send_to_chat` tool), the same shape Tutor's descriptor has. Three entry points, one instance:
   - **`execute(purpose, ticket, answer_url, to_number)`** — places the callback via
     `TelephonyPort.originate_call`. No LLM call, no tier (there is no `_DEFAULT_AGENT_TIERS["lelik"]`
     entry, and none is needed for this method).
@@ -540,8 +540,16 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     declaration. `LelikPersonaService.assemble()` supplies only the *context* (`LelikContext`:
     biographical facts + primary-channel history, RFC §4.8) — `LelikAgent` itself calls
     `prompt_builder.build_for_agent(agent_type="lelik", ...)` to turn that context into instructions,
-    and builds the tool declaration from `coordinator.get_available_intents_for(LELIK)` the same way
-    Smart/Tutor do. Raises on failure — no call opens on an empty context.
+    and builds the `delegate_to_specialist` declaration from `coordinator.get_available_intents_for(LELIK)`
+    the same way Smart/Tutor do, plus a second top-level tool `send_to_chat(request)` when the registry
+    knows that intent (description: the intent's `capability_descriptions` entry on `ALEK`). Raises on
+    failure — no call opens on an empty context.
+  - **`send_to_chat` is a channel, not a worker** (RFC §4.15 delta 2026-10-29,
+    `decisions/lelik_send_to_chat.md`): something for the caller's chat, Lelik does not hear back. The
+    relay turns the call into the `send_to_chat` intent (`domain/voice_errand.delegation_arguments`, the
+    one mapping) and treats it as an errand (no filler, no waiting notes, no abandon); `delegate()` runs
+    it like any delegation. It is not in `LELIK.allowed_intents`, so the delegate tool never offers it.
+    Actions (reminders, tasks, saving) go to `ask_alek`, whose answer Lelik confirms by voice.
   - **`delegate(user_id, account_id, arguments, call_context)`** — runs one `delegate_to_specialist`
     call from the live realtime session through `DelegationEngine(coordinator).dispatch(...)` (public,
     made for this second caller — see Orchestration Patterns below), exactly as a text orchestrator's
@@ -552,7 +560,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   - **`delegate()` posts nothing to chat** (RFC §4.15.3, 2026-09-29). The rule-2 link copy for
     every non-Alek specialist was withdrawn: it filled the chat with every search's links. The
     `notifications` constructor argument is now unused, kept for construction compatibility. When
-    the caller wants something in chat, Lelik hands it to Alek with `tell_alek`.
+    the caller wants something in chat, Lelik calls `send_to_chat`.
   - **Persona is a context source, not a prompt author.** `services/lelik_persona_service.py` never
     calls the LLM and never renders prompt text — it assembles facts/history (RFC §4.8); rendering is
     `LelikAgent`'s job via the shared `PromptBuilderPort`, same division as every other agent in this
@@ -596,7 +604,7 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
   `LELIK.allowed_intents` (see the registry rule below — an internal intent an explicit allowlist
   names). `RETRY_POLICY = NO_RETRY_POLICY`: a retry re-runs Router + Smart + specialists, so it would
   double the spend and the chat copy.
-  - **`tell_alek` — errands (RFC §4.15.2).** The same gateway declares `tell_alek` as `ExecutionMode.ASYNC`
+  - **`send_to_chat` — errands (RFC §4.15.2; the `tell_alek` intent until 2026-10-29).** The same gateway declares `send_to_chat` as `ExecutionMode.ASYNC`
     (`dispatch_deadline_s=720`), so an errand runs as a Cloud Task and reaches `execute()` as
     `AgentIntent.DELEGATE` from `AgentWorkerHandler`. `can_handle` accepts both intents. The
     commission gets an `[Errand from Lelik…]` header, and Smart's whole answer is posted to chat,

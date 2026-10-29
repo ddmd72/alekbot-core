@@ -20,7 +20,7 @@ from src.services.agent_context_builder import AgentExecutionContext
 F = "reminder:1729401234567@2026-10-20T06:00:00+00:00"
 CHAT = {"interactive_delivery": True}
 REMINDER = {"run_origin": "background:execute_reminder", "run_fire_key": F}
-ERRAND = {"run_origin": "voice:tell_alek"}
+ERRAND = {"run_origin": "voice:send_to_chat"}
 
 
 @dataclass
@@ -106,7 +106,7 @@ async def test_absent_without_the_service():
 @pytest.mark.parametrize("extra,origin,fire", [
     (CHAT, "chat", None),
     (REMINDER, "background:execute_reminder", F),
-    (ERRAND, "voice:tell_alek", None),
+    (ERRAND, "voice:send_to_chat", None),
     ({"run_origin": "voice:ask_alek"}, "voice:ask_alek", None),
     ({"run_origin": "background:daily_email_review"}, "background:daily_email_review", None),
 ])
