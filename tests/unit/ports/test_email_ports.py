@@ -133,6 +133,8 @@ class TestIndexedEmailRepository:
             "update_indexing_state", "clear_indexing_state", "count_by_user",
             "delete_by_user", "get_unconsolidated_batch", "mark_consolidated",
             "get_pending_embeddings", "update_vectors",
+            # R1 (SECRETS_AT_REST_RFC §6.2 F1/F2): the flag/mark field update and the feature-store user listing
+            "set_reconnect_flags", "list_indexing_user_ids",
         }
 
     def test_save_batch_signature(self):

@@ -46,7 +46,8 @@ class TestTaskConfigPortContract:
             name for name, method in inspect.getmembers(TaskConfigPort)
             if getattr(method, "__isabstractmethod__", False)
         }
-        assert len(abstract_methods) == 3, f"Expected 3 abstract methods, got {abstract_methods}"
+        # R1 (SECRETS_AT_REST_RFC §6.2): list_user_ids (users from the feature store) and set_reconnect_notified (F2)
+        assert len(abstract_methods) == 5, f"Expected 5 abstract methods, got {abstract_methods}"
 
     def test_get_config_signature(self):
         sig = inspect.signature(TaskConfigPort.get_config)
