@@ -117,7 +117,7 @@ class TestClassifyContent:
         assert classify(ch("~$contract.docx"), Scope.NORMAL, None, None).reason is Reason.OS_ARTIFACT
 
     def test_over_the_download_cap(self):
-        cls = classify(ch(size=MAX_DOWNLOAD_BYTES + 1), Scope.NORMAL, None, None)
+        cls = classify(ch(size=policy.size_cap("pdf") + 1), Scope.NORMAL, None, None)
         assert (cls.state, cls.reason) == (RecordState.METADATA_ONLY, Reason.TOO_LARGE)
 
     def test_at_the_download_cap(self):
@@ -158,7 +158,7 @@ class TestClassifyContent:
         assert classify(ch(cv="c2"), Scope.NORMAL, None, failed).state is RecordState.PENDING
 
     def test_oversized_new_version_beats_a_standing_outcome(self):
-        cls = classify(ch(cv="c1", size=MAX_DOWNLOAD_BYTES + 1), Scope.NORMAL, None, indexed_rec())
+        cls = classify(ch(cv="c1", size=policy.size_cap("pdf") + 1), Scope.NORMAL, None, indexed_rec())
         assert (cls.reason, cls.content_kept) == (Reason.TOO_LARGE, False)
 
 
