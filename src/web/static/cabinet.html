@@ -1616,6 +1616,7 @@
           "questions.invoices_title": "Invoices with no payment confirmation",
           "questions.one_kind": "Select questions of one kind to mark them together.",
           "questions.select": "Select",
+          "questions.show_more": "Show more",
           "questions.none_selected": "Select at least one fact first.",
           "questions.failed": "Could not send the answers.",
           "questions.result_applied": "Done",
@@ -1761,6 +1762,7 @@
           "questions.invoices_title": "Рахунки без підтвердження оплати",
           "questions.one_kind": "Виберіть питання одного виду, щоб позначити їх разом.",
           "questions.select": "Вибрати",
+          "questions.show_more": "Показати ще",
           "questions.none_selected": "Спершу виберіть хоча б один факт.",
           "questions.failed": "Не вдалося надіслати відповіді.",
           "questions.result_applied": "Готово",
@@ -1906,6 +1908,7 @@
           "questions.invoices_title": "Factures sans confirmation de paiement",
           "questions.one_kind": "Sélectionnez des questions d'un même type pour les marquer ensemble.",
           "questions.select": "Sélectionner",
+          "questions.show_more": "Afficher plus",
           "questions.none_selected": "Sélectionnez d'abord au moins un fait.",
           "questions.failed": "Impossible d'envoyer les réponses.",
           "questions.result_applied": "Fait",
@@ -2051,6 +2054,7 @@
           "questions.invoices_title": "Facturas sin confirmación de pago",
           "questions.one_kind": "Selecciona preguntas de un mismo tipo para marcarlas juntas.",
           "questions.select": "Seleccionar",
+          "questions.show_more": "Mostrar más",
           "questions.none_selected": "Selecciona primero al menos un hecho.",
           "questions.failed": "No se pudieron enviar las respuestas.",
           "questions.result_applied": "Hecho",
@@ -2178,6 +2182,7 @@
 
       /* ── Navigation ──────────────────────────────────── */
       let _activeSection = "integrations";
+      const _visitedSections = new Set();
 
       function navigate(name) {
         document.querySelectorAll(".section").forEach((s) => {
@@ -2190,11 +2195,14 @@
         const sec = document.getElementById(`section-${name}`);
         if (sec) {
           sec.classList.add("active");
-          // Re-trigger animations
-          sec.querySelectorAll(".reveal").forEach((el) => {
-            el.classList.remove("visible");
-            setTimeout(() => el.classList.add("visible"), 50);
-          });
+          // The entrance plays once per section; a tab the user returns to keeps what it shows
+          if (!_visitedSections.has(name)) {
+            _visitedSections.add(name);
+            sec.querySelectorAll(".reveal").forEach((el) => {
+              el.classList.remove("visible");
+              setTimeout(() => el.classList.add("visible"), 50);
+            });
+          }
         }
 
         // Update Desktop Nav
@@ -2728,9 +2736,11 @@
         return `${t("questions.status_waiting")}, ${t("questions.waiting_since").replace("{date}", shortDate(q.waiting_since))}`;
       }
 
+      const REVIEW_PAGE = 10;
       let reviewQuestions = [],
         reviewResults = {},
-        reviewBound = false;
+        reviewBound = false,
+        reviewShown = { questions: REVIEW_PAGE, invoices: REVIEW_PAGE };
 
       function answerButtons(options, questionId) {
         const q = questionId
@@ -2799,16 +2809,98 @@
       function reviewSection(group, title, subtitle) {
         const qs = reviewQuestions.filter((q) => q.group === group);
         if (qs.length === 0) return "";
+        const shown = qs.slice(0, reviewShown[group]);
         const sub = subtitle
           ? `<p style="color:var(--text-muted); margin-bottom:16px;">${escapeHtml(subtitle)}</p>`
           : "";
         return `
         <div style="margin-bottom: 40px;">
-          <h2 style="margin-bottom:4px;">${escapeHtml(title)} (${qs.length})</h2>
+          <h2 style="margin-bottom:4px;" data-count-title="${escapeHtml(group)}">${escapeHtml(title)} (${qs.length})</h2>
           ${sub}
           <div data-group="${escapeHtml(group)}" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:16px;">${bulkBarContent(group)}</div>
-          ${qs.map(reviewRow).join("")}
+          <div data-rows="${escapeHtml(group)}">${shown.map(reviewRow).join("")}</div>
+          <div data-more="${escapeHtml(group)}">${reviewMoreButton(group)}</div>
         </div>`;
+      }
+
+      function reviewMoreButton(group) {
+        const hidden = reviewQuestions.filter((q) => q.group === group).length - reviewShown[group];
+        return hidden > 0
+          ? `<button data-show-more="${escapeHtml(group)}" class="btn btn-secondary">${escapeHtml(t("questions.show_more"))} (${hidden})</button>`
+          : "";
+      }
+
+      const REVIEW_TITLES = {
+        questions: "questions.title",
+        invoices: "questions.invoices_title",
+      };
+
+      function showMoreReview(group) {
+        reviewShown[group] += REVIEW_PAGE;
+        const box = document.getElementById("review-questions");
+        const rows = box.querySelector(`div[data-rows="${group}"]`);
+        const shownIds = new Set(
+          Array.from(rows.querySelectorAll("input[data-question-id]")).map((c) => c.dataset.questionId),
+        );
+        rows.insertAdjacentHTML(
+          "beforeend",
+          reviewQuestions
+            .filter((q) => q.group === group && !shownIds.has(q.question_id))
+            .slice(0, reviewShown[group] - shownIds.size)
+            .map(reviewRow)
+            .join(""),
+        );
+        box.querySelector(`div[data-more="${group}"]`).innerHTML = reviewMoreButton(group);
+        box.dataset.rendered = "";
+      }
+
+      // Answered rows leave one by one; the rest of the list is not repainted
+      function removeReviewRows(ids) {
+        const box = document.getElementById("review-questions");
+        const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        const gone = new Set(ids);
+        const groups = new Set(reviewQuestions.filter((q) => gone.has(q.question_id)).map((q) => q.group));
+        reviewQuestions = reviewQuestions.filter((q) => !gone.has(q.question_id));
+        ids.forEach((id) => {
+          const input = box.querySelector(`input[data-question-id="${CSS.escape(id)}"]`);
+          const row = input && input.closest(".fact-card");
+          if (!row) return;
+          const drop = () => row.remove();
+          if (calm) return drop();
+          row.style.overflow = "hidden";
+          row.style.maxHeight = row.offsetHeight + "px";
+          row.style.transition = "max-height .25s ease, opacity .25s ease, margin .25s ease";
+          requestAnimationFrame(() => {
+            row.style.maxHeight = "0";
+            row.style.opacity = "0";
+            row.style.marginBottom = "0";
+          });
+          setTimeout(drop, 280);
+        });
+        groups.forEach((group) => {
+          const left = reviewQuestions.filter((q) => q.group === group);
+          const section = box.querySelector(`div[data-rows="${group}"]`).parentElement;
+          if (left.length === 0) {
+            setTimeout(() => section.remove(), calm ? 0 : 280);
+            return;
+          }
+          const title = section.querySelector(`h2[data-count-title="${group}"]`);
+          title.textContent = `${t(REVIEW_TITLES[group])} (${left.length})`;
+          // keep the page full: the next hidden questions take the freed places
+          const rows = section.querySelector(`div[data-rows="${group}"]`);
+          const present = new Set(
+            Array.from(rows.querySelectorAll("input[data-question-id]")).map((c) => c.dataset.questionId),
+          );
+          const room = reviewShown[group] - (present.size - ids.filter((id) => present.has(id)).length);
+          rows.insertAdjacentHTML(
+            "beforeend",
+            left.filter((q) => !present.has(q.question_id)).slice(0, Math.max(room, 0)).map(reviewRow).join(""),
+          );
+          section.querySelector(`div[data-more="${group}"]`).innerHTML = reviewMoreButton(group);
+          refreshBulkBar(group);
+        });
+        if (reviewQuestions.length === 0) setTimeout(() => box.classList.add("hidden"), calm ? 0 : 280);
+        box.dataset.rendered = "";
       }
 
       function renderReviewQuestions(questions) {
@@ -2846,6 +2938,8 @@
       }
 
       async function onReviewClick(ev) {
+        const more = ev.target.closest("button[data-show-more]");
+        if (more) return showMoreReview(more.dataset.showMore);
         const btn = ev.target.closest("button[data-answer]");
         if (!btn) return;
         const bar = btn.closest("div[data-group]");
@@ -2886,7 +2980,13 @@
             if (r.result === "changed") changed = true;
           });
           if (changed) showToast(t("questions.result_changed"), "error");
-          await loadReviewQuestions();
+          const done = (data.results || []).filter((r) => r.result === "applied").map((r) => r.question_id);
+          if (done.length === (data.results || []).length) {
+            box.querySelectorAll("button").forEach((b) => (b.disabled = false));
+            removeReviewRows(done);
+          } else {
+            await loadReviewQuestions();
+          }
           if (applied || changed) {
             if (factsState === "closed") await closedLoad();
             else await browseLoad(true, true);
@@ -2924,6 +3024,12 @@
           document.getElementById("domain-chips").classList.remove("hidden");
 
           const newFacts = data.facts || [];
+          // A refresh that finds the same first page leaves the cards and the paging alone
+          if (
+            keepList &&
+            JSON.stringify(allFacts.slice(0, newFacts.length)) === JSON.stringify(newFacts)
+          )
+            return;
           if (isFirst) allFacts = newFacts;
           else allFacts = allFacts.concat(newFacts);
 
