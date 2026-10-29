@@ -267,9 +267,10 @@ class DriveOperations:
         async def run() -> DriveOutcome:
             if self._drive_search is None:
                 return _fail(DriveOp.SEARCH, "Drive search is not available on this deployment.", OutcomeClass.FAILED)
-            text, items = await self._drive_search.search_deleted(user_id, str(query or ""))
-            return DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK if items else OutcomeClass.NOT_FOUND,
-                                text=f"{REFERENCE_REMINDER}\n{text}", success=True, items=tuple(items))
+            found = await self._drive_search.search_deleted(user_id, str(query or ""))
+            return DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK if found.items else OutcomeClass.NOT_FOUND,
+                                text=f"{REFERENCE_REMINDER}\n{found.text}", success=True, items=tuple(found.items),
+                                stored_text_shown=found.has_passage)
         return await self._call(DriveOp.SEARCH, context, user_id, run, label="")
 
     async def find_passages(self, context: Mapping[str, Any], user_id: str, *, question: Any, folder: Any = None,

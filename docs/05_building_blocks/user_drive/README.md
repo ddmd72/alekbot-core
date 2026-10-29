@@ -1571,6 +1571,9 @@ every run that is **not a chat turn**: reminders, the daily review and other bac
 `tell_alek`) and a run with no origin. A chat turn is never gated. The refusal is `REFUSED`, with an INFO log
 `[DriveAgent] <kind> refused: passages were read in step N of this run`; Alek commissions the change again. Why not
 `is_owner_turn`: `decisions/drive_content_write_gate.md`.
+What arms it: `find_passages` / `read_passages` results, and a `search_deleted_recordings_and_notes` result in which at least one entry
+carries a transcript passage (`DeletedSearchResult.has_passage` → `DriveOutcome.stored_text_shown`). Ordinary `search_drive` snippets do
+not (owner-accepted residual).
 
 **Limits and what it does not do.** Passages read stored chunks: they can be stale (the stale line says so) or cut at
 `MAX_CHUNKS_PER_FILE`; the open stays the live, authoritative read. Numbers over a table (totals, counts) are computed

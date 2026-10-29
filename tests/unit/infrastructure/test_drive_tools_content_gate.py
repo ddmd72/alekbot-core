@@ -236,3 +236,54 @@ async def test_a_note_write_after_passages_in_a_chat_turn_runs():
     run.step = 2
     await _note(notes, nt.CREATE_NOTE, item_ref="drive:item-1", text="Tom's review plan for Acme")
     service.create.assert_awaited_once()
+
+
+# -- passages of the deleted-files search arm the gate too -----------------------------------------------------------
+
+def _deleted(*, passage: bool) -> DriveOutcome:
+    return DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, success=True, stored_text_shown=passage,
+                        text="Deleted files (1):\nmeeting.m4a | Recordings/meeting.m4a | gone\n"
+                             + ("[00:30] the meeting moved to Thursday" if passage else ""))
+
+
+@pytest.mark.parametrize("context", GATED, ids=["reminder", "daily_review", "ask_alek", "tell_alek", "no_origin"])
+async def test_a_deleted_search_that_returned_a_passage_closes_the_gate_off_chat(context):
+    ops = _ops()
+    ops.search_deleted.return_value = _deleted(passage=True)
+    run, collector = _run(ops, context)
+    await _call(run, tt.SEARCH_DELETED, query="meeting")
+    run.step = 2
+    await _call(run, tt.DELETE_DRIVE_ITEM, file_ref="drive:item-1")
+    ops.delete.assert_not_called()
+    assert collector.results[-1].outcome.cls is OutcomeClass.REFUSED
+    assert collector.results[-1].outcome.text == t.WRITE_AFTER_PASSAGES
+
+
+async def test_a_deleted_search_with_no_passage_leaves_the_gate_open():
+    ops = _ops()
+    ops.search_deleted.return_value = _deleted(passage=False)
+    run, collector = _run(ops, REMINDER)
+    await _call(run, tt.SEARCH_DELETED, query="meeting")
+    run.step = 2
+    await _call(run, tt.DELETE_DRIVE_ITEM, file_ref="drive:item-1")
+    ops.delete.assert_awaited_once()
+    assert collector.results[-1].outcome.cls is OutcomeClass.OK
+
+
+async def test_a_deleted_search_passage_does_not_refuse_a_chat_turn():
+    ops = _ops()
+    ops.search_deleted.return_value = _deleted(passage=True)
+    run, collector = _run(ops, CHAT)
+    await _call(run, tt.SEARCH_DELETED, query="meeting")
+    run.step = 2
+    await _call(run, tt.DELETE_DRIVE_ITEM, file_ref="drive:item-1")
+    ops.delete.assert_awaited_once()
+
+
+async def test_a_change_co_emitted_with_the_deleted_search_runs():
+    ops = _ops()
+    ops.search_deleted.return_value = _deleted(passage=True)
+    run, collector = _run(ops, REMINDER)
+    await asyncio.gather(_call(run, tt.SEARCH_DELETED, query="meeting"),
+                         _call(run, tt.DELETE_DRIVE_ITEM, file_ref="drive:item-1"))
+    ops.delete.assert_awaited_once()

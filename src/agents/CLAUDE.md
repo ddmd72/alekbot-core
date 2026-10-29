@@ -259,7 +259,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     `not interactive_delivery` (set only by `ConversationHandler`), so a reminder, the daily review, any `notify` run, a
     call and a run with no origin are gated; a chat turn is not. `DriveToolRun.run` refuses a change (any `MUTATING_OPS`
     op and the note writers) in a step after the first one whose passages reached the model (`write_refused`); a change
-    co-emitted with the first passages read is not refused. The refusal is `REFUSED` (never settled by a later call),
+    co-emitted with the first passages read is not refused. A `search_deleted_recordings_and_notes` result with a
+    transcript passage arms it too (`DriveOutcome.stored_text_shown`); `search_drive` snippets do not. The refusal is `REFUSED` (never settled by a later call),
     text `WRITE_AFTER_PASSAGES`, and one INFO line `[DriveAgent] <kind> refused: passages were read in step N of this run`.
   - **Logs** (`make fetch-logs`, then `grep '\[DriveAgent\]\|\[DriveOperations\]' alek_debug.log`): one
     `[DriveAgent] user=<8> status=<status> model=<model> ops=<op>:<class>,… turns=N ms=…` line per commission, where
