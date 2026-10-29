@@ -5749,8 +5749,10 @@ the order they were first retrieved, chunks by index, adjacent runs merged (A7),
 specialist retrieved by `find_passages`, `read_passages` or a follow-up reaches Smart; none is selected out (specialist
 RFC §2.2 "no default selection" stands). Search results and opened files keep today's per-call blocks. A cut run
 (soft deadline, turn cap, `max_tokens`) delivers everything retrieved so far: fail-open comes from the collector.
-Files whose passages reached Smart enter `drive_context` as `{path, ref}` (`src/domain/user_drive.py:242-244`);
-passage numbers do not (they are bound to a generation).
+Files whose passages reached Smart enter `drive_context` as `{path, ref}` (`src/domain/user_drive.py:242-244`).
+Since 2026-10-29 the entry also carries the display numbers retrieved, so the history line says which passages were
+read (`read passages 3–5`, DRIVE_SPECIALIST_RFC §7.4); the numbers are bound to a generation and are a record of
+what was read, not a stable address.
 
 **A12 The "Searched" line; the note withheld on passage runs.** The specialist's note is a model-written line
 (`drive_answer.py:135-136`) whose ban on content claims (`OUTPUT_FORMAT_DRIVE.groovy:23`,
@@ -5956,7 +5958,7 @@ Searched line replaces the note only on passage runs; the A14 gate (on a backgro
 later step refused, a co-emitted one not, a note write refused, a run without passages unaffected; a chat turn never
 gated); the OQ-A2 selection (`R_ACCURACY_IMAGE` only with a card below 90 % whose capture is not `digital`, none
 recorded included; never at 90 % or more; never for a digital card; the passages head marks); `drive_context` gets the
-files, not numbers; the tool-field e2e card covers both tools; A18 across rounds (a folder and a file line printed
+files (and, since 2026-10-29, the passage numbers for the history line); the tool-field e2e card covers both tools; A18 across rounds (a folder and a file line printed
 once per run, a folder dropped by the cap in one round printed in a later one; Smart's block prints each noted folder
 once, before its first file, in A11's order; the extended `R_OWNER_NOTE` fires with folder lines). Eval (`specialist_ab.py`, `specialist_replay.py`, invented fixtures): a new
 invented `R&D` folder in the G3 overlay (`tests/fixtures/drive_eval/tree_g3.json`) with `R&D/Tom's plan.docx` and

@@ -55,6 +55,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from src.agents.base_agent import BaseAgent
 from src.domain.drive_answer_texts import WRITE_AFTER_PASSAGES
 from src.domain.drive_note_tool_texts import NOTE_WRITE_TOOLS
+from src.domain.history_context_block import history_context_block
 from src.domain.drive_tool_texts import (
     APPEND_TO_FILE, COPY_FILE_TO_DRIVE, CREATE_FOLDER, DELETE_DRIVE_ITEM, FIND_PASSAGES, MOVE_FILE, READ_PASSAGES,
     REPLACE_FILE_CONTENT, SAVE_TEXT_FILE)
@@ -323,11 +324,13 @@ def usage_summary(llm_calls: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
 
 
 def history_pair(text: str, answer: str, metadata: Mapping[str, Any]) -> List[Message]:
-    """The session pair ConversationHandler writes: the answer, with every `*_context` block in full_text."""
+    """The session pair ConversationHandler writes: the answer, with every `*_context` block in full_text, rendered by
+    the handler's own `history_context_block` (the drive's refs as one line per file)."""
     full = answer
     for key, value in (metadata or {}).items():
-        if key.endswith("_context") and value:
-            full += "\n\n" + json.dumps({key: value}, ensure_ascii=False, separators=(",", ":"))
+        block = history_context_block(key, value)
+        if block:
+            full += "\n\n" + block
     now = time.time()
     return [Message(role="user", parts=[MessagePart(text=text)], created_at=now),
             Message(role="model", parts=[MessagePart(text=answer, full_text=full)], created_at=now + 1)]

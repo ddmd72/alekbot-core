@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
@@ -38,6 +37,8 @@ from src.composition.service_container import ServiceContainer  # noqa: E402
 from src.composition.user_agent_factory import UserAgentFactory  # noqa: E402
 from src.config.settings import load_settings  # noqa: E402
 from src.domain.agent import AgentIntent, AgentMessage  # noqa: E402
+from src.domain.drive_history import DRIVE_CONTEXT_KEY, OP_LISTED  # noqa: E402
+from src.domain.history_context_block import history_context_block  # noqa: E402
 from src.domain.llm import Message, MessagePart  # noqa: E402
 from src.domain.request_context import RequestContext  # noqa: E402
 from src.infrastructure.agent_coordinator import AgentCoordinator  # noqa: E402
@@ -55,18 +56,19 @@ REMOVED_DRIVE_INTENTS = {
 
 
 def _pair(user: str, model: str, drive_context: Any = None) -> List[Message]:
-    """A stored exchange in production shape: refs live only in the `*_context` JSON block that
-    ConversationHandler appends to the model turn (conversation_handler.py:1326-1340), never in the
-    prose — the reply is not assumed to repeat any label."""
+    """A stored exchange in production shape: refs live only in the drive history lines ConversationHandler appends to
+    the model turn (`history_context_block`, the handler's own renderer), never in the prose — the reply is not
+    assumed to repeat any label."""
     model_text = model
-    if drive_context is not None:
-        model_text += "\n\n" + json.dumps({"drive_context": drive_context}, ensure_ascii=False, separators=(",", ":"))
+    block = history_context_block(DRIVE_CONTEXT_KEY, drive_context)
+    if block:
+        model_text += "\n\n" + block
     return [Message(role="user", parts=[MessagePart(text=user)]),
             Message(role="model", parts=[MessagePart(text=model_text)])]
 
 
-_LISTED = [[{"path": "Договори/lease_2026.pdf", "ref": "drive:AAA"},
-           {"path": "Договори/lease_2025.pdf", "ref": "drive:BBB"}]]
+_LISTED = [[{"path": "Договори/lease_2026.pdf", "ref": "drive:AAA", "op": OP_LISTED},
+           {"path": "Договори/lease_2025.pdf", "ref": "drive:BBB", "op": OP_LISTED}]]
 
 # `query_has`: words the commission's query must carry (casefolded); `query_lacks`: words it must not
 SCENARIOS: List[Dict[str, Any]] = [

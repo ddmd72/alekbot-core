@@ -169,7 +169,7 @@ class TestOpenCaps:
         resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:i2"))
         assert resp.status == AgentStatus.SUCCESS
         assert resp.metadata["file_data"]["mime_type"] == "image/png"
-        assert resp.history_context == {"drive_context": [{"path": "a.png", "ref": "drive:i2"}]}
+        assert resp.history_context == {"drive_context": [{"path": "a.png", "ref": "drive:i2", "op": "opened"}]}
 
     async def test_folder_is_pointed_to_listing(self, ops, conversion):
         conversion.get_drive_item.return_value = FOLDER

@@ -107,10 +107,13 @@ async def test_a_chat_turn_finds_passages_in_a_folder_then_reads_the_neighbours_
     neighbours = _tool_result(seen[-1], tt.READ_PASSAGES)
     assert f"[id drive:{w.plan}:9-12 · \"R&D/Tom's plan.docx\" · passages 9–12 of 12]" in neighbours
     assert all(text in neighbours for text in PLAN_TEXTS[8:])
-    # every passage retrieved reaches the orchestrator, and the file enters drive_context
+    # every passage retrieved reaches the orchestrator, and the file enters drive_context once per call, with the
+    # passage numbers that call read (§7.4, 2026-10-29: the history line says which passages were read)
     for text in PLAN_TEXTS:
         assert text in resp.result
-    assert {"path": "R&D/Tom's plan.docx", "ref": f"drive:{w.plan}"} in resp.history_context["drive_context"]
+    entry = {"path": "R&D/Tom's plan.docx", "ref": f"drive:{w.plan}", "op": "passages"}
+    assert resp.history_context["drive_context"] == [{**entry, "passages": list(range(1, 9))},
+                                                     {**entry, "passages": [9, 10, 11, 12]}]
     w.drive_service.move.assert_not_called()
 
 

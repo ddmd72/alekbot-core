@@ -49,7 +49,7 @@ class DriveAnswer:
     text: str
     status: DriveStatus
     files: List[Dict[str, Any]] = field(default_factory=list)
-    drive_context: List[Dict[str, str]] = field(default_factory=list)
+    drive_context: List[Dict[str, Any]] = field(default_factory=list)
     reading: Tuple[str, ...] = ()
     # The note changes' history lines and the owner's receipts, from the collector on every status (design Δ7).
     note_context: List[str] = field(default_factory=list)

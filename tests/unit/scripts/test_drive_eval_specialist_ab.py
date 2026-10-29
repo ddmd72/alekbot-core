@@ -182,8 +182,8 @@ def test_the_replays_content_checks_read_the_delivered_text_and_the_log():
 def test_the_history_pair_keeps_the_drive_refs_in_full_text_only():
     user, model = history_pair("find my leases", "Two leases.", {"drive_context": [[{"path": "a", "ref": "drive:A"}]],
                                                                  "drive_status": "ok"})
-    assert model.parts[0].text == "Two leases." and model.parts[0].full_text.endswith(
-        '{"drive_context":[[{"path":"a","ref":"drive:A"}]]}')
+    # the handler's own rendering since 2026-10-29 (§7.4): one line per file, drive_status not a `*_context` key
+    assert model.parts[0].text == "Two leases." and model.parts[0].full_text == "Two leases.\n\n[Drive: a ref=drive:A]"
 
 
 def test_unknown_case_ids_are_refused():

@@ -1911,7 +1911,10 @@ commissions again).
 specialist note, then **every read block verbatim** in run order (`[Result r1, step 1: search]`, a listing labelled
 "before the changes in steps …"). The specialist's model sees search cards and listings in full but only a stand-in
 for an opened file, so nothing is retyped; images and PDFs reach Smart as a `file_data` list. `drive_context` refs
-are one flat list per commission, so history keeps today's shape (RFC §7.4). A plain-text final reply written beside
+are one flat list per commission, each entry naming what was done (`src/domain/drive_history.py`); the next turns
+read them in full_text only (never the summary, never consolidation) as one line per file, deduplicated, with its ref:
+`[Drive: Health/lab-report.pdf ref=drive:abc123 — searched for "lab report" (2 files); read passages 3–5]` (RFC §7.4;
+until 2026-10-29 a JSON block that repeated each file per operation and named none). A plain-text final reply written beside
 `report_to_orchestrator` is the note when the report's own note is empty. Receipts of a delete or replace and the
 late-failure notices are sent literally (`DriveOperations._receipt`, `notify_raw(..., literal=True)` → `send_literal`):
 the path is text the bot did not write, so it is never formatted, linked or read as a mention. They read, for example,
