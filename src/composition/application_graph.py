@@ -339,6 +339,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         overflow_callback=overflow_callback,
         threshold_resolver=companion_window_resolver.resolve,
         alert_webhook=_alert_webhook,
+        cipher=cipher,
     )
     file_service = FileUploadService(container.llm_port)
     session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown

@@ -226,16 +226,6 @@ class EnvironmentConfig:
         return f"{prefix}companion_context_cache"
 
     @property
-    def oauth_credentials_collection(self) -> str:
-        """
-        Get OAuth credentials collection.
-        Dev: development_oauth_credentials
-        Prod: oauth_credentials
-        """
-        prefix = self.firestore_collection_prefix
-        return f"{prefix}oauth_credentials"
-
-    @property
     def credentials_collection(self) -> str:
         """
         Integration credentials (Gmail, Google Tasks, Microsoft To Do, OneDrive). Doc id = {user_id}:{credential_id};

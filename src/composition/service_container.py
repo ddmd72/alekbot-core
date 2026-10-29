@@ -13,7 +13,9 @@ import os
 from typing import Callable, Optional, Any
 
 from ..config.environment import EnvironmentConfig
+from . import cipher_setup
 from ..ports.account_repository import AccountRepository
+from ..ports.cipher_port import CipherPort
 from ..ports.llm_port import LLMPort
 from ..adapters.gemini_adapter import GeminiAdapter
 from ..adapters.claude_adapter import ClaudeAdapter
@@ -43,7 +45,7 @@ from ..services.email_indexing_service import EmailIndexingService
 from ..services.email_review_service import EmailReviewService
 from ..services.prompt_builder import PromptBuilder
 from ..adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
-from ..adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredentialsAdapter
+from ..adapters.firestore_credential_store import FirestoreCredentialStore
 from ..adapters.gmail_provider_adapter import GmailProviderAdapter
 from ..adapters.firestore_email_job_repo import FirestoreEmailJobRepository
 from ..adapters.firestore_email_exclusions_adapter import FirestoreEmailExclusionsAdapter
@@ -112,6 +114,7 @@ class ServiceContainer:
         overflow_callback: Optional[Callable] = None,
         threshold_resolver: Optional[Callable] = None,
         alert_webhook: Optional[Any] = None,
+        cipher: Optional[CipherPort] = None,
     ) -> None:
         # ------------------------------------------------------------------
         # LLM adapters
@@ -140,7 +143,11 @@ class ServiceContainer:
         # Email search adapters (shared, stateless)
         # ------------------------------------------------------------------
         self.indexed_email_repo = FirestoreIndexedEmailRepository(db_client, env_config)
-        self.oauth_credentials = FirestoreOAuthCredentialsAdapter(db_client, env_config)
+        # Credentials at rest (SECRETS_AT_REST_RFC §2.3): the graph passes its one cipher; a caller without one (an
+        # owner-run script) gets the real KMS cipher from its own config, which refuses an empty key (I6). Never a no-op.
+        self.oauth_credentials = FirestoreCredentialStore(
+            db_client, env_config,
+            cipher=cipher if cipher is not None else cipher_setup.build_cipher(config.get("KMS_CRYPTO_KEY")))
         self.gmail_provider = GmailProviderAdapter(
             client_id=config.get("GOOGLE_OAUTH_CLIENT_ID", ""),
             client_secret=config.get("GOOGLE_OAUTH_CLIENT_SECRET", ""),
