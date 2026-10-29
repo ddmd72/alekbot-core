@@ -18,3 +18,6 @@ class ReadFacts:
     owner_note: bool = False             # a card, or an opened file's own block, carries the owner's note
     excerpts: bool = False               # a passages result returned passage text (§28.3 A13)
     low_accuracy_image: bool = False     # a card below 90% whose text is not known to be born-digital (§28 OQ-A2)
+    paged: bool = False                  # a page of a file's indexed text was read, `from N` (§29.5)
+    too_long: bool = False               # an open was refused: the text is above the open bound (§29.2)
+    cut: bool = False                    # an open was cut at the open bound: the body is the file's head (§29.2)
