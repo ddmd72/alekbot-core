@@ -53,8 +53,9 @@ class FakeNotification:
     def __init__(self) -> None:
         self.files: list[dict] = []
 
-    async def notify_file_bytes(self, **kw):
+    async def notify_file_bytes(self, **kw) -> bool:
         self.files.append(kw)
+        return True  # UserNotificationService.notify_file_bytes returns True when the upload succeeded
 
 
 class FakeSearch:
