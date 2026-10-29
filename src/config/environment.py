@@ -226,14 +226,15 @@ class EnvironmentConfig:
         return f"{prefix}companion_context_cache"
 
     @property
-    def oauth_credentials_collection(self) -> str:
+    def credentials_collection(self) -> str:
         """
-        Get OAuth credentials collection.
-        Dev: development_oauth_credentials
-        Prod: oauth_credentials
+        Integration credentials (Gmail, Google Tasks, Microsoft To Do, OneDrive). Doc id = {user_id}:{credential_id};
+        tokens and the account label are one CipherPort ciphertext (SECRETS_AT_REST_RFC §2.3). A new collection: the
+        old plaintext `oauth_credentials` is never read (§2.7).
+        Dev: development_credentials
         """
         prefix = self.firestore_collection_prefix
-        return f"{prefix}oauth_credentials"
+        return f"{prefix}credentials"
 
     @property
     def mcp_oauth_clients_collection(self) -> str:

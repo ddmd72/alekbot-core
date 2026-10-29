@@ -24,6 +24,7 @@ from ..services.auth_provider_registry import AuthProviderRegistry
 from ..services.google_oauth_service import GoogleOAuthService
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..config.auth import AuthConfig
+from ..domain.email import ACCOUNT_REALM_MICROSOFT
 from ..domain.exceptions import AccessDeniedError
 from ..domain.reconnect_policy import Integration
 from ..domain.safe_redirect import safe_return_path
@@ -688,13 +689,34 @@ def create_oauth_blueprint(
         response.delete_cookie("tasks_connect_user_id")
         return response
 
+    # Microsoft consents request User.Read: the account identity is Graph /me (SECRETS_AT_REST_RFC §2.3, I9).
+    _TODO_SCOPE = "Tasks.ReadWrite offline_access User.Read"
+    _GRAPH_ME = "https://graph.microsoft.com/v1.0/me"
+
+    async def _read_microsoft_identity(session, access_token: str) -> tuple:
+        """(subject, label) of the consenting Microsoft account: Graph `/me` `id`, and `mail` or `userPrincipalName`
+        (display only, may be ""). Raises when the read fails or carries no `id`, so the callback stores nothing (I9).
+        One value names the account across To Do and OneDrive."""
+        import aiohttp
+
+        async with session.get(_GRAPH_ME, headers={"Authorization": f"Bearer {access_token}"},
+                               timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if not resp.ok:
+                raise RuntimeError(f"Microsoft account identity read failed ({resp.status})")
+            body = await resp.json()
+        subject = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(subject, str) or not subject:
+            raise RuntimeError("Microsoft /me carried no id: no account identity")
+        label = body.get("mail") or body.get("userPrincipalName") or ""
+        return subject, label if isinstance(label, str) else ""
+
     # ========================================================================
     # GET /auth/connect-microsoft-todo - Initiate MS To Do OAuth
     # ========================================================================
     @bp.route("/auth/connect-microsoft-todo", methods=["GET"])
     async def connect_microsoft_todo():
         """
-        Initiate Microsoft To Do OAuth (Tasks.ReadWrite + offline_access).
+        Initiate Microsoft To Do OAuth (Tasks.ReadWrite + offline_access + User.Read for the account identity).
 
         Requires: authenticated session (access_token cookie).
         Sets cookies: microsoft_todo_oauth_state, microsoft_todo_connect_user_id.
@@ -718,7 +740,7 @@ def create_oauth_blueprint(
             "client_id": ms_todo_client_id,
             "response_type": "code",
             "redirect_uri": ms_todo_redirect_uri,
-            "scope": "Tasks.ReadWrite offline_access",
+            "scope": _TODO_SCOPE,
             "state": state,
             "response_mode": "query",
         }
@@ -787,20 +809,8 @@ def create_oauth_blueprint(
                         text = await resp.text()
                         raise RuntimeError(f"Token exchange failed: {resp.status} {text}")
                     token_data = await resp.json()
-
-            # Fetch Microsoft account email for display
-            ms_email = ""
-            try:
-                async with aiohttp.ClientSession() as me_session:
-                    async with me_session.get(
-                        "https://graph.microsoft.com/v1.0/me",
-                        headers={"Authorization": f"Bearer {token_data['access_token']}"},
-                    ) as me_resp:
-                        if me_resp.ok:
-                            me_data = await me_resp.json()
-                            ms_email = me_data.get("mail") or me_data.get("userPrincipalName", "")
-            except Exception as e:
-                logger.warning(f"⚠️ Could not fetch MS user profile: {e}")
+                # the account identity (I9): a failed read raises, so nothing is stored
+                ms_subject, ms_label = await _read_microsoft_identity(session, token_data["access_token"])
 
             expires_in = int(token_data.get("expires_in", 3600))
             credentials = OAuthCredentials(
@@ -810,7 +820,9 @@ def create_oauth_blueprint(
                 refresh_token=token_data.get("refresh_token"),
                 token_expiry=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
                 scopes=token_data.get("scope", "").split(),
-                email_address=ms_email,
+                email_address=ms_label,
+                account_realm=ACCOUNT_REALM_MICROSOFT,
+                account_subject=ms_subject,
             )
             await oauth_credentials_port.save_credentials(credentials)
             logger.info(f"✅ MS To Do connected for user={user_id[:8]}")
@@ -841,7 +853,7 @@ def create_oauth_blueprint(
     # Same Microsoft app registration as To Do; its own redirect URI and scope.
     # ========================================================================
     _ONEDRIVE_PROVIDER = "microsoft_onedrive"  # == adapters.microsoft.ONEDRIVE_PROVIDER (tested)
-    _ONEDRIVE_SCOPE = "Files.ReadWrite.AppFolder offline_access"
+    _ONEDRIVE_SCOPE = "Files.ReadWrite.AppFolder offline_access User.Read"
     _ONEDRIVE_APPROOT = "https://graph.microsoft.com/v1.0/me/drive/special/approot"
 
     async def _read_drive_id(session, access_token: str) -> str:
@@ -870,7 +882,7 @@ def create_oauth_blueprint(
     @bp.route("/auth/connect-onedrive", methods=["GET"])
     async def connect_onedrive():
         """
-        Initiate the drive OAuth (Files.ReadWrite.AppFolder + offline_access).
+        Initiate the drive OAuth (Files.ReadWrite.AppFolder + offline_access + User.Read for the account identity).
 
         Requires: authenticated session (access_token cookie).
         Sets cookies: drive_oauth_state, drive_connect_user_id.
@@ -942,6 +954,8 @@ def create_oauth_blueprint(
                     if not resp.ok:
                         raise RuntimeError(f"Token exchange failed: {resp.status} {await resp.text()}")
                     token_data = await resp.json()
+                # the account identity (I9): a failed read raises, so nothing is stored
+                ms_subject, ms_label = await _read_microsoft_identity(session, token_data["access_token"])
                 drive_id = await _read_drive_id(session, token_data["access_token"])
 
             await oauth_credentials_port.save_credentials(OAuthCredentials(
@@ -951,8 +965,10 @@ def create_oauth_blueprint(
                 refresh_token=token_data.get("refresh_token"),
                 token_expiry=datetime.now(timezone.utc) + timedelta(seconds=int(token_data.get("expires_in", 3600))),
                 scopes=token_data.get("scope", "").split(),
-                email_address="",
+                email_address=ms_label,
                 drive_id=drive_id,
+                account_realm=ACCOUNT_REALM_MICROSOFT,
+                account_subject=ms_subject,
             ))
             logger.info(f"✅ Drive connected for user={user_id[:8]}")
             await _consented(user_id, Integration.DRIVE)

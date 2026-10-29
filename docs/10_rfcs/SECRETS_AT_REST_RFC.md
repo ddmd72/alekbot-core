@@ -1,6 +1,6 @@
 # RFC: Secrets at Rest — every persisted secret, one credential store
 
-**Status:** S1 built, S2 built (v2, rewritten 2026-10-29; v1 dated 2026-07-20/22): the cipher, the keyed digest, the MCP store and the R1 reconnect notice are in code; S3 onward are PROPOSED
+**Status:** S1 built, S2 built, S3 built (v2, rewritten 2026-10-29; v1 dated 2026-07-20/22): the cipher, the keyed digest, the MCP store, the R1 reconnect notice and the credential store (`decisions/credential_store_cutover.md`) are in code; S4 onward are PROPOSED
 **Owner:** AI Engineering
 **Milestone:** Security — stage 0 of the multi-drive programme (runs before any multi-drive work)
 
@@ -117,9 +117,9 @@ One software key (`ENCRYPT_DECRYPT`), **automatic rotation** every 90 days. Ever
 primary; idle records decrypt under their version. No version is disabled or destroyed in stage 0 (I7). About $0.06
 per version-month + $0.03 per 10 000 ops: **< $1/month** (`06_secrets_inventory.md`, KMS facts). The key name comes from
 configuration (`KMS_CRYPTO_KEY`, `load_settings()`), never a tracked file. `roles/cloudkms.cryptoKeyEncrypterDecrypter`
-is granted **on the key**, to the one shared runtime identity today. Only the **main service** and the **indexer**
-(`indexer_main.py:120`; it refreshes OneDrive) need it; the relay, sandbox and deep-research job need none, but the
-grant reaches them while they share the identity. Narrowing it is the per-service-identity follow-up (§9).
+is granted **on the key**, to the **main service's** and the **indexer's** identities only. The services already run under
+separate identities (main service, indexer, voice relay, sandbox, deep-research job); the indexer (`indexer_main.py`; it
+refreshes OneDrive) and the main service need the key, while the relay, sandbox and job get no grant and no secret.
 **Fail closed:** both services refuse to start without `KMS_CRYPTO_KEY` (the main service also needs the digest key),
 mirroring `config/auth.py:162-170`. The cipher and the digest key are built in the composition root
 (`build_application_graph`), outside the MCP build, whose errors are swallowed (`main.py:517-522`: "Bot will continue
@@ -153,7 +153,7 @@ real KMS key** (the owner's identity can decrypt). **Tests** use an in-memory AE
 | Same identity also reading Secret Manager | same | invite codes safe (128 bits); the digest key alone opens nothing |
 | Row swap inside Firestore (attacker with write) | possible | AAD binds each ciphertext to its record; decrypt fails, loud |
 | Log reader | live tickets (5 min), invite codes (7 days) | fingerprints only |
-| Runtime identity compromised, or an identity that can act as it | everything | everything. All services share one runtime identity today, so the grant reaches units that need none; closed by least privilege (separate work) |
+| Runtime identity compromised, or an identity that can act as it | everything | everything. The key grant is held only by the main service's and the indexer's identities, so the relay, sandbox and job reach nothing here; further narrowing is the least-privilege track (separate work) |
 | Plaintext exposed before stage 0 (old collection, backups, PITR, exports) | — | not undone by encryption or deletion; cured by revoking the old grants (§6.3 step 2) |
 
 KMS data-access audit logs (enabled for the key) record every decrypt with its caller. Plaintext lives only in process
@@ -169,7 +169,7 @@ memory for a provider call (and the Graph token cache); it is never logged and n
 - **I5** At most one credential per (user, kind) in stage 0; `credential_id` survives refreshes and same-account consents.
 - **I6** Main service and indexer refuse to start without the key configuration.
 - **I7** No KMS key version is disabled or destroyed while a record may reference it (stage 0: never).
-- **I8** A reconnect of the same account re-indexes and purges nothing (§6.2, with its To Do exception).
+- **I8** A reconnect of the same account re-indexes and purges nothing (§6.2); the To Do exception: a consent re-subscribes and re-reads the list exactly once.
 - **I9** No credential record exists without its account identity: an identity read that fails stores nothing.
 
 ## 6. Migration contract: by reconnect, no copy
@@ -222,19 +222,21 @@ I8, checked against the code:
   check (`:865`) becomes live, **if the drive id read at connect succeeds**: on failure an empty string is stored and the
   check stays off (`oauth_app.py:829-850`). Both sides read `parentReference.driveId` of the same call, so the same drive compares
   equal; another drive purges, by design. A reconnect over 30 days after the deploy → `PURGE_EXPIRED`, a paid rebuild.
-- **To Do: does not hold strictly.** The callback enqueues `setup_microsoft_todo` (`oauth_app.py:802-807`). A
-  subscription still active is kept and nothing is re-read; a lapsed one is re-registered and `reindex_task_list`
-  re-reads the primary list once (`task_setup_service.py:92-110`). Lapsing is near-certain: the renewal sweep lists users
-  from the credential store, so it skips them during the gap, Graph subscriptions live only days, and the grant is
-  already revoked. The re-read is an upsert, purges nothing, and is correct, because webhook notifications during the
-  gap went unprocessed. The one re-read is accepted (owner, 2026-10-29; Q3).
+- **To Do: does not hold strictly, by rule.** The callback enqueues `setup_microsoft_todo`. A consent is a new grant, so
+  the setup always re-subscribes: it drops every stored subscription (deleting it at Graph), registers one, and
+  `reindex_task_list` re-reads the primary list exactly once, even when the old subscription still read "active". The
+  re-read is an upsert, purges nothing, and is correct, because webhook notifications during the gap went unprocessed.
+  The renewal sweep is unchanged (an active subscription is kept, nothing re-read). The one re-read is accepted (owner,
+  2026-10-29; Q3).
 
 ### 6.3 Sequence
 1. **Deploy** main service and indexer with key, digest key and grants in place (I6). The stores start empty; R1 notices go out.
 2. **Revoke the old grants, at once after the deploy.** Google: revoke each old record's **refresh** token. Today's
    disconnect revokes the *access* token, usually expired, and does not reach the grant (`user_cabinet_app.py:1210`).
-   Microsoft consumer accounts offer no per-app token revocation, so **owner step:** remove the app's consent on the
-   Microsoft account's app-permissions page. One-off procedures live in the private ops repo. Both revocations are
+   The Google revoke refuses to run while the new store holds a Google record (revoking is grant-wide, so it would end the
+   new grant too): it runs before the first Google reconnect. Microsoft consumer accounts offer no per-app token
+   revocation, so **owner step:** every Microsoft account holder removes the app's consent on their own account's
+   app-permissions page, proven by a refresh with the old token that fails. One-off procedures live in the private ops repo. Both revocations are
    expected to be grant-wide: Google ends the grant to the OAuth client Gmail and Google Tasks share, and Microsoft ends
    every grant of the app. Why now: the new code never reads the old collection, so nothing depends on the old grants;
    revoking first retires the exposed grants without delay, and one consent per integration is then the only reconnect.
@@ -243,14 +245,15 @@ I8, checked against the code:
    (§2.3, I9), and tokens are ciphertext from the first write.
 4. **Verify** after the reconnect (a check, not a gate before anything): each integration did its normal work through
    the new store (a Gmail search or daily review, a drive tick resumed from its cursor, a To Do webhook); the stored
-   drive id is non-empty (F7); the KMS audit log shows only the runtime identity.
+   drive id is non-empty (F7); the KMS audit log shows only the main service's and the indexer's identities.
 5. **Delete** the old collections (credentials, MCP clients and their refresh tokens, raw verify-only documents; voice
    ones also age out by TTL), within 7 days of the deploy: they are the plaintext being removed. Old MCP refresh tokens are selected by the **old
    clients' ids**: the new clients' refresh tokens share the collection. Older copies need no action here (Q2 resolved).
 
 ### 6.4 Rollback
-- Per store, the rollback is its deploy's previous revision, plus a connector re-add for MCP and a reconnect of every
-  integration for credentials (its consents recreate the old collection). Invites issued since the deploy are lost.
+- Per store, the rollback is its deploy's previous revision, plus a connector re-add for MCP and, for credentials, the
+  previous revision of both services, an empty new credential collection (`{prefix}credentials`) and a reconnect of every
+  integration (its consents recreate the old collection). Invites issued since the deploy are lost.
 - **Image:** exempt the pre-cutover images from Artifact Registry cleanup until step 5 + horizon, or rebuild from that commit.
 
 ## 7. Relationship to other work
@@ -274,7 +277,7 @@ I8, checked against the code:
   - Gmail: a consent over an existing indexing state writes only the credential and enqueues no indexing.
   - Drive: no credential + a sync state → `RECORD_LOSS`, index kept. A same-drive consent → `RESUME_AFTER_REGAIN` from
     the stored cursor. Another drive → `PURGE_DRIVE_SWITCH`. Past 30 days → `PURGE_EXPIRED`.
-  - To Do: an active subscription → no reindex; a lapsed one → exactly one `reindex_task_list`, no delete.
+  - To Do: a consent, with an active or a lapsed subscription → exactly one `reindex_task_list`, a re-subscription (old ones deleted at Graph), no index delete; the renewal sweep keeps an active subscription and re-reads nothing.
 - **R1:** no credential + a past-connection state → one notice per integration and "Reconnect"; the next fan-out sends
   none; a consent clears it. A deliberate disconnect → no notice. **I9:** each consent edge stores subject and label; a failed identity read stores nothing.
 - **Live check (owner-run):** after step 2 a refresh by an old refresh token fails; after step 3, step 4's list.

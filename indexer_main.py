@@ -65,12 +65,13 @@ from hypercorn.config import Config as HypercornConfig
 from quart import Quart
 
 from src.adapters.firestore_account_repo import FirestoreAccountRepository
-from src.adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredentialsAdapter
+from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from src.adapters.microsoft import OneDriveAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
+from src.composition.cipher_setup import build_cipher
 from src.composition.drive_indexing_setup import (
     build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue, build_place_lookup,
 )
@@ -103,6 +104,9 @@ def build_app() -> Quart:
     accepted = parse_sa_emails(drive_invoker or sa_email, os.environ.get("OIDC_TRANSITION_SA_EMAILS"))
     gate = worker_oidc_gate(accepted, indexer_audiences(os.environ.get("DRIVE_INDEXER_URL")),
                             on_cloud_run=bool(os.environ.get("K_SERVICE")))
+    # The credential store's cipher (SECRETS_AT_REST_RFC §2.6, I6): the indexer has no load_settings(), so the key
+    # name comes from its environment; an empty one refuses the start, before any client is built.
+    cipher = build_cipher(os.environ.get("KMS_CRYPTO_KEY"))
     env_config = EnvironmentConfig()
     db = firestore.AsyncClient(project=project, database=env_config.firestore_database_id)
 
@@ -117,7 +121,7 @@ def build_app() -> Quart:
         logger.warning("[Indexer] DRIVE_INDEXER_URL is not set: /worker disabled until the next deploy")
         app.register_blueprint(create_indexer_worker_blueprint(None, gate))
         return app
-    oauth_credentials = FirestoreOAuthCredentialsAdapter(db, env_config)
+    oauth_credentials = FirestoreCredentialStore(db, env_config, cipher=cipher)
     account_repo = FirestoreAccountRepository(db_client=db, collection_name=env_config.account_collection_name)
     embeddings = GeminiEmbeddingAdapter(api_key=os.environ["GEMINI_API_KEY"])
     users = FirestoreUserRepository(db, env_config, account_repo)

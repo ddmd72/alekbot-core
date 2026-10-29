@@ -50,6 +50,6 @@ dumps a collection). S1 builds the primitives and applies them to the MCP store;
 ## Triggers to revisit
 
 - A secret near the 64 KiB limit (a session blob): add a data-key layer for it only.
-- Per-service identities exist: narrow the key grant to the main service and the indexer.
+- Further narrowing: the key grant is already held only by the main service's and the indexer's identities (the relay, sandbox and job get none); a per-secret or per-purpose key is the next step.
 - KMS latency or cost shows up in traces on a hot path: cache decrypted values per request, not across requests.
 - A provider-side need for a second cipher (another cloud): the port already isolates it.

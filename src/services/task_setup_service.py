@@ -56,15 +56,37 @@ class TaskSetupService:
 
     async def setup(self, user_id: str) -> None:
         """
-        Full onboarding flow:
+        The consent path (the `setup_microsoft_todo` task the OAuth callback enqueues; its only caller):
         1. Ensure primary "Alek Bot Tasks" list exists
         2. Persist primary_list_id if first time
-        3. Ensure all lists have active webhook subscriptions
+        3. Re-subscribe: a consent is a new grant, so a stored subscription is never trusted, even one that still
+           reads "active" (Graph may have dropped it with the old consent). Every stored one is dropped (and deleted
+           at Graph, best effort), one is registered, and the list is re-read exactly once (`reindex_task_list`, an
+           upsert that deletes nothing), so changes made while the grant was gone are not lost
+           (SECRETS_AT_REST_RFC §6.2, I8 To Do).
+        The renewal sweep keeps `ensure_subscriptions` (an active subscription is kept, nothing re-read).
         """
         list_id = await self._lifecycle.ensure_primary_list(user_id)
         list_id = await self._task_config.set_primary_list_id_if_absent(user_id, list_id)
-        await self.ensure_subscriptions(user_id, _list_id=list_id)
+        await self._resubscribe(user_id, list_id)
         logger.info(f"✅ MS To Do setup complete for user {user_id[:8]}")
+
+    async def _resubscribe(self, user_id: str, list_id: str) -> None:
+        config = await self._task_config.get_config(user_id)
+        for old in config.subscriptions:
+            try:
+                await self._lifecycle.delete_subscription(user_id, old.sub_id)
+            except Exception as e:
+                # the old grant's subscription may already be gone at Graph; a leftover expires on its own
+                logger.warning(f"⚠️ Failed to delete subscription {old.sub_id[:8]} at consent: {e}")
+        sub = await self._lifecycle.register_subscription(user_id, list_id, self._notification_url_base)
+        config.subscriptions = [sub]
+        await self._task_queue.enqueue_worker_task(
+            "reindex_task_list",
+            {"user_id": user_id, "list_id": list_id},
+        )
+        logger.info(f"📡 Re-subscribed primary list {list_id[:8]} at consent, user {user_id[:8]}")
+        await self._task_config.save_config(user_id, config)
 
     # ------------------------------------------------------------------
     # ensure_subscriptions

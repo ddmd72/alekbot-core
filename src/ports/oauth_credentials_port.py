@@ -11,20 +11,21 @@ from src.domain.email import OAuthCredentials
 
 class OAuthCredentialsPort(ABC):
     """
-    Port for stored OAuth grants: one record per (user_id, provider); providers gmail, google_tasks,
-    microsoft_todo, microsoft_onedrive.
+    Port for stored OAuth grants: at most one record per (user_id, provider) (SECRETS_AT_REST_RFC §2.4, I5);
+    providers ("kinds") gmail, google_tasks, microsoft_todo, microsoft_onedrive.
 
     Holds for every method:
-    - Tenancy: a read for one (user_id, provider) never returns another user's or another provider's record. The
-      adapter keys `{user_id}_{provider}` without comparing the stored fields; unambiguous because user ids are
-      uuid4, with no `_` (observed).
+    - Tenancy: a read for one (user_id, provider) never returns another user's or another provider's record; the
+      adapter finds the record by an equality query on its stored user and kind.
+    - Identity: every record carries its account identity (account_realm, account_subject) and an opaque
+      credential_id from its first write (I9). An update keeps the stored identity and never takes it from its
+      argument; a consent of the same account keeps the credential_id, another account replaces the record.
     - Expiry: no method checks or refreshes token_expiry; the caller refreshes and updates.
-    - Legacy documents: a missing needs_reconnect reads as False, a missing or null drive_id as "". A document
-      missing any other field raises in get_credentials (observed).
-    - Atomicity: one document per write, no compare-and-set, last writer wins. Callers set needs_reconnect by get
-      + update_credentials and accept the race between two updates (decisions/gmail_grant_revoked_reconnect.md);
-      an update never re-creates a record revoked meanwhile (see update_credentials).
-    - Errors: backend errors propagate; no method turns an error into "connected" or "not connected".
+    - Atomicity: each write is one backend transaction; between two updates the last writer wins. Callers set
+      needs_reconnect by get + update_credentials and accept the race between two updates
+      (decisions/gmail_grant_revoked_reconnect.md); an update never re-creates a record revoked meanwhile (see
+      update_credentials).
+    - Errors: backend and decrypt errors propagate; no method turns an error into "connected" or "not connected".
     """
 
     @abstractmethod
@@ -43,6 +44,8 @@ class OAuthCredentialsPort(ABC):
         """Store `credentials` as the record of (credentials.user_id, credentials.provider): the consent path.
 
         Upsert: creates the record or replaces the whole one, so a save after a new consent clears needs_reconnect.
+            The same account (realm + subject) keeps its credential_id; another account gets a new one and the old
+            record is deleted. Raises, storing nothing, when credentials.account_subject is empty (I9).
             Only a consent (oauth_app.py) calls it; a refresh or a flag write goes through update_credentials, so it
             cannot bring back a record that revoke_credentials deleted.
         """
@@ -52,8 +55,9 @@ class OAuthCredentialsPort(ABC):
         """Replace the record of (credentials.user_id, credentials.provider) only if it still exists: the path for a
         token refresh and for the needs_reconnect flag.
 
-        Returns True when the record was replaced (the whole record, as save_credentials does, so a refresh clears
-            needs_reconnect), False when there is none: nothing is written, and the caller treats the user as not
+        Returns True when the record was replaced (tokens, label, scopes, expiry, needs_reconnect and drive_id from
+            `credentials`, so a refresh clears needs_reconnect; credential_id, kind and account identity stay as
+            stored), False when there is none: nothing is written, and the caller treats the user as not
             connected. The existence check and the write are one atomic backend operation, not a read then a write,
             so a disconnect that lands first stands.
         """
@@ -87,5 +91,4 @@ class OAuthCredentialsPort(ABC):
         """Return the user_id of every record of `provider`, each user once, needs_reconnect ones included.
 
         Order: none; callers iterate. Limit: none.
-        Legacy: a record without user_id is skipped (observed).
         """

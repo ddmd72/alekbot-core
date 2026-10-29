@@ -11,6 +11,7 @@ from src.config.environment import EnvironmentConfig
 from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
 from src.ports.user_drive_port import UserDrivePort
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 
 
 def _container(monkeypatch, **extra):
@@ -21,7 +22,7 @@ def _container(monkeypatch, **extra):
         "CONSOLIDATION": ConsolidationSettings(), "GCS_MEDIA_BUCKET": "",
         **extra,
     }
-    return ServiceContainer(config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
+    return ServiceContainer(cipher=AesGcmTestCipher(), config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
                             account_repo=AsyncMock(spec=AccountRepository))
 
 

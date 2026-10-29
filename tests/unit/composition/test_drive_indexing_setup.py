@@ -12,6 +12,7 @@ from src.domain.place_lookup import PlaceRow
 from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 
 
 class _RecordingQueue:
@@ -100,7 +101,7 @@ def _container(monkeypatch, **extra):
         "CONSOLIDATION": ConsolidationSettings(), "GCS_MEDIA_BUCKET": "",
         **extra,
     }
-    return ServiceContainer(config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
+    return ServiceContainer(cipher=AesGcmTestCipher(), config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
                             account_repo=AsyncMock(spec=AccountRepository))
 
 

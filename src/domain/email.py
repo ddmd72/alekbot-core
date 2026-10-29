@@ -19,16 +19,21 @@ from pydantic import BaseModel
 # OAuth
 # ---------------------------------------------------------------------------
 
+ACCOUNT_REALM_GOOGLE = "google"
+ACCOUNT_REALM_MICROSOFT = "microsoft"
+
+
 @dataclass
 class OAuthCredentials:
-    """OAuth tokens for a connected email provider. Stored in Firestore."""
+    """One stored grant of an integration (SECRETS_AT_REST_RFC §2.3): kinds gmail, google_tasks, microsoft_todo,
+    microsoft_onedrive. The tokens and the label are ciphertext at rest; the identity fields are plaintext."""
     user_id: str
-    provider: str           # "gmail" | "outlook"
+    provider: str           # the record's kind: gmail | google_tasks | microsoft_todo | microsoft_onedrive
     access_token: str
     refresh_token: str
     token_expiry: datetime
     scopes: List[str]
-    email_address: str      # provider account email (display only)
+    email_address: str      # the account label (display only, personal: stored inside the ciphertext)
     # Set when the provider rejected the refresh token (revoked / expired grant).
     # Only a new consent (reconnect) clears it: every save after a fresh exchange
     # or a successful refresh builds credentials with the default False.
@@ -37,6 +42,13 @@ class OAuthCredentials:
     # the grant is saved and carried through every token refresh. "" for every other provider and
     # for a drive connected before the field existed (drive-switch checks are then skipped).
     drive_id: str = ""
+    # The record identity (§2.3, §2.4). `credential_id` is opaque and chosen by the store, never by a caller; the
+    # account is read by the consent edge (`account_realm` google | microsoft, `account_subject` the provider's stable
+    # account id: Google `sub`, Graph `/me.id`). A store keeps the stored identity on every update, so a refresh that
+    # rebuilds the credential field by field cannot lose it (D-P2); a save without a subject is refused (I9).
+    credential_id: str = ""
+    account_realm: str = ""
+    account_subject: str = ""
 
 
 # ---------------------------------------------------------------------------

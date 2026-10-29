@@ -9,11 +9,12 @@ it. The stores are the real Firestore adapters on the world's `EvalDb`; the quic
 from datetime import datetime, timezone
 
 from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
-from src.adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredentialsAdapter
+from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.domain.email import IndexingState
 from src.domain.reconnect_policy import R1_NOTICES, Integration
 from src.services.integration_reconnect_service import IntegrationReconnectService
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.redelivery_world import deliver
 from tests.support.seam_world import PRIMARY, TELEGRAM, USER, SeamWorld, require, says
 
@@ -28,7 +29,7 @@ def _world(monkeypatch):
     world = SeamWorld(monkeypatch)
     email = FirestoreIndexedEmailRepository(world.db, world.env)
     world.handler._reconnect = IntegrationReconnectService(
-        credentials=FirestoreOAuthCredentialsAdapter(world.db, world.env), users=world.users, notifier=world.notifier,
+        credentials=FirestoreCredentialStore(world.db, world.env, cipher=AesGcmTestCipher()), users=world.users, notifier=world.notifier,
         email_states=email, task_config=FirestoreTaskConfigRepository(world.db, world.env),
         ensure_agents=world.factory.ensure_agents_for_user, clock=lambda: NOW)
     return world, email

@@ -1625,7 +1625,9 @@ citations: RFC §28.10. Decisions: `decisions/drive_content_write_gate.md`, `dri
 
 `DriveIndexingService.tick(user_id, nudge)` runs only on the indexer service, one user at a time.
 1. **Gate**, from Firestore, never from the agent cache: indexing off with anything stored → purge; indexing off with
-   nothing stored → `disabled`, nothing read or written; no credentials or `needs_reconnect` → stamp `access_lost_at`
+   nothing stored → `disabled`, nothing read or written; no credentials (the encrypted credential store, `decisions/credential_store_cutover.md`;
+   after the cutover every user has none until one reconnect, which resumes from the stored cursor when the drive is the same, and a
+   decrypt or KMS error raises and is never read as "no credentials") or `needs_reconnect` → stamp `access_lost_at`
    once and stop; past 30 days → purge; a different `drive_id` → purge. The delta cursor carries the drive id and App
    Folder id it came from: a mismatch with a fresh App Folder read restarts the enumeration before the old cursor is
    followed, and a page from another drive purges and re-onboards. A 404 on a stored cursor restarts the enumeration

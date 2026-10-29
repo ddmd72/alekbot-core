@@ -28,6 +28,7 @@ from src.composition.service_container import ServiceContainer
 from src.domain.request_context import RequestContext
 from src.ports.llm_port import LLMResponse
 from src.utils.logger import logger
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 
 # Constants
 TEST_USER_ID = "e2e_test_user_consolidation"
@@ -144,6 +145,7 @@ async def test_sliding_window_e2e():
 
         # Wire all services via ServiceContainer, then override session_store with test one
         container = ServiceContainer(
+            cipher=AesGcmTestCipher(),
             config=config,
             db_client=db_client,
             env_config=env_config,

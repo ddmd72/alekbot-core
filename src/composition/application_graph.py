@@ -100,7 +100,7 @@ from src.services.fact_review_service import FactReviewService
 from src.services.file_access_token_service import FileAccessTokenService
 from src.services.file_link_service import FileLinkService
 from src.services.file_upload_service import FileUploadService
-from src.services.google_oauth_service import GMAIL_SCOPES, GoogleOAuthService
+from src.services.google_oauth_service import GMAIL_SCOPES, GOOGLE_TASKS_SCOPES, GoogleOAuthService
 from src.services.iam_service import IAMService
 from src.services.interactive_choice_service import InteractiveChoiceService
 from src.services.invite_code_service import InviteCodeService
@@ -339,6 +339,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         overflow_callback=overflow_callback,
         threshold_resolver=companion_window_resolver.resolve,
         alert_webhook=_alert_webhook,
+        cipher=cipher,
     )
     file_service = FileUploadService(container.llm_port)
     session_store = container.session_store  # Alias for Slack/Telegram adapters and shutdown
@@ -632,7 +633,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     google_tasks_oauth_service = GoogleOAuthService(
         client_id=auth_config.google_oauth_client_id,
         client_secret=auth_config.google_oauth_client_secret,
-        scopes=["https://www.googleapis.com/auth/tasks"],
+        scopes=GOOGLE_TASKS_SCOPES,
     )
 
     # Email adapters — reuse from ServiceContainer (no duplicate instantiation)

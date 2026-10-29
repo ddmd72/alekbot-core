@@ -286,7 +286,12 @@ stale `running` jobs.
   only on the False→True transition (a reconnect or successful refresh clears it implicitly).
   `/api/gmail/status` returns the flag and the Cabinet shows **Reconnect Gmail**. Until 2026-10-10
   a revoked grant failed silently while the Cabinet said "Connected". See
-  `decisions/gmail_grant_revoked_reconnect.md`. **R1:** a feature state that shows a past connection (Gmail indexing
+  `decisions/gmail_grant_revoked_reconnect.md`. **Credentials are encrypted** (S3, `decisions/credential_store_cutover.md`): Gmail, Google
+  Tasks, To Do and OneDrive grants live in `{prefix}credentials` (`FirestoreCredentialStore`; doc `{user_id}:{credential_id}`, account
+  identity in plaintext, tokens + label one KMS ciphertext); the old `oauth_credentials` is never read, so each integration is reconnected
+  once. Consents read the account identity (Google `openid email`, Microsoft `User.Read`); a failed read stores nothing. A To Do consent
+  always re-subscribes and re-reads the list once. The main service and the indexer hold the key grant (separate service identities; the
+  relay, sandbox and job get none). **R1:** a feature state that shows a past connection (Gmail indexing
   state, drive sync state, To Do config with a primary list) with no credential also shows Reconnect and sends one
   notice, unless the user disconnected on purpose; the hourly `reconnect_notice_sweep` lists users from the feature
   stores (`decisions/reconnect_notice_r1.md`).
@@ -726,7 +731,7 @@ in **bytes** — NAME_MAX is 255 bytes and a Cyrillic character costs 2. See
 **User Drive** (`docs/10_rfcs/USER_DRIVE_RFC.md`) — the user's long-term file area: the OneDrive App Folder
 (scope `Files.ReadWrite.AppFolder`; its localised root path is read from Graph) behind the provider-neutral
 `UserDrivePort` (`OneDriveAdapter`; Graph modules in `src/adapters/microsoft/`: `graph_auth.py`, `todo_adapter.py`,
-`onedrive_adapter.py`). Token refresh is shared with To Do: concurrent forced refreshes are deduped and the cache
+`onedrive_adapter.py`). Its tokens sit in the encrypted credential store (above). Token refresh is shared with To Do: concurrent forced refreshes are deduped and the cache
 lives at most 5 minutes per provider key, so a disconnect reaches every instance within 5 minutes. The model and
 history see only `drive:<opaque id>` refs and `[Drive: …]` labels with decoded paths — no provider name. Graph
 paths came back raw in the spike; the adapter unquotes (no-op on raw) and strips both `/drive/root:` and

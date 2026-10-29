@@ -49,28 +49,41 @@ def _posts(fake: Any, url: str) -> list:
     return [r for r in fake.requests if r.method == "POST" and r.url == url]
 
 
-async def test_setup_delivered_twice_creates_one_list_and_one_subscription(prod_graph, monkeypatch):
-    """Regression: the subscription or the list id not persisted, so the second setup registers again. The adapter's
-    per-instance list cache would hide only the list half; the stored document is what is asserted."""
+async def test_setup_delivered_twice_creates_one_list_and_leaves_one_live_subscription(prod_graph, monkeypatch):
+    """Two consents (two task names) each re-register, by decision (a consent never trusts a stored subscription,
+    SECRETS_AT_REST_RFC §6.2, I8 To Do): the list is created once, the first subscription is deleted at Graph and
+    only the second is stored, and each consent re-reads the list once. A redelivery under a name already run is
+    still merged by the claim: no third registration, no third re-read. Regression: the list id or the subscription
+    not persisted (a second list, two stored subscriptions), or the earlier subscription left live at Graph."""
     from src.adapters.microsoft import todo_adapter
     from src.services import task_setup_service
+    from tests.support.redelivery_world import deliver
     pin_datetime(monkeypatch, todo_adapter, T0)
     pin_datetime(monkeypatch, task_setup_service, T0)
     fake = http_boundary_fake.install(monkeypatch)
     fake.todo_empty_account()
+    sub_ids = iter(["s1", "s2"])
+    fake.route("POST", f"{GRAPH}/subscriptions", handler=lambda _r: (201, {"id": next(sub_ids)}))
+    fake.route("DELETE", f"{GRAPH}/subscriptions/s1", 204, None)
     await _connect(prod_graph)
 
     twice = await deliver_twice(prod_graph.app.worker_handler,
                                 {"task_type": "setup_microsoft_todo", "user_id": "u1"}, gathered=False)
+    graph_calls_after_two = len(fake.requests)
+    again = await deliver(prod_graph.app.worker_handler,
+                          {"task_type": "setup_microsoft_todo", "user_id": "u1"}, "t-2")
 
     assert not twice.raised
     assert twice.answers == [({"status": "ok"}, 200), ({"status": "ok"}, 200)]
     assert len(_posts(fake, f"{GRAPH}/me/todo/lists")) == 1
-    assert len(_posts(fake, f"{GRAPH}/subscriptions")) == 1
+    assert len(_posts(fake, f"{GRAPH}/subscriptions")) == 2
+    assert [r.url for r in fake.requests if r.method == "DELETE"] == [f"{GRAPH}/subscriptions/s1"]
     stored = prod_graph.offline.db.collection(CONFIG_COLLECTION).docs["u1"]
     assert stored["primary_list_id"] == "l1"
-    assert [s["sub_id"] for s in stored["subscriptions"]] == ["s1"]
-    assert _reindex_bodies() == [{"task_type": "reindex_task_list", "user_id": "u1", "list_id": "l1"}]
+    assert [s["sub_id"] for s in stored["subscriptions"]] == ["s2"]
+    assert _reindex_bodies() == [{"task_type": "reindex_task_list", "user_id": "u1", "list_id": "l1"}] * 2
+    assert again[1] == 200 and again[0].get("status") == "duplicate"
+    assert len(fake.requests) == graph_calls_after_two
     assert fake.unrouted == []
 
 

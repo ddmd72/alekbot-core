@@ -10,6 +10,7 @@ from src.composition.service_container import ServiceContainer
 from src.config.environment import EnvironmentConfig
 from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 
 
 def test_factory_wires_drive_and_timeout():
@@ -32,6 +33,7 @@ def _container(monkeypatch, **extra):
         **extra,
     }
     return ServiceContainer(
+        cipher=AesGcmTestCipher(),
         config=config, db_client=MagicMock(), env_config=EnvironmentConfig(),
         account_repo=AsyncMock(spec=AccountRepository),
     )

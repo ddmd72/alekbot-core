@@ -20,6 +20,7 @@ src.adapters.firestore_companion_cache_repository.FirestoreCompanionCacheReposit
 src.adapters.firestore_companion_extraction_queue.FirestoreCompanionExtractionQueue 1  # by-design single instance
 src.adapters.firestore_companion_memory_repository.FirestoreCompanionMemoryRepository 1  # by-design single instance
 src.adapters.firestore_consolidation_queue.FirestoreConsolidationQueue 1  # by-design single instance
+src.adapters.firestore_credential_store.FirestoreCredentialStore 1  # by-design single instance, held by the ServiceContainer as oauth_credentials over the graph's one cipher (SECRETS_AT_REST_RFC §2.3)
 src.adapters.firestore_dedup_store.FirestoreDedupStore 3  # by-design three stores on three TTLs: worker daily-review marks (application_graph.py WorkerHandler), deep-research webhook claims, Telegram update dedup
 src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
@@ -35,7 +36,6 @@ src.adapters.firestore_long_turn_registry.FirestoreLongTurnRegistry 1  # by-desi
 src.adapters.firestore_memory_fact_draft_repository.FirestoreMemoryFactDraftRepository 1  # by-design single instance
 src.adapters.firestore_memory_write_lease.FirestoreMemoryWriteLease 1  # by-design single instance, built once as _memory_write_lease in application_graph.py and held by the one ConsolidationService and the one FactReviewService, so a consolidation and a memory review of an account never write at once (Facts S2, S4 T10a, decisions/fact_versions_one_writer.md)
 src.adapters.firestore_notification_state_adapter.FirestoreNotificationStateAdapter 1  # by-design single instance
-src.adapters.firestore_oauth_credentials_adapter.FirestoreOAuthCredentialsAdapter 1  # by-design single instance
 src.adapters.firestore_prompt_repository.FirestorePromptComponentRepository 1  # by-design single instance
 src.adapters.firestore_quota_service.FirestoreQuotaService 1  # by-design single instance
 src.adapters.firestore_repo.FirestoreFactRepository 1  # by-design single instance

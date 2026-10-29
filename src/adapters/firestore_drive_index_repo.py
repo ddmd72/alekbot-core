@@ -53,7 +53,7 @@ Errors: Firestore's transient errors (DeadlineExceeded, ServiceUnavailable, Inte
 ResourceExhausted) and FailedPrecondition (a composite index missing or still building, logged ERROR) leave every
 public method as DriveIndexStoreUnavailable, which the tick treats as systemic (§8.2); any other error keeps its type.
 Datetimes come back as plain tz-aware UTC datetimes, never DatetimeWithNanoseconds (see
-firestore_oauth_credentials_adapter.py: `.replace()` on one breaks write-back).
+firestore_credential_store.py: `.replace()` on one breaks write-back).
 """
 from __future__ import annotations
 
