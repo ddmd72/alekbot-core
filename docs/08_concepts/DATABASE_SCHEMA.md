@@ -116,8 +116,8 @@ How the v3 collections combine into a prompt: `prompt_assembly_guide.md`.
 | `{p}voice_tickets` | call tickets and the one-call-per-user marker (TTL on `expires_at`) | ticket or marker key | `src/adapters/firestore_ephemeral_store.py` |
 | `{p}companion_records` | companion memory records, scoped by session | record id | `src/adapters/firestore_companion_memory_repository.py` |
 | `{p}companion_context_cache` | cached context summary per companion session | session id | `src/adapters/firestore_companion_cache_repository.py` |
-| `{p}mcp_oauth_clients` | MCP OAuth clients (dynamic registration) | `client_id` | `src/adapters/firestore_mcp_client_repository.py` |
-| `{p}mcp_auth_codes` | short-lived MCP authorization codes | the code | same |
+| `{p}mcp_clients` | MCP OAuth clients (dynamic registration); `client_secret` is KMS ciphertext | `client_id` | `src/adapters/firestore_mcp_client_repository.py` |
+| `{p}mcp_auth_codes` | short-lived MCP authorization codes | keyed digest of the code | same |
 | `{p}mcp_refresh_tokens` | MCP refresh tokens, rotated on use | sha256 of the token | same |
 
 ### 3.7 User drive
