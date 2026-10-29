@@ -8,6 +8,7 @@ through a flag on the feature state (F2).
 Public interface:
     Integration                                   the three integrations R1 covers
     Cleared.MARK                                  "clear the stored value" for a field-level flag update
+    R1_NOTICES[integration]                       the English system_alert of the one notice
     reconnect_needed(has_credential, past_connection, disconnected_by_user) -> bool     Cabinet shows Reconnect
     r1_due(has_credential, past_connection, disconnected_by_user, notified) -> bool     the one notice is due
 """
@@ -26,6 +27,28 @@ class Cleared(Enum):
     """Passed to a field-level flag update whose `None` means "leave as stored": the stored value becomes empty."""
 
     MARK = "cleared"
+
+
+# The one notice per integration (an English `system_alert` the formatter agent turns into the user's language). No
+# provider-side cause is guessed: the stored access is simply gone. The drive's provider is never named to the model
+# (USER_DRIVE_RFC Step 1 §4.3).
+R1_NOTICES = {
+    Integration.GMAIL: (
+        "Alek's saved access to the user's Gmail is no longer there, so the connection has to be made again. Until "
+        "the user reconnects, the daily email review, email auto-indexing and email search do not run; the emails "
+        "already indexed are kept. Tell them, and that the fix is Cabinet → Gmail → Reconnect."
+    ),
+    Integration.DRIVE: (
+        "Alek's saved access to the user's drive is no longer there, so the connection has to be made again. Until "
+        "the user reconnects, the drive index is not updated; searching it still works from the last update. Tell "
+        "them, and that the fix is Cabinet → Drive → Reconnect."
+    ),
+    Integration.TODO: (
+        "Alek's saved access to the user's To Do tasks is no longer there, so the connection has to be made again. "
+        "Until the user reconnects, Alek cannot read or change their tasks and changes made in To Do are not "
+        "synced. Tell them, and that the fix is Cabinet → To Do → Reconnect."
+    ),
+}
 
 
 def reconnect_needed(has_credential: bool, past_connection: bool, disconnected_by_user: bool) -> bool:

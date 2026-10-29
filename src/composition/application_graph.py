@@ -117,6 +117,7 @@ from src.services.session_service import SessionService
 from src.services.short_link_service import ShortLinkService
 from src.services.task_dispatch_service import TaskDispatchService
 from src.services.task_setup_service import TaskSetupService
+from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.services.user_notification_service import UserNotificationService
 from src.utils.logger import logger
 
@@ -148,6 +149,7 @@ class ApplicationGraph:
     gmail_oauth_service: GoogleOAuthService
     google_tasks_oauth_service: GoogleOAuthService
     task_setup_service: Optional[TaskSetupService]
+    reconnect_service: IntegrationReconnectService
     twilio_verify_client: Any
     task_dispatch: Optional[TaskDispatchService]
     deep_research_fetch: Optional[Callable[..., Any]]
@@ -728,6 +730,21 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             language=_language_service,
         )
 
+    # R1 (SECRETS_AT_REST_RFC §6.2, plan D-P4): Reconnect and one notice for a past connection with no credential.
+    # Lists its users from the feature stores; the hourly `reconnect_notice_sweep` covers Gmail and To Do (Drive's
+    # notice is the drive fan-out's). The Cabinet and the consent callbacks keep its disconnect mark.
+    _reconnect_service = IntegrationReconnectService(
+        credentials=oauth_credentials_port,
+        users=user_repo,
+        notifier=notification_service,
+        email_states=indexed_email_repo,
+        task_config=container.task_config_repo,
+        drive_states=container.drive_index_repo,
+        drive=container.user_drive,
+        alert_sink=_alert_webhook,
+        ensure_agents=agent_factory.ensure_agents_for_user,
+    )
+
     # The fact janitor (FACT_LIFECYCLE_RFC D4). Log-only unless FACT_LIFECYCLE_SWEEP_DRY_RUN is an explicit off value:
     # an optional rollout knob, read here with os.getenv (not load_settings).
     _fact_sweep_dry_run = sweep_dry_run(os.getenv("FACT_LIFECYCLE_SWEEP_DRY_RUN"))
@@ -872,6 +889,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         fact_lifecycle_sweep=_fact_lifecycle_sweep,
         fact_review=_fact_review_service,
         interactive_choice=_interactive_choice,
+        reconnect=_reconnect_service,
     )
 
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
@@ -1055,6 +1073,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         gmail_oauth_service=gmail_oauth_service,
         google_tasks_oauth_service=google_tasks_oauth_service,
         task_setup_service=task_setup_service,
+        reconnect_service=_reconnect_service,
         twilio_verify_client=twilio_verify_client,
         task_dispatch=_task_dispatch_service,
         deep_research_fetch=_openai_dr_fetch,
