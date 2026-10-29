@@ -14,6 +14,8 @@ designed in §26 and **built (slices S1–S6) and deployed 2026-10-19** (PRs #81
 `accuracy` applied); §26 states what that release changed.
 **Answer from content** (the drive specialist retrieves, reads and passes to Smart the passages nearest a content request;
 Smart says what, the specialist decides how; owner questions OQ-A1–OQ-A3 resolved 2026-10-28) is designed in §28 and **built (rev 3.33, 2026-10-28) and deployed 2026-10-29**; §28.10 records what the build decided beyond the design.
+**Open bound and paging** (owner rule 2026-10-29: a drive text over 60 000 characters is never handed to a model whole; it is read
+through the index, by meaning or a page at a time; reverses A16, resolves OQ-2) is designed in §29 (rev 3.34), **built, not deployed** (§29.16 lists the build's deltas).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
 Replaces that RFC's §5 "Step 2" placeholder.
 **Precedents reused:** email index ([GMAIL_EMAIL_INDEXING_RFC.md](GMAIL_EMAIL_INDEXING_RFC.md), `IndexedEmail`),
@@ -181,6 +183,12 @@ To Do mirror (`TaskSearchIndex`), `src/domain/rrf.py`, `TaskQueue.enqueue_worker
   `read_passages` (hybrid ranking, several chunks per file); the specialist reads them and judges only whether they are
   enough, every retrieved passage reaches Smart verbatim; Smart's commission says what, never how. Supersedes D19 and
   the specialist RFC's §2.3.11 for passage questions only. Search unchanged. Not built.
+- Rev 3.34 (2026-10-29): §29 proposed — open bound and paging (L1–L13), after a call opened a very long file whole.
+  A drive text over 60 000 characters is never delivered whole: pageable, the open is refused before any download and
+  the file is read through the index (`find_passages` by meaning, `read_passages from N` in order); otherwise its head
+  and a code-written cut line. A stale file opens live, cut, with a line naming the old indexed version. Live
+  transcripts are refused then paged; archived ones keep head-and-cut. A16 reversed, OQ-2 resolved, A7/A10/A11/A13
+  extended, §28.7's opens from stored chunks superseded above the cap. Not built.
 
 **Owner decisions (2026-10-11)**
 - The App Folder is meant to become a real document store. It is empty only because the feature is being built.
@@ -1494,7 +1502,8 @@ reports are in `scripts/memory/onedrive_s0_*.json`, which is gitignored because 
   vs-document protocol line (§10.4) is revisited with it.
 - **OQ-2 Full text on open.** Step 1 deliberately returns a file's full converted text to Smart (file storage README
   §2.2; truncation removed in `2ee8cb3`). With a growing drive, opening a 300-page document puts all of it in context.
-  Options: keep as is; a cap with an alert; range reads from stored chunks (§14).
+  Options: keep as is; a cap with an alert; range reads from stored chunks (§14). **Resolved 2026-10-29 (§29, rev
+  3.34):** a 60 000-character cap; an indexed file above it is refused and read through the index, any other is cut.
 - **OQ-3 Caps.** Initial values in §15 are reasoned, not measured; S3 and the first real folders set them. Owner decision 2026-10-29: `MAX_CHUNKS_PER_FILE` 400 → 1 000, `MAX_CHUNKS_PER_USER` 50 000 → 150 000, `EMBED_FILE_BUDGET` 180 → 300 s, so long books are indexed in full (`decisions/drive_chunk_caps_raised.md`). S3 measured the same day from a Cloud Run
 Job: the chunk kNN at 150 000 chunks takes about 2.4 s, accepted for drive search; the cap is per user by evidence.
 
@@ -5080,7 +5089,8 @@ the pinned transcripts alone unless asked (`--mirror`), because a roll-forward n
   (`file_management_agent.py:619-626`) stays for a recording with no transcript yet. A recording is recognised by the kind
   classifier (extension first), not the provider mime, so a transcribed `.opus`, `.ogg` or `.mkv` with a generic mime still opens as its
   transcript. The text is capped at `TRANSCRIPT_OPEN_MAX_CHARS` = 60 000 characters at a paragraph boundary with a note that says it was cut
-  and suggests searching for a passage (Δ150, G19); the speaker-labels-may-differ line heads the open text when a seam was uncertain. **Arbiter call (Δ121):** the
+  and suggests searching for a passage (Δ150, G19; *§29.10, rev 3.34: a pageable transcript over the cap is refused
+  and paged instead, an unindexed one gets the cut line for its state*); the speaker-labels-may-differ line heads the open text when a seam was uncertain. **Arbiter call (Δ121):** the
   transcript is the default; an optional boolean `original` on the open intent (manifest field description: "set true only
   when the user asks for the recording itself, not its content") returns the **original as a drive link** (`web_url`),
   never bytes into chat, for audio and video alike.
@@ -5820,7 +5830,8 @@ a code cap would bring back the per-run call caps the owner dropped (specialist 
 reasons; a `max_tokens` stop is the trigger to raise the budget or lower the effort.
 
 **A16 The whole-file open stays the live read.** `open_drive_file` is unchanged: live, authoritative, uncapped (OQ-2),
-the specialist sees a stand-in. Serving opens from stored chunks is deferred (§28.7).
+the specialist sees a stand-in. Serving opens from stored chunks is deferred (§28.7). **Reversed 2026-10-29 (§29,
+rev 3.34):** the open is bounded at 60 000 characters; above it an indexed file is refused and paged, any other cut.
 
 **A17 Off chat.** `user_message` holds the owner's words only on `chat` (`origin_label`); on a call it is Lelik's, on a
 background run a task's. There the commission is the only statement of the need: a whole-file need it states ("the
@@ -6026,7 +6037,7 @@ Engineering decisions taken here: A1–A18, each with its reason above. The para
 - **Opens served from stored chunks** (OQ-2's third option). Index text comes from another converter in another
   process and may be stale or truncated (`MAX_CHUNKS_PER_FILE` 1 000). Trigger: the open's log line (S2) shows recurring
   opens over `TRANSCRIPT_OPEN_MAX_CHARS` 60 000 characters (`drive_index_params.py:259`) of indexed, non-stale files, or
-  the owner asks for a cap on opens.
+  the owner asks for a cap on opens. *Superseded above the cap by §29 (rev 3.34): a page is that read.*
 - **Folder descriptions written by a model.** A per-folder summary of its children's descriptions, built bottom-up
   by the indexer as a new enrichment job (states, defer and hold fields, a per-tick cap, a usage class). If ever built:
   display-only in A18's folder lines and always inside a wrapper (a summary of model readings of untrusted text); never
@@ -6134,3 +6145,396 @@ Engineering decisions taken here: A1–A18, each with its reason above. The para
 | tokens | `prompts_snapshot/tokens/system/COGNITIVE_PROCESS_DRIVE.groovy`, `PROTOCOL_DRIVE_SEARCH.groovy`, `OUTPUT_FORMAT_DRIVE.groovy`, `PROTOCOL_AGENT_SELECTION.groovy`; Smart's intent text `src/infrastructure/agent_manifest.py:585` |
 | evals | `scripts/validation/drive_eval/excerpts_eval.py`, `specialist_ab.py`, `owner_notes_overlay.py`, `fixture_texts_afc.py`; gold `tests/fixtures/drive_eval/gold_specialist_afc.json` |
 | mutation targets | `tests/support/mutation_targets.py` (the six domain modules) |
+
+## 29. Open bound and paging (rev 3.34, 2026-10-29; built, not deployed)
+
+*Designed 2026-10-29 after an incident on a call (§29.1). The owner fixed the rule (§29.2) and the scope; the engineering
+decisions are L1–L13. Reverses A16 and resolves OQ-2 (§29.12). Code is cited at `main` `55c2d298`. Every example is
+invented; a file's path in a text below is written `‹path›`. Built: no.*
+
+### 29.1 Problem
+
+**The incident (2026-10-29), described without its file.** On a call the user asked for the first page of a long
+document on the drive. The same commission ran three times. Twice the specialist read passages. Once it opened the file
+whole: all of its text reached the orchestrator, and its next model request was many times the cap. A
+longer file, or a failover model with a smaller window, would have failed the turn.
+
+**Three gaps added up:**
+- **No bound on an open.** A16 kept `open_drive_file` live and uncapped (OQ-2): `_open_drive_item` hands the whole
+  converted text to the wrapper (`src/infrastructure/drive_operations.py:887-895`), and `compose_answer` prints every read
+  block (`src/domain/drive_answer.py:165-172`). Only transcripts were capped, at 60 000 characters with a cut note
+  (`TRANSCRIPT_OPEN_MAX_CHARS`, `src/domain/drive_index_params.py:262`; `src/domain/drive_transcript_render.py:87-104`).
+- **No route for a position.** The routing order (§28.2) has files, values, content and the whole file. "The first page"
+  fits none of them, so `open_drive_file` was the only tool sure to return the beginning. `read_passages` can read
+  passage 1 of any indexed file (`src/services/drive_search_service.py:1441-1478`), but its description offers it only
+  for neighbours (`src/domain/drive_tool_texts.py:135-137`).
+- **The remaining guard is one model's reading of another model's words.** Off chat the commission is the only
+  statement of the need (A17, `COGNITIVE_PROCESS_DRIVE.groovy:55`), and "the full text of that first page" reads like
+  that rule's own whole-file example. A wording fix alone leaves the next paraphrase the same hole.
+
+### 29.2 The rule (owner, 2026-10-29; binding)
+
+- **A text file from the indexed drive above the cap is never handed to a model to read whole.** Every origin (chat,
+  call, background), both callers (the drive specialist's `open_drive_file` and FileManagement's `open_file` on a
+  `drive:` ref), no override.
+- Such a file is read **through the index**: `find_passages` for a part by meaning (the first choice), and pages in file
+  order only when the user's own words ask for the text in order (its beginning, the next page, its full text).
+- **A file the index cannot page** (indexing off, not read yet, rebuilding, no indexed text, hidden by an ancestor,
+  stale: §29.3) opens live and returns its **head** up to the cap, cut at a paragraph, plus a code-written cut line that
+  says what the rest is.
+- **The cap is 60 000 characters, one constant**, shared with transcripts. Live transcripts move to refuse-then-page;
+  archived transcripts keep head-and-cut (they have no chunks).
+- Code enforces the cap, the refusal, the texts, the page lines and the reading lines. The specialist's prompt only
+  steers the route (§29.8).
+- **Out of scope:** books as a feature; whole-document understanding (a retell or summary of a file above the cap:
+  §28.7's chapter summaries stay the deferred path); vision opens (§29.11: measured only); sending a file to the chat;
+  reading aloud on calls. Chat uploads, delivered documents, skill files and workspace copies are not drive files and are
+  unchanged.
+
+**L1 The decision, per file.**
+
+| The file | Decided | Result |
+|---|---|---|
+| Pageable, `text_chars` > 60 000 | before the download | **refused** (§29.7 "Refusal"); nothing is downloaded |
+| Pageable and **truncated** (`MAX_TEXT_CHARS` 2 M, or the reader's page or time budget) | before the download | refused the same way (L2) |
+| Pageable, `text_chars` ≤ 60 000 | after the conversion | whole, as today; if the live text is longer after all (another converter, an edit not yet observed), head + the third cut line |
+| Stale (§29.3) | after the conversion | live text ≤ 60 000: whole. Above: head + the stale cut line |
+| Not pageable (off, not read, rebuilding, no text, hidden) | after the conversion | live text ≤ 60 000: whole. Above: head + the not-indexed cut line |
+| A recording with a current transcript | as a text file (its transcript is indexed as text, §29.10) | over the cap and pageable: refused, then paged; otherwise the transcript, whole or head + cut |
+| An archived transcript (a file of `_Transcripts/Archive`, §27.9.11) | unchanged | head + today's cut note |
+| An image or a PDF opened to vision | unchanged | under today's byte caps; one log line (§29.11) |
+
+**Pageable** means exactly what `read_passages` needs (`_excerpt_range`, `drive_search_service.py:1441-1458`): the search
+gate open and not rebuilding or awaiting a rebuild, the record found, its ancestor chain visible, `_readable` (`:337-338`:
+not a folder, a readable generation, `chunk_count > 0`), and not stale. **L3 Invariant: an open is refused only when
+`read_passages from 1` would return text.** A refusal never leaves the model with nothing to read.
+
+**L2 Truncated files are refused, not cut.** Head + cut on a truncated file returns its first 60 000 characters, which
+page 1 already holds, and it would take paging of the indexed part (up to 2 M characters) away. Past the indexed part
+nothing can be read either way: a live open is capped too. The last page says so.
+
+### 29.3 Stale index after an edit (L4)
+
+**The case.** The user edits a long file; the delta feed marks its record stale (`content_version != indexed_version`,
+`src/domain/drive_index.py:437-438`) until the indexer reads it again (the 10-minute fan-out, then the tick). The old
+generation stays readable: `_readable` ignores staleness, so `read_passages` and `find_passages` serve it today with the
+`stale` line (`src/domain/drive_excerpt_render.py:106-107`). `PROTOCOL_DRIVE_SEARCH.groovy:71` opens a stale file
+live, because a content question about a recent edit needs the new text.
+
+**Options weighed.**
+- *Refuse and page the old version.* Keeps the cap, but a question about the edit gets only text from before it, and
+  nothing tells the user who just edited the file that the change is not in it.
+- *Head + cut with design v3's line* ("pages come back once the index catches up"). Keeps the cap, but the line is false
+  (the old pages exist now), and it hides the old version from a question about the rest of the file.
+- *Head + cut with a truthful line that names the old version.* **Chosen.**
+
+**Decision.** A stale file is not pageable. Its open is decided after the conversion, as a not-indexed file's is: the
+live text whole when it is within the cap; above, the live head (≤ 60 000 characters, at a paragraph) and the stale cut
+line (§29.7). That line says three true things: the head is the file as it is now; the rest of this version cannot be
+read until the index reads it again; the index still holds the version before the change, searchable by meaning,
+marked stale, and it may not hold the change. Pages are not offered for a stale file: the old version's passage numbers
+do not line up with the live head. The specialist's stand-in names `find_passages` scoped to the file for a later part.
+So "never whole above the cap" holds, and every text says which version it shows.
+
+**Residual (accepted).** Between an edit and the delta round that observes it, the record still looks current: a
+refusal routes to pages of the version before the edit, with no stale mark. Every search result has this window today.
+
+### 29.4 The extent, and where the check runs (L5–L8)
+
+- **L5 `DriveSearchService.text_extent(user_id, item_id) -> TextExtent`.** The gate sequence of `_excerpt_gate`
+  (`drive_search_service.py:1189-1202`), extracted into one private method both use (`_excerpt_gate`'s results
+  unchanged), then the record read, ancestry load and chain `_excerpt_range` does (`:1446-1456`), `_readable` and
+  `stale`. `TextExtent` (domain): `state` (`pageable` | `stale` | `not_indexed`), `why` (`off`, `not_connected`,
+  `rebuilding`, `not_read`, `no_text`, `hidden`), `text_chars`, `passages` (`chunk_count`), `truncated`, `version` (the
+  readable generation), `pages_total`. Per drive open: the three gate reads in parallel, one record read, the ancestor
+  reads the chain needs; no vector, no chunk.
+- **L6 Where.** `_open_drive_item` (`drive_operations.py:823`) asks for the extent once, after the folder and archived
+  checks (`:826-831`) and before the note lookup, except for `original=True` (a recording's link). The refusal is decided
+  there, before `_transcript_of` (`:850-854`) and `resolve_content` (`:887`). The vision and video branches use the
+  extent only for the log line.
+- **L7 A failed lookup fails safe.** An exception, or a value that is not a `TextExtent`, counts as `not_indexed` with
+  one WARNING (`[DriveOperations] extent lookup failed: …`): the open goes on, and the post-conversion bound still holds
+  the cap. No port changes.
+- **L8 The post-conversion bound.** After `resolve_content`, and inside `transcript_text` for a live transcript, one
+  domain function bounds the text: whole when ≤ 60 000; otherwise the longest prefix of whole paragraphs within 60 000
+  (an oversized first paragraph is cut at the limit), then the cut line for the extent's state. The cap counts the
+  file's text; the wrapper, label, cut line and owner-note block add under 1 000 characters. The existing
+  `[DriveOperations] opened: <ref> chars=<n>` line keeps logging the converted length, before the bound.
+
+### 29.5 Paging: `read_passages` gains `from N` (L9, L10)
+
+- **L9 Shape.** `read_passages(file_ref, passages)`, both still required. `passages` keeps `7` and `6-8` and gains a page,
+  `from N`: up to `EXCERPT_RANGE_MAX` (10) passages starting at N. Accepted liberally, advertised strictly
+  (`decisions/mcp_tool_schema_liberal_input.md`): `from passage N`, and `start`, `beginning`, `first page` for `from 1`;
+  case and spaces ignored. Anything else keeps today's corrections (`src/domain/drive_excerpt_request.py:27-34`).
+  `ExcerptRangeRequest` gains `page: bool`. A page has today's bounds: 10 passages and `EXCERPTS_CHARS_MAX` 24 000
+  characters (`_excerpt_range`, `drive_search_service.py:1466-1474`). No new constant, no stored state.
+- **L10 The page's position.** For a page request the service returns a typed `PageSpan` on `ExcerptResult`: the
+  delivered first and last display numbers, `total` (`chunk_count`), `version` (the generation read), `next` (after the
+  last delivered passage: `continue_at` when the character budget cut, else `last + 1`; computed from the request, never
+  from the last returned index, so a store fault that drops a chunk does not move the reader past it), `end` (the last
+  passage was delivered), `truncated`, `stale`, and `past_end` (N is beyond the last passage; nothing is read). Plain
+  ranges (neighbours) carry no span and render as today, `CONTINUE` included.
+
+**Across turns, no state.** A page's history entry names its range, the next number and the version (L13). "Next page"
+becomes Smart commissioning "‹file›, the next page: from 11". **Edits between turns:** passage numbers are bound to a
+generation (A11). If the file is re-indexed between two pages, the next page comes from the new version; the page line
+and the history line both name the version, and `R_PAGED` tells Smart to say the numbering may have shifted when the
+versions differ. Accepted and marked, not prevented: the commission carries no version to check against.
+
+### 29.6 What reaches Smart (L11–L13)
+
+Paging does not touch search or ranking: `excerpts()`, the search path, the indexer and the chunker are not on its path,
+and nothing new is stored. As first designed it blurred what Smart reads; these keep the two modes apart without stored
+state or a budget.
+
+- **L11 Ledger provenance, one ledger.** `ExcerptLedger` (`src/domain/drive_excerpt_ledger.py:23`) keeps its keys, so a
+  find after a page still withholds chunks already shown (correct dedup: the text is in the specialist's context and in
+  Smart's block). It also records `matched` (the chunks a find selected or listed as repeated) and the `PageSpan`s per
+  file. `render_block` (`drive_excerpt_render.py:190-194`) prints, for a file that had a page, one code line outside the
+  wrapper: `pages read: …` with the next number or the end, and `nearest the question: …` when finds also matched in
+  that file. A file without a page prints exactly as today.
+- **L12 The block's opening follows the mix.** Finds only: `OPENING_BLOCK` unchanged (`:46`). Pages only, or both: their
+  own openings (§29.7). A find-only answer is byte-identical to today's.
+- **L13 Facts, reading lines, the Searched line, history, the refusal's class.**
+  - `ReadFacts` gains `paged` (a page was read), `too_long` (an open was refused) and `cut` (an open was cut).
+  - `R_EXCERPTS` fires on a passages block that is not a page (`drive_answer.py:194-195`); `R_PAGED` on a page;
+    `R_TOO_LONG` on a refusal or a cut. A mixed run gets `R_EXCERPTS` and `R_PAGED`, and the `pages read` line says
+    which chunks are which. A cut open does not add `R_NUMBERS` ("open the file, then compute"): its text is a head.
+  - The Searched line (`searched_line`, `drive_excerpt_render.py:216-244`) gains a `pages:` part; a page is never
+    filed under `neighbours`.
+  - `drive_history` (`src/domain/drive_history.py`) gains three phrases: pages, a refused open, a cut open. Pages never
+    merge into `read passages …`.
+  - **The refusal is `OutcomeClass.REFUSED`** with `ReadFacts.too_long`, carrying the file as its item. `REFUSED` is
+    not correctable, so `_settled` (`drive_answer.py:231-247`) never drops it, whether the next open is of another file
+    or the same one. With a page or passages after it the status is `ok` ("answer from the results"); alone it is
+    `refused`, the refusal as "What to do".
+  - **The text Smart reads never names a tool.** The outcome's text is Smart-facing in both callers; each caller
+    appends its own route. The specialist's `_seen` (`src/infrastructure/drive_tools.py:165-176`) appends the tool
+    route; FileManagement's `_respond` (`src/agents/file_management_agent.py:122`) appends the intent route and answers
+    with `AgentResponse.success`, because a failure gets the engine's "Correct your input and try again" suffix
+    (`src/infrastructure/delegation_engine.py:826-833`) and invites the same open again. This replaces design v3's
+    `reader` argument on `DriveOperations.open`.
+
+### 29.7 Exact texts (domain; code writes every one)
+
+`‹path›` is the quoted path (`drive_excerpt_context.quoted`); numbers carry thousands separators (`1,234,567`); `{cap}`
+is `OPEN_MAX_CHARS`.
+
+**Refusal** (the outcome's text, both callers):
+```
+‹path› is too long to open whole: {chars} characters, {passages} passages in the index. A file this long is never delivered whole; nothing was downloaded.
+```
+Truncated:
+```
+‹path› is too long to open whole: more than {chars} characters; the index holds its first {passages} passages. A file this long is never delivered whole; nothing was downloaded.
+```
+**Specialist route** (appended by `_seen`):
+```
+For what it says about something: find_passages with file_refs={ref}. Only when the need is its text in order (its beginning, the next page, its full text): read_passages file_ref={ref} passages="from 1". Correcting this refused open is not a follow-up.
+```
+**Orchestrator route** (appended by FileManagement):
+```
+To read it, commission work_with_drive_files for this file: the question, for what it says about something; only when the user's own words ask for its text in order, its beginning or the next page.
+```
+**Cut lines** (after the wrapper, before the owner-note block): not pageable, stale, and pageable but longer live:
+```
+[Cut by the system: ‹path› is {chars} characters; only the first {kept} are above. The rest cannot be read now: the file has no indexed text ({why}).]
+[Cut by the system: ‹path› is {chars} characters; only the first {kept} are above, read from the file as it is now. The rest of this version cannot be read until the index reads it again. The index still holds the version before the latest change ({passages} passages, marked stale): its passages can be searched by what they say, and they may not hold the change.]
+[Cut by the system: ‹path› is {chars} characters; only the first {kept} are above. The rest can be read through the index, by what it says or a page at a time.]
+```
+`{why}`: `drive indexing is off` | `the drive is not connected` | `the index is being rebuilt` | `the file is not read
+yet` | `the index holds no text for it` | `it is in a folder the index does not show`. A live transcript's cut line is the
+first or third form with "the transcript" for `‹path›`, and keeps today's pointer sentence (`The full text is in
+‹mirror path›.`).
+
+**The specialist's stand-in for a cut body** (`STAND_IN_TEXT`, `drive_answer_texts.py:55-56`, stays for a whole body):
+```
+[{handle}: opened {label}, cut at {kept} of {chars} characters, delivered to the orchestrator; you do not see the text]
+```
+For the stale cut it ends ` For a later part by what it says: find_passages with file_refs={ref} (the version before the latest change).`
+
+**Page lines** (the specialist's per-call result; code, outside the wrapper, after the blocks; only on a page request):
+```
+Page: passages {first}–{last} of {total} of ‹path›, indexed text version {version}. Next page: read_passages passages="from {next}".
+Page: passages {first}–{last} of {total} of ‹path›, indexed text version {version}: the end of the file.
+Page: passages {first}–{last} of {total} of ‹path›, indexed text version {version}: the end of the indexed text. The file goes on past it; that part cannot be read.
+```
+A stale file's page line ends ` The file changed after this version was indexed.`
+
+**Past the end** (class `ok`, no passages; for a page, instead of "No indexed passage matched in this scope."):
+```
+‹path› has {total} passages (indexed text version {version}); passage {first} is past the end. The last page starts at passage {last_page}.
+```
+**Smart's block** (`render_block`):
+- opening, pages only: `Pages read in order: the files' indexed text, a page at a time, not whole files.`
+- opening, both: `Passages retrieved for this request and pages read in order: excerpts of the files' indexed text, not
+  whole files; each file's "pages read" line says which is which.`
+- per file with a page, before its wrapper: `pages read: passages {ranges} of {total}, indexed text version {version};
+  next page: from {next}` (or `; the end of the file`, or `; the end of the indexed text: the file goes on past it, and
+  that part cannot be read`), then ` · nearest the question: {numbers}` when finds matched in that file, then `; the
+  file changed after this version was indexed` when stale.
+
+**Searched line part:** `pages: ‹path› passages {first}–{last} (next: from {next})` or `(the end)`.
+
+**Smart's reading lines** (`src/domain/drive_answer_texts.py`, chosen by `reading_lines`):
+- `R_PAGED`: "Pages are a long file's indexed text in order, a page at a time. Say which part of the file this is and that it
+  goes on (its \"pages read\" line gives the next page); for more, commission the next page by its number (\"from N\").
+  A page whose indexed text version differs from an earlier page's comes from a changed file: say the numbering may
+  have shifted."
+- `R_TOO_LONG`: "A file over {cap} characters is never delivered whole. Answer from what was read and say the file was
+  read in part; offer the next page, or a part by what it says. A cut opened file is its beginning only: no total,
+  count or summary over the whole file from it."
+
+**History phrases:** `read pages {first}–{last} (next: from {next}, version {version})` or `(the end, version
+{version})`; `too long to open whole ({chars} characters, {passages} passages)`; `opened, cut at {kept} of {chars}
+characters`.
+
+### 29.8 Routing (prompt; steers only)
+
+Two last-resort open rules carry the risk: an unanswered content question ends in an open
+(`PROTOCOL_DRIVE_SEARCH.groovy:75`), and a total over a table opens (`:72`). Refused and pointed at page 1, either would
+hand Smart a page of front matter for a content need. The code texts above list `find_passages` first and make paging
+conditional on the need. The prompt changes:
+- `COGNITIVE_PROCESS_DRIVE` rule 4 (`:43`) gains: "A long file is never delivered whole: when the user's own words ask
+  for its text in order (its beginning, the first or next page, its full text), read it a page at a time (read_passages
+  from 1, then the number its page line gives); a part of it by what it says is find_passages." It sits inside rule 4,
+  so it cannot fire for rules 2 and 3, and it gives "the first page" its route.
+- `PROTOCOL_DRIVE_SEARCH`: `:58` (follow-ups) gains "A page (read_passages from N) is never a follow-up for a content
+  need."; `:69` gains "A file over 60 000 characters is never delivered whole: the open is refused and says how to read
+  it."; `:72` gains "When the open is refused as too long, report that a total over the whole table is not possible from
+  excerpts; never page through it for a total."; `:75` gains "When that open is refused as too long, report with what
+  you have: a page is never a fallback for an unanswered content need."
+- Tool texts: `read_passages` leads with its positional purpose and states the exclusion ("Not for what a file says
+  about something: that is find_passages."); `passages` describes `from N`; `open_drive_file` says a text over the cap
+  is refused when indexed and cut otherwise.
+- Smart: no token change. The manifest's drive paragraph (`src/infrastructure/agent_manifest.py:587`) gains "a file over
+  60 000 characters is never delivered whole: it is read page by page, or by what it says". Smart's reading lines are
+  code.
+- Whether correcting a refused open counts against the one off-chat follow-up (`PROTOCOL_DRIVE_SEARCH.groovy:59`) was
+  unstated: the specialist route says it does not (a code text, said once, where it applies).
+
+### 29.9 Edge cases
+
+- **Page then find in one run:** the find's new picks are the next-best chunks (the ledger's `shown`), its `repeated`
+  names the overlap, and the block marks those `nearest the question`. **Find then page:** the page is delivered whole,
+  overlap included (A7).
+- **`from N` past the end:** the past-the-end text, class `ok`, never "No indexed passage matched".
+- **Truncated:** refused; pages cover the indexed part; only the last page says the rest is past the index (the
+  `truncated` line inside each wrapper stays as today).
+- **A gap in the store** (`get_chunks` returns fewer rows): `next` comes from the request, so the reader is not moved past
+  the missing chunk.
+- **The content-write gate** (A14) is untouched: a page is passages and arms the gate like any passages read; a refusal
+  or a cut open is not passages and does not arm it.
+- **A refusal and another file's successful open** in one run: the refusal stays in the answer (L13).
+- **On a call** (the incident's shape): a misread open costs one refused call and one corrected turn, no download, and at
+  most 24 000 characters of a page reach Smart.
+- **A reminder that needs a long file:** refused, then the specialist finds the part by meaning (or pages when the task
+  states an order need); `R_TOO_LONG` makes Smart say the file was read in part. No question to the user.
+
+### 29.10 Transcripts
+
+A live recording's transcript is indexed through the ordinary text path (§27.5, `index_transcript`), so its record
+carries `text_chars`, `chunk_count` and a readable generation, and the extent decides it as any text file. Over the cap
+and pageable: refused, then paged (its passages keep their `[mm:ss]` stamps). Not pageable (indexing off, the transcript
+not yet indexed): `transcript_text` bounds it with the cut line for its state. Today's "[Transcript cut at … Search for
+a passage to read a specific part.]" note was false there, since no passage can be searched. Archived transcripts keep
+`cap_plain_text` / `open_text` and today's note: they have no chunks. G19 and Δ150 are folded into this bound.
+
+### 29.11 Vision opens: measured, not bounded
+
+PDFs and images open to vision under their byte caps (`drive_operations.py:837-867`). The vision open is how the
+low-accuracy rule checks a value on a scan (OQ-A2), so this section leaves it alone, and a large born-digital PDF still
+reaches Smart whole as an attachment. One log line per vision open measures the gap:
+`[DriveOperations] opened vision: <ref> mime=<m> bytes=<n> pages=<p|->` (pages from the extent's record when it has one).
+**Trigger to revisit:** born-digital PDFs above about 30 pages opened to vision more than occasionally.
+
+### 29.12 Decisions this section reverses, extends or supersedes
+
+| Earlier | Where | Now |
+|---|---|---|
+| A16 "the whole-file open stays the live read … uncapped (OQ-2)" | §28.3 | **Reversed.** The open stays live but bounded: pageable and over the cap, refused before any download and read through the index; otherwise head + cut. **Why:** the 2026-10-29 incident (§29.1). One model's misreading of a commission put a very long file whole into the orchestrator's context on a call. A guard that depends on a model telling a method phrase from a need phrase fails on some runs; a code bound does not |
+| OQ-2 "Full text on open" (keep / a cap with an alert / range reads) | §20 | **Resolved:** a cap with range reads. Refused and paged when indexed, head + cut otherwise; no alert (the log lines measure it) |
+| A7 "`read_passages` reads up to 10 chunks by number" | §28.3 | **Extended:** `from N` pages, the page line, past-the-end |
+| A10, A11 the passages render and the consolidated block | §28.3 | **Extended:** page lines, the `pages read` line, the openings; find-only output byte-identical |
+| A13 `R_EXCERPTS` on every passages read | §28.3 | **Narrowed:** not on a page; `R_PAGED` and `R_TOO_LONG` added |
+| "Opens served from stored chunks" | §28.7 | **Superseded for indexed files above the cap:** a page is that read. Still deferred for whole-file opens within the cap |
+| G19 / Δ150: a live transcript capped at 60 000 with a "search for a passage" note | §27.11, §27.16 | **Folded in:** refused then paged when pageable; otherwise the cut line for its state. Archived transcripts unchanged |
+| `TRANSCRIPT_OPEN_MAX_CHARS` | `drive_index_params.py:262` | replaced by `OPEN_MAX_CHARS` (60 000); the old name stays an alias until its readers move |
+| Design v3 cut line "pages come back once the index catches up" | design note (2026-10-29) | **Not taken:** false for a stale file (§29.3) |
+| Design v3 `reader` argument on `DriveOperations.open` | design note | **Not taken:** the outcome text is tool-free and each caller appends its route (L13) |
+| Design v3 page line in place of `CONTINUE` | design note | **Narrowed:** only on a page request; neighbour ranges keep `CONTINUE`, so every existing passages output stays as it is |
+
+### 29.13 Rejected alternatives
+
+- **Head + cut for indexed files too:** returns the first 60 000 characters, which page 1 already holds, and nothing to
+  go on with; its cut line would have to point at passages anyway.
+- **A model-decided ask-back** ("return the first page and ask Smart whether to open the whole"): a second model loop for
+  a decision code can make; the refusal is the deterministic ask-back.
+- **Send the file to the chat instead:** out of scope (owner); it answers "give me the file", not "what does it say".
+- **Uncapped, with sharper wording only:** the incident's runs show the variance; the next paraphrase finds the same
+  hole.
+- **A higher cap:** 60 000 characters is about 30 printed pages, so ordinary documents still open whole; any cap that
+  admits a book admits a request that breaks a failover model's window.
+- **Paging the old version of a stale file:** its numbers do not line up with the live head (§29.3).
+- **A separate ledger for pages:** a find would re-send text the specialist already holds; provenance on one ledger gives
+  Smart the same distinction (L11).
+
+### 29.14 Parameters
+
+| Name | Value | Role |
+|---|---|---|
+| `OPEN_MAX_CHARS` | 60 000 | the most of a drive text an open returns; shared with transcripts; about 30 printed pages, 2.5 pages of passages |
+| `EXCERPT_RANGE_MAX` (existing) | 10 | passages per page |
+| `EXCERPTS_CHARS_MAX` (existing) | 24 000 | characters per page |
+
+### 29.15 Verification
+
+- **Free.** The unit tests of the build plan. The live `opened: chars=` distribution in Cloud Logging (how many live
+  opens the cap would have refused or cut). The incident turn's rows in BigQuery `prompt_content`, the measured
+  before-cost.
+- **Offline evals, expected identical.** `scripts/validation/drive_eval/search_v2_eval.py` (offline) and
+  `excerpts_eval.py` run the search path and `excerpts()`, which paging does not touch. A diff means the change leaked
+  into search.
+- **Paid replay** (`specialist_ab --replay-commissions --prompts-from-snapshot`; before = `main`, after = the branch;
+  `--repeats 3`; chat and call origins; an estimate and the owner's OK first). Fixture: one invented long document (about
+  200 000 characters, a contents page first, a point deep inside it) and one over 2 M characters marked truncated.
+  Families: positional ("first page", "next page", "full text"; the incident's commission shape, "…open it and return
+  the verbatim text of the first page … full text of that first page, uncompressed"), `large_content` (a point deep
+  inside, and the variant where the first find misses), `large_table_total`, and the existing AFC families. Bars: no
+  body over 60 000 characters delivered; the positional answers hold the document's opening; a refused open is followed
+  by a page read in the same commission on positional cases only; zero `from N` reads on the content families; content
+  recall at or above the AFC bar; the call origin passes as chat does.
+- **G3 `smart_dry_run`, before and after** at equal repeats: the `whole_file` cases (short files) still open whole.
+
+### 29.16 As built: deltas and code citations (built, not deployed)
+
+Deltas from the plan and the text above, declared:
+- **B1** `drive_open_bound.py` holds `refuses`, `bound`, `refusal_text`, `path_subject`. The cut itself (`head_at_paragraph`,
+  `cut_line`, `stand_in_cut`) is in `drive_open_cut.py`, because `drive_transcript_render` needs it and `drive_open_bound` reaches
+  `drive_search`, which imports the renderer (an import cycle). `BoundText` and `OpenBoundInfo` are one-class files
+  (`drive_open_bound_text.py`, `drive_open_bound_info.py`) under the one-public-class rule.
+- **B2** `text_extent` calls `_excerpt_gate` as it is and maps its `ExcerptResult` (disabled, disconnected, building) instead of
+  extracting a separate `_index_gate`: the gate sequence is the same code, so the two cannot drift.
+- **B3** A stale record is readable by `read_passages` (`_readable` ignores staleness), so `pageable` implies a first page (L3), while a
+  stale file also has one; the invariant test asserts the one direction the refusal needs.
+- **B4** A live transcript's cut note is `open_text(live=True, extent=...)`: the ordinary open's cut line for the extent's real
+  state (§29.7: pageable, stale with the previous version's passages, or not indexed with its reason: off, not connected,
+  rebuilding, not read, no text, hidden). `transcript_text` asks `DriveSearchService.text_extent` only when the text is cut; a
+  failed lookup, or no extent, reads "the index could not be asked". (An earlier cut of this block narrowed it to two lines, which
+  was false for a stale record and gave the wrong reason with indexing off.) The transcript outcome carries `ReadFacts.cut` only
+  when the extent proves the cut (not pageable and `text_chars` above the cap); the specialist's stand-in for it is the old one
+  (no `kept` known).
+- **B5** Searched line: `pages:` entries read `‹path› passages i–j (next: from N)`, `(the end)` or `from passage N (past the end)`.
+- **B6** `pages read:` sits after the folder lines and before the head lines (plan T5); §29.7 said "before its wrapper": both hold.
+- **B8** One page per commission, enforced in code: after the first page request of a run, `DriveToolRun` answers any further
+  paged `read_passages` with `ONE_PAGE` (per-execution state; the orchestrator commissions the next page). The page line says "when the
+  commission asks for it"; rule 4 and the manifest say the same; a call commission asking for the full text gets one page (§29.9).
+- **B7** A second existing test goes red beside the one the plan named: it also asserts the old note on a **live** transcript
+  (`tests/unit/agents/test_file_management_open_archived.py::test_a_recording_without_a_mirror_file_cuts_without_a_path`).
+
+Code: `src/domain/drive_open_bound.py`, `drive_open_cut.py`, `drive_open_texts.py`, `drive_text_extent.py`, `drive_excerpt_page.py`,
+`drive_excerpt_render.py` (`page_line`, `render_block`, `searched_line`), `drive_excerpt_ledger.py`, `drive_answer.py`
+(`reading_lines`), `drive_history.py`; `DriveSearchService.text_extent` / `_excerpt_range`; `DriveOperations._open_drive_item`;
+`drive_tools.py` `_seen`; `file_management_agent.py` `_respond`; tokens `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH` (upload is
+the owner's, before the deploy).

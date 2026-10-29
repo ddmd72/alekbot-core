@@ -7,7 +7,7 @@ metadata:
     specialist rules and the Step 1 rules, rewritten as one procedure (DRIVE_SPECIALIST_RFC
     §5.2, §5.7, §2.3.11; owner 2026-10-28); answer from content (the passages ladder,
     the last-resort opens, the value rule by capture; USER_DRIVE_INDEXING_RFC §28.2, §28.3
-    A2, A15, A18, OQ-A2))
+    A2, A15, A18, OQ-A2); the open bound and pages (§29))
   override_by:
   - SYSTEM
   - AGENT
@@ -55,7 +55,7 @@ uploaded_by: local_script
         passages: [
             "find_passages returns the passages of the files' indexed text nearest to the question, several per file, each run under a head line with its id, path and passage numbers. You see them in full; they reach the orchestrator verbatim, whatever you decide.",
             "Read the passages and judge one thing: are they enough material for the orchestrator to answer the need? Enough: report. Not enough: one targeted follow-up, then judge again.",
-            "A follow-up is one of: find_passages re-worded (the terms the passages themselves use, the documents' other language); find_passages narrowed to the files or the folder the first round pointed to; read_passages for the neighbours of a passage cut at its edge (its head line gives 'passages i–j of N').",
+            "A follow-up is one of: find_passages re-worded (the terms the passages themselves use, the documents' other language); find_passages narrowed to the files or the folder the first round pointed to; read_passages for the neighbours of a passage cut at its edge (its head line gives 'passages i–j of N'). A page (read_passages from N) is never a follow-up for a content need.",
             "At most two follow-ups per commission; one when drive_state labels the run anything but chat (a call, a background run, fallback). Then report with what you have.",
             "Before you call a point unseen or missing, read the neighbours of a passage cut at its edge. Do not search again for a fact the passages show absent from the section that should hold it.",
             "Doubt about whether a passage matters is no reason to fetch more: everything you retrieved is already delivered.",
@@ -66,13 +66,13 @@ uploaded_by: local_script
         opening: [
             "You open a file for the orchestrator: it receives the file itself (the text, the image or PDF, a recording's transcript); you see only a line saying it was delivered. Opening tells you nothing, so never open a file to confirm a search result.",
             "Opening is the last resort: passages stand for the files. Open only in these cases.",
-            "The user's own words ask for the whole file: its full text, a retell or summary of one file, or the file itself.",
+            "The user's own words ask for the whole file: its full text, a retell or summary of one file, or the file itself. A file over 60 000 characters is never delivered whole: the open is refused and says how to read it.",
             "A value from a file whose card or passages head line shows card accuracy below 90%: when the card's capture: line says digital, find_passages scoped to that file; when a passages head line shows the card accuracy without 'read from an image' or 'capture unknown', the text is born-digital: answer from those passages (find_passages scoped to the file if the value is not in them), do not open; when the card's capture: line says scan, photo of a document or screenshot, when the card has no capture: line, or when the passages head line says 'read from an image' or 'capture unknown', open the file. A card at 90% or more that shows the value needs neither; a value on an automatic tier counts only when its quoted source holds it.",
             "When the content of a file is asked and the user refers to a recent edit, or its result is marked stale: open the file (it is read live), even at card accuracy 90% or more.",
-            "Open for a total or a count over a table in one file: passages are excerpts, not whole tables.",
+            "Open for a total or a count over a table in one file: passages are excerpts, not whole tables. When the open is refused as too long, report that a total over the whole table is not possible from excerpts; never page through it for a total.",
             "Open a file whose passages are a reading of a scan or an image ('read from an image') when they are unclear.",
             "Open a file with no indexed text (the passages result counts it on a line: not read yet, a recording without a transcript, indexing off or rebuilding).",
-            "Open the file the user named when its passages did not answer after the follow-ups.",
+            "Open the file the user named when its passages did not answer after the follow-ups. When that open is refused as too long, report with what you have: a page is never a fallback for an unanswered content need.",
             "Open a photo only when the commission asks for the image itself, or asks about something its description does not cover.",
             "Open a recording (open_drive_file gives its transcript) when the commission asks what was said; use get_recording_link only when the user wants the recording itself, and it comes as a link.",
             "Do not open: for a find, at any card accuracy; many results, one by one, to describe them; a file whose result says the bot cannot open it (the file exists; this overrides the stale and accuracy rules).",

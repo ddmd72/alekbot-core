@@ -18,6 +18,7 @@ from .agent import DeliveryItem
 from .drive_excerpt_context_plan import ContextPlan
 from .drive_excerpt_result import ExcerptResult
 from .drive_op import MUTATING_OPS, DriveOp
+from .drive_open_bound_info import OpenBoundInfo
 from .drive_outcome_class import OutcomeClass
 from .drive_read_facts import ReadFacts
 from .user_drive import DriveItem, drive_context_entry
@@ -48,6 +49,9 @@ class DriveOutcome:
     # A deleted-files search whose entries carry stored transcript text: the model read file content, as after passages
     # (the write gate arms on it; `excerpts` stays None because that text is not a typed passage result).
     stored_text_shown: bool = False
+    # An open the bound refused or cut (USER_DRIVE_INDEXING_RFC §29.6 L13): read by the stand-in and the history,
+    # never printed by `compose_answer`.
+    open_bound: Optional[OpenBoundInfo] = None
 
     @property
     def is_change(self) -> bool:

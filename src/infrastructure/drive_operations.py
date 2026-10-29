@@ -93,6 +93,10 @@ from ..domain.user_drive import (
 )
 from ..domain.workspace import COPY_FOLDER, WORKSPACE_REF_PREFIX, folder_of, parse_workspace_path, workspace_kind
 from ..utils.file_conversion import is_native_binary
+from ..domain.drive_index_params import OPEN_MAX_CHARS
+from ..domain.drive_open_bound import bound, cut_line, path_subject, refusal_text, refuses
+from ..domain.drive_open_bound_info import OpenBoundInfo
+from ..domain.drive_text_extent import ExtentState, TextExtent
 from ..utils.logger import exc_brief, logger
 
 if TYPE_CHECKING:
@@ -820,6 +824,20 @@ class DriveOperations:
             return None
         return text or None
 
+    async def _text_extent(self, user_id: str, item: DriveItem) -> TextExtent:
+        """What the index holds of the item's text (§29.4 L5). A lookup that failed, or an answer that is not a
+        `TextExtent`, counts as not indexed (L7): the open goes on and the post-conversion bound still holds the cap."""
+        try:
+            if self._drive_search is None:
+                return TextExtent.UNKNOWN
+            extent = await self._drive_search.text_extent(user_id, item.item_id)
+            if not isinstance(extent, TextExtent):
+                raise TypeError(f"text_extent returned {type(extent).__name__}")
+            return extent
+        except Exception as exc:
+            logger.warning("[DriveOperations] extent lookup failed: %s", exc_brief(exc))
+            return TextExtent.UNKNOWN
+
     async def _open_drive_item(self, context: Mapping[str, Any], ref: str, user_id: str, *,
                                original: bool) -> DriveOutcome:
         item = await self._conversion_service.get_drive_item(ref, user_id)
@@ -829,13 +847,23 @@ class DriveOperations:
         archived = await self._archived_transcript_of(user_id, ref, item)
         if archived is not None:
             return _ok(DriveOp.OPEN, archived, [item], body=True)
-        note = await self._note_line_of(user_id, item.item_id)
         mime = item.mime_type or (mimetypes.guess_type(item.name)[0] or "application/octet-stream")
+        vision_cap = (MAX_DRIVE_VISION_IMAGE_BYTES if mime.startswith("image/")
+                      else MAX_DRIVE_VISION_PDF_BYTES if mime == "application/pdf" else None)
+        # The open bound (RFC §29): a text above the cap is never handed to a model whole. An indexed one is refused
+        # before any download and read through the index; any other is cut after the conversion. A recording's link
+        # (`original`) is no text and asks nothing.
+        extent = TextExtent.UNKNOWN if original else await self._text_extent(user_id, item)
+        if vision_cap is None and refuses(extent):
+            logger.info("[DriveOperations] open refused: %s chars=%d passages=%d truncated=%s", item.ref,
+                        extent.text_chars, extent.passages, extent.truncated)
+            return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.REFUSED, text=refusal_text(item.path, extent),
+                                success=False, items=(item,), facts=ReadFacts(too_long=True),
+                                open_bound=OpenBoundInfo(extent))
+        note = await self._note_line_of(user_id, item.item_id)
         # Vision caps and unsupported formats are decided on metadata, before any download (§4.6).
         if mime.startswith("image/") and mime not in VISION_IMAGE_MIME_TYPES:
             return _ok(DriveOp.OPEN, f"'{item.path}' is in a format that cannot be viewed yet ({mime}).", [item])
-        vision_cap = (MAX_DRIVE_VISION_IMAGE_BYTES if mime.startswith("image/")
-                      else MAX_DRIVE_VISION_PDF_BYTES if mime == "application/pdf" else None)
         # A recording is decided the way the indexer decides it: by the kind classifier (extension first), not the
         # provider's mime, so a transcribed .opus/.ogg/.mkv with a generic mime still opens as its transcript.
         recording = kind_of(item.name, item.mime_type or "", False) in TRANSCRIBED_KINDS
@@ -850,13 +878,20 @@ class DriveOperations:
         if recording and self._drive_search is not None:
             transcript = await self._transcript_of(user_id, item)
             if transcript is not None:
-                return _ok(DriveOp.OPEN, self._with_note(transcript, item, note), [item], body=True,
-                           owner_note=bool(note))
+                # `transcript_text` returns text only: whether it cut is read off the extent (§29.10)
+                cut = extent.state is not ExtentState.PAGEABLE and extent.text_chars > OPEN_MAX_CHARS
+                return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, success=True, items=(item,), body=True,
+                                    text=self._with_note(transcript, item, note),
+                                    facts=ReadFacts(owner_note=bool(note), cut=cut),
+                                    open_bound=OpenBoundInfo(extent, chars=extent.text_chars,
+                                                             cut_state=extent.state) if cut else None)
         try:
             if vision_cap is not None:
                 if item.size_bytes > vision_cap:
                     raise DriveFileTooLargeError(item, vision_cap)
                 data = await self._conversion_service.resolve_bytes(ref, user_id)
+                logger.info("[DriveOperations] opened vision: %s mime=%s bytes=%d pages=%s", item.ref, mime, len(data),
+                            extent.pages_total or "-")
                 tmp_fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(item.name)[1] or ".bin")
                 os.close(tmp_fd)
                 async with aiofiles.open(tmp_path, "wb") as f:
@@ -889,10 +924,20 @@ class DriveOperations:
         logger.info("[DriveOperations] opened: %s chars=%d", item.ref, len(content))
         # File text is untrusted: it reaches the model only inside the wrapper (RFC §10.4, RFC Δ11). The owner's note
         # (§6.2) is its own block after it, so a file whose text starts with `noted by the owner:` cannot pass for it.
-        wrapped = wrap_untrusted(f"{drive_label(item)}\n{content}", nonce=secrets.token_hex(8),
+        cut = bound(content, extent)
+        wrapped = wrap_untrusted(f"{drive_label(item)}\n{cut.text}", nonce=secrets.token_hex(8),
                                  ref=item.ref, path=item.path)
-        return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}", item, note), [item], body=True,
-                   owner_note=bool(note))
+        if cut.cut is None:
+            return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}", item, note), [item],
+                       body=True, owner_note=bool(note))
+        logger.info("[DriveOperations] open cut: %s chars=%d kept=%d extent=%s", item.ref, cut.chars, cut.kept,
+                    cut.cut.value)
+        # the cut line is the system's, outside the file's wrapper and before the owner's note block
+        line = cut_line(path_subject(item.path), cut, extent)
+        return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, success=True, items=(item,), body=True,
+                            text=self._with_note(f"{REFERENCE_REMINDER}\n{wrapped}\n{line}", item, note),
+                            facts=ReadFacts(owner_note=bool(note), cut=True),
+                            open_bound=OpenBoundInfo(extent, chars=cut.chars, kept=cut.kept, cut_state=cut.cut))
 
     async def _note_line_of(self, user_id: str, item_id: str) -> str:
         """The owner's note on the item as a search card renders it (DRIVE_FILE_NOTES_RFC §6.2): the store's current
@@ -991,6 +1036,7 @@ def _passages(result: ExcerptResult, shown_folders: FrozenSet[str], described_fi
     return DriveOutcome(op=DriveOp.PASSAGES, cls=_excerpt_class(result), text=rendered.text, success=True,
                         items=tuple(f.drive_item() for f in result.files),
                         facts=ReadFacts(excerpts=bool(result.files), owner_note=rendered.plan.has_owner_line,
+                                        paged=result.page is not None,
                                         building=result.building or result.awaiting_rebuild),   # as search's
                         excerpts=result, excerpt_plan=rendered.plan, request_text=request_text)
 
@@ -1007,6 +1053,8 @@ def _excerpt_class(result: ExcerptResult) -> OutcomeClass:
         return OutcomeClass.NOT_FOUND
     if result.status == STATUS_AMBIGUOUS_FOLDER:
         return OutcomeClass.OK   # candidate folders are shown: content the reader acts on
+    if result.page is not None:
+        return OutcomeClass.OK   # a page past the end says where the last page starts (§29.5), it is no "not found"
     return OutcomeClass.OK if result.files else OutcomeClass.NOT_FOUND
 
 

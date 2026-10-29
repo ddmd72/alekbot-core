@@ -726,11 +726,12 @@ work in its own loop (≤ 6 turns, 150 s soft deadline under the caller's budget
 FileManagement: lock, shield, receipts and late-failure notices such as `🗑️ Deleted from the drive: {path}` and
 `⚠️ Deleting {path} did not complete.` (`src/locales/*.py`), both sent literally through `send_literal`, so a path is never
 formatted, linked or read as a mention). Code builds the answer: `Drive result: <status>`, a
-"What to do" line, op lines, reading lines, then every read block verbatim in run order (vision files as a list); the
+"What to do" line, op lines, reading lines, then every read block verbatim in run order (vision files as a list; a drive text
+over 60 000 characters is never delivered whole: refused and read through the index when indexed, cut otherwise; §29); the
 specialist's model never sees an opened body (a plain-text final reply beside `report_to_orchestrator` fills an empty
 report note). **Answer from content** (RFC §28, built, not deployed): a content question is served by `find_passages` /
 `read_passages` (the stored chunks nearest the question, verbatim, one consolidated block to Smart; the specialist sees them
-in full); on a run that is not a chat turn (reminder, `notify`, call, no origin) a change is refused once passages were read
+in full; `read_passages` with `from N` pages a long file in order, RFC §29); on a run that is not a chat turn (reminder, `notify`, call, no origin) a change is refused once passages were read
 (`decisions/drive_content_write_gate.md`). The 8 drive intents it replaced are gone (a stale text naming one gets
 the coordinator's unknown-intent refusal). **Searches per commission:** no cap in production (the owner dropped a
 3-search cap): ≤ 6 turns, one re-search after a "Without X" line, an identical search skipped by code. A subject is
@@ -808,7 +809,8 @@ the indexer's kill switch `DRIVE_TRANSCRIBE_ENABLED` (a Cloud Build substitution
 (`transcribe` class, `TRANSCRIBE_USD_PER_MONTH` $20, no initial-build share): a whole file's estimate is **reserved** before its first window and settled at
 collection in the reservation's month; a file that does not fit is parked whole until next month; an optional `DRIVE_TRANSCRIBE_USD_CAP_DEV` can only lower the
 cap. Billing keeps the held `gemini-3.8-flash` price (≈ $0.16/audio hour, ≈ 125 h/month until 2027). No `prompt_content`/Logfire row per window (a batch is not a
-call). Opening a transcribed recording returns the transcript (`get_recording_link` → a link). Rollout: the rollout notes (ops); levers: `docs/07_deployment/README.md` →
+call). Opening a transcribed recording returns the transcript, bounded at 60 000 characters like any drive text (refused and paged when
+indexed and longer, cut otherwise; archived transcripts keep head-and-cut; `get_recording_link` → a link). Rollout: the rollout notes (ops); levers: `docs/07_deployment/README.md` →
 "Standing levers"; the owner's map `docs/05_building_blocks/user_drive/README.md` §4.23; decision `decisions/drive_transcripts_t1.md`.
 **Mirror folder T2 (RFC §27.9, Δ183–Δ244; live since 2026-10-21, owner).** The indexer writes each transcript as `<name>.md` into a bot-owned
 **`_Transcripts`** folder at the App Folder root (D49: the same name in every language; fixed `_README.md`, `Archive`, `Long paths`), reconciled by `DriveTranscriptMirror`

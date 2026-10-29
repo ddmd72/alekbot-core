@@ -35,6 +35,9 @@ OP_OPENED = "opened"
 OP_OPEN_NO_CONTENT = "open_no_content"
 OP_LINK = "link"
 OP_PASSAGES = "passages"
+OP_PAGED = "paged"
+OP_TOO_LONG = "too_long"
+OP_OPENED_CUT = "opened_cut"
 OP_CHANGED = "changed"
 
 _CHANGE_VERBS = {
@@ -48,7 +51,7 @@ _PHRASES = {
     OP_OPENED: "opened whole",
     OP_OPEN_NO_CONTENT: "open answered without its content",
     OP_LINK: "recording link given",
-}
+}   # OP_PAGED, OP_TOO_LONG and OP_OPENED_CUT carry numbers: `_File.add` writes their phrases
 _QUERY_MAX_CHARS = 100
 _NESTING_MAX = 4   # the fold nests one level; deeper is not a shape any writer produces
 
@@ -62,6 +65,16 @@ def history_entries(kind: str, outcome: DriveOutcome) -> List[Dict[str, Any]]:
             detail["query"] = outcome.request_text
     elif detail["op"] == OP_CHANGED:
         detail["change"] = outcome.op.value
+    elif detail["op"] == OP_PAGED and outcome.excerpts is not None and outcome.excerpts.page is not None:
+        page = outcome.excerpts.page
+        detail.update({"pages": [page.first, page.last], "next": page.next, "version": page.version})
+    elif detail["op"] in (OP_TOO_LONG, OP_OPENED_CUT) and outcome.open_bound is not None:
+        info = outcome.open_bound
+        detail.update({"chars": info.chars or info.extent.text_chars})
+        if detail["op"] == OP_TOO_LONG:
+            detail["passages"] = info.extent.passages
+        else:
+            detail["kept"] = info.kept
     numbers: Dict[str, List[int]] = {}
     if outcome.excerpts is not None:
         for f in outcome.excerpts.files:
@@ -94,13 +107,17 @@ def _op(kind: str, outcome: DriveOutcome) -> str:
     if outcome.is_change:
         return OP_CHANGED
     if outcome.op is DriveOp.PASSAGES:
-        return OP_PASSAGES
+        return OP_PAGED if outcome.facts.paged else OP_PASSAGES
     if outcome.op is DriveOp.LIST:
         return OP_LISTED
     if outcome.op is DriveOp.SEARCH:
         return OP_SEARCHED_DELETED if kind == t.KIND_DELETED_SEARCH else OP_SEARCHED
     if kind == t.KIND_LINK:
         return OP_LINK
+    if outcome.op is DriveOp.OPEN and outcome.facts.too_long:
+        return OP_TOO_LONG
+    if outcome.op is DriveOp.OPEN and outcome.facts.cut:
+        return OP_OPENED_CUT
     if outcome.op is DriveOp.OPEN:
         return OP_OPENED if (outcome.body or outcome.file_data) else OP_OPEN_NO_CONTENT
     return str(outcome.op.value)
@@ -154,6 +171,12 @@ class _File:
             raw = entry.get("passages")
             self.passages.extend(n for n in (_count(x) for x in (raw if isinstance(raw, (list, tuple)) else ()))
                                  if n is not None)
+        elif op == OP_PAGED:
+            self._phrase(_paged_phrase(entry))
+        elif op == OP_TOO_LONG:
+            self._phrase(_too_long_phrase(entry))
+        elif op == OP_OPENED_CUT:
+            self._phrase(_cut_phrase(entry))
         elif op in (OP_SEARCHED, OP_SEARCHED_DELETED):
             self._phrase(_search_phrase(op, entry))
         elif op == OP_CHANGED:
@@ -176,6 +199,32 @@ class _File:
         if not numbers:
             return "read passages"
         return f"read passage {numbers[0]}" if len(numbers) == 1 else f"read passages {_ranges(numbers)}"
+
+
+def _paged_phrase(entry: Mapping[str, Any]) -> str:
+    """`read pages 1–10 (next: from 11, version 2)` or `(the end, version 2)`; the next number is the request's."""
+    pages = entry.get("pages")
+    first, last = (_count(x) for x in pages) if isinstance(pages, (list, tuple)) and len(pages) == 2 else (None, None)
+    if first is None or last is None:
+        return "read pages"
+    following = _count(entry.get("next"))
+    version = _count(entry.get("version"))
+    tail = f"next: from {following}" if following is not None else "the end"
+    return f"read pages {first}–{last} ({tail}{f', version {version}' if version is not None else ''})"
+
+
+def _too_long_phrase(entry: Mapping[str, Any]) -> str:
+    chars, passages = _count(entry.get("chars")), _count(entry.get("passages"))
+    if chars is None or passages is None:
+        return "too long to open whole"
+    return f"too long to open whole ({chars:,} characters, {passages:,} passages)"
+
+
+def _cut_phrase(entry: Mapping[str, Any]) -> str:
+    kept, chars = _count(entry.get("kept")), _count(entry.get("chars"))
+    if kept is None or chars is None:
+        return "opened, cut"
+    return f"opened, cut at {kept:,} of {chars:,} characters"
 
 
 def _search_phrase(op: str, entry: Mapping[str, Any]) -> str:

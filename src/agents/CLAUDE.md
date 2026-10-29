@@ -214,6 +214,16 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     ConversationHandler renders the turn's entries into full_text as one `[Drive: <path> ref=… — <what was done>]`
     line per file (`drive_history_lines` via `history_context_block`), never JSON, never in the summary;
     FileManagement's open_file builds its entries with the same helper.
+    **The open bound** (USER_DRIVE_INDEXING_RFC §29, built, not deployed): a drive text above
+    `OPEN_MAX_CHARS` (60 000) is never handed to a model whole. `DriveOperations._open_drive_item` asks
+    `DriveSearchService.text_extent` once (not for `original`); a pageable extent over the cap (or truncated) is
+    refused before any download (`REFUSED`, `ReadFacts.too_long`, a tool-free text from `drive_open_bound`); any other
+    text is cut after the conversion (head at a paragraph + a cut line outside the wrapper, `ReadFacts.cut`). A failed
+    lookup counts as not indexed (one WARNING). The specialist's `_seen` appends `ROUTE_SPECIALIST` to a refusal and
+    shows a cut body as `stand_in_cut`; FileManagement's `_respond` answers a refusal as `AgentResponse.success` with
+    `ROUTE_ORCHESTRATOR` (a failure would invite the same open again). Vision opens are unchanged (one log line). One page per commission:
+    `DriveToolRun` answers a second paged `read_passages` in a run with `ONE_PAGE` (set before the await, so a
+    co-emitted second page is refused too); Smart commissions the next page with the history line's `next: from N`.
   - **Search** (`search_drive` → `DriveSearchService` over the opt-in index; USER_DRIVE_INDEXING_RFC §10.4, §24.10,
     Search v2 §25.5): parameters `query`, `folder`, `kind`, `date_from`, `date_to`, described in
     `domain/drive_tool_texts.py`. `query` is the subject in the user's words (a name, place, person, topic, a document
@@ -257,7 +267,11 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     (`EXCERPT_FOLDER_NOTES_CHARS_MAX` caps the folder notes). Low-accuracy values: passages for born-digital files, an
     open for image text or an unknown capture (`ReadFacts.low_accuracy_image`, `R_ACCURACY_IMAGE`). Code:
     `src/domain/drive_excerpt*.py`, `drive_excerpts.py`, `drive_content_gate.py`; `drive_operations.py`
-    `find_passages` / `read_passages`; `drive_tools.py`.
+    `find_passages` / `read_passages`; `drive_tools.py`. **Pages** (§29.5): `read_passages(file_ref, passages="from N")` reads up
+    to 10 passages from N (`range_request` → `ExcerptRangeRequest.page`); the service returns a `PageSpan`
+    (`drive_excerpt_page.py`: first, last, total, version, next from the request, end, past_end); a page line replaces
+    `CONTINUE` on a page only, and Smart's block gets a `pages read:` line per paged file (`ExcerptLedger` keeps the
+    spans and the chunks a find matched, so `nearest the question` says which is which) and `R_PAGED`.
   - **The content write gate** (`decisions/drive_content_write_gate.md`): `content_gate_applies(context)` is
     `not interactive_delivery` (set only by `ConversationHandler`), so a reminder, the daily review, any `notify` run, a
     call and a run with no origin are gated; a chat turn is not. `DriveToolRun.run` refuses a change (any `MUTATING_OPS`
@@ -269,11 +283,15 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     `[DriveAgent] user=<8> status=<status> model=<model> ops=<op>:<class>,… turns=N ms=…` line per commission, where
     `model=` is the model that ran (read from the execution's billing ledger, so a cross-provider failover shows the
     fallback model; models joined by `+`; the failover itself is the `llm_fallback claude→openai` WARNING); one
-    `[DriveOperations] <op>: <ref or folder>` line per operation; `[DriveOperations] opened: <ref> chars=<n>` per whole-file open; one
+    `[DriveOperations] <op>: <ref or folder>` line per operation; `[DriveOperations] opened: <ref> chars=<n>` per whole-file open (the converted length, before the bound), then
+    `open refused: <ref> chars=… passages=… truncated=…`, `open cut: <ref> chars=… kept=… extent=…` or, for a PDF or an image,
+    `opened vision: <ref> mime=… bytes=… pages=…`; one
     `[DriveSearch] user=<8> status=… mode=excerpts|excerpt_range scope=… files=… repeated=… no_text=…` line per passages call
     (counts, no text), next to the search's `mode=query|filter` line; a turn-cap exit is
     `ERROR [DriveAgent] user=<8> hit the turn limit (6) without a report; tools per turn: …`. `prompt_content` records
     the request's model, so it cannot show a failover.
+  - **Gotchas of the bound:** a refusal is `REFUSED` and never settled by a later open; it arms no content gate (a page does);
+    a live transcript's cut line is the open bound's, an archived one keeps `[Transcript cut at …]`.
   - **Owner notes** (`DRIVE_FILE_NOTES_RFC.md` rev 3.3, specialist RFC §9; built on `feat/drive-notes`): `notes`
     (`DriveNoteService`) and `notes_enabled` (`DRIVE_NOTES_ENABLED`) are injected by composition. With both and a user,
     `DriveNoteToolRun` (`src/infrastructure/drive_note_tools.py`) runs on the same `DriveToolRun` (collector, step,

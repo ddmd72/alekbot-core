@@ -259,7 +259,8 @@ DELETED_SHOW_MAX = 5                        # §27.9.11: archived transcripts sh
 TRANSCRIBE_UPLOAD_S = 60                    # G16: worst case of uploading one window; added to the tick deadline sum
 TRANSCRIBE_FILE_LIFE_AT_SUBMIT = timedelta(hours=24)   # §27.5: an uploaded window is submitted only with this much of its provider file's life left (the batch API's 24 h contract); less is re-extracted first
 TRANSCRIBE_MIN_RUN_WALL_S = 90              # Task 12: a further extraction run of a file within one step starts only with this much of the step's wall left (one 30-min window needs ~32 CPU-s plus its bytes)
-TRANSCRIPT_OPEN_MAX_CHARS = 60_000          # G19: not an RFC name; the most an open returns, the summary input bound
+OPEN_MAX_CHARS = 60_000                     # RFC §29: the most of a drive text an open returns (about 30 printed pages); shared with transcripts
+TRANSCRIPT_OPEN_MAX_CHARS = OPEN_MAX_CHARS  # G19 name, kept as an alias of OPEN_MAX_CHARS until its last readers move
 # DRIVE_FILE_NOTES_RFC §5.4 (N1): the owner note's own key cap, classifiers first and never cut. Defined here so the
 # keyer (`drive_keys`) can read it without importing `drive_note` (which imports the keyer); `drive_note` re-exports it.
 # Deliberately NOT in `drive_keys.index_tables_digest`: it shapes only noted records, which NOTE_MERGE_VERSION re-merges.

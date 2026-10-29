@@ -7,17 +7,21 @@ Public interface:
     render_body(transcript) -> str                             # one paragraph per segment, a stamp at every head
     card_segment(rec) -> Optional[str]                         # `transcript: 47 min, 2 speakers, uk/en` or a stub line
     open_needs_cut(stored, *, max_chars) -> bool               # whether open_text would cut
-    open_text(stored, *, max_chars) -> str                     # what opening a recording returns, capped (G19)
+    open_text(stored, *, max_chars, mirror_path, live, extent) -> str   # what opening a recording returns, capped (G19, §29.10)
     cap_plain_text(text, *, max_chars, path) -> str            # a transcript file read as text, cut the same way
 
 The labels are language-neutral (G17): `Speaker N`, `[MM:SS]`, `[~MM:SS]`. The localized header, stubs, gap sentence
 and summary belong to the mirror file, not here. Every stub has this deterministic structural rendering.
 """
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from src.domain.drive_index import DriveIndexRecord, RecordState
 from src.domain.drive_enrichment import JobState
 from src.domain.drive_transcript import StitchedTranscript, StoredTranscript, TranscriptStub
+from src.domain.drive_open_cut import cut_line, head_at_paragraph
+from src.domain.drive_open_bound_text import BoundText
+from src.domain.drive_open_texts import TRANSCRIPT_SUBJECT
+from src.domain.drive_text_extent import TextExtent
 from src.domain.drive_transcript_time import format_stamp
 
 TRANSCRIPT_BODY_VERSION = 1
@@ -84,24 +88,29 @@ def _head(transcript: StitchedTranscript) -> str:
         + (UNCERTAIN_SEAM_LINE + "\n\n" if transcript.uncertain_seam else "")
 
 
-def _cut(full: str, head: str, max_chars: int, pointer: str) -> str:
-    """`head` + `full` cut at a paragraph boundary so the whole result, the cut note included, stays within
-    `max_chars` (G19). `pointer` is the note's optional "The full text is in …" sentence."""
-    def note(shown: int) -> str:
-        return (f"[Transcript cut at {shown} of {len(full)} characters.{pointer} "
+def _archived_note(pointer: str) -> Callable[[int, int], str]:
+    def note(shown: int, total: int) -> str:
+        return (f"[Transcript cut at {shown} of {total} characters.{pointer} "
                 f"Search for a passage to read a specific part.]")
+    return note
 
-    room = max(0, max_chars - len(head) - len(note(len(full))) - 2)
-    kept: List[str] = []
-    size = 0
-    for paragraph in full.split("\n\n"):
-        added = len(paragraph) + (2 if kept else 0)
-        if size + added > room:
-            break
-        kept.append(paragraph)
-        size += added
-    body = "\n\n".join(kept) if kept else full[:room]
-    return head + body + "\n\n" + note(len(body))
+
+def _live_note(pointer: str, extent: Optional[TextExtent]) -> Callable[[int, int], str]:
+    """RFC §29.7 cut line for a live transcript, the ordinary open's line for the extent's state (pageable, stale, or
+    not indexed with its reason). With no extent the index could not be asked."""
+    extent = extent if extent is not None else TextExtent.UNKNOWN
+
+    def note(shown: int, total: int) -> str:
+        return cut_line(TRANSCRIPT_SUBJECT, BoundText("", total, shown, extent.state), extent) + pointer
+    return note
+
+
+def _cut(full: str, head: str, max_chars: int, note: Callable[[int, int], str]) -> str:
+    """`head` + `full` cut at a paragraph boundary so the whole result, the cut note included, stays within
+    `max_chars` (G19). `note(shown, total)` writes the cut note."""
+    room = max(0, max_chars - len(head) - len(note(len(full), len(full))) - 2)
+    body = head_at_paragraph(full, room)
+    return head + body + "\n\n" + note(len(body), len(full))
 
 
 def _pointer(path: str) -> str:
@@ -116,10 +125,12 @@ def open_needs_cut(stored: StoredTranscript, *, max_chars: int) -> bool:
     return len(_head(transcript)) + len(render_body(transcript)) > max_chars
 
 
-def open_text(stored: StoredTranscript, *, max_chars: int, mirror_path: str = "") -> str:
+def open_text(stored: StoredTranscript, *, max_chars: int, mirror_path: str = "", live: bool = False,
+              extent: Optional[TextExtent] = None) -> str:
     """The transcript as Smart reads it: the indexed body, cut at a paragraph boundary so the whole result (seam line
     and cut note included) stays within `max_chars` (G19). The note points at `mirror_path` when the caller has one.
-    A stub is its card line; nothing stored is the empty string."""
+    A stub is its card line; nothing stored is the empty string. `live=True` (RFC §29.10) writes the open bound's cut
+    line instead of the archived note; `extent` is what the index holds of it (the cut line follows its state)."""
     transcript = stored.transcript
     if transcript is None:
         return _stub_line(stored.stub) or ""
@@ -127,7 +138,8 @@ def open_text(stored: StoredTranscript, *, max_chars: int, mirror_path: str = ""
     head = _head(transcript)
     if len(head) + len(full) <= max_chars:
         return head + full
-    return _cut(full, head, max_chars, _pointer(mirror_path))
+    note = _live_note(_pointer(mirror_path), extent) if live else _archived_note(_pointer(mirror_path))
+    return _cut(full, head, max_chars, note)
 
 
 def cap_plain_text(text: str, *, max_chars: int, path: str = "") -> str:
@@ -135,4 +147,4 @@ def cap_plain_text(text: str, *, max_chars: int, path: str = "") -> str:
     `open_text` cuts: at a paragraph boundary, the cut note inside `max_chars` and naming the file's `path`."""
     if len(text) <= max_chars:
         return text
-    return _cut(text, "", max_chars, _pointer(path))
+    return _cut(text, "", max_chars, _archived_note(_pointer(path)))

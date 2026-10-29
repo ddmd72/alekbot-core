@@ -191,8 +191,12 @@ def reading_lines(blocks: Sequence[CollectedResult]) -> List[str]:
     cards = sum(s.facts.cards for s in searches)
     if cards:
         add(t.R_FIND, t.R_TIERS, t.R_TRUST, t.R_RELATED, t.R_COVERAGE, t.R_MANY, t.R_ALL)
-    if any(b.outcome.facts.excerpts for b in blocks):
+    if any(b.outcome.facts.excerpts and not b.outcome.facts.paged for b in blocks):
         add(t.R_EXCERPTS)
+    if any(b.outcome.facts.paged for b in blocks):
+        add(t.R_PAGED)
+    if any(b.outcome.facts.too_long or b.outcome.facts.cut for b in blocks):
+        add(t.R_TOO_LONG)
     if any(s.facts.passage for s in searches):
         add(t.R_PASSAGE)
     if any(s.facts.accuracy for s in searches):
@@ -217,7 +221,11 @@ def reading_lines(blocks: Sequence[CollectedResult]) -> List[str]:
     # refusal or the line that a video was sent to the chat (M2).
     if any(b.outcome.op is DriveOp.OPEN and b.kind == t.KIND_OPEN and b.outcome.cls is OutcomeClass.OK
            and (b.outcome.body or b.outcome.file_data) for b in blocks):
-        add(t.R_NUMBERS, t.R_DOC_VS_MEMORY, t.R_NOT_READ)
+        # a cut body is a file's head: no "open the file, then compute" (§29.6 L13)
+        if not all(b.outcome.facts.cut for b in blocks if b.outcome.op is DriveOp.OPEN and b.kind == t.KIND_OPEN
+                   and b.outcome.cls is OutcomeClass.OK and (b.outcome.body or b.outcome.file_data)):
+            add(t.R_NUMBERS)
+        add(t.R_DOC_VS_MEMORY, t.R_NOT_READ)
     return lines
 
 

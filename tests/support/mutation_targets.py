@@ -248,6 +248,8 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.domain.drive_excerpt_ledger", "tests/unit/domain/drive_excerpt_ledger_equivalent_mutants.txt"),
     MutationTarget("src.domain.drive_content_gate", "tests/unit/domain/drive_content_gate_equivalent_mutants.txt"),
     MutationTarget("src.domain.drive_excerpt_context", "tests/unit/domain/drive_excerpt_context_equivalent_mutants.txt"),
+    MutationTarget("src.domain.drive_open_bound", "tests/unit/domain/drive_open_bound_equivalent_mutants.txt"),
+    MutationTarget("src.domain.drive_excerpt_page", "tests/unit/domain/drive_excerpt_page_equivalent_mutants.txt"),
 )
 
 

@@ -10,6 +10,7 @@ from typing import Optional, Tuple, Union
 
 from .drive_excerpt_context import ExcerptContext
 from .drive_excerpt_file import ExcerptFile
+from .drive_excerpt_page import PageSpan
 from .drive_excerpt_range_request import ExcerptRangeRequest
 from .drive_excerpt_request import ExcerptRequest
 from .drive_index_lean import ChunkId
@@ -35,3 +36,4 @@ class ExcerptResult:
     folder_not_indexed: bool = False
     continue_at: Optional[int] = None
     context: ExcerptContext = ExcerptContext.EMPTY
+    page: Optional[PageSpan] = None        # only on a page request (`from N`, RFC §29.5)

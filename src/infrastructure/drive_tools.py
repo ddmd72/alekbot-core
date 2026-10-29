@@ -30,7 +30,11 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Mapping, Optio
 from ..domain import drive_answer_texts as t
 from ..domain import drive_tool_texts as tools
 from ..domain.drive_collected_result import CollectedResult
+from ..domain.drive_excerpt_request import parse_page
 from ..domain.drive_content_gate import content_gate_applies, write_refused
+from ..domain.drive_open_bound_text import BoundText
+from ..domain.drive_open_cut import stand_in_cut
+from ..domain.drive_open_texts import ROUTE_SPECIALIST
 from ..domain.drive_file_content_item import FileContentItem
 from ..domain.drive_op import DriveOp
 from ..domain.drive_outcome import DriveOutcome
@@ -73,6 +77,7 @@ class DriveToolRun:
         self._ran_on = False   # a change answered still-running: later changes of this run do not start
         self._gated = content_gate_applies(context)   # not a chat turn: changes stop once passages were read (A14)
         self._passages_step: Optional[int] = None   # the first step whose passages text reached the model
+        self._paged = False   # a page was asked for in this run: one page per commission (RFC §29.9)
         self.step = 0
 
     def left(self) -> float:
@@ -169,6 +174,15 @@ class DriveToolRun:
         if outcome.file_data:
             return self._answer(tc, t.STAND_IN_FILE.format(handle=result.handle, label=label,
                                                            mime=outcome.file_data.get("mime_type", "")))
+        if outcome.facts.too_long:
+            # the refusal's text names no tool; this caller appends its own route (RFC §29.6 L13)
+            ref = outcome.items[0].ref if outcome.items else str((tc.args or {}).get("file_ref") or "")
+            return self._answer(tc, f"[{result.handle}]\n{outcome.text}\n" + ROUTE_SPECIALIST.format(ref=ref))
+        info = outcome.open_bound
+        if outcome.body and outcome.facts.cut and info is not None and info.kept:
+            ref = outcome.items[0].ref if outcome.items else ""
+            return self._answer(tc, stand_in_cut(result.handle, label,
+                                                 BoundText("", info.chars, info.kept, info.cut_state), ref, info.extent))
         if outcome.body:
             return self._answer(tc, t.STAND_IN_TEXT.format(handle=result.handle, label=label,
                                                            chars=len(outcome.text)))
@@ -234,6 +248,14 @@ class DriveToolRun:
 
     async def _read_passages(self, tc: ToolCall) -> ToolResult:
         args = tc.args or {}
+        try:
+            page = parse_page(args.get("passages")) is not None
+        except ValueError:
+            page = False   # a malformed page is a correction from the operation, not a page
+        if page:
+            if self._paged:
+                return self._answer(tc, t.ONE_PAGE)
+            self._paged = True   # set before the await: a co-emitted second page is refused too
         ledger = self._collector.ledger
         result = await self._run(DriveOp.PASSAGES, t.KIND_PASSAGES, lambda: self._ops.read_passages(
             self._context, self._user_id, file_ref=args.get("file_ref"), passages=args.get("passages"),

@@ -2,21 +2,27 @@
 store entry, capped, the cut note naming the file's path; with no store entry, the downloaded file capped the same way.
 A recording's own transcript names its active mirror file in the cut note. Synthetic speech only. The open is
 DriveOperations.open since the cut (DRIVE_SPECIALIST_RFC §5.5; the specialist's `open_drive_file`)."""
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from src.adapters.in_memory_drive_mirror_repo import InMemoryDriveMirrorRepository
-from src.domain.drive_index import DriveIndexRecord, RecordState
+from src.domain.drive_index import (
+    KEYS_VERSION, MIGRATION_GATE_KEY, DriveIndexRecord, DriveSyncState, RecordState, Scope,
+)
 from src.domain.drive_index_params import TRANSCRIPT_OPEN_MAX_CHARS
 from src.domain.drive_mirror import (
     ARCHIVE_NAME, KIND_ARCHIVE, KIND_FILE, MIRROR_ACTIVE, MIRROR_ARCHIVED, MirrorDoc, MirrorRoot,
 )
 from src.domain.drive_search import REFERENCE_REMINDER
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
-from src.domain.user_drive import DriveItem
+from src.domain.drive_transcript_render import render_body
+from src.domain.user_drive import DriveConnection, DriveItem
 from src.infrastructure.drive_operations import DriveOperations
 from src.ports.drive_index_repository import DriveIndexRepository
+from src.ports.user_drive_port import UserDrivePort
+from src.ports.user_repository import UserRepository
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
@@ -77,6 +83,19 @@ def conversion():
 def search(mirror, index):
     return DriveSearchService(index, AsyncMock(), AsyncMock(), AsyncMock(), embedding_space="s/8",
                               nonce=lambda: "nonce0001", mirror=mirror)
+
+
+def _search_gate_open(mirror, index):
+    """The `search` fixture with the extent's gate answered as it is for an indexing user (enabled, connected,
+    migrated sync state), so `text_extent` reads the record itself (RFC §29.10)."""
+    index.get_sync_state.return_value = DriveSyncState(user_id="u1", drive_id="d1", root_item_id="root",
+                                                       applied_versions={MIGRATION_GATE_KEY: KEYS_VERSION})
+    users = AsyncMock(spec=UserRepository)
+    users.get_user.return_value = SimpleNamespace(config=SimpleNamespace(drive_indexing_enabled=True))
+    drive = AsyncMock(spec=UserDrivePort)
+    drive.connection.return_value = DriveConnection(connected=True, drive_id="d1")
+    return DriveSearchService(index, AsyncMock(), users, drive, embedding_space="s/8", nonce=lambda: "nonce0001",
+                              mirror=mirror)
 
 
 @pytest.fixture
@@ -161,13 +180,26 @@ async def test_the_open_of_a_transcribed_recording_names_its_active_mirror_file(
     assert "The full text is in _Transcripts/Calls - call9.md." in text
 
 
-async def test_a_recording_without_a_mirror_file_cuts_without_a_path(search, index):
+async def test_a_recording_without_a_mirror_file_cuts_without_a_path(mirror, index):
+    # a visible indexed card under the root with no chunks: the extent's NO_TEXT state (RFC §29.10, the line names it)
     index.get_records.return_value = {"s2": DriveIndexRecord(user_id="u1", item_id="s2", name="x.m4a",
                                                              state=RecordState.INDEXED, transcript_state="current",
-                                                             transcript_key="k2")}
-    index.get_transcript.return_value = _stored(*_long())
+                                                             transcript_key="k2", has_card=True, scope=Scope.NORMAL,
+                                                             parent_id="root")}
+    stored = _stored(*_long())
+    index.get_transcript.return_value = stored
+    search = _search_gate_open(mirror, index)
     text = await search.transcript_text("u1", "s2")
-    assert "[Transcript cut at" in text and "The full text is in" not in text
+    # RFC §29.10: a live transcript the index cannot page gets the open bound's cut line, not the archived note;
+    # with no mirror file the line names no path
+    assert "[Transcript cut at" not in text and "The full text is in" not in text
+    inner = text.split('<drive_document nonce="nonce0001" ref="drive:s2" path="">\n', 1)[1]
+    shown, sep, line = inner.rpartition("\n\n[Cut by the system: ")
+    full = render_body(stored.transcript)
+    assert sep and full.startswith(shown) and 0 < len(shown) < len(full)
+    assert line == (f"the transcript is {len(full):,} characters; only the first {len(shown):,} are above. The rest "
+                    f"cannot be read now: the file has no indexed text (the index holds no text for it).]\n"
+                    f'</drive_document nonce="nonce0001">')
 
 
 async def test_a_broken_ledger_chain_falls_back_to_the_items_own_path(agent, index, mirror):

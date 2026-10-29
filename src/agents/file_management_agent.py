@@ -23,6 +23,7 @@ from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentMessage, AgentResponse, AgentConfig, AgentIntent
 from ..domain import drive_answer_texts as drive_texts
 from ..domain.drive_history import DRIVE_CONTEXT_KEY, history_entries
+from ..domain.drive_open_texts import ROUTE_ORCHESTRATOR
 from ..domain.drive_outcome import DriveOutcome
 from ..domain.skill import SKILL_REF_PREFIX
 from ..domain.user_drive import is_drive_ref
@@ -122,6 +123,14 @@ class FileManagementAgent(BaseAgent):
     def _respond(self, message: AgentMessage, outcome: DriveOutcome) -> AgentResponse:
         """Today's AgentResponse for an outcome: success with the text, the touched items' `drive_context` and the
         vision file; failure with the text as the error."""
+        if outcome.facts.too_long:
+            # A refused open is an answer, not a failure: a failure gets the engine's "correct your input and try
+            # again" suffix and invites the same open again (RFC §29.6 L13).
+            self._on_agent_success(char_count=len(outcome.text), output_text=outcome.text[:200])
+            entries = history_entries(drive_texts.KIND_OPEN, outcome)
+            return AgentResponse.success(
+                task_id=message.task_id, agent_id=self.agent_id, result=outcome.text + "\n" + ROUTE_ORCHESTRATOR,
+                confidence=1.0, history_context={DRIVE_CONTEXT_KEY: entries} if entries else None)
         if not outcome.success:
             return self._fail(message, outcome.text)
         self._on_agent_success(char_count=len(outcome.text), output_text=outcome.text[:200])
