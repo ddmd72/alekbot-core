@@ -296,7 +296,7 @@ A plain dispatcher sidesteps all three because there's no path rewriting.
 
 | Kind                 | Form              | Storage                       | TTL    | Purpose                                         |
 |----------------------|-------------------|-------------------------------|--------|-------------------------------------------------|
-| MCP client           | pydantic model    | `{env}_mcp_oauth_clients`     | ∞      | DCR-registered OAuth client                     |
+| MCP client           | pydantic model    | `{env}_mcp_oauth_clients`     | ∞      | DCR-registered OAuth client (superseded: client secrets are encrypted and codes stored by keyed digest since SECRETS_AT_REST_RFC S1; see decisions/secrets_at_rest_cipher_and_digest.md) |
 | Authorization code   | random 32 bytes   | `{env}_mcp_auth_codes`        | 10 min | One-shot redeem for access token                |
 | Refresh token        | random 48 bytes   | `{env}_mcp_refresh_tokens`    | 30 d   | Rotated on every `/token` refresh call          |
 | Access token         | HS256 JWT         | **stateless** — not stored    | 1 h    | Carries `sub`, `account_id`, `client_id`, `aud` |
@@ -387,7 +387,7 @@ A known failure mode we're already watching: claude.ai stuffs everything into `q
 
 - **DCR abuse**: host allowlist prevents callback-hijacking; no `/register` rate-limit (Cloud Run caps). Experimental feature on dev — acceptable.
 - **Access token**: HS256 JWT, same secret as Cabinet (`oauth_session_secret` ≥ 32 chars), distinct `aud`. Stateless — no revocation of issued access tokens until expiry (1h). Refresh tokens can be revoked server-side and are rotated on every use.
-- **Client secret**: plaintext at rest (SDK constraint, see § 6.4). Treat `{env}_mcp_oauth_clients` collection as a secret.
+- **Client secret**: plaintext at rest (SDK constraint, see § 6.4). Treat `{env}_mcp_oauth_clients` collection as a secret. (superseded: client secrets are encrypted and codes stored by keyed digest since SECRETS_AT_REST_RFC S1; see decisions/secrets_at_rest_cipher_and_digest.md)
 - **Consent binding**: user identity comes from the **existing Cabinet JWT cookie** at the consent-page step. The OAuth flow does NOT re-authenticate the user — if they were logged in as user X in Cabinet, the MCP token is issued for user X. Guard: if no cookie, `/mcp/consent` redirects to `/auth/login?next=<self>` before rendering.
 - **Redirect URI**: strict equality match between `/authorize` and `/token` (SDK enforces).
 - **PKCE**: S256 only (no `plain`). SDK enforces, and the service's consent JWT carries `code_challenge` so even if the SDK flow is bypassed, re-exchange fails.
@@ -417,7 +417,7 @@ All tests are SDK-light — we do not test the SDK itself, only our integration 
 ### 10.2 Firestore
 
 No composite indexes needed — all lookups are doc-id. Three collections auto-create on first write:
-- `{env}_mcp_oauth_clients`
+- `{env}_mcp_oauth_clients` (superseded: client secrets are encrypted and codes stored by keyed digest since SECRETS_AT_REST_RFC S1; see decisions/secrets_at_rest_cipher_and_digest.md)
 - `{env}_mcp_auth_codes`
 - `{env}_mcp_refresh_tokens`
 
