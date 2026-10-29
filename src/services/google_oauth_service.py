@@ -20,7 +20,7 @@ from urllib.parse import urlencode
 
 import aiohttp
 
-from ..domain.email import OAuthCredentials
+from ..domain.email import ACCOUNT_REALM_GOOGLE, OAuthCredentials
 from ..utils.logger import logger
 
 _AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -30,6 +30,12 @@ _USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
+    "openid",
+    "email",
+]
+# openid + email on every consent: exchange_code reads the account identity (SECRETS_AT_REST_RFC §2.3, I9)
+GOOGLE_TASKS_SCOPES = [
+    "https://www.googleapis.com/auth/tasks",
     "openid",
     "email",
 ]
@@ -78,8 +84,8 @@ class GoogleOAuthService:
         """
         Exchange authorization code for OAuthCredentials.
 
-        Fetches email address from Google userinfo endpoint.
-        Raises ValueError on HTTP errors.
+        Reads the account identity (`sub`, email) from Google userinfo: the scopes must include `openid email`.
+        Raises ValueError on an HTTP error or when the identity is missing (I9: the caller then stores nothing).
         """
         payload = {
             "code": code,
@@ -104,20 +110,21 @@ class GoogleOAuthService:
             expires_in = int(token_data.get("expires_in", 3600))
             token_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
-            # 2. Fetch email from userinfo
-            email_address = ""
+            # 2. The account identity (I9, SECRETS_AT_REST_RFC §2.3): OpenID `sub` + email from userinfo. A failed
+            #    or incomplete read raises, so the consent stores nothing.
             async with session.get(
                 _USERINFO_URL,
                 headers={"Authorization": f"Bearer {access_token}"},
             ) as resp:
-                if resp.status == 200:
-                    info = await resp.json()
-                    email_address = info.get("email", "")
+                if resp.status != 200:
+                    raise ValueError(f"Google userinfo read failed ({resp.status}): no account identity")
+                info = await resp.json()
+            subject = info.get("sub") if isinstance(info, dict) else None
+            email_address = info.get("email") if isinstance(info, dict) else None
+            if not isinstance(subject, str) or not subject or not isinstance(email_address, str) or not email_address:
+                raise ValueError("Google userinfo carried no sub or email: no account identity")
 
-        logger.info(
-            f"✅ Google OAuth connected: email={email_address or '(unknown)'} "
-            f"user={user_id[:8]}"
-        )
+        logger.info(f"✅ Google OAuth connected: user={user_id[:8]}")
         return OAuthCredentials(
             user_id=user_id,
             provider=provider_override or "gmail",
@@ -126,6 +133,8 @@ class GoogleOAuthService:
             token_expiry=token_expiry,
             scopes=self._scopes,
             email_address=email_address,
+            account_realm=ACCOUNT_REALM_GOOGLE,
+            account_subject=subject,
         )
 
     async def revoke_token(self, access_token: str) -> None:
