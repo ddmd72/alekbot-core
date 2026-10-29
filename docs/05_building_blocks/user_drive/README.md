@@ -634,7 +634,8 @@ brief's date, so a stale one is never cited.
   `MAX_CHUNKS_PER_FILE` (1 000) chunks (`truncated` beyond; `MAX_TEXT_CHARS` binds first at about 925). No chunk → `no_text`.
 - **Chunk cap** (`chunk_cap_refuses`): the user's readable chunks may not pass `MAX_CHUNKS_PER_USER` (150 000); a file
   that would is `metadata_only / user_chunk_cap` with its would-be `chunk_count`, released (best card rank, then
-  newest) when the headroom holds it, never re-read before.
+  newest) when the headroom holds it, never re-read before. Why 150 000: the chunk kNN is an exact scan of the user's
+  chunks, about 2.4 s at the cap measured in-cloud (spike S3, `decisions/drive_chunk_caps_raised.md`).
 - **Embeddings**: one `RETRIEVAL_DOCUMENT` vector per chunk, at most `EMBED_IN_FLIGHT` (4) calls at once, within
   `EMBED_FILE_BUDGET_S` (180 s; past it → `embed_timeout`, retried). An edit embeds only its new or changed chunks:
   the readable generation's vectors are reused by a hash of the chunk text when they are in the current embedding

@@ -22,9 +22,29 @@ A re-embed waits twice (chunks, then hints) and downloads nothing: its start gat
 falls back to the user-wide chunk streams with the folder filter (covered by
 `test_a_folder_over_the_in_memory_chunk_bound_uses_the_wide_streams_with_the_folder_filter`).
 
+**Measured after raising (spike S3, 2026-10-29).** Synthetic chunks (random 768-dim vectors, 2 400-character texts)
+in the test database, timed from a Cloud Run Job in the service's region, 30 sequential calls per point:
+
+| Chunks of the user | kNN, limit 300, p50 / p95 | limit 1 000, p50 / p95 |
+|--------------------|---------------------------|------------------------|
+| 10 000 | 0.24 / 0.29 s | 0.39 / 0.45 s |
+| 50 000 | 0.82–0.86 / 1.05–1.24 s | 0.88–0.91 / 1.02–1.24 s |
+| 150 000 | 2.37 / 2.70 s | 2.50 / 2.92 s |
+
+- The kNN is exact: time grows linearly with the user's chunks (about 15 ms per 1 000), billed one read per 100
+  index entries plus one per returned document.
+- A user next to 244 000 chunks of another user measured the same as alone: the `user_id` prefix bounds the scan, so
+  the cap is per user and other tenants do not slow a search.
+- Four parallel kNN calls take about 15 % longer than one; no errors, no rising tail over a series (no throttling).
+  A search runs its card, chunk and hint kNN in parallel, so what a user waits for is about the unfiltered chunk kNN;
+  a kind filter scans only that kind.
+- About 2.4 s per search at the cap is accepted for drive search (owner, 2026-10-29): it is not the memory fast path.
+- Timings from outside Google Cloud are not decision-grade: they add the round trip and the transfer of the results.
+
 **Rejected.**
 - A scoped-books design (index a book only when searched in its folder): more machinery for a solo-developer system.
-- A latency benchmark before raising: the caps are cheap to lower again.
 
 **Revisit when** `[DriveSearch]` latency rises after the long files are requeued, or `embed_timeout` appears in the
-tick summary.
+tick summary. Past the caps (a user at the card or chunk cap, or a drive of tens of thousands of files) the answer is a
+vector store with approximate search behind the `DriveIndexRepository` port. That decision is taken only on timings
+measured from inside Google Cloud.

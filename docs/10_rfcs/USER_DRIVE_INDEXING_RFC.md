@@ -1445,7 +1445,7 @@ port) and the Smart protocol token change with its backup reference.
 | S0f | Do `/items/{id}/thumbnails` work for App Folder items under `Files.ReadWrite.AppFolder`, at what sizes, and for which image formats (incl. HEIC)? | Slice 4 triage, or a fallback (downscale on the indexer) |
 | S0g | Do Graph custom thumbnail sizes (`c{w}x{h}`) work for App Folder items, up to which size, and is receipt and A4 text legible in them (HEIC included)? | The reader's image input (§24.5) |
 | S1 | On the indexer service (gen2), from the indexer's image with `DRIVE_PARSER_USER` set (the child as the `driveparser` user, as deployed): child-process `RLIMIT_AS`/`RLIMIT_CPU` hold for the Phase 0 bomb set; the service's peak RSS with a 45 MB download and a child at its limit; for long PDFs, a reader-shaped run in which the parent holds `MODEL_IN_FLIGHT` windows' bytes, base64 and request bodies while the child cuts the next window (simulated, no API call), so the cgroup peak includes the parent's side of a read; cold-start time; whether a backfill's embedding calls raise chat-side 429s on the shared quota. | Indexer memory, child limits, `EMBED_IN_FLIGHT` |
-| S3 | Cost and latency of `find_nearest` at 10k and 50k chunks under a `user_id` filter. | Per-user caps |
+| S3 | Cost and latency of `find_nearest` at 10k and 50k chunks under a `user_id` filter. Measured 2026-10-29, in-cloud: results in `decisions/drive_chunk_caps_raised.md`. | Per-user caps |
 
 S0a–S0e and the eval fixture come before Slice 1 code; S1 before Slice 2; S3 before Slice 2 ships; S0f before
 Slice 4.
@@ -1495,7 +1495,8 @@ reports are in `scripts/memory/onedrive_s0_*.json`, which is gitignored because 
 - **OQ-2 Full text on open.** Step 1 deliberately returns a file's full converted text to Smart (file storage README
   §2.2; truncation removed in `2ee8cb3`). With a growing drive, opening a 300-page document puts all of it in context.
   Options: keep as is; a cap with an alert; range reads from stored chunks (§14).
-- **OQ-3 Caps.** Initial values in §15 are reasoned, not measured; S3 and the first real folders set them. Owner decision 2026-10-29: `MAX_CHUNKS_PER_FILE` 400 → 1 000, `MAX_CHUNKS_PER_USER` 50 000 → 150 000, `EMBED_FILE_BUDGET` 180 → 300 s, so long books are indexed in full (`decisions/drive_chunk_caps_raised.md`).
+- **OQ-3 Caps.** Initial values in §15 are reasoned, not measured; S3 and the first real folders set them. Owner decision 2026-10-29: `MAX_CHUNKS_PER_FILE` 400 → 1 000, `MAX_CHUNKS_PER_USER` 50 000 → 150 000, `EMBED_FILE_BUDGET` 180 → 300 s, so long books are indexed in full (`decisions/drive_chunk_caps_raised.md`). S3 measured the same day from a Cloud Run
+Job: the chunk kNN at 150 000 chunks takes about 2.4 s, accepted for drive search; the cap is per user by evidence.
 
 ---
 
