@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 from datetime import date, datetime
 from typing import AbstractSet, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
+from src.domain.drive_cap_alert import CapCounts
 from src.domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMonth
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, RecordState
 from src.domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
@@ -46,9 +47,11 @@ class DriveIndexRepository(ABC):
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
                                 reconnect_notified: Optional[bool] = None, migration_alerted: Optional[bool] = None,
                                 stall_alerted: Optional[bool] = None,
-                                fallback_alerted_day: Optional[str] = None) -> None:
-        """Field-level update of the fan-out's flags (the v1 two and Search v2's three alert flags, §25.8); a missing
-        state is left missing. `save_sync_state` never writes them."""
+                                fallback_alerted_day: Optional[str] = None,
+                                card_cap_alerted: Optional[bool] = None,
+                                chunk_cap_alerted: Optional[bool] = None) -> None:
+        """Field-level update of the fan-out's flags (the v1 two, Search v2's three alert flags, §25.8, and the two cap
+        alert flags, drive_cap_alert); a missing state is left missing. `save_sync_state` never writes them."""
 
     @abstractmethod
     async def delete_sync_state(self, user_id: str, owner: Optional[str] = None) -> None:
@@ -127,6 +130,11 @@ class DriveIndexRepository(ABC):
     async def chunk_capped(self, user_id: str, limit: int) -> List[DriveIndexRecord]:
         """Records refused by the chunk cap (`metadata_only` / `user_chunk_cap`), best card_rank first, then newest
         modified_at (release, §5.4)."""
+
+    @abstractmethod
+    async def count_capped(self, user_id: str) -> CapCounts:
+        """Records held by each per-user cap (§5.4): `card_capped`, and `metadata_only` / `user_chunk_cap`. Count
+        aggregations with equality filters only, never a scan (the fan-out's cap alert, drive_cap_alert)."""
 
     @abstractmethod
     async def count_unread(self, user_id: str, kinds: AbstractSet[str],

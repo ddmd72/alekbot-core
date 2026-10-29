@@ -494,6 +494,9 @@ class DriveSyncState:
     migration_alerted: bool = False           # awaiting the from-scratch rebuild: alerted once
     stall_alerted: bool = False               # the rebuild stalled for DESCRIBED_STALL_AFTER: alerted once
     fallback_alerted_day: str = ""            # "YYYY-MM-DD" the fallback alert was posted for
+    # the fan-out's cap alert (drive_cap_alert): files held by the card cap / the chunk cap, alerted once per incident
+    card_cap_alerted: bool = False
+    chunk_cap_alerted: bool = False
     purge_keep_transcripts: bool = False      # §27.8 b: the running purge keeps the stored transcripts
     # -- owner notes (DRIVE_FILE_NOTES_RFC §3.4, §5.1 b): the notes step's state, purged with the sync state (each is
     # re-derivable: a purge re-reads every note). The watermark is the (updated_at, note_id) pair of the last note the

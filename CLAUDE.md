@@ -783,7 +783,7 @@ pinned audience, gen2, 2 GiB, concurrency 1, max 1; logs `make fetch-logs-indexe
 `drive-sync-dev` (`max-concurrent-dispatches=1`). URL chain `INDEXER_URL_DEV` → `_INDEXER_URL` → `DRIVE_INDEXER_URL`
 (`os.getenv`); `make deploy` refuses it empty unless `DRIVE_FIRST_PASS=1` (`docs/07_deployment/README.md`). The main
 service fans out `start_drive_sync` every 10 min (`DriveSyncSchedulerService`: minimal sync state for enabled users,
-staleness alert, one reconnect notice; v2 adds the awaiting-rebuild, stalled-rebuild and fallback-share alerts) and
+staleness alert, one reconnect notice; v2 adds the awaiting-rebuild, stalled-rebuild and fallback-share alerts; the cap alert posts once per incident when files are held by the card cap or the chunk cap, each with its count) and
 nudges after each Step 1 mutation. OS/lock artefacts get no card; dot-folders, `.git`/`pyvenv.cfg` folders,
 `node_modules`/`__pycache__`/`site-packages` and dense trees collapse to one card. **Content (Slice 2+4, §24; live since 2026-10-14, PR #60):** the
 §5.1 document kinds are parsed on the indexer by a child process (`SubprocessContentExtractor`, rlimits, run as the

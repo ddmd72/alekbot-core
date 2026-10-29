@@ -17,6 +17,11 @@ DESCRIBED_STALL_AFTER while jobs are ready and budget is left (once, cleared whe
 `described_grew_at`, which the tick refreshes on any enrichment progress or when no job is ready (review rv_sv2_p5
 MINOR 2), so a quiet day followed by one new file is not a stall.
 
+The cap alert (§5.4; drive_cap_alert): files held by the card cap (`card_capped`) or the chunk cap (`metadata_only /
+user_chunk_cap`), one ops alert per cap with its count when it goes from none held to some, through its own flag, lowered
+when the cap holds none again. Counted with two count aggregations (equality filters only) per pass for a user with
+indexing on; the tick keeps no count of held files, only a per-tick event count on its log line.
+
 Two passes: every user's tick is enqueued first, then the checks run. A notice goes through the
 formatter agent (up to its 120 s SLA), so running checks first would let one slow notice delay every
 later user's tick past the scheduler's attempt deadline.
@@ -40,11 +45,13 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from ..domain import drive_enrich_plan as enrich
+from ..domain.drive_cap_alert import CARD_CAP, cap_flag_changes
 from ..domain.drive_access import NOTICE_FILENAME, notice_batch, notice_file, notice_paths
 from ..domain.drive_enrichment import EnrichJob, JobState, UsageClass
 from ..domain.drive_index import MIGRATION_GATE_KEY, DriveIndexRecord, DriveSyncState
 from ..domain.drive_index_params import (
-    DESCRIBED_STALL_AFTER, FALLBACK_ALERT_SHARE, INACCESSIBLE_NOTICE_BATCH, INACCESSIBLE_SCAN_MAX, TICK_DEADLINE_S,
+    DESCRIBED_STALL_AFTER, FALLBACK_ALERT_SHARE, INACCESSIBLE_NOTICE_BATCH, INACCESSIBLE_SCAN_MAX,
+    MAX_CARD_RECORDS_PER_USER, MAX_CHUNKS_PER_USER, TICK_DEADLINE_S,
 )
 from ..domain.drive_index_planner import is_stale, month_key
 from ..domain.drive_profile import PROFILE_POLICY
@@ -129,6 +136,7 @@ class DriveSyncSchedulerService:
                 summary["notices"] += await self._inaccessible_notice(user_id, profile, state)
                 summary["alerts"] += await self._staleness(user_id, state, now)
                 summary["alerts"] += await self._search_v2_alerts(user_id, state, now)
+                summary["alerts"] += await self._cap_alerts(user_id, state)
             except Exception as exc:   # a check never costs anyone their tick: all are enqueued already
                 summary["errors"] += 1
                 logger.error(f"[DriveSync] checks failed for {user_id[:8]}: {exc}", exc_info=True)
@@ -239,6 +247,34 @@ class DriveSyncSchedulerService:
         await self._repo.update_sync_flags(user_id, stall_alerted=True)
         logger.warning(f"[DriveSync] drive index rebuild stalled for {user_id[:8]}; alerted")
         return 1
+
+    async def _cap_alerts(self, user_id: str, state: DriveSyncState) -> int:
+        """One ops alert per cap that starts holding files; its flag is written only after the post, and lowered when
+        the cap holds none again (module docstring; drive_cap_alert)."""
+        if self._alert_sink is None:
+            return 0
+        counts = await self._repo.count_capped(user_id)
+        posted = 0
+        for cap, raised in cap_flag_changes(counts, card_alerted=state.card_cap_alerted,
+                                            chunk_alerted=state.chunk_cap_alerted).items():
+            flag = "card_cap_alerted" if cap == CARD_CAP else "chunk_cap_alerted"
+            if not raised:
+                await self._repo.update_sync_flags(user_id, **{flag: False})
+                logger.info(f"[DriveSync] drive {cap} cap holds no file of {user_id[:8]} again")
+                continue
+            if cap == CARD_CAP:
+                text = (f"⚠️ Drive index of user {user_id[:8]} is at the card cap: {counts.card} files held without a "
+                        f"card (`card_capped`, {MAX_CARD_RECORDS_PER_USER} carded records per user); their content "
+                        f"and triage wait until headroom returns")
+            else:
+                text = (f"⚠️ Drive index of user {user_id[:8]} is at the chunk cap: {counts.chunk} files not read "
+                        f"(`user_chunk_cap`, {MAX_CHUNKS_PER_USER} readable chunks per user); their content is not "
+                        f"searchable until headroom holds them")
+            await self._alert_sink.post(text)
+            await self._repo.update_sync_flags(user_id, **{flag: True})
+            logger.warning(f"[DriveSync] drive {cap} cap holds files of {user_id[:8]}; alerted")
+            posted += 1
+        return posted
 
     async def _reconnect_notice(self, user_id: str, profile: Any, state: DriveSyncState,
                                 connection: DriveConnection) -> int:

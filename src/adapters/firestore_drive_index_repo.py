@@ -76,6 +76,7 @@ from google.cloud.firestore_v1.field_path import FieldPath
 from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
+from ..domain.drive_cap_alert import CapCounts
 from ..domain.drive_enrichment import (
     DriveHintDoc, DriveProfile, EnrichJob, GradedValue, HintItem, InitialBuild, JobState, KeyValue, ModelUsageMonth,
     PhotoObject, ProfileDate, ProfileEntity, UsageClass,
@@ -110,7 +111,8 @@ CARD_DISTANCE = "card_distance"
 CHUNK_VECTOR = "vector"
 CHUNK_DISTANCE = "chunk_distance"
 _TS_MIN = datetime(1, 1, 1, tzinfo=timezone.utc)   # Firestore's smallest timestamp: `>=` it excludes nulls
-_FLAGS = ("stale_alerted", "reconnect_notified", "migration_alerted", "stall_alerted", "fallback_alerted_day")
+_FLAGS = ("stale_alerted", "reconnect_notified", "migration_alerted", "stall_alerted", "fallback_alerted_day",
+          "card_cap_alerted", "chunk_cap_alerted")
 _LEASE = ("lease_owner", "lease_until")
 IN_VALUES_MAX = 30                                  # Firestore `in` limit (and the disjunction limit per query)
 # metadata_only reasons that leave an admitted document unread (drive_search.is_unread, §10.2)
@@ -270,6 +272,7 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "model_backoff_by_agent": _dt_map,
     "described_count": int, "described_grew_at": _dt,
     "migration_alerted": bool, "stall_alerted": bool, "fallback_alerted_day": str,
+    "card_cap_alerted": bool, "chunk_cap_alerted": bool,
     "purge_keep_transcripts": bool,
     # DRIVE_FILE_NOTES_RFC §3.4: the notes step's watermark pair, pass end and space-pass cursor
     "notes_applied_at": _dt, "notes_scanned_at": _dt, "notes_space_at": _dt, "notes_paging": bool,
@@ -694,10 +697,13 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
     async def update_sync_flags(self, user_id: str, *, stale_alerted: Optional[bool] = None,
                                 reconnect_notified: Optional[bool] = None, migration_alerted: Optional[bool] = None,
                                 stall_alerted: Optional[bool] = None,
-                                fallback_alerted_day: Optional[str] = None) -> None:
+                                fallback_alerted_day: Optional[str] = None,
+                                card_cap_alerted: Optional[bool] = None,
+                                chunk_cap_alerted: Optional[bool] = None) -> None:
         given = {"stale_alerted": stale_alerted, "reconnect_notified": reconnect_notified,
                  "migration_alerted": migration_alerted, "stall_alerted": stall_alerted,
-                 "fallback_alerted_day": fallback_alerted_day}
+                 "fallback_alerted_day": fallback_alerted_day, "card_cap_alerted": card_cap_alerted,
+                 "chunk_cap_alerted": chunk_cap_alerted}
         changes: Dict[str, Any] = {name: value for name, value in given.items() if value is not None}
         if not changes:
             return
@@ -893,6 +899,21 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                  .order_by("card_rank").order_by("modified_at", direction=firestore.Query.DESCENDING)
                  .order_by("item_id").limit(limit))
         return await self._read(query)
+
+    def capped_count_queries(self, user_id: str) -> Tuple[Any, Any]:
+        """`count_capped`'s two queries, equality filters only (card cap, chunk cap): served by the single-field
+        indexes, no composite needed (the `count_by_state` precedent). Not a port method: a provisioning test reads
+        them."""
+        card = self._user_query(user_id).where(filter=FieldFilter("card_capped", "==", True))
+        chunk = (self._user_query(user_id)
+                 .where(filter=FieldFilter("state", "==", RecordState.METADATA_ONLY.value))
+                 .where(filter=FieldFilter("reason", "==", Reason.USER_CHUNK_CAP.value)))
+        return card, chunk
+
+    async def count_capped(self, user_id: str) -> CapCounts:
+        """Two count aggregations, never a scan."""
+        card, chunk = await asyncio.gather(*(self._count(q) for q in self.capped_count_queries(user_id)))
+        return CapCounts(card=card, chunk=chunk)
 
     def unread_count_queries(self, user_id: str, kinds: AbstractSet[str],
                              triaged: AbstractSet[str] = frozenset(), pending: Optional[bool] = None,
