@@ -27,6 +27,7 @@ from src.adapters.firestore_short_link_repository import FirestoreShortLinkRepos
 from src.adapters.slack.http_adapter import HTTPModeAdapter
 from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
 from src.composition.mcp_setup import build_mcp_components
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from src.domain import sandbox_contract as sc
 from src.domain.sandbox_contract import SandboxLimits, SandboxOp
 from src.services.file_access_token_service import FileAccessTokenService
@@ -414,7 +415,8 @@ def _mcp_world():
         auth_config=SimpleNamespace(mcp_resource_uri="https://mcp.example.test/mcp", oauth_session_secret=SESSION_SECRET,
                                     mcp_access_token_ttl=3600, mcp_refresh_token_ttl=2592000, mcp_auth_code_ttl=600,
                                     mcp_consent_request_ttl=600),
-        search_enrichment_service=MagicMock(side_effect=AssertionError("search reached anonymously")))
+        search_enrichment_service=MagicMock(side_effect=AssertionError("search reached anonymously")),
+        cipher=AesGcmTestCipher(), digest_key=bytes(range(32)))
     return db, components.fastmcp.streamable_http_app()
 
 

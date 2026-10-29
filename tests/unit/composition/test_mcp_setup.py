@@ -26,6 +26,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from src.composition.mcp_setup import build_mcp_components
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from src.composition.mcp_sdk_oauth_provider import AlekAccessToken
 from src.domain.search import EnrichedContext, EnrichedFact
 from src.services.search_enrichment_service import SearchEnrichmentService
@@ -70,6 +71,8 @@ def components(enrichment_service):
         env_config=MagicMock(),
         auth_config=_auth_config(),
         search_enrichment_service=enrichment_service,
+        cipher=AesGcmTestCipher(),
+        digest_key=bytes(range(32)),
     )
 
 
