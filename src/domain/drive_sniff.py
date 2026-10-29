@@ -5,7 +5,8 @@ Magic bytes win over the declared kind (the one `kind_of` gave from the name and
 is an archive, and the caller sends the sniffed kind back through the policy. A container whose content cannot be
 told from the head (OOXML members past the head, an OLE2 directory sector elsewhere in the file) keeps the declared
 kind when that kind can live in the container, else it is `archive` (ZIP) or `other` (OLE2). Encrypted OOXML is an
-OLE2 file by the standard, so an OOXML kind stays: the parser reports it `encrypted`.
+OLE2 file by the standard, so an OOXML kind stays: the parser reports it `encrypted`. A plain tar declared EPUB stays
+EPUB: an Apple Books package (`.epub.pkgf`), which the parser repacks as an EPUB ZIP.
 
 Public interface:
     SNIFF_HEAD_BYTES
@@ -72,6 +73,8 @@ def sniff_kind(head: bytes, declared_kind: str) -> str:
     ftyp = _ftyp_kind(head)
     if ftyp:
         return ftyp
+    if declared_kind == "epub" and head[257:262] == b"ustar":
+        return "epub"                                # an Apple Books package (`.epub.pkgf`): the parser repacks it
     for offset, magic, kind in _SIGNATURES:
         if head[offset:offset + len(magic)] == magic:
             return kind

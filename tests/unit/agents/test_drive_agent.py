@@ -95,7 +95,9 @@ async def test_a_find_returns_success_with_the_code_built_answer(ops, prompts):
     assert resp.result.startswith("Drive result: ok\nWhat to do: Answer from the results below.")
     assert "[Result r1, step 1: search]\nREMINDER\n<card lease>" in resp.result
     assert "Specialist note: Searched for the lease." in resp.result
-    assert resp.history_context == {"drive_context": [{"path": "Inbox/lease.pdf", "ref": "drive:f1"}]}
+    # the entry names the search (§7.4, 2026-10-29); the spec mock's outcome carries no request_text, so no query
+    assert resp.history_context == {"drive_context": [{"path": "Inbox/lease.pdf", "ref": "drive:f1", "op": "searched",
+                                                       "count": 1}]}
     assert "Correct your input" not in resp.result and len(seen) == 2
 
 

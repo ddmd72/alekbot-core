@@ -466,7 +466,8 @@ locales, the `CONSOLIDATION_TAXONOMY` token. Docs: root `CLAUDE.md`, `src/agents
   `save_to_memory`; "запомни в Встречи" fills `folder`; a chat file opened on one turn, then "move it to Встречи"
   on the next → `save_file_to_drive`, not `move_file_in_drive`; a listing, then "open the second one" on the next
   turn → `open_file_from_drive` with the second ref. The previous turn is seeded in the shape production stores:
-  the reply text plus the `{"drive_context": [[…]]}` JSON block, refs not repeated in the prose.
+  the reply text plus the `{"drive_context": [[…]]}` JSON block, refs not repeated in the prose (the stored shape
+  until 2026-10-29; since then one `[Drive: <path> ref=… — <what was done>]` line per file, DRIVE_SPECIALIST_RFC §7.4).
 - Consolidation dry run per §4.12.
 - Live: connect; save by default and into a named folder; save the same file twice (no duplicate) and a different
   file under the same name (suffix, stated); move a file by hand in OneDrive and open it by the old ref; rename and

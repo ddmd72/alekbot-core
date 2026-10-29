@@ -104,7 +104,7 @@ async def test_a_found_passage_enters_the_ledger_and_drive_context():
     assert collector.ledger.keys() == frozenset({("item-1", 1, 2)})
     assert collector.ledger.folders_shown() == frozenset({"f-rd"})
     assert collector.ledger.files_described() == frozenset({"item-1"})
-    assert collector.drive_context() == [{"path": TOMS_PLAN, "ref": "drive:item-1"}]
+    assert collector.drive_context() == [{"path": TOMS_PLAN, "ref": "drive:item-1", "op": "passages", "passages": [3]}]
 
 
 async def test_a_second_find_gets_the_ledgers_sets_and_prints_the_context_no_more():

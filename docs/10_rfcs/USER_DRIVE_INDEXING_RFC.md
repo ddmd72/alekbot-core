@@ -439,6 +439,14 @@ Decided from metadata first; a download happens only if the item is admitted.
   Password-protected PDF/Office/EPUB → `metadata_only / encrypted` (deterministic: no retries, no model call). Apple
   iWork (`.pages`, `.numbers`, `.key`) has no extractor → `kind_not_admitted`. Kind comes from magic bytes on the downloaded head plus the mime type: a `.txt` that is a
   ZIP is a ZIP.
+  - **Apple Books packages** (`<name>.epub.pkgf`, policy 4): the EPUB folder stored as one plain tar. The name gives
+    kind `epub` (the `.pkgf` suffix is dropped for an `.epub` stem only), and a ustar head declared EPUB stays `epub`
+    (any other declared kind is `archive`). Inside the parser child the tar is repacked as an EPUB ZIP in memory, then
+    read on the EPUB path (DRM check included): at most `MAX_ZIP_MEMBERS` headers and `MAX_ZIP_UNCOMPRESSED_BYTES` of
+    member data, the EPUB ZIP bounds, both checked on the headers before any data is read (over a bound →
+    `too_large`); regular files only (links, devices, sparse files skipped); names normalised to relative ZIP entry
+    names (absolute names, `..` and AppleDouble `._*` skipped); a package tarred with its folder is read from that
+    folder. A tar that cannot be read is `unsupported`, like a corrupt EPUB. Nothing is written to disk.
 - **Metadata only by default:** source code, logs and dumps, archives, disk images, databases, executables, images,
   audio, video. Screenshots and scans are admitted to text recognition in Slice 4 (§5.3); the rest are candidate
   extensions (§14). Why each class gets the treatment it gets: §5.5.
@@ -1104,9 +1112,9 @@ the reason: enrichment would also hand file content to claude.ai via MCP and to 
   finished — set when that round ends; it is what search shows as `index_as_of`.
 - `last_success_at` advances on every tick that ends without a systemic error and either made progress or found
   nothing to do. It drives the staleness alert only; search never shows it.
-- `DriveSyncState.counters` hold records per state and carded records (readable chunks from Slice 2), refreshed when
-  a tick finds nothing left to do; `unread` and `not_read_yet` (Slice 2+4) are refreshed by every tick that
-  completes, because search tells Smart about them. Embedding usage stays in the log line.
+- `DriveSyncState.counters` hold records per state and carded records (readable chunks from Slice 2), `unread` and
+  `not_read_yet` (Slice 2+4), all refreshed by every tick that completes, settled or not, so the Cabinet card moves
+  while the first build runs (search tells Smart about `unread` too). Embedding usage stays in the log line.
   Embeddings are unbilled system-wide today; pricing them is a separate decision.
 
 ### 12.2 Rebuild
@@ -1273,13 +1281,13 @@ substitutions (deploy-substitution trap).
 | `DOWNLOAD_TIMEOUT` | 120 s | Step 1 drive timeout |
 | `EXTRACT_WALL_TIMEOUT` | 120 s | S1 |
 | `RLIMIT_AS` / `RLIMIT_CPU` | placeholders | Set by S1 for the chosen host |
-| `EMBED_IN_FLIGHT` / `EMBED_FILE_BUDGET` | 4 / 180 s | Caps the indexer's share of the shared Gemini quota; a 429 ends the tick |
+| `EMBED_IN_FLIGHT` / `EMBED_FILE_BUDGET` | 4 / 300 s (180 s until 2026-10-29) | Caps the indexer's share of the shared Gemini quota; a 429 ends the tick |
 | Download cap | 45 MB (Step 1), XLSX 10 MB; the indexer's PDF 100 MiB (2026-10-29) | Step 1 §4.6; `decisions/drive_indexer_pdf_download_cap.md` |
 | ZIP container caps | 100 MiB inflated, 10 000 members | Phase 0 pre-filter, not a memory bound |
 | `MAX_TEXT_CHARS` | 2 000 000 | Extractor-output memory bound |
 | `CHUNK_CHARS` / `CHUNK_OVERLAP` | 2 400 / 240 | ≈ 600 tokens, far below the 8 192-token embedding limit |
-| `MAX_CHUNKS_PER_FILE` | 400 | The binding content cap: ≈ 864k characters indexed |
-| `MAX_CARD_RECORDS_PER_USER` / `MAX_CHUNKS_PER_USER` | 25 000 / 50 000 | kNN cost — S3 |
+| `MAX_CHUNKS_PER_FILE` | 1 000 (400 until 2026-10-29) | Owner decision 2026-10-29. `MAX_TEXT_CHARS` binds first: ≈ 925 chunks, ≈ 2M characters indexed |
+| `MAX_CARD_RECORDS_PER_USER` / `MAX_CHUNKS_PER_USER` | 25 000 / 150 000 (chunks: 50 000 until 2026-10-29) | kNN cost — S3 |
 | `MAX_SHEET_ROWS` | 5 000 | — |
 | `CARD_LEAD_CHARS` | 2 000 | — |
 | `K`, `CARD_FETCH`, `CHUNK_FETCH`, `NAME_FETCH` | 8, 50, 300, 100 | Widened once when fewer than K survive. *v2 (§25.12): `K` only for filter-only listings and folder candidates* |
@@ -1488,7 +1496,7 @@ reports are in `scripts/memory/onedrive_s0_*.json`, which is gitignored because 
 - **OQ-2 Full text on open.** Step 1 deliberately returns a file's full converted text to Smart (file storage README
   §2.2; truncation removed in `2ee8cb3`). With a growing drive, opening a 300-page document puts all of it in context.
   Options: keep as is; a cap with an alert; range reads from stored chunks (§14).
-- **OQ-3 Caps.** Initial values in §15 are reasoned, not measured; S3 and the first real folders set them.
+- **OQ-3 Caps.** Initial values in §15 are reasoned, not measured; S3 and the first real folders set them. Owner decision 2026-10-29: `MAX_CHUNKS_PER_FILE` 400 → 1 000, `MAX_CHUNKS_PER_USER` 50 000 → 150 000, `EMBED_FILE_BUDGET` 180 → 300 s, so long books are indexed in full (`decisions/drive_chunk_caps_raised.md`).
 
 ---
 
@@ -2008,7 +2016,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
   (`c2048x2048`, JPEG; HEIC is never decoded by us). **Spike S0g** confirms custom rendition sizes under
   `Files.ReadWrite.AppFolder` and that receipt text stays legible. With no rendition, the original is sent only when it
   is JPEG/PNG/WebP/GIF within the vision cap (3.75 MiB raw: 5 MiB once base64-encoded, Anthropic's per-image limit; to
-  be confirmed in the live model check); other formats are `metadata_only / no_text`. A 413 on an image is
+  be confirmed in the live model check); other formats are `metadata_only / no_text`. A rendition over that cap steps
+  down through `READER_RENDITION_STEPS` (`c2048x2048`, `c1536x1536`, `c1024x1024`); if none fits and the original
+  cannot be sent, the file is `metadata_only / too_large`, not `no_text`. A 413 on an image is
   `too_large`, a 400/422 `unsupported` (both terminal); a timeout on an image is a model outage.
 - Done-when of §16 Slice 4 holds: 100 holiday photos cost ⌈100 / `TRIAGE_BATCH`⌉ triage calls and no reader call.
 
@@ -2129,7 +2139,7 @@ never a refusal of the input (Search v2, §25.4.4 N7; until then it was sorted a
     only a refused batch is halved, down to the refused image.
   - **Embeddings** (`gemini-embedding-2`): **no monthly cap**, and not priced in `billing.py` or billed to the user
     (embeddings are unbilled system-wide, §12.1). Bounded by size instead: `MAX_CARD_RECORDS_PER_USER` (25 000) cards
-    and `MAX_CHUNKS_PER_USER` (50 000) readable chunks per user, `MAX_CHUNKS_PER_FILE` (400); a card is re-embedded
+    and `MAX_CHUNKS_PER_USER` (150 000) readable chunks per user, `MAX_CHUNKS_PER_FILE` (1 000); a card is re-embedded
     only when its text changes; an edit embeds only its new or changed chunks (vectors reused by text hash); an
     embedding-space change re-embeds stored text without a download or a reader call.
   - **Firestore:** reads and writes at Firestore prices; the chunk kNN is billed one read per 100 index entries
@@ -2207,7 +2217,7 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
 | `TICK_FILE_BUDGET` | 50 | Index runs per tick |
 | `MAX_DOWNLOAD_BYTES` / `MAX_SHEET_DOWNLOAD_BYTES` / `MAX_PDF_DOWNLOAD_BYTES` | 45 MiB / 10 MiB / 100 MiB | Step 1 cap; sheets amplify most (Phase 0); the PDF cap is the indexer's only, measured (`decisions/drive_indexer_pdf_download_cap.md`) |
 | `MAX_TEXT_CHARS` / `MAX_SHEET_ROWS` | 2 000 000 / 5 000 | Text and table bounds |
-| `CHUNK_CHARS` / `CHUNK_OVERLAP` / `MAX_CHUNKS_PER_FILE` / `MAX_CHUNKS_PER_USER` | 2 400 / 240 / 400 / 50 000 | §8.4, §5.4 |
+| `CHUNK_CHARS` / `CHUNK_OVERLAP` / `MAX_CHUNKS_PER_FILE` / `MAX_CHUNKS_PER_USER` | 2 400 / 240 / 1 000 / 150 000 | §8.4, §5.4 |
 | `CARD_LEAD_CHARS` | 2 000 | Lead text in the card |
 | `MODEL_EXTRACT_DENSITY` / `MODEL_EXTRACT_GARBAGE` | 200 chars per page / 0.05 | §9 router |
 | `MODEL_EXTRACT_MAX_PAGES` | 200 | Pages read per file |
@@ -3094,7 +3104,7 @@ re-measured by the live model check):
   the name queries, the candidates' `word_keys` and hint reads, the windows and the shown records. Worst case several
   thousand reads and a few MB; the scale test measures it with a broad concept that fills `ABOUT_FETCH`.
 - **Index storage:** the form set gives ≈ 700–900 `word_keys` entries per chunk, ≈ 35–45 M composite entries at the
-  50 000-chunk cap, plus up to 600 `about_keys` entries × 3 composites per record. The largest new cost line, measured
+  50 000-chunk cap (§15 raised the cap to 150 000 on 2026-10-29, so about three times that at the cap), plus up to 600 `about_keys` entries × 3 composites per record. The largest new cost line, measured
   before deploy (OQ-V5).
 
 ### 25.7 Evaluation
@@ -5739,8 +5749,10 @@ the order they were first retrieved, chunks by index, adjacent runs merged (A7),
 specialist retrieved by `find_passages`, `read_passages` or a follow-up reaches Smart; none is selected out (specialist
 RFC §2.2 "no default selection" stands). Search results and opened files keep today's per-call blocks. A cut run
 (soft deadline, turn cap, `max_tokens`) delivers everything retrieved so far: fail-open comes from the collector.
-Files whose passages reached Smart enter `drive_context` as `{path, ref}` (`src/domain/user_drive.py:242-244`);
-passage numbers do not (they are bound to a generation).
+Files whose passages reached Smart enter `drive_context` as `{path, ref}` (`src/domain/user_drive.py:242-244`).
+Since 2026-10-29 the entry also carries the display numbers retrieved, so the history line says which passages were
+read (`read passages 3–5`, DRIVE_SPECIALIST_RFC §7.4); the numbers are bound to a generation and are a record of
+what was read, not a stable address.
 
 **A12 The "Searched" line; the note withheld on passage runs.** The specialist's note is a model-written line
 (`drive_answer.py:135-136`) whose ban on content claims (`OUTPUT_FORMAT_DRIVE.groovy:23`,
@@ -5946,7 +5958,7 @@ Searched line replaces the note only on passage runs; the A14 gate (on a backgro
 later step refused, a co-emitted one not, a note write refused, a run without passages unaffected; a chat turn never
 gated); the OQ-A2 selection (`R_ACCURACY_IMAGE` only with a card below 90 % whose capture is not `digital`, none
 recorded included; never at 90 % or more; never for a digital card; the passages head marks); `drive_context` gets the
-files, not numbers; the tool-field e2e card covers both tools; A18 across rounds (a folder and a file line printed
+files (and, since 2026-10-29, the passage numbers for the history line); the tool-field e2e card covers both tools; A18 across rounds (a folder and a file line printed
 once per run, a folder dropped by the cap in one round printed in a later one; Smart's block prints each noted folder
 once, before its first file, in A11's order; the extended `R_OWNER_NOTE` fires with folder lines). Eval (`specialist_ab.py`, `specialist_replay.py`, invented fixtures): a new
 invented `R&D` folder in the G3 overlay (`tests/fixtures/drive_eval/tree_g3.json`) with `R&D/Tom's plan.docx` and
@@ -6012,7 +6024,7 @@ Engineering decisions taken here: A1–A18, each with its reason above. The para
   specialist failing on references Smart left unresolved. Scope then: interactive runs only, labelled, `file_data`
   stripped, no copy of the current turn (other origins carry unrelated chat).
 - **Opens served from stored chunks** (OQ-2's third option). Index text comes from another converter in another
-  process and may be stale or truncated (`MAX_CHUNKS_PER_FILE` 400). Trigger: the open's log line (S2) shows recurring
+  process and may be stale or truncated (`MAX_CHUNKS_PER_FILE` 1 000). Trigger: the open's log line (S2) shows recurring
   opens over `TRANSCRIPT_OPEN_MAX_CHARS` 60 000 characters (`drive_index_params.py:259`) of indexed, non-stale files, or
   the owner asks for a cap on opens.
 - **Folder descriptions written by a model.** A per-folder summary of its children's descriptions, built bottom-up

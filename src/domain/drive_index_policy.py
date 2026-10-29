@@ -35,6 +35,9 @@ _EXT_KIND: Dict[str, str] = {
     ".exe": "executable", ".dll": "executable", ".msi": "executable", ".dmg": "disk_image", ".iso": "disk_image",
     ".img": "disk_image", ".vhd": "disk_image", ".pages": "iwork", ".numbers": "iwork", ".key": "iwork",
 }
+# An Apple Books package (`<name>.epub.pkgf`) is a tar of the EPUB folder; the parser repacks it (§5.1).
+_PACKAGE_EXT = ".pkgf"
+_PACKAGED_EXTS: FrozenSet[str] = frozenset({".epub"})
 _DOCUMENT_KINDS: FrozenSet[str] = frozenset({
     "pdf", "docx", "doc", "pptx", "ppt", "xlsx", "xls", "odt", "ods", "odp", "epub", "html", "mhtml",
     "markdown", "text", "csv", "json", "rtf", "msg", "eml", "subtitles", "iwork",
@@ -74,7 +77,9 @@ _GENERATED_DIRS = frozenset({"node_modules", "__pycache__", "site-packages"})
 def kind_of(name: str, mime: str, is_folder: bool) -> str:
     if is_folder:
         return "folder"
-    ext = os.path.splitext(name)[1].lower()
+    stem, ext = os.path.splitext(name.lower())
+    if ext == _PACKAGE_EXT and os.path.splitext(stem)[1] in _PACKAGED_EXTS:
+        ext = os.path.splitext(stem)[1]
     kind = _EXT_KIND.get(ext)
     if kind == "iwork" and ext == ".key" and mime not in ("", "application/vnd.apple.keynote"):
         return "other"   # a .key that is not Keynote is a secret file, caught by item_rule first

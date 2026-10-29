@@ -195,6 +195,8 @@ class DriveToolRun:
         query = (tc.args or {}).get("query")
         result = await self._run(DriveOp.SEARCH, t.KIND_DELETED_SEARCH, lambda: self._ops.search_deleted(
             self._context, self._user_id, query), change=False)
+        if result.outcome.stored_text_shown:   # transcript passages of deleted files: content the model read (A14)
+            self._arm_gate(result)
         return self._seen(tc, result)
 
     async def _list(self, tc: ToolCall) -> ToolResult:
@@ -242,8 +244,11 @@ class DriveToolRun:
         """The model reads the passages in full; from this step on the run has read file content (A14)."""
         excerpts = result.outcome.excerpts
         if excerpts is not None and excerpts.files:
-            self._passages_step = result.step if self._passages_step is None else min(self._passages_step, result.step)
+            self._arm_gate(result)
         return self._seen(tc, result)
+
+    def _arm_gate(self, result: CollectedResult) -> None:
+        self._passages_step = result.step if self._passages_step is None else min(self._passages_step, result.step)
 
     # -- changes ---------------------------------------------------------------------------------------------------
 

@@ -12,7 +12,7 @@ import pytest
 
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
 from src.domain.email import OAuthCredentials
-from src.domain.user_drive import DriveFileTooLarge, DriveItemNotFoundError
+from src.domain.user_drive import DriveFileTooLarge, DriveItemNotFoundError, DriveThumbnailTooLarge
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 
 _FILE = {"id": "f1", "name": "scan.pdf", "size": 10, "file": {"mimeType": "application/pdf"},
@@ -135,11 +135,11 @@ class TestGetThumbnail:
         with patch("aiohttp.ClientSession", return_value=session):
             assert await _adapter().get_thumbnail("u1", "f1", "medium") is None
 
-    async def test_rendition_over_the_vision_cap_is_none(self):
+    async def test_rendition_over_the_vision_cap_raises_too_large(self):
         big = [b"x" * (1024 * 1024)] * 6
         session = _session([_resp(_thumbs("c2048x2048")), _resp(chunks=big)])
-        with patch("aiohttp.ClientSession", return_value=session):
-            assert await _adapter().get_thumbnail("u1", "f1", "c2048x2048") is None
+        with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveThumbnailTooLarge):
+            await _adapter().get_thumbnail("u1", "f1", "c2048x2048")
 
     async def test_missing_item_is_not_found(self):
         with patch("aiohttp.ClientSession", return_value=_session([_resp({}, status=404)])), \

@@ -91,9 +91,11 @@ async def test_the_refs_land_in_full_text_and_never_in_the_summary():
     with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
         await handler.handle_message(ctx, _channel())
     model = next(m for m in store.append_messages_batch.call_args[0][1] if m.role == "model")
-    block = json.dumps({"drive_context": [LEASES]}, ensure_ascii=False, separators=(",", ":"))
-    assert model.parts[0].full_text.endswith("\n\n" + block)
-    assert "drive:" not in model.parts[0].text
+    # one line per file since 2026-10-29 (§7.4): the repeated Porto entry is one line, both refs kept
+    lines = ("[Drive: Contracts/Lease agreement — Porto.pdf ref=drive:AAA]\n"
+             "[Drive: Contracts/Lease Lisbon.pdf ref=drive:BBB]")
+    assert model.parts[0].full_text == "1. Porto lease\n2. Lisbon lease\n\n" + lines
+    assert "drive:" not in model.parts[0].text and "[Drive:" not in model.parts[0].text
 
 
 class _Agent(BaseAgent):

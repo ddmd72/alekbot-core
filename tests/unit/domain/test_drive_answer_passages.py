@@ -133,9 +133,11 @@ def test_a_run_without_passages_keeps_the_note_and_has_no_passages_lines():
         assert absent not in answer.text
 
 
-def test_drive_context_has_the_files_and_no_passage_numbers():
+def test_drive_context_has_the_files_and_the_passage_numbers_read():
+    """A11 as revised 2026-10-29: each file, in order, with the display numbers read, a record for the history line."""
     _, answer = _answer((1, t.KIND_PASSAGES, _passages(_file(0, 1), _file(2, item_id="item-2", path=LEASE))))
-    assert answer.drive_context == [{"path": TOMS_PLAN, "ref": PLAN_ITEM.ref}, {"path": LEASE, "ref": LEASE_ITEM.ref}]
+    assert answer.drive_context == [{"path": TOMS_PLAN, "ref": PLAN_ITEM.ref, "op": "passages", "passages": [1, 2]},
+                                    {"path": LEASE, "ref": LEASE_ITEM.ref, "op": "passages", "passages": [3]}]
 
 
 def test_the_default_nonce_wraps_each_file():

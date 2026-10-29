@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.domain.drive_deleted_result import DeletedSearchResult
 from src.domain.drive_search import STATUS_OK, DriveSearchResult
 from src.domain.language import LanguageCode
 from src.domain.user_drive import DriveMirrorWriteRefused
@@ -24,7 +25,7 @@ WAIT = 100.0
 def search():
     svc = AsyncMock(spec=DriveSearchService)
     svc.search.return_value = DriveSearchResult(status=STATUS_OK, matched_total=0)
-    svc.search_deleted.return_value = ("Deleted files (0):\nNo deleted file matched.", [])
+    svc.search_deleted.return_value = DeletedSearchResult("Deleted files (0):\nNo deleted file matched.", [])
     return svc
 
 
@@ -121,7 +122,7 @@ def test_the_line_exists_in_every_language():
 async def test_shown_mirror_files_reach_drive_context(search, drive_service):
     from src.domain.user_drive import DriveItem
     item = DriveItem(item_id="m1", name="call1.md", path="_Transcripts/Archive/2026-10-05/call1.md", is_folder=False)
-    search.search_deleted.return_value = ("Deleted files (1):\n...", [item])
+    search.search_deleted.return_value = DeletedSearchResult("Deleted files (1):\n...", [item])
     resp = await _agent(search, drive_service).search_deleted(CTX, "u1")
     assert resp.drive_context() == [
         {"path": "_Transcripts/Archive/2026-10-05/call1.md", "ref": "drive:m1"}]    # "open the second one" has a ref

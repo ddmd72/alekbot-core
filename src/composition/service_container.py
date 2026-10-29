@@ -351,6 +351,7 @@ class ServiceContainer:
             classifier=self.email_classifier,
             embedding=self.embedding_service,
             oauth=self.oauth_credentials,
+            alert_sink=alert_webhook,
         )
         self.email_review_service = EmailReviewService(
             email_provider=self.gmail_provider,
