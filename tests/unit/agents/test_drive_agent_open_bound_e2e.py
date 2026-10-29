@@ -87,7 +87,7 @@ async def test_a_refused_open_is_followed_by_a_page_and_smart_reads_both(context
     refused = _tool_result(seen[1], tt.OPEN_DRIVE_FILE)
     assert "never delivered whole" in refused and ROUTE_SPECIALIST.format(ref=ref) in refused
     page = _tool_result(seen[-1], tt.READ_PASSAGES)
-    assert "Clause 10." in page and "Clause 11." not in page and 'passages="from 11"' in page
+    assert "Clause 10." in page and "Clause 11." not in page and "from 11." in page
     # Smart's answer: the refusal block, the one consolidated block with its pages line, the reading lines
     answer = resp.result
     assert "never delivered whole; nothing was downloaded" in answer

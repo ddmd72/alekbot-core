@@ -6523,6 +6523,9 @@ Deltas from the plan and the text above, declared:
   (not pageable and `text_chars` above the cap); the specialist's stand-in for it is the old one (no `kept` known).
 - **B5** Searched line: `pages:` entries read `‹path› passages i–j (next: from N)`, `(the end)` or `from passage N (past the end)`.
 - **B6** `pages read:` sits after the folder lines and before the head lines (plan T5); §29.7 said "before its wrapper": both hold.
+- **B8** One page per commission, enforced in code: after the first page request of a run, `DriveToolRun` answers any further
+  paged `read_passages` with `ONE_PAGE` (per-execution state; the orchestrator commissions the next page). The page line says "when the
+  commission asks for it"; rule 4 and the manifest say the same; a call commission asking for the full text gets one page (§29.9).
 - **B7** A second existing test goes red beside the one the plan named: it also asserts the old note on a **live** transcript
   (`tests/unit/agents/test_file_management_open_archived.py::test_a_recording_without_a_mirror_file_cuts_without_a_path`).
 

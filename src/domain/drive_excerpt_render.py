@@ -73,7 +73,7 @@ SEARCHED_WHOLE_DRIVE = "the whole drive"
 SEARCHED_FOLDER = "folder {path}"
 SEARCHED_FILES = "files {paths}"
 PAGE_NEXT = ("Page: passages {first}–{last} of {total} of {path}, indexed text version {version}. "
-             "Next page: " + READ_PASSAGES + " passages=\"from {next}\".")
+             "Next page, when the commission asks for it: from {next}.")
 PAGE_END = "Page: passages {first}–{last} of {total} of {path}, indexed text version {version}: the end of the file."
 PAGE_END_TRUNCATED = ("Page: passages {first}–{last} of {total} of {path}, indexed text version {version}: the end "
                       "of the indexed text. The file goes on past it; that part cannot be read.")

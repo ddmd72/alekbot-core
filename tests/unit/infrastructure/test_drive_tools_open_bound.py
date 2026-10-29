@@ -123,3 +123,58 @@ async def test_the_passages_argument_reaches_the_operation_unchanged(passages):
     ops, run, _ = _run(_refusal())
     await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages=passages)
     assert ops.read_passages.await_args.kwargs["passages"] == passages
+
+
+async def test_one_page_per_commission_a_second_page_is_refused_without_a_call():
+    ops, run, collector = _run(_refusal())
+    await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1")
+    run.step = 2
+    seen = await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 11")
+    assert seen.result_str == t.ONE_PAGE
+    assert ops.read_passages.await_count == 1 and len(collector.results) == 1
+
+
+async def test_a_co_emitted_second_page_is_refused_too():
+    import asyncio
+    ops, run, collector = _run(_refusal())
+    first, second = await asyncio.gather(
+        _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1"),
+        _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 11"))
+    assert sorted([first.result_str == t.ONE_PAGE, second.result_str == t.ONE_PAGE]) == [False, True]
+    assert ops.read_passages.await_count == 1
+
+
+async def test_neighbour_ranges_and_finds_are_not_limited_by_the_page_rule():
+    ops, run, _ = _run(_refusal())
+    await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1")
+    run.step = 2
+    for rng in ("6-8", "9"):
+        seen = await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages=rng)
+        assert seen.result_str != t.ONE_PAGE
+    assert ops.read_passages.await_count == 3
+
+
+async def test_a_malformed_page_does_not_use_up_the_page():
+    ops, run, _ = _run(_refusal())
+    await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 0")
+    seen = await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1")
+    assert seen.result_str != t.ONE_PAGE
+
+
+async def test_a_new_run_starts_with_a_fresh_page():
+    _, first, _ = _run(_refusal())
+    await _call(first, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1")
+    _, second, _ = _run(_refusal())
+    seen = await _call(second, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1")
+    assert seen.result_str != t.ONE_PAGE
+
+
+def test_the_texts_the_review_changed():
+    from src.domain import drive_excerpt_render as R
+    from src.domain.drive_open_texts import ROUTE_ORCHESTRATOR
+    assert "when the commission asks for it" in R.PAGE_NEXT
+    assert "report now" in ROUTE_SPECIALIST
+    assert "whether it goes on" in t.R_PAGED and "that it goes on" not in t.R_PAGED
+    assert "from its beginning" in t.R_TOO_LONG
+    assert "only when the user's own words ask" in ROUTE_ORCHESTRATOR
+    assert "tool" not in t.ONE_PAGE and tt.READ_PASSAGES not in t.ONE_PAGE

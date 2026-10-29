@@ -17,10 +17,11 @@ REFUSAL_TRUNCATED = ("{path} is too long to open whole: more than {chars} charac
 
 ROUTE_SPECIALIST = ("For what it says about something: find_passages with file_refs={ref}. Only when the need is its "
                     "text in order (its beginning, the next page, its full text): read_passages file_ref={ref} "
-                    "passages=\"from 1\". Correcting this refused open is not a follow-up.")
+                    "passages=\"from 1\". Correcting this refused open is not a follow-up. If you opened it because its passages did not answer, or for a "
+                    "total, report now.")
 ROUTE_ORCHESTRATOR = ("To read it, commission work_with_drive_files for this file: the question, for what it says about "
-                      "something; only when the user's own words ask for its text in order, its beginning or the next "
-                      "page.")
+                      "something; its beginning or a next page only when the user's own words ask for its text "
+                      "in order.")
 
 CUT_NOT_INDEXED = ("[Cut by the system: {subject} is {chars} characters; only the first {kept} are above. The rest "
                    "cannot be read now: the file has no indexed text ({why}).]")

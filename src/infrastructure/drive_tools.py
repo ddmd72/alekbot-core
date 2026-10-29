@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Mapping, Optio
 from ..domain import drive_answer_texts as t
 from ..domain import drive_tool_texts as tools
 from ..domain.drive_collected_result import CollectedResult
+from ..domain.drive_excerpt_request import parse_page
 from ..domain.drive_content_gate import content_gate_applies, write_refused
 from ..domain.drive_open_bound_text import BoundText
 from ..domain.drive_open_cut import stand_in_cut
@@ -76,6 +77,7 @@ class DriveToolRun:
         self._ran_on = False   # a change answered still-running: later changes of this run do not start
         self._gated = content_gate_applies(context)   # not a chat turn: changes stop once passages were read (A14)
         self._passages_step: Optional[int] = None   # the first step whose passages text reached the model
+        self._paged = False   # a page was asked for in this run: one page per commission (RFC §29.9)
         self.step = 0
 
     def left(self) -> float:
@@ -246,6 +248,14 @@ class DriveToolRun:
 
     async def _read_passages(self, tc: ToolCall) -> ToolResult:
         args = tc.args or {}
+        try:
+            page = parse_page(args.get("passages")) is not None
+        except ValueError:
+            page = False   # a malformed page is a correction from the operation, not a page
+        if page:
+            if self._paged:
+                return self._answer(tc, t.ONE_PAGE)
+            self._paged = True   # set before the await: a co-emitted second page is refused too
         ledger = self._collector.ledger
         result = await self._run(DriveOp.PASSAGES, t.KIND_PASSAGES, lambda: self._ops.read_passages(
             self._context, self._user_id, file_ref=args.get("file_ref"), passages=args.get("passages"),

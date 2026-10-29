@@ -34,7 +34,7 @@ async def test_from_one_is_a_page():
     assert (out.op, out.cls, out.success) == (DriveOp.PASSAGES, OutcomeClass.OK, True)
     assert out.facts.paged and out.facts.excerpts
     assert "Clause 10." in out.text and "Clause 11." not in out.text
-    assert out.text.splitlines()[-1].endswith('passages="from 11".')
+    assert out.text.splitlines()[-1].endswith("when the commission asks for it: from 11.")
 
 
 async def test_past_the_end_is_ok_and_paged_not_not_found():
