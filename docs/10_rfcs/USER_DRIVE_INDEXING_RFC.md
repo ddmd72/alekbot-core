@@ -1273,13 +1273,13 @@ substitutions (deploy-substitution trap).
 | `DOWNLOAD_TIMEOUT` | 120 s | Step 1 drive timeout |
 | `EXTRACT_WALL_TIMEOUT` | 120 s | S1 |
 | `RLIMIT_AS` / `RLIMIT_CPU` | placeholders | Set by S1 for the chosen host |
-| `EMBED_IN_FLIGHT` / `EMBED_FILE_BUDGET` | 4 / 180 s | Caps the indexer's share of the shared Gemini quota; a 429 ends the tick |
+| `EMBED_IN_FLIGHT` / `EMBED_FILE_BUDGET` | 4 / 300 s (180 s until 2026-10-29) | Caps the indexer's share of the shared Gemini quota; a 429 ends the tick |
 | Download cap | 45 MB (Step 1), XLSX 10 MB | Step 1 §4.6 |
 | ZIP container caps | 100 MiB inflated, 10 000 members | Phase 0 pre-filter, not a memory bound |
 | `MAX_TEXT_CHARS` | 2 000 000 | Extractor-output memory bound |
 | `CHUNK_CHARS` / `CHUNK_OVERLAP` | 2 400 / 240 | ≈ 600 tokens, far below the 8 192-token embedding limit |
-| `MAX_CHUNKS_PER_FILE` | 400 | The binding content cap: ≈ 864k characters indexed |
-| `MAX_CARD_RECORDS_PER_USER` / `MAX_CHUNKS_PER_USER` | 25 000 / 50 000 | kNN cost — S3 |
+| `MAX_CHUNKS_PER_FILE` | 1 000 (400 until 2026-10-29) | Owner decision 2026-10-29. `MAX_TEXT_CHARS` binds first: ≈ 925 chunks, ≈ 2M characters indexed |
+| `MAX_CARD_RECORDS_PER_USER` / `MAX_CHUNKS_PER_USER` | 25 000 / 150 000 (chunks: 50 000 until 2026-10-29) | kNN cost — S3 |
 | `MAX_SHEET_ROWS` | 5 000 | — |
 | `CARD_LEAD_CHARS` | 2 000 | — |
 | `K`, `CARD_FETCH`, `CHUNK_FETCH`, `NAME_FETCH` | 8, 50, 300, 100 | Widened once when fewer than K survive. *v2 (§25.12): `K` only for filter-only listings and folder candidates* |
@@ -1488,7 +1488,7 @@ reports are in `scripts/memory/onedrive_s0_*.json`, which is gitignored because 
 - **OQ-2 Full text on open.** Step 1 deliberately returns a file's full converted text to Smart (file storage README
   §2.2; truncation removed in `2ee8cb3`). With a growing drive, opening a 300-page document puts all of it in context.
   Options: keep as is; a cap with an alert; range reads from stored chunks (§14).
-- **OQ-3 Caps.** Initial values in §15 are reasoned, not measured; S3 and the first real folders set them.
+- **OQ-3 Caps.** Initial values in §15 are reasoned, not measured; S3 and the first real folders set them. Owner decision 2026-10-29: `MAX_CHUNKS_PER_FILE` 400 → 1 000, `MAX_CHUNKS_PER_USER` 50 000 → 150 000, `EMBED_FILE_BUDGET` 180 → 300 s, so long books are indexed in full (`decisions/drive_chunk_caps_raised.md`).
 
 ---
 
@@ -2129,7 +2129,7 @@ never a refusal of the input (Search v2, §25.4.4 N7; until then it was sorted a
     only a refused batch is halved, down to the refused image.
   - **Embeddings** (`gemini-embedding-2`): **no monthly cap**, and not priced in `billing.py` or billed to the user
     (embeddings are unbilled system-wide, §12.1). Bounded by size instead: `MAX_CARD_RECORDS_PER_USER` (25 000) cards
-    and `MAX_CHUNKS_PER_USER` (50 000) readable chunks per user, `MAX_CHUNKS_PER_FILE` (400); a card is re-embedded
+    and `MAX_CHUNKS_PER_USER` (150 000) readable chunks per user, `MAX_CHUNKS_PER_FILE` (1 000); a card is re-embedded
     only when its text changes; an edit embeds only its new or changed chunks (vectors reused by text hash); an
     embedding-space change re-embeds stored text without a download or a reader call.
   - **Firestore:** reads and writes at Firestore prices; the chunk kNN is billed one read per 100 index entries
@@ -2207,7 +2207,7 @@ Values in `src/domain/drive_index_params.py` unless named otherwise.
 | `TICK_FILE_BUDGET` | 50 | Index runs per tick |
 | `MAX_DOWNLOAD_BYTES` / `MAX_SHEET_DOWNLOAD_BYTES` | 45 MiB / 10 MiB | Step 1 cap; sheets amplify most (Phase 0) |
 | `MAX_TEXT_CHARS` / `MAX_SHEET_ROWS` | 2 000 000 / 5 000 | Text and table bounds |
-| `CHUNK_CHARS` / `CHUNK_OVERLAP` / `MAX_CHUNKS_PER_FILE` / `MAX_CHUNKS_PER_USER` | 2 400 / 240 / 400 / 50 000 | §8.4, §5.4 |
+| `CHUNK_CHARS` / `CHUNK_OVERLAP` / `MAX_CHUNKS_PER_FILE` / `MAX_CHUNKS_PER_USER` | 2 400 / 240 / 1 000 / 150 000 | §8.4, §5.4 |
 | `CARD_LEAD_CHARS` | 2 000 | Lead text in the card |
 | `MODEL_EXTRACT_DENSITY` / `MODEL_EXTRACT_GARBAGE` | 200 chars per page / 0.05 | §9 router |
 | `MODEL_EXTRACT_MAX_PAGES` | 200 | Pages read per file |
@@ -3094,7 +3094,7 @@ re-measured by the live model check):
   the name queries, the candidates' `word_keys` and hint reads, the windows and the shown records. Worst case several
   thousand reads and a few MB; the scale test measures it with a broad concept that fills `ABOUT_FETCH`.
 - **Index storage:** the form set gives ≈ 700–900 `word_keys` entries per chunk, ≈ 35–45 M composite entries at the
-  50 000-chunk cap, plus up to 600 `about_keys` entries × 3 composites per record. The largest new cost line, measured
+  50 000-chunk cap (§15 raised the cap to 150 000 on 2026-10-29, so about three times that at the cap), plus up to 600 `about_keys` entries × 3 composites per record. The largest new cost line, measured
   before deploy (OQ-V5).
 
 ### 25.7 Evaluation
@@ -6012,7 +6012,7 @@ Engineering decisions taken here: A1–A18, each with its reason above. The para
   specialist failing on references Smart left unresolved. Scope then: interactive runs only, labelled, `file_data`
   stripped, no copy of the current turn (other origins carry unrelated chat).
 - **Opens served from stored chunks** (OQ-2's third option). Index text comes from another converter in another
-  process and may be stale or truncated (`MAX_CHUNKS_PER_FILE` 400). Trigger: the open's log line (S2) shows recurring
+  process and may be stale or truncated (`MAX_CHUNKS_PER_FILE` 1 000). Trigger: the open's log line (S2) shows recurring
   opens over `TRANSCRIPT_OPEN_MAX_CHARS` 60 000 characters (`drive_index_params.py:259`) of indexed, non-stale files, or
   the owner asks for a cap on opens.
 - **Folder descriptions written by a model.** A per-folder summary of its children's descriptions, built bottom-up

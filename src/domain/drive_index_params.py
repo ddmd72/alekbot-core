@@ -49,7 +49,7 @@ QUIET = timedelta(minutes=10)               # S0b: Word for the web saves every 
 MAX_DEFER = timedelta(minutes=60)
 DOWNLOAD_TIMEOUT_S = 120
 EXTRACT_WALL_TIMEOUT_S = 120                # S1 may revise
-EMBED_FILE_BUDGET_S = 180
+EMBED_FILE_BUDGET_S = 300                   # 1 000 chunks, 4 in flight: 250 rounds, so 1.2 s per call fits
 MODEL_FILE_BUDGET_S = 600                   # §24.3: windows done by then are indexed, the rest `truncated`
 FILE_START_MARGIN_S = 60
 MAX_DOWNLOAD_BYTES = 45 * 1024 * 1024       # Step 1 drive cap
@@ -57,8 +57,8 @@ MAX_SHEET_DOWNLOAD_BYTES = 10 * 1024 * 1024 # XLSX/XLS (Phase 0 amplification)
 MAX_TEXT_CHARS = 2_000_000
 CHUNK_CHARS = 2_400
 CHUNK_OVERLAP = 240
-MAX_CHUNKS_PER_FILE = 400
-MAX_CHUNKS_PER_USER = 50_000
+MAX_CHUNKS_PER_FILE = 1_000                 # MAX_TEXT_CHARS binds first, at about 925 chunks
+MAX_CHUNKS_PER_USER = 150_000
 MAX_SHEET_ROWS = 5_000
 CARD_LEAD_CHARS = 2_000
 CHUNK_FETCH = 300
