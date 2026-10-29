@@ -12,10 +12,11 @@ rule with an ``UNTIL`` — beyond the horizon the answer is ``None``, never a ha
 """
 
 from datetime import datetime, timedelta, timezone
+from itertools import islice
 from typing import Dict, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from dateutil.rrule import rrulestr
+from dateutil.rrule import rrule, rrulestr
 
 from ..ports.recurrence_port import RecurrencePort
 from ..utils.logger import logger
@@ -29,6 +30,10 @@ _ALLOWED_FREQ = {"MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"}
 # 5 min, so a finer step cannot be honoured: the note's due would fall behind real time
 # and fire on every tick. Change this together with the scheduler cadence.
 _MIN_MINUTELY_INTERVAL = 5
+_MIN_GAP = timedelta(minutes=_MIN_MINUTELY_INTERVAL)
+# BY* lists (BYMINUTE, BYSECOND, several BYHOUR) can space occurrences closer than
+# INTERVAL says. The pattern repeats every period, so this many occurrences show it.
+_GAP_PROBE_OCCURRENCES = 500
 _REJECTED_PARTS = ("DTSTART", "EXDATE", "RDATE")
 
 _FREQ_UNIT = {
@@ -81,6 +86,13 @@ class DateutilRecurrenceAdapter(RecurrencePort):
                 f"this rule never occurs within {_HORIZON_YEARS} years "
                 "— check BYMONTHDAY/BYMONTH combinations."
             )
+        gap = self._shortest_gap(canonical, probe_start)
+        if gap is not None and gap < _MIN_GAP:
+            raise ValueError(
+                f"occurrences must be at least {_MIN_MINUTELY_INTERVAL} minutes apart "
+                f"(reminders are checked every {_MIN_MINUTELY_INTERVAL} minutes); this rule "
+                f"has two {int(gap.total_seconds())} s apart — thin BYMINUTE/BYSECOND."
+            )
         return canonical
 
     # ------------------------------------------------------------------ #
@@ -117,13 +129,21 @@ class DateutilRecurrenceAdapter(RecurrencePort):
         ``UNTIL`` is appended to the copy handed to dateutil — never to the stored
         rule — purely to bound the search.
         """
+        return self._bounded(rule, local_anchor).after(local_anchor, inc=inc)
+
+    def _shortest_gap(self, rule: str, local_anchor: datetime) -> Optional[timedelta]:
+        """Smallest step between the rule's first occurrences, None under two."""
+        occurrences = list(islice(self._bounded(rule, local_anchor), _GAP_PROBE_OCCURRENCES))
+        return min((b - a for a, b in zip(occurrences, occurrences[1:])), default=None)
+
+    @staticmethod
+    def _bounded(rule: str, local_anchor: datetime) -> rrule:
         horizon = local_anchor + timedelta(days=365 * _HORIZON_YEARS)
         bounded = f"RRULE:{rule};UNTIL={horizon.strftime('%Y%m%dT%H%M%S')}"
         try:
-            expansion = rrulestr(bounded, dtstart=local_anchor)
+            return rrulestr(bounded, dtstart=local_anchor)
         except Exception as exc:  # dateutil raises bare ValueError/TypeError variants
             raise ValueError(str(exc)) from exc
-        return expansion.after(local_anchor, inc=inc)
 
     # ------------------------------------------------------------------ #
     # Description                                                        #
