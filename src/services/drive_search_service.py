@@ -809,6 +809,7 @@ class DriveSearchService:
                 for cid in chunks:
                     pool.hits[i].words.setdefault(cid[0], set()).add(cid)
                 pool.hits[i].full |= full
+                pool.hits[i].unchecked |= full   # a full user-wide page may not have reached the folder
             for i, (docs, full) in enumerate(hints):
                 for doc in docs:
                     cid = (doc.item_id, doc.generation, doc.index)
@@ -816,6 +817,7 @@ class DriveSearchService:
                     pool.hint_checked.add(cid)
                     pool.hits[i].hints.setdefault(doc.item_id, set()).add(cid)
                 pool.hits[i].full |= full
+                pool.hits[i].unchecked |= full
             if vector is not None:
                 await self._knn_vectors(user_id, vector, members, pool, stats)
             return
