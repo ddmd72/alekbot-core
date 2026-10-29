@@ -2180,6 +2180,11 @@
       let _activeSection = "integrations";
 
       function navigate(name) {
+        if (name !== "integrations" && _driveStatusTimer) {
+          clearTimeout(_driveStatusTimer);
+          _driveStatusTimer = null;
+        }
+        _driveStatusSnapshot = null;   // reopening always renders
         document.querySelectorAll(".section").forEach((s) => {
           s.classList.remove("active");
         });
@@ -3498,8 +3503,33 @@
           data.dr_copy = await loadDeepResearchCopy();
           // The search disclosure mentions the copies while the copy is on (they are indexed like any file).
           if (data.indexing) data.indexing.dr_copy = data.dr_copy === true;
-          renderDriveStatus(data);
+          const snapshot = JSON.stringify(data);
+          // Re-render only when the data changed: the poll must not twitch the UI.
+          if (snapshot !== _driveStatusSnapshot) {
+            _driveStatusSnapshot = snapshot;
+            renderDriveStatus(data);
+          }
+          scheduleDriveStatusPoll(!!(data.indexing && data.indexing.building));
         } catch {}
+      }
+
+      // While the first build runs the card's numbers move: re-poll every 2 min, only while the card shows
+      // building, the Integrations section is open and the tab is visible.
+      const DRIVE_STATUS_POLL_MS = 120000;
+      let _driveStatusSnapshot = null;
+      let _driveStatusTimer = null;
+      function scheduleDriveStatusPoll(building) {
+        if (_driveStatusTimer) clearTimeout(_driveStatusTimer);
+        _driveStatusTimer = null;
+        if (!building) return;
+        _driveStatusTimer = setTimeout(() => {
+          _driveStatusTimer = null;
+          if (document.visibilityState === "visible" && _activeSection === "integrations") {
+            loadDriveStatus();
+          } else {
+            scheduleDriveStatusPoll(true);
+          }
+        }, DRIVE_STATUS_POLL_MS);
       }
 
       // "Copy deep research reports to my drive" (decisions/deep_research_drive_copy.md): true/false, or

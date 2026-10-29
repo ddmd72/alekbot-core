@@ -903,12 +903,9 @@ class DriveIndexingService:
             transcribing = _transcribing()   # recordings count as waiting only for a user whose stage runs (G3)
             if more:
                 cont.request()
-                # unread is what search tells Smart: refreshed every tick, not only once the index settles (F4-1)
-                state = replace(state, counters=await self._unread_counters(user_id, state.counters, marked=marked,
-                                                                            transcription_on=transcribing))
-            else:   # settled: refresh
-                state = replace(state, counters=await self._counters(user_id, marked=marked,
-                                                                     transcription_on=transcribing))
+            # every tick, settled or not: the Cabinet card moves while the first build runs (F4-1)
+            state = replace(state, counters=await self._counters(user_id, marked=marked,
+                                                                 transcription_on=transcribing))
             if job_counts:
                 state = replace(state, counters={**{k: v for k, v in state.counters.items()
                                                     if not k.startswith(("profile_", "passages_", "coverage_"))},

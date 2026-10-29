@@ -1104,9 +1104,9 @@ the reason: enrichment would also hand file content to claude.ai via MCP and to 
   finished — set when that round ends; it is what search shows as `index_as_of`.
 - `last_success_at` advances on every tick that ends without a systemic error and either made progress or found
   nothing to do. It drives the staleness alert only; search never shows it.
-- `DriveSyncState.counters` hold records per state and carded records (readable chunks from Slice 2), refreshed when
-  a tick finds nothing left to do; `unread` and `not_read_yet` (Slice 2+4) are refreshed by every tick that
-  completes, because search tells Smart about them. Embedding usage stays in the log line.
+- `DriveSyncState.counters` hold records per state and carded records (readable chunks from Slice 2), `unread` and
+  `not_read_yet` (Slice 2+4), all refreshed by every tick that completes, settled or not, so the Cabinet card moves
+  while the first build runs (search tells Smart about `unread` too). Embedding usage stays in the log line.
   Embeddings are unbilled system-wide today; pricing them is a separate decision.
 
 ### 12.2 Rebuild
