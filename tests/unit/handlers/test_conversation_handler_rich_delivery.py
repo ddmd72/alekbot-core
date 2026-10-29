@@ -6,10 +6,11 @@ responses from SmartAgent — verifying that structured_data and link_list reach
 the correct channel methods.
 
 Routes:
-  content_type in _MEDIA_CONTENT_TYPES ("file", "widget", ...)
-      → RichContentService.process() → send_message(url)
-  other content types ("table", "pdf", ...)
-      → response_channel.send_rich_content()
+  with a RichContentService: RichContentService.deliver() routes (real service over fake ports here)
+      content_type in MEDIA_CONTENT_TYPES ("file", "widget", ...)
+          → platform upload, or GCS URL → send_message(url)
+      other content types ("table", "pdf", ...) → response_channel.send_rich_content()
+  without one: every type → response_channel.send_rich_content()
   link_list
       → passed to update_message() or send_chunked_message() as kwarg
 """
@@ -21,6 +22,7 @@ from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.messaging import MessageContext, RichContent, SmartResponse
 from src.domain.ui_messages import StatusType
 from src.handlers.conversation_handler import ConversationHandler
+from src.services.rich_content_service import RichContentService
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +79,31 @@ def _make_channel() -> MagicMock:
     return ch
 
 
+class _FakeMedia:
+    """PlatformMediaPort fake: records what reached the platform."""
+
+    def __init__(self):
+        self.files, self.images = [], []
+
+    async def upload_file(self, file_bytes, filename, title, channel_id):
+        self.files.append((file_bytes, filename, title, channel_id))
+
+    async def upload_image(self, image_bytes, alt_text, channel_id):
+        self.images.append((image_bytes, alt_text, channel_id))
+
+
+class _FakeStorage:
+    """MediaStoragePort fake: records stored objects, answers a fixed public URL."""
+
+    def __init__(self, url):
+        self.url = url
+        self.stored = []
+
+    async def store(self, data, key, content_type):
+        self.stored.append((data, key, content_type))
+        return self.url
+
+
 def _make_handler(coordinator, rich_content_service=None) -> ConversationHandler:
     session_store = MagicMock()
     session_store.append_messages_batch = AsyncMock()
@@ -119,7 +146,7 @@ class TestRichContentDelivery:
         channel.send_message.assert_not_awaited()
 
     async def test_pdf_file_uploaded_to_slack(self):
-        """content_type='file', filename=*.pdf → RichContentService.process() → Slack upload (no URL returned)."""
+        """content_type='file', filename=*.pdf → RichContentService.deliver() → platform upload (no URL returned)."""
         coordinator = MagicMock()
         coordinator.route_message = AsyncMock()
         rich = _make_rich(
@@ -130,9 +157,8 @@ class TestRichContentDelivery:
             SmartResponse(text="Your PDF report.", structured_data=rich)
         )
 
-        rcs = MagicMock()
-        # PDF → platform upload → process() returns None (no GCS URL)
-        rcs.process = AsyncMock(return_value=None)
+        media = _FakeMedia()
+        rcs = RichContentService(media_port=media)
 
         handler = _make_handler(coordinator, rich_content_service=rcs)
         channel = _make_channel()
@@ -140,7 +166,8 @@ class TestRichContentDelivery:
         with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(_make_context(), channel)
 
-        rcs.process.assert_awaited_once_with(rich, channel.channel_id)
+        # The file reached the platform upload, on this channel
+        assert media.files == [(b"%PDF-1.4 binary content", "report.pdf", "Report", channel.channel_id)]
         # No GCS URL → no extra send_message call (text was delivered via update_message)
         channel.send_rich_content.assert_not_awaited()
 
@@ -157,9 +184,9 @@ class TestRichContentDelivery:
         )
 
         _GCS_URL = "https://storage.googleapis.com/bucket/report.html"
-        rcs = MagicMock()
-        # HTML → GCS upload → process() returns public URL
-        rcs.process = AsyncMock(return_value=_GCS_URL)
+        media = _FakeMedia()
+        storage = _FakeStorage(_GCS_URL)
+        rcs = RichContentService(media_port=media, storage_port=storage)
 
         handler = _make_handler(coordinator, rich_content_service=rcs)
         channel = _make_channel()
@@ -167,7 +194,11 @@ class TestRichContentDelivery:
         with patch.object(handler, "validate_model_output", side_effect=lambda t, u: t):
             await handler.handle_message(_make_context(), channel)
 
-        rcs.process.assert_awaited_once_with(rich, channel.channel_id)
+        # HTML stored in GCS, not uploaded to the platform
+        assert [(data, ctype) for data, _key, ctype in storage.stored] == [
+            (b"<h1>Report</h1>", "text/html; charset=utf-8")
+        ]
+        assert media.files == []
         # GCS URL sent as plain message so Slack unfurls it
         channel.send_message.assert_awaited_with(_GCS_URL, thread_id=None)
         channel.send_rich_content.assert_not_awaited()
