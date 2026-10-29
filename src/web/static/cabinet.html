@@ -2816,12 +2816,28 @@
         if (questions.length === 0) {
           box.classList.add("hidden");
           box.innerHTML = "";
+          delete box.dataset.rendered;
           return;
         }
-        box.innerHTML =
+        const html =
           reviewSection("questions", t("questions.title"), t("questions.subtitle")) +
           reviewSection("invoices", t("questions.invoices_title"), "");
         box.classList.remove("hidden");
+        // Same markup = nothing to repaint; a changed list keeps the owner's ticked rows
+        if (box.dataset.rendered === html) {
+          box.querySelectorAll("button").forEach((b) => (b.disabled = false));
+          return;
+        }
+        const ticked = new Set([
+          ...checkedReviewIds("questions"),
+          ...checkedReviewIds("invoices"),
+        ]);
+        box.innerHTML = html;
+        box.dataset.rendered = html;
+        box.querySelectorAll("input[type=checkbox][data-question-id]").forEach((c) => {
+          c.checked = ticked.has(c.dataset.questionId);
+        });
+        ["questions", "invoices"].forEach(refreshBulkBar);
       }
 
       function onReviewChange(ev) {
@@ -2873,7 +2889,7 @@
           await loadReviewQuestions();
           if (applied || changed) {
             if (factsState === "closed") await closedLoad();
-            else await browseLoad(true);
+            else await browseLoad(true, true);
           }
         } catch (e) {
           showToast(t("questions.failed"), "error");
@@ -2881,8 +2897,9 @@
         }
       }
 
-      async function browseLoad(isFirst = false) {
-        if (isFirst) {
+      async function browseLoad(isFirst = false, keepList = false) {
+        // keepList: refresh in place, the cards stay until the new page arrives (no skeleton flash)
+        if (isFirst && !keepList) {
           document.getElementById("facts-container").innerHTML =
             _memorySkeletonHtml;
         }
@@ -2916,7 +2933,7 @@
               browseKnownDomains.push(f.domain);
           });
 
-          renderFacts(newFacts, isFirst);
+          renderFacts(newFacts, isFirst, keepList);
           renderDomainChips(browseKnownDomains.sort());
         } catch (e) {
           showToast("Error loading facts: " + e.message, "error");
@@ -2982,7 +2999,7 @@
         }
       }
 
-      function renderFacts(facts, isFirstLoad) {
+      function renderFacts(facts, isFirstLoad, instant = false) {
         const container = document.getElementById("facts-container");
         const countEl = document.getElementById("facts-count");
         const pageEl = document.getElementById("facts-pagination");
@@ -3011,7 +3028,7 @@
             const factIndex = allFacts.findIndex((fact) => fact.id === f.id);
 
             return `
-        <div class="card fact-card reveal" style="transition-delay: ${Math.min(i, 8) * 40}ms;">
+        <div class="card fact-card reveal${instant ? " visible" : ""}" style="transition-delay: ${instant ? 0 : Math.min(i, 8) * 40}ms;">
           <div class="card-body" style="display:flex; flex-direction:column; height:100%;">
             <div class="fact-text">${escapeHtml(f.text)}</div>
             
@@ -3029,7 +3046,7 @@
           .join("");
 
         if (isFirstLoad) container.innerHTML = factsHtml;
-        else container.innerHTML += factsHtml;
+        else container.insertAdjacentHTML("beforeend", factsHtml);
 
         observeElements();
 
