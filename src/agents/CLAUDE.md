@@ -210,7 +210,10 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     empty), then every read
     block verbatim in run order. The specialist's model sees search cards and listings in full but only a stand-in for
     an opened file; images and PDFs reach Smart as a `file_data` list. `history_context["drive_context"]` is one flat
-    list (no dedup), so Smart's fold stores today's shape.
+    list (no dedup) of `{path, ref}` entries that also name the operation (`drive_history.history_entries`);
+    ConversationHandler renders the turn's entries into full_text as one `[Drive: <path> ref=… — <what was done>]`
+    line per file (`drive_history_lines` via `history_context_block`), never JSON, never in the summary;
+    FileManagement's open_file builds its entries with the same helper.
   - **Search** (`search_drive` → `DriveSearchService` over the opt-in index; USER_DRIVE_INDEXING_RFC §10.4, §24.10,
     Search v2 §25.5): parameters `query`, `folder`, `kind`, `date_from`, `date_to`, described in
     `domain/drive_tool_texts.py`. `query` is the subject in the user's words (a name, place, person, topic, a document
@@ -259,7 +262,8 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     `not interactive_delivery` (set only by `ConversationHandler`), so a reminder, the daily review, any `notify` run, a
     call and a run with no origin are gated; a chat turn is not. `DriveToolRun.run` refuses a change (any `MUTATING_OPS`
     op and the note writers) in a step after the first one whose passages reached the model (`write_refused`); a change
-    co-emitted with the first passages read is not refused. The refusal is `REFUSED` (never settled by a later call),
+    co-emitted with the first passages read is not refused. A `search_deleted_recordings_and_notes` result with a
+    transcript passage arms it too (`DriveOutcome.stored_text_shown`); `search_drive` snippets do not. The refusal is `REFUSED` (never settled by a later call),
     text `WRITE_AFTER_PASSAGES`, and one INFO line `[DriveAgent] <kind> refused: passages were read in step N of this run`.
   - **Logs** (`make fetch-logs`, then `grep '\[DriveAgent\]\|\[DriveOperations\]' alek_debug.log`): one
     `[DriveAgent] user=<8> status=<status> model=<model> ops=<op>:<class>,… turns=N ms=…` line per commission, where

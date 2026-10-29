@@ -7,7 +7,7 @@ import pytest
 
 from src.adapters.microsoft.onedrive_adapter import THUMBNAIL_MAX_BYTES
 from src.domain.drive_image_mime import MAX_VISION_IMAGE_BYTES
-from src.domain.user_drive import DriveItemNotFoundError
+from src.domain.user_drive import DriveItemNotFoundError, DriveThumbnailTooLarge
 from tests.unit.adapters.test_onedrive_content_wire import _FILE, _adapter, _resp, _session, _thumbs
 
 
@@ -30,9 +30,13 @@ def test_the_rendition_cap_is_the_vision_cap():
 
 
 @pytest.mark.parametrize("size,kept", [(MAX_VISION_IMAGE_BYTES, True), (MAX_VISION_IMAGE_BYTES + 1, False)])
-async def test_a_rendition_over_the_vision_cap_is_none(size, kept):
+async def test_a_rendition_over_the_vision_cap_raises_too_large(size, kept):
     chunks = [b"x" * (1024 * 1024)] * (size // (1024 * 1024)) + [b"x" * (size % (1024 * 1024))]
     session = _session([_resp(_thumbs("c2048x2048")), _resp(chunks=chunks)])
     with patch("aiohttp.ClientSession", return_value=session):
-        data = await _adapter().get_thumbnail("u1", "f1", "c2048x2048")
-    assert (data is not None) is kept
+        if kept:
+            data = await _adapter().get_thumbnail("u1", "f1", "c2048x2048")
+            assert data is not None and len(data) == size
+        else:
+            with pytest.raises(DriveThumbnailTooLarge):
+                await _adapter().get_thumbnail("u1", "f1", "c2048x2048")

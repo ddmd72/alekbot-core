@@ -117,6 +117,7 @@ STILL_RUNNING = ("The drive operation is still running and may complete. Check w
 # are duration-capped (VIDEO_GENERATION_RFC.md §3.11 decision #10, 10s hard cap), so a real file almost never
 # approaches this; it only makes an anomalous file degrade to a message instead of a failed upload.
 MAX_VIDEO_ATTACH_BYTES = 45 * 1024 * 1024
+VIDEO_NOT_SENT = "Could not send the video: the upload to the chat failed. Nothing was delivered."
 
 _LATE_FAILURE_UI = {DriveOp.DELETE: UIMessage.DRIVE_DELETE_FAILED, DriveOp.REPLACE: UIMessage.DRIVE_REPLACE_FAILED}
 _SCAN_CAPTURES = frozenset({Capture.SCAN.value, Capture.DOCUMENT_PHOTO.value})
@@ -267,9 +268,10 @@ class DriveOperations:
         async def run() -> DriveOutcome:
             if self._drive_search is None:
                 return _fail(DriveOp.SEARCH, "Drive search is not available on this deployment.", OutcomeClass.FAILED)
-            text, items = await self._drive_search.search_deleted(user_id, str(query or ""))
-            return DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK if items else OutcomeClass.NOT_FOUND,
-                                text=f"{REFERENCE_REMINDER}\n{text}", success=True, items=tuple(items))
+            found = await self._drive_search.search_deleted(user_id, str(query or ""))
+            return DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK if found.items else OutcomeClass.NOT_FOUND,
+                                text=f"{REFERENCE_REMINDER}\n{found.text}", success=True, items=tuple(found.items),
+                                stored_text_shown=found.has_passage)
         return await self._call(DriveOp.SEARCH, context, user_id, run, label="")
 
     async def find_passages(self, context: Mapping[str, Any], user_id: str, *, question: Any, folder: Any = None,
@@ -595,11 +597,13 @@ class DriveOperations:
         if not self._notification:
             return _fail(DriveOp.OPEN, "File delivery is not configured — cannot resend the video as a file.",
                          OutcomeClass.FAILED)
-        await self._notification.notify_file_bytes(
+        sent = await self._notification.notify_file_bytes(
             user_id=user_id, account_id=context.get("account_id") or "", file_bytes=data,
             filename=os.path.basename(ref), title="Video",
             channel_id_override=context.get("origin_channel_id"), platform_override=context.get("origin_platform"),
         )
+        if not sent:
+            return _fail(DriveOp.OPEN, VIDEO_NOT_SENT, OutcomeClass.FAILED)
         return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, success=True,
                             text=f"Video '{ref}' has been sent to the user as a file attachment.")
 
@@ -866,12 +870,14 @@ class DriveOperations:
                 if not self._notification:
                     return _fail(DriveOp.OPEN, "File delivery is not configured — cannot send the video.",
                                  OutcomeClass.FAILED)
-                await self._notification.notify_file_bytes(
+                sent = await self._notification.notify_file_bytes(
                     user_id=user_id, account_id=context.get("account_id") or "",
                     file_bytes=data, filename=item.name, title="Video",
                     channel_id_override=context.get("origin_channel_id"),
                     platform_override=context.get("origin_platform"),
                 )
+                if not sent:
+                    return _fail(DriveOp.OPEN, VIDEO_NOT_SENT, OutcomeClass.FAILED)
                 return _ok(DriveOp.OPEN, self._with_note(f"{REFERENCE_REMINDER_ATTACHED}\n{drive_label(item)} has "
                                                          f"been sent to the user as a file.", item, note), [item],
                            owner_note=bool(note))

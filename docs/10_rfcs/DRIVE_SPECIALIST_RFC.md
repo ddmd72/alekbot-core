@@ -218,7 +218,7 @@ Items found on the way that are real but separate are listed in Appendix A as ba
 3. The engine's `Correct your input and try again.` suffix (`delegation_engine.py:741`) never reaches a drive answer.
    The only exits that still reach Smart as a failure: a missing prompt (before any LLM call), a circuit-breaker
    refusal, an external cancellation, and a hard timeout the soft deadline failed to prevent (§5.6).
-4. `drive_context` history refs keep follow-ups working, in today's shape (§7.4).
+4. `drive_context` history refs keep follow-ups working (§7.4; since 2026-10-29 rendered as one line per file).
 5. The user's own words reach the specialist: drive search keys are strict AND on them, and the protocol says
    "query always English" (§4.3, §5.3).
 6. Today's texts that name an intent or field Smart no longer has are reworded: for Smart, the name becomes plain
@@ -668,7 +668,18 @@ blocks, where today the whole skill body rode in history.
 - `DriveAgent` returns `history_context={"drive_context": [...]}` built from the collector: the concatenation, in
   order, of exactly the entries today's handlers return per operation, **no deduplication** (today has none). Smart's
   engine wraps it one level (`[[…]]`), the shape one FileManagement call produces today, and
-  `ConversationHandler._prepare_history_texts` writes it into `full_text` unchanged (`conversation_handler.py:1387`).
+  `ConversationHandler._prepare_history_texts` writes it into `full_text` (never the summary).
+- **Rendering (2026-10-29).** Each entry also names what was done (`src/domain/drive_history.py`,
+  `history_entries`: `op`, a search's `query` and `count`, a passages call's display numbers, a change's kind), and
+  the handler renders the turn's entries as one line per file, deduplicated, operations combined, the ref kept:
+  `[Drive: Health/lab-report.pdf ref=drive:abc123 — searched for "lab report" (2 files); read passages 3–5]`.
+  The JSON block it replaced repeated a file once per operation and named none, so a later turn misread where an
+  answer came from. FileManagement's open_file of a drive ref builds its entries with the same helper ("opened whole",
+  or "open answered without its content"); its delete refuses a drive ref, so it has none. An entry without `op` (the
+  older flat shape) renders as the file and its ref. Other `*_context` keys keep their JSON block; one function
+  renders every key (`src/domain/history_context_block.py`), and the evals that seed history
+  (`drive_routing_probe.py`, `drive_eval/specialist_ab.py`) call it too. A delete names no file in either path: its
+  outcome touches no item that stays.
 - Smart reads the refs and its own reply (which names files by path) and passes refs in the next commission. Ordinals
   ("the second one") point at Smart's reply, so Smart resolves them.
 - Opened text and cards stay out of history, as today. No status key is added (only `*_context` keys persist).
@@ -912,7 +923,7 @@ DocPlanner, PdfGenerator and HtmlPageGenerator still resolves `drive:` refs copi
 | Answer | each status and the precedence table; "What to do" is today's text byte for byte; one op line per mutating call, in step order ("Already on the drive" and "It already existed" included); a connection-state line only when no operation ran; a search-state line only on an answer that ran a search (a save during a rebuild carries no `REBUILDING_LINE`); `not_possible` for a no-op run, for a text tool without its item, and for deleted search + `not_done`; an unknown `text_item` is refused and nothing is written; `question` cannot override a failure or a done change |
 | Reading lines | each trigger of §7.3 adds exactly its lines, and none without its trigger |
 | Pass-through | blocks byte-identical to today's renders, each with its own reminder; **search + open → both blocks reach Smart**; two searches → both; a listing before moves is labelled; the stand-in of an open holds no body; several vision files reach Smart's transcript in order |
-| `drive_context` | equals the concatenation of today's per-op entries, no dedup; one level after Smart's fold |
+| `drive_context` | equals the concatenation of the per-op entries, no dedup; one level after Smart's fold; rendered by the handler as one line per file naming the operations (2026-10-29, §7.4) |
 | Tools | each tool → one `DriveOperations` call with mapped arguments; an empty or omitted field never mutates; `folder` as a path and as a `drive:` ref give the same call; one `move_file` with both fields makes one `svc.move`; each source kind of `copy_file_to_drive` and `replace_file_content` (chat, delivered key, `workspace:`, `skill:`, `drive:` for replace only); two `save_text_file` with two items in one commission are written in order with their own texts; no parameter named `name`; parameter descriptions name no Smart-era field and no "not read" clause |
 | Agent | `AgentResponse.success` on every status, and no "Correct your input" in Smart's tool result; `delivery_items` forwarded; `NO_RETRY_POLICY`; missing prompt → failure, no LLM call; `include_directives=False`; `_on_agent_start` logs no commission text; `allow_delegation=False` → unknown-tool answer; one per-user lock across two concurrent executions; batch order |
 | Time | a read still running at the soft deadline ends the run with the earlier mutation's op line intact; an LLM call is clamped; `still_running` cancels the engine and keeps the shielded mutation; `CURRENT_RUN_DEADLINE` from a 180 s reminder run lowers the soft deadline, is cleared under an orchestrator without a timeout, and is absent from an enqueued Cloud Task payload; the mutation wait floor |

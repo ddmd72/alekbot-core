@@ -14,9 +14,10 @@ from typing import Any, Mapping, Optional, Tuple
 from .drive_enrichment import DriveProfile, PhotoObject
 from .drive_note_check import NoteCheck
 
-POLICY_VERSION = 3                            # 2: the Slice 2+4 kinds admitted (§24.1); 3: audio and video admitted
+POLICY_VERSION = 4                            # 2: the Slice 2+4 kinds admitted (§24.1); 3: audio and video admitted
                                               # for transcription (§27.3); re-plans EVERY record (113/113 for the owner), not only media: structure
-                                              # decisions stand from STRUCTURE_POLICY_SINCE, no card re-embed
+                                              # decisions stand from STRUCTURE_POLICY_SINCE, no card re-embed; 4: an
+                                              # `.epub.pkgf` package is an epub (§5.1), re-planned as one
 # The policy version since which a record's structure decisions (density probe, opaque marker, README read) are valid.
 # A bump that only changes media admission must not re-decide structure for every user, so these checks compare
 # against this, not POLICY_VERSION. Raise it only when a bump changes how folders are classified.

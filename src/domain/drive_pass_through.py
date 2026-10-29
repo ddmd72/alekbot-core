@@ -19,6 +19,7 @@ from .agent import DeliveryItem
 from .drive_collected_result import CollectedResult
 from .drive_excerpt_context_plan import ContextPlan
 from .drive_excerpt_ledger import ExcerptLedger
+from .drive_history import history_entries
 from .drive_outcome import DriveOutcome
 
 SearchKey = Tuple[str, ...]
@@ -57,11 +58,12 @@ class PassThroughCollector:
     def remember_search(self, key: SearchKey, handle: str) -> None:
         self._searches.setdefault(key, handle)
 
-    def drive_context(self) -> List[Dict[str, str]]:
-        """The concatenation, in order, of today's per-operation entries; no deduplication (§7.4)."""
-        entries: List[Dict[str, str]] = []
+    def drive_context(self) -> List[Dict[str, Any]]:
+        """The concatenation, in order, of the per-operation entries, each naming what was done; no deduplication
+        (§7.4): ConversationHandler dedups when it renders them (drive_history.py)."""
+        entries: List[Dict[str, Any]] = []
         for result in self._results:
-            entries.extend(result.outcome.drive_context())
+            entries.extend(history_entries(result.kind, result.outcome))
         return entries
 
     def note_context(self) -> List[str]:

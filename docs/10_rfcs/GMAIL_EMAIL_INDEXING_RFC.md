@@ -668,6 +668,7 @@ Returns: converted text string to delegating agent.
 |---|---|---|
 | Gmail rate limit | Exponential backoff → auto-retry (transparent) | Nothing |
 | LLM batch timeout | Retry 1x → skip batch + log → continue job | Nothing during job; summary mentions skipped count |
+| Classifier failure on a page (parse retries exhausted, MAX_TURNS, non-transient exception) | `EmailClassificationResult.failure` is set on every email of the page; the page's emails count in `emails_failed`, one ops alert (`AlertSinkPort`: job/user prefix, page size, failure class, no email content) per failed page; the cursor still advances. Transient LLM errors still propagate for Cloud Tasks retry | Cabinet shows the failed count |
 | Embedding fail | Store doc with `vectors=null`, `embedding_pending=True` | Nothing — repair job fixes it |
 | Cloud Tasks timeout | Reads `next_page_token` from job journal → resumes | Nothing |
 | Cloud Tasks auto-retry (≤5x) | Built-in | Nothing |

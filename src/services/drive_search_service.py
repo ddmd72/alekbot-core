@@ -25,8 +25,8 @@ Public interface:
     await excerpt_range(user_id, request) -> ExcerptResult    # read_passages: one file's passages by number (§28.3 A7)
     await indexing_status(user_id) -> DriveIndexingStatus     # Cabinet (§6)
     await access_note(user_id, *, item_id=None, path=None) -> Optional[str]   # list/open on a 404 (§26.2, Δ55)
-    await search_deleted(user_id, drive_query) -> str          # `drive_deleted`: archived transcripts (§27.9.11) and
-                                                               # the sources added with add_deleted_source (notes)
+    await search_deleted(user_id, drive_query) -> DeletedSearchResult   # archived transcripts (§27.9.11) and the sources
+                                                               # added with add_deleted_source (notes); has_passage
     add_deleted_source(source)                                 # the owner-notes source (notes RFC §6.4)
     await archived_text(user_id, mirror_item_id, ...) -> Optional[str]   # opening a file of the bot's `_Transcripts`
 
@@ -81,6 +81,7 @@ from ..domain.drive_search import (
     hides_descendants, in_date_range, kinds_for, make_card, normalize_path, path_match, record_visible,
     render_results, resolve_chain, search_gate,
 )
+from ..domain.drive_deleted_result import DeletedSearchResult
 from ..domain.drive_deleted_search import (
     DeletedHit, matches as deleted_matches, merge_hits, passage, render_deleted, transcript_line,
 )
@@ -1791,7 +1792,7 @@ class DriveSearchService:
         """Add a source to the deleted-files section (the owner-notes RFC's, §6.4): one flag, one section."""
         self._deleted_sources.append(source)
 
-    async def search_deleted(self, user_id: str, drive_query: str) -> Tuple[str, List[DriveItem]]:
+    async def search_deleted(self, user_id: str, drive_query: str) -> DeletedSearchResult:
         """The deleted-files search: the heading `Deleted files (N):` and one wrapped entry per hit,
         for the orchestrator, and the drive files the shown refs open (so "open the second one" works next turn). Runs before (and
         without) the index gate: with drive search off it still answers from the ledger. An empty query lists the
@@ -1813,7 +1814,8 @@ class DriveSearchService:
                     f"concepts={len(concepts)} connected={connection.connected}")
         text = render_deleted(hits, connected=connection.connected and not connection.needs_reconnect,
                               coverage=coverage)
-        return text, [h.item for h in hits if h.item is not None]
+        return DeletedSearchResult(text, [h.item for h in hits if h.item is not None],
+                                   has_passage=any(h.passage for h in hits))
 
     async def _deleted_transcripts(self, user_id: str, concepts: Sequence[Concept],
                                    connection: DriveConnection) -> Tuple[List[DeletedHit], List[str]]:

@@ -262,6 +262,8 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   `CONTENT`): PDF, DOCX, PPTX, XLSX/XLS, ODT/ODS/ODP, EPUB, HTML, Markdown, text, CSV, JSON, RTF, MSG, EML and VTT/SRT
   subtitles. Every image is admitted for triage (`TRIAGE`). Since `POLICY_VERSION` 3 (RFC §27, live) audio and video are admitted for **transcription**
   (`Admission.TRANSCRIBE`): not parsed, never in the content classes, handled by the transcript stage (§4.23).
+  Since `POLICY_VERSION` 4 an Apple Books package (`<name>.epub.pkgf`, a plain tar of the EPUB folder) is kind `epub`:
+  the parser child repacks it as an EPUB ZIP in memory under the EPUB ZIP bounds (RFC §5.1).
   Everything else (`doc`, `ppt`, `mhtml`, iWork, archives, code, …) is `metadata_only` (reason `kind_not_admitted`) with a card.
   (Structure decisions compare against `STRUCTURE_POLICY_SINCE` = 2, so the version 3 bump re-reads no README and re-probes no folder.) A content kind over its
   download cap (45 MiB; 10 MiB for XLSX/XLS) is `metadata_only / too_large` before any download. Dot-names,
@@ -481,9 +483,12 @@ when headroom returns (`released`, class 3) it is read again — a model-routed 
 
 `_fetch`: a document is streamed to a temp file by `download_to_file`, cut at `size_cap(kind)` (`too_large` if the
 stream passes it — metadata can understate a size). An image triaged as text is fetched as the provider's
-`c2048x2048` rendition (JPEG/PNG; HEIC is never decoded by us); with no rendition, the original is used only when it
-is JPEG/PNG/WebP/GIF within the 3.75 MiB vision cap (`original_fallback`), else the record is `metadata_only /
-no_text`. `sniff_kind` (`src/domain/drive_sniff.py`) reads the first 8 KiB: magic bytes win over the name (a `.txt`
+`c2048x2048` rendition (JPEG/PNG; HEIC is never decoded by us). A rendition over the vision cap (a PNG source gets a
+big PNG; the port raises `DriveThumbnailTooLarge`, distinct from `None` = no rendition) steps down through
+`READER_RENDITION_STEPS` (`c2048x2048`, `c1536x1536`, `c1024x1024`) until one fits. With no rendition (or none that
+fits), the original is used only when it is JPEG/PNG/WebP/GIF within the 3.75 MiB vision cap (`original_fallback`),
+else the record is `metadata_only / no_text` (no rendition) or `metadata_only / too_large` (every rendition was over
+the cap). The triage thumbnail (`large`) is unchanged: over the cap counts as no rendition. `sniff_kind` (`src/domain/drive_sniff.py`) reads the first 8 KiB: magic bytes win over the name (a `.txt`
 that is a ZIP is an archive); a sniffed kind the policy does not admit is `metadata_only / kind_not_admitted`; a file
 whose bytes show a kind that may reach the reader, with no time left in this tick for the reader's worst case, waits
 one second for the next tick. A gone item (404/410) is re-observed at once instead of being read as "no content"
@@ -500,7 +505,8 @@ image `(reader)`, every other admitted kind `(parser)`.
   directory; one child at a time. Readers (`src/adapters/drive_parser/readers.py`): pdfminer.six for PDF text, laid
   out page by page and stopped once `MAX_TEXT_CHARS` is reached (`truncated` when a page was left; pypdf for the
   page count, walked from the page tree, and encryption);
-  markitdown's allowlisted converters for DOCX, PPTX, EPUB and MSG; HTML by the parser's HTML policy (`drive_parser/html_text.py`,
+  markitdown's allowlisted converters for DOCX, PPTX, EPUB and MSG (an EPUB that is a plain tar, an Apple Books
+  `.epub.pkgf`, is first repacked as a ZIP in memory by `drive_parser/epub_package.py`); HTML by the parser's HTML policy (`drive_parser/html_text.py`,
   RFC §25.3, Search v2): one BeautifulSoup parse, the content element converted in place with markdownify — the first
   visible `<main>`, else the largest `<article>` holding half the body's text, else the body without its top-level
   header, footer, nav and aside; hidden elements, scripts and option lists dropped; blocks of in-page links dropped
@@ -624,8 +630,8 @@ brief's date, so a stale one is never cited.
 - **Chunker** (`chunk_text`, `src/domain/drive_chunker.py`): about `CHUNK_CHARS` (2 400) characters, ending at a
   paragraph, else a sentence or line, else a word; the next chunk repeats up to `CHUNK_OVERLAP` (240) characters of
   trailing sentences; a Markdown table is never overlapped, its continued chunks start with the header row. At most
-  `MAX_CHUNKS_PER_FILE` (400) chunks (`truncated` beyond). No chunk → `no_text`.
-- **Chunk cap** (`chunk_cap_refuses`): the user's readable chunks may not pass `MAX_CHUNKS_PER_USER` (50 000); a file
+  `MAX_CHUNKS_PER_FILE` (1 000) chunks (`truncated` beyond; `MAX_TEXT_CHARS` binds first at about 925). No chunk → `no_text`.
+- **Chunk cap** (`chunk_cap_refuses`): the user's readable chunks may not pass `MAX_CHUNKS_PER_USER` (150 000); a file
   that would is `metadata_only / user_chunk_cap` with its would-be `chunk_count`, released (best card rank, then
   newest) when the headroom holds it, never re-read before.
 - **Embeddings**: one `RETRIEVAL_DOCUMENT` vector per chunk, at most `EMBED_IN_FLIGHT` (4) calls at once, within
@@ -755,7 +761,7 @@ No alert of its own: the outage shows as ERROR / WARNING lines (`[drive_reader]`
 | Concurrent model calls | 4 per file (files go to the reader one at a time) | — |
 | Re-read of an edited, reader-read file (`MODEL_REREAD_COOLDOWN`) | 24 h after `model_read_at` | the edit waits; the newest version is read once |
 | Reader outages charged to one content version | `MAX_ATTEMPTS` (3) | `failed / extract_error` |
-| Readable chunks per user | 50 000 | `user_chunk_cap` |
+| Readable chunks per user | 150 000 | `user_chunk_cap` |
 | Carded records per user | 25 000 | `card_capped`, decided before any content or triage work |
 | Maintenance share of the start budget | 30 % | upgrades and month-held work yield to edits and first-seen work |
 
@@ -775,8 +781,8 @@ its own line (§7).
 - Over 45 MiB (likely for a 600-page scan): `metadata_only / too_large` from the size in the listing, never
   downloaded; its name card is searchable, it counts as "could not be read" (§7.1).
 - With a good text layer: the parser reads every page until `MAX_TEXT_CHARS` (2 M characters); the chunker keeps the
-  first `MAX_CHUNKS_PER_FILE` (400) chunks of about 2 400 characters each, so roughly the first 860 000 characters
-  (a few hundred pages) are searchable and the rest is not. The router judges density as an average over all
+  first `MAX_CHUNKS_PER_FILE` (1 000) chunks of about 2 400 characters each; `MAX_TEXT_CHARS` stops it first, at about 925
+  chunks, so roughly the first 2 M characters (a long book) are searchable and the rest is not. The router judges density as an average over all
   pages, so a mostly-text PDF with some scanned pages stays with the parser and its scanned pages are not read.
 - A scan (no or thin text layer): the reader gets the first `MODEL_EXTRACT_MAX_PAGES` (200) pages, 10 per call,
   4 calls at a time, within 600 s; pages 201–600 are never sent. It needs the dollars for its 200 pages (≈ $0.12) left
@@ -834,7 +840,7 @@ within the maintenance share, and re-plans each stale record (`stale_versions`, 
   Meanwhile, per user until that user's pass completes, search says `refreshing` and runs on names, filters and exact
   terms only (card, chunk and hint kNN are skipped, §6); the re-embed runs in class 3 inside the 30 % maintenance share, so
   a large index takes several ticks. Cost: Gemini embeddings only — no download, no parser, no reader call, not
-  billed to the user, bounded by the 25 000 cards and 50 000 chunks per user (§4.13).
+  billed to the user, bounded by the 25 000 cards and 150 000 chunks per user (§4.13).
 - A pass that leaves stale records (backing off, held) does not repeat until due work has run; `applied_versions` and
   `applied_space` are written only after a clean pass.
 - A record whose model work is held for next month's budget, and which is stale only for what that held work
@@ -857,7 +863,7 @@ itself makes no model call, only one query embedding):
 | **Initial build** (D27) | the first full description of a drive, every class | `INITIAL_BUILD_USD` $40 once per user; the monthly ceiling after it is $31 ($4 + $3 + $4 + $20) |
 | **Reader** (scans, screenshots, images with text, PDFs the parser cannot read) | GPT-6 Luna by default (or Haiku 5.5), $0.10 / $0.50 per million input / output tokens; a page ≈ $0.0006. A failover call runs on Gemini Flash (`gemini-3.8-flash`, $1.50 / $7.50, promotional until 2026-12-31 — 15× the primary's token price), priced per model that ran | `READER_USD_PER_MONTH` $4 per user (Search v2; ≈ 6 666 pages, `MODEL_EXTRACT_PAGES_PER_MONTH` derived from it), after the one-time initial build (D27), 200 pages per file; an edit re-reads at most once per 24 h (`MODEL_REREAD_COOLDOWN`); a file whose reads keep failing as an outage at most `MAX_ATTEMPTS` times; a refused page or image is never retried |
 | **Triage** (every image, 8 thumbnails of 800 px per call; triage v2 adds ≈ 250 output tokens a photo) | the same models and fallback; an 800 px thumbnail costs more input tokens than the 176 px one did; not priced per image yet — the live model check's triage leg prints the real cost | `TRIAGE_USD_PER_MONTH` $3 per user (Search v2, after the initial build; the 20 000-image cap is retired); a failing batch costs its call and parse retry, a refused one halves only down to the refused image |
-| **Embeddings** (card, chunk and hint vectors, `gemini-embedding-2`) | not priced in `billing.py` and not billed to the user; Google's charge is not in the daily summary | **no monthly cap.** Bounded by size: 25 000 cards and 50 000 readable chunks per user, 400 chunks per file; a card is re-embedded only when its text changes; an edit embeds only its changed chunks (vectors reused by text hash); a space change re-embeds stored text without reading the file again |
+| **Embeddings** (card, chunk and hint vectors, `gemini-embedding-2`) | not priced in `billing.py` and not billed to the user; Google's charge is not in the daily summary | **no monthly cap.** Bounded by size: 25 000 cards and 150 000 readable chunks per user, 1 000 chunks per file; a card is re-embedded only when its text changes; an edit embeds only its changed chunks (vectors reused by text hash); a space change re-embeds stored text without reading the file again |
 | **Firestore** (records, chunks, kNN, term and count queries) | reads and writes at Firestore prices; a kNN reads 1 per 100 index entries scanned under the user filter | linear in the user's chunks, so bounded by the chunk cap; spike S3 measures it before the slice ships |
 | **Indexer CPU** | Cloud Run, scale to zero, one instance | `TICK_FILE_BUDGET` 50 runs per tick, a 30-minute tick deadline |
 
@@ -1570,6 +1576,9 @@ every run that is **not a chat turn**: reminders, the daily review and other bac
 `tell_alek`) and a run with no origin. A chat turn is never gated. The refusal is `REFUSED`, with an INFO log
 `[DriveAgent] <kind> refused: passages were read in step N of this run`; Alek commissions the change again. Why not
 `is_owner_turn`: `decisions/drive_content_write_gate.md`.
+What arms it: `find_passages` / `read_passages` results, and a `search_deleted_recordings_and_notes` result in which at least one entry
+carries a transcript passage (`DeletedSearchResult.has_passage` → `DriveOutcome.stored_text_shown`). Ordinary `search_drive` snippets do
+not (owner-accepted residual).
 
 **Limits and what it does not do.** Passages read stored chunks: they can be stale (the stale line says so) or cut at
 `MAX_CHUNKS_PER_FILE`; the open stays the live, authoritative read. Numbers over a table (totals, counts) are computed
@@ -1901,7 +1910,10 @@ commissions again).
 specialist note, then **every read block verbatim** in run order (`[Result r1, step 1: search]`, a listing labelled
 "before the changes in steps …"). The specialist's model sees search cards and listings in full but only a stand-in
 for an opened file, so nothing is retyped; images and PDFs reach Smart as a `file_data` list. `drive_context` refs
-are one flat list per commission, so history keeps today's shape (RFC §7.4). A plain-text final reply written beside
+are one flat list per commission, each entry naming what was done (`src/domain/drive_history.py`); the next turns
+read them in full_text only (never the summary, never consolidation) as one line per file, deduplicated, with its ref:
+`[Drive: Health/lab-report.pdf ref=drive:abc123 — searched for "lab report" (2 files); read passages 3–5]` (RFC §7.4;
+until 2026-10-29 a JSON block that repeated each file per operation and named none). A plain-text final reply written beside
 `report_to_orchestrator` is the note when the report's own note is empty. Receipts of a delete or replace and the
 late-failure notices are sent literally (`DriveOperations._receipt`, `notify_raw(..., literal=True)` → `send_literal`):
 the path is text the bot did not write, so it is never formatted, linked or read as a mention. They read, for example,

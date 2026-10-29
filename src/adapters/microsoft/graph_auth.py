@@ -9,6 +9,8 @@ not per HTTP call, and a disconnect or reconnect reaches every instance within t
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 
@@ -27,6 +29,15 @@ _REAUTH_ERRORS = ("invalid_grant", "interaction_required", "consent_required")
 # Own bound on the token POST (aiohttp's default is 300 s): a hanging endpoint ends as a TimeoutError well
 # inside a Graph call's budget. Callers keep their mapping of it (the drive: a systemic throttle).
 TOKEN_POST_TIMEOUT_S = 30.0
+
+
+def _oauth_error(body: str) -> str:
+    """The `error` code of an OAuth error body (an enum such as invalid_grant); '' when absent or not one."""
+    try:
+        code = str((json.loads(body) or {}).get("error") or "")
+    except (ValueError, AttributeError, TypeError):
+        return ""
+    return code if re.fullmatch(r"[a-z_]{1,64}", code) else ""
 
 
 class GraphReauthRequired(ValueError):
@@ -106,10 +117,11 @@ class MicrosoftGraphTokenProvider:
                                     timeout=aiohttp.ClientTimeout(total=TOKEN_POST_TIMEOUT_S)) as resp:
                 if resp.status != 200:
                     body = await resp.text()
-                    logger.error(f"MS token refresh failed ({self._provider}, {resp.status}): {body[:300]}")
+                    # status and the enum-like OAuth `error` code only: the body's free text can quote the account
+                    logger.error(f"MS token refresh failed ({self._provider}, {resp.status}): {_oauth_error(body)}")
                     if any(code in body for code in _REAUTH_ERRORS):
                         raise GraphReauthRequired(f"MS token refresh rejected ({self._provider}): reconnect needed")
-                    raise ValueError(f"MS token refresh failed ({resp.status}): {body}")
+                    raise ValueError(f"MS token refresh failed ({resp.status})")
                 payload = await resp.json()
 
         new_creds = OAuthCredentials(

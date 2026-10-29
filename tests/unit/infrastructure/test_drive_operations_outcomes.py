@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.domain.drive_deleted_result import DeletedSearchResult
 from src.agents.file_management_agent import FileManagementAgent
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
 from src.domain.drive_op import DriveOp
@@ -174,9 +175,9 @@ async def test_plain_cards_carry_no_triggers(ops, search):
 
 
 async def test_the_deleted_search_is_ok_with_hits_and_not_found_without(ops, search):
-    search.search_deleted.return_value = ("hits", [FILE])
+    search.search_deleted.return_value = DeletedSearchResult("hits", [FILE])
     hit = await ops.search_deleted(CTX, "u1", "garden")
-    search.search_deleted.return_value = ("none", [])
+    search.search_deleted.return_value = DeletedSearchResult("none", [])
     miss = await ops.search_deleted(CTX, "u1", "garden")
     assert (hit.cls, miss.cls) == (OutcomeClass.OK, OutcomeClass.NOT_FOUND)
     assert hit.text.endswith("\nhits") and hit.success and miss.success

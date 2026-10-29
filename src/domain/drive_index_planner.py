@@ -23,7 +23,7 @@ Public interface:
     triaged(rec, result, now) -> DriveIndexRecord;  attempt_crashed(rec, now) -> bool
     month_key(now) / usage_now(state, now) / with_usage(state, now, *, pages=0, images=0)
     model_available(state, now) / model_outage(state, now) / model_recovered(state)
-    can_start_file(elapsed_s, *, routed) -> bool
+    can_start_file(elapsed_s, *, routed) -> bool / can_start_reembed(elapsed_s) -> bool
     with_card(rec, card_hash, embedding_space, now) / without_card(rec, now) / capped(rec, now) / released(rec, now)
     card_refused(rec, now) -> DriveIndexRecord
     drops_readable(before, after) -> bool                                                    (§7.4)
@@ -1082,6 +1082,11 @@ def can_start_file(elapsed_s: float, *, routed: bool) -> bool:
     worst = (DOWNLOAD_TIMEOUT_S + EXTRACT_WALL_TIMEOUT_S + (MODEL_FILE_BUDGET_S if routed else 0)
              + EMBED_FILE_BUDGET_S + FILE_START_MARGIN_S)
     return elapsed_s + worst < TICK_DEADLINE_S
+
+
+def can_start_reembed(elapsed_s: float) -> bool:
+    """A re-embed waits twice (chunks, then hints), each under EMBED_FILE_BUDGET_S, and downloads nothing."""
+    return elapsed_s + 2 * EMBED_FILE_BUDGET_S + FILE_START_MARGIN_S < TICK_DEADLINE_S
 
 
 # -- model usage and outages on the sync state (§24.7, §24.8) -------------------------------------------------------
