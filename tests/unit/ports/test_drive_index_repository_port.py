@@ -42,6 +42,8 @@ _EXPECTED = {
     # the transcript mirror (§27.9.4, Δ187, Δ217; plan T2 Task 20A): the records' mirror queue and its wake-ups, and the
     # scanning purge that keeps the store entries the mirror ledger pins (Δ186, Δ214)
     "mirror_queue", "mirror_wakeups", "delete_user_transcripts_except",
+    # a folder past FOLDER_INMEM_CHUNKS: kNN restricted to the walked files' ids (RFC Δ246)
+    "find_nearest_chunks_in", "find_nearest_hints_in",
 }
 
 

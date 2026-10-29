@@ -81,8 +81,12 @@ async def test_the_readable_sum_has_its_records_index(db, mock_env_config):
 
 
 def test_chunk_indexes_are_declared_for_the_live_collection_only():
-    # 4 composites (+ Search v2's word_keys stream, §25.2.5) + 2 vector entries
-    assert len(_declared("development_drive_index_chunks")) == 6
+    # 4 composites (+ Search v2's word_keys stream, §25.2.5) + 3 vector entries (+ Δ246's user_id, item_id, vector)
+    assert len(_declared("development_drive_index_chunks")) == 7
+    assert [i for i in _declared("development_drive_index_chunks") if i[-1] == ("vector", "VECTOR")] == [
+        [("user_id", "ASCENDING"), ("vector", "VECTOR")],
+        [("user_id", "ASCENDING"), ("kind", "ASCENDING"), ("vector", "VECTOR")],
+        [("user_id", "ASCENDING"), ("item_id", "ASCENDING"), ("vector", "VECTOR")]]
     assert _declared("drive_index_chunks") == []
 
 

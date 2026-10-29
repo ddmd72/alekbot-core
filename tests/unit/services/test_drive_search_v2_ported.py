@@ -10,7 +10,7 @@ import pytest
 
 from src.domain.drive_enrichment import DriveProfile
 from src.domain.drive_index_params import (
-    CARD_FETCH, CHUNK_CHARS, CHUNK_FETCH, MAX_CONCEPTS, MENTIONED_SHOWN, WINDOW_CHARS_TOTAL_V2, WINDOW_MAX,
+    CARD_FETCH, CHUNK_CHARS, CHUNK_FETCH, HINT_FETCH, MAX_CONCEPTS, MENTIONED_SHOWN, WINDOW_CHARS_TOTAL_V2, WINDOW_MAX,
 )
 from src.domain.drive_keys import query_concepts
 from src.domain.drive_search import render_results
@@ -32,6 +32,8 @@ class Spy(KeySpyRepo):
         super().__init__()
         self.card_calls = []
         self.chunk_calls = []
+        self.scoped_chunk_calls = []   # (limit, item ids) per kNN over a set of files (RFC Δ246)
+        self.scoped_hint_calls = []
         self.ranking_reads = []
         self.record_reads = []
 
@@ -42,6 +44,14 @@ class Spy(KeySpyRepo):
     async def find_nearest_chunks(self, user_id, vector, limit, kind=None):
         self.chunk_calls.append((limit, kind))
         return await super().find_nearest_chunks(user_id, vector, limit, kind)
+
+    async def find_nearest_chunks_in(self, user_id, vector, limit, item_ids):
+        self.scoped_chunk_calls.append((limit, tuple(item_ids)))
+        return await super().find_nearest_chunks_in(user_id, vector, limit, item_ids)
+
+    async def find_nearest_hints_in(self, user_id, vector, limit, item_ids):
+        self.scoped_hint_calls.append((limit, tuple(item_ids)))
+        return await super().find_nearest_hints_in(user_id, vector, limit, item_ids)
 
     async def get_chunks_with_vectors(self, user_id, item_id, generation, indexes, **flags):
         self.ranking_reads.append(flags)
@@ -365,8 +375,10 @@ async def test_folder_scope_finds_a_weakly_named_file_deep_in_the_subtree_by_con
     assert "scope=folder-memory" in line and "content=memory" in line
 
 
-async def test_a_folder_over_the_in_memory_chunk_bound_uses_the_wide_streams_with_the_folder_filter(monkeypatch):
-    """Ports the test of the same name (§25.5.5)."""
+async def test_a_folder_over_the_in_memory_chunk_bound_runs_its_knn_over_its_own_files(monkeypatch):
+    """Ports test_a_folder_over_the_in_memory_chunk_bound_uses_the_wide_streams_with_the_folder_filter (§25.5.5). RFC
+    Δ246: the key streams stay user-wide under the folder filter; the chunk and hint kNN run over the folder's readable
+    files only, at CHUNK_FETCH / HINT_FETCH, and the user-wide chunk kNN does not run."""
     monkeypatch.setattr(search_mod, "FOLDER_INMEM_CHUNKS", 2)
     w = world()
     work = w.folder("Work")
@@ -375,7 +387,9 @@ async def test_a_folder_over_the_in_memory_chunk_bound_uses_the_wide_streams_wit
     log = log_line(monkeypatch)
     result = await w.search("lease", folder="Work")
     assert [c.item_id for c in result.cards if c.tier != "related"] == [inside]
-    assert w.repo.chunk_calls == [(CHUNK_FETCH, None)] and "content=wide" in log.info.call_args[0][0]
+    assert w.repo.chunk_calls == [] and w.repo.scoped_chunk_calls == [(CHUNK_FETCH, (inside,))]
+    assert w.repo.scoped_hint_calls == [(HINT_FETCH, (inside,))]
+    assert "content=folder-knn" in log.info.call_args[0][0]
 
 
 async def test_a_truncated_word_page_in_the_wide_folder_branch_never_states_the_folder_lacks_the_word(monkeypatch):
