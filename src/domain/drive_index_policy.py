@@ -11,7 +11,9 @@ from enum import Enum
 from typing import Dict, FrozenSet, Optional, Sequence
 
 from .drive_index import ContentClass, DriveChange, FolderProbe, Reason
-from .drive_index_params import DENSE_FOLDER_CHILDREN, MAX_DOWNLOAD_BYTES, MAX_SHEET_DOWNLOAD_BYTES
+from .drive_index_params import (
+    DENSE_FOLDER_CHILDREN, MAX_DOWNLOAD_BYTES, MAX_PDF_DOWNLOAD_BYTES, MAX_SHEET_DOWNLOAD_BYTES,
+)
 
 _EXT_KIND: Dict[str, str] = {
     ".pdf": "pdf", ".docx": "docx", ".doc": "doc", ".pptx": "pptx", ".ppt": "ppt", ".xlsx": "xlsx",
@@ -104,8 +106,11 @@ def admission(kind: str) -> Admission:
 
 
 def size_cap(kind: str) -> int:
-    """Download cap by kind, checked on metadata before any download (§5.4, §15): sheets amplify most (Phase 0)."""
-    return MAX_SHEET_DOWNLOAD_BYTES if kind in _SHEET_KINDS else MAX_DOWNLOAD_BYTES
+    """The indexer's download cap by kind, checked on metadata before any download (§5.4, §15): sheets amplify most
+    (Phase 0); a PDF goes higher, measured (decisions/drive_indexer_pdf_download_cap.md). Chat and open never read it."""
+    if kind in _SHEET_KINDS:
+        return MAX_SHEET_DOWNLOAD_BYTES
+    return MAX_PDF_DOWNLOAD_BYTES if kind == "pdf" else MAX_DOWNLOAD_BYTES
 
 
 def content_class_of(kind: str) -> ContentClass:

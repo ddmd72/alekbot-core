@@ -9,8 +9,9 @@ from src.domain.drive_card import card_text
 from src.domain.drive_keys import word_keys_capped
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import Priority, Reason, RecordState
-from src.domain.drive_index_params import MAX_ATTEMPTS, MAX_DOWNLOAD_BYTES, RETRY_CAP
+from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.domain.drive_index_planner import backoff
+from src.domain.drive_index_policy import size_cap
 from src.domain.user_drive import DriveAccessDenied
 from src.services import drive_indexing_service as svc_mod
 
@@ -75,7 +76,7 @@ async def test_a_rename_costs_one_card_and_no_download(w):
 
 
 async def test_metadata_over_the_cap_is_never_downloaded(w):
-    big = w.drive.add("huge.pdf", size_bytes=MAX_DOWNLOAD_BYTES + 1)
+    big = w.drive.add("huge.pdf", size_bytes=size_cap("pdf") + 1)
     await w.settle()
     assert w.rec(big).reason is Reason.TOO_LARGE and w.drive.downloads == []
 

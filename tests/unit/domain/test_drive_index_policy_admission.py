@@ -6,7 +6,7 @@ from src.domain import drive_index_policy as policy
 from src.domain.drive_card import _KIND_LABEL
 from src.domain.drive_extraction import chain_for
 from src.domain.drive_index import ContentClass
-from src.domain.drive_index_params import MAX_DOWNLOAD_BYTES, MAX_SHEET_DOWNLOAD_BYTES
+from src.domain.drive_index_params import MAX_DOWNLOAD_BYTES, MAX_PDF_DOWNLOAD_BYTES, MAX_SHEET_DOWNLOAD_BYTES
 from src.domain.drive_index_policy import (
     SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS, TRIAGED_KINDS, Admission, admission, content_class_of, size_cap,
 )
@@ -69,6 +69,9 @@ class TestSizeCap:
     def test_sheets(self, kind):
         assert size_cap(kind) == MAX_SHEET_DOWNLOAD_BYTES
 
-    @pytest.mark.parametrize("kind", ["pdf", "docx", "ods", "csv", "image"])
+    def test_pdf(self):   # indexer-only raise (decisions/drive_indexer_pdf_download_cap.md)
+        assert size_cap("pdf") == MAX_PDF_DOWNLOAD_BYTES
+
+    @pytest.mark.parametrize("kind", ["docx", "ods", "csv", "image"])
     def test_everything_else(self, kind):
         assert size_cap(kind) == MAX_DOWNLOAD_BYTES

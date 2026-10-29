@@ -14,7 +14,7 @@ from src.domain.drive_index import (
     Priority, Reason, RecordState, Scope, TriageVerdict,
 )
 from src.domain.drive_index_params import (
-    CARD_LEAD_CHARS, MAX_ATTEMPTS, MAX_DEFER, MAX_DOWNLOAD_BYTES, MAX_SHEET_DOWNLOAD_BYTES, MODEL_BACKOFF_BASE_S,
+    CARD_LEAD_CHARS, MAX_ATTEMPTS, MAX_DEFER, MAX_SHEET_DOWNLOAD_BYTES, MODEL_BACKOFF_BASE_S,
     MODEL_BACKOFF_CAP_S, QUIET, TICK_DEADLINE_S, TICK_START_BUDGET,
 )
 from src.domain.drive_index_planner import (
@@ -117,11 +117,11 @@ class TestClassifyContent:
         assert classify(ch("~$contract.docx"), Scope.NORMAL, None, None).reason is Reason.OS_ARTIFACT
 
     def test_over_the_download_cap(self):
-        cls = classify(ch(size=MAX_DOWNLOAD_BYTES + 1), Scope.NORMAL, None, None)
+        cls = classify(ch(size=policy.size_cap("pdf") + 1), Scope.NORMAL, None, None)
         assert (cls.state, cls.reason) == (RecordState.METADATA_ONLY, Reason.TOO_LARGE)
 
     def test_at_the_download_cap(self):
-        assert classify(ch(size=MAX_DOWNLOAD_BYTES), Scope.NORMAL, None, None).state is RecordState.PENDING
+        assert classify(ch(size=policy.size_cap("pdf")), Scope.NORMAL, None, None).state is RecordState.PENDING
 
     def test_sheets_have_their_own_cap(self):
         assert classify(ch("t.xlsx", size=MAX_SHEET_DOWNLOAD_BYTES + 1), Scope.NORMAL, None,
@@ -158,7 +158,7 @@ class TestClassifyContent:
         assert classify(ch(cv="c2"), Scope.NORMAL, None, failed).state is RecordState.PENDING
 
     def test_oversized_new_version_beats_a_standing_outcome(self):
-        cls = classify(ch(cv="c1", size=MAX_DOWNLOAD_BYTES + 1), Scope.NORMAL, None, indexed_rec())
+        cls = classify(ch(cv="c1", size=policy.size_cap("pdf") + 1), Scope.NORMAL, None, indexed_rec())
         assert (cls.reason, cls.content_kept) == (Reason.TOO_LARGE, False)
 
 
