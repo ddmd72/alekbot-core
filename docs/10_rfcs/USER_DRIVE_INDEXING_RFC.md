@@ -2008,7 +2008,9 @@ this section wins; the text above was corrected where it was plainly false. Slic
   (`c2048x2048`, JPEG; HEIC is never decoded by us). **Spike S0g** confirms custom rendition sizes under
   `Files.ReadWrite.AppFolder` and that receipt text stays legible. With no rendition, the original is sent only when it
   is JPEG/PNG/WebP/GIF within the vision cap (3.75 MiB raw: 5 MiB once base64-encoded, Anthropic's per-image limit; to
-  be confirmed in the live model check); other formats are `metadata_only / no_text`. A 413 on an image is
+  be confirmed in the live model check); other formats are `metadata_only / no_text`. A rendition over that cap steps
+  down through `READER_RENDITION_STEPS` (`c2048x2048`, `c1536x1536`, `c1024x1024`); if none fits and the original
+  cannot be sent, the file is `metadata_only / too_large`, not `no_text`. A 413 on an image is
   `too_large`, a 400/422 `unsupported` (both terminal); a timeout on an image is a model outage.
 - Done-when of §16 Slice 4 holds: 100 holiday photos cost ⌈100 / `TRIAGE_BATCH`⌉ triage calls and no reader call.
 

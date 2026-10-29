@@ -129,4 +129,5 @@ class UserDrivePort(ABC):
     @abstractmethod
     async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
         """A provider-rendered image of the item (`size` e.g. "medium" or "c2048x2048"), JPEG or PNG; None when the
-        provider has no rendition for it. The indexer never decodes or scales an image itself (§5.3)."""
+        provider has no rendition for it. Raises DriveThumbnailTooLarge when the rendition passes the vision byte cap.
+        The indexer never decodes or scales an image itself (§5.3)."""

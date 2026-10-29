@@ -127,6 +127,15 @@ class DriveFileTooLarge(Exception):
         self.limit_bytes = limit_bytes
 
 
+class DriveThumbnailTooLarge(Exception):
+    """A provider rendition exists but passed its byte cap (distinct from "no rendition", which is None)."""
+
+    def __init__(self, size: str, limit_bytes: int) -> None:
+        super().__init__(f"thumbnail {size} exceeded {format_size(limit_bytes)}")
+        self.size = size
+        self.limit_bytes = limit_bytes
+
+
 @dataclass
 class FolderResolution:
     folder: DriveItem

@@ -75,6 +75,7 @@ TRIAGE_THUMBNAIL_SIZE = "large"             # Graph 800 px, chosen after the liv
                                             # precise than at 176 px ("medium"). TRIAGE_VERSION is not bumped: images
                                             # already triaged keep their verdict until the owner rebuilds the index
 READER_RENDITION_SIZE = "c2048x2048"        # Graph custom size for the reader's image input (S0g)
+READER_RENDITION_STEPS = (READER_RENDITION_SIZE, "c1536x1536", "c1024x1024")   # tried in order while one is over the cap
 MODEL_BACKOFF_BASE_S = 60                   # model outage backoff, doubled per consecutive outage (§24.8)
 MODEL_BACKOFF_CAP_S = 3600
 MODEL_REREAD_COOLDOWN = timedelta(hours=24)  # a file the reader read is not read by it again sooner: the edits made
