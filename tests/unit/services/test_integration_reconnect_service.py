@@ -10,7 +10,7 @@ from typing import Dict, List, Optional
 import pytest
 
 from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
-from src.adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredentialsAdapter
+from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.agent import AgentStatus
@@ -22,11 +22,12 @@ from src.domain.reconnect_policy import R1_NOTICES, Integration
 from src.domain.task import TaskUserConfig
 from src.domain.user_drive import DriveConnection
 from src.services.integration_reconnect_service import IntegrationReconnectService
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 NOW = datetime(2026, 10, 29, 9, 30, tzinfo=timezone.utc)
-CREDS, FACTS, STATE, TASKS = "eval_oauth_credentials", "eval_email_facts", "eval_email_state", "eval_task_config"
+CREDS, FACTS, STATE, TASKS = "eval_credentials", "eval_email_facts", "eval_email_state", "eval_task_config"
 
 
 class Notifier:
@@ -70,12 +71,12 @@ class Alerts:
 
 class World:
     def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={CREDS: "development_oauth_credentials",
+        self.db = EvalDb(indexes=INDEXES_FILE, groups={CREDS: "development_credentials",
                                                         FACTS: "development_domain_email_facts_v1",
                                                         STATE: "development_email_indexing_state"})
-        env = SimpleNamespace(oauth_credentials_collection=CREDS, domain_email_facts_collection=FACTS,
+        env = SimpleNamespace(credentials_collection=CREDS, domain_email_facts_collection=FACTS,
                               email_indexing_state_collection=STATE, task_config_collection=TASKS)
-        self.creds = FirestoreOAuthCredentialsAdapter(self.db, env)
+        self.creds = FirestoreCredentialStore(self.db, env, cipher=AesGcmTestCipher())
         self.email = FirestoreIndexedEmailRepository(self.db, env)
         self.tasks = FirestoreTaskConfigRepository(self.db, env)
         self.drive_states = InMemoryDriveIndexRepository()
@@ -95,7 +96,9 @@ class World:
     async def connect(self, user_id: str, provider: str) -> None:
         await self.creds.save_credentials(OAuthCredentials(
             user_id=user_id, provider=provider, access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[],
-            email_address="user@example.com"))
+            email_address="user@example.com",
+            account_realm="microsoft" if provider.startswith("microsoft") else "google",
+            account_subject=f"sub-{user_id}"))
 
     async def gmail_state(self, user_id: str) -> None:
         await self.email.update_indexing_state(IndexingState(user_id=user_id, provider="gmail",

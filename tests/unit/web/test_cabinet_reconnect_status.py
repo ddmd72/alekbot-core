@@ -14,7 +14,7 @@ import pytest
 from quart import Quart
 
 from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
-from src.adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredentialsAdapter
+from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index import DriveSyncState
@@ -25,12 +25,13 @@ from src.services.integration_reconnect_service import IntegrationReconnectServi
 from src.services.task_setup_service import TaskSetupService
 from src.web.oauth_app import create_oauth_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 USER = "user-a"
 NOW = datetime(2026, 10, 29, 9, 30, tzinfo=timezone.utc)
-CREDS, FACTS, STATE, TASKS = "eval_oauth_credentials", "eval_email_facts", "eval_email_state", "eval_task_config"
+CREDS, FACTS, STATE, TASKS = "eval_credentials", "eval_email_facts", "eval_email_state", "eval_task_config"
 AUTH = {"Authorization": "Bearer t"}
 
 
@@ -56,12 +57,12 @@ class Users:
 
 class World:
     def __init__(self) -> None:
-        self.db = EvalDb(indexes=INDEXES_FILE, groups={CREDS: "development_oauth_credentials",
+        self.db = EvalDb(indexes=INDEXES_FILE, groups={CREDS: "development_credentials",
                                                         FACTS: "development_domain_email_facts_v1",
                                                         STATE: "development_email_indexing_state"})
-        env = SimpleNamespace(oauth_credentials_collection=CREDS, domain_email_facts_collection=FACTS,
+        env = SimpleNamespace(credentials_collection=CREDS, domain_email_facts_collection=FACTS,
                               email_indexing_state_collection=STATE, task_config_collection=TASKS)
-        self.creds = FirestoreOAuthCredentialsAdapter(self.db, env)
+        self.creds = FirestoreCredentialStore(self.db, env, cipher=AesGcmTestCipher())
         self.email = FirestoreIndexedEmailRepository(self.db, env)
         self.tasks = FirestoreTaskConfigRepository(self.db, env)
         self.drive_states = InMemoryDriveIndexRepository()
@@ -101,7 +102,8 @@ class World:
     async def connect(self, provider: str) -> None:
         await self.creds.save_credentials(OAuthCredentials(
             user_id=USER, provider=provider, access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[],
-            email_address="user@example.com"))
+            email_address="user@example.com",
+            account_realm="microsoft" if provider.startswith("microsoft") else "google", account_subject="sub-a"))
 
     async def gmail_state(self) -> None:
         await self.email.update_indexing_state(IndexingState(user_id=USER, provider="gmail"))
@@ -202,7 +204,7 @@ async def test_the_gmail_consent_clears_the_mark_and_the_flag(world):
     gmail = Mock()
     gmail.exchange_code = AsyncMock(return_value=OAuthCredentials(
         user_id=USER, provider="gmail", access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[],
-        email_address="user@example.com"))
+        email_address="user@example.com", account_realm="google", account_subject="sub-a"))
     async with world.oauth(gmail).test_client() as client:
         client.set_cookie("localhost", "gmail_oauth_state", "s1")
         client.set_cookie("localhost", "gmail_connect_user_id", USER)
@@ -216,7 +218,7 @@ async def test_a_failed_clear_never_fails_the_connect(world):
     gmail = Mock()
     gmail.exchange_code = AsyncMock(return_value=OAuthCredentials(
         user_id=USER, provider="gmail", access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[],
-        email_address="user@example.com"))
+        email_address="user@example.com", account_realm="google", account_subject="sub-a"))
     world.reconnect.consented = AsyncMock(side_effect=RuntimeError("firestore down"))
     async with world.oauth(gmail).test_client() as client:
         client.set_cookie("localhost", "gmail_oauth_state", "s1")
@@ -236,11 +238,16 @@ def _aiohttp_session(token: Dict):
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
     session.post.return_value = resp
-    refused = MagicMock()   # the profile / drive-id reads after the token: refused, both are best effort
+    me = MagicMock()        # the account identity read (Graph /me), required since SECRETS_AT_REST_RFC I9
+    me.status, me.ok = 200, True
+    me.json = AsyncMock(return_value={"id": "ms-subject-a", "mail": "user@example.com"})
+    me.__aenter__ = AsyncMock(return_value=me)
+    me.__aexit__ = AsyncMock(return_value=False)
+    refused = MagicMock()   # the drive-id read after the token: refused, it is best effort
     refused.status, refused.ok = 403, False
     refused.__aenter__ = AsyncMock(return_value=refused)
     refused.__aexit__ = AsyncMock(return_value=False)
-    session.get.return_value = refused
+    session.get.side_effect = lambda url, **kw: me if url == "https://graph.microsoft.com/v1.0/me" else refused
     return session
 
 
