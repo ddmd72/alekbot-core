@@ -54,6 +54,9 @@ from src.utils.memory_scope import memory_scope
 EXTRACT_MEMORY_LIMIT_BYTES = 1024 * 1024 * 1024    # RLIMIT_AS of the child (S1 placeholder; indexer has 2 GiB)
 EXTRACT_CPU_LIMIT_S = 90                           # RLIMIT_CPU soft limit (S1 placeholder; below the wall clock)
 EXTRACT_FILE_LIMIT_BYTES = 64 * 1024 * 1024        # RLIMIT_FSIZE: the result, one PDF window, the stderr file
+# RLIMIT_NPROC of the sandboxed child (per uid: processes and threads). The document child spawns no process and its
+# numeric libraries are pinned to one thread; the media child's 256 is the same fork-bomb bound (mirrored, REQ-ARCH-08).
+EXTRACT_NPROC_LIMIT = 256
 CHILD_MODULE = "src.adapters.drive_parser.child"
 # The child's exit codes (drive_parser/child.py). Mirrored, not imported: a top-level adapter imports no other
 # adapter module (REQ-ARCH-08); a test pins the two in step.
@@ -162,6 +165,8 @@ class SubprocessContentExtractor(ContentExtractorPort):
                 staged, window = self._stage(payload, workdir)
                 request = {**staged, "out": out, "memory_bytes": self._memory, "cpu_s": self._cpu,
                            "file_bytes": self._file_bytes}
+                if self._sandbox is not None:     # root ignores it and a dev user's own processes would count against it
+                    request["nproc"] = EXTRACT_NPROC_LIMIT
                 with open(os.path.join(workdir, "stderr.txt"), "w+b") as errors:
                     returncode, timed_out = await self._spawn(request, workdir, errors)
                     status, detail = self._exit_status(returncode, timed_out)

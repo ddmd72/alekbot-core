@@ -101,6 +101,7 @@ import hashlib
 import os
 import tempfile
 import time
+import traceback
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
@@ -956,7 +957,9 @@ class DriveIndexingService:
             category = ErrorCategory.PROVIDER_ERROR if isinstance(exc, (DriveAccessDenied, ValueError)) \
                 else ErrorCategory.INTERNAL
             delay = _backoff_s(state.systemic_failures)
-            logger.error(f"[DriveIndex] tick failed for {user_id[:8]}: {exc}; continuing in {delay}s", exc_info=True)
+            # type, digest and frames (code lines, no values): a message can quote a transcript, a path or a file name
+            logger.error(f"[DriveIndex] tick failed for {user_id[:8]}: {exc_brief(exc)}; continuing in {delay}s\n"
+                         f"{''.join(traceback.format_tb(exc.__traceback__))}")
             cont.request(delay)
             await self._save_state(_notes_onto(replace(models.onto(saved.state), last_error=category,
                                                        continuation_enqueued_at=now,
