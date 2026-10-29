@@ -385,7 +385,7 @@ ref shape (§2.4) — so `open_file` re-reads generated/delivered documents too,
 Binary files returned as `file_data` in `AgentResponse.metadata` — SmartAgent propagates to
 MessagePart for LLM vision.
 
-**Two stores, two lifetimes.** Chat attachments (this document) live in GCS for 90 days and are addressed by
+**Two stores, two lifetimes.** Chat attachments (this document) live in GCS for 30 days (`email_review/` 5) and are addressed by
 file name. The user's **drive** (`UserDrivePort`, OneDrive App Folder; `docs/10_rfcs/USER_DRIVE_RFC.md`) is the
 long-term area, reached through one intent, `work_with_drive_files`: the drive specialist (`DriveAgent`,
 `docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`) works on it through the user's `DriveOperations` (this agent's former drive

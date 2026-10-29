@@ -49,7 +49,7 @@ apply to the main service.
 
 **Drive indexer** (`indexer_main.py`; [`../10_rfcs/USER_DRIVE_INDEXING_RFC.md`](../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §9,
 §12.5; [decision](../04_solution_strategy/decisions/drive_indexer_lease_queue_service.md)). A `/worker` that serves
-`drive_sync` only (plus `/health`); the main service (1 GiB) never indexes.
+`drive_sync` only (plus `/health`); the main service (2 GiB) never indexes.
 - **Ingress is internal and the in-app OIDC check stays:** a request from outside Google's network gets 404 before the
   app, and on Cloud Run the check fails closed when no accepted identity is configured (`DRIVE_INVOKER_SA_EMAIL`, else
   `SERVICE_ACCOUNT_EMAIL`, plus the optional `OIDC_TRANSITION_SA_EMAILS`; RFC Δ21).

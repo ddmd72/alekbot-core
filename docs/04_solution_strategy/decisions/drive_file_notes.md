@@ -1,7 +1,7 @@
 # Decision: The owner's drive file notes are written inside the drive specialist, one tool per edit kind
 
 **Date:** 2026-10-28
-**Status:** Accepted with the drive specialist RFC (§9); built on `feat/drive-notes`, not deployed.
+**Status:** Accepted with the drive specialist RFC (§9); deployed.
 **Context:** [DRIVE_FILE_NOTES_RFC.md](../../10_rfcs/DRIVE_FILE_NOTES_RFC.md) rev 3.3 §0.5; [DRIVE_SPECIALIST_RFC.md](../../10_rfcs/DRIVE_SPECIALIST_RFC.md)
 §9; owner's map [user_drive/README.md](../../05_building_blocks/user_drive/README.md) §4.24; [drive_specialist.md](drive_specialist.md).
 
