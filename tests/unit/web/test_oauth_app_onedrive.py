@@ -1,6 +1,6 @@
 """Drive connect routes (docs/10_rfcs/USER_DRIVE_RFC.md §4.1)."""
 import inspect
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import DEFAULT, AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from quart import Quart
@@ -27,6 +27,10 @@ def _session(post):
     s.__aenter__ = AsyncMock(return_value=s)
     s.__aexit__ = AsyncMock(return_value=False)
     s.post.return_value = post
+    # the account identity read (Graph /me), required since SECRETS_AT_REST_RFC I9: a valid synthetic account; any
+    # other GET (the best-effort drive-id read) keeps the default mock answer
+    me = _resp({"id": "ms-subject-1", "mail": "user@example.com"})
+    s.get.side_effect = lambda url, **kwargs: me if url == "https://graph.microsoft.com/v1.0/me" else DEFAULT
     return s
 
 

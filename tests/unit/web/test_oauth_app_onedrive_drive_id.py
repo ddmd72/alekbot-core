@@ -1,5 +1,5 @@
 """The drive connect callback saves the connected drive's id (USER_DRIVE_INDEXING_RFC §10.1 step 0)."""
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import DEFAULT, AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from quart import Quart
@@ -8,6 +8,7 @@ from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.web.oauth_app import create_oauth_blueprint
 
 _APPROOT = "https://graph.microsoft.com/v1.0/me/drive/special/approot"
+_ME = "https://graph.microsoft.com/v1.0/me"
 
 
 def _resp(json_data, status=200):
@@ -22,13 +23,24 @@ def _resp(json_data, status=200):
 
 
 def _session(post, get):
+    """`get` answers the drive-id read (the App Folder item). The account identity read (Graph /me, required since
+    SECRETS_AT_REST_RFC I9) answers with a valid synthetic account: these tests are about the drive id, and the failed
+    identity read is `test_consent_identity.py`'s."""
     s = MagicMock()
     s.__aenter__ = AsyncMock(return_value=s)
     s.__aexit__ = AsyncMock(return_value=False)
     s.post.return_value = post
-    if isinstance(get, Exception):
-        s.get.side_effect = get
-    else:
+    me = _resp({"id": "ms-subject-1", "mail": "user@example.com"})
+
+    def answer(url, **kwargs):
+        if url == _ME:
+            return me
+        if isinstance(get, Exception):
+            raise get
+        return DEFAULT
+
+    s.get.side_effect = answer
+    if not isinstance(get, Exception):
         s.get.return_value = get
     return s
 
