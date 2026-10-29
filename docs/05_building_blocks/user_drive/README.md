@@ -1597,7 +1597,9 @@ reason). Pageable and over the cap (or truncated): the open is **refused** befor
 specialist's result adds the route (`find_passages` for what a file says, `read_passages ... "from 1"` only for its text in order),
 FileManagement's adds the commission route. Anything else over the cap is **cut** after the conversion: the head at a paragraph
 plus a cut line (no indexed text, stale, or longer live than indexed). Vision opens are unchanged. `read_passages` with `from N`
-returns up to 10 passages from N and a page line (next page, the end, past the end); Smart's block shows a `pages read:` line per
+returns up to 10 passages from N and a page line (next page, the end, past the end). One page per commission: a second
+paged `read_passages` in the same specialist run is answered `ONE_PAGE` (code, `DriveToolRun`), and Smart asks for the next
+page in a new commission with the `next: from N` number its history line names (§29.16 B8). Smart's block shows a `pages read:` line per
 paged file and the reading lines `R_PAGED` / `R_TOO_LONG`. A failed extent lookup fails safe (one WARNING; the cut still holds).
 
 **Logs.** `[DriveSearch] user=<8> status=… mode=excerpts|excerpt_range scope=… files=… repeated=… no_text=…` (counts, no

@@ -214,14 +214,16 @@ Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live
     ConversationHandler renders the turn's entries into full_text as one `[Drive: <path> ref=… — <what was done>]`
     line per file (`drive_history_lines` via `history_context_block`), never JSON, never in the summary;
     FileManagement's open_file builds its entries with the same helper.
-    **The open bound** (USER_DRIVE_INDEXING_RFC §29, built on `feat/drive-open-cap-paging`): a drive text above
+    **The open bound** (USER_DRIVE_INDEXING_RFC §29, built, not deployed): a drive text above
     `OPEN_MAX_CHARS` (60 000) is never handed to a model whole. `DriveOperations._open_drive_item` asks
     `DriveSearchService.text_extent` once (not for `original`); a pageable extent over the cap (or truncated) is
     refused before any download (`REFUSED`, `ReadFacts.too_long`, a tool-free text from `drive_open_bound`); any other
     text is cut after the conversion (head at a paragraph + a cut line outside the wrapper, `ReadFacts.cut`). A failed
     lookup counts as not indexed (one WARNING). The specialist's `_seen` appends `ROUTE_SPECIALIST` to a refusal and
     shows a cut body as `stand_in_cut`; FileManagement's `_respond` answers a refusal as `AgentResponse.success` with
-    `ROUTE_ORCHESTRATOR` (a failure would invite the same open again). Vision opens are unchanged (one log line).
+    `ROUTE_ORCHESTRATOR` (a failure would invite the same open again). Vision opens are unchanged (one log line). One page per commission:
+    `DriveToolRun` answers a second paged `read_passages` in a run with `ONE_PAGE` (set before the await, so a
+    co-emitted second page is refused too); Smart commissions the next page with the history line's `next: from N`.
   - **Search** (`search_drive` → `DriveSearchService` over the opt-in index; USER_DRIVE_INDEXING_RFC §10.4, §24.10,
     Search v2 §25.5): parameters `query`, `folder`, `kind`, `date_from`, `date_to`, described in
     `domain/drive_tool_texts.py`. `query` is the subject in the user's words (a name, place, person, topic, a document
