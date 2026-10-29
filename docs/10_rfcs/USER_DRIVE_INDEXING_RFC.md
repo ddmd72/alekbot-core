@@ -6146,7 +6146,7 @@ Engineering decisions taken here: A1–A18, each with its reason above. The para
 | evals | `scripts/validation/drive_eval/excerpts_eval.py`, `specialist_ab.py`, `owner_notes_overlay.py`, `fixture_texts_afc.py`; gold `tests/fixtures/drive_eval/gold_specialist_afc.json` |
 | mutation targets | `tests/support/mutation_targets.py` (the six domain modules) |
 
-## 29. Open bound and paging (rev 3.34, 2026-10-29; built: no)
+## 29. Open bound and paging (rev 3.34, 2026-10-29; built on `feat/drive-open-cap-paging`, not deployed)
 
 *Designed 2026-10-29 after an incident on a call (§29.1). The owner fixed the rule (§29.2) and the scope; the engineering
 decisions are L1–L13. Reverses A16 and resolves OQ-2 (§29.12). Code is cited at `main` `55c2d298`. Every example is
@@ -6506,3 +6506,28 @@ reaches Smart whole as an attachment. One log line per vision open measures the 
   by a page read in the same commission on positional cases only; zero `from N` reads on the content families; content
   recall at or above the AFC bar; the call origin passes as chat does.
 - **G3 `smart_dry_run`, before and after** at equal repeats: the `whole_file` cases (short files) still open whole.
+
+### 29.16 As built: deltas and code citations (built, not deployed)
+
+Deltas from the plan and the text above, declared:
+- **B1** `drive_open_bound.py` holds `refuses`, `bound`, `refusal_text`, `path_subject`. The cut itself (`head_at_paragraph`,
+  `cut_line`, `stand_in_cut`) is in `drive_open_cut.py`, because `drive_transcript_render` needs it and `drive_open_bound` reaches
+  `drive_search`, which imports the renderer (an import cycle). `BoundText` and `OpenBoundInfo` are one-class files
+  (`drive_open_bound_text.py`, `drive_open_bound_info.py`) under the one-public-class rule.
+- **B2** `text_extent` calls `_excerpt_gate` as it is and maps its `ExcerptResult` (disabled, disconnected, building) instead of
+  extracting a separate `_index_gate`: the gate sequence is the same code, so the two cannot drift.
+- **B3** A stale record is readable by `read_passages` (`_readable` ignores staleness), so `pageable` implies a first page (L3), while a
+  stale file also has one; the invariant test asserts the one direction the refusal needs.
+- **B4** A live transcript's cut note is `open_text(live=True, indexed=...)`; `indexed` is `_readable(rec) and not rec.stale` at the
+  record level (the gate is not asked again). The transcript outcome carries `ReadFacts.cut` only when the extent proves the cut
+  (not pageable and `text_chars` above the cap); the specialist's stand-in for it is the old one (no `kept` known).
+- **B5** Searched line: `pages:` entries read `‹path› passages i–j (next: from N)`, `(the end)` or `from passage N (past the end)`.
+- **B6** `pages read:` sits after the folder lines and before the head lines (plan T5); §29.7 said "before its wrapper": both hold.
+- **B7** A second existing test goes red beside the one the plan named: it also asserts the old note on a **live** transcript
+  (`tests/unit/agents/test_file_management_open_archived.py::test_a_recording_without_a_mirror_file_cuts_without_a_path`).
+
+Code: `src/domain/drive_open_bound.py`, `drive_open_cut.py`, `drive_open_texts.py`, `drive_text_extent.py`, `drive_excerpt_page.py`,
+`drive_excerpt_render.py` (`page_line`, `render_block`, `searched_line`), `drive_excerpt_ledger.py`, `drive_answer.py`
+(`reading_lines`), `drive_history.py`; `DriveSearchService.text_extent` / `_excerpt_range`; `DriveOperations._open_drive_item`;
+`drive_tools.py` `_seen`; `file_management_agent.py` `_respond`; tokens `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH` (upload is
+the owner's, before the deploy).

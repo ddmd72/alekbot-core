@@ -17,10 +17,13 @@ The owner's notes on files ([DRIVE_FILE_NOTES_RFC.md](../../10_rfcs/DRIVE_FILE_N
 erase are §4.24.
 Answer from content ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §28; deployed 2026-10-29):
 the specialist's `find_passages` / `read_passages`, the write gate and the low-accuracy route are §4.25.
+Open bound and paging (RFC §29; built, not deployed): why a long file was not opened whole, the refusal, the cut lines and the
+`from N` pages are §4.25 ("The open bound and pages"); the log lines are §7.
 
 | Question | Read |
 |---|---|
 | What is in the index, what a record or a card holds, why a folder is one card | §3 |
+| Why a long file was not opened whole; what a page is; what `open refused` / `open cut` mean | §4.25 (open bound and pages), §7 |
 | Why a file was or was not read; what happens to it from the moment it lands on the drive | §4 (walk-through, steps 1–9) |
 | When a new file (a scan, a PDF) becomes searchable; why an edited file still shows its old text | §4.15 (timelines) |
 | Why a scan, a screenshot or a PDF went to the model, and what the model returns | §4 steps 4–6 |
@@ -1339,8 +1342,9 @@ $0.30 per audio hour plus a small per-window allowance, an upper bound of a wind
 prompt-content row in BigQuery and no Logfire span; the tick line and the batch log lines carry counts only.
 
 **Search and open.** A transcribed card carries the transcript line; passages come from the chunk windows with the `[mm:ss]` stamp at their
-head, so Smart can say where in a recording. Opening a transcribed recording (`open_drive_file`) returns the transcript (at most 60 000 characters, then a note) inside
-the untrusted wrapper, not the video; with `original: true` it returns a link to the recording, never bytes into chat. Until a transcript exists the
+head, so Smart can say where in a recording. Opening a transcribed recording (`open_drive_file`) returns the transcript inside
+the untrusted wrapper, not the video, bounded like any drive text (RFC §29.10): over 60 000 characters and indexed it is refused and
+read by pages, otherwise cut with a code-written line (an archived transcript keeps today's note); with `original: true` it returns a link to the recording, never bytes into chat. Until a transcript exists the
 open behaves as before. A date said in a recording never changes the file's date. The specialist's `PROTOCOL_DRIVE_SEARCH` carries the recordings line (audio or video, `.webm` is video; dates in names as `YYYY-MM-DD`; a media folder listing as fallback).
 
 **Privacy.** Audio goes to Google only (Files API, deleted after collection; the 48 h expiry bounds the rest). Transcripts are other people's
@@ -1587,8 +1591,17 @@ not (owner-accepted residual).
 from an opened file. A find is unchanged: zero-LLM, strict AND, no passages in its result. Files in a code repository or a
 dense folder have no chunks.
 
+**The open bound and pages (RFC §29; built, not deployed).** A text file from the drive above `OPEN_MAX_CHARS` (60 000) is never
+handed to a model whole. `DriveSearchService.text_extent` says what the index holds (`pageable`, `stale`, `not_indexed` with a
+reason). Pageable and over the cap (or truncated): the open is **refused** before any download, with a tool-free text; the
+specialist's result adds the route (`find_passages` for what a file says, `read_passages ... "from 1"` only for its text in order),
+FileManagement's adds the commission route. Anything else over the cap is **cut** after the conversion: the head at a paragraph
+plus a cut line (no indexed text, stale, or longer live than indexed). Vision opens are unchanged. `read_passages` with `from N`
+returns up to 10 passages from N and a page line (next page, the end, past the end); Smart's block shows a `pages read:` line per
+paged file and the reading lines `R_PAGED` / `R_TOO_LONG`. A failed extent lookup fails safe (one WARNING; the cut still holds).
+
 **Logs.** `[DriveSearch] user=<8> status=… mode=excerpts|excerpt_range scope=… files=… repeated=… no_text=…` (counts, no
-text); `[DriveOperations] opened: <ref> chars=<n>`; `[DriveAgent] … refused: passages were read …`.
+text); `[DriveOperations] opened: <ref> chars=<n>`, `open refused: <ref> chars=… passages=… truncated=…`, `open cut: <ref> chars=… kept=… extent=…`, `opened vision: <ref> mime=… bytes=… pages=…`; `[DriveAgent] … refused: passages were read …`.
 
 **Evals.** `scripts/validation/drive_eval/excerpts_eval.py` (passage recall on the cached index, bars
 `tests/fixtures/drive_eval/bars_excerpts.json`); the specialist families (`knowledge`, `value_in_content`, `follow_up`,
@@ -2084,6 +2097,10 @@ and index-time descriptions instead of query-time ranking. The full delta table 
 
 ## 7. Operations
 
+- **Open bound lines** (main service, `make fetch-logs`; RFC §29): `[DriveOperations] open refused` (a pageable text over the cap
+  was not downloaded), `open cut` (the head was delivered; `extent=` says why), `opened vision` (what the unbounded vision path
+  delivers: the trigger to revisit is born-digital PDFs above about 30 pages opened often), and `extent lookup failed` (the open went
+  on without the index). The unchanged `opened: <ref> chars=` line is the converted length before the bound.
 - **Logs.** On the indexer service, one `[DriveIndex] tick user=… end=done|continued {…} model_cost=$… duration=…`
   line per tick that completes, with counts such as `observed`, `pages`, `skipped`, `cards`, `swept`, `deleted`,
   `rescoped`, `upgraded`, `released`; from Slice 2+4 `indexed`, `demoted`, `failed`, `retried`, `deferred`, `chunks`,
@@ -2371,6 +2388,7 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 
 | Piece | File |
 |---|---|
+| Open bound and pages (RFC §29) | `src/domain/drive_open_bound.py` (refuses, bound, texts), `drive_open_cut.py`, `drive_open_texts.py`, `drive_open_bound_text.py`, `drive_open_bound_info.py`, `drive_text_extent.py`; `drive_excerpt_page.py` (`PageSpan`); `DriveSearchService.text_extent`; `DriveOperations._open_drive_item`; `drive_tools.py` `_seen`; `file_management_agent.py` `_respond` |
 | Domain model, parameters, versions | `src/domain/drive_index.py`, `src/domain/drive_index_params.py` |
 | Policy, planner, card, task keys | `src/domain/drive_index_policy.py`, `drive_index_planner.py`, `drive_card.py`, `drive_task_keys.py` |
 | Keys and labels (Search v2) | `src/domain/drive_keys.py` (families, `word_keys`, `about_keys_of`, `query_concepts`, `name_keys_v2`), `drive_key_forms.py` (tokens, forms, skeletons), `drive_key_sources.py`, `drive_match.py` (families, source classes, tiers), `drive_labels.py` (fixed enums, D31 names, `k:` table), `drive_name_keys.py` (shared helpers) |

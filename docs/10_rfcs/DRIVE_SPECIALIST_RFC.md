@@ -551,6 +551,7 @@ code produces, for **every** read of the run, in the order produced.
 | Deleted recordings and notes search | the full text | verbatim | `render_deleted` |
 | Listing | the full text | verbatim | `_list_drive` |
 | Opened text, transcript, recording link | a stand-in: `[r2: opened [Drive: … ref=…], N characters, delivered to the orchestrator as is; you do not see the text]` | the block, verbatim, with its own `REFERENCE_REMINDER` | `_open_drive_item` |
+| Opened text over 60 000 characters (USER_DRIVE_INDEXING_RFC §29, built, not deployed) | indexed: a refusal (no body, nothing downloaded) plus the route naming `find_passages` and `read_passages "from 1"`; otherwise a cut stand-in: `[r2: opened …, cut at K of N characters, delivered to the orchestrator; you do not see the text]` (stale: plus the find route) | the refusal block, or the head and its code-written cut line | `drive_open_bound.py`, `DriveOperations._open_drive_item` |
 | Image, PDF | a stand-in: `[r3: [Drive: …] (<mime>) attached for the orchestrator]` | today's line + `metadata["file_data"]` → vision | `REFERENCE_REMINDER_ATTACHED`, temp path as today |
 | Video | today's "has been sent to the user as a file" | the same line | `notify_file_bytes` |
 | Mutations | today's one-line result | the same line, in the op lines (§7.1) | — |
@@ -739,6 +740,8 @@ descriptions are specialist-owned constants in `src/domain/drive_tool_texts.py`.
 
 `save_text_file` and `append_to_file` are always declared; without a matching item the handler refuses with no service
 call, and the refusal is classed `not_possible` (§7.2). `OUTPUT_FORMAT_DRIVE` describes `not_done` next to `question`.
+
+**Built, not deployed (open bound):** `USER_DRIVE_INDEXING_RFC.md` §29 changes two descriptions here: `open_drive_file` says a text over 60 000 characters is refused when indexed and cut otherwise; `read_passages` leads with its positional purpose ("from N" pages, "Not for what a file says about something"); its `passages` field gains `from N`. The texts are in `src/domain/drive_tool_texts.py`.
 
 **Built, not deployed:** `USER_DRIVE_INDEXING_RFC.md` §28 (answer from content, 2026-10-28) adds the read tools `find_passages` and `read_passages`, which the specialist sees in full; it amends §2.3.11, §5.8 (A′), §6 and `execute_as_given` for reads (§28.3 lists each), and, by the owner's decision of 2026-10-28 (OQ-A1), §2.2 row 1: a run that is not a chat turn (a background run or a call) refuses its changes for the rest of the run once it has read passages (§28.3 A14).
 
