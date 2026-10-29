@@ -625,8 +625,8 @@ brief's date, so a stale one is never cited.
 - **Chunker** (`chunk_text`, `src/domain/drive_chunker.py`): about `CHUNK_CHARS` (2 400) characters, ending at a
   paragraph, else a sentence or line, else a word; the next chunk repeats up to `CHUNK_OVERLAP` (240) characters of
   trailing sentences; a Markdown table is never overlapped, its continued chunks start with the header row. At most
-  `MAX_CHUNKS_PER_FILE` (400) chunks (`truncated` beyond). No chunk → `no_text`.
-- **Chunk cap** (`chunk_cap_refuses`): the user's readable chunks may not pass `MAX_CHUNKS_PER_USER` (50 000); a file
+  `MAX_CHUNKS_PER_FILE` (1 000) chunks (`truncated` beyond; `MAX_TEXT_CHARS` binds first at about 925). No chunk → `no_text`.
+- **Chunk cap** (`chunk_cap_refuses`): the user's readable chunks may not pass `MAX_CHUNKS_PER_USER` (150 000); a file
   that would is `metadata_only / user_chunk_cap` with its would-be `chunk_count`, released (best card rank, then
   newest) when the headroom holds it, never re-read before.
 - **Embeddings**: one `RETRIEVAL_DOCUMENT` vector per chunk, at most `EMBED_IN_FLIGHT` (4) calls at once, within
@@ -756,7 +756,7 @@ No alert of its own: the outage shows as ERROR / WARNING lines (`[drive_reader]`
 | Concurrent model calls | 4 per file (files go to the reader one at a time) | — |
 | Re-read of an edited, reader-read file (`MODEL_REREAD_COOLDOWN`) | 24 h after `model_read_at` | the edit waits; the newest version is read once |
 | Reader outages charged to one content version | `MAX_ATTEMPTS` (3) | `failed / extract_error` |
-| Readable chunks per user | 50 000 | `user_chunk_cap` |
+| Readable chunks per user | 150 000 | `user_chunk_cap` |
 | Carded records per user | 25 000 | `card_capped`, decided before any content or triage work |
 | Maintenance share of the start budget | 30 % | upgrades and month-held work yield to edits and first-seen work |
 
@@ -776,8 +776,8 @@ its own line (§7).
 - Over 45 MiB (likely for a 600-page scan): `metadata_only / too_large` from the size in the listing, never
   downloaded; its name card is searchable, it counts as "could not be read" (§7.1).
 - With a good text layer: the parser reads every page until `MAX_TEXT_CHARS` (2 M characters); the chunker keeps the
-  first `MAX_CHUNKS_PER_FILE` (400) chunks of about 2 400 characters each, so roughly the first 860 000 characters
-  (a few hundred pages) are searchable and the rest is not. The router judges density as an average over all
+  first `MAX_CHUNKS_PER_FILE` (1 000) chunks of about 2 400 characters each; `MAX_TEXT_CHARS` stops it first, at about 925
+  chunks, so roughly the first 2 M characters (a long book) are searchable and the rest is not. The router judges density as an average over all
   pages, so a mostly-text PDF with some scanned pages stays with the parser and its scanned pages are not read.
 - A scan (no or thin text layer): the reader gets the first `MODEL_EXTRACT_MAX_PAGES` (200) pages, 10 per call,
   4 calls at a time, within 600 s; pages 201–600 are never sent. It needs the dollars for its 200 pages (≈ $0.12) left
@@ -835,7 +835,7 @@ within the maintenance share, and re-plans each stale record (`stale_versions`, 
   Meanwhile, per user until that user's pass completes, search says `refreshing` and runs on names, filters and exact
   terms only (card, chunk and hint kNN are skipped, §6); the re-embed runs in class 3 inside the 30 % maintenance share, so
   a large index takes several ticks. Cost: Gemini embeddings only — no download, no parser, no reader call, not
-  billed to the user, bounded by the 25 000 cards and 50 000 chunks per user (§4.13).
+  billed to the user, bounded by the 25 000 cards and 150 000 chunks per user (§4.13).
 - A pass that leaves stale records (backing off, held) does not repeat until due work has run; `applied_versions` and
   `applied_space` are written only after a clean pass.
 - A record whose model work is held for next month's budget, and which is stale only for what that held work
@@ -858,7 +858,7 @@ itself makes no model call, only one query embedding):
 | **Initial build** (D27) | the first full description of a drive, every class | `INITIAL_BUILD_USD` $40 once per user; the monthly ceiling after it is $31 ($4 + $3 + $4 + $20) |
 | **Reader** (scans, screenshots, images with text, PDFs the parser cannot read) | GPT-6 Luna by default (or Haiku 5.5), $0.10 / $0.50 per million input / output tokens; a page ≈ $0.0006. A failover call runs on Gemini Flash (`gemini-3.8-flash`, $1.50 / $7.50, promotional until 2026-12-31 — 15× the primary's token price), priced per model that ran | `READER_USD_PER_MONTH` $4 per user (Search v2; ≈ 6 666 pages, `MODEL_EXTRACT_PAGES_PER_MONTH` derived from it), after the one-time initial build (D27), 200 pages per file; an edit re-reads at most once per 24 h (`MODEL_REREAD_COOLDOWN`); a file whose reads keep failing as an outage at most `MAX_ATTEMPTS` times; a refused page or image is never retried |
 | **Triage** (every image, 8 thumbnails of 800 px per call; triage v2 adds ≈ 250 output tokens a photo) | the same models and fallback; an 800 px thumbnail costs more input tokens than the 176 px one did; not priced per image yet — the live model check's triage leg prints the real cost | `TRIAGE_USD_PER_MONTH` $3 per user (Search v2, after the initial build; the 20 000-image cap is retired); a failing batch costs its call and parse retry, a refused one halves only down to the refused image |
-| **Embeddings** (card, chunk and hint vectors, `gemini-embedding-2`) | not priced in `billing.py` and not billed to the user; Google's charge is not in the daily summary | **no monthly cap.** Bounded by size: 25 000 cards and 50 000 readable chunks per user, 400 chunks per file; a card is re-embedded only when its text changes; an edit embeds only its changed chunks (vectors reused by text hash); a space change re-embeds stored text without reading the file again |
+| **Embeddings** (card, chunk and hint vectors, `gemini-embedding-2`) | not priced in `billing.py` and not billed to the user; Google's charge is not in the daily summary | **no monthly cap.** Bounded by size: 25 000 cards and 150 000 readable chunks per user, 1 000 chunks per file; a card is re-embedded only when its text changes; an edit embeds only its changed chunks (vectors reused by text hash); a space change re-embeds stored text without reading the file again |
 | **Firestore** (records, chunks, kNN, term and count queries) | reads and writes at Firestore prices; a kNN reads 1 per 100 index entries scanned under the user filter | linear in the user's chunks, so bounded by the chunk cap; spike S3 measures it before the slice ships |
 | **Indexer CPU** | Cloud Run, scale to zero, one instance | `TICK_FILE_BUDGET` 50 runs per tick, a 30-minute tick deadline |
 
