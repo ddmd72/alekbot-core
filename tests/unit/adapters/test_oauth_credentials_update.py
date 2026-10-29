@@ -1,8 +1,10 @@
-"""OAuthCredentialsPort.update_credentials on FirestoreOAuthCredentialsAdapter (access fix 1): a refresh or a flag
-write replaces an existing record and never creates one, so a disconnect stands. Assertions are on the raw stored
-documents and on what readers return."""
+"""OAuthCredentialsPort.update_credentials on FirestoreCredentialStore (access fix 1; SECRETS_AT_REST_RFC §2.4): a
+refresh or a flag write replaces an existing record and never creates one, so a disconnect stands. Assertions are on the
+raw stored documents and on what readers return. Doc ids are opaque (`{user_id}:{credential_id}`, §2.3), so a stored
+record is found by its `user_id` + `kind` fields; `drive_id` is stored on a OneDrive record only (§2.3)."""
 import asyncio
 import uuid
+from dataclasses import replace
 
 import pytest
 
@@ -31,13 +33,18 @@ async def test_update_of_a_record_never_saved_writes_nothing(store):
     assert store.docs == {}
 
 
-async def test_update_replaces_every_field_of_an_existing_record_and_returns_true(store):
-    await store.repo.save_credentials(creds(U1, "gmail", needs_reconnect=True, drive_id="D1"))
-    new = creds(U1, "gmail", access_token="at-new", refresh_token="rt-new", scopes=["a", "b"],
-                email_address="other@example.com", needs_reconnect=False, drive_id="D2")
+@pytest.mark.parametrize("provider, old_drive, new_drive", [("gmail", "", ""),
+                                                             ("microsoft_onedrive", "D1", "D2")])
+async def test_update_replaces_every_field_of_an_existing_record_and_returns_true(store, provider, old_drive,
+                                                                                  new_drive):
+    await store.repo.save_credentials(creds(U1, provider, needs_reconnect=True, drive_id=old_drive))
+    new = creds(U1, provider, access_token="at-new", refresh_token="rt-new", scopes=["a", "b"],
+                email_address="other@example.com", needs_reconnect=False, drive_id=new_drive)
     assert await store.repo.update_credentials(new) is True
-    assert await store.repo.get_credentials(U1, "gmail") == new
-    assert store.docs[f"{U1}_gmail"]["needs_reconnect"] is False       # a refresh clears the flag, as a save does
+    got = await store.repo.get_credentials(U1, provider)
+    assert got.credential_id                                            # the store's own id, never the argument's ""
+    assert replace(got, credential_id="") == new
+    assert store.doc_of(U1, provider)["needs_reconnect"] is False      # a refresh clears the flag, as a save does
 
 
 async def test_update_can_raise_the_needs_reconnect_flag(store):
@@ -55,7 +62,8 @@ async def test_update_touches_only_its_own_user_and_provider(store):
     assert (await store.repo.get_credentials(U1, "google_tasks")).access_token == "at-old"
     assert (await store.repo.get_credentials(U2, "gmail")).access_token == "at-old"
     assert await store.repo.update_credentials(creds(U2, "google_tasks")) is False     # no record of that provider
-    assert sorted(store.docs) == sorted([f"{U1}_gmail", f"{U1}_google_tasks", f"{U2}_gmail"])
+    assert sorted((d["user_id"], d["kind"]) for d in store.docs.values()) == sorted(
+        [(U1, "gmail"), (U1, "google_tasks"), (U2, "gmail")])
 
 
 async def test_a_disconnect_stands_against_an_update_in_flight(store):

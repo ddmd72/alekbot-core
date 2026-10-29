@@ -288,3 +288,130 @@ async def test_two_records_of_one_kind_raise_instead_of_guessing(store):
     store.docs["user-a:another"] = dict(doc, credential_id="another")
     with pytest.raises(RuntimeError):
         await store.repo.get_credentials("user-a", "gmail")
+
+
+# ------------------------------------------------------------------ port contract carried over from the deleted kit
+# The behaviours of `test_oauth_credentials_store_kit.py` (FirestoreOAuthCredentialsAdapter, deleted in S3, §2.7) that the
+# port still promises, re-asserted over the encrypted store. Its doc-id and legacy-document tests are not carried: the
+# store has neither (§2.3, §2.7).
+
+PROVIDERS = ("gmail", "google_tasks", "microsoft_todo", "microsoft_onedrive")
+
+
+def _realm(provider: str) -> str:
+    return "microsoft" if provider.startswith("microsoft") else "google"
+
+
+async def test_an_expiry_saved_in_another_zone_reads_back_as_plain_utc(store):
+    plus3 = timezone(timedelta(hours=3))
+    await store.repo.save_credentials(creds(token_expiry=datetime(2026, 10, 10, 14, 12, tzinfo=plus3)))
+    got = await store.repo.get_credentials("user-a", "gmail")
+    assert got.token_expiry == datetime(2026, 10, 10, 11, 12, tzinfo=timezone.utc)
+    assert got.token_expiry.utcoffset() == timedelta(0)
+    assert type(got.token_expiry) is datetime
+
+
+async def test_a_flagged_and_expired_record_is_returned_and_connected(store):
+    past = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    await store.repo.save_credentials(creds(token_expiry=past))
+    stored = await store.repo.get_credentials("user-a", "gmail")
+    assert await store.repo.update_credentials(replace(stored, needs_reconnect=True))
+    got = await store.repo.get_credentials("user-a", "gmail")
+    assert got is not None and got.needs_reconnect is True and got.token_expiry == past
+    assert await store.repo.is_connected("user-a", "gmail") is True
+    assert await store.repo.list_users_by_provider("gmail") == ["user-a"]
+
+
+async def test_a_missing_record_is_none_and_not_connected_and_writes_nothing(store):
+    assert await store.repo.get_credentials("user-a", "gmail") is None
+    assert await store.repo.is_connected("user-a", "gmail") is False
+    assert store.docs == {}
+
+
+async def test_re_saving_what_was_read_keeps_every_field(store):
+    """The consent and refresh paths re-save a credential built from a read."""
+    await store.repo.save_credentials(creds(provider="microsoft_onedrive", account_realm="microsoft", drive_id="D1",
+                                            scopes=["a", "b", "c"]))
+    read = await store.repo.get_credentials("user-a", "microsoft_onedrive")
+    (doc_id, before), = {k: dict(v) for k, v in store.docs.items()}.items()
+    await store.repo.save_credentials(read)
+    (after_id, after), = store.docs.items()
+    assert after_id == doc_id
+    assert {k: v for k, v in after.items() if k not in ("secret", "updated_at")} == {
+        k: v for k, v in before.items() if k not in ("secret", "updated_at")}
+    assert await store.repo.get_credentials("user-a", "microsoft_onedrive") == read
+
+
+async def test_a_consent_rewrites_the_whole_record(store):
+    await store.repo.save_credentials(creds())
+    (doc_id, doc), = store.docs.items()
+    store.docs[doc_id] = dict(doc, stale_extra="gone")
+    await store.repo.save_credentials(creds(access_token="at-new"))
+    assert "stale_extra" not in store.docs[doc_id]
+    assert (await store.repo.get_credentials("user-a", "gmail")).access_token == "at-new"
+
+
+async def test_every_kind_of_every_user_reads_back_its_own_record(store):
+    for user in ("user-a", "user-b"):
+        for provider in PROVIDERS:
+            await store.repo.save_credentials(creds(user, provider, access_token=f"at-{user}-{provider}",
+                                                    account_realm=_realm(provider), account_subject=f"sub-{user}"))
+    for user in ("user-a", "user-b"):
+        for provider in PROVIDERS:
+            got = await store.repo.get_credentials(user, provider)
+            assert (got.user_id, got.provider, got.access_token) == (user, provider, f"at-{user}-{provider}")
+
+
+async def test_revoke_keeps_the_users_other_kinds_and_other_users(store):
+    for provider in PROVIDERS:
+        await store.repo.save_credentials(creds("user-a", provider, account_realm=_realm(provider)))
+    await store.repo.save_credentials(creds("user-b", "gmail", account_subject="sub-b"))
+    before = {k: dict(v) for k, v in store.docs.items()}
+    await store.repo.revoke_credentials("user-a", "gmail")
+    assert store.docs == {k: v for k, v in before.items() if not (v["user_id"] == "user-a" and v["kind"] == "gmail")}
+    assert await store.repo.is_connected("user-a", "gmail") is False
+    assert await store.repo.list_users_by_provider("gmail") == ["user-b"]
+
+
+async def test_a_new_consent_after_a_revoke_connects_again(store):
+    onedrive = dict(provider="microsoft_onedrive", account_realm="microsoft")
+    await store.repo.save_credentials(creds(drive_id="D1", **onedrive))
+    await store.repo.revoke_credentials("user-a", "microsoft_onedrive")
+    await store.repo.save_credentials(creds(access_token="consent-2", drive_id="D2", **onedrive))
+    got = await store.repo.get_credentials("user-a", "microsoft_onedrive")
+    assert (got.access_token, got.drive_id, got.needs_reconnect) == ("consent-2", "D2", False)
+    assert await store.repo.is_connected("user-a", "microsoft_onedrive") is True
+    assert await store.repo.list_users_by_provider("microsoft_onedrive") == ["user-a"]
+
+
+async def test_list_users_returns_every_user_of_a_kind_once(store):
+    users = [f"user-{i:02d}" for i in range(25)]
+    for i, user in enumerate(users):
+        await store.repo.save_credentials(creds(user, "gmail", account_subject=f"sub-{user}"))
+        await store.repo.save_credentials(creds(user, "gmail", account_subject=f"sub-{user}"))    # a re-consent
+        if i % 3 == 0:
+            flagged = replace(await store.repo.get_credentials(user, "gmail"), needs_reconnect=True)
+            assert await store.repo.update_credentials(flagged)
+        if i % 2:
+            await store.repo.save_credentials(creds(user, "google_tasks", account_subject=f"sub-{user}"))
+    await store.repo.save_credentials(creds("user-a", "microsoft_todo", account_realm="microsoft"))
+    listed = await store.repo.list_users_by_provider("gmail")
+    assert sorted(listed) == users and len(listed) == len(set(listed))
+    assert await store.repo.list_users_by_provider("microsoft_todo") == ["user-a"]
+    assert await store.repo.list_users_by_provider("microsoft_onedrive") == []
+
+
+@pytest.mark.parametrize("call", [
+    lambda repo: repo.get_credentials("user-a", "gmail"),
+    lambda repo: repo.is_connected("user-a", "gmail"),
+    lambda repo: repo.save_credentials(creds()),
+    lambda repo: repo.update_credentials(creds()),
+    lambda repo: repo.revoke_credentials("user-a", "gmail"),
+    lambda repo: repo.list_users_by_provider("gmail"),
+    lambda repo: repo.list_connected_providers("user-a"),
+])
+async def test_a_backend_error_propagates_never_connected_or_not(store, call):
+    await store.repo.save_credentials(creds())
+    store.db.collection(CREDS).fail = RuntimeError("backend down")
+    with pytest.raises(RuntimeError, match="backend down"):
+        await call(store.repo)

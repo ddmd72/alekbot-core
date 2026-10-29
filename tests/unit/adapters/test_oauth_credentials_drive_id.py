@@ -1,11 +1,12 @@
 """
-OAuthCredentials.drive_id (USER_DRIVE_INDEXING_RFC §10.1 step 0): persisted by the Firestore adapter,
-"" for documents written before the field existed, and carried through every Graph token refresh.
+OAuthCredentials.drive_id (USER_DRIVE_INDEXING_RFC §10.1 step 0): "" by default and carried through every Graph token
+refresh. Its storage is asserted by the credential store kit (`test_credential_store_kit.py`: only a OneDrive record
+carries it, a refresh keeps it); the old adapter's round-trip and legacy-document tests went with that adapter
+(SECRETS_AT_REST_RFC §2.7).
 """
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.adapters.firestore_oauth_credentials_adapter import FirestoreOAuthCredentialsAdapter
 from src.adapters.microsoft.graph_auth import MicrosoftGraphTokenProvider
 from src.domain.email import OAuthCredentials
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
@@ -19,22 +20,6 @@ def _creds(**kw) -> OAuthCredentials:
 
 def test_default_is_empty():
     assert _creds().drive_id == ""
-
-
-class TestFirestore:
-    def test_round_trips(self):
-        doc = FirestoreOAuthCredentialsAdapter._to_firestore(_creds(drive_id="D1"))
-        assert doc["drive_id"] == "D1"
-        assert FirestoreOAuthCredentialsAdapter._from_firestore(doc).drive_id == "D1"
-
-    def test_legacy_document_reads_empty(self):
-        doc = FirestoreOAuthCredentialsAdapter._to_firestore(_creds())
-        del doc["drive_id"]
-        assert FirestoreOAuthCredentialsAdapter._from_firestore(doc).drive_id == ""
-
-    def test_null_reads_empty(self):
-        doc = {**FirestoreOAuthCredentialsAdapter._to_firestore(_creds()), "drive_id": None}
-        assert FirestoreOAuthCredentialsAdapter._from_firestore(doc).drive_id == ""
 
 
 def _resp(json_data, status=200):
