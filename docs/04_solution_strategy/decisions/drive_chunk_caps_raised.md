@@ -18,9 +18,13 @@ start budget 480 + download 120 + extract 120 + embed 300 + margin 60 + model 60
 A re-embed waits twice (chunks, then hints) and downloads nothing: its start gate (`can_start_reembed`) uses
 2 × 300 + 60 = 660 s.
 
-**Accepted consequence.** A folder holding several long books passes `FOLDER_INMEM_CHUNKS` (2 000), and its search
-falls back to the user-wide chunk streams with the folder filter (covered by
-`test_a_folder_over_the_in_memory_chunk_bound_uses_the_wide_streams_with_the_folder_filter`).
+**Accepted consequence.** A folder holding several long books passes `FOLDER_INMEM_CHUNKS` (2 000). Its word and
+hint key streams fall back to the user-wide pages with the folder filter. Its meaning streams no longer do: the walk
+names the folder's readable files, so the chunk and hint kNN (search and passages) run over those files only, in
+batches of 30 ids (`item_id in`), and keep the folder's exact top K (USER_DRIVE_INDEXING_RFC Δ246; two composite vector
+indexes, `user_id` + `item_id` + vector, on chunks and hints). Before, the user-wide top K post-filtered to the folder
+lost the folder's chunks whenever closer ones lay elsewhere on the drive. Only an incomplete walk (more than
+`FOLDER_INMEM_CARDS` records) keeps the user-wide kNN kept by ancestry.
 
 **Measured after raising (spike S3, 2026-10-29).** Synthetic chunks (random 768-dim vectors, 2 400-character texts)
 in the test database, timed from a Cloud Run Job in the service's region, 30 sequential calls per point:

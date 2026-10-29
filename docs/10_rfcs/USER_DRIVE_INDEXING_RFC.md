@@ -994,7 +994,8 @@ that its contents are not indexed and points to `list_files_in_drive`, instead o
 walks the subtree via `children`
 with projection reads (no vectors), never entering opaque roots, **stopping after `FOLDER_INMEM_CARDS` records
 read**. If the walk completed, the
-subtree's cards are ranked in memory, and its chunks too when `Σ chunk_count ≤ FOLDER_INMEM_CHUNKS`. Otherwise the
+subtree's cards are ranked in memory, and its chunks too when `Σ chunk_count ≤ FOLDER_INMEM_CHUNKS` (past that bound
+the chunk and hint kNN run over the walked files only, Δ246). Otherwise the
 user-wide streams are used and each candidate is kept only if its ancestor chain — already walked to build its path
 (§10.2) — passes through the folder, with the widening of step 5.
 
@@ -3027,7 +3028,8 @@ honest negatives into junk). No judge; a judge stays D22's trigger.
   Δ37). The smoke script runs a family query once against live Firestore.
 - Date and folder filters: post-filters (the about stream takes a date range in the query). The `capped` hedge stays.
 - **Folder scope:** a subtree within `FOLDER_INMEM_CARDS` is ranked in memory over `about_keys`, chunk `word_keys`,
-  hint documents and vectors (within `FOLDER_INMEM_CHUNKS`); beyond, the user-wide streams with the folder post-filter.
+  hint documents and vectors (within `FOLDER_INMEM_CHUNKS`); beyond, the user-wide word and hint key streams with the
+  folder post-filter, and the chunk and hint kNN over the folder's readable files only (Δ246).
 - **The `document` family (D23):** {docx, doc, odt, rtf, pdf, markdown, text}.
 
 #### 25.5.6 What Smart receives (`render_results`; verbatim contract in §25.13.6)
@@ -5459,6 +5461,7 @@ unmeasured language.
 | Δ243 | Δ224, Δ241: detached files are frozen in the audit (followed, never written) | **Re-review concern 1:** a detached file keeps its stored transcript under a pin (Δ190), so it is **rewritten and moved back like an archived one** (`_audit_archived` takes both states, kind file; `render_archived` from the document's snapshot). Its deletion or a move out of the mirror keeps its own handling (the document loses its item and keeps its pin). The audit property test's allowance covers exactly these rewrites and moves | The owner ruling covers every `.md` in `_Transcripts`, and the read-me says the bot overwrites every file there |
 | Δ244 | Δ239: a root-loss mark past its grace takes the reserve | **Re-review concern 3:** a confirming read that keeps failing (`mirror_root_read_failed`, or `mirror_errors` for an unexpected exception on that read, while the mark stays set: a run that keeps the root in `gone_ids` stops at step 0, so its only errors are that read's; round 3) steps the user's `_root_setup_holds` ladder (10 min doubling to 6 h, process memory, Δ227), kept apart from the language hold; `_mirror_ready` gives the past-grace mark the reserve only while not held, and the step still tries the read every tick. The mark gone (cleared, or the loss confirmed) clears the hold | A read that kept failing took 45 s of the content classes on every tick |
 | Δ245 | §25.2.6: write batches are bounded by request bytes plus an estimate of their index-entry bytes | Firestore counts the single-field index entries a write creates toward a commit as well as the request bytes. A long document's chunk write, bounded by request bytes alone, was refused ("Transaction too big") on every attempt and the record ended `failed`/`extract_error`. `WRITE_BATCH_BYTES` now bounds `stored_bytes` plus `index_entry_bytes` (scalar twice, array element once, vector none, leaning high). The delete path keeps its own count cap. |
+| Δ246 | §10.1, §25.5.5, §28 A5: a folder past `FOLDER_INMEM_CHUNKS` with a complete walk takes the user-wide chunk and hint kNN (`CHUNK_FETCH` / `HINT_FETCH` per member kind in search, `FETCH_MAX` in passages) kept to the folder | The walk already names the folder's readable files, so the kNN runs over them only: new port methods `find_nearest_chunks_in` / `find_nearest_hints_in` pre-filter `user_id ==` and `item_id in [...]` (at most `KNN_ITEM_IDS_MAX` 30 ids, Firestore's `in` limit; more is a `ValueError`, never a cut) before `find_nearest`; no kind filter (a `kind + item_id` pre-filter would need a third index; the member kind picks the files from the walked records). The service batches the files by 30, at most `_WALK_PARALLEL` queries in flight, and keeps the union's top K by distance: each batch's top K holds every member of the set's top K that lies in it, so the result is the folder's top K exactly. Search keeps one kNN per member kind at `CHUNK_FETCH` / `HINT_FETCH` (log `content=folder-knn`; the word and hint key streams stay user-wide with the folder post-filter); passages keep the folder's top `CHUNK_FETCH`, not `FETCH_MAX` (the widening only made up for the post-filter; log `scope=folder-scoped`). The scan reads only those files' chunks (their count / 100, plus the returned documents; probed on the test database 2026-10-29). Two composite vector indexes, chunks (`user_id`, `item_id`, `vector`) and hints (`user_id`, `item_id`, `hint_vector`), flat 768, declared in `config/firestore.indexes.json` and created by `scripts/infrastructure/create_drive_scoped_vector_indexes.sh`; both must be `READY` before the code ships (a missing index fails the query). An incomplete walk (ids unknown) keeps the user-wide kNN kept by ancestry | A folder of several long books passed the bound, and its chunks reached the result only when they made the user's top K: a closer passage elsewhere on the drive hid the folder's own (`decisions/drive_chunk_caps_raised.md`, "Accepted consequence") |
 
 ### 27.17 Open questions (each with a recommendation)
 - **OQ-T1 Window length (30 min) against output drift and cost — resolved by T0 (Δ129).** 30, 45 and 60 min were complete with `MM:SS` times
@@ -5709,8 +5712,8 @@ among the nearest. No cosine floor (§10.1 step 4, D14).
   (`drive_search_service.py:763-776`).
 - `folder`: the search's resolution and walk (`_resolve_folder` `:1183`, `_walk` `:1291`); a complete walk whose
   Σ `chunk_count` ≤ `FOLDER_INMEM_CHUNKS` 2 000 (`drive_index_params.py:65`, the bound search's folder path already
-  uses) ranks in memory as above, otherwise user-wide kNN at `FETCH_MAX` 1 000
-  (`drive_index_params.py:20`) kept by ancestry.
+  uses) ranks in memory as above, otherwise a kNN over the walked readable files only, their top `CHUNK_FETCH` 300
+  (Δ246); an incomplete walk, user-wide kNN at `FETCH_MAX` 1 000 (`drive_index_params.py:20`) kept by ancestry.
 - Neither: user-wide kNN at `CHUNK_FETCH` 300 (`:64`). `find_nearest_chunks` is **not fenced** (port `:198-201`):
   records are read with `get_records`, every hit is fenced and visibility-checked as search does; a chunk of a stale
   generation is never shown.
@@ -6078,7 +6081,7 @@ Engineering decisions taken here: A1–A18, each with its reason above. The para
 | RRF k | 60 | `src/domain/rrf.py` |
 | `EXCERPT_RANGE_MAX` | 10 | chunks per `read_passages` |
 | `EXCERPT_FILE_REFS_MAX` | 10 | files per scoped call |
-| `FOLDER_INMEM_CHUNKS` (existing, reused) | 2 000 | above it, a folder uses the wide kNN, as in search |
+| `FOLDER_INMEM_CHUNKS` (existing, reused) | 2 000 | above it, a folder's kNN runs over its walked files only (Δ246), as in search |
 | follow-ups per commission | 2 (1 on a call or background run) | prompt rule (A15) |
 | card accuracy trusted for a value | 90 % | OQ-A2; today a number in texts only, a named constant from S2 |
 | `EXCERPT_FOLDER_NOTES_CHARS_MAX` | 4 000 | A18's cap on the folder notes of one render (OQ-A3); one branch six folders deep with full notes fits whole; raise it to remove the cap in practice |
