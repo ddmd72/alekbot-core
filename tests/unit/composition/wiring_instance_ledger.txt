@@ -131,6 +131,7 @@ src.services.google_oauth_service.GoogleOAuthService 2  # by-design Gmail scopes
 src.services.history_summary_service.HistorySummaryService 1  # by-design single instance
 src.services.iam_service.IAMService 1  # by-design single instance
 src.services.interactive_choice_service.InteractiveChoiceService 1  # by-design the one click path, held by WorkerHandler for the interactive_choice task over IAMService, the one InteractiveMessageRouter and FactAnswerService (application_graph.py, Facts S4 T8g)
+src.services.integration_reconnect_service.IntegrationReconnectService 1  # by-design single instance
 src.services.invite_code_service.InviteCodeService 1  # by-design single instance
 src.services.language_preference_service.LanguagePreferenceService 1  # by-design single instance
 src.services.localization_service.LocalizationService 1  # by-design single instance

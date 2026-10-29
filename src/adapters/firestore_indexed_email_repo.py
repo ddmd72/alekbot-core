@@ -9,7 +9,7 @@ Collections:
 
 import asyncio
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from google.api_core.exceptions import NotFound
 from google.cloud.firestore import FieldFilter
@@ -18,6 +18,7 @@ from google.cloud.firestore_v1.vector import Vector
 
 from ..config.environment import EnvironmentConfig
 from ..domain.email import IndexedEmail, IndexingState
+from ..domain.reconnect_policy import Cleared
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..utils.logger import logger
 
@@ -39,7 +40,9 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
     """Firestore mechanics (the port states the observable contract):
     - Facts: `EnvironmentConfig.domain_email_facts_collection` (`{prefix}domain_email_facts_v1`), body
       `IndexedEmail.model_dump()` with the vector fields wrapped in `Vector`; cursors:
-      `EnvironmentConfig.email_indexing_state_collection`, document id `{user_id}_{provider}`.
+      `EnvironmentConfig.email_indexing_state_collection`, document id `{user_id}_{provider}`; `update_indexing_state`
+      updates only the cursor fields, `set_reconnect_flags` only `reconnect_notified` / `disconnected_by_user_at`
+      (an `update`, so a missing state stays missing); `list_indexing_user_ids` is one equality query on `provider`.
     - `save_batch` and `mark_consolidated` write in batches of 500 (`batch.set` of the whole document / `batch.update`);
       `delete_by_user` deletes 500 per query until none is left.
     - `find_nearest`: one `find_nearest` per vector field (COSINE, `distance_threshold` 0.4, `limit * 2`),
@@ -234,7 +237,34 @@ class FirestoreIndexedEmailRepository(IndexedEmailRepository):
             indexed_through=self._strip_tz(data.get("indexed_through")),
             oldest_indexed_through=self._strip_tz(data.get("oldest_indexed_through")),
             cursor_reindex=self._strip_tz(data.get("cursor_reindex")),
+            reconnect_notified=bool(data.get("reconnect_notified", False)),
+            disconnected_by_user_at=self._strip_tz(data.get("disconnected_by_user_at")),
         )
+
+    async def set_reconnect_flags(
+        self, user_id: str, provider: str, *,
+        reconnect_notified: Optional[bool] = None,
+        disconnected_by_user_at: Union[datetime, Cleared, None] = None,
+    ) -> None:
+        changes: Dict[str, Any] = {}
+        if reconnect_notified is not None:
+            changes["reconnect_notified"] = reconnect_notified
+        if disconnected_by_user_at is Cleared.MARK:
+            changes["disconnected_by_user_at"] = None
+        elif disconnected_by_user_at is not None:
+            changes["disconnected_by_user_at"] = disconnected_by_user_at
+        if not changes:
+            return
+        try:
+            await self.indexing_state_col.document(f"{user_id}_{provider}").update(changes)
+        except NotFound:
+            logger.debug(f"📌 No indexing state for user={user_id[:8]} provider={provider}; "
+                         f"reconnect flags {sorted(changes)} not written")
+
+    async def list_indexing_user_ids(self, provider: str) -> List[str]:
+        query = self.indexing_state_col.where(filter=FieldFilter("provider", "==", provider)).select(["user_id"])
+        ids = {snap.to_dict().get("user_id") async for snap in query.stream()}
+        return sorted(i for i in ids if i)
 
     async def update_indexing_state(self, state: IndexingState) -> None:
         doc_id = f"{state.user_id}_{state.provider}"

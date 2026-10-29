@@ -15,6 +15,8 @@ from src.adapters.firestore_drive_index_repo import (
 from src.domain.drive_index import DocumentBrief, DriveIndexRecord, DriveSyncState
 
 T = datetime(2026, 10, 12, 9, 15, 30, 250000, tzinfo=timezone.utc)
+# The state's timestamp fan-out flags: written only by update_sync_flags, never by save_sync_state (R1's mark)
+_STATE_FANOUT_TIMESTAMPS = frozenset({"disconnected_by_user_at"})
 
 
 def _firestore_ts(value: datetime) -> DatetimeWithNanoseconds:
@@ -81,7 +83,13 @@ def test_record_timestamp_reads_back_as_plain_utc_datetime(name):
 @pytest.mark.parametrize("name", _datetime_fields(DriveSyncState))
 def test_state_timestamp_reads_back_as_plain_utc_datetime(name):
     state = DriveSyncState(user_id="u", **{name: T})
-    doc = _stored(state_to_doc(state))
+    written = state_to_doc(state)
+    if name in _STATE_FANOUT_TIMESTAMPS:
+        # a fan-out flag (SECRETS_AT_REST_RFC §6.2 F1): never part of the tick's state writes; update_sync_flags
+        # writes the plain datetime with a field update, state_from_doc reads it
+        assert name not in written
+        written = {**written, name: T}
+    doc = _stored(written)
     assert type(doc[name]) is DatetimeWithNanoseconds
     back = getattr(state_from_doc("u", doc), name)
     _assert_plain_utc(back, name)

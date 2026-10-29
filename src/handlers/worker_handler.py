@@ -43,6 +43,9 @@ Supported task_types:
                                      user on the drive queue (the indexer service runs it), raises the
                                      staleness alert and the one reconnect notice (USER_DRIVE_INDEXING_RFC
                                      §7.1, §12.1; RFC Δ5, Δ6)
+  - reconnect_notice_sweep        → hourly: IntegrationReconnectService.sweep() sends R1's one notice per Gmail / To Do
+                                     whose past connection has no credential (SECRETS_AT_REST_RFC §6.2; Drive's runs in
+                                     start_drive_sync); unconfigured answers 200 "disabled"
 """
 
 from __future__ import annotations
@@ -72,6 +75,7 @@ if TYPE_CHECKING:
     from ..services.fact_lifecycle_sweep_service import FactLifecycleSweepService
     from ..services.fact_review_service import FactReviewService
     from ..services.interactive_choice_service import InteractiveChoiceService
+    from ..services.integration_reconnect_service import IntegrationReconnectService
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
@@ -145,7 +149,9 @@ class WorkerHandler:
         fact_lifecycle_sweep: "Optional[FactLifecycleSweepService]" = None,
         fact_review: "Optional[FactReviewService]" = None,
         interactive_choice: "Optional[InteractiveChoiceService]" = None,
+        reconnect: "Optional[IntegrationReconnectService]" = None,
     ) -> None:
+        self._reconnect = reconnect
         self._fact_lifecycle_sweep = fact_lifecycle_sweep
         self._fact_review = fact_review
         self._interactive_choice = interactive_choice
@@ -343,6 +349,8 @@ class WorkerHandler:
             return await self._handle_repair_email_embeddings()
         elif task_type == "start_drive_sync":
             return await self._handle_start_drive_sync()
+        elif task_type == "reconnect_notice_sweep":
+            return await self._handle_reconnect_notice_sweep()
         elif task_type == "fact_lifecycle_sweep":
             return await self._handle_fact_lifecycle_sweep()
         elif task_type == FACT_REVIEW_TASK:
@@ -882,6 +890,20 @@ class WorkerHandler:
             )
         logger.info(f"[Worker] renew_all_task_subscriptions: enqueued {len(user_ids)} renewal tasks")
         return {"status": "ok", "enqueued": len(user_ids)}, 200
+
+    # ------------------------------------------------------------------
+    # R1 reconnect notices (SECRETS_AT_REST_RFC §6.2)
+    # ------------------------------------------------------------------
+
+    async def _handle_reconnect_notice_sweep(self) -> Tuple[dict, int]:
+        """Cloud Scheduler, hourly: R1's one notice per Gmail / To Do whose past connection has no credential.
+
+        Unconfigured answers 200 like start_drive_sync: a 5xx request log is ERROR severity, which the error alert policy
+        would page on every hour."""
+        if not self._reconnect:
+            logger.info("[Worker] reconnect_notice_sweep: not configured; skipped")
+            return {"status": "disabled"}, 200
+        return await self._reconnect.sweep(), 200
 
     # ------------------------------------------------------------------
     # Drive index fan-out

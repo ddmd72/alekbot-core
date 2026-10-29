@@ -142,6 +142,22 @@ Both budgets were unreachable from the day they were written until 2026-08-15 �
 
 ---
 
+### Reconnect Notice Sweep (R1)
+
+| Field | Value |
+|-------|-------|
+| **Job name** | `alek-bot-dev-reconnect-notice-sweep` |
+| **Schedule** | `37 * * * *` (hourly at :37 — collides with no other job) |
+| **HTTP** | `POST /worker` on the main service, OIDC (worker SA) |
+| **Payload** | `{"task_type": "reconnect_notice_sweep"}` |
+| **Attempt deadline** | `180s` — one pass may post notices through the formatter agent |
+| **Purpose** | Lists users from the feature stores (Gmail indexing states, To Do configs), not from the credential store. For each whose feature state shows a past connection and has no credential, and who did not disconnect on purpose, sends the one reconnect notice and raises a flag on the feature state; a credential that is back lowers it. Drive's notice runs in the drive fan-out below. |
+| **Handler** | `WorkerHandler._handle_reconnect_notice_sweep()` → `IntegrationReconnectService.sweep()` |
+| **Unconfigured** | Answers `200 {"status": "disabled"}`, not 5xx (an ERROR request log would page every hour). |
+| **Decision** | `docs/04_solution_strategy/decisions/reconnect_notice_r1.md` |
+
+---
+
 ### Start Drive Sync (drive index fan-out)
 
 | Field | Value |

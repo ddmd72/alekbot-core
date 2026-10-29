@@ -5,7 +5,9 @@ DriveSyncSchedulerService — the `start_drive_sync` fan-out on the main service
 Every TICK_INTERVAL Cloud Scheduler calls it once. It enqueues one `drive_sync` tick per user with
 indexing on, or with a stored sync state (so an orphaned index always gets purged), and skips a user
 whose continuation is already queued. It also runs the two checks that must work while the drive
-queue is stuck: the staleness alert (§12.1) and the one reconnect notice per lost grant (§7.7, RFC Δ6).
+queue is stuck: the staleness alert (§12.1) and the one reconnect notice per lost grant (§7.7, RFC Δ6), which also
+covers R1 (SECRETS_AT_REST_RFC §6.2): no grant at all while the sync state shows a past connection, unless the user
+disconnected on purpose (`disconnected_by_user_at`).
 It writes the two fan-out flags, through `update_sync_flags`, and a minimal sync state for an enabled
 user with a working grant who has none (`create_sync_state_if_absent`): its `created_at` is the staleness baseline, so a user
 whose ticks never land is alerted too (§12.1). The tick onboards from it as from no state at all.
@@ -60,6 +62,7 @@ from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_key, tick_payload
 from ..domain.language import LanguageCode
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import empty_answer_alert, is_empty_answer
+from ..domain.reconnect_policy import R1_NOTICES, Integration, r1_due
 from ..domain.ui_messages import UIMessage
 from ..domain.user_drive import DriveConnection
 from ..ports.alert_sink import AlertSinkPort
@@ -278,7 +281,9 @@ class DriveSyncSchedulerService:
 
     async def _reconnect_notice(self, user_id: str, profile: Any, state: DriveSyncState,
                                 connection: DriveConnection) -> int:
-        """One notice per lost grant (§7.7, RFC Δ6). Retried on the next fan-out when no send was attempted
+        """One notice per lost grant (§7.7, RFC Δ6), and R1's one notice when the grant is gone altogether while the
+        sync state shows a past connection and no deliberate disconnect (SECRETS_AT_REST_RFC §6.2, F1; same flag).
+        Retried on the next fan-out when no send was attempted
         (no channel, a formatter failure, `notify` raising); once a send was attempted the flag stays up,
         delivered or not, because a partial delivery would otherwise repeat every 10 minutes. Except
         `empty_answer`, which is final: the flag stays up (one ERROR line + one ops alert). A good
@@ -287,7 +292,13 @@ class DriveSyncSchedulerService:
             if state.reconnect_notified:
                 await self._repo.update_sync_flags(user_id, reconnect_notified=False)
             return 0
-        if not connection.needs_reconnect or state.reconnect_notified:
+        if state.reconnect_notified:
+            return 0
+        if connection.needs_reconnect:
+            notice = RECONNECT_NOTICE
+        elif r1_due(connection.connected, True, state.disconnected_by_user_at is not None, state.reconnect_notified):
+            notice = R1_NOTICES[Integration.DRIVE]
+        else:
             return 0
         if self._notifier is None:
             logger.warning(f"[DriveSync] drive needs reconnect for {user_id[:8]}; no notifier configured")
@@ -303,7 +314,7 @@ class DriveSyncSchedulerService:
         await self._repo.update_sync_flags(user_id, reconnect_notified=True)
         try:
             result = await self._notifier.notify(user_id=user_id, account_id=profile.account_id,
-                                                 system_alert=RECONNECT_NOTICE,
+                                                 system_alert=notice,
                                                  kind=NotificationKind.DOCUMENT_DELIVERY)
         except Exception as exc:   # notify raises only before any send (channel lookup)
             logger.error(f"[DriveSync] reconnect notice for {user_id[:8]} raised ({exc}); retried on the "

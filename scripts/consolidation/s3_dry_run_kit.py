@@ -474,6 +474,13 @@ class NoWriteIndexedEmails(IndexedEmailRepository):
     async def clear_indexing_state(self, user_id: str, provider: str) -> None:
         self.writes.append({"kind": "clear_indexing_state"})
 
+    async def set_reconnect_flags(self, user_id: str, provider: str, *, reconnect_notified: Optional[bool] = None,
+                                  disconnected_by_user_at: Any = None) -> None:
+        self.writes.append({"kind": "set_reconnect_flags"})
+
+    async def list_indexing_user_ids(self, provider: str) -> List[str]:
+        return await self._real.list_indexing_user_ids(provider)
+
     async def delete_by_user(self, user_id: str) -> None:
         self.writes.append({"kind": "delete_by_user"})
 

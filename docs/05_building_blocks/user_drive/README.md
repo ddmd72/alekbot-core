@@ -2141,7 +2141,8 @@ and index-time descriptions instead of query-time ranking. The full delta table 
   hit the turn limit (6) without a report; tools per turn: …` line.
 - **Alerts.** The fan-out posts to the ops sink when a user's index is stale (no clean tick since the last success or
   since the sync state was created, or an overdue edit, for `STALE_ALERT_AFTER` = 2 h), once per incident. On a lost
-  grant it posts one reconnect notice to the user: the flag is set before sending and lowered only when no send was
+  grant it posts one reconnect notice to the user (R1: also when no credential exists at all and the sync state carries
+  no deliberate-disconnect mark; `decisions/reconnect_notice_r1.md`): the flag is set before sending and lowered only when no send was
   attempted (`NotifyResult.sent`), so the next fan-out retries a notice that never left, and one cut off after it left
   is lost, never repeated. A missing drive prompt or a model outage has no alert of its own: ERROR lines only.
   **Cap alert** (`drive_cap_alert`): files held by a per-user cap — the card cap (`card_capped`) and the chunk cap

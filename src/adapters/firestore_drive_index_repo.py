@@ -32,8 +32,9 @@ Writes:
       nested map such as `facets` loses stale keys), and the fields not listed — `card_vector` and its mirror — are
       kept. A given vector adds both to the merge list; a record with has_card=False lists them with DELETE_FIELD.
     - `create_sync_state_if_absent` is a document `create()`: AlreadyExists means a state is there, nothing written.
-    - `save_sync_state` merges every state field except `stale_alerted` and `reconnect_notified`; only
-      `update_sync_flags` writes those two, with `update`, so a missing state stays missing.
+    - `save_sync_state` merges every state field except the fan-out flags (`_FLAGS`: `stale_alerted`,
+      `reconnect_notified`, the alert flags and R1's `disconnected_by_user_at`); only `update_sync_flags` writes them,
+      with `update`, so a missing state stays missing.
     - `save_sync_state` never writes `lease_owner`/`lease_until` either: the lease is taken and released in
       transactions by `acquire_lease`/`release_lease` only (a creating `acquire_lease` writes it with the new
       state). A tick that outlived its lease would otherwise write it back and then release the new holder's.
@@ -63,7 +64,7 @@ import uuid
 from dataclasses import fields, is_dataclass, replace
 from datetime import date, datetime, timezone
 from enum import Enum
-from typing import AbstractSet, Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union
 
 from google.api_core.exceptions import (
     Aborted, AlreadyExists, DeadlineExceeded, FailedPrecondition, InternalServerError, NotFound, ResourceExhausted,
@@ -81,6 +82,7 @@ from ..domain.drive_enrichment import (
     DriveHintDoc, DriveProfile, EnrichJob, GradedValue, HintItem, InitialBuild, JobState, KeyValue, ModelUsageMonth,
     PhotoObject, ProfileDate, ProfileEntity, UsageClass,
 )
+from ..domain.reconnect_policy import Cleared
 from ..domain.drive_index import (
     ContentClass, DocumentBrief, DriveChunk, DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState, EpochPhase,
     ErrorCategory, LeaseLost, Priority, Reason, RecordState, Scope, TriageVerdict, record_key,
@@ -112,7 +114,7 @@ CHUNK_VECTOR = "vector"
 CHUNK_DISTANCE = "chunk_distance"
 _TS_MIN = datetime(1, 1, 1, tzinfo=timezone.utc)   # Firestore's smallest timestamp: `>=` it excludes nulls
 _FLAGS = ("stale_alerted", "reconnect_notified", "migration_alerted", "stall_alerted", "fallback_alerted_day",
-          "card_cap_alerted", "chunk_cap_alerted")
+          "card_cap_alerted", "chunk_cap_alerted", "disconnected_by_user_at")
 _LEASE = ("lease_owner", "lease_until")
 IN_VALUES_MAX = 30                                  # Firestore `in` limit (and the disjunction limit per query)
 # metadata_only reasons that leave an admitted document unread (drive_search.is_unread, §10.2)
@@ -273,6 +275,7 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "described_count": int, "described_grew_at": _dt,
     "migration_alerted": bool, "stall_alerted": bool, "fallback_alerted_day": str,
     "card_cap_alerted": bool, "chunk_cap_alerted": bool,
+    "disconnected_by_user_at": _dt,   # R1 (SECRETS_AT_REST_RFC §6.2 F1), a fan-out flag
     "purge_keep_transcripts": bool,
     # DRIVE_FILE_NOTES_RFC §3.4: the notes step's watermark pair, pass end and space-pass cursor
     "notes_applied_at": _dt, "notes_scanned_at": _dt, "notes_space_at": _dt, "notes_paging": bool,
@@ -709,12 +712,16 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                                 stall_alerted: Optional[bool] = None,
                                 fallback_alerted_day: Optional[str] = None,
                                 card_cap_alerted: Optional[bool] = None,
-                                chunk_cap_alerted: Optional[bool] = None) -> None:
+                                chunk_cap_alerted: Optional[bool] = None,
+                                disconnected_by_user_at: Union[datetime, Cleared, None] = None) -> None:
         given = {"stale_alerted": stale_alerted, "reconnect_notified": reconnect_notified,
                  "migration_alerted": migration_alerted, "stall_alerted": stall_alerted,
                  "fallback_alerted_day": fallback_alerted_day, "card_cap_alerted": card_cap_alerted,
                  "chunk_cap_alerted": chunk_cap_alerted}
         changes: Dict[str, Any] = {name: value for name, value in given.items() if value is not None}
+        if disconnected_by_user_at is not None:
+            changes["disconnected_by_user_at"] = None if disconnected_by_user_at is Cleared.MARK \
+                else disconnected_by_user_at
         if not changes:
             return
         try:

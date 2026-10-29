@@ -41,8 +41,20 @@ class TestReconnectNoticeReview:
         assert len(env.notifier.calls) == 1
 
     async def test_deliberate_disconnect_with_flag_down_sends_no_notice(self, env):  # noqa: F811
-        """A user who disconnected on purpose is not told the connection expired (§7.7)."""
+        """A user who disconnected on purpose is not told the connection expired (§7.7). Since R1 (SECRETS_AT_REST_RFC
+        §6.2, F1) a deliberate disconnect is the Cabinet's mark on the sync state; without the mark the same state gets
+        R1's notice (tests/unit/services/test_drive_reconnect_r1.py)."""
         await env.repo.save_sync_state(DriveSyncState(user_id="u"))
+        await env.repo.update_sync_flags("u", disconnected_by_user_at=env.clock.now)
+        env.drive.connection_state = DriveConnection(connected=False)
+        await env.svc.fan_out()
+        assert env.notifier.calls == []
+        assert (await env.repo.get_sync_state("u")).reconnect_notified is False
+
+    async def test_no_grant_with_flag_up_sends_no_notice(self, env):  # noqa: F811
+        """R1's once-per-transition flag (F2): a user already told gets no second notice while the grant stays gone."""
+        await env.repo.save_sync_state(DriveSyncState(user_id="u"))
+        await env.repo.update_sync_flags("u", reconnect_notified=True)
         env.drive.connection_state = DriveConnection(connected=False)
         await env.svc.fan_out()
         assert env.notifier.calls == []

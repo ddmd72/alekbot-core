@@ -17,11 +17,12 @@ outlived its lease cannot purge or overwrite the state of the tick that took ove
 """
 from abc import ABC, abstractmethod
 from datetime import date, datetime
-from typing import AbstractSet, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
+from typing import AbstractSet, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union
 
 from src.domain.drive_cap_alert import CapCounts
 from src.domain.drive_enrichment import DriveHintDoc, InitialBuild, ModelUsageMonth
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, RecordState
+from src.domain.reconnect_policy import Cleared
 from src.domain.drive_index_lean import ChunkId, DriveChunkLean, DriveHintLean, DriveRecordLean
 from src.domain.drive_transcript import StoredTranscript, TranscriptBatch, TranscriptJob, WindowTranscript
 
@@ -49,9 +50,12 @@ class DriveIndexRepository(ABC):
                                 stall_alerted: Optional[bool] = None,
                                 fallback_alerted_day: Optional[str] = None,
                                 card_cap_alerted: Optional[bool] = None,
-                                chunk_cap_alerted: Optional[bool] = None) -> None:
-        """Field-level update of the fan-out's flags (the v1 two, Search v2's three alert flags, §25.8, and the two cap
-        alert flags, drive_cap_alert); a missing state is left missing. `save_sync_state` never writes them."""
+                                chunk_cap_alerted: Optional[bool] = None,
+                                disconnected_by_user_at: Union[datetime, Cleared, None] = None) -> None:
+        """Field-level update of the fan-out's flags (the v1 two, Search v2's three alert flags, §25.8, the two cap
+        alert flags, drive_cap_alert, and R1's deliberate-disconnect mark, SECRETS_AT_REST_RFC §6.2 F1); a missing state
+        is left missing. `save_sync_state` never writes them. None leaves a flag as stored; `Cleared.MARK` empties
+        `disconnected_by_user_at`."""
 
     @abstractmethod
     async def delete_sync_state(self, user_id: str, owner: Optional[str] = None) -> None:

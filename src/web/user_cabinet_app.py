@@ -14,6 +14,8 @@ from ..services.drive_search_service import DriveSearchService
 from ..services.cabinet_fact_service import CabinetFactService
 from ..services.fact_answer_service import FactAnswerService
 from ..services.localization_service import LocalizationService
+from ..services.integration_reconnect_service import IntegrationReconnectService
+from ..domain.reconnect_policy import Integration
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
@@ -79,11 +81,23 @@ def create_user_cabinet_blueprint(
     fact_review_store: Optional[FactReviewStore] = None,
     fact_answer_service: Optional[FactAnswerService] = None,
     localization: Optional[LocalizationService] = None,
+    reconnect: Optional[IntegrationReconnectService] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
     """
     bp = Blueprint("cabinet", __name__)
+
+    async def _reconnect_needed(user_id: str, integration: Integration) -> bool:
+        """R1 (SECRETS_AT_REST_RFC §6.2): a "not connected" integration with a past connection shows Reconnect.
+        Best effort: the status card must not depend on this read."""
+        if reconnect is None:
+            return False
+        try:
+            return (await reconnect.status(user_id, (integration,)))[integration.value] is True
+        except Exception as exc:
+            logger.warning(f"{integration.value} status: reading the reconnect state failed: {exc_brief(exc)}")
+            return False
 
     # Calculate absolute paths
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1026,7 +1040,10 @@ def create_user_cabinet_blueprint(
         try:
             creds = await oauth_credentials_port.get_credentials(g.user_id, "gmail")
             if not creds:
-                return jsonify({"connected": False}), 200
+                body: dict = {"connected": False}
+                if reconnect is not None:
+                    body["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.GMAIL)
+                return jsonify(body), 200
 
             indexed_through = None
             oldest_indexed_through = None
@@ -1206,6 +1223,11 @@ def create_user_cabinet_blueprint(
             creds = await oauth_credentials_port.get_credentials(g.user_id, "gmail")
             if not creds:
                 return jsonify({"error": "Gmail not connected"}), 404
+
+            # A deliberate disconnect is not a loss (R1, F1): marked before the credential goes, so no sweep in
+            # between reads a past connection without a credential and no mark; a failed mark deletes nothing.
+            if reconnect is not None:
+                await reconnect.mark_disconnected(g.user_id, Integration.GMAIL)
 
             # Best-effort token revocation at Google
             if gmail_oauth_service:
@@ -1453,6 +1475,8 @@ def create_user_cabinet_blueprint(
                 # The grant was rejected on refresh (§7.7): still stored, but only a reconnect helps.
                 "needs_reconnect": connection.connected and connection.needs_reconnect,
             }
+            if reconnect is not None and not connection.connected:
+                body["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.DRIVE)
         except Exception as exc:
             logger.error(f"Error fetching drive status: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
@@ -1565,6 +1589,9 @@ def create_user_cabinet_blueprint(
         if not user_drive:
             return jsonify({"error": "Drive integration not configured"}), 501
         try:
+            # R1 (F1): marked before the grant goes, so a deliberate disconnect never reads as a loss
+            if reconnect is not None:
+                await reconnect.mark_disconnected(g.user_id, Integration.DRIVE)
             await user_drive.disconnect(g.user_id)
             logger.info(f"🔌 Drive disconnected for user={g.user_id[:8]}")
         except Exception as exc:
@@ -1594,6 +1621,8 @@ def create_user_cabinet_blueprint(
             return jsonify({"connected": False}), 200
         try:
             status = await task_setup.get_status(g.user_id)
+            if reconnect is not None and not status.get("connected"):
+                status["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.TODO)
             return jsonify(status), 200
         except Exception as exc:
             logger.error(f"Error fetching MS Tasks status: {exc}", exc_info=True)

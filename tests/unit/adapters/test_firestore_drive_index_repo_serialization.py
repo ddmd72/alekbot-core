@@ -107,6 +107,7 @@ def full_state() -> DriveSyncState:
         described_count=7, described_grew_at=T - timedelta(hours=2), migration_alerted=True, stall_alerted=True,
         fallback_alerted_day="2026-10-09", purge_keep_transcripts=True,
         card_cap_alerted=True, chunk_cap_alerted=True,   # the fan-out's cap alert flags (drive_cap_alert)
+        disconnected_by_user_at=T - timedelta(days=1),   # R1's deliberate-disconnect mark (SECRETS_AT_REST_RFC §6.2 F1)
         # DRIVE_FILE_NOTES_RFC §3.4: the notes step's state (part B review verdict, plus the rollback stamp)
         notes_applied_at=T - timedelta(minutes=4), notes_applied_id="N7", notes_paging=True,
         notes_scanned_at=T - timedelta(minutes=3), notes_merge_version=1, notes_space="old/768",
@@ -179,9 +180,9 @@ class TestStateSerialization:
     def test_doc_excludes_fanout_flags(self):
         doc = state_to_doc(full_state())
         # Search v2 (§25.8) adds three fan-out flags, written only by update_sync_flags like the v1 two
-        # the cap alert (drive_cap_alert) adds two more, written the same way
+        # the cap alert (drive_cap_alert) adds two more, written the same way; R1's disconnect mark one more (F1)
         flags = {"stale_alerted", "reconnect_notified", "migration_alerted", "stall_alerted", "fallback_alerted_day",
-                 "card_cap_alerted", "chunk_cap_alerted"}
+                 "card_cap_alerted", "chunk_cap_alerted", "disconnected_by_user_at"}
         assert set(doc) == {f.name for f in fields(DriveSyncState)} - flags
         assert set(STATE_FIELDS) == set(doc) - {"lease_owner", "lease_until"}   # the lease is not save_sync_state's
         assert not flags & set(doc)
@@ -193,7 +194,8 @@ class TestStateSerialization:
     def test_round_trip_with_flags_from_the_document(self):
         doc = {**stored(state_to_doc(full_state())), "stale_alerted": True, "reconnect_notified": True,
                "migration_alerted": True, "stall_alerted": True, "fallback_alerted_day": "2026-10-09",
-               "card_cap_alerted": True, "chunk_cap_alerted": True}
+               "card_cap_alerted": True, "chunk_cap_alerted": True,
+               "disconnected_by_user_at": stored(T - timedelta(days=1))}
         assert state_from_doc("u1", doc) == full_state()
 
     def test_missing_doc_fields_default(self):

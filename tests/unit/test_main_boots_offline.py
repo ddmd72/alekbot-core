@@ -125,6 +125,10 @@ MATRIX: Dict[str, Expect] = {
     "fire_due_reminders": Expect(200, {"claim_lost": 0, "enqueued": 0, "skipped": 0}),
     "renew_all_task_subscriptions": Expect(200, {"enqueued": 1, "status": "ok"}),
     "repair_email_embeddings": Expect(200, {"has_more": False, "repaired": 0, "status": "ok"}),
+    # R1 (SECRETS_AT_REST_RFC §6.2, plan D-P4): the sweep lists users from the feature stores, and when it runs (sorted
+    # order) no Gmail indexing state or To Do config is stored, so it has no candidate and sends nothing.
+    "reconnect_notice_sweep": Expect(200, {"candidates": 0, "errors": 0, "notices": 0},
+                                     log="[Reconnect] sweep {'candidates': 0, 'notices': 0, 'errors': 0}"),
     "start_daily_email_review": Expect(200, {"failed": 0, "started": 0}),
     "start_drive_sync": Expect(200, {"alerts": 0, "candidates": 0, "continuing": 0, "enqueued": 0, "errors": 0, "notices": 0, "skipped": 0}),
     "start_email_indexing": Expect(200, {"skipped": 1, "started": 0},

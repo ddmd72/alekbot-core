@@ -288,6 +288,35 @@ gcloud scheduler jobs describe alek-bot-dev-start-daily-email-review \
   --attempt-deadline=180s \
   --project=$PROJECT_ID
 
+# R1 reconnect notices (SECRETS_AT_REST_RFC §6.2, plan D-P4): hourly, one chat notice per Gmail / To Do whose feature
+# state shows a past connection but whose credential is gone (Drive's runs in start-drive-sync). :37 collides with no
+# other job (hourly :02/:07/:12/:17/:47, :27 every 2 h, */5, */10, 3-59/10). 180s: a pass may post notices through the
+# formatter agent.
+gcloud scheduler jobs describe alek-bot-dev-reconnect-notice-sweep \
+  --location=us-central1 --project=$PROJECT_ID 2>/dev/null \
+&& gcloud scheduler jobs update http alek-bot-dev-reconnect-notice-sweep \
+  --schedule="37 * * * *" \
+  --uri="$SERVICE_URL/worker" \
+  --oidc-service-account-email="$SA" \
+  --oidc-token-audience="$SERVICE_URL/worker" \
+  --http-method=POST \
+  --message-body='{"task_type":"reconnect_notice_sweep"}' \
+  --update-headers="Content-Type=application/json" \
+  --location=us-central1 \
+  --attempt-deadline=180s \
+  --project=$PROJECT_ID \
+|| gcloud scheduler jobs create http alek-bot-dev-reconnect-notice-sweep \
+  --schedule="37 * * * *" \
+  --uri="$SERVICE_URL/worker" \
+  --oidc-service-account-email="$SA" \
+  --oidc-token-audience="$SERVICE_URL/worker" \
+  --http-method=POST \
+  --message-body='{"task_type":"reconnect_notice_sweep"}' \
+  --headers="Content-Type=application/json" \
+  --location=us-central1 \
+  --attempt-deadline=180s \
+  --project=$PROJECT_ID
+
 # Drive index fan-out (USER_DRIVE_INDEXING_RFC §7.1, §12.1): every TICK_INTERVAL the MAIN
 # service enqueues one drive_sync per user on drive-sync-dev (run by alek-bot-indexer-dev),
 # then checks staleness and the reconnect notice. 3-59/10 (:03, :13, ...) collides with no
