@@ -1,7 +1,7 @@
 # Decision: After passages are read, a run that is not a chat turn refuses its changes
 
 **Date:** 2026-10-28
-**Status:** Accepted (owner, OQ-A1, 2026-10-28); built on `feat/drive-answer-from-content`, not deployed.
+**Status:** Accepted (owner, OQ-A1, 2026-10-28); deployed 2026-10-29.
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §28.3 A14, §28.6 OQ-A1;
 [DRIVE_SPECIALIST_RFC.md](../../10_rfcs/DRIVE_SPECIALIST_RFC.md) §2.2 row 1, §2.3.11; code `src/domain/drive_content_gate.py`,
 `DriveToolRun.run` in `src/infrastructure/drive_tools.py`.

@@ -1,6 +1,6 @@
 # Ports
 
-ABC interfaces. Contracts between domain/services and the external world. ~58 ports.
+ABC interfaces. Contracts between domain/services and the external world. ~93 ports.
 
 ## Key Ports
 

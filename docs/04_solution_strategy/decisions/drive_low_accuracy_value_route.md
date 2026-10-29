@@ -1,7 +1,7 @@
 # Decision: A low-accuracy value is read through passages when the text is born-digital, by an open when it is image text
 
 **Date:** 2026-10-28
-**Status:** Accepted (owner, OQ-A2, 2026-10-28); built on `feat/drive-answer-from-content`, not deployed.
+**Status:** Accepted (owner, OQ-A2, 2026-10-28); deployed 2026-10-29.
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §28.2, §28.3 A10, A13, §28.6 OQ-A2;
 [drive_card_accuracy_score.md](drive_card_accuracy_score.md); code `src/domain/drive_capture.py` (`IMAGE_TEXT_CAPTURES`),
 `ReadFacts.low_accuracy_image`, `R_ACCURACY_VALUE`, `R_ACCURACY_IMAGE` in `src/domain/drive_answer_texts.py`.

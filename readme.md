@@ -24,13 +24,13 @@ the consolidation agent extracts new facts in the background → next conversati
 ## Architecture
 
 **Hexagonal Architecture (Ports & Adapters).** Domain and business logic have zero infrastructure
-dependencies. All I/O goes through ~58 ABC interfaces (ports), with concrete implementations
+dependencies. All I/O goes through ~93 ABC interfaces (ports), with concrete implementations
 injected at startup via `ServiceContainer`.
 
 ```
 src/
   domain/         — Entities, enums, value objects. No external imports.
-  ports/          — ~58 ABC interfaces. Only domain/ + stdlib.
+  ports/          — ~93 ABC interfaces. Only domain/ + stdlib.
   adapters/       — Firestore, Gemini, Claude, Grok, OpenAI, Slack, Telegram, Gmail, Microsoft To Do.
   services/       — Business logic (search enrichment, prompt assembly, fact writing, email indexing).
   agents/         — Multi-agent network. Receive all dependencies via constructor.

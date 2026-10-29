@@ -17,7 +17,7 @@ field, `workspace_file`, bound by code in NotesAgent and rendered at fire time a
 ## Why
 
 - **Storage.** Copies of PDFs and scans are part of the job (a Firestore document caps at 1 MiB); object versioning
-  gives history and restore for free; a dedicated bucket keeps lifecycles apart from the media bucket's 90-day uploads;
+  gives history and restore for free; a dedicated bucket keeps lifecycles apart from the media bucket's 30-day uploads;
   the user's drive is the user's area and is absent when not connected.
 - **Pull, not push.** A self-written block in every prompt was the riskiest part of rev 1 (injection, cache
   invalidation per write, ~600 tokens), and the evidence showed Smart does not start writes on its own.

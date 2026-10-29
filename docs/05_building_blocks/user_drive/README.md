@@ -13,10 +13,9 @@ marked "(branch)" below is now deployed code (2026-10-19).
 RFC §27 (transcripts of audio and video; decisions D41–D47, deltas Δ95–Δ175): **slice T1 is live since 2026-10-21 (the owner only, $10 monthly cap; other users have transcription off);
 the mirror folder (T2) is live since 2026-10-21 (the owner); the summary (T3) is not built.** How it works end to end, in plain English, is §4.23; the rollout and
 the switches are §7.2, `docs/07_deployment/README.md` → "Transcripts switch and cap" and "Standing levers", and the rollout notes (ops).
-The owner's notes on files ([DRIVE_FILE_NOTES_RFC.md](../../10_rfcs/DRIVE_FILE_NOTES_RFC.md) rev 3.3; built on `feat/drive-notes`,
-not deployed): what a note is, the drive specialist's note tools, the receipt, the merge into cards and search, deleted files and
+The owner's notes on files ([DRIVE_FILE_NOTES_RFC.md](../../10_rfcs/DRIVE_FILE_NOTES_RFC.md) rev 3.3; deployed): what a note is, the drive specialist's note tools, the receipt, the merge into cards and search, deleted files and
 erase are §4.24.
-Answer from content ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §28; built on `feat/drive-answer-from-content`, not deployed):
+Answer from content ([USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §28; deployed 2026-10-29):
 the specialist's `find_passages` / `read_passages`, the write gate and the low-accuracy route are §4.25.
 
 | Question | Read |
@@ -213,7 +212,7 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
 - **Content fields (Slice 2+4)** on the same record: `indexed_generation` (the readable chunk generation, or none),
   `index_generation` (the last generation a run started), `indexed_version` (the content version it was read at),
   `chunk_count`, `chunk_space` (the embedding space of its chunks), `extraction_version`, `extracted_by`
-  (`parser@2` / `reader@1`), `truncated`, `text_chars`, `pages_total`, `lead_text` (the first 2 000 characters),
+  (`parser@3` / `reader@2`), `truncated`, `text_chars`, `pages_total`, `lead_text` (the first 2 000 characters),
   `brief` (from the reader), the triage `triage_verdict` / `triage_version` / `triaged_content_version` (v1's `caption` is replaced by the
   photo fields below),
   and the run bookkeeping `attempts`, `attempt_started_at`, `dirty_since`, `defer_until` / `defer_priority`. Three
@@ -501,7 +500,7 @@ image `(reader)`, every other admitted kind `(parser)`.
   directory; one child at a time. Readers (`src/adapters/drive_parser/readers.py`): pdfminer.six for PDF text, laid
   out page by page and stopped once `MAX_TEXT_CHARS` is reached (`truncated` when a page was left; pypdf for the
   page count, walked from the page tree, and encryption);
-  markitdown's allowlisted converters for DOCX, PPTX, EPUB and MSG; HTML by parser@2 (`drive_parser/html_text.py`,
+  markitdown's allowlisted converters for DOCX, PPTX, EPUB and MSG; HTML by the parser's HTML policy (`drive_parser/html_text.py`,
   RFC §25.3, Search v2): one BeautifulSoup parse, the content element converted in place with markdownify — the first
   visible `<main>`, else the largest `<article>` holding half the body's text, else the body without its top-level
   header, footer, nav and aside; hidden elements, scripts and option lists dropped; blocks of in-page links dropped
@@ -538,7 +537,7 @@ image `(reader)`, every other admitted kind `(parser)`.
   Otherwise the record waits (`deferred`). The runner builds the agent with the user's own configuration
   (`AgentContextBuilder`, D7) and bills every call to the user's account. The provider is resolved in this order:
   the user's `agent_providers["drive_reader"]` (or `drive_triage`), then the user's global `provider_preference`
-  when it names `claude`, `openai` or `gemini`, then the default `openai` (`gpt-6-luna`). A call the base layer fails
+  when it names `claude` or `openai` (a `gemini` value is ignored: Gemini is the fallback only), then the default `openai` (`gpt-6-luna`). A call the base layer fails
   over on (429, 5xx, timeout, network, an open breaker) is re-served on the Gemini Flash fallback
   (`gemini-3.8-flash`). Where the prompts live and how to switch the provider: §4.16.
   - An image is one call on the rendition.
@@ -565,7 +564,7 @@ image `(reader)`, every other admitted kind `(parser)`.
     the file's — charges it to the file (`outage_charged`, §4.10).
 - **Outcome** (`outcome_step` in `src/domain/drive_index_run.py`): `text` goes on; `no_text`, `unsupported`,
   `too_large`, `encrypted` demote; `timeout`, `memory`, `error` retry; `budget_exhausted` waits for next month. See
-  the table in §4.10. `extracted_by` records the link that decided (`parser@2` or `reader@1`), so a new version of
+  the table in §4.10. `extracted_by` records the link that decided (`parser@3` or `reader@2`), so a new version of
   that link re-reads exactly the files it decided (§4.12).
 
 ### Step 5 (images) — triage
@@ -996,7 +995,7 @@ fallback and the indexer warns at start. `GeminiAdapter` sends the inline base64
 Gemini has no `allow_provider_storage` switch (like Claude). The failover is per call: one call of a PDF's windows
 or one triage batch may be read by Gemini while the rest are read by the primary, and `extracted_by` does not record
 which. The eval and the live model check run each provider alone, never with the fallback. It does **not** re-read files
-already read: `extracted_by` is `reader@1` whichever provider read it. To have them read again by the new provider,
+already read: `extracted_by` is `reader@2` whichever provider read it. To have them read again by the new provider,
 bump `READER_VERSION` in `src/composition/drive_reader_runner.py` (a deploy; re-reads and re-bills every
 reader-decided file of every user, §4.12). Before switching for real, compare the two on real files with
 `scripts/validation/drive_model_check.py read <folder> --providers claude,openai`, and re-record the eval bars with
@@ -1435,7 +1434,7 @@ first run makes the bot create `_Transcripts (Alek)`.
 [drive_transcripts_mirror_archive.md](../../04_solution_strategy/decisions/drive_transcripts_mirror_archive.md); the reasoning and the deltas of the build are RFC §27.16
 (Δ136–Δ244) and §27.19.
 
-### 4.24 The owner's notes on files (DRIVE_FILE_NOTES_RFC rev 3.3; built on `feat/drive-notes`, not deployed)
+### 4.24 The owner's notes on files (DRIVE_FILE_NOTES_RFC rev 3.3; deployed)
 
 **In plain English.** The owner tells the bot what a file or folder is ("this one is the bathroom repair invoice from Reformas
 Exemplo; it's an invoice, not a receipt"), or says "yes" when the bot proposes it. The bot keeps that as a **note**
@@ -1532,7 +1531,7 @@ can show an un-noted copy of a noted file without the note line.
 `src/adapters/firestore_drive_note_repo.py`; wiring `src/composition/drive_note_setup.py`; prompt
 `prompts_snapshot/tokens/system/PROTOCOL_DRIVE_NOTES.groovy`. Decision `decisions/drive_file_notes.md`.
 
-### 4.25 Answer from content: passages (RFC §28; built on `feat/drive-answer-from-content`, not deployed)
+### 4.25 Answer from content: passages (RFC §28; deployed 2026-10-29)
 
 **In plain English.** Search finds *which file*. This is for "what does it say": "How does the review process work in the
 R&D specs?", "What does Tom's plan say happens after the first review?". Smart says **what** it needs, in the user's
@@ -2231,7 +2230,7 @@ item id is the one in the file's `drive:` ref) answers most cases on its own:
 
 Then the indexer's logs (`make fetch-logs-indexer K=…`, grep the item id):
 - `[DriveIndex] run user=… item=<id> outcome=indexed|failed|demoted|retried|deferred state=… reason=…
-  extractor=parser@2|reader@1 attempts=… pages=<sent>/<total> refused=… truncated=…` — one INFO line per index
+  extractor=parser@3|reader@2 attempts=… pages=<sent>/<total> refused=… truncated=…` — one INFO line per index
   run, held and deferred runs included;
 - `[DriveReader] user=… item=<id> kind=… status=… pages=… calls=… cost=… truncated=… refused=…` — what the reader
   did with it;

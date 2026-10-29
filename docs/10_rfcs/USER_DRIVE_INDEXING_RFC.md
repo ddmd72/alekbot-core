@@ -8,13 +8,12 @@ switch after the live check. **Search v2** (owner decisions D14–D28 and D30, D
 in §25 and **implemented and live since 2026-10-14** (PR #64; results on the synthetic fixture: §25.7.1);
 §25 overrides §5.5, §8.5, §10, §14, §15 and §24 where they disagree. Slice 3 not built. Phase 0 hardening merged (PR #57, §16). **Audio and video transcripts** (owner decisions D41–D47,
 engineering deltas Δ95–Δ244, owner decisions D48–D49) are designed in §27; **T1 (extraction, batch, store, index, open) is live since 2026-10-21 (the owner only);
-T2 (the mirror folder with D48's archive and D49's `_Transcripts`, the deleted-files search, the chat-write guard, the scripts) is built on
-`feat/drive-transcripts-t2` and not deployed; T3 (the summary) is not built** (§27.19).
+T2 (the mirror folder with D48's archive and D49's `_Transcripts`, the deleted-files search, the chat-write guard, the scripts) is live since 2026-10-21 (the owner); T3 (the summary) is not built** (§27.19).
 **Card accuracy, capture and files the bot cannot open** (owner decisions D33–D40, engineering deltas Δ47–Δ91) are
 designed in §26 and **built (slices S1–S6) and deployed 2026-10-19** (PRs #81–#84; the owner's index rebuilt, gate key
 `accuracy` applied); §26 states what that release changed.
 **Answer from content** (the drive specialist retrieves, reads and passes to Smart the passages nearest a content request;
-Smart says what, the specialist decides how; owner questions OQ-A1–OQ-A3 resolved 2026-10-28) is designed in §28 and **built on `feat/drive-answer-from-content` (rev 3.33, 2026-10-28), not deployed**; §28.10 records what the build decided beyond the design.
+Smart says what, the specialist decides how; owner questions OQ-A1–OQ-A3 resolved 2026-10-28) is designed in §28 and **built (rev 3.33, 2026-10-28) and deployed 2026-10-29**; §28.10 records what the build decided beyond the design.
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
 Replaces that RFC's §5 "Step 2" placeholder.
 **Precedents reused:** email index ([GMAIL_EMAIL_INDEXING_RFC.md](GMAIL_EMAIL_INDEXING_RFC.md), `IndexedEmail`),
@@ -5572,7 +5571,7 @@ that text, and where they disagree with an older paragraph the row wins. No mode
 
 ## 28. Answer from content (rev 3.33, 2026-10-28; built, not deployed)
 
-*Built on `feat/drive-answer-from-content`, not deployed (rev 3.33; §28.10 lists the build's deltas). Serves G2 (§1, "a clause, an amount or a date inside a document, with the file it came from")
+*Built and deployed 2026-10-29 (rev 3.33; §28.10 lists the build's deltas). Serves G2 (§1, "a clause, an amount or a date inside a document, with the file it came from")
 and the third query type of the owner decisions of 2026-10-11 (Smart uses the documents as a knowledge base), from the
 stored chunks, through the drive specialist (`DRIVE_SPECIALIST_RFC.md`). Search (§25) is unchanged: zero-LLM, strict
 AND, the same result text. A1–A18 are this section's design decisions; owner questions OQ-A1–OQ-A3 were resolved by

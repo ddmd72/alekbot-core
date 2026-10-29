@@ -856,8 +856,7 @@ lost access keeps the index 30 days. Rebuild one user: `scripts/infrastructure/d
 default, `bars_v2.json`; results RFC §25.7.1), G3 `… drive_eval.smart_dry_run` (owner-run, paid, `--max-usd` required, a hard stop; bars in `bars_g3.json`, not recorded yet, so a run without `--record` ends "no bars"; drive writes stubbed by the class-level `dry_run_drive.DryRunDriveOperations`; `--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier` run the branch's prompt files and pick the specialist; `--record` writes no bars while Smart fails a hard check). **Before/after:** before = G3 on `main` with the Firestore prompts, after = G3 on the branch with `--prompts-from-snapshot`, both at the same `--repeats`; compare the two reports `scripts/memory/drive_g3/g3_<stamp>.json` (`scores`, `wall_p50_s`). The drive specialist eval `… drive_eval.specialist_ab` (owner-run, paid, `--max-usd`; `--replay-commissions` runs the specialist alone; `--compare <report> --compare-design today`; `--prompts-from-snapshot` runs the branch's prompt files). Decisions:
 `decisions/drive_*.md`.
 
-**Owner notes on drive files** (`docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` rev 3.3, D1–D21; built on `feat/drive-notes`, not
-deployed; the owner's map `docs/05_building_blocks/user_drive/README.md` §4.24; `decisions/drive_file_notes.md`) — what the
+**Owner notes on drive files** (`docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` rev 3.3, D1–D21; deployed; the owner's map `docs/05_building_blocks/user_drive/README.md` §4.24; `decisions/drive_file_notes.md`) — what the
 owner says or confirms a file or folder is, kept bot-side in `{prefix}drive_notes` (SCD2 `versions/v<n>`; never on the drive,
 never in memory, never purged with the index). **Written only inside the drive specialist:** Smart has no note tool and puts
 a note's words in the `work_with_drive_files` query (`file_contents` is "never a note's words"). `DriveAgent` declares
@@ -923,7 +922,7 @@ src/
                   Key: llm.py (LLMRequest/LLMResponse/Message/MessagePart/ToolCall, PROMPT_CACHE_BOUNDARY,
                   build_tool_turn), auth.py, retry_policy.py, exceptions.py. MessagePart.consolidation_text
                   is visible only to the consolidation serializer (legacy: no writer left, readers kept until stored sessions drop it).
-  ports/        — ~58 ABC interfaces (domain/ + stdlib only). One port per system boundary.
+  ports/        — ~93 ABC interfaces (domain/ + stdlib only). One port per system boundary.
   adapters/     — Port implementations: LLM (Gemini/Claude/Grok/OpenAI), Firestore repos, Slack/Telegram,
                   Gmail, MicrosoftToDo (GoogleTasks frozen), Node runners (DOCX/Puppeteer), Unsplash, MCP repo.
                   No cross-subpackage adapter imports (REQ-ARCH-23).

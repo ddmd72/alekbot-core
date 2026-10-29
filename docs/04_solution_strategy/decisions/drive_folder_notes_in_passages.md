@@ -1,7 +1,7 @@
 # Decision: Passages carry folder notes under one cap; a file's own note is never capped
 
 **Date:** 2026-10-28
-**Status:** Accepted (owner, OQ-A3, 2026-10-28); built on `feat/drive-answer-from-content`, not deployed.
+**Status:** Accepted (owner, OQ-A3, 2026-10-28); deployed 2026-10-29.
 **Context:** [USER_DRIVE_INDEXING_RFC.md](../../10_rfcs/USER_DRIVE_INDEXING_RFC.md) §28.3 A18, §28.6 OQ-A3, §28.9;
 [DRIVE_FILE_NOTES_RFC.md](../../10_rfcs/DRIVE_FILE_NOTES_RFC.md) D20; code `src/domain/drive_excerpt_context.py`
 (`plan_context`), `EXCERPT_FOLDER_NOTES_CHARS_MAX` in `src/domain/drive_index_params.py`.

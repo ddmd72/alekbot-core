@@ -4,7 +4,7 @@
 deleted-files search and the deletion "why" with the transcripts mirror (§0.3); rev 3.2 records the owner's ruling on
 editing archived and other-drive notes (D21) and the deltas of the built S1 core (§0.4); rev 3.3 moves the write side
 from Smart into the drive specialist (`DRIVE_SPECIALIST_RFC.md` §9) and records what that build changed (§0.5). S1–S3
-are built on `feat/drive-notes`, with the note tools in the drive specialist; not deployed.
+are deployed, with the note tools in the drive specialist.
 **Date:** rev 1 2026-10-21; rev 2 2026-10-21, after the builder-check review (`scripts/memory/review_drive_file_notes_rfc.md`,
 private): C1 and I1–I10 fixed, the cheap minors folded in, the per-slice test gaps added; rev 3 2026-10-21, the owner's
 answers to OD1–OD12 (§0.1).

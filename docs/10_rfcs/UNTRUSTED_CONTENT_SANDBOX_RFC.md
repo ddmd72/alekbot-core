@@ -34,13 +34,13 @@ process under an unprivileged uid**; the server process only moves the payload t
 | # | Consumer | Input it receives | Runs today | Port today |
 |---|----------|-------------------|------------|------------|
 | C1 | Drive document parsing (PDF, DOCX, PPTX, XLSX/XLS, ODF, EPUB, HTML, RTF, MSG, EML, text) | a file from a user's drive | indexer, child process under an unprivileged user with rlimits (`src/adapters/subprocess_content_extractor.py:113`, `:154`, `:223`; `src/adapters/drive_parser/child.py`, `readers.py`) | `ContentExtractorPort.extract` (`src/ports/content_extractor_port.py`); the PDF page ops (`pdf_page_count`, `cut_pdf_window`) are **not** on the port: they reach the reader through `PdfSplitter` (`src/composition/drive_reader_runner.py:73-78`) |
-| C2 | Chat-upload conversion; on-demand reading of a drive file in chat | a file attached in Slack/Telegram; a drive file opened by `open_file` | main service, **in process**, a thread (`src/utils/file_conversion.py:207`, markitdown at `:264`; four callers: `src/services/file_conversion_service.py:125` and `:244`, `src/services/email_search_service.py:240`, `src/handlers/conversation_handler.py:821`) | none: a free function |
+| C2 | Chat-upload conversion; on-demand reading of a drive file in chat | a file attached in Slack/Telegram; a drive file opened by `open_file` | main service, **in process**, a thread (`src/utils/file_conversion.py:207`; five call sites in three modules: `src/services/file_conversion_service.py:137`, `:178` and `:294`, `src/services/email_search_service.py:244`, `src/handlers/conversation_handler.py:920`) | none: a free function |
 | C3 | Audio/video decoding for transcripts (`ffmpeg`, `ffprobe`) | a recording on a drive (§27.4: a short-lived download URL) | not built (planned in the indexer's parser child); `ffprobe` on raw bytes already runs in the main service (`src/utils/video_probe.py:21`) | `MediaAudioPort` (proposed in §27.4), none for the probe |
 | C4 | DOCX generation | a Node script written by a model | main service, Node subprocess with a module hook and a withheld environment (`src/adapters/node_docx_runner.py:25-62`; wired at `src/composition/user_agent_factory.py:730`) | `DocxRunnerPort.run(js_code, spec_json, timeout) -> bytes` (`src/ports/docx_runner_port.py`) |
 | C5 | HTML to PDF | HTML written by a model | main service, Node + Puppeteer subprocess, request filter in `pdf_generator/runner.js:18-56` (`src/adapters/node_puppeteer_runner.py`) | `PuppeteerRunnerPort.run(html, timeout) -> bytes` |
 | C6 | HTML to PNG (rich-content widgets) | HTML written by a model | main service, one shared headless Chromium (`src/adapters/playwright_html_renderer.py:110-123`; wired `main.py:797-800`; used `src/services/rich_content_service.py:134`) | `HtmlRendererPort.render(html, width) -> bytes` plus `start`/`stop` |
 
-The four converter callers above are the full list found by grep (the e-mail attachment path is one of them); the markitdown builder
+The five converter call sites above are the full list found by grep (the e-mail attachment path is one of them); the markitdown builder
 (`src/utils/document_hardening.py:38`) has no other user. HTML cleaning of e-mail bodies with BeautifulSoup in the Gmail adapter
 (`src/adapters/gmail_provider_adapter.py`) stays in the main service **by decision** (O10): it is markup text cleaning of mail the user's own provider
 delivered, not a decoder of attachments; revisit if its input class changes.
@@ -385,7 +385,7 @@ i. **No-NAT dry run** for S6: a deny-all egress deployment that still serves a r
 - Accept: S0-g equivalence on the drive corpus; one tick on the owner's drive in `sandbox` mode within the tick budget (drive RFC §7.1); zero `sandbox_lost`.
 
 ### S4. Chat uploads and on-demand reads (C2)
-- Build: `DocumentConverterPort`, `LocalDocumentConverter`, `SandboxDocumentConverter`; the four callers move to the port; the "converter unavailable" alert and the degraded-start behaviour of the main service. Prerequisite: the main service's own identity (P0, O8).
+- Build: `DocumentConverterPort`, `LocalDocumentConverter`, `SandboxDocumentConverter`; the five call sites move to the port; the "converter unavailable" alert and the degraded-start behaviour of the main service. Prerequisite: the main service's own identity (P0, O8).
 - Tests: all existing conversion cases through both adapters; the audio branch untouched; size alert at 5 MiB before any call; unavailable alert; a hostile-archive case gives the same alert as in-process.
 - Accept: added p95 latency for a typical 1 MiB docx stated to the owner; Slack and Telegram e2e with docx, xlsx, pdf, csv.
 
@@ -466,4 +466,4 @@ Remaining engineering points (no owner input needed; the author's call, stated f
 7. **`indexer_worker_app.py` reserves `/extract` for "Slice 3"** as an indexer route (docstring); that earlier seam is replaced by a separate service and should be edited out when S1 lands.
 8. **`video_probe` is an unlisted consumer** in the main service (S-Δ7).
 9. **`DocxRunnerPort` and `PuppeteerRunnerPort` already anticipate an HTTP adapter** (docstrings), which is consistent; their timeout arguments become the request's `limits`.
-10. **The e-mail attachment path** reaches the converter through `email_search_service.py:240`, one of four callers (§1).
+10. **The e-mail attachment path** reaches the converter through `email_search_service.py:244`, one of five call sites (§1).
