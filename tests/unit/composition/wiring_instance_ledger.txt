@@ -47,6 +47,7 @@ src.adapters.firestore_task_config_repository.FirestoreTaskConfigRepository 1  #
 src.adapters.firestore_task_search_index.FirestoreTaskSearchIndex 1  # by-design single instance
 src.adapters.firestore_user_repo.FirestoreUserRepository 2  # by-design the graph's user_repo plus one uncached one shared by DriveSearchService and the note service (service_container.py drive_users)
 src.adapters.firestore_whitelist_repo.FirestoreWhitelistRepository 1  # by-design single instance
+src.adapters.gcp_kms_cipher_adapter.GcpKmsCipherAdapter 1  # by-design single instance
 src.adapters.gcp_task_queue.GcpTaskQueue 3  # by-design agent-tasks queue (application_graph.py), drive-sync queue (drive_indexing_setup.py:65), Slack intake queue (slack_adapter_factory.py:149)
 src.adapters.gcs_file_storage_adapter.GcsFileStorageAdapter 1  # by-design single instance
 src.adapters.gcs_media_adapter.GcsMediaAdapter 2  # by-design graph media_storage (application_graph.py:416, also the Slack RichContentService's storage_port, application_graph.py:899) and the container's (service_container.py:381), stateless clients on one bucket

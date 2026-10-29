@@ -76,6 +76,11 @@ def load_settings():
         "GOOGLE_OAUTH_CLIENT_ID": os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
         "GOOGLE_OAUTH_CLIENT_SECRET": os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
         "OAUTH_SESSION_SECRET": os.getenv("OAUTH_SESSION_SECRET"),
+        # Secrets at rest (SECRETS_AT_REST_RFC §2.5-§2.6): the Cloud KMS key that encrypts stored secrets, and the hex
+        # key of the verify-only digests. Required: the composition root refuses to build without either (I6), locally
+        # too (local dev uses the real key, §2.7).
+        "KMS_CRYPTO_KEY": os.getenv("KMS_CRYPTO_KEY"),
+        "SECRET_DIGEST_KEY": os.getenv("SECRET_DIGEST_KEY"),
         # Telegram secrets (Session 2026-02-09 Phase 3)
         "TELEGRAM_BOT_TOKEN": os.getenv("TELEGRAM_BOT_TOKEN"),
         "TELEGRAM_WEBHOOK_SECRET": os.getenv("TELEGRAM_WEBHOOK_SECRET"),

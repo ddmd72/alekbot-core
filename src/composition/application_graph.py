@@ -56,6 +56,7 @@ from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
 from src.services.rich_content_service import RichContentService
 from src.agents.infrastructure.billing_agent import BillingAgent
 from src.agents.infrastructure.logger_agent import LoggerAgent
+from src.composition import cipher_setup
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
 from src.composition.drive_indexing_setup import build_drive_sync_scheduler
 from src.composition.drive_note_setup import command_drive_note_service
@@ -79,6 +80,7 @@ from src.infrastructure.agent_manifest import ALL_DESCRIPTORS
 from src.infrastructure.agent_registry import AgentRegistry
 from src.infrastructure.interactive_message_router import InteractiveMessageRouter
 from src.infrastructure.notification_sla import NOTIFICATION_SLA, dispatch_deadline_s
+from src.ports.cipher_port import CipherPort
 from src.services.agent_fallback_service import AgentFallbackService
 from src.services.authentication_service import AuthenticationService
 from src.services.auth_provider_registry import AuthProviderRegistry
@@ -156,6 +158,9 @@ class ApplicationGraph:
     companion_extractor_runner: CompanionExtractorRunner
     language_service: LanguagePreferenceService
     localization: _LocalizationService
+    # the stored-secrets cipher and the verify-only digest key (SECRETS_AT_REST_RFC §2.6), consumed by main()'s MCP wiring
+    cipher: CipherPort
+    digest_key: bytes
     # needed by start() and shutdown()
     agent_task_queue: Optional[GcpTaskQueue]
     billing_agent: BillingAgent
@@ -187,6 +192,11 @@ class ApplicationGraph:
 def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     """Build every non-web object of the main service from the settings dict and the Firestore client; starts nothing."""
     env_config = config["ENVIRONMENT_CONFIG"]
+
+    # Fail closed before anything else is built (SECRETS_AT_REST_RFC I6, plan D-P1): here, never inside the MCP
+    # build, whose errors main() swallows.
+    cipher = cipher_setup.build_cipher(config.get("KMS_CRYPTO_KEY"))
+    secret_digest_key = cipher_setup.digest_key(config.get("SECRET_DIGEST_KEY"))
 
     logger.info("� Initializing Account Repository...")
     account_repo = FirestoreAccountRepository(
@@ -1055,6 +1065,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         companion_extractor_runner=companion_extractor_runner,
         language_service=_language_service,
         localization=_localization,
+        cipher=cipher,
+        digest_key=secret_digest_key,
         agent_task_queue=agent_task_queue,
         billing_agent=billing_agent,
         logger_agent=logger_agent,
