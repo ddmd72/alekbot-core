@@ -15,6 +15,7 @@ def test_factory_requires_db_client():
     with patch("src.composition.slack_adapter_factory.ConversationHandler"):
         with pytest.raises(ValueError, match="db_client is required"):
             SlackAdapterFactory.create_adapter(
+                rich_content_service=MagicMock(),
                 app=AsyncMock(),
                 coordinator=AsyncMock(),
                 agent_factory=AsyncMock(),
@@ -56,6 +57,7 @@ def test_factory_selects_http_mode_with_dependencies():
          patch("src.composition.slack_adapter_factory.HTTPModeAdapter") as mock_http, \
          patch("src.composition.slack_adapter_factory.ConversationHandler"):
         SlackAdapterFactory.create_adapter(
+            rich_content_service=MagicMock(),
             app=app,
             coordinator=AsyncMock(),
             agent_factory=agent_factory,
@@ -96,6 +98,7 @@ def test_factory_forwards_skill_service_to_conversation_handler():
          patch("src.composition.slack_adapter_factory.HTTPModeAdapter"), \
          patch("src.composition.slack_adapter_factory.ConversationHandler") as mock_handler:
         SlackAdapterFactory.create_adapter(
+            rich_content_service=MagicMock(),
             app=app,
             coordinator=AsyncMock(),
             agent_factory=AsyncMock(),

@@ -49,7 +49,7 @@ src.adapters.firestore_user_repo.FirestoreUserRepository 2  # by-design the grap
 src.adapters.firestore_whitelist_repo.FirestoreWhitelistRepository 1  # by-design single instance
 src.adapters.gcp_task_queue.GcpTaskQueue 3  # by-design agent-tasks queue (application_graph.py), drive-sync queue (drive_indexing_setup.py:65), Slack intake queue (slack_adapter_factory.py:149)
 src.adapters.gcs_file_storage_adapter.GcsFileStorageAdapter 1  # by-design single instance
-src.adapters.gcs_media_adapter.GcsMediaAdapter 3  # by-design graph media_storage, the container's, and the Slack factory's own storage_adapter (slack_adapter_factory.py:102), all stateless clients on one bucket
+src.adapters.gcs_media_adapter.GcsMediaAdapter 2  # by-design graph media_storage (application_graph.py:416, also the Slack RichContentService's storage_port, application_graph.py:899) and the container's (service_container.py:381), stateless clients on one bucket
 src.adapters.gcs_workspace_adapter.GcsWorkspaceAdapter 1  # by-design single instance
 src.adapters.gemini_adapter.GeminiAdapter 1  # by-design single instance
 src.adapters.gemini_embedding_adapter.GeminiEmbeddingAdapter 1  # by-design single instance
@@ -77,9 +77,9 @@ src.adapters.slack.channel_history.SlackChannelHistorySource 1  # by-design sing
 src.adapters.slack.http_adapter.HTTPModeAdapter 1  # by-design single instance
 src.adapters.slack.interactive_message_adapter.SlackInteractiveMessageAdapter 1  # by-design the slack entry of the one InteractiveMessageRouter, over the Slack app's client (application_graph.py, Facts S4 T10a)
 src.adapters.slack.interactivity_route.SlackInteractivityRoute 1  # by-design the one POST /slack/interactivity, built by the one HTTPModeAdapter over the main task queue (http_adapter.py, Facts S4 T5d)
-src.adapters.slack.media_adapter.SlackMediaAdapter 2  # by-design the Slack factory's for rich content and the graph's for notification media (application_graph.py), stateless clients
+src.adapters.slack.media_adapter.SlackMediaAdapter 1  # by-design single instance (application_graph.py:895), shared by the Slack RichContentService and the notification service's platform media
 src.adapters.slack.webhook_adapter.SlackWebhookAdapter 1  # by-design single instance
-src.adapters.telegram.media_adapter.TelegramMediaAdapter 2  # by-design the Telegram factory's for rich content and the graph's for notification media (application_graph.py), stateless clients
+src.adapters.telegram.media_adapter.TelegramMediaAdapter 1  # by-design single instance (application_graph.py:970), shared by the Telegram RichContentService and the notification service's platform media
 src.adapters.telegram.webhook_adapter.TelegramWebhookAdapter 1  # by-design single instance
 src.adapters.twilio_telephony_adapter.TwilioTelephonyAdapter 1  # by-design single instance
 src.adapters.unsplash_adapter.UnsplashAdapter 1  # by-design single instance

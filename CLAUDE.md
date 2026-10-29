@@ -315,7 +315,10 @@ stale `running` jobs.
 - **`UserNotificationService`** — background notifications to the user's last active channel
   (`user_notification_state`). `notify()` routes `system_alert` through a formatter agent (Quick by
   default; `agent_id_override` → Smart for reminders/daily-review) → formatted delivery + session history.
-  `notify_raw()`: direct text, no reformatting. `prompt_tokens` in `UsageMetadata` always = uncached input
+  `notify_raw()`: direct text, no reformatting. Rich content on `notify()` and `notify_answer_copy()` goes through
+  the platform's `RichContentService.deliver`, the one routine the chat turn uses too, so a `file` / `widget` is
+  uploaded, never posted as its fallback line (`decisions/rich_content_one_delivery_path.md`).
+  `prompt_tokens` in `UsageMetadata` always = uncached input
   (OpenAI/Gemini subtract cached from total).
 - **Billing daily summary** — Scheduler 09:00 Europe/Madrid → `billing_daily_summary`: posts yesterday's
   `prev_daily_tokens/cost` snapshot to Slack. Per-provider cache pricing Claude 0.1× (Opus 5.5 / Sonnet 5.5: 0.05×)/OpenAI 0.1×/Gemini 0.1× (3.x generation; was 0.25×).

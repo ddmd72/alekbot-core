@@ -20,10 +20,10 @@ def _slack_handler(**extra) -> ConversationHandler:
     env_config = MagicMock()
     env_config.is_development = True
     config = {"SLACK_BOT_TOKEN": "x", "GOOGLE_CLOUD_PROJECT": "p", "CLOUD_RUN_SERVICE_URL": "http://localhost:8080"}
-    with patch(_SLACK + "SlackMediaAdapter"), patch(_SLACK + "GcsMediaAdapter"), \
-            patch(_SLACK + "SlackChannelHistorySource"), patch(_SLACK + "RichContentService"), \
+    with patch(_SLACK + "SlackChannelHistorySource"), patch(_SLACK + "RichContentService"), \
             patch(_SLACK + "GcpTaskQueue"), patch(_SLACK + "HTTPModeAdapter") as adapter:
         SlackAdapterFactory.create_adapter(
+            rich_content_service=MagicMock(),
             app=MagicMock(), config=config, env_config=env_config, coordinator=AsyncMock(),
             agent_factory=AsyncMock(), iam_service=AsyncMock(), file_service=AsyncMock(),
             session_store=MagicMock(), db_client=MagicMock(), **extra)
@@ -31,8 +31,9 @@ def _slack_handler(**extra) -> ConversationHandler:
 
 
 def _telegram_handler(**extra) -> ConversationHandler:
-    with patch(_TG + "Bot"), patch(_TG + "TelegramMediaAdapter"), patch(_TG + "TelegramWebhookAdapter") as adapter:
+    with patch(_TG + "TelegramWebhookAdapter") as adapter:
         TelegramAdapterFactory.create_adapter(
+            rich_content_service=MagicMock(),
             token="123:abc", webhook_secret="secret", dedup_store=MagicMock(), session_store=MagicMock(),
             coordinator=AsyncMock(), agent_factory=AsyncMock(), iam_service=AsyncMock(),
             file_service=AsyncMock(), **extra)

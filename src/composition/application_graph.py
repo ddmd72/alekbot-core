@@ -10,6 +10,7 @@ from typing import Any, Callable, Optional
 
 from anthropic import AsyncAnthropic
 from slack_bolt.async_app import AsyncApp
+from telegram import Bot
 from twilio.rest import Client as TwilioClient
 
 from src.adapters.claude_deep_research_adapter import ClaudeDeepResearchAdapter
@@ -52,6 +53,7 @@ from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.adapters.telegram.media_adapter import TelegramMediaAdapter
 from src.adapters.telegram.response_channel import TelegramResponseChannel
 from src.adapters.telegram.webhook_adapter import TelegramWebhookAdapter
+from src.services.rich_content_service import RichContentService
 from src.agents.infrastructure.billing_agent import BillingAgent
 from src.agents.infrastructure.logger_agent import LoggerAgent
 from src.composition.companion_extractor_runner import CompanionExtractorRunner
@@ -889,6 +891,17 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
 
     logger.info("🔌 Initializing Slack Adapter...")
 
+    # One RichContentService per platform: the chat handler and the notification service deliver files through the same one.
+    slack_media_adapter = SlackMediaAdapter(
+        app_client=app.client,
+        bot_token=config.get("SLACK_BOT_TOKEN", ""),
+    )
+    slack_rich_content = RichContentService(
+        media_port=slack_media_adapter,
+        storage_port=gcs_media_adapter,
+        html_renderer=html_renderer,
+    )
+
     slack_adapter = SlackAdapterFactory.create_adapter(
         app=app,
         config=config,
@@ -918,6 +931,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         long_turn_service=long_turn_service,
         doc_delivery_service=doc_delivery_service,
         worker_queue=agent_task_queue,
+        rich_content_service=slack_rich_content,
     )
     worker_handler.attach_slack_worker(slack_adapter.handle_queued_event)
     notification_channel_factory.register_factory(
@@ -930,10 +944,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     )
 
     # Wire Slack media adapter into notification service for async file delivery (DOCX).
-    notification_service.register_platform_media("slack", SlackMediaAdapter(
-        app_client=slack_adapter.app.client,
-        bot_token=config.get("SLACK_BOT_TOKEN", ""),
-    ))
+    notification_service.register_platform_media("slack", slack_media_adapter)
+    notification_service.register_platform_rich_content("slack", slack_rich_content)
 
     slack_adapter.register_handlers()
 
@@ -953,6 +965,10 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                 db_client=db_client,
                 collection_name=env_config.event_dedup_collection
             )
+
+            # One Bot, one media adapter, one RichContentService: shared by the chat handler and the notification service
+            telegram_media_adapter = TelegramMediaAdapter(bot=Bot(telegram_config["token"]))
+            telegram_rich_content = RichContentService(media_port=telegram_media_adapter, html_renderer=html_renderer)
 
             # Create adapter via factory (wires RichContentService + html_renderer)
             built_telegram_adapter = TelegramAdapterFactory.create_adapter(
@@ -983,9 +999,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                 task_queue=agent_task_queue,
                 long_turn_service=long_turn_service,
                 doc_delivery_service=doc_delivery_service,
+                rich_content_service=telegram_rich_content,
             )
-            # File delivery to a Telegram chat (notify_file_bytes picks the port by platform)
-            telegram_media_adapter = TelegramMediaAdapter(bot=built_telegram_adapter.bot)
         except Exception as e:
             logger.error(f"❌ Failed to initialize Telegram adapter: {e}", exc_info=True)
             logger.warning("🤖 Bot will continue without Telegram support")
@@ -998,7 +1013,9 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
                     telegram_adapter, channel_id
                 ),
             )
+            # File delivery to a Telegram chat (notify_file_bytes picks the port by platform)
             notification_service.register_platform_media("telegram", telegram_media_adapter)
+            notification_service.register_platform_rich_content("telegram", telegram_rich_content)
 
             # Register in factory
             PlatformAdapterFactory.register("telegram", telegram_adapter)

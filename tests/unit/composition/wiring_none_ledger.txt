@@ -34,7 +34,7 @@ ConsolidationAgent.user_id  # by-design unused: user_id arrives per call in the 
 EmailClassificationAgent._user_id  # by-design one shared system-level classifier, user_id arrives per call (service_container.py:303, email_classification_agent.py:288)
 app.companion_extractor_runner._prompt_builder.repo  # by-design never reads facts, include_biographical=False (application_graph.py companion_prompt_builder comment)
 app.container.email_classifier._prompt_builder.repo  # by-design never reads facts, repo=None (service_container.py:300)
-app.telegram_adapter.conversation_handler._rich_content_service._storage_port  # by-design Telegram has no GCS storage, documented (telegram_adapter_factory.py:93, rich_content_protocol/README.md:195); an HTML file item goes out as an attachment instead of a link, degraded not lost (rich_content_service.py:92-96)
+app.notification_service._platform_rich_content['telegram']._storage_port  # by-design Telegram has no media storage: the graph builds Telegram's one RichContentService without storage_port (application_graph.py:971), the same instance the Telegram chat handler holds, documented (rich_content_protocol/README.md:195); an HTML file item goes out as an attachment instead of a link, degraded not lost (rich_content_service.py:122-125)
 app.telegram_adapter.conversation_handler._channel_history  # by-design the Telegram Bot API cannot read chat history; only history_source="platform" bindings use it, guarded at conversation_handler.py:718 (slack_adapter_factory.py:110)
 AgentDescriptor.allowed_intents*  # by-design None means every non-internal intent (agent_registry.py:58-62)
 AgentDescriptor.companion_default_config*  # by-design only companion agents declare one (agent_registry.py:108)
