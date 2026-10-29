@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Sequence
 
+from .drive_index_params import OPEN_MAX_CHARS
+
 SEARCH_DRIVE = "search_drive"
 SEARCH_DELETED = "search_deleted_recordings_and_notes"
 LIST_FOLDER = "list_folder"
@@ -92,8 +94,8 @@ PASSAGES_FILE_REFS = ("Optional: only these files: their drive: refs, comma-sepa
                       "not limited to files.")
 PASSAGES_FILE_REF = "The file's drive: ref, from a card or a passages head line's id."
 PASSAGES_RANGE = ("The passage numbers to read: one number or a range such as 6-8, numbered as head lines number them "
-                  "('passages i–j of N'); at most 10. The passages after a run i–j start at j+1; a cut result says "
-                  "where it continues.")
+                  "('passages i–j of N'), at most 10; or a page, \"from N\" (\"from 1\" is the file's beginning). The "
+                  "passages after a run i–j start at j+1; a cut result or a page line says where it continues.")
 NOTE = ("At most two sentences on what you searched, opened or changed. Never a file's content, never whether the files "
         "answer the question, never that something is complete or missing.")
 QUESTION = ("Optional: only when the orchestrator must ask the user which file is meant; name the candidates by path. "
@@ -125,15 +127,20 @@ def drive_tool_declarations(extra: Sequence[Dict[str, Any]] = ()) -> List[Dict[s
               "files. Never for an ordinary search.", [], query=DELETED_QUERY),
         _tool(LIST_FOLDER, "List one folder, folders first.", [], folder=LIST_FOLDER_PARAM),
         _tool(OPEN_DRIVE_FILE, "Open a drive file for the orchestrator: its text, the image or PDF itself, or a "
-              "recording's transcript; a video is sent to the user's chat instead. You do not see what is opened.",
+              "recording's transcript; a video is sent to the user's chat instead. You do not see what is opened. "
+              f"A text over {OPEN_MAX_CHARS:,} characters is never delivered whole: when the file is indexed the open "
+              "is refused and says how to read it; otherwise it is cut at its beginning.",
               ["file_ref"], file_ref=OPEN_REF),
         _tool(FIND_PASSAGES, "Read what the files say about a question: the indexed passages nearest it, verbatim "
               "excerpts numbered per file, shown to you in full and delivered to the orchestrator. For what is "
               "written inside files; to find which files there are use search_drive, for a whole file "
               "open_drive_file.", ["question"], question=PASSAGES_QUESTION, folder=PASSAGES_FOLDER,
               file_refs=PASSAGES_FILE_REFS),
-        _tool(READ_PASSAGES, "Read one file's passages by number: the ones around or after a passage you were shown, "
-              "or where a cut result continues. Shown to you in full and delivered to the orchestrator.",
+        _tool(READ_PASSAGES, "Read one file's text by passage number. In order, a page at a time, only when the need "
+              "is the file's text in order (its beginning, the next page, its full text): passages \"from 1\", then the "
+              "number the page line gives. Or the passages around or after one you were shown, or where a cut result "
+              "continues. Not for what a file says about something: that is find_passages. Shown to you in full and "
+              "delivered to the orchestrator.",
               ["file_ref", "passages"], file_ref=PASSAGES_FILE_REF, passages=PASSAGES_RANGE),
         _tool(GET_RECORDING_LINK, "A link to a recording itself, only when the user asks for the recording, not its "
               "content.", ["file_ref"], file_ref=RECORDING_REF),

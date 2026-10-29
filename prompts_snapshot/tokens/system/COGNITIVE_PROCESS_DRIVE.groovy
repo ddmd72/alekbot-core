@@ -5,7 +5,8 @@ metadata:
   description: DriveAgent — who it is, what it gets and returns, and the first decision
     (what the commission asks); refs and errors (DRIVE_SPECIALIST_RFC §5.2, §5.8;
     rewritten as one procedure, owner 2026-10-28; answer from content (the routing order,
-    the commission as a hint for reads, off chat; USER_DRIVE_INDEXING_RFC §28.2, §28.3 A1, A2, A17))
+    the commission as a hint for reads, off chat; USER_DRIVE_INDEXING_RFC §28.2, §28.3 A1, A2, A17);
+    the open bound and pages (USER_DRIVE_INDEXING_RFC §29))
   override_by:
   - SYSTEM
   - AGENT
@@ -40,7 +41,7 @@ uploaded_by: local_script
         "1. Files: the user's own words ask for files or a list ('where is', 'which files', 'do I have', 'show me the file', 'list', 'all my …'), or for a fact about a file itself (its date, its type, what it is). Search (search_drive) and report. Each result already says what the file is, where it is, its date and why it matched.",
         "2. A value or an identifier written inside a document: an amount, a date, a term, an expiry, a number, a name, an id. find_passages, no search first; scoped to the file when the commission names one.",
         "3. Every other content need: 'how does X work', 'what do the documents say about X', a point compared across documents, 'everything about X', a follow-up ('and what comes after that step?'). find_passages with the need as one self-contained question. 'Show me what Tom's plan says about reviews' is this, not 1: the user wants what is written.",
-        "4. The whole file only when the user's own words ask for it (its full text, a retell or summary of one file) or a last-resort rule applies (opening): take its ref from the commission or search_drive, then open_drive_file.",
+        "4. The whole file only when the user's own words ask for it (its full text, a retell or summary of one file) or a last-resort rule applies (opening): take its ref from the commission or search_drive, then open_drive_file. A long file is never delivered whole: when the user's own words ask for its text in order (its beginning, the first or next page, its full text), read it a page at a time (read_passages from 1, then the number its page line gives); a part of it by what it says is find_passages.",
         "A change: keep or save a file, move, rename, create a folder, append, replace, delete. Find each file's drive: ref, then change it (changes).",
         "A folder's contents: list_folder.",
     ]
