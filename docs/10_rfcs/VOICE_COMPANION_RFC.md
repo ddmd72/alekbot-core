@@ -412,6 +412,7 @@ descriptor, like the tutor's, declares an allowlist:
 LELIK.allowed_intents = {search_memory, search_web, ask_alek}
 LELIK.intent_fanout   = {search_web: SEARCH_WEB_MAPS_FANOUT}   # the constant Smart and Quick share
 # Revised 2026-09-29 (§4.15): {search_memory, search_web_light, ask_alek, tell_alek}, no fan-out
+# Revised 2026-10-29 (§4.15 delta): {search_memory, search_web_light, ask_alek}; send_to_chat is its own tool
 ```
 
 Maps arrive through the same `search_web → maps_query` fan-out Smart uses. Adding a capability to
@@ -1079,6 +1080,33 @@ Changes:
 phrasing, pace and jokes all changed. The lesson for this model is to steer register with
 situational good/bad examples, not with rules about the form of the reply, because such rules get
 spoken. `POLICY_WITTY_ACCENTUATION` is still in the profile; revisit only if jokes creep back.
+
+**Delta 2026-10-29 (owner): a worker and a channel — `tell_alek` becomes the tool `send_to_chat`.**
+The trigger named in point 2 ("Lelik confuses the two") fired. On one live call Lelik chose `tell_alek`
+three times when the caller wanted the answer by voice, once after the caller explicitly asked for it by
+voice instead of in the chat. The owner's diagnosis: the names do not carry the meaning. Both name a worker (Alek), and both
+were values of one `delegate_to_specialist(intent=…)` enum, so nothing in the call said where the answer
+goes.
+- `ask_alek` stays, SYNC, mechanics unchanged (the relay waits up to 300 s; then, or at call end, the
+  answer is abandoned and the main service posts it to chat). It now covers **actions** as well as
+  questions: set or change a reminder or task, save something. Lelik hears the outcome and confirms it by
+  voice.
+- `tell_alek` is removed. In its place the realtime session declares a second top-level tool,
+  `send_to_chat(request)`, next to `delegate_to_specialist` and **not** an intent of it. It puts
+  something into the caller's chat: Alek finds or makes it and posts it there; Lelik does not hear back.
+- Internally it is the old errand path under one word: the relay maps a `send_to_chat` call to the
+  `send_to_chat` intent with the request as its query (`domain/voice_errand.delegation_arguments`, the
+  one place), then treats it as an errand (no dispatch filler, no waiting notes, no abandon).
+  `/voice/delegate`, `LelikAgent.delegate_outcome` and the Alek gateway see an ordinary delegation;
+  the gateway declares `send_to_chat` ASYNC (Cloud Task, `dispatch_deadline_s=720`). `LELIK.allowed_intents`
+  no longer names it, so the delegate tool does not offer it; `ALEK` stays `internal`, so Smart never
+  sees it. The tool's one-line description is the intent's `capability_descriptions` entry.
+- The run origin `voice:tell_alek` becomes `voice:send_to_chat` (drive-note owner turns, workspace
+  origins); owner-turn semantics are unchanged.
+- Prompts: `PROTOCOL_LELIK_DELEGATION(_BARE)` describe `ask_alek` as a question or an action whose answer
+  comes back, and `send_to_chat` as a separate tool for the chat; the question/errand boundary rule is
+  deleted. `FEW_SHOT_EXAMPLES_LELIK` gains the case "not to the chat, tell me" → `ask_alek`.
+- Rejected alternatives and why: `decisions/lelik_send_to_chat.md`.
 
 ### 4.16 Second provider: xAI behind a relay switch (2026-09-29)
 

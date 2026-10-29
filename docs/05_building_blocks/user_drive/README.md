@@ -1481,7 +1481,7 @@ An empty field never changes anything, and a change that would leave a note empt
 
 **When the tools exist.** With the switch on, the service wired and a user, every drive commission gets `get_note`. The
 ten writers come only on an **owner turn**: a chat message, or a call with Lelik that reached Alek through `ask_alek` /
-`tell_alek`. A reminder run, the daily review, a `notify` run or `/worker` gets no writer, and the specialist reports a
+`send_to_chat`. A reminder run, the daily review, a `notify` run or `/worker` gets no writer, and the specialist reports a
 note request there as not done. Each writer checks the owner turn again before it calls the service.
 
 **What one write does.** The security check on the new words, before any drive call. A `drive:` ref needs the connected
@@ -1579,7 +1579,7 @@ file itself, because passages would repeat the same reading of the image. Code c
 
 **The gate.** Once passages were read in a step, a change (any mutating op or a note write) in a *later* step is refused on
 every run that is **not a chat turn**: reminders, the daily review and other background runs, calls (`ask_alek`,
-`tell_alek`) and a run with no origin. A chat turn is never gated. The refusal is `REFUSED`, with an INFO log
+`send_to_chat`) and a run with no origin. A chat turn is never gated. The refusal is `REFUSED`, with an INFO log
 `[DriveAgent] <kind> refused: passages were read in step N of this run`; Alek commissions the change again. Why not
 `is_owner_turn`: `decisions/drive_content_write_gate.md`.
 What arms it: `find_passages` / `read_passages` results, and a `search_deleted_recordings_and_notes` result in which at least one entry
