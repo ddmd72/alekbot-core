@@ -28,6 +28,7 @@ Public interface:
     await search_deleted(user_id, drive_query) -> DeletedSearchResult   # archived transcripts (§27.9.11) and the sources
                                                                # added with add_deleted_source (notes); has_passage
     add_deleted_source(source)                                 # the owner-notes source (notes RFC §6.4)
+    await text_extent(user_id, item_id) -> TextExtent         # the open bound (§29.4 L5)
     await archived_text(user_id, mirror_item_id, ...) -> Optional[str]   # opening a file of the bot's `_Transcripts`
 
 Files the bot cannot open (§26.2, D33): their cards say so in the `index:` line (drive_search.index_line), the coverage
@@ -51,6 +52,7 @@ from ..domain.drive_excerpt_chunk import ExcerptChunk, display_number, stored_in
 from ..domain.drive_excerpt_context import ExcerptContext, file_description
 from ..domain.drive_excerpt_file import ExcerptFile
 from ..domain.drive_excerpt_file_context import FileContext
+from ..domain.drive_excerpt_page import PageSpan
 from ..domain.drive_excerpt_folder_note import FolderNote
 from ..domain.drive_excerpt_range_request import ExcerptRangeRequest
 from ..domain.drive_excerpt_request import ExcerptRequest
@@ -67,7 +69,7 @@ from ..domain.drive_index_params import (
     ABOUT_FETCH, ABOUT_SHOWN, CARD_FETCH, CHUNK_FETCH, FETCH_MAX, FOLDER_INMEM_CARDS, FOLDER_INMEM_CHUNKS,
     ARCHIVE_QUERY_MAX, DELETED_SHOW_MAX, GROUP_READ_MAX, HINT_FETCH, INACCESSIBLE_SCAN_MAX, K, LABELLED_SHOWN, MAX_CARD_RECORDS_PER_USER, MENTIONED_SHOWN, NAME_FETCH,
     NAME_KEY_QUERIES, PASSAGE_MAX_CHUNKS_PER_FILE, PROFILE_MIN_CHARS, RELATED_MAX, RELATED_SMALL, TRANSLATED_SHOWN, WINDOW_CHARS_TOTAL_V2,
-    TRANSCRIBE_USD_PER_MONTH, TRANSCRIPT_OPEN_MAX_CHARS, WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
+    OPEN_MAX_CHARS, TRANSCRIBE_USD_PER_MONTH, WINDOW_MAX, WORD_FETCH, WORD_FILES_MAX,
 )
 from ..domain.drive_index_planner import month_key
 from ..domain.drive_indexing_status import DriveIndexingStatus
@@ -76,7 +78,7 @@ from ..domain.drive_match import Concept, KeyFamily, MatchTier, QueryConcepts
 from ..domain.drive_search_line import SearchLine, search_line
 from ..domain.drive_search_texts import ACCESS_NOTE_FILE, ACCESS_NOTE_FOLDER
 from ..domain.drive_search import (
-    INACCESSIBLE_COUNTER, MAX_CHAIN_DEPTH, REFERENCE_REMINDER, wrap_untrusted, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
+    INACCESSIBLE_COUNTER, MAX_CHAIN_DEPTH, REFERENCE_REMINDER, wrap_untrusted, NOT_READ_YET_COUNTER, STATUS_AMBIGUOUS_FOLDER, STATUS_DISABLED, STATUS_FOLDER_NOT_FOUND, STATUS_OK, UNREAD_COUNTER,
     DriveSearchCard, DriveSearchEnvelope, DriveSearchRequest, DriveSearchResult, content_admitted, cosine_distance,
     hides_descendants, in_date_range, kinds_for, make_card, normalize_path, path_match, record_visible,
     render_results, resolve_chain, search_gate,
@@ -87,6 +89,7 @@ from ..domain.drive_deleted_search import (
 )
 from ..domain.drive_mirror import KIND_FILE, MIRROR_ACTIVE, MirrorDoc, doc_key
 from ..domain.drive_mirror_names import driver_keys
+from ..domain.drive_text_extent import ExtentState, ExtentWhy, TextExtent
 from ..domain.drive_transcript_render import card_segment, cap_plain_text, open_needs_cut, open_text
 from ..domain.drive_tier_explain import explain, not_matched, passage_window
 from ..domain.drive_tier_pool import (
@@ -1175,6 +1178,33 @@ class DriveSearchService:
         self._log_excerpts(user_id, result, stats, started)
         return result
 
+    async def text_extent(self, user_id: str, item_id: str) -> TextExtent:
+        """What the index holds of one file's text (§29.4 L5): the gate, one record read and the ancestor chain, the
+        same reads as `_excerpt_range`; no vector, no chunk. `pageable` exactly when `read_passages from 1` returns
+        text and the record is current (L3)."""
+        ref = make_drive_ref(item_id)
+        gated = await self._excerpt_gate(user_id, ExcerptRangeRequest(ref, 1, 1))
+        if isinstance(gated, ExcerptResult):
+            if gated.status == STATUS_DISABLED:
+                return TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.OFF)
+            if gated.status != STATUS_OK:
+                return TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.NOT_CONNECTED)
+            return TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.REBUILDING)
+        ancestry = _Ancestry(self._repo, user_id, gated.root_item_id)
+        rec = (await self._repo.get_records(user_id, [item_id])).get(item_id)
+        if rec is None:
+            return TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.NOT_READ)
+        await ancestry.load([rec])
+        if ancestry.chain(rec) is None:
+            return TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.HIDDEN)
+        if not _readable(rec):
+            return TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.NO_TEXT)
+        numbers = dict(text_chars=rec.text_chars, passages=rec.chunk_count, truncated=rec.truncated,
+                       version=int(rec.indexed_generation or 0), pages_total=rec.chunk_count)
+        if rec.stale:
+            return TextExtent(ExtentState.STALE, **numbers)
+        return TextExtent(ExtentState.PAGEABLE, **numbers)
+
     def _log_excerpts(self, user_id: str, result: ExcerptResult, stats: _ExcerptStats, started: float) -> None:
         ms = round((self._monotonic() - started) * 1000)
         chunks = sum(len(f.chunks) for f in result.files)
@@ -1457,6 +1487,11 @@ class DriveSearchService:
             return ExcerptResult(status=STATUS_OK, request=request, no_text=1, building=building,
                                  no_text_paths=(chain[0] if chain is not None else request.file_ref,))
         first = stored_index(request.first)
+        if request.page and first >= rec.chunk_count:
+            span = PageSpan(first=request.first, last=request.first - 1, total=rec.chunk_count,
+                            version=int(rec.indexed_generation or 0), past_end=True, truncated=rec.truncated,
+                            stale=rec.stale, path=chain[0], ref=make_drive_ref(item_id))
+            return ExcerptResult(status=STATUS_OK, request=request, building=building, page=span)
         last = min(stored_index(request.last), rec.chunk_count - 1, first + EXCERPT_RANGE_MAX - 1)
         generation = int(rec.indexed_generation or 0)
         rows = await self._repo.get_chunks(user_id, item_id, generation, list(range(first, last + 1))) \
@@ -1473,8 +1508,17 @@ class DriveSearchService:
             kept.append(chunk)
             chars += len(chunk.text)
         files = (self._excerpt_file(rec, chain, kept),) if kept else ()
+        span = None
+        if request.page:
+            # `next` comes from the request, never from the last returned row: a dropped chunk must not move the reader
+            end = continue_at is None and last >= rec.chunk_count - 1
+            following = continue_at if continue_at is not None else (None if end else display_number(last) + 1)
+            shown = display_number(max(c.index for c in kept)) if kept else request.first
+            span = PageSpan(first=request.first, last=shown, total=rec.chunk_count, version=generation,
+                            next=following, end=end, truncated=rec.truncated, stale=rec.stale, path=chain[0],
+                            ref=make_drive_ref(item_id))
         return ExcerptResult(status=STATUS_OK, request=request, files=files, building=building,
-                             continue_at=continue_at,
+                             continue_at=continue_at, page=span,
                              context=self._excerpt_context(files, {item_id: rec}, {item_id: chain}, ancestry))
 
     # ------------------------------------------------------------------------------------------
@@ -1762,7 +1806,7 @@ class DriveSearchService:
     async def transcript_text(self, user_id: str, item_id: str, *, path: str = "",
                               label: str = "") -> Optional[str]:
         """What opening a transcribed recording returns (§27.11): the transcript, or the stub's card line, inside the
-        nonce wrapper under the reference reminder, capped at `TRANSCRIPT_OPEN_MAX_CHARS` (G19). None when the record
+        nonce wrapper under the reference reminder, capped at `OPEN_MAX_CHARS` (G19). None when the record
         has no current transcript, so the caller keeps its own branch (Δ121). Speech is other people's: never logged."""
         rec = (await self._repo.get_records(user_id, [item_id])).get(item_id)
         if rec is None or rec.transcript_state != JobState.CURRENT.value:
@@ -1775,8 +1819,9 @@ class DriveSearchService:
             if stored is not None:
                 # the file's path is looked up only when the cut note will use it
                 mirror_path = (await self._active_mirror_path(user_id, item_id)
-                               if open_needs_cut(stored, max_chars=TRANSCRIPT_OPEN_MAX_CHARS) else "")
-                body = open_text(stored, max_chars=TRANSCRIPT_OPEN_MAX_CHARS, mirror_path=mirror_path)
+                               if open_needs_cut(stored, max_chars=OPEN_MAX_CHARS) else "")
+                body = open_text(stored, max_chars=OPEN_MAX_CHARS, mirror_path=mirror_path, live=True,
+                                 indexed=_readable(rec) and not rec.stale)
         else:
             body = None
         if not body:
@@ -1946,7 +1991,7 @@ class DriveSearchService:
     async def archived_text(self, user_id: str, mirror_item_id: str, *, label: str = "", path: str = "",
                             file_text: Optional[Callable[[], Awaitable[str]]] = None) -> Optional[str]:
         """What opening a transcript file of the mirror returns (§27.9.11): `open_text` of the pinned store entry, capped
-        at `TRANSCRIPT_OPEN_MAX_CHARS`, the cut note naming the file's path, inside the nonce wrapper under the
+        at `OPEN_MAX_CHARS`, the cut note naming the file's path, inside the nonce wrapper under the
         reference reminder. With no store entry, `file_text` (the downloaded file) is capped the same way. None when
         the item is no mirror file (the caller opens it as any file). Speech is other people's: never logged."""
         if self._mirror is None:
@@ -1960,9 +2005,9 @@ class DriveSearchService:
         stored = await self._stored(user_id, doc)
         body: Optional[str] = None
         if stored is not None:
-            body = open_text(stored, max_chars=TRANSCRIPT_OPEN_MAX_CHARS, mirror_path=mirror_path) or None
+            body = open_text(stored, max_chars=OPEN_MAX_CHARS, mirror_path=mirror_path) or None
         if body is None and file_text is not None:
-            body = cap_plain_text(await file_text(), max_chars=TRANSCRIPT_OPEN_MAX_CHARS, path=mirror_path)
+            body = cap_plain_text(await file_text(), max_chars=OPEN_MAX_CHARS, path=mirror_path)
         if not body:
             return None
         wrapped = wrap_untrusted(f"{label}\n{body}" if label else body, nonce=self._nonce(),
