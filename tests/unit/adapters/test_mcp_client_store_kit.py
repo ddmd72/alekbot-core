@@ -9,6 +9,10 @@ every outcome asserted on the HTTP answer and on the stored documents.
 
 `delete_client` is marked "no caller in src/" and is not tested.
 
+At rest (SECRETS_AT_REST_RFC §2.2, §2.5): a client secret is stored as ciphertext bound to `mcp_clients/{client_id}` and an
+authorization code under its keyed digest with no `code` field; what each stored shape must not hold, and the cipher's
+failure modes, are in `test_mcp_client_store_cipher_kit.py`. This kit keeps every other behaviour on the new shape.
+
 `store` is the one fixture that selects the backend.
 """
 import asyncio
@@ -29,6 +33,7 @@ from starlette.requests import Request
 from src.adapters.firestore_mcp_client_repository import FirestoreMCPClientRepository
 from src.composition.mcp_sdk_oauth_provider import MCPSdkOAuthProvider
 from src.domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken
+from src.domain.secret_digest import keyed_digest
 from src.services.mcp_authorization_service import MCPAuthorizationService, MCPInvalidGrant
 from tests.support.firestore_eval import EvalDb
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
@@ -42,10 +47,21 @@ REDIRECT = "https://claude.ai/api/mcp/auth_callback"
 VERIFIER = "v" * 64
 CHALLENGE = base64.urlsafe_b64encode(hashlib.sha256(VERIFIER.encode()).digest()).decode().rstrip("=")
 DROP = object()
+DIGEST_KEY = bytes(range(32))
 
 
 def sha(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def dig(code: str) -> str:
+    """The doc id of an authorization code: its keyed digest (purpose `mcp_code`, §2.5)."""
+    return keyed_digest(DIGEST_KEY, "mcp_code", code)
+
+
+def holds(doc: dict, secret: str) -> bool:
+    return any(isinstance(v, str) and secret in v for v in doc.values()) or any(
+        isinstance(v, list) and any(isinstance(i, str) and secret in i for i in v) for v in doc.values())
 
 
 class MCPStore:
@@ -58,7 +74,7 @@ class MCPStore:
             REFRESH: "development_mcp_refresh_tokens"})
         self.repo = FirestoreMCPClientRepository(self.db, SimpleNamespace(
             mcp_oauth_clients_collection=CLIENTS, mcp_auth_codes_collection=CODES,
-            mcp_refresh_tokens_collection=REFRESH), cipher=AesGcmTestCipher(), digest_key=bytes(range(32)))
+            mcp_refresh_tokens_collection=REFRESH), cipher=AesGcmTestCipher(), digest_key=DIGEST_KEY)
         self.service = MCPAuthorizationService(
             self.repo, jwt_secret="kit-secret-that-is-at-least-32-characters", mcp_resource_uri="https://dev.example/mcp",
             consent_base_url="https://dev.example/mcp/consent", allowed_redirect_hosts=("claude.ai",))
@@ -133,12 +149,17 @@ def strip(doc: dict, **over) -> dict:
 
 async def test_save_client_stores_every_field_under_client_id(store):
     await store.repo.save_client(client(client_secret_expires_at=1_900_000_000))
-    assert store.docs(CLIENTS) == {"cli-a": {
-        "client_id": "cli-a", "client_secret": "secret-cli-a", "client_secret_expires_at": 1_900_000_000,
+    assert set(store.docs(CLIENTS)) == {"cli-a"}
+    stored = dict(store.docs(CLIENTS)["cli-a"])
+    sealed = stored.pop("client_secret")
+    assert stored == {
+        "client_id": "cli-a", "client_secret_expires_at": 1_900_000_000,
         "client_name": "Claude", "redirect_uris": [REDIRECT], "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"], "scope": "user_context", "token_endpoint_auth_method": "client_secret_post",
         "created_at": NOW,
-    }}
+    }
+    assert not holds(store.docs(CLIENTS)["cli-a"], "secret-cli-a")
+    assert await store.repo._cipher.decrypt(sealed, aad="mcp_clients/cli-a") == "secret-cli-a"
 
 
 async def test_get_client_returns_every_field_as_saved(store):
@@ -164,11 +185,17 @@ async def test_an_absent_client_is_none_and_the_token_endpoint_refuses_it(store)
     await store.repo.save_auth_code(auth_code(client_id="cli-a"))
     status, body = await store.exchange_code("cli-x", "code-a")
     assert (status, body["error"]) == (401, "unauthorized_client")
-    assert "code-a" in store.docs(CODES)
+    assert dig("code-a") in store.docs(CODES)
+
+
+async def stored_client(store, **over) -> dict:
+    """The document `save_client(client())` stores (its secret a real ciphertext), with `over` applied."""
+    await store.repo.save_client(client())
+    return strip(store.docs(CLIENTS)["cli-a"], **over)
 
 
 async def test_legacy_client_defaults(store):
-    store.docs(CLIENTS)["cli-a"] = strip(FirestoreMCPClientRepository._client_to_fs(client()), grant_types=DROP,
+    store.docs(CLIENTS)["cli-a"] = strip(FirestoreMCPClientRepository._client_to_fs(client(), None), grant_types=DROP,
                                          response_types=DROP, token_endpoint_auth_method=DROP, scope=DROP,
                                          client_name=DROP, client_secret=DROP, client_secret_expires_at=DROP)
     got = await store.repo.get_client("cli-a")
@@ -178,30 +205,31 @@ async def test_legacy_client_defaults(store):
 
 
 async def test_legacy_client_without_redirect_uris_reads_empty_and_is_refused(store):
-    store.docs(CLIENTS)["cli-a"] = strip(FirestoreMCPClientRepository._client_to_fs(client()), redirect_uris=DROP)
+    store.docs(CLIENTS)["cli-a"] = await stored_client(store, redirect_uris=DROP)
     assert (await store.repo.get_client("cli-a")).redirect_uris == []
     await store.repo.save_auth_code(auth_code())
     with pytest.raises(ValidationError):
         await store.exchange_code("cli-a", "code-a")
-    assert "code-a" in store.docs(CODES) and store.docs(REFRESH) == {}
+    assert dig("code-a") in store.docs(CODES) and store.docs(REFRESH) == {}
 
 
 @pytest.mark.parametrize("field", ["client_id", "created_at"])
 async def test_legacy_client_missing_a_required_field_raises(store, field):
-    store.docs(CLIENTS)["cli-a"] = strip(FirestoreMCPClientRepository._client_to_fs(client()), **{field: DROP})
+    store.docs(CLIENTS)["cli-a"] = await stored_client(store, **{field: DROP})
     with pytest.raises(KeyError):
         await store.repo.get_client("cli-a")
 
 
 # ------------------------------------------------------------------------------------------ authorization codes
 
-async def test_save_auth_code_stores_every_field_under_the_code(store):
+async def test_save_auth_code_stores_every_field_under_the_codes_digest(store):
     await store.repo.save_auth_code(auth_code())
-    assert store.docs(CODES) == {"code-a": {
-        "code": "code-a", "client_id": "cli-a", "user_id": "usr-cli-a", "account_id": "acc-cli-a",
+    assert store.docs(CODES) == {dig("code-a"): {
+        "client_id": "cli-a", "user_id": "usr-cli-a", "account_id": "acc-cli-a",
         "redirect_uri": REDIRECT, "code_challenge": CHALLENGE, "code_challenge_method": "S256",
         "resource": "https://dev.example/mcp", "scopes": ["user_context"], "expires_at": SOON,
     }}
+    assert not holds(store.docs(CODES)[dig("code-a")], "code-a")
 
 
 async def test_get_auth_code_returns_it_as_saved_without_consuming_it(store):
@@ -212,7 +240,7 @@ async def test_get_auth_code_returns_it_as_saved_without_consuming_it(store):
     assert first == second == saved
     assert first.expires_at == datetime(2030, 1, 1, 10, 0, tzinfo=timezone.utc)
     assert first.expires_at.utcoffset() == timedelta(0)
-    assert "code-a" in store.docs(CODES)
+    assert dig("code-a") in store.docs(CODES)
 
 
 async def test_save_auth_code_replaces_a_code_with_that_value(store):
@@ -226,7 +254,7 @@ async def test_consume_deletes_the_code_and_returns_it_once(store):
     await store.repo.save_auth_code(auth_code())
     await store.repo.save_auth_code(auth_code("code-b", "cli-b"))
     assert await store.repo.consume_auth_code("code-a") == auth_code()
-    assert set(store.docs(CODES)) == {"code-b"}
+    assert set(store.docs(CODES)) == {dig("code-b")}
     assert await store.repo.consume_auth_code("code-a") is None
     assert await store.repo.get_auth_code("code-a") is None
 
@@ -249,20 +277,20 @@ async def test_an_expired_code_is_returned_not_deleted(store):
     await store.repo.save_auth_code(auth_code(expires_at=PAST))
     got = await store.repo.get_auth_code("code-a")
     assert got.expires_at == PAST and got.expires_at.utcoffset() == timedelta(0)
-    assert "code-a" in store.docs(CODES)
+    assert dig("code-a") in store.docs(CODES)
 
 
 async def test_legacy_code_defaults(store):
-    store.docs(CODES)["code-a"] = strip(FirestoreMCPClientRepository._code_to_fs(auth_code()),
-                                        code_challenge_method=DROP, resource=DROP, scopes=DROP)
+    store.docs(CODES)[dig("code-a")] = strip(FirestoreMCPClientRepository._code_to_fs(auth_code()),
+                                             code_challenge_method=DROP, resource=DROP, scopes=DROP)
     got = await store.repo.get_auth_code("code-a")
     assert (got.code_challenge_method, got.resource, got.scopes) == ("S256", None, [])
 
 
-@pytest.mark.parametrize("field", ["code", "client_id", "user_id", "account_id", "redirect_uri", "code_challenge",
+@pytest.mark.parametrize("field", ["client_id", "user_id", "account_id", "redirect_uri", "code_challenge",
                                    "expires_at"])
 async def test_legacy_code_missing_a_required_field_raises(store, field):
-    store.docs(CODES)["code-a"] = strip(FirestoreMCPClientRepository._code_to_fs(auth_code()), **{field: DROP})
+    store.docs(CODES)[dig("code-a")] = strip(FirestoreMCPClientRepository._code_to_fs(auth_code()), **{field: DROP})
     with pytest.raises(KeyError):
         await store.repo.get_auth_code("code-a")
     with pytest.raises(KeyError):
@@ -403,7 +431,7 @@ async def test_a_code_of_another_client_is_refused_and_stays(store):
     await store.repo.save_auth_code(auth_code(client_id="cli-a"))
     status, body = await store.exchange_code("cli-b", "code-a")
     assert (status, body["error"]) == (400, "invalid_grant")
-    assert "code-a" in store.docs(CODES) and store.docs(REFRESH) == {}
+    assert dig("code-a") in store.docs(CODES) and store.docs(REFRESH) == {}
 
 
 async def test_an_expired_code_is_refused_and_stays(store):
@@ -411,7 +439,7 @@ async def test_an_expired_code_is_refused_and_stays(store):
     await store.repo.save_auth_code(auth_code(expires_at=PAST))
     status, body = await store.exchange_code("cli-a", "code-a")
     assert (status, body["error"], body["error_description"]) == (400, "invalid_grant", "authorization code has expired")
-    assert "code-a" in store.docs(CODES) and store.docs(REFRESH) == {}
+    assert dig("code-a") in store.docs(CODES) and store.docs(REFRESH) == {}
 
 
 async def test_a_refresh_exchange_rotates_the_token(store):

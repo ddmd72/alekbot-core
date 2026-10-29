@@ -20,6 +20,7 @@ PlaywrightHtmlRenderer._playwright  # lazy Chromium starts on the first widget r
 GcsFileStorageAdapter._client  # lazy storage client (gcs_file_storage_adapter.py:39)
 GcsWorkspaceAdapter._client  # lazy storage client built on first use (gcs_workspace_adapter.py:58-64)
 BigQueryPromptContentAdapter._client  # lazy BigQuery client (bigquery_prompt_content_adapter.py:75)
+GcpKmsCipherAdapter._client  # lazy KMS async client built on the first encrypt or decrypt, inside the running event loop, plan D-P6 (gcp_kms_cipher_adapter.py:35-38)
 MCPClient._tool_declarations  # lazy filled by the first get_tool_declarations() (adapters/mcp/mcp_client.py:48-57)
 
 # ---- state a served request fills
