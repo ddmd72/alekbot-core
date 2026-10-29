@@ -1,9 +1,13 @@
 """Apple Books packages (`.epub.pkgf`, USER_DRIVE_INDEXING_RFC §5.1): kind `epub` from the name, admitted for content,
 and a plain tar head keeps the declared EPUB kind so the parser repacks it."""
+from dataclasses import replace
+
 import pytest
 
-from src.domain.drive_index import ContentClass, DriveChange, RecordState, Scope
-from src.domain.drive_index_planner import classify
+from src.domain.drive_index import (
+    NAME_KEYS_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, Reason, RecordState, Scope,
+)
+from src.domain.drive_index_planner import change_from_record, classify, structure_stale
 from src.domain.drive_index_policy import Admission, admission, content_class_of, kind_of
 from src.domain.drive_sniff import sniff_kind
 
@@ -49,3 +53,17 @@ def test_tar_head_under_another_kind_is_an_archive(declared):
 
 def test_compressed_tar_declared_epub_is_an_archive():
     assert sniff_kind(b"\x1f\x8b\x08\x00" + b"\x00" * 600, "epub") == "archive"
+
+
+def test_a_package_stored_under_policy_3_is_re_planned_as_an_epub():
+    """Policy 4: a `.epub.pkgf` stored before it as `other / kind_not_admitted` is stale, so the upgrade pass re-plans
+    it, and the re-plan makes it a pending EPUB read."""
+    rec = DriveIndexRecord(user_id="u", item_id="a", parent_id="root", name="A Sample Book.epub.pkgf", size_bytes=1000,
+                           kind="other", scope=Scope.NORMAL, state=RecordState.METADATA_ONLY,
+                           reason=Reason.KIND_NOT_ADMITTED, policy_version=3,
+                           name_keys_version=NAME_KEYS_VERSION)
+    assert POLICY_VERSION == 4
+    assert structure_stale(rec, embedding_space=None)
+    assert not structure_stale(replace(rec, policy_version=POLICY_VERSION), embedding_space=None)
+    cls = classify(change_from_record(rec), Scope.NORMAL, None, rec)
+    assert (cls.kind, cls.state, cls.reason) == ("epub", RecordState.PENDING, None)
