@@ -1,254 +1,293 @@
-# RFC: Per-User Secrets at Rest — Application-Layer Encryption via CipherPort
+# RFC: Secrets at Rest — every persisted secret, one credential store
 
-**Status:** PROPOSED
-**Date:** 2026-07-20 (revised 2026-07-22)
+**Status:** PROPOSED (v2, rewritten 2026-10-29; v1 dated 2026-07-20/22)
 **Owner:** AI Engineering
-**Milestone:** Security — Credential Storage Hardening
+**Milestone:** Security — stage 0 of the multi-drive programme (runs before any multi-drive work)
 
-**Related:** `ports/oauth_credentials_port.py` + `adapters/firestore_oauth_credentials_adapter.py`
-(the credential store being hardened); `adapters/firestore_mcp_client_repository.py` +
-`domain/mcp.py` (second plaintext secret store — §3.5); TELEGRAM_CHANNEL_READER_RFC (first *new*
-consumer — reuses this mechanism for the MTProto session, §7, and is **blocked on this RFC shipping**).
+**Related:** `ports/oauth_credentials_port.py`, `adapters/firestore_oauth_credentials_adapter.py` (replaced here);
+`adapters/firestore_mcp_client_repository.py`, `domain/mcp.py`; the voice apps over `adapters/firestore_ephemeral_store.py`;
+`adapters/firestore_invite_code_repo.py`; TELEGRAM_CHANNEL_READER_RFC (§7). The delivery plan and the one-off rollout steps live in the owner's private ops repo
+(`alekbot/designs/secrets_at_rest_plan.md`, `alekbot/deploy/secrets_at_rest.md`); this RFC holds what stays true after the deploy.
 
----
+## 1. Problem
 
-## 1. Problem Statement
+The app persists secrets of its own outside Secret Manager, all raw. Firestore's default encryption protects the disk,
+not the data from an identity *authorized to read Firestore*: a leaked service-account key, an over-broad binding, a
+bug that dumps a collection, an export. Two classes, by what the app does with the value:
 
-Per-user access credentials are currently stored **in Firestore as plaintext**, in two independent
-places.
+| Class | Store (`{prefix}` = env prefix) | Today | Use |
+|---|---|---|---|
+| Decryptable | `oauth_credentials` (Gmail, Google Tasks, Microsoft To Do, OneDrive) | `access_token`, `refresh_token` raw (`firestore_oauth_credentials_adapter.py:33-44`) | sent to the provider |
+| Decryptable | `mcp_oauth_clients` | `client_secret` raw (`firestore_mcp_client_repository.py:50`), deliberate (`domain/mcp.py:109-117`) | the `mcp` SDK compares it |
+| Decryptable | future Telegram session (TELEGRAM RFC) | — | sent to Telegram |
+| Verify-only | `mcp_auth_codes` | doc id and `code` = the raw code (`firestore_mcp_client_repository.py:97,125`) | compared once |
+| Verify-only | `voice_tickets` (`voice_ticket:` key) | doc id = the raw ticket (`voice_webhook_app.py:130`) | redeemed once (`get_and_delete`) |
+| Verify-only | `domain_invite_codes` | doc id = the raw 9-hex code, 36 bits (`invite_code_service.py:47-48`) | compared on join |
+| Verify-only | `mcp_refresh_tokens` | already `sha256(token)` (`mcp_authorization_service.py:449-450`) | compared on refresh |
 
-**1. OAuth credentials.** `FirestoreOAuthCredentialsAdapter._to_firestore()` writes `access_token`
-and `refresh_token` as raw strings (`firestore_oauth_credentials_adapter.py:33-42`), for providers
-`gmail`, `google_tasks`, and `microsoft_todo`. The `refresh_token` is a long-lived key to the user's
-entire mailbox / task account.
+**Completeness pass (2026-10-29, main @ b818f7a1).** Checked: every collection in `config/environment.py` and named
+inline in `src/adapters/firestore_*.py`; every `secrets.*`/`uuid4` minting site; log lines interpolating a ticket, code
+or token; Cloud Tasks payloads (none carries a secret); Logfire (LLM SDKs only, no HTTP header capture); GCS (content);
+`prompt_content` (no credential reaches a model); cookies (login `state`, Cabinet session: not persisted). Found:
+- **The voice ticket is not purely verify-only.** It also sits raw in `voice_pending_callback:` and `voice_web_call:`
+  records (`voice_webhook_app.py:141`, `voice_web_call_app.py:79`), read back to build the callback and SFU URLs
+  (`voice_webhook_app.py:173-187`, `voice_web_call_app.py:99-104`), and in derived keys (`voice_control_plane_app.py:87,91`;
+  `voice_call_kind:{ticket}`, `voice_call_setup_service.py:68`).
+- **Tickets are logged** in ~60 statements in seven files (main service and relay); invite codes at `invite_code_service.py:63,100`,
+  `firestore_invite_code_repo.py:73,91` and `oauth_app.py:188`.
+- **Short links** (`{prefix}short_links`): doc id = the code, `target_url` = an `/f/<token>` capability link. Out of
+  scope: the same links sit in session history and `prompt_content`, so this collection alone protects nothing (§9).
+- **Draft and erase codes** (`$skill save`, `$memory save`, `$drive-notes erase`): user-scoped, chat-only. Not secrets.
 
-**2. MCP OAuth client secrets.** `MCPClient.client_secret` is stored raw in
-`{env}_mcp_oauth_clients` (`domain/mcp.py:20-32`). This one is *deliberate* and documented — the
-`mcp` SDK authenticates clients via `hmac.compare_digest(client.client_secret, presented_secret)`
-with no hashing hook. That rationale is sound but **narrower than it reads**: it rules out *hashing*,
-not *encryption* (§3.5).
-
-**Firestore encrypts at rest by default — but that does not address this threat.** Google's default
-at-rest encryption protects against someone stealing the physical disk; it does **nothing** against an
-actor who is *authorized to read Firestore*: a leaked service-account key, an over-broad IAM binding, a
-bug that dumps a collection, an export to BigQuery/GCS, or a compromised admin. Any of those yields
-every user's live tokens in cleartext today.
-
-**Desired outcome:** sensitive credential fields are encrypted at the **application layer** before they
-touch Firestore, using a managed KMS key. A Firestore reader sees only ciphertext; obtaining a usable
-token requires *both* Firestore read access *and* a separate KMS decrypt permission. The mechanism is a
-single reusable primitive so every per-user secret (OAuth tokens now, Telegram session later) is
-protected the same way.
-
----
-
-## 2. Key Decisions
+## 2. Decisions
 
 ### 2.1 Encrypt at the application layer, keep the datastore
+Secret Manager does not fit OAuth credentials: tokens refresh about hourly (a version per refresh: churn, cost, destroy
+hygiene), the store must be queried, and a credential is a record, not a string. Firestore fits; we encrypt the secret
+fields. Firestore CMEK is no substitute: it hides nothing from an API reader and is fixed at database creation.
 
-The fix is **not** "move secrets into Secret Manager." Secret Manager is the wrong fit for OAuth
-credentials specifically, on three axes:
+### 2.2 One primitive: `CipherPort`, backed by Cloud KMS
+`ports/cipher_port.py`: `encrypt(plaintext: str, *, aad: str) -> str`, `decrypt(ciphertext: str, *, aad: str) -> str`,
+base64 out. **`aad` is required**, of the form `<store>/<record key>`: a ciphertext cannot move to another record or
+store. `decrypt` raises on a wrong key, tampering or a mismatched AAD. The port names no provider, store or secret.
+`adapters/gcp_kms_cipher_adapter.py` wraps the async KMS client and sends and checks the CRC32C fields both ways
+(`plaintext_crc32c`, `additional_authenticated_data_crc32c`, the `verified_*` flags, `ciphertext_crc32c`); a mismatch
+raises. New dependency `google-cloud-kms`. **Direct encrypt, no envelope:** every secret is far below the 64 KiB
+symmetric plaintext limit; a data-key layer stays an option for large blobs.
 
-- **Write frequency.** `update_credentials` (the refresh and flag writes; `save_credentials` is the consent write) runs after *every* token refresh — roughly hourly per active
-  Gmail user (see the port docstring). Secret-Manager-per-secret would mint a new secret version every
-  hour per user → version churn, cost, and write-quota pressure.
-- **Queryability.** The port must answer `list_users_by_provider` / `list_connected_providers`
-  (fan-out for indexing and renewal jobs). Secret Manager has no query — you would list all secrets and
-  parse names.
-- **Structure.** A credential is a record (token / refresh / expiry / scopes / email), not a single
-  opaque string.
+### 2.3 The credential store, in its final data shape
+A **new collection** `{prefix}credentials`, doc id `{user_id}:{credential_id}`; `credential_id` is opaque, random and
+immutable; tenancy is structural (the doc id carries the user).
 
-Firestore already fits all three (structured, queryable, high-write). So we **keep Firestore** and
-encrypt only the *secret fields* within each document. Non-secret, queryable fields (`user_id`,
-`provider`, `email_address`, `token_expiry`, `scopes`) stay plaintext so existing queries keep working.
+| Field | Plaintext? | Why |
+|---|---|---|
+| `user_id`, `credential_id`, `kind` (`gmail`, `google_tasks`, `microsoft_todo`, `microsoft_onedrive`) | yes | queried, not secret |
+| `account.realm` (`google`, `microsoft`), `account.subject` (the provider's stable account id) | yes | queried by stage 1's revoke rule |
+| `scopes`, `token_expiry`, `needs_reconnect`, `created_at`, `updated_at` | yes | operational, not secret, not personal |
+| `drive_id` (OneDrive only) | yes | compared by the indexer's drive-switch gate; stage 1 moves it to `DriveConnection` |
+| `secret` = ciphertext of `{access_token, refresh_token, account_label}` | **no** | the label (email, display only) is personal, never queried |
 
-### 2.2 One primitive: `CipherPort` (KMS-backed), datastore chosen per access pattern
+One ciphertext, AAD `credentials/{user_id}:{credential_id}`: one KMS call per read and per write, no partial swap. The
+Telegram session (§7) is one more `kind` (realm `telegram`, subject its user id, payload the session), not a new store.
 
-The generalization is a single **`CipherPort`** — `encrypt(str) -> str` / `decrypt(str) -> str` — that
-any per-user-secret adapter composes. The *encryption mechanism* is shared and uniform; the *datastore*
-is whatever fits each secret's access pattern:
+**Identity, read by the consent edge; every record has it from its first write (I9).** In code, the Microsoft
+consents request `Tasks.ReadWrite offline_access` and `Files.ReadWrite.AppFolder offline_access` (`oauth_app.py:705,826`):
+no profile scope, so `/me` is not readable and no account identity is stored today. Google: OpenID `sub` + email from userinfo (Gmail already asks `openid email`; the
+Google Tasks consent gains both). Microsoft, To Do and OneDrive alike: the consent gains **`User.Read`**; subject = Graph
+`/me` `id`, label = `mail` or `userPrincipalName`. One value then names a Microsoft account across both kinds. No
+`openid` for Microsoft: a second identity source nothing reads. OneDrive keeps reading `drive_id` from the App Folder's
+`parentReference.driveId` (`oauth_app.py:829-847`), the field the delta reader binds its cursor to (`onedrive_adapter.py:88`).
 
-- OAuth credentials → Firestore + `CipherPort` on token fields (this RFC).
-- Telegram MTProto session → Firestore + the **same** `CipherPort` (TELEGRAM RFC, later).
+### 2.4 The port contract stays "credential of user U for kind P": a seam, not a crutch
+`OAuthCredentialsPort` keeps every method and every docstring promise (tenancy, no expiry logic, "update never
+re-creates a revoked record", errors propagate) except two lines of its docstring, which are dropped: the
+`{user_id}_{provider}` keying and the legacy-document reads (`oauth_credentials_port.py:19-23`); the new store has
+neither (§2.7). **An update keeps the stored record identity** (`credential_id`, `kind`, `account.realm`,
+`account.subject`) and never takes it from its argument: every refresh rebuilds the credential field by field
+(`graph_auth.py:127-138`, and the Gmail and Google Tasks adapters), so identity fields on the argument would be lost on
+the first refresh. Stage 0 holds **at most one record per (user, kind)**, today's honest
+contract, found by an equality query on `user_id` + `kind`. A consent runs in a transaction: the same account keeps its
+`credential_id`; a different account gets a new one and the old record is deleted. `update_credentials` keeps its
+"exists" precondition. Stage 1 changes **addressing** (by credential or connection, no `provider` parameter) and allows a
+second record per kind. It does not touch the **data**: stage 0 leaves ~33 call sites untouched, and stage 1 re-keys
+them against final data.
 
-This supersedes the Telegram RFC's earlier "Secret-Manager-per-user" storage choice. Once a
-`CipherPort` exists for OAuth, the crypto code is already paid for, so reusing it for Telegram is free
-and gives **one encryption mechanism across all per-user secrets** — consistency chosen over having two
-storage backends. The Telegram RFC §2.5/§5 are updated to point here.
+### 2.5 Verify-only values: a keyed digest, never the raw value
+Stored as `HMAC-SHA256(key, purpose ‖ 0x00 ‖ value)` (hex): the doc id where the raw value is today, with no raw copy in
+any field. `key` is a new Secret Manager secret via `load_settings()` (required), main service only; `purpose`
+(`mcp_code`, `voice_ticket`, `invite`) separates the uses. The digest is a pure `domain/` function (stdlib `hmac`), no port.
+- **MCP codes:** doc id = digest, the `code` field goes, `load_authorization_code` rebuilds from the presented code.
+- **Voice tickets:** `voice_ticket:<digest>` and digest-based derived keys, `voice_call_kind:<digest>` included. The two
+  hand-out records (`voice_pending_callback:`, `voice_web_call:`) carry the ticket as `CipherPort` ciphertext (AAD
+  `voice/<record key>`), so the ticket is decryptable only there, for the record's own life: 300 s for the callback
+  record, the call's TTL for the web-call record (`voice_web_call_app.py:78-81`).
+- **Invite codes: 128 bits** (26 base32 characters, grouped) *and* digested. The digest key sits in Secret Manager,
+  which every runtime identity and the analysis identity can read today, and they also read Firestore. Behind that key
+  a 36-bit code falls to an offline search; a 128-bit one does not. The Cabinet shows a code once, at creation; the
+  list shows type, state, expiry and a non-secret hint. Invites move to a new collection like every other store, and
+  the old one is deleted with the other old stores (§6.3 step 5): left in place, the Cabinet list
+  (`user_cabinet_app.py:436`) would show its raw codes.
+- **MCP refresh tokens stay unkeyed `sha256`:** 384 random bits gain nothing from a key. Re-keying needs plaintext we do
+  not hold, so every connector would re-authorize, or a mixed lookup would be the branch §2.7 forbids.
+- **Logs:** correlation by `sha256(value)[:8]`, safe because every remaining value is ≥ 122 bits; invite codes are never
+  logged in any form.
 
-### 2.3 Direct KMS encrypt (no envelope/DEK)
+### 2.6 KMS key and access
+One software key (`ENCRYPT_DECRYPT`), **automatic rotation** every 90 days. Every refresh re-encrypts under the
+primary; idle records decrypt under their version. No version is disabled or destroyed in stage 0 (I7). About $0.06
+per version-month + $0.03 per 10 000 ops: **< $1/month** (`06_secrets_inventory.md`, KMS facts). The key name comes from
+configuration (`KMS_CRYPTO_KEY`, `load_settings()`), never a tracked file. `roles/cloudkms.cryptoKeyEncrypterDecrypter`
+is granted **on the key**, to the one shared runtime identity today. Only the **main service** and the **indexer**
+(`indexer_main.py:120`; it refreshes OneDrive) need it; the relay, sandbox and deep-research job need none, but the
+grant reaches them while they share the identity. Narrowing it is the per-service-identity follow-up (§9).
+**Fail closed:** both services refuse to start without `KMS_CRYPTO_KEY` (the main service also needs the digest key),
+mirroring `config/auth.py:162-170`. The cipher and the digest key are built in the composition root
+(`build_application_graph`), outside the MCP build, whose errors are swallowed (`main.py:517-522`: "Bot will continue
+without MCP connector"): fail closed means a failed start, never "MCP silently off". The indexer has no `load_settings()`
+(`indexer_main.py:99-140`): it reads the key name from its environment and fails closed the same way.
 
-Secrets here are small — OAuth tokens and a StringSession are well under KMS's **64 KiB** symmetric
-plaintext limit. So the adapter calls KMS `encrypt`/`decrypt` **directly** on the field; no
-data-encryption-key / envelope layer is needed. Envelope encryption stays a documented future option
-if we ever encrypt large blobs.
+### 2.7 No legacy branch, anywhere
+No dual read, no `enc_v` plaintext path, no passthrough cipher in any runtime, no copy. The new stores start **empty**,
+the new code never touches the old collections, and every grant is re-created by a consent (§6). **Local dev uses the
+real KMS key** (the owner's identity can decrypt). **Tests** use an in-memory AES-GCM cipher with a test key
+(`tests/support/`): real authenticated encryption with the same AAD semantics, never an identity function.
 
----
+## 3. Rejected alternatives
 
-## 3. Architecture
+| Alternative | Why not |
+|---|---|
+| Secret Manager per credential | write churn, no query, a record is not a string (§2.1) |
+| Copy old records into the new store (earlier v2 draft) | needs ordering rules for consents, disconnects and rotation during the copy; carries no identity (none stored); leaves the exposed grants alive. Reconnecting every record fixes all three |
+| Encrypt in place with `enc_v` + dual read; passthrough cipher for local dev (v1) | plaintext paths in production code; local dev has KMS access |
+| One ciphertext per token (v1) | two KMS calls per op; tokens of two grants could be paired |
+| Unkeyed hash, or keyed digest alone, for invite codes | 36 bits: enumerable offline; the key is readable by the Firestore readers (§2.5) |
+| KMS-held MAC key for digests | a KMS call per check, no gain once every value is ≥ 122 bits |
+| Re-addressing the port in stage 0 | doubles stage 0 (~33 call sites); stage 1 re-keys them anyway (§2.4) |
+| Waiting for per-service identities | not needed: `roles/editor` holds no `cloudkms.cryptoKeyVersions.useToEncrypt/useToDecrypt` and cannot grant itself a role on the key |
 
-### 3.1 Port (`ports/cipher_port.py`)
+## 4. Threat model
 
-```python
-class CipherPort(ABC):
-    @abstractmethod
-    async def encrypt(self, plaintext: str, *, aad: Optional[str] = None) -> str:
-        """Encrypt a UTF-8 secret. Returns opaque base64 ciphertext safe to store in a string field.
-        `aad` (additional authenticated data) binds the ciphertext to its context — it is NOT stored
-        in the ciphertext and MUST be supplied identically on decrypt."""
+| Actor / event | Today | After stage 0 |
+|---|---|---|
+| Identity with Firestore read (leaked analysis key, export, dump) | every token, client secret, live code | ciphertext and digests. A usable token needs Firestore read **and** KMS decrypt, held by different grantees |
+| Same identity also reading Secret Manager | same | invite codes safe (128 bits); the digest key alone opens nothing |
+| Row swap inside Firestore (attacker with write) | possible | AAD binds each ciphertext to its record; decrypt fails, loud |
+| Log reader | live tickets (5 min), invite codes (7 days) | fingerprints only |
+| Runtime identity compromised, or an identity that can act as it | everything | everything. All services share one runtime identity today, so the grant reaches units that need none; closed by least privilege (separate work) |
+| Plaintext exposed before stage 0 (old collection, backups, PITR, exports) | — | not undone by encryption or deletion; cured by revoking the old grants (§6.3 step 2) |
 
-    @abstractmethod
-    async def decrypt(self, ciphertext: str, *, aad: Optional[str] = None) -> str:
-        """Inverse. Raises on tamper, wrong key, or mismatched `aad`."""
-```
+KMS data-access audit logs (enabled for the key) record every decrypt with its caller. Plaintext lives only in process
+memory for a provider call (and the Graph token cache); it is never logged and never reaches `prompt_content`.
 
-- **String in / string out.** Secrets are strings; base64 ciphertext stores cleanly in Firestore.
-- **AAD** binds each ciphertext to *where it lives* — e.g. `f"{user_id}:{provider}:refresh_token"`.
-  KMS cryptographically ties decrypt success to the same AAD, so a ciphertext cannot be copy-pasted
-  from one user/field to another inside the DB (defends against confused-deputy / row-swap tampering).
-  Cheap, high-value defense-in-depth.
-- The port is **storage-agnostic and secret-agnostic** — no mention of KMS, OAuth, or Telegram.
+## 5. Invariants
 
-### 3.2 Adapter (`adapters/gcp_kms_cipher_adapter.py`)
+- **I1** No secret of §1 reaches Firestore, logs or task payloads raw: only as `CipherPort` ciphertext or as a digest.
+- **I2** Every ciphertext is bound by AAD to `<store>/<record key>`; `aad` has no default.
+- **I3** No runtime path reads a plaintext secret from Firestore, and no runtime holds a no-op cipher.
+- **I4** A decrypt or KMS failure raises and is alerted: never "not connected", never a delete, a flag, a drive purge
+  or a reconnect notice.
+- **I5** At most one credential per (user, kind) in stage 0; `credential_id` survives refreshes and same-account consents.
+- **I6** Main service and indexer refuse to start without the key configuration.
+- **I7** No KMS key version is disabled or destroyed while a record may reference it (stage 0: never).
+- **I8** A reconnect of the same account re-indexes and purges nothing (§6.2, with its To Do exception).
+- **I9** No credential record exists without its account identity: an identity read that fails stores nothing.
 
-- Wraps `google.cloud.kms_v1.KeyManagementServiceAsyncClient`.
-- `encrypt` → `client.encrypt(name=<key>, plaintext=…, additional_authenticated_data=…)` →
-  `base64(response.ciphertext)`. `decrypt` inverse.
-- **Key resource name from config**, never hardcoded (SECRETS RULE): `KMS_CRYPTO_KEY =
-  projects/<p>/locations/<l>/keyRings/<ring>/cryptoKeys/<key>`, added to `src/config/settings.py`.
-- **Rotation is transparent.** KMS ciphertext references the key (not a pinned version); decrypt works
-  across rotations while old versions are retained, and the next `save` naturally re-encrypts under the
-  new primary. No re-encrypt job required for rotation.
-- **New dependency:** `google-cloud-kms` (not currently vendored).
+## 6. Migration contract: by reconnect, no copy
 
-**Local dev:** production **fails closed** — missing `KMS_CRYPTO_KEY` in a deployed environment
-refuses to start (mirrors `config/auth.py:167` "Refusing to start"). Local dev may wire an explicit
-`PassthroughCipherAdapter` (identity encrypt/decrypt) in `composition/`, selected *only* when no
-project/KMS is configured — never silently active in prod.
+Live state is in the private ops repo. Every grant is re-created by
+a consent on the new code, which also supplies the identity (§2.3). The old grants are revoked right after the deploy, so
+one consent per integration is the only reconnect.
 
-### 3.3 OAuth adapter migration (`FirestoreOAuthCredentialsAdapter`)
+The stores switch in **separate deploys**, not one (order and per-deploy owner steps: the delivery plan in the private
+ops repo, `alekbot/designs/secrets_at_rest_plan.md`): MCP clients and codes first, then the credential store, then
+voice tickets, then invites. §6.3's revoke → reconnect sequence is the **credential deploy's** sequence; §6.1 per store
+stays as written.
 
-Inject `CipherPort`. Consumers do **not** change — `get_credentials` / `save_credentials` / `update_credentials` keep their
-signatures; encryption is entirely internal to the adapter (the hexagonal payoff: the port already
-isolates every caller from storage details).
+### 6.1 What the deploy does to each store
+- **Credentials:** the new store is empty; the old collection is never read or written by the new code.
+- **MCP clients:** the new collection is empty, so the claude.ai connector can neither authorize nor refresh. **Owner
+  step:** remove the connector and add it again. The old clients' MCP refresh tokens are orphans (deleted in step 5).
+- **Verify-only stores:** raw values outstanding at the deploy stop working. What the user notices: an invite issued
+  before it answers "invalid" and is reissued; a connector sign-in in progress fails and is restarted; a call being set
+  up at that moment does not connect and is dialled again. Deploy outside a call: a call running across the deploy can
+  lose a late delegation answer.
 
-- `_to_firestore`: encrypt `access_token` + `refresh_token`
-  (AAD `f"{user_id}:{provider}:{field}"`); write a schema marker `enc_v: 1`. Other fields unchanged.
-- `_from_firestore`: **dual-read for zero-downtime migration** — `enc_v` present → decrypt;
-  absent (legacy doc) → read plaintext. New writes are always encrypted, old reads still work.
+### 6.2 Between deploy and reconnect; the reconnect invariant (I8)
+With no record, every integration reads "not connected". Today (verified):
+- **Gmail:** `needs_reconnect` and its one notice exist only for a refresh rejected on an existing record
+  (`worker_handler.py:1060-1081`). With no record the Cabinet shows "Connect Gmail", and daily review and search skip.
+- **Drive:** the notice fires only on `needs_reconnect` (`drive_sync_scheduler_service.py:279-334`). With no record the
+  tick records an access loss and starts the 30-day grace silently (`drive_index_planner.py:858-864`).
+- **To Do:** no reconnect state and no notice exist at all.
 
-### 3.4 Backfill (`scripts/migrations/encrypt_oauth_credentials.py`)
+**Requirement R1** (in stage 0, not a follow-up): an integration whose own state shows a past connection (Gmail indexing
+state, drive sync state, To Do task config) but has no credential shows **Reconnect** in the Cabinet and sends one chat
+notice per user and integration. R1 reads those feature states, never the old credential collection. Its sweep also
+**lists users from the feature stores, not the credential store**: today's daily-review and To Do renewal fan-outs list
+from the credential store (`email_review_service.py:48`, `task_setup_service.py:53-55`) and would see nobody. Gmail and
+To Do run in a new scheduled worker task; Drive in its existing fan-out.
+- **A deliberate disconnect is not a loss (F1).** A disconnect marks the feature state "disconnected by user", and R1
+  skips such a state; a consent clears the mark. Gmail and Drive disconnects delete only the credential and keep the
+  feature state (`user_cabinet_app.py:1199-1217`, `onedrive_adapter.py:247-250`); To Do's deliberate disconnect resets its config
+  (`task_setup_service.py:235`), leaving no past connection for R1 to see, so only Gmail and Drive need the mark.
+- **The once-per-transition flag lives on the feature state (F2)**, not on the credential record: Gmail indexing state,
+  drive sync state, To Do config. Gmail's current flag sits on the credential and its path returns when there is no
+  record (`worker_handler.py:1071-1073`); To Do has no notice path today.
 
-One-time, idempotent: stream docs lacking `enc_v`, encrypt tokens, write back with `enc_v: 1`; skip
-already-encrypted docs. Runs against live Firestore with the `us-production` database. After the
-backfill is verified, a follow-up removes the legacy plaintext read branch in `_from_firestore`
-(closing the transitional window).
+I8, checked against the code:
+- **Gmail: holds.** The callback only saves the credential (`oauth_app.py:570-584`). Indexing starts only from the
+  Cabinet; indexed emails and the indexing state are keyed by user, not by grant.
+- **Drive: holds, within the grace.** Same drive → `RESUME_AFTER_REGAIN`: the cursor resumes, nothing is purged
+  (`drive_index_planner.py:867-869`). `drive_id` is stored for the first time (empty on the live record), so the switch
+  check (`:865`) becomes live, **if the drive id read at connect succeeds**: on failure an empty string is stored and the
+  check stays off (`oauth_app.py:829-850`). Both sides read `parentReference.driveId` of the same call, so the same drive compares
+  equal; another drive purges, by design. A reconnect over 30 days after the deploy → `PURGE_EXPIRED`, a paid rebuild.
+- **To Do: does not hold strictly.** The callback enqueues `setup_microsoft_todo` (`oauth_app.py:802-807`). A
+  subscription still active is kept and nothing is re-read; a lapsed one is re-registered and `reindex_task_list`
+  re-reads the primary list once (`task_setup_service.py:92-110`). Lapsing is near-certain: the renewal sweep lists users
+  from the credential store, so it skips them during the gap, Graph subscriptions live only days, and the grant is
+  already revoked. The re-read is an upsert, purges nothing, and is correct, because webhook notifications during the
+  gap went unprocessed. The one re-read is accepted (owner, 2026-10-29; Q3).
 
-### 3.5 MCP client secrets (`FirestoreMCPClientRepository`)
+### 6.3 Sequence
+1. **Deploy** main service and indexer with key, digest key and grants in place (I6). The stores start empty; R1 notices go out.
+2. **Revoke the old grants, at once after the deploy.** Google: revoke each old record's **refresh** token. Today's
+   disconnect revokes the *access* token, usually expired, and does not reach the grant (`user_cabinet_app.py:1210`).
+   Microsoft consumer accounts offer no per-app token revocation, so **owner step:** remove the app's consent on the
+   Microsoft account's app-permissions page. One-off procedures live in the private ops repo. Both revocations are
+   expected to be grant-wide: Google ends the grant to the OAuth client Gmail and Google Tasks share, and Microsoft ends
+   every grant of the app. Why now: the new code never reads the old collection, so nothing depends on the old grants;
+   revoking first retires the exposed grants without delay, and one consent per integration is then the only reconnect.
+   Proof: a refresh with an old refresh token fails.
+3. **Reconnect**, once: each user reconnects each integration in the Cabinet. The consents request the identity scopes
+   (§2.3, I9), and tokens are ciphertext from the first write.
+4. **Verify** after the reconnect (a check, not a gate before anything): each integration did its normal work through
+   the new store (a Gmail search or daily review, a drive tick resumed from its cursor, a To Do webhook); the stored
+   drive id is non-empty (F7); the KMS audit log shows only the runtime identity.
+5. **Delete** the old collections (credentials, MCP clients and their refresh tokens, raw verify-only documents; voice
+   ones also age out by TTL), within 7 days of the deploy: they are the plaintext being removed. Old MCP refresh tokens are selected by the **old
+   clients' ids**: the new clients' refresh tokens share the collection. Older copies need no action here (Q2 resolved).
 
-`MCPClient.client_secret` is stored plaintext by design, because the `mcp` SDK compares the presented
-secret against the stored value with `hmac.compare_digest` and offers no hashing hook
-(`domain/mcp.py:20-32`).
+### 6.4 Rollback
+- Per store, the rollback is its deploy's previous revision, plus a connector re-add for MCP and a reconnect of every
+  integration for credentials (its consents recreate the old collection). Invites issued since the deploy are lost.
+- **Image:** exempt the pre-cutover images from Artifact Registry cleanup until step 5 + horizon, or rebuild from that commit.
 
-**That rationale rules out hashing, not encryption.** `CipherPort` is decrypt-on-read: the adapter
-returns the raw secret to the SDK exactly as today, and the SDK's comparison is unaffected. The
-plaintext-at-rest exposure disappears at no behavioural cost. So this is in scope, and it is the
-cheapest possible consumer — same dual-read pattern, AAD `f"{client_id}:mcp_client_secret"`, and the
-`domain/mcp.py` docstring is corrected to say *not hashed* rather than *not protected*.
+## 7. Relationship to other work
+- **TELEGRAM_CHANNEL_READER_RFC** (still blocked on this one): its session is one more credential `kind` (§2.3), zero new crypto code.
+- **Multi-drive stage 1** inherits the store as is (opaque `credential_id`, identity, plaintext/secret split). It re-keys
+  the port (§2.4), moves `drive_id` to `DriveConnection`, and applies its revoke rule over `account.realm` + `account.subject`.
+- **Data privacy track** (separate): content is not encrypted here; its first step is IAM least privilege.
 
-**Explicitly deferred — MCP authorization codes.** `{env}_mcp_auth_codes` stores the code itself as
-the document ID, in the clear. Note the asymmetry inside the same repository: refresh tokens are
-stored as `sha256(token_value)`, auth codes are not. The exposure is materially smaller — codes are
-single-use, expire in 10 minutes, and an attacker holding one still needs the PKCE `code_verifier`
-(only the challenge is stored) plus the client secret. The correct fix is also *different* from this
-RFC's mechanism: hash the document ID to match the refresh-token treatment, rather than encrypt a
-field. Deferred as its own small change; trigger to revisit is any widening of MCP beyond its current
-dev-only, experimental status.
+## 8. Testing contract
+- **Cipher:** the AES-GCM test cipher round-trips; a wrong AAD, a flipped byte or another key raises. The KMS adapter's
+  wire test (mocked at the SDK boundary, `ADAPTER_WIRE_TESTING.md`) checks key name, AAD and CRC32C fields; a missing
+  `verified_*` flag or a CRC mismatch raises.
+- **Credential adapter** (fake Firestore with semantics): no token or label in any plaintext field; the existing
+  port-contract tests run unchanged over ciphertext records. A same-account consent keeps `credential_id`, another
+  account replaces it. `update` after revoke returns `False` and writes nothing. A ciphertext moved to another record
+  fails (I2), and a KMS failure propagates (I4).
+- **Architecture:** every credential or MCP-client store has a `CipherPort`; the KMS adapter is the only one in `src/` (I3).
+- **Verify-only:** no raw MCP code, ticket or invite reaches a Firestore write or a log record (capture both); invites
+  are ≥ 128 bits; the voice hand-out records hold ciphertext; derived keys use the digest. **Startup:** I6.
+- **I8** (fakes with semantics):
+  - Gmail: a consent over an existing indexing state writes only the credential and enqueues no indexing.
+  - Drive: no credential + a sync state → `RECORD_LOSS`, index kept. A same-drive consent → `RESUME_AFTER_REGAIN` from
+    the stored cursor. Another drive → `PURGE_DRIVE_SWITCH`. Past 30 days → `PURGE_EXPIRED`.
+  - To Do: an active subscription → no reindex; a lapsed one → exactly one `reindex_task_list`, no delete.
+- **R1:** no credential + a past-connection state → one notice per integration and "Reconnect"; the next fan-out sends
+  none; a consent clears it. A deliberate disconnect → no notice. **I9:** each consent edge stores subject and label; a failed identity read stores nothing.
+- **Live check (owner-run):** after step 2 a refresh by an old refresh token fails; after step 3, step 4's list.
 
----
+## 9. Out of scope
+Content encryption (facts, sessions, drive index, vectors, workspace, media); capability links in history and
+`prompt_content`, with the short links that mirror them (§1); per-service identities and least privilege (§3, last row);
+rate limiting invite redemption; draft and erase codes (§1); app-level secrets already in Secret Manager.
 
-## 4. Security & Threat Model
-
-What application-layer encryption adds over Firestore's default at-rest encryption:
-
-| Control | Effect |
-|---------|--------|
-| Ciphertext in Firestore | A DB dump / export / broad read yields unusable ciphertext, not tokens |
-| Two-key requirement | A usable token needs **both** Firestore-read **and** KMS `useToDecrypt` — separate IAM, separate grantees |
-| Least privilege | `cloudkms.cryptoKeyVersions.useToDecrypt` on the runtime SA only, distinct from Firestore access |
-| Audit | Cloud Audit Logs record every decrypt with caller identity — anomalous credential access is detectable |
-| AAD binding | Ciphertext cannot be relocated across users/fields inside the DB |
-| In use | Plaintext exists only transiently in instance memory during a provider call; never logged, never in `prompt_content` BigQuery, tokens on the log-redaction deny-list |
-| Rotation | KMS key rotation + re-encrypt-on-write; CMEK/HSM available for stronger key custody |
-
-Blast-radius summary: a leaked service-account key that can read Firestore but lacks KMS decrypt is
-**useless** for stealing credentials — the exact gap that exists today.
-
----
-
-## 5. Scope / Non-Goals
-
-- **In scope:** `CipherPort` + KMS adapter; encrypting OAuth `access_token`/`refresh_token` + backfill
-  (§3.3–3.4); encrypting MCP `client_secret` (§3.5).
-- **Not encrypting non-secret fields** (`user_id`, `provider`, `expiry`, `scopes`) — needed plaintext
-  for queries. `email_address` is PII but not an access credential — left plaintext in MVP; encrypting
-  it is a documented possible extension (it is not queried by the current port).
-- **MCP authorization codes — explicitly deferred** with rationale in §3.5 (different fix: hash the
-  doc ID, not encrypt a field).
-- **No consumer changes** — Gmail/Microsoft adapters, the `mcp` SDK token handler, indexing, and
-  renewal jobs are untouched. Encryption is internal to each adapter.
-- **No envelope/DEK layer** — payloads < 64 KiB (§2.3).
-- **Other collections** (facts, sessions, etc.) are out of scope — this RFC is per-user *credentials*.
-
-**Completeness note.** The two stores in §1 are the result of an audit of what this system persists
-that grants access. MCP refresh tokens are already `sha256`-hashed and need no change. If a third
-per-user secret appears later, it composes `CipherPort` — that is the point of the primitive.
-
----
-
-## 6. Rollout Order
-
-The mechanism ships **first**, as a standalone primitive, before any new feature depends on it:
-
-1. `CipherPort` + `GcpKmsCipherAdapter` + `PassthroughCipherAdapter` (local) + unit/wire tests + KMS
-   key provisioning + `settings.py` wiring.
-2. Migrate `FirestoreOAuthCredentialsAdapter` to encrypt tokens (dual-read) + backfill script; run and
-   verify the backfill on live data.
-3. Remove the legacy plaintext read branch once backfill is confirmed.
-4. Migrate `FirestoreMCPClientRepository.client_secret` (§3.5) — same dual-read + backfill shape, much
-   smaller collection. Sequenced after OAuth so the pattern is settled on the higher-value store first.
-5. **(Later, separate work)** Telegram `FirestoreTelegramSessionRepository` composes the same
-   `CipherPort` — the mechanism is already proven in production by then.
-
-Steps 1–4 are a **hard prerequisite** for TELEGRAM_CHANNEL_READER_RFC, by owner decision: secrets are
-stored correctly before a full-account MTProto session is added to the system.
-
----
-
-## 7. Relationship to the Telegram RFC
-
-TELEGRAM_CHANNEL_READER_RFC originally proposed Secret-Manager-per-user for the MTProto session. With
-this RFC accepted, that is superseded: the Telegram session is stored Firestore + `CipherPort`, uniform
-with OAuth credentials. The Telegram RFC's §2.6 and §5 reference this mechanism instead of Secret
-Manager. Telegram is the **validation case** for reuse, implemented only after this mechanism is live —
-it should require *zero* new crypto code, only a new repository adapter composing `CipherPort`.
-
----
-
-## 8. Testing
-
-- **Port substitution:** consumers/tests use `AsyncMock(spec=CipherPort)` — no real KMS.
-- **KMS adapter wire test** (`tests/unit/adapters/`, mock at the KMS SDK boundary, not the port — per
-  `ADAPTER_WIRE_TESTING.md`): `encrypt` calls KMS with the right key + AAD and base64-encodes;
-  `decrypt` round-trips; mismatched AAD → raises.
-- **Round-trip property:** `decrypt(encrypt(x, aad), aad) == x`; `decrypt` with wrong AAD raises.
-- **OAuth adapter:** save encrypts tokens + sets `enc_v`; get decrypts; **dual-read** — a legacy doc
-  without `enc_v` still reads (plaintext branch) until backfill. Queryable fields stay plaintext
-  (assert `list_users_by_provider` still works over ciphertext docs).
-- **Backfill script:** idempotent (re-run is a no-op on `enc_v` docs); converts a plaintext doc.
-- **MCP client repo:** `save_client` writes ciphertext; `get_client` returns the raw secret so
-  `hmac.compare_digest` still matches (assert an end-to-end client-auth comparison passes against an
-  encrypted-at-rest client); dual-read for legacy plaintext clients.
-- **Redaction:** token and client-secret plaintext never appear in emitted log records.
-- **Fail-closed:** prod composition without `KMS_CRYPTO_KEY` refuses to start; local passthrough is
-  only selected when explicitly unconfigured.
+## 10. Open questions
+- **Q1** (resolved) Does revoking one Google refresh token end the client's whole grant? Moot for the sequence:
+  revocation precedes the only reconnect, so grant-wide or per-token both end the old grant before the new consent.
+- **Q2** (resolved, 2026-10-29) Backups and exports of the old collections: no retained copy outlives the grants. Step 2's
+  revocation ends every grant an older copy could hold; the personal content that older copies still hold belongs to the
+  data privacy track (§7). Facts about the copies live in the private ops repo.
+- **Q3** (resolved) To Do's I8 exception: the one re-read is accepted (owner, 2026-10-29).
