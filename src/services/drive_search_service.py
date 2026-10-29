@@ -1178,6 +1178,14 @@ class DriveSearchService:
         self._log_excerpts(user_id, result, stats, started)
         return result
 
+    async def _extent_or_none(self, user_id: str, item_id: str) -> Optional[TextExtent]:
+        """`text_extent` for a cut line only: a failed lookup leaves the line at "the index could not be asked"."""
+        try:
+            return await self.text_extent(user_id, item_id)
+        except Exception as exc:
+            logger.warning("[DriveSearch] extent lookup for a transcript cut failed: %s", exc_brief(exc))
+            return None
+
     async def text_extent(self, user_id: str, item_id: str) -> TextExtent:
         """What the index holds of one file's text (§29.4 L5): the gate, one record read and the ancestor chain, the
         same reads as `_excerpt_range`; no vector, no chunk. `pageable` exactly when `read_passages from 1` returns
@@ -1818,10 +1826,11 @@ class DriveSearchService:
             body = None
             if stored is not None:
                 # the file's path is looked up only when the cut note will use it
-                mirror_path = (await self._active_mirror_path(user_id, item_id)
-                               if open_needs_cut(stored, max_chars=OPEN_MAX_CHARS) else "")
-                body = open_text(stored, max_chars=OPEN_MAX_CHARS, mirror_path=mirror_path, live=True,
-                                 indexed=_readable(rec) and not rec.stale)
+                cuts = open_needs_cut(stored, max_chars=OPEN_MAX_CHARS)
+                mirror_path = await self._active_mirror_path(user_id, item_id) if cuts else ""
+                # the cut line names the record's real state (§29.10): asked only when the text is cut
+                extent = await self._extent_or_none(user_id, item_id) if cuts else None
+                body = open_text(stored, max_chars=OPEN_MAX_CHARS, mirror_path=mirror_path, live=True, extent=extent)
         else:
             body = None
         if not body:

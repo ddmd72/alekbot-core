@@ -6518,9 +6518,13 @@ Deltas from the plan and the text above, declared:
   extracting a separate `_index_gate`: the gate sequence is the same code, so the two cannot drift.
 - **B3** A stale record is readable by `read_passages` (`_readable` ignores staleness), so `pageable` implies a first page (L3), while a
   stale file also has one; the invariant test asserts the one direction the refusal needs.
-- **B4** A live transcript's cut note is `open_text(live=True, indexed=...)`; `indexed` is `_readable(rec) and not rec.stale` at the
-  record level (the gate is not asked again). The transcript outcome carries `ReadFacts.cut` only when the extent proves the cut
-  (not pageable and `text_chars` above the cap); the specialist's stand-in for it is the old one (no `kept` known).
+- **B4** A live transcript's cut note is `open_text(live=True, extent=...)`: the ordinary open's cut line for the extent's real
+  state (§29.7: pageable, stale with the previous version's passages, or not indexed with its reason: off, not connected,
+  rebuilding, not read, no text, hidden). `transcript_text` asks `DriveSearchService.text_extent` only when the text is cut; a
+  failed lookup, or no extent, reads "the index could not be asked". (An earlier cut of this block narrowed it to two lines, which
+  was false for a stale record and gave the wrong reason with indexing off.) The transcript outcome carries `ReadFacts.cut` only
+  when the extent proves the cut (not pageable and `text_chars` above the cap); the specialist's stand-in for it is the old one
+  (no `kept` known).
 - **B5** Searched line: `pages:` entries read `‹path› passages i–j (next: from N)`, `(the end)` or `from passage N (past the end)`.
 - **B6** `pages read:` sits after the folder lines and before the head lines (plan T5); §29.7 said "before its wrapper": both hold.
 - **B8** One page per commission, enforced in code: after the first page request of a run, `DriveToolRun` answers any further

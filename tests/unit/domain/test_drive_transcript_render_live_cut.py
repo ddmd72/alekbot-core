@@ -16,19 +16,19 @@ def _stored(count=400):
     return StoredTranscript("k", StitchedTranscript(segments, ("en",), 2, 3000.0))
 
 
-def test_a_live_cut_uses_the_not_indexed_line_and_the_pointer():
+def test_a_live_cut_with_no_extent_says_the_index_could_not_be_asked():
     stored = _stored()
     out = open_text(stored, max_chars=CAP, mirror_path="_Transcripts/Oak Street call.md", live=True)
     assert len(out) <= CAP
     assert "Search for a passage" not in out and "[Transcript cut at" not in out
     assert T.TRANSCRIPT_SUBJECT in out
-    assert T.WHY[ExtentWhy.NO_TEXT] in out
+    assert T.WHY[ExtentWhy.UNKNOWN] in out
     assert "The full text is in _Transcripts/Oak Street call.md." in out
     assert render_body(stored.transcript).startswith(out.split("\n\n[Cut by")[0][:200])
 
 
 def test_indexed_picks_the_third_form():
-    out = open_text(_stored(), max_chars=CAP, live=True, indexed=True)
+    out = open_text(_stored(), max_chars=CAP, live=True, extent=TextExtent(ExtentState.PAGEABLE))
     head, _, line = out.rpartition("\n\n")
     total = len(render_body(_stored().transcript))
     expected = cut_line(T.TRANSCRIPT_SUBJECT, BoundText("", total, len(head), ExtentState.PAGEABLE),
@@ -48,3 +48,27 @@ def test_archived_keeps_the_old_note():
     assert "[Transcript cut at" in archived and "Search for a passage" in archived
     plain = cap_plain_text(render_body(stored.transcript), max_chars=CAP)
     assert plain == archived
+
+
+import pytest
+
+from src.domain.drive_text_extent import TextExtent as _E
+
+
+@pytest.mark.parametrize("extent", [
+    _E(ExtentState.STALE, passages=77),
+    _E(ExtentState.NOT_INDEXED, ExtentWhy.OFF),
+    _E(ExtentState.NOT_INDEXED, ExtentWhy.NOT_CONNECTED),
+    _E(ExtentState.NOT_INDEXED, ExtentWhy.REBUILDING),
+    _E(ExtentState.NOT_INDEXED, ExtentWhy.NOT_READ),
+    _E(ExtentState.NOT_INDEXED, ExtentWhy.NO_TEXT),
+    _E(ExtentState.NOT_INDEXED, ExtentWhy.HIDDEN),
+    _E(ExtentState.PAGEABLE, passages=40),
+], ids=lambda e: f"{e.state.value}-{e.why.value if e.why else ''}")
+def test_the_cut_line_is_the_ordinary_opens_for_the_extent(extent):
+    stored = _stored()
+    out = open_text(stored, max_chars=CAP, live=True, extent=extent)
+    head, _, line = out.rpartition("\n\n")
+    total = len(render_body(stored.transcript))
+    assert line == cut_line(T.TRANSCRIPT_SUBJECT, BoundText("", total, len(head), extent.state), extent)
+    assert len(out) <= CAP
