@@ -43,6 +43,7 @@ def _handler_kwargs_from_slack(monkeypatch, service):
     monkeypatch.setattr(slack_adapter_factory, "ConversationHandler", _recording_handler)
     with pytest.raises(_Captured) as caught:
         SlackAdapterFactory.create_adapter(
+            rich_content_service=MagicMock(),
             app=MagicMock(), config={}, env_config=MagicMock(), coordinator=MagicMock(), agent_factory=MagicMock(),
             iam_service=MagicMock(), file_service=MagicMock(), session_store=MagicMock(), db_client=MagicMock(),
             consolidation_service=service,
@@ -54,6 +55,7 @@ def _handler_kwargs_from_telegram(monkeypatch, service):
     monkeypatch.setattr(telegram_adapter_factory, "ConversationHandler", _recording_handler)
     with pytest.raises(_Captured) as caught:
         TelegramAdapterFactory.create_adapter(
+            rich_content_service=MagicMock(),
             token="1:abc", webhook_secret="s", dedup_store=MagicMock(), session_store=MagicMock(),
             coordinator=MagicMock(), agent_factory=MagicMock(), iam_service=MagicMock(), file_service=MagicMock(),
             consolidation_service=service,
