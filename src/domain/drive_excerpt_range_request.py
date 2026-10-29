@@ -10,3 +10,4 @@ class ExcerptRangeRequest:
     file_ref: str
     first: int
     last: int
+    page: bool = False        # "from N": a page in file order (RFC §29.5 L9), not a neighbour range

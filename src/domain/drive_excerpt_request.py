@@ -10,6 +10,7 @@ Public interface:
     parse_file_refs(value) -> (ref, ...)         a list or a comma string of drive: refs, at most EXCERPT_FILE_REFS_MAX
                                                  (a passages head line's id `drive:<id>:<i>-<j>` or `:<i>` is a ref:
                                                  the passage numbers are dropped, here and in range_request)
+    parse_page(value) -> Optional[int]           "from 11", "from passage 11", "start": a page's first display number
     parse_range(value) -> (first, last)          "3", "3-5", "3–5": display numbers, at most EXCERPT_RANGE_MAX of them
     excerpt_request(question, folder, file_refs) -> ExcerptRequest
     range_request(file_ref, passages) -> ExcerptRangeRequest
@@ -18,7 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 from .drive_excerpt_range_request import ExcerptRangeRequest
 from .drive_index_params import EXCERPT_FILE_REFS_MAX, EXCERPT_RANGE_MAX
@@ -34,6 +35,10 @@ REVERSED_RANGE = "The range '{value}' ends before it starts: give the first pass
 WIDE_RANGE = "At most {limit} passages per call ('{value}' is {count}): read the rest in a second call."
 
 _RANGE = re.compile(r"\s*(\d+)\s*(?:[-–—]\s*(\d+)\s*)?")
+# A page (RFC §29.5 L9): "from N" or "from passage N"; `start`, `beginning`, `first page` are "from 1".
+_PAGE = re.compile(r"\s*from\s+(?:passage\s+)?(\d+)\s*", re.IGNORECASE)
+_PAGE_START = re.compile(r"\s*(?:start|beginning|first\s+page)\s*", re.IGNORECASE)
+_PAGE_WORD = re.compile(r"\s*from\b", re.IGNORECASE)
 # The passage numbers a head line appends to the ref (`drive_excerpt_render.HEAD`: `[id <ref>:<i>-<j> · …]`).
 _HEAD_NUMBERS = re.compile(r":\d+(?:-\d+)?$")
 
@@ -91,6 +96,20 @@ def parse_range(value: Any) -> Tuple[int, int]:
     return first, last
 
 
+def parse_page(value: Any) -> Optional[int]:
+    """The first display number of a page request, or None when `value` is not one. `from 0` and `from 3-5` are
+    refused as a bad range."""
+    text = str(value if value is not None else "").strip()
+    if _PAGE_START.fullmatch(text):
+        return 1
+    if not _PAGE_WORD.match(text):
+        return None
+    match = _PAGE.fullmatch(text)
+    if match is None or int(match.group(1)) < 1:
+        raise ValueError(BAD_RANGE.format(value=text))
+    return int(match.group(1))
+
+
 def excerpt_request(question: Any, folder: Any = "", file_refs: Any = None) -> ExcerptRequest:
     text = " ".join(str(question or "").split())
     if not text:
@@ -102,5 +121,8 @@ def range_request(file_ref: Any, passages: Any) -> ExcerptRangeRequest:
     if not str(file_ref or "").strip():
         raise ValueError(FILE_REF_REQUIRED)
     ref = _ref(file_ref)
+    first_page = parse_page(passages)
+    if first_page is not None:
+        return ExcerptRangeRequest(file_ref=ref, first=first_page, last=first_page + EXCERPT_RANGE_MAX - 1, page=True)
     first, last = parse_range(passages)
     return ExcerptRangeRequest(file_ref=ref, first=first, last=last)
