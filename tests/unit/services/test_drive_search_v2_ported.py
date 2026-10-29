@@ -378,6 +378,23 @@ async def test_a_folder_over_the_in_memory_chunk_bound_uses_the_wide_streams_wit
     assert w.repo.chunk_calls == [(CHUNK_FETCH, None)] and "content=wide" in log.info.call_args[0][0]
 
 
+async def test_a_truncated_word_page_in_the_wide_folder_branch_never_states_the_folder_lacks_the_word(monkeypatch):
+    """The wide folder branch (chunks over FOLDER_INMEM_CHUNKS) reads the user-wide word pages. A full page that stops
+    at a file outside the folder has not reached the folder's files, so "No file in this scope holds ..." must not
+    be stated (P6 review M1); the word is reported as not checked instead."""
+    monkeypatch.setattr(search_mod, "FOLDER_INMEM_CHUNKS", 2)
+    monkeypatch.setattr(search_mod, "WORD_FILES_MAX", 1)
+    monkeypatch.setattr(search_mod, "WORD_FETCH", 1)
+    w = world()
+    w.file("aaa-notes.txt", chunks=["the lighthouse keeper"])   # outside the folder, sorts first by item_id
+    library = w.folder("Library")
+    w.file("novel.epub", parent=library, chunks=["the lighthouse keeper", "chapter two", "chapter three"])
+    result = await w.search("lighthouse", folder="Library")
+    text = render_results(result)
+    assert 'No file in this scope holds "lighthouse".' not in text
+    assert 'could not be checked in the whole scope: "lighthouse"' in text
+
+
 async def test_the_summary_line_counts_the_content_streams(monkeypatch):
     """Ports test_the_summary_line_counts_the_content_streams to the v2 fields (§25.5.7)."""
     w = world()
