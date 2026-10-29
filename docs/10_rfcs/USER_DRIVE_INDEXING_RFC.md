@@ -15,7 +15,7 @@ designed in §26 and **built (slices S1–S6) and deployed 2026-10-19** (PRs #81
 **Answer from content** (the drive specialist retrieves, reads and passes to Smart the passages nearest a content request;
 Smart says what, the specialist decides how; owner questions OQ-A1–OQ-A3 resolved 2026-10-28) is designed in §28 and **built (rev 3.33, 2026-10-28) and deployed 2026-10-29**; §28.10 records what the build decided beyond the design.
 **Open bound and paging** (owner rule 2026-10-29: a drive text over 60 000 characters is never handed to a model whole; it is read
-through the index, by meaning or a page at a time; reverses A16, resolves OQ-2) is designed in §29 (rev 3.34), **not built**.
+through the index, by meaning or a page at a time; reverses A16, resolves OQ-2) is designed in §29 (rev 3.34), **built, not deployed** (§29.16 lists the build's deltas).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md) (Step 1, live: CRUD over the user's OneDrive App Folder).
 Replaces that RFC's §5 "Step 2" placeholder.
 **Precedents reused:** email index ([GMAIL_EMAIL_INDEXING_RFC.md](GMAIL_EMAIL_INDEXING_RFC.md), `IndexedEmail`),
@@ -6146,7 +6146,7 @@ Engineering decisions taken here: A1–A18, each with its reason above. The para
 | evals | `scripts/validation/drive_eval/excerpts_eval.py`, `specialist_ab.py`, `owner_notes_overlay.py`, `fixture_texts_afc.py`; gold `tests/fixtures/drive_eval/gold_specialist_afc.json` |
 | mutation targets | `tests/support/mutation_targets.py` (the six domain modules) |
 
-## 29. Open bound and paging (rev 3.34, 2026-10-29; built on `feat/drive-open-cap-paging`, not deployed)
+## 29. Open bound and paging (rev 3.34, 2026-10-29; built, not deployed)
 
 *Designed 2026-10-29 after an incident on a call (§29.1). The owner fixed the rule (§29.2) and the scope; the engineering
 decisions are L1–L13. Reverses A16 and resolves OQ-2 (§29.12). Code is cited at `main` `55c2d298`. Every example is
