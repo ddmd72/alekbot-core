@@ -32,6 +32,7 @@ from ..config.auth import AuthConfig
 from ..config.environment import EnvironmentConfig
 from ..domain.mcp import KEYWORDS_MAX, normalize_keywords, normalize_phrase
 from ..domain.request_context import RequestContext
+from ..ports.cipher_port import CipherPort
 from ..services.mcp_authorization_service import MCPAuthorizationService
 from ..services.search_enrichment_service import SearchEnrichmentService
 from ..utils.logger import logger
@@ -150,6 +151,8 @@ def build_mcp_components(
     env_config: EnvironmentConfig,
     auth_config: AuthConfig,
     search_enrichment_service: SearchEnrichmentService,
+    cipher: CipherPort,
+    digest_key: bytes,
 ) -> MCPComponents:
     """
     Build the FastMCP server for the remote MCP endpoint.
@@ -160,6 +163,10 @@ def build_mcp_components(
         auth_config: AuthConfig (MCP resource URI, TTLs, JWT secret)
         search_enrichment_service: the RRF memory search service —
             invoked by the tool handler
+        cipher: the stored-secrets cipher built by build_application_graph
+            (never here: main.py swallows this build's errors, so a missing
+            key would read as "MCP off", not as a failed start)
+        digest_key: the verify-only digest key, built there too
 
     Returns:
         MCPComponents with the FastMCP instance and the authorization
@@ -168,7 +175,7 @@ def build_mcp_components(
         it (composition must not import web/).
     """
     # --- storage + service + SDK provider ---
-    repo = FirestoreMCPClientRepository(db_client, env_config)
+    repo = FirestoreMCPClientRepository(db_client, env_config, cipher=cipher, digest_key=digest_key)
 
     # Consent URL: same host as the MCP resource URI, at /mcp/consent.
     # When the SDK redirects the browser to our authorize result, the

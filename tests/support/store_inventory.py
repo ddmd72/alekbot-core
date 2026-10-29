@@ -71,7 +71,8 @@ KITS: Dict[str, Tuple[str, ...]] = {
     _STORE + "fact_management_adapter.FactManagementAdapter": (_A + "test_fact_management_kit.py",),
     # P6 access kits
     _STORE + "firestore_whitelist_repo.FirestoreWhitelistRepository": (_A + "test_whitelist_store_kit.py",),
-    _STORE + "firestore_mcp_client_repository.FirestoreMCPClientRepository": (_A + "test_mcp_client_store_kit.py",),
+    _STORE + "firestore_mcp_client_repository.FirestoreMCPClientRepository": (
+        _A + "test_mcp_client_store_kit.py", _A + "test_mcp_client_store_cipher_kit.py"),
     _STORE + "firestore_oauth_credentials_adapter.FirestoreOAuthCredentialsAdapter": (
         _A + "test_oauth_credentials_store_kit.py",),
     _STORE + "firestore_invite_code_repo.FirestoreInviteCodeRepository": (_A + "test_invite_code_store_kit.py",),
