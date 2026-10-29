@@ -52,7 +52,7 @@ playwright>=1.40.0  # HTML → PNG rendering for widget rich content (ENABLE_HTM
 google-cloud-secret-manager
 google-cloud-kms==3.18.0  # stored secrets encrypted by Cloud KMS (SECRETS_AT_REST_RFC §2.2)
 google-crc32c==1.8.0  # the KMS CRC32C integrity fields, sent and checked both ways
-cryptography==46.0.5  # AES-GCM test cipher (tests/support/aes_gcm_cipher.py); already a transitive dependency
+cryptography==50.0.0  # AES-GCM test cipher (tests/support/aes_gcm_cipher.py); already a transitive dependency
 google-auth>=2.0.0  # in-app Google OIDC verification on the /worker endpoint
 firebase-admin>=6.0.0  # OAuth Multi-Tenant Session 3: Firebase Auth adapter
 PyJWT>=2.8.0  # OAuth Multi-Tenant Session 4: JWT session management
