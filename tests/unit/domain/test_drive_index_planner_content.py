@@ -589,7 +589,11 @@ class TestCanStartFile:
         assert not can_start_file(TICK_DEADLINE_S - parsed - MODEL_FILE_BUDGET_S, routed=True)
 
     def test_a_parsed_file_can_start_later_than_a_routed_one(self):
-        late = TICK_DEADLINE_S - 600
+        from src.domain.drive_index_params import (
+            DOWNLOAD_TIMEOUT_S, EMBED_FILE_BUDGET_S, EXTRACT_WALL_TIMEOUT_S, FILE_START_MARGIN_S, MODEL_FILE_BUDGET_S,
+        )
+        parsed = DOWNLOAD_TIMEOUT_S + EXTRACT_WALL_TIMEOUT_S + EMBED_FILE_BUDGET_S + FILE_START_MARGIN_S
+        late = TICK_DEADLINE_S - parsed - MODEL_FILE_BUDGET_S / 2   # between the two worst cases
         assert can_start_file(late, routed=False) and not can_start_file(late, routed=True)
 
 
