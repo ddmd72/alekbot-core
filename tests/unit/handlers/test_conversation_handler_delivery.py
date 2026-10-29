@@ -2,7 +2,7 @@
 Unit tests for ConversationHandler delivery paths and handle_message edge cases.
 
 Coverage targets:
-  _deliver_rich_content  — lines 137-142: media type + no channel_id → warning + fallback
+  _deliver_rich_content  — media type + no channel_id → warning + fallback (via RichContentService.deliver)
   _deliver_item          — lines 153-222: all item types + error paths
   handle_message         — lines 313-320: notification channel persistence (Slack DM vs regular)
                          — lines 373-391: no text + attachments (localization + hardcoded)
@@ -33,6 +33,7 @@ from src.domain.messaging import FileAttachment, MessageContext, RichContent, Sm
 from src.domain.settings import ConsolidationSettings
 from src.domain.ui_messages import StatusType
 from src.handlers.conversation_handler import ConversationHandler
+from src.services.rich_content_service import RichContentService
 
 
 # ---------------------------------------------------------------------------
@@ -142,13 +143,26 @@ def _simple_coordinator(result) -> MagicMock:
 # Class 1: _deliver_rich_content — no channel_id → warning + fallback
 # ---------------------------------------------------------------------------
 
+class _FakeMedia:
+    """PlatformMediaPort fake: records what reached the platform."""
+
+    def __init__(self):
+        self.files, self.images = [], []
+
+    async def upload_file(self, file_bytes, filename, title, channel_id):
+        self.files.append((file_bytes, filename, title, channel_id))
+
+    async def upload_image(self, image_bytes, alt_text, channel_id):
+        self.images.append((image_bytes, alt_text, channel_id))
+
+
 class TestDeliverRichContentNoChannelId:
-    """Lines 137-142: media type + rich_content_service present but channel has no channel_id."""
+    """Media type + rich_content_service present but channel has no channel_id (routing in RichContentService.deliver)."""
 
     async def test_media_type_no_channel_id_falls_back_to_send_rich_content(self):
         coord = MagicMock()
-        rcs = MagicMock()
-        rcs.process = AsyncMock(return_value="https://gcs/file.png")
+        media = _FakeMedia()
+        rcs = RichContentService(media_port=media)
 
         handler = _make_handler(coord, rich_content_service=rcs)
 
@@ -158,19 +172,21 @@ class TestDeliverRichContentNoChannelId:
         channel.send_rich_content = AsyncMock()
         channel.send_message = AsyncMock()
 
-        content = RichContent(content_type="file", data={"title": "x"}, fallback_text="")
+        content = RichContent(content_type="file", data={"title": "x", "content": "x", "filename": "x.txt"},
+                              fallback_text="")
 
         await handler._deliver_rich_content(content, channel, thread_id=None)
 
-        # RichContentService.process must NOT be called — no channel_id
-        rcs.process.assert_not_awaited()
+        # Nothing reached the platform and no URL was sent — no channel_id
+        assert media.files == [] and media.images == []
+        channel.send_message.assert_not_awaited()
         # Fallback: send_rich_content called instead
         channel.send_rich_content.assert_awaited_once_with(content, thread_id=None)
 
     async def test_media_type_channel_id_none_falls_back_to_send_rich_content(self):
         coord = MagicMock()
-        rcs = MagicMock()
-        rcs.process = AsyncMock(return_value=None)
+        media = _FakeMedia()
+        rcs = RichContentService(media_port=media)
 
         handler = _make_handler(coord, rich_content_service=rcs)
 
@@ -182,7 +198,7 @@ class TestDeliverRichContentNoChannelId:
 
         await handler._deliver_rich_content(content, channel, thread_id=None)
 
-        rcs.process.assert_not_awaited()
+        assert media.files == [] and media.images == []
         channel.send_rich_content.assert_awaited_once_with(content, thread_id=None)
 
 

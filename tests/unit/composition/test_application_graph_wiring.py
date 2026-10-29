@@ -126,11 +126,15 @@ async def test_the_platforms_the_workers_and_the_started_state_are_wired(prod_gr
 @pytest.mark.slow
 async def test_a_dependency_lost_from_the_graph_is_reported_by_its_path(prod_graph):
     handler = prod_graph.app.slack_adapter.conversation_handler
+    shared = prod_graph.app.notification_service._platform_rich_content["slack"]
+    # The chat handler and the notification service hold one RichContentService; the walk reports it by the path it reaches first
+    assert handler._rich_content_service is shared
     handler._rich_content_service._media_port = None
 
     problems = none_problems(prod_graph.app)
 
-    assert any("unledgered None" in p and "_rich_content_service._media_port" in p for p in problems), problems
+    assert any("unledgered None" in p and "app.notification_service._platform_rich_content['slack']._media_port" in p
+               for p in problems), problems
 
 
 @pytest.mark.slow
