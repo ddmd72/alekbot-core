@@ -76,9 +76,10 @@ class FirestoreMCPClientRepository(MCPClientRepository):
         }
 
     @staticmethod
-    def _client_from_fs(data: dict, client_secret: Optional[str]) -> MCPClient:
+    def _client_from_fs(data: dict, client_id: str, client_secret: Optional[str]) -> MCPClient:
+        """Rebuild the client of doc id `client_id`; the identity comes from the record key, never from the body."""
         return MCPClient(
-            client_id=data["client_id"],
+            client_id=client_id,
             client_secret=client_secret,
             client_secret_expires_at=data.get("client_secret_expires_at"),
             client_name=data.get("client_name", ""),
@@ -104,11 +105,17 @@ class FirestoreMCPClientRepository(MCPClientRepository):
         if not doc.exists:
             return None
         data = doc.to_dict()
+        # I2 for whole-record copies: the body must belong to this doc id, and the AAD is built from the id the caller
+        # asked for, so a document copied under another id never decrypts or reads back as the other client.
+        stored_id = data["client_id"]
+        if stored_id != client_id:
+            logger.error(f"[MCPClientRepo] client doc {client_id} holds the body of another client; refused")
+            raise ValueError(f"MCP client document {client_id!r} holds a body for another client id")
         sealed = data.get("client_secret")
         secret = None
         if sealed is not None:
-            secret = await self._cipher.decrypt(sealed, aad=self._client_aad(data["client_id"]))
-        return self._client_from_fs(data, secret)
+            secret = await self._cipher.decrypt(sealed, aad=self._client_aad(client_id))
+        return self._client_from_fs(data, client_id, secret)
 
     async def delete_client(self, client_id: str) -> None:
         await self._clients.document(client_id).delete()

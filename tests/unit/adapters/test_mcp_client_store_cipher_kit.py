@@ -141,6 +141,27 @@ async def test_a_ciphertext_copied_to_another_clients_doc_raises(store):
     assert await store.repo.get_client("client-a") == client("client-a")
 
 
+async def test_a_whole_doc_copied_under_another_id_raises(store, caplog):
+    await store.repo.save_client(client("client-a"))
+    await store.repo.save_client(client("client-b"))
+    store.docs(CLIENTS)["client-a"] = dict(store.docs(CLIENTS)["client-b"])
+
+    with caplog.at_level(logging.ERROR), pytest.raises(ValueError, match="another client id"):
+        await store.repo.get_client("client-a")
+    assert any("client-a" in r.getMessage() and "refused" in r.getMessage() for r in caplog.records)
+    assert not any("secret-client-b" in r.getMessage() for r in caplog.records)
+    assert await store.repo.get_client("client-b") == client("client-b")
+
+
+async def test_a_whole_doc_copied_with_its_body_id_rewritten_does_not_decrypt(store):
+    await store.repo.save_client(client("client-a"))
+    await store.repo.save_client(client("client-b"))
+    store.docs(CLIENTS)["client-a"] = {**store.docs(CLIENTS)["client-b"], "client_id": "client-a"}
+
+    with pytest.raises(InvalidTag):
+        await store.repo.get_client("client-a")
+
+
 async def test_a_public_client_stores_and_reads_no_secret(store):
     public = client(client_secret=None, token_endpoint_auth_method="none")
     await store.repo.save_client(public)
