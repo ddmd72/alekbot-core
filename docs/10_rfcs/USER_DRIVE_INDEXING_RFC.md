@@ -439,6 +439,14 @@ Decided from metadata first; a download happens only if the item is admitted.
   Password-protected PDF/Office/EPUB → `metadata_only / encrypted` (deterministic: no retries, no model call). Apple
   iWork (`.pages`, `.numbers`, `.key`) has no extractor → `kind_not_admitted`. Kind comes from magic bytes on the downloaded head plus the mime type: a `.txt` that is a
   ZIP is a ZIP.
+  - **Apple Books packages** (`<name>.epub.pkgf`, policy 4): the EPUB folder stored as one plain tar. The name gives
+    kind `epub` (the `.pkgf` suffix is dropped for an `.epub` stem only), and a ustar head declared EPUB stays `epub`
+    (any other declared kind is `archive`). Inside the parser child the tar is repacked as an EPUB ZIP in memory, then
+    read on the EPUB path (DRM check included): at most `MAX_ZIP_MEMBERS` headers and `MAX_ZIP_UNCOMPRESSED_BYTES` of
+    member data, the EPUB ZIP bounds, both checked on the headers before any data is read (over a bound →
+    `too_large`); regular files only (links, devices, sparse files skipped); names normalised to relative ZIP entry
+    names (absolute names, `..` and AppleDouble `._*` skipped); a package tarred with its folder is read from that
+    folder. A tar that cannot be read is `unsupported`, like a corrupt EPUB. Nothing is written to disk.
 - **Metadata only by default:** source code, logs and dumps, archives, disk images, databases, executables, images,
   audio, video. Screenshots and scans are admitted to text recognition in Slice 4 (§5.3); the rest are candidate
   extensions (§14). Why each class gets the treatment it gets: §5.5.

@@ -263,6 +263,8 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   `CONTENT`): PDF, DOCX, PPTX, XLSX/XLS, ODT/ODS/ODP, EPUB, HTML, Markdown, text, CSV, JSON, RTF, MSG, EML and VTT/SRT
   subtitles. Every image is admitted for triage (`TRIAGE`). Since `POLICY_VERSION` 3 (RFC §27, live) audio and video are admitted for **transcription**
   (`Admission.TRANSCRIBE`): not parsed, never in the content classes, handled by the transcript stage (§4.23).
+  Since `POLICY_VERSION` 4 an Apple Books package (`<name>.epub.pkgf`, a plain tar of the EPUB folder) is kind `epub`:
+  the parser child repacks it as an EPUB ZIP in memory under the EPUB ZIP bounds (RFC §5.1).
   Everything else (`doc`, `ppt`, `mhtml`, iWork, archives, code, …) is `metadata_only` (reason `kind_not_admitted`) with a card.
   (Structure decisions compare against `STRUCTURE_POLICY_SINCE` = 2, so the version 3 bump re-reads no README and re-probes no folder.) A content kind over its
   download cap (45 MiB; 10 MiB for XLSX/XLS) is `metadata_only / too_large` before any download. Dot-names,
@@ -504,7 +506,8 @@ image `(reader)`, every other admitted kind `(parser)`.
   directory; one child at a time. Readers (`src/adapters/drive_parser/readers.py`): pdfminer.six for PDF text, laid
   out page by page and stopped once `MAX_TEXT_CHARS` is reached (`truncated` when a page was left; pypdf for the
   page count, walked from the page tree, and encryption);
-  markitdown's allowlisted converters for DOCX, PPTX, EPUB and MSG; HTML by parser@2 (`drive_parser/html_text.py`,
+  markitdown's allowlisted converters for DOCX, PPTX, EPUB and MSG (an EPUB that is a plain tar, an Apple Books
+  `.epub.pkgf`, is first repacked as a ZIP in memory by `drive_parser/epub_package.py`); HTML by parser@2 (`drive_parser/html_text.py`,
   RFC §25.3, Search v2): one BeautifulSoup parse, the content element converted in place with markdownify — the first
   visible `<main>`, else the largest `<article>` holding half the body's text, else the body without its top-level
   header, footer, nav and aside; hidden elements, scripts and option lists dropped; blocks of in-page links dropped
