@@ -27,7 +27,6 @@ Public interface:
 """
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Iterable, Optional
 
@@ -126,9 +125,8 @@ class IntegrationReconnectService:
         config = await task_config.get_config(user_id)
 
         async def flag(value: bool) -> None:
-            # the config is replaced whole (TaskConfigPort.save_config): re-read just before the write
-            current = await task_config.get_config(user_id)
-            await task_config.save_config(user_id, replace(current, reconnect_notified=value))
+            # a field write: never a config rewrite, which could undo a concurrent save of the subscriptions
+            await task_config.set_reconnect_notified(user_id, value)
 
         has_credential = await self._credentials.is_connected(user_id, TODO_PROVIDER)
         if has_credential:
@@ -215,7 +213,7 @@ class IntegrationReconnectService:
         elif self._task_config is not None:
             config = await self._task_config.get_config(user_id)
             if config.reconnect_notified:
-                await self._task_config.save_config(user_id, replace(config, reconnect_notified=False))
+                await self._task_config.set_reconnect_notified(user_id, False)
 
     async def status(self, user_id: str, integrations: Iterable[Integration] = ALL) -> Dict[str, bool]:
         """Per integration: True when the Cabinet shows Reconnect (`reconnect_policy.reconnect_needed`)."""

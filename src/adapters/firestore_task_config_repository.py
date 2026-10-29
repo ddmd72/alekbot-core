@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from google.api_core.exceptions import NotFound
 from google.cloud import firestore
 
 from ..config.environment import EnvironmentConfig
@@ -25,7 +26,8 @@ class FirestoreTaskConfigRepository(TaskConfigPort):
 
     Collection `EnvironmentConfig.task_config_collection` (`{prefix}task_config`), document id `user_id`, fields
     `primary_list_id`, `subscriptions: [{sub_id, list_id, expires_at}]` and `reconnect_notified`. The only query is
-    `list_user_ids`, a projection over the whole collection, so no index is needed.
+    `list_user_ids`, a projection over the whole collection, so no index is needed. `set_reconnect_notified` is a field
+    `update` of `reconnect_notified` alone (NotFound for a missing document → False).
     `save_config` is a plain `set` of the whole document. `set_primary_list_id_if_absent` is one Firestore transaction
     (read, then `set` with merge so the subscriptions stay); a commit that lost to another writer aborts and the body
     re-runs against the winner's value. A stored datetime comes back as `DatetimeWithNanoseconds` and is rebuilt as a
@@ -147,3 +149,16 @@ class FirestoreTaskConfigRepository(TaskConfigPort):
     async def list_user_ids(self) -> List[str]:
         """Every document id of the collection (one per user), read with a one-field projection."""
         return sorted([snap.id async for snap in self.collection.select(["primary_list_id"]).stream()])
+
+    # ------------------------------------------------------------------
+    # TaskConfigPort — set_reconnect_notified
+    # ------------------------------------------------------------------
+
+    async def set_reconnect_notified(self, user_id: str, value: bool) -> bool:
+        """One `update` of `reconnect_notified` (its "document exists" precondition: a missing config stays missing)."""
+        try:
+            await self.collection.document(user_id).update({"reconnect_notified": value})
+        except NotFound:
+            logger.debug(f"📋 No TaskConfig for user {user_id[:8]}; reconnect flag not written")
+            return False
+        return True

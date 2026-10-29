@@ -53,3 +53,11 @@ class TaskConfigPort(ABC):
         A listed user's config may be empty (a disconnect stores an empty config).
         """
         ...
+
+    @abstractmethod
+    async def set_reconnect_notified(self, user_id: str, value: bool) -> bool:
+        """Field-level write of R1's notice flag (SECRETS_AT_REST_RFC §6.2, F2): every other stored field stays as stored,
+        so it never undoes a concurrent `save_config`. A missing config is left missing and the call returns False;
+        True when the flag was written.
+        """
+        ...
