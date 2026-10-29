@@ -12,9 +12,11 @@ def _registry():
     return registry
 
 
-def test_lelik_has_a_light_search_and_both_alek_intents_but_no_full_web_search():
-    assert LELIK.allowed_intents == frozenset(
-        {Intent.SEARCH_MEMORY, Intent.SEARCH_WEB_LIGHT, Intent.ASK_ALEK, Intent.TELL_ALEK})
+def test_lelik_has_a_light_search_and_ask_alek_but_no_full_web_search():
+    # send_to_chat replaced tell_alek as a tool of its own, not an intent of the allowlist (§4.15.2, rev. 2026-10-29).
+    assert LELIK.allowed_intents == frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_WEB_LIGHT, Intent.ASK_ALEK})
+    assert Intent.SEND_TO_CHAT not in LELIK.allowed_intents
+    assert not hasattr(Intent, "TELL_ALEK")
     assert LELIK.intent_fanout == {}
 
 
@@ -37,5 +39,5 @@ def test_lelik_is_offered_the_new_intents_and_smart_is_not():
     lelik = {i["name"] for i in registry.get_available_intents_for(LELIK)}
     smart = {i["name"] for i in registry.get_available_intents_for(SMART_RESPONSE)}
 
-    assert lelik == {"search_memory", "search_web_light", "ask_alek", "tell_alek"}
-    assert not smart & {"search_web_light", "ask_alek", "tell_alek"}
+    assert lelik == {"search_memory", "search_web_light", "ask_alek"}
+    assert not smart & {"search_web_light", "ask_alek", "send_to_chat"}

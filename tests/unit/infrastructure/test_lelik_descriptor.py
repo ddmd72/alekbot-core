@@ -18,8 +18,8 @@ def test_maps_fanout_targets_maps_query():
 
 
 def test_lelik_allowlist_is_the_fast_specialists():
-    assert LELIK.allowed_intents == frozenset(
-        {Intent.SEARCH_MEMORY, Intent.SEARCH_WEB_LIGHT, Intent.ASK_ALEK, Intent.TELL_ALEK})
+    # send_to_chat is Lelik's own session tool, never an allowlisted intent (§4.15.2, revised 2026-10-29).
+    assert LELIK.allowed_intents == frozenset({Intent.SEARCH_MEMORY, Intent.SEARCH_WEB_LIGHT, Intent.ASK_ALEK})
     assert LELIK.internal is True
     assert LELIK.capabilities == {}
 
