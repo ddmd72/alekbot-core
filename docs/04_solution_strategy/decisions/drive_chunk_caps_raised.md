@@ -15,6 +15,8 @@ is a ceiling that is not reached.
 `asyncio.wait_for(EMBED_FILE_BUDGET_S)`. 1 000 chunks are 250 rounds: 180 s needs 0.72 s per call, 300 s allows 1.2 s.
 A timeout costs the whole file (`embed_timeout`, read again), so the margin was widened. The tick-deadline test holds:
 start budget 480 + download 120 + extract 120 + embed 300 + margin 60 + model 600 = 1 680 < 1 800 s.
+A re-embed waits twice (chunks, then hints) and downloads nothing: its start gate (`can_start_reembed`) uses
+2 × 300 + 60 = 660 s.
 
 **Accepted consequence.** A folder holding several long books passes `FOLDER_INMEM_CHUNKS` (2 000), and its search
 falls back to the user-wide chunk streams with the folder filter (covered by

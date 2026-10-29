@@ -151,7 +151,7 @@ from ..domain.drive_index_params import (
 )
 from ..domain.drive_index_planner import (
     AccessAction, ObservationPlan, PlaceOf, PlanContext, access_action, access_observed, access_recheck_due,
-    access_rechecked, access_regained, attempt_crashed, can_start_file, capped,
+    access_rechecked, access_regained, attempt_crashed, can_start_file, can_start_reembed, capped,
     card_refused, change_from_record, chunks_reembedded, chunks_refused, content_due, content_retry, deferred, demoted,
     drops_readable, extractor_stale, generation_started, indexed, marked_inaccessible, model_available, model_outage,
     model_recovered, month_key, month_parked, needs_probe, next_month_start, outage_charged, quiet_over,
@@ -404,6 +404,11 @@ class _Budget:
         ends before the tick deadline (§7.1, §24.3)."""
         return (self.files > 0 and self.time_left()
                 and can_start_file(self.monotonic() - self.started, routed=routed))
+
+    def reembed_allowed(self) -> bool:
+        """`file_allowed` for a re-embed, whose worst case is two embedding waits, not a download and a parse."""
+        return (self.files > 0 and self.time_left()
+                and can_start_reembed(self.monotonic() - self.started))
 
     def item_call_allowed(self) -> bool:
         """An item call (probe, parent lookup, re-listing page) starts only within both budgets: a slow provider
@@ -2928,7 +2933,7 @@ class DriveIndexingService:
         still due; a chunk this space refuses (HTTP 400) is terminal for the space (chunks_refused, R3 F2-3); chunks that
         cannot be read back as stored, an embedding timeout or any other error send the file to a full index run,
         which counts it."""
-        if not budget.file_allowed(routed=False):
+        if not budget.reembed_allowed():
             return False
         readable = rec.indexed_generation
         if readable is None:
