@@ -33,7 +33,7 @@ in the test database, timed from a Cloud Run Job in the service's region, 30 seq
 
 - The kNN is exact: time grows linearly with the user's chunks (about 15 ms per 1 000), billed one read per 100
   index entries plus one per returned document.
-- A user next to 244 000 chunks of another user measured the same as alone: the `user_id` prefix bounds the scan, so
+- A user next to 244 000 synthetic chunks of another user measured the same as alone: the `user_id` prefix bounds the scan, so
   the cap is per user and other tenants do not slow a search.
 - Four parallel kNN calls take about 15 % longer than one; no errors, no rising tail over a series (no throttling).
   A search runs its card, chunk and hint kNN in parallel, so what a user waits for is about the unfiltered chunk kNN;
