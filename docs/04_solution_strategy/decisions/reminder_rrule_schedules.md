@@ -47,6 +47,15 @@ the rule's first occurrence after `now`, stepped along the rule from the old `du
 tick until it caught up — tolerable for a daily rule, six fires 5 min apart for a 10-minute rule
 after a 1 h outage.
 
+*Amended 2026-10-29.* The floor applies to the occurrences, not only to MINUTELY's `INTERVAL`:
+`FREQ=HOURLY;BYMINUTE=0,1` or `BYSECOND=0,30` passed the old check (reported from outside the
+project). Such a rule still fired once per tick, but a per-second rule needs 300 catch-up steps
+per 5 min, so an outage of about 80 min exceeded `_MAX_CATCH_UP_STEPS` and the reminder was
+never rescheduled. `normalize` now expands the first 500 occurrences and refuses any two closer
+than 5 min. A probe, not a proof: the pattern repeats each period, so a close pair shows early.
+A structural check of BY* combinations was rejected — it re-implements RFC 5545 expansion.
+Stored rules are not re-validated; they keep firing once per tick.
+
 **4. Both read paths carry the whole note** — rule verbatim, complexity, last fire — rendered
 only when set (the orchestrator's block sits after the cache boundary and is re-sent every request).
 The orchestrator edits by quoting the rule it can now see.

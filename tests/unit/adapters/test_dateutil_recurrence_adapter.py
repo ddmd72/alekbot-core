@@ -101,6 +101,30 @@ class TestNormalize:
             adapter.normalize("FREQ=MONTHLY;BYMONTH=2;BYMONTHDAY=31")
 
 
+class TestNormalizeShortestGap:
+    """The 5-minute floor holds for the occurrences themselves, not only for
+    FREQ=MINUTELY's INTERVAL: BY* lists can space them closer than INTERVAL says."""
+
+    @pytest.mark.parametrize("rule", [
+        "FREQ=HOURLY;BYMINUTE=0,1",
+        "FREQ=MINUTELY;INTERVAL=5;BYSECOND=0,30",
+        "FREQ=DAILY;BYHOUR=9;BYMINUTE=0,2",
+        "FREQ=HOURLY;BYMINUTE=1,58",  # 3 min apart only across the hour boundary
+    ])
+    def test_rejects_occurrences_closer_than_the_cron_cadence(self, adapter, rule):
+        with pytest.raises(ValueError, match="at least 5 minutes apart"):
+            adapter.normalize(rule)
+
+    @pytest.mark.parametrize("rule", [
+        "FREQ=HOURLY;BYMINUTE=0,5",
+        "FREQ=DAILY;BYHOUR=8,20;BYMINUTE=0",
+        "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=30",
+        "FREQ=YEARLY",
+    ])
+    def test_accepts_occurrences_at_least_the_cadence_apart(self, adapter, rule):
+        assert adapter.normalize(rule) == rule
+
+
 # =============================================================================
 # Schedule arithmetic — parity with the pre-RRULE model
 # =============================================================================
