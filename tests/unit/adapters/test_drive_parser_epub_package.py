@@ -230,3 +230,10 @@ def test_short_file_is_not_a_tar_package(tmp_path):
     path = tmp_path / "book.epub.pkgf"
     path.write_bytes(b"ustar")
     assert not is_tar_package(str(path))
+
+
+def test_member_data_shorter_than_its_header_is_a_package_error(tmp_path, monkeypatch):
+    path = make_package(tmp_path / "book.epub.pkgf", BOOK)
+    monkeypatch.setattr(tarfile.TarFile, "extractfile", lambda self, member: io.BytesIO(b"x"))
+    with pytest.raises(PackageError, match="ends early"):
+        epub_zip_from_tar(path)
