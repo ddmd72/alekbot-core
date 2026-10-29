@@ -25,11 +25,13 @@ from ..services.google_oauth_service import GoogleOAuthService
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..config.auth import AuthConfig
 from ..domain.exceptions import AccessDeniedError
+from ..domain.reconnect_policy import Integration
 from ..domain.safe_redirect import safe_return_path
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..services.invite_code_service import InviteCodeService
+    from ..services.integration_reconnect_service import IntegrationReconnectService
 
 
 _ACCESS_DENIED_PAGE = (
@@ -57,6 +59,7 @@ def create_oauth_blueprint(
     ms_todo_redirect_uri: Optional[str] = None,
     onedrive_redirect_uri: Optional[str] = None,
     task_queue=None,
+    reconnect: Optional['IntegrationReconnectService'] = None,
 ) -> Blueprint:
     """
     Create Quart Blueprint with OAuth endpoints.
@@ -72,6 +75,18 @@ def create_oauth_blueprint(
         Configured Blueprint
     """
     bp = Blueprint("oauth", __name__)
+
+    async def _consented(user_id: str, integration: Integration) -> None:
+        """R1 (SECRETS_AT_REST_RFC §6.2): a consent clears the disconnect mark and the notice flag. Best effort: the
+        credential is already stored, so a failure here never fails the connect (the mark would only keep the next
+        loss of this integration silent)."""
+        if reconnect is None:
+            return
+        try:
+            await reconnect.consented(user_id, integration)
+        except Exception as exc:
+            logger.error(f"💥 Clearing the reconnect state of {integration.value} failed for user={user_id[:8]}: {exc}",
+                         exc_info=True)
 
     # ========================================================================
     # GET /auth/login - Redirect to OAuth provider
@@ -576,6 +591,7 @@ def create_oauth_blueprint(
             )
             await oauth_credentials_port.save_credentials(credentials)
             logger.info(f"✅ Gmail connected for user={user_id[:8]}")
+            await _consented(user_id, Integration.GMAIL)
         except Exception as exc:
             logger.error(f"💥 Gmail OAuth callback failed: {exc}")
             return redirect("/cabinet?gmail_error=exchange")
@@ -798,6 +814,8 @@ def create_oauth_blueprint(
             )
             await oauth_credentials_port.save_credentials(credentials)
             logger.info(f"✅ MS To Do connected for user={user_id[:8]}")
+            # before the setup task: its read-modify-save of the config then reads the cleared flag
+            await _consented(user_id, Integration.TODO)
 
             # Enqueue setup (idempotent): ensure_primary_list + register subscriptions
             if task_queue:
@@ -937,6 +955,7 @@ def create_oauth_blueprint(
                 drive_id=drive_id,
             ))
             logger.info(f"✅ Drive connected for user={user_id[:8]}")
+            await _consented(user_id, Integration.DRIVE)
         except Exception as exc:
             logger.error(f"💥 Drive OAuth callback failed: {exc}", exc_info=True)
             err_response = await make_response(redirect("/cabinet?drive_error=exchange"))

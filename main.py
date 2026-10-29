@@ -102,6 +102,7 @@ async def main():
             ms_todo_redirect_uri=config.get("MICROSOFT_TODO_REDIRECT_URI", ""),
             onedrive_redirect_uri=config.get("ONEDRIVE_REDIRECT_URI", ""),
             task_queue=app.agent_task_queue,
+            reconnect=app.reconnect_service,
         )
 
         cabinet_bp = create_user_cabinet_blueprint(
@@ -131,6 +132,7 @@ async def main():
             fact_review_store=app.container.fact_review_store,
             fact_answer_service=app.fact_answers,
             localization=app.localization,
+            reconnect=app.reconnect_service,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(
