@@ -103,7 +103,7 @@ steps:
   # --timeout=1800: TICK_DEADLINE_S, the Cloud Tasks HTTP maximum; every drive_sync enqueue passes it
   #   as dispatch_deadline, and the tick starts no new work after 8 min (§7.1).
   # --min-instances=0: idle between ticks; a cold start costs nothing a background tick notices.
-  # No --service-account override (yet). The tasks' OIDC identity is DRIVE_INVOKER_SA_EMAIL when that secret
+  # Runs as its own service account (--service-account below). The tasks' OIDC identity is DRIVE_INVOKER_SA_EMAIL when that secret
   #   exists, else SERVICE_ACCOUNT_EMAIL (GcpTaskQueue, drive_indexing_setup); /worker accepts the same
   #   identity plus the optional OIDC_TRANSITION_SA_EMAILS list (src/web/indexer_worker_app.py).
   # Seven secrets, exactly what indexer_main.py reads: GEMINI_API_KEY (embeddings, and the drive agents' Gemini
@@ -210,7 +210,7 @@ steps:
   # min-instances=0: RFC §9 item 9 leaves this genuinely open (unlike the main
   # service, the relay has no scheduler keep-alive yet) — start cold, revisit
   # after real call volume.
-  # No --service-account override (yet): relay_main.py mints an OIDC token from its
+  # Runs as its own service account (--service-account below): relay_main.py mints an OIDC token from its
   # own Cloud Run runtime identity to call back into the main service's
   # /voice/* control plane (src/web/voice_control_plane_app.py). Main accepts
   # SERVICE_ACCOUNT_EMAIL, VOICE_RELAY_SA_EMAIL (the relay's own runtime SA, once that
