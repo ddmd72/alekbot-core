@@ -543,7 +543,9 @@
       const AUDIBLE_RMS_THRESHOLD = 0.02;
       const AUDIBLE_SUSTAIN_MS = 150;
       const AUDIBLE_POLL_MS = 50;
-      const RINGBACK_LIVE_CAP_MS = 8000;
+      // Lelik's first audio leaves the relay about a second after Live (live log, 2026-10-29);
+      // the cap is the guarantee when neither detector hears him. Was 8 s: rang over his reply.
+      const RINGBACK_LIVE_CAP_MS = 2500;
 
       // One AudioContext for the page's lifetime (iOS requires it to be created — or, if
       // already created, resumed — synchronously inside a user-gesture handler; a call page
