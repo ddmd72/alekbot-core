@@ -250,6 +250,10 @@ TARGETS: tuple[MutationTarget, ...] = (
     MutationTarget("src.domain.drive_excerpt_context", "tests/unit/domain/drive_excerpt_context_equivalent_mutants.txt"),
     MutationTarget("src.domain.drive_open_bound", "tests/unit/domain/drive_open_bound_equivalent_mutants.txt"),
     MutationTarget("src.domain.drive_excerpt_page", "tests/unit/domain/drive_excerpt_page_equivalent_mutants.txt"),
+    # The fan-out's cap alert (USER_DRIVE_INDEXING_RFC §5.4, §12.1): header-only equivalent file; the scheduler test
+    # reaches the module only through src/ (DriveSyncSchedulerService).
+    MutationTarget("src.domain.drive_cap_alert", "tests/unit/domain/drive_cap_alert_equivalent_mutants.txt",
+                   extra=("tests/unit/services/test_drive_sync_scheduler_cap_alert.py",)),
 )
 
 
