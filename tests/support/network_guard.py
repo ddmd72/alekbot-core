@@ -18,6 +18,7 @@ import re
 from typing import Any
 
 import socket
+import urllib.request
 
 import grpc
 import grpc.aio
@@ -69,7 +70,22 @@ def _no_default_credentials(*_args, **_kwargs):
     raise NetworkGuardError(f"google.auth.default() looks for real credentials (and then the metadata server). {HOW_TO_FIX}")
 
 
-PROXY_VARIABLES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+PROXY_VARIABLES = (
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "GRPC_PROXY", "http_proxy", "https_proxy", "all_proxy", "grpc_proxy",
+)
+# Where urllib.request.getproxies() looks when no proxy variable is set: the macOS system proxy (scutil --proxy, via
+# _scproxy) and the Windows registry. requests, httpx and aiohttp bind `getproxies` by name at import, but its body
+# looks these up in urllib.request at call time, so replacing them here reaches every client.
+_SYSTEM_PROXY_LOOKUPS = ("getproxies_macosx_sysconf", "getproxies_registry")
+
+
+def _no_system_proxy(monkeypatch) -> None:
+    """A local intercepting proxy set as the system proxy listens on loopback, the one address the socket guard allows.
+    Deleting the variables is not enough: urllib then falls back to the system setting, and a test that rewrites
+    os.environ (prod_env.seal()) drops any NO_PROXY the caller set. So the system lookup itself reports no proxy."""
+    for name in _SYSTEM_PROXY_LOOKUPS:
+        if hasattr(urllib.request, name):
+            monkeypatch.setattr(urllib.request, name, dict)
 
 
 def _guard_connect_ex(monkeypatch) -> None:
@@ -90,10 +106,11 @@ def install(monkeypatch) -> None:
     """Block non-loopback `connect()`/`connect_ex()` and arm the gRPC / credentials tripwire for the current test."""
     import google.auth
 
-    # A proxy variable (cloud sessions set HTTPS_PROXY to a loopback port) would let requests/httpx tunnel out
-    # through the one address the socket guard allows.
+    # A proxy (a variable: cloud sessions set HTTPS_PROXY to a loopback port; or the system setting: a local intercepting
+    # proxy on a Mac) would let requests/httpx/aiohttp/urllib tunnel out through the one address the socket guard allows.
     for name in PROXY_VARIABLES:
         monkeypatch.delenv(name, raising=False)
+    _no_system_proxy(monkeypatch)
     pytest_socket.socket_allow_hosts(LOOPBACK_HOSTS, allow_unix_socket=True)
     _guard_connect_ex(monkeypatch)
     monkeypatch.setattr(google.auth, "default", _no_default_credentials)
