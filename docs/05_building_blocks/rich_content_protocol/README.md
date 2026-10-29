@@ -178,26 +178,29 @@ async def _deliver_rich_content(self, content, response_channel, thread_id):
 
 ## 8. Composition: Factories
 
-Both platform adapters are assembled in their respective factories in `composition/`:
+`build_application_graph` builds one `RichContentService` per platform and hands the same instance to the platform's
+adapter factory (a required argument) and to `UserNotificationService.register_platform_rich_content`, so a chat turn
+and a background notification (`notify`, `notify_answer_copy`) deliver rich content through one routine,
+`RichContentService.deliver` (`decisions/rich_content_one_delivery_path.md`):
 
-**Slack** (`src/composition/slack_adapter_factory.py`):
+**Slack** (`src/composition/application_graph.py` → `slack_adapter_factory.py`):
 ```
 SlackMediaAdapter(app.client)
-  → RichContentService(media_port, storage_port, html_renderer)
-  → ConversationHandler(..., rich_content_service)
+  → RichContentService(media_port, storage_port=graph's GcsMediaAdapter, html_renderer)
+  → ConversationHandler(..., rich_content_service)  and  notification_service (platform "slack")
   → SlackAdapter
 ```
 
-**Telegram** (`src/composition/telegram_adapter_factory.py`):
+**Telegram** (`src/composition/application_graph.py` → `telegram_adapter_factory.py`):
 ```
 Bot(token)
   → TelegramMediaAdapter(bot)
   → RichContentService(media_port, html_renderer)  ← no GCS storage
-  → ConversationHandler(..., rich_content_service)
+  → ConversationHandler(..., rich_content_service)  and  notification_service (platform "telegram")
   → TelegramWebhookAdapter
 ```
 
-Both factories receive the same `html_renderer` singleton from `build_application_graph`.
+Both services use the same `html_renderer` singleton.
 
 ---
 
