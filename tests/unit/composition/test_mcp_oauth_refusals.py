@@ -29,6 +29,7 @@ from src.services.mcp_authorization_service import (
 )
 from src.web.mcp_consent_app import build_mcp_consent_blueprint
 from tests.support.firestore_eval import EvalDb
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.unit.web.gate_fakes import access_token, forged_token, session_service
 
 RESOURCE = "https://mcp.example.test/mcp"
@@ -49,7 +50,7 @@ class World:
     def __init__(self) -> None:
         self.db = EvalDb()
         self.components = build_mcp_components(db_client=self.db, env_config=ENV, auth_config=_auth_config(),
-                                               search_enrichment_service=MagicMock())
+                                               search_enrichment_service=MagicMock(), cipher=AesGcmTestCipher(), digest_key=bytes(range(32)))
         self.service = self.components.authorization_service
         self.asgi = self.components.fastmcp.streamable_http_app()
 
@@ -131,7 +132,7 @@ class TestConsentPost:
 
     async def test_approve_when_the_code_issue_fails_is_400_and_redirects_nowhere(self):
         db = EvalDb()
-        service = _CodeIssueFails(FirestoreMCPClientRepository(db, ENV), jwt_secret=SECRET, mcp_resource_uri=RESOURCE,
+        service = _CodeIssueFails(FirestoreMCPClientRepository(db, ENV, cipher=AesGcmTestCipher(), digest_key=bytes(range(32))), jwt_secret=SECRET, mcp_resource_uri=RESOURCE,
                                   consent_base_url=f"{BASE}/mcp/consent", allowed_redirect_hosts=("claude.ai",))
         client = _consent_app(service)
         client.set_cookie("localhost", "access_token", access_token())
@@ -174,7 +175,7 @@ class TestMcpBearer:
         w = World()
         other = build_mcp_components(db_client=EvalDb(), env_config=ENV,
                                      auth_config=_auth_config("https://other.example.test/mcp"),
-                                     search_enrichment_service=MagicMock())
+                                     search_enrichment_service=MagicMock(), cipher=AesGcmTestCipher(), digest_key=bytes(range(32)))
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=other.fastmcp.streamable_http_app()),
                                      base_url="https://other.example.test") as other_http:
             # Same signing secret, so only the audience tells the two servers' tokens apart.

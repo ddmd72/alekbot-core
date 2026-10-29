@@ -1,10 +1,13 @@
 """
-Firestore-backed storage for MCP OAuth entities.
+Firestore-backed storage for MCP OAuth entities (secrets at rest: SECRETS_AT_REST_RFC §2.2, §2.5).
 
 Three collections, env-prefixed via EnvironmentConfig:
-- {env}_mcp_oauth_clients      doc_id = client_id
-- {env}_mcp_auth_codes         doc_id = code
-- {env}_mcp_refresh_tokens     doc_id = sha256(token_value) hex
+- {env}_mcp_clients            doc_id = client_id; client_secret = CipherPort ciphertext, AAD mcp_clients/{client_id}
+- {env}_mcp_auth_codes         doc_id = keyed_digest(digest_key, "mcp_code", code); no raw code in any field
+- {env}_mcp_refresh_tokens     doc_id = sha256(token_value) hex (unkeyed: 384 random bits gain nothing from a key)
+
+Reads go by the presented value only (port contract): a code is found by digesting the code the caller presents, so a
+document keyed by a raw code is never read (§2.7, no legacy branch). A decrypt or cipher failure propagates (I4).
 """
 
 from datetime import datetime, timezone
@@ -12,6 +15,8 @@ from typing import Optional
 
 from ..config.environment import EnvironmentConfig
 from ..domain.mcp import MCPAuthCode, MCPClient, MCPRefreshToken
+from ..domain.secret_digest import keyed_digest
+from ..ports.cipher_port import CipherPort
 from ..ports.mcp_client_repository import MCPClientRepository
 from ..utils.logger import logger
 
@@ -29,9 +34,15 @@ def _to_utc(value) -> datetime:
     )
 
 
+_CLIENT_AAD_STORE = "mcp_clients"
+_CODE_PURPOSE = "mcp_code"
+
+
 class FirestoreMCPClientRepository(MCPClientRepository):
-    def __init__(self, db_client, env_config: EnvironmentConfig):
+    def __init__(self, db_client, env_config: EnvironmentConfig, *, cipher: CipherPort, digest_key: bytes):
         self.db = db_client
+        self._cipher = cipher
+        self._digest_key = digest_key
         self._clients = db_client.collection(env_config.mcp_oauth_clients_collection)
         self._codes = db_client.collection(env_config.mcp_auth_codes_collection)
         self._refresh = db_client.collection(env_config.mcp_refresh_tokens_collection)
@@ -45,10 +56,15 @@ class FirestoreMCPClientRepository(MCPClientRepository):
     # --- clients ---
 
     @staticmethod
-    def _client_to_fs(c: MCPClient) -> dict:
+    def _client_aad(client_id: str) -> str:
+        return f"{_CLIENT_AAD_STORE}/{client_id}"
+
+    @staticmethod
+    def _client_to_fs(c: MCPClient, sealed_secret: Optional[str]) -> dict:
+        """The stored document; `sealed_secret` is the ciphertext of c.client_secret (None for a public client)."""
         return {
             "client_id": c.client_id,
-            "client_secret": c.client_secret,
+            "client_secret": sealed_secret,
             "client_secret_expires_at": c.client_secret_expires_at,
             "client_name": c.client_name,
             "redirect_uris": list(c.redirect_uris),
@@ -60,10 +76,11 @@ class FirestoreMCPClientRepository(MCPClientRepository):
         }
 
     @staticmethod
-    def _client_from_fs(data: dict) -> MCPClient:
+    def _client_from_fs(data: dict, client_id: str, client_secret: Optional[str]) -> MCPClient:
+        """Rebuild the client of doc id `client_id`; the identity comes from the record key, never from the body."""
         return MCPClient(
-            client_id=data["client_id"],
-            client_secret=data.get("client_secret"),
+            client_id=client_id,
+            client_secret=client_secret,
             client_secret_expires_at=data.get("client_secret_expires_at"),
             client_name=data.get("client_name", ""),
             redirect_uris=list(data.get("redirect_uris", [])),
@@ -77,24 +94,41 @@ class FirestoreMCPClientRepository(MCPClientRepository):
         )
 
     async def save_client(self, client: MCPClient) -> None:
-        await self._clients.document(client.client_id).set(self._client_to_fs(client))
+        sealed = None
+        if client.client_secret is not None:
+            sealed = await self._cipher.encrypt(client.client_secret, aad=self._client_aad(client.client_id))
+        await self._clients.document(client.client_id).set(self._client_to_fs(client, sealed))
         logger.debug(f"💾 MCP client saved: {client.client_id}")
 
     async def get_client(self, client_id: str) -> Optional[MCPClient]:
         doc = await self._clients.document(client_id).get()
         if not doc.exists:
             return None
-        return self._client_from_fs(doc.to_dict())
+        data = doc.to_dict()
+        # I2 for whole-record copies: the body must belong to this doc id, and the AAD is built from the id the caller
+        # asked for, so a document copied under another id never decrypts or reads back as the other client.
+        stored_id = data["client_id"]
+        if stored_id != client_id:
+            logger.error(f"[MCPClientRepo] client doc {client_id} holds the body of another client; refused")
+            raise ValueError(f"MCP client document {client_id!r} holds a body for another client id")
+        sealed = data.get("client_secret")
+        secret = None
+        if sealed is not None:
+            secret = await self._cipher.decrypt(sealed, aad=self._client_aad(client_id))
+        return self._client_from_fs(data, client_id, secret)
 
     async def delete_client(self, client_id: str) -> None:
         await self._clients.document(client_id).delete()
 
     # --- auth codes ---
 
+    def _code_doc_id(self, code: str) -> str:
+        return keyed_digest(self._digest_key, _CODE_PURPOSE, code)
+
     @staticmethod
     def _code_to_fs(c: MCPAuthCode) -> dict:
+        """The stored document: every field but the code itself, which only its digest (the doc id) stands for."""
         return {
-            "code": c.code,
             "client_id": c.client_id,
             "user_id": c.user_id,
             "account_id": c.account_id,
@@ -107,9 +141,10 @@ class FirestoreMCPClientRepository(MCPClientRepository):
         }
 
     @staticmethod
-    def _code_from_fs(data: dict) -> MCPAuthCode:
+    def _code_from_fs(data: dict, code: str) -> MCPAuthCode:
+        """Rebuild the code from its stored document and the presented code value."""
         return MCPAuthCode(
-            code=data["code"],
+            code=code,
             client_id=data["client_id"],
             user_id=data["user_id"],
             account_id=data["account_id"],
@@ -122,21 +157,21 @@ class FirestoreMCPClientRepository(MCPClientRepository):
         )
 
     async def save_auth_code(self, auth_code: MCPAuthCode) -> None:
-        await self._codes.document(auth_code.code).set(self._code_to_fs(auth_code))
+        await self._codes.document(self._code_doc_id(auth_code.code)).set(self._code_to_fs(auth_code))
 
     async def get_auth_code(self, code: str) -> Optional[MCPAuthCode]:
-        doc = await self._codes.document(code).get()
+        doc = await self._codes.document(self._code_doc_id(code)).get()
         if not doc.exists:
             return None
-        return self._code_from_fs(doc.to_dict())
+        return self._code_from_fs(doc.to_dict(), code)
 
     async def consume_auth_code(self, code: str) -> Optional[MCPAuthCode]:
-        ref = self._codes.document(code)
+        ref = self._codes.document(self._code_doc_id(code))
         doc = await ref.get()
         if not doc.exists:
             return None
         await ref.delete()
-        return self._code_from_fs(doc.to_dict())
+        return self._code_from_fs(doc.to_dict(), code)
 
     # --- refresh tokens ---
 

@@ -156,6 +156,10 @@ SECRET_VALUES: Dict[str, str] = {
     "GOOGLE_TASKS_OAUTH_REDIRECT_URI": f"{_SERVICE_URL}/auth/connect-google-tasks/callback",
     "MICROSOFT_TODO_REDIRECT_URI": f"{_SERVICE_URL}/auth/connect-microsoft-todo/callback",
     "ONEDRIVE_REDIRECT_URI": f"{_SERVICE_URL}/auth/connect-onedrive/callback",
+    # secrets at rest (SECRETS_AT_REST_RFC §2.5-§2.6): a KMS key resource name and a hex digest key of 32 bytes, both shaped
+    # as the deploy's; the KMS client itself is the SDK-shaped fake `install_offline_services` installs
+    "KMS_CRYPTO_KEY": "projects/p9-test-project/locations/us-central1/keyRings/r-test/cryptoKeys/k-test",
+    "SECRET_DIGEST_KEY": "5e" * 32,
 }
 
 
@@ -219,8 +223,10 @@ def install_offline_services(monkeypatch) -> OfflineServices:
 
     Fakes sit at SDK modules, not at names a composition module owns, so they hold wherever the graph is built:
     Firestore (`EvalDb`), Cloud Tasks (a recording client), Gemini embeddings, OpenAI deep-research retrieval and
-    Google's OIDC key check (a token equal to `VALID_TOKEN` carries the deploy's invoker identity).
+    Google's OIDC key check (a token equal to `VALID_TOKEN` carries the deploy's invoker identity) and Cloud KMS (the
+    SDK-shaped `kms_fake`, real AES-GCM with the AAD bound).
     """
+    from tests.support import kms_fake
     from tests.support.cloud_tasks_fake import FakeCloudTasksClient
     from tests.support.firestore_eval import EvalDb
 
@@ -230,6 +236,7 @@ def install_offline_services(monkeypatch) -> OfflineServices:
     monkeypatch.setattr("google.cloud.firestore.AsyncClient", lambda *a, **k: db)
     monkeypatch.setattr(FakeCloudTasksClient, "instances", [])
     monkeypatch.setattr("google.cloud.tasks_v2.CloudTasksClient", FakeCloudTasksClient)
+    kms_fake.install(monkeypatch)
 
     async def embedding(self, text, task_type="RETRIEVAL_DOCUMENT"):
         return list(EMBEDDING)

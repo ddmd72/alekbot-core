@@ -154,6 +154,8 @@ index` (full); `codegraph status` shows index health.
   required configuration go in `load_settings()`; optional knobs — model pins, rollback switches — are
   read with `os.getenv()` at their call site.** Registering an optional knob is not free either: every
   empty key in that dict is chased into Secret Manager on each boot.
+  `KMS_CRYPTO_KEY` (the Cloud KMS key of stored secrets) and `SECRET_DIGEST_KEY` (hex, at least 32 bytes) are the opposite kind: required
+  settings in `load_settings()`; `build_application_graph` refuses to start without either, locally too (local dev uses the real key).
   The sandbox knobs are of this kind: `SANDBOX_RENDER`, `SANDBOX_RENDER_URL` (main service); `SANDBOX_URL`,
   `SANDBOX_CALLERS_RENDER`, `SANDBOX_RECYCLE`, `SANDBOX_WORK_ROOT`, `SANDBOX_OUTPUT_ROOT`, `SANDBOX_ENGINE_USER` (render service).
   So is `FACT_LIFECYCLE_SWEEP_DRY_RUN` (main service): the fact janitor is log-only unless it is an explicit off value
@@ -243,6 +245,11 @@ rotation) via the `mcp` SDK; endpoints at server root routed by a plain ASGI dis
 (NOT Starlette `Mount`). SDK shim `composition/mcp_sdk_oauth_provider.py` in `composition/` (REQ-ARCH-01).
 **MVP, dev-only, experimental.** Code under `src/{domain/mcp.py,ports/mcp_client_repository.py,adapters/firestore_mcp_client_repository.py,services/mcp_authorization_service.py,composition/mcp_*.py,web/mcp_consent_app.py}`.
 See `docs/05_building_blocks/remote_mcp_server/` + `docs/10_rfcs/REMOTE_MCP_SERVER_RFC.md`.
+- **Stored MCP secrets are encrypted or digested** (`SECRETS_AT_REST_RFC`, `decisions/secrets_at_rest_cipher_and_digest.md`). A client secret
+  is `CipherPort` ciphertext (Cloud KMS, AAD `mcp_clients/{client_id}`, CRC32C both ways) in the new collection `{prefix}mcp_clients`; the old
+  plaintext `mcp_oauth_clients` is never read, so a registered connector must be removed and re-added once. Authorization codes are stored
+  under a keyed HMAC digest (`SECRET_DIGEST_KEY`), refresh tokens under plain sha256. Fail closed in `build_application_graph`, not in the MCP
+  build (whose errors `main.py` swallows).
 - **Tool schema: accept liberally, advertise strictly** (fixed 2026-09-18). FastMCP derives the wire
   schema from type hints, so `Optional[T]` emits `anyOf:[T,null]` — clients collapse the union and
   guess the argument shape. Optionality goes through `default: ""/[]`; **every param needs its own

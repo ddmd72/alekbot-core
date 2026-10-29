@@ -29,6 +29,7 @@ Adding a new rule:
 from dataclasses import dataclass, field
 from typing import Callable, Dict
 
+import google_crc32c
 from google.genai import types
 
 
@@ -976,4 +977,47 @@ BATCH_THOUGHTS_IN_OUTPUT_LEG = ContractRule(
             ),
         ),
     },
+)
+
+
+# ============================================================================
+# Cloud KMS cipher (SECRETS_AT_REST_RFC §2.2, §8 Cipher): validator key "gcp_kms".
+# Input: {"key_name": configured key, "aad": the CipherPort aad, "request": the request dict sent to
+# KeyManagementServiceAsyncClient.encrypt or .decrypt}.
+# ============================================================================
+
+def _kms_crc32c(data: bytes) -> int:
+    return int(google_crc32c.value(data))
+
+
+def _kms_crc_fields(request: dict) -> None:
+    data_field = "plaintext" if "plaintext" in request else "ciphertext"
+    _true(data_field in request, "KMS: the request carries neither plaintext nor ciphertext")
+    for name in (data_field, "additional_authenticated_data"):
+        _eq(request.get(f"{name}_crc32c"), _kms_crc32c(request[name]),
+            f"KMS: {name}_crc32c missing or not the CRC32C of {name}")
+
+
+KMS_BINDS_KEY_AND_AAD = ContractRule(
+    name="KMS_BINDS_KEY_AND_AAD",
+    description=(
+        "Every encrypt and decrypt request names the configured CryptoKey and carries the CipherPort aad, UTF-8, as "
+        "additional_authenticated_data, so a ciphertext opens only under its own key and record (I2)."
+    ),
+    validators={
+        "gcp_kms": lambda d: (
+            _eq(d["request"].get("name"), d["key_name"], "KMS: request name is not the configured key"),
+            _eq(d["request"].get("additional_authenticated_data"), d["aad"].encode("utf-8"),
+                "KMS: additional_authenticated_data is not the aad bytes"),
+        ),
+    },
+)
+
+KMS_CRC32C_BOTH_WAYS = ContractRule(
+    name="KMS_CRC32C_BOTH_WAYS",
+    description=(
+        "Every request carries the CRC32C of its data field (plaintext on encrypt, ciphertext on decrypt) and of its "
+        "additional_authenticated_data, so KMS verifies what it received (Cloud KMS data-integrity guidelines)."
+    ),
+    validators={"gcp_kms": lambda d: _kms_crc_fields(d["request"])},
 )

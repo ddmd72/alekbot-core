@@ -1,0 +1,1 @@
+# Mutants a reviewer ruled equivalent for src.adapters.firestore_mcp_client_repository: `key  # reason`, one per line (tests/CLAUDE.md -> Mutation check).

@@ -319,6 +319,18 @@ a stronger-model review, not verdicts.
 
 A false positive is overridden with the PR label `pii-ok` (create it once). PRs from forks get no secrets and fail.
 
+**Stored-secrets encryption (`docs/10_rfcs/SECRETS_AT_REST_RFC.md`).** The main service mounts two more secrets and refuses to
+start without either (locally too).
+1. A Cloud KMS key ring and one software key with purpose `ENCRYPT_DECRYPT`, automatic rotation every 90 days, data-access
+   audit logs on for Cloud KMS. Its full resource name is the secret `KMS_CRYPTO_KEY`
+   (`projects/<PROJECT_ID>/locations/<LOCATION>/keyRings/<KEY_RING>/cryptoKeys/<KEY>`).
+2. `SECRET_DIGEST_KEY`: at least 32 random bytes as hex (`openssl rand -hex 32`, stored with `printf '%s'`), the key of the
+   verify-only digests. Changing it invalidates every digested value still in flight (MCP codes live ~10 minutes).
+3. Grant `roles/cloudkms.cryptoKeyEncrypterDecrypter` **on the key** (not the project) to the runtime service account, and to the
+   developer's own identity: local runs use the real key, with no fallback cipher. Both secrets also need
+   `secretmanager.secretAccessor` for the runtime account.
+Keep the digest key's value out of tracked files and chat; it is not derivable from the KMS key.
+
 ---
 
 ## First deploy: the two-pass URLs

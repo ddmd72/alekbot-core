@@ -503,6 +503,8 @@ async def main():
                         env_config=env_config,
                         auth_config=app.auth_config,
                         search_enrichment_service=mcp_search_enrichment,
+                        cipher=app.cipher,
+                        digest_key=app.digest_key,
                     )
                     # Consent blueprint is built in main.py (not in
                     # composition/) because composition must not depend

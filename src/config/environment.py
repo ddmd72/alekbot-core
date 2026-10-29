@@ -238,16 +238,17 @@ class EnvironmentConfig:
     @property
     def mcp_oauth_clients_collection(self) -> str:
         """
-        MCP OAuth clients (RFC 7591 DCR-registered clients). Doc id = client_id.
-        Dev: development_mcp_oauth_clients
+        MCP OAuth clients (RFC 7591 DCR-registered clients). Doc id = client_id; client_secret is CipherPort
+        ciphertext (SECRETS_AT_REST_RFC §2.2). A new collection: the old plaintext `mcp_oauth_clients` is never read.
+        Dev: development_mcp_clients
         """
         prefix = self.firestore_collection_prefix
-        return f"{prefix}mcp_oauth_clients"
+        return f"{prefix}mcp_clients"
 
     @property
     def mcp_auth_codes_collection(self) -> str:
         """
-        MCP short-lived authorization codes. Doc id = code. TTL ~10min.
+        MCP short-lived authorization codes. Doc id = keyed digest of the code (SECRETS_AT_REST_RFC §2.5). TTL ~10min.
         Dev: development_mcp_auth_codes
         """
         prefix = self.firestore_collection_prefix

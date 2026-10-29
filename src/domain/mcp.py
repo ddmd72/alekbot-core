@@ -119,12 +119,13 @@ class MCPClient(BaseModel):
     """
     OAuth 2.1 confidential client registered via RFC 7591 DCR.
 
-    client_secret is stored in plaintext because the `mcp` SDK's token
-    handler performs client authentication via
-    `hmac.compare_digest(client.client_secret, presented_secret)` —
-    there is no hashing hook in the SDK. Access to Firestore is
-    restricted by the service account; treat the collection as
-    sensitive and never expose it.
+    client_secret is the plaintext secret in memory: the `mcp` SDK's token
+    handler authenticates the client via
+    `hmac.compare_digest(client.client_secret, presented_secret)`, with no
+    hashing hook, so the store must give the value back. At rest it is
+    CipherPort ciphertext bound to its record (AAD `mcp_clients/{client_id}`,
+    SECRETS_AT_REST_RFC §2.2); the store encrypts on save and decrypts on read,
+    and nothing stores or logs it raw.
     """
     client_id: str
     client_secret: Optional[str] = None  # None only if token_endpoint_auth_method == "none"
