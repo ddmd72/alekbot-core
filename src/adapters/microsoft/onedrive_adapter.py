@@ -45,6 +45,7 @@ from ...domain.user_drive import (
     DriveAccessDenied,
     DriveConnection,
     DriveFileTooLarge,
+    DriveThumbnailTooLarge,
     DriveItem,
     DriveItemNotFoundError,
     DriveNameConflictError,
@@ -407,7 +408,8 @@ class OneDriveAdapter(UserDrivePort):
     async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
         """One provider rendition: a standard size (`medium` = 176 px, `large` = 800 px) or a custom `c{w}x{h}`
         (Graph scales it, HEIC included; we never decode). The set comes from `/thumbnails?select=<size>`, the
-        bytes from its pre-authenticated URL. None: no rendition, its URL gone, or bigger than the vision cap."""
+        bytes from its pre-authenticated URL. None: no rendition or its URL gone; DriveThumbnailTooLarge: bigger than
+        the vision cap."""
         if not _THUMBNAIL_SIZE_RE.fullmatch(size):
             raise ValueError(f"Unknown thumbnail size {size!r}")
         async with aiohttp.ClientSession() as s:
@@ -432,7 +434,7 @@ class OneDriveAdapter(UserDrivePort):
                         if len(data) > THUMBNAIL_MAX_BYTES:
                             logger.warning(f"Drive thumbnail {size} of item {item_id} exceeds "
                                            f"{THUMBNAIL_MAX_BYTES} bytes; not used")
-                            return None
+                            raise DriveThumbnailTooLarge(size, THUMBNAIL_MAX_BYTES)
                     return bytes(data)
             except asyncio.TimeoutError as exc:
                 logger.warning(f"Drive thumbnail fetch for item {item_id} timed out")

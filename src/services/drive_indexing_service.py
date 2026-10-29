@@ -144,7 +144,7 @@ from ..domain.drive_index_params import (
     MAINTENANCE_SHARE, MAX_ATTEMPTS, MAX_CARD_RECORDS_PER_USER, MAX_CHUNKS_PER_USER, MODEL_EXTRACT_PAGES_PER_MONTH,
     MODEL_IN_FLIGHT,
     NUDGE_RETRY_DELAY_S, PASSAGE_CHUNK_USD_ESTIMATE, PASSAGE_CHUNKS_PER_CALL, PASSAGE_IN_FLIGHT, PROBE_CHILDREN,
-    README_CHILD_NAMES, README_SCAN_CHILDREN, READER_PAGE_USD_ESTIMATE, READER_RENDITION_SIZE, RECORD_WRITE_BATCH,
+    README_CHILD_NAMES, README_SCAN_CHILDREN, READER_PAGE_USD_ESTIMATE, READER_RENDITION_STEPS, RECORD_WRITE_BATCH,
     RELIST_PAGE, RETRY_CAP, SYSTEMIC_BACKOFF_BASE_S, SYSTEMIC_BACKOFF_CAP_S, TICK_DEADLINE_S, TICK_FILE_BUDGET,
     TICK_START_BUDGET, TRANSCRIBE_EXTRACT_WALL_S, TRANSCRIBE_SHARE, TRANSCRIBE_UPLOAD_S, TRANSCRIBE_USD_PER_MONTH,
     TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_SIZE,
@@ -202,7 +202,7 @@ from ..domain.drive_usage import added_usage
 from ..domain.exceptions import LLMClientError, LLMError, LLMRateLimitError, LLMUnavailableError
 from ..domain.user_drive import (
     DriveAccessDenied, DriveConnection, DriveFileTooLarge, DriveItemNotFoundError, DriveNotConnectedError,
-    DriveReauthRequired, DriveResyncRequired, DriveThrottled,
+    DriveReauthRequired, DriveResyncRequired, DriveThrottled, DriveThumbnailTooLarge,
 )
 from ..ports.content_extractor_port import ContentExtractorPort
 from ..ports.document_profiler_port import DocumentProfilerPort
@@ -2643,12 +2643,21 @@ class DriveIndexingService:
         bytes show; or, instead, the record a deterministic or per-item outcome leaves."""
         try:
             if chain_for(run.kind)[0] == READER:
-                data = await self._drive.get_thumbnail(user_id, run.item_id, READER_RENDITION_SIZE)
-                if data is not None:
-                    await asyncio.to_thread(_write_file, path, data)
-                    return run.kind, None   # a provider rendition (JPEG or PNG): nothing to sniff
+                oversize = False
+                for size in READER_RENDITION_STEPS:   # a PNG source gets a big PNG rendition: step down until one fits
+                    try:
+                        data = await self._drive.get_thumbnail(user_id, run.item_id, size)
+                    except DriveThumbnailTooLarge as exc:
+                        oversize = True
+                        logger.info(f"[DriveIndex] rendition {size} of item {run.item_id} for {user_id[:8]} is over "
+                                    f"{exc.limit_bytes} bytes; trying a smaller one")
+                        continue
+                    if data is not None:
+                        await asyncio.to_thread(_write_file, path, data)
+                        return run.kind, None   # a provider rendition (JPEG or PNG): nothing to sniff
+                    break   # no rendition at this size: a smaller one will not exist either
                 if not original_fallback(run):
-                    return None, demoted(run, Reason.NO_TEXT, now)   # never decoded by us (§24.5)
+                    return None, demoted(run, Reason.TOO_LARGE if oversize else Reason.NO_TEXT, now)   # never decoded (§24.5)
                 await self._drive.download_to_file(user_id, run.item_id, path, READER_IMAGE_MAX_BYTES)
             else:
                 await self._drive.download_to_file(user_id, run.item_id, path, size_cap(run.kind))
@@ -3173,6 +3182,8 @@ class DriveIndexingService:
                                f"{user_id[:8]}: {type(exc).__name__}")
                 await self._commit(user_id, writes, set(), before={r.item_id: r for r in batch})   # verdicts stay
                 raise
+            except DriveThumbnailTooLarge:
+                thumbnail = None   # as before: an over-cap triage thumbnail counts as no rendition
             except _PER_ITEM_ERRORS as exc:
                 logger.warning(f"[DriveIndex] thumbnail of item {rec.item_id} failed for {user_id[:8]}: "
                                f"{type(exc).__name__}: {exc}")

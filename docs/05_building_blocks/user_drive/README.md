@@ -482,9 +482,12 @@ when headroom returns (`released`, class 3) it is read again — a model-routed 
 
 `_fetch`: a document is streamed to a temp file by `download_to_file`, cut at `size_cap(kind)` (`too_large` if the
 stream passes it — metadata can understate a size). An image triaged as text is fetched as the provider's
-`c2048x2048` rendition (JPEG/PNG; HEIC is never decoded by us); with no rendition, the original is used only when it
-is JPEG/PNG/WebP/GIF within the 3.75 MiB vision cap (`original_fallback`), else the record is `metadata_only /
-no_text`. `sniff_kind` (`src/domain/drive_sniff.py`) reads the first 8 KiB: magic bytes win over the name (a `.txt`
+`c2048x2048` rendition (JPEG/PNG; HEIC is never decoded by us). A rendition over the vision cap (a PNG source gets a
+big PNG; the port raises `DriveThumbnailTooLarge`, distinct from `None` = no rendition) steps down through
+`READER_RENDITION_STEPS` (`c2048x2048`, `c1536x1536`, `c1024x1024`) until one fits. With no rendition (or none that
+fits), the original is used only when it is JPEG/PNG/WebP/GIF within the 3.75 MiB vision cap (`original_fallback`),
+else the record is `metadata_only / no_text` (no rendition) or `metadata_only / too_large` (every rendition was over
+the cap). The triage thumbnail (`large`) is unchanged: over the cap counts as no rendition. `sniff_kind` (`src/domain/drive_sniff.py`) reads the first 8 KiB: magic bytes win over the name (a `.txt`
 that is a ZIP is an archive); a sniffed kind the policy does not admit is `metadata_only / kind_not_admitted`; a file
 whose bytes show a kind that may reach the reader, with no time left in this tick for the reader's worst case, waits
 one second for the next tick. A gone item (404/410) is re-observed at once instead of being read as "no content"
