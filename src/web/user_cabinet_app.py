@@ -427,7 +427,8 @@ def create_user_cabinet_blueprint(
                 return jsonify({"error": "Invalid invite type"}), 400
 
             return jsonify({
-                "code": code.code,
+                "code": code.code,  # shown once; later reads carry only the hint
+                "hint": code.hint,
                 "type": code.type.value,
                 "expires_at": code.expires_at.isoformat()
             }), 201
@@ -452,7 +453,7 @@ def create_user_cabinet_blueprint(
             result = []
             for code in codes:
                 result.append({
-                    "code": code.code,
+                    "hint": code.hint,
                     "type": code.type.value,
                     "is_valid": code.is_valid(),
                     "expires_at": code.expires_at.isoformat(),

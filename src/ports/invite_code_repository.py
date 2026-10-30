@@ -5,7 +5,8 @@ from ..domain.invite_code import InviteCode
 
 class InviteCodeRepository(ABC):
     """
-    Port for invite codes. A code is a bearer secret (stored under the code itself): its holder joins the creator's
+    Port for invite codes. A code is a bearer secret, stored only as a keyed digest of its normalised form (never the code itself; the
+    invite carries it in memory at creation and on a lookup by the presented value, a list carries only `hint`): its holder joins the creator's
     account (TEAM_INVITE) or links a platform (SELF_LINK, no consumer in src/).
 
     Holds for every method:
@@ -20,15 +21,14 @@ class InviteCodeRepository(ABC):
     async def create(self, invite_code: InviteCode) -> InviteCode:
         """Store `invite_code` under its code and return it.
 
-        Idempotency: callers need a new code never to replace another. Known defect: an existing code is overwritten
-            (firestore_invite_code_repo.py:71), so a collision of the 9-hex-character code
-            (invite_code_service.py:47-48) rebinds the older invite to the new creator's account.
+        Idempotency: callers need a new code never to replace another. An existing code is overwritten, which a
+            128-bit random code makes negligible.
         """
         pass
 
     @abstractmethod
     async def get_by_code(self, code: str) -> Optional[InviteCode]:
-        """Return the invite stored under exactly `code` (case-sensitive), or None.
+        """Return the invite stored under `code` (case, spaces and dashes ignored), or None.
 
         Tenancy: none; holding the code is the authorization, the caller checks type and validity.
         """
