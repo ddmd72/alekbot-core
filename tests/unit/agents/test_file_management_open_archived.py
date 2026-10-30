@@ -2,7 +2,6 @@
 store entry, capped, the cut note naming the file's path; with no store entry, the downloaded file capped the same way.
 A recording's own transcript names its active mirror file in the cut note. Synthetic speech only. The open is
 DriveOperations.open since the cut (DRIVE_SPECIALIST_RFC §5.5; the specialist's `open_drive_file`)."""
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -13,19 +12,17 @@ from src.domain.drive_index import (
 )
 from src.domain.drive_index_params import TRANSCRIPT_OPEN_MAX_CHARS
 from src.domain.drive_mirror import (
-    ARCHIVE_NAME, KIND_ARCHIVE, KIND_FILE, MIRROR_ACTIVE, MIRROR_ARCHIVED, MirrorDoc, MirrorRoot,
+    ARCHIVE_NAME, KIND_ARCHIVE, KIND_FILE, MIRROR_ACTIVE, MIRROR_ARCHIVED, MirrorDoc, MirrorRoot, ledger_key,
 )
 from src.domain.drive_search import REFERENCE_REMINDER
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
 from src.domain.drive_transcript_render import render_body
-from src.domain.user_drive import DriveConnection, DriveItem
+from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import DriveOperations
 from src.ports.drive_index_repository import DriveIndexRepository
-from src.ports.user_drive_port import UserDrivePort
-from src.ports.user_repository import UserRepository
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
-from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_spec_mock import connection_of, spec_drive_service
 
 MIRROR_FILE = DriveItem(item_id="m1", name="call1.md", path="_Transcripts/Archive/2026-10-05/call1.md",
                         is_folder=False, size_bytes=900, mime_type="text/markdown")
@@ -36,6 +33,8 @@ AUDIO = DriveItem(item_id="s1", name="call1.m4a", path="Calls/call1.m4a", is_fol
 
 
 CTX = {"user_id": "u1", "account_id": "a1"}
+CONN = connection_of("u1")          # u1's one connection: its ref tag, scope and drive identity
+DRIVE = CONN.drive_identity         # the mirror's drive (MULTI_DRIVE_RFC §10)
 
 
 def _stored(*texts):
@@ -51,14 +50,15 @@ def _long(n=400):
 @pytest.fixture
 async def mirror():
     repo = InMemoryDriveMirrorRepository()
-    await repo.save_root(MirrorRoot(user_id="u1", drive_id="d1", root_item_id="root", root_name="_Transcripts"))
-    await repo.save_doc(MirrorDoc(user_id="u1", drive_id="d1", kind=KIND_ARCHIVE, source_item_id="arch",
+    await repo.save_root(MirrorRoot(user_id="u1", drive_identity=DRIVE, root_item_id="root", root_name="_Transcripts"))
+    await repo.save_doc(MirrorDoc(user_id="u1", drive_identity=DRIVE, kind=KIND_ARCHIVE, source_item_id="arch",
                                   mirror_item_id="arch", mirror_parent_id="root", mirror_name=ARCHIVE_NAME,
                                   state=MIRROR_ACTIVE))
-    await repo.save_doc(MirrorDoc(user_id="u1", drive_id="d1", kind=KIND_ARCHIVE, source_item_id="day",
+    await repo.save_doc(MirrorDoc(user_id="u1", drive_identity=DRIVE, kind=KIND_ARCHIVE, source_item_id="day",
                                   mirror_item_id="day", mirror_parent_id="arch", mirror_name="2026-10-05",
                                   state=MIRROR_ACTIVE))
-    await repo.save_doc(MirrorDoc(user_id="u1", drive_id="d1", kind=KIND_FILE, source_item_id="s1", source_name="call1.m4a",
+    await repo.save_doc(MirrorDoc(user_id="u1", drive_identity=DRIVE, kind=KIND_FILE, source_item_id="s1", source_name="call1.m4a",
+                                  source_identity="fake_a:s1",
                                   content_key="k1", mirror_item_id="m1", mirror_parent_id="day",
                                   mirror_name="call1.md", state=MIRROR_ARCHIVED))
     return repo
@@ -74,9 +74,14 @@ def index():
 
 @pytest.fixture
 def conversion():
-    c = AsyncMock(spec=FileConversionService)
-    c.get_drive_item.return_value = MIRROR_FILE
-    return c
+    return AsyncMock(spec=FileConversionService)
+
+
+@pytest.fixture
+def drive():
+    d = spec_drive_service("u1")
+    d.get_item.return_value = MIRROR_FILE
+    return d
 
 
 @pytest.fixture
@@ -87,21 +92,18 @@ def search(mirror, index):
 
 def _search_gate_open(mirror, index):
     """The `search` fixture with the extent's gate answered as it is for an indexing user (enabled, connected,
-    migrated sync state), so `text_extent` reads the record itself (RFC §29.10)."""
-    index.get_sync_state.return_value = DriveSyncState(user_id="u1", drive_id="d1", root_item_id="root",
+    migrated sync state), so `text_extent` reads the record itself (RFC §29.10). The connection (CONN) carries the
+    indexing switch and the drive identity the sync state is checked against."""
+    index.get_sync_state.return_value = DriveSyncState(user_id="u1", drive_identity=DRIVE, root_item_id="root",
                                                        applied_versions={MIGRATION_GATE_KEY: KEYS_VERSION})
-    users = AsyncMock(spec=UserRepository)
-    users.get_user.return_value = SimpleNamespace(config=SimpleNamespace(drive_indexing_enabled=True))
-    drive = AsyncMock(spec=UserDrivePort)
-    drive.connection.return_value = DriveConnection(connected=True, drive_id="d1")
-    return DriveSearchService(index, AsyncMock(), users, drive, embedding_space="s/8", nonce=lambda: "nonce0001",
-                              mirror=mirror)
+    return DriveSearchService(index, AsyncMock(), AsyncMock(), AsyncMock(), embedding_space="s/8",
+                              nonce=lambda: "nonce0001", mirror=mirror)
 
 
 @pytest.fixture
-def agent(conversion, search):
+def agent(conversion, drive, search):
     return DriveOperations(conversion_service=conversion, notification=AsyncMock(),
-                           drive_service=AsyncMock(spec=UserDriveService), drive_search=search)
+                           drive_service=drive, drive_search=search)
 
 
 async def test_archived_ref_opens_from_the_store_capped(agent, conversion, index):
@@ -151,8 +153,8 @@ async def test_speech_stays_inside_the_wrapper(agent, index):
     assert wrapper.count("</drive_document") == 1 and "&lt;/drive_document" in wrapper
 
 
-async def test_any_other_file_opens_as_before(agent, conversion, index):
-    conversion.get_drive_item.return_value = OTHER_FILE
+async def test_any_other_file_opens_as_before(agent, conversion, drive, index):
+    drive.get_item.return_value = OTHER_FILE
     conversion.resolve_content.return_value = "plain notes"
     resp = await agent.open(CTX, "u1", "drive:o1")
     assert resp.success and "plain notes" in resp.text
@@ -169,27 +171,29 @@ async def test_a_failing_lookup_keeps_the_plain_open(agent, conversion, search, 
 
 async def test_the_open_of_a_transcribed_recording_names_its_active_mirror_file(conversion, index, mirror, search):
     # the recording's own open: its active mirror file is named in the cut note
-    await mirror.save_doc(MirrorDoc(user_id="u1", drive_id="d1", kind=KIND_FILE, source_item_id="s9",
-                                    source_name="call9.m4a", content_key="k9", mirror_item_id="m9",
+    await mirror.save_doc(MirrorDoc(user_id="u1", drive_identity=DRIVE, kind=KIND_FILE, source_item_id="s9",
+                                    source_name="call9.m4a", source_identity="fake_a:s9", content_key="k9", mirror_item_id="m9",
                                     mirror_parent_id="root", mirror_name="Calls - call9.md", state=MIRROR_ACTIVE))
     index.get_records.return_value = {"s9": DriveIndexRecord(user_id="u1", item_id="s9", name="call9.m4a",
+                                                             connection_id=CONN.connection_id, identity="fake_a:s9",
                                                              state=RecordState.INDEXED, transcript_state="current",
                                                              transcript_key="k9")}
     index.get_transcript.return_value = _stored(*_long())
-    text = await search.transcript_text("u1", "s9", path="Calls/call9.m4a")
+    text = await search.transcript_text(CONN, "s9", path="Calls/call9.m4a")
     assert "The full text is in _Transcripts/Calls - call9.md." in text
 
 
 async def test_a_recording_without_a_mirror_file_cuts_without_a_path(mirror, index):
     # a visible indexed card under the root with no chunks: the extent's NO_TEXT state (RFC §29.10, the line names it)
     index.get_records.return_value = {"s2": DriveIndexRecord(user_id="u1", item_id="s2", name="x.m4a",
+                                                             connection_id=CONN.connection_id,
                                                              state=RecordState.INDEXED, transcript_state="current",
                                                              transcript_key="k2", has_card=True, scope=Scope.NORMAL,
                                                              parent_id="root")}
     stored = _stored(*_long())
     index.get_transcript.return_value = stored
     search = _search_gate_open(mirror, index)
-    text = await search.transcript_text("u1", "s2")
+    text = await search.transcript_text(CONN, "s2")
     # RFC §29.10: a live transcript the index cannot page gets the open bound's cut line, not the archived note;
     # with no mirror file the line names no path
     assert "[Transcript cut at" not in text and "The full text is in" not in text
@@ -204,7 +208,8 @@ async def test_a_recording_without_a_mirror_file_cuts_without_a_path(mirror, ind
 
 async def test_a_broken_ledger_chain_falls_back_to_the_items_own_path(agent, index, mirror):
     from dataclasses import replace
-    doc = (await mirror.get_docs("u1", ["u1:file:s1"]))["u1:file:s1"]
+    key = ledger_key("u1", KIND_FILE, DRIVE, "fake_a:s1")
+    doc = (await mirror.get_docs("u1", [key]))[key]
     await mirror.save_doc(replace(doc, mirror_parent_id="gone-folder"))
     index.get_transcript.return_value = _stored(*_long())
     resp = await agent.open(CTX, "u1", "drive:m1")
