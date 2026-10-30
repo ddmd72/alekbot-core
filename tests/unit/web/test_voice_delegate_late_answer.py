@@ -11,12 +11,13 @@ import src.web.voice_control_plane_app as voice_control_plane_app
 from src.domain.voice_delegation_outcome import VoiceDelegationOutcome
 from src.ports.ephemeral_store import EphemeralStore
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
+from tests.support.voice_tickets import abandoned_key, result_key
 
 _AUTH = {"Authorization": "Bearer x"}
 _BODY = {"user_id": "u1", "account_id": "a1", "arguments": {"intent": "ask_alek", "query": "q"},
          "call_context": [], "ticket": "t1", "call_id": "c1", "request": "ask_alek: q"}
-_RESULT_KEY = "voice_delegation_result:t1:c1"
-_ABANDONED_KEY = "voice_delegation_abandoned:t1:c1"
+_RESULT_KEY = result_key("t1", "c1")
+_ABANDONED_KEY = abandoned_key("t1", "c1")
 
 
 class _MemoryStore(EphemeralStore):

@@ -20,6 +20,7 @@ from src.services.voice_session_service import VoiceSessionService
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from tests.support.firestore_eval import EvalDb, eval_transactions
 from tests.unit.web.gate_fakes import Tripwire
+from tests.support.voice_tickets import ticket_key
 
 MAIN = "https://main.example.test"
 RELAY_TOKEN = "relay-oidc-token"
@@ -96,7 +97,7 @@ async def test_unknown_ticket_ends_the_call_before_a_session_opens():
 async def test_redeemed_ticket_cannot_start_a_second_call():
     w = World()
     with eval_transactions():
-        await w.store.set("voice_ticket:t1", {"user_id": "u1", "account_id": "a1", "instructions": "x"}, ttl_s=300)
+        await w.store.set(ticket_key("t1"), {"user_id": "u1", "account_id": "a1", "instructions": "x"}, ttl_s=300)
         first = await w.http.post("/voice/session-config", json={"ticket": "t1"},
                                   headers={"Authorization": f"Bearer {RELAY_TOKEN}"})
         assert first.status_code == 200              # the legitimate relay redeemed it

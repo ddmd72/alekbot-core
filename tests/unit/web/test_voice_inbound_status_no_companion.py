@@ -13,6 +13,7 @@ from src.web.twilio_signature_verifier import verify_twilio_signature
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from tests.support.firestore_eval import EvalDb, eval_transactions
 from tests.unit.web.gate_fakes import Tripwire
+from tests.support.voice_tickets import seal_ticket, ticket_key
 
 TOKEN = "p7-twilio-auth-token-0123456789"
 FORM = {"CallSid": "CAin", "CallStatus": "completed"}
@@ -36,15 +37,17 @@ async def test_no_companion_releases_ticket_and_marker_and_alerts():
     async def twilio(url, form_params, signature):
         return verify_twilio_signature(TOKEN, url, form_params, signature)
 
+    cipher = AesGcmTestCipher()
     app = Quart("voice_webhook_c1")
     app.register_blueprint(create_voice_webhook_blueprint(
         user_repository=Tripwire("user_repository", touched), ephemeral_store=store, alert_sink=alerts,
         notification_service=Tripwire("notification_service", touched), lelik_agent_provider=no_companion,
-        answer_url="https://app.example/voice/answer", signature_verifier=twilio, cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
+        answer_url="https://app.example/voice/answer", signature_verifier=twilio, cipher=cipher, digest_key=b"k" * 32))
     with eval_transactions():
-        await store.set("voice_pending_callback:CAin", {"ticket": "t1", "user_id": "u1", "account_id": "a1",
-                                                        "to_number": "+12025550100"}, ttl_s=300)
-        await store.set("voice_ticket:t1", {"user_id": "u1", "account_id": "a1"}, ttl_s=300)
+        await store.set("voice_pending_callback:CAin", {
+            "ticket_ct": await seal_ticket(cipher, "voice_pending_callback:CAin", "t1"),
+            "user_id": "u1", "account_id": "a1", "to_number": "+12025550100"}, ttl_s=300)
+        await store.set(ticket_key("t1"), {"user_id": "u1", "account_id": "a1"}, ttl_s=300)
         await store.set("voice_one_call:u1", {"in_flight": True}, ttl_s=300)
         signature = RequestValidator(TOKEN).compute_signature("http://localhost/voice/inbound-status", FORM)
         resp = await app.test_client().post("/voice/inbound-status", form=FORM,

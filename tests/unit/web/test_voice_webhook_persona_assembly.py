@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 from quart import Quart
 
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
+from tests.support.voice_tickets import ticket_key
 
 
 def _app(*, ephemeral_store, lelik_agent_provider, alert_sink):
@@ -55,7 +56,7 @@ async def _assert_failed_closed(response, ephemeral_store, alert_sink):
     assert "<Connect" not in body
 
     deleted_keys = {c.args[0] for c in ephemeral_store.delete.await_args_list}
-    assert "voice_ticket:t1" in deleted_keys
+    assert ticket_key("t1") in deleted_keys
     assert "voice_one_call:u1" in deleted_keys
 
     # Nothing half-written back onto the ticket.

@@ -5,6 +5,10 @@ from unittest.mock import AsyncMock, MagicMock
 from quart import Quart
 
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
+from tests.support.voice_tickets import open_ticket, seal_ticket, ticket_key as ticket_key_of
+
+# One cipher for the `_app(deps)` blueprint, so a test can seal or open the pending record's ticket.
+_CIPHER = AesGcmTestCipher()
 
 
 def _persona_factory(instructions="you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"):
@@ -47,7 +51,7 @@ def _app(deps):
         # the X-Twilio-Signature header via an injected async callable, the same
         # shape voice_control_plane_app injects its OIDC verifier. Mechanical
         # adaptation to a new REQUIRED dependency; no assertion in this file changed.
-        signature_verifier=AsyncMock(return_value=True), cipher=AesGcmTestCipher(), digest_key=b"k" * 32
+        signature_verifier=AsyncMock(return_value=True), cipher=_CIPHER, digest_key=b"k" * 32
     ))
     return app
 
@@ -93,8 +97,11 @@ async def test_bound_number_mints_ticket_and_parks_callback_without_originating(
     # Marker at the short TTL while only parked.
     assert set_calls["voice_one_call:u1"][1] == 300
     pending, _ = set_calls["voice_pending_callback:CAin"]
-    assert pending == {
-        "ticket": ticket_key.split(":", 1)[1], "user_id": "u1", "account_id": "a1", "to_number": "+15550101",
+    # The parked record names the same ticket the stored ticket record is keyed by (sealed, never raw).
+    parked_ticket = await open_ticket(_CIPHER, "voice_pending_callback:CAin", pending)
+    assert ticket_key == ticket_key_of(parked_ticket)
+    assert {k: v for k, v in pending.items() if k != "ticket_ct"} == {
+        "user_id": "u1", "account_id": "a1", "to_number": "+15550101",
     }
 
     lelik_agent_factory.assert_not_called()
@@ -115,13 +122,16 @@ async def test_dial_without_call_sid_is_rejected(deps):
     ephemeral_store.set.assert_not_called()
 
 
-_PENDING = {"ticket": "t1", "user_id": "u1", "account_id": "a1", "to_number": "+15550101"}
+async def _pending():
+    """The record /voice/auth parks under `voice_pending_callback:CAin` for ticket `t1`."""
+    return {"ticket_ct": await seal_ticket(_CIPHER, "voice_pending_callback:CAin", "t1"),
+            "user_id": "u1", "account_id": "a1", "to_number": "+15550101"}
 
 
 @pytest.mark.asyncio
 async def test_inbound_completed_originates_the_parked_callback(deps):
     _, ephemeral_store, alert_sink, notification_service, lelik_agent, lelik_agent_factory = deps
-    ephemeral_store.get_and_delete.return_value = dict(_PENDING)
+    ephemeral_store.get_and_delete.return_value = await _pending()
 
     response = await _app(deps).test_client().post(
         "/voice/inbound-status", form={"CallSid": "CAin", "CallStatus": "completed"},
@@ -173,14 +183,14 @@ async def test_non_terminal_inbound_status_is_ignored(deps, call_status):
 @pytest.mark.parametrize("call_status", ["no-answer", "busy", "failed", "canceled"])
 async def test_dial_that_never_completed_releases_without_calling_back(deps, call_status):
     _, ephemeral_store, _, _, lelik_agent, _ = deps
-    ephemeral_store.get_and_delete.return_value = dict(_PENDING)
+    ephemeral_store.get_and_delete.return_value = await _pending()
 
     await _app(deps).test_client().post(
         "/voice/inbound-status", form={"CallSid": "CAin", "CallStatus": call_status},
     )
 
     deleted = {c.args[0] for c in ephemeral_store.delete.await_args_list}
-    assert deleted == {"voice_ticket:t1", "voice_one_call:u1"}
+    assert deleted == {ticket_key_of("t1"), "voice_one_call:u1"}
     lelik_agent.execute.assert_not_called()
 
 
@@ -192,7 +202,7 @@ async def test_origination_failure_releases_ticket_and_marker_and_alerts(deps):
     (commit d1dd648). The caller has already hung up, so there is no TwiML to
     apologise with - an alert and a clean 200 to Twilio."""
     _, ephemeral_store, alert_sink, notification_service, lelik_agent, _ = deps
-    ephemeral_store.get_and_delete.return_value = dict(_PENDING)
+    ephemeral_store.get_and_delete.return_value = await _pending()
     lelik_agent.execute.side_effect = RuntimeError("origination boom")
 
     response = await _app(deps).test_client().post(
@@ -201,7 +211,7 @@ async def test_origination_failure_releases_ticket_and_marker_and_alerts(deps):
 
     assert response.status_code == 200
     deleted = {c.args[0] for c in ephemeral_store.delete.await_args_list}
-    assert deleted == {"voice_ticket:t1", "voice_one_call:u1"}
+    assert deleted == {ticket_key_of("t1"), "voice_one_call:u1"}
     alert_sink.post.assert_awaited_once()
     notification_service.notify_raw.assert_not_called()
 
@@ -279,7 +289,7 @@ async def test_answer_webhook_assembles_persona_and_streams_on_human_pickup():
     persona_factory.assert_awaited_once_with("u1")
     agent.session_config.assert_awaited_once_with(user_id="u1", account_id="a1")
     set_calls = {c.args[0]: c.args[1] for c in ephemeral_store.set.await_args_list}
-    assert set_calls["voice_ticket:t1"]["instructions"] == "you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"
+    assert set_calls[ticket_key_of("t1")]["instructions"] == "you are Lelik.\n<!-- CACHE_BOUNDARY -->\ndynamic"
 
 
 @pytest.mark.asyncio
@@ -355,7 +365,7 @@ async def test_answer_reads_ticket_from_query_string_as_lelik_agent_actually_sen
 
     body = (await response.get_data()).decode()
     assert "<Connect>" in body
-    ephemeral_store.get.assert_awaited_once_with("voice_ticket:real-ticket")
+    ephemeral_store.get.assert_awaited_once_with(ticket_key_of("real-ticket"))
 
 
 @pytest.mark.asyncio
@@ -375,7 +385,7 @@ async def test_answer_does_not_read_the_ticket_from_the_form_body():
 
     body = (await response.get_data()).decode()
     assert "<Reject" in body
-    ephemeral_store.get.assert_awaited_once_with("voice_ticket:")
+    ephemeral_store.get.assert_awaited_once_with(ticket_key_of(""))
 
 
 @pytest.mark.asyncio
@@ -400,7 +410,7 @@ async def test_machine_detection_releases_ticket_and_one_call_marker():
     assert "<Connect" not in body
 
     deleted = {c.args[0] for c in ephemeral_store.delete.await_args_list}
-    assert deleted == {"voice_ticket:t1", "voice_one_call:u1"}
+    assert deleted == {ticket_key_of("t1"), "voice_one_call:u1"}
 
 
 @pytest.mark.asyncio
@@ -425,7 +435,7 @@ async def test_status_callback_releases_both_keys_on_terminal_status(call_status
     # Twilio does not parse TwiML from a status callback — a bare 200 is the contract.
     assert response.status_code == 200
     deleted = {c.args[0] for c in ephemeral_store.delete.await_args_list}
-    assert deleted == {"voice_ticket:t1", "voice_one_call:u1"}
+    assert deleted == {ticket_key_of("t1"), "voice_one_call:u1"}
 
 
 @pytest.mark.asyncio

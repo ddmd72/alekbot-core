@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.services.voice_call_setup_service import VoiceCallSetupError, VoiceCallSetupService
+from tests.support.voice_tickets import call_kind_key, ticket_key
 
 
 def _service(store=None, agent=None):
@@ -37,9 +38,9 @@ async def test_prepare_stores_session_identity_and_kind_on_the_ticket():
     service, store, _ = _service(agent=agent)
     await service.prepare("t1", "u1", "a1", "web")
     writes = {c.args[0]: c.args[1] for c in store.set.await_args_list}
-    assert writes["voice_ticket:t1"] == {"instructions": "you are Lelik", "tools": [],
+    assert writes[ticket_key("t1")] == {"instructions": "you are Lelik", "tools": [],
                                           "user_id": "u1", "account_id": "a1", "call_kind": "web"}
-    assert writes["voice_call_kind:t1"] == {"call_kind": "web"}
+    assert writes[call_kind_key("t1")] == {"call_kind": "web"}
 
 
 @pytest.mark.asyncio
@@ -50,7 +51,7 @@ async def test_prepare_failure_releases_alerts_and_raises():
     with pytest.raises(VoiceCallSetupError):
         await service.prepare("t1", "u1", "a1", "web")
     deleted = {c.args[0] for c in store.delete.await_args_list}
-    assert deleted == {"voice_ticket:t1", "voice_one_call:u1"}
+    assert deleted == {ticket_key("t1"), "voice_one_call:u1"}
     alert.post.assert_awaited_once()
 
 
