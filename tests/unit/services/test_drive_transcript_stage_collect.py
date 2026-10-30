@@ -23,7 +23,7 @@ from src.domain.exceptions import LLMClientError, LLMUnavailableError
 from src.services.drive_transcript_stage import EXTRACTED_BY, TRANSCRIBER_AGENT, DriveTranscriptStage
 
 from tests.unit.services.drive_transcript_fakes import (
-    NOW, OLD, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner, Recording, record,
+    cid, HANDLE, SCOPE, NOW, OLD, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner, Recording, record,
 )
 
 MONTH = "2026-10"
@@ -51,15 +51,15 @@ async def _add(env, *recs, **recordings):
 
 
 async def _extract(env, stop_in=600.0):
-    return await env.stage.extract_step(USER, env.host, stop_at=env.clock.mono + stop_in)
+    return await env.stage.extract_step(HANDLE, env.host, stop_at=env.clock.mono + stop_in)
 
 
 async def _cheap(env, stop_in=600.0):
-    return await env.stage.cheap_steps(USER, env.host, stop_at=env.clock.mono + stop_in)
+    return await env.stage.cheap_steps(HANDLE, env.host, stop_at=env.clock.mono + stop_in)
 
 
 async def _get(env, item_id):
-    return (await env.repo.get_records(USER, [item_id])).get(item_id)
+    return (await env.repo.get_records(SCOPE, [item_id])).get(item_id)
 
 
 def _job(env, item_id):
@@ -159,7 +159,7 @@ async def test_slow_cadence_after_one_hour(tmp_path):
 async def test_at_most_10_polls_per_tick(tmp_path):
     env = _env(tmp_path)
     for i in range(BATCH_POLLS_PER_TICK + 2):
-        await env.repo.create_batch(TranscriptBatch(name=f"batches/x{i:02d}", user_id=USER, submitted_at=NOW,
+        await env.repo.create_batch(TranscriptBatch(name=f"batches/x{i:02d}", user_id=USER, connection_id=USER, submitted_at=NOW,
                                                     request_keys=(f"x{i}:0",), created_at=NOW, next_poll_at=NOW))
     await _cheap(env)
     assert len(env.batch.polls) == BATCH_POLLS_PER_TICK == len(set(env.batch.polls))
@@ -439,8 +439,8 @@ async def test_result_for_deleted_record_settled_and_dropped(tmp_path):
     env = _env(tmp_path)
     b1 = await _submitted(env, record("a"), a=Recording(600))
     file_ref = _job(env, "a").windows[0].file_ref
-    assert await env.stage.drop_jobs(USER, env.host, ["a"]) == 0   # T-R20: left for collection
-    await env.repo.delete_records(USER, ["a"])
+    assert await env.stage.drop_jobs(HANDLE, env.host, ["a"]) == 0   # T-R20: left for collection
+    await env.repo.delete_records(SCOPE, ["a"])
     _answer_all(env, b1, usd=0.01)
     _due(env, b1)
     env.host.events.clear()
@@ -454,7 +454,7 @@ async def test_result_for_deleted_record_settled_and_dropped(tmp_path):
 async def test_result_for_another_content_version_settled_and_dropped(tmp_path):
     env = _env(tmp_path)
     b1 = await _submitted(env, record("a"), a=Recording(600))
-    await env.host.commit([replace(await _get(env, "a"), content_version="c2", content_hash="hash-a2")],
+    await env.host.commit([replace(await _get(env, "a"), content_version="c2", content_identity=cid("hash-a2"))],
                           {"a": await _get(env, "a")})
     await _extract(env)   # stage A leaves the job alone while its window is in a batch (T-R20)
     assert len(env.runner.submits) == 1 and _job(env, "a").content_key == "hash-a"
@@ -470,7 +470,7 @@ async def test_files_deleted_on_success_and_abandon(tmp_path):
     env = _env(tmp_path)
     b1 = await _submitted(env, record("a", day="2026-10-02"), record("b"), a=Recording(600), b=Recording(600))
     refs = {i: _job(env, i).windows[0].file_ref for i in ("a", "b")}
-    await env.repo.delete_records(USER, ["b"])
+    await env.repo.delete_records(SCOPE, ["b"])
     _answer_all(env, b1)
     _due(env, b1)
     await _cheap(env)
@@ -528,7 +528,7 @@ async def test_finalize_through_host_fence(tmp_path):
     _answer_all(env, b1)
 
     async def edited_under_the_run(rec):
-        await env.host.commit([replace(rec, content_version="c2", content_hash="hash-a2")], {"a": rec})
+        await env.host.commit([replace(rec, content_version="c2", content_identity=cid("hash-a2"))], {"a": rec})
         return False   # the §7.4 fence drops the run's result
 
     env.host.on_index = edited_under_the_run
@@ -786,7 +786,7 @@ async def test_a_poll_client_error_is_logged_as_an_error(tmp_path, caplog):
 async def test_a_batch_without_request_keys_is_closed_and_released_once(tmp_path):
     env = _env(tmp_path)
     await env.host.reserve(0.05, MONTH)
-    await env.repo.create_batch(TranscriptBatch(name="batches/empty", user_id=USER, submitted_at=NOW, created_at=NOW,
+    await env.repo.create_batch(TranscriptBatch(name="batches/empty", user_id=USER, connection_id=USER, submitted_at=NOW, created_at=NOW,
                                                 next_poll_at=NOW, reserved_usd=0.05, reserved_month=MONTH))
     await _cheap(env)
     closed = env.repo.batches[(USER, "batches/empty")]
@@ -821,7 +821,7 @@ async def test_dropped_windows_are_gap_markers_while_another_batch_carries_the_r
     from src.domain.drive_transcript import JobWindow, TranscriptJob
     env = _env(tmp_path)
     specs = plan_windows(3_600)
-    job = TranscriptJob(USER, "a", "hash-a", content_version=1, duration_s=3_600.0, reserved_usd=0.1,
+    job = TranscriptJob(USER, "a", "hash-a", connection_id=USER, content_version=1, duration_s=3_600.0, reserved_usd=0.1,
                         reserved_month=MONTH, windows=(
                             JobWindow(specs[0], state="submitted", file_ref="files/0", request_key="a:0",
                                       batch_name="batches/b1", files_expire_at=NOW + timedelta(hours=40)),
@@ -829,7 +829,7 @@ async def test_dropped_windows_are_gap_markers_while_another_batch_carries_the_r
                                       batch_name="batches/b2", files_expire_at=NOW + timedelta(hours=40)),
                             JobWindow(specs[2], state="done")))
     await env.repo.save_transcript_job(job)
-    await env.repo.create_batch(TranscriptBatch(name="batches/b1", user_id=USER, request_keys=("a:0",),
+    await env.repo.create_batch(TranscriptBatch(name="batches/b1", user_id=USER, connection_id=USER, request_keys=("a:0",),
                                                 submitted_at=NOW, created_at=NOW, next_poll_at=NOW))
     env.runner.results["batches/b1"] = {"a:0": _ok("a:0", _transcript(1_800))}
     env.batch.statuses["batches/b1"] = BatchStatus.SUCCEEDED

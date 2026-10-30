@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index import EXTRACTION_VERSION, Reason, RecordState
 from src.domain.drive_index_params import (
     BATCH_POLL_FIRST_S, MAX_ATTEMPTS, RETRY_BASE, TRANSCRIBE_EXTRACT_WALL_S, TRANSCRIBE_MAX_SECONDS,
@@ -22,7 +23,7 @@ from src.domain.exceptions import LLMClientError, LLMUnavailableError
 from src.services.drive_transcript_stage import EXTRACTED_BY, TRANSCRIBER_AGENT, DriveTranscriptStage
 
 from tests.unit.services.drive_transcript_fakes import (
-    NOW, OLD, URL_PREFIX, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner, Recording, record,
+    cid, HANDLE, SCOPE, NOW, OLD, URL_PREFIX, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner, Recording, record,
 )
 
 MONTH = "2026-10"
@@ -49,11 +50,11 @@ async def _add(env, *recs, **recordings):
 
 
 async def _step(env, stop_in=600.0):
-    return await env.stage.extract_step(USER, env.host, stop_at=env.clock.mono + stop_in)
+    return await env.stage.extract_step(HANDLE, env.host, stop_at=env.clock.mono + stop_in)
 
 
 async def _get(env, item_id):
-    return (await env.repo.get_records(USER, [item_id]))[item_id]
+    return (await env.repo.get_records(SCOPE, [item_id]))[item_id]
 
 
 def _job(env, item_id):
@@ -193,7 +194,7 @@ async def test_url_never_persisted(tmp_path, caplog):
 
 async def test_probe_duration_beats_facet(tmp_path):
     env = _env(tmp_path)
-    await _add(env, record("a", kind="video", facets={"video": {"duration": 10_000}}), a=Recording(3600))
+    await _add(env, record("a", kind="video", media=DriveMediaFacts(video_duration_ms=10_000)), a=Recording(3600))
     await _step(env)
     job = _job(env, "a")
     assert job.duration_s == 3600 and [w.spec.index for w in job.windows] == [0, 1, 2]
@@ -324,7 +325,7 @@ async def test_a_woken_mid_job_park_resubmits_through_its_job(tmp_path):
     env = _env(tmp_path)
     window = JobWindow(spec=WindowSpec(0, 0.0, 600.0), state="uploaded", file_ref="files/x", request_key="a:0",
                        attempts=1, files_expire_at=NOW + timedelta(hours=40))
-    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, item_id="a", content_key="hash-a",
+    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key="hash-a",
                                                           duration_s=600.0, windows=(window,), reserved_usd=0.05,
                                                           reserved_month="2026-09")
     parked = replace(record("a"), transcript_state="parked", transcript_hold="resubmit", transcript_key="hash-a",
@@ -342,7 +343,7 @@ async def test_a_resubmit_that_does_not_fit_parks_the_file_mid_job(tmp_path):
     env = _env(tmp_path, cap=0.0001)
     window = JobWindow(spec=WindowSpec(0, 0.0, 600.0), state="uploaded", file_ref="files/x", request_key="a:0",
                        attempts=1, files_expire_at=NOW + timedelta(hours=40))
-    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, item_id="a", content_key="hash-a",
+    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key="hash-a",
                                                           duration_s=600.0, windows=(window,), reserved_usd=0.05,
                                                           reserved_month=MONTH)
     await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"))
@@ -466,13 +467,13 @@ async def test_a_working_record_without_a_job_starts_again(tmp_path):
 async def test_an_unreadable_job_document_is_dropped_and_charged(tmp_path, monkeypatch):
     env = _env(tmp_path)
     await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"), a=Recording(600))
-    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, item_id="a", content_key="hash-a")
+    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key="hash-a")
     real = env.repo.get_transcript_job
 
-    async def corrupt(user_id, item_id):
-        if item_id == "a" and (user_id, item_id) in env.repo.transcript_jobs:
+    async def corrupt(scope, item_id):
+        if item_id == "a" and (scope.connection_id, item_id) in env.repo.transcript_jobs:
             raise ValueError("unknown window state 'planned'")
-        return await real(user_id, item_id)
+        return await real(scope, item_id)
 
     monkeypatch.setattr(env.repo, "get_transcript_job", corrupt)
     summary = await _step(env)   # never fails the tick
@@ -485,7 +486,7 @@ async def test_a_new_content_version_drops_the_old_job_and_releases_it_once(tmp_
     await _add(env, record("a"), a=Recording(5000, cut_after=1))
     await _step(env)
     held = _job(env, "a").reserved_usd
-    edited = replace(await _get(env, "a"), content_version="c2", content_hash="hash-new", modified_at=OLD)
+    edited = replace(await _get(env, "a"), content_version="c2", content_identity=cid("hash-new"), modified_at=OLD)
     env.clock.advance(TRANSCRIBE_REREAD_COOLDOWN.total_seconds() + 60)   # past the edit cooldown (T-R9)
     await _add(env, edited, a=Recording(600))
     await _step(env)
@@ -499,7 +500,7 @@ async def test_drop_jobs_releases_and_deletes(tmp_path):
     await _add(env, record("a"), a=Recording(5000, cut_after=1))
     await _step(env)
     held = _job(env, "a").reserved_usd
-    assert await env.stage.drop_jobs(USER, env.host, ["a", "missing"]) == 1
+    assert await env.stage.drop_jobs(HANDLE, env.host, ["a", "missing"]) == 1
     assert _job(env, "a") is None and env.host.releases == [(pytest.approx(held), MONTH)]
     assert env.batch.deleted == ["files/f1"] and _reserved(env) == pytest.approx(0.0)
 
@@ -555,7 +556,7 @@ async def test_edit_cooldown_holds(tmp_path):
     bought = replace(record("a", content_hash="hash-old"), transcript_state="current", transcript_key="hash-old",
                      transcript_version=1, transcript_body_version=TRANSCRIPT_BODY_VERSION,
                      model_read_at=NOW - timedelta(hours=1))
-    edited = replace(bought, content_version="c2", content_hash="hash-new")
+    edited = replace(bought, content_version="c2", content_identity=cid("hash-new"))
     await _add(env, edited, a=Recording(600))
     rec = await _get(env, "a")
     assert rec.transcript_state == "held" and rec.transcript_hold == "cooldown"
@@ -567,7 +568,7 @@ async def test_a_working_record_whose_windows_are_all_submitted_is_repaired_to_w
     env = _env(tmp_path)
     window = JobWindow(spec=WindowSpec(0, 0.0, 600.0), state="submitted", file_ref="files/x", request_key="a:0",
                        batch_name="batches/b0", files_expire_at=NOW + timedelta(hours=40))
-    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, item_id="a", content_key="hash-a",
+    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key="hash-a",
                                                           duration_s=600.0, windows=(window,), reserved_usd=0.05,
                                                           reserved_month=MONTH)
     await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"), a=Recording(600))

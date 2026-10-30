@@ -15,14 +15,14 @@ from src.domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION
 from src.domain.exceptions import LLMRateLimitError
 from src.services.drive_transcript_stage import TRANSCRIBER_AGENT
 
-from tests.unit.services.drive_transcript_fakes import NOW, OLD, USER, Recording, record
+from tests.unit.services.drive_transcript_fakes import cid, HANDLE, NOW, OLD, USER, Recording, record
 from tests.unit.services.test_drive_transcript_stage_extract import MONTH, _add, _env, _get, _job, _step
 
 
 def _resubmit_job(reserved_month=MONTH, now=NOW):
     window = JobWindow(spec=WindowSpec(0, 0.0, 600.0), state="uploaded", file_ref="files/x", request_key="a:0",
                        attempts=1, files_expire_at=now + timedelta(hours=40))
-    return window, TranscriptJob(user_id=USER, item_id="a", content_key="hash-a", duration_s=600.0, windows=(window,),
+    return window, TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key="hash-a", duration_s=600.0, windows=(window,),
                                  reserved_usd=0.05, reserved_month=reserved_month)
 
 
@@ -35,7 +35,7 @@ async def test_an_edited_waiting_file_leaves_its_running_batch_alone(tmp_path):
     ((_, b1),) = env.repo.batches.items()
     old_job = _job(env, "a")
     assert (await _get(env, "a")).transcript_state == "waiting"
-    edited = replace(await _get(env, "a"), content_version="c2", content_hash="hash-new", modified_at=OLD)
+    edited = replace(await _get(env, "a"), content_version="c2", content_identity=cid("hash-new"), modified_at=OLD)
     env.clock.advance(TRANSCRIBE_REREAD_COOLDOWN.total_seconds() + 60)
     await _add(env, edited, a=Recording(600))
     assert (await _get(env, "a")).transcript_state == "ready"
@@ -51,7 +51,7 @@ async def test_drop_jobs_leaves_a_job_with_a_window_in_a_batch(tmp_path):
     await _add(env, record("a"), a=Recording(600))
     await _step(env)
     job = _job(env, "a")
-    assert await env.stage.drop_jobs(USER, env.host, ["a"]) == 0
+    assert await env.stage.drop_jobs(HANDLE, env.host, ["a"]) == 0
     assert _job(env, "a") == job and env.host.releases == [] and env.batch.deleted == []
 
 
@@ -113,7 +113,7 @@ async def test_a_step_straddling_midnight_books_its_reservations_in_its_own_mont
 
 async def test_a_restart_gives_back_the_reservation_the_old_job_held(tmp_path):
     env = _env(tmp_path)
-    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, item_id="a", content_key="hash-a",
+    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key="hash-a",
                                                           reserved_usd=0.05, reserved_month=MONTH)
     await _add(env, record("a"), a=Recording(600))
     await _step(env)
