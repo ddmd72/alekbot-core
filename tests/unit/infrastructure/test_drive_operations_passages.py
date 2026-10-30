@@ -61,12 +61,13 @@ async def test_a_find_returns_the_rendered_passages_with_its_typed_result_and_fi
     search.excerpts.assert_awaited_once_with("u1", ExcerptRequest(question=QUESTION, folder="R&D"),
                                              shown=frozenset())
     assert out.op is DriveOp.PASSAGES and out.cls is OutcomeClass.OK and out.success
-    assert "[id drive:item-1:3-3 · " in out.text and "After the first review, Acme signs off." in out.text
+    assert "[id drive:a1:item-1:3-3 · " in out.text and "After the first review, Acme signs off." in out.text
     assert "The rent is due on the first day." in out.text
     assert out.excerpts is found and out.excerpt_plan is not None
     assert [i.item_id for i in out.items] == ["item-1", "item-2"]
     assert out.items[0] == PLAN.drive_item()
-    assert out.drive_context() == [{"path": TOMS_PLAN, "ref": "drive:item-1"}, {"path": LEASE, "ref": "drive:item-2"}]
+    assert out.drive_context() == [{"path": TOMS_PLAN, "ref": "drive:a1:item-1"},
+                                   {"path": LEASE, "ref": "drive:a1:item-2"}]
     assert out.facts.excerpts is True and out.request_text == QUESTION
     assert out.body is False   # the specialist's model reads passages in full (A2)
 
@@ -249,9 +250,9 @@ async def test_an_open_logs_the_ref_and_the_size_of_the_converted_text(caplog):
     search.archived_text.return_value = None
     ops = DriveOperations(conversion_service=conversion, drive_service=_drive_with(item), drive_search=search)
     with caplog.at_level(logging.INFO):
-        out = await ops.open(CTX, "u1", "drive:item-1")
+        out = await ops.open(CTX, "u1", "drive:a1:item-1")
     assert out.cls is OutcomeClass.OK and out.body
-    assert "[DriveOperations] opened: drive:item-1 chars=1234" in [r.getMessage() for r in caplog.records]
+    assert "[DriveOperations] opened: drive:a1:item-1 chars=1234" in [r.getMessage() for r in caplog.records]
 
 
 async def test_an_open_that_converts_nothing_logs_no_opened_line(caplog):
@@ -262,5 +263,5 @@ async def test_an_open_that_converts_nothing_logs_no_opened_line(caplog):
     search.archived_text.return_value = None
     ops = DriveOperations(conversion_service=conversion, drive_service=_drive_with(item), drive_search=search)
     with caplog.at_level(logging.INFO):
-        await ops.open(CTX, "u1", "drive:item-3")
+        await ops.open(CTX, "u1", "drive:a1:item-3")
     assert not [r for r in caplog.records if r.getMessage().startswith("[DriveOperations] opened:")]
