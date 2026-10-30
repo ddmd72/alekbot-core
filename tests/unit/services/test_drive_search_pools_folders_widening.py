@@ -180,7 +180,7 @@ class TestWalkBudget:
             read[parent_id] = read.get(parent_id, 0) + len(page)
             return page
         w.repo.children = children
-        result = await w.search("p3", folder=f"drive:{photos}")
+        result = await w.search("p3", folder=f"drive:a1:{photos}")
         assert result.status == STATUS_OK and w.repo.card_limits   # incomplete walk: the user-wide streams ran
         walked = sum(read.values())
         assert walked <= 30 + 1 + search_mod._WALK_PARALLEL * 2, walked
@@ -231,7 +231,7 @@ class TestSearchDecisions:
         w.drive.add("lease.pdf")
         await w.settle()
         w.set_state(folder, has_card=False)
-        by_ref = await w.search("lease", folder=f"drive:{folder}")
+        by_ref = await w.search("lease", folder=f"drive:a1:{folder}")
         assert by_ref.status == STATUS_OK and paths(by_ref) == ["Contracts/lease.pdf"]
         by_path = await w.search("lease", folder="Contracts")
         assert by_path.status == STATUS_OK and paths(by_path) == ["Contracts/lease.pdf"]
