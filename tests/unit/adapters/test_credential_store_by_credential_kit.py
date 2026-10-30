@@ -264,3 +264,48 @@ async def test_a_record_written_before_the_fields_reads_them_as_missing(store):
                                            account_id="acct-1"))
     assert "integration" not in store.docs[doc_id] and "account_id" not in store.docs[doc_id]
     assert (await store.repo.get(ALEX, got.credential_id)).access_token == "at-2"
+
+
+# ------------------------------------------------------------------ save returns the id; list_keys never decrypts
+
+async def test_save_returns_the_stored_records_id_and_get_finds_it(store):
+    first = await store.repo.save(cred(subject="sub-1", access_token="at-a"))
+    second = await store.repo.save(cred(subject="sub-2", access_token="at-b"))
+    assert first and second and first != second
+    assert {d["credential_id"] for d in store.docs.values()} == {first, second}
+    assert f"{ALEX}:{first}" in store.docs
+    assert (await store.repo.get(ALEX, first)).access_token == "at-a"
+    assert (await store.repo.get(ALEX, second)).access_token == "at-b"
+    assert await store.repo.save(cred(subject="sub-1", access_token="at-c")) == first   # same account, same id
+
+
+async def test_list_keys_lists_the_users_records_of_a_kind_with_no_cipher_call(store):
+    a = await store.repo.save(cred(subject="sub-1"))
+    b = await store.repo.save(cred(subject="sub-2"))
+    g = await store.repo.save(cred(kind="gmail", subject="sub-g"))
+    await store.repo.save(cred(CLARA, subject="sub-c"))
+    decrypts = store.cipher.decrypts
+    keys = await store.repo.list_keys(ALEX, "microsoft_onedrive")
+    assert {k.credential_id for k in keys} == {a, b} and all(k.user_id == ALEX for k in keys)
+    assert {k.credential_id for k in await store.repo.list_keys(ALEX)} == {a, b, g}
+    assert await store.repo.list_keys(ALEX, "google_tasks") == []
+    assert store.cipher.decrypts == decrypts
+
+
+async def test_list_keys_still_lists_when_the_cipher_fails(store):
+    a = await store.repo.save(cred(kind="gmail", subject="sub-g"))
+    broken = Store(cipher=NoDecrypt(), db=store.db)
+    assert await broken.repo.list_keys(ALEX, "gmail") == [CredentialKey(user_id=ALEX, credential_id=a)]
+    with pytest.raises(RuntimeError):
+        await broken.repo.get(ALEX, a)          # a decrypt failure still raises, never "not connected"
+    with pytest.raises(RuntimeError):
+        await broken.repo.list_for_user(ALEX, "gmail")
+
+
+@pytest.mark.parametrize("older", ["sub-1", "sub-2"])
+async def test_list_keys_is_oldest_first(store, older):
+    ids = {s: await store.repo.save(cred(subject=s)) for s in ("sub-1", "sub-2")}
+    for doc in store.docs.values():
+        doc["created_at"] = EXPIRY if doc["account"]["subject"] == older else EXPIRY + timedelta(days=1)
+    keys = await store.repo.list_keys(ALEX, "microsoft_onedrive")
+    assert keys[0].credential_id == ids[older] and len(keys) == 2

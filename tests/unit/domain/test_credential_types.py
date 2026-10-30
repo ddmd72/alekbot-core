@@ -78,13 +78,16 @@ def test_value_object_fields():
 
 def test_the_credential_port_is_rekeyed_by_credential():
     assert set(OAuthCredentialsPort.__abstractmethods__) == {
-        "get", "save", "update", "delete", "list_for_user", "list_by_account", "list_user_ids"}
+        "get", "save", "update", "delete", "list_for_user", "list_keys", "list_by_account", "list_user_ids"}
     params = {name: list(inspect.signature(getattr(OAuthCredentialsPort, name)).parameters)[1:]
               for name in OAuthCredentialsPort.__abstractmethods__}
     assert params == {"get": ["user_id", "credential_id"], "save": ["credential"], "update": ["credential"],
                       "delete": ["user_id", "credential_id"], "list_for_user": ["user_id", "kind"],
+                      "list_keys": ["user_id", "kind"],
                       "list_by_account": ["realm", "subject"], "list_user_ids": ["kind"]}
     assert inspect.signature(OAuthCredentialsPort.list_for_user).parameters["kind"].default is None
+    assert inspect.signature(OAuthCredentialsPort.list_keys).parameters["kind"].default is None
+    assert inspect.signature(OAuthCredentialsPort.save).return_annotation is str
 
 
 def test_the_provider_port_shape():
