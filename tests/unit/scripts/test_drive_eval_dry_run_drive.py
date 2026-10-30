@@ -9,6 +9,7 @@ import pytest
 from scripts.validation.ab_agent_models import _READ_ONLY_INTENTS
 from scripts.validation.drive_eval.dry_run_drive import (
     STUB_TEXT, DriveOpLog, DryRunDriveOperations, DryRunError, public_coroutines)
+from scripts.validation.drive_eval.eval_connection import EvalDriveConnections, eval_connection
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive
 from src.composition.drive_specialist_build import build_drive_specialist
 from src.domain import drive_tool_texts as tt
@@ -83,8 +84,10 @@ async def test_the_same_mutation_without_the_dry_run_reaches_the_service(method)
 async def test_a_read_runs_for_real_and_is_logged_with_its_outcome():
     drive = FixtureDrive(MANIFEST)
     log = DriveOpLog()
-    ops = DriveOperations(conversion_service=FileConversionService(storage=MagicMock(), drive=drive),
-                          drive_service=UserDriveService(drive), drive_search=None)
+    connections = EvalDriveConnections(eval_connection("u1"))
+    ops = DriveOperations(conversion_service=FileConversionService(storage=MagicMock(), drive=drive,
+                                                                   connections=connections),
+                          drive_service=UserDriveService(drive, connections), drive_search=None)
     with DryRunDriveOperations(log):
         out = await ops.list_folder(CONTEXT, "u1", "Contracts")
         state = await ops.preflight("u1")
