@@ -353,41 +353,41 @@ Set-Cookie: oauth_state=abc123...; HttpOnly; Max-Age=600; SameSite=Lax
 
 ---
 
-### 7. `GET /auth/connect-gmail`
+### 7. `GET /auth/connect/<kind>`
 
-**Purpose:** Initiate incremental Gmail OAuth to grant `gmail.readonly` scope.
+**Purpose:** Start an integration connect. `kind` is `gmail`, `google_tasks`, `microsoft_todo` or `microsoft_onedrive`; with `?credential=<id>` it starts the reconnect of that stored credential.
 
-**Authentication:** Requires valid `access_token` (cookie or `Authorization: Bearer`).
+**Authentication:** Cabinet session (anonymous requests are sent to the sign-in).
 
-**Flow:** Redirects user to Google's OAuth consent screen. On return, the callback stores credentials in Firestore and triggers a background email indexing job via Cloud Tasks.
+**Flow:** `OAuthConnectService.start()` stores the flow server-side (only the digest of the state, PKCE) and the route redirects to the provider's consent screen. No cookie is set.
 
 **Response:**
-- `302 Found` → Google OAuth URL (with `gmail.readonly` scope + CSRF state cookie).
-- `401` — Not authenticated.
+- `302 Found` → provider consent URL.
+- `302` → Cabinet with `?connect_error=state` for a reconnect of a credential the user does not hold.
+- `404` — Unknown kind.
+- `501` — The kind's realm has no OAuth client on this deployment.
 
-**Implementation:** `src/web/oauth_app.py` — `connect_gmail()`
+**Implementation:** `src/web/oauth_app.py` — `connect_start()`
 
 ---
 
-### 8. `GET /auth/connect-gmail/callback`
+### 8. `GET /auth/connect/callback`
 
-**Purpose:** Handle Gmail OAuth callback — exchange authorization code for tokens and persist credentials.
+**Purpose:** The one callback of every integration connect (Google and Microsoft): exchange the code, persist the credential, run the integration's activation.
 
-**Authentication:** CSRF state cookie (set by `GET /auth/connect-gmail`).
+**Authentication:** The stored flow (single use) checked against the Cabinet session.
 
 **Flow:**
-1. Validate CSRF state.
-2. Exchange `code` for Gmail OAuth tokens via `GmailOAuthService`.
-3. Persist `OAuthCredentials` to `oauth_credentials` Firestore collection (keyed by `user_id`).
-4. Enqueue `email_indexing` Cloud Tasks job via `WorkerHandler`.
-5. Redirect user to Cabinet UI with success indicator.
+1. A provider refusal returns `?connect_error=denied`; a missing state or code returns `state` / `no_code`.
+2. `OAuthConnectService.complete()` consumes the flow, exchanges the code through the realm's `OAuthProviderPort`, reads the account identity and checks the granted scopes; a failed identity read or a missing scope stores nothing.
+3. The credential is saved to the credential store; the integration's activation runs (mail and drive clear the deliberate-disconnect mark and the notice flag, the drive also stores its drive id; To Do also enqueues `setup_microsoft_todo`; Google Tasks does nothing).
+4. The user returns to the flow's return path with `?connected=<kind>` or `?connect_error=<status>&kind=<kind>`.
 
 **Response:**
 - `302 Found` → Cabinet UI URL.
-- `400` — Invalid or missing state / code.
-- `401` — Not authenticated.
+- `501` — Integrations not configured.
 
-**Implementation:** `src/web/oauth_app.py` — `connect_gmail_callback()`
+**Implementation:** `src/web/oauth_app.py` — `connect_callback()`
 
 ---
 

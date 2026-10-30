@@ -1,6 +1,6 @@
 # RFC: Multi-drive, stages 1 and 2: connections, handles, tagged refs, mounts
 
-**Status:** PROPOSED (rev 1.1, 2026-10-30). Not built.
+**Status:** ACCEPTED (rev 1.2, 2026-10-30). Slice 1a built.
 **Owner:** AI Engineering
 **Milestone:** Multi-drive programme. Stage 0 (secrets at rest) is done: [SECRETS_AT_REST_RFC.md](SECRETS_AT_REST_RFC.md),
 S1–S5. This RFC is stage 1 (connections: preparatory, the user sees nothing change) and stage 2 (the product core for
@@ -8,7 +8,8 @@ several connections, proven on a second OneDrive App Folder account and an accou
 adapter work only (the Google drive adapter with its native-document emulation, its OAuth edge, one registry entry)
 and out of scope; §6, §7 and §11.3 define the seams it plugs into.
 **Revisions:** rev 1 (2026-10-30); rev 1.1 (2026-10-30, review round 1: cut-over keeps paid transcripts, provider-neutral
-scopes and the account-wide feed moved into stage 2).
+scopes and the account-wide feed moved into stage 2); rev 1.2 (2026-10-30, accepted; slice 1a built: the engineering decisions of the slice added as
+E26–E32, the port signatures `save -> str` and `list_keys`, `authorization_url(..., *, state)`).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md), [USER_DRIVE_INDEXING_RFC.md](USER_DRIVE_INDEXING_RFC.md) (index,
 tick, transcripts, mirror), [DRIVE_SPECIALIST_RFC.md](DRIVE_SPECIALIST_RFC.md), [DRIVE_FILE_NOTES_RFC.md](DRIVE_FILE_NOTES_RFC.md).
 **Peer:** [EXTERNAL_FILES_RFC.md](EXTERNAL_FILES_RFC.md) (accepted, not built). The tagged ref of §9 is the drive row of
@@ -158,10 +159,11 @@ never from a literal (T-6):
 
 ```
 get(user_id, credential_id) -> Optional[OAuthCredential]
-save(credential) -> None                      # the store chooses credential_id on first save (stage 0, D-P2 kept)
+save(credential) -> str                       # the store chooses credential_id on first save (stage 0, D-P2 kept) and returns it
 update(credential) -> bool                    # keeps the stored identity fields (stage 0 D-P2)
 delete(user_id, credential_id) -> None
 list_for_user(user_id, kind: Optional[str] = None) -> List[OAuthCredential]
+list_keys(user_id, kind: Optional[str] = None) -> List[CredentialKey]   # plaintext fields only, never a cipher call (E28)
 list_by_account(realm, subject) -> List[CredentialKey]     # across users; the revoke rule (§4.3)
 list_user_ids(kind) -> List[str]                           # replaces list_users_by_provider
 ```
@@ -214,7 +216,7 @@ Doc `{prefix}drive_connections/{user_id}:{connection_id}` (structural tenancy, a
 ```
 realm -> str                                             # "google", "microsoft": data, compared, never branched on
 revocation_scope -> RevocationScope                      # GRANT_WIDE | NONE
-authorization_url(flow: OAuthFlow, spec: ConnectorSpec, redirect_uri) -> str   # maps flow.intent to the realm's prompt params
+authorization_url(flow: OAuthFlow, spec: ConnectorSpec, redirect_uri, *, state) -> str   # maps flow.intent to the realm's prompt params (E29)
 exchange(code, flow, spec, redirect_uri) -> GrantResult  # tokens, granted scopes, ProviderAccount
 revoke(credential) -> None
 ```
@@ -237,7 +239,7 @@ activation after the credential is saved.
   digest of `state` (`SECRET_DIGEST_KEY`, the voice-ticket pattern of stage 0); the PKCE verifier is `CipherPort`
   ciphertext with AAD `oauth_flows/<digest>` (stage 0's rule: every persisted secret is encrypted or digested). PKCE
   S256 is sent to both realms.
-- The callback consumes the flow with `get_and_delete` (single use), refuses when the Cabinet session's user is not
+- The callback consumes the flow with  (single use), refuses when the Cabinet session's user is not
   `flow.user_id`, when the flow expired, or when granted scopes miss `spec.required_scopes` (stage 0's
   `OAuthScopeNotGrantedError` path moves here). A reconnect whose `GrantResult.account.subject` differs from the
   expected subject is refused ("you signed in with another account"), stores nothing and revokes nothing. This replaces
@@ -764,6 +766,13 @@ Drive" and "User Drive indexing" paragraphs and `src/agents/CLAUDE.md` → Drive
 | E23 | A disconnect marks the transcripts its records carried `retained`; the sweep never deletes a retained head. | Realises D9 beyond the sweep's 30 days. | Relying on the 30-day window; deleting with the index. |
 | E24 | The network-capable parser sandbox gets a header-less URL or streamed bytes, never provider headers. | A full-drive bearer token must not enter the sandbox; deciding now keeps stage 3 a pure adapter. | Passing `MediaSource.headers` to ffmpeg. |
 | E25 | Single-credential services filter by the `kind` of an injected `ConnectorSpec`, not by integration. | `TASKS` has two kinds (Google Tasks and To Do); an integration filter is the overloaded argument relocated. | `list_for_user(user, integration)`. |
+| E26 | `drive_id` stays on the credential until slice 1b, where its home, the `DriveConnection`, arrives. | Moving it earlier needs the connection entity; the OneDrive activation stores it on the saved credential meanwhile. | A second store for it in 1a. |
+| E27 | All four kinds are `multiple=False` in 1a: a consent of another account replaces the record, as before. Slice 1b flips the drive. | 1a is invisible to the user; many drives need the connection entity and the handle. | `multiple=True` for the drive before the connection exists. |
+| E28 | Every existence check (connected, status, disconnect, sweep, one-per-kind replacement) reads `list_keys`, which never calls the cipher; `get` is used only where a token is needed. | The stage-0 property: a decrypt or KMS failure never reads as "not connected". | `list_for_user` for existence checks. |
+| E29 | `save` returns the `credential_id` the store chose, and `authorization_url(flow, spec, redirect_uri, *, state)` takes the state as an argument. | The connect routes keep the saved record by id without a re-read; the stored flow keeps only the digest of the state, so the URL cannot be built from the flow. | A re-read after save; storing the plaintext state in the flow. |
+| E30 | One `Integration` enum (`domain/integration.py`: `MAIL`, `TASKS`, `DRIVE`) serves the Cabinet grouping and R1's reconnect notices; `reconnect_policy` imports it and no second enum of the name exists. The ops alert path strings of R1 changed with it (`mail_`, `tasks_`, `drive_reconnect_notice`). | Two enums of one name drift; the notice texts are unchanged. | Keeping R1's `GMAIL/TODO/DRIVE` enum beside it. |
+| E31 | `ConnectorSpec.required_scopes` holds product scopes only; each edge adds the identity scopes it needs, and Microsoft's granted scopes are normalised to the short form before the check. `ConnectorSpec.offered` is False for Google Tasks (frozen: stored grants work, no button, no entry in `GET /api/connectors`). | The scope check compares like with like; the registry is the single place that knows which kinds the Cabinet offers. | Identity scopes in every spec; a Cabinet-side list of kinds. |
+| E32 | `GMAIL_INDEX_PROVIDER` (`domain/email.py`) is the email index's own key, not a credential kind; the credential kind literals live in the registry. | The email index job and the credential are different records; the index key names a provider of mail, not a grant, and T-6 keeps credential kind literals in the registry. | Reusing the `gmail` kind constant for the index. |
 
 ## 17. Owner-only questions
 

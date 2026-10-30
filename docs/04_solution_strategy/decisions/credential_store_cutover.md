@@ -1,7 +1,7 @@
 # Decision: integration credentials move to a new encrypted store, by reconnect
 
 **Date:** 2026-10-29
-**Status:** S3 built (not yet deployed at the time of writing)
+**Status:** S3 built; the port was re-keyed by credential in multi-drive slice 1a (`OAuthCredential`, `get(user_id, credential_id)`, `save` returns the id; `docs/10_rfcs/MULTI_DRIVE_RFC.md` §4.2)
 **Context:** `docs/10_rfcs/SECRETS_AT_REST_RFC.md` §2.3, §2.4, §6. Gmail, Google Tasks, Microsoft To Do and OneDrive grants were
 stored as plaintext tokens in `{prefix}oauth_credentials`. S1 built the cipher; S3 applies it to these grants.
 
@@ -14,15 +14,15 @@ stored as plaintext tokens in `{prefix}oauth_credentials`. S1 built the cipher; 
   plaintext fields. At most one record per (user, kind) in this stage (I5).
 - **Plaintext / secret split.** Queried and operational fields stay plaintext (`user_id`, `credential_id`, `kind`, `account.*`,
   `scopes`, `token_expiry`, `needs_reconnect`, `drive_id`, timestamps). `secret` is ONE `CipherPort` ciphertext of
-  `{access_token, refresh_token, account_label}`, so a read or a write is one cipher call. Listings and `is_connected` read
-  plaintext only and never touch KMS.
+  `{access_token, refresh_token, account_label}`, so a read or a write is one cipher call. Listings and the existence checks
+  (`list_keys`, which returns `CredentialKey`s) read plaintext only and never touch KMS.
 - **AAD = record identity**: `credentials/{user_id}:{credential_id}`. A ciphertext moved to another record does not decrypt (I2).
 - **The identity is read at every consent, and a failed read stores nothing (I5, I9).** Google: scopes `openid email`, userinfo
   `sub`. Microsoft (To Do and OneDrive): scope `User.Read`, Graph `/me` `id`. A missing `sub` / `id` raises before the save;
-  `save_credentials` also refuses an empty `account_subject`.
+  `save` also refuses an empty `account_subject`.
 - **A same-account consent keeps the `credential_id`**; another account gets a new id and the old record is deleted, in one
   transaction.
-- **An update keeps the record identity (D-P2).** `update_credentials` (refresh, flag write) is exists-or-`False`, rebuilds the
+- **An update keeps the record identity (D-P2).** `update` (refresh, flag write) is exists-or-`False`, rebuilds the
   secret and the mutable fields from its argument, and never takes `credential_id`, `kind` or `account.*` from it.
 - **Fail loud.** A decrypt or KMS error raises and is logged without values (I4); it is never "not connected". Two records for one
   (user, kind) raise rather than guess.
@@ -51,6 +51,7 @@ stored as plaintext tokens in `{prefix}oauth_credentials`. S1 built the cipher; 
 
 ## Triggers to revisit
 
-- **Multi-drive stage 1** re-keys the port (more than one record per user and kind), moves `drive_id` to `DriveConnection`, and
-  applies its revoke rule over `account.realm` + `account.subject`.
+- **Multi-drive 1a** re-keyed the port by credential and applies the revoke rule over `account.realm` + `account.subject`
+  (`CredentialRevocationService`); every kind is still one record per user. **Slice 1b** allows more than one drive record per
+  user and moves `drive_id` to `DriveConnection`.
 - A new credential kind (the Telegram reader session) is one more `kind` in this store.

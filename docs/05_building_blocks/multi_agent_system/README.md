@@ -162,7 +162,7 @@ Agents marked with `eager=False` in their `AgentDescriptor` are not created duri
   - **Auto-tagging:** LLM instructed to derive MS To Do categories from task context (e.g. "remind me about Prague hotel" → tags: ["prague", "trip"]).
   - **Language:** Delegation queries and responses use the orchestrator's active language.
   - **Dedicated tasklist:** `MicrosoftToDoAdapter.ensure_primary_list()` creates "Alek Bot Tasks" on first use; `list_id` cached per user in `task_config` Firestore collection.
-  - **Auth:** OAuth2 via `OAuthCredentialsPort`, provider `"microsoft_todo"` (Azure consumers tenant, `Tasks.ReadWrite offline_access`). Cabinet UI: `/auth/connect-microsoft-todo`.
+  - **Auth:** OAuth2 via `OAuthCredentialsPort`, kind `"microsoft_todo"` (Azure consumers tenant, `Tasks.ReadWrite offline_access`). Cabinet UI: `/auth/connect/microsoft_todo`.
   - **Webhook sync:** Graph subscriptions keep `task_search_index` fresh when user edits tasks directly in the MS To Do app. Worker task `reindex_task_list` reindexes after subscription setup.
   - **Parallel delegation:** Multiple task-related requests in one message → multiple parallel `delegate_to_specialist` calls, each with its own tool loop.
   - Registered as `internal=False`. BALANCED tier (Gemini Flash default). See [Tasks Integration Building Block](../tasks_integration/README.md).
