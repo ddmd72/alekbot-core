@@ -4,6 +4,7 @@ shows no transcript line on the card. Synthetic records only."""
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_index import DriveIndexRecord, RecordState, Scope
 from src.domain.drive_transcript_plan import (
     TranscriptContext, leaves_job, mark_current, transcript_plan,
@@ -14,11 +15,17 @@ NOW = datetime(2026, 10, 21, 12, tzinfo=timezone.utc)
 CTX = TranscriptContext(now=NOW, enabled=True, month_usd=0.0, reserved_usd=0.0, cap_usd=20.0)
 
 
+def _cid(digest):
+    """The content identity (MULTI_DRIVE_RFC §7.2) a provider hash `digest` gives."""
+    return ContentIdentity("quickxor", digest, 1)
+
+
 def _rec(**kw):
     base = dict(user_id="u", item_id="i1", kind="audio", scope=Scope.NORMAL, state=RecordState.PENDING,
-                content_version="c1", content_hash="h1", name="a.mp3", size_bytes=1_000_000,
+                content_version="c1", content_identity=_cid("h1"), name="a.mp3", size_bytes=1_000_000,
                 modified_at=NOW - timedelta(days=3))
     base.update(kw)
+    base.setdefault("identity", f"microsoft_onedrive:d1:{base['item_id']}")   # MULTI_DRIVE_RFC §7.2
     return DriveIndexRecord(**base)
 
 
