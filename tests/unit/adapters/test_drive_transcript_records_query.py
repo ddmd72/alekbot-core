@@ -50,4 +50,4 @@ async def test_the_firestore_read_is_equality_only(adapter):
     await repo.transcript_records(U_SCOPE, "working", 5)
     (ops,) = db.cols[RECS].executed
     assert _required(ops) is None   # two equality filters, no ordering: single-field indexes serve it
-    assert not {"user_id", "transcript_state"} & _exempt(LIVE_RECS)
+    assert not {"connection_id", "transcript_state"} & _exempt(LIVE_RECS)
