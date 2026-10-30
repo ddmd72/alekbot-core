@@ -163,7 +163,7 @@ def transcript_checks(repo: FirestoreDriveIndexRepository, user_id: str,
         ("orphaned windows (collection group)",
          lambda: repo.connection_subdoc_refs(repo.windows_group, scope.connection_id, 5)),
         ("orphaned parts (collection group)",
-         lambda: repo.connection_subdoc_refs(repo.parts_group, scope.connection_id, 5)),
+         lambda: repo.user_subdoc_refs(repo.parts_group, user_id, 5)),
     ]
 
 
