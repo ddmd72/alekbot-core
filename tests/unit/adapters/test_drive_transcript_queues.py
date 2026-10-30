@@ -296,12 +296,15 @@ async def test_purge_queries_filter_on_the_user_only(fs):
     await repo.delete_user_transcript_jobs(U_SCOPE, 100)
     await repo.delete_user_batches(U_SCOPE, 100)
     await repo.delete_user_transcripts("u", 100)
-    top = [LIVE["jobs"], LIVE["batches"], LIVE["store"]]
-    for name in top:
+    # jobs and batches are the connection's, the store the user's (MULTI_DRIVE_RFC §8, §10)
+    top = {LIVE["jobs"]: "connection_id", LIVE["batches"]: "connection_id", LIVE["store"]: "user_id"}
+    for name, owner in top.items():
         filters = [op for ops in db.cols[name].executed for op in ops if op[0] == "where"]
-        assert filters and {(op[1], op[2]) for op in filters} == {("user_id", "==")}
-    for ops in (o for runs in db.group_executed.values() for o in runs):
-        assert {(op[1], op[2]) for op in ops if op[0] == "where"} == {("user_id", "==")}
+        assert filters and {(op[1], op[2]) for op in filters} == {(owner, "==")}
+    groups = {LIVE["windows"]: "connection_id", LIVE["parts"]: "user_id"}
+    for group, runs in db.group_executed.items():
+        for ops in runs:
+            assert {(op[1], op[2]) for op in ops if op[0] == "where"} == {(groups[group], "==")}
 
 
 # -- provisioning -----------------------------------------------------------------------------------------------------
@@ -329,15 +332,15 @@ async def test_every_new_query_has_its_index(fs):
     # queue, wake-ups, open batches, orphans
     assert needing == 4
     # the equality-only copy check still has its composite (the brief's), and the sweep's group reads theirs
-    assert [("user_id", "ASCENDING"), ("content_key", "ASCENDING")] in _declared(LIVE["jobs"])
+    assert [("connection_id", "ASCENDING"), ("content_key", "ASCENDING")] in _declared(LIVE["jobs"])
     await repo.delete_user_transcript_orphans(U_SCOPE, 5, keep_transcripts=False)
-    for group in (LIVE["windows"], LIVE["parts"]):
+    for group, owner in ((LIVE["windows"], "connection_id"), (LIVE["parts"], "user_id")):
         (ops,) = db.group_executed[group][:1]
         required = _required(ops)
-        assert required == ({("user_id", "EQ")}, [("index", "ASCENDING")])
+        assert required == ({(owner, "EQ")}, [("index", "ASCENDING")])
         groups = [i for i in _raw() if i["collectionGroup"] == group and i.get("queryScope") == "COLLECTION_GROUP"]
         assert [[(f["fieldPath"], f["order"]) for f in i["fields"]] for i in groups] == [
-            [("user_id", "ASCENDING"), ("index", "ASCENDING")]]
+            [(owner, "ASCENDING"), ("index", "ASCENDING")]]
 
 
 def _raw():
@@ -345,12 +348,12 @@ def _raw():
 
 
 def test_the_declared_queue_indexes_match_the_brief():
-    assert _declared(LIVE_RECS).count([("user_id", "ASCENDING"), ("transcript_state", "ASCENDING"),
+    assert _declared(LIVE_RECS).count([("connection_id", "ASCENDING"), ("transcript_state", "ASCENDING"),
                                        ("effective_day", "DESCENDING"), ("parent_id", "ASCENDING"),
                                        ("item_id", "ASCENDING")]) == 1
-    assert _declared(LIVE_RECS).count([("user_id", "ASCENDING"), ("transcript_wake_at", "ASCENDING"),
+    assert _declared(LIVE_RECS).count([("connection_id", "ASCENDING"), ("transcript_wake_at", "ASCENDING"),
                                        ("item_id", "ASCENDING")]) == 1
-    assert _declared(LIVE["batches"]) == [[("user_id", "ASCENDING"), ("next_poll_at", "ASCENDING")]]
+    assert _declared(LIVE["batches"]) == [[("connection_id", "ASCENDING"), ("next_poll_at", "ASCENDING")]]
     assert _declared(LIVE["store"]) == [[("user_id", "ASCENDING"), ("last_used_at", "ASCENDING")]]
 
 
