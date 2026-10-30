@@ -271,7 +271,7 @@ async def test_purge_new_deletes_only_the_connection_scoped_documents():
     scoped = {"user_id": USER, "connection_id": cid}
     for name, doc_id in ((n.records, f"{cid}:item-1"), (n.chunks, f"{cid}:item-1:1:0"), (n.hints, f"{cid}:item-1:1:0"),
                          (n.jobs, f"{cid}:item-2"), (n.batches, f"{cid}:batches%2Fb2")):
-        w.col(name)[doc_id] = dict(scoped)
+        w.col(name)[doc_id] = dict(scoped, state="done") if name == n.batches else dict(scoped)   # drained
     w.db.collection(f"{n.jobs}/{cid}:item-2/{n.windows}").docs["0"] = {"user_id": USER, "connection_id": cid}
     w.col(n.sync_state)[sync_state_doc_id(ConnectionScope(USER, cid))] = dict(scoped)
     kept = {name: dict(w.col(name)) for name in (n.transcripts, n.ledger, n.roots, n.notes, n.usage)}
