@@ -14,6 +14,7 @@ from src.infrastructure.drive_operations import DriveOperations
 from src.ports.user_drive_port import UserDrivePort
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_connections import seeded_connections
 
 ROOT = DriveItem(item_id="root", name="Alek-bot", path="", is_folder=True)
 FOLDER = DriveItem(item_id="notes", name="Notes", path="Notes", is_folder=True)
@@ -34,16 +35,16 @@ class _MemoryDrive:
         port.upload.side_effect = self._upload
         return port
 
-    async def _list(self, user_id, folder_id):
+    async def _list(self, handle, folder_id):
         if folder_id == "root":
             return [FOLDER]
         return [DriveItem(item_id=f"id:{n}", name=n, path=f"Notes/{n}", is_folder=False, size_bytes=len(b))
                 for n, b in self.files.items()]
 
-    async def _download(self, user_id, item_id):
+    async def _download(self, handle, item_id):
         return self.files[item_id.removeprefix("id:")]
 
-    async def _upload(self, user_id, parent_id, filename, data, content_type):
+    async def _upload(self, handle, parent_id, filename, data, content_type):
         self.uploads.append(filename)
         name, n = filename, 0
         stem, dot, ext = filename.rpartition(".")
@@ -70,7 +71,7 @@ def setup():
 
     conversion.resolve_bytes.side_effect = resolve_bytes
     agent = DriveOperations(conversion_service=conversion, notification=AsyncMock(),
-                            drive_service=UserDriveService(memory.port()), localization=MagicMock(),
+                            drive_service=UserDriveService(memory.port(), seeded_connections("u1")), localization=MagicMock(),
                             language_service=AsyncMock())
     return agent, memory, chat_files
 

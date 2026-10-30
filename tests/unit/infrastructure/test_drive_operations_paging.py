@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 from src.domain import drive_excerpt_render as R
 from src.domain.drive_op import DriveOp
 from src.domain.drive_outcome_class import OutcomeClass
-from src.domain.user_drive import DriveConnection, make_drive_ref
+from src.domain import drive_ref
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
@@ -22,10 +22,9 @@ def _setup(count=25):
     item = w.doc("Oak Street parking rules.md", [f"Clause {n}. The gate stays closed." for n in range(1, count + 1)],
                  [0.1] * count, kind="md", content_version="c1", indexed_version="c1")
     drive = AsyncMock(spec=UserDriveService)
-    drive.connection.return_value = DriveConnection(connected=True, drive_id="d1")
     ops = DriveOperations(conversion_service=MagicMock(spec=FileConversionService), drive_service=drive,
                           drive_search=w.service)
-    return w, ops, make_drive_ref(item)
+    return w, ops, drive_ref.format("a1", item)   # the harness connection's tag
 
 
 async def test_from_one_is_a_page():

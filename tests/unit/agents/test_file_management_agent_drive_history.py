@@ -14,7 +14,7 @@ from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.drive_operations import DriveOperations
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
-from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_spec_mock import spec_drive_service
 
 LAB = DriveItem(item_id="abc123", name="lab-report.pdf", path="Health/lab-report.pdf", is_folder=False,
                 size_bytes=2048, mime_type="application/pdf")
@@ -38,10 +38,14 @@ def conversion():
 
 
 @pytest.fixture
-def agent(conversion):
+def drive():
+    return spec_drive_service("u1")
+
+
+@pytest.fixture
+def agent(conversion, drive):
     language = AsyncMock()
     language.resolve_ui_language.return_value = LanguageCode.EN
-    drive = AsyncMock(spec=UserDriveService)
     ops = DriveOperations(conversion_service=conversion, notification=AsyncMock(), drive_service=drive,
                           localization=MagicMock(), language_service=language)
     return FileManagementAgent(
@@ -57,22 +61,22 @@ async def _lines(agent, ref):
     return drive_history_lines([resp.history_context["drive_context"]])   # Smart's fold wraps one call one level
 
 
-async def test_an_opened_text_file_is_opened_whole(agent, conversion):
-    conversion.get_drive_item.return_value = NOTES
+async def test_an_opened_text_file_is_opened_whole(agent, conversion, drive):
+    drive.get_item.return_value = NOTES
     conversion.resolve_content.return_value = "line one"
-    assert await _lines(agent, "drive:txt01") == ["[Drive: Folder/a.txt ref=drive:txt01 — opened whole]"]
+    assert await _lines(agent, "drive:a1:txt01") == ["[Drive: Folder/a.txt ref=drive:a1:txt01 — opened whole]"]
 
 
-async def test_a_pdf_attached_for_vision_is_opened_whole(agent, conversion):
-    conversion.get_drive_item.return_value = LAB
+async def test_a_pdf_attached_for_vision_is_opened_whole(agent, conversion, drive):
+    drive.get_item.return_value = LAB
     conversion.resolve_bytes.return_value = b"%PDF"
-    assert await _lines(agent, "drive:abc123") == [
-        "[Drive: Health/lab-report.pdf ref=drive:abc123 — opened whole]"]
+    assert await _lines(agent, "drive:a1:abc123") == [
+        "[Drive: Health/lab-report.pdf ref=drive:a1:abc123 — opened whole]"]
 
 
-async def test_an_open_that_shows_no_content_says_so(agent, conversion):
-    conversion.get_drive_item.return_value = HEIC
-    assert await _lines(agent, "drive:h1") == ["[Drive: scan.heic ref=drive:h1 — open answered without its content]"]
+async def test_an_open_that_shows_no_content_says_so(agent, conversion, drive):
+    drive.get_item.return_value = HEIC
+    assert await _lines(agent, "drive:a1:h1") == ["[Drive: scan.heic ref=drive:a1:h1 — open answered without its content]"]
 
 
 async def test_a_chat_store_open_touches_no_drive_item(agent, conversion):

@@ -16,7 +16,8 @@ from src.composition.user_agent_factory import UserAgentFactory, _UserContext
 from src.domain import drive_tool_texts as tt
 from src.domain.llm import PROMPT_CACHE_BOUNDARY, LLMRequest, LLMResponse, Message, MessagePart, ToolCall
 from src.domain.user import UserBotConfig
-from src.domain.user_drive import DriveConnection, DriveItem
+from src.domain.drive_connection_status import DriveConnectionStatus
+from src.domain.user_drive import DriveItem
 from src.infrastructure.agent_coordinator import AgentCoordinator
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, Intent
 from src.infrastructure.agent_registry import AgentRegistry
@@ -25,6 +26,7 @@ from src.infrastructure.drive_operations import DriveOperations
 from src.ports.agent_factory_port import AgentFactoryPort
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_connections import ConnectionReads, connection_of
 from tests.support.scripted_llm import calls, script
 
 USER, ACCOUNT = "u1", "a1"
@@ -62,7 +64,10 @@ def _world(monkeypatch):
     coordinator = AgentCoordinator(registry=registry, file_ref_resolver=resolver, task_queue=queue)
 
     drive = AsyncMock(spec=UserDriveService)
-    drive.connection.return_value = DriveConnection(connected=True)
+    reads = ConnectionReads()
+    drive.status.return_value = DriveConnectionStatus(connected=True)
+    drive.resolve_ref.side_effect = reads.resolve_ref
+    drive.get_item.return_value = SCAN
     drive.delete.return_value = SimpleNamespace(item=OLD)
     conversion = MagicMock(spec=FileConversionService)
     conversion.get_drive_item = AsyncMock(return_value=SCAN)
@@ -98,13 +103,13 @@ def _world(monkeypatch):
     monkeypatch.setattr(DriveOperations, "delete", delete_seen)
 
     specialist_llm, specialist_seen = script(
-        calls((tt.DELETE_DRIVE_ITEM, {"file_ref": "drive:old"}), (tt.OPEN_DRIVE_FILE, {"file_ref": "drive:scan"})),
+        calls((tt.DELETE_DRIVE_ITEM, {"file_ref": "drive:a1:old"}), (tt.OPEN_DRIVE_FILE, {"file_ref": "drive:a1:scan"})),
         calls((tt.REPORT_TOOL, {"note": "Deleted the old notes and opened the scan."})))
 
     async def specialist_call(self, request, turn=0, **kw):
         return await specialist_llm(request, turn)
     monkeypatch.setattr(DriveAgent, "_call_llm", specialist_call)
-    return SimpleNamespace(coordinator=coordinator, factory=factory, fake=fake, ctx=ctx, drive=drive,
+    return SimpleNamespace(coordinator=coordinator, factory=factory, fake=fake, ctx=ctx, drive=drive, reads=reads,
                            notifier=notifier, resolver=resolver, queue=queue, seen_contexts=seen_contexts,
                            specialist_seen=specialist_seen)
 
@@ -114,8 +119,8 @@ async def test_a_chat_turn_reaches_the_lazy_specialist_and_back_with_receipts_vi
     smart_requests: list = []
     replies = [
         LLMResponse(text="", tool_calls=[_delegate(1, Intent.WORK_WITH_DRIVE_FILES,
-                                                   "Delete Inbox/old.txt (drive:old) and open the scan (drive:scan).")]),
-        LLMResponse(text="", tool_calls=[_delegate(2, Intent.CREATE_PDF, "A PDF of the scan.", file_ref="drive:scan")]),
+                                                   "Delete Inbox/old.txt (drive:a1:old) and open the scan (drive:a1:scan).")]),
+        LLMResponse(text="", tool_calls=[_delegate(2, Intent.CREATE_PDF, "A PDF of the scan.", file_ref="drive:a1:scan")]),
         LLMResponse(text="Done: the notes are deleted, the PDF is on its way."),
     ]
 
@@ -139,7 +144,7 @@ async def test_a_chat_turn_reaches_the_lazy_specialist_and_back_with_receipts_vi
     assert 'user_message (chat): "delete the old notes and show me the scan"' in \
         world.specialist_seen[0].system_instruction
     # the delete really ran (no dry run here) and its receipt went to the chat the turn came from
-    world.drive.delete.assert_awaited_once_with(USER, "old")
+    world.drive.delete.assert_awaited_once_with(connection_of(world.reads, USER).handle, "old")
     world.notifier.notify_raw.assert_awaited_once_with(USER, ACCOUNT, "Deleted Inbox/old.txt",
                                                        channel_id_override="C1", platform_override="slack",
                                                        literal=True)
@@ -150,7 +155,7 @@ async def test_a_chat_turn_reaches_the_lazy_specialist_and_back_with_receipts_vi
                   if p.tool_response)
     assert answer.startswith("Drive result: ok")
     # the card's drive: ref reached create_pdf through the coordinator's prefetch, before the enqueue
-    world.resolver.assert_awaited_once_with("drive:scan", USER)
+    world.resolver.assert_awaited_once_with("drive:a1:scan", USER)
     enqueued = world.queue.enqueue_agent_task.await_args.kwargs
     assert enqueued["intent"] == Intent.CREATE_PDF
     assert enqueued["context"]["params"]["file_content"] == "SCAN TEXT"

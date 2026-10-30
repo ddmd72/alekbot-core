@@ -17,15 +17,17 @@ from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_search import REFERENCE_REMINDER
 from src.domain.drive_text_extent import ExtentState, ExtentWhy, TextExtent
 from src.domain import drive_open_texts as T
-from src.domain.user_drive import DriveConnection, DriveItem
+from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.user_drive_service import UserDriveService
+
+from tests.support.drive_service_connections import ConnectionReads
 
 from .test_drive_operations_uncovered_paths import CTX, FakeConversion
 
 PATH = "Docs/Oak Street parking rules.md"
 RULES = DriveItem(item_id="r1", name="Oak Street parking rules.md", path=PATH, is_folder=False, size_bytes=300_000,
-                  mime_type="text/markdown")
+                  mime_type="text/markdown", identity="fake_a:drive-1:r1")
 SCAN = DriveItem(item_id="p1", name="Garage plan.pdf", path="Docs/Garage plan.pdf", is_folder=False, size_bytes=5000,
                  mime_type="application/pdf")
 PHOTO = DriveItem(item_id="i1", name="Space 14.jpg", path="Docs/Space 14.jpg", is_folder=False, size_bytes=5000,
@@ -58,13 +60,13 @@ class FakeExtentSearch:
         self.extent_asks: list[str] = []
         self.transcript_asks: list[str] = []
 
-    async def text_extent(self, user_id, item_id):
+    async def text_extent(self, conn, item_id):
         self.extent_asks.append(item_id)
         if self.raises is not None:
             raise self.raises
         return self.extents.get(item_id, TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.NOT_READ))
 
-    async def transcript_text(self, user_id, item_id, *, path="", label=""):
+    async def transcript_text(self, conn, item_id, *, path="", label=""):
         self.transcript_asks.append(item_id)
         return self.transcripts.get(item_id)
 
@@ -72,9 +74,17 @@ class FakeExtentSearch:
         return None
 
 
+class _Reads(ConnectionReads):
+    pass
+
+
 def _ops(conversion, search, *, note=None):
     drive = AsyncMock(spec=UserDriveService)
-    drive.connection.return_value = DriveConnection(connected=True, drive_id="d1")
+    reads = _Reads()
+    drive.primary.side_effect = reads.primary
+    drive.resolve_ref.side_effect = reads.resolve_ref
+    items = {item.item_id: item for item in conversion.items.values()}
+    drive.get_item.side_effect = lambda handle, item_id: items[item_id]
     kw = {}
     if note is not None:
         kw.update(drive_notes=note)
@@ -82,11 +92,11 @@ def _ops(conversion, search, *, note=None):
 
 
 def _conv(item, text="", data=b"%PDF"):
-    return FakeConversion({f"drive:{item.item_id}": item}, data=data, text=text)
+    return FakeConversion({f"drive:a1:{item.item_id}": item}, data=data, text=text)
 
 
 async def _open(ops, item):
-    return await ops.open(CTX, "u1", f"drive:{item.item_id}")
+    return await ops.open(CTX, "u1", f"drive:a1:{item.item_id}")
 
 
 # -- the refusal, before any download ------------------------------------------------------------------------------
@@ -154,9 +164,10 @@ async def test_vision_opens_ignore_a_huge_pageable_extent(item, caplog):
     with caplog.at_level(logging.INFO):
         out = await _open(_ops(conv, FakeExtentSearch({item.item_id: pageable(5_000_000, passages=4000)})), item)
     assert out.cls is OutcomeClass.OK and out.file_data is not None
-    assert conv.byte_reads == [f"drive:{item.item_id}"]
+    assert conv.byte_reads == [f"drive:a1:{item.item_id}"]
     lines = [r.getMessage() for r in caplog.records if "opened vision" in r.getMessage()]
-    assert lines == [f"[DriveOperations] opened vision: drive:{item.item_id} mime={item.mime_type} bytes=4 pages=4000"]
+    assert lines == [f"[DriveOperations] opened vision: drive:a1:{item.item_id} mime={item.mime_type} bytes=4 "
+                     "pages=4000"]
 
 
 async def test_a_recording_with_an_over_cap_pageable_extent_is_refused_before_its_transcript():
@@ -184,7 +195,7 @@ async def test_a_live_transcript_that_cannot_be_paged_and_is_over_the_cap_is_mar
 
 async def test_the_recordings_link_never_asks_for_the_extent():
     search = FakeExtentSearch({"c1": pageable(300_000)})
-    out = await _ops(_conv(CALL), search).open(CTX, "u1", "drive:c1", original=True)
+    out = await _ops(_conv(CALL), search).open(CTX, "u1", "drive:a1:c1", original=True)
     assert out.cls is OutcomeClass.OK and out.body and search.extent_asks == []
 
 
@@ -222,10 +233,7 @@ async def test_a_search_without_text_extent_is_unknown(caplog):
 # -- the note block, the wrapper and the logs ----------------------------------------------------------------------
 
 class _Notes:
-    async def drive_id_for_connection(self, user_id, connection):
-        return "d1"
-
-    async def note_for_item(self, user_id, drive_id, item_id):
+    async def note_for_item(self, user_id, identity):
         from types import SimpleNamespace
         return SimpleNamespace(text="the garage rules", doc_type=None, life_areas=())
 
@@ -247,7 +255,7 @@ async def test_the_log_lines(caplog):
         await _open(_ops(_conv(RULES, live), FakeExtentSearch({"r1": TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.OFF)})), RULES)
         await _open(_ops(_conv(RULES, "x"), FakeExtentSearch({"r1": pageable(250_000, passages=140, truncated=True)})), RULES)
     messages = [r.getMessage() for r in caplog.records]
-    assert f"[DriveOperations] opened: drive:r1 chars={len(live)}" in messages
-    assert any(m.startswith("[DriveOperations] open cut: drive:r1 chars=") and m.endswith("extent=not_indexed")
+    assert f"[DriveOperations] opened: drive:a1:r1 chars={len(live)}" in messages
+    assert any(m.startswith("[DriveOperations] open cut: drive:a1:r1 chars=") and m.endswith("extent=not_indexed")
                for m in messages)
-    assert "[DriveOperations] open refused: drive:r1 chars=250000 passages=140 truncated=True" in messages
+    assert "[DriveOperations] open refused: drive:a1:r1 chars=250000 passages=140 truncated=True" in messages

@@ -33,6 +33,7 @@ from src.ports.file_storage_port import FileStoragePort
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_connections import ConnectionReads
 
 CTX = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
 FILE = DriveItem(item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", is_folder=False, size_bytes=2048,
@@ -40,9 +41,16 @@ FILE = DriveItem(item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", is_fold
 FOLDER = DriveItem(item_id="d1", name="Inbox", path="Inbox", is_folder=True)
 
 
+class _Reads(ConnectionReads):
+    pass
+
+
 @pytest.fixture
 def drive():
     d = AsyncMock(spec=UserDriveService)
+    reads = _Reads()
+    d.primary.side_effect = reads.primary
+    d.resolve_ref.side_effect = reads.resolve_ref
     d.get_item.return_value = FILE
     return d
 
@@ -89,17 +97,19 @@ def ops(drive, search, notifier):
 ])
 async def test_each_exception_maps_to_its_class_with_todays_text(ops, drive, exc, cls, text):
     drive.move.side_effect = exc
-    out = await ops.move(CTX, "u1", "drive:f1", folder="Archive", wait_s=5)
+    out = await ops.move(CTX, "u1", "drive:a1:f1", folder="Archive", wait_s=5)
     assert (out.op, out.cls, out.text, out.success) == (DriveOp.MOVE, cls, text, False)
 
 
 async def test_an_item_the_bot_cannot_open_is_refused_with_the_index_sentence(ops, drive, search):
     drive.delete.side_effect = DriveItemNotFoundError("x")
     search.access_note.return_value = "The file exists, but the bot cannot open it"
-    out = await ops.delete(CTX, "u1", "drive:f1", wait_s=5)
+    out = await ops.delete(CTX, "u1", "drive:a1:f1", wait_s=5)
     assert out.cls is OutcomeClass.REFUSED and out.facts.inaccessible
     assert out.text == "The file exists, but the bot cannot open it"
-    search.access_note.assert_awaited_once_with("u1", item_id="f1")
+    (conn,), kw = search.access_note.await_args   # once, on the ref's connection (MULTI_DRIVE_RFC §9)
+    assert search.access_note.await_count == 1
+    assert (conn.user_id, conn.ref_tag, kw) == ("u1", "a1", {"item_id": "f1"})
 
 
 async def test_not_configured_answers_before_any_call():
@@ -124,7 +134,8 @@ async def test_a_listing_is_ok_with_its_items(ops, drive):
     drive.list_folder.return_value = ListOutcome(folder=FOLDER, items=[FILE], truncated=False)
     out = await ops.list_folder(CTX, "u1", "Inbox")
     assert out.cls is OutcomeClass.OK and out.success
-    assert out.drive_context() == [{"path": "Inbox", "ref": "drive:d1"}, {"path": "Inbox/lease.pdf", "ref": "drive:f1"}]
+    assert out.drive_context() == [{"path": "Inbox", "ref": "drive:a1:d1"},
+                                   {"path": "Inbox/lease.pdf", "ref": "drive:a1:f1"}]
 
 
 def _card(**kw):
@@ -140,7 +151,7 @@ def _card(**kw):
     (DriveSearchResult(status=STATUS_OK, awaiting_rebuild=True), OutcomeClass.REBUILDING),
     (DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND), OutcomeClass.NOT_FOUND),
     (DriveSearchResult(status=STATUS_OK), OutcomeClass.NOT_FOUND),
-    (DriveSearchResult(status=STATUS_OK, cards=(_card(),)), OutcomeClass.OK),
+    (DriveSearchResult(status=STATUS_OK, cards=(_card(),), ref_tag="a1"), OutcomeClass.OK),
 ])
 async def test_search_class_comes_from_the_typed_result(ops, search, result, cls):
     search.search.return_value = result
@@ -159,7 +170,7 @@ async def test_read_facts_come_from_the_cards(ops, search):
         status=STATUS_OK,
         cards=(_card(passage="…deposit…", card_accuracy=80), _card(kind="image", capture="scan", inaccessible=True)),
         envelope=DriveSearchEnvelope(building=True),
-        tiered=TieredResult(concepts=("lease",), coverage=CoverageFacts(not_read_yet=2)))
+        tiered=TieredResult(concepts=("lease",), coverage=CoverageFacts(not_read_yet=2)), ref_tag="a1")
     out = await ops.search(CTX, "u1", query="lease")
     # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13, OQ-A2): the first card scores 80% with no capture recorded, so its
     # text is not known to be born-digital and low_accuracy_image is set
@@ -169,13 +180,13 @@ async def test_read_facts_come_from_the_cards(ops, search):
 
 async def test_plain_cards_carry_no_triggers(ops, search):
     search.search.return_value = DriveSearchResult(status=STATUS_OK, cards=(_card(),),
-                                                   tiered=TieredResult(concepts=("lease",)))
+                                                   tiered=TieredResult(concepts=("lease",)), ref_tag="a1")
     out = await ops.search(CTX, "u1", query="lease")
     assert out.facts == ReadFacts(cards=1)
 
 
 async def test_the_deleted_search_is_ok_with_hits_and_not_found_without(ops, search):
-    search.search_deleted.return_value = DeletedSearchResult("hits", [FILE])
+    search.search_deleted.return_value = DeletedSearchResult("hits", [FILE], ref_tag="a1")
     hit = await ops.search_deleted(CTX, "u1", "garden")
     search.search_deleted.return_value = DeletedSearchResult("none", [])
     miss = await ops.search_deleted(CTX, "u1", "garden")
@@ -199,14 +210,14 @@ async def _settle(ops):
 
 async def test_still_running_is_a_success_of_its_own_class(ops, drive):
     drive.move.side_effect = _late()
-    out = await ops.move(CTX, "u1", "drive:f1", folder="X", wait_s=0.01)
+    out = await ops.move(CTX, "u1", "drive:a1:f1", folder="X", wait_s=0.01)
     assert (out.cls, out.text, out.success) == (OutcomeClass.STILL_RUNNING, STILL_RUNNING, True)
     await _settle(ops)
 
 
 async def test_a_late_failing_delete_posts_its_notice_keyed_on_the_op(ops, drive, notifier):
     drive.delete.side_effect = _late(RuntimeError("boom"))
-    out = await ops.delete(CTX, "u1", "drive:f1", wait_s=0.01)
+    out = await ops.delete(CTX, "u1", "drive:a1:f1", wait_s=0.01)
     assert out.cls is OutcomeClass.STILL_RUNNING
     await _settle(ops)
     notifier.notify_raw.assert_awaited_once()
@@ -218,7 +229,7 @@ async def test_a_late_failing_append_posts_no_notice(ops, drive, notifier):
         await asyncio.sleep(0.15)
         raise RuntimeError("boom")
     drive.append_text.side_effect = late_append
-    out = await ops.append(CTX, "u1", "drive:f1", "more", wait_s=0.01)
+    out = await ops.append(CTX, "u1", "drive:a1:f1", "more", wait_s=0.01)
     assert out.cls is OutcomeClass.STILL_RUNNING
     await _settle(ops)
     notifier.notify_raw.assert_not_called()
@@ -248,7 +259,7 @@ async def test_one_user_one_lock_across_two_holders(ops, drive):
     """Two agents holding one DriveOperations serialize one user's mutations (§5.5)."""
     order = []
 
-    async def move(user_id, item_id, folder, new_name):
+    async def move(handle, item_id, folder, new_name):
         order.append(("start", folder))
         await asyncio.sleep(0.05)
         order.append(("end", folder))
@@ -257,8 +268,8 @@ async def test_one_user_one_lock_across_two_holders(ops, drive):
     first, second = _agent(ops), _agent(ops)
     # Reviewer edit at the cut: FileManagement has no drive mutation intent any more (DRIVE_SPECIALIST_RFC §5.5); the
     # first holder's mutation goes through the operations object it holds, the order assertion is unchanged
-    await asyncio.gather(first.drive_operations.move(CTX, "u1", "drive:f1", folder="A", wait_s=5),
-                         ops.move(CTX, "u1", "drive:f1", folder="B", wait_s=5))
+    await asyncio.gather(first.drive_operations.move(CTX, "u1", "drive:a1:f1", folder="A", wait_s=5),
+                         ops.move(CTX, "u1", "drive:a1:f1", folder="B", wait_s=5))
     assert order == [("start", "A"), ("end", "A"), ("start", "B"), ("end", "B")]
     assert second.drive_operations is first.drive_operations
 

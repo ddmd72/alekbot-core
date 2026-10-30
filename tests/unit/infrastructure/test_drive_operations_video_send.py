@@ -5,6 +5,7 @@ from src.domain.drive_op import DriveOp
 from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import VIDEO_NOT_SENT, DriveOperations
+from tests.support.drive_service_connections import ConnectionReads
 
 CTX = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
 CLIP = DriveItem(item_id="v1", name="clip.mp4", path="Videos/clip.mp4", is_folder=False, size_bytes=5,
@@ -19,8 +20,11 @@ class Conversion:
         return b"frames"
 
 
-class Drive:
-    """Only present so the drive is configured; opening a video never calls it."""
+class Drive(ConnectionReads):
+    """The drive service: an open resolves the ref to its connection and reads the item by handle."""
+
+    async def get_item(self, handle, item_id):
+        return CLIP
 
 
 class Notification:
@@ -41,7 +45,7 @@ def _ops(result: bool) -> tuple[DriveOperations, Notification]:
 async def test_a_failed_upload_is_a_failure_outcome(call):
     ops, note = _ops(False)
     if call == "open":
-        out = await ops.open(CTX, "u1", "drive:v1")
+        out = await ops.open(CTX, "u1", "drive:a1:v1")
     else:
         out = await ops.fetch_stored(CTX, "u1", "workspace:files/clip.mp4")
     assert (out.op, out.cls, out.success) == (DriveOp.OPEN, OutcomeClass.FAILED, False)
@@ -54,7 +58,7 @@ async def test_a_failed_upload_is_a_failure_outcome(call):
 async def test_a_successful_upload_is_unchanged(call, tail):
     ops, _ = _ops(True)
     if call == "open":
-        out = await ops.open(CTX, "u1", "drive:v1")
+        out = await ops.open(CTX, "u1", "drive:a1:v1")
     else:
         out = await ops.fetch_stored(CTX, "u1", "workspace:files/clip.mp4")
     assert out.cls is OutcomeClass.OK and out.success and out.text.endswith(tail)
