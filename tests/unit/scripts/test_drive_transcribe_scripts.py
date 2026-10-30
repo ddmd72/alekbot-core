@@ -1,4 +1,4 @@
-"""Operator scripts of the transcript build (USER_DRIVE_INDEXING_RFC §27.13, §27.15): the per-user flag, the backlog
+"""Operator scripts of the transcript build (USER_DRIVE_INDEXING_RFC §27.13, §27.15): the backlog
 estimate, the requeue (Δ122) and the orphan sweep. In-memory repositories only: no network, no cloud write."""
 import importlib.util
 from dataclasses import replace
@@ -11,7 +11,6 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_enrichment import ModelUsageMonth
 from src.domain.drive_index import DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState
 from src.domain.drive_transcript import JobWindow, StoredTranscript, TranscriptBatch, TranscriptJob, WindowSpec
-from src.domain.user import UserBotConfig, UserProfile
 
 from tests.unit.services.drive_index_fakes import T0
 
@@ -23,11 +22,6 @@ def _load(name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-@pytest.fixture
-def flag():
-    return _load("drive_transcribe_flag")
 
 
 @pytest.fixture
@@ -43,60 +37,6 @@ def requeue():
 @pytest.fixture
 def sweep():
     return _load("drive_transcript_sweep")
-
-
-# -- the per-user flag -----------------------------------------------------------------------------------------------
-
-class FakeUsers:
-    def __init__(self, enabled=False, exists=True, sticky=True):
-        self.user = UserProfile(user_id="u", account_id="a", config=UserBotConfig(drive_transcribe_enabled=enabled)) if exists else None
-        self.updates = 0
-        self.sticky = sticky
-
-    async def get_user(self, user_id):
-        return self.user.model_copy(deep=True) if self.user is not None else None
-
-    async def update_user(self, user):
-        self.updates += 1
-        if self.sticky:
-            self.user = user
-        return user
-
-
-async def test_flag_dry_run_writes_nothing_and_says_before_and_after(flag):
-    users = FakeUsers()
-    code, message = await flag.set_flag(users, "u", enabled=True, apply=False)
-    assert code == 0 and users.updates == 0 and users.user.config.drive_transcribe_enabled is False
-    assert "False" in message and "True" in message and "--apply" in message
-
-
-async def test_flag_apply_sets_it_and_prints_before_and_after(flag):
-    users = FakeUsers()
-    code, message = await flag.set_flag(users, "u", enabled=True, apply=True)
-    assert code == 0 and users.updates == 1 and users.user.config.drive_transcribe_enabled is True
-    assert "before False" in message and "after True" in message
-
-
-async def test_flag_off_clears_it(flag):
-    users = FakeUsers(enabled=True)
-    code, _ = await flag.set_flag(users, "u", enabled=False, apply=True)
-    assert code == 0 and users.user.config.drive_transcribe_enabled is False
-
-
-async def test_flag_already_in_place_writes_nothing(flag):
-    users = FakeUsers(enabled=True)
-    code, message = await flag.set_flag(users, "u", enabled=True, apply=True)
-    assert code == 0 and users.updates == 0 and "already" in message
-
-
-async def test_flag_unknown_user_is_an_error(flag):
-    code, _ = await flag.set_flag(FakeUsers(exists=False), "u", enabled=True, apply=True)
-    assert code == 1
-
-
-async def test_flag_write_that_does_not_stick_fails_loudly(flag):
-    code, message = await flag.set_flag(FakeUsers(sticky=False), "u", enabled=True, apply=True)
-    assert code == 1 and "did not stick" in message
 
 
 # -- the backlog -----------------------------------------------------------------------------------------------------

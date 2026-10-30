@@ -13,7 +13,11 @@ The estimate is the stage's own reservation (`file_estimate_usd`: the held hourl
 included, plus each window's prompt allowance), an upper bound of what the batch will bill. The monthly cap still applies:
 what does not fit is parked for the next month by the stage as for any file.
 
-`--apply` takes the user's lease (refused while a tick runs: retry in a few minutes) and, per candidate content key:
+Per connection (MULTI_DRIVE_RFC §8): the candidates are one connection's records (`--connection`, or the user's one live
+connection); the stored transcripts are the user's (§10), so a key that a record of the user's OTHER connections uses is
+skipped like a key a non-candidate copy uses. The "transcription is off" warning reads the connection's switch.
+
+`--apply` takes the connection's lease (refused while a tick runs: retry in a few minutes) and, per candidate content key:
 sets the records `ready` (stub, attempts, holds and wake-up cleared), THEN deletes the stored transcript, so a crash in
 between leaves records the stage finishes for free from the store; a re-run finishes the delete. The next tick buys the audio
 again. Nothing is logged but counts.
@@ -21,8 +25,8 @@ again. Nothing is logged but counts.
 Dry run by default: prints counts and the estimate, writes nothing.
 
 Usage (project and credentials from the environment / ADC, collections from APP_ENV, default development):
-    python scripts/infrastructure/drive_transcribe_requeue.py --user <user_id> [--apply]
-Exit code: 0 (also for a dry run or nothing to redo), 1 when nothing is stored for the user or the lease is busy.
+    python scripts/infrastructure/drive_transcribe_requeue.py --user <user_id> [--connection <id>] [--apply]
+Exit code: 0 (also for a dry run or nothing to redo), 1 when nothing is stored for the connection or the lease is busy.
 """
 import argparse
 import asyncio
@@ -32,10 +36,12 @@ import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from scripts.infrastructure.drive_connection_arg import resolve_connection  # noqa: E402
+from src.domain.connection_scope import ConnectionScope  # noqa: E402
 from src.domain.drive_index import TRANSCRIBE_VERSION, DriveIndexRecord  # noqa: E402
 from src.domain.drive_index_params import TRANSCRIBE_MAX_SECONDS, TRANSCRIBE_USD_PER_MONTH  # noqa: E402
 from src.domain.drive_index_policy import TRANSCRIBED_KINDS  # noqa: E402
@@ -74,10 +80,11 @@ def _seconds(rec: DriveIndexRecord) -> float:
     return float(min(rec.transcript_seconds, TRANSCRIBE_MAX_SECONDS)) if rec.transcript_seconds > 0 else 0.0
 
 
-def build_plan(records: List[DriveIndexRecord]) -> Plan:
-    """Group candidates by key; drop a key that any non-candidate record of the same key uses (its store must stay)."""
+def build_plan(records: List[DriveIndexRecord], others: Sequence[DriveIndexRecord] = ()) -> Plan:
+    """Group candidates by key; drop a key that any non-candidate record of the same key uses (its store must stay),
+    and any key a record of another connection of the user uses (`others`: the store is the user's, §10)."""
     candidates: Dict[str, List[DriveIndexRecord]] = {}
-    blocked = set()
+    blocked = {rec.transcript_key for rec in others if rec.transcript_key}
     for rec in records:
         if rec.is_folder or not rec.transcript_key:
             continue
@@ -102,15 +109,25 @@ def summary(plan: Plan) -> str:
             f"re-bought; estimated cost up to ${plan.estimate_usd:,.2f} (held price, an upper bound){skipped}")
 
 
-async def load_plan(repo: DriveIndexRepository, user_id: str) -> Plan:
+async def _media_records(repo: DriveIndexRepository, scope: ConnectionScope) -> List[DriveIndexRecord]:
     records: List[DriveIndexRecord] = []
     after: Optional[str] = None
     while True:
-        page = await repo.records_page(user_id, after, _PAGE)
+        page = await repo.records_page(scope, after, _PAGE)
         records.extend(r for r in page if not r.is_folder and r.kind in TRANSCRIBED_KINDS)
         if len(page) < _PAGE:
-            return build_plan(records)
+            return records
         after = page[-1].item_id
+
+
+async def load_plan(repo: DriveIndexRepository, scope: ConnectionScope,
+                    others: Sequence[ConnectionScope] = ()) -> Plan:
+    """The plan of one connection; `others` are the user's other connections, whose records only block keys."""
+    shared: List[DriveIndexRecord] = []
+    for other in others:
+        if other != scope:
+            shared += await _media_records(repo, other)
+    return build_plan(await _media_records(repo, scope), shared)
 
 
 def reset(rec: DriveIndexRecord) -> DriveIndexRecord:
@@ -120,41 +137,44 @@ def reset(rec: DriveIndexRecord) -> DriveIndexRecord:
 
 
 async def headroom_note(repo: DriveIndexRepository, user_id: str, plan: Plan, now: datetime, cap_usd: float,
-                        user_enabled: Optional[bool]) -> str:
-    """The month's headroom (cap - spent - reserved) beside the estimate, with a warning when the estimate exceeds it or
-    the user's drive_transcribe_enabled is off (`user_enabled` None = unknown, no warning about it)."""
+                        transcribe_enabled: Optional[bool]) -> str:
+    """The month's headroom (cap - spent - reserved; the cap is the user's, shared by the connections) beside the
+    estimate, with a warning when the estimate exceeds it or the connection's transcription switch is off
+    (`transcribe_enabled` None = unknown, no warning about it)."""
     usage = await repo.get_model_usage(user_id, month_key(now))
     room = max(0.0, cap_usd - usage.cap_usd("transcribe") - max(0.0, usage.transcribe_reserved_usd))
     note = f"; this month's headroom ${room:,.2f} (cap ${cap_usd:,.2f} less spent and reserved)"
     if plan.estimate_usd > room:
         note += " — WARNING: the estimate exceeds it, the stage parks what does not fit until next month"
-    if user_enabled is False:
-        note += " — WARNING: drive_transcribe_enabled is OFF for this user, nothing will be bought until it is on"
+    if transcribe_enabled is False:
+        note += (" — WARNING: transcription (transcribe_enabled) is OFF for this connection, nothing will be bought "
+                 "until it is on")
     return note
 
 
-async def requeue(repo: DriveIndexRepository, user_id: str, *, apply: bool, now: datetime, owner: str,
-                  cap_usd: float = TRANSCRIBE_USD_PER_MONTH, user_enabled: Optional[bool] = None) -> Tuple[int, str]:
+async def requeue(repo: DriveIndexRepository, scope: ConnectionScope, *, apply: bool, now: datetime, owner: str,
+                  cap_usd: float = TRANSCRIBE_USD_PER_MONTH, transcribe_enabled: Optional[bool] = None,
+                  others: Sequence[ConnectionScope] = ()) -> Tuple[int, str]:
     """Returns (exit code, message). The estimate and the month's headroom are in the message either way, before
-    anything is written."""
-    if await repo.get_sync_state(user_id) is None:
-        return 1, "no sync state: nothing is indexed for this user"
-    plan = await load_plan(repo, user_id)
+    anything is written. `others`: the user's other connections (their records keep a shared key)."""
+    if await repo.get_sync_state(scope) is None:
+        return 1, "no sync state: nothing is indexed for this connection"
+    plan = await load_plan(repo, scope, others)
     if not plan.groups:
         return 0, "nothing to redo" + (f" ({plan.skipped_shared} files skipped, shared)" if plan.skipped_shared else "")
-    note = await headroom_note(repo, user_id, plan, now, cap_usd, user_enabled)
+    note = await headroom_note(repo, scope.user_id, plan, now, cap_usd, transcribe_enabled)
     if not apply:
         return 0, f"dry run: {summary(plan)}{note}; re-run with --apply"
-    if await repo.acquire_lease(user_id, owner, now, now + _HOLD, create=False) is None:
+    if await repo.acquire_lease(scope, owner, now, now + _HOLD, create=False) is None:
         return 1, "a tick holds the lease (or the state just went away); retry in a few minutes"
     try:
         records = [r for recs in plan.groups.values() for r in recs]
         for start in range(0, len(records), _WRITE_BATCH):
             await repo.upsert_records([reset(r) for r in records[start:start + _WRITE_BATCH]])
         for key in plan.groups:    # after the records: a crash in between costs nothing (the store still answers)
-            await repo.delete_transcript(user_id, key)
+            await repo.delete_transcript(scope.user_id, key)
     finally:
-        await repo.release_lease(user_id, owner)
+        await repo.release_lease(scope, owner)
     return 0, f"requeued: {summary(plan)}{note}"
 
 
@@ -169,25 +189,27 @@ def resolve_cap(cli: Optional[float], env: Optional[str]) -> Tuple[float, str]:
     return effective_monthly_cap(None), "default (no cap knob)"
 
 
-async def _main(user_id: str, apply: bool, cap_usd: Optional[float] = None) -> int:
+async def _main(user_id: str, connection_id: Optional[str], apply: bool, cap_usd: Optional[float] = None) -> int:
     from google.cloud import firestore
 
+    from src.adapters.firestore_drive_connection_repo import FirestoreDriveConnectionRepository
     from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
     from src.config.environment import EnvironmentConfig
 
     env = EnvironmentConfig()
     db = firestore.AsyncClient(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None, database=env.firestore_database_id)
-    from src.adapters.firestore_account_repo import FirestoreAccountRepository
-    from src.adapters.firestore_user_repo import FirestoreUserRepository
-
-    accounts = FirestoreAccountRepository(db_client=db, collection_name=env.account_collection_name)
-    user = await FirestoreUserRepository(db, env, accounts).get_user(user_id)
+    connections = FirestoreDriveConnectionRepository(db, env.drive_connections_collection,
+                                                     env.drive_user_settings_collection)
+    conn, why = await resolve_connection(connections, user_id, connection_id)
+    if conn is None:
+        print(f"refused: {why}")
+        return 1
+    others = [c.scope for c in await connections.list_for_user(user_id) if c.connection_id != conn.connection_id]
     cap, source = resolve_cap(cap_usd, os.getenv("DRIVE_TRANSCRIBE_USD_CAP_DEV"))
     print(f"monthly cap assumed: ${cap:.2f} (from {source}; make sure it is the live one)")
-    code, message = await requeue(FirestoreDriveIndexRepository(db, env), user_id, apply=apply,
+    code, message = await requeue(FirestoreDriveIndexRepository(db, env), conn.scope, apply=apply,
                                   now=datetime.now(timezone.utc), owner=f"requeue-{uuid.uuid4().hex}",
-                                  cap_usd=cap,
-                                  user_enabled=None if user is None else bool(user.config.drive_transcribe_enabled))
+                                  cap_usd=cap, transcribe_enabled=conn.transcribe_enabled, others=others)
     print(message)
     return code
 
@@ -195,8 +217,9 @@ async def _main(user_id: str, apply: bool, cap_usd: Optional[float] = None) -> i
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--user", required=True, help="the user whose transcripts are re-bought")
+    parser.add_argument("--connection", default=None, help="the connection (default: the user's one live connection)")
     parser.add_argument("--apply", action="store_true", help="reset the jobs (default: dry run, estimate only)")
     parser.add_argument("--cap-usd", type=float, default=None,
                         help="the live monthly cap to assume (default: DRIVE_TRANSCRIBE_USD_CAP_DEV from .env, else $20)")
     args = parser.parse_args()
-    sys.exit(asyncio.run(_main(args.user, args.apply, args.cap_usd)))
+    sys.exit(asyncio.run(_main(args.user, args.connection, args.apply, args.cap_usd)))
