@@ -21,7 +21,7 @@ def _rec(item, graded, *, doc_type="invoice", capture="", extracted_by="parser@3
          refused=0, score=None, dates=()):
     profile = DriveProfile(title="t", what_it_is="w", language="en", doc_type=doc_type, dates=tuple(dates),
                            graded=tuple(graded))
-    return DriveIndexRecord(user_id="u", item_id=item, name=f"{item}.pdf", indexed_generation=1, profile=profile,
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item, name=f"{item}.pdf", indexed_generation=1, profile=profile,
                             profile_source="model", capture=capture, extracted_by=extracted_by,
                             read_by_fallback=fallback, truncated=truncated, pages_refused=refused, card_accuracy=score)
 
@@ -186,7 +186,7 @@ def test_read_weights_refuses_a_bad_file_with_a_clear_error(tmp_path):
 
 async def test_collect_cards_pages_and_skips_unscored_records():
     recs = _snapshot()
-    folder = DriveIndexRecord(user_id="u", item_id="f", name="dir", is_folder=True)
+    folder = DriveIndexRecord(user_id="u", connection_id="u", item_id="f", name="dir", is_folder=True)
     repo = AsyncMock(spec=DriveIndexRepository)
     repo.records_page.side_effect = [recs[:2] + [folder], recs[2:], []]
     cards = await script.collect_cards(repo, "u")

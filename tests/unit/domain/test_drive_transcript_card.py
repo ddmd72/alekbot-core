@@ -41,7 +41,7 @@ def test_card_segment_appended_for_transcribed_media():
 
 
 def test_media_without_a_transcript_has_no_segment_and_a_stable_hash():
-    rec = DriveIndexRecord(user_id="u", item_id="1", name="song.mp3", kind="audio", state=RecordState.METADATA_ONLY)
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="1", name="song.mp3", kind="audio", state=RecordState.METADATA_ONLY)
     assert "transcript" not in card_text(rec)
     assert card_hash(rec) == "b2a32339c47d5683a7880b89189b0de3"          # pinned: equal to the pre-§27 card hash
     for state in ("none", "working", "waiting", "failed"):
@@ -50,12 +50,12 @@ def test_media_without_a_transcript_has_no_segment_and_a_stable_hash():
 
 def test_untranscribed_media_card_unchanged_hash():
     rec = media(transcript_state="none", transcript_seconds=0, transcript_speakers=0, transcript_languages=())
-    assert card_hash(rec) == card_hash(DriveIndexRecord(user_id="u", item_id="m", name="call.m4a", kind="audio",
+    assert card_hash(rec) == card_hash(DriveIndexRecord(user_id="u", connection_id="u", item_id="m", name="call.m4a", kind="audio",
                                                        state=RecordState.INDEXED))
 
 
 def test_document_card_unchanged_hash():
-    rec = DriveIndexRecord(user_id="u", item_id="2", name="lease.pdf", kind="pdf", state=RecordState.INDEXED,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="2", name="lease.pdf", kind="pdf", state=RecordState.INDEXED,
                            profile=DriveProfile(title="Lease", what_it_is="A lease", language="en",
                                                 doc_type="contract", topics=("rent",)))
     assert card_hash(rec) == "245379c6567240f9d19e95a61d793ae1"

@@ -17,6 +17,8 @@ from src.services.drive_note_lifecycle import DriveNoteLifecycle
 
 from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
 from .drive_index_fakes import Clock, FakeEmbeddings, FakeQueue, FakeUsers
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 DRIVE = "d1"   # the fakes' drive id
 
@@ -35,11 +37,11 @@ class NotesWorld:
         self.svc = DriveIndexingService(self.drive, self.repo, self.emb, self.queue, self.users,
                                         lambda lat, lon: "Rome (Roma), Italy", "test-space/8",
                                         extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)},
-                                        triage=FakeTriage(), note_lifecycle=self.lifecycle, clock=self.clock,
+                                        triage=FakeTriage(), note_lifecycle=self.lifecycle, connections=LegacyConnections(self.users, self.drive), clock=self.clock,
                                         monotonic=self.clock.monotonic)
 
     async def tick(self, nudge=None):
-        return await self.svc.tick("u", nudge)
+        return await self.svc.tick(U_SCOPE, nudge)
 
     async def settle(self, max_ticks: int = 50):
         for _ in range(max_ticks):
@@ -78,4 +80,4 @@ class NotesWorld:
         return self.notes.notes[("u", note_id)]
 
     async def state(self):
-        return await self.repo.get_sync_state("u")
+        return await self.repo.get_sync_state(U_SCOPE)

@@ -20,7 +20,7 @@ def test_change_is_frozen_and_defaults_live():
 
 
 def test_record_defaults_have_no_work():
-    rec = DriveIndexRecord(user_id="u", item_id="a")
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="a")
     assert rec.due_at is None and rec.priority is None
     assert rec.indexed_generation is None and rec.index_generation == 0
     assert rec.has_card is False and rec.card_hash is None
@@ -32,7 +32,7 @@ def test_priority_order_matches_rfc_7_8():
 
 
 def test_sync_state_starts_idle_without_cursor():
-    st = DriveSyncState(user_id="u")
+    st = DriveSyncState(user_id="u", connection_id="u")
     assert st.epoch == 0 and st.epoch_phase is EpochPhase.IDLE and st.cursor is None
     assert st.applied_versions == {} and st.purging is False and st.systemic_failures == 0
 

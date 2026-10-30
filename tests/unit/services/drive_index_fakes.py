@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
 from src.domain.user_drive import DriveConnection, DriveItemNotFoundError, DriveResyncRequired
 
@@ -214,3 +215,6 @@ class LegacyConnections:
 
     async def reconnect_needed(self, user_id: str) -> List[Any]:
         return []
+
+# The single-drive harnesses' connection scope: user "u", whose connection id is "u" (`LegacyConnections`)
+U_SCOPE = ConnectionScope(user_id="u", connection_id="u")

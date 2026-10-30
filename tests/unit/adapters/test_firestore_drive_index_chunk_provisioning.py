@@ -11,6 +11,7 @@ import pytest
 from tests.unit.adapters.firestore_drive_chunk_fakes import CHUNKS, ChunkDb, make_chunk_repo
 from tests.unit.adapters.firestore_drive_fakes import RECS, executed
 from tests.unit.adapters.test_firestore_drive_index_provisioning import _deploy_commands
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -60,8 +61,8 @@ async def test_every_chunk_query_has_a_declared_index(db, mock_env_config):
     await repo.find_nearest_chunks("u", [1.0], 5, kind="pdf")
     await repo.find_chunks_by_term("u", "1250", 5)
     await repo.find_chunks_by_term("u", "1250", 5, kind="pdf")
-    await repo.chunks_page("u", None, 5)
-    await repo.chunks_page("u", ("a", 1, 0), 5)
+    await repo.chunks_page(U_SCOPE, None, 5)
+    await repo.chunks_page(U_SCOPE, ("a", 1, 0), 5)
     await repo.delete_chunks_except("u", "a", 1)
     await repo.delete_user_chunks("u", 5)
     queries = executed(db, CHUNKS)
@@ -105,7 +106,7 @@ async def test_no_chunk_query_relies_on_an_exempt_field(db, mock_env_config):
     await repo.delete_chunks_except("u", "a", 1)
     await repo.delete_user_chunks("u", 5)
     await repo.find_chunks_by_term("u", "1250", 5)
-    await repo.chunks_page("u", ("a", 1, 0), 5)
+    await repo.chunks_page(U_SCOPE, ("a", 1, 0), 5)
     await repo.find_chunks_by_word_keys("u", ["w:a"], 5)
     await repo.find_chunks_by_word_keys("u", ["w:a"], 5, after_item_id="a")
     exempt = _exempt("development_drive_index_chunks")
@@ -140,7 +141,7 @@ async def test_the_chunk_cap_and_unread_queries_have_their_records_indexes(db, m
     """Part B's release query and unread counts (§5.4, §10.2): an `in` or a null filter is an equality here."""
     repo = make_chunk_repo(db, mock_env_config)
     await repo.chunk_capped("u", 5)
-    await repo.count_unread("u", {"pdf", "docx"})
+    await repo.count_unread(U_SCOPE, {"pdf", "docx"})
     queries = executed(db, RECS)
     assert len(queries) == 7
     declared = _declared("development_drive_index_records")

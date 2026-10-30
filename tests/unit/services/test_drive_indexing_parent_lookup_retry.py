@@ -11,6 +11,7 @@ from src.services import drive_indexing_service as svc_mod
 
 from .drive_index_fakes import ROOT
 from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
+from .drive_index_fakes import U_SCOPE
 
 
 async def _onboarded():
@@ -21,7 +22,7 @@ async def _onboarded():
 
 
 async def _seed_unresolved(w, item_id, name, parent_id, *, folder=False):
-    rec = DriveIndexRecord(user_id="u", item_id=item_id, parent_id=parent_id, name=name, is_folder=folder,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, parent_id=parent_id, name=name, is_folder=folder,
                            kind="folder" if folder else "pdf", scope=Scope.UNRESOLVED, state=RecordState.UNRESOLVED,
                            policy_version=planner.POLICY_VERSION, seen_epoch=1, due_at=w.clock.now,
                            priority=int(Priority.CASCADE))
@@ -131,10 +132,10 @@ class TestParkedRecords:
         target = {**CURRENT_VERSIONS, "policy": POLICY_VERSION + 1}
         monkeypatch.setattr(planner, "POLICY_VERSION", POLICY_VERSION + 1)
         monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", target)
-        parked = DriveIndexRecord(user_id="u", item_id="zz_parked", parent_id=f, name="late.pdf", kind="pdf",
+        parked = DriveIndexRecord(user_id="u", connection_id="u", item_id="zz_parked", parent_id=f, name="late.pdf", kind="pdf",
                                   scope=Scope.UNRESOLVED, state=RecordState.UNRESOLVED, policy_version=1,
                                   seen_epoch=1)
         await w.repo.upsert_records([parked])
         await w.settle(max_ticks=100)
         assert planner.stale_versions(w.rec("zz_parked")) and w.rec("zz_parked").due_at is None
-        assert dict((await w.repo.get_sync_state("u")).applied_versions) == {**target, **EXTRACTOR_VERSIONS}
+        assert dict((await w.repo.get_sync_state(U_SCOPE)).applied_versions) == {**target, **EXTRACTOR_VERSIONS}

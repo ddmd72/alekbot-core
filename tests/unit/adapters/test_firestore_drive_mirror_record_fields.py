@@ -10,7 +10,7 @@ T = datetime(2026, 10, 21, 9, 30, tzinfo=timezone.utc)
 
 
 def test_mirror_fields_roundtrip():
-    rec = DriveIndexRecord(user_id="u", item_id="i", mirror_due=True, mirrored_digest="abc", mirror_retry_at=T,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", mirror_due=True, mirrored_digest="abc", mirror_retry_at=T,
                            mirror_held_digest="def")
     doc = record_to_doc(rec)
     stored = {k: (DatetimeWithNanoseconds(v.year, v.month, v.day, v.hour, v.minute, v.second, v.microsecond,

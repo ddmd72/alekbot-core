@@ -170,7 +170,7 @@ def test_the_notes_apply_in_memory_to_the_records_and_a_missing_record_is_refuse
     item_id = item_id_for("R&D")
     rec = DriveIndexRecord.__new__(DriveIndexRecord)   # replaced below by a real minimal record if available
     try:
-        rec = DriveIndexRecord(user_id="u", item_id=item_id, name="R&D", kind="folder", is_folder=True)
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, name="R&D", kind="folder", is_folder=True)
     except TypeError:
         pytest.skip("DriveIndexRecord needs more fields than this test builds")
     repo.records[("u", item_id)] = rec

@@ -72,7 +72,7 @@ def test_policy_1_marker_opaque_folder_is_re_planned():
 
 @pytest.mark.parametrize("kind", ["audio", "video"])
 def test_pending_media_is_not_unread_while_transcription_is_off(kind):
-    rec = DriveIndexRecord(user_id="u", item_id="m", kind=kind, state=RecordState.PENDING)
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="m", kind=kind, state=RecordState.PENDING)
     # off = the media set is not given (Task 5: the bare policy default now counts recordings, G2)
     kinds, images = pol.ADMITTED_KINDS, pol.TRIAGED_KINDS
     assert not is_unread(rec, kinds, images) and not is_not_read_yet(rec, kinds, images)

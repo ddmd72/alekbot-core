@@ -11,7 +11,7 @@ BRIEF_DATE = datetime(2024, 3, 15, tzinfo=timezone.utc)
 
 
 def rec() -> DriveIndexRecord:
-    return DriveIndexRecord(user_id="u", item_id="x", name="a.pdf", kind="pdf", scope=Scope.NORMAL,
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id="x", name="a.pdf", kind="pdf", scope=Scope.NORMAL,
                             state=RecordState.PENDING, content_version="c1")
 
 

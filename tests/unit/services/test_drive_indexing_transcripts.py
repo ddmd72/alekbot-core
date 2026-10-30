@@ -41,6 +41,7 @@ from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
 from .drive_enrich_world import EnrichWorld
 from .drive_index_fakes import T0
 from .drive_transcript_fakes import FakeBatch, FakeDrive, FakeMedia, FakeRunner, Recording
+from .drive_index_fakes import LegacyConnections
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -141,7 +142,7 @@ class TranscriptWorld(EnrichWorld):
             self.drive, self.repo, self.emb, self.queue, self.users, lambda lat, lon: "Rome (Roma), Italy", SPACE,
             extractors={"parser": self.parser, "reader": self.reader}, triage=self.triage,
             profiler=self.profiler if enrich else None, passages=self.passages if enrich else None,
-            transcripts=self.stage, transcribe_enabled=switch, transcribe_cap_usd=tick_cap, clock=self.clock,
+            transcripts=self.stage, transcribe_enabled=switch, transcribe_cap_usd=tick_cap, connections=LegacyConnections(self.users, self.drive), clock=self.clock,
             monotonic=self.clock.monotonic)
         self.states: Dict[str, List[str]] = {}
         real_upsert = self.repo.upsert_records
@@ -690,7 +691,7 @@ async def test_cap_override_only_lowers(world, raw, cap):
     ready = transcript_plan(_media(), _ctx(w))
     assert ready.transcript_state == "ready"
     await w.repo.upsert_records([ready])
-    models = svc_mod._Models(DriveSyncState(user_id="u"))
+    models = svc_mod._Models(DriveSyncState(user_id="u", connection_id="u"))
     assert await w.svc._extraction_ready("u", models) is (cap > 0)
     await w.repo.reserve_model_usd("u", month_key(w.clock()), UsageClass.TRANSCRIBE.value, 5.0)
     assert await w.svc._extraction_ready("u", models) is (cap > 5.0)

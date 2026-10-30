@@ -31,6 +31,7 @@ from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
 from .drive_index_fakes import ROOT
 from .drive_mirror_tick_step_world import StepWorld
 from .drive_mirror_tick_world import DRIVE
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -332,9 +333,9 @@ async def test_no_continuation_for_mirror_work(world):
     _, continued = await w.tick_counting()
     assert not continued
     assert w.outs[-1].get("mirror_ops") == MIRROR_OPS_PER_TICK
-    assert await w.repo.mirror_queue("u", 1)   # work is left, and only the fan-out's next tick takes it
+    assert await w.repo.mirror_queue(U_SCOPE, 1)   # work is left, and only the fan-out's next tick takes it
     _, continued = await w.tick_counting()
-    assert not continued and not await w.repo.mirror_queue("u", 1)
+    assert not continued and not await w.repo.mirror_queue(U_SCOPE, 1)
 
 
 async def test_tick_line_counters(world, caplog):

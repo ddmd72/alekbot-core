@@ -32,6 +32,7 @@ from tests.unit.adapters.firestore_drive_chunk_fakes import ChunkDb, make_chunk_
 from tests.unit.adapters.firestore_drive_eval_fakes import (
     CHUNKS, HINTS, RECS, USAGE, EvalDb, eval_transactions, make_eval_repo,
 )
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 T = datetime(2026, 10, 13, 9, 30, tzinfo=timezone.utc)
 FIRESTORE_REQUEST_LIMIT = 10 * 1024 * 1024
@@ -40,13 +41,13 @@ HEAVY = ("text", "word_keys", "content_terms", "items", "profile", "readme_excer
 
 
 def hint(item="a", gen=1, index=0, *, keys=("w:roma",), kind="pdf", items=None):
-    return DriveHintDoc(user_id="u", item_id=item, generation=gen, index=index, kind=kind, chunk_text_hash="sha",
+    return DriveHintDoc(user_id="u", connection_id="u", item_id=item, generation=gen, index=index, kind=kind, chunk_text_hash="sha",
                         items=items if items is not None else (HintItem("Rome", "keyword", "en Roma", 12, 19),),
                         hint_keys=tuple(keys), passages_version=1)
 
 
 def big_chunk(index, *, keys=900, text_chars=2_400):
-    return DriveChunk(user_id="u", item_id="big", generation=1, index=index, text="ё" * text_chars, char_start=0,
+    return DriveChunk(user_id="u", connection_id="u", item_id="big", generation=1, index=index, text="ё" * text_chars, char_start=0,
                       char_end=text_chars, kind="pdf", content_terms=tuple(f"{n:08d}" for n in range(64)),
                       word_keys=tuple(f"w:слово{n:05d}" for n in range(keys)), keys_version=1)
 
@@ -81,7 +82,7 @@ class TestLeanProjections:
             assert not set(selected(ops)) & set(HEAVY)
 
     async def test_get_records_lean_reads_only_the_lean_fields(self, repo, db):
-        await repo.get_records_lean("u", ["a", "b"])
+        await repo.get_records_lean(U_SCOPE, ["a", "b"])
         ((ids, paths),) = db.get_all_calls
         assert ids == ["u:a", "u:b"] and tuple(paths) == RECORD_LEAN_FIELDS
 
@@ -90,7 +91,7 @@ class TestLeanProjections:
         (ops,) = db.cols[CHUNKS].executed
         assert selected(ops) == CHUNK_LEAN_FIELDS == ("user_id", "item_id", "generation", "index", "kind")
         await repo.find_hints_by_keys("u", ["w:roma"], 5)
-        await repo.hints_page("u", ("a", 1, 0), 5)
+        await repo.hints_page(U_SCOPE, ("a", 1, 0), 5)
         await repo.find_nearest_hints("u", [1.0, 0.0], 5, kind="pdf")
         hint_ops = db.cols[HINTS].executed
         assert [selected(ops) for ops in hint_ops[:2]] == [HINT_LEAN_FIELDS] * 2
@@ -107,7 +108,7 @@ class TestLeanProjections:
             (["u:a:1:0"], ("item_id", "generation", "index", "hint_keys"))]
 
     async def test_windows_read_whole_hint_documents_and_only_the_keys_pass_reads_vectors(self, repo, db):
-        await repo.get_hints("u", "a", 1)
+        await repo.get_hints(U_SCOPE, "a", 1)
         await repo.get_hints_with_vectors("u", "a", 1)
         first, second = db.cols[HINTS].executed
         assert selected(first) == HINT_FIELDS and HINT_VECTOR not in selected(first)
@@ -201,7 +202,7 @@ class TestByteBatches:
     @pytest.mark.slow
     async def test_records_are_batched_by_bytes_too(self, mock_env_config):
         db = ChunkDb()
-        records = [DriveIndexRecord(user_id="u", item_id=f"r{i}", about_keys=tuple(f"e:k{n:04d}" * 4
+        records = [DriveIndexRecord(user_id="u", connection_id="u", item_id=f"r{i}", about_keys=tuple(f"e:k{n:04d}" * 4
                                                                                     for n in range(600)),
                                     readme_excerpt="x" * 7_500) for i in range(RECORD_WRITE_BATCH)]
         await make_chunk_repo(db, mock_env_config).upsert_records(records)
@@ -315,7 +316,7 @@ class TestTheSdkBuildsTheQueries:
         repo = _real_repo(mock_env_config)
         for call in (lambda: repo.find_by_about_keys("u", ["e:rome"], 5),
                      lambda: repo.find_hints_by_keys("u", ["w:roma"], 5),
-                     lambda: repo.enrich_queue("u", 5),
+                     lambda: repo.enrich_queue(U_SCOPE, 5),
                      lambda: repo.count_by_job_state("u", {"pdf"})):
             with pytest.raises(DriveIndexStoreUnavailable) as raised:
                 await call()

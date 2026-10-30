@@ -27,7 +27,7 @@ def _drive_item(w, item_id, name, parent, folder=True, child_count=0):
 
 
 async def _seed_unresolved(w, item_id, name, parent_id, *, folder=True, child_count=0, due=True):
-    rec = DriveIndexRecord(user_id="u", item_id=item_id, parent_id=parent_id, name=name, is_folder=folder,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, parent_id=parent_id, name=name, is_folder=folder,
                            child_count=child_count, kind="folder" if folder else "pdf", scope=Scope.UNRESOLVED,
                            state=RecordState.UNRESOLVED, policy_version=planner.POLICY_VERSION, seen_epoch=1,
                            due_at=w.clock.now if due else None, priority=int(Priority.CASCADE) if due else None)

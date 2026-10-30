@@ -128,7 +128,7 @@ class TestProfilePlan:
         assert rec.profile_state == JobState.CURRENT.value and rec.profile.doc_type == "web_page"
 
     def test_a_collapsed_folder_with_a_readme_excerpt_is_ready(self):
-        folder = DriveIndexRecord(user_id="u", item_id="f1", name="repo", is_folder=True, kind="folder",
+        folder = DriveIndexRecord(user_id="u", connection_id="u", item_id="f1", name="repo", is_folder=True, kind="folder",
                                   scope=Scope.OPAQUE_ROOT, state=RecordState.METADATA_ONLY, reason=Reason.OPAQUE_ROOT,
                                   readme_excerpt="# Tool\n\nIt converts invoices.")
         rec = ep.profile_plan(folder, ctx())

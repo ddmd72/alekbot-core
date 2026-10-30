@@ -134,7 +134,7 @@ class TestCollectChunks:
         assert p.collect_chunks == "a"
 
     def test_moving_into_an_opaque_folder_collects(self):
-        repo = DriveIndexRecord(user_id="u", item_id="repo", name="repo", parent_id=ROOT, is_folder=True,
+        repo = DriveIndexRecord(user_id="u", connection_id="u", item_id="repo", name="repo", parent_id=ROOT, is_folder=True,
                                 kind="folder", content_class=ContentClass.FOLDER, scope=Scope.OPAQUE_ROOT,
                                 state=RecordState.METADATA_ONLY, reason=Reason.OPAQUE_ROOT, policy_version=1)
         p = plan(ch(parent="repo"), indexed_rec(), parent=repo)

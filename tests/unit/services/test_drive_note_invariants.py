@@ -49,6 +49,7 @@ from src.services.drive_search_service import DriveSearchService
 
 from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
 from .drive_index_fakes import ROOT, T0, Clock, FakeEmbeddings, FakeQueue, FakeUsers
+from .drive_index_fakes import LegacyConnections
 
 SPACE = "test-space/8"
 U, ACC = "u", "a"
@@ -140,7 +141,7 @@ class World:
         self.tick_svc = DriveIndexingService(
             self.drive, self.repo, self.emb, self.queue, self.users, lambda lat, lon: None, SPACE,
             extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)}, triage=FakeTriage(),
-            notes=self.notes, note_lifecycle=self.lifecycle, clock=self.clock, monotonic=self.clock.monotonic)
+            notes=self.notes, note_lifecycle=self.lifecycle, connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)
         codes = iter(f"c{i:04d}" for i in range(100))
         self.note_svc = DriveNoteService(
             self.notes, self.drive, self.repo, self.emb, _security(), self.users, embedding_space=SPACE,

@@ -11,6 +11,7 @@ from src.domain.user_drive import DriveThrottled
 from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -43,7 +44,7 @@ async def test_systemic_errors_never_fail_a_record(w):
         assert (rec.state, rec.attempts, rec.attempt_started_at) == (RecordState.PENDING, 0, None)
         assert w.chunks(doc) == []
         w.clock.advance(1800)
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.last_error is ErrorCategory.THROTTLED and state.systemic_failures == 10
     generations = w.rec(doc).index_generation
     flaky.failing = False

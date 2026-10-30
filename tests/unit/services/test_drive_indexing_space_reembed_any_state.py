@@ -17,6 +17,8 @@ from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
 from .drive_usage_helpers import close_initial_build, spend
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -39,13 +41,13 @@ def _world():
 
 def _switch_space(w, space):
     w.svc = svc_mod.DriveIndexingService(w.drive, w.repo, w.emb, w.queue, w.users, lambda lat, lon: None, space,
-                                         extractors=w.svc._extractors, triage=w.svc._triage, clock=w.clock,
+                                         extractors=w.svc._extractors, triage=w.svc._triage, connections=LegacyConnections(w.users, w.drive), clock=w.clock,
                                          monotonic=w.clock.monotonic)
 
 
 async def _assert_switched(w, doc, texts):
     rec = w.rec(doc)
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert rec.chunk_space == NEW and not rec.chunk_reembed_pending
     assert [c.text for c in w.readable(doc)] == texts and w.generations(doc) == [rec.indexed_generation]
     assert state.applied_space == NEW and state.cards_in_space(NEW)

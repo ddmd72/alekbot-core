@@ -17,6 +17,7 @@ from src.domain.agent import AgentStatus
 from src.domain.user_drive import DriveConnection
 from src.services.drive_sync_scheduler_service import RECONNECT_NOTICE, DriveSyncSchedulerService
 from tests.unit.services.drive_index_fakes import Clock, FakeDrive, FakeQueue, FakeUsers
+from .drive_index_fakes import U_SCOPE
 
 
 class FakeAlerts:
@@ -106,7 +107,7 @@ class TestFanOut:
 
     async def test_disabled_user_with_state_is_ticked_so_the_purge_runs(self, env):
         env.users.enabled["u"] = False
-        await env.repo.save_sync_state(DriveSyncState(user_id="u"))
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u"))
         await env.svc.fan_out()
         assert len(_drive_tasks(env.queue)) == 1
 
@@ -124,13 +125,13 @@ class TestFanOut:
         assert "ghost" in {t["payload"]["user_id"] for t in _drive_tasks(env.queue)}
 
     async def test_fresh_continuation_skips_the_user(self, env):
-        await env.repo.save_sync_state(DriveSyncState(user_id="u", continuation_enqueued_at=env.clock.now))
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", continuation_enqueued_at=env.clock.now))
         env.clock.advance(TICK_DEADLINE_S - 1)
         summary = await env.svc.fan_out()
         assert summary["continuing"] == 1 and _drive_tasks(env.queue) == []
 
     async def test_old_continuation_no_longer_skips(self, env):
-        await env.repo.save_sync_state(DriveSyncState(user_id="u", continuation_enqueued_at=env.clock.now))
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", continuation_enqueued_at=env.clock.now))
         env.clock.advance(TICK_DEADLINE_S)
         await env.svc.fan_out()
         assert len(_drive_tasks(env.queue)) == 1
@@ -151,34 +152,34 @@ class TestFanOut:
         assert [t["payload"]["user_id"] for t in _drive_tasks(env.queue)] == ["v"]
 
     async def test_fan_out_writes_only_the_two_flags(self, env):
-        state = DriveSyncState(user_id="u", last_success_at=env.clock.now, cursor="delta:7", epoch=3)
+        state = DriveSyncState(user_id="u", connection_id="u", last_success_at=env.clock.now, cursor="delta:7", epoch=3)
         await env.repo.save_sync_state(state)
         env.clock.advance(STALE_ALERT_AFTER.total_seconds() + 1)
         env.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
         await env.svc.fan_out()
-        after = await env.repo.get_sync_state("u")
+        after = await env.repo.get_sync_state(U_SCOPE)
         assert replace(after, stale_alerted=False, reconnect_notified=False) == state
         assert env.repo.records == {}
 
 
 class TestStaleness:
     async def test_alert_on_transition_only(self, env):
-        await env.repo.save_sync_state(DriveSyncState(user_id="u", last_success_at=env.clock.now))
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", last_success_at=env.clock.now))
         env.clock.advance(STALE_ALERT_AFTER.total_seconds() + 1)
         await env.svc.fan_out()
         env.clock.advance(600)
         await env.svc.fan_out()
         assert len(env.alerts.posts) == 1 and "u" in env.alerts.posts[0]
-        assert (await env.repo.get_sync_state("u")).stale_alerted is True
+        assert (await env.repo.get_sync_state(U_SCOPE)).stale_alerted is True
 
     async def test_flag_clears_when_fresh_again_and_next_incident_alerts(self, env):
-        await env.repo.save_sync_state(DriveSyncState(user_id="u", last_success_at=env.clock.now))
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", last_success_at=env.clock.now))
         env.clock.advance(STALE_ALERT_AFTER.total_seconds() + 1)
         await env.svc.fan_out()
-        st = await env.repo.get_sync_state("u")
+        st = await env.repo.get_sync_state(U_SCOPE)
         await env.repo.save_sync_state(replace(st, last_success_at=env.clock.now))   # a clean tick
         await env.svc.fan_out()
-        assert (await env.repo.get_sync_state("u")).stale_alerted is False
+        assert (await env.repo.get_sync_state(U_SCOPE)).stale_alerted is False
         env.clock.advance(STALE_ALERT_AFTER.total_seconds() + 1)
         await env.svc.fan_out()
         assert len(env.alerts.posts) == 2
@@ -186,7 +187,7 @@ class TestStaleness:
     async def test_never_succeeded_user_alerts_after_stale_window(self, env):
         """A broken onboarding: every tick failed, so there is no last_success_at; created_at is the
         baseline (§12.1)."""
-        await env.repo.save_sync_state(DriveSyncState(user_id="u", created_at=env.clock.now,
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", created_at=env.clock.now,
                                                       last_error=ErrorCategory.PROVIDER_ERROR))
         env.clock.advance(STALE_ALERT_AFTER.total_seconds() - 60)
         await env.svc.fan_out()
@@ -198,7 +199,7 @@ class TestStaleness:
         assert len(env.alerts.posts) == 1 and "never" in env.alerts.posts[0]
 
     async def test_overdue_class0_record_is_stale(self, env):
-        await env.repo.save_sync_state(DriveSyncState(user_id="u", last_success_at=env.clock.now))
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", last_success_at=env.clock.now))
         await env.repo.upsert_records([DriveIndexRecord(
             user_id="u", item_id="a", due_at=env.clock.now - STALE_ALERT_AFTER - timedelta(seconds=1),
             priority=int(Priority.EDIT))])
@@ -206,7 +207,7 @@ class TestStaleness:
         assert len(env.alerts.posts) == 1
 
     async def test_overdue_cascade_is_not_stale(self, env):
-        await env.repo.save_sync_state(DriveSyncState(user_id="u", last_success_at=env.clock.now))
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", last_success_at=env.clock.now))
         await env.repo.upsert_records([DriveIndexRecord(
             user_id="u", item_id="a", due_at=env.clock.now - STALE_ALERT_AFTER - timedelta(seconds=1),
             priority=int(Priority.CASCADE))])
@@ -214,7 +215,7 @@ class TestStaleness:
         assert env.alerts.posts == []
 
     async def test_access_lost_never_alerts(self, env):
-        await env.repo.save_sync_state(DriveSyncState(user_id="u", last_success_at=env.clock.now,
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", last_success_at=env.clock.now,
                                                       access_lost_at=env.clock.now))
         env.clock.advance(STALE_ALERT_AFTER.total_seconds() * 3)
         await env.svc.fan_out()
@@ -222,17 +223,17 @@ class TestStaleness:
 
     async def test_failed_alert_keeps_flag_down_and_still_enqueues(self, env):
         env.alerts.fail = True
-        await env.repo.save_sync_state(DriveSyncState(user_id="u", last_success_at=env.clock.now,
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", last_success_at=env.clock.now,
                                                       last_error=ErrorCategory.INTERNAL))
         env.clock.advance(STALE_ALERT_AFTER.total_seconds() + 1)
         summary = await env.svc.fan_out()
-        assert (await env.repo.get_sync_state("u")).stale_alerted is False
+        assert (await env.repo.get_sync_state(U_SCOPE)).stale_alerted is False
         assert summary["errors"] == 1 and len(_drive_tasks(env.queue)) == 1
 
 
 class TestReconnectNotice:
     async def _lost(self, env):
-        await env.repo.save_sync_state(DriveSyncState(user_id="u", last_error=ErrorCategory.RECONNECT_NEEDED))
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", last_error=ErrorCategory.RECONNECT_NEEDED))
         env.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
 
     async def test_reconnect_notice_once_per_breakage(self, env):
@@ -244,7 +245,7 @@ class TestReconnectNotice:
         call = env.notifier.calls[0]
         assert call == {"user_id": "u", "account_id": "a", "alert": RECONNECT_NOTICE,
                         "kind": NotificationKind.DOCUMENT_DELIVERY}
-        assert (await env.repo.get_sync_state("u")).reconnect_notified is True
+        assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is True
 
     async def test_good_grant_clears_flag_and_next_breakage_notifies_again(self, env):
         await self._lost(env)
@@ -252,7 +253,7 @@ class TestReconnectNotice:
         env.drive.connection_state = DriveConnection(connected=True, drive_id="d1")
         env.clock.advance(600)
         await env.svc.fan_out()
-        assert (await env.repo.get_sync_state("u")).reconnect_notified is False
+        assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is False
         env.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
         env.clock.advance(600)
         await env.svc.fan_out()
@@ -263,12 +264,12 @@ class TestReconnectNotice:
         await self._lost(env)
         env.notifier.result = NotifyResult(delivered=False, agent_status=AgentStatus.SUCCESS, error=error)
         await env.svc.fan_out()
-        assert (await env.repo.get_sync_state("u")).reconnect_notified is False
+        assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is False
         env.notifier.result = NotifyResult(delivered=True, agent_status=AgentStatus.SUCCESS)
         env.clock.advance(600)
         await env.svc.fan_out()
         assert len(env.notifier.calls) == 2
-        assert (await env.repo.get_sync_state("u")).reconnect_notified is True
+        assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is True
 
     @pytest.mark.parametrize("result", [
         NotifyResult(delivered=False, agent_status=AgentStatus.FAILED, error="send raised", sent=True),
@@ -284,19 +285,19 @@ class TestReconnectNotice:
         env.clock.advance(600)
         await env.svc.fan_out()
         assert len(env.notifier.calls) == 1
-        assert (await env.repo.get_sync_state("u")).reconnect_notified is True
+        assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is True
 
     async def test_notifier_raising_is_counted_and_retried(self, env):
         await self._lost(env)
         env.notifier.raises = RuntimeError("channel lookup failed")
         summary = await env.svc.fan_out()
         assert summary["errors"] == 1 and summary["enqueued"] == 1
-        assert (await env.repo.get_sync_state("u")).reconnect_notified is False
+        assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is False
         env.notifier.raises = None
         env.clock.advance(600)
         await env.svc.fan_out()
         assert len(env.notifier.calls) == 2
-        assert (await env.repo.get_sync_state("u")).reconnect_notified is True
+        assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is True
 
     async def test_every_tick_is_enqueued_before_any_notice(self, env):
         """A notice runs through the formatter (up to 120 s): it must never delay another user's tick."""
@@ -313,23 +314,23 @@ class TestReconnectNotice:
     async def test_connection_states_are_per_user(self, env):
         env.connected.append("v")
         env.users.enabled["v"] = True
-        await env.repo.save_sync_state(DriveSyncState(user_id="u"))
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u"))
         await env.repo.save_sync_state(DriveSyncState(user_id="v"))
         await env.repo.update_sync_flags("v", reconnect_notified=True)
         env.drive.per_user["u"] = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
         env.drive.per_user["v"] = DriveConnection(connected=True, drive_id="d1")
         await env.svc.fan_out()
         assert [c["user_id"] for c in env.notifier.calls] == ["u"]
-        assert (await env.repo.get_sync_state("u")).reconnect_notified is True
+        assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is True
         assert (await env.repo.get_sync_state("v")).reconnect_notified is False
 
     async def test_deliberate_disconnect_sends_no_notice_and_keeps_flag(self, env):
-        await env.repo.save_sync_state(DriveSyncState(user_id="u"))
-        await env.repo.update_sync_flags("u", reconnect_notified=True)
+        await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u"))
+        await env.repo.update_sync_flags(U_SCOPE, reconnect_notified=True)
         env.drive.connection_state = DriveConnection(connected=False)
         await env.svc.fan_out()
         assert env.notifier.calls == []
-        assert (await env.repo.get_sync_state("u")).reconnect_notified is True
+        assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is True
 
     async def test_disabled_user_gets_no_notice(self, env):
         await self._lost(env)

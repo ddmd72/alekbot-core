@@ -26,7 +26,7 @@ def _stored(value):
 
 
 def test_the_record_copy_round_trips():
-    rec = DriveIndexRecord(user_id="u", item_id="i", owner_note_id="n1", owner_note_version=3,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", owner_note_id="n1", owner_note_version=3,
                            owner_note_text="the contractor's invoice", owner_doc_type="contract",
                            owner_life_areas=("home", "finance"), owner_note_merge_version=1)
     doc = record_to_doc(rec)
@@ -35,7 +35,7 @@ def test_the_record_copy_round_trips():
 
 
 def test_the_notes_state_round_trips_with_plain_datetimes():
-    state = DriveSyncState(user_id="u", notes_applied_at=T, notes_applied_id="n9", notes_paging=True,
+    state = DriveSyncState(user_id="u", connection_id="u", notes_applied_at=T, notes_applied_id="n9", notes_paging=True,
                            notes_scanned_at=T, notes_merge_version=1, notes_space="space/8", notes_space_at=T,
                            notes_space_id="n3")
     doc = state_to_doc(state)

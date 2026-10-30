@@ -18,7 +18,7 @@ PHOTO_FACETS = {"photo": {"takenDateTime": "2025-08-01T10:00:00Z", "cameraMake":
 
 def rec(name="Договор.pdf", kind="pdf", **kw):
     kw.setdefault("reason", Reason.KIND_NOT_ADMITTED)
-    return DriveIndexRecord(user_id="u", item_id="i", name=name, kind=kind, scope=Scope.NORMAL,
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id="i", name=name, kind=kind, scope=Scope.NORMAL,
                             state=RecordState.METADATA_ONLY, **kw)
 
 
@@ -30,10 +30,10 @@ SLICE1 = [
     (rec("clip.mp4", "video", facets={"video": {"duration": 125000, "width": 1920, "height": 1080}}),
      "clip.mp4 | video | video 2:05 1920x1080"),
     (rec("notes", "other"), "notes | file"),
-    (DriveIndexRecord(user_id="u", item_id="f", name="Docs", is_folder=True, kind="folder",
+    (DriveIndexRecord(user_id="u", connection_id="u", item_id="f", name="Docs", is_folder=True, kind="folder",
                       content_class=ContentClass.FOLDER, scope=Scope.NORMAL, state=RecordState.METADATA_ONLY,
                       reason=Reason.FOLDER), "Docs | folder"),
-    (DriveIndexRecord(user_id="u", item_id="r", name="proj", is_folder=True, kind="folder",
+    (DriveIndexRecord(user_id="u", connection_id="u", item_id="r", name="proj", is_folder=True, kind="folder",
                       content_class=ContentClass.FOLDER, scope=Scope.OPAQUE_ROOT, state=RecordState.METADATA_ONLY,
                       reason=Reason.OPAQUE_ROOT), "proj | repository"),
 ]

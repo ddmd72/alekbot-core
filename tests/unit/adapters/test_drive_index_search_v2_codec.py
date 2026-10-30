@@ -70,7 +70,7 @@ def v2_record() -> DriveIndexRecord:
 
 class TestRecordFields:
     def test_the_fixture_sets_every_v2_field(self):
-        default = DriveIndexRecord(user_id="u", item_id="i")
+        default = DriveIndexRecord(user_id="u", connection_id="u", item_id="i")
         assert [n for n in V2_RECORD_FIELDS if getattr(v2_record(), n) == getattr(default, n)] == []
 
     def test_every_v2_field_is_a_stored_field(self):
@@ -91,25 +91,25 @@ class TestRecordFields:
         assert type(back) is datetime and back.utcoffset() == timedelta(0)
 
     def test_neutral_defaults(self):
-        rec = DriveIndexRecord(user_id="u", item_id="i")
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i")
         assert rec.profile is None and rec.profile_state == "none" and rec.passages_state == "none"
         assert rec.about_keys == () and rec.keys_version == 0 and not rec.enrich_ready and not rec.keys_capped
 
     def test_a_v1_document_reads_with_the_defaults(self):
-        v1 = {f: v for f, v in record_to_doc(DriveIndexRecord(user_id="u", item_id="i")).items()
+        v1 = {f: v for f, v in record_to_doc(DriveIndexRecord(user_id="u", connection_id="u", item_id="i")).items()
               if f not in V2_RECORD_FIELDS}
-        assert record_from_doc(v1) == DriveIndexRecord(user_id="u", item_id="i")
+        assert record_from_doc(v1) == DriveIndexRecord(user_id="u", connection_id="u", item_id="i")
 
 
 class TestStateField:
     def test_backoff_by_agent_round_trips_as_plain_utc(self):
-        state = DriveSyncState(user_id="u", model_backoff_by_agent={"drive_profiler": T, "drive_passages": T})
+        state = DriveSyncState(user_id="u", connection_id="u", model_backoff_by_agent={"drive_profiler": T, "drive_passages": T})
         back = state_from_doc("u", stored(state_to_doc(state)))
         assert back == state
         assert all(type(v) is datetime for v in back.model_backoff_by_agent.values())
 
     def test_default_is_empty(self):
-        assert DriveSyncState(user_id="u").model_backoff_by_agent == {}
+        assert DriveSyncState(user_id="u", connection_id="u").model_backoff_by_agent == {}
         assert state_from_doc("u", {}).model_backoff_by_agent == {}
 
 

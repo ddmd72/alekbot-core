@@ -63,7 +63,7 @@ class Language:
 
 
 def closed(item_id, name, parent="root", since=MARKED, notified=None, folder=False):
-    return DriveIndexRecord(user_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=folder,
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=folder,
                             kind="folder" if folder else "pdf", scope=Scope.NORMAL,
                             state=RecordState.METADATA_ONLY if folder else RecordState.PENDING, has_card=True,
                             inaccessible_since=since, inaccessible_checked_at=since,
@@ -89,7 +89,7 @@ def env():
 
 
 async def state(env, observed=MARKED + timedelta(minutes=10), waiting=1, **kw):
-    env.repo.states["u"] = DriveSyncState(user_id="u", root_item_id="root", observed_as_of=observed,
+    env.repo.states["u"] = DriveSyncState(user_id="u", connection_id="u", root_item_id="root", observed_as_of=observed,
                                           created_at=T0, last_success_at=env.clock.now,
                                           counters={INACCESSIBLE_COUNTER: waiting,
                                                     INACCESSIBLE_UNNOTIFIED_COUNTER: waiting}, **kw)

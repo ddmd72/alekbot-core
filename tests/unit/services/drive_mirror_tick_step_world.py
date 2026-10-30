@@ -20,6 +20,7 @@ from src.services.localization_service import LocalizationService
 from .drive_index_fakes import ROOT
 from .drive_mirror_tick_world import MirrorWorld
 from .test_drive_indexing_transcripts import SPACE
+from .drive_index_fakes import LegacyConnections
 
 AREA_PATH = "Apps/Alek"
 WRITES = ("create_folder", "upload", "replace_content", "move", "delete")
@@ -213,7 +214,7 @@ class StepWorld(MirrorWorld):
             profiler=self.profiler if enrich else None, passages=self.passages if enrich else None,
             transcripts=self.stage, transcribe_enabled=switch, transcribe_cap_usd=cap, mirror_repo=self.mirror,
             mirror=self.step, localization=LocalizationService(FileLocalizationAdapter()) if built else None,
-            language=self.lang if built else None, clock=self.clock, monotonic=self.clock.monotonic)
+            language=self.lang if built else None, connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)
         real_work_off = self.svc._work_off
 
         async def work_off(user_id, state, now, budget, summary, models):

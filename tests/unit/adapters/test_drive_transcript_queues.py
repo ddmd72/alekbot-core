@@ -18,6 +18,7 @@ from src.domain.drive_transcript import (
 from tests.unit.adapters.firestore_drive_eval_fakes import RECS, EvalDb, eval_transactions, make_eval_repo
 from tests.unit.adapters.firestore_drive_transcript_fakes import transcript_doc_fakes
 from tests.unit.adapters.test_firestore_drive_index_v2_provisioning import _covered, _declared, _exempt, _required
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 T = datetime(2026, 10, 21, 9, 30, tzinfo=timezone.utc)
 LIVE_RECS = "development_drive_index_records"
@@ -68,8 +69,8 @@ async def test_queue_order_newest_first(adapter):
         _rec("none", effective_day="2026-12-02"),
         _rec("other-user", user="v", transcript_state="ready", effective_day="2026-12-03"),
     ])
-    assert [r.item_id for r in await repo.transcript_queue("u", 10)] == ["new-0", "new-a", "new-b", "old"]
-    assert [r.item_id for r in await repo.transcript_queue("u", 2)] == ["new-0", "new-a"]
+    assert [r.item_id for r in await repo.transcript_queue(U_SCOPE, 10)] == ["new-0", "new-a", "new-b", "old"]
+    assert [r.item_id for r in await repo.transcript_queue(U_SCOPE, 2)] == ["new-0", "new-a"]
 
 
 async def test_wakeups_due_only(adapter):
@@ -92,7 +93,7 @@ async def test_open_batches_by_next_poll(adapter):
         await repo.create_batch(TranscriptBatch(name=name, user_id="u", next_poll_at=at))
     await repo.create_batch(TranscriptBatch(name="batches/z", user_id="v", next_poll_at=T - timedelta(days=1)))
     await repo.create_batch(TranscriptBatch(name="batches/closed", user_id="u", state="done", next_poll_at=T))
-    assert [b.name for b in await repo.get_open_batches("u", T, 10)] == ["batches/a", "batches/c"]
+    assert [b.name for b in await repo.get_open_batches(U_SCOPE, T, 10)] == ["batches/a", "batches/c"]
 
 
 # -- copies in flight -------------------------------------------------------------------------------------------------
@@ -100,9 +101,9 @@ async def test_open_batches_by_next_poll(adapter):
 async def test_jobs_by_content_key(adapter):
     repo, _ = adapter
     key = "sha/with:odd chars%"
-    await repo.save_transcript_job(TranscriptJob(user_id="u", item_id="i2", content_key=key))
-    await repo.save_transcript_job(TranscriptJob(user_id="u", item_id="i1", content_key=key))
-    await repo.save_transcript_job(TranscriptJob(user_id="u", item_id="i3", content_key="other"))
+    await repo.save_transcript_job(TranscriptJob(user_id="u", connection_id="u", item_id="i2", content_key=key))
+    await repo.save_transcript_job(TranscriptJob(user_id="u", connection_id="u", item_id="i1", content_key=key))
+    await repo.save_transcript_job(TranscriptJob(user_id="u", connection_id="u", item_id="i3", content_key="other"))
     await repo.save_transcript_job(TranscriptJob(user_id="v", item_id="i4", content_key=key))
     assert [j.item_id for j in await repo.jobs_by_content_key("u", key)] == ["i1", "i2"]
     assert await repo.jobs_by_content_key("u", "absent") == []
@@ -146,8 +147,8 @@ async def test_purge_helpers_delete_only_the_user(adapter):
     for call in (repo.delete_user_transcript_jobs, repo.delete_user_batches, repo.delete_user_transcripts):
         assert await call("u", 100) == 0
     for i in (1, 2):
-        assert await repo.get_transcript_job("u", f"i{i}") is None
-        assert await repo.get_window_results("u", f"i{i}") == {}
+        assert await repo.get_transcript_job(U_SCOPE, f"i{i}") is None
+        assert await repo.get_window_results(U_SCOPE, f"i{i}") == {}
         assert await repo.get_transcript("u", f"k{i}") is None
         assert len(await repo.get_window_results("v", f"i{i}")) == 2
         assert (await repo.get_transcript_job("v", f"i{i}")) is not None
@@ -198,7 +199,7 @@ async def _plant_orphans(db, repo, monkeypatch):
 async def test_helpers_reach_parts_of_any_token_and_never_use_a_collection_group(fs, monkeypatch):
     db, repo = fs
     parts = await _plant_orphans(db, repo, monkeypatch)
-    await repo.save_transcript_job(TranscriptJob(user_id="u", item_id="i1", content_key="k1"))
+    await repo.save_transcript_job(TranscriptJob(user_id="u", connection_id="u", item_id="i1", content_key="k1"))
     await repo.save_window_result("u", "i1", 0, _result())
     assert await repo.delete_user_transcripts("u", 100) == 1
     assert parts.docs == {}
@@ -240,7 +241,7 @@ async def test_orphan_windows_are_swept_on_both_adapters(adapter):
     await repo.save_window_result("u", "gone", 0, _result())   # its job is gone (the helpers already returned 0)
     await repo.save_window_result("v", "gone", 0, _result())
     assert await repo.delete_user_transcript_orphans("u", 10, keep_transcripts=False) == 1
-    assert await repo.get_window_results("u", "gone") == {}
+    assert await repo.get_window_results(U_SCOPE, "gone") == {}
     assert len(await repo.get_window_results("v", "gone")) == 1
 
 
@@ -296,10 +297,10 @@ async def test_purge_queries_filter_on_the_user_only(fs):
 async def test_every_new_query_has_its_index(fs):
     db, repo = fs
     await repo.upsert_records([_rec("c")])   # the records collection exists
-    await repo.transcript_queue("u", 5)
+    await repo.transcript_queue(U_SCOPE, 5)
     await repo.transcript_wakeups("u", T, 5)
     await repo.jobs_by_content_key("u", "k")
-    await repo.get_open_batches("u", T, 5)
+    await repo.get_open_batches(U_SCOPE, T, 5)
     await repo.orphan_transcripts("u", T, 5)
     await repo.delete_user_transcript_jobs("u", 5)
     await repo.delete_user_batches("u", 5)
@@ -385,7 +386,7 @@ async def test_a_missing_queue_index_is_the_systemic_outage(fs):
     db, repo = fs
     db.collection(RECS).fail = gexc.FailedPrecondition("requires an index")
     with pytest.raises(DriveIndexStoreUnavailable):
-        await repo.transcript_queue("u", 5)
+        await repo.transcript_queue(U_SCOPE, 5)
 
 
 async def test_a_failing_helper_read_is_the_outage(fs):
@@ -407,7 +408,7 @@ async def test_keep_transcripts_leaves_a_sharded_transcript_readable(adapter, mo
     await repo.save_window_result("u", "i1", 0, _result())
     assert db is None or len(db.collection(f"{LIVE['store']}/u:k1/{LIVE['parts']}").docs) > 1
     assert await repo.delete_user_transcript_orphans("u", 100, keep_transcripts=True) == 1   # the window only
-    assert await repo.get_window_results("u", "i1") == {}
+    assert await repo.get_window_results(U_SCOPE, "i1") == {}
     assert await repo.get_transcript("u", "k1") == big
     if db is not None:
         assert db.group_executed.keys() == {LIVE["windows"]}   # the parts group was never queried

@@ -178,7 +178,7 @@ async def test_measure_counts_a_word_held_only_by_an_automatic_label():
 
 
 async def test_measure_reads_the_opened_file_and_classifies_it():
-    record = DriveIndexRecord(user_id="u", item_id="ITEM1", about_keys=("e:zorblax", "lw:invoice"),
+    record = DriveIndexRecord(user_id="u", connection_id="u", item_id="ITEM1", about_keys=("e:zorblax", "lw:invoice"),
                               indexed_generation=1, chunk_count=1)
     repo = _repo({"e:", "lw:"}, record=record, chunk_keys={("ITEM1", 1, 0): ("w:other",)})
     result = await script.measure(repo, "u", pair_searches(SAMPLE[:2]))

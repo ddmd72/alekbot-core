@@ -35,7 +35,7 @@ def _no_fence():
 
 
 def _state(**kw):
-    return DriveSyncState(user_id="u", drive_id=DRIVE, root_item_id=ROOT, **kw)
+    return DriveSyncState(user_id="u", connection_id="u", drive_id=DRIVE, root_item_id=ROOT, **kw)
 
 
 @pytest.fixture
@@ -150,7 +150,7 @@ class TestAudit:
         assert w.note(nid).state == NoteState.ACTIVE.value and state.notes_audited_at == w.clock.now
 
     async def test_without_a_drive_id_nothing_runs(self, w):
-        state, counts = await w.lifecycle.audit("u", DriveSyncState(user_id="u"), take_item_call=_budget(5),
+        state, counts = await w.lifecycle.audit("u", DriveSyncState(user_id="u", connection_id="u"), take_item_call=_budget(5),
                                                 fence=_no_fence)
         assert counts == {} and state.notes_audited_at is None
 

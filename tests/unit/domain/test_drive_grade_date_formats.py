@@ -73,7 +73,7 @@ class TestRegradeUnderVersion2:
     def test_a_profile_graded_not_in_text_is_regraded_in_text_as(self):
         assert ACCURACY_VERSION == 2
         text = "Passport. Born 27 ЛИП/JUL 22. Stamp 13JUN2024. Ref 20261009T180724Z."
-        chunks = [DriveChunk(user_id="u", item_id="i", generation=1, index=0, text=text, char_start=0,
+        chunks = [DriveChunk(user_id="u", connection_id="u", item_id="i", generation=1, index=0, text=text, char_start=0,
                              char_end=len(text), kind="pdf")]
         profile = DriveProfile(title="Passport", what_it_is="A passport", language="en", doc_type="id_document",
                                dates=(ProfileDate("birth", date(2022, 7, 27), "27 ЛИП/JUL 22"),

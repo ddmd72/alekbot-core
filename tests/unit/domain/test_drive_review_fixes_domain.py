@@ -74,7 +74,7 @@ class TestShortFiles:
     @pytest.mark.parametrize("kind", ["pdf", "docx", "eml"])
     def test_a_short_document_is_profiled_by_the_model(self, kind):
         assert dp.policy_of(kind, text_chars=120) == dp.PROFILE_POLICY[kind]
-        rec = DriveIndexRecord(user_id="u", item_id="i", kind=kind)
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind=kind)
         text = "Ticket 4411. Bus Springfield-Lisbon. 12/05/2026 08:30. Seat 14."
         assert dp.profile_input(rec, _chunks(text), kind).head == text
 

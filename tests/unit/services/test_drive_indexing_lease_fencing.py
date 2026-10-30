@@ -9,6 +9,7 @@ from src.domain.drive_index_params import TICK_DEADLINE_S
 from src.services import drive_indexing_service as svc_mod
 
 from .test_drive_indexing_service import World
+from .drive_index_fakes import U_SCOPE
 
 
 async def test_a_tick_past_its_own_lease_writes_nothing_more(caplog):
@@ -25,7 +26,7 @@ async def test_a_tick_past_its_own_lease_writes_nothing_more(caplog):
     result = await w.tick()
     assert result.status == "lease_lost"
     assert w.repo.records == {}
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.cursor is None and state.lease_owner is None    # its own lease released, nothing else written
     assert any("lease" in r.getMessage() and r.levelname == "INFO" for r in caplog.records)
 
@@ -50,7 +51,7 @@ async def test_a_stale_purge_leaves_the_new_holders_state(caplog):
     w.repo.delete_user_records = stolen_mid_purge
     result = await w.tick()
     assert result.status == "lease_lost"
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state is not None and state.lease_owner == "B"
     assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
 
@@ -59,7 +60,7 @@ async def test_a_stale_save_is_refused_and_ends_the_tick_quietly(caplog):
     w = World()
     w.drive.add("a.pdf")
     await w.settle()
-    before = await w.repo.get_sync_state("u")
+    before = await w.repo.get_sync_state(U_SCOPE)
     w.drive.add("b.pdf")
     real = w.drive.get_changes
 
@@ -70,7 +71,7 @@ async def test_a_stale_save_is_refused_and_ends_the_tick_quietly(caplog):
     w.drive.get_changes = stolen
     result = await w.tick()
     assert result.status == "lease_lost"
-    after = await w.repo.get_sync_state("u")
+    after = await w.repo.get_sync_state(U_SCOPE)
     assert after.lease_owner == "B" and after.cursor == before.cursor
     assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []   # a stop, not a failure
 
@@ -96,5 +97,5 @@ async def test_a_purge_past_its_own_lease_stops_between_batches(monkeypatch):
     result = await w.tick()
     assert result.status == "lease_lost"
     assert len(w.repo.records) == total - 1       # no batch after the lease's end
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state is not None and state.purging and state.lease_owner is None

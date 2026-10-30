@@ -9,6 +9,7 @@ from src.domain.exceptions import LLMClientError, LLMServerError
 from src.services import drive_indexing_service as svc_mod
 
 from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
+from .drive_index_fakes import U_SCOPE
 
 
 def _bump_card_version(monkeypatch):
@@ -68,7 +69,7 @@ class TestRefusedCardBecomesTerminal:
             w.clock.advance(600)
             await w.tick()
             per_tick.append(len(pages) - before)
-        st = await w.repo.get_sync_state("u")
+        st = await w.repo.get_sync_state(U_SCOPE)
         assert dict(st.applied_versions) == target
         assert len(refused) == MAX_ATTEMPTS
         assert per_tick[-6:] == [0] * 6, per_tick
@@ -94,7 +95,7 @@ class TestRefusedCardBecomesTerminal:
             w.clock.advance(60)
             await w.tick()
         assert pages == []
-        assert dict((await w.repo.get_sync_state("u")).applied_versions) != target
+        assert dict((await w.repo.get_sync_state(U_SCOPE)).applied_versions) != target
 
     async def test_a_terminal_refusal_is_not_retried_until_the_card_text_changes(self):
         w = World()

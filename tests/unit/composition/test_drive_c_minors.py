@@ -34,7 +34,7 @@ def test_the_cap_is_3_75_mib_and_its_base64_fits_5_mib():
 
 def test_the_original_fallback_uses_the_same_cap():
     assert READER_IMAGE_MAX_BYTES == MAX_VISION_IMAGE_BYTES
-    rec = DriveIndexRecord(user_id="u", item_id="i", name="a.jpg", parent_id="root", mime_type="image/jpeg",
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", name="a.jpg", parent_id="root", mime_type="image/jpeg",
                            size_bytes=MAX_VISION_IMAGE_BYTES + 1)
     assert original_fallback(rec) is False
 

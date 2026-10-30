@@ -46,9 +46,9 @@ def _lean(rec: DriveIndexRecord) -> DriveIndexRecord:
 
 
 def test_the_lean_fields_carry_what_the_notice_reads():
-    folder = DriveIndexRecord(user_id="u", item_id="d1", name="Shared", is_folder=True, kind="folder",
+    folder = DriveIndexRecord(user_id="u", connection_id="u", item_id="d1", name="Shared", is_folder=True, kind="folder",
                               scope=Scope.NORMAL, state=RecordState.METADATA_ONLY, parent_id="root")
-    doc = DriveIndexRecord(user_id="u", item_id="f1", name="a.pdf", parent_id="d1", kind="pdf", scope=Scope.NORMAL,
+    doc = DriveIndexRecord(user_id="u", connection_id="u", item_id="f1", name="a.pdf", parent_id="d1", kind="pdf", scope=Scope.NORMAL,
                            state=RecordState.PENDING, inaccessible_since=MARKED)
     lean = _lean(doc)
     after = MARKED + timedelta(minutes=1)
@@ -61,10 +61,10 @@ async def test_the_fan_out_reads_the_marked_records_lean():
     clock = Clock()
     clock.now = T0 + timedelta(hours=1)
     repo = InMemoryDriveIndexRepository()
-    await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="f1", name="a.pdf", parent_id="root", kind="pdf",
+    await repo.upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="f1", name="a.pdf", parent_id="root", kind="pdf",
                                                 scope=Scope.NORMAL, state=RecordState.PENDING,
                                                 inaccessible_since=MARKED, inaccessible_checked_at=MARKED)])
-    repo.states["u"] = DriveSyncState(user_id="u", root_item_id="root", observed_as_of=MARKED + timedelta(minutes=5),
+    repo.states["u"] = DriveSyncState(user_id="u", connection_id="u", root_item_id="root", observed_as_of=MARKED + timedelta(minutes=5),
                                       created_at=T0, last_success_at=clock.now,
                                       counters={INACCESSIBLE_COUNTER: 1, INACCESSIBLE_UNNOTIFIED_COUNTER: 1})
     calls = []

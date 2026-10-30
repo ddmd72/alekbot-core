@@ -19,7 +19,7 @@ SINCE = datetime(2026, 10, 14, 9, 0, tzinfo=timezone.utc)
 
 def rec(item="F1", name="card scan.pdf", folder=False, **kw):
     kw.setdefault("state", RecordState.METADATA_ONLY if folder else RecordState.PENDING)
-    return DriveIndexRecord(user_id="u", item_id=item, name=name, is_folder=folder, kind="folder" if folder else "pdf",
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item, name=name, is_folder=folder, kind="folder" if folder else "pdf",
                             scope=Scope.NORMAL, has_card=True, **kw)
 
 

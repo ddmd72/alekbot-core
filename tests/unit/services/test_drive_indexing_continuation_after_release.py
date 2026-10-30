@@ -7,6 +7,7 @@ import pytest
 from src.domain.user_drive import DriveConnection, DriveThrottled
 
 from .test_drive_indexing_service import World
+from .drive_index_fakes import U_SCOPE
 
 
 def _watch_lease_at_enqueue(w):
@@ -65,7 +66,7 @@ async def _purging_slowly(w):
         return await real(user_id, 1)
 
     w.repo.delete_user_records = slow_delete
-    st = await w.repo.get_sync_state("u")
+    st = await w.repo.get_sync_state(U_SCOPE)
     await w.repo.save_sync_state(replace(st, purging=True))
 
 

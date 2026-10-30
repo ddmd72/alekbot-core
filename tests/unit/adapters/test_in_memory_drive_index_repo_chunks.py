@@ -4,6 +4,7 @@ import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index import DriveChunk, DriveIndexRecord
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 
 def chunk(item="a", gen=1, index=0, user="u", kind="pdf", terms=(), text=None):
@@ -24,7 +25,7 @@ class TestWrite:
     async def test_write_and_replace(self, repo):
         await put(repo, chunk(text="old"))
         await put(repo, chunk(text="new"))
-        assert [c.text for c in await repo.get_chunks("u", "a", 1, [0])] == ["new"]
+        assert [c.text for c in await repo.get_chunks(U_SCOPE, "a", 1, [0])] == ["new"]
 
     async def test_vectors_must_match_chunks(self, repo):
         with pytest.raises(ValueError):
@@ -82,19 +83,19 @@ class TestFindByTerm:
 class TestGetChunks:
     async def test_window_by_index_skipping_missing(self, repo):
         await put(repo, chunk(index=0), chunk(index=1), chunk(index=2), chunk(gen=2, index=1))
-        got = await repo.get_chunks("u", "a", 1, [2, -1, 1, 1, 3])
+        got = await repo.get_chunks(U_SCOPE, "a", 1, [2, -1, 1, 1, 3])
         assert [(c.generation, c.index) for c in got] == [(1, 1), (1, 2)]
 
 
 class TestReadableChunkTotal:
     async def test_sums_records_with_a_readable_generation(self, repo):
         await repo.upsert_records([
-            DriveIndexRecord(user_id="u", item_id="a", indexed_generation=1, chunk_count=10),
-            DriveIndexRecord(user_id="u", item_id="b", indexed_generation=None, chunk_count=99),   # chunk-cap refusal
-            DriveIndexRecord(user_id="u", item_id="c", indexed_generation=3, chunk_count=5),
+            DriveIndexRecord(user_id="u", connection_id="u", item_id="a", indexed_generation=1, chunk_count=10),
+            DriveIndexRecord(user_id="u", connection_id="u", item_id="b", indexed_generation=None, chunk_count=99),   # chunk-cap refusal
+            DriveIndexRecord(user_id="u", connection_id="u", item_id="c", indexed_generation=3, chunk_count=5),
             DriveIndexRecord(user_id="v", item_id="d", indexed_generation=1, chunk_count=7),
         ])
-        assert await repo.readable_chunk_total("u") == 15
+        assert await repo.readable_chunk_total(U_SCOPE) == 15
         assert await repo.readable_chunk_total("nobody") == 0
 
 
@@ -102,14 +103,14 @@ class TestPagingAndPurge:
     async def test_chunks_page_orders_by_key_and_resumes(self, repo):
         await put(repo, chunk(item="b"), chunk(item="a", gen=2), chunk(item="a", gen=1, index=1),
                   chunk(item="a", gen=1, index=0), chunk(item="z", user="v"))
-        first = await repo.chunks_page("u", None, 3)
+        first = await repo.chunks_page(U_SCOPE, None, 3)
         assert [(c.item_id, c.generation, c.index) for c in first] == [("a", 1, 0), ("a", 1, 1), ("a", 2, 0)]
-        rest = await repo.chunks_page("u", ("a", 2, 0), 10)
+        rest = await repo.chunks_page(U_SCOPE, ("a", 2, 0), 10)
         assert [(c.item_id, c.generation, c.index) for c in rest] == [("b", 1, 0)]
 
     async def test_index_order_is_numeric(self, repo):
         await put(repo, chunk(index=10), chunk(index=2))
-        assert [c.index for c in await repo.chunks_page("u", None, 5)] == [2, 10]
+        assert [c.index for c in await repo.chunks_page(U_SCOPE, None, 5)] == [2, 10]
 
     async def test_delete_user_chunks_in_batches(self, repo):
         await put(repo, chunk(index=0), chunk(index=1), chunk(index=2), chunk(user="v"))

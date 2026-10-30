@@ -19,6 +19,7 @@ from src.domain.drive_transcript import (
 
 from tests.unit.adapters.firestore_drive_eval_fakes import EvalDb, EvalDocRef, eval_transactions, make_eval_repo
 from tests.unit.adapters.firestore_drive_transcript_fakes import transcript_doc_fakes
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 T = datetime(2026, 10, 21, 9, 30, tzinfo=timezone.utc)
 JOBS, BATCHES, STORE = "eval_drive_transcript_jobs", "eval_drive_transcript_batches", "eval_drive_transcripts"
@@ -85,17 +86,17 @@ def _stored(n=3, **kw):
 
 async def test_job_roundtrip_and_absent(adapter):
     repo, _ = adapter
-    assert await repo.get_transcript_job("u", "i1") is None
+    assert await repo.get_transcript_job(U_SCOPE, "i1") is None
     await repo.save_transcript_job(_job())
-    assert await repo.get_transcript_job("u", "i1") == _job()
+    assert await repo.get_transcript_job(U_SCOPE, "i1") == _job()
     assert await repo.get_transcript_job("other", "i1") is None
 
 
 async def test_job_with_defaults_roundtrips(adapter):
     repo, _ = adapter
-    bare = TranscriptJob(user_id="u", item_id="i2", content_key="k2")
+    bare = TranscriptJob(user_id="u", connection_id="u", item_id="i2", content_key="k2")
     await repo.save_transcript_job(bare)
-    assert await repo.get_transcript_job("u", "i2") == bare
+    assert await repo.get_transcript_job(U_SCOPE, "i2") == bare
 
 
 async def test_window_results_roundtrip_by_index(adapter):
@@ -103,9 +104,9 @@ async def test_window_results_roundtrip_by_index(adapter):
     await repo.save_window_result("u", "i1", 1, _result(1))
     await repo.save_window_result("u", "i1", 0, _result(2))
     await repo.save_window_result("u", "other", 0, _result(3))
-    got = await repo.get_window_results("u", "i1")
+    got = await repo.get_window_results(U_SCOPE, "i1")
     assert list(got) == [0, 1] and got[0] == _result(2) and got[1] == _result(1)
-    assert await repo.get_window_results("u", "none") == {}
+    assert await repo.get_window_results(U_SCOPE, "none") == {}
 
 
 async def test_saving_the_job_leaves_window_results(adapter):
@@ -113,7 +114,7 @@ async def test_saving_the_job_leaves_window_results(adapter):
     await repo.save_window_result("u", "i1", 0, _result())
     await repo.save_transcript_job(_job())
     await repo.save_transcript_job(_job(batch_name="batches/b2"))
-    assert 0 in await repo.get_window_results("u", "i1")
+    assert 0 in await repo.get_window_results(U_SCOPE, "i1")
 
 
 async def test_delete_job_removes_its_window_results_only(adapter):
@@ -123,8 +124,8 @@ async def test_delete_job_removes_its_window_results_only(adapter):
     await repo.save_window_result("u", "i1", 0, _result())
     await repo.save_window_result("u", "i2", 0, _result())
     await repo.delete_transcript_job("u", "i1")
-    assert await repo.get_transcript_job("u", "i1") is None and await repo.get_window_results("u", "i1") == {}
-    assert await repo.get_transcript_job("u", "i2") is not None and 0 in await repo.get_window_results("u", "i2")
+    assert await repo.get_transcript_job(U_SCOPE, "i1") is None and await repo.get_window_results(U_SCOPE, "i1") == {}
+    assert await repo.get_transcript_job(U_SCOPE, "i2") is not None and 0 in await repo.get_window_results(U_SCOPE, "i2")
     await repo.delete_transcript_job("u", "i1")   # missing is a no-op
 
 
@@ -134,13 +135,13 @@ async def test_batch_roundtrip_create_save_delete(adapter):
     repo, _ = adapter
     assert await repo.create_batch(_batch()) is True
     assert await repo.create_batch(_batch(reserved_usd=9.0)) is False   # writes nothing
-    assert (await repo.get_open_batches("u", T + timedelta(hours=1), 5)) == [_batch()]
+    assert (await repo.get_open_batches(U_SCOPE, T + timedelta(hours=1), 5)) == [_batch()]
     closed = _batch(state="done", next_poll_at=None)
     await repo.save_batch(closed)
-    assert await repo.get_open_batches("u", T + timedelta(hours=1), 5) == []
+    assert await repo.get_open_batches(U_SCOPE, T + timedelta(hours=1), 5) == []
     await repo.save_batch(_batch())
     await repo.delete_batch("u", "batches/b1")
-    assert await repo.get_open_batches("u", T + timedelta(hours=1), 5) == []
+    assert await repo.get_open_batches(U_SCOPE, T + timedelta(hours=1), 5) == []
     await repo.delete_batch("u", "batches/b1")   # missing is a no-op
 
 
@@ -150,9 +151,9 @@ async def test_open_batches_are_due_ordered_and_limited(adapter):
     await repo.save_batch(_batch("batches/early", next_poll_at=T + timedelta(minutes=1)))
     await repo.save_batch(_batch("batches/future", next_poll_at=T + timedelta(hours=3)))
     await repo.save_batch(_batch("batches/other", user_id="v", next_poll_at=T))
-    names = [b.name for b in await repo.get_open_batches("u", T + timedelta(minutes=30), 10)]
+    names = [b.name for b in await repo.get_open_batches(U_SCOPE, T + timedelta(minutes=30), 10)]
     assert names == ["batches/early", "batches/late"]
-    assert [b.name for b in await repo.get_open_batches("u", T + timedelta(minutes=30), 1)] == ["batches/early"]
+    assert [b.name for b in await repo.get_open_batches(U_SCOPE, T + timedelta(minutes=30), 1)] == ["batches/early"]
 
 
 # -- the store --------------------------------------------------------------------------------------------------------
@@ -411,9 +412,9 @@ async def test_closed_batch_is_saved_without_a_poll_time(adapter):
     repo, _ = adapter
     for state in ("done", "failed"):
         await repo.save_batch(_batch(f"batches/{state}", state=state, next_poll_at=T))
-    assert await repo.get_open_batches("u", T + timedelta(days=30), 10) == []
+    assert await repo.get_open_batches(U_SCOPE, T + timedelta(days=30), 10) == []
     assert await repo.create_batch(_batch("batches/c", state="done", next_poll_at=T)) is True
-    assert await repo.get_open_batches("u", T + timedelta(days=30), 10) == []
+    assert await repo.get_open_batches(U_SCOPE, T + timedelta(days=30), 10) == []
 
 
 @pytest.mark.parametrize("url", ["https://example.test/x", "HTTP://example.test/x", " https://example.test"])
@@ -427,7 +428,7 @@ async def test_url_in_a_job_or_batch_is_refused(adapter, url):
         await repo.save_batch(_batch(name=url))
     with pytest.raises(ValueError):
         await repo.create_batch(_batch(request_keys=(url,)))
-    assert await repo.get_transcript_job("u", "i1") is None
+    assert await repo.get_transcript_job(U_SCOPE, "i1") is None
     if db is not None:
         assert not db.collection(JOBS).docs and not db.collection(BATCHES).docs
 
@@ -445,7 +446,7 @@ async def test_unknown_window_state_is_refused_on_read(fs):
     await repo.save_transcript_job(_job())
     db.collection(JOBS).docs["u:i1"]["windows"][0]["state"] = "mystery"
     with pytest.raises(ValueError):
-        await repo.get_transcript_job("u", "i1")
+        await repo.get_transcript_job(U_SCOPE, "i1")
 
 
 async def test_four_hour_cyrillic_transcript_fits_at_the_real_bound(fs):
@@ -464,7 +465,7 @@ async def test_four_hour_cyrillic_transcript_fits_at_the_real_bound(fs):
 async def test_a_base64_key_starting_with_http_is_not_a_url(adapter, key):
     repo, _ = adapter
     await repo.save_transcript_job(_job(content_key=key))
-    assert (await repo.get_transcript_job("u", "i1")).content_key == key
+    assert (await repo.get_transcript_job(U_SCOPE, "i1")).content_key == key
 
 
 @pytest.mark.parametrize("value", ["https://x", "http://x", "HTTP://x", "ftp://x", "files/a https://x"])

@@ -20,6 +20,7 @@ from src.domain.drive_index_params import RECORD_WRITE_BATCH, WRITE_BATCH_BYTES
 from tests.unit.adapters.firestore_drive_fakes import (
     NOW, PROJECTION, RECS, STATES, TS_MIN, Db, executed, make_repo, rec_doc, snap,
 )
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 
 @pytest.fixture
@@ -42,16 +43,16 @@ def passthrough_transactions():
 
 class TestSyncState:
     async def test_get_missing_is_none(self, repo):
-        assert await repo.get_sync_state("u") is None
+        assert await repo.get_sync_state(U_SCOPE) is None
 
     async def test_get_reads_flags_and_fields(self, repo, db):
-        doc = {**state_to_doc(DriveSyncState(user_id="u", epoch=3)), "stale_alerted": True}
+        doc = {**state_to_doc(DriveSyncState(user_id="u", connection_id="u", epoch=3)), "stale_alerted": True}
         db.cols[STATES].document("u").get = AsyncMock(return_value=snap(doc, "u"))
-        st = await repo.get_sync_state("u")
+        st = await repo.get_sync_state(U_SCOPE)
         assert st.epoch == 3 and st.stale_alerted is True and st.reconnect_notified is False
 
     async def test_save_merges_every_field_but_the_flags(self, repo, db):
-        await repo.save_sync_state(DriveSyncState(user_id="u", epoch=3, stale_alerted=True))
+        await repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", epoch=3, stale_alerted=True))
         doc = db.cols[STATES].docs["u"]
         assert doc.get.call_args.kwargs["transaction"] is db.tx      # the fenced write (§7.1) reads in the transaction
         ref, data = db.tx.set.call_args.args
@@ -61,23 +62,23 @@ class TestSyncState:
         assert data["epoch"] == 3
 
     async def test_update_flags_writes_only_the_given_flags(self, repo, db):
-        await repo.update_sync_flags("u", reconnect_notified=True)
+        await repo.update_sync_flags(U_SCOPE, reconnect_notified=True)
         db.cols[STATES].docs["u"].update.assert_awaited_once_with({"reconnect_notified": True})
 
     async def test_update_flags_without_values_writes_nothing(self, repo, db):
-        await repo.update_sync_flags("u")
+        await repo.update_sync_flags(U_SCOPE)
         assert "u" not in db.cols[STATES].docs
 
     async def test_update_flags_on_missing_state_is_a_noop(self, repo, db):
         doc = db.cols[STATES].document("u")
         doc.update = AsyncMock(side_effect=NotFound("no doc"))
-        await repo.update_sync_flags("u", stale_alerted=True)   # no raise
+        await repo.update_sync_flags(U_SCOPE, stale_alerted=True)   # no raise
         doc.set.assert_not_awaited()
 
     async def test_delete(self, repo, db):
         doc = db.cols[STATES].document("u")
-        doc.get = AsyncMock(return_value=snap(state_to_doc(DriveSyncState(user_id="u", epoch=2)), "u"))
-        await repo.delete_sync_state("u")
+        doc.get = AsyncMock(return_value=snap(state_to_doc(DriveSyncState(user_id="u", connection_id="u", epoch=2)), "u"))
+        await repo.delete_sync_state(U_SCOPE)
         db.tx.delete.assert_called_once_with(doc)                    # in the fencing transaction (§7.1)
 
     async def test_list_user_ids_reads_names_only(self, repo, db):
@@ -88,18 +89,18 @@ class TestSyncState:
 
 class TestLease:
     def _stored(self, db, **kw):
-        doc = state_to_doc(DriveSyncState(user_id="u", **kw))
+        doc = state_to_doc(DriveSyncState(user_id="u", connection_id="u", **kw))
         db.cols[STATES].document("u").get = AsyncMock(return_value=snap(doc, "u"))
 
     async def test_missing_state_without_create_writes_nothing(self, repo, db):
-        assert await repo.acquire_lease("u", "a", NOW, NOW + timedelta(minutes=31), create=False) is None
+        assert await repo.acquire_lease(U_SCOPE, "a", NOW, NOW + timedelta(minutes=31), create=False) is None
         db.tx.set.assert_not_called()
         db.tx.update.assert_not_called()
 
     async def test_missing_state_with_create_writes_a_fresh_state_without_flags(self, repo, db):
         until = NOW + timedelta(minutes=31)
-        st = await repo.acquire_lease("u", "a", NOW, until, create=True)
-        assert st == DriveSyncState(user_id="u", lease_owner="a", lease_until=until)
+        st = await repo.acquire_lease(U_SCOPE, "a", NOW, until, create=True)
+        assert st == DriveSyncState(user_id="u", connection_id="u", lease_owner="a", lease_until=until)
         ref, data = db.tx.set.call_args.args
         assert ref is db.cols[STATES].docs["u"]
         assert data["lease_owner"] == "a" and data["lease_until"] == until
@@ -108,31 +109,31 @@ class TestLease:
 
     async def test_live_lease_of_another_owner_is_busy(self, repo, db):
         self._stored(db, lease_owner="b", lease_until=NOW + timedelta(seconds=1))
-        assert await repo.acquire_lease("u", "a", NOW, NOW + timedelta(minutes=31), create=True) is None
+        assert await repo.acquire_lease(U_SCOPE, "a", NOW, NOW + timedelta(minutes=31), create=True) is None
         db.tx.update.assert_not_called()
         db.tx.set.assert_not_called()
 
     async def test_expired_lease_is_taken_with_a_field_update(self, repo, db):
         self._stored(db, epoch=4, lease_owner="b", lease_until=NOW)
         until = NOW + timedelta(minutes=31)
-        st = await repo.acquire_lease("u", "a", NOW, until, create=True)
+        st = await repo.acquire_lease(U_SCOPE, "a", NOW, until, create=True)
         assert st.epoch == 4 and st.lease_owner == "a"
         db.tx.update.assert_called_once_with(db.cols[STATES].docs["u"], {"lease_owner": "a", "lease_until": until})
         db.tx.set.assert_not_called()
 
     async def test_own_live_lease_is_renewed(self, repo, db):
         self._stored(db, lease_owner="a", lease_until=NOW + timedelta(minutes=5))
-        assert (await repo.acquire_lease("u", "a", NOW, NOW + timedelta(minutes=31), create=True)).lease_owner == "a"
+        assert (await repo.acquire_lease(U_SCOPE, "a", NOW, NOW + timedelta(minutes=31), create=True)).lease_owner == "a"
 
     async def test_release_by_owner_clears_the_lease(self, repo, db):
         self._stored(db, lease_owner="a", lease_until=NOW)
-        await repo.release_lease("u", "a")
+        await repo.release_lease(U_SCOPE, "a")
         db.tx.update.assert_called_once_with(db.cols[STATES].docs["u"], {"lease_owner": None, "lease_until": None})
 
     async def test_release_by_another_owner_or_missing_state_is_a_noop(self, repo, db):
-        await repo.release_lease("u", "a")              # missing
+        await repo.release_lease(U_SCOPE, "a")              # missing
         self._stored(db, lease_owner="b", lease_until=NOW)
-        await repo.release_lease("u", "a")              # not the owner
+        await repo.release_lease(U_SCOPE, "a")              # not the owner
         db.tx.update.assert_not_called()
 
 
@@ -140,7 +141,7 @@ class TestLease:
 
 class TestRecordWrites:
     async def test_upsert_merges_every_record_field_and_keeps_the_vector(self, repo, db):
-        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="a", has_card=True)])
+        await repo.upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="a", has_card=True)])
         ref, data = db.batches[0].set.call_args.args
         assert ref is db.cols[RECS].docs["u:a"]
         assert db.batches[0].set.call_args.kwargs["merge"] == list(RECORD_FIELDS)
@@ -148,14 +149,14 @@ class TestRecordWrites:
         db.batches[0].commit.assert_awaited_once()
 
     async def test_given_vector_is_stored_with_its_mirror(self, repo, db):
-        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="a", has_card=True)], {"a": [1, 0.5]})
+        await repo.upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="a", has_card=True)], {"a": [1, 0.5]})
         _, data = db.batches[0].set.call_args.args
         assert data["card_vector"] == Vector([1.0, 0.5]) and data["has_card_vector"] is True
         assert set(db.batches[0].set.call_args.kwargs["merge"]) == set(RECORD_FIELDS) | {"card_vector",
                                                                                          "has_card_vector"}
 
     async def test_cardless_record_deletes_its_vector(self, repo, db):
-        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="a", has_card=False)])
+        await repo.upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="a", has_card=False)])
         _, data = db.batches[0].set.call_args.args
         assert data["card_vector"] is firestore.DELETE_FIELD and data["has_card_vector"] is False
         assert "card_vector" in db.batches[0].set.call_args.kwargs["merge"]
@@ -164,7 +165,7 @@ class TestRecordWrites:
     async def test_writes_are_batched_at_record_write_batch(self, repo, db):
         """Both caps bind record writes (RFC Δ245): RECORD_WRITE_BATCH, and WRITE_BATCH_BYTES over request plus
         index-entry bytes. A default record's ~140 indexed fields put the byte cap below 400 records a commit."""
-        records = [DriveIndexRecord(user_id="u", item_id=f"i{n}") for n in range(401)]
+        records = [DriveIndexRecord(user_id="u", connection_id="u", item_id=f"i{n}") for n in range(401)]
         await repo.upsert_records(records)
         written = [c.args for b in db.batches for c in b.set.call_args_list]
         assert [ref.doc_id for ref, _ in written] == [f"u:i{n}" for n in range(401)]   # all, once, in order
@@ -178,18 +179,18 @@ class TestRecordWrites:
     @pytest.mark.slow
     async def test_record_count_cap_holds_when_bytes_do_not_bind(self, repo, db):
         with patch("src.adapters.firestore_drive_index_repo.WRITE_BATCH_BYTES", 10 ** 12):
-            await repo.upsert_records([DriveIndexRecord(user_id="u", item_id=f"i{n}") for n in range(401)])
+            await repo.upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id=f"i{n}") for n in range(401)])
         assert [b.set.call_count for b in db.batches] == [RECORD_WRITE_BATCH, 1]
 
     async def test_due_without_priority_is_refused_before_any_write(self, repo, db):
-        ok = DriveIndexRecord(user_id="u", item_id="a", due_at=NOW, priority=0)
-        stuck = DriveIndexRecord(user_id="u", item_id="b", due_at=NOW)
+        ok = DriveIndexRecord(user_id="u", connection_id="u", item_id="a", due_at=NOW, priority=0)
+        stuck = DriveIndexRecord(user_id="u", connection_id="u", item_id="b", due_at=NOW)
         with pytest.raises(ValueError, match="due without a priority"):
             await repo.upsert_records([ok, stuck])
         assert db.batches == []
 
     async def test_priority_without_due_is_allowed(self, repo, db):
-        await repo.upsert_records([DriveIndexRecord(user_id="u", item_id="a", priority=0)])
+        await repo.upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="a", priority=0)])
         assert db.batches[0].set.call_count == 1
 
     async def test_delete_records_by_key_deduplicated(self, repo, db):
@@ -213,13 +214,13 @@ class TestRecordWrites:
 class TestRecordReads:
     async def test_get_records_batched_projected_and_deduplicated(self, repo, db):
         db.stored = {"u:a": rec_doc("a", name="x"), "u:b": rec_doc("b")}
-        out = await repo.get_records("u", ["a", "zz", "a", "b"])
+        out = await repo.get_records(U_SCOPE, ["a", "zz", "a", "b"])
         assert set(out) == {"a", "b"} and out["a"].name == "x"
         assert db.get_all_calls == [(["u:a", "u:zz", "u:b"], list(RECORD_FIELDS))]
 
     @pytest.mark.slow
     async def test_get_records_chunks_large_reads(self, repo, db):
-        await repo.get_records("u", [f"i{n}" for n in range(401)])
+        await repo.get_records(U_SCOPE, [f"i{n}" for n in range(401)])
         assert [len(ids) for ids, _ in db.get_all_calls] == [400, 1]
 
     async def test_due_records_one_query_per_class_in_order(self, repo, db):
@@ -227,7 +228,7 @@ class TestRecordReads:
                     int(Priority.FIRST_SEEN): [rec_doc("a", due_at=NOW, priority=2),
                                                rec_doc("c", due_at=NOW, priority=2)]}
         db.cols[RECS].respond = lambda ops: [snap(d) for d in by_class.get(ops[1][3], [])]
-        out = await repo.due_records("u", NOW, 10)
+        out = await repo.due_records(U_SCOPE, NOW, 10)
         assert [r.item_id for r in out] == ["b", "a", "c"]
         queries = executed(db)
         assert [q[1][3] for q in queries] == [0, 1, 2, 3, 4]
@@ -238,22 +239,22 @@ class TestRecordReads:
 
     async def test_due_records_stops_once_the_page_is_full(self, repo, db):
         db.cols[RECS].respond = lambda ops: [snap(rec_doc("b", due_at=NOW, priority=0))]
-        assert [r.item_id for r in await repo.due_records("u", NOW, 1)] == ["b"]
+        assert [r.item_id for r in await repo.due_records(U_SCOPE, NOW, 1)] == ["b"]
         assert len(executed(db)) == 1
 
     async def test_oldest_due_at_excludes_undated_and_uses_the_due_index(self, repo, db):
         db.cols[RECS].respond = lambda ops: [snap(rec_doc("a", due_at=NOW, priority=2))]
-        assert await repo.oldest_due_at("u", 2) == NOW
+        assert await repo.oldest_due_at(U_SCOPE, 2) == NOW
         assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "priority", "==", 2),
                                  ("where", "due_at", ">=", TS_MIN), ("order_by", "due_at", "ASCENDING"),
                                  ("order_by", "item_id", "ASCENDING"), ("limit", 1), PROJECTION]]
 
     async def test_oldest_due_at_none(self, repo):
-        assert await repo.oldest_due_at("u", 0) is None
+        assert await repo.oldest_due_at(U_SCOPE, 0) is None
 
     async def test_children_paged_by_item_id(self, repo, db):
-        await repo.children("u", "p", None, 5)
-        await repo.children("u", "p", "a", 2)
+        await repo.children(U_SCOPE, "p", None, 5)
+        await repo.children(U_SCOPE, "p", "a", 2)
         assert executed(db) == [
             [("where", "user_id", "==", "u"), ("where", "parent_id", "==", "p"),
              ("order_by", "item_id", "ASCENDING"), ("limit", 5), PROJECTION],
@@ -261,12 +262,12 @@ class TestRecordReads:
              ("order_by", "item_id", "ASCENDING"), ("limit", 2), PROJECTION]]
 
     async def test_records_page(self, repo, db):
-        await repo.records_page("u", "m", 100)
+        await repo.records_page(U_SCOPE, "m", 100)
         assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "item_id", ">", "m"),
                                  ("order_by", "item_id", "ASCENDING"), ("limit", 100), PROJECTION]]
 
     async def test_records_seen_before(self, repo, db):
-        await repo.records_seen_before("u", 3, 400)
+        await repo.records_seen_before(U_SCOPE, 3, 400)
         assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "seen_epoch", "<", 3),
                                  ("order_by", "seen_epoch", "ASCENDING"), ("order_by", "item_id", "ASCENDING"),
                                  ("limit", 400), PROJECTION]]
@@ -288,13 +289,13 @@ class TestCountsAndEviction:
 
     async def test_count_carded_is_an_aggregation_on_the_vector_mirror(self, repo, db):
         db.cols[RECS].respond = self._counts({True: 4})
-        assert await repo.count_carded("u") == 4
+        assert await repo.count_carded(U_SCOPE) == 4
         assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "has_card_vector", "==", True),
                                  ("count", "n")]]
 
     async def test_count_by_state_omits_empty_states_and_adds_carded(self, repo, db):
         db.cols[RECS].respond = self._counts({"metadata_only": 3, "indexed": 1, True: 2})
-        assert await repo.count_by_state("u") == {"metadata_only": 3, "indexed": 1, "carded": 2}
+        assert await repo.count_by_state(U_SCOPE) == {"metadata_only": 3, "indexed": 1, "carded": 2}
         assert len(executed(db)) == 7 and all(q[-1] == ("count", "n") for q in executed(db))
 
     async def test_lowest_ranked_none_when_nothing_carded(self, repo, db):
@@ -372,5 +373,5 @@ class TestSearchReads:
 
     async def test_card_vectors_read_only_the_vector(self, repo, db):
         db.stored = {"u:a": {"item_id": "a", "card_vector": Vector([0.5, 0.5])}, "u:b": {"item_id": "b"}}
-        assert await repo.card_vectors("u", ["a", "b", "zz"]) == {"a": [0.5, 0.5]}
+        assert await repo.card_vectors(U_SCOPE, ["a", "b", "zz"]) == {"a": [0.5, 0.5]}
         assert db.get_all_calls == [(["u:a", "u:b", "u:zz"], ["item_id", "card_vector"])]

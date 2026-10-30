@@ -16,6 +16,7 @@ from src.domain.user_drive import DriveAccessDenied
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
 from .drive_usage_helpers import close_initial_build, month_usd, spend
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -121,7 +122,7 @@ async def test_a_triage_outage_defers_images_and_lets_documents_through(w):
     result = await w.settle()
     assert result.status == "done" and w.rec(doc).state is RecordState.INDEXED
     rec = w.rec(img)
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert (rec.state, rec.triage_verdict, rec.attempts) == (RecordState.PENDING, None, 0)
     assert rec.has_card and state.model_backoff_until == rec.due_at
     w.triage.unavailable = False

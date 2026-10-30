@@ -8,6 +8,7 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from tests.unit.adapters.firestore_drive_eval_fakes import RECS, EvalDb, eval_transactions, make_eval_repo
 from tests.unit.adapters.test_drive_index_v2_parity import Pair, rec
 from tests.unit.adapters.test_firestore_drive_index_v2_provisioning import LIVE, _covered, _declared, _required
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 
 @pytest.fixture
@@ -48,4 +49,4 @@ async def test_an_unknown_job_is_refused(pair):
     _, both = pair
     for repo in (both.mem, both.fs):
         with pytest.raises(ValueError):
-            await repo.enrich_queue("u", 5, job="pages")
+            await repo.enrich_queue(U_SCOPE, 5, job="pages")

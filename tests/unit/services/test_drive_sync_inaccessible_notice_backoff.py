@@ -35,7 +35,7 @@ class Localization:
 
 
 def closed(item_id):
-    return DriveIndexRecord(user_id="u", item_id=item_id, name=f"{item_id}.pdf", parent_id="root", kind="pdf",
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, name=f"{item_id}.pdf", parent_id="root", kind="pdf",
                             scope=Scope.NORMAL, state=RecordState.PENDING, has_card=True,
                             inaccessible_since=MARKED, inaccessible_checked_at=MARKED)
 
@@ -65,7 +65,7 @@ def env():
 
 async def seed(env, waiting):
     await env.repo.upsert_records([closed(f"f{n}") for n in range(waiting)])
-    env.repo.states["u"] = DriveSyncState(user_id="u", root_item_id="root", observed_as_of=MARKED + timedelta(minutes=5),
+    env.repo.states["u"] = DriveSyncState(user_id="u", connection_id="u", root_item_id="root", observed_as_of=MARKED + timedelta(minutes=5),
                                           created_at=T0, last_success_at=env.clock.now,
                                           counters={INACCESSIBLE_COUNTER: waiting,
                                                     INACCESSIBLE_UNNOTIFIED_COUNTER: waiting})

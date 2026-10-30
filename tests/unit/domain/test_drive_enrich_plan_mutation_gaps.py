@@ -81,7 +81,7 @@ def test_the_records_own_date_wins_over_now():
 # -- fingerprints and clears -----------------------------------------------------------------------------------------
 
 def _chunk(text: str) -> DriveChunk:
-    return DriveChunk(user_id="u", item_id="d1", generation=1, index=0, text=text, char_start=0, char_end=len(text),
+    return DriveChunk(user_id="u", connection_id="u", item_id="d1", generation=1, index=0, text=text, char_start=0, char_end=len(text),
                       kind="markdown")
 
 

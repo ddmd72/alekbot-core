@@ -16,6 +16,7 @@ from src.domain.drive_index_run import READER_IMAGE_MAX_BYTES
 
 from .drive_content_world import JPEG, PNG, ContentWorld, admitted, prose  # noqa: F401  (fixture)
 from .drive_usage_helpers import affordable, close_initial_build, month_calls, month_usd, spend
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -115,7 +116,7 @@ async def test_a_model_outage_defers_model_work_only(w):
     assert result.status == "done"
     assert w.rec(note).state is RecordState.INDEXED and w.rec(scan).has_card   # parser work and cards go on
     rec = w.rec(scan)
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert (rec.state, rec.attempts, rec.attempt_started_at) == (RecordState.PENDING, 0, None)
     assert state.model_failures == 1 and state.model_backoff_until == rec.due_at
     assert state.last_error is None and state.systemic_failures == 0
@@ -125,7 +126,7 @@ async def test_a_model_outage_defers_model_work_only(w):
     w.reader.unavailable = False
     w.clock.advance(1)
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert w.rec(scan).state is RecordState.INDEXED and (state.model_failures, state.model_backoff_until) == (0, None)
 
 
@@ -252,7 +253,7 @@ async def test_nothing_wired_ends_the_tick_before_any_write():
     assert result.status == "error"
     rec = w.rec(doc)
     assert (rec.index_generation, rec.attempts, rec.attempt_started_at) == (0, 0, None)
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.last_error.value == "internal"
 
 

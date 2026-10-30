@@ -15,7 +15,7 @@ async def test_both_adapters_count_each_gap_per_user(pair):  # noqa: F811
 
 
 def test_describe_gap_round_trips():
-    r = DriveIndexRecord(user_id="u", item_id="a", name="a.pdf", kind="pdf", state=RecordState.INDEXED,
+    r = DriveIndexRecord(user_id="u", connection_id="u", item_id="a", name="a.pdf", kind="pdf", state=RecordState.INDEXED,
                          scope=Scope.NORMAL, describe_gap="held")
     assert record_from_doc(record_to_doc(r)).describe_gap == "held"
     assert record_from_doc({k: v for k, v in record_to_doc(r).items() if k != "describe_gap"}).describe_gap == ""
@@ -25,6 +25,6 @@ def test_an_entitys_found_spellings_round_trip():
     from src.domain.drive_enrichment import DriveProfile, ProfileEntity
     entity = ProfileEntity(name="Коїмбра", type="place", printed="COIMBRA", forms=("Coimbra",),
                            found=("Coimbra",))
-    r = DriveIndexRecord(user_id="u", item_id="a", name="a.pdf", kind="pdf", state=RecordState.INDEXED,
+    r = DriveIndexRecord(user_id="u", connection_id="u", item_id="a", name="a.pdf", kind="pdf", state=RecordState.INDEXED,
                          scope=Scope.NORMAL, profile=DriveProfile("t", "w", "en", "ticket", entities=(entity,)))
     assert record_from_doc(record_to_doc(r)).profile.entities == (entity,)

@@ -29,7 +29,7 @@ def ch(item_id, name, parent=ROOT, folder=False, **kw):
 
 
 def folder_rec(item_id, name, scope=Scope.NORMAL, reason=Reason.FOLDER, parent=ROOT, **kw):
-    return DriveIndexRecord(user_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True,
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True,
                             kind="folder", content_class=ContentClass.FOLDER, scope=scope,
                             state=RecordState.METADATA_ONLY, reason=reason, policy_version=POLICY_VERSION, **kw)
 
@@ -184,7 +184,7 @@ class TestObservation:
 
     def test_marker_renamed_reopens_and_child_is_classified_under_the_reopened_folder(self):
         old = folder_rec("p", "site", scope=Scope.OPAQUE_ROOT, reason=Reason.OPAQUE_ROOT)
-        cfg = DriveIndexRecord(user_id="u", item_id="g", name="pyvenv.cfg", parent_id="p", scope=Scope.NORMAL)
+        cfg = DriveIndexRecord(user_id="u", connection_id="u", item_id="g", name="pyvenv.cfg", parent_id="p", scope=Scope.NORMAL)
         plan = observe(ch("g", "notes.md", parent="p"), cfg, old, previous_parent=old)
         assert plan.parent_updates[0].scope is Scope.NORMAL and plan.upsert.scope is Scope.NORMAL
 
@@ -263,20 +263,20 @@ class TestAccess:
 
     @pytest.mark.parametrize("enabled,state,conn,expected", [
         (False, None, ON, AccessAction.NOOP_DISABLED),
-        (False, DriveSyncState(user_id="u"), ON, AccessAction.PURGE_OPT_OUT),
+        (False, DriveSyncState(user_id="u", connection_id="u"), ON, AccessAction.PURGE_OPT_OUT),
         (True, None, DriveConnection(connected=False), AccessAction.NOOP_DISABLED),
-        (True, DriveSyncState(user_id="u"), DriveConnection(connected=False), AccessAction.RECORD_LOSS),
-        (True, DriveSyncState(user_id="u"), DriveConnection(connected=True, needs_reconnect=True), AccessAction.RECORD_LOSS),
-        (True, DriveSyncState(user_id="u", access_lost_at=NOW - ACCESS_LOSS_TTL), DriveConnection(connected=False),
+        (True, DriveSyncState(user_id="u", connection_id="u"), DriveConnection(connected=False), AccessAction.RECORD_LOSS),
+        (True, DriveSyncState(user_id="u", connection_id="u"), DriveConnection(connected=True, needs_reconnect=True), AccessAction.RECORD_LOSS),
+        (True, DriveSyncState(user_id="u", connection_id="u", access_lost_at=NOW - ACCESS_LOSS_TTL), DriveConnection(connected=False),
          AccessAction.PURGE_EXPIRED),
-        (True, DriveSyncState(user_id="u", drive_id="d0"), ON, AccessAction.PURGE_DRIVE_SWITCH),
-        (True, DriveSyncState(user_id="u", drive_id="d1", access_lost_at=NOW - timedelta(days=3)), ON,
+        (True, DriveSyncState(user_id="u", connection_id="u", drive_id="d0"), ON, AccessAction.PURGE_DRIVE_SWITCH),
+        (True, DriveSyncState(user_id="u", connection_id="u", drive_id="d1", access_lost_at=NOW - timedelta(days=3)), ON,
          AccessAction.RESUME_AFTER_REGAIN),
-        (True, DriveSyncState(user_id="u", drive_id="d1", access_lost_at=NOW - ACCESS_LOSS_TTL), ON,
+        (True, DriveSyncState(user_id="u", connection_id="u", drive_id="d1", access_lost_at=NOW - ACCESS_LOSS_TTL), ON,
          AccessAction.PURGE_THEN_RESTART),
-        (True, DriveSyncState(user_id="u", drive_id="d1"), ON, AccessAction.PROCEED),
+        (True, DriveSyncState(user_id="u", connection_id="u", drive_id="d1"), ON, AccessAction.PROCEED),
         (True, None, ON, AccessAction.PROCEED),
-        (True, DriveSyncState(user_id="u", drive_id=""), ON, AccessAction.PROCEED),
+        (True, DriveSyncState(user_id="u", connection_id="u", drive_id=""), ON, AccessAction.PROCEED),
     ])
     def test_access_action(self, enabled, state, conn, expected):
         assert access_action(enabled, state, conn, NOW) is expected
@@ -284,23 +284,23 @@ class TestAccess:
 
 class TestStaleness:
     def test_fresh_user_with_no_baseline_is_not_stale(self):
-        assert is_stale(DriveSyncState(user_id="u"), None, NOW) is False
+        assert is_stale(DriveSyncState(user_id="u", connection_id="u"), None, NOW) is False
 
     def test_onboarding_that_never_succeeded_goes_stale(self):
-        st = DriveSyncState(user_id="u", created_at=NOW - STALE_ALERT_AFTER - timedelta(seconds=1))
+        st = DriveSyncState(user_id="u", connection_id="u", created_at=NOW - STALE_ALERT_AFTER - timedelta(seconds=1))
         assert is_stale(st, None, NOW) is True
 
     def test_no_clean_tick_for_too_long(self):
-        st = DriveSyncState(user_id="u", last_success_at=NOW - STALE_ALERT_AFTER - timedelta(seconds=1))
+        st = DriveSyncState(user_id="u", connection_id="u", last_success_at=NOW - STALE_ALERT_AFTER - timedelta(seconds=1))
         assert is_stale(st, None, NOW) is True
 
     def test_overdue_edit(self):
-        st = DriveSyncState(user_id="u", last_success_at=NOW)
+        st = DriveSyncState(user_id="u", connection_id="u", last_success_at=NOW)
         assert is_stale(st, NOW - STALE_ALERT_AFTER - timedelta(seconds=1), NOW) is True
         assert is_stale(st, NOW - timedelta(minutes=5), NOW) is False
 
     def test_access_lost_never_stale(self):
-        assert is_stale(DriveSyncState(user_id="u", access_lost_at=NOW), None, NOW) is False
+        assert is_stale(DriveSyncState(user_id="u", connection_id="u", access_lost_at=NOW), None, NOW) is False
 
 
 class TestReviewARegressions:
@@ -323,7 +323,7 @@ class TestReviewARegressions:
         assert capped(dying, NOW) is dying
 
     def test_a_started_purge_always_finishes(self):
-        st = DriveSyncState(user_id="u", purging=True, drive_id="d1")
+        st = DriveSyncState(user_id="u", connection_id="u", purging=True, drive_id="d1")
         assert access_action(True, st, DriveConnection(connected=True, drive_id="d1"), NOW) is AccessAction.PURGE_THEN_RESTART
         assert access_action(False, st, DriveConnection(connected=True, drive_id="d1"), NOW) is AccessAction.PURGE_OPT_OUT
 

@@ -351,7 +351,7 @@ class TestFieldTypes:
         assert {name: hints[name] for name in expected} == expected
 
     def test_record_v2_defaults_are_neutral(self):
-        rec = DriveIndexRecord(user_id="u", item_id="i")
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i")
         assert (rec.profile_state, rec.passages_state) == (JobState.NONE.value, JobState.NONE.value)
         assert rec.caption == "" and rec.lead_text == ""   # kept until P3/P5 retire or reuse them
 

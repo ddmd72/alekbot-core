@@ -16,6 +16,7 @@ from src.ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY
 
 from tests.unit.adapters.firestore_drive_eval_fakes import RECS, eval_transactions, make_eval_repo
 from tests.unit.adapters.firestore_drive_mirror_fakes import LEDGER, ROOTS, NameAwareDb
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 _ROOT = Path(__file__).resolve().parents[2]
 LIVE_LEDGER = "development_drive_transcript_mirror"
@@ -81,7 +82,7 @@ def run():
 
 async def _everything(repo):
     await repo.ready_marks("u", "d", T, 5)
-    await repo.children("u", "d", "p", 5)
+    await repo.children(U_SCOPE, "d", "p", 5)
     await repo.folder_docs("u", "d", None, 5)
     await repo.folder_docs("u", "d", "u:folder:a", 5)
     await repo.scan_page("u", "d", None, 5)
@@ -164,7 +165,7 @@ async def test_pins_send_two_queries_each_and_never_an_or(run):
 async def test_every_step_query_filters_on_the_drive(run):
     db, repo = run
     await repo.ready_marks("u", "d", T, 5)
-    await repo.children("u", "d", "p", 5)
+    await repo.children(U_SCOPE, "d", "p", 5)
     await repo.folder_docs("u", "d", None, 5)
     await repo.scan_page("u", "d", None, 5)
     await repo.detached_due("u", "d", T, 5)

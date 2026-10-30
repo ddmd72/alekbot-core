@@ -383,7 +383,7 @@ async def test_sweep_marks_gone(world):
 
 
 async def _seed_unresolved(w, item_id, parent_id, name="memo.pdf"):
-    rec = DriveIndexRecord(user_id="u", item_id=item_id, parent_id=parent_id, name=name, kind="pdf",
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, parent_id=parent_id, name=name, kind="pdf",
                            scope=Scope.UNRESOLVED, state=RecordState.UNRESOLVED, policy_version=planner.POLICY_VERSION,
                            seen_epoch=w.repo.states["u"].epoch, due_at=w.clock.now, priority=int(Priority.CASCADE))
     await w.repo.upsert_records([rec])
@@ -434,7 +434,7 @@ async def test_reread_marks_unstored(world):
     w.add_root()
     hidden = w.drive.add(".private", folder=True)
     await w.settle()
-    rec = DriveIndexRecord(user_id="u", item_id="x", parent_id=hidden, name="memo.pdf", kind="pdf",
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="x", parent_id=hidden, name="memo.pdf", kind="pdf",
                            state=RecordState.INDEXED, scope=Scope.NORMAL, policy_version=planner.POLICY_VERSION)
     await w.repo.upsert_records([rec])
     w.mirrored("x")

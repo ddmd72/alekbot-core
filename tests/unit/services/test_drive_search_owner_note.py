@@ -14,6 +14,7 @@ from src.domain.drive_index_params import CARD_RENDER_MAX
 from src.domain.drive_search import STATUS_AMBIGUOUS_FOLDER, render_results
 
 from .drive_search_v2_fixture import V2World, card, tier_of
+from .drive_index_fakes import U_SCOPE
 
 NOTE = dict(owner_note_id="n1", owner_note_version=1, owner_note_text="the bathroom repair invoice from Reformas Exemplo",
             owner_doc_type="contract", owner_note_merge_version=1)
@@ -111,7 +112,7 @@ async def test_the_noted_copy_is_the_collapse_representative(w):
     shown = [c.item_id for c in result.cards if c.tier]
     assert noted in shown and first not in shown
     assert card(result, noted).also_at == ("Bathroom invoice.pdf",)
-    lean = (await w.repo.get_records_lean("u", [noted]))[noted]
+    lean = (await w.repo.get_records_lean(U_SCOPE, [noted]))[noted]
     assert lean.owner_note_id == "n1"
 
 

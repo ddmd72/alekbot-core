@@ -10,6 +10,8 @@ from src.domain.exceptions import LLMClientError
 from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -46,7 +48,7 @@ def _world():
 
 def _switch_space(w, space, embeddings):
     w.svc = svc_mod.DriveIndexingService(w.drive, w.repo, embeddings, w.queue, w.users, lambda lat, lon: None, space,
-                                         extractors=w.svc._extractors, triage=w.svc._triage, clock=w.clock,
+                                         extractors=w.svc._extractors, triage=w.svc._triage, connections=LegacyConnections(w.users, w.drive), clock=w.clock,
                                          monotonic=w.clock.monotonic)
 
 
@@ -63,7 +65,7 @@ async def test_a_chunk_the_new_space_refuses_is_terminal_for_that_space():
         await w.settle(max_ticks=20)
         w.clock.advance(RETRY_CAP.total_seconds())
     rec = w.rec(doc)
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert len(w.parser.requests) == parses and len(w.reader.requests) == reads   # never read again
     assert refusing.refusals == 1
     assert (rec.state, rec.reason, rec.indexed_generation) == (RecordState.FAILED, Reason.EXTRACT_ERROR, None)

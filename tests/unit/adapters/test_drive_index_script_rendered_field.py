@@ -8,24 +8,25 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index import DriveIndexRecord
 
 from tests.unit.adapters.firestore_drive_eval_fakes import EvalDb, eval_transactions, make_eval_repo
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 
 def test_a_stored_field_that_round_trips():
-    rec = DriveIndexRecord(user_id="u", item_id="i", kind="html", script_rendered=True)
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind="html", script_rendered=True)
     doc = record_to_doc(rec)
     assert "script_rendered" in RECORD_FIELDS and doc["script_rendered"] is True
     assert record_from_doc(doc) == rec
 
 
 def test_a_record_stored_before_the_field_reads_false():
-    doc = {k: v for k, v in record_to_doc(DriveIndexRecord(user_id="u", item_id="i")).items() if k != "script_rendered"}
+    doc = {k: v for k, v in record_to_doc(DriveIndexRecord(user_id="u", connection_id="u", item_id="i")).items() if k != "script_rendered"}
     assert record_from_doc(doc).script_rendered is False
 
 
 async def test_both_repositories_keep_it(mock_env_config):
-    rec = DriveIndexRecord(user_id="u", item_id="i", kind="html", script_rendered=True,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind="html", script_rendered=True,
                            modified_at=datetime(2026, 10, 13, tzinfo=timezone.utc))
     with eval_transactions():
         for repo in (InMemoryDriveIndexRepository(), make_eval_repo(EvalDb(), mock_env_config)):
             await repo.upsert_records([rec])
-            assert (await repo.get_records("u", ["i"]))["i"].script_rendered is True
+            assert (await repo.get_records(U_SCOPE, ["i"]))["i"].script_rendered is True

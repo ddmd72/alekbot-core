@@ -9,6 +9,7 @@ from src.domain.drive_search import STATUS_DISCONNECTED, STATUS_FOLDER_NOT_FOUND
 from src.domain.user_drive import DriveConnection
 
 from .test_drive_search_service import World
+from .drive_index_fakes import U_SCOPE
 
 BUILDING = "The index is still being built"
 
@@ -22,7 +23,7 @@ async def _settled():
 
 async def test_folder_not_found_while_building_says_building_first():
     w = await _settled()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     await w.repo.save_sync_state(replace(state, epoch_phase=EpochPhase.ENUMERATING))
     result = await w.search("lease", folder="Taxes/2025")
     text = render_results(result)

@@ -26,12 +26,12 @@ HINTS = "test_drive_index_hints"
 
 
 def _chunk(item: str, index: int = 0) -> DriveChunk:
-    return DriveChunk(user_id="u", item_id=item, generation=1, index=index, text="", char_start=0, char_end=10,
+    return DriveChunk(user_id="u", connection_id="u", item_id=item, generation=1, index=index, text="", char_start=0, char_end=10,
                       kind="epub")
 
 
 def _hint(item: str, index: int = 0) -> DriveHintDoc:
-    return DriveHintDoc(user_id="u", item_id=item, generation=1, index=index, kind="epub", chunk_text_hash="t",
+    return DriveHintDoc(user_id="u", connection_id="u", item_id=item, generation=1, index=index, kind="epub", chunk_text_hash="t",
                         items=(), hint_keys=("w:chapter",), passages_version=1)
 
 

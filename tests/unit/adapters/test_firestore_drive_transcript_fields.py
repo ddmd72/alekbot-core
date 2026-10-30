@@ -18,7 +18,7 @@ def _stored(doc):
 
 
 def _rec(**kw):
-    return DriveIndexRecord(user_id="u", item_id="i", **kw)
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id="i", **kw)
 
 
 def test_transcript_fields_roundtrip():
@@ -34,7 +34,7 @@ def test_transcript_fields_roundtrip():
 
 
 def test_purge_keep_transcripts_roundtrip():
-    state = DriveSyncState(user_id="u", purge_keep_transcripts=True)
+    state = DriveSyncState(user_id="u", connection_id="u", purge_keep_transcripts=True)
     back = state_from_doc("u", _stored(state_to_doc(state)))
     assert back.purge_keep_transcripts is True and back == state
 

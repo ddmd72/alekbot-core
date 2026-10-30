@@ -31,7 +31,7 @@ def _rec(**kw):
 
 
 def _folder(**kw):
-    return DriveIndexRecord(user_id="u", item_id="f1", parent_id="p0", name="Videos", is_folder=True,
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id="f1", parent_id="p0", name="Videos", is_folder=True,
                            **{"state": RecordState.METADATA_ONLY, **kw})
 
 

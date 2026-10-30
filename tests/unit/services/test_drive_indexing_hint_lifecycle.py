@@ -10,6 +10,7 @@ import pytest
 from src.domain.drive_enrichment import DriveHintDoc, HintItem
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -125,4 +126,4 @@ async def test_the_hint_sweep_restarts_when_cut(w, monkeypatch):
     w.drive.resync_next = True
     await w.settle()
     assert starts.count(None) == 2   # cut after one page, then one whole pass from the first hint document
-    assert hints_of(w, doc) == [] and (await w.repo.get_sync_state("u")).epoch_phase.value == "idle"
+    assert hints_of(w, doc) == [] and (await w.repo.get_sync_state(U_SCOPE)).epoch_phase.value == "idle"

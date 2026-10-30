@@ -10,6 +10,7 @@ from .test_drive_indexing_card_embedding_outcomes import (
     _bump_card_version, _count_upgrade_pages, _refuse_cards_starting_with,
 )
 from .test_drive_indexing_service import World
+from .drive_index_fakes import U_SCOPE
 
 
 async def _until_terminal(w):
@@ -64,5 +65,5 @@ async def test_a_card_builder_bump_retries_and_converges(monkeypatch):
     rec = w.rec(bad)
     assert len(refused) == MAX_ATTEMPTS and rec.card_refused and rec.card_version == drive_card.CARD_VERSION
     assert rec.state is RecordState.METADATA_ONLY and not planner.stale_versions(rec)
-    assert dict((await w.repo.get_sync_state("u")).applied_versions) == target
+    assert dict((await w.repo.get_sync_state(U_SCOPE)).applied_versions) == target
     assert per_tick == [0] * 6
