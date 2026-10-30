@@ -32,13 +32,18 @@ def run():
         yield db, mirror_repo.FirestoreDriveMirrorRepository(db, env)
 
 
+DRIVE = "microsoft_onedrive:d"     # the mirror's drive identity (MULTI_DRIVE_RFC §10)
+
+
 @pytest.mark.slow
 async def test_mark_gone_commits_in_chunks(run):
     db, repo = run
     n = RECORD_WRITE_BATCH * 2 + 50
     for i in range(n):
-        await repo.save_doc(MirrorDoc(user_id="u", drive_id="d", kind="file", source_item_id=f"i{i}"))
-    assert await repo.mark_gone("u", [DeletionNotice(f"i{i}", GONE, T) for i in range(n)]) == n
+        await repo.save_doc(MirrorDoc(user_id="u", drive_identity=DRIVE, kind="file", source_item_id=f"i{i}",
+                                      source_identity=f"{DRIVE}:i{i}"))
+    assert await repo.mark_gone("u", [DeletionNotice(f"i{i}", GONE, T, source_identity=f"{DRIVE}:i{i}") for i in range(n)],
+                                drive_identity=DRIVE) == n
     assert [len(c) for c in db.commits] == [RECORD_WRITE_BATCH, RECORD_WRITE_BATCH, 50]
     assert all(d["gone_pending"] for d in db.collection(LEDGER).docs.values())
 
@@ -60,7 +65,7 @@ def test_every_field_has_a_supported_codec_shape():
 
 async def test_delete_doc_checks_the_documents_owner(run):
     db, repo = run
-    await repo.save_doc(MirrorDoc(user_id="u", drive_id="d", kind="file", source_item_id="a"))
+    await repo.save_doc(MirrorDoc(user_id="u", drive_identity=DRIVE, kind="file", source_item_id="a", source_identity=f"{DRIVE}:a"))
     await repo.delete_doc("v", "u:file:a")      # a key that is another user's document
     assert "u:file:a" in db.collection(LEDGER).docs
     await repo.delete_doc("u", "u:file:a")
@@ -75,4 +80,4 @@ async def test_a_write_path_backend_error_is_store_unavailable(run, monkeypatch)
 
     monkeypatch.setattr(type(db.collection(LEDGER).document("x")), "set", boom)
     with pytest.raises(DriveIndexStoreUnavailable):
-        await repo.save_doc(MirrorDoc(user_id="u", drive_id="d", kind="file", source_item_id="a"))
+        await repo.save_doc(MirrorDoc(user_id="u", drive_identity=DRIVE, kind="file", source_item_id="a", source_identity=f"{DRIVE}:a"))

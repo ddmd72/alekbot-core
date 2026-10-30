@@ -30,19 +30,22 @@ def run():
 
 
 def _doc(item: str, **kw) -> MirrorDoc:
-    return MirrorDoc(user_id="u", drive_id=kw.pop("drive", "d1"), kind=KIND_FILE, source_item_id=item, **kw)
+    drive = kw.pop("drive", "microsoft_onedrive:d1")          # the mirror's drive identity (MULTI_DRIVE_RFC §10)
+    return MirrorDoc(user_id="u", drive_identity=drive, kind=KIND_FILE, source_item_id=item,
+                     source_identity=f"microsoft_onedrive:src:{item}", **kw)
 
 
 async def test_pinned_keys_needs_no_composite_index(run, monkeypatch):
     db, repo = run
     monkeypatch.setattr("src.adapters.firestore_drive_mirror_repo.PIN_PAGE", 2)
     docs = [_doc(f"z{n}", state=MIRROR_ARCHIVED, content_key=f"k{n % 3}") for n in range(5)]
-    docs += [_doc(f"a{n}", state=MIRROR_DETACHED, content_key=f"d{n}", drive="d2") for n in range(3)]
+    docs += [_doc(f"a{n}", state=MIRROR_DETACHED, content_key=f"d{n}", drive="microsoft_onedrive:d2") for n in range(3)]
     docs += [_doc(f"m{n}", state=MIRROR_ACTIVE, content_key=f"p{n}") for n in range(3)]
     docs += [_doc("x", state=MIRROR_ACTIVE, content_key="active-only")]
     for d in docs:
         await repo.save_doc(d)
-    await repo.mark_gone("u", [DeletionNotice(f"m{n}", GONE, T) for n in range(3)])
+    await repo.mark_gone("u", [DeletionNotice(f"m{n}", GONE, T, source_identity=f"microsoft_onedrive:src:m{n}")
+                              for n in range(3)], drive_identity="microsoft_onedrive:d1")
     db.collection(LEDGER).executed.clear()
     keys = await repo.pinned_keys("u")
     assert keys == frozenset({"k0", "k1", "k2", "d0", "d1", "d2", "p0", "p1", "p2"})
@@ -57,7 +60,7 @@ async def test_pinned_keys_needs_no_composite_index(run, monkeypatch):
             assert op[0] != "order_by" or op[1] == "__name__", op
             assert op[0] != "start_after", op
         fields = {op[1] for op in ops if op[0] == "where"}
-        assert "content_key" not in fields and "drive_id" not in fields
+        assert "content_key" not in fields and "drive_identity" not in fields
 
 
 @pytest.mark.parametrize("error", [ServiceUnavailable("down at https://console.example.invalid/project/secret-proj"),
