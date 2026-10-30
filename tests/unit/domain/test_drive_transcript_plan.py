@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.domain import drive_transcript_plan as pm
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_index import TRANSCRIBE_VERSION, DriveIndexRecord, Reason, RecordState, Scope
 from src.domain.drive_index_params import (
     MAX_ATTEMPTS, QUIET, TRANSCRIBE_HOUR_USD_ESTIMATE, TRANSCRIBE_MAX_BYTES, TRANSCRIBE_MAX_SECONDS,
@@ -21,16 +22,22 @@ from src.domain.drive_transcript_plan import (
 from src.domain.drive_transcript_windows import plan_windows
 from src.domain.drive_index_planner import EXTRACTION_VERSION, change_from_record, classify
 from src.domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION
-from src.domain.drive_transcript_windows import content_key
+from src.domain.drive_transcript_windows import record_content_key
 
 NOW = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
 OLD = NOW - timedelta(days=3)
 
 
+def _cid(digest):
+    """The content identity (MULTI_DRIVE_RFC §7.2) a provider hash `digest` gives."""
+    return ContentIdentity("quickxor", digest, 1)
+
+
 def _rec(**kw):
     base = dict(user_id="u", item_id="i1", kind="audio", scope=Scope.NORMAL, state=RecordState.PENDING,
-                content_version="c1", content_hash="h1", name="a.mp3", mime_type="audio/mpeg", size_bytes=1_000_000, modified_at=OLD)
+                content_version="c1", content_identity=_cid("h1"), name="a.mp3", mime_type="audio/mpeg", size_bytes=1_000_000, modified_at=OLD)
     base.update(kw)
+    base.setdefault("identity", f"microsoft_onedrive:d1:{base['item_id']}")   # MULTI_DRIVE_RFC §7.2
     return DriveIndexRecord(**base)
 
 
@@ -41,7 +48,7 @@ def _ctx(**kw):
 
 
 def _key(rec):
-    return content_key(rec)[0]
+    return record_content_key(rec)[0]
 
 
 def _current(rec, **kw):
@@ -153,7 +160,7 @@ def test_new_content_version_resets_attempts_and_holds():
     rec = _rec()
     failed = replace(rec, transcript_state="failed", transcript_attempts=MAX_ATTEMPTS, transcript_hold_version=_hk(rec))
     assert transcript_plan(failed, _ctx()).transcript_state == "failed"
-    edited = replace(failed, content_version="c2", content_hash="h2")
+    edited = replace(failed, content_version="c2", content_identity=_cid("h2"))
     out = transcript_plan(edited, _ctx())
     assert (out.transcript_state, out.transcript_attempts, out.transcript_hold, out.transcript_hold_version) == (
         "ready", 0, None, "")
@@ -169,7 +176,7 @@ def test_reset_keeps_attempts_for_the_same_version():
 
 def test_edit_cooldown_holds_24h_after_last_transcription():
     done = _current(_rec(), model_read_at=NOW - timedelta(hours=2))
-    edited = replace(done, content_version="c2", content_hash="h2")
+    edited = replace(done, content_version="c2", content_identity=_cid("h2"))
     out = transcript_plan(edited, _ctx())
     assert out.transcript_state == "held" and out.transcript_hold == "cooldown"
     assert out.transcript_wake_at == done.model_read_at + TRANSCRIBE_REREAD_COOLDOWN
@@ -179,14 +186,14 @@ def test_edit_cooldown_holds_24h_after_last_transcription():
 
 def test_second_edit_inside_cooldown_stays_held():
     done = _current(_rec(), model_read_at=NOW - timedelta(hours=2))
-    once = transcript_plan(replace(done, content_version="c2", content_hash="h2"), _ctx())
-    twice = transcript_plan(replace(once, content_version="c3", content_hash="h3"), _ctx())
+    once = transcript_plan(replace(done, content_version="c2", content_identity=_cid("h2")), _ctx())
+    twice = transcript_plan(replace(once, content_version="c3", content_identity=_cid("h3")), _ctx())
     assert twice.transcript_state == "held" and twice.transcript_wake_at == once.transcript_wake_at
 
 
 def test_edit_after_cooldown_is_ready():
     done = _current(_rec(), model_read_at=NOW - TRANSCRIBE_REREAD_COOLDOWN - timedelta(minutes=1))
-    out = transcript_plan(replace(done, content_version="c2", content_hash="h2"), _ctx())
+    out = transcript_plan(replace(done, content_version="c2", content_identity=_cid("h2")), _ctx())
     assert out.transcript_state == "ready"
 
 
@@ -251,12 +258,12 @@ def test_plan_reads_no_store():
 def test_reserved_at_fit_not_at_submit():
     ctx = _ctx(cap_usd=1.0, month_usd=0.0)
     probe = MediaProbe(duration_s=3600 * 3, has_audio=True)       # 3 h = about 0.62 USD with the overlaps
-    first = start_file(transcript_plan(_rec(item_id="a", content_hash="ha"), ctx), ctx, probe)
+    first = start_file(transcript_plan(_rec(item_id="a", content_identity=_cid("ha")), ctx), ctx, probe)
     assert first.outcome is StartOutcome.STARTED
     assert first.reservation is not None and first.reservation.usd == pytest.approx(file_estimate_usd(3 * 3600))
     assert first.reservation.month == "2026-10"
     assert first.ctx.reserved_usd == pytest.approx(file_estimate_usd(3 * 3600))           # held before any window is extracted or submitted
-    second = start_file(transcript_plan(_rec(item_id="b", content_hash="hb"), first.ctx), first.ctx, probe)
+    second = start_file(transcript_plan(_rec(item_id="b", content_identity=_cid("hb")), first.ctx), first.ctx, probe)
     assert second.outcome is StartOutcome.PARKED                  # fits alone (0.62 <= 1.0), not after the first's hold
     assert fits(file_estimate_usd(3 * 3600), ctx)
 
@@ -269,8 +276,8 @@ def test_release_returns_the_reservation():
 
 
 def test_unshared_key_never_hits_another_item():
-    a = _rec(item_id="a", content_hash=None)
-    b = _rec(item_id="b", content_hash=None)
+    a = _rec(item_id="a", content_identity=None)
+    b = _rec(item_id="b", content_identity=None)
     assert _key(a) != _key(b)
     done = _current(a, model_read_at=OLD)
     # b has a's key on its record (impossible by construction, but the plan must not call it current)
@@ -317,7 +324,7 @@ def test_current_stub_survives_the_plan():
 
 def test_stale_key_working_job_resets_to_ready():
     working = replace(_current(_rec()), transcript_state="working")
-    edited = replace(working, content_version="c2", content_hash="h2")
+    edited = replace(working, content_version="c2", content_identity=_cid("h2"))
     assert transcript_plan(edited, _ctx()).transcript_state == "ready"
 
 
@@ -435,7 +442,7 @@ def test_a_same_key_edit_keeps_an_in_flight_job():
     for state in ("working", "waiting"):
         job = replace(_current(_rec()), transcript_state=state, dirty_since=fresh, modified_at=fresh,
                       content_version="c2")                          # new cTag, same bytes: same key
-        assert content_key(job)[0] == _key(_rec())
+        assert record_content_key(job)[0] == _key(_rec())
         assert transcript_plan(job, _ctx()).transcript_state == state
 
 
@@ -476,7 +483,7 @@ def test_cooldown_runs_from_the_purchase_not_only_the_completion():
     started = start_file(transcript_plan(_rec(), _ctx()), _ctx(), MediaProbe(duration_s=3600, has_audio=True))
     assert started.rec.model_read_at == NOW
     later = NOW + timedelta(hours=2)                                 # quiet period long over
-    edited = replace(started.rec, content_version="c2", content_hash="h2", dirty_since=None)
+    edited = replace(started.rec, content_version="c2", content_identity=_cid("h2"), dirty_since=None)
     out = transcript_plan(edited, _ctx(now=later))
     assert out.transcript_state == "held" and out.transcript_hold == "cooldown"
     assert out.transcript_wake_at == NOW + TRANSCRIBE_REREAD_COOLDOWN
@@ -541,6 +548,6 @@ def test_key_change_while_parked_mid_job_resets():
     ctx = _ctx(cap_usd=1.0)
     started = start_file(transcript_plan(_rec(), ctx), ctx, MediaProbe(duration_s=7200, has_audio=True))
     parked = park(started.rec, ctx, resubmit=True)
-    edited = replace(parked, content_version="c2", content_hash="h2")
+    edited = replace(parked, content_version="c2", content_identity=_cid("h2"))
     out = transcript_plan(edited, replace(ctx, now=NOW + timedelta(days=30)))
     assert out.transcript_state == "ready" and out.transcript_hold is None and out.transcript_attempts == 0

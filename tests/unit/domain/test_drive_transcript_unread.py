@@ -20,7 +20,7 @@ DOCS = frozenset({"pdf"})
 
 
 def rec(item_id="m", **kw):
-    return DriveIndexRecord(**{"user_id": "u", "item_id": item_id, "kind": "audio", "state": RecordState.PENDING, **kw})
+    return DriveIndexRecord(**{"user_id": "u", "connection_id": "u", "item_id": item_id, "kind": "audio", "state": RecordState.PENDING, **kw})
 
 
 def test_pending_media_not_read_yet_when_enabled():
@@ -82,23 +82,23 @@ class TestRepositories:
     async def test_in_memory_counts_media_only_when_given(self):
         mem = InMemoryDriveIndexRepository()
         await mem.upsert_records(self._records())
-        assert await mem.count_unread("u", ADMITTED_KINDS, TRIAGED_KINDS) == 1
-        assert await mem.count_unread("u", ADMITTED_KINDS, TRIAGED_KINDS, transcribed=MEDIA) == 4
-        assert await mem.count_unread("u", ADMITTED_KINDS, TRIAGED_KINDS, pending=True, transcribed=MEDIA) == 1
-        assert await mem.count_unread("u", ADMITTED_KINDS, TRIAGED_KINDS, pending=False, transcribed=MEDIA) == 3
+        assert await mem.count_unread(U_SCOPE, ADMITTED_KINDS, TRIAGED_KINDS) == 1
+        assert await mem.count_unread(U_SCOPE, ADMITTED_KINDS, TRIAGED_KINDS, transcribed=MEDIA) == 4
+        assert await mem.count_unread(U_SCOPE, ADMITTED_KINDS, TRIAGED_KINDS, pending=True, transcribed=MEDIA) == 1
+        assert await mem.count_unread(U_SCOPE, ADMITTED_KINDS, TRIAGED_KINDS, pending=False, transcribed=MEDIA) == 3
 
     async def test_firestore_and_memory_unread_counts_agree_for_media(self, mock_env_config):
         """Each Firestore class is answered by the in-memory rule applied to the records its filters would match."""
         db = ChunkDb()
         repo = make_chunk_repo(db, mock_env_config)
         db.cols[RECS].respond = lambda ops: [[SimpleNamespace(alias="n", value=1)]]
-        queries = repo.unread_count_queries("u", frozenset(), frozenset(), None, MEDIA)
+        queries = repo.unread_count_queries(U_SCOPE, frozenset(), frozenset(), None, MEDIA)
         assert len(queries) == 5                                  # failed, pending, too_large, machine_text, chunk_cap
         mem = InMemoryDriveIndexRepository()
         await mem.upsert_records([r for r in self._records() if r.kind != "pdf"])
         # classes the Firestore side sums: failed 1 + pending 1 (p; p2 has a generation) + too_large 1 = 3, and the
         # silent stub (`no_text`) is in none of them
-        assert await mem.count_unread("u", frozenset(), frozenset(), transcribed=MEDIA) == 3
+        assert await mem.count_unread(U_SCOPE, frozenset(), frozenset(), transcribed=MEDIA) == 3
 
     async def test_no_new_index_for_media_unread_classes(self, mock_env_config):
         from tests.unit.adapters.test_firestore_drive_index_chunk_provisioning import _declared

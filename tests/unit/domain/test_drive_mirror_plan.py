@@ -36,7 +36,7 @@ def _folder(**kw):
 
 
 def _doc(**kw):
-    base = dict(user_id="u", drive_id="d", kind=KIND_FILE, source_item_id="i1", source_name="Interview.mp4",
+    base = dict(user_id="u", drive_identity="d", kind=KIND_FILE, source_item_id="i1", source_name="Interview.mp4",
                 source_parent_id="p1", mirror_name="Interview.mp4.md", rendered_hash="h1", mirror_item_id="m1")
     base.update(kw)
     return MirrorDoc(**base)
@@ -266,7 +266,7 @@ def test_a_mark_without_ready_at_uses_gone_at_plus_grace():
 # -- the root ------------------------------------------------------------------------------------------------------
 
 def _root(gone=T):
-    return MirrorRoot(user_id="u", drive_id="d", root_item_id="r", root_name="_Transcripts", root_gone_at=gone)
+    return MirrorRoot(user_id="u", drive_identity="d", root_item_id="r", root_name="_Transcripts", root_gone_at=gone)
 
 
 LATE = T + MIRROR_ROOT_GRACE + timedelta(minutes=1)

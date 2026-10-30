@@ -2,6 +2,7 @@
 reach the index step, and a transcribe link is never extractor-stale."""
 from datetime import datetime, timedelta, timezone
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_card import card_hash
 from src.domain.drive_index import (
     DriveChange, DriveIndexRecord, EpochPhase, Priority, Reason, RecordState, Scope,
@@ -17,7 +18,7 @@ MIB = 1024 * 1024
 
 
 def ctx():
-    return PlanContext(user_id="u", root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=NOW,
+    return PlanContext(scope=ConnectionScope("u", "u"), root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=NOW,
                        place_of=lambda lat, lon: None)
 
 

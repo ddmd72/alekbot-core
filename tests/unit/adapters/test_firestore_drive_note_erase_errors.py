@@ -33,7 +33,7 @@ async def _first(repo, note_id: str, item: str) -> None:
     version = next_version(0, NoteContent("the contractor's invoice"), NoteAction.SET, CHAT, T)
     note = note_after_write(DriveNote(note_id=note_id, user_id=U, account_id="acc"), version, NoteState.ACTIVE, CHAT, T,
                             vector=None, embedding_space="", embedding_pending=False,
-                            binding=NoteBinding(provider_key="onedrive", drive_id="d1", item_id=item, bound_at=T),
+                            binding=NoteBinding(item_id=item, identity=f"onedrive:d1:{item}", ref_tag="a1", bound_at=T),
                             snapshot=NoteSnapshot(name=f"{item}.pdf", path=f"Docs/{item}.pdf", snapshot_at=T))
     await repo.write_version(note, version, expected_version=0)
 

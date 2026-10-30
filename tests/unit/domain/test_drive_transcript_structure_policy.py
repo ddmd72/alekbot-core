@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain import drive_index_policy as pol
 from src.domain.drive_index import (
     POLICY_VERSION, STRUCTURE_POLICY_SINCE, ContentClass, DriveChange, DriveIndexRecord, EpochPhase, Reason,
@@ -18,7 +19,7 @@ NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
 
 
 def ctx():
-    return PlanContext(user_id="u", root_item_id="root", epoch=1, phase=EpochPhase.IDLE, now=NOW,
+    return PlanContext(scope=ConnectionScope("u", "u"), root_item_id="root", epoch=1, phase=EpochPhase.IDLE, now=NOW,
                        place_of=lambda lat, lon: None)
 
 
