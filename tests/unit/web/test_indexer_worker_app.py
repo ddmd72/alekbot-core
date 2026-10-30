@@ -6,7 +6,8 @@ import pytest
 from quart import Quart
 
 from src.domain.drive_index import Nudge
-from src.domain.drive_task_keys import tick_payload
+from src.domain.connection_scope import ConnectionScope
+from src.domain.drive_task_keys import scope_payload
 from src.services.drive_indexing_service import TickResult
 from src.web import indexer_worker_app
 from src.web.indexer_worker_app import create_indexer_worker_blueprint, indexer_audiences, worker_oidc_gate
@@ -23,8 +24,11 @@ def _app(tick_result=None, verifier=None, raises=None):
     return app, indexing, oidc
 
 
-def _task(user_id="u1", nudge=None):
-    return {"task_type": "drive_sync", **tick_payload(user_id, nudge)}
+SCOPE = ConnectionScope("u1", "c1")
+
+
+def _task(scope=SCOPE, nudge=None):
+    return {"task_type": "drive_sync", **scope_payload(scope, nudge)}
 
 
 class TestRouting:
@@ -33,13 +37,13 @@ class TestRouting:
         resp = await app.test_client().post("/worker", json=_task(), headers={"Authorization": "Bearer t"})
         assert resp.status_code == 200
         assert await resp.get_json() == {"status": "done", "observed": 3}
-        indexing.tick.assert_awaited_once_with("u1", None)
+        indexing.tick.assert_awaited_once_with(SCOPE, None)   # per connection (MULTI_DRIVE_RFC §8)
 
     async def test_nudge_is_parsed_and_passed(self):
         app, indexing, _ = _app()
         nudge = Nudge(mutation_id="m1", item_ids=("a", "b"), attempt=2)
         await app.test_client().post("/worker", json=_task(nudge=nudge))
-        indexing.tick.assert_awaited_once_with("u1", nudge)
+        indexing.tick.assert_awaited_once_with(SCOPE, nudge)
 
     @pytest.mark.parametrize("status", ["disabled", "busy", "purging", "purged", "access_lost", "throttled",
                                         "error"])
