@@ -22,7 +22,6 @@ and a positive control first: while the note is active on its live record, the s
 never pass on an empty or gated search). Synthetic items and notes only."""
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import Any, Dict, List, Optional, Tuple
 from unittest.mock import AsyncMock
 
@@ -32,14 +31,18 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.in_memory_drive_mirror_repo import InMemoryDriveMirrorRepository
 from src.adapters.in_memory_drive_note_repo import InMemoryDriveNoteRepository
 from src.composition.drive_note_setup import add_drive_note_deleted_source
+from src.domain.connection_scope import ConnectionScope
+from src.domain.drive_connection import DriveConnection
+from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_extraction import PARSER, READER
-from src.domain.drive_index import DriveChange, DriveChanges
+from src.domain.drive_index import DriveChange
 from src.domain.drive_keys import word_keys
 from src.domain.drive_mirror import KIND_ARCHIVE, KIND_FILE, MIRROR_ACTIVE, MIRROR_ARCHIVED, MirrorDoc, MirrorRoot
 from src.domain.drive_note import BoundBy, DriveNote, NoteProvenance, NoteState
 from src.domain.drive_search import DriveSearchRequest, render_results
 from src.domain.prompt_v3.security import RiskLevel, ValidationResult
-from src.domain.user_drive import DriveConnection, DriveItem, DriveItemNotFoundError
+from src.domain.drive_user_settings import DriveUserSettings
+from src.domain.user_drive import DriveItem, DriveItemNotFoundError
 from src.ports.ephemeral_store import EphemeralStore
 from src.ports.security_port import SecurityPort
 from src.services.drive_indexing_service import DriveIndexingService
@@ -47,20 +50,24 @@ from src.services.drive_note_lifecycle import DriveNoteLifecycle
 from src.services.drive_note_service import DriveNoteService
 from src.services.drive_search_service import DriveSearchService
 
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+from tests.support.drive_connections import connection_service
+
 from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
 from .drive_index_fakes import ROOT, T0, Clock, FakeEmbeddings, FakeQueue, FakeUsers
-from .drive_index_fakes import LegacyConnections
 
 SPACE = "test-space/8"
 U, ACC = "u", "a"
 CHAT = NoteProvenance(origin="chat", session_id="s1", turn_id="t1")
 TEXT = "contractor bathroom invoice"
 WORD = "bathroom"
+C1, TAG1 = "u", "a1"        # the connection mounting d1 (its id is the user id, as the single-drive harnesses' is)
+C2, TAG2 = "c2", "b2"       # the connection of another drive (`World.connect_other_drive`)
 
 
 class NoteDrive(FakeContentDrive):
-    """The scripted drive with the two reads the note service makes (`get_item`) and a drive id that can change (a
-    different drive connected)."""
+    """The scripted drive with the two reads the note service makes (`get_item`) and a drive that can change (a
+    different drive connected: its items carry that drive's identity, MULTI_DRIVE_RFC §7.2)."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -69,26 +76,22 @@ class NoteDrive(FakeContentDrive):
         # keeps out of its records (the mirror root is opaque); here the tick has no mirror wired
         self.outside: Dict[str, DriveChange] = {}
 
-    async def get_change(self, user_id: str, item_id: str) -> DriveChange:
+    async def get_change(self, handle, item_id: str) -> DriveChange:
         if item_id in self.outside:
             return self.outside[item_id]
-        return await super().get_change(user_id, item_id)
+        return await super().get_change(handle, item_id)
 
-    async def get_item(self, user_id: str, item_id: str) -> DriveItem:
+    async def get_item(self, handle, item_id: str) -> DriveItem:
         found = self.items.get(item_id)
         if found is None:
             raise DriveItemNotFoundError(item_id)
         return DriveItem(item_id=item_id, name=found.name or "", path=found.name or "", is_folder=found.is_folder)
 
-    async def get_changes(self, user_id: str, cursor: Optional[str]) -> DriveChanges:
-        page = await super().get_changes(user_id, cursor)
-        return replace(page, drive_id=self.drive_id)
-
     def connect(self, drive_id: str) -> None:
-        """Another drive: its own (empty) item set and change log, and the connection names it."""
+        """Another drive: its own (empty) item set and change log, and its pages name it."""
         self.drive_id = drive_id
+        self.drive_identity = f"fake:{drive_id}"
         self.items, self.log = {}, []
-        self.connection_state = DriveConnection(connected=True, drive_id=drive_id)
 
     def move_out(self, item_id: str) -> None:
         """Moved out of the App Folder: the feed sends a tombstone and the item is not found by id any more."""
@@ -138,24 +141,48 @@ class World:
         self.clock = Clock()
         self.notes = InMemoryDriveNoteRepository(clock=self.clock)
         self.lifecycle = DriveNoteLifecycle(self.notes, self.repo, self.drive, clock=self.clock)
+        # one connection service for the tick, the write path and the search (MULTI_DRIVE_RFC §4.4)
+        self.conn_repo = FakeDriveConnectionRepository()
+        self.connections = connection_service(self.conn_repo)
+        self._add_connection(C1, TAG1, "d1")
+        self.scope = ConnectionScope(user_id=U, connection_id=C1)    # the connection the tick works
         self.tick_svc = DriveIndexingService(
             self.drive, self.repo, self.emb, self.queue, self.users, lambda lat, lon: None, SPACE,
             extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)}, triage=FakeTriage(),
-            notes=self.notes, note_lifecycle=self.lifecycle, connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)
+            notes=self.notes, note_lifecycle=self.lifecycle, connections=self.connections, clock=self.clock, monotonic=self.clock.monotonic)
         codes = iter(f"c{i:04d}" for i in range(100))
         self.note_svc = DriveNoteService(
-            self.notes, self.drive, self.repo, self.emb, _security(), self.users, embedding_space=SPACE,
+            self.notes, self.drive, self.repo, self.emb, _security(), self.connections, embedding_space=SPACE,
             nudge_queue=self.queue, erase_requests=MemoryStore(), clock=self.clock, new_code=lambda: next(codes))
-        self.search_svc = DriveSearchService(self.repo, self.emb, self.users, self.drive, embedding_space=SPACE,
+        self.search_svc = DriveSearchService(self.repo, self.emb, self.drive, self.connections, embedding_space=SPACE,
                                              clock=self.clock, mirror=mirror)
         add_drive_note_deleted_source(self.search_svc, self.notes, self.emb, embedding_space=SPACE)
+
+    # -- the connections ---------------------------------------------------------------------------------------
+
+    def _add_connection(self, connection_id: str, tag: str, drive_id: str) -> None:
+        """An ACTIVE connection mounting `drive_id`, indexing on, the user's primary."""
+        self.conn_repo.connections[(U, connection_id)] = DriveConnection(
+            connection_id=connection_id, user_id=U, account_id=ACC, credential_id=f"cred-{connection_id}", kind="fake",
+            drive_identity=f"fake:{drive_id}", ref_tag=tag, indexing_enabled=True, created_at=self.clock.now)
+        self.conn_repo.settings[U] = DriveUserSettings(user_id=U, primary_connection_id=connection_id)
+
+    async def connect_other_drive(self, drive_id: str = "d2") -> None:
+        """The owner disconnected the drive (its tick purges its index, MULTI_DRIVE_RFC D9) and connected another one:
+        a new connection (own tag), the tick on it."""
+        current = self.conn_repo.connections[(U, C1)]
+        self.conn_repo.connections[(U, C1)] = current.with_state(ConnectionState.DISCONNECTED, self.clock.now)
+        await self.settle()
+        self.drive.connect(drive_id)
+        self._add_connection(C2, TAG2, drive_id)
+        self.scope = ConnectionScope(user_id=U, connection_id=C2)
 
     # -- driving -------------------------------------------------------------------------------------------------
 
     async def settle(self, max_ticks: int = 60) -> Any:
         for _ in range(max_ticks):
             before = len(self.queue.tasks)
-            result = await self.tick_svc.tick(U, None)
+            result = await self.tick_svc.tick(self.scope, None)
             continued = [t for t in self.queue.tasks[before:] if ":cont:" in (t["key"] or "")]
             if not continued:
                 return result
@@ -193,8 +220,8 @@ class World:
         return (await self.search_svc.search_deleted(U, word)).text
 
     def carriers(self, note_id: str) -> List[str]:
-        return sorted(item for (user, item), rec in self.repo.records.items()
-                      if user == U and rec.owner_note_id == note_id)
+        return sorted(item for (_connection, item), rec in self.repo.records.items()
+                      if rec.user_id == U and rec.owner_note_id == note_id)
 
     # -- the two assertions --------------------------------------------------------------------------------------
 
@@ -217,7 +244,7 @@ class World:
 async def _archived(w: World, name: str = "scan.pdf") -> Tuple[str, str]:
     """A noted file deleted in OneDrive and archived by the round end (row 1's end state)."""
     item = await w.file(name)
-    nid = await w.note(f"drive:{item}")
+    nid = await w.note(f"drive:a1:{item}")
     await w.control(nid)
     w.drive.delete(item)
     await w.settle()
@@ -243,7 +270,7 @@ class TestArchivedRows:
 
     async def test_move_out_of_the_app_folder(self, w):
         item = await w.file()
-        nid = await w.note(f"drive:{item}")
+        nid = await w.note(f"drive:a1:{item}")
         await w.control(nid)
         w.drive.move_out(item)
         await w.settle()
@@ -255,8 +282,8 @@ class TestArchivedRows:
         folder = w.drive.add("Contracts", folder=True)
         await w.settle()
         child = await w.file("lease.pdf", parent=folder)
-        n_folder = await w.note(f"drive:{folder}", "bathroom folder of contracts")
-        n_child = await w.note(f"drive:{child}")
+        n_folder = await w.note(f"drive:a1:{folder}", "bathroom folder of contracts")
+        n_child = await w.note(f"drive:a1:{child}")
         await w.control(n_child)
         w.drive.delete_folder_only(folder)
         await w.next_round()
@@ -278,8 +305,8 @@ class TestArchivedRows:
 
     async def test_an_archived_note_undone_by_its_ref(self, w):
         item = await w.file()
-        nid = await w.note(f"drive:{item}", "bathroom first invoice")
-        await w.note(f"drive:{item}")
+        nid = await w.note(f"drive:a1:{item}", "bathroom first invoice")
+        await w.note(f"drive:a1:{item}")
         await w.control(nid)
         w.drive.delete(item)
         await w.settle()
@@ -307,14 +334,14 @@ class TestArchivedRows:
 
     async def test_another_drive_connected_leaves_the_note_dormant(self, w):
         item = await w.file()
-        nid = await w.note(f"drive:{item}")
+        nid = await w.note(f"drive:a1:{item}")
         await w.control(nid)
-        w.drive.connect("d2")
+        await w.connect_other_drive("d2")
         w.clock.advance(600)
         await w.settle()
         same = w.drive.add("scan.pdf", item_id=item)   # even the same item id: a binding names its drive (D15, D16)
         await w.settle()
-        assert w.repo.records.get((U, same)) is not None and (await w.stored(nid)).state == NoteState.ACTIVE.value
+        assert w.repo.records.get((C2, same)) is not None and (await w.stored(nid)).state == NoteState.ACTIVE.value
         assert "scan.pdf |" in await w.found("scan")   # the search answers on d2 (not gated by the rebuild)
         await w.a1(nid)
         w.a2(nid)
@@ -346,9 +373,9 @@ class TestActiveNoteRows:
 
     async def test_clear_of_an_active_note(self, w):
         item = await w.file()
-        nid = await w.note(f"drive:{item}")
+        nid = await w.note(f"drive:a1:{item}")
         await w.control(nid)
-        await w.note_svc.clear(U, ACC, f"drive:{item}", provenance=CHAT)
+        await w.note_svc.clear(U, ACC, f"drive:a1:{item}", provenance=CHAT)
         w.clock.advance(1)
         await w.settle()
         assert w.repo.records.get((U, item)) is not None
@@ -357,9 +384,9 @@ class TestActiveNoteRows:
 
     async def test_erase_of_an_active_note(self, w):
         item = await w.file()
-        nid = await w.note(f"drive:{item}")
+        nid = await w.note(f"drive:a1:{item}")
         await w.control(nid)
-        request = await w.note_svc.request_erase(U, f"drive:{item}")
+        request = await w.note_svc.request_erase(U, f"drive:a1:{item}")
         assert await w.note_svc.erase(U, request.code) == 1
         w.clock.advance(1)
         await w.settle()
@@ -371,7 +398,7 @@ class TestActiveNoteRows:
 class TestCopy:
     async def test_a_copy_of_a_noted_live_file_carries_no_note(self, w):
         original = await w.file()
-        nid = await w.note(f"drive:{original}")
+        nid = await w.note(f"drive:a1:{original}")
         copy = await w.file("scan - Copy.pdf")
         assert w.carriers(nid) == [original]   # A2 for the copy's record; the original keeps the note
         out = await w.found()
@@ -398,12 +425,13 @@ async def _mirror_with_transcript(item_id: str, name: str) -> InMemoryDriveMirro
     """The main service's view of an archived transcript of `item_id` (what T2's mirror step writes when the recording
     is deleted; the tick here has no transcript stage wired)."""
     repo = InMemoryDriveMirrorRepository()
-    await repo.save_root(MirrorRoot(user_id=U, drive_id="d1", root_item_id="tr-root", root_name="_Transcripts"))
-    await repo.save_doc(MirrorDoc(user_id=U, drive_id="d1", kind=KIND_ARCHIVE, source_item_id="day",
+    await repo.save_root(MirrorRoot(user_id=U, drive_identity="fake:d1", root_item_id="tr-root", root_name="_Transcripts"))
+    await repo.save_doc(MirrorDoc(user_id=U, drive_identity="fake:d1", kind=KIND_ARCHIVE, source_item_id="day",
                                   mirror_item_id="day", mirror_parent_id="tr-root", mirror_name="2026-10-11",
                                   state=MIRROR_ACTIVE))
     await repo.save_doc(MirrorDoc(
-        user_id=U, drive_id="d1", kind=KIND_FILE, source_item_id=item_id, source_name=name, source_path=name,
+        user_id=U, drive_identity="fake:d1", kind=KIND_FILE, source_item_id=item_id,
+        source_identity=f"fake:d1:{item_id}", source_name=name, source_path=name,
         content_key="k1", mirror_item_id="m1", mirror_parent_id="day", mirror_name="call1.md", state=MIRROR_ARCHIVED,
         archive_day="2026-10-11", archived_at=T0, seconds=600.0, speakers=1, languages=("en",),
         archive_keys=tuple(sorted(word_keys("bathroom budget"))), name_keys=tuple(sorted(word_keys("call1")))))
@@ -418,7 +446,7 @@ class TestTranscriptAndNote:
         assert w.drive.add("call1.m4a") == item          # the same scripted id in the world that has the mirror
         w.drive.outside["m1"] = DriveChange(item_id="m1", name="call1.md", parent_id="day")   # the transcript file
         await w.settle()
-        nid = await w.note(f"drive:{item}")
+        nid = await w.note(f"drive:a1:{item}")
         await w.control(nid)
         w.drive.delete(item)
         await w.settle()
@@ -427,5 +455,5 @@ class TestTranscriptAndNote:
         w.a2(nid)
         out = await w.deleted()
         assert out.startswith("Deleted files (1):")
-        assert "archived transcript: drive:m1" in out and f"drive_note:{nid}" in out and "noted by the owner" in out
+        assert "archived transcript: drive:a1:m1" in out and f"drive_note:{nid}" in out and "noted by the owner" in out
 
