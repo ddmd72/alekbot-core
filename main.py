@@ -252,6 +252,7 @@ async def main():
                     # HttpCallControlPlaneAdapter.submit_transcript), the same
                     # List[dict] shape CompanionExtractorRunner.extract() expects,
                     # so no reshaping is needed before handing them over.
+                    from src.domain.secret_digest import fingerprint
                     extraction = await app.companion_extractor_runner.extract(
                         companion_type="voice",
                         account_id=account_id,
@@ -262,7 +263,6 @@ async def main():
                     if not summary:
                         logger.warning(f"voice call {fingerprint(call_id)}: summarizer returned an empty summary, nothing to deliver")
                         return
-                    from src.domain.secret_digest import fingerprint
                     from src.domain.voice_call_note import call_event_from_turns
                     from src.domain.voice_ticket_keys import call_kind_key
                     profile = await app.user_repo.get_user(user_id)
