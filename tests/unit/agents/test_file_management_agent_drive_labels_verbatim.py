@@ -10,7 +10,7 @@ from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
-from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_spec_mock import spec_drive_service
 
 PDF = DriveItem(item_id="p1", name="Tom's plan.pdf", path="R&D/Tom's plan.pdf", is_folder=False,
                 size_bytes=2048, mime_type="application/pdf")
@@ -21,13 +21,14 @@ CLIP = DriveItem(item_id="v1", name="Q&A.mp4", path="R&D/Q&A.mp4", is_folder=Fal
 @pytest.mark.parametrize("item", [PDF, CLIP], ids=["attached", "sent"])
 async def test_the_label_keeps_the_real_path(item):
     conversion = AsyncMock(spec=FileConversionService)
-    conversion.get_drive_item.return_value = item
+    drive = spec_drive_service("u1")
+    drive.get_item.return_value = item
     conversion.resolve_bytes.return_value = b"%PDF" if item is PDF else b"video"
     search = AsyncMock(spec=DriveSearchService)
     search.transcript_text.return_value = None   # §27.11: an untranscribed recording keeps the file branch
     search.archived_text.return_value = None   # §27.9.11: not a file of the bot's _Transcripts folder
     agent = DriveOperations(conversion_service=conversion, notification=AsyncMock(),
-                            drive_service=AsyncMock(spec=UserDriveService), drive_search=search)
+                            drive_service=drive, drive_search=search)
     resp = await agent.open({"user_id": "u1", "account_id": "a1"}, "u1", item.ref)
     assert resp.text.startswith(REFERENCE_REMINDER_ATTACHED + "\n")
     assert f"[Drive: {item.path} (" in resp.text and "&amp;" not in resp.text and "&#x27;" not in resp.text
