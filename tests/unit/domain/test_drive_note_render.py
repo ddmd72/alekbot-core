@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from src.domain.drive_card import owner_note_line
 from src.domain.drive_deleted_search import DeletedHit, merge_hits, render_deleted
 from src.domain.drive_keys import name_keys_v2, query_concepts
-from src.domain.drive_note import ONEDRIVE_PROVIDER_KEY, DriveNote, NoteBinding, NoteSnapshot, NoteState
+from src.domain.drive_note import DriveNote, NoteBinding, NoteSnapshot, NoteState
 from src.domain.drive_note_merge import NOTE_STORE_KEYS_VERSION
 from src.domain.drive_note_render import matched_line, note_hit, note_matches, search_keys
 
@@ -24,7 +24,7 @@ def _concepts(q):
 
 def _note(**kw):
     base = dict(note_id="n1", user_id="u", state=NoteState.ARCHIVED, current_version=1, text="contractor bathroom",
-                binding=NoteBinding(provider_key=ONEDRIVE_PROVIDER_KEY, drive_id="d1", item_id="i1"),
+                binding=NoteBinding(identity="fake:d1:i1", item_id="i1", ref_tag="a1"),
                 snapshot=NoteSnapshot(name="invoice.pdf", path="Home/invoice.pdf"), archived_at=T)
     base.update(kw)
     return DriveNote(**base)
@@ -66,7 +66,7 @@ class TestHit:
         hit = note_hit(_note(doc_type="contract"), dormant=False, nonce="abcdef12", matched="matched: x",
                        day="2026-10-01")
         assert (hit.name, hit.path, hit.day, hit.ref, hit.item, hit.item_key) == (
-            "invoice.pdf", "Home/invoice.pdf", "2026-10-01", "drive_note:n1", None, "d1:i1")
+            "invoice.pdf", "Home/invoice.pdf", "2026-10-01", "drive_note:n1", None, "fake:d1:i1")   # the item identity
         assert hit.note_line == "noted by the owner: «contractor bathroom» (type contract)\nmatched: x"
         assert hit.note_line.split("\n")[0] == owner_note_line("contractor bathroom", "contract", ())   # part B's renderer
         out = render_deleted([hit], connected=True)
