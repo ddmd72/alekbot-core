@@ -1227,9 +1227,10 @@ open. Four ways, one path (`FactAnswerService.apply`, with its source `digit`, `
   once and does no more work in the request), and the worker applies it through the same path. The message is then re-rendered with
   the chosen answer and no buttons. A click on a question that is already answered shows its answer. The click must come from the
   question's own user, on the question's own message.
-- **A reply in words.** Recorded on the question (up to 2,000 characters), acknowledged ("Noted — I'll take it into account."),
-  and shown to the review once on its next run, which applies it and closes the question (releasing the next). It does not go to
-  Smart. It never shortens the 14 days; if the review leaves it undecided, the question waits for its timeout, and the timeout
+- **A reply in words.** Recorded on the question (up to 2,000 characters), acknowledged ("Noted — I'll take it into account.").
+  When it answers the *current* question, the same transaction gives up the slot and the next question is released at once (a
+  `next` task; no model involved); the question stays `asked`. The review is shown the words once on its next run, which applies
+  them and closes the question; that close finds the slot already free and releases nothing more. It does not go to Smart. It never shortens the 14 days; if the review leaves it undecided, the question waits for its timeout, and the timeout
   step sees the reply.
 - **The Cabinet.** The "Questions" list shows each waiting or asked fact in full with one button per deciding option of its
   question (for `still_true`: yes, no longer, never; "don't remember" is never offered there), checkboxes and a bulk "mark
@@ -1237,7 +1238,7 @@ open. Four ways, one path (`FactAnswerService.apply`, with its source `digit`, `
   their own group, "Invoices with no payment confirmation", with Paid / Not paid in bulk. A click is a direct owner action under
   the same preconditions; an answer that is not one of its question's options (a click from another message version, a stale
   page) is `not_applied` before any write.
-A reply to a question that is already closed gets "Already answered." An answer to the *current* question releases the next one.
+A reply to a question that is already closed gets "Already answered." An answer to the *current* question, a reply in words included, releases the next one.
 Two kinds of message that are not taken as an answer fall through to ordinary conversation, so nothing the owner wrote is
 dropped: a reply the system could not take (an error in the path, which is logged, counted as `reply_intake_failed` and alerted the
 next morning; or a reply the store would not record) and a digit whose answer the write rules refused. A digit for a fact that
@@ -1443,7 +1444,7 @@ consolidation run).
    queued.
 3. *Same run or a later one:* if no question is out and fewer than 5 went today, the question is posted to the primary chat,
    one fact, the options of its kind (four for `still_true`). The owner replies "4"… or "3 — it's Iron Temple now", or presses a button, or answers in the
-   Cabinet. A digit, a button and a Cabinet click are applied at once; words are read by the review on its next run.
+   Cabinet. A digit, a button and a Cabinet click are applied at once; words are recorded, release the next question at once, and are read by the review on its next run.
 4. *If he does not answer:* the next local day the question stays open as `unanswered` (and the next one may be sent); after 14
    days from the send the fallback applies: a lasting fact is revived for twice the window it last had (between 14 and 365 days),
    noise is archived (**P2**: a plan is written as history with an unknown outcome; before P2 a dated plan was archived).

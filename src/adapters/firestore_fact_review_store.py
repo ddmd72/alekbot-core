@@ -40,6 +40,7 @@ from ..config.environment import EnvironmentConfig
 from ..domain.exceptions import QuestionTransitionError
 from ..domain.fact_review_answer_kind import AnswerKind
 from ..domain.fact_review_question_close import QuestionClose
+from ..domain.fact_review_reply_record import ReplyRecord
 from ..domain.fact_review_quote_translation import QUOTE_TRANSLATION_RETENTION, QuoteTranslation
 from ..domain.fact_review_question import (
     OPEN_STATUSES, QUESTION_RETENTION, AnswerSource, ClosedBy, FactReviewQuestion, QuestionStatus,
@@ -185,8 +186,13 @@ class FirestoreFactReviewStore(FactReviewStore):
     async def set_message_ref(self, question_id: str, ref: MessageRef) -> bool:
         return await self._move(question_id, lambda q: q.posted(ref))
 
-    async def record_reply(self, question_id: str, text: str, at: datetime) -> bool:
-        return await self._move(question_id, lambda q: q.with_reply(text, at))
+    async def record_reply(self, question_id: str, text: str, at: datetime) -> ReplyRecord:
+        moved, state_written = await self._move_with_state(
+            question_id, lambda q: q.with_reply(text, at), lambda state: state.released(question_id),
+        )
+        if not moved:
+            return ReplyRecord.REFUSED
+        return ReplyRecord.RELEASED if state_written else ReplyRecord.RECORDED
 
     async def mark_offered(self, question_id: str, at: datetime) -> bool:
         return await self._move(question_id, lambda q: q.offered(at))

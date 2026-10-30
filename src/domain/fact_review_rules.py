@@ -186,8 +186,8 @@ def channel_refusal(
 
 def becomes_unanswered(question: FactReviewQuestion, now: datetime, tz: str) -> bool:
     """An `asked` question sent on an earlier owner-local day is `unanswered`: still open and timing out, no longer
-    current. A recorded reply in words does not keep it current (the review reads it once; undecided, it waits for the
-    timeout)."""
+    current. A recorded reply in words does not keep it current: it gives up the slot at once, though the status stays
+    `asked` (the review reads it once; undecided, it waits for the timeout)."""
     return (
         question.status is QuestionStatus.ASKED
         and question.asked_at is not None

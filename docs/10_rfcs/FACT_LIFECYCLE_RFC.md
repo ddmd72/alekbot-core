@@ -1024,6 +1024,7 @@ the code differ, the code wins and is described here. The owner's map is `docs/0
   third time in 30 days.
 - **Janitor guard.** The janitor takes a run guard before anything is read (a small collection, 5 minutes), so two runs never
   overlap; S3's "the job is not retried" rule stays.
+- **Reply in words releases the slot (2026-10-30).** A reply in words to the current question gives up the slot in the same transaction that records it (`record_reply` returns `ReplyRecord`), so the next question goes out at once; before, it held the slot and the day's questions stopped after it. The status stays `asked`; the review still reads the words on its next run.
 - **Other collections.** `fact_review_questions` and `fact_review_messages` carry `purge_after` (a Firestore TTL policy on that
   field deletes closed records 90 days after closing, digest claims 90 days after the claim and quote translations 180 days after they were written; nothing named `expires_at`);
   `fact_review_state` and `fact_lifecycle_run` have no TTL policy (the no-TTL test lists them).

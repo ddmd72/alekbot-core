@@ -6,7 +6,7 @@
 typed write path or in place, and closes. `close_question` is every close (the owner's, the review's, a timeout,
 `resolved_elsewhere`): it clears the current slot with the close and releases the next question, and re-renders the
 question's message. `answer_reply` is the owner's reply at intake: it finds the question by the message replied to, takes
-the digit through `apply` or records the words, and appends the reply with its acknowledgement to history. `handle` is the
+the digit through `apply` or records the words (releasing the next question when this one was current), and appends the reply with its acknowledgement to history. `handle` is the
 owner's click on a button of the question's message (`ChoiceHandlerPort`): the same `apply` for an open question, the
 existing answer for a closed one.
 """
@@ -30,6 +30,7 @@ from ..domain.fact_review_question import (
 )
 from ..domain.fact_review_frame import reply_part
 from ..domain.fact_review_question_close import QuestionClose
+from ..domain.fact_review_reply_record import ReplyRecord
 from ..domain.fact_review_overview import QueueEntry, queue_entries, user_questions
 from ..domain.fact_review_reply import (
     ClickPath, ClickShow, ReplyPath, acknowledgement, click_outcome, click_path, needs_completing, reply_path,
@@ -171,8 +172,9 @@ class FactAnswerService(ChoiceHandlerPort):
         `completed()` first moves to asked) takes the path `reply_path` names: a lone digit, read on the message the
         owner saw, is applied through `apply` with source `digit` (`MEMORY_ANSWER_NOTED`; the next question is released
         by the close, if this one was current; `MEMORY_FACT_CHANGED` when the fact changed or the write conflicted, the
-        question staying open); anything else is recorded for the review (`record_reply`, `MEMORY_REPLY_NOTED`), applied
-        and released by nothing here.
+        question staying open); anything else is recorded for the review (`record_reply`, `MEMORY_REPLY_NOTED`); when that
+        question was the current one, recording clears the slot and the next question is released at once, as after a
+        digit. The words are applied by nothing here (the review reads them on its next run).
 
         The acknowledgement and the reply are appended to the question's session as one pair, the user part the owner's
         text verbatim under `reply_part`, the model part the acknowledgement; the append raises when it is not stored.
@@ -213,9 +215,12 @@ class FactAnswerService(ChoiceHandlerPort):
                 raise RuntimeError("a digit path carries its digit")
             result = await self.apply(account_id, user_id, question.question_id, digit, "digit", now)
         elif path is ReplyPath.WORDS:
-            if not await self._review_store.record_reply(question.question_id, text, now):
+            recorded = await self._review_store.record_reply(question.question_id, text, now)
+            if recorded is ReplyRecord.REFUSED:
                 logger.info(f"[FactAnswer] question {question.question_id}: the reply was not recorded; left to conversation")
                 return None
+            if recorded is ReplyRecord.RELEASED:
+                await self._release_next(question)
             await self._count(account_id, now, {CounterField.REPLIES_IN_WORDS: 1})
         else:
             await self._count(account_id, now, {CounterField.ALREADY_ANSWERED: 1})
