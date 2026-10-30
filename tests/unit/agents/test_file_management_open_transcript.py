@@ -65,8 +65,8 @@ async def test_open_transcribed_audio_returns_wrapped_transcript(agent, drive, c
     search.transcript_text.return_value = "REMINDER\n<drive_document>[00:00] hi</drive_document>"
     resp = await agent.open(CTX, "u1", "drive:a1:s1")
     assert resp.success and resp.text == search.transcript_text.return_value
-    search.transcript_text.assert_awaited_once_with("u1", "s1", path="Rec/call.m4a",
-                                                   label=drive_label(AUDIO))
+    search.transcript_text.assert_awaited_once_with(CONN, "s1", path="Rec/call.m4a",
+                                                   label=drive_label(AUDIO, "a1"))
     conversion.resolve_bytes.assert_not_called()
     conversion.resolve_content.assert_not_called()
 
