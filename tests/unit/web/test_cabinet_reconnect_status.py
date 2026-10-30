@@ -5,11 +5,13 @@ start, then the one callback, over the real `OAuthConnectService`, both edges an
 the notice flag.
 
 The real `IntegrationReconnectService` runs over the real credential, indexing-state and To Do config stores on one
-evaluating Firestore fake, and the in-memory drive index repository; the drive is a fake with a settable connection."""
+evaluating Firestore fake; the drive reads its connections through the real `DriveConnectionService` on the in-memory
+connection store (MULTI_DRIVE_RFC §4.4: an ACTIVE connection whose grant is gone shows Reconnect; a disconnect ends the
+connection, so the drive needs no disconnect mark)."""
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, List
+from typing import Dict
 from unittest.mock import AsyncMock, MagicMock, Mock
 from urllib.parse import parse_qs, urlparse
 
@@ -20,19 +22,18 @@ from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepos
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.adapters.google.google_oauth_provider import GoogleOAuthProvider
-from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.microsoft.microsoft_oauth_provider import MicrosoftOAuthProvider
 from src.composition.connector_registry import ConnectorRegistry
 from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
 from src.domain.billing import BillingAccount
-from src.domain.drive_index import DriveSyncState
+from src.domain.drive_connection_state import ConnectionState
 from src.domain.email import IndexingState
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.domain.task import TaskUserConfig
 from src.domain.user import UserProfile
-from src.domain.user_drive import DriveConnection
 from src.services.credential_revocation_service import CredentialRevocationService
+from src.services.drive_connection_service import DriveConnectionService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.services.session_service import SessionService
 from src.services.task_setup_service import TaskSetupService
@@ -40,6 +41,7 @@ from src.web.oauth_app import create_oauth_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support import http_boundary_fake
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.firestore_eval import EvalDb
 from tests.support.oauth_credentials_store import has_kind
 
@@ -54,21 +56,6 @@ GRANTED = {
     "microsoft_todo": "Tasks.ReadWrite offline_access User.Read",
     "microsoft_onedrive": "Files.ReadWrite.AppFolder offline_access User.Read",
 }
-
-
-class Drive:
-    display_name = "Drive"
-
-    def __init__(self) -> None:
-        self.state = DriveConnection(connected=False)
-        self.disconnected: List[str] = []
-
-    async def connection(self, user_id):
-        return self.state
-
-    async def disconnect(self, user_id):
-        self.disconnected.append(user_id)
-        self.state = DriveConnection(connected=False)
 
 
 class Users:
@@ -86,10 +73,11 @@ class World:
         self.creds = FirestoreCredentialStore(self.db, env, cipher=AesGcmTestCipher())
         self.email = FirestoreIndexedEmailRepository(self.db, env)
         self.tasks = FirestoreTaskConfigRepository(self.db, env)
-        self.drive_states = InMemoryDriveIndexRepository()
-        self.drive = Drive()
+        self.drive_repo = FakeDriveConnectionRepository()
+        self.drive_connections = DriveConnectionService(self.drive_repo, self.creds, clock=lambda: NOW)
         self.reconnect = IntegrationReconnectService(
             credentials=self.creds, users=Users(), notifier=None, email_states=self.email, task_config=self.tasks,
+            drive_connections=self.drive_connections,
             clock=lambda: NOW, mail_connector=ConnectorRegistry().get("gmail"), todo_connector=ConnectorRegistry().get("microsoft_todo"))
         # get_status reads only the credential port and the config
         self.task_setup = TaskSetupService(lifecycle=None, task_config=self.tasks, tasks_provider=None,
@@ -103,8 +91,9 @@ class World:
         bp = create_user_cabinet_blueprint(
             invite_service=MagicMock(), session_service=session_service, user_repo=Users(), fact_repo=MagicMock(),
             embedding_service=MagicMock(), oauth_credentials_port=self.creds, indexed_email_repo=self.email,
-            task_setup=self.task_setup, user_drive=self.drive, reconnect=self.reconnect, connectors=ConnectorRegistry(),
-            credential_revocation=CredentialRevocationService(self.creds, {}))
+            task_setup=self.task_setup, user_drive=None, reconnect=self.reconnect, connectors=ConnectorRegistry(),
+            credential_revocation=CredentialRevocationService(self.creds, {}),
+            drive_connections=self.drive_connections)
         app = Quart("test_cabinet_reconnect")
         app.register_blueprint(bp)
         return app
@@ -154,6 +143,15 @@ class World:
                                     subject="sub-a", label="user@example.com"),
             access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[]))
 
+    async def drive_connected(self, *, grant: bool = True) -> None:
+        """The user's drive connection, made by the consent's activation (MULTI_DRIVE_RFC §4.4); `grant=False`: its
+        credential is gone afterwards."""
+        await self.connect("microsoft_onedrive")
+        (held,) = await self.creds.list_for_user(USER, "microsoft_onedrive")
+        await self.drive_connections.activate(held, "microsoft_onedrive:d1")
+        if not grant:
+            await self.creds.delete(USER, held.credential_id)
+
     async def gmail_state(self) -> None:
         await self.email.update_indexing_state(IndexingState(user_id=USER, provider="gmail"))
 
@@ -181,15 +179,14 @@ async def test_gmail_never_connected_answers_no_reconnect(world):
     assert await _get(world.cabinet(), "/api/gmail/status") == {"connected": False, "reconnect_needed": False}
 
 
-async def test_drive_with_a_sync_state_and_no_grant_answers_reconnect(world):
-    await world.drive_states.save_sync_state(DriveSyncState(user_id=USER))
+async def test_drive_with_a_connection_and_no_grant_answers_reconnect(world):
+    await world.drive_connected(grant=False)
     body = await _get(world.cabinet(), "/api/drive/status")
     assert (body["connected"], body["reconnect_needed"]) == (False, True)
 
 
 async def test_a_connected_drive_carries_no_reconnect_needed(world):
-    await world.drive_states.save_sync_state(DriveSyncState(user_id=USER))
-    world.drive.state = DriveConnection(connected=True, drive_id="d1")
+    await world.drive_connected()
     body = await _get(world.cabinet(), "/api/drive/status")
     assert body["connected"] is True and "reconnect_needed" not in body
 
@@ -234,13 +231,15 @@ async def test_a_failed_mark_deletes_nothing(world):
     assert await has_kind(world.creds, USER, "gmail") is True
 
 
-async def test_the_drive_disconnect_marks_the_sync_state(world):
-    await world.drive_states.save_sync_state(DriveSyncState(user_id=USER))
-    world.drive.state = DriveConnection(connected=True, drive_id="d1")
+async def test_the_drive_disconnect_ends_the_connection_and_then_shows_no_reconnect(world):
+    await world.drive_connected()
     async with world.cabinet().test_client() as client:
         resp = await client.delete("/api/drive/disconnect", headers=AUTH)
-    assert resp.status_code == 200 and world.drive.disconnected == [USER]
-    assert (await world.drive_states.get_sync_state(USER)).disconnected_by_user_at == NOW
+    assert resp.status_code == 200
+    # MULTI_DRIVE_RFC §4.4: the connection ends (no sync-state mark) and its grant goes under the revoke rule
+    (ended,) = world.drive_repo.connections.values()
+    assert ended.state is ConnectionState.DISCONNECTED and ended.disconnected_at == NOW
+    assert await has_kind(world.creds, USER, "microsoft_onedrive") is False
     body = await _get(world.cabinet(), "/api/drive/status")
     assert (body["connected"], body["reconnect_needed"]) == (False, False)
 
