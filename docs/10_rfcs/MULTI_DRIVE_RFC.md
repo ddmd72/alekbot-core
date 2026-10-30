@@ -9,7 +9,7 @@ adapter work only (the Google drive adapter with its native-document emulation, 
 and out of scope; §6, §7 and §11.3 define the seams it plugs into.
 **Revisions:** rev 1 (2026-10-30); rev 1.1 (2026-10-30, review round 1: cut-over keeps paid transcripts, provider-neutral
 scopes and the account-wide feed moved into stage 2); rev 1.2 (2026-10-30, accepted; slice 1a built: the engineering decisions of the slice added as
-E26–E32, the port signatures `save -> str` and `list_keys`, `authorization_url(..., *, state)`).
+E26–E32, the port signatures `save -> str` and `list_keys`, `authorization_url(..., *, state)`; the flow no longer stores the hint label).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md), [USER_DRIVE_INDEXING_RFC.md](USER_DRIVE_INDEXING_RFC.md) (index,
 tick, transcripts, mirror), [DRIVE_SPECIALIST_RFC.md](DRIVE_SPECIALIST_RFC.md), [DRIVE_FILE_NOTES_RFC.md](DRIVE_FILE_NOTES_RFC.md).
 **Peer:** [EXTERNAL_FILES_RFC.md](EXTERNAL_FILES_RFC.md) (accepted, not built). The tagged ref of §9 is the drive row of
@@ -235,7 +235,8 @@ activation after the credential is saved.
   every realm (E4). The four pairs `/auth/connect-gmail`, `-google-tasks`, `-microsoft-todo`, `-onedrive` go. The
   Cabinet sign-in (`/auth/login`, `/auth/callback`) is untouched.
 - `OAuthConnectService.start` writes an `OAuthFlow` (`user_id, kind, intent CONNECT|ADD|RECONNECT, target id, expected
-  subject, hint label, PKCE verifier, return path, expires_at = now + 10 min`) through the ephemeral store. Doc key = the keyed
+  subject, PKCE verifier, return path, expires_at = now + 10 min`) through the ephemeral store. The hint label (the account
+  email) is used only at start to build the authorization URL and is not stored: the flow record holds no plaintext personal data. Doc key = the keyed
   digest of `state` (`SECRET_DIGEST_KEY`, the voice-ticket pattern of stage 0); the PKCE verifier is `CipherPort`
   ciphertext with AAD `oauth_flows/<digest>` (stage 0's rule: every persisted secret is encrypted or digested). PKCE
   S256 is sent to both realms.
