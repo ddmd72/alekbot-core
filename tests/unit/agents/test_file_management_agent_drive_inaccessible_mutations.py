@@ -10,7 +10,7 @@ from src.domain.user_drive import DriveItemNotFoundError
 from src.infrastructure.drive_operations import GONE, DriveOperations
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
-from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_spec_mock import spec_drive_service
 
 
 CTX = {"user_id": "u1", "account_id": "a1"}
@@ -18,7 +18,7 @@ CTX = {"user_id": "u1", "account_id": "a1"}
 
 @pytest.fixture
 def drive():
-    d = AsyncMock(spec=UserDriveService)
+    d = spec_drive_service("u1")
     for name in ("move", "delete", "append_text", "get_item"):
         getattr(d, name).side_effect = DriveItemNotFoundError("f1")
     return d
@@ -27,7 +27,7 @@ def drive():
 @pytest.fixture
 def search():
     s = AsyncMock(spec=DriveSearchService)
-    s.access_note.side_effect = lambda user_id, item_id=None, path=None: ACCESS_NOTE_FILE if item_id == "f1" else None
+    s.access_note.side_effect = lambda connection, item_id=None, path=None: ACCESS_NOTE_FILE if item_id == "f1" else None
     return s
 
 
