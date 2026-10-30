@@ -14,16 +14,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveItemNotFoundError
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from src.composition.connector_registry import ConnectorRegistry
 
 _NOT_FOUND = {"error": {"code": "itemNotFound", "message": "The resource could not be found."}}
 
 
 def _creds():
-    return OAuthCredentials(user_id="u1", provider=ONEDRIVE_PROVIDER, access_token="tok", refresh_token="r",
-                            token_expiry=datetime.now(timezone.utc) + timedelta(hours=1), scopes=[], email_address="")
+    return OAuthCredential(
+        user_id="u1",
+        account_id="acct-1",
+        kind=ONEDRIVE_PROVIDER,
+        integration=Integration.DRIVE,
+        account=ProviderAccount(realm="microsoft", subject="", label=""),
+        access_token="tok",
+        refresh_token="r",
+        token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+        scopes=[],
+    )
 
 
 def _resp(json_data=None, status=200):
@@ -48,8 +60,9 @@ def _session(responses):
 
 def _adapter():
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.get_credentials.return_value = _creds()
-    return OneDriveAdapter(oauth, "cid", "csecret")
+    oauth.get.return_value = _creds()
+    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
 
 
 async def test_get_change_404_raises_and_is_never_a_deletion():

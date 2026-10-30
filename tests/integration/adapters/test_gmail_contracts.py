@@ -12,7 +12,9 @@ from datetime import datetime, timezone
 import pytest
 
 from src.adapters.gmail_provider_adapter import GmailProviderAdapter
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from tests.contracts.adapter_contracts import (
     GMAIL_AUTHORIZATION_HEADER_PRESENT,
     GMAIL_LIST_EMAILS_PAGE_TOKEN_EXCLUDES_QUERY,
@@ -20,15 +22,17 @@ from tests.contracts.adapter_contracts import (
 from tests.integration.adapters.conftest import GmailCapturingStub
 
 
-def _credentials() -> OAuthCredentials:
-    return OAuthCredentials(
+def _credentials() -> OAuthCredential:
+    return OAuthCredential(
         user_id="u1",
-        provider="gmail",
+        account_id="acct-1",
+        kind="gmail",
+        integration=Integration.MAIL,
+        account=ProviderAccount(realm="google", subject="", label="u@example.com"),
         access_token="test-access-token",
         refresh_token="test-refresh-token",
         token_expiry=datetime(2099, 1, 1, tzinfo=timezone.utc),
         scopes=["https://www.googleapis.com/auth/gmail.readonly"],
-        email_address="u@example.com",
     )
 
 

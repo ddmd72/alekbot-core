@@ -39,6 +39,7 @@ from tests.support.redelivery_world import require
 from tests.support.scripted_llm import ScriptedLLM, execution_context, first_user_text, text, tool_results, tools
 from tests.support.tool_e2e import StubPromptBuilder
 from tests.support.tool_fields import unused
+from src.composition.connector_registry import ConnectorRegistry
 
 USER = "u1"
 ACCOUNT = "a1"
@@ -94,7 +95,7 @@ class Rig:
         env = EnvironmentConfig()
         self.index_docs: Dict[str, Dict[str, Any]] = self.db.collection(env.task_search_index_collection).docs
         self.provider = MicrosoftToDoAdapter(
-            self.credentials.repo, FirestoreTaskConfigRepository(self.db, env), "client-id", "client-secret")
+            self.credentials.repo, FirestoreTaskConfigRepository(self.db, env), "client-id", "client-secret", connector=ConnectorRegistry().get("microsoft_todo"))
         self.indexing = TaskIndexingService(HashEmbedder(), FirestoreTaskSearchIndex(self.db, env), self.provider)
         registry = AgentRegistry()
         registry.register(TASKS)
@@ -133,7 +134,7 @@ class Rig:
         self.fake.route("DELETE", f"{TASKS_URL}/", handler=delete, prefix=True)
 
     async def start(self) -> "Rig":
-        await self.credentials.repo.save_credentials(
+        await self.credentials.repo.save(
             creds(USER, "microsoft_todo", token_expiry=datetime.now(timezone.utc) + timedelta(hours=1)))
         return self
 

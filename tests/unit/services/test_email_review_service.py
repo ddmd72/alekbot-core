@@ -33,8 +33,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.domain.daily_review_window import EligibleReviewUser
-from src.domain.email import EmailFullContent, EmailMetadata, OAuthCredentials
+from src.domain.email import EmailFullContent, EmailMetadata
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.services.email_review_service import EmailReviewService
+from src.composition.connector_registry import ConnectorRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -48,12 +52,12 @@ def _make_service():
     email_provider.refresh_token = AsyncMock()
 
     oauth = MagicMock()
-    oauth.get_credentials = AsyncMock()
-    oauth.list_users_by_provider = AsyncMock()
-    oauth.save_credentials = AsyncMock()
-    oauth.update_credentials = AsyncMock(return_value=True)   # the record exists: a refresh replaces it
+    oauth.list_for_user = AsyncMock()
+    oauth.list_user_ids = AsyncMock()
+    oauth.save = AsyncMock()
+    oauth.update = AsyncMock(return_value=True)   # the record exists: a refresh replaces it
 
-    svc = EmailReviewService(email_provider=email_provider, oauth_credentials=oauth)
+    svc = EmailReviewService(email_provider=email_provider, oauth_credentials=oauth, connector=ConnectorRegistry().get("gmail"))
     return svc, email_provider, oauth
 
 
@@ -64,14 +68,16 @@ def _make_creds(user_id="user-1", expiring_soon=False, no_expiry=False):
         expiry = datetime.now(timezone.utc) + timedelta(minutes=2)
     else:
         expiry = datetime.now(timezone.utc) + timedelta(hours=1)
-    return OAuthCredentials(
+    return OAuthCredential(
         user_id=user_id,
-        provider="gmail",
+        account_id="acct-1",
+        kind="gmail",
+        integration=Integration.MAIL,
+        account=ProviderAccount(realm="google", subject="", label="user@example.com"),
         access_token="tok",
         refresh_token="rtok",
         token_expiry=expiry,
         scopes=[],
-        email_address="user@example.com",
     )
 
 
@@ -117,7 +123,7 @@ class TestFindEligibleUsers:
     async def test_eligible_user_included(self):
         svc, _, oauth = _make_service()
         now_utc = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)  # 10:00 UTC
-        oauth.list_users_by_provider = AsyncMock(return_value=["user-1"])
+        oauth.list_user_ids = AsyncMock(return_value=["user-1"])
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(return_value=_make_profile(hour=10))
 
@@ -128,7 +134,7 @@ class TestFindEligibleUsers:
     async def test_gmail_daily_review_false_excluded(self):
         svc, _, oauth = _make_service()
         now_utc = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)
-        oauth.list_users_by_provider = AsyncMock(return_value=["user-1"])
+        oauth.list_user_ids = AsyncMock(return_value=["user-1"])
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(
             return_value=_make_profile(gmail_daily_review=False, hour=10)
@@ -141,7 +147,7 @@ class TestFindEligibleUsers:
     async def test_user_not_found_skipped(self):
         svc, _, oauth = _make_service()
         now_utc = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)
-        oauth.list_users_by_provider = AsyncMock(return_value=["user-ghost"])
+        oauth.list_user_ids = AsyncMock(return_value=["user-ghost"])
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(return_value=None)
 
@@ -158,7 +164,7 @@ class TestFindEligibleUsers:
     )
     async def test_hour_mismatch_excluded(self, now_utc):
         svc, _, oauth = _make_service()
-        oauth.list_users_by_provider = AsyncMock(return_value=["user-1"])
+        oauth.list_user_ids = AsyncMock(return_value=["user-1"])
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(
             return_value=_make_profile(hour=9)  # user wants 09:00, now is outside its 3 h window
@@ -171,7 +177,7 @@ class TestFindEligibleUsers:
     async def test_multiple_users_only_eligible_returned(self):
         svc, _, oauth = _make_service()
         now_utc = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)
-        oauth.list_users_by_provider = AsyncMock(return_value=["u1", "u2", "u3"])
+        oauth.list_user_ids = AsyncMock(return_value=["u1", "u2", "u3"])
 
         profiles = {
             "u1": _make_profile(hour=10, account_id="acc-1"),
@@ -197,7 +203,7 @@ class TestFetchReviewPayload:
 
     async def test_no_credentials_returns_none(self):
         svc, _, oauth = _make_service()
-        oauth.get_credentials = AsyncMock(return_value=None)
+        oauth.list_for_user = AsyncMock(return_value=[])
 
         result = await svc.fetch_review_payload("user-1")
 
@@ -206,7 +212,7 @@ class TestFetchReviewPayload:
     async def test_token_refresh_fails_returns_none(self):
         svc, email_provider, oauth = _make_service()
         creds = _make_creds(expiring_soon=True)
-        oauth.get_credentials = AsyncMock(return_value=creds)
+        oauth.list_for_user = AsyncMock(return_value=[creds])
         email_provider.refresh_token = AsyncMock(side_effect=RuntimeError("revoked"))
 
         result = await svc.fetch_review_payload("user-1")
@@ -216,7 +222,7 @@ class TestFetchReviewPayload:
     async def test_no_emails_returns_empty_list(self):
         svc, email_provider, oauth = _make_service()
         creds = _make_creds()
-        oauth.get_credentials = AsyncMock(return_value=creds)
+        oauth.list_for_user = AsyncMock(return_value=[creds])
         email_provider.list_emails = AsyncMock(return_value=([], None))
 
         result = await svc.fetch_review_payload("user-1")
@@ -226,7 +232,7 @@ class TestFetchReviewPayload:
     async def test_single_page_returns_structured_list(self):
         svc, email_provider, oauth = _make_service()
         creds = _make_creds()
-        oauth.get_credentials = AsyncMock(return_value=creds)
+        oauth.list_for_user = AsyncMock(return_value=[creds])
         meta = _make_metadata("e1")
         email_provider.list_emails = AsyncMock(return_value=([meta], None))
         fc = _make_full_content("e1", body_text="Full body", attachments=["doc.pdf"])
@@ -243,7 +249,7 @@ class TestFetchReviewPayload:
     async def test_pagination_fetches_all_pages(self):
         svc, email_provider, oauth = _make_service()
         creds = _make_creds()
-        oauth.get_credentials = AsyncMock(return_value=creds)
+        oauth.list_for_user = AsyncMock(return_value=[creds])
 
         meta1 = _make_metadata("e1")
         meta2 = _make_metadata("e2")
@@ -267,7 +273,7 @@ class TestFetchReviewPayload:
     async def test_email_missing_from_full_content_has_empty_body(self):
         svc, email_provider, oauth = _make_service()
         creds = _make_creds()
-        oauth.get_credentials = AsyncMock(return_value=creds)
+        oauth.list_for_user = AsyncMock(return_value=[creds])
         meta = _make_metadata("e1")
         email_provider.list_emails = AsyncMock(return_value=([meta], None))
         email_provider.batch_get_full_content = AsyncMock(return_value={})  # e1 absent
@@ -322,8 +328,8 @@ class TestRefreshIfNeeded:
 
         assert result is new_creds
         email_provider.refresh_token.assert_called_once_with(creds)
-        oauth.update_credentials.assert_called_once_with(new_creds)
-        oauth.save_credentials.assert_not_called()                # a refresh never creates a record
+        oauth.update.assert_called_once_with(new_creds)
+        oauth.save.assert_not_called()                # a refresh never creates a record
 
     async def test_no_token_expiry_no_refresh(self):
         svc, email_provider, _ = _make_service()
@@ -351,7 +357,7 @@ class TestFindEligibleUsersWindow:
         from datetime import date
         svc, _, oauth = _make_service()
         now_utc = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)
-        oauth.list_users_by_provider = AsyncMock(return_value=["user-1"])
+        oauth.list_user_ids = AsyncMock(return_value=["user-1"])
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(return_value=_make_profile(hour=9))
 
@@ -364,7 +370,7 @@ class TestFindEligibleUsersWindow:
     async def test_excluded_outside_window(self):
         svc, _, oauth = _make_service()
         now_utc = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
-        oauth.list_users_by_provider = AsyncMock(return_value=["user-1"])
+        oauth.list_user_ids = AsyncMock(return_value=["user-1"])
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(return_value=_make_profile(hour=9))
 
@@ -375,7 +381,7 @@ class TestFindEligibleUsersBadConfig:
 
     async def _run(self, profiles):
         svc, _, oauth = _make_service()
-        oauth.list_users_by_provider = AsyncMock(return_value=list(profiles))
+        oauth.list_user_ids = AsyncMock(return_value=list(profiles))
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(side_effect=lambda uid: profiles.get(uid))
         now_utc = datetime(2026, 1, 15, 10, 0, tzinfo=timezone.utc)

@@ -4,6 +4,7 @@ import pytest
 
 from src.domain.exceptions import OAuthScopeNotGrantedError
 from src.services.google_oauth_service import GMAIL_SCOPES, GOOGLE_TASKS_SCOPES, GoogleOAuthService
+from tests.support.oauth_credentials_store import one
 from tests.unit.web.test_consent_identity import (  # noqa: F401
     CALLBACKS, GOOGLE, GOOGLE_TOKEN, GOOGLE_TOKEN_BODY, USERINFO, World, world,
 )
@@ -18,7 +19,7 @@ async def test_granted_scopes_are_stored(world, which):
     world.http.route("POST", GOOGLE_TOKEN, body={**GOOGLE_TOKEN_BODY, "scope": f"openid email {SERVICE_SCOPE[which]}"})
     resp = await world.callback(which)
     assert resp.headers["Location"] == CALLBACKS[which][4]
-    got = await world.store.get_credentials("user-a", CALLBACKS[which][3])
+    got = await one(world.store, "user-a", CALLBACKS[which][3])
     assert sorted(got.scopes) == sorted(["openid", "email", SERVICE_SCOPE[which]])
 
 

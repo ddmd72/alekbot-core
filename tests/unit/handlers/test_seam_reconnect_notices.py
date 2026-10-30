@@ -17,6 +17,7 @@ from src.services.integration_reconnect_service import IntegrationReconnectServi
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.redelivery_world import deliver
 from tests.support.seam_world import PRIMARY, TELEGRAM, USER, SeamWorld, require, says
+from src.composition.connector_registry import ConnectorRegistry
 
 NOW = datetime(2026, 10, 29, 9, 30, tzinfo=timezone.utc)
 TEXT = "Your Gmail connection needs to be made again: Cabinet, Gmail, Reconnect."
@@ -31,7 +32,7 @@ def _world(monkeypatch):
     world.handler._reconnect = IntegrationReconnectService(
         credentials=FirestoreCredentialStore(world.db, world.env, cipher=AesGcmTestCipher()), users=world.users, notifier=world.notifier,
         email_states=email, task_config=FirestoreTaskConfigRepository(world.db, world.env),
-        ensure_agents=world.factory.ensure_agents_for_user, clock=lambda: NOW)
+        ensure_agents=world.factory.ensure_agents_for_user, clock=lambda: NOW, mail_connector=ConnectorRegistry().get("gmail"), todo_connector=ConnectorRegistry().get("microsoft_todo"))
     return world, email
 
 

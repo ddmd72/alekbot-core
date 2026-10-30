@@ -14,6 +14,7 @@ from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import make_fact
 from tests.support.fact_store import FACTS, FactStore, make_env_config
+from src.composition.connector_registry import ConnectorRegistry
 
 _USER_ID = "user-1"
 _ACCOUNT_ID = "account-1"
@@ -35,7 +36,7 @@ def _app(fact_repo):
     # Reviewer edit (facts S4, T2c): the route delegates to CabinetFactService, which the blueprint now takes.
     bp = create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo),
+        fact_repo=fact_repo, embedding_service=MagicMock(), cabinet_facts=CabinetFactService(fact_repo), connectors=ConnectorRegistry(),
     )
     app = Quart("test_app")
     app.register_blueprint(bp)

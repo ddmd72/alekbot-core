@@ -9,28 +9,40 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.domain.agent import AgentStatus
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.exceptions import OAuthGrantRevokedError
 from src.domain.notify_result import NotifyResult
 from src.handlers.worker_handler import WorkerHandler
 from src.services.email_review_service import EmailReviewService
+from src.composition.connector_registry import ConnectorRegistry
 
 _NOW = datetime(2026, 10, 10, 11, 12, tzinfo=timezone.utc)
 
 
 class _Store:
-    """Credentials store that hands out copies, like Firestore. A flag write goes through update_credentials, which
+    """Credentials store that hands out copies, like Firestore. A flag write goes through update, which
     writes only while the record exists (OAuthCredentialsPort); there is no consent path here."""
 
     def __init__(self):
-        self.creds = OAuthCredentials(user_id="u", provider="gmail", access_token="tok", refresh_token="rtok",
-                                      token_expiry=_NOW, scopes=[], email_address="user@example.com")
+        self.creds = OAuthCredential(
+            user_id="u",
+            account_id="acct-1",
+            kind="gmail",
+            integration=Integration.MAIL,
+            account=ProviderAccount(realm="google", subject="", label="user@example.com"),
+            access_token="tok",
+            refresh_token="rtok",
+            token_expiry=_NOW,
+            scopes=[],
+        )
         self.saves = []
 
-    async def get_credentials(self, user_id, provider):
-        return replace(self.creds) if self.creds is not None else None
+    async def list_for_user(self, user_id, kind=None):
+        return [replace(self.creds)] if self.creds is not None else []
 
-    async def update_credentials(self, creds):
+    async def update(self, creds):
         if self.creds is None:
             return False
         self.saves.append(creds.needs_reconnect)
@@ -46,7 +58,7 @@ def _worker(store, notify):
     return WorkerHandler(
         agent_worker_handler=MagicMock(), email_indexing_service=MagicMock(), notification_service=notification,
         consolidation_service=None, coordinator=MagicMock(), agent_factory=AsyncMock(), indexed_email_repo=None,
-        user_repo=MagicMock(), task_dispatch=AsyncMock(), email_review=review, oauth_credentials=store,
+        user_repo=MagicMock(), task_dispatch=AsyncMock(), email_review=review, oauth_credentials=store, mail_connector=ConnectorRegistry().get("gmail"),
     )
 
 

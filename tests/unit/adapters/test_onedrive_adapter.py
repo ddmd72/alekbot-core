@@ -11,12 +11,15 @@ from urllib.parse import quote
 import pytest
 
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import (
     DriveAccessDenied, DriveItemNotFoundError, DriveNameConflictError, DriveNotConnectedError, DriveThrottled,
 )
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.ports.user_drive_port import UserDrivePort
+from src.composition.connector_registry import ConnectorRegistry
 
 _ROOT = {"id": "root1", "name": "Alek-bot", "folder": {"childCount": 1},
          "parentReference": {"path": "/drive/root:/Apps"}}
@@ -26,9 +29,17 @@ _FILE = {"id": "f1", "name": "заметка.txt", "size": 12, "file": {"mimeTyp
 
 
 def _creds():
-    return OAuthCredentials(user_id="u1", provider=ONEDRIVE_PROVIDER, access_token="tok", refresh_token="r",
-                            token_expiry=datetime.now(timezone.utc) + timedelta(hours=1), scopes=[],
-                            email_address="")
+    return OAuthCredential(
+        user_id="u1",
+        account_id="acct-1",
+        kind=ONEDRIVE_PROVIDER,
+        integration=Integration.DRIVE,
+        account=ProviderAccount(realm="microsoft", subject="", label=""),
+        access_token="tok",
+        refresh_token="r",
+        token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+        scopes=[],
+    )
 
 
 def _resp(json_data=None, status=200, body=b"", headers=None):
@@ -59,9 +70,9 @@ def _session(**methods):
 
 def _adapter(creds="default"):
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.get_credentials.return_value = _creds() if creds == "default" else creds
-    oauth.is_connected.return_value = creds is not None
-    return OneDriveAdapter(oauth, "cid", "csecret"), oauth
+    oauth.get.return_value = _creds() if creds == "default" else creds
+    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive")), oauth
 
 
 class TestPortCompliance:

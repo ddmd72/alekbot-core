@@ -10,7 +10,10 @@ import pytest
 
 from src.agents.email_classification_agent import EmailClassificationAgent, MAX_TURNS
 from src.domain.agent import AgentConfig, AgentIntent, AgentMessage, AgentStatus
-from src.domain.email import EmailClassificationResult, EmailFullContent, EmailMetadata, OAuthCredentials
+from src.domain.email import EmailClassificationResult, EmailFullContent, EmailMetadata
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.user import PerformanceTier
 from src.ports.email_provider_port import EmailProviderPort
 from src.ports.llm_port import (
@@ -238,14 +241,16 @@ class TestEmailClassificationAgent:
                 attachment_binaries={},
             )
         }
-        credentials = OAuthCredentials(
+        credentials = OAuthCredential(
             user_id="user123",
-            provider="gmail",
+            account_id="acct-1",
+            kind="gmail",
+            integration=Integration.MAIL,
+            account=ProviderAccount(realm="google", subject="", label="user@example.test"),
             access_token="tok",
             refresh_token="ref",
             token_expiry=datetime(2099, 1, 1),
             scopes=["gmail.readonly"],
-            email_address="user@example.test",
         )
         config = AgentConfig(agent_id="test_email_classifier", agent_type="email_classifier")
         agent_with_tools = EmailClassificationAgent(
@@ -279,14 +284,16 @@ class TestEmailClassificationAgent:
         """If LLM never produces a final answer — always returns tool_calls — max_turns_reached."""
         gmail_mock = AsyncMock(spec=EmailProviderPort)
         gmail_mock.batch_get_full_content.return_value = {}
-        credentials = OAuthCredentials(
+        credentials = OAuthCredential(
             user_id="user123",
-            provider="gmail",
+            account_id="acct-1",
+            kind="gmail",
+            integration=Integration.MAIL,
+            account=ProviderAccount(realm="google", subject="", label=""),
             access_token="tok",
             refresh_token="ref",
             token_expiry=datetime(2099, 1, 1),
             scopes=[],
-            email_address="",
         )
         config = AgentConfig(agent_id="test_email_classifier", agent_type="email_classifier")
         agent_with_tools = EmailClassificationAgent(

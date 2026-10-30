@@ -14,6 +14,7 @@ from src.domain.entities import FactState
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import ACC, OTHER, USER, make_fact
 from tests.support.fact_lifecycle_world import make_fact_world
+from src.composition.connector_registry import ConnectorRegistry
 
 TOKEN = {"Authorization": "Bearer t"}
 
@@ -24,7 +25,7 @@ def _app(repo: Any, account: str = ACC) -> Quart:
     app = Quart("test_cabinet_fact_state_views")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(), fact_repo=repo,
-        embedding_service=MagicMock(),
+        embedding_service=MagicMock(), connectors=ConnectorRegistry(),
     ))
     return app
 

@@ -51,6 +51,8 @@ from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.cloud_tasks_fake import FakeCloudTasksClient
 from tests.support.firestore_eval import EvalDb
 from tests.unit.services.test_drive_indexing_service import World as DriveWorld
+from tests.support.oauth_credentials_store import has_kind, one
+from src.composition.connector_registry import ConnectorRegistry
 
 USER = "u"   # the drive harness's user
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
@@ -120,7 +122,7 @@ class World:
         self.task_setup = TaskSetupService(
             lifecycle=self.graph, task_config=self.task_config, tasks_provider=None, oauth_credentials=self.store,
             task_search_index=self.search_index, task_queue=self.queue,
-            notification_url_base="https://svc.example.test")
+            notification_url_base="https://svc.example.test", connector=ConnectorRegistry().get("microsoft_todo"))
         session_service = Mock()
         session_service.verify_access_token = Mock(return_value={"sub": USER})
         self.app = Quart("test_reconnect_does_not_reindex")
@@ -132,7 +134,7 @@ class World:
             oauth_credentials_port=self.store, ms_todo_client_id="ms-cid", ms_todo_client_secret="ms-csecret",
             ms_todo_redirect_uri="https://example.test/auth/connect-microsoft-todo/callback",
             onedrive_redirect_uri="https://example.test/auth/connect-onedrive/callback",
-            task_queue=self.queue))
+            task_queue=self.queue, connectors=ConnectorRegistry()))
         self.http.route("POST", GOOGLE_TOKEN, body={"access_token": "at-g", "refresh_token": "rt-g",
                                                     "expires_in": 3600,  # Google always lists the granted scopes
                                                     "scope": "https://www.googleapis.com/auth/gmail.readonly openid "
@@ -172,7 +174,7 @@ async def test_gmail_a_consent_writes_only_the_credential_and_enqueues_no_indexi
                                                           oldest_indexed_through=OLDEST))
     world.db.collection(ENV.domain_email_facts_collection).docs["e1"] = {"user_id": USER, "subject": "Invoice FA-0137"}
     emails_before = world.docs(ENV.domain_email_facts_collection)
-    assert await world.store.is_connected(USER, "gmail") is False
+    assert await has_kind(world.store, USER, "gmail") is False
 
     resp = await world.consent("/auth/connect-gmail/callback", "gmail_oauth_state", "gmail_connect_user_id")
 
@@ -194,7 +196,7 @@ class Drive:
 
     def __init__(self, world: World) -> None:
         self.w = DriveWorld()
-        self.adapter = OneDriveAdapter(oauth_credentials=world.store, client_id="ms-cid", client_secret="ms-csecret")
+        self.adapter = OneDriveAdapter(oauth_credentials=world.store, client_id="ms-cid", client_secret="ms-csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
         self.cursors: List[Any] = []
         real_changes = self.w.drive.get_changes
 
@@ -242,7 +244,7 @@ async def test_drive_same_drive_consent_resumes_from_the_stored_cursor(world):
 
     resp = await _onedrive_consent(world)
     assert resp.headers["Location"] == "/cabinet?drive_connected=1"
-    assert (await world.store.get_credentials(USER, "microsoft_onedrive")).drive_id == "d1"
+    assert (await one(world.store, USER, "microsoft_onedrive")).drive_id == "d1"
     result = await drive.w.tick()
 
     assert result.status not in ("purged", "purging", "access_lost")
@@ -298,7 +300,7 @@ async def test_drive_a_failing_decrypt_raises_and_records_no_loss(world):
     state = await drive.w.repo.get_sync_state(USER)
     assert state.access_lost_at is None and not state.purging
     assert drive.w.repo.records == records and len(drive.w.queue.tasks) == tasks
-    assert await world.store.is_connected(USER, "microsoft_onedrive") is True
+    assert await has_kind(world.store, USER, "microsoft_onedrive") is True
 
 
 # ------------------------------------------------------------------------------------------------ To Do

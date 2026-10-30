@@ -1,21 +1,31 @@
 """The real FirestoreCredentialStore over the evaluating Firestore fake and the AES-GCM test cipher, for tests of code
 that refreshes or flags a grant. `disconnect_after_read` makes the race of a disconnect landing while a refresh is in
-flight. `creds()` carries a synthetic account identity (SECRETS_AT_REST_RFC §2.3, I9): the store refuses a credential
-without one."""
+flight. `creds()` carries a synthetic account identity, integration and account_id (SECRETS_AT_REST_RFC §2.3, I9;
+MULTI_DRIVE_RFC §4.2): the store refuses a credential without them. `one()` reads the user's one credential of a kind,
+the way the single-credential consumers find theirs."""
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Optional
+from typing import Any, Optional
 
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
-from src.domain.email import OAuthCredentials
+from src.composition.connector_registry import ConnectorRegistry
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb
 
 INDEXES_FILE = Path(__file__).resolve().parents[2] / "config" / "firestore.indexes.json"
 COLLECTION = "eval_credentials"
 EXPIRY = datetime(2026, 10, 10, 11, 12, 13, tzinfo=timezone.utc)
-_REALM = {"gmail": "google", "google_tasks": "google", "microsoft_todo": "microsoft", "microsoft_onedrive": "microsoft"}
+ACCOUNT_ID = "acct-1"
+_REGISTRY = ConnectorRegistry()
+
+
+async def one(repo: Any, user_id: str, kind: str) -> Optional[OAuthCredential]:
+    """The user's credential of `kind` (the oldest when several), or None."""
+    found = await repo.list_for_user(user_id, kind)
+    return found[0] if found else None
 
 
 class CredentialsStore:
@@ -29,31 +39,58 @@ class CredentialsStore:
     def docs(self) -> dict:
         return self.db.collection(COLLECTION).docs
 
-    def doc_of(self, user_id: str, provider: str) -> Optional[dict]:
-        """The one stored document of (user_id, provider), or None (doc ids are opaque: `{user_id}:{credential_id}`)."""
-        found = [d for d in self.docs.values() if d.get("user_id") == user_id and d.get("kind") == provider]
-        assert len(found) <= 1, f"more than one record of {provider}"
+    def doc_of(self, user_id: str, kind: str) -> Optional[dict]:
+        """The one stored document of (user_id, kind), or None (doc ids are opaque: `{user_id}:{credential_id}`)."""
+        found = [d for d in self.docs.values() if d.get("user_id") == user_id and d.get("kind") == kind]
+        assert len(found) <= 1, f"more than one record of {kind}"
         return found[0] if found else None
 
-    def disconnect_after_read(self, user_id: str, provider: str) -> None:
-        """The next get_credentials of (user_id, provider) returns the record and then the user disconnects: what a
-        refresh or flag write that started from that read finds when it writes."""
-        real_get = self.repo.get_credentials
+    def disconnect_after_read(self, user_id: str, kind: str) -> None:
+        """The next read of the user's credential of `kind` (`list_for_user` or `get`) returns the record and then the
+        user disconnects: what a refresh or flag write that started from that read finds when it writes."""
+        real_list, real_get = self.repo.list_for_user, self.repo.get
 
-        async def get_then_disconnect(uid, prov):
-            got = await real_get(uid, prov)
-            if (uid, prov) == (user_id, provider):
-                await self.repo.revoke_credentials(user_id, provider)
-                self.repo.get_credentials = real_get
+        async def disconnect() -> None:
+            for credential in await real_list(user_id, kind):
+                await self.repo.delete(user_id, credential.credential_id)
+            self.repo.list_for_user, self.repo.get = real_list, real_get
+
+        async def list_then_disconnect(uid, of_kind=None):
+            got = await real_list(uid, of_kind)
+            if uid == user_id and any(c.kind == kind for c in got):
+                await disconnect()
             return got
 
-        self.repo.get_credentials = get_then_disconnect
+        async def get_then_disconnect(uid, credential_id):
+            got = await real_get(uid, credential_id)
+            if got is not None and uid == user_id and got.kind == kind:
+                await disconnect()
+            return got
+
+        self.repo.list_for_user, self.repo.get = list_then_disconnect, get_then_disconnect
 
 
-def creds(user_id: str, provider: str, **over) -> OAuthCredentials:
-    fields = dict(user_id=user_id, provider=provider, access_token="at-old", refresh_token="rt-old",
-                  token_expiry=EXPIRY, scopes=["s.read"], email_address="owner@example.com",
-                  needs_reconnect=False, drive_id="", account_realm=_REALM.get(provider, "google"),
-                  account_subject=f"subject-{provider}")
+def creds(user_id: str, kind: str, **over) -> OAuthCredential:
+    spec = _REGISTRY.get(kind)
+    fields = dict(user_id=user_id, account_id=ACCOUNT_ID, kind=kind, integration=spec.integration,
+                  account=ProviderAccount(realm=spec.realm, subject=f"subject-{kind}", label="owner@example.com"),
+                  access_token="at-old", refresh_token="rt-old", token_expiry=EXPIRY, scopes=["s.read"],
+                  needs_reconnect=False, drive_id="")
     fields.update(over)
-    return OAuthCredentials(**fields)
+    return OAuthCredential(**fields)
+
+
+async def delete_kind(repo: Any, user_id: str, kind: str) -> None:
+    """Delete every credential of the user of `kind` (what a disconnect of that integration does)."""
+    for credential in await repo.list_for_user(user_id, kind):
+        await repo.delete(user_id, credential.credential_id)
+
+
+async def has_kind(repo: Any, user_id: str, kind: str) -> bool:
+    """True when the user has a credential of `kind`."""
+    return bool(await repo.list_for_user(user_id, kind))
+
+
+async def kinds_of(repo: Any, user_id: str) -> list:
+    """The kind of every credential of the user."""
+    return [credential.kind for credential in await repo.list_for_user(user_id)]

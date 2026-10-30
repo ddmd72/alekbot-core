@@ -17,6 +17,8 @@ from src.web.oauth_app import create_oauth_blueprint
 from tests.support import http_boundary_fake
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb
+from tests.support.oauth_credentials_store import one
+from src.composition.connector_registry import ConnectorRegistry
 
 GOOGLE_TOKEN = "https://oauth2.googleapis.com/token"
 USERINFO = "https://www.googleapis.com/oauth2/v3/userinfo"
@@ -71,7 +73,7 @@ class World:
             oauth_credentials_port=self.store,
             ms_todo_client_id="ms-cid", ms_todo_client_secret="ms-csecret",
             ms_todo_redirect_uri="https://example.test/auth/connect-microsoft-todo/callback",
-            onedrive_redirect_uri="https://example.test/auth/connect-onedrive/callback",
+            onedrive_redirect_uri="https://example.test/auth/connect-onedrive/callback", connectors=ConnectorRegistry(),
         ))
         # an unknown redirect_uri gets the bare GOOGLE_TOKEN_BODY (no `scope`), which test_consent_scope_check relies on
         self.http.route("POST", GOOGLE_TOKEN, handler=lambda r: (200, {**GOOGLE_TOKEN_BODY, **(
@@ -113,8 +115,8 @@ def world(monkeypatch) -> World:
 async def test_each_consent_stores_the_account_subject_and_label(world, which, realm, subject, label):
     resp = await world.callback(which)
     assert resp.headers["Location"] == CALLBACKS[which][4]
-    got = await world.store.get_credentials(USER, CALLBACKS[which][3])
-    assert (got.account_realm, got.account_subject, got.email_address) == (realm, subject, label)
+    got = await one(world.store, USER, CALLBACKS[which][3])
+    assert (got.account.realm, got.account.subject, got.account.label) == (realm, subject, label)
     (doc,) = world.docs.values()
     assert doc["account"] == {"realm": realm, "subject": subject}
     assert world.http.unrouted == []
@@ -122,13 +124,13 @@ async def test_each_consent_stores_the_account_subject_and_label(world, which, r
 
 async def test_the_onedrive_consent_still_stores_the_drive_id(world):
     await world.callback("onedrive")
-    assert (await world.store.get_credentials(USER, "microsoft_onedrive")).drive_id == "d1"
+    assert (await one(world.store, USER, "microsoft_onedrive")).drive_id == "d1"
 
 
 async def test_a_microsoft_account_without_mail_takes_the_principal_name(world):
     world.http.route("GET", GRAPH_ME, body={"id": "sub-m", "mail": None, "userPrincipalName": "user@example.net"})
     await world.callback("todo")
-    assert (await world.store.get_credentials(USER, "microsoft_todo")).email_address == "user@example.net"
+    assert (await one(world.store, USER, "microsoft_todo")).account.label == "user@example.net"
 
 
 @pytest.mark.parametrize("which", GOOGLE)
@@ -189,7 +191,7 @@ async def test_a_failed_identity_read_does_not_enqueue_the_to_do_setup(world, mo
         auth_service=Mock(), session_service=session_service, auth_registry=Mock(),
         auth_config=SimpleNamespace(oauth_redirect_uri="https://example.test/auth/callback"),
         oauth_credentials_port=world.store, ms_todo_client_id="ms-cid", ms_todo_client_secret="ms-csecret",
-        ms_todo_redirect_uri="https://example.test/auth/connect-microsoft-todo/callback", task_queue=queue))
+        ms_todo_redirect_uri="https://example.test/auth/connect-microsoft-todo/callback", task_queue=queue, connectors=ConnectorRegistry()))
     world.http.route("GET", GRAPH_ME, status=401, body={})
     async with app.test_client() as client:
         client.set_cookie("localhost", "microsoft_todo_oauth_state", "st-1")

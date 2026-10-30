@@ -52,6 +52,7 @@ from src.web.voice_webhook_app import create_voice_webhook_blueprint
 from src.web.worker_oidc_verifier import build_oidc_gate
 from tests.support.firestore_eval import EvalDb
 from tests.unit.web.gate_fakes import SESSION_SECRET, Tripwire, session_service
+from src.composition.connector_registry import ConnectorRegistry
 
 ROOT = Path(__file__).resolve().parents[3]
 SA = frozenset({"caller@example.test"})
@@ -95,7 +96,7 @@ def _cabinet(p: Probe):
         cabinet_facts=w("cabinet_facts"),   # reviewer edit, facts S4 T2c: main.py passes it (the route delegates to it)
         # reviewer edit, facts S4 T11a/T11b: main.py passes all three (the review queue, the answers, the button labels)
         fact_review_store=w("fact_review_store"), fact_answer_service=w("fact_answer_service"),
-        localization=w("localization"),
+        localization=w("localization"), connectors=ConnectorRegistry(),
     ), {}
 
 
@@ -111,7 +112,7 @@ def _oauth(p: Probe):
         oauth_credentials_port=w("oauth_credentials_port"), google_tasks_oauth_service=w("google_tasks_oauth_service"),
         ms_todo_client_id="ms-client", ms_todo_client_secret="ms-secret",
         ms_todo_redirect_uri="https://app.example/m", onedrive_redirect_uri="https://app.example/o",
-        task_queue=w("task_queue"),
+        task_queue=w("task_queue"), connectors=ConnectorRegistry(),
     ), {}
 
 

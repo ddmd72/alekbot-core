@@ -23,6 +23,7 @@ from tests.support.fact_store import FactStore
 from tests.support.fact_write import EXPIRY_NONE, ctx
 from tests.support.firestore_eval import EvalDb
 from tests.unit.web.gate_fakes import Tripwire, access_token, forged_token, session_service
+from src.composition.connector_registry import ConnectorRegistry
 
 OWNER, STRANGER = ("user-a", "account-a"), ("user-b", "account-b")
 
@@ -50,7 +51,7 @@ class World:
             embedding_service=self.facts.embedder,
             email_job_repo=self.jobs,
             agent_note_port=self.notes,
-            cabinet_facts=CabinetFactService(self.facts.repo),   # reviewer edit, facts S4 T2c: the route delegates to it
+            cabinet_facts=CabinetFactService(self.facts.repo), connectors=ConnectorRegistry(),   # reviewer edit, facts S4 T2c: the route delegates to it
         ))
         self.client = app.test_client()
 

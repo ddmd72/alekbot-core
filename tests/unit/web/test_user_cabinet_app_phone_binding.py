@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 from quart import Quart
 
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from src.composition.connector_registry import ConnectorRegistry
 
 _USER_ID = "user-1"
 _ACCOUNT_ID = "account-1"
@@ -32,7 +33,7 @@ def _app(*, twilio_verify_client, user_repo=None):
         user_repo=user_repo or MagicMock(),
         fact_repo=MagicMock(),
         embedding_service=MagicMock(),
-        twilio_verify_client=twilio_verify_client,
+        twilio_verify_client=twilio_verify_client, connectors=ConnectorRegistry(),
     )
     app = Quart("test_app")
     app.register_blueprint(bp)

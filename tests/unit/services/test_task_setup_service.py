@@ -28,6 +28,8 @@ from src.ports.task_search_index import TaskSearchIndex
 from src.ports.tasks_provider_port import TasksProviderPort
 from src.services.task_setup_service import TaskSetupService
 from src.domain.task import TaskList
+from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import creds
 
 _USER_ID = "user-1"
 _LIST_ID = "list-1"
@@ -69,8 +71,7 @@ def _make_service(
     tasks_provider.list_task_lists.return_value = lists
 
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.is_connected.return_value = True
-    oauth.revoke_credentials.return_value = None
+    oauth.list_for_user.return_value = [creds(_USER_ID, "microsoft_todo")]
 
     search_index = AsyncMock(spec=TaskSearchIndex)
     search_index.delete_all_for_user.return_value = None
@@ -85,7 +86,7 @@ def _make_service(
         oauth_credentials=oauth,
         task_search_index=search_index,
         task_queue=task_queue,
-        notification_url_base="https://example.com",
+        notification_url_base="https://example.com", connector=ConnectorRegistry().get("microsoft_todo"),
     )
 
     return svc, lifecycle, task_config, tasks_provider, oauth, search_index, task_queue
@@ -439,7 +440,7 @@ class TestGetStatus:
 
     async def test_returns_connected_true(self):
         svc, _, _, _, oauth, _, _ = _make_service()
-        oauth.is_connected.return_value = True
+        oauth.list_for_user.return_value = [creds(_USER_ID, "microsoft_todo")]
 
         result = await svc.get_status(_USER_ID)
 
@@ -447,7 +448,7 @@ class TestGetStatus:
 
     async def test_returns_connected_false_when_no_credentials(self):
         svc, _, _, _, oauth, _, _ = _make_service()
-        oauth.is_connected.return_value = False
+        oauth.list_for_user.return_value = []
 
         result = await svc.get_status(_USER_ID)
 

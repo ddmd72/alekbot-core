@@ -13,9 +13,12 @@ from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepos
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.composition.connector_registry import ConnectorRegistry
 from src.domain.agent import AgentStatus
 from src.domain.drive_index import DriveSyncState
-from src.domain.email import IndexingState, OAuthCredentials
+from src.domain.email import IndexingState
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.notification_kind import NotificationKind
 from src.domain.notify_result import NotifyResult
 from src.domain.reconnect_policy import R1_NOTICES, Integration
@@ -24,6 +27,7 @@ from src.domain.user_drive import DriveConnection
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb
+from tests.support.oauth_credentials_store import delete_kind
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 NOW = datetime(2026, 10, 29, 9, 30, tzinfo=timezone.utc)
@@ -91,14 +95,15 @@ class World:
         self.svc = IntegrationReconnectService(
             credentials=self.creds, users=Users("user-a", "user-b"), notifier=self.notifier,
             email_states=self.email, task_config=self.tasks, drive_states=self.drive_states, drive=self.drive,
-            alert_sink=self.alerts, ensure_agents=ensure, clock=lambda: NOW)
+            alert_sink=self.alerts, ensure_agents=ensure, clock=lambda: NOW, mail_connector=ConnectorRegistry().get("gmail"), todo_connector=ConnectorRegistry().get("microsoft_todo"))
 
     async def connect(self, user_id: str, provider: str) -> None:
-        await self.creds.save_credentials(OAuthCredentials(
-            user_id=user_id, provider=provider, access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[],
-            email_address="user@example.com",
-            account_realm="microsoft" if provider.startswith("microsoft") else "google",
-            account_subject=f"sub-{user_id}"))
+        await self.creds.save(OAuthCredential(
+            user_id=user_id, account_id="acct-1", kind=provider,
+            integration=ConnectorRegistry().get(provider).integration,
+            account=ProviderAccount(realm="microsoft" if provider.startswith("microsoft") else "google",
+                                    subject=f"sub-{user_id}", label="user@example.com"),
+            access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[]))
 
     async def gmail_state(self, user_id: str) -> None:
         await self.email.update_indexing_state(IndexingState(user_id=user_id, provider="gmail",
@@ -163,8 +168,8 @@ async def test_a_consent_clears_the_flag_and_the_next_loss_notifies_again(world)
     await world.svc.consented("user-a", Integration.TODO)
     assert (await world.email.get_indexing_state("user-a", "gmail")).reconnect_notified is False
     assert (await world.tasks.get_config("user-a")).reconnect_notified is False
-    await world.creds.revoke_credentials("user-a", "gmail")
-    await world.creds.revoke_credentials("user-a", "microsoft_todo")
+    await delete_kind(world.creds, "user-a", "gmail")
+    await delete_kind(world.creds, "user-a", "microsoft_todo")
     assert (await world.svc.sweep())["notices"] == 2
     assert len(world.notifier.calls) == 4
 

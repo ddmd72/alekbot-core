@@ -6,6 +6,7 @@ from quart import Quart
 
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.web.oauth_app import create_oauth_blueprint
+from src.composition.connector_registry import ConnectorRegistry
 
 _APPROOT = "https://graph.microsoft.com/v1.0/me/drive/special/approot"
 _ME = "https://graph.microsoft.com/v1.0/me"
@@ -60,7 +61,7 @@ def _app(oauth_port):
         auth_service=Mock(), session_service=session_service, auth_registry=Mock(),
         auth_config=auth_config, oauth_credentials_port=oauth_port,
         ms_todo_client_id="cid", ms_todo_client_secret="csecret",
-        onedrive_redirect_uri="https://example.test/auth/connect-onedrive/callback",
+        onedrive_redirect_uri="https://example.test/auth/connect-onedrive/callback", connectors=ConnectorRegistry(),
     ))
     return app
 
@@ -84,22 +85,22 @@ async def test_drive_id_read_from_the_app_folder_item_and_saved(oauth_port):
     assert resp.headers["Location"] == "/cabinet?drive_connected=1"
     assert session.get.call_args.args[0] == _APPROOT
     assert session.get.call_args.kwargs["headers"] == {"Authorization": "Bearer a"}
-    assert oauth_port.save_credentials.call_args.args[0].drive_id == "d1"
+    assert oauth_port.save.call_args.args[0].drive_id == "d1"
 
 
 async def test_approot_refused_still_connects_without_drive_id(oauth_port):
     resp = await _callback(oauth_port, _session(_resp(_TOKEN), _resp({}, status=401)))
     assert resp.headers["Location"] == "/cabinet?drive_connected=1"
-    assert oauth_port.save_credentials.call_args.args[0].drive_id == ""
+    assert oauth_port.save.call_args.args[0].drive_id == ""
 
 
 async def test_approot_network_error_still_connects(oauth_port):
     resp = await _callback(oauth_port, _session(_resp(_TOKEN), OSError("boom")))
     assert resp.headers["Location"] == "/cabinet?drive_connected=1"
-    assert oauth_port.save_credentials.call_args.args[0].drive_id == ""
+    assert oauth_port.save.call_args.args[0].drive_id == ""
 
 
 async def test_reconnect_saves_a_cleared_flag(oauth_port):
     approot = _resp({"id": "R!1", "parentReference": {"driveId": "d1"}})
     await _callback(oauth_port, _session(_resp(_TOKEN), approot))
-    assert oauth_port.save_credentials.call_args.args[0].needs_reconnect is False
+    assert oauth_port.save.call_args.args[0].needs_reconnect is False

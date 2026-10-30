@@ -11,6 +11,7 @@ from src.domain.agent import AgentResponse, AgentStatus
 from src.domain.notification_kind import NotificationKind
 from src.handlers.worker_handler import WorkerHandler
 from src.services.deep_research_delivery import deliver_deep_research
+from src.composition.connector_registry import ConnectorRegistry
 
 
 # --- WorkerHandler ---------------------------------------------------------
@@ -228,10 +229,10 @@ class TestEnsureBeforeNotify:
     async def test_gmail_reconnect_flag_notice(self):
         creds = MagicMock(needs_reconnect=False)
         oauth = AsyncMock()
-        oauth.get_credentials.return_value = creds
+        oauth.list_for_user.return_value = [creds]
         email_review = AsyncMock()
         email_review.fetch_review_payload.side_effect = OAuthGrantRevokedError("revoked")
-        worker, log = _ordered_worker(oauth_credentials=oauth, email_review=email_review)
+        worker, log = _ordered_worker(oauth_credentials=oauth, email_review=email_review, mail_connector=ConnectorRegistry().get("gmail"))
         await worker.handle({"task_type": "daily_email_review", "user_id": "u1", "account_id": "a1"})
         assert log[:2] == ["ensure", "notify"]
 
@@ -279,13 +280,13 @@ class TestGmailReconnectEnsureFailure:
     async def test_ensure_failure_saves_nothing_and_next_run_notifies(self):
         creds = MagicMock(needs_reconnect=False)
         oauth = AsyncMock()
-        oauth.get_credentials.return_value = creds
-        oauth.update_credentials.return_value = True        # the record still exists
-        worker, log = _ordered_worker(oauth_credentials=oauth)
+        oauth.list_for_user.return_value = [creds]
+        oauth.update.return_value = True        # the record still exists
+        worker, log = _ordered_worker(oauth_credentials=oauth, mail_connector=ConnectorRegistry().get("gmail"))
         worker._agent_factory.ensure_agents_for_user.side_effect = RuntimeError("cold")
         await worker._flag_gmail_reconnect("u1", "a1")
-        oauth.update_credentials.assert_not_awaited()
-        oauth.save_credentials.assert_not_awaited()
+        oauth.update.assert_not_awaited()
+        oauth.save.assert_not_awaited()
         assert creds.needs_reconnect is False
         worker._notification.notify.assert_not_awaited()
 
@@ -294,7 +295,7 @@ class TestGmailReconnectEnsureFailure:
 
         worker._agent_factory.ensure_agents_for_user.side_effect = _ok
         await worker._flag_gmail_reconnect("u1", "a1")
-        oauth.update_credentials.assert_awaited_once_with(creds)
-        oauth.save_credentials.assert_not_awaited()          # a flag write never creates a record
+        oauth.update.assert_awaited_once_with(creds)
+        oauth.save.assert_not_awaited()          # a flag write never creates a record
         assert creds.needs_reconnect is True
         assert log == ["ensure", "notify"]

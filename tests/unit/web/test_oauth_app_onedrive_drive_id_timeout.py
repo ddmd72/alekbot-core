@@ -15,4 +15,4 @@ async def test_the_app_folder_read_carries_a_ten_second_timeout(oauth_port):  # 
 async def test_a_timeout_still_connects_without_a_drive_id(oauth_port):  # noqa: F811
     resp = await _callback(oauth_port, _session(_resp(_TOKEN), TimeoutError()))
     assert resp.headers["Location"] == "/cabinet?drive_connected=1"
-    assert oauth_port.save_credentials.call_args.args[0].drive_id == ""
+    assert oauth_port.save.call_args.args[0].drive_id == ""

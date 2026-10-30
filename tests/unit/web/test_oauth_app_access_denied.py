@@ -13,6 +13,7 @@ from quart import Quart
 
 from src.domain.exceptions import AccessDeniedError
 from src.web.oauth_app import create_oauth_blueprint
+from src.composition.connector_registry import ConnectorRegistry
 
 
 @pytest.fixture
@@ -40,7 +41,7 @@ def app(auth_service, session_service):
             auth_service=auth_service,
             session_service=session_service,
             auth_registry=Mock(),
-            auth_config=auth_config,
+            auth_config=auth_config, connectors=ConnectorRegistry(),
         )
     )
     return app

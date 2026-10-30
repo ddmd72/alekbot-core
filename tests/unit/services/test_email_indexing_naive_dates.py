@@ -12,7 +12,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from src.adapters.gmail_provider_adapter import GmailProviderAdapter
-from src.domain.email import EmailMetadata, IndexingJob, OAuthCredentials
+from src.domain.email import EmailMetadata, IndexingJob
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.email_dates import to_naive_utc
 from src.ports.email_classifier_port import EmailClassifierPort
 from src.ports.email_exclusions_port import EmailExclusionsPort
@@ -21,6 +24,7 @@ from src.ports.email_provider_port import EmailProviderPort
 from src.ports.embedding_service import EmbeddingService
 from src.ports.indexed_email_repository import IndexedEmailRepository
 from src.services.email_indexing_service import EmailIndexingService
+from src.composition.connector_registry import ConnectorRegistry
 
 
 @pytest.fixture
@@ -54,7 +58,7 @@ def service(gmail, email_repo, job_repo):
         exclusions_repo=exclusions,
         classifier=AsyncMock(spec=EmailClassifierPort),
         embedding=AsyncMock(spec=EmbeddingService),
-        oauth=None,
+        oauth=None, connector=ConnectorRegistry().get("gmail"),
     )
 
 
@@ -66,11 +70,17 @@ def _job() -> IndexingJob:
     )
 
 
-def _creds() -> OAuthCredentials:
-    return OAuthCredentials(
-        user_id="user-abc", provider="gmail", access_token="t", refresh_token="r",
+def _creds() -> OAuthCredential:
+    return OAuthCredential(
+        user_id="user-abc",
+        account_id="acct-1",
+        kind="gmail",
+        integration=Integration.MAIL,
+        account=ProviderAccount(realm="google", subject="", label="a@example.com"),
+        access_token="t",
+        refresh_token="r",
         token_expiry=datetime(2099, 1, 1, tzinfo=timezone.utc),
-        scopes=["gmail.readonly"], email_address="a@example.com",
+        scopes=["gmail.readonly"],
     )
 
 

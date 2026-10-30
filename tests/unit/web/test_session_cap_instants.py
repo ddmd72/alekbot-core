@@ -27,6 +27,7 @@ from src.web.oauth_app import create_oauth_blueprint
 from tests.support.clock_instants import pin_datetime
 from tests.support.firestore_eval import EvalDb
 from tests.unit.web.gate_fakes import SESSION_SECRET, Tripwire
+from src.composition.connector_registry import ConnectorRegistry
 
 ALLOWED = "owner@example.com"
 USERS, ACCOUNTS, WHITELIST = "users", "accounts", "whitelist"
@@ -88,7 +89,7 @@ async def _world():
         ms_todo_client_id="ms-client", ms_todo_client_secret="ms-secret",
         ms_todo_redirect_uri="https://app.example/auth/connect-microsoft-todo/callback",
         onedrive_redirect_uri="https://app.example/auth/connect-onedrive/callback",
-        task_queue=Tripwire("task_queue", touched),
+        task_queue=Tripwire("task_queue", touched), connectors=ConnectorRegistry(),
     ))
     return app.test_client()
 

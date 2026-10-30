@@ -13,8 +13,10 @@ from src.domain.email import (
     EmailFullContent,
     EmailMetadata,
     IndexingJob,
-    OAuthCredentials,
 )
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.ports.email_classifier_port import EmailClassifierPort
 from src.ports.email_exclusions_port import EmailExclusionsPort
 from src.ports.email_indexing_job_repository import EmailIndexingJobRepository
@@ -22,6 +24,7 @@ from src.ports.email_provider_port import EmailProviderPort
 from src.ports.embedding_service import EmbeddingService
 from src.ports.indexed_email_repository import IndexedEmailRepository
 from src.services.email_indexing_service import EmailIndexingService
+from src.composition.connector_registry import ConnectorRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +88,7 @@ def service(
         exclusions_repo=mock_exclusions_repo,
         classifier=mock_classifier,
         embedding=mock_embedding,
-        oauth=None,
+        oauth=None, connector=ConnectorRegistry().get("gmail"),
     )
 
 
@@ -104,14 +107,16 @@ def _make_job(next_page_token=None):
 
 
 def _make_credentials():
-    return OAuthCredentials(
+    return OAuthCredential(
         user_id="user-abc",
-        provider="gmail",
+        account_id="acct-1",
+        kind="gmail",
+        integration=Integration.MAIL,
+        account=ProviderAccount(realm="google", subject="", label="test@example.com"),
         access_token="tok",
         refresh_token="rtok",
-        token_expiry=datetime(2099, 1, 1, tzinfo=timezone.utc),  # Far future — no refresh needed
+        token_expiry=datetime(2099, 1, 1, tzinfo=timezone.utc),
         scopes=["gmail.readonly"],
-        email_address="test@example.com",
     )
 
 

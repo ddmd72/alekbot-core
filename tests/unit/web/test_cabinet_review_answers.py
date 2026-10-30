@@ -28,6 +28,7 @@ from tests.support.fact_kit import ACC, OTHER, USER
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import ReviewWorld
 from tests.support.fact_write import EXPIRY_NONE, ctx
+from src.composition.connector_registry import ConnectorRegistry
 
 TOKEN = {"Authorization": "Bearer t"}
 TEXT = "drinks green tea every morning"
@@ -59,7 +60,7 @@ def _app(world: ReviewWorld, account: str = ACC, user: str = USER, service: Any 
         fact_review_store=world.review_store if with_store else None,
         fact_answer_service=_service(world) if service == "real" else service,
         language_service=world.language if localized else None,
-        localization=LocalizationService(world.localization) if localized else None,
+        localization=LocalizationService(world.localization) if localized else None, connectors=ConnectorRegistry(),
     ))
     return app
 

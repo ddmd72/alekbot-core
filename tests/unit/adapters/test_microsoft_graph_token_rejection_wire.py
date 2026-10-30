@@ -16,9 +16,12 @@ import pytest
 
 from src.adapters.microsoft.graph_auth import GraphReauthRequired, MicrosoftGraphTokenProvider
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveReauthRequired
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from src.composition.connector_registry import ConnectorRegistry
 
 _INTERACTION = {"error": "interaction_required",
                 "error_description": "AADSTS50076: Due to a configuration change made by your administrator, "
@@ -30,10 +33,18 @@ _CONSENT = {"error": "consent_required",
             "error_codes": [65001], "suberror": "consent_required"}
 
 
-def _creds() -> OAuthCredentials:
-    return OAuthCredentials(user_id="u1", provider=ONEDRIVE_PROVIDER, access_token="old", refresh_token="r1",
-                            token_expiry=datetime.now(timezone.utc) - timedelta(minutes=1), scopes=[],
-                            email_address="")
+def _creds() -> OAuthCredential:
+    return OAuthCredential(
+        user_id="u1",
+        account_id="acct-1",
+        kind=ONEDRIVE_PROVIDER,
+        integration=Integration.DRIVE,
+        account=ProviderAccount(realm="microsoft", subject="", label=""),
+        access_token="old",
+        refresh_token="r1",
+        token_expiry=datetime.now(timezone.utc) - timedelta(minutes=1),
+        scopes=[],
+    )
 
 
 def _resp(json_data, status=200):
@@ -58,7 +69,8 @@ def _session(post):
 
 def _oauth():
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.get_credentials.return_value = _creds()
+    oauth.get.return_value = _creds()
+    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
     return oauth
 
 
@@ -73,12 +85,12 @@ class TestSignInRequiredIsReauth:
         oauth = _oauth()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(body, status=400)])), \
                 pytest.raises(GraphReauthRequired):
-            await _provider(oauth).headers("u1")
-        oauth.save_credentials.assert_not_called()
+            await _provider(oauth).user_headers("u1")
+        oauth.save.assert_not_called()
 
     @pytest.mark.parametrize("body", [_INTERACTION, _CONSENT], ids=["interaction_required", "consent_required"])
     async def test_drive_asks_for_a_reconnect(self, body):
-        adapter = OneDriveAdapter(_oauth(), "cid", "csecret")
+        adapter = OneDriveAdapter(_oauth(), "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
         with patch("aiohttp.ClientSession", return_value=_session([_resp(body, status=400)])), \
                 pytest.raises(DriveReauthRequired):
             await adapter.get_changes("u1", None)
@@ -88,6 +100,6 @@ class TestSignInRequiredIsReauth:
         body = {"error": "temporarily_unavailable", "error_description": "AADSTS90033: transient"}
         with patch("aiohttp.ClientSession", return_value=_session([_resp(body, status=503)])), \
                 pytest.raises(ValueError) as exc:
-            await _provider(oauth).headers("u1")
+            await _provider(oauth).user_headers("u1")
         assert not isinstance(exc.value, GraphReauthRequired)
 

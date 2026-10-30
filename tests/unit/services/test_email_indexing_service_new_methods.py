@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.domain.email import IndexingJob, OAuthCredentials
+from src.domain.email import IndexingJob
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.ports.email_classifier_port import EmailClassifierPort
 from src.ports.email_exclusions_port import EmailExclusionsPort
 from src.ports.email_indexing_job_repository import EmailIndexingJobRepository
@@ -18,6 +21,7 @@ from src.ports.embedding_service import EmbeddingService
 from src.ports.indexed_email_repository import IndexedEmailRepository
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.services.email_indexing_service import EmailIndexingService
+from src.composition.connector_registry import ConnectorRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -49,15 +53,17 @@ def _make_job(
     )
 
 
-def _make_creds() -> OAuthCredentials:
-    return OAuthCredentials(
+def _make_creds() -> OAuthCredential:
+    return OAuthCredential(
         user_id=_USER_ID,
-        provider="gmail",
+        account_id="acct-1",
+        kind="gmail",
+        integration=Integration.MAIL,
+        account=ProviderAccount(realm="google", subject="", label="test@example.com"),
         access_token="tok",
         refresh_token="rtok",
         token_expiry=datetime(2099, 1, 1),
         scopes=["gmail.readonly"],
-        email_address="test@example.com",
     )
 
 
@@ -88,8 +94,8 @@ def mock_job_repo():
 @pytest.fixture
 def mock_oauth():
     m = AsyncMock(spec=OAuthCredentialsPort)
-    m.get_credentials.return_value = _make_creds()
-    m.list_users_by_provider.return_value = []
+    m.list_for_user.return_value = [_make_creds()]
+    m.list_user_ids.return_value = []
     return m
 
 
@@ -102,7 +108,7 @@ def service(mock_job_repo, mock_oauth):
         exclusions_repo=AsyncMock(spec=EmailExclusionsPort),
         classifier=AsyncMock(spec=EmailClassifierPort),
         embedding=AsyncMock(spec=EmbeddingService),
-        oauth=mock_oauth,
+        oauth=mock_oauth, connector=ConnectorRegistry().get("gmail"),
     )
 
 
@@ -116,7 +122,7 @@ def service_no_oauth(mock_job_repo):
         exclusions_repo=AsyncMock(spec=EmailExclusionsPort),
         classifier=AsyncMock(spec=EmailClassifierPort),
         embedding=AsyncMock(spec=EmbeddingService),
-        oauth=None,
+        oauth=None, connector=ConnectorRegistry().get("gmail"),
     )
 
 
@@ -129,7 +135,7 @@ class TestLoadJobForExecution:
     async def test_returns_job_and_creds_when_all_ok(self, service, mock_job_repo, mock_oauth):
         job = _make_job(status="running")
         mock_job_repo.get_job.return_value = job
-        mock_oauth.get_credentials.return_value = _make_creds()
+        mock_oauth.list_for_user.return_value = [_make_creds()]
 
         result_job, result_creds, skip_reason = await service.load_job_for_execution(_JOB_ID)
 
@@ -169,7 +175,7 @@ class TestLoadJobForExecution:
 
     async def test_missing_creds_returns_failed_auth(self, service, mock_job_repo, mock_oauth):
         mock_job_repo.get_job.return_value = _make_job(status="running")
-        mock_oauth.get_credentials.return_value = None
+        mock_oauth.list_for_user.return_value = []
 
         job, creds, reason = await service.load_job_for_execution(_JOB_ID)
 
@@ -178,7 +184,7 @@ class TestLoadJobForExecution:
 
     async def test_missing_creds_updates_job_status(self, service, mock_job_repo, mock_oauth):
         mock_job_repo.get_job.return_value = _make_job(status="running")
-        mock_oauth.get_credentials.return_value = None
+        mock_oauth.list_for_user.return_value = []
 
         await service.load_job_for_execution(_JOB_ID)
 
@@ -193,7 +199,7 @@ class TestLoadJobForExecution:
 
         await service.load_job_for_execution(_JOB_ID)
 
-        mock_oauth.get_credentials.assert_called_once_with(job.user_id, job.provider)
+        mock_oauth.list_for_user.assert_called_once_with(job.user_id, job.provider)
 
 
 # ===========================================================================
@@ -253,7 +259,7 @@ class TestStartIndexingForEligibleUsers:
         assert skipped == 0
 
     async def test_no_users_returns_empty(self, service, mock_oauth):
-        mock_oauth.list_users_by_provider.return_value = []
+        mock_oauth.list_user_ids.return_value = []
         user_repo = MagicMock()
 
         job_ids, started, skipped = await service.start_indexing_for_eligible_users(
@@ -263,7 +269,7 @@ class TestStartIndexingForEligibleUsers:
         assert started == 0
 
     async def test_user_not_found_is_skipped(self, service, mock_oauth):
-        mock_oauth.list_users_by_provider.return_value = [_USER_ID]
+        mock_oauth.list_user_ids.return_value = [_USER_ID]
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(return_value=None)
 
@@ -275,7 +281,7 @@ class TestStartIndexingForEligibleUsers:
         assert skipped == 1
 
     async def test_auto_index_disabled_is_skipped(self, service, mock_oauth):
-        mock_oauth.list_users_by_provider.return_value = [_USER_ID]
+        mock_oauth.list_user_ids.return_value = [_USER_ID]
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(return_value=_make_user_profile(gmail_auto_index=False))
 
@@ -288,7 +294,7 @@ class TestStartIndexingForEligibleUsers:
 
     async def test_wrong_local_hour_is_skipped(self, service, mock_oauth):
         # now_utc=10:00 UTC, user_tz=UTC, trigger_hour=9 → mismatch
-        mock_oauth.list_users_by_provider.return_value = [_USER_ID]
+        mock_oauth.list_user_ids.return_value = [_USER_ID]
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(
             return_value=_make_user_profile(gmail_auto_index=True, hour=9, timezone="UTC")
@@ -302,7 +308,7 @@ class TestStartIndexingForEligibleUsers:
         assert skipped == 1
 
     async def test_job_already_running_is_skipped(self, service, mock_oauth, mock_job_repo):
-        mock_oauth.list_users_by_provider.return_value = [_USER_ID]
+        mock_oauth.list_user_ids.return_value = [_USER_ID]
         mock_job_repo.get_latest_job.return_value = _make_job(status="running")
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(
@@ -317,8 +323,8 @@ class TestStartIndexingForEligibleUsers:
         assert skipped == 1
 
     async def test_no_credentials_is_skipped(self, service, mock_oauth, mock_job_repo):
-        mock_oauth.list_users_by_provider.return_value = [_USER_ID]
-        mock_oauth.get_credentials.return_value = None
+        mock_oauth.list_user_ids.return_value = [_USER_ID]
+        mock_oauth.list_for_user.return_value = []
         mock_job_repo.get_latest_job.return_value = None
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(
@@ -333,8 +339,8 @@ class TestStartIndexingForEligibleUsers:
         assert skipped == 1
 
     async def test_eligible_user_creates_job(self, service, mock_oauth, mock_job_repo):
-        mock_oauth.list_users_by_provider.return_value = [_USER_ID]
-        mock_oauth.get_credentials.return_value = _make_creds()
+        mock_oauth.list_user_ids.return_value = [_USER_ID]
+        mock_oauth.list_for_user.return_value = [_make_creds()]
         mock_job_repo.get_latest_job.return_value = None
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(
@@ -351,8 +357,8 @@ class TestStartIndexingForEligibleUsers:
         mock_job_repo.create_job.assert_called_once()
 
     async def test_created_job_has_correct_provider_and_mode(self, service, mock_oauth, mock_job_repo):
-        mock_oauth.list_users_by_provider.return_value = [_USER_ID]
-        mock_oauth.get_credentials.return_value = _make_creds()
+        mock_oauth.list_user_ids.return_value = [_USER_ID]
+        mock_oauth.list_for_user.return_value = [_make_creds()]
         mock_job_repo.get_latest_job.return_value = None
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(

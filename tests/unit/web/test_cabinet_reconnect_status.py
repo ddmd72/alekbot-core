@@ -17,8 +17,12 @@ from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepos
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.composition.connector_registry import ConnectorRegistry
 from src.domain.drive_index import DriveSyncState
-from src.domain.email import IndexingState, OAuthCredentials
+from src.domain.email import IndexingState
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.task import TaskUserConfig
 from src.domain.user_drive import DriveConnection
 from src.services.integration_reconnect_service import IntegrationReconnectService
@@ -27,6 +31,7 @@ from src.web.oauth_app import create_oauth_blueprint
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb
+from tests.support.oauth_credentials_store import has_kind
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 USER = "user-a"
@@ -69,11 +74,11 @@ class World:
         self.drive = Drive()
         self.reconnect = IntegrationReconnectService(
             credentials=self.creds, users=Users(), notifier=None, email_states=self.email, task_config=self.tasks,
-            drive_states=self.drive_states, drive=self.drive, clock=lambda: NOW)
+            drive_states=self.drive_states, drive=self.drive, clock=lambda: NOW, mail_connector=ConnectorRegistry().get("gmail"), todo_connector=ConnectorRegistry().get("microsoft_todo"))
         # get_status reads only the credential port and the config
         self.task_setup = TaskSetupService(lifecycle=None, task_config=self.tasks, tasks_provider=None,
                                            oauth_credentials=self.creds, task_search_index=None, task_queue=None,
-                                           notification_url_base="")
+                                           notification_url_base="", connector=ConnectorRegistry().get("microsoft_todo"))
 
     def cabinet(self) -> Quart:
         session_service = MagicMock()
@@ -82,7 +87,7 @@ class World:
         bp = create_user_cabinet_blueprint(
             invite_service=MagicMock(), session_service=session_service, user_repo=Users(), fact_repo=MagicMock(),
             embedding_service=MagicMock(), oauth_credentials_port=self.creds, indexed_email_repo=self.email,
-            task_setup=self.task_setup, user_drive=self.drive, reconnect=self.reconnect)
+            task_setup=self.task_setup, user_drive=self.drive, reconnect=self.reconnect, connectors=ConnectorRegistry())
         app = Quart("test_cabinet_reconnect")
         app.register_blueprint(bp)
         return app
@@ -96,14 +101,15 @@ class World:
             gmail_oauth_service=gmail_oauth_service, oauth_credentials_port=self.creds, ms_todo_client_id="cid",
             ms_todo_client_secret="csecret", onedrive_redirect_uri="https://example.test/auth/connect-onedrive/callback",
             ms_todo_redirect_uri="https://example.test/auth/connect-microsoft-todo/callback",
-            reconnect=self.reconnect))
+            reconnect=self.reconnect, connectors=ConnectorRegistry()))
         return app
 
     async def connect(self, provider: str) -> None:
-        await self.creds.save_credentials(OAuthCredentials(
-            user_id=USER, provider=provider, access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[],
-            email_address="user@example.com",
-            account_realm="microsoft" if provider.startswith("microsoft") else "google", account_subject="sub-a"))
+        await self.creds.save(OAuthCredential(
+            user_id=USER, account_id="acct-1", kind=provider, integration=ConnectorRegistry().get(provider).integration,
+            account=ProviderAccount(realm="microsoft" if provider.startswith("microsoft") else "google",
+                                    subject="sub-a", label="user@example.com"),
+            access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[]))
 
     async def gmail_state(self) -> None:
         await self.email.update_indexing_state(IndexingState(user_id=USER, provider="gmail"))
@@ -182,7 +188,7 @@ async def test_a_failed_mark_deletes_nothing(world):
     async with world.cabinet().test_client() as client:
         resp = await client.delete("/api/gmail/disconnect", headers=AUTH)
     assert resp.status_code == 500
-    assert await world.creds.is_connected(USER, "gmail") is True
+    assert await has_kind(world.creds, USER, "gmail") is True
 
 
 async def test_the_drive_disconnect_marks_the_sync_state(world):
@@ -202,9 +208,17 @@ async def test_the_gmail_consent_clears_the_mark_and_the_flag(world):
     await world.gmail_state()
     await world.email.set_reconnect_flags(USER, "gmail", reconnect_notified=True, disconnected_by_user_at=NOW)
     gmail = Mock()
-    gmail.exchange_code = AsyncMock(return_value=OAuthCredentials(
-        user_id=USER, provider="gmail", access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[],
-        email_address="user@example.com", account_realm="google", account_subject="sub-a"))
+    gmail.exchange_code = AsyncMock(return_value=OAuthCredential(
+        user_id=USER,
+        account_id="acct-1",
+        kind="gmail",
+        integration=Integration.MAIL,
+        account=ProviderAccount(realm="google", subject="sub-a", label="user@example.com"),
+        access_token="at",
+        refresh_token="rt",
+        token_expiry=NOW,
+        scopes=[],
+    ))
     async with world.oauth(gmail).test_client() as client:
         client.set_cookie("localhost", "gmail_oauth_state", "s1")
         client.set_cookie("localhost", "gmail_connect_user_id", USER)
@@ -216,16 +230,24 @@ async def test_the_gmail_consent_clears_the_mark_and_the_flag(world):
 
 async def test_a_failed_clear_never_fails_the_connect(world):
     gmail = Mock()
-    gmail.exchange_code = AsyncMock(return_value=OAuthCredentials(
-        user_id=USER, provider="gmail", access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[],
-        email_address="user@example.com", account_realm="google", account_subject="sub-a"))
+    gmail.exchange_code = AsyncMock(return_value=OAuthCredential(
+        user_id=USER,
+        account_id="acct-1",
+        kind="gmail",
+        integration=Integration.MAIL,
+        account=ProviderAccount(realm="google", subject="sub-a", label="user@example.com"),
+        access_token="at",
+        refresh_token="rt",
+        token_expiry=NOW,
+        scopes=[],
+    ))
     world.reconnect.consented = AsyncMock(side_effect=RuntimeError("firestore down"))
     async with world.oauth(gmail).test_client() as client:
         client.set_cookie("localhost", "gmail_oauth_state", "s1")
         client.set_cookie("localhost", "gmail_connect_user_id", USER)
         resp = await client.get("/auth/connect-gmail/callback?code=c&state=s1")
     assert resp.headers["Location"] == "/cabinet?gmail_connected=1"
-    assert await world.creds.is_connected(USER, "gmail") is True
+    assert await has_kind(world.creds, USER, "gmail") is True
 
 
 def _aiohttp_session(token: Dict):

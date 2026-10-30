@@ -15,6 +15,7 @@ from src.services.drive_search_service import DriveSearchService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 
 from .test_cabinet_drive_index_strings import LANGS, _dicts
+from src.composition.connector_registry import ConnectorRegistry
 
 
 @pytest.mark.parametrize("lang", LANGS)
@@ -53,7 +54,7 @@ def _app(flag):
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
         fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=drive,
         drive_search_service=search, drive_task_queue=AsyncMock(),
-        drive_transcribe_switch_on=True,   # the switch is on: the user's flag decides (T-R34)
+        drive_transcribe_switch_on=True, connectors=ConnectorRegistry(),   # the switch is on: the user's flag decides (T-R34)
     ))
     return app
 

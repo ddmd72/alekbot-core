@@ -25,6 +25,7 @@ from tests.support.firestore_eval import EvalDb
 from tests.unit.web.gate_fakes import (
     Tripwire, access_token, expired_token, forged_token, refresh_token, session_service,
 )
+from src.composition.connector_registry import ConnectorRegistry
 
 ALLOWED = "owner@example.com"
 USERS, ACCOUNTS, WHITELIST = "users", "accounts", "whitelist"
@@ -93,7 +94,7 @@ class World:
             ms_todo_client_id="ms-client", ms_todo_client_secret="ms-secret",
             ms_todo_redirect_uri="https://app.example/auth/connect-microsoft-todo/callback",
             onedrive_redirect_uri="https://app.example/auth/connect-onedrive/callback",
-            task_queue=self.task_queue,
+            task_queue=self.task_queue, connectors=ConnectorRegistry(),
         ))
         self.client = self.app.test_client()
 

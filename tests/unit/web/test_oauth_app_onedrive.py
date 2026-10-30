@@ -9,6 +9,7 @@ from src.adapters.microsoft import ONEDRIVE_PROVIDER
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.web import oauth_app
 from src.web.oauth_app import create_oauth_blueprint
+from src.composition.connector_registry import ConnectorRegistry
 
 
 def _resp(json_data, status=200):
@@ -48,7 +49,7 @@ def _app(oauth_port, redirect="https://example.test/auth/connect-onedrive/callba
     app.register_blueprint(create_oauth_blueprint(
         auth_service=Mock(), session_service=session_service, auth_registry=Mock(),
         auth_config=auth_config, oauth_credentials_port=oauth_port,
-        ms_todo_client_id="cid", ms_todo_client_secret="csecret", onedrive_redirect_uri=redirect,
+        ms_todo_client_id="cid", ms_todo_client_secret="csecret", onedrive_redirect_uri=redirect, connectors=ConnectorRegistry(),
     ))
     return app
 
@@ -72,8 +73,8 @@ async def test_callback_saves_credentials_under_drive_provider(oauth_port):
         with patch("aiohttp.ClientSession", return_value=_session(token)):
             resp = await client.get("/auth/connect-onedrive/callback?code=c&state=s1")
     assert resp.headers["Location"] == "/cabinet?drive_connected=1"
-    saved = oauth_port.save_credentials.call_args.args[0]
-    assert saved.provider == ONEDRIVE_PROVIDER and saved.user_id == "u1" and saved.refresh_token == "r"
+    saved = oauth_port.save.call_args.args[0]
+    assert saved.kind == ONEDRIVE_PROVIDER and saved.user_id == "u1" and saved.refresh_token == "r"
 
 
 async def test_callback_state_mismatch(oauth_port):
@@ -82,7 +83,7 @@ async def test_callback_state_mismatch(oauth_port):
         client.set_cookie("localhost", "drive_connect_user_id", "u1")
         resp = await client.get("/auth/connect-onedrive/callback?code=c&state=evil")
     assert resp.headers["Location"] == "/cabinet?drive_error=state"
-    oauth_port.save_credentials.assert_not_called()
+    oauth_port.save.assert_not_called()
 
 
 async def test_501_when_not_configured(oauth_port):

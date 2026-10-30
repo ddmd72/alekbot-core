@@ -21,15 +21,15 @@ async def test_insufficient_scope_flags_reconnect_once(monkeypatch):
         await adapter.list_emails(_creds())
 
     async def get(*_a, **_k):
-        return stored["creds"]
+        return [stored["creds"]]
 
     async def update(c):
         stored["creds"] = c
         return True
 
     worker._email_indexing.run_indexing_job = AsyncMock(side_effect=run)
-    oauth.get_credentials.side_effect = get
-    oauth.update_credentials.side_effect = update
+    oauth.list_for_user.side_effect = get
+    oauth.update.side_effect = update
 
     result, status = await worker._handle_email_indexing({"job_id": "job-0000-1111"})
     assert (status, result) == (200, {"status": "failed", "error": "gmail_reconnect_required"})

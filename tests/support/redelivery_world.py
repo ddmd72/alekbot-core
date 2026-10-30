@@ -55,6 +55,7 @@ from tests.support.clock_instants import pin_datetime
 from tests.support.firestore_eval import EvalDb
 from tests.support.recording_task_queue import SERVICE_URL, DedupCloudTasksClient
 from tests.support.worker_payload_fields import consumers
+from src.composition.connector_registry import ConnectorRegistry
 
 # 09:00 in Berlin (CET, after the October transition). No boundary is under test at this instant.
 T0 = datetime(2026, 10, 27, 8, 0, tzinfo=timezone.utc)
@@ -243,7 +244,8 @@ class ScriptedReview(EmailReviewService):
     the real one."""
 
     def __init__(self, emails: List[dict]) -> None:
-        super().__init__(email_provider=None, oauth_credentials=None)  # type: ignore[arg-type]
+        super().__init__(email_provider=None, oauth_credentials=None,  # type: ignore[arg-type]
+                         connector=ConnectorRegistry().get("gmail"))
         self.emails = list(emails)
 
     async def fetch_review_payload(self, user_id: str) -> Optional[List[dict]]:

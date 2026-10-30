@@ -10,16 +10,28 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from src.composition.connector_registry import ConnectorRegistry
 
 
 def _adapter():
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.get_credentials.return_value = OAuthCredentials(
-        user_id="u1", provider=ONEDRIVE_PROVIDER, access_token="tok", refresh_token="r",
-        token_expiry=datetime.now(timezone.utc) + timedelta(hours=1), scopes=[], email_address="")
-    return OneDriveAdapter(oauth, "cid", "csecret")
+    oauth.get.return_value = OAuthCredential(
+        user_id="u1",
+        account_id="acct-1",
+        kind=ONEDRIVE_PROVIDER,
+        integration=Integration.DRIVE,
+        account=ProviderAccount(realm="microsoft", subject="", label=""),
+        access_token="tok",
+        refresh_token="r",
+        token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+        scopes=[],
+    )
+    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
 
 
 class _Content:
