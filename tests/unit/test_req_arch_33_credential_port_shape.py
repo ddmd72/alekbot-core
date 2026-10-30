@@ -82,15 +82,31 @@ def _init_annotations(cls: ast.ClassDef) -> List[str]:
     return []
 
 
+def _fixed_kind(arg: ast.expr) -> bool:
+    """A kind the class fixes: a string literal, a module constant (an ALL_CAPS name) or an attribute of the instance
+    (`self._kind`, `self._spec.kind`). A kind read off a local or a stored record (`connection.kind`) is not one: the
+    class then serves every kind its records carry (the drive connections, MULTI_DRIVE_RFC §4.4)."""
+    if isinstance(arg, ast.Constant):
+        return isinstance(arg.value, str)
+    if isinstance(arg, ast.Name):
+        return arg.id.isupper()
+    while isinstance(arg, ast.Attribute):
+        arg = arg.value
+    return isinstance(arg, ast.Name) and arg.id in {"self", "cls"}
+
+
 def _lists_by_kind(cls: ast.ClassDef) -> bool:
-    """A call of a credential-listing method with a kind (a second positional or a `kind=` argument; `list_user_ids`
-    takes the kind first)."""
+    """A call of a credential-listing method with a kind the class fixes (a second positional or a `kind=` argument;
+    `list_user_ids` takes the kind first)."""
     for node in ast.walk(cls):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr in _LISTING_CALLS):
             continue
-        needed = 1 if node.func.attr == "list_user_ids" else 2
-        if len(node.args) >= needed or any(k.arg == "kind" for k in node.keywords):
+        position = 0 if node.func.attr == "list_user_ids" else 1
+        kinds = [k.value for k in node.keywords if k.arg == "kind"]
+        if len(node.args) > position:
+            kinds.append(node.args[position])
+        if any(_fixed_kind(kind) for kind in kinds):
             return True
     return False
 
@@ -184,3 +200,17 @@ def test_the_spec_checker_flags_a_kind_listing_service_without_a_spec():
     assert single_credential_without_spec(good) == []
     assert single_credential_without_spec(by_id) == []
     assert single_credential_without_spec(ids) == ["T"]
+
+
+def test_the_spec_checker_spares_a_class_listing_by_a_kind_read_off_a_record():
+    by_record = ("class D:\n    def __init__(self, creds: OAuthCredentialsPort):\n        self._c = creds\n"
+                 "    async def f(self, u, connections):\n        for c in connections:\n"
+                 "            await self._c.list_keys(u, c.kind)\n")
+    fixed = ("class L:\n    def __init__(self, creds: OAuthCredentialsPort):\n        self._c = creds\n"
+             "    async def f(self, u):\n        await self._c.list_keys(u, \"x\")\n"
+             "        await self._c.list_for_user(u, kind=self._spec.kind)\n        await self._c.list_user_ids(KIND)\n")
+    assert single_credential_without_spec(by_record) == []
+    assert single_credential_without_spec(fixed) == ["L"]
+    for call in ('list_keys(u, "x")', "list_for_user(u, kind=self._spec.kind)", "list_user_ids(KIND)"):
+        one = fixed.split("    async def")[0] + f"    async def f(self, u):\n        await self._c.{call}\n"
+        assert single_credential_without_spec(one) == ["L"], call
