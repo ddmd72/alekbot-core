@@ -15,14 +15,14 @@ from src.domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION
 from src.domain.exceptions import LLMRateLimitError
 from src.services.drive_transcript_stage import TRANSCRIBER_AGENT
 
-from tests.unit.services.drive_transcript_fakes import cid, HANDLE, NOW, OLD, USER, Recording, record
+from tests.unit.services.drive_transcript_fakes import ckey, cid, HANDLE, NOW, OLD, USER, Recording, record
 from tests.unit.services.test_drive_transcript_stage_extract import MONTH, _add, _env, _get, _job, _step
 
 
 def _resubmit_job(reserved_month=MONTH, now=NOW):
     window = JobWindow(spec=WindowSpec(0, 0.0, 600.0), state="uploaded", file_ref="files/x", request_key="a:0",
                        attempts=1, files_expire_at=now + timedelta(hours=40))
-    return window, TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key="hash-a", duration_s=600.0, windows=(window,),
+    return window, TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key=ckey("hash-a"), duration_s=600.0, windows=(window,),
                                  reserved_usd=0.05, reserved_month=reserved_month)
 
 
@@ -102,7 +102,7 @@ async def test_a_step_straddling_midnight_books_its_reservations_in_its_own_mont
     env.clock.now = datetime(2026, 10, 31, 23, 59, 45, tzinfo=timezone.utc)
     window, job = _resubmit_job(now=env.clock.now)
     env.repo.transcript_jobs[(USER, "a")] = job
-    await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"),
+    await _add(env, replace(record("a"), transcript_state="working", transcript_key=ckey("hash-a")),
                record("b"), b=Recording(600))
     await _step(env)
     assert env.clock.now.month == 11   # the extraction of "b" passed midnight before the submission
@@ -113,7 +113,7 @@ async def test_a_step_straddling_midnight_books_its_reservations_in_its_own_mont
 
 async def test_a_restart_gives_back_the_reservation_the_old_job_held(tmp_path):
     env = _env(tmp_path)
-    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key="hash-a",
+    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key=ckey("hash-a"),
                                                           reserved_usd=0.05, reserved_month=MONTH)
     await _add(env, record("a"), a=Recording(600))
     await _step(env)
@@ -123,8 +123,8 @@ async def test_a_restart_gives_back_the_reservation_the_old_job_held(tmp_path):
 
 async def test_a_refinalized_too_long_stub_keeps_its_duration(tmp_path):
     env = _env(tmp_path)
-    await env.repo.put_transcript(USER, StoredTranscript("hash-a", None, stub="too_long", last_used_at=OLD))
-    stubbed = replace(record("a"), state=RecordState.METADATA_ONLY, transcript_state="current", transcript_key="hash-a",
+    await env.repo.put_transcript(USER, StoredTranscript(ckey("hash-a"), None, stub="too_long", last_used_at=OLD))
+    stubbed = replace(record("a"), state=RecordState.METADATA_ONLY, transcript_state="current", transcript_key=ckey("hash-a"),
                       transcript_stub="too_long", transcript_seconds=20_000, transcript_version=1,
                       transcript_body_version=TRANSCRIPT_BODY_VERSION, extraction_version=EXTRACTION_VERSION - 1)
     await _add(env, stubbed)
@@ -155,7 +155,7 @@ async def test_a_submit_outage_gives_the_resubmit_reservation_back_once(tmp_path
     env = _env(tmp_path)
     window, job = _resubmit_job()
     env.repo.transcript_jobs[(USER, "a")] = job
-    await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"))
+    await _add(env, replace(record("a"), transcript_state="working", transcript_key=ckey("hash-a")))
     # T-R28: only a definite refusal (here a 429) proves nothing was bought and gives the money back; an ambiguous
     # error keeps it on the `submitting` document (test_drive_transcript_stage_final_f1.py, the ambiguous cases).
     env.runner.raise_next = LLMRateLimitError("429", http_status=429)

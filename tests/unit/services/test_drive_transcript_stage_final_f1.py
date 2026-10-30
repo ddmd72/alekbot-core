@@ -26,7 +26,7 @@ from src.domain.exceptions import LLMClientError, LLMRateLimitError, LLMUnavaila
 from src.services.drive_transcript_stage import TRANSCRIBER_AGENT, DriveTranscriptStage
 
 from tests.unit.services.drive_transcript_fakes import (
-    HANDLE, SCOPE, NOW, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner, Recording, record,
+    ckey, HANDLE, SCOPE, NOW, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner, Recording, record,
 )
 
 MONTH = "2026-10"
@@ -158,7 +158,7 @@ def _resubmit_job(now=NOW):
     """A job whose one window collection sent back (a re-purchase: reserved again when it is submitted, T-R8)."""
     window = JobWindow(spec=WindowSpec(0, 0.0, 600.0), state="uploaded", file_ref="files/x", request_key="a:0",
                        attempts=1, files_expire_at=now + timedelta(hours=40))
-    return window, TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key="hash-a", duration_s=600.0,
+    return window, TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key=ckey("hash-a"), duration_s=600.0,
                                  windows=(window,), reserved_usd=0.05, reserved_month=MONTH)
 
 
@@ -166,7 +166,7 @@ async def _with_resubmit(env):
     window, job = _resubmit_job()
     env.repo.transcript_jobs[(USER, "a")] = job
     await env.repo.reserve_model_usd(USER, MONTH, "transcribe", job.reserved_usd)
-    await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"), a=Recording(600))
+    await _add(env, replace(record("a"), transcript_state="working", transcript_key=ckey("hash-a")), a=Recording(600))
     return window_estimate_usd(window)
 
 
@@ -403,14 +403,14 @@ async def test_a_provider_reported_failure_is_still_only_released(tmp_path):
 
 def _held_primary(state):
     specs = plan_windows(8.0)
-    job = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key="shared", duration_s=8.0, windows=tuple(
+    job = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key=ckey("shared"), duration_s=8.0, windows=tuple(
         JobWindow(s, state="uploaded", file_ref="files/a0", files_expire_at=NOW + timedelta(hours=40))
         for s in specs))
     wake = NOW + timedelta(minutes=10) if state == "held" else next_month_start(NOW)
     rec = replace(record("a", content_hash="shared", day="2026-10-02"), transcript_state=state,
                   transcript_hold="retry" if state == "held" else None, transcript_wake_at=wake,
-                  transcript_key="shared", transcript_attempts=1 if state == "held" else 0,
-                  transcript_hold_version="shared")
+                  transcript_key=ckey("shared"), transcript_attempts=1 if state == "held" else 0,
+                  transcript_hold_version=ckey("shared"))
     return rec, job
 
 
@@ -465,7 +465,7 @@ async def test_a_long_window_accepted_short_is_counted_and_stored_truncated(tmp_
     _due(env, b2)
     second = await _cheap(env)
     assert second["windows_accepted_short"] == 1 and second["windows_accepted_truncated"] == 1
-    stored = env.repo.transcripts[(USER, "hash-a")]
+    stored = env.repo.transcripts[(USER, ckey("hash-a"))]
     assert stored.transcript is not None and stored.transcript.truncated
 
 
@@ -476,7 +476,7 @@ async def test_a_charge_keeps_the_reservation_behind_a_running_batch(tmp_path):
     reservation (the batch may still bill against it)."""
     env = _env(tmp_path)
     specs = plan_windows(3_400.0)
-    job = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key="hash-a", duration_s=3_400.0, reserved_usd=0.4,
+    job = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key=ckey("hash-a"), duration_s=3_400.0, reserved_usd=0.4,
                         reserved_month=MONTH, windows=(
                             JobWindow(specs[0], state="submitted", file_ref="files/0", request_key="a:0",
                                       batch_name="batches/b0", files_expire_at=NOW + timedelta(hours=40)),
@@ -485,7 +485,7 @@ async def test_a_charge_keeps_the_reservation_behind_a_running_batch(tmp_path):
     env.repo.transcript_jobs[(USER, "a")] = job
     await env.repo.create_batch(TranscriptBatch(name="batches/b0", user_id=USER, connection_id=USER, request_keys=("a:0",),
                                                 next_poll_at=NOW + timedelta(hours=1)))
-    await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"),
+    await _add(env, replace(record("a"), transcript_state="working", transcript_key=ckey("hash-a")),
                a=Recording(3_400, extract_error=MediaUnreadable("bad packet")))
     summary = await _extract(env)
     assert summary["transcript_attempts_charged"] == 1
