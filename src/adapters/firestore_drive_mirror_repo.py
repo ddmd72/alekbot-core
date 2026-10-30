@@ -3,16 +3,17 @@ FirestoreDriveMirrorRepository — DriveMirrorRepository on Firestore (docs/10_r
 §27.9.3, §27.15 step 8c).
 
 Collections (env-prefixed through EnvironmentConfig):
-    {prefix}drive_mirror_roots        doc id `{user_id}:{drive_id}`; every MirrorRoot field under its own name
-    {prefix}drive_transcript_mirror   doc id MirrorDoc.key (`{user_id}:{kind}:{source_item_id}`, or the archive folder's
-                                      hashed key); every MirrorDoc field under its own name
+    {prefix}drive_mirror_roots        doc id `mirror_root_doc_id(user_id, drive_identity)`; every MirrorRoot field under
+                                      its own name
+    {prefix}drive_transcript_mirror   doc id MirrorDoc.key (`ledger_key(user_id, kind, drive_identity, source_identity)`,
+                                      or the archive folder's hashed key); every MirrorDoc field under its own name
 
 Both codecs are built from `fields(...)` of the domain class, so a field added there is carried without a second edit:
 datetimes come back as plain tz-aware UTC datetimes (never DatetimeWithNanoseconds), tuples as tuples, a missing stored
 field takes the dataclass default (schema growth).
 
 Queries (the composite indexes are in config/firestore.indexes.json, §27.15 step 8c): every read of the mirror step
-filters `user_id` and `drive_id` (Δ206); the cursor reads page on the document id (the implicit order, so `after_key`
+filters `user_id` and `drive_identity` (Δ206, MULTI_DRIVE_RFC §10); the cursor reads page on the document id (the implicit order, so `after_key`
 is a range on `__name__`); the deleted-files search and the pins span drives (Δ217), and `pinned`/`pinned_keys` send
 two queries each, one per pinning condition, never one OR filter. Writes: `save_*` replace the whole document; the mark
 methods update only the mark fields of an existing document (never create one).
@@ -40,7 +41,7 @@ from ..domain.drive_index import DriveIndexStoreUnavailable
 from ..domain.drive_index_params import RECORD_WRITE_BATCH
 from ..domain.drive_mirror import (
     KIND_ARCHIVE, KIND_FILE, KIND_FOLDER, MIRROR_ARCHIVED, MIRROR_DETACHED, DeletionNotice, MirrorDoc,
-    MirrorRoot,
+    MirrorRoot, ledger_key, mirror_root_doc_id,
 )
 from ..domain.drive_mirror_plan import mark_held, marked, unmarked
 from ..ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY, DriveMirrorRepository
@@ -96,10 +97,6 @@ _ROOT_READERS = _readers(MirrorRoot)
 _DOC_READERS = _readers(MirrorDoc)
 
 
-def root_doc_id(user_id: str, drive_id: str) -> str:
-    return f"{user_id}:{drive_id}"
-
-
 def root_to_doc(root: MirrorRoot) -> Dict[str, Any]:
     return {f.name: _plain(getattr(root, f.name)) for f in fields(root)}
 
@@ -133,9 +130,9 @@ class FirestoreDriveMirrorRepository(DriveMirrorRepository):
         self._roots = db_client.collection(env_config.drive_mirror_roots_collection)
         self._docs = db_client.collection(env_config.drive_transcript_mirror_collection)
 
-    def _ledger(self, user_id: str, drive_id: str) -> Any:
+    def _ledger(self, user_id: str, drive_identity: str) -> Any:
         return (self._docs.where(filter=FieldFilter("user_id", "==", user_id))
-                .where(filter=FieldFilter("drive_id", "==", drive_id)))
+                .where(filter=FieldFilter("drive_identity", "==", drive_identity)))
 
     @staticmethod
     async def _read(query: Any) -> List[MirrorDoc]:
@@ -145,14 +142,14 @@ class FirestoreDriveMirrorRepository(DriveMirrorRepository):
 
     async def roots(self, user_id: str) -> List[MirrorRoot]:
         snaps = await self._roots.where(filter=FieldFilter("user_id", "==", user_id)).get()
-        return sorted((root_from_doc(snap.to_dict()) for snap in snaps), key=lambda r: r.drive_id)
+        return sorted((root_from_doc(snap.to_dict()) for snap in snaps), key=lambda r: r.drive_identity)
 
-    async def get_root(self, user_id: str, drive_id: str) -> Optional[MirrorRoot]:
-        snap = await self._roots.document(root_doc_id(user_id, drive_id)).get()
+    async def get_root(self, user_id: str, drive_identity: str) -> Optional[MirrorRoot]:
+        snap = await self._roots.document(mirror_root_doc_id(user_id, drive_identity)).get()
         return root_from_doc(snap.to_dict()) if snap.exists else None
 
     async def save_root(self, root: MirrorRoot) -> None:
-        await self._roots.document(root_doc_id(root.user_id, root.drive_id)).set(root_to_doc(root))
+        await self._roots.document(root.key).set(root_to_doc(root))
 
     async def _roots_of_item(self, user_id: str, root_item_id: str) -> List[Any]:
         query = (self._roots.where(filter=FieldFilter("user_id", "==", user_id))
@@ -209,14 +206,18 @@ class FirestoreDriveMirrorRepository(DriveMirrorRepository):
     def _mark_update(doc: MirrorDoc) -> Dict[str, Any]:
         return {name: _plain(getattr(doc, name)) for name in _MARK_FIELDS}
 
-    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice], *, drive_id: str = "") -> int:
+    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice], *, drive_identity: str) -> int:
+        if not drive_identity:
+            raise ValueError("mark_gone needs the mirror's drive identity")
         by_key: Dict[str, List[DeletionNotice]] = {}
         for notice in marks:
+            if not notice.source_identity:
+                continue   # names no document: a ledger key is built from the source identity (§10)
             for kind in (KIND_FILE, KIND_FOLDER):
-                by_key.setdefault(f"{user_id}:{kind}:{notice.item_id}", []).append(notice)
+                by_key.setdefault(ledger_key(user_id, kind, drive_identity, notice.source_identity), []).append(notice)
         existing = await self.get_docs(user_id, list(by_key))
-        if drive_id:   # the key carries no drive id (§27.9.3): a document of another drive is not this notice's
-            existing = {k: d for k, d in existing.items() if d.drive_id == drive_id}
+        # the key carries the drive (§10); the stored field is checked too, as every drive-scoped read does
+        existing = {k: d for k, d in existing.items() if d.drive_identity == drive_identity}
         updates = []
         for key, doc in existing.items():
             for notice in by_key[key]:
@@ -241,15 +242,15 @@ class FirestoreDriveMirrorRepository(DriveMirrorRepository):
             if held != doc:
                 await self._ref(key).update({"mark_ready_at": held.mark_ready_at})
 
-    async def ready_marks(self, user_id: str, drive_id: str, now: datetime, limit: int) -> List[MirrorDoc]:
-        query = (self._ledger(user_id, drive_id).where(filter=FieldFilter("gone_pending", "==", True))
+    async def ready_marks(self, user_id: str, drive_identity: str, now: datetime, limit: int) -> List[MirrorDoc]:
+        query = (self._ledger(user_id, drive_identity).where(filter=FieldFilter("gone_pending", "==", True))
                  .where(filter=FieldFilter("mark_ready_at", "<=", now)).order_by("mark_ready_at").limit(limit))
         return await self._read(query)
 
     # -- the step's reads -----------------------------------------------------------------------
 
-    async def children(self, user_id: str, drive_id: str, mirror_parent_id: str, limit: int) -> List[MirrorDoc]:
-        query = self._ledger(user_id, drive_id).where(filter=FieldFilter("mirror_parent_id", "==", mirror_parent_id))
+    async def children(self, user_id: str, drive_identity: str, mirror_parent_id: str, limit: int) -> List[MirrorDoc]:
+        query = self._ledger(user_id, drive_identity).where(filter=FieldFilter("mirror_parent_id", "==", mirror_parent_id))
         return await self._read(query.limit(limit))
 
     def _by_key(self, query: Any, after_key: Optional[str], limit: int) -> Any:
@@ -258,17 +259,17 @@ class FirestoreDriveMirrorRepository(DriveMirrorRepository):
             query = query.where(filter=FieldFilter(FieldPath.document_id(), ">", self._ref(after_key)))
         return query.limit(limit)
 
-    async def folder_docs(self, user_id: str, drive_id: str, after_key: Optional[str],
+    async def folder_docs(self, user_id: str, drive_identity: str, after_key: Optional[str],
                           limit: int) -> List[MirrorDoc]:
-        query = self._ledger(user_id, drive_id).where(filter=FieldFilter("kind", "in", list(_FOLDER_KINDS)))
+        query = self._ledger(user_id, drive_identity).where(filter=FieldFilter("kind", "in", list(_FOLDER_KINDS)))
         return await self._read(self._by_key(query, after_key, limit))
 
-    async def scan_page(self, user_id: str, drive_id: str, after_key: Optional[str], limit: int) -> List[MirrorDoc]:
-        query = self._ledger(user_id, drive_id).where(filter=FieldFilter("kind", "==", KIND_FILE))
+    async def scan_page(self, user_id: str, drive_identity: str, after_key: Optional[str], limit: int) -> List[MirrorDoc]:
+        query = self._ledger(user_id, drive_identity).where(filter=FieldFilter("kind", "==", KIND_FILE))
         return await self._read(self._by_key(query, after_key, limit))
 
-    async def detached_due(self, user_id: str, drive_id: str, before: datetime, limit: int) -> List[MirrorDoc]:
-        base = self._ledger(user_id, drive_id).where(filter=FieldFilter("state", "==", MIRROR_DETACHED))
+    async def detached_due(self, user_id: str, drive_identity: str, before: datetime, limit: int) -> List[MirrorDoc]:
+        base = self._ledger(user_id, drive_identity).where(filter=FieldFilter("state", "==", MIRROR_DETACHED))
         never = await self._read(base.where(filter=FieldFilter("checked_at", "==", None)).limit(limit))
         if len(never) >= limit:
             return never

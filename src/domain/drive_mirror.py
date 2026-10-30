@@ -16,15 +16,14 @@ Public interface:
     GONE / UNSTORED / UNKNOWN                              (why a source is gone, DeletionNotice.why)
     KIND_FILE / KIND_FOLDER / KIND_ARCHIVE                 (MirrorDoc.kind)
     ROOT_NAME, README_NAME, ARCHIVE_NAME, LONG_PATHS_NAME  (fixed names, D49)
-    doc_key(user_id, kind, source_item_id), archive_folder_key(user_id, drive_id, day, path)
-    ledger_key(user_id, kind, mirror_drive_identity, source_identity)    by drive identity (MULTI_DRIVE_RFC §10)
-    mirror_root_doc_id(user_id, drive_identity)                           by drive identity (§10)
+    ledger_key(user_id, kind, mirror_drive_identity, source_identity)    a file or folder document (MULTI_DRIVE_RFC §10)
+    archive_folder_key(user_id, drive_identity, day, path)                 an archive folder's document
+    mirror_root_doc_id(user_id, drive_identity)                            a root document (§10)
 
-Multi-drive keys (MULTI_DRIVE_RFC §10, user-scoped by design): a ledger document is keyed by the mirror's drive and the
-source item's identity, so two connections that see one source item each keep their own mirror; a root is keyed by
-its drive identity, so a reconnect (a new connection of the same drive) finds the same `_Transcripts` folder. An
-archive folder's key is `archive_folder_key` called with the drive identity in place of the drive id. `doc_key` is the
-single-drive ledger key, kept until its callers move (slice 1b).
+Keys (MULTI_DRIVE_RFC §10, user-scoped by design): a ledger document is keyed by the mirror's drive identity and the
+source item's identity, so two connections that see one source item each keep their own mirror, and reads filter
+`drive_identity`; a root is keyed by its drive identity, so a reconnect (a new connection of the same drive) finds the
+same `_Transcripts` folder. Both identities are adapter-built (`{id_space}:{…}`), opaque here.
 """
 from __future__ import annotations
 
@@ -53,9 +52,10 @@ LONG_PATHS_NAME = "Long paths"
 
 @dataclass(frozen=True)
 class MirrorRoot:
-    """`{prefix}drive_mirror_roots/{user_id}:{drive_id}` (§27.9.2). Never deleted by a purge."""
+    """`{prefix}drive_mirror_roots/{mirror_root_doc_id(user_id, drive_identity)}` (§27.9.2, MULTI_DRIVE_RFC §10). Never
+    deleted by a purge. `drive_identity` is the drive's adapter-built identity (the key)."""
     user_id: str
-    drive_id: str
+    drive_identity: str
     root_item_id: str
     root_name: str
     readme_item_id: str = ""
@@ -78,17 +78,21 @@ class MirrorRoot:
     # when step 1 last found the read-me's name held by an item that is not the bot's (§27.9.1): the name is read
     # again only MIRROR_AUDIT_DAYS later (the audit's cadence), not every tick; None when nothing blocks it
     readme_blocked_at: Optional[datetime] = None
-    # MULTI_DRIVE_RFC §10 (slice 1b): the drive's adapter-built identity, the root's key (`mirror_root_doc_id`); it
-    # replaces `drive_id`. "" on a root written before the field existed.
-    drive_identity: str = ""
+
+    @property
+    def key(self) -> str:
+        return mirror_root_doc_id(self.user_id, self.drive_identity)
 
 
 @dataclass(frozen=True)
 class MirrorDoc:
     """One ledger document (§27.9.3), keyed by `key`. `kind` is file / folder / archive; `state` is active / archived /
-    detached. The archive snapshot (`source_path`, `seconds`, `speakers`, `languages`) is refreshed at every render."""
+    detached. The archive snapshot (`source_path`, `seconds`, `speakers`, `languages`) is refreshed at every render.
+    `drive_identity` is the mirror's drive (reads filter it); `source_identity` the source item's adapter-built identity
+    (a file's and a folder's key, MULTI_DRIVE_RFC §10); `source_item_id` stays the provider id the records are read by.
+    An archive folder has no source: its `source_item_id` is the hashed part of its `archive_folder_key`."""
     user_id: str
-    drive_id: str
+    drive_identity: str
     kind: str
     source_item_id: str
     source_name: str = ""
@@ -140,15 +144,13 @@ class MirrorDoc:
     # file from the pinned store entry with no record (owner ruling 2026-10-21, Δ241). No link: the recording is gone
     recorded_on: str = ""
     transcript_stub: str = ""
-    # MULTI_DRIVE_RFC §10 (slice 1b): the mirror's drive identity and the source item's identity, the document's key
-    # (`ledger_key`); reads filter `drive_identity`. They replace `drive_id` and `source_item_id` in the key. "" on a
-    # document written before the fields existed.
-    drive_identity: str = ""
     source_identity: str = ""
 
     @property
     def key(self) -> str:
-        return doc_key(self.user_id, self.kind, self.source_item_id)
+        if self.kind == KIND_ARCHIVE:
+            return f"{self.user_id}:{KIND_ARCHIVE}:{self.source_item_id}"
+        return ledger_key(self.user_id, self.kind, self.drive_identity, self.source_identity)
 
 
 @dataclass(frozen=True)
@@ -160,14 +162,12 @@ class DeletionNotice:
     source_identity: str = ""   # MULTI_DRIVE_RFC §10: the gone item's identity, from which its ledger keys are built
 
 
-def doc_key(user_id: str, kind: str, source_item_id: str) -> str:
-    """`{user_id}:{kind}:{source_item_id}` (§27.9.3)."""
-    return f"{user_id}:{kind}:{source_item_id}"
-
-
-def archive_folder_key(user_id: str, drive_id: str, day: str, path: str) -> str:
-    """`{user_id}:archive:{sha256(drive_id + "/" + day + "/" + path)[:32]}` — an archive folder's ledger key (§27.9.3)."""
-    digest = hashlib.sha256(f"{drive_id}/{day}/{path}".encode("utf-8")).hexdigest()[:32]
+def archive_folder_key(user_id: str, drive_identity: str, day: str, path: str) -> str:
+    """`{user_id}:archive:{sha256(drive_identity + "/" + day + "/" + path)[:32]}` — an archive folder's ledger key
+    (§27.9.3, MULTI_DRIVE_RFC §10). ValueError for an empty drive identity."""
+    if not drive_identity:
+        raise ValueError("an archive folder key needs the drive identity")
+    digest = hashlib.sha256(f"{drive_identity}/{day}/{path}".encode("utf-8")).hexdigest()[:32]
     return f"{user_id}:{KIND_ARCHIVE}:{digest}"
 
 

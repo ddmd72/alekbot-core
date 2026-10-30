@@ -11,6 +11,7 @@ from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from ..domain.drive_mirror import (
     KIND_ARCHIVE, KIND_FILE, KIND_FOLDER, MIRROR_ARCHIVED, MIRROR_DETACHED, DeletionNotice, MirrorDoc, MirrorRoot,
+    ledger_key,
 )
 from ..domain.drive_mirror_plan import mark_held, marked, unmarked
 from ..ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY, DriveMirrorRepository
@@ -24,8 +25,8 @@ class InMemoryDriveMirrorRepository(DriveMirrorRepository):
         self.root_docs: Dict[Tuple[str, str], MirrorRoot] = {}
         self.docs: Dict[str, MirrorDoc] = {}
 
-    def _drive(self, user_id: str, drive_id: str) -> List[MirrorDoc]:
-        return sorted((d for d in self.docs.values() if d.user_id == user_id and d.drive_id == drive_id),
+    def _drive(self, user_id: str, drive_identity: str) -> List[MirrorDoc]:
+        return sorted((d for d in self.docs.values() if d.user_id == user_id and d.drive_identity == drive_identity),
                       key=lambda d: d.key)
 
     def _user(self, user_id: str) -> List[MirrorDoc]:
@@ -34,13 +35,14 @@ class InMemoryDriveMirrorRepository(DriveMirrorRepository):
     # -- roots ---------------------------------------------------------------------------------
 
     async def roots(self, user_id: str) -> List[MirrorRoot]:
-        return sorted((r for (u, _), r in self.root_docs.items() if u == user_id), key=lambda r: r.drive_id)
+        return sorted((r for (u, _), r in self.root_docs.items() if u == user_id), key=lambda r: r.drive_identity)
 
-    async def get_root(self, user_id: str, drive_id: str) -> Optional[MirrorRoot]:
-        return self.root_docs.get((user_id, drive_id))
+    async def get_root(self, user_id: str, drive_identity: str) -> Optional[MirrorRoot]:
+        return self.root_docs.get((user_id, drive_identity))
 
     async def save_root(self, root: MirrorRoot) -> None:
-        self.root_docs[(root.user_id, root.drive_id)] = root
+        root.key   # ValueError for an empty drive identity, as the Firestore adapter
+        self.root_docs[(root.user_id, root.drive_identity)] = root
 
     async def mark_root_gone(self, user_id: str, root_item_id: str, at: datetime) -> bool:
         found = False
@@ -77,15 +79,19 @@ class InMemoryDriveMirrorRepository(DriveMirrorRepository):
 
     # -- marks --------------------------------------------------------------------------------------
 
-    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice], *, drive_id: str = "") -> int:
+    async def mark_gone(self, user_id: str, marks: Sequence[DeletionNotice], *, drive_identity: str) -> int:
+        if not drive_identity:
+            raise ValueError("mark_gone needs the mirror's drive identity")
         by_key: Dict[str, List[DeletionNotice]] = {}
         for notice in marks:
+            if not notice.source_identity:
+                continue
             for kind in (KIND_FILE, KIND_FOLDER):
-                by_key.setdefault(f"{user_id}:{kind}:{notice.item_id}", []).append(notice)
+                by_key.setdefault(ledger_key(user_id, kind, drive_identity, notice.source_identity), []).append(notice)
         updated = 0
         for key, notices in by_key.items():
             doc = self.docs.get(key)
-            if doc is None or doc.user_id != user_id or (drive_id and doc.drive_id != drive_id):
+            if doc is None or doc.user_id != user_id or doc.drive_identity != drive_identity:
                 continue
             for notice in notices:
                 doc = marked(doc, notice)
@@ -103,27 +109,27 @@ class InMemoryDriveMirrorRepository(DriveMirrorRepository):
         if doc is not None and doc.user_id == user_id:
             self.docs[key] = mark_held(doc, until)
 
-    async def ready_marks(self, user_id: str, drive_id: str, now: datetime, limit: int) -> List[MirrorDoc]:
-        ripe = [d for d in self._drive(user_id, drive_id)
+    async def ready_marks(self, user_id: str, drive_identity: str, now: datetime, limit: int) -> List[MirrorDoc]:
+        ripe = [d for d in self._drive(user_id, drive_identity)
                 if d.gone_pending and d.mark_ready_at is not None and d.mark_ready_at <= now]
         return sorted(ripe, key=lambda d: (d.mark_ready_at, d.key))[:limit]
 
     # -- the step's reads ------------------------------------------------------------------------------
 
-    async def children(self, user_id: str, drive_id: str, mirror_parent_id: str, limit: int) -> List[MirrorDoc]:
-        return [d for d in self._drive(user_id, drive_id) if d.mirror_parent_id == mirror_parent_id][:limit]
+    async def children(self, user_id: str, drive_identity: str, mirror_parent_id: str, limit: int) -> List[MirrorDoc]:
+        return [d for d in self._drive(user_id, drive_identity) if d.mirror_parent_id == mirror_parent_id][:limit]
 
-    async def folder_docs(self, user_id: str, drive_id: str, after_key: Optional[str],
+    async def folder_docs(self, user_id: str, drive_identity: str, after_key: Optional[str],
                           limit: int) -> List[MirrorDoc]:
-        return [d for d in self._drive(user_id, drive_id)
+        return [d for d in self._drive(user_id, drive_identity)
                 if d.kind in (KIND_FOLDER, KIND_ARCHIVE) and (after_key is None or d.key > after_key)][:limit]
 
-    async def scan_page(self, user_id: str, drive_id: str, after_key: Optional[str], limit: int) -> List[MirrorDoc]:
-        return [d for d in self._drive(user_id, drive_id)
+    async def scan_page(self, user_id: str, drive_identity: str, after_key: Optional[str], limit: int) -> List[MirrorDoc]:
+        return [d for d in self._drive(user_id, drive_identity)
                 if d.kind == KIND_FILE and (after_key is None or d.key > after_key)][:limit]
 
-    async def detached_due(self, user_id: str, drive_id: str, before: datetime, limit: int) -> List[MirrorDoc]:
-        detached = [d for d in self._drive(user_id, drive_id) if d.state == MIRROR_DETACHED]
+    async def detached_due(self, user_id: str, drive_identity: str, before: datetime, limit: int) -> List[MirrorDoc]:
+        detached = [d for d in self._drive(user_id, drive_identity) if d.state == MIRROR_DETACHED]
         never = [d for d in detached if d.checked_at is None]
         old = sorted((d for d in detached if d.checked_at is not None and d.checked_at < before),
                      key=lambda d: (d.checked_at, d.key))
