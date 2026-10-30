@@ -16,7 +16,7 @@ The **Gmail Email Indexing** pipeline extends Alek-Core's memory with the user's
 
 ```
 Driving side (user initiates):
-  Cabinet UI → GET /auth/connect-gmail → GmailOAuthService → OAuthCredentials (Firestore)
+  Cabinet UI → GET /auth/connect-gmail → GoogleOAuthService → FirestoreCredentialStore (encrypted)
   Cabinet UI → POST /api/gmail/start-indexing → WorkerHandler → Cloud Tasks
 
 Driven side (background processing):
@@ -41,7 +41,7 @@ Query side (SmartAgent delegation):
 | Port | Adapter |
 |---|---|
 | `EmailProviderPort` | `GmailProviderAdapter` |
-| `OAuthCredentialsPort` | `FirestoreOAuthCredentialsAdapter` |
+| `OAuthCredentialsPort` | `FirestoreCredentialStore` (collection `{prefix}credentials`, see § 3.1) |
 | `IndexedEmailRepository` | `FirestoreIndexedEmailRepository` |
 | `EmailExclusionsPort` | `FirestoreEmailExclusionsAdapter` |
 | `EmailIndexingJobRepository` | `FirestoreEmailJobRepository` |
@@ -62,13 +62,21 @@ User clicks "Connect Gmail" in Cabinet
        → 302 → Google consent screen
 
 User approves → GET /auth/connect-gmail/callback
-  → GmailOAuthService.exchange_code(code)
-  → OAuthCredentials persisted to Firestore (keyed by user_id)
+  → GoogleOAuthService.exchange_code(code)
+  → credentials persisted to the encrypted credential store (keyed by user_id and credential_id)
   → WorkerHandler enqueues email_indexing Cloud Task
   → 302 → Cabinet UI (success)
 ```
 
-Credentials stored: `access_token`, `refresh_token`, `token_expiry`, `provider="gmail"`, `scopes=["gmail.readonly"]`.
+Credentials stored: `access_token`, `refresh_token`, `token_expiry`, `provider="gmail"`, `scopes=["gmail.readonly"]`, plus the account identity (Google scope `openid email`, the userinfo `sub`). A consent whose identity read fails stores nothing.
+
+### 3.1 Credential store
+
+Gmail, Google Tasks, Microsoft To Do and OneDrive grants live in `{prefix}credentials` (`FirestoreCredentialStore`). Doc id is `{user_id}:{credential_id}`; the account identity is plaintext, tokens and label are one KMS ciphertext. The main service and the indexer hold the key grant (separate service identities); the relay, sandbox and job get none. The old plaintext `oauth_credentials` collection is never read, so each integration is reconnected once. A To Do consent always re-subscribes and re-reads the list once. See `docs/04_solution_strategy/decisions/credential_store_cutover.md`.
+
+### 3.2 Revoked grant and reconnect
+
+`invalid_grant` on refresh raises `OAuthGrantRevokedError`. The daily review and the indexing worker set `OAuthCredentials.needs_reconnect` and notify the user only on the False-to-True transition; a reconnect or a successful refresh clears the flag. `/api/gmail/status` returns the flag and the Cabinet shows **Reconnect Gmail**. A feature state that shows a past connection (Gmail indexing state, drive sync state, To Do config with a primary list) with no credential also shows Reconnect and sends one notice, unless the user disconnected on purpose; the hourly `reconnect_notice_sweep` lists users from the feature stores. See `decisions/gmail_grant_revoked_reconnect.md` and `decisions/reconnect_notice_r1.md`.
 
 Token refresh is handled transparently by `GmailProviderAdapter` before each API call. A refresh rejected with `invalid_grant` raises `OAuthGrantRevokedError`; the background paths then flag the credentials `needs_reconnect` and notify the user once (see `docs/04_solution_strategy/decisions/gmail_grant_revoked_reconnect.md`).
 
@@ -165,11 +173,19 @@ No search — direct Gmail API call. The stored index provides `email_id`; the f
 
 ## 7. UserNotificationService
 
-Sends system alerts to the user's active Slack/Telegram channel when background events complete (email indexing done, errors, etc.).
+Sends background notifications to the user's last active channel when background events complete (email indexing done, errors, reminders, the daily review).
 
-- **State storage:** `user_notification_state` Firestore collection — persists the user's last active channel (`slack_channel_id` or `telegram_chat_id`).
+- **State storage:** `user_notification_state` Firestore collection — persists the user's last active channel (`slack_channel_id` or `telegram_chat_id`); system notifications go to the primary channel.
 - **Channel factory:** `NotificationChannelFactory` resolves the appropriate adapter (Slack/Telegram) based on stored state.
+- **`notify()`:** routes a `system_alert` through a formatter agent (Quick by default; `agent_id_override` selects Smart for reminders and the daily review) and delivers the formatted text, with session history.
+- **`notify_raw()`:** sends the given text directly, with no reformatting.
+- **Rich content:** `notify()` and `notify_answer_copy()` deliver rich content through the platform's `RichContentService.deliver`, the one routine the chat turn uses too, so a `file` or `widget` is uploaded, never posted as its fallback line (`decisions/rich_content_one_delivery_path.md`).
+- **Usage:** `prompt_tokens` in `UsageMetadata` is always uncached input (OpenAI and Gemini subtract cached from total).
 - **Triggers:** `EmailIndexingService.completion_alert()` after a job page cycle completes.
+
+### 7.1 Daily email review
+
+Settings: `gmail_daily_review*` in `UserBotConfig`; Cabinet endpoint `/api/gmail/daily-review`. The hourly fan-out and the once-per-local-date mark are described in `docs/07_deployment/SCHEDULERS.md` (Daily Email Review). The worker fetches the last 24 h of emails (cap 200, full body cleaned by the adapter: BS4, `html.unescape`, invisible-Unicode strip) and passes a structured JSON array to Smart through `notify(save_history=False)`. Smart's protocol: triage each email as [ACTION], [FYI], [DIGEST] or [NOISE]; deep-read with `get_email_details` / `get_email_attachment`; research with `search_web`; then `create_html_page` for a report whose subjects link to Gmail, plus a short chat message. `notify_document_link` saves the report URL and a `fetch_url` hint to history.
 
 ---
 
@@ -206,7 +222,8 @@ The Cabinet web UI (`src/web/user_cabinet_app.py`) exposes management endpoints:
 - `src/domain/email.py`: All email domain models (EmailMetadata, IndexedEmail, IndexingJob, OAuthCredentials, etc.)
 - `src/services/email_indexing_service.py`: Indexing pipeline orchestration.
 - `src/services/email_search_service.py`: Search, details, and attachment retrieval.
-- `src/services/gmail_oauth_service.py`: OAuth token exchange and refresh.
+- `src/services/google_oauth_service.py`: OAuth token exchange and refresh.
+- `src/adapters/firestore_credential_store.py`: encrypted credential store.
 - `src/services/user_notification_service.py`: System alert delivery.
 - `src/agents/email_search_agent.py`: Specialist agent (3 intents).
 - `src/agents/email_classification_agent.py`: Batch classifier (shared singleton).

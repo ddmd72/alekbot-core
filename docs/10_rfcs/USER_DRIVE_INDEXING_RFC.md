@@ -1362,7 +1362,7 @@ the user works on the markup itself. Chat uploads, Step 1 `open_file_from_drive`
 `ContentExtractorPort`; correction of Step 1 §2.
 *Done when:* the port produces the same text as the current path for each caller's fixtures.
 
-**Documentation per slice.** Slice 1: CLAUDE.md (User Drive paragraph, WorkerHandler task list), `src/agents/CLAUDE.md`
+**Documentation per slice.** Slice 1: CLAUDE.md (User Drive paragraph), `docs/07_deployment/SCHEDULERS.md` (WorkerHandler task list), `src/agents/CLAUDE.md`
 roster line, `docs/07_deployment/SCHEDULERS.md` (job, queue, its concurrency), a `docs/05_building_blocks/user_drive/`
 README, `capabilities.py`, `docs/07_deployment/README.md` (indexer service), decision records for
 "drive not in `SearchEnrichmentService`", "opt-in; access loss keeps the index under a 30-day TTL", "lease + dedicated

@@ -250,7 +250,7 @@ message follows it) → `/worker` `task_type=fact_lifecycle_sweep`:
   `user_agent_factory.py:584`).
 - Wiring: the job goes in `scripts/infrastructure/cloudbuild_scheduler_jobs.sh` (where the consolidation sweep job
   lives, `:160-180`), `docs/07_deployment/SCHEDULERS.md`, the `WorkerHandler` dispatch (`worker_handler.py:166-211`)
-  and the dispatch list in the root `CLAUDE.md`. The main service's repository has the biographical context service
+  and the task-type list in `docs/07_deployment/SCHEDULERS.md`. The main service's repository has the biographical context service
   injected; `refresh_biographical_context_cache` skips silently without it (`firestore_repo.py:805-810`).
 
 **No Firestore TTL policy on the facts collection, ever.** Nine other collections in this database have an ACTIVE TTL

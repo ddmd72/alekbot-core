@@ -71,8 +71,8 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/` | none | Public landing; a signed-in owner is redirected to `/cabinet` (`src/web/landing_app.py`) |
-| `GET` | `/og.png`, `/robots.txt`, `/favicon.ico` | none | Landing assets |
+| `GET` | `/` | none | Public landing, one self-contained file (`src/web/static/landing.html`, no external requests, hand-maintained numbers), the GitHub repo's homepage; a signed-in owner is redirected to `/cabinet` (`src/web/landing_app.py`) |
+| `GET` | `/og.png`, `/robots.txt`, `/favicon.ico` | none | Landing assets: the share image, and a `robots.txt` that allows only `/$` and closes everything else |
 | `GET` | `/cabinet` | none (its API calls need JWT) | Cabinet SPA; on a touch device it opens `/cabinet/call` |
 | `GET` | `/cabinet/call` (+ `manifest.webmanifest`, `icon-<size>.png`) | none (its API calls need JWT) | Voice call page, installable |
 | `GET` | `/join?code=…` | cookie / redirect | Team invite deep link |

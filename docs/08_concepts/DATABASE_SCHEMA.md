@@ -49,7 +49,7 @@ drive. This page says where to look, so it does not copy field lists that would 
 | `{p}channel_bindings` | a channel bound to an agent (companion channels) | `channel_id` | `ChannelBinding`, `src/domain/channel_binding.py` |
 
 Account usage counters written before 2026-07-28 are inflated. For historical cost, use BigQuery `prompt_content`, not
-`usage.*` (root `CLAUDE.md`, Token accounting).
+`usage.*` (`decisions/billing_execution_scoped_ledger.md`).
 
 ### 3.2 Memory
 

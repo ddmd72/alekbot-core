@@ -9,6 +9,10 @@ remote MCP client. When Claude on claude.ai calls the tool, the server runs a 6-
 search across the user's indexed facts and returns a formatted text block of memory facts,
 RRF-ordered and grouped by domain.
 
+### Status
+
+MVP, dev-only, experimental.
+
 ### What it is not
 
 - **Not** a generic MCP framework. It exposes exactly one tool; to add more, edit

@@ -1,7 +1,7 @@
 # 06 Runtime View
 
 How work moves through the system at runtime. Each section names the code that owns the step and points to the
-document that holds the detail; the root `CLAUDE.md` (Key Mechanisms) is the index of current behaviour.
+document that holds the detail: building-block READMEs, RFCs and decision records under `docs/`.
 
 ## 1. A chat turn (Slack / Telegram)
 
@@ -44,8 +44,7 @@ sequenceDiagram
 1. **Intake.** The adapter verifies the request (Slack signature, Telegram secret token) and enqueues a **named** Cloud Task, so a platform retry is
    `ALREADY_EXISTS`, not a second turn; every `/worker` delivery is also claimed by task name (`TaskClaimStore`).
    A busy session waits in-process, then re-queues, then asks the user to resend. When `/worker` hands the event
-   back, the adapter authorizes the sender against the whitelist (`IAMService.authorize`). Detail: `CLAUDE.md` → Gmail
-   Email Indexing → "Chat intake never loses or doubles a message"; `decisions/worker_task_dedup.md`.
+   back, the adapter authorizes the sender against the whitelist (`IAMService.authorize`). Detail: `decisions/worker_task_dedup.md`.
 2. **`ConversationHandler`** (`src/handlers/conversation_handler.py`): `$skill`, `$memory`, `$consolidate` and other `$` commands are handled here before any LLM call; voice notes are
    transcribed into the user's own text; other attachments go through `FileConversionService` into GCS
    (reference-only parts); `UserAgentFactory.ensure_agents_for_user` builds or refreshes the user's agents.
@@ -63,8 +62,8 @@ sequenceDiagram
 
 **Long turns.** A turn has one 25-minute clock. At 90 s unanswered the user gets a status note and can keep talking;
 the finished run posts a late answer with a link. Before the mark a failed Smart turn falls back to Quick
-(`AgentFallbackService`); after it, the long-turn machinery owns the outcome. Detail: `CLAUDE.md` → Long-running turns,
-`decisions/long_running_turns.md`.
+(`AgentFallbackService`); after it, the long-turn machinery owns the outcome. Detail: `decisions/long_running_turns.md`,
+`docs/10_rfcs/LONG_RUNNING_TURNS_RFC.md`.
 
 ## 2. Memory formation
 
@@ -83,7 +82,7 @@ Three more runtime units run outside the main service:
 
 | Unit | Entry point | Does |
 |------|-------------|------|
-| Voice relay | `relay_main.py` | Live call audio between Twilio / Cloudflare SFU and the realtime provider (`CLAUDE.md` → Voice Companion) |
+| Voice relay | `relay_main.py` | Live call audio between Twilio / Cloudflare SFU and the realtime provider (`docs/10_rfcs/VOICE_COMPANION_RFC.md`) |
 | Drive indexer | `indexer_main.py` | `drive_sync` ticks for the user drive index (`docs/05_building_blocks/user_drive/README.md`) |
 | Deep research job | `job_main.py` | Claude deep research as a Cloud Run Job (`decisions/cloud_tasks_vs_jobs.md`) |
 

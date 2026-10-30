@@ -61,6 +61,11 @@ running total and the delta.
 Also fixed: `/voice/submit-transcript` added the seconds into the account's token counter.
 `domain.billing.realtime_token_count` sums only the `*_tokens` legs.
 
+## Realtime usage legs
+
+`domain.billing.calculate_realtime_cost` prices the flat legs `OpenAIRealtimeAdapter._flatten_usage`
+produces. `reasoning_tokens` are a subset of the output text leg, never additive.
+
 ## Known remaining gaps (not fixed here)
 
 - **Seconds after the last reply.** xAI bills the session until hang-up, but the last
