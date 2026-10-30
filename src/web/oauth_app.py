@@ -73,7 +73,7 @@ def create_oauth_blueprint(
         auth_config: OAuth configuration
         invite_service: Optional service to consume invite codes on callback
         connect_service: the integration connect flow (`/auth/connect/<kind>`, `/auth/connect/callback`); without it
-            (or without `connectors`) both answer 501
+            both answer 501 (the start also without `connectors`)
         connectors: the connector registry: which kinds exist and which realms have an edge
 
     Returns:

@@ -38,7 +38,6 @@ from ..utils.logger import logger
 from .connector_registry import ConnectorRegistry
 
 Activation = Callable[[OAuthCredential], Awaitable[None]]
-SETUP_MICROSOFT_TODO_TASK = "setup_microsoft_todo"
 
 
 def build_oauth_edges(config: dict) -> List[OAuthProviderPort]:
@@ -82,7 +81,7 @@ def build_connect_activations(*, credentials: OAuthCredentialsPort, reconnect: I
         if task_queue is None:
             return
         try:     # idempotent: the primary list and the subscriptions
-            await task_queue.enqueue_worker_task(SETUP_MICROSOFT_TODO_TASK, {"user_id": credential.user_id})
+            await task_queue.enqueue_worker_task("setup_microsoft_todo", {"user_id": credential.user_id})
         except Exception as exc:
             logger.error(f"💥 Enqueueing the To Do setup failed for user={credential.user_id[:8]}: "
                          f"{type(exc).__name__}", exc_info=True)
