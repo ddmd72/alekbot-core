@@ -1,7 +1,7 @@
 """DriveSearchService.search_deleted reports whether any entry carries stored transcript text (a passage), so the
 specialist's write gate can arm on it. Reuses the fixtures of the deleted-transcripts tests."""
 from tests.unit.services.test_drive_search_deleted_transcripts import (  # noqa: F401  (fixtures)
-    _doc, _stored, drive, index, mirror, svc,
+    _doc, _stored, connections, drive, index, mirror, svc,
 )
 
 
