@@ -25,7 +25,7 @@ def run(*entries, report=DriveReport(), **kw):
 
 
 def out(op, cls, text, success=True, **kw):
-    return DriveOutcome(op=op, cls=cls, text=text, success=success, **kw)
+    return DriveOutcome(op=op, cls=cls, text=text, success=success, **kw, ref_tag="a1")
 
 
 NOT_FOUND_SEARCH = out(DriveOp.SEARCH, OutcomeClass.NOT_FOUND, "REMINDER\nNo file holds it.", success=False,

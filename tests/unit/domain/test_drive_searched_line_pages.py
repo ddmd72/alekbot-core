@@ -17,7 +17,7 @@ ITEM = DriveItem(item_id="item-1", name="Oak Street parking rules.md", path=PATH
 
 def _collected(res, handle="r1"):
     outcome = DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text="x", success=True, items=(ITEM,),
-                           facts=ReadFacts(excerpts=True), excerpts=res, request_text="")
+                           facts=ReadFacts(excerpts=True), excerpts=res, request_text="", ref_tag="a1")
     return CollectedResult(handle=handle, step=1, kind="passages", outcome=outcome)
 
 

@@ -32,7 +32,7 @@ def _file(*indexes):
 def _find():
     res = result(_file(2, 3))
     return DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text="x", success=True, items=(ITEM,),
-                        facts=ReadFacts(excerpts=True), excerpts=res, request_text="gate hours")
+                        facts=ReadFacts(excerpts=True), excerpts=res, request_text="gate hours", ref_tag="a1")
 
 
 def _page(first=1, last=10, nxt=11):
@@ -40,17 +40,17 @@ def _page(first=1, last=10, nxt=11):
     res = result(_file(*range(first - 1, last)), request=ExcerptRangeRequest("drive:item-1", first, first + 9, page=True),
                  page=span)
     return DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text="page", success=True, items=(ITEM,),
-                        facts=ReadFacts(excerpts=True, paged=True), excerpts=res)
+                        facts=ReadFacts(excerpts=True, paged=True), excerpts=res, ref_tag="a1")
 
 
 def _refusal(item=ITEM):
     return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.REFUSED, text=refusal_text(item.path, EXTENT), success=False,
-                        items=(item,), facts=ReadFacts(too_long=True), open_bound=OpenBoundInfo(EXTENT))
+                        items=(item,), facts=ReadFacts(too_long=True), open_bound=OpenBoundInfo(EXTENT), ref_tag="a1")
 
 
 def _open(item, *, cut=False):
     return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text="BODY of " + item.name, success=True,
-                        items=(item,), body=True, facts=ReadFacts(cut=cut))
+                        items=(item,), body=True, facts=ReadFacts(cut=cut), ref_tag="a1")
 
 
 def _answer(*entries):
@@ -83,7 +83,7 @@ def test_a_past_the_end_page_still_reads_as_paged():
     span = PageSpan(first=300, last=299, total=130, version=1, past_end=True, path=PATH, ref="drive:item-1")
     past = DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text="past", success=True, items=(ITEM,),
                         facts=ReadFacts(paged=True),
-                        excerpts=result(request=ExcerptRangeRequest("drive:item-1", 300, 309, page=True), page=span))
+                        excerpts=result(request=ExcerptRangeRequest("drive:item-1", 300, 309, page=True), page=span), ref_tag="a1")
     answer = _answer((1, t.KIND_PASSAGES, past))
     assert t.R_PAGED in _reading(answer) and answer.status is DriveStatus.OK
 

@@ -10,7 +10,9 @@ from src.domain.drive_index import MIGRATION_GATE_KEY, DriveSyncState, EpochPhas
 from src.domain.drive_line import DriveLine
 from src.domain.drive_pass_through import PassThroughCollector, search_key
 from src.domain.drive_search_line import SearchLine, search_line
-from src.domain.user_drive import DriveConnection
+from src.domain.drive_connection import DriveConnection
+from src.domain.drive_connection_state import ConnectionState
+from src.domain.drive_connection_status import DriveConnectionStatus
 
 NOW = datetime(2026, 10, 22, tzinfo=timezone.utc)
 
@@ -73,9 +75,16 @@ def test_the_collector_holds_each_outcome_as_a_collected_result_in_run_order():
 
 
 def test_drive_line_from_the_connection():
-    assert DriveLine.of(DriveConnection(connected=True)) is DriveLine.CONNECTED
-    assert DriveLine.of(DriveConnection(connected=True, needs_reconnect=True)) is DriveLine.RECONNECT_NEEDED
-    assert DriveLine.of(DriveConnection(connected=False)) is DriveLine.NOT_CONNECTED
+    assert DriveLine.of(DriveConnectionStatus(connected=True)) is DriveLine.CONNECTED
+    assert DriveLine.of(DriveConnectionStatus(connected=True, needs_reconnect=True)) is DriveLine.RECONNECT_NEEDED
+    assert DriveLine.of(DriveConnectionStatus(connected=False)) is DriveLine.NOT_CONNECTED
+
+
+def _conn(state=ConnectionState.ACTIVE, drive_identity="fake_a:new"):
+    """The searched connection (MULTI_DRIVE_RFC §4.4): the gate reads its state and drive identity."""
+    return DriveConnection(connection_id="conn-1", user_id="u1", account_id="acc-1", credential_id="cred-1",
+                           kind="fake_a", drive_identity=drive_identity, ref_tag="a1", state=state, created_at=NOW,
+                           disconnected_at=NOW if state is ConnectionState.DISCONNECTED else None)
 
 
 def _state(**kw):
@@ -84,14 +93,14 @@ def _state(**kw):
 
 
 @pytest.mark.parametrize("enabled, state, connection, expected", [
-    (False, None, DriveConnection(connected=True), SearchLine.OFF),
-    (True, _state(), DriveConnection(connected=False), SearchLine.ON),
-    (True, _state(drive_id="old"), DriveConnection(connected=True, drive_id="new"), SearchLine.REBUILDING),
-    (True, _state(purging=True), DriveConnection(connected=True), SearchLine.REBUILDING),
-    (True, None, DriveConnection(connected=True), SearchLine.BUILDING),
-    (True, _state(applied_versions={}), DriveConnection(connected=True), SearchLine.REBUILDING),
-    (True, _state(epoch_phase=EpochPhase.ENUMERATING), DriveConnection(connected=True), SearchLine.BUILDING),
-    (True, _state(), DriveConnection(connected=True), SearchLine.ON),
+    (False, None, _conn(), SearchLine.OFF),
+    (True, _state(), _conn(ConnectionState.DISCONNECTED), SearchLine.ON),
+    (True, _state(drive_identity="fake_a:old"), _conn(drive_identity="fake_a:new"), SearchLine.REBUILDING),
+    (True, _state(purging=True), _conn(), SearchLine.REBUILDING),
+    (True, None, _conn(), SearchLine.BUILDING),
+    (True, _state(applied_versions={}), _conn(), SearchLine.REBUILDING),
+    (True, _state(epoch_phase=EpochPhase.ENUMERATING), _conn(), SearchLine.BUILDING),
+    (True, _state(), _conn(), SearchLine.ON),
 ])
 def test_search_line_from_the_gate_facts(enabled, state, connection, expected):
     assert search_line(enabled, state, connection, NOW) is expected

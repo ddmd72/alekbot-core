@@ -66,7 +66,7 @@ def test_folders_shown_and_files_described_accumulate_from_the_plans():
 class TestCollector:
     def _outcome(self, res):
         return DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text="…", success=True, excerpts=res,
-                            excerpt_plan=ContextPlan(shown_after=frozenset({"folder-1"})))
+                            excerpt_plan=ContextPlan(shown_after=frozenset({"folder-1"})), ref_tag="a1")
 
     def test_a_passages_outcome_with_files_fills_the_ledger(self):
         collector = PassThroughCollector()
@@ -77,11 +77,11 @@ class TestCollector:
     def test_an_outcome_without_files_leaves_it_empty(self):
         collector = PassThroughCollector()
         collector.add(1, "passages", self._outcome(result()))
-        collector.add(2, "search", DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text="…", success=True))
+        collector.add(2, "search", DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text="…", success=True, ref_tag="a1"))
         assert not collector.ledger and collector.ledger.folders_shown() == frozenset()
 
     def test_a_missing_plan_counts_as_empty(self):
         collector = PassThroughCollector()
         collector.add(1, "passages", DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text="…", success=True,
-                                                  excerpts=result(_plan_file(0))))
+                                                  excerpts=result(_plan_file(0)), ref_tag="a1"))
         assert collector.ledger and collector.ledger.folders_shown() == frozenset()
