@@ -1,6 +1,8 @@
 """The tick harness with the owner-notes lifecycle wired (DRIVE_FILE_NOTES_RFC §7): the in-memory note store, the
 DriveNoteLifecycle over it, and helpers that put a note on an indexed item the way part B's merge does (the record's
-`owner_note_id` and a note bound to the item on the harness's drive)."""
+`owner_note_id` and a note bound to the item on the harness's drive). A note is bound by the item's identity
+(`fake:{drive}:{item}`, the harness drive's form, MULTI_DRIVE_RFC §7.2) on the connection mounting that drive: the
+harness's own connection (tag `a1`) for DRIVE, another connection's tag for any other drive (§9)."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -10,7 +12,7 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.in_memory_drive_note_repo import InMemoryDriveNoteRepository
 from src.domain.drive_extraction import PARSER, READER
 from src.domain.drive_note import (
-    ONEDRIVE_PROVIDER_KEY, DriveNote, NoteBinding, NoteSnapshot, NoteState, binding_key, ref_key,
+    DriveNote, NoteBinding, NoteSnapshot, NoteState, item_binding_key, tagged_ref_key,
 )
 from src.services.drive_indexing_service import DriveIndexingService
 from src.services.drive_note_lifecycle import DriveNoteLifecycle
@@ -21,6 +23,7 @@ from .drive_index_fakes import LegacyConnections
 from .drive_index_fakes import U_SCOPE
 
 DRIVE = "d1"   # the fakes' drive id
+TAGS = {DRIVE: "a1", "d2": "b2"}   # the ref tag of the connection mounting each drive (a1: the harness connection)
 
 
 class NotesWorld:
@@ -34,11 +37,16 @@ class NotesWorld:
         self.notes = InMemoryDriveNoteRepository(clock=self.clock)
         self.lifecycle: Optional[DriveNoteLifecycle] = (
             DriveNoteLifecycle(self.notes, self.repo, self.drive, clock=self.clock) if lifecycle else None)
+        self.connections = LegacyConnections(self.users, self.drive)
         self.svc = DriveIndexingService(self.drive, self.repo, self.emb, self.queue, self.users,
                                         lambda lat, lon: "Rome (Roma), Italy", "test-space/8",
                                         extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)},
-                                        triage=FakeTriage(), note_lifecycle=self.lifecycle, connections=LegacyConnections(self.users, self.drive), clock=self.clock,
+                                        triage=FakeTriage(), note_lifecycle=self.lifecycle, connections=self.connections, clock=self.clock,
                                         monotonic=self.clock.monotonic)
+
+    async def connection(self):
+        """The harness's connection as the tick reads it (user `u`, connection `u`, tag `a1`)."""
+        return await self.connections.get(U_SCOPE.user_id, U_SCOPE.connection_id)
 
     async def tick(self, nudge=None):
         return await self.svc.tick(U_SCOPE, nudge)
@@ -62,13 +70,14 @@ class NotesWorld:
         note_id = note_id or f"n-{item_id}"
         item = self.drive.items.get(item_id)
         name = item.name if item is not None else f"{item_id}.pdf"
-        binding = NoteBinding(provider_key=ONEDRIVE_PROVIDER_KEY, drive_id=drive, item_id=item_id)
+        tag = TAGS[drive]
+        binding = NoteBinding(identity=f"fake:{drive}:{item_id}", item_id=item_id, ref_tag=tag)
         self.notes.notes[("u", note_id)] = DriveNote(
             note_id=note_id, user_id="u", account_id="a", state=NoteState.ACTIVE, current_version=1, text="the invoice",
             binding=binding, snapshot=NoteSnapshot(name=name, path=path or name,
                                                    parent_item_id=item.parent_id if item is not None else "",
                                                    snapshot_at=self.clock.now),
-            match_keys=[binding_key(ONEDRIVE_PROVIDER_KEY, drive, item_id), ref_key(item_id)],
+            match_keys=[item_binding_key(binding.identity), tagged_ref_key(tag, item_id)],
             updated_at=self.clock.now, revision=1)
         if merge:
             rec = self.rec(item_id)
