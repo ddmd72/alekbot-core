@@ -7,7 +7,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from src.domain.email import EmailFullContent, EmailMetadata, OAuthCredentials
+from src.domain.email import EmailFullContent, EmailMetadata
+from src.domain.oauth_credential import OAuthCredential
 
 
 class EmailProviderPort(ABC):
@@ -15,7 +16,7 @@ class EmailProviderPort(ABC):
     @abstractmethod
     async def list_emails(
         self,
-        credentials: OAuthCredentials,
+        credentials: OAuthCredential,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
         page_token: Optional[str] = None,
@@ -33,7 +34,7 @@ class EmailProviderPort(ABC):
     @abstractmethod
     async def batch_get_full_content(
         self,
-        credentials: OAuthCredentials,
+        credentials: OAuthCredential,
         email_ids: List[str],
         deep: bool = False,
     ) -> Dict[str, EmailFullContent]:
@@ -45,9 +46,9 @@ class EmailProviderPort(ABC):
         """
 
     @abstractmethod
-    async def refresh_token(self, credentials: OAuthCredentials) -> OAuthCredentials:
+    async def refresh_token(self, credentials: OAuthCredential) -> OAuthCredential:
         """
         Exchange refresh_token for a new access_token.
-        Returns updated OAuthCredentials with new access_token + token_expiry.
+        Returns updated OAuthCredential with new access_token + token_expiry.
         Raises OAuthExpiredError if refresh_token is expired or revoked.
         """

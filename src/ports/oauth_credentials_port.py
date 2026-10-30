@@ -1,94 +1,73 @@
 """
-OAuthCredentialsPort — persist OAuth tokens, provider-agnostic.
-See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §2.1.2.
+OAuthCredentialsPort — the stored OAuth grants, keyed by credential (MULTI_DRIVE_RFC §4.2; SECRETS_AT_REST_RFC §2.3).
 """
 
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from src.domain.email import OAuthCredentials
+from src.domain.credential_key import CredentialKey
+from src.domain.oauth_credential import OAuthCredential
 
 
 class OAuthCredentialsPort(ABC):
     """
-    Port for stored OAuth grants: at most one record per (user_id, provider) (SECRETS_AT_REST_RFC §2.4, I5);
-    providers ("kinds") gmail, google_tasks, microsoft_todo, microsoft_onedrive.
+    Port for stored OAuth grants. A record is found by (user_id, credential_id); no method takes a provider
+    argument, and a `kind` reaching it comes from an injected `ConnectorSpec`, never a literal (T-6).
 
     Holds for every method:
-    - Tenancy: a read for one (user_id, provider) never returns another user's or another provider's record; the
-      adapter finds the record by an equality query on its stored user and kind.
-    - Identity: every record carries its account identity (account_realm, account_subject) and an opaque
-      credential_id from its first write (I9). An update keeps the stored identity and never takes it from its
-      argument; a consent of the same account keeps the credential_id, another account replaces the record.
+    - Cardinality: the store holds any number of records per (user_id, kind). How many a kind may have is product
+      policy (`ConnectorSpec.multiple`), decided above the port (E15).
+    - Tenancy: a read for one user never returns another user's record (the doc id is `{user_id}:{credential_id}`
+      and the stored user is checked); only `list_by_account` and `list_user_ids` read across users.
+    - Identity: every record carries `kind`, `integration`, `account_id`, its account (realm + subject) and an opaque
+      `credential_id` from its first write (I9). An update keeps the stored identity and never takes it from its
+      argument (D-P2). A record written before `integration` / `account_id` existed reads them as None.
     - Expiry: no method checks or refreshes token_expiry; the caller refreshes and updates.
-    - Atomicity: each write is one backend transaction; between two updates the last writer wins. Callers set
-      needs_reconnect by get + update_credentials and accept the race between two updates
-      (decisions/gmail_grant_revoked_reconnect.md); an update never re-creates a record revoked meanwhile (see
-      update_credentials).
+    - Atomicity: each write is one backend transaction; between two updates the last writer wins; an update never
+      re-creates a record deleted meanwhile.
     - Errors: backend and decrypt errors propagate; no method turns an error into "connected" or "not connected".
     """
 
     @abstractmethod
-    async def get_credentials(
-        self, user_id: str, provider: str
-    ) -> Optional[OAuthCredentials]:
-        """Return the record of (user_id, provider), or None when there is none (not connected).
+    async def get(self, user_id: str, credential_id: str) -> Optional[OAuthCredential]:
+        """The record of (user_id, credential_id) with every field as saved (token_expiry tz-aware UTC), or None when
+        there is none. A record with needs_reconnect True is returned; the caller decides."""
 
-        Returns every OAuthCredentials field as saved, token_expiry tz-aware UTC, so get → update keeps them all
-            (worker_handler.py:1019-1025, onedrive_adapter.py:542-545). A record with needs_reconnect True is
-            returned; the caller decides.
+    @abstractmethod
+    async def save(self, credential: OAuthCredential) -> None:
+        """Store `credential` (the consent path): create, or replace the whole record of the same account.
+
+        The store chooses `credential_id` on the first save; the argument's `credential_id` is never used. A save of
+        the same (user, kind, account realm + subject) keeps its record's id and `created_at` and rewrites the rest, so
+        a new consent clears needs_reconnect. A save of another account creates another record and deletes none.
+        Raises, storing nothing, when the account subject, `integration` or `account_id` is missing (I9).
         """
 
     @abstractmethod
-    async def save_credentials(self, credentials: OAuthCredentials) -> None:
-        """Store `credentials` as the record of (credentials.user_id, credentials.provider): the consent path.
+    async def update(self, credential: OAuthCredential) -> bool:
+        """Replace the record of (credential.user_id, credential.credential_id) only if it still exists: a token
+        refresh or the needs_reconnect flag.
 
-        Upsert: creates the record or replaces the whole one, so a save after a new consent clears needs_reconnect.
-            The same account (realm + subject) keeps its credential_id; another account gets a new one and the old
-            record is deleted. Raises, storing nothing, when credentials.account_subject is empty (I9).
-            Only a consent (oauth_app.py) calls it; a refresh or a flag write goes through update_credentials, so it
-            cannot bring back a record that revoke_credentials deleted.
+        Returns True when replaced (tokens, label, scopes, expiry, needs_reconnect and drive_id from `credential`;
+        credential_id, kind, integration, account_id and the account realm + subject stay as stored), False when the
+        record is gone: nothing is written. The existence check and the write are one atomic backend operation.
         """
 
     @abstractmethod
-    async def update_credentials(self, credentials: OAuthCredentials) -> bool:
-        """Replace the record of (credentials.user_id, credentials.provider) only if it still exists: the path for a
-        token refresh and for the needs_reconnect flag.
-
-        Returns True when the record was replaced (tokens, label, scopes, expiry, needs_reconnect and drive_id from
-            `credentials`, so a refresh clears needs_reconnect; credential_id, kind and account identity stay as
-            stored), False when there is none: nothing is written, and the caller treats the user as not
-            connected. The existence check and the write are one atomic backend operation, not a read then a write,
-            so a disconnect that lands first stands.
-        """
+    async def delete(self, user_id: str, credential_id: str) -> None:
+        """Delete the record of (user_id, credential_id). Provider-side revocation is not part of it.
+        An absent record is a no-op; the user's other records stay."""
 
     @abstractmethod
-    async def revoke_credentials(self, user_id: str, provider: str) -> None:
-        """Delete the record of (user_id, provider): get_credentials then returns None, is_connected False, and
-        list_users_by_provider omits the user.
-
-        Provider-side revocation is not part of this method; Gmail and Google Tasks disconnects revoke first, OneDrive
-            and To Do do not (onedrive_adapter.py:247, task_setup_service.py:233).
-
-        Idempotency: an absent record is a no-op, no error.
-        Tenancy: the user's records for other providers stay.
-        """
+    async def list_for_user(self, user_id: str, kind: Optional[str] = None) -> List[OAuthCredential]:
+        """Every record of the user, or only those of `kind`. Order: oldest first (`created_at`)."""
 
     @abstractmethod
-    async def is_connected(self, user_id: str, provider: str) -> bool:
-        """True exactly when a record of (user_id, provider) exists, including one get_credentials raises on;
-        needs_reconnect and token_expiry are not considered."""
+    async def list_by_account(self, realm: str, subject: str) -> List[CredentialKey]:
+        """The key of every record of the provider account (realm + subject), across users (the revoke rule, §4.3).
+        Reads plaintext fields only. Order: none."""
 
     @abstractmethod
-    async def list_connected_providers(self, user_id: str) -> List[str]:
-        """Return the provider of every record whose stored user_id is `user_id`.
-
-        Contract (observed; no caller in src/). Order: none.
-        """
-
-    @abstractmethod
-    async def list_users_by_provider(self, provider: str) -> List[str]:
-        """Return the user_id of every record of `provider`, each user once, needs_reconnect ones included.
-
-        Order: none; callers iterate. Limit: none.
-        """
+    async def list_user_ids(self, kind: str) -> List[str]:
+        """The user_id of every user with a record of `kind`, each once, needs_reconnect ones included.
+        Reads plaintext fields only. Order: none; limit: none."""
