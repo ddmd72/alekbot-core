@@ -13,12 +13,15 @@ from google.cloud.firestore_v1.vector import Vector
 
 from src.adapters.firestore_drive_index_repo import (
     CHUNK_DISTANCE, CHUNK_FIELDS, CHUNK_LEAN_FIELDS, CHUNK_VECTOR, STREAM_FIELDS, FirestoreDriveIndexRepository,
-    chunk_from_doc, chunk_key, chunk_to_doc,
+    chunk_from_doc, chunk_to_doc,
 )
-from src.domain.drive_index import DriveChunk
+from src.domain.connection_scope import ConnectionScope
+from src.domain.drive_index import DriveChunk, chunk_doc_id
 from src.domain.drive_index_params import RECORD_WRITE_BATCH
 
-from tests.unit.adapters.firestore_drive_chunk_fakes import CHUNKS, ChunkDb, chunk, chunk_snap, make_chunk_repo
+from tests.support.g1a3_drive_chunks import chunk
+from tests.unit.adapters import firestore_drive_chunk_fakes
+from tests.unit.adapters.firestore_drive_chunk_fakes import CHUNKS, ChunkDb, chunk_snap, make_chunk_repo
 from tests.unit.adapters.firestore_drive_fakes import RECS, executed, snap
 from tests.unit.services.drive_index_fakes import U_SCOPE
 
@@ -48,7 +51,8 @@ class TestCodec:
 
     def test_a_projected_stream_row_reads_with_empty_text(self):
         # review D-M3: a stream row projects neither `text` nor `content_terms`; both read back empty
-        doc = {k: v for k, v in chunk_to_doc(chunk(terms=("1250",))).items() if k in STREAM_FIELDS}
+        doc = {k: v for k, v in chunk_to_doc(firestore_drive_chunk_fakes.chunk(terms=("1250",))).items()
+               if k in STREAM_FIELDS}
         assert "text" not in doc and "content_terms" not in doc
         assert chunk_from_doc(doc) == DriveChunk("u", "a", 1, 0, "", 0, 10, "pdf", ())
 
@@ -57,7 +61,7 @@ class TestCodec:
         assert chunk_from_doc(doc).content_terms == ()
 
     def test_key(self):
-        assert chunk_key("u", "i", 3, 7) == "u:i:3:7"
+        assert chunk_doc_id(ConnectionScope(user_id="u", connection_id="conn-1"), "i", 3, 7) == "conn-1:i:3:7"
 
     def test_the_sdk_encodes_a_chunk(self):
         from google.cloud.firestore_v1 import _helpers
@@ -90,25 +94,26 @@ class TestDeleteChunksExcept:
     async def test_deletes_every_other_generation(self, repo, db):
         db.cols[CHUNKS].respond = lambda ops: [chunk_snap(chunk(gen=g, index=i)) for g, i in ((1, 0), (2, 0), (2, 1),
                                                                                                (3, 0))]
-        assert await repo.delete_chunks_except("u", "a", 2) == 2
+        assert await repo.delete_chunks_except(U_SCOPE, "a", 2) == 2
         (ops,) = executed(db, CHUNKS)
-        assert ops == [("where", "user_id", "==", "u"), ("where", "item_id", "==", "a"), ("select", ("generation",))]
+        assert ops == [("where", "connection_id", "==", "u"), ("where", "item_id", "==", "a"),
+                       ("select", ("user_id", "generation"))]
         deleted = [c.args[0].doc_id for c in db.batches[0].delete.call_args_list]
         assert deleted == ["u:a:1:0", "u:a:3:0"]
 
     async def test_none_deletes_all(self, repo, db):
         db.cols[CHUNKS].respond = lambda ops: [chunk_snap(chunk(gen=g)) for g in (1, 2)]
-        assert await repo.delete_chunks_except("u", "a", None) == 2
+        assert await repo.delete_chunks_except(U_SCOPE, "a", None) == 2
 
     async def test_nothing_to_delete_commits_nothing(self, repo, db):
-        assert await repo.delete_chunks_except("u", "a", 1) == 0
+        assert await repo.delete_chunks_except(U_SCOPE, "a", 1) == 0
         assert db.batches == []
 
 
 class TestFindNearest:
     async def test_projects_the_chunk_fields_and_the_distance(self, repo, db):
         db.cols[CHUNKS].respond = lambda ops: [chunk_snap(chunk(item="b"), **{CHUNK_DISTANCE: 0.25})]
-        hits = await repo.find_nearest_chunks("u", [1.0, 0.0], 300, kind="pdf")
+        hits = await repo.find_nearest_chunks(U_SCOPE, [1.0, 0.0], 300, kind="pdf")
         assert [(c.item_id, d) for c, d in hits] == [("b", 0.25)]
         (ops,) = executed(db, CHUNKS)
         assert [op[0] for op in ops] == ["where", "where", "select", "find_nearest"]
@@ -128,7 +133,7 @@ class TestFindNearest:
 
         monkeypatch.setattr(AsyncVectorQuery, "get", capture)
         repo = _real_repo(mock_env_config)
-        assert await repo.find_nearest_chunks("u", [1.0], 5) == []
+        assert await repo.find_nearest_chunks(U_SCOPE, [1.0], 5) == []
         (query,) = sent
         selected = {f.field_path for f in query.select.fields}
         assert CHUNK_DISTANCE in selected and CHUNK_VECTOR not in selected
@@ -139,15 +144,15 @@ class TestFindNearest:
 class TestFindByTerm:
     async def test_one_array_contains_term_ordered_by_key(self, repo, db):
         db.cols[CHUNKS].respond = lambda ops: [chunk_snap(chunk(terms=("20240012",)))]
-        found = await repo.find_chunks_by_term("u", "20240012", 100)
+        found = await repo.find_chunks_by_term(U_SCOPE, "20240012", 100)
         assert [c.content_terms for c in found] == [("20240012",)]
         (ops,) = executed(db, CHUNKS)
-        assert ops == [("where", "user_id", "==", "u"), ("where", "content_terms", "array_contains", "20240012"),
+        assert ops == [("where", "connection_id", "==", "u"), ("where", "content_terms", "array_contains", "20240012"),
                        ("order_by", "item_id", "ASCENDING"), ("order_by", "generation", "ASCENDING"),
                        ("order_by", "index", "ASCENDING"), ("limit", 100), ("select", STREAM_FIELDS)]
 
     async def test_kind(self, repo, db):
-        await repo.find_chunks_by_term("u", "1250", 5, kind="xlsx")
+        await repo.find_chunks_by_term(U_SCOPE, "1250", 5, kind="xlsx")
         (ops,) = executed(db, CHUNKS)
         assert ops[1] == ("where", "kind", "==", "xlsx")
 
@@ -155,7 +160,7 @@ class TestFindByTerm:
 class TestGetChunks:
     async def test_by_doc_id_in_index_order_without_vectors(self, repo, db):
         for c in (chunk(index=2), chunk(index=0)):
-            db.stored[chunk_key("u", "a", 1, c.index)] = chunk_to_doc(c)
+            db.stored[chunk_doc_id(U_SCOPE, "a", 1, c.index)] = chunk_to_doc(c)
         found = await repo.get_chunks(U_SCOPE, "a", 1, [2, 1, 0, 2])
         assert [c.index for c in found] == [0, 2]
         ((ids, paths),) = db.get_all_calls
@@ -163,7 +168,7 @@ class TestGetChunks:
 
     async def test_with_vectors(self, repo, db):
         db.stored["u:a:1:0"] = {**chunk_to_doc(chunk()), CHUNK_VECTOR: Vector([0.5, 0.5])}
-        rows = await repo.get_chunks_with_vectors("u", "a", 1, [0, 1])
+        rows = await repo.get_chunks_with_vectors(U_SCOPE, "a", 1, [0, 1])
         assert [(c.index, v) for c, v in rows] == [(0, [0.5, 0.5])]
         ((_, paths),) = db.get_all_calls
         assert CHUNK_VECTOR in paths
@@ -174,7 +179,7 @@ class TestReadableTotal:
         db.cols[RECS].respond = lambda ops: [[SimpleNamespace(alias="n", value=1234)]]
         assert await repo.readable_chunk_total(U_SCOPE) == 1234
         (ops,) = executed(db, RECS)
-        assert ops == [("where", "user_id", "==", "u"), ("where", "indexed_generation", ">=", 0),
+        assert ops == [("where", "connection_id", "==", "u"), ("where", "indexed_generation", ">=", 0),
                        ("sum", "chunk_count", "n")]
 
     async def test_no_match_is_zero(self, repo, db):
@@ -189,13 +194,13 @@ class TestReadableTotal:
             return [[SimpleNamespace(alias="n", value=7)]]
 
         monkeypatch.setattr(AsyncAggregationQuery, "get", capture)
-        assert await _real_repo(mock_env_config).readable_chunk_total("u") == 7
+        assert await _real_repo(mock_env_config).readable_chunk_total(U_SCOPE) == 7
         (proto,) = sent
         (agg,) = proto.aggregations
         assert agg.sum.field.field_path == "chunk_count" and agg.alias == "n"
         filters = proto.structured_query.where.composite_filter.filters
         assert [(f.field_filter.field.field_path, f.field_filter.op.name) for f in filters] == [
-            ("user_id", "EQUAL"), ("indexed_generation", "GREATER_THAN_OR_EQUAL")]
+            ("connection_id", "EQUAL"), ("indexed_generation", "GREATER_THAN_OR_EQUAL")]
         assert filters[1].field_filter.value.integer_value == 0
 
 
@@ -204,7 +209,7 @@ class TestChunksPage:
         db.cols[CHUNKS].respond = lambda ops: [chunk_snap(chunk())]
         assert [c.item_id for c in await repo.chunks_page(U_SCOPE, None, 50)] == ["a"]
         (ops,) = executed(db, CHUNKS)
-        assert ops == [("where", "user_id", "==", "u"), ("order_by", "item_id", "ASCENDING"),
+        assert ops == [("where", "connection_id", "==", "u"), ("order_by", "item_id", "ASCENDING"),
                        ("order_by", "generation", "ASCENDING"), ("order_by", "index", "ASCENDING"),
                        ("select", CHUNK_LEAN_FIELDS), ("limit", 50)]   # ids only (review m3)
 
@@ -221,7 +226,7 @@ class TestChunksPage:
             return []
 
         monkeypatch.setattr(AsyncQuery, "get", capture)
-        await _real_repo(mock_env_config).chunks_page("u", ("a", 2, 9), 50)
+        await _real_repo(mock_env_config).chunks_page(U_SCOPE, ("a", 2, 9), 50)
         (query,) = sent
         assert [o.field.field_path for o in query.order_by] == ["item_id", "generation", "index"]
         assert [v.string_value or v.integer_value for v in query.start_at.values] == ["a", 2, 9]
@@ -231,9 +236,9 @@ class TestChunksPage:
 class TestDeleteUserChunks:
     async def test_deletes_up_to_limit(self, repo, db):
         db.cols[CHUNKS].respond = lambda ops: [snap({}, f"u:a:1:{i}") for i in range(3)]
-        assert await repo.delete_user_chunks("u", 3) == 3
+        assert await repo.delete_user_chunks(U_SCOPE, 3) == 3
         (ops,) = executed(db, CHUNKS)
-        assert ops[0] == ("where", "user_id", "==", "u") and ops[-1] == ("limit", 3)
+        assert ops[0] == ("where", "connection_id", "==", "u") and ops[-1] == ("limit", 3)
         assert db.batches[0].delete.call_count == 3
 
 

@@ -35,9 +35,9 @@ class TestChunkCapped:
     async def test_release_order_query(self, repo, db):
         db.cols[RECS].respond = lambda ops: [snap(rec_doc("a", state=RecordState.METADATA_ONLY,
                                                           reason=Reason.USER_CHUNK_CAP))]
-        assert [r.item_id for r in await repo.chunk_capped("u", 20)] == ["a"]
+        assert [r.item_id for r in await repo.chunk_capped(U_SCOPE, 20)] == ["a"]
         (ops,) = executed(db)
-        assert ops[:3] == [("where", "user_id", "==", "u"), ("where", "state", "==", "metadata_only"),
+        assert ops[:3] == [("where", "connection_id", "==", "u"), ("where", "state", "==", "metadata_only"),
                            ("where", "reason", "==", "user_chunk_cap")]
         assert ops[3:6] == [("order_by", "card_rank", "ASCENDING"), ("order_by", "modified_at", "DESCENDING"),
                             ("order_by", "item_id", "ASCENDING")]
@@ -53,7 +53,7 @@ class TestChunkCapped:
             DriveIndexRecord(user_id="u", connection_id="u", item_id="undated", card_rank=0, **cap),
             DriveIndexRecord(user_id="u", connection_id="u", item_id="other", state=RecordState.METADATA_ONLY, reason=Reason.TOO_LARGE),
         ])
-        assert [r.item_id for r in await mem.chunk_capped("u", 10)] == ["new", "old", "undated", "media"]
+        assert [r.item_id for r in await mem.chunk_capped(U_SCOPE, 10)] == ["new", "old", "undated", "media"]
 
 
 class TestCountUnread:
@@ -63,7 +63,7 @@ class TestCountUnread:
         queries = executed(db)
         assert len(queries) == 6 and all(ops[-1] == ("count", "n") for ops in queries)
         assert all(("where", "kind", "in", ["docx", "pdf"]) in ops for ops in queries)
-        classes = [tuple(op[1:] for op in ops if op[0] == "where" and op[1] not in ("user_id", "kind"))
+        classes = [tuple(op[1:] for op in ops if op[0] == "where" and op[1] not in ("connection_id", "kind"))
                    for ops in queries]
         assert classes == [
             (("state", "==", "failed"),),
@@ -95,7 +95,7 @@ class TestCountUnread:
             DriveIndexRecord(user_id="u", connection_id="u", item_id="c", kind="code", state=RecordState.FAILED),
             DriveIndexRecord(user_id="u", connection_id="u", item_id="d", kind="folder", is_folder=True, state=RecordState.PENDING),
         ])
-        assert await mem.count_unread("u", SLICE2_CONTENT_KINDS) == 3
+        assert await mem.count_unread(U_SCOPE, SLICE2_CONTENT_KINDS) == 3
 
     async def test_the_sent_aggregations(self, monkeypatch, mock_env_config):
         sent = []
@@ -109,7 +109,7 @@ class TestCountUnread:
         mock_env_config.drive_index_records_collection = "test_drive_index_records"
         mock_env_config.drive_sync_state_collection = "test_drive_sync_state"
         mock_env_config.drive_index_chunks_collection = "test_drive_index_chunks"
-        assert await FirestoreDriveIndexRepository(client, mock_env_config).count_unread("u", {"pdf"}) == 6
+        assert await FirestoreDriveIndexRepository(client, mock_env_config).count_unread(U_SCOPE, {"pdf"}) == 6
         pending = sent[1].structured_query.where.composite_filter.filters
         assert pending[2].unary_filter.op.name == "IS_NULL"
         assert pending[2].unary_filter.field.field_path == "indexed_generation"

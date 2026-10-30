@@ -3,12 +3,13 @@
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveChunk, DriveIndexRecord
 from tests.unit.services.drive_index_fakes import U_SCOPE
 
 
 def chunk(item="a", gen=1, index=0, user="u", kind="pdf", terms=(), text=None):
-    return DriveChunk(user_id=user, item_id=item, generation=gen, index=index, text=text or f"{item}/{gen}/{index}",
+    return DriveChunk(user_id=user, connection_id=user, item_id=item, generation=gen, index=index, text=text or f"{item}/{gen}/{index}",
                       char_start=index * 10, char_end=index * 10 + 10, kind=kind, content_terms=tuple(terms))
 
 
@@ -36,48 +37,48 @@ class TestWrite:
 class TestDeleteChunksExcept:
     async def test_keeps_one_generation(self, repo):
         await put(repo, chunk(gen=1), chunk(gen=1, index=1), chunk(gen=2), chunk(item="b", gen=1))
-        assert await repo.delete_chunks_except("u", "a", 2) == 2
+        assert await repo.delete_chunks_except(U_SCOPE, "a", 2) == 2
         assert sorted((k[1], k[2]) for k in repo.chunks) == [("a", 2), ("b", 1)]
 
     async def test_none_deletes_every_generation(self, repo):
         await put(repo, chunk(gen=1), chunk(gen=2), chunk(user="v"))
-        assert await repo.delete_chunks_except("u", "a", None) == 2
+        assert await repo.delete_chunks_except(U_SCOPE, "a", None) == 2
         assert list(repo.chunks) == [("v", "a", 1, 0)]
 
     async def test_nothing_to_delete(self, repo):
-        assert await repo.delete_chunks_except("u", "a", 1) == 0
+        assert await repo.delete_chunks_except(U_SCOPE, "a", 1) == 0
 
 
 class TestFindNearest:
     async def test_nearest_first_with_distance(self, repo):
         await repo.write_chunks([chunk(item="far"), chunk(item="near")], [[0.0, 1.0], [1.0, 0.1]])
-        hits = await repo.find_nearest_chunks("u", [1.0, 0.0], 10)
+        hits = await repo.find_nearest_chunks(U_SCOPE, [1.0, 0.0], 10)
         assert [c.item_id for c, _ in hits] == ["near", "far"]
         assert hits[0][1] < hits[1][1] and hits[1][1] == pytest.approx(1.0)
 
     async def test_kind_user_and_limit(self, repo):
         await put(repo, chunk(item="a"), chunk(item="b", kind="docx"), chunk(item="c", user="v"), chunk(item="d"))
-        assert {c.item_id for c, _ in await repo.find_nearest_chunks("u", [1.0, 0.0], 10, kind="pdf")} == {"a", "d"}
-        assert len(await repo.find_nearest_chunks("u", [1.0, 0.0], 1)) == 1
+        assert {c.item_id for c, _ in await repo.find_nearest_chunks(U_SCOPE, [1.0, 0.0], 10, kind="pdf")} == {"a", "d"}
+        assert len(await repo.find_nearest_chunks(U_SCOPE, [1.0, 0.0], 1)) == 1
 
     async def test_not_fenced(self, repo):
         """The service fences (§7.4): a generation no record names is still returned here."""
         await put(repo, chunk(gen=7))
-        assert [c.generation for c, _ in await repo.find_nearest_chunks("u", [1.0, 0.0], 5)] == [7]
+        assert [c.generation for c, _ in await repo.find_nearest_chunks(U_SCOPE, [1.0, 0.0], 5)] == [7]
 
 
 class TestFindByTerm:
     async def test_matches_whole_terms_in_key_order(self, repo):
         await put(repo, chunk(item="b", terms=("1250.00", "2024")), chunk(item="a", index=1, terms=("1250.00",)),
                   chunk(item="a", index=0, terms=("12500",)), chunk(item="c", user="v", terms=("1250.00",)))
-        hits = await repo.find_chunks_by_term("u", "1250.00", 10)
+        hits = await repo.find_chunks_by_term(U_SCOPE, "1250.00", 10)
         assert [(c.item_id, c.index) for c in hits] == [("a", 1), ("b", 0)]
 
     async def test_kind_and_limit(self, repo):
         await put(repo, chunk(item="a", terms=("x99",)), chunk(item="b", kind="docx", terms=("x99",)),
                   chunk(item="c", terms=("x99",)))
-        assert [c.item_id for c in await repo.find_chunks_by_term("u", "x99", 10, kind="docx")] == ["b"]
-        assert [c.item_id for c in await repo.find_chunks_by_term("u", "x99", 1)] == ["a"]
+        assert [c.item_id for c in await repo.find_chunks_by_term(U_SCOPE, "x99", 10, kind="docx")] == ["b"]
+        assert [c.item_id for c in await repo.find_chunks_by_term(U_SCOPE, "x99", 1)] == ["a"]
 
 
 class TestGetChunks:
@@ -93,10 +94,10 @@ class TestReadableChunkTotal:
             DriveIndexRecord(user_id="u", connection_id="u", item_id="a", indexed_generation=1, chunk_count=10),
             DriveIndexRecord(user_id="u", connection_id="u", item_id="b", indexed_generation=None, chunk_count=99),   # chunk-cap refusal
             DriveIndexRecord(user_id="u", connection_id="u", item_id="c", indexed_generation=3, chunk_count=5),
-            DriveIndexRecord(user_id="v", item_id="d", indexed_generation=1, chunk_count=7),
+            DriveIndexRecord(user_id="v", connection_id="v", item_id="d", indexed_generation=1, chunk_count=7),
         ])
         assert await repo.readable_chunk_total(U_SCOPE) == 15
-        assert await repo.readable_chunk_total("nobody") == 0
+        assert await repo.readable_chunk_total(ConnectionScope(user_id="nobody", connection_id="nobody")) == 0
 
 
 class TestPagingAndPurge:
@@ -114,7 +115,7 @@ class TestPagingAndPurge:
 
     async def test_delete_user_chunks_in_batches(self, repo):
         await put(repo, chunk(index=0), chunk(index=1), chunk(index=2), chunk(user="v"))
-        assert await repo.delete_user_chunks("u", 2) == 2
-        assert await repo.delete_user_chunks("u", 2) == 1
-        assert await repo.delete_user_chunks("u", 2) == 0
+        assert await repo.delete_user_chunks(U_SCOPE, 2) == 2
+        assert await repo.delete_user_chunks(U_SCOPE, 2) == 1
+        assert await repo.delete_user_chunks(U_SCOPE, 2) == 0
         assert list(repo.chunks) == [("v", "a", 1, 0)]

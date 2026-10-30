@@ -69,7 +69,7 @@ class TestFirestore:
         recs = await repo.inaccessible_records(U_SCOPE, 50)
         assert [r.item_id for r in recs] == ["a"] and recs[0].inaccessible_notified_since == T
         ops = executed(db)[-1]
-        assert ("where", "user_id", "==", "u") in ops and ("where", "inaccessible_since", ">=", TS_MIN) in ops
+        assert ("where", "connection_id", "==", "u") in ops and ("where", "inaccessible_since", ">=", TS_MIN) in ops
         assert ("order_by", "inaccessible_since", "ASCENDING") in ops and ("limit", 50) in ops
         projection = next(op for op in ops if op[0] == "select")[1]
         assert NOTIFIED in projection and set(RECORD_FIELDS) <= set(projection)
@@ -77,7 +77,7 @@ class TestFirestore:
     async def test_set_notified_is_a_field_update_per_record_and_skips_a_deleted_one(self, repo, db):
         col = db.cols[RECS]
         col.document("u:gone").update = AsyncMock(side_effect=NotFound("deleted"))
-        await repo.set_inaccessible_notified("u", {"a": T, "gone": T, "b": None})
+        await repo.set_inaccessible_notified(U_SCOPE, {"a": T, "gone": T, "b": None})
         col.docs["u:a"].update.assert_awaited_once_with({NOTIFIED: T})
         col.docs["u:b"].update.assert_awaited_once_with({NOTIFIED: None})
         col.docs["u:a"].set.assert_not_awaited()
@@ -87,7 +87,7 @@ class TestInMemory:
     async def test_upsert_keeps_the_stored_fan_out_field(self):
         repo = InMemoryDriveIndexRepository()
         await repo.upsert_records([marked()])
-        await repo.set_inaccessible_notified("u", {"a": T})
+        await repo.set_inaccessible_notified(U_SCOPE, {"a": T})
         await repo.upsert_records([marked(notified=None, name="renamed.pdf")])   # a stale tick snapshot
         rec = (await repo.get_records(U_SCOPE, ["a"]))["a"]
         assert rec.name == "renamed.pdf" and rec.inaccessible_notified_since == T
@@ -96,11 +96,11 @@ class TestInMemory:
         repo = InMemoryDriveIndexRepository()
         await repo.upsert_records([marked("b", since=T + timedelta(hours=1)), marked("a", since=T),
                                    DriveIndexRecord(user_id="u", connection_id="u", item_id="open"),
-                                   DriveIndexRecord(user_id="v", item_id="x", inaccessible_since=T)])
+                                   DriveIndexRecord(user_id="v", connection_id="v", item_id="x", inaccessible_since=T)])
         assert [r.item_id for r in await repo.inaccessible_records(U_SCOPE, 10)] == ["a", "b"]
         assert [r.item_id for r in await repo.inaccessible_records(U_SCOPE, 1)] == ["a"]
 
     async def test_set_notified_on_a_missing_record_writes_nothing(self):
         repo = InMemoryDriveIndexRepository()
-        await repo.set_inaccessible_notified("u", {"nope": T})
+        await repo.set_inaccessible_notified(U_SCOPE, {"nope": T})
         assert repo.records == {}

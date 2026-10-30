@@ -8,6 +8,7 @@ from src.domain.drive_index import DriveIndexRecord, RecordState
 from src.domain.drive_search import is_not_read_yet
 
 from tests.unit.adapters.firestore_drive_fakes import RECS, Db, executed, make_repo
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 
 @pytest.fixture
@@ -18,7 +19,7 @@ def repo(mock_env_config):
 
 async def test_the_lean_read_projects_the_mark_fields(repo):
     store, db = repo
-    await store.inaccessible_records("u", 9, lean=True)
+    await store.inaccessible_records(U_SCOPE, 9, lean=True)
     projection = next(op for op in executed(db, RECS)[-1] if op[0] == "select")[1]
     assert set(projection) == set(ACCESS_MARK_FIELDS)
     assert {"profile", "about_keys", "lead_text"}.isdisjoint(projection)

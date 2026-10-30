@@ -3,15 +3,15 @@ adapters, a record round-tripping its derived `describe_gap`, and the Firestore 
 from src.adapters.firestore_drive_index_repo import record_from_doc, record_to_doc
 from src.domain.drive_index import DriveIndexRecord, RecordState, Scope
 
-from tests.unit.adapters.test_drive_index_v2_parity import pair, rec  # noqa: F401  (fixture)
+from tests.unit.adapters.test_drive_index_v2_parity import NOBODY, U, pair, rec  # noqa: F401  (fixture)
 
 
 async def test_both_adapters_count_each_gap_per_user(pair):  # noqa: F811
     await pair.write(records=[rec("a", describe_gap="waiting"), rec("b", describe_gap="waiting"),
                               rec("c", describe_gap="held"), rec("d", describe_gap="no_passages"), rec("e"),
                               rec("f", user="other", describe_gap="waiting")])
-    assert await pair.both("count_describe_gaps", "u") == {"waiting": 2, "held": 1, "no_passages": 1}
-    assert await pair.both("count_describe_gaps", "nobody") == {}
+    assert await pair.both("count_describe_gaps", U) == {"waiting": 2, "held": 1, "no_passages": 1}
+    assert await pair.both("count_describe_gaps", NOBODY) == {}
 
 
 def test_describe_gap_round_trips():
