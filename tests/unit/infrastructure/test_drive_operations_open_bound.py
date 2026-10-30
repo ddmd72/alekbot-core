@@ -92,11 +92,11 @@ def _ops(conversion, search, *, note=None):
 
 
 def _conv(item, text="", data=b"%PDF"):
-    return FakeConversion({f"drive:{item.item_id}": item}, data=data, text=text)
+    return FakeConversion({f"drive:a1:{item.item_id}": item}, data=data, text=text)
 
 
 async def _open(ops, item):
-    return await ops.open(CTX, "u1", f"drive:{item.item_id}")
+    return await ops.open(CTX, "u1", f"drive:a1:{item.item_id}")
 
 
 # -- the refusal, before any download ------------------------------------------------------------------------------
@@ -164,9 +164,10 @@ async def test_vision_opens_ignore_a_huge_pageable_extent(item, caplog):
     with caplog.at_level(logging.INFO):
         out = await _open(_ops(conv, FakeExtentSearch({item.item_id: pageable(5_000_000, passages=4000)})), item)
     assert out.cls is OutcomeClass.OK and out.file_data is not None
-    assert conv.byte_reads == [f"drive:{item.item_id}"]
+    assert conv.byte_reads == [f"drive:a1:{item.item_id}"]
     lines = [r.getMessage() for r in caplog.records if "opened vision" in r.getMessage()]
-    assert lines == [f"[DriveOperations] opened vision: drive:{item.item_id} mime={item.mime_type} bytes=4 pages=4000"]
+    assert lines == [f"[DriveOperations] opened vision: drive:a1:{item.item_id} mime={item.mime_type} bytes=4 "
+                     "pages=4000"]
 
 
 async def test_a_recording_with_an_over_cap_pageable_extent_is_refused_before_its_transcript():
@@ -194,7 +195,7 @@ async def test_a_live_transcript_that_cannot_be_paged_and_is_over_the_cap_is_mar
 
 async def test_the_recordings_link_never_asks_for_the_extent():
     search = FakeExtentSearch({"c1": pageable(300_000)})
-    out = await _ops(_conv(CALL), search).open(CTX, "u1", "drive:c1", original=True)
+    out = await _ops(_conv(CALL), search).open(CTX, "u1", "drive:a1:c1", original=True)
     assert out.cls is OutcomeClass.OK and out.body and search.extent_asks == []
 
 
@@ -254,7 +255,7 @@ async def test_the_log_lines(caplog):
         await _open(_ops(_conv(RULES, live), FakeExtentSearch({"r1": TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.OFF)})), RULES)
         await _open(_ops(_conv(RULES, "x"), FakeExtentSearch({"r1": pageable(250_000, passages=140, truncated=True)})), RULES)
     messages = [r.getMessage() for r in caplog.records]
-    assert f"[DriveOperations] opened: drive:r1 chars={len(live)}" in messages
-    assert any(m.startswith("[DriveOperations] open cut: drive:r1 chars=") and m.endswith("extent=not_indexed")
+    assert f"[DriveOperations] opened: drive:a1:r1 chars={len(live)}" in messages
+    assert any(m.startswith("[DriveOperations] open cut: drive:a1:r1 chars=") and m.endswith("extent=not_indexed")
                for m in messages)
-    assert "[DriveOperations] open refused: drive:r1 chars=250000 passages=140 truncated=True" in messages
+    assert "[DriveOperations] open refused: drive:a1:r1 chars=250000 passages=140 truncated=True" in messages
