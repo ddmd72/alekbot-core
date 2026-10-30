@@ -57,14 +57,14 @@ def db():
 
 async def test_every_chunk_query_has_a_declared_index(db, mock_env_config):
     repo = make_chunk_repo(db, mock_env_config)
-    await repo.find_nearest_chunks("u", [1.0], 5)
-    await repo.find_nearest_chunks("u", [1.0], 5, kind="pdf")
-    await repo.find_chunks_by_term("u", "1250", 5)
-    await repo.find_chunks_by_term("u", "1250", 5, kind="pdf")
+    await repo.find_nearest_chunks(U_SCOPE, [1.0], 5)
+    await repo.find_nearest_chunks(U_SCOPE, [1.0], 5, kind="pdf")
+    await repo.find_chunks_by_term(U_SCOPE, "1250", 5)
+    await repo.find_chunks_by_term(U_SCOPE, "1250", 5, kind="pdf")
     await repo.chunks_page(U_SCOPE, None, 5)
     await repo.chunks_page(U_SCOPE, ("a", 1, 0), 5)
-    await repo.delete_chunks_except("u", "a", 1)
-    await repo.delete_user_chunks("u", 5)
+    await repo.delete_chunks_except(U_SCOPE, "a", 1)
+    await repo.delete_user_chunks(U_SCOPE, 5)
     queries = executed(db, CHUNKS)
     assert len(queries) == 8
     declared = _declared("development_drive_index_chunks")
@@ -74,7 +74,7 @@ async def test_every_chunk_query_has_a_declared_index(db, mock_env_config):
 
 
 async def test_the_readable_sum_has_its_records_index(db, mock_env_config):
-    await make_chunk_repo(db, mock_env_config).readable_chunk_total("u")
+    await make_chunk_repo(db, mock_env_config).readable_chunk_total(U_SCOPE)
     (ops,) = executed(db, RECS)
     required = _required(ops)
     assert required == ({("user_id", "EQ")}, [("indexed_generation", "ASCENDING"), ("chunk_count", "ASCENDING")])
@@ -103,12 +103,12 @@ async def test_no_chunk_query_relies_on_an_exempt_field(db, mock_env_config):
     composite that lists it. The only exempt field in a composite is Search v2's `word_keys`, as CONTAINS (§25.2.5);
     the vector field is served by its vector index."""
     repo = make_chunk_repo(db, mock_env_config)
-    await repo.delete_chunks_except("u", "a", 1)
-    await repo.delete_user_chunks("u", 5)
-    await repo.find_chunks_by_term("u", "1250", 5)
+    await repo.delete_chunks_except(U_SCOPE, "a", 1)
+    await repo.delete_user_chunks(U_SCOPE, 5)
+    await repo.find_chunks_by_term(U_SCOPE, "1250", 5)
     await repo.chunks_page(U_SCOPE, ("a", 1, 0), 5)
-    await repo.find_chunks_by_word_keys("u", ["w:a"], 5)
-    await repo.find_chunks_by_word_keys("u", ["w:a"], 5, after_item_id="a")
+    await repo.find_chunks_by_word_keys(U_SCOPE, ["w:a"], 5)
+    await repo.find_chunks_by_word_keys(U_SCOPE, ["w:a"], 5, after_item_id="a")
     exempt = _exempt("development_drive_index_chunks")
     declared = _declared("development_drive_index_chunks")
     queries = executed(db, CHUNKS)
@@ -140,7 +140,7 @@ def test_deploy_creates_the_chunk_composites_and_the_exemptions():
 async def test_the_chunk_cap_and_unread_queries_have_their_records_indexes(db, mock_env_config):
     """Part B's release query and unread counts (§5.4, §10.2): an `in` or a null filter is an equality here."""
     repo = make_chunk_repo(db, mock_env_config)
-    await repo.chunk_capped("u", 5)
+    await repo.chunk_capped(U_SCOPE, 5)
     await repo.count_unread(U_SCOPE, {"pdf", "docx"})
     queries = executed(db, RECS)
     assert len(queries) == 7
