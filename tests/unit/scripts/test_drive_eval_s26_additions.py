@@ -46,7 +46,7 @@ async def test_an_inaccessible_item_is_listed_by_delta_but_404s_on_every_id_call
     assert {closed, opened} <= listed and drive.is_inaccessible("Shared/closed.pdf")
     assert not drive.is_inaccessible("Shared/open.pdf")
     for call in (drive.get_change(USER, closed), drive.get_item(USER, closed), drive.download(USER, closed),
-                 drive.download_to_file(USER, closed, str(tmp_path / "x"), 100), drive.get_thumbnail(USER, closed, "l")):
+                 drive.download_to_file(USER, closed, str(tmp_path / "x"), 100), drive.get_thumbnail(USER, closed, 512)):
         with pytest.raises(DriveItemNotFoundError):
             await call
     assert (await drive.get_change(USER, opened)).item_id == opened   # an ordinary item answers

@@ -4,6 +4,7 @@ policy sets, as the flip does; once the flip has landed the rebinding is a no-op
 from __future__ import annotations
 
 import struct
+from datetime import datetime, timezone
 
 from typing import Callable, Dict, List, Optional
 
@@ -13,6 +14,7 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain import drive_index_policy as policy
 from src.domain.drive_extraction import PARSER, READER, ExtractionOutcome, ExtractionRequest
 from src.domain.drive_index import DriveChunk, DriveIndexRecord
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS
 from src.services.drive_indexing_service import DriveIndexingService, TickResult
 
@@ -112,10 +114,10 @@ class ContentWorld:
 
     def add_image(self, name: str, thumbnail: Optional[bytes] = JPEG, data: bytes = JPEG, *,
                   camera: bool = False, **kw) -> str:
-        facets = {"image": {"width": 4000, "height": 3000}}
-        if camera:
-            facets["photo"] = {"takenDateTime": "2026-08-01T10:00:00Z", "cameraMake": "Apple"}
-        return self.drive.add_file(name, data, thumbnail=thumbnail, mime_type="image/jpeg", facets=facets, **kw)
+        media = (DriveMediaFacts(image_width=4000, image_height=3000,
+                                 taken_at=datetime(2026, 8, 1, 10, 0, tzinfo=timezone.utc), camera_make="Apple")
+                 if camera else DriveMediaFacts(image_width=4000, image_height=3000))
+        return self.drive.add_file(name, data, thumbnail=thumbnail, mime_type="image/jpeg", media=media, **kw)
 
 
 def prose(n_sentences: int, seed_word: str = "clause") -> str:
