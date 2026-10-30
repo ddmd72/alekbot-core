@@ -248,10 +248,6 @@ class FakeHost:
         self.file_slots: Optional[int] = None            # the tick's TICK_FILE_BUDGET slots left (G32); None = no limit
         self.on_index: Optional[Callable[[DriveIndexRecord], Any]] = None   # runs inside `index_transcript`
         self.handle = HANDLE                              # the connection the tick is for (MULTI_DRIVE_RFC §8)
-        self.sweep_ok = True                              # I7: every ACTIVE connection re-attached
-
-    async def sweep_allowed(self) -> bool:
-        return self.sweep_ok
 
     def fence(self) -> None:
         self.fences += 1

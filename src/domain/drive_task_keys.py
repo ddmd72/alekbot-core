@@ -19,35 +19,6 @@ from .drive_index_params import TICK_INTERVAL
 DRIVE_SYNC_TASK = "drive_sync"
 
 
-# -- TRANSITIONAL (slice 1b): the single-drive keys and payload, kept only because the frozen core's versions of part A's
-# Cabinet and part D's user drive and note services import them in this branch; their branches no longer do, and these
-# five are deleted at assembly. No module of part C calls them.
-
-def tick_key(user_id: str, now: datetime) -> str:
-    bucket = int(now.timestamp() // TICK_INTERVAL.total_seconds())
-    return f"{user_id}:tick:{bucket}"
-
-
-def continuation_key(user_id: str, tick_id: str) -> str:
-    return f"{user_id}:cont:{tick_id}"
-
-
-def nudge_key(user_id: str, mutation_id: str, attempt: int) -> str:
-    return f"{user_id}:nudge:{mutation_id}" + (f":r{attempt}" if attempt else "")
-
-
-def toggle_key(user_id: str, now: datetime) -> str:
-    return f"{user_id}:toggle:{int(now.timestamp() * 1000)}"
-
-
-def tick_payload(user_id: str, nudge: Optional[Nudge] = None) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {"user_id": user_id}
-    if nudge is not None:
-        payload["nudge"] = {"mutation_id": nudge.mutation_id, "item_ids": list(nudge.item_ids),
-                            "attempt": nudge.attempt}
-    return payload
-
-
 def tick_task_key(scope: ConnectionScope, now: datetime) -> str:
     bucket = int(now.timestamp() // TICK_INTERVAL.total_seconds())
     return f"{scope.connection_id}:tick:{bucket}"

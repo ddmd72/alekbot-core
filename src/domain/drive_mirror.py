@@ -162,13 +162,6 @@ class DeletionNotice:
     source_identity: str = ""   # MULTI_DRIVE_RFC §10: the gone item's identity, from which its ledger keys are built
 
 
-def doc_key(user_id: str, kind: str, source_item_id: str) -> str:
-    """TRANSITIONAL (slice 1b): the single-drive ledger key, kept only because the frozen core's version of part D's
-    search service imports it in this branch; part D's branch no longer does, and it is deleted at assembly. No module
-    of part C calls it."""
-    return f"{user_id}:{kind}:{source_item_id}"
-
-
 def archive_folder_key(user_id: str, drive_identity: str, day: str, path: str) -> str:
     """`{user_id}:archive:{sha256(drive_identity + "/" + day + "/" + path)[:32]}` — an archive folder's ledger key
     (§27.9.3, MULTI_DRIVE_RFC §10). ValueError for an empty drive identity."""

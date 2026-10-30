@@ -14,8 +14,7 @@ Public interface:
 
 Per connection (MULTI_DRIVE_RFC §8): jobs and batches are the connection's (`handle.scope`); the money, the store of
 transcripts and the orphan sweep are the user's (a store hit on any connection pays nothing). The sweep keeps a head a
-record of any connection carries, one the ledger pins and one retained by a disconnect (I8), and runs only once every
-ACTIVE connection of the user re-attached its transcripts (`host.sweep_allowed`, I7).
+record of any connection carries, one the ledger pins and one retained by a disconnect (I8).
     TranscriptHost        what the tick lends the stage (a Protocol; DriveIndexingService implements it, Task 14)
     TranscriptRunner      the runner the stage submits through (a Protocol; DriveTranscriptRunner in composition/)
     TRANSCRIBER_AGENT     the model backoff key of this class (§25.4.6; defined in drive_transcript_plan, re-exported)
@@ -86,7 +85,7 @@ else the tick does goes on. Nothing from a transcript, no download URL and no pr
    Every window a gap marker and none refused is no transcript: the job is dropped and the file charged an attempt
    (T-R23). No slot left ends the finalizing; a run the §7.4 fence dropped goes on to the next file.
 5. once a day per user, deletes stored transcripts unused for TRANSCRIPT_ORPHAN_TTL that no record carries, no ledger
-   document pins and no disconnect retained (§27.8 b, I8), and only when the user's connections all re-attached (I7).
+   document pins and no disconnect retained (§27.8 b, I8).
 """
 from __future__ import annotations
 
@@ -196,10 +195,6 @@ class TranscriptHost(Protocol):
 
     async def agent_outage(self, agent: str) -> None:
         """An uncharged outage of the agent type: its backoff, persisted with the tick's state."""
-
-    async def sweep_allowed(self) -> bool:
-        """I7 (MULTI_DRIVE_RFC §10): every ACTIVE connection of the user re-attached its stored transcripts since its
-        sync state was created; until then the user's orphan sweep does not run."""
 
 
 class TranscriptRunner(Protocol):
@@ -1500,11 +1495,6 @@ class DriveTranscriptStage:
         off the front of the page, so they never crowd out the real orphans."""
         now = self._clock()
         if self._swept.get(handle.user_id) == now.date():
-            return
-        if not await host.sweep_allowed():
-            # I7 (MULTI_DRIVE_RFC §10, E22): a connection of the user has not re-attached its stored transcripts since
-            # its sync state was created (a purge and rebuild): no record carries their keys yet, so none is swept
-            _inc(summary, "transcript_sweep_waiting")
             return
         keys = await self._repo.orphan_transcripts(handle.user_id, now - TRANSCRIPT_ORPHAN_TTL, _ORPHAN_PAGE)
         for key in keys:

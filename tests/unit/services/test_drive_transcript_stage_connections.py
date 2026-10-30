@@ -1,6 +1,6 @@
-"""The transcript stage per connection (MULTI_DRIVE_RFC §8, §10, I7, I8, E24): the orphan sweep waits for every
-connection's re-attachment and never deletes a head a disconnect retained; the media sandbox only ever receives a
-header-free media source. Synthetic data, technical ids."""
+"""The transcript stage per connection (MULTI_DRIVE_RFC §8, §10, I8, E24): the orphan sweep never deletes a head a
+disconnect retained or another connection's record carries; the media sandbox only ever receives a header-free media
+source. Synthetic data, technical ids."""
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
@@ -30,18 +30,6 @@ def _env(tmp_path):
 
 async def _cheap(env):
     return await env.stage.cheap_steps(HANDLE, env.host, stop_at=env.clock.mono + 600.0)
-
-
-async def test_the_sweep_waits_until_every_connection_reattached(tmp_path):
-    """I7: while a connection of the user has not re-attached its stored transcripts, nothing is swept."""
-    env = _env(tmp_path)
-    await env.repo.put_transcript(USER, StoredTranscript("orphan", T, last_used_at=LONG_AGO))
-    env.host.sweep_ok = False
-    summary = await _cheap(env)
-    assert summary.get("transcript_sweep_waiting") == 1 and (USER, "orphan") in env.repo.transcripts
-    env.host.sweep_ok = True   # the same day: the waiting run did not count as the day's sweep
-    summary = await _cheap(env)
-    assert summary["transcript_orphans_deleted"] == 1 and (USER, "orphan") not in env.repo.transcripts
 
 
 async def test_a_retained_head_is_never_swept(tmp_path):

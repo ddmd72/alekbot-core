@@ -1,7 +1,7 @@
-"""The drive tick per connection (MULTI_DRIVE_RFC §8, §10, I3, I7, I8): each connection's tick loads its connection,
+"""The drive tick per connection (MULTI_DRIVE_RFC §8, §10, I3, I8): each connection's tick loads its connection,
 indexes its own drive under its own keys and continues under its own payload; a purge removes one connection's index
 only; the user-scoped transcript store is kept whenever another connection may read it, and a disconnect first retains
-every head its records carry; the orphan sweep waits for every ACTIVE connection's re-attachment. Technical ids only."""
+every head its records carry. Technical ids only."""
 from dataclasses import replace
 
 import pytest
@@ -134,36 +134,6 @@ async def test_the_tick_spends_the_initial_build_of_the_connections_account(w):
     await w.svc._spend_usd((await w.connections.get(USER, "conn-2")).handle, "profile", 2.0, 0.0, 1)
     usage = await w.repo.get_model_usage(USER, "2026-10")
     assert usage.profile_usd == pytest.approx(3.5) and usage.profile_initial_usd == pytest.approx(1.5)
-
-
-async def test_the_orphan_sweep_waits_for_every_active_connection_to_reattach(w):
-    """I7 (E22): the sweep is allowed only when every ACTIVE connection's state carries `transcripts_reattached_at`; a
-    DISCONNECTED connection does not hold it back."""
-    await _index_one_item_on_each(w)
-    one = (await w.connections.get(USER, "conn-1")).handle
-    assert not await w.svc._sweep_allowed(one)
-    state = await w.repo.get_sync_state(w.scope("conn-1"))
-    await w.repo.save_sync_state(replace(state, transcripts_reattached_at=w.clock.now))
-    assert not await w.svc._sweep_allowed(one)   # conn-2 has not re-attached
-    await w.connections.disconnect(USER, "conn-2")
-    assert await w.svc._sweep_allowed(one)
-
-
-async def test_reattachment_is_stamped_once_the_first_round_left_no_recording_waiting(w):
-    await _index_one_item_on_each(w)
-    handle = (await w.connections.get(USER, "conn-1")).handle
-    state = await w.repo.get_sync_state(w.scope("conn-1"))
-    assert state.initial_enumeration_done and state.transcripts_reattached_at is None
-    rec = w.records("conn-1")["item-1"]
-    await w.repo.upsert_records([replace(rec, transcript_state="ready")])
-    assert (await w.svc._reattached(handle, state, w.clock.now)).transcripts_reattached_at is None
-    await w.repo.upsert_records([replace(rec, transcript_state="current")])
-    stamped = await w.svc._reattached(handle, state, w.clock.now)
-    assert stamped.transcripts_reattached_at == w.clock.now
-    later = await w.svc._reattached(handle, stamped, w.clock.now.replace(year=2027))
-    assert later.transcripts_reattached_at == w.clock.now   # stamped once
-    assert (await w.svc._reattached(handle, replace(state, initial_enumeration_done=False),
-                                    w.clock.now)).transcripts_reattached_at is None
 
 
 async def test_a_note_binds_by_identity_on_the_connection_whose_tag_it_carries():

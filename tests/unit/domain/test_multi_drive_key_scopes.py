@@ -22,9 +22,7 @@ USER_SCOPED = {
     "record_binding_key": "the single-drive record binding key (part D removes it)",
 }
 
-# TRANSITIONAL (slice 1b): the single-drive keys part C keeps only for the frozen core's versions of parts A and D in its
-# branch (their branches no longer call them). Deleted at assembly, and this set emptied with them.
-TRANSITIONAL = {"doc_key", "tick_key", "continuation_key", "nudge_key", "toggle_key"}
+TRANSITIONAL: set = set()   # none left
 
 # Not a stored document key: a value, a query key or an ordering key that no document is addressed by.
 NOT_A_DOCUMENT_KEY = {

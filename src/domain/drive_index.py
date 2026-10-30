@@ -559,12 +559,9 @@ class DriveSyncState:
     notes_audit_after_id: str = ""
     # -- MULTI_DRIVE_RFC §8, §10 (slice 1b): one sync state per connection (doc id `sync_state_doc_id(scope)` = the
     # connection id; `user_id` checked on read, I3). `drive_identity` is the adapter-built identity of the drive the feed
-    # reads (the drive-change check compares it with the connection's). `transcripts_reattached_at`
-    # (I7): when the transcript stage finished its first pass over the connection's recordings after this state was
-    # created; the user's orphan sweep runs only when every ACTIVE connection of the user has it set.
+    # reads (the drive-change check compares it with the connection's).
     connection_id: str = ""
     drive_identity: str = ""
-    transcripts_reattached_at: Optional[datetime] = None
 
     def cards_in_space(self, embedding_space: str) -> bool:
         """The card stream answers queries embedded in `embedding_space`: no card is left in another space."""

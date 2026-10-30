@@ -170,11 +170,10 @@ from ..domain.drive_mirror import GONE, UNKNOWN, UNSTORED, DeletionNotice, Mirro
 from ..domain.drive_mirror_plan import local_day, mirror_plan
 from ..domain.drive_mirror_render import MirrorStrings
 from ..domain.drive_note import (
-    BINDING_KEY_PREFIX, REF_KEY_PREFIX, DriveNote, NoteState, item_binding_key, note_embedding_text,
+    DriveNote, NoteState, binding_identity, item_binding_key, note_embedding_text, on_connection,
 )
-from ..domain.drive_ref import is_valid_tag
 from ..domain.drive_note_merge import (
-    NOTE_EMBED_PER_TICK, NOTE_MERGE_VERSION, NOTE_PAGE, NOTE_STEP_S, NOTE_STUB_HOLD_MAX, NoteView, notes_query_start,
+    NOTE_EMBED_PER_TICK, NOTE_MERGE_VERSION, NOTE_PAGE, NOTE_STEP_S, NOTE_STUB_HOLD_MAX, NoteView, note_view, notes_query_start,
     with_owner_note,
 )
 from ..domain.drive_note_check import NoteCheck
@@ -1396,15 +1395,15 @@ class DriveIndexingService:
         by_item: Dict[str, DriveNote] = {}
         tag = tick.connection.ref_tag if tick.connection is not None else ""
         for note in found:   # lowest note id first, as `find_bound`; the key is exact, and checked anyway
-            item_id = keys.get(item_binding_key(_note_identity(note))) if _note_identity(note) else None
-            if item_id is not None and _note_on_connection(note, tag):
+            item_id = keys.get(item_binding_key(binding_identity(note))) if binding_identity(note) else None
+            if item_id is not None and on_connection(note, tag):
                 by_item.setdefault(item_id, note)
         out: List[DriveIndexRecord] = []
         for rec in cleared:
             note = by_item.get(rec.item_id)
             if note is not None:
                 note = await self._reactivated(handle, note, tick)
-                view = _bound_view(note)
+                view = note_view(note, ref_tag=tag)
                 if view is not None:
                     rec = with_owner_note(rec, view)
                     if snapshot_stale(note.snapshot, rec):   # notes RFC §7.5: refreshed from the record at the round end
@@ -1536,18 +1535,18 @@ class DriveIndexingService:
         snapshots: Dict[str, DriveNote] = {}   # the active notes of the page by id, for the §7.5 snapshot check
         tick = _TICK_NOTES.get()
         tag = tick.connection.ref_tag if tick is not None and tick.connection is not None else ""
-        identities = sorted({i for i in (_note_identity(n) for n in page) if i})
+        identities = sorted({i for i in (binding_identity(n) for n in page) if i})
         by_identity = await self._repo.records_by_identity(handle.scope, identities) if identities else {}
         recs = {rec.item_id: rec for rec in by_identity.values()}
         bound: Dict[str, str] = {}   # note id -> item id, for the notes bound to an item of this connection
         for index, note in enumerate(page):
             if note.erase_pending:
                 stubs.append((index, note))
-            rec = by_identity.get(_note_identity(note))
-            if rec is None or not _note_on_connection(note, tag):
+            rec = by_identity.get(binding_identity(note))
+            if rec is None or not on_connection(note, tag):
                 continue   # bound to an item this connection does not index, or bound on another connection (D16)
             bound[note.note_id] = rec.item_id
-            view = _bound_view(note)
+            view = note_view(note, ref_tag=tag)
             if view is not None:
                 snapshots[note.note_id] = note
             per_item.setdefault(rec.item_id, []).append((note.note_id, view))
@@ -1603,6 +1602,7 @@ class DriveIndexingService:
         tick = _TICK_NOTES.get()
         if tick is None:
             return
+        tag = tick.connection.ref_tag if tick.connection is not None else ""
         for note in page:
             if note.erase_pending or not (note.state == NoteState.ARCHIVED.value or (
                     note.state == NoteState.CLEARED.value and note.archived_at is not None)):
@@ -1612,7 +1612,7 @@ class DriveIndexingService:
             if item_id is None or rec is None or rec.state == RecordState.DELETING:
                 continue
             revived = await self._reactivated(handle, note, tick)
-            view = _bound_view(revived)
+            view = note_view(revived, ref_tag=tag)
             per_item[item_id] = [(nid, view if nid == note.note_id else v) for nid, v in per_item.get(item_id, [])]
             if view is not None:
                 snapshots[note.note_id] = revived
@@ -1810,7 +1810,6 @@ class DriveIndexingService:
         if _transcribing():
             # after the enrichment phase (inside the due loop) whatever class it stopped at, before the upgrade pass
             await self._transcript_extract(handle, budget, summary, models)
-            state = await self._reattached(handle, state, now)
         if worked and _upgrade_waiting(state):
             state = replace(state, upgrade_found_stale=False)   # the work may have cleared what the pass left
         if stopped_class is None:
@@ -4247,31 +4246,6 @@ class DriveIndexingService:
         transcription.extract_progressed = (transcription.commits > commits or any(
             out.get(k) for k in ("windows_extracted", "windows_uploaded", "windows_submitted")))
 
-    async def _reattached(self, handle: DriveHandle, state: DriveSyncState, now: datetime) -> DriveSyncState:
-        """I7 (MULTI_DRIVE_RFC §10, E22): `transcripts_reattached_at` is stamped once the transcript stage finished its
-        first pass over the connection's recordings after this state was created: the first enumeration is done (every
-        recording has its record) and no recording waits in the stage's queue (`ready`: each one met its stored
-        transcript, paying nothing, or started a job). Only then may the user's orphan sweep run (`_sweep_allowed`)."""
-        if state.transcripts_reattached_at is not None or not state.initial_enumeration_done:
-            return state
-        if await self._repo.transcript_queue(handle.scope, 1):
-            return state
-        logger.info(f"[DriveIndex] stored transcripts re-attached for {_who(handle)}: the orphan sweep may run (I7)")
-        return replace(state, transcripts_reattached_at=now)
-
-    async def _sweep_allowed(self, handle: DriveHandle) -> bool:
-        """I7: the user's orphan sweep of stored transcripts runs only when every ACTIVE connection of the user has its
-        `transcripts_reattached_at` stamped (as stored): after a purge no record carries a transcript key until the
-        stage re-attaches it. A connection with transcription off never re-attaches, so its user is not swept (the store
-        keeps more and never pays twice)."""
-        for connection in await self._connections.list_for_user(handle.user_id):
-            if connection.state is not ConnectionState.ACTIVE:
-                continue
-            state = await self._repo.get_sync_state(connection.scope)
-            if state is None or state.transcripts_reattached_at is None:
-                return False
-        return True
-
     async def _extraction_ready(self, handle: DriveHandle, models: _Models) -> bool:
         """The user has extraction work the stage can do now (G16): the `drive_transcriber` agent is not backed off,
         and a job is in flight (`working`: its money is reserved already) or a recording is `ready` while the month's
@@ -4863,10 +4837,6 @@ class _TickHost:
     def agent_available(self, agent: str) -> bool:
         return self._models.agent_available(agent, self._svc._clock())
 
-    async def sweep_allowed(self) -> bool:
-        """I7: every ACTIVE connection of the user re-attached its stored transcripts (`_sweep_allowed`)."""
-        return await self._svc._sweep_allowed(self.handle)
-
     async def agent_outage(self, agent: str) -> None:
         """The agent's backoff, written with the tick's state at once (a killed tick keeps it, as the reader's)."""
         self._models.agent_outage(agent, self._svc._clock())
@@ -4984,51 +4954,6 @@ def _note_copy_stale(rec: DriveIndexRecord) -> bool:
     if about_keys_capped(rec)[0] != rec.about_keys:
         return True
     return card_eligible(rec) and rec.has_card and rec.card_hash != card_hash(rec) and rec.due_at is None
-
-
-def _note_identity(note: DriveNote) -> str:
-    """The item identity the note binds to: its binding's, else the rest of its `i:` match key (an erase stub has no
-    binding: the step clears its record copy through the key); "" when neither holds one. The rule of
-    `drive_note.binding_identity` (part D), kept here so the tick reads the identity whatever the binding's version."""
-    binding_identity = getattr(note.binding, "identity", "") if note.binding is not None else ""
-    if binding_identity:
-        return str(binding_identity)
-    for key in note.match_keys:
-        if key.startswith(BINDING_KEY_PREFIX) and len(key) > len(BINDING_KEY_PREFIX):
-            return key[len(BINDING_KEY_PREFIX):]
-    return ""
-
-
-def _note_on_connection(note: DriveNote, ref_tag: str) -> bool:
-    """The note is bound on the connection whose ref tag is `ref_tag` (MULTI_DRIVE_RFC §9): its binding's tag, else the
-    tag of its `r:{tag}:{item_id}` match key (an untagged `r:{item_id}` key of before the connections is none). False
-    for an empty tag. The rule of `drive_note.on_connection` (part D)."""
-    if not ref_tag:
-        return False
-    bound_tag = getattr(note.binding, "ref_tag", "") if note.binding is not None else ""
-    if bound_tag:
-        return bound_tag == ref_tag
-    item_id = note.binding.item_id if note.binding is not None else None
-    for key in note.match_keys:
-        if not key.startswith(REF_KEY_PREFIX):
-            continue
-        tag, sep, rest = key[len(REF_KEY_PREFIX):].partition(":")
-        if sep and rest and is_valid_tag(tag) and (item_id is None or rest == item_id):
-            return tag == ref_tag
-    return False
-
-
-def _bound_view(note: Optional[DriveNote]) -> Optional[NoteView]:
-    """The view to merge for a note already bound to the record by identity, or None to clear the copy: only an `active`
-    note (not an erase stub) with content gives one (D9: an archived note is never merged). The drive check of the
-    single-drive merge is the identity match itself (MULTI_DRIVE_RFC §7.2: an identity names one item on one drive)."""
-    if note is None or note.erase_pending or note.state != NoteState.ACTIVE.value:
-        return None
-    content = note.content
-    if content.is_empty:
-        return None
-    return NoteView(note_id=note.note_id, version=note.current_version, text=content.text,
-                    doc_type=content.doc_type, life_areas=tuple(content.life_areas))
 
 
 def _fold_tick_notes(notes: _TickNotes, state: DriveSyncState) -> DriveSyncState:

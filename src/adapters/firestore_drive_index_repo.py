@@ -297,7 +297,6 @@ _STATE_READERS: Dict[str, Callable[[Any], Any]] = {
     "notes_merge_version": int,
     # owner notes (DRIVE_FILE_NOTES_RFC §3.4, §7.4)
     "note_checks": _note_checks, "notes_audited_at": _dt, "notes_audit_after_at": _dt, "notes_audit_after_id": str,
-    "transcripts_reattached_at": _dt,   # MULTI_DRIVE_RFC I7 (slice 1b)
 }
 
 
@@ -851,8 +850,8 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
         await _release(self._db.transaction())
 
     async def list_sync_scopes(self) -> List[ConnectionScope]:
-        """Every state document's (`user_id`, id); one without a `user_id` (written before the field was stored, or a
-        pre-cut-over per-user state whose id is no connection id) is skipped with an ERROR."""
+        """Every state document's (`user_id`, id); a document that names no valid connection (no `user_id`, or an id
+        that is no connection id) is skipped with an ERROR."""
         scopes: List[ConnectionScope] = []
         async for snap in self._states.select(["user_id"]).stream():
             user_id = (snap.to_dict() or {}).get("user_id")
