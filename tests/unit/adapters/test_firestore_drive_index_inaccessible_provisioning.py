@@ -8,6 +8,7 @@ import pytest
 
 from tests.unit.adapters.firestore_drive_eval_fakes import EvalDb, make_eval_repo
 from tests.unit.adapters.firestore_drive_fakes import RECS, TS_MIN, Db, executed, make_repo
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -26,7 +27,7 @@ def repo(mock_env_config):
 
 async def test_the_query_and_its_index(repo):
     store, db = repo
-    await store.inaccessible_records("u", 7)
+    await store.inaccessible_records(U_SCOPE, 7)
     ops = [op for op in executed(db, RECS)[-1] if op[0] != "select"]
     assert ops == [("where", "user_id", "==", "u"), ("where", "inaccessible_since", ">=", TS_MIN),
                    ("order_by", "inaccessible_since", "ASCENDING"), ("limit", 7)]

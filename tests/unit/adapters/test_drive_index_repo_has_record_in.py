@@ -6,6 +6,7 @@ import pytest
 from google.cloud.firestore_v1.field_path import FieldPath
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveIndexRecord, Priority, RecordState
 from tests.unit.adapters.firestore_drive_fakes import RECS, Db, executed, make_repo, rec_doc, snap
 from tests.unit.services.drive_index_fakes import U_SCOPE
@@ -18,13 +19,13 @@ async def test_in_memory_matches_state_and_priority_of_the_user_only():
     await repo.upsert_records([
         DriveIndexRecord(user_id="u", connection_id="u", item_id="a", state=RecordState.UNRESOLVED, due_at=NOW, priority=Priority.RETRY),
         DriveIndexRecord(user_id="u", connection_id="u", item_id="b", state=RecordState.PENDING, due_at=NOW, priority=Priority.CASCADE),
-        DriveIndexRecord(user_id="x", item_id="c", state=RecordState.UNRESOLVED, due_at=NOW,
+        DriveIndexRecord(user_id="x", connection_id="x", item_id="c", state=RecordState.UNRESOLVED, due_at=NOW,
                          priority=Priority.CASCADE),
         DriveIndexRecord(user_id="u", connection_id="u", item_id="d", state=RecordState.UNRESOLVED),   # parked: no priority
     ])
     assert not await repo.has_record_in(U_SCOPE, RecordState.UNRESOLVED, Priority.CASCADE)
     assert await repo.has_record_in(U_SCOPE, RecordState.UNRESOLVED, Priority.RETRY)
-    assert await repo.has_record_in("x", RecordState.UNRESOLVED, Priority.CASCADE)
+    assert await repo.has_record_in(ConnectionScope(user_id="x", connection_id="x"), RecordState.UNRESOLVED, Priority.CASCADE)
 
 
 @pytest.fixture

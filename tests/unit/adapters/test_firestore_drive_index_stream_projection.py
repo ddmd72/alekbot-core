@@ -8,6 +8,7 @@ from src.adapters.firestore_drive_index_repo import STREAM_FIELDS
 
 from tests.unit.adapters.firestore_drive_chunk_fakes import CHUNKS, ChunkDb, make_chunk_repo
 from tests.unit.adapters.firestore_drive_fakes import executed
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 
 @pytest.fixture
@@ -26,14 +27,14 @@ def test_the_stream_fields_hold_neither_text_nor_terms():
 
 
 async def test_the_chunk_knn_does_not_read_the_terms(repo, db):
-    await repo.find_nearest_chunks("u", [1.0, 0.0], 300)
+    await repo.find_nearest_chunks(U_SCOPE, [1.0, 0.0], 300)
     (ops,) = executed(db, CHUNKS)
     (select,) = [op for op in ops if op[0] == "select"]
     assert "content_terms" not in select[1]
 
 
 async def test_the_term_stream_does_not_read_the_terms(repo, db):
-    await repo.find_chunks_by_term("u", "20240012", 100)
+    await repo.find_chunks_by_term(U_SCOPE, "20240012", 100)
     (ops,) = executed(db, CHUNKS)
     (select,) = [op for op in ops if op[0] == "select"]
     assert "content_terms" not in select[1]
