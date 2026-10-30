@@ -138,11 +138,13 @@ def test_review_payload_is_evaluated():
     assert keys.keys == {"task_type", "user_id", "account_id", "mode"}
 
 
-def test_tick_payload_is_evaluated_with_and_without_a_nudge():
-    plain = _site("q.enqueue_worker_task(DRIVE_SYNC_TASK, tick_payload(u))\n", 1, "drive_sync")
-    nudged = _site("q.enqueue_worker_task(DRIVE_SYNC_TASK, tick_payload(u, n))\n", 1, "drive_sync")
-    assert plain.keys == {"task_type", "user_id"}
-    assert nudged.keys == {"task_type", "user_id", "nudge", "nudge.mutation_id", "nudge.item_ids", "nudge.attempt"}
+def test_scope_payload_is_evaluated_with_and_without_a_nudge():
+    # MULTI_DRIVE_RFC §8: the drive_sync payload is per connection, {user_id, connection_id} (+ the nudge)
+    plain = _site("q.enqueue_worker_task(DRIVE_SYNC_TASK, scope_payload(s))\n", 1, "drive_sync")
+    nudged = _site("q.enqueue_worker_task(DRIVE_SYNC_TASK, scope_payload(s, n))\n", 1, "drive_sync")
+    assert plain.keys == {"task_type", "user_id", "connection_id"}
+    assert nudged.keys == {"task_type", "user_id", "connection_id", "nudge", "nudge.mutation_id", "nudge.item_ids",
+                           "nudge.attempt"}
 
 
 def test_to_payload_of_a_choice_is_the_model_fields():
