@@ -21,6 +21,7 @@ from src.adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from src.agents.drive_agent import DriveAgent
 from src.domain import drive_tool_texts as tt
 from src.domain.agent import AgentConfig, AgentStatus
+from src.domain.drive_handle import DriveHandle
 from src.domain.user_drive import MOVE_NEEDS_TARGET, DriveItem, DriveItemNotFoundError
 from src.infrastructure.agent_config import DRIVE
 from src.infrastructure.agent_coordinator import AgentCoordinator
@@ -30,6 +31,7 @@ from src.infrastructure.drive_operations import DriveOperations
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from src.services.user_notification_service import UserNotificationService
+from tests.support.drive_service_connections import seeded_connections
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import FakeLanguageService, FakeNotificationState, RecordingChannelFactory
 from tests.support.gcs_fake import FakeGcs
@@ -69,12 +71,12 @@ REFUSED_MOVE = {"file_ref": "drive:<id>"}
 class TreeDrive(ScriptedDrive):
     """`ScriptedDrive` plus the two reads `UserDriveService` also makes (it leaves them unimplemented)."""
 
-    async def list_children(self, user_id: str, folder_id: str) -> List[DriveItem]:
+    async def list_children(self, handle: DriveHandle, folder_id: str) -> List[DriveItem]:
         self._call("list_children", item_id=folder_id)
         self._folder(folder_id)
         return [self._item(n) for n in self.children(folder_id)]
 
-    async def download(self, user_id: str, item_id: str) -> bytes:
+    async def download(self, handle: DriveHandle, item_id: str) -> bytes:
         self._call("download", item_id=item_id)
         node = self.nodes.get(item_id)
         if node is None or node.is_folder:
@@ -102,6 +104,7 @@ def appended(ref: str) -> dict:
 class World:
     def __init__(self) -> None:
         self.drive = TreeDrive()
+        connections = seeded_connections(USER)   # the user's one primary connection, tag a1 (MULTI_DRIVE_RFC §4.4)
         self.gcs = FakeGcs(buckets={MEDIA_BUCKET: "plain"})
         self.storage = GcsFileStorageAdapter(MEDIA_BUCKET)
         self.storage._client = self.gcs.client()
@@ -109,8 +112,9 @@ class World:
         self.state = FakeNotificationState(NOW)
         notifier = UserNotificationService(self.state, self.channels, coordinator=None, notification_sla={})
         self.operations = DriveOperations(
-            conversion_service=FileConversionService(storage=self.storage, drive=self.drive), notification=notifier,
-            drive_service=UserDriveService(self.drive), localization=FileLocalizationAdapter(),
+            conversion_service=FileConversionService(storage=self.storage, drive=self.drive, connections=connections),
+            notification=notifier, drive_service=UserDriveService(self.drive, connections),
+            localization=FileLocalizationAdapter(),
             language_service=FakeLanguageService(),
         )
         registry = AgentRegistry()
