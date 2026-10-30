@@ -3,7 +3,10 @@
 After the credential cutover the new store starts empty: every integration reads "not connected" until the user
 consents once. This file drives that consent through the real chain and asserts what the feature stores hold after it.
 
-Real: the oauth blueprint's callbacks, `GoogleOAuthService`, `FirestoreCredentialStore` + `AesGcmTestCipher`,
+Real: the oauth blueprint's generic connect routes (`/auth/connect/<kind>`, `/auth/connect/callback`, MULTI_DRIVE_RFC
+§5.2) over the real `SessionService`, `OAuthConnectService` with its flows in `FirestoreEphemeralStore`, the Google and
+Microsoft edges and the activations (`build_connect_activations`: the drive id read by `OneDriveAdapter.read_drive_id`,
+the To Do setup task); R1's `consented` is a spec'd recorder. `FirestoreCredentialStore` + `AesGcmTestCipher`,
 `FirestoreIndexedEmailRepository`, `FirestoreTaskConfigRepository`, `FirestoreTaskSearchIndex`, `TaskSetupService` (its task
 delivered through the real `WorkerHandler` dispatch),
 `OneDriveAdapter.connection`, `DriveIndexingService` over `InMemoryDriveIndexRepository`, `GcpTaskQueue` over
@@ -27,7 +30,8 @@ Outcomes by integration:
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, List
-from unittest.mock import Mock
+from unittest.mock import Mock, create_autospec
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from quart import Quart
@@ -37,13 +41,20 @@ from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepos
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.adapters.firestore_task_search_index import FirestoreTaskSearchIndex
 from src.adapters.gcp_task_queue import GcpTaskQueue
+from src.adapters.google.google_oauth_provider import GoogleOAuthProvider
 from src.adapters.microsoft import OneDriveAdapter
+from src.adapters.microsoft.microsoft_oauth_provider import MicrosoftOAuthProvider
+from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
+from src.domain.billing import BillingAccount
 from src.domain.drive_index_params import ACCESS_LOSS_TTL
 from src.domain.email import IndexingState
 from src.domain.task import TaskSubscriptionConfig, TaskUserConfig
+from src.domain.user import UserProfile
 from src.ports.task_lifecycle_port import TaskLifecyclePort
-from src.services.google_oauth_service import GMAIL_SCOPES, GoogleOAuthService
 from src.handlers.worker_handler import WorkerHandler
+from src.services.credential_revocation_service import CredentialRevocationService
+from src.services.integration_reconnect_service import IntegrationReconnectService
+from src.services.session_service import SessionService
 from src.services.task_setup_service import TaskSetupService
 from src.web.oauth_app import create_oauth_blueprint
 from tests.support import http_boundary_fake
@@ -64,6 +75,13 @@ ENV = SimpleNamespace(
     credentials_collection="eval_credentials", domain_email_facts_collection="eval_email_facts",
     email_indexing_state_collection="eval_email_state", task_config_collection="eval_task_config",
     task_search_index_collection="eval_task_search")
+SECRET = "session-secret-for-tests-0123456789abcdef"
+REDIRECT = "https://service.example/auth/connect/callback"
+GRANTED = {   # each realm's token endpoint lists the granted scopes
+    "gmail": "https://www.googleapis.com/auth/gmail.readonly openid https://www.googleapis.com/auth/userinfo.email",
+    "microsoft_todo": "Tasks.ReadWrite offline_access User.Read",
+    "microsoft_onedrive": "Files.ReadWrite.AppFolder offline_access User.Read",
+}
 INDEXED_THROUGH = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
 OLDEST = datetime(2026, 1, 3, 8, 0, tzinfo=timezone.utc)
 
@@ -123,24 +141,31 @@ class World:
             lifecycle=self.graph, task_config=self.task_config, tasks_provider=None, oauth_credentials=self.store,
             task_search_index=self.search_index, task_queue=self.queue,
             notification_url_base="https://svc.example.test", connector=ConnectorRegistry().get("microsoft_todo"))
-        session_service = Mock()
-        session_service.verify_access_token = Mock(return_value={"sub": USER})
+        self.sessions = SessionService(secret_key=SECRET, access_token_ttl=3600, refresh_token_ttl=3600)
+        registry = ConnectorRegistry(edges={"google": GoogleOAuthProvider("cid", "csecret"),
+                                            "microsoft": MicrosoftOAuthProvider("ms-cid", "ms-csecret")})
+        self.reconnect = create_autospec(IntegrationReconnectService, instance=True)
+        drive = OneDriveAdapter(self.store, "ms-cid", "ms-csecret", connector=registry.get("microsoft_onedrive"))
+        connect_service = build_oauth_connect_service(
+            self.db, SimpleNamespace(oauth_flows_collection="eval_oauth_flows"), connectors=registry,
+            credentials=self.store, cipher=AesGcmTestCipher(), digest_key=b"k" * 32,
+            revocation=CredentialRevocationService(self.store, registry.edges()),
+            activations=build_connect_activations(
+                credentials=self.store, reconnect=self.reconnect, todo_connector=registry.get("microsoft_todo"),
+                task_queue=self.queue, read_drive_id=drive.read_drive_id),
+            redirect_uri=REDIRECT)
         self.app = Quart("test_reconnect_does_not_reindex")
         self.app.register_blueprint(create_oauth_blueprint(
-            auth_service=Mock(), session_service=session_service, auth_registry=Mock(),
-            auth_config=SimpleNamespace(oauth_redirect_uri="https://example.test/auth/callback",
-                                        gmail_oauth_redirect_uri="https://example.test/auth/connect-gmail/callback"),
-            gmail_oauth_service=GoogleOAuthService("cid", "csecret", scopes=GMAIL_SCOPES),
-            oauth_credentials_port=self.store, ms_todo_client_id="ms-cid", ms_todo_client_secret="ms-csecret",
-            ms_todo_redirect_uri="https://example.test/auth/connect-microsoft-todo/callback",
-            onedrive_redirect_uri="https://example.test/auth/connect-onedrive/callback",
-            task_queue=self.queue, connectors=ConnectorRegistry()))
-        self.http.route("POST", GOOGLE_TOKEN, body={"access_token": "at-g", "refresh_token": "rt-g",
-                                                    "expires_in": 3600,  # Google always lists the granted scopes
-                                                    "scope": "https://www.googleapis.com/auth/gmail.readonly openid "
-                                                             "https://www.googleapis.com/auth/userinfo.email"})
-        self.http.route("POST", MS_TOKEN, body={"access_token": "at-m", "refresh_token": "rt-m", "expires_in": 3600,
-                                                "scope": "Files.ReadWrite.AppFolder offline_access User.Read"})
+            auth_service=Mock(), session_service=self.sessions, auth_registry=Mock(),
+            auth_config=SimpleNamespace(oauth_redirect_uri="https://service.example/auth/callback"),
+            connect_service=connect_service, connectors=registry))
+        self._kind = "gmail"
+        def token(tag: str) -> tuple:
+            return 200, {"access_token": f"at-{tag}", "refresh_token": f"rt-{tag}", "expires_in": 3600,
+                         "scope": GRANTED[self._kind]}
+
+        self.http.route("POST", GOOGLE_TOKEN, handler=lambda r: token("g"))
+        self.http.route("POST", MS_TOKEN, handler=lambda r: token("m"))
         self.http.route("GET", USERINFO, body={"sub": "sub-g", "email": "user@example.com"})
         self.http.route("GET", GRAPH_ME, body={"id": "sub-m", "mail": "user@example.test"})
         self.approot("d1")
@@ -154,11 +179,16 @@ class World:
     def docs(self, name: str) -> dict:
         return {k: dict(v) for k, v in self.db.collection(name).docs.items()}
 
-    async def consent(self, path: str, state_cookie: str, user_cookie: str):
+    async def consent(self, kind: str):
+        """The user's connect of `kind` through the generic routes: the start, then the provider's callback."""
+        self._kind = kind
+        session = self.sessions.create_access_token(UserProfile(user_id=USER, account_id="acct-1"),
+                                                    BillingAccount(account_id="acct-1"))
         async with self.app.test_client() as client:
-            client.set_cookie("localhost", state_cookie, "st-1")
-            client.set_cookie("localhost", user_cookie, USER)
-            return await client.get(f"{path}?code=c-1&state=st-1")
+            client.set_cookie("localhost", "access_token", session)
+            start = await client.get(f"/auth/connect/{kind}")
+            state = parse_qs(urlparse(start.headers["Location"]).query)["state"][0]
+            return await client.get(f"/auth/connect/callback?state={state}&code=c-1")
 
 
 @pytest.fixture
@@ -176,9 +206,9 @@ async def test_gmail_a_consent_writes_only_the_credential_and_enqueues_no_indexi
     emails_before = world.docs(ENV.domain_email_facts_collection)
     assert await has_kind(world.store, USER, "gmail") is False
 
-    resp = await world.consent("/auth/connect-gmail/callback", "gmail_oauth_state", "gmail_connect_user_id")
+    resp = await world.consent("gmail")
 
-    assert resp.headers["Location"] == "/cabinet?gmail_connected=1"
+    assert resp.headers["Location"] == "/cabinet?connected=gmail"
     assert [d["kind"] for d in world.docs(ENV.credentials_collection).values()] == ["gmail"]
     assert not [b for b in world.bodies() if b["task_type"] in ("email_indexing", "start_email_indexing")]
     state = await world.email.get_indexing_state(USER, "gmail")
@@ -220,7 +250,7 @@ class Drive:
 
 
 async def _onedrive_consent(world: World):
-    return await world.consent("/auth/connect-onedrive/callback", "drive_oauth_state", "drive_connect_user_id")
+    return await world.consent("microsoft_onedrive")
 
 
 async def test_drive_no_credential_records_the_loss_and_keeps_the_index(world):
@@ -243,7 +273,7 @@ async def test_drive_same_drive_consent_resumes_from_the_stored_cursor(world):
     assert (await drive.w.repo.get_sync_state(USER)).access_lost_at is not None
 
     resp = await _onedrive_consent(world)
-    assert resp.headers["Location"] == "/cabinet?drive_connected=1"
+    assert resp.headers["Location"] == "/cabinet?connected=microsoft_onedrive"
     assert (await one(world.store, USER, "microsoft_onedrive")).drive_id == "d1"
     result = await drive.w.tick()
 
@@ -307,9 +337,8 @@ async def test_drive_a_failing_decrypt_raises_and_records_no_loss(world):
 
 async def _todo_consent_and_setup(world: World):
     """The consent, then the task it enqueued, delivered through the real WorkerHandler dispatch."""
-    resp = await world.consent("/auth/connect-microsoft-todo/callback", "microsoft_todo_oauth_state",
-                               "microsoft_todo_connect_user_id")
-    assert resp.headers["Location"] == "/cabinet?microsoft_todo_connected=1"
+    resp = await world.consent("microsoft_todo")
+    assert resp.headers["Location"] == "/cabinet?connected=microsoft_todo"
     setups = [b for b in world.bodies() if b["task_type"] == "setup_microsoft_todo"]
     assert setups == [{"task_type": "setup_microsoft_todo", "user_id": USER}]
     worker = WorkerHandler(agent_worker_handler=None, email_indexing_service=None, notification_service=None,
