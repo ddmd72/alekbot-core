@@ -8,14 +8,15 @@ import pytest
 from google.api_core.datetime_helpers import DatetimeWithNanoseconds
 
 from src.adapters.firestore_drive_index_repo import (
-    CHUNK_FIELDS, CHUNK_VECTOR, RECORD_FIELDS, STREAM_FIELDS, chunk_from_doc, chunk_key, chunk_to_doc, record_from_doc,
+    CHUNK_FIELDS, CHUNK_VECTOR, RECORD_FIELDS, STREAM_FIELDS, chunk_from_doc, chunk_to_doc, record_from_doc,
     record_to_doc, state_from_doc, state_to_doc,
 )
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_enrichment import DriveProfile, KeyValue, PhotoObject, ProfileDate, ProfileEntity
-from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState
+from src.domain.drive_index import DriveChunk, DriveIndexRecord, DriveSyncState, chunk_doc_id
 
 from tests.unit.adapters.firestore_drive_chunk_fakes import ChunkDb, make_chunk_repo
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 T = datetime(2026, 10, 13, 9, 30, 15, 250000, tzinfo=timezone.utc)
 
@@ -128,7 +129,7 @@ class TestChunkKeys:
         assert "word_keys" not in STREAM_FIELDS and "keys_version" not in STREAM_FIELDS
 
 
-KEYED = DriveChunk("u", "a", 1, 0, "text", 0, 4, "pdf", ("1250",), ("w:text",), 1)
+KEYED = DriveChunk("u", "a", 1, 0, "text", 0, 4, "pdf", ("1250",), ("w:text",), 1, connection_id="u")
 
 
 class TestReadParity:
@@ -136,18 +137,18 @@ class TestReadParity:
         memory = InMemoryDriveIndexRepository()
         await memory.write_chunks([KEYED], [[0.5, 0.5]])
         db = ChunkDb()
-        db.stored[chunk_key("u", "a", 1, 0)] = chunk_to_doc(KEYED)
+        db.stored[chunk_doc_id(U_SCOPE, "a", 1, 0)] = chunk_to_doc(KEYED)
         firestore = make_chunk_repo(db, mock_env_config)
-        assert await memory.get_chunks("u", "a", 1, [0]) == await firestore.get_chunks("u", "a", 1, [0]) == [KEYED]
+        assert await memory.get_chunks(U_SCOPE, "a", 1, [0]) == await firestore.get_chunks(U_SCOPE, "a", 1, [0]) == [KEYED]
 
     async def test_terms_false_leaves_the_keys_out_in_both(self, mock_env_config):
         memory = InMemoryDriveIndexRepository()
         await memory.write_chunks([KEYED], [[0.5, 0.5]])
-        ((c, _),) = await memory.get_chunks_with_vectors("u", "a", 1, [0], terms=False)
+        ((c, _),) = await memory.get_chunks_with_vectors(U_SCOPE, "a", 1, [0], terms=False)
         assert c == replace(KEYED, content_terms=(), word_keys=())
         db = ChunkDb()
-        db.stored[chunk_key("u", "a", 1, 0)] = {**chunk_to_doc(KEYED), CHUNK_VECTOR: [0.5, 0.5]}
-        await make_chunk_repo(db, mock_env_config).get_chunks_with_vectors("u", "a", 1, [0], terms=False)
+        db.stored[chunk_doc_id(U_SCOPE, "a", 1, 0)] = {**chunk_to_doc(KEYED), CHUNK_VECTOR: [0.5, 0.5]}
+        await make_chunk_repo(db, mock_env_config).get_chunks_with_vectors(U_SCOPE, "a", 1, [0], terms=False)
         ((_, paths),) = db.get_all_calls
         assert "word_keys" not in paths and "content_terms" not in paths and "keys_version" in paths
 
