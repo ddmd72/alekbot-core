@@ -139,7 +139,7 @@ class TestCursorBoundToDriveAndRoot:
         # The restart page names drive B, so the tick's per-page drive check can purge drive A.
         again, session = await _page(adapter, APPROOT_OTHER_DRIVE, pages[0], exc.value.restart_cursor)
         assert session.get.call_args_list[-1].args[0] == f"{_GRAPH}{_DELTA_START}"
-        assert again.drive_id == "DRIVE-B" and again.full_enumeration is True
+        assert again.drive_identity == "microsoft_onedrive:DRIVE-B" and again.full_enumeration is True
 
     async def test_cursor_from_a_recreated_app_folder_restarts(self):
         pages = _load("initial_enumeration.json")["pages"]
@@ -171,7 +171,7 @@ class TestCursorBoundToDriveAndRoot:
         legacy = json.dumps({"url": f"{_GRAPH}/me/drive/special/approot/delta?token=prev", "full": False})
         result, session = await _page(adapter, APPROOT_OTHER_DRIVE, pages[0], legacy)   # unknown: no mismatch
         assert session.get.call_args_list[-1].args[0] == f"{_GRAPH}/me/drive/special/approot/delta?token=prev"
-        assert result.drive_id == "DRIVE-B"
+        assert result.drive_identity == "microsoft_onedrive:DRIVE-B"
         assert json.loads(result.cursor)["drive_id"] == "DRIVE-B"       # bound from now on
 
     @pytest.mark.parametrize("binding", [{"drive_id": 1, "root_id": ROOT_ID}, {"drive_id": DRIVE_ID, "root_id": []}])
