@@ -54,18 +54,18 @@ async def test_every_record_query_has_a_declared_index(repo, db):
     await repo.children(U_SCOPE, "p", "a", 5)
     await repo.records_page(U_SCOPE, "a", 5)
     await repo.records_seen_before(U_SCOPE, 2, 5)
-    await repo.card_capped("u", 5)
-    await repo.find_by_name_keys("u", ["w:a"], 5)
-    await repo.find_by_name_keys("u", ["w:a"], 5, kind="pdf")
-    await repo.filter_records("u", None, None, None, 8)
-    await repo.filter_records("u", "pdf", NOW, NOW, 8)
-    await repo.find_nearest_cards("u", [1.0], 5)
-    await repo.find_nearest_cards("u", [1.0], 5, kind="pdf")
+    await repo.card_capped(U_SCOPE, 5)
+    await repo.find_by_name_keys(U_SCOPE, ["w:a"], 5)
+    await repo.find_by_name_keys(U_SCOPE, ["w:a"], 5, kind="pdf")
+    await repo.filter_records(U_SCOPE, None, None, None, 8)
+    await repo.filter_records(U_SCOPE, "pdf", NOW, NOW, 8)
+    await repo.find_nearest_cards(U_SCOPE, [1.0], 5)
+    await repo.find_nearest_cards(U_SCOPE, [1.0], 5, kind="pdf")
     await repo.count_by_state(U_SCOPE)
-    await repo.delete_user_records("u", 5)
+    await repo.delete_user_records(U_SCOPE, 5)
     db.cols[RECS].respond = lambda ops: ([snap(rec_doc("x", card_rank=2))]
                                          if ("order_by", "card_rank", "DESCENDING") in ops else [])
-    await repo.lowest_ranked_carded("u")   # top rank, dated (empty), undated
+    await repo.lowest_ranked_carded(U_SCOPE)   # top rank, dated (empty), undated
     queries = executed(db)
     assert len(queries) == 27   # due_records 5, count_by_state 7, lowest_ranked_carded 3, the rest 1 each
     declared = _declared_indexes()
