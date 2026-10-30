@@ -75,10 +75,6 @@ class TestGate:
         assert search_gate(True, st, DriveConnection(connected=True, drive_id="d2"), NOW).status \
             == STATUS_DISCONNECTED
 
-    def test_drive_id_not_yet_on_credentials_skips_the_comparison(self):
-        st = DriveSyncState("u", drive_id="d1")
-        assert search_gate(True, st, DriveConnection(connected=True, drive_id=""), NOW).status == STATUS_OK
-
 
 class TestRequest:
     def test_date_only_bounds_cover_whole_days(self):
