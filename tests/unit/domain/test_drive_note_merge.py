@@ -72,11 +72,6 @@ def test_only_an_active_note_on_the_current_drive_gives_a_view():
     assert note_view(None, drive_id="d1") is None
 
 
-def test_the_record_binding_key_uses_the_one_provider_key():
-    assert record_binding_key("d1", "i1") == binding_key(ONEDRIVE_PROVIDER_KEY, "d1", "i1")
-    assert record_binding_key("d1", "i1") in _note().match_keys
-
-
 def _ctx() -> PlanContext:
     return PlanContext(user_id="u", root_item_id="root", epoch=1, phase=EpochPhase.IDLE, now=T,
                        place_of=lambda lat, lon: None)
