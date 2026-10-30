@@ -115,14 +115,16 @@ class World:
     ids: List[str] = field(default_factory=lambda: ["conn1a2b3c4d", "conn9e8f7a6b"])
     tags: List[str] = field(default_factory=lambda: ["a1", "b2"])
 
-    def run(self, now: datetime = NOW) -> Any:
+    def run(self, now: datetime = NOW, owner: str = "cutover-test") -> Any:
         ids, tags = list(self.ids), list(self.tags)
         return self.script.Cutover(db=self.db, names=self.names, connections=self.store, infra=self.infra,
                                    required_indexes=[], now=now, new_id=lambda: ids.pop(0),
-                                   new_tag=lambda: tags.pop(0), owner="cutover-test")
+                                   new_tag=lambda: tags.pop(0), owner=owner)
 
-    async def go(self, mode: str, *, write: bool = True, now: datetime = NOW) -> Tuple[int, List[str]]:
-        return await self.script.run_cutover(self.run(now), mode, write=write)
+    async def go(self, mode: str, *, write: bool = True, now: datetime = NOW,
+                 owner: str = "cutover-test") -> Tuple[int, List[str]]:
+        """One run of the script; each process has its own lease owner, so a second run passes another `owner`."""
+        return await self.script.run_cutover(self.run(now, owner), mode, write=write)
 
     def col(self, name: str) -> Dict[str, Dict[str, Any]]:
         return self.db.collection(name).docs

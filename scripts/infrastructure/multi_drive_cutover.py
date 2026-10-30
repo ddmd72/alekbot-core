@@ -22,11 +22,16 @@ Modes (exactly one; a dry run when none is given):
                        Idempotent: a re-run writes nothing new (a copy whose target exists is skipped).
   --purge-new          rollback before transcription is back on: deletes only the connection-scoped documents of the
                        index collections, the connections' sync states, the connection documents and the user's drive
-                       settings. Never the transcript store, ledger, mirror roots, notes or usage.
+                       settings. Never the transcript store, ledger, mirror roots, notes or usage. Refused while
+                       transcription work is in flight (the same drain rule as --apply).
   --copy-back          rollback after transcription is back on (run BEFORE --purge-new): transcript heads with their
                        parts and ledger documents under the new keys that the old keys lack, or hold differently, are
                        copied to the old keys (the old revision's own key shapes), so the old revision neither pays for
-                       them again nor meets unknown files in `_Transcripts`.
+                       them again nor meets unknown files in `_Transcripts`; a note written since the cut-over gets
+                       back its old `r:{item}` key.
+                       Both rollback modes stamp `last_used_at` = now on every old-key transcript head (E22 on the
+                       old keys: the old revision's orphan sweep cannot delete a paid transcript before its rebuilt
+                       records carry the key again).
   --cleanup            after acceptance: deletes the old-key heads with their parts, the old ledger, root and
                        initial-build documents, the `r:{item}` note keys, the credentials' `drive_id` and the
                        UserBotConfig drive flags. An old document is deleted only when its new-key twin exists.
@@ -40,7 +45,9 @@ after the resume can never purge the rebuilt index), the connection_id / drive_i
 config/firestore.indexes.json are READY, one OneDrive credential per user with its `drive_id`, and the I6 equality
 checks: every mirror root's and ledger document's `drive_id`, and the drive part of every note's `i:` key, equal the
 credential's `drive_id`; every archive folder document that has a folder on the drive can be re-keyed.
---purge-new, --copy-back and --cleanup check the queue and the two jobs only.
+--copy-back and --cleanup check the queue and the two jobs only; --purge-new also the drain rule.
+A run that crashed mid-purge holds the old lease for 30 minutes (the owner is per process): a re-run before then is
+refused as "lease is held"; wait the 30 minutes, then re-run.
 
 Keys (I6, T-14): every key this script writes is computed by the product's functions (the domain key functions and
 the OneDrive adapter's identity and content-identity functions) from the old documents; the old key shapes are known
@@ -516,7 +523,25 @@ async def user_problems(run: Cutover, user_id: str, creds: Sequence[Credential])
         problems.append(f"{short}: the OneDrive credential lacks its account, account_id or credential_id")
     state = await run.get(n.sync_state, user_id)
     if state is not None and _busy(state, run.now):
-        problems.append(f"{short}: the old sync state's lease is held (a tick runs)")
+        problems.append(f"{short}: the old sync state's lease is held (a tick runs, or a crashed run's lease has "
+                        f"not run out: wait {int(_HOLD.total_seconds() // 60)} minutes)")
+    problems += await in_flight_problems(run, user_id)
+    for conn in await run.connections.list_for_user(user_id):
+        if await run.get(n.sync_state, sync_state_doc_id(conn.scope)) is not None:
+            problems.append(f"{short}: connection {conn.connection_id[:8]} already has a sync state "
+                            f"(the index was rebuilt: never re-run --apply after the resume)")
+    if cred is None or not cred.drive_id:
+        return problems
+    problems += await i6_problems(run, user_id, cred)
+    return problems
+
+
+async def in_flight_problems(run: Cutover, user_id: str) -> List[str]:
+    """The drain rule (RFC §12): no transcript job working or waiting, no open batch, no open reservation, under any
+    key of the user (old or connection-scoped). --apply and --purge-new both refuse otherwise: a purge would book a
+    submitted batch as spend and drop it."""
+    n, short = run.names, user_id[:8]
+    problems: List[str] = []
     records = await run.docs_of(n.records, user_id, ("transcript_state", "connection_id"))
     live = sum(1 for d in records.values() if d.get("transcript_state") in _IN_FLIGHT_STATES)
     if live:
@@ -532,13 +557,6 @@ async def user_problems(run: Cutover, user_id: str, creds: Sequence[Credential])
                     if k.endswith("_reserved_usd") and float(v or 0) > 0)
     if reserved:
         problems.append(f"{short}: {reserved} open reservations")
-    for conn in await run.connections.list_for_user(user_id):
-        if await run.get(n.sync_state, sync_state_doc_id(conn.scope)) is not None:
-            problems.append(f"{short}: connection {conn.connection_id[:8]} already has a sync state "
-                            f"(the index was rebuilt: never re-run --apply after the resume)")
-    if cred is None or not cred.drive_id:
-        return problems
-    problems += await i6_problems(run, user_id, cred)
     return problems
 
 
@@ -786,9 +804,24 @@ async def apply_user(run: Cutover, user_id: str, cred: Optional[Credential], *, 
 
 # -- rollback and cleanup -----------------------------------------------------------------------------------------
 
+async def stamp_old_heads(run: Cutover, user_id: str, counts: Counts, *, write: bool) -> None:
+    """E22's guard on the rollback side: every old-key transcript head gets `last_used_at` = now, so the old
+    revision's orphan sweep (30 days by `last_used_at`, before its rebuilt records carry the keys again) cannot delete a
+    paid transcript before the rebuild re-attaches it. Both rollback modes run it."""
+    n = run.names
+    heads = await run.docs_of(n.transcripts, user_id, ("content_key",))
+    old = sorted(i for i, d in heads.items()
+                 if parse_legacy_content_key(str(d.get("content_key") or ""), run.id_space) is not None)
+    counts.add(f"stamped {n.transcripts}", len(old))
+    if write and old:
+        await run._commit([("update", run.col(n.transcripts).document(i), {"last_used_at": run.now}) for i in old])
+
+
 async def purge_new_user(run: Cutover, user_id: str, *, write: bool) -> Counts:
-    """--purge-new: the connection-scoped index documents, sync states, connections and the drive settings."""
+    """--purge-new: the connection-scoped index documents, sync states, connections and the drive settings; the old-key
+    heads are stamped (`stamp_old_heads`)."""
     n, counts = run.names, Counts()
+    await stamp_old_heads(run, user_id, counts, write=write)
     for conn in await run.connections.list_for_user(user_id):
         for name in n.index_collections():
             ids = await run.connection_index_ids(name, conn.connection_id)
@@ -865,7 +898,34 @@ async def copy_back_user(run: Cutover, cred: Credential, *, write: bool) -> Coun
         counts.add(f"copied back {n.ledger}")
         if write:
             await run.col(n.ledger).document(target).set(data)
+    await untag_notes_back(run, cred, counts, write=write)
+    await stamp_old_heads(run, user_id, counts, write=write)   # after the heads copied back: they are stamped too
     return counts
+
+
+async def untag_notes_back(run: Cutover, cred: Credential, counts: Counts, *, write: bool) -> None:
+    """--copy-back, notes: a note written after the cut-over carries only `r:{tag}:{item}`; the old revision finds a
+    note by `r:{item}`, so that key is added (the tagged one stays for a roll-forward). The item comes from the tagged
+    key of one of the user's connections and must give the note's `i:` key on the credential's drive."""
+    n, user_id = run.names, cred.user_id
+    tags = [c.ref_tag for c in await run.connections.list_for_user(user_id)]
+    for doc_id, doc in sorted((await run.docs_of(n.notes, user_id, ("match_keys",))).items()):
+        keys = list(doc.get("match_keys") or ())
+        binding = {k for k in keys if k.startswith(BINDING_KEY_PREFIX)}
+        for key in keys:
+            for tag in tags:
+                if not key.startswith(f"{REF_KEY_PREFIX}{tag}:"):
+                    continue
+                item_id = key[len(REF_KEY_PREFIX) + len(tag) + 1:]
+                if tagged_ref_key(tag, item_id) != key or legacy_ref_key(item_id) in keys:
+                    continue
+                identity = onedrive_item_identity(cred.drive_id, item_id, run.id_space)
+                if not identity or item_binding_key(identity) not in binding:
+                    counts.add(f"skipped {n.notes} (bound to another drive)")
+                    continue
+                counts.add(f"ref key added back {n.notes}")
+                if write:
+                    await run.col(n.notes).document(doc_id).update({"match_keys": ArrayUnion([legacy_ref_key(item_id)])})
 
 
 async def cleanup_user(run: Cutover, cred: Credential, *, write: bool) -> Counts:
@@ -954,6 +1014,9 @@ async def run_cutover(run: Cutover, mode: str, *, write: bool,
             problems += await user_problems(run, user_id, creds.get(user_id, []))
     else:
         problems = await infra_problems(run, indexes=False)
+        if mode == "purge-new":   # the drain rule: never delete in-flight jobs or batches (they bill when they finish)
+            for user_id in users:
+                problems += await in_flight_problems(run, user_id)
     lines += [f"REFUSED: {p}" for p in problems]
     if problems and write:
         lines.append("nothing written: fix the above and re-run")
@@ -965,6 +1028,9 @@ async def run_cutover(run: Cutover, mode: str, *, write: bool,
             counts, extra = await apply_user(run, user_id, cred, write=write)
         elif mode == "purge-new":
             counts, extra = await purge_new_user(run, user_id, write=write), ""
+        elif cred is None and mode == "copy-back":
+            counts, extra = Counts(), "no OneDrive credential: old-key heads stamped only"
+            await stamp_old_heads(run, user_id, counts, write=write)
         elif cred is None:
             counts, extra = Counts(), "no OneDrive credential: nothing to do"
         elif mode == "copy-back":
