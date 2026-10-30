@@ -17,8 +17,8 @@ from src.domain.drive_note import (
 from src.domain.drive_note_check import WHY_GONE, NoteCheck
 from src.services.drive_note_lifecycle import DriveNoteLifecycle
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
-from tests.support.drive_connection_service_stand_in import seed
-from tests.support.handle_keyed_drive import HandleKeyedDrive
+from tests.support.drive_connections import seed
+from tests.support.fake_drive_adapter import FakeDriveAdapter
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 NOW = T0 + timedelta(days=30)
@@ -52,13 +52,13 @@ async def world():
     w = World()
     w.notes = InMemoryDriveNoteRepository()
     w.index = _LeanIndex()
-    w.drive = HandleKeyedDrive()
+    w.drive = FakeDriveAdapter("fake_a")
     repo = FakeDriveConnectionRepository()
     w.one = await seed(repo, connection_id="conn-1", tag="a1")
-    w.drive.add_file(w.one.handle, "item-here", "here.pdf")        # still on conn-1's drive
+    here = w.drive.plant(w.one.handle, "root", "here.pdf")           # still on conn-1's drive (generated: item-1)
     await _note(w.notes, "n-gone", "item-gone", "a1")                # conn-1's note, item gone from conn-1
     await _note(w.notes, "n-other", "item-gone", "b2")               # another connection's note of the same item id
-    await _note(w.notes, "n-here", "item-here", "a1")
+    await _note(w.notes, "n-here", here, "a1")
     w.lifecycle = DriveNoteLifecycle(w.notes, w.index, w.drive, clock=lambda: NOW)
     return w
 

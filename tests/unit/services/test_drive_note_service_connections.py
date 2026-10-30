@@ -23,8 +23,8 @@ from src.ports.security_port import SecurityPort
 from src.services.drive_note_deleted_search import DriveNoteDeletedSearch
 from src.services.drive_note_service import DriveNoteService
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
-from tests.support.drive_connection_service_stand_in import StandInDriveConnectionService, seed
-from tests.support.handle_keyed_drive import HandleKeyedDrive
+from tests.support.drive_connections import connection_service, seed
+from tests.support.fake_drive_adapter import FakeDriveAdapter
 from tests.unit.services.drive_index_fakes import FakeQueue
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -50,22 +50,23 @@ async def world():
         pass
     w = World()
     w.repo = FakeDriveConnectionRepository()
-    w.drive = HandleKeyedDrive()
+    w.drive = FakeDriveAdapter("fake_a")
     w.notes = InMemoryDriveNoteRepository()
     w.index = _ScopedIndex()
     w.queue = FakeQueue()
     w.one = await seed(w.repo, connection_id="conn-1", tag="a1")
     w.two = await seed(w.repo, connection_id="conn-2", tag="b2", kind="fake_b", primary=False, indexing_enabled=False,
                        created_at=T1)
-    w.drive.add_file(w.one.handle, "item-1", "on-one.pdf", b"one")
-    w.drive.add_file(w.two.handle, "item-1", "on-two.pdf", b"two")
+    for connection, name, data in ((w.one, "on-one.pdf", b"one"), (w.two, "on-two.pdf", b"two")):
+        w.drive.tree(connection.handle, drive_id=connection.connection_id)   # item identities fake_a:<connection>:<item>
+        assert w.drive.plant(connection.handle, "root", name, data) == "item-1"   # the same item id on purpose (T-4)
     embeddings = AsyncMock(spec=EmbeddingService)
     embeddings.get_embedding.return_value = [0.1, 0.2]
     security = AsyncMock(spec=SecurityPort)
     security.validate.return_value = ValidationResult(sanitized_text="", risk_level=RiskLevel.SAFE, risk_score=0.0,
                                                       patterns_detected=[], action_taken="passed", metadata={})
     w.service = DriveNoteService(w.notes, w.drive, w.index, embeddings, security,
-                                 StandInDriveConnectionService(w.repo), embedding_space="space-a",
+                                 connection_service(w.repo), embedding_space="space-a",
                                  nudge_queue=w.queue, clock=lambda: T1)
     return w
 
@@ -83,9 +84,9 @@ class TestLivePath:
         receipt = await world.service.set("usr-1", "acc-1", "drive:b2:item-1", "the second drive's file")
         note = await _only(world.notes)
         assert note.binding is not None
-        assert (note.binding.identity, note.binding.item_id, note.binding.ref_tag) == ("fake:conn-2:item-1",
+        assert (note.binding.identity, note.binding.item_id, note.binding.ref_tag) == ("fake_a:conn-2:item-1",
                                                                                       "item-1", "b2")
-        assert note.match_keys == ["i:fake:conn-2:item-1", "r:b2:item-1"]
+        assert note.match_keys == ["i:fake_a:conn-2:item-1", "r:b2:item-1"]
         assert note.snapshot is not None and note.snapshot.name == "on-two.pdf"
         assert receipt.ref == "drive:b2:item-1"
 
@@ -136,9 +137,9 @@ class TestStoreAlone:
 
     async def test_note_for_item_is_by_identity(self, world):
         await world.service.set("usr-1", "acc-1", "drive:a1:item-1", "first")
-        found = await world.service.note_for_item("usr-1", "fake:conn-1:item-1")
+        found = await world.service.note_for_item("usr-1", "fake_a:conn-1:item-1")
         assert found is not None and found.text == "first"
-        assert await world.service.note_for_item("usr-1", "fake:conn-2:item-1") is None
+        assert await world.service.note_for_item("usr-1", "fake_a:conn-2:item-1") is None
         assert await world.service.note_for_item("usr-1", "") is None
 
 

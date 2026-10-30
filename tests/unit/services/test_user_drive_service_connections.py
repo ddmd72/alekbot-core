@@ -14,10 +14,11 @@ from src.domain.user_drive import (
 )
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
-from tests.support.drive_connection_service_stand_in import StandInDriveConnectionService, seed
-from tests.support.handle_keyed_drive import ROOT, HandleKeyedDrive
+from tests.support.drive_connections import connection_service, seed
+from tests.support.fake_drive_adapter import FakeDriveAdapter
 from tests.unit.services.drive_index_fakes import FakeQueue
 
+ROOT = "root"
 T1 = datetime(2026, 1, 2, tzinfo=timezone.utc)
 
 
@@ -25,11 +26,11 @@ T1 = datetime(2026, 1, 2, tzinfo=timezone.utc)
 def world():
     class World:
         repo = FakeDriveConnectionRepository()
-        drive = HandleKeyedDrive()
+        drive = FakeDriveAdapter("fake_a")
         queue = FakeQueue()
         mirror = InMemoryDriveMirrorRepository()
     w = World()
-    w.service = UserDriveService(w.drive, StandInDriveConnectionService(w.repo), nudge_queue=w.queue,
+    w.service = UserDriveService(w.drive, connection_service(w.repo), nudge_queue=w.queue,
                                  mirror_roots=w.mirror)
     return w
 
@@ -38,9 +39,14 @@ async def _two(world):
     """usr-1 with conn-1 (primary, tag a1) and conn-2 (tag b2), the same item id on both on purpose (T-4)."""
     one = await seed(world.repo, connection_id="conn-1", tag="a1")
     two = await seed(world.repo, connection_id="conn-2", tag="b2", kind="fake_b", primary=False, created_at=T1)
-    world.drive.add_file(one.handle, "item-1", "on-one.txt", b"one")
-    world.drive.add_file(two.handle, "item-1", "on-two.txt", b"two")
+    for connection, name, data in ((one, "on-one.txt", b"one"), (two, "on-two.txt", b"two")):
+        world.drive.tree(connection.handle, drive_id=connection.connection_id)   # drive identity fake_a:<connection>
+        assert world.drive.plant(connection.handle, ROOT, name, data) == "item-1"
     return one, two
+
+
+def _names(world, handle):
+    return {node.name for node in world.drive.tree(handle).nodes.values()}
 
 
 class TestWhichConnection:
@@ -89,13 +95,14 @@ class TestOneConnectionOnly:
         one, two = await _two(world)
         out = await world.service.save(two.handle, b"x", "new.txt", "text/plain", "Notes")
         assert out.item.path == "Notes/new.txt"
-        assert {i.name for i in world.drive.items["conn-2"].values()} >= {"Notes", "new.txt"}
-        assert {i.name for i in world.drive.items["conn-1"].values()} == {"", "on-one.txt"}
+        assert _names(world, two.handle) >= {"Notes", "new.txt"}
+        assert _names(world, one.handle) == {"", "on-one.txt"}
 
     async def test_a_delete_by_the_same_item_id_leaves_the_other_connection(self, world):
         one, two = await _two(world)
         await world.service.delete(two.handle, "item-1")
-        assert world.drive.deleted == {"conn-1": [], "conn-2": ["item-1"]}
+        assert (world.drive.tree(one.handle).recycle.keys(), world.drive.tree(two.handle).recycle.keys()) \
+            == (set(), {"item-1"})
         assert (await world.service.get_item(one.handle, "item-1")).name == "on-one.txt"
 
     async def test_the_root_of_the_handles_drive_is_protected(self, world):
@@ -118,20 +125,20 @@ class TestNudgePerConnection:
 
 class TestMirrorGuardPerDrive:
     async def _root_on(self, world, handle, drive_identity: str) -> None:
-        world.drive.add_folder(handle, "mirror", "_Transcripts")
-        await world.mirror.save_root(MirrorRoot(user_id="usr-1", drive_id="", root_item_id="mirror",
+        mirror = world.drive.plant(handle, ROOT, "_Transcripts", folder=True)
+        await world.mirror.save_root(MirrorRoot(user_id="usr-1", drive_id="", root_item_id=mirror,
                                                 root_name="_Transcripts", drive_identity=drive_identity))
 
     async def test_the_mirror_of_this_drive_is_refused(self, world):
         one, _ = await _two(world)
-        await self._root_on(world, one.handle, "fake:conn-1")
+        await self._root_on(world, one.handle, "fake_a:conn-1")
         with pytest.raises(DriveMirrorWriteRefused):
             await world.service.save(one.handle, b"x", "a.md", "text/markdown", "_Transcripts")
 
     async def test_another_drives_mirror_does_not_guard_this_one(self, world):
         one, two = await _two(world)
-        await self._root_on(world, one.handle, "fake:conn-1")
-        world.drive.add_folder(two.handle, "mirror", "_Transcripts")   # a plain folder of that name on conn-2
+        await self._root_on(world, one.handle, "fake_a:conn-1")
+        world.drive.plant(two.handle, ROOT, "_Transcripts", folder=True)   # a plain folder of that name on conn-2
         out = await world.service.save(two.handle, b"x", "a.md", "text/markdown", "_Transcripts")
         assert out.item.path == "_Transcripts/a.md"
 
