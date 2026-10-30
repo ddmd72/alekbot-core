@@ -29,7 +29,7 @@ def _client(order, summary_consumer=None):
     app.register_blueprint(create_voice_control_plane_blueprint(
         ephemeral_store=AsyncMock(), quota_service=AsyncMock(), prompt_content_store=store,
         summary_consumer=summary_consumer or consumer, oidc_verifier=AsyncMock(return_value=True),
-        alert_sink=AsyncMock(),
+        alert_sink=AsyncMock(), digest_key=b"k" * 32
     ))
     return app.test_client(), store
 

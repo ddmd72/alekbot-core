@@ -12,6 +12,8 @@ apart.
 """
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
+from src.domain.secret_digest import fingerprint
+from src.domain.voice_ticket_keys import call_kind_key, ticket_key
 from src.ports.alert_sink import AlertSinkPort
 from src.ports.ephemeral_store import EphemeralStore
 from src.utils.logger import logger
@@ -31,8 +33,9 @@ class VoiceCallSetupService:
 
     def __init__(self, ephemeral_store: EphemeralStore, alert_sink: AlertSinkPort,
                  lelik_agent_provider: Callable[[str], Awaitable[Optional["LelikAgent"]]],
-                 ticket_ttl_s: int = 300, one_call_ttl_s: int = 3600) -> None:
+                 *, digest_key: bytes, ticket_ttl_s: int = 300, one_call_ttl_s: int = 3600) -> None:
         self._store = ephemeral_store
+        self._digest_key = digest_key
         self._alerts = alert_sink
         self._lelik = lelik_agent_provider
         self._ticket_ttl_s = ticket_ttl_s
@@ -62,12 +65,12 @@ class VoiceCallSetupService:
                 raise RuntimeError("voice companion is not configured on this deployment")
             session = await agent.session_config(user_id=user_id, account_id=account_id)
             # identity wins over anything the session carried: /voice/delegate trusts these ids.
-            await self._store.set(f"voice_ticket:{ticket}", {
+            await self._store.set(ticket_key(self._digest_key, ticket), {
                 **session, "user_id": user_id, "account_id": account_id, "call_kind": call_kind,
             }, ttl_s=self._ticket_ttl_s)
-            await self._store.set(f"voice_call_kind:{ticket}", {"call_kind": call_kind}, ttl_s=self._one_call_ttl_s)
+            await self._store.set(call_kind_key(self._digest_key, ticket), {"call_kind": call_kind}, ttl_s=self._one_call_ttl_s)
         except Exception as exc:
-            logger.error(f"voice setup: call preparation failed for {user_id} (ticket {ticket}): {exc}",
+            logger.error(f"voice setup: call preparation failed for {user_id} (ticket {fingerprint(ticket)}): {exc}",
                          exc_info=True)
             try:
                 await self.release(ticket, user_id)
@@ -79,5 +82,5 @@ class VoiceCallSetupService:
             raise VoiceCallSetupError(str(exc)) from exc
 
     async def release(self, ticket: str, user_id: str) -> None:
-        await self._store.delete(f"voice_ticket:{ticket}")
+        await self._store.delete(ticket_key(self._digest_key, ticket))
         await self._store.delete(self._marker_key(user_id))

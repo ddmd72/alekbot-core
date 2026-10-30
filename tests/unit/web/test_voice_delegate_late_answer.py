@@ -11,12 +11,13 @@ import src.web.voice_control_plane_app as voice_control_plane_app
 from src.domain.voice_delegation_outcome import VoiceDelegationOutcome
 from src.ports.ephemeral_store import EphemeralStore
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
+from tests.support.voice_tickets import abandoned_key, result_key
 
 _AUTH = {"Authorization": "Bearer x"}
 _BODY = {"user_id": "u1", "account_id": "a1", "arguments": {"intent": "ask_alek", "query": "q"},
          "call_context": [], "ticket": "t1", "call_id": "c1", "request": "ask_alek: q"}
-_RESULT_KEY = "voice_delegation_result:t1:c1"
-_ABANDONED_KEY = "voice_delegation_abandoned:t1:c1"
+_RESULT_KEY = result_key("t1", "c1")
+_ABANDONED_KEY = abandoned_key("t1", "c1")
 
 
 class _MemoryStore(EphemeralStore):
@@ -48,7 +49,7 @@ def _app(store, sink, output="the answer", delegate_side_effect=None, failed=Fal
     app.register_blueprint(create_voice_control_plane_blueprint(
         ephemeral_store=store, quota_service=AsyncMock(), prompt_content_store=AsyncMock(),
         summary_consumer=AsyncMock(), oidc_verifier=AsyncMock(return_value=True), alert_sink=AsyncMock(),
-        lelik_agent_provider=AsyncMock(return_value=agent), late_answer_sink=sink,
+        lelik_agent_provider=AsyncMock(return_value=agent), late_answer_sink=sink, digest_key=b"k" * 32
     ))
     return app.test_client()
 
@@ -168,7 +169,7 @@ async def test_abandon_requires_oidc():
     app.register_blueprint(create_voice_control_plane_blueprint(
         ephemeral_store=store, quota_service=AsyncMock(), prompt_content_store=AsyncMock(),
         summary_consumer=AsyncMock(), oidc_verifier=AsyncMock(return_value=False), alert_sink=AsyncMock(),
-        late_answer_sink=AsyncMock(),
+        late_answer_sink=AsyncMock(), digest_key=b"k" * 32
     ))
     response = await app.test_client().post("/voice/delegate/abandon", json={"ticket": "t1", "call_id": "c1"})
     assert response.status_code == 401
@@ -217,7 +218,7 @@ async def test_a_cancelled_handler_does_not_cancel_the_delegation():
     app.register_blueprint(create_voice_control_plane_blueprint(
         ephemeral_store=store, quota_service=AsyncMock(), prompt_content_store=AsyncMock(),
         summary_consumer=AsyncMock(), oidc_verifier=AsyncMock(return_value=True), alert_sink=AsyncMock(),
-        lelik_agent_provider=AsyncMock(return_value=agent), late_answer_sink=sink,
+        lelik_agent_provider=AsyncMock(return_value=agent), late_answer_sink=sink, digest_key=b"k" * 32
     ))
     view = app.view_functions["voice_control_plane.delegate"]
     async with app.test_request_context("/voice/delegate", method="POST", json=_BODY, headers=_AUTH):

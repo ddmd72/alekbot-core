@@ -1,11 +1,13 @@
 """Async AMD: Twilio posts the machine-detection verdict to /voice/status (no CallStatus),
 and the call is already connected — the verdict is only recorded, never acted on here."""
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 import pytest
 from unittest.mock import AsyncMock
 
 from quart import Quart
 
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
+from tests.support.voice_tickets import amd_key
 
 
 def _app(ephemeral_store):
@@ -17,7 +19,7 @@ def _app(ephemeral_store):
         notification_service=AsyncMock(),
         lelik_agent_provider=AsyncMock(),
         answer_url="https://main.example.com/voice/answer",
-        signature_verifier=AsyncMock(return_value=True),
+        signature_verifier=AsyncMock(return_value=True), cipher=AesGcmTestCipher(), digest_key=b"k" * 32
     ))
     return app
 
@@ -36,7 +38,7 @@ async def test_amd_verdict_is_recorded_for_the_ticket_and_releases_nothing(answe
     assert response.status_code == 200
     ephemeral_store.set.assert_awaited_once()
     key, value = ephemeral_store.set.await_args.args[:2]
-    assert key == "voice_amd:t1"
+    assert key == amd_key("t1")
     assert value == {"answered_by": answered_by}
     # The call is live: the ticket and the one-call marker belong to it until it ends.
     ephemeral_store.delete.assert_not_awaited()
@@ -50,7 +52,7 @@ async def test_amd_verdict_is_rejected_when_unsigned():
         user_repository=AsyncMock(), ephemeral_store=ephemeral_store, alert_sink=AsyncMock(),
         notification_service=AsyncMock(), lelik_agent_provider=AsyncMock(),
         answer_url="https://main.example.com/voice/answer",
-        signature_verifier=AsyncMock(return_value=False),
+        signature_verifier=AsyncMock(return_value=False), cipher=AesGcmTestCipher(), digest_key=b"k" * 32
     ))
 
     response = await app.test_client().post(

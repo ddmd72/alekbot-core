@@ -20,6 +20,7 @@ from typing import AsyncIterator
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.services.voice_session_service import VoiceSessionService
+from src.domain.secret_digest import fingerprint
 from src.utils.logger import logger
 
 
@@ -131,10 +132,10 @@ class MediaStreamHandler:
                 elif event == "stop":
                     break
         except Exception:
-            logger.error(f"media stream for ticket={ticket} failed", exc_info=True)
+            logger.error(f"media stream for ticket={fingerprint(ticket or '')} failed", exc_info=True)
             raise
         finally:
             await inbound_queue.put(None)
             if call_task is not None:
                 await call_task
-            logger.info(f"media stream closed for ticket={ticket}")
+            logger.info(f"media stream closed for ticket={fingerprint(ticket or '')}")

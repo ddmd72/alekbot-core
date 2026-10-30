@@ -10,6 +10,7 @@ import uuid
 
 from quart import Blueprint, g, jsonify, request, send_file
 
+from src.domain.voice_ticket_keys import ticket_key
 from src.ports.media_room_port import MediaRoomError
 from src.services.voice_call_setup_service import VoiceCallSetupError
 from src.utils.logger import logger
@@ -20,7 +21,8 @@ _ICON_SIZES = (180, 192, 512)
 
 
 def create_voice_web_call_blueprint(session_service, call_setup, media_room, ephemeral_store,
-                                    relay_base_url: str, call_ttl_s: int = 3600) -> Blueprint:
+                                    relay_base_url: str, call_ttl_s: int = 3600, *, cipher,
+                                    digest_key: bytes) -> Blueprint:
     bp = Blueprint("voice_web_call", __name__)
     auth_required = make_auth_required(session_service)
 
@@ -29,6 +31,9 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         if record is None or record.get("user_id") != g.user_id:
             return None
         return record
+
+    async def _ticket_of(call_id: str, record: dict) -> str:
+        return await cipher.decrypt(record["ticket_ct"], aad=f"voice/voice_web_call:{call_id}")
 
     static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
@@ -76,7 +81,7 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         try:
             leg = await media_room.open_caller(body["sdp"], str(body["mid"]))
             await ephemeral_store.set(f"voice_web_call:{call_id}", {
-                "user_id": g.user_id, "account_id": g.account_id, "ticket": ticket,
+                "user_id": g.user_id, "account_id": g.account_id, "ticket_ct": await cipher.encrypt(ticket, aad=f"voice/voice_web_call:{call_id}"),
                 "session_id": leg.session_id, "adapter_ids": [],
             }, ttl_s=call_ttl_s)
         except Exception:
@@ -96,7 +101,7 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
         record = await _owned(call_id)
         if record is None:
             return jsonify({"error": "not found"}), 404
-        ticket = record["ticket"]
+        ticket = await _ticket_of(call_id, record)
         try:
             leg = await media_room.attach_agent(
                 record["session_id"],
@@ -138,8 +143,9 @@ def create_voice_web_call_blueprint(session_service, call_setup, media_room, eph
             return jsonify({"error": "not found"}), 404
         await media_room.close(record.get("adapter_ids", []))
         # Ticket still unredeemed = the relay never started: nothing will release the marker.
-        if await ephemeral_store.get(f"voice_ticket:{record['ticket']}") is not None:
-            await call_setup.release(record["ticket"], g.user_id)
+        ticket = await _ticket_of(call_id, record)
+        if await ephemeral_store.get(ticket_key(digest_key, ticket)) is not None:
+            await call_setup.release(ticket, g.user_id)
         # The record goes last: a connect still attaching re-reads it and cleans up after itself.
         await ephemeral_store.delete(f"voice_web_call:{call_id}")
         return jsonify({"ok": True})

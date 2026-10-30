@@ -5,6 +5,7 @@ import httpx
 
 from src.domain.voice_call_buffer import VoiceCallBuffer
 from src.ports.call_control_plane_port import CallControlPlanePort
+from src.domain.secret_digest import fingerprint
 from src.utils.logger import logger
 
 # Router -> Smart -> specialists takes tens of seconds; the relay's own wait_for is the
@@ -83,4 +84,4 @@ class HttpCallControlPlaneAdapter(CallControlPlanePort):
             response.raise_for_status()
         except Exception as exc:
             # Never raises: a lost abandon only means the late answer stays unposted (TTL cleans it).
-            logger.warning(f"voice call {ticket}: abandoning delegation {call_id} failed: {exc}")
+            logger.warning(f"voice call {fingerprint(ticket)}: abandoning delegation {call_id} failed: {exc}")

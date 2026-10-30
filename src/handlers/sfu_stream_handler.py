@@ -27,6 +27,7 @@ from src.domain.voice_audio_format import PCM16_24K, PCM16_48K_STEREO
 from src.domain.voice_audio_frame import AudioFrame
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.services.voice_session_service import VoiceSessionService
+from src.domain.secret_digest import fingerprint
 from src.utils.logger import logger
 
 _FRAME_MS = 20
@@ -122,7 +123,7 @@ class SfuStreamHandler:
             try:
                 await asyncio.wait_for(call.paired.wait(), timeout=self._pair_timeout_s)
             except asyncio.TimeoutError:
-                logger.warning(f"sfu stream {call.ticket}: second socket never arrived, dropping")
+                logger.warning(f"sfu stream {fingerprint(call.ticket)}: second socket never arrived, dropping")
                 return
             await self._session_service.handle_call(
                 ticket=call.ticket,
@@ -132,14 +133,14 @@ class SfuStreamHandler:
                 playback=call.playback,
             )
         except Exception:
-            logger.error(f"sfu stream {call.ticket}: call failed", exc_info=True)
+            logger.error(f"sfu stream {fingerprint(call.ticket)}: call failed", exc_info=True)
         finally:
             call.end()
             for ws in (call.ingest_ws, call.egress_ws):
                 if ws is not None:
                     await ws.close()
             self._forget(call)
-            logger.info(f"sfu stream {call.ticket}: call closed")
+            logger.info(f"sfu stream {fingerprint(call.ticket)}: call closed")
 
     def _forget(self, call: _SfuCall) -> None:
         # By identity: a stale call (e.g. an unpaired one still waiting out its pair timeout)
@@ -162,18 +163,18 @@ class SfuStreamHandler:
     async def _serve_egress(self, call: _SfuCall, ws) -> None:
         call.egress_ws = ws
         self._mark_paired(call)
-        logger.info(f"sfu stream {call.ticket}: egress connected")
+        logger.info(f"sfu stream {fingerprint(call.ticket)}: egress connected")
         try:
             async for message in ws:
                 if call.ended.is_set():
                     break
                 if not isinstance(message, (bytes, bytearray)):
-                    logger.warning(f"sfu stream {call.ticket}: non-binary egress message ignored")
+                    logger.warning(f"sfu stream {fingerprint(call.ticket)}: non-binary egress message ignored")
                     continue
                 try:
                     packet = decode_sfu_packet(message)
                 except ValueError as exc:
-                    logger.warning(f"sfu stream {call.ticket}: malformed egress packet skipped: {exc}")
+                    logger.warning(f"sfu stream {fingerprint(call.ticket)}: malformed egress packet skipped: {exc}")
                     continue
                 pcm24 = call.downsampler(packet.payload)
                 if pcm24:
@@ -183,27 +184,27 @@ class SfuStreamHandler:
                     ))
         except ConnectionClosed as exc:
             # Routine: the SFU drops egress on hangup and between stream-mode retries.
-            logger.info(f"sfu stream {call.ticket}: egress closed abnormally ({exc})")
+            logger.info(f"sfu stream {fingerprint(call.ticket)}: egress closed abnormally ({exc})")
         except Exception:
-            logger.error(f"sfu stream {call.ticket}: egress read failed", exc_info=True)
+            logger.error(f"sfu stream {fingerprint(call.ticket)}: egress read failed", exc_info=True)
         if call.egress_ws is not ws or call.ended.is_set():
             return
         # Stream mode: the SFU retries the same endpoint for up to 5 s; a new egress re-attaches.
         await asyncio.sleep(self._egress_reattach_s)
         if call.egress_ws is ws and not call.ended.is_set():
-            logger.info(f"sfu stream {call.ticket}: egress gone and not reattached, ending call")
+            logger.info(f"sfu stream {fingerprint(call.ticket)}: egress gone and not reattached, ending call")
             call.end()
             if not call.paired.is_set():
                 self._forget(call)
 
     async def _serve_ingest(self, call: _SfuCall, ws) -> None:
         if call.ingest_ws is not None:
-            logger.warning(f"sfu stream {call.ticket}: duplicate ingest socket closed")
+            logger.warning(f"sfu stream {fingerprint(call.ticket)}: duplicate ingest socket closed")
             await ws.close()
             return
         call.ingest_ws = ws
         self._mark_paired(call)
-        logger.info(f"sfu stream {call.ticket}: ingest connected")
+        logger.info(f"sfu stream {fingerprint(call.ticket)}: ingest connected")
         drain = asyncio.ensure_future(self._drain(call, ws))
         try:
             await self._pace(call, ws, drain)
@@ -226,12 +227,12 @@ class SfuStreamHandler:
             async for _ in ws:
                 pass
         except ConnectionClosed as exc:
-            logger.info(f"sfu stream {call.ticket}: ingest closed abnormally ({exc})")
+            logger.info(f"sfu stream {fingerprint(call.ticket)}: ingest closed abnormally ({exc})")
             return
         except Exception:
-            logger.error(f"sfu stream {call.ticket}: ingest read failed", exc_info=True)
+            logger.error(f"sfu stream {fingerprint(call.ticket)}: ingest read failed", exc_info=True)
             return
-        logger.info(f"sfu stream {call.ticket}: ingest closed by the SFU")
+        logger.info(f"sfu stream {fingerprint(call.ticket)}: ingest closed by the SFU")
 
     async def _pace(self, call: _SfuCall, ws, drain: asyncio.Task) -> None:
         loop = asyncio.get_running_loop()
@@ -246,7 +247,7 @@ class SfuStreamHandler:
             try:
                 await ws.send(encode_sfu_packet(sequence, sequence * _FRAME_SAMPLES, frame))
             except Exception:
-                logger.info(f"sfu stream {call.ticket}: ingest send failed, ending call")
+                logger.info(f"sfu stream {fingerprint(call.ticket)}: ingest send failed, ending call")
                 return
             sequence += 1
             for mark in played_marks:

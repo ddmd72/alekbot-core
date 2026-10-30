@@ -164,12 +164,12 @@ class EnvironmentConfig:
     @property
     def domain_invite_codes_collection(self) -> str:
         """
-        Get domain invite codes collection (v1 schema).
-        Dev: development_domain_invite_codes_v1
-        Prod: domain_invite_codes_v1
+        Get invite codes collection (v2: doc id = keyed digest of the code; the v1 collection is never read).
+        Dev: development_invite_codes_v2
+        Prod: invite_codes_v2
         """
         prefix = self.firestore_collection_prefix
-        return f"{prefix}domain_invite_codes_v1"
+        return f"{prefix}invite_codes_v2"
 
     @property
     def domain_whitelist_collection(self) -> str:

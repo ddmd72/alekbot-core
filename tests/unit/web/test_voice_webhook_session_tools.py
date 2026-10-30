@@ -1,9 +1,11 @@
 import pytest
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from unittest.mock import AsyncMock
 
 from quart import Quart
 
 from src.web.voice_webhook_app import create_voice_webhook_blueprint
+from tests.support.voice_tickets import ticket_key
 
 _TOOL = {"name": "delegate_to_specialist", "description": "d", "parameters": {"type": "object"}}
 
@@ -14,7 +16,7 @@ def _app(ephemeral_store, provider, alert_sink=None):
         user_repository=AsyncMock(), ephemeral_store=ephemeral_store, alert_sink=alert_sink or AsyncMock(),
         notification_service=AsyncMock(), lelik_agent_provider=provider,
         answer_url="https://main.example.com/voice/answer",
-        signature_verifier=AsyncMock(return_value=True), relay_stream_url="wss://relay.example.com/",
+        signature_verifier=AsyncMock(return_value=True), relay_stream_url="wss://relay.example.com/", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
     ))
     return app
 
@@ -27,7 +29,7 @@ async def test_answer_stores_instructions_and_tools_on_the_ticket():
     agent.session_config.return_value = {"instructions": "PROMPT", "tools": [_TOOL]}
     client = _app(store, AsyncMock(return_value=agent)).test_client()
     await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
-    stored = {c.args[0]: c.args[1] for c in store.set.await_args_list}["voice_ticket:t1"]
+    stored = {c.args[0]: c.args[1] for c in store.set.await_args_list}[ticket_key("t1")]
     assert stored == {"user_id": "u1", "account_id": "a1", "instructions": "PROMPT", "tools": [_TOOL], "call_kind": "phone"}
 
 
@@ -41,7 +43,7 @@ async def test_answer_ticket_identity_wins_over_session_keys():
     agent.session_config.return_value = {"instructions": "PROMPT", "tools": [_TOOL], "user_id": "evil"}
     client = _app(store, AsyncMock(return_value=agent)).test_client()
     await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
-    stored = {c.args[0]: c.args[1] for c in store.set.await_args_list}["voice_ticket:t1"]
+    stored = {c.args[0]: c.args[1] for c in store.set.await_args_list}[ticket_key("t1")]
     assert stored["user_id"] == "u1"
 
 
@@ -53,5 +55,5 @@ async def test_answer_with_no_lelik_available_fails_closed():
     client = _app(store, AsyncMock(return_value=None), alert_sink).test_client()
     response = await client.post("/voice/answer?ticket=t1", form={"CallSid": "CA1", "AnsweredBy": "human"})
     assert "<Connect" not in (await response.get_data()).decode()
-    assert {c.args[0] for c in store.delete.await_args_list} >= {"voice_ticket:t1", "voice_one_call:u1"}
+    assert {c.args[0] for c in store.delete.await_args_list} >= {ticket_key("t1"), "voice_one_call:u1"}
     alert_sink.post.assert_awaited_once()

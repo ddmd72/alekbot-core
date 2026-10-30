@@ -18,6 +18,7 @@ from src.domain.voice_turn_ownership import TurnOwnership
 from src.ports.alert_sink import AlertSinkPort
 from src.ports.call_control_plane_port import CallControlPlanePort
 from src.ports.realtime_session_port import RealtimeSessionPort
+from src.domain.secret_digest import fingerprint
 from src.utils.logger import logger
 
 _UNKNOWN_MODEL_LABEL = "unknown"
@@ -227,7 +228,7 @@ class VoiceSessionService:
                                    reasoning_effort=self._reasoning_effort or spec.reasoning_effort,
                                    tools=config.get("tools", []))
             except Exception as exc:
-                logger.error(f"voice call {ticket}: failed to open realtime session: {exc}")
+                logger.error(f"voice call {fingerprint(ticket)}: failed to open realtime session: {exc}")
                 raise
 
             # Inbound forwarding and outbound event consumption are two independent
@@ -273,7 +274,7 @@ class VoiceSessionService:
             abandoned += [answer.call_id for answer in state.queued_answers
                           if answer.output not in (_DELEGATION_TIMED_OUT, _DELEGATION_FAILED)]
             if abandoned:
-                logger.info(f"voice call {ticket}: call ended with {len(abandoned)} unheard answers, abandoning")
+                logger.info(f"voice call {fingerprint(ticket)}: call ended with {len(abandoned)} unheard answers, abandoning")
                 await asyncio.gather(*(self._abandon(ticket, call_id) for call_id in abandoned))
             # 3. In-flight delegations stop here: the abandoned ones reach chat from the main service.
             await self._cancel_all(ticket, list(state.delegations) + list(state.errands))
@@ -300,7 +301,7 @@ class VoiceSessionService:
             # failures; this only catches an unexpected bug in the loop
             # itself, and still needs to be visible in logs.
             if isinstance(result, Exception):
-                logger.error(f"voice call {ticket}: session loop crashed: {result}")
+                logger.error(f"voice call {fingerprint(ticket)}: session loop crashed: {result}")
 
     async def _consume_events(
         self,
@@ -345,7 +346,7 @@ class VoiceSessionService:
                     elif state.turn_ownership is TurnOwnership.PROVIDER:
                         # The provider stops its own reply; what it already sent is still queued here.
                         await clear_outbound_audio()
-                        logger.info(f"voice call {ticket}: caller spoke over the reply, queued audio dropped")
+                        logger.info(f"voice call {fingerprint(ticket)}: caller spoke over the reply, queued audio dropped")
                     elif self._barge_in_min_speech_s > 0:
                         # A line blip or an "uh-huh" also starts speech; only sustained speech
                         # interrupts (live, 2026-09-25: replies cut by 400 ms noises).
@@ -362,12 +363,12 @@ class VoiceSessionService:
                 if state.speech_in_greeting_guard:
                     state.speech_in_greeting_guard = False
                     state.speech_dismissed = True
-                    logger.info(f"voice call {ticket}: speech during the greeting's first seconds, not an interruption")
+                    logger.info(f"voice call {fingerprint(ticket)}: speech during the greeting's first seconds, not an interruption")
                 elif state.pending_barge_in is not None and not state.pending_barge_in.done():
                     state.pending_barge_in.cancel()
                     state.pending_barge_in = None
                     state.speech_dismissed = True
-                    logger.info(f"voice call {ticket}: speech too short to interrupt, Lelik keeps talking")
+                    logger.info(f"voice call {fingerprint(ticket)}: speech too short to interrupt, Lelik keeps talking")
             elif event.type == "turn_committed":
                 if state.turn_ownership is TurnOwnership.PROVIDER:
                     # The provider is already replying (it starts before the commit arrives).
@@ -375,7 +376,7 @@ class VoiceSessionService:
                 elif state.speech_dismissed:
                     # Lelik is still mid-reply; the words stay in the conversation for his next turn.
                     state.speech_dismissed = False
-                    logger.info(f"voice call {ticket}: short turn over Lelik not answered")
+                    logger.info(f"voice call {fingerprint(ticket)}: short turn over Lelik not answered")
                 else:
                     await self._reply_to_turn(session, state, "turn")
             elif event.type == "audio_delta":
@@ -384,7 +385,7 @@ class VoiceSessionService:
                     if state.response_reason == "pickup":
                         state.greeting_audible_at = asyncio.get_running_loop().time()
                     elapsed_ms =round((asyncio.get_running_loop().time() - state.response_started_at) * 1000)
-                    logger.info(f"voice call {ticket}: first audio after {elapsed_ms} ms ({state.response_reason})")
+                    logger.info(f"voice call {fingerprint(ticket)}: first audio after {elapsed_ms} ms ({state.response_reason})")
                     if self._cue_tail_queued(state):
                         # Only cue audio can be queued here (the cue plays only once playback caught up).
                         await clear_outbound_audio()
@@ -398,7 +399,7 @@ class VoiceSessionService:
                 tool_called = True
                 if state.response_cancelled:
                     call_id = event.payload.get("call_id")
-                    logger.info(f"voice call {ticket}: delegation {call_id} skipped (response cancelled)")
+                    logger.info(f"voice call {fingerprint(ticket)}: delegation {call_id} skipped (response cancelled)")
                     await session.submit_tool_result(call_id, _CANCELLED_TOOL_CALL)
                 else:
                     self._start_delegation(ticket, config, session, state, buffer, event.payload, pending_request_text)
@@ -422,7 +423,7 @@ class VoiceSessionService:
                     ended_at=datetime.now(timezone.utc),
                 ))
                 if not (pending_response_text or tool_called or state.response_cancelled):
-                    logger.info(f"voice call {ticket}: response done with an empty transcript")
+                    logger.info(f"voice call {fingerprint(ticket)}: response done with an empty transcript")
                 pending_request_text = ""
                 pending_response_text = ""
                 # No dispatch filler after a delegating turn (removed 2026-09-29, RFC §4.15): the
@@ -431,8 +432,8 @@ class VoiceSessionService:
                 # _WAITING_NOTE after _silence_timeout_s.
                 await self._flush_answers(session, state)
             elif event.type == "error":
-                logger.error(f"voice call {ticket}: provider error {event.payload.get('message')}")
-                await self._alert_sink.post(f"Voice call {ticket} provider error: {event.payload.get('message')}")
+                logger.error(f"voice call {fingerprint(ticket)}: provider error {event.payload.get('message')}")
+                await self._alert_sink.post(f"Voice call {fingerprint(ticket)} provider error: {event.payload.get('message')}")
                 return
 
     async def _barge_in(
@@ -457,7 +458,7 @@ class VoiceSessionService:
             await session.truncate(state.item_id, heard_ms)
             # Truncated once; a second speech_started must not cut the same item again.
             state.item_id = None
-        logger.info(f"voice call {state.ticket}: barge-in, heard {heard_ms} ms, cancelled={cancelled}")
+        logger.info(f"voice call {fingerprint(state.ticket)}: barge-in, heard {heard_ms} ms, cancelled={cancelled}")
         state.response_cancelled = state.response_cancelled or cancelled
         return cancelled
 
@@ -472,7 +473,7 @@ class VoiceSessionService:
             try:
                 await self._barge_in(session, state, clear_outbound_audio)
             except Exception as exc:
-                logger.error(f"voice call {state.ticket}: barge-in failed: {exc}", exc_info=True)
+                logger.error(f"voice call {fingerprint(state.ticket)}: barge-in failed: {exc}", exc_info=True)
                 raise
 
     async def _reply_to_turn(self, session: RealtimeSessionPort, state: _CallState, reason: str) -> None:
@@ -490,14 +491,14 @@ class VoiceSessionService:
         # call-ending error, so the slot is claimed before the first await: a concurrent
         # starter (watchdog, a second answer) sees it taken instead of racing past the guard.
         if state.response_active:
-            logger.warning(f"voice call {state.ticket}: a response is already active, not starting another ({reason})")
+            logger.warning(f"voice call {fingerprint(state.ticket)}: a response is already active, not starting another ({reason})")
             return
         state.response_active = True
         state.response_owed = False
         state.response_reason = reason
         state.response_audible = False
         state.response_started_at = asyncio.get_running_loop().time()
-        logger.info(f"voice call {state.ticket}: starting response ({reason})")
+        logger.info(f"voice call {fingerprint(state.ticket)}: starting response ({reason})")
         if note:
             await session.submit_message("system", note)
         await session.request_response()
@@ -521,7 +522,7 @@ class VoiceSessionService:
             if (self._hangup_after_silence_s is not None and state.silence_prompted and not state.delegations
                     and now - quiet_since >= self._hangup_after_silence_s):
                 # The one "still there?" went unanswered: a voicemail box or a phone put down.
-                logger.info(f"voice call {state.ticket}: hanging up after {round(now - quiet_since)} s of silence")
+                logger.info(f"voice call {fingerprint(state.ticket)}: hanging up after {round(now - quiet_since)} s of silence")
                 return
             limit = waiting_gap if state.delegations else self._silence_timeout_s
             if (state.silence_prompted and not state.delegations) or now - quiet_since < limit:
@@ -562,7 +563,7 @@ class VoiceSessionService:
             now = loop.time()
             if not self._cue_wanted(state):
                 if started_at is not None:
-                    logger.info(f"voice call {state.ticket}: cue stopped after {round((now - started_at) * 1000)} ms")
+                    logger.info(f"voice call {fingerprint(state.ticket)}: cue stopped after {round((now - started_at) * 1000)} ms")
                 wanted_since = started_at = None
                 continue
             if wanted_since is None:
@@ -573,7 +574,7 @@ class VoiceSessionService:
                 # Each pause starts the clip from its first sound, not mid-silence.
                 started_at, sent, position = now, 0, 0
                 kind = "thinking" if state.response_active else "waiting"
-                logger.info(f"voice call {state.ticket}: cue started ({kind})")
+                logger.info(f"voice call {fingerprint(state.ticket)}: cue started ({kind})")
             while sent < (now - started_at) * _MULAW_BYTES_PER_S + _CUE_LEAD_BYTES and self._cue_wanted(state):
                 chunk = looped[position:position + _CUE_FRAME_BYTES]
                 await send_cue_audio(AudioFrame(
@@ -606,7 +607,7 @@ class VoiceSessionService:
             arguments = {}
         # The session's two tools run as one kind of delegation: send_to_chat becomes its errand intent here.
         arguments = delegation_arguments(payload.get("name"), arguments)
-        logger.info(f"voice call {ticket}: delegation {payload.get('call_id')} dispatched ({arguments.get('intent')})")
+        logger.info(f"voice call {fingerprint(ticket)}: delegation {payload.get('call_id')} dispatched ({arguments.get('intent')})")
         # Tracked, never fire-and-forget (RUF006): the call's teardown cancels what is left.
         task = asyncio.ensure_future(self._run_delegation(
             ticket, config, session, state, payload.get("call_id"),
@@ -636,11 +637,11 @@ class VoiceSessionService:
             answer = _Answer(call_id, output, dispatched_at, _request_label(arguments))
             await self._resolve_late_answer(session, state, answer, elapsed_ms)
         except asyncio.CancelledError:
-            logger.info(f"voice call {ticket}: call ended, delegation {call_id} discarded")
+            logger.info(f"voice call {fingerprint(ticket)}: call ended, delegation {call_id} discarded")
             raise
         except Exception as exc:
             # Nothing gathers a finished delegation task, so an error here is logged or lost.
-            logger.error(f"voice call {ticket}: answer to delegation {call_id} not delivered: {exc}", exc_info=True)
+            logger.error(f"voice call {fingerprint(ticket)}: answer to delegation {call_id} not delivered: {exc}", exc_info=True)
 
     async def _fetch_answer(
         self, ticket: str, config: dict, state: _CallState, call_id: str, arguments: dict, call_context: list,
@@ -655,7 +656,7 @@ class VoiceSessionService:
                 timeout=self._delegation_timeout_s,
             )
         except asyncio.TimeoutError:
-            logger.warning(f"voice call {ticket}: delegation {call_id} timed out, its answer goes to chat")
+            logger.warning(f"voice call {fingerprint(ticket)}: delegation {call_id} timed out, its answer goes to chat")
             # Still pending until the abandon has landed: a call ending mid-abandon (which cancels
             # this task) abandons it again from teardown. Twice is harmless; never is a lost answer.
             await self._abandon(ticket, call_id)
@@ -663,7 +664,7 @@ class VoiceSessionService:
             return _DELEGATION_TIMED_OUT
         except Exception as exc:
             # No retry: it re-runs the whole pipeline (double spend, double chat copy).
-            logger.error(f"voice call {ticket}: delegation {call_id} failed: {exc}")
+            logger.error(f"voice call {fingerprint(ticket)}: delegation {call_id} failed: {exc}")
             return _DELEGATION_FAILED
         finally:
             # The answer (or its failure) is in the relay's hands: nothing left to abandon.
@@ -675,7 +676,7 @@ class VoiceSessionService:
         try:
             await asyncio.wait_for(self._control_plane.abandon_delegation(ticket, call_id), _ABANDON_TIMEOUT_S)
         except Exception as exc:
-            logger.warning(f"voice call {ticket}: abandoning delegation {call_id} failed: {exc!r}")
+            logger.warning(f"voice call {fingerprint(ticket)}: abandoning delegation {call_id} failed: {exc!r}")
 
     async def _resolve_late_answer(
         self, session: RealtimeSessionPort, state: _CallState, answer: _Answer, elapsed_ms: int,
@@ -683,10 +684,10 @@ class VoiceSessionService:
         # The one seam RFC §4.7 names; swap the policy here, nowhere else.
         if state.response_active:
             # response.create during an active response is a call-ending provider error.
-            logger.info(f"voice call {state.ticket}: answer {answer.call_id} arrived after {elapsed_ms} ms, queued")
+            logger.info(f"voice call {fingerprint(state.ticket)}: answer {answer.call_id} arrived after {elapsed_ms} ms, queued")
             state.queued_answers.append(answer)
             return
-        logger.info(f"voice call {state.ticket}: answer {answer.call_id} arrived after {elapsed_ms} ms, injecting")
+        logger.info(f"voice call {fingerprint(state.ticket)}: answer {answer.call_id} arrived after {elapsed_ms} ms, injecting")
         await self._deliver_answers(session, state, [answer])
 
     async def _deliver_answers(self, session: RealtimeSessionPort, state: _CallState, answers: List[_Answer]) -> None:
@@ -715,7 +716,7 @@ class VoiceSessionService:
         else:
             await session.submit_tool_result(answer.call_id, answer.output)
             channel = "function_call_output"
-        logger.info(f"voice call {state.ticket}: answer {answer.call_id} injected as {channel}, "
+        logger.info(f"voice call {fingerprint(state.ticket)}: answer {answer.call_id} injected as {channel}, "
                     f"{len(answer.output)} chars")
 
     async def _reply_or_owe(self, session: RealtimeSessionPort, state: _CallState) -> None:
@@ -729,5 +730,5 @@ class VoiceSessionService:
         if not state.queued_answers:
             return
         queued, state.queued_answers = state.queued_answers, []
-        logger.info(f"voice call {state.ticket}: flushing {len(queued)} queued answers")
+        logger.info(f"voice call {fingerprint(state.ticket)}: flushing {len(queued)} queued answers")
         await self._deliver_answers(session, state, queued)

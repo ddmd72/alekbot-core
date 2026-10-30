@@ -1,4 +1,5 @@
 """Cabinet web-call API: auth, ownership, busy, failure releases, hangup before the relay starts."""
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,6 +10,10 @@ from src.domain.media_room_caller_leg import CallerLeg
 from src.ports.media_room_port import MediaRoomError
 from src.services.voice_call_setup_service import VoiceCallSetupError
 from src.web.voice_web_call_app import create_voice_web_call_blueprint
+from tests.support.voice_tickets import open_ticket, ticket_key
+
+# One cipher for every `_app`, so a test can open the call record's ticket.
+CIPHER = AesGcmTestCipher()
 
 AUTH = {"Authorization": "Bearer tok"}
 
@@ -35,7 +40,7 @@ def _setup(store, prepare_error=None):
     agent = MagicMock()
     agent.session_config = AsyncMock(side_effect=prepare_error or None,
                                      return_value={"instructions": "you are Lelik", "tools": []})
-    return VoiceCallSetupService(store, AsyncMock(), AsyncMock(return_value=agent))
+    return VoiceCallSetupService(store, AsyncMock(), AsyncMock(return_value=agent), digest_key=b"k" * 32)
 
 
 def _app(store, media_room, user="u1", setup=None):
@@ -44,7 +49,7 @@ def _app(store, media_room, user="u1", setup=None):
     app = Quart(__name__)
     app.register_blueprint(create_voice_web_call_blueprint(
         session_service=session_service, call_setup=setup or _setup(store), media_room=media_room,
-        ephemeral_store=store, relay_base_url="wss://relay.example.com"))
+        ephemeral_store=store, relay_base_url="wss://relay.example.com", cipher=CIPHER, digest_key=b"k" * 32))
     return app
 
 
@@ -65,10 +70,11 @@ async def test_start_answers_and_never_returns_the_ticket():
     store, room = MemoryStore(), _room()
     resp, body = await _start(_app(store, room).test_client())
     assert resp.status_code == 201 and body["sdp"] == "ANSWER"
-    record = store.data[f"voice_web_call:{body['call_id']}"]
-    assert record["ticket"] not in str(body)
+    record_key = f"voice_web_call:{body['call_id']}"
+    ticket = await open_ticket(CIPHER, record_key, store.data[record_key])
+    assert ticket not in str(body)
     assert store.data["voice_one_call:u1"]["call_id"] == body["call_id"]
-    assert store.data[f"voice_ticket:{record['ticket']}"]["call_kind"] == "web"
+    assert store.data[ticket_key(ticket)]["call_kind"] == "web"
 
 
 @pytest.mark.asyncio
@@ -86,7 +92,8 @@ async def test_connect_points_the_sfu_at_the_relay_with_the_ticket():
     store, room = MemoryStore(), _room()
     client = _app(store, room).test_client()
     _, body = await _start(client)
-    ticket = store.data[f"voice_web_call:{body['call_id']}"]["ticket"]
+    record_key = f"voice_web_call:{body['call_id']}"
+    ticket = await open_ticket(CIPHER, record_key, store.data[record_key])
     resp = await client.post(f"/api/voice/web-call/{body['call_id']}/connect", headers=AUTH)
     assert (await resp.get_json())["sdp"] == "OFFER2"
     room.attach_agent.assert_awaited_once_with(
@@ -162,7 +169,7 @@ async def test_unauthenticated_is_401():
     ss.verify_access_token = MagicMock(side_effect=ValueError("bad"))
     session_less.register_blueprint(create_voice_web_call_blueprint(
         session_service=ss, call_setup=_setup(store), media_room=room, ephemeral_store=store,
-        relay_base_url="wss://relay.example.com"))
+        relay_base_url="wss://relay.example.com", cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
     resp = await session_less.test_client().post("/api/voice/web-call", json={"sdp": "o", "mid": "0"})
     assert resp.status_code == 401
 

@@ -11,6 +11,7 @@ TTL — that happens only when the relay redeems the ticket (see
 test_voice_session_config_extends_marker.py). The MemoryStore here records the `ttl_s` each `set`
 call used so that can be asserted directly.
 """
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -50,7 +51,7 @@ def _setup(store, prepare_error=None):
     agent = MagicMock()
     agent.session_config = AsyncMock(side_effect=prepare_error or None,
                                      return_value={"instructions": "you are Lelik", "tools": []})
-    return VoiceCallSetupService(store, AsyncMock(), AsyncMock(return_value=agent))
+    return VoiceCallSetupService(store, AsyncMock(), AsyncMock(return_value=agent), digest_key=b"k" * 32)
 
 
 def _app(store, media_room, user="u1", setup=None):
@@ -59,7 +60,7 @@ def _app(store, media_room, user="u1", setup=None):
     app = Quart(__name__)
     app.register_blueprint(create_voice_web_call_blueprint(
         session_service=session_service, call_setup=setup or _setup(store), media_room=media_room,
-        ephemeral_store=store, relay_base_url="wss://relay.example.com"))
+        ephemeral_store=store, relay_base_url="wss://relay.example.com", cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
     return app
 
 

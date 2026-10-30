@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 from quart import Quart
 
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
+from tests.support.voice_tickets import amd_key
 
 
 def _turn(request_text):
@@ -17,14 +18,14 @@ def _app(verdict):
     ephemeral_store = AsyncMock()
 
     async def get(key):
-        return verdict if key == "voice_amd:t1" else None
+        return verdict if key == amd_key("t1") else None
 
     ephemeral_store.get.side_effect = get
     summary_consumer = AsyncMock()
     app = Quart(__name__)
     app.register_blueprint(create_voice_control_plane_blueprint(
         ephemeral_store=ephemeral_store, quota_service=AsyncMock(), prompt_content_store=AsyncMock(),
-        summary_consumer=summary_consumer, oidc_verifier=AsyncMock(return_value=True), alert_sink=AsyncMock(),
+        summary_consumer=summary_consumer, oidc_verifier=AsyncMock(return_value=True), alert_sink=AsyncMock(), digest_key=b"k" * 32
     ))
     return app, ephemeral_store, summary_consumer
 
