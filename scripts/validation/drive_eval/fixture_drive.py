@@ -54,7 +54,8 @@ AREA_PATH = "/Apps/Alek-bot"                   # synthetic: the area root's abso
 _FULL = "fx:full:"
 _DELTA = "fx:delta"
 _CHILDREN = "fx:children:"
-_ROOT_CHANGE = DriveChange(item_id=ROOT_ID, name="root", is_folder=True)   # S0a: in every round, no `root` facet
+_ROOT_CHANGE = DriveChange(item_id=ROOT_ID, name="root", is_folder=True,
+                           identity=onedrive_item_identity(DRIVE_ID, ROOT_ID))   # S0a: in every round, no `root` facet
 _RAW_FACETS = ("photo", "location", "image", "video", "audio", "remoteItem", "package", "malware")
 
 
@@ -277,7 +278,7 @@ class FixtureDrive(UserDrivePort):
 
     async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
         if item_id == ROOT_ID:
-            return DriveChange(item_id=ROOT_ID, name="root", is_folder=True)
+            return _ROOT_CHANGE
         self._check(item_id)
         found = self._items.get(item_id)
         if found is None:   # the port contract (USER_DRIVE_INDEXING_RFC §26.2, Δ48): "not found" raises, never a deletion
@@ -407,6 +408,8 @@ class FixtureDrive(UserDrivePort):
 
     async def get_thumbnail(self, handle: DriveHandle, item_id: str, max_edge_px: int) -> Optional[bytes]:
         """The same rendition for every size: the fixture's pictures are already small (S0f, S0g)."""
+        if max_edge_px <= 0:
+            raise ValueError("a thumbnail edge is positive")
         self.thumbnail_calls.append((item_id, max_edge_px))
         self._check(item_id)
         change = self._items.get(item_id)
