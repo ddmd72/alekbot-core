@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Iterable, Optional
 
 from ..domain.connector_spec import ConnectorSpec
+from ..domain.email import GMAIL_INDEX_PROVIDER
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import empty_answer_alert, is_empty_answer
 from ..domain.integration import Integration
@@ -47,7 +48,6 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from .user_notification_service import UserNotificationService
 
-GMAIL_PROVIDER = "gmail"   # the provider key of the Gmail indexing state (not a credential kind)
 ALL = tuple(Integration)
 
 FlagWriter = Callable[[bool], Awaitable[None]]
@@ -91,7 +91,7 @@ class IntegrationReconnectService:
         summary = {"candidates": 0, "notices": 0, "errors": 0}
         passes = []
         if self._email is not None:
-            passes.append((Integration.MAIL, await self._email.list_indexing_user_ids(GMAIL_PROVIDER), self._gmail))
+            passes.append((Integration.MAIL, await self._email.list_indexing_user_ids(GMAIL_INDEX_PROVIDER), self._gmail))
         if self._task_config is not None:
             passes.append((Integration.TASKS, await self._task_config.list_user_ids(), self._todo))
         for integration, user_ids, visit in passes:
@@ -110,12 +110,12 @@ class IntegrationReconnectService:
         email = self._email
         if email is None:   # the sweep visits Gmail only when the store is wired; its caller logs the raise
             raise RuntimeError("Gmail reconnect check without an indexing-state store")
-        state = await email.get_indexing_state(user_id, GMAIL_PROVIDER)
+        state = await email.get_indexing_state(user_id, GMAIL_INDEX_PROVIDER)
         if state is None:
             return 0
 
         async def flag(value: bool) -> None:
-            await email.set_reconnect_flags(user_id, GMAIL_PROVIDER, reconnect_notified=value)
+            await email.set_reconnect_flags(user_id, GMAIL_INDEX_PROVIDER, reconnect_notified=value)
 
         has_credential = await self._has_credential(user_id, self._mail_kind)
         if has_credential:
@@ -203,7 +203,7 @@ class IntegrationReconnectService:
         now = self._clock()
         if integration is Integration.MAIL:
             if self._email is not None:
-                await self._email.set_reconnect_flags(user_id, GMAIL_PROVIDER, disconnected_by_user_at=now)
+                await self._email.set_reconnect_flags(user_id, GMAIL_INDEX_PROVIDER, disconnected_by_user_at=now)
         elif integration is Integration.DRIVE:
             if self._drive_states is not None:
                 await self._drive_states.update_sync_flags(user_id, disconnected_by_user_at=now)
@@ -216,7 +216,7 @@ class IntegrationReconnectService:
         Drive's flag is lowered by the drive fan-out once the grant works (its single clear path)."""
         if integration is Integration.MAIL:
             if self._email is not None:
-                await self._email.set_reconnect_flags(user_id, GMAIL_PROVIDER, reconnect_notified=False,
+                await self._email.set_reconnect_flags(user_id, GMAIL_INDEX_PROVIDER, reconnect_notified=False,
                                                       disconnected_by_user_at=Cleared.MARK)
         elif integration is Integration.DRIVE:
             if self._drive_states is not None:
@@ -237,7 +237,7 @@ class IntegrationReconnectService:
         if integration is Integration.MAIL:
             if self._email is None:
                 return False
-            state = await self._email.get_indexing_state(user_id, GMAIL_PROVIDER)
+            state = await self._email.get_indexing_state(user_id, GMAIL_INDEX_PROVIDER)
             if state is None:
                 return False
             return reconnect_needed(await self._has_credential(user_id, self._mail_kind), True,

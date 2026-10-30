@@ -8,6 +8,8 @@
 - `id_space`: the prefix of the item and drive identities the kind's drive adapter builds (E7); "" for a kind with
   no drive items.
 - `label`: the display name the Cabinet shows.
+- `offered`: whether the Cabinet offers a connect button for the kind (False for a frozen integration whose stored
+  credentials still work).
 """
 from dataclasses import dataclass
 from typing import Tuple
@@ -24,3 +26,4 @@ class ConnectorSpec:
     multiple: bool
     id_space: str
     label: str
+    offered: bool = True

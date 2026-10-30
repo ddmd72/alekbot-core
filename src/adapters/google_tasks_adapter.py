@@ -229,7 +229,7 @@ class GoogleTasksAdapter(TasksProviderPort):
         if not creds:
             raise ValueError(
                 f"No Google Tasks credentials found for user {user_id[:8]}. "
-                "Please connect Google Tasks via /auth/connect-google-tasks"
+                "Please connect Google Tasks via /auth/connect/google_tasks"
             )
 
         # Refresh if token expires within 5 minutes
@@ -243,7 +243,7 @@ class GoogleTasksAdapter(TasksProviderPort):
                 # Disconnected while the token endpoint answered: not connected, as when no record is found.
                 raise ValueError(
                     f"No Google Tasks credentials found for user {user_id[:8]}. "
-                    "Please connect Google Tasks via /auth/connect-google-tasks"
+                    "Please connect Google Tasks via /auth/connect/google_tasks"
                 )
 
         return creds

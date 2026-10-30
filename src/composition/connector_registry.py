@@ -2,17 +2,21 @@
 
 The kind literals live here and in the adapters only: a service receives its `ConnectorSpec` by constructor from this
 registry and filters credentials by `spec.kind`, never by a literal or by integration (E25). `required_scopes` are the
-service scopes each connect asks for today (Google checks them at consent, `google_oauth_service.py`; Microsoft
-requests them in `oauth_app.py` and checks none yet); `label` is the display name the Cabinet shows.
+service scopes each connect asks for (the realm's edge adds its identity scopes; `OAuthConnectService` refuses a grant
+that misses one, for every realm); `label` is the display name the Cabinet shows; `offered` False keeps a frozen kind
+(Google Tasks) out of the Cabinet's connect buttons.
 
 Public interface:
     ConnectorRegistry(edges: Mapping[str, OAuthProviderPort] = {})
     get(kind) -> ConnectorSpec                         unknown kind raises KeyError
     kinds(integration) -> List[str]                    in declaration order
     realm_edge(realm) -> OAuthProviderPort             unknown realm raises KeyError
+    specs() -> Mapping[str, ConnectorSpec]             kind -> spec, read-only
+    edges() -> Mapping[str, OAuthProviderPort]         realm -> edge, read-only
+    offered() -> List[ConnectorSpec]                   the kinds the Cabinet offers, in declaration order
 """
 from types import MappingProxyType
-from typing import Dict, List, Mapping, Optional
+from typing import List, Mapping, Optional
 
 from ..domain.connector_spec import ConnectorSpec
 from ..domain.integration import Integration
@@ -32,7 +36,7 @@ _SPECS = (
                   id_space="", label="Gmail"),
     ConnectorSpec(kind=GOOGLE_TASKS, integration=Integration.TASKS, realm=_GOOGLE,
                   required_scopes=("https://www.googleapis.com/auth/tasks",), multiple=False,
-                  id_space="", label="Google Tasks"),
+                  id_space="", label="Google Tasks", offered=False),   # frozen: stored grants work, no new connects
     ConnectorSpec(kind=MICROSOFT_TODO, integration=Integration.TASKS, realm=_MICROSOFT,
                   required_scopes=("Tasks.ReadWrite",), multiple=False,
                   id_space="", label="Microsoft To Do"),
@@ -49,7 +53,7 @@ class ConnectorRegistry:
     allowed until the edges are wired."""
 
     def __init__(self, edges: Optional[Mapping[str, OAuthProviderPort]] = None) -> None:
-        self._specs: Dict[str, ConnectorSpec] = {spec.kind: spec for spec in _SPECS}
+        self._specs: Mapping[str, ConnectorSpec] = MappingProxyType({spec.kind: spec for spec in _SPECS})
         self._edges: Mapping[str, OAuthProviderPort] = MappingProxyType(dict(edges or {}))
 
     def get(self, kind: str) -> ConnectorSpec:
@@ -66,3 +70,12 @@ class ConnectorRegistry:
             return self._edges[realm]
         except KeyError:
             raise KeyError(f"No OAuth edge for realm: {realm!r}") from None
+
+    def specs(self) -> Mapping[str, ConnectorSpec]:
+        return self._specs
+
+    def edges(self) -> Mapping[str, OAuthProviderPort]:
+        return self._edges
+
+    def offered(self) -> List[ConnectorSpec]:
+        return [spec for spec in self._specs.values() if spec.offered]

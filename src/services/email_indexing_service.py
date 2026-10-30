@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from ..domain.email_dates import to_naive_utc
 from ..domain.email import (
+    GMAIL_INDEX_PROVIDER,
     EmailClassificationResult,
     EmailExclusion,
     EmailMetadata,
@@ -109,7 +110,7 @@ class EmailIndexingService:
         user_id: str,
         account_id: str,
         credentials: OAuthCredential,
-        provider: str = "gmail",
+        provider: str = GMAIL_INDEX_PROVIDER,
         triggered_by: str = "cabinet",
         max_pages: Optional[int] = None,
         date_from: Optional[datetime] = None,
@@ -187,7 +188,7 @@ class EmailIndexingService:
                 skipped += 1
                 continue
 
-            latest_job = await self._job_repo.get_latest_job(user_id, "gmail")
+            latest_job = await self._job_repo.get_latest_job(user_id, GMAIL_INDEX_PROVIDER)
             if latest_job and latest_job.status == "running":
                 logger.info(
                     "[EmailIndexing] job already running for %s, skipping", user_id[:8]
@@ -204,7 +205,7 @@ class EmailIndexingService:
 
             job = self.create_job(
                 user_id=user_id,
-                provider="gmail",
+                provider=GMAIL_INDEX_PROVIDER,
                 triggered_by="scheduler",
                 mode="incremental",
                 account_id=profile.account_id,

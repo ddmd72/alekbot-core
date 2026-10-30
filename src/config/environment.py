@@ -468,6 +468,14 @@ class EnvironmentConfig:
         """
         return f"{self.firestore_collection_prefix}drive_note_erase_requests"
 
+    @property
+    def oauth_flows_collection(self) -> str:
+        """
+        Pending integration connect flows under `oauth_flow:<keyed digest of the state>`, single use, ten minutes
+        (MULTI_DRIVE_RFC §5.2; a TTL policy on `expires_at` sweeps the abandoned ones). Dev: development_oauth_flows
+        """
+        return f"{self.firestore_collection_prefix}oauth_flows"
+
     # --- Infrastructure Collections (Stable) ---
 
     @property

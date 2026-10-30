@@ -86,9 +86,11 @@ THUMBNAIL_MAX_BYTES = MAX_VISION_IMAGE_BYTES
 # Graph's named sizes and custom `c{w}x{h}[_crop]`; anything else never reaches the URL.
 _THUMBNAIL_SIZE_RE = re.compile(
     r"(?:small|medium|large|smallSquare|mediumSquare|largeSquare|c[1-9]\d{0,3}x[1-9]\d{0,3}(?:_crop)?)")
-# The App Folder item. Its parentReference.driveId is the drive id; the OAuth callback
-# (src/web/oauth_app.py, _read_drive_id) reads the same field of the same call, so the two compare equal.
+# The App Folder item. Its parentReference.driveId is the drive id; the connect's drive activation
+# (`read_drive_id`, below) reads the same field of the same call, so the two compare equal.
 _APPROOT = "/me/drive/special/approot"
+# Bound on the drive-id read at connect: the OAuth callback waits for it.
+DRIVE_ID_READ_TIMEOUT_S = 10.0
 _DELTA_START = f"{_APPROOT}/delta?$top=200"   # S0a: $top paginates delta
 # Facets stored raw on the record (§3.2); `hashes` comes from file.hashes.
 _FACETS = ("photo", "image", "video", "audio", "location", "remoteItem", "package", "malware")
@@ -251,6 +253,28 @@ class OneDriveAdapter(UserDrivePort):
         """The user's credential of the drive kind (the oldest when several), or None."""
         keys = await self._oauth.list_keys(user_id, self._kind)
         return await self._oauth.get(user_id, keys[0].credential_id) if keys else None
+
+    async def read_drive_id(self, access_token: str) -> str:
+        """The drive id of a just-granted token, for the index's drive-switch check (USER_DRIVE_INDEXING_RFC §10.1
+        step 0), read by the drive connect's activation before the credential carries it. Read from the App Folder
+        item: it answers under Files.ReadWrite.AppFolder (spike A6 saw other calls refused with 401), and
+        `parentReference.driveId` is the field `get_changes` binds its cursor to, so both sides compare the same
+        string. Best effort: "" (any failure, a non-2xx, a body without the field, past DRIVE_ID_READ_TIMEOUT_S)
+        only skips the check, so it never fails the connect. Not on UserDrivePort: slice 1b's `get_root(handle)`
+        replaces it (MULTI_DRIVE_RFC §5.1)."""
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{_GRAPH}{_APPROOT}", headers={"Authorization": f"Bearer {access_token}"},
+                                 timeout=aiohttp.ClientTimeout(total=DRIVE_ID_READ_TIMEOUT_S)) as resp:
+                    if not resp.ok:
+                        logger.warning(f"⚠️ Drive id not read at connect ({resp.status})")
+                        return ""
+                    body = await resp.json()
+            drive_id = (body.get("parentReference") or {}).get("driveId") if isinstance(body, dict) else None
+            return drive_id if isinstance(drive_id, str) else ""
+        except Exception as exc:
+            logger.warning(f"⚠️ Drive id not read at connect: {type(exc).__name__}")
+            return ""
 
     async def is_connected(self, user_id: str) -> bool:
         return bool(await self._oauth.list_keys(user_id, self._kind))

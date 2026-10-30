@@ -23,6 +23,11 @@ from pydantic import BaseModel
 ACCOUNT_REALM_GOOGLE = "google"
 ACCOUNT_REALM_MICROSOFT = "microsoft"
 
+# The `provider` of the Gmail index's stored records: the indexing state (doc `{user_id}_{provider}`) and the indexing
+# jobs. A key of the email index's own data, not a credential kind (a credential's kind comes from the connector
+# registry's spec, MULTI_DRIVE_RFC §4.2, T-6); it equals the Gmail kind's spelling only by history.
+GMAIL_INDEX_PROVIDER = "gmail"
+
 
 # ---------------------------------------------------------------------------
 # Email fetch primitives (transient — not stored in Firestore)

@@ -47,6 +47,7 @@ from ..services.prompt_builder import PromptBuilder
 from ..adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
 from ..adapters.firestore_credential_store import FirestoreCredentialStore
 from .connector_registry import GMAIL, MICROSOFT_ONEDRIVE, MICROSOFT_TODO, ConnectorRegistry
+from .oauth_connect_setup import build_oauth_edges
 from ..adapters.gmail_provider_adapter import GmailProviderAdapter
 from ..adapters.firestore_email_job_repo import FirestoreEmailJobRepository
 from ..adapters.firestore_email_exclusions_adapter import FirestoreEmailExclusionsAdapter
@@ -147,8 +148,8 @@ class ServiceContainer:
         # Credentials at rest (SECRETS_AT_REST_RFC §2.3): the graph passes its one cipher; a caller without one (an
         # owner-run script) gets the real KMS cipher from its own config, which refuses an empty key (I6). Never a no-op.
         # Every connector kind and its spec (MULTI_DRIVE_RFC §4.2): services take their spec from here, never a literal.
-        # No OAuth edge is wired yet.
-        self.connectors = ConnectorRegistry()
+        # One OAuth edge per realm (§5.1), built once here from the existing client settings.
+        self.connectors = ConnectorRegistry(edges={edge.realm: edge for edge in build_oauth_edges(config)})
         self.oauth_credentials = FirestoreCredentialStore(
             db_client, env_config,
             cipher=cipher if cipher is not None else cipher_setup.build_cipher(config.get("KMS_CRYPTO_KEY")))
