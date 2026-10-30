@@ -742,6 +742,15 @@ Lelik chose not to forward would be gone permanently.
 **Trigger to revisit:** if real calls show the end-of-call summary is consistently too coarse, raise
 reasoning effort (§4.3) and give Lelik the judgment — do not add more structural rules.
 
+**Gateway chat copy (code).** `AlekGatewayAgent` posts a reading-shaped answer (`SmartResponse.link_list` or
+`.structured_data`) through `UserNotificationService.notify_answer_copy`. When both are empty it falls back to
+`domain/result_links.build_link_copy(answer.text)`, so a plain-text answer with bare URLs still gets a bare-anchor copy.
+A `file` / `widget` rich content goes through `RichContentService.deliver` (`decisions/rich_content_one_delivery_path.md`).
+The copy is wrapped in `asyncio.wait_for(..., _ANSWER_COPY_TIMEOUT_S = 5.0)`, as Lelik's own copy is; a failure or timeout
+is logged, not raised, because the spoken answer matters more. **Known limit:** synchronous `delivery_items` on a Smart
+response are dropped on this path (only `full_response`, `link_list` and `structured_data` are read); the only sync
+`delivery_item` Smart produces today is WebSearch grounding attribution, off by default (`ENABLE_GROUNDING_ATTRIBUTION`).
+
 ### 4.11 `RequestContext` for the lifetime of a call
 
 `RequestContext` (`src/domain/request_context.py`) is built on `contextvars`. Each `asyncio.Task`

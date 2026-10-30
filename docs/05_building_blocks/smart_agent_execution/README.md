@@ -185,6 +185,9 @@ empty strings to `None` for optional fields.
 After editing Firestore: run `$admin_cache_reset` to invalidate the user agent pool
 (TTL is 3600s without reset).
 
+**Thinking effort.** Smart's thinking effort comes from `UserBotConfig.agent_thinking["smart"]`; a
+`message.context["thinking_effort"]` value overrides it for that request (`decisions/two_layer_provider_override.md`).
+
 ---
 
 ## 6. Dependency Injection
