@@ -40,8 +40,8 @@ async def test_a_drive_activation_without_a_drive_reader_keeps_no_drive_id_and_s
     (stored,) = await world.held("microsoft_onedrive")
     world.events.clear()
     activations = build_connect_activations(
-        credentials=world.store, reconnect=world.reconnect, todo_connector=world.registry.get("microsoft_todo"),
-        task_queue=None, read_drive_id=None)
+        reconnect=world.reconnect, todo_connector=world.registry.get("microsoft_todo"),
+        task_queue=None, drive_activation=None)
     await activations[Integration.DRIVE](stored)
     (after,) = await world.held("microsoft_onedrive")
     assert after.drive_id == stored.drive_id == "drive-b1"

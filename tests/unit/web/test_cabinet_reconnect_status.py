@@ -21,7 +21,6 @@ from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.adapters.google.google_oauth_provider import GoogleOAuthProvider
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
-from src.adapters.microsoft import OneDriveAdapter
 from src.adapters.microsoft.microsoft_oauth_provider import MicrosoftOAuthProvider
 from src.composition.connector_registry import ConnectorRegistry
 from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
@@ -91,7 +90,7 @@ class World:
         self.drive = Drive()
         self.reconnect = IntegrationReconnectService(
             credentials=self.creds, users=Users(), notifier=None, email_states=self.email, task_config=self.tasks,
-            drive_states=self.drive_states, drive=self.drive, clock=lambda: NOW, mail_connector=ConnectorRegistry().get("gmail"), todo_connector=ConnectorRegistry().get("microsoft_todo"))
+            clock=lambda: NOW, mail_connector=ConnectorRegistry().get("gmail"), todo_connector=ConnectorRegistry().get("microsoft_todo"))
         # get_status reads only the credential port and the config
         self.task_setup = TaskSetupService(lifecycle=None, task_config=self.tasks, tasks_provider=None,
                                            oauth_credentials=self.creds, task_search_index=None, task_queue=None,
@@ -126,14 +125,13 @@ class World:
         http.route("GET", "https://graph.microsoft.com/v1.0/me/drive/special/approot", 403, {})
         registry = ConnectorRegistry(edges={"google": GoogleOAuthProvider("cid", "csecret"),
                                             "microsoft": MicrosoftOAuthProvider("cid", "csecret")})
-        drive = OneDriveAdapter(self.creds, "cid", "csecret", connector=registry.get("microsoft_onedrive"))
         connect_service = build_oauth_connect_service(
             self.db, SimpleNamespace(oauth_flows_collection="eval_oauth_flows"), connectors=registry,
             credentials=self.creds, cipher=AesGcmTestCipher(), digest_key=b"k" * 32,
             revocation=CredentialRevocationService(self.creds, registry.edges()),
-            activations=build_connect_activations(credentials=self.creds, reconnect=self.reconnect,
+            activations=build_connect_activations(reconnect=self.reconnect,
                                                   todo_connector=registry.get("microsoft_todo"), task_queue=None,
-                                                  read_drive_id=drive.read_drive_id),
+                                                  drive_activation=None),
             redirect_uri="https://service.example/auth/connect/callback")
         sessions = SessionService(secret_key=SECRET, access_token_ttl=3600, refresh_token_ttl=3600)
         app = Quart("test_oauth_reconnect")

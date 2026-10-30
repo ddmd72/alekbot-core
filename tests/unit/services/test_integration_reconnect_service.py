@@ -95,7 +95,7 @@ class World:
 
         self.svc = IntegrationReconnectService(
             credentials=self.creds, users=Users("user-a", "user-b"), notifier=self.notifier,
-            email_states=self.email, task_config=self.tasks, drive_states=self.drive_states, drive=self.drive,
+            email_states=self.email, task_config=self.tasks,
             alert_sink=self.alerts, ensure_agents=ensure, clock=lambda: NOW, mail_connector=ConnectorRegistry().get("gmail"), todo_connector=ConnectorRegistry().get("microsoft_todo"))
 
     async def connect(self, user_id: str, provider: str) -> None:

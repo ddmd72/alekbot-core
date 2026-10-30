@@ -145,14 +145,13 @@ class World:
         registry = ConnectorRegistry(edges={"google": GoogleOAuthProvider("cid", "csecret"),
                                             "microsoft": MicrosoftOAuthProvider("ms-cid", "ms-csecret")})
         self.reconnect = create_autospec(IntegrationReconnectService, instance=True)
-        drive = OneDriveAdapter(self.store, "ms-cid", "ms-csecret", connector=registry.get("microsoft_onedrive"))
         connect_service = build_oauth_connect_service(
             self.db, SimpleNamespace(oauth_flows_collection="eval_oauth_flows"), connectors=registry,
             credentials=self.store, cipher=AesGcmTestCipher(), digest_key=b"k" * 32,
             revocation=CredentialRevocationService(self.store, registry.edges()),
             activations=build_connect_activations(
-                credentials=self.store, reconnect=self.reconnect, todo_connector=registry.get("microsoft_todo"),
-                task_queue=self.queue, read_drive_id=drive.read_drive_id),
+                reconnect=self.reconnect, todo_connector=registry.get("microsoft_todo"),
+                task_queue=self.queue, drive_activation=None),
             redirect_uri=REDIRECT)
         self.app = Quart("test_reconnect_does_not_reindex")
         self.app.register_blueprint(create_oauth_blueprint(
