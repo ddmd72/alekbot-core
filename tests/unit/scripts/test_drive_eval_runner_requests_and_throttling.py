@@ -12,7 +12,8 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_search import DriveSearchCard, DriveSearchResult, request_from_fields
 from src.domain.exceptions import LLMRateLimitError
 from src.services.drive_indexing_service import TickResult
-from src.domain.user_drive import make_drive_ref
+from src.domain import drive_ref
+from scripts.validation.drive_eval.eval_connection import EVAL_REF_TAG
 
 from ..services.drive_index_fakes import FakeEmbeddings
 from .drive_eval_samples import GOLD, MANIFEST, fake_content, rome
@@ -189,7 +190,7 @@ class TestRunnerGaps:
                 pass
 
             async def search(self, user_id, request):
-                card = DriveSearchCard(ref=make_drive_ref(item_id), item_id=item_id, name="Scan_0012.pdf",
+                card = DriveSearchCard(ref=drive_ref.format(EVAL_REF_TAG, item_id), item_id=item_id, name="Scan_0012.pdf",
                                        path=expected, kind="pdf", is_folder=False, summary="Scan_0012.pdf | pdf")
                 return DriveSearchResult("ambiguous_folder", cards=(card,))
 

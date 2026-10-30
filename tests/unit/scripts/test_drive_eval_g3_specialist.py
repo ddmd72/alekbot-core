@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from scripts.validation.drive_eval.dry_run_drive import DriveOpLog, DryRunDriveOperations
+from scripts.validation.drive_eval.eval_connection import EvalDriveConnections, eval_connection
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive
 from scripts.validation.drive_eval.smart_dry_run import (
     FORBIDDEN_ON_INJECTION, NOT_RUN_OUTCOMES, REMOVED_DRIVE_INTENTS, DryRunDispatch, annotate_drive_read, drive_counts,
@@ -119,8 +120,10 @@ def test_a_search_naming_a_word_no_file_holds_is_marked_d29():
 
 async def test_the_dry_run_log_feeds_the_metrics_and_writes_never_run():
     drive = FixtureDrive(MANIFEST)
-    service = UserDriveService(drive)
-    ops = DriveOperations(conversion_service=FileConversionService(storage=AsyncMock(), drive=drive),
+    connections = EvalDriveConnections(eval_connection("u"))
+    service = UserDriveService(drive, connections)
+    ops = DriveOperations(conversion_service=FileConversionService(storage=AsyncMock(), drive=drive,
+                                                                   connections=connections),
                           drive_service=service, drive_search=None)
     context = {"user_id": "u"}
     log = DriveOpLog()
