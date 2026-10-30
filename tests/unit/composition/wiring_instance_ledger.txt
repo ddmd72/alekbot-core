@@ -25,7 +25,7 @@ src.adapters.firestore_dedup_store.FirestoreDedupStore 3  # by-design three stor
 src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
 src.adapters.firestore_drive_note_repo.FirestoreDriveNoteRepository 1  # by-design single instance
-src.adapters.firestore_ephemeral_store.FirestoreEphemeralStore 1  # by-design single instance
+src.adapters.firestore_ephemeral_store.FirestoreEphemeralStore 2  # by-design one per collection: the drive notes' erase requests (drive_note_setup.py) and the connect flows, {prefix}oauth_flows (oauth_connect_setup.py, MULTI_DRIVE_RFC 5.2)
 src.adapters.firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter 1  # by-design single instance
 src.adapters.firestore_email_job_repo.FirestoreEmailJobRepository 1  # by-design single instance
 src.adapters.firestore_fact_lifecycle_counters.FirestoreFactLifecycleCounters 1  # by-design single instance, held by the ServiceContainer (Facts S3, FACT_LIFECYCLE_RFC D10); the consolidator adds to it, the janitor shares it (application_graph.py FactLifecycleSweepService)
