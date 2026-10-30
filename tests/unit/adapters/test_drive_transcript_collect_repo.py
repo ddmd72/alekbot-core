@@ -31,9 +31,9 @@ def adapter(request, mock_env_config):
 async def test_transcript_key_in_use_in_any_state_per_user(adapter):
     repo, _ = adapter
     await repo.upsert_records([
-        DriveIndexRecord("u", "a", transcript_state="current", transcript_key="k1"),
-        DriveIndexRecord("u", "b", transcript_state="ready", transcript_key="k2"),
-        DriveIndexRecord("v", "c", transcript_state="current", transcript_key="k3"),
+        DriveIndexRecord("u", "a", connection_id="u", transcript_state="current", transcript_key="k1"),
+        DriveIndexRecord("u", "b", connection_id="u", transcript_state="ready", transcript_key="k2"),
+        DriveIndexRecord("v", "c", connection_id="v", transcript_state="current", transcript_key="k3"),
     ])
     assert await repo.transcript_key_in_use("u", "k1") and await repo.transcript_key_in_use("u", "k2")
     assert not await repo.transcript_key_in_use("u", "k3") and not await repo.transcript_key_in_use("u", "nope")
@@ -43,7 +43,7 @@ async def test_the_firestore_read_is_equality_only(adapter):
     repo, db = adapter
     if db is None:
         pytest.skip("Firestore wire only")
-    await repo.upsert_records([DriveIndexRecord("u", "a", transcript_key="k1")])
+    await repo.upsert_records([DriveIndexRecord("u", "a", connection_id="u", transcript_key="k1")])
     db.cols[RECS].executed.clear()
     await repo.transcript_key_in_use("u", "k1")
     (ops,) = db.cols[RECS].executed
@@ -71,7 +71,7 @@ async def test_refused_roundtrips_on_the_job(adapter):
 async def test_batch_booked_at_roundtrips(adapter):
     from src.domain.drive_transcript import TranscriptBatch
     repo, _ = adapter
-    batch = TranscriptBatch(name="batches/b9", user_id="u", request_keys=("i:0",), submitted_at=T, created_at=T,
+    batch = TranscriptBatch(name="batches/b9", user_id="u", connection_id="u", request_keys=("i:0",), submitted_at=T, created_at=T,
                             next_poll_at=T)
     await repo.create_batch(batch)
     assert (await repo.get_open_batches(U_SCOPE, T, 5))[0].booked_at is None
