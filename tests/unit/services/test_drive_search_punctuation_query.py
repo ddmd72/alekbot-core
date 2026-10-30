@@ -20,8 +20,8 @@ def test_a_query_with_name_keys_is_not():
 
 async def test_the_service_runs_the_filter_only_path():
     w = World()
-    w.drive.add("old.pdf", facets=taken("2025-01-01"))
-    w.drive.add("new.pdf", facets=taken("2026-01-01"))
+    w.drive.add("old.pdf", media=taken("2025-01-01"))
+    w.drive.add("new.pdf", media=taken("2026-01-01"))
     await w.settle()
     calls = len(w.emb.calls)
     result = await w.search("???", kind="pdf")
