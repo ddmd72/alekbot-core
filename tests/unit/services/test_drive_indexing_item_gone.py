@@ -10,7 +10,7 @@ from datetime import timedelta
 import pytest
 
 from src.domain.drive_index import RecordState, TriageVerdict, inaccessible
-from src.domain.drive_index_params import READER_RENDITION_SIZE
+from src.domain.drive_index_params import READER_RENDITION_EDGE_PX
 from src.domain.user_drive import DriveItemNotFoundError
 
 from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
@@ -85,7 +85,7 @@ async def test_a_vanished_rendition_for_the_reader_re_reads_and_marks(w):
     real = w.drive.get_thumbnail
 
     async def thumbnail(user_id, item_id, size):
-        if size == READER_RENDITION_SIZE:
+        if size == READER_RENDITION_EDGE_PX:
             vanish(w, item_id)
         return await real(user_id, item_id, size)
     w.drive.get_thumbnail = thumbnail

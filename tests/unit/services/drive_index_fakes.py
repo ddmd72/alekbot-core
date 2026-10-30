@@ -217,6 +217,12 @@ class LegacyConnections:
         found = await self.get(user_id, user_id)
         return [found] if found is not None else []
 
+    async def primary(self, user_id: str) -> Optional[Any]:
+        """The user's one connection while it is ACTIVE (`DriveConnectionService.primary`, stage 1)."""
+        from src.domain.drive_connection_state import ConnectionState
+        found = await self.get(user_id, user_id)
+        return found if found is not None and found.state is ConnectionState.ACTIVE else None
+
     async def flag_reconnect(self, handle: Any) -> bool:
         flag = getattr(self.drive, "flag_reconnect", None)
         return bool(await flag(handle.user_id)) if flag is not None else False

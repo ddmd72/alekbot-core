@@ -23,7 +23,7 @@ async def indexed_doc(w, name="a.md", parent="root"):
 
 
 async def debris(w, item_id, generation, n=2):
-    await w.repo.write_chunks([DriveChunk("u", item_id, generation, i, "stray", 0, 5, "markdown") for i in range(n)],
+    await w.repo.write_chunks([DriveChunk("u", item_id, generation, i, "stray", 0, 5, "markdown", connection_id="u") for i in range(n)],
                               [[0.1] * 8 for _ in range(n)])
 
 
