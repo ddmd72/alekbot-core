@@ -22,10 +22,13 @@ C1B_MODULES = (
     "src/domain/drive_media_facts.py",
     "src/domain/drive_media_source.py",
     "src/domain/drive_ref.py",
+    "src/domain/drive_ref_refusal.py",
+    "src/domain/drive_resolved_ref.py",
     "src/domain/drive_untagged_ref.py",
     "src/domain/drive_user_settings.py",
     "src/ports/drive_connection_repository.py",
     "src/ports/user_drive_port.py",
+    "src/services/drive_connection_service.py",
 )
 
 
