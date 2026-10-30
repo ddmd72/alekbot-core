@@ -41,7 +41,7 @@ async def test_the_status_reports_the_initial_build_of_the_provider_account():
 
 
 async def test_a_connection_without_an_account_logs_an_error_and_reports_a_closed_build(caplog):
-    _, _, service = await _service(eval_connection(USER))
+    _, _, service = await _service(replace(eval_connection(USER), provider_account=None))
     with caplog.at_level(logging.ERROR):
         status = await service.indexing_status(USER)
     assert status.initial_build_spent_usd == 0 and status.initial_build_closed
