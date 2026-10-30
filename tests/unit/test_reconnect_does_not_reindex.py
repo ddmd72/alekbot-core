@@ -5,27 +5,32 @@ consents once. This file drives that consent through the real chain and asserts 
 
 Real: the oauth blueprint's generic connect routes (`/auth/connect/<kind>`, `/auth/connect/callback`, MULTI_DRIVE_RFC
 §5.2) over the real `SessionService`, `OAuthConnectService` with its flows in `FirestoreEphemeralStore`, the Google and
-Microsoft edges and the activations (`build_connect_activations`: the drive id read by `OneDriveAdapter.read_drive_id`,
-the To Do setup task); R1's `consented` is a spec'd recorder. `FirestoreCredentialStore` + `AesGcmTestCipher`,
+Microsoft edges and the activations (`build_connect_activations`: the drive activation, `build_drive_activation`, over
+the real `DriveConnectionService` with the drive identity read by `OneDriveAdapter.get_root` behind the router; the To
+Do setup task); R1's `consented` is a spec'd recorder. `FirestoreCredentialStore` + `AesGcmTestCipher`,
 `FirestoreIndexedEmailRepository`, `FirestoreTaskConfigRepository`, `FirestoreTaskSearchIndex`, `TaskSetupService` (its task
 delivered through the real `WorkerHandler` dispatch),
-`OneDriveAdapter.connection`, `DriveIndexingService` over `InMemoryDriveIndexRepository`, `GcpTaskQueue` over
+`DriveIndexingService` over `InMemoryDriveIndexRepository`, ticking the connection read from the same
+`DriveConnectionService` (MULTI_DRIVE_RFC §4.4, §8), `GcpTaskQueue` over
 `tests/support/cloud_tasks_fake.py` (the main service's worker queue); all Firestore on one `EvalDb`.
 Fakes: HTTP through `tests/support/http_boundary_fake.py` (token endpoints, Google userinfo, Graph `/me`, approot); the
-drive's I/O through `FakeContentDrive` with `connection()` delegated to the real adapter; To Do's Graph subscription
+drive's I/O through `FakeContentDrive` with the adapter's credential read in front of its feed; the drive connections
+on `FakeDriveConnectionRepository`; To Do's Graph subscription
 lifecycle (`GraphSubscriptions`, subscriptions with an expiry). The drive tick's own continuation queue is the drive
 harness's `FakeQueue` (the indexer's queue, not the worker queue).
 
 Outcomes by integration:
 - Gmail holds: a consent writes only the credential and enqueues no indexing.
-- Drive holds within the grace: the same drive resumes from the stored cursor, nothing purged. Another drive purges by
-  design (drive switch). A reconnect over 30 days after the loss purges (expired), and the next ticks rebuild the index
-  from scratch: a paid rebuild (card embeddings, content and enrichment work again).
+- Drive (MULTI_DRIVE_RFC §4.4): a lost grant flags the connection and the index holds within the grace; a consent of
+  the same drive reconnects the same connection, which resumes from the stored cursor, nothing purged. Another drive
+  purges by design (drive switch). A reconnect over 30 days after the loss purges (expired), and the next ticks rebuild
+  the index from scratch: a paid rebuild (card embeddings, content and enrichment work again). A credential that is
+  simply gone is no loss on the index: the index is kept and R1 owes the connection its reconnect notice.
 - To Do: a consent re-subscribes whatever the stored subscription says (active or lapsed): the stored one is dropped,
   one is registered and the primary list is re-read exactly once (`reindex_task_list`), an upsert that deletes nothing.
   A stored "active" subscription may have been dropped by Graph with the old consent, so trusting it would lose the
   changes made during the gap. The renewal sweep still keeps an active subscription.
-- I4: a cipher that fails on decrypt makes the tick raise; no loss is recorded, nothing is purged.
+- I4: a cipher that fails on decrypt fails the tick; no loss is recorded, nothing is purged.
 """
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -44,15 +49,22 @@ from src.adapters.gcp_task_queue import GcpTaskQueue
 from src.adapters.google.google_oauth_provider import GoogleOAuthProvider
 from src.adapters.microsoft import OneDriveAdapter
 from src.adapters.microsoft.microsoft_oauth_provider import MicrosoftOAuthProvider
+from src.composition.drive_connection_setup import build_drive_activation
+from src.composition.drive_provider_router import DriveProviderRouter
 from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
 from src.domain.billing import BillingAccount
+from src.domain.drive_connection_state import ConnectionState
+from src.domain.drive_extraction import PARSER, READER
 from src.domain.drive_index_params import ACCESS_LOSS_TTL
 from src.domain.email import IndexingState
 from src.domain.task import TaskSubscriptionConfig, TaskUserConfig
 from src.domain.user import UserProfile
+from src.domain.user_drive import DriveNotConnectedError
 from src.ports.task_lifecycle_port import TaskLifecyclePort
 from src.handlers.worker_handler import WorkerHandler
 from src.services.credential_revocation_service import CredentialRevocationService
+from src.services.drive_connection_service import DriveConnectionService
+from src.services.drive_indexing_service import DriveIndexingService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.services.session_service import SessionService
 from src.services.task_setup_service import TaskSetupService
@@ -60,9 +72,11 @@ from src.web.oauth_app import create_oauth_blueprint
 from tests.support import http_boundary_fake
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.cloud_tasks_fake import FakeCloudTasksClient
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.firestore_eval import EvalDb
+from tests.unit.services.drive_content_fakes import FakeExtractor, FakeTriage
 from tests.unit.services.test_drive_indexing_service import World as DriveWorld
-from tests.support.oauth_credentials_store import has_kind, one
+from tests.support.oauth_credentials_store import has_kind
 from src.composition.connector_registry import ConnectorRegistry
 
 USER = "u"   # the drive harness's user
@@ -145,13 +159,21 @@ class World:
         registry = ConnectorRegistry(edges={"google": GoogleOAuthProvider("cid", "csecret"),
                                             "microsoft": MicrosoftOAuthProvider("ms-cid", "ms-csecret")})
         self.reconnect = create_autospec(IntegrationReconnectService, instance=True)
+        # the drive (MULTI_DRIVE_RFC §4.4, §5.2): connections in the real service; the activation reads the grant's
+        # drive identity through the real OneDriveAdapter behind the router
+        self.drive_connections = DriveConnectionService(FakeDriveConnectionRepository(), self.store)
+        onedrive = OneDriveAdapter(oauth_credentials=self.store, client_id="ms-cid", client_secret="ms-csecret",
+                                   connector=registry.get("microsoft_onedrive"))
+        self.drive_activation = build_drive_activation(
+            connections=self.drive_connections, drive=DriveProviderRouter({"microsoft_onedrive": onedrive}),
+            task_queue=None)
         connect_service = build_oauth_connect_service(
             self.db, SimpleNamespace(oauth_flows_collection="eval_oauth_flows"), connectors=registry,
             credentials=self.store, cipher=AesGcmTestCipher(), digest_key=b"k" * 32,
             revocation=CredentialRevocationService(self.store, registry.edges()),
             activations=build_connect_activations(
                 reconnect=self.reconnect, todo_connector=registry.get("microsoft_todo"),
-                task_queue=self.queue, drive_activation=None),
+                task_queue=self.queue, drive_activation=self.drive_activation),
             redirect_uri=REDIRECT)
         self.app = Quart("test_reconnect_does_not_reindex")
         self.app.register_blueprint(create_oauth_blueprint(
@@ -219,66 +241,129 @@ async def test_gmail_a_consent_writes_only_the_credential_and_enqueues_no_indexi
 
 # ------------------------------------------------------------------------------------------------ Drive
 
+class CredentialReadDrive:
+    """The drive harness's scripted drive with the OneDrive adapter's credential read in front of the change feed: the
+    adapter reads `get(user_id, credential_id)` from the store on every call (the decrypt runs there) and answers
+    DriveNotConnectedError when the record is gone (onedrive_adapter.py). Everything else is the scripted drive."""
+
+    def __init__(self, drive: Any, store: FirestoreCredentialStore) -> None:
+        self._drive = drive
+        self._store = store
+        self.cursors: List[Any] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._drive, name)
+
+    async def get_changes(self, handle: Any, cursor: Any) -> Any:
+        if await self._store.get(handle.user_id, handle.credential_id) is None:
+            raise DriveNotConnectedError("no drive credential")
+        self.cursors.append(cursor)
+        return await self._drive.get_changes(handle, cursor)
+
+
 class Drive:
-    """The drive harness, its connection read through the real OneDriveAdapter over the new store; before `cutover()`
-    the index is built as the old store left it (connected to drive d1)."""
+    """The drive side (MULTI_DRIVE_RFC §4.4, §5.2, §8): a OneDrive consent goes through the generic routes and the real
+    drive activation (the real OneDriveAdapter reads the App Folder root over the HTTP fake), which creates or
+    reconnects the user's DriveConnection in the real DriveConnectionService; the indexer ticks that connection over the
+    drive harness's scripted drive, reading the connection fresh from the same service."""
 
     def __init__(self, world: World) -> None:
+        self.world = world
         self.w = DriveWorld()
-        self.adapter = OneDriveAdapter(oauth_credentials=world.store, client_id="ms-cid", client_secret="ms-csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
-        self.cursors: List[Any] = []
-        real_changes = self.w.drive.get_changes
+        self.w.drive.drive_identity = "microsoft_onedrive:d1"   # the identity the adapter builds for drive d1
+        self.drive = CredentialReadDrive(self.w.drive, world.store)
+        self.svc = DriveIndexingService(self.drive, self.w.repo, self.w.emb, self.w.queue, self.w.users,
+                                        lambda lat, lon: None, "test-space/8",
+                                        extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)},
+                                        triage=FakeTriage(), connections=world.drive_connections,
+                                        clock=self.w.clock, monotonic=self.w.clock.monotonic)
 
-        async def recording_changes(user_id, cursor):
-            self.cursors.append(cursor)
-            return await real_changes(user_id, cursor)
+    async def connection(self) -> Any:
+        (found,) = await self.world.drive_connections.list_for_user(USER, include_disconnected=True)
+        return found
 
-        self.w.drive.get_changes = recording_changes
+    async def tick(self) -> Any:
+        return await self.svc.tick((await self.connection()).scope)
 
-    def cutover(self) -> None:
-        self.w.drive.connection = self.adapter.connection
-        self.cursors.clear()
+    async def state(self) -> Any:
+        return await self.w.repo.get_sync_state((await self.connection()).scope)
+
+    async def settle(self, max_ticks: int = 50) -> Any:
+        for _ in range(max_ticks):
+            before = len(self.w.queue.tasks)
+            result = await self.tick()
+            continued = [t for t in self.w.queue.tasks[before:] if ":cont:" in (t["key"] or "")]
+            if not continued:
+                return result
+            self.w.clock.advance(max(1, max(t["delay"] for t in continued)))
+        raise AssertionError("did not settle")
 
     async def built(self) -> Any:
+        """Connected (one consent), indexing on, two files indexed."""
+        resp = await _onedrive_consent(self.world)
+        assert resp.headers["Location"] == "/cabinet?connected=microsoft_onedrive"
+        conn = await self.connection()
+        await self.world.drive_connections.set_indexing(USER, conn.connection_id, True)
         self.w.drive.add("a.pdf")
         self.w.drive.add("b.pdf")
-        await self.w.settle()
-        state = await self.w.repo.get_sync_state(USER)
-        assert state.drive_id == "d1" and state.cursor and state.cursor.startswith("delta:")
+        await self.settle()
+        state = await self.state()
+        assert state.drive_identity == "microsoft_onedrive:d1" and state.cursor and state.cursor.startswith("delta:")
+        self.drive.cursors.clear()
         return state
+
+    async def lose_the_grant(self) -> None:
+        """The adapter's rejected refresh flags the connection (DriveReauthRequired -> flag_reconnect, §4.4)."""
+        assert await self.world.drive_connections.flag_reconnect((await self.connection()).handle)
 
 
 async def _onedrive_consent(world: World):
     return await world.consent("microsoft_onedrive")
 
 
-async def test_drive_no_credential_records_the_loss_and_keeps_the_index(world):
+async def test_drive_a_lost_grant_records_the_loss_and_keeps_the_index(world):
     drive = Drive(world)
     await drive.built()
     records = len(drive.w.repo.records)
-    drive.cutover()
-    assert (await drive.w.tick()).status == "access_lost"
-    state = await drive.w.repo.get_sync_state(USER)
-    assert state.access_lost_at is not None
+    await drive.lose_the_grant()
+    assert (await drive.tick()).status == "access_lost"
+    assert (await drive.state()).access_lost_at is not None
     assert len(drive.w.repo.records) == records and drive.w.carded()
+
+
+async def test_drive_no_credential_keeps_the_index_and_is_owed_the_reconnect_notice(world):
+    """MULTI_DRIVE_RFC §4.4: an ACTIVE connection whose credential is gone is not a loss on the index (only a rejected
+    grant flags the connection); the index is kept and R1 owes it the reconnect notice."""
+    drive = Drive(world)
+    await drive.built()
+    records = dict(drive.w.repo.records)
+    conn = await drive.connection()
+    await world.store.delete(USER, conn.credential_id)
+    await drive.tick()
+    state = await drive.state()
+    assert state.access_lost_at is None and not state.purging
+    assert drive.w.repo.records == records
+    assert [c.connection_id for c in await world.drive_connections.reconnect_needed(USER)] == [conn.connection_id]
 
 
 async def test_drive_same_drive_consent_resumes_from_the_stored_cursor(world):
     drive = Drive(world)
     stored = await drive.built()
     records = dict(drive.w.repo.records)
-    drive.cutover()
-    await drive.w.tick()
-    assert (await drive.w.repo.get_sync_state(USER)).access_lost_at is not None
+    conn = await drive.connection()
+    await drive.lose_the_grant()
+    await drive.tick()
+    assert (await drive.state()).access_lost_at is not None
 
     resp = await _onedrive_consent(world)
     assert resp.headers["Location"] == "/cabinet?connected=microsoft_onedrive"
-    assert (await one(world.store, USER, "microsoft_onedrive")).drive_id == "d1"
-    result = await drive.w.tick()
+    again = await drive.connection()
+    assert (again.connection_id, again.drive_identity) == (conn.connection_id, "microsoft_onedrive:d1")
+    result = await drive.tick()
 
     assert result.status not in ("purged", "purging", "access_lost")
-    assert drive.cursors and drive.cursors[0] == stored.cursor
-    after = await drive.w.repo.get_sync_state(USER)
+    assert drive.drive.cursors and drive.drive.cursors[0] == stored.cursor
+    after = await drive.state()
     assert after.access_lost_at is None and after.epoch == stored.epoch and not after.purging
     assert set(drive.w.repo.records) == set(records)
 
@@ -286,12 +371,13 @@ async def test_drive_same_drive_consent_resumes_from_the_stored_cursor(world):
 async def test_drive_another_drive_consent_purges_by_switch(world):
     drive = Drive(world)
     await drive.built()
-    drive.cutover()
-    await drive.w.tick()
+    await drive.lose_the_grant()
+    await drive.tick()
     world.approot("d2")
 
     await _onedrive_consent(world)
-    result = await drive.w.tick()
+    assert (await drive.connection()).drive_identity == "microsoft_onedrive:d2"
+    result = await drive.tick()
 
     assert result.status in ("purged", "purging")
     assert drive.w.repo.records == {}
@@ -301,34 +387,31 @@ async def test_drive_a_reconnect_past_the_grace_purges_as_expired(world):
     """Over 30 days after the loss: the index is purged (expired) and the next ticks rebuild it, a paid rebuild."""
     drive = Drive(world)
     await drive.built()
-    drive.cutover()
-    await drive.w.tick()
+    await drive.lose_the_grant()
+    await drive.tick()
     drive.w.clock.advance(ACCESS_LOSS_TTL.total_seconds() + 60)
 
-    result = await drive.w.tick()
+    result = await drive.tick()
 
     assert result.status == "purged"
-    assert drive.w.repo.records == {} and await drive.w.repo.get_sync_state(USER) is None
+    assert drive.w.repo.records == {} and await drive.state() is None
 
 
-async def test_drive_a_failing_decrypt_raises_and_records_no_loss(world):
-    """I4: the indexer reads the connection before any decision (drive_indexing_service.py tick), so a KMS failure is
-    a failed tick, never "not connected": no loss mark, no purge."""
+async def test_drive_a_failing_decrypt_records_no_loss(world):
+    """I4: a KMS failure on the drive's credential read is a failed tick, never "not connected": no loss mark, no
+    purge. The tick decides from the stored connection (no decrypt, E28); the decrypt runs in the adapter's read."""
     drive = Drive(world)
     await drive.built()
-    drive.cutover()
-    await _onedrive_consent(world)
-    await drive.w.tick()
     records = dict(drive.w.repo.records)
-    tasks = len(drive.w.queue.tasks)
     world.cipher.failing = True
 
-    with pytest.raises(RuntimeError, match="KMS decrypt unavailable"):
-        await drive.w.tick()
+    result = await drive.tick()
 
-    state = await drive.w.repo.get_sync_state(USER)
+    assert result.status not in ("purged", "purging", "access_lost")
+    state = await drive.state()
     assert state.access_lost_at is None and not state.purging
-    assert drive.w.repo.records == records and len(drive.w.queue.tasks) == tasks
+    assert drive.w.repo.records == records
+    assert (await drive.connection()).state is ConnectionState.ACTIVE
     assert await has_kind(world.store, USER, "microsoft_onedrive") is True
 
 
