@@ -103,7 +103,7 @@ def _world(monkeypatch):
     monkeypatch.setattr(DriveOperations, "delete", delete_seen)
 
     specialist_llm, specialist_seen = script(
-        calls((tt.DELETE_DRIVE_ITEM, {"file_ref": "drive:old"}), (tt.OPEN_DRIVE_FILE, {"file_ref": "drive:scan"})),
+        calls((tt.DELETE_DRIVE_ITEM, {"file_ref": "drive:a1:old"}), (tt.OPEN_DRIVE_FILE, {"file_ref": "drive:a1:scan"})),
         calls((tt.REPORT_TOOL, {"note": "Deleted the old notes and opened the scan."})))
 
     async def specialist_call(self, request, turn=0, **kw):
@@ -119,8 +119,8 @@ async def test_a_chat_turn_reaches_the_lazy_specialist_and_back_with_receipts_vi
     smart_requests: list = []
     replies = [
         LLMResponse(text="", tool_calls=[_delegate(1, Intent.WORK_WITH_DRIVE_FILES,
-                                                   "Delete Inbox/old.txt (drive:old) and open the scan (drive:scan).")]),
-        LLMResponse(text="", tool_calls=[_delegate(2, Intent.CREATE_PDF, "A PDF of the scan.", file_ref="drive:scan")]),
+                                                   "Delete Inbox/old.txt (drive:a1:old) and open the scan (drive:a1:scan).")]),
+        LLMResponse(text="", tool_calls=[_delegate(2, Intent.CREATE_PDF, "A PDF of the scan.", file_ref="drive:a1:scan")]),
         LLMResponse(text="Done: the notes are deleted, the PDF is on its way."),
     ]
 
@@ -155,7 +155,7 @@ async def test_a_chat_turn_reaches_the_lazy_specialist_and_back_with_receipts_vi
                   if p.tool_response)
     assert answer.startswith("Drive result: ok")
     # the card's drive: ref reached create_pdf through the coordinator's prefetch, before the enqueue
-    world.resolver.assert_awaited_once_with("drive:scan", USER)
+    world.resolver.assert_awaited_once_with("drive:a1:scan", USER)
     enqueued = world.queue.enqueue_agent_task.await_args.kwargs
     assert enqueued["intent"] == Intent.CREATE_PDF
     assert enqueued["context"]["params"]["file_content"] == "SCAN TEXT"
