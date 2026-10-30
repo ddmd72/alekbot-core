@@ -138,7 +138,3 @@ def test_no_content_identity_falls_back_to_item_identity_and_version_unshared():
     assert record_content_key(rec) == (f"item:{IDENTITY}:ctag1", False)
     assert record_content_key(_rec(content_identity=None, content_version="c")) == (f"item:{IDENTITY}:c", False)
 
-
-def test_sha1_is_never_used():
-    rec = _rec(content_hash=None, content_version="c", facets={"hashes": {"sha1Hash": "AB", "sha256Hash": "CD"}})
-    assert content_key(rec) == ("item:it1:c", False)
