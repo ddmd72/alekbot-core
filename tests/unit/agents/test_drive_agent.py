@@ -97,7 +97,7 @@ async def test_a_find_returns_success_with_the_code_built_answer(ops, prompts):
     assert "[Result r1, step 1: search]\nREMINDER\n<card lease>" in resp.result
     assert "Specialist note: Searched for the lease." in resp.result
     # the entry names the search (§7.4, 2026-10-29); the spec mock's outcome carries no request_text, so no query
-    assert resp.history_context == {"drive_context": [{"path": "Inbox/lease.pdf", "ref": "drive:f1", "op": "searched",
+    assert resp.history_context == {"drive_context": [{"path": "Inbox/lease.pdf", "ref": "drive:a1:f1", "op": "searched",
                                                        "count": 1}]}
     assert "Correct your input" not in resp.result and len(seen) == 2
 
@@ -342,8 +342,8 @@ async def test_one_user_lock_across_two_concurrent_executions(prompts):
     drive.move.side_effect = move
     shared = DriveOperations(conversion_service=AsyncMock(spec=FileConversionService), drive_service=drive)
     first, second = _agent(shared, prompts), _agent(shared, prompts)
-    first._call_llm, _ = script(calls((tt.MOVE_FILE, {"file_ref": "drive:f1", "folder": "A"}), REPORT))
-    second._call_llm, _ = script(calls((tt.MOVE_FILE, {"file_ref": "drive:f1", "folder": "B"}), REPORT))
+    first._call_llm, _ = script(calls((tt.MOVE_FILE, {"file_ref": "drive:a1:f1", "folder": "A"}), REPORT))
+    second._call_llm, _ = script(calls((tt.MOVE_FILE, {"file_ref": "drive:a1:f1", "folder": "B"}), REPORT))
     await asyncio.gather(first.execute(_msg("to A")), second.execute(_msg("to B")))
     assert order in ([("start", "A"), ("end", "A"), ("start", "B"), ("end", "B")],
                      [("start", "B"), ("end", "B"), ("start", "A"), ("end", "A")])
