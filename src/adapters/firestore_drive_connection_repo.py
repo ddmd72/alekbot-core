@@ -124,7 +124,7 @@ class FirestoreDriveConnectionRepository(DriveConnectionRepository):
             transaction.set(ref, _to_doc(connection, datetime.now(timezone.utc)))
             return True
 
-        created = await _create(self._db.transaction())
+        created: bool = await _create(self._db.transaction())
         if created:
             logger.info(f"🔗 Drive connection created: user={connection.user_id[:8]} "
                         f"connection={connection.connection_id[:8]} kind={connection.kind}")
@@ -178,7 +178,8 @@ class FirestoreDriveConnectionRepository(DriveConnectionRepository):
             transaction.update(ref, {**fields, "updated_at": datetime.now(timezone.utc)})
             return _from_doc({**data, **fields})
 
-        return await _update(self._db.transaction())
+        updated: Optional[DriveConnection] = await _update(self._db.transaction())
+        return updated
 
     async def transition(self, user_id: str, connection_id: str, to: ConnectionState, now: datetime) -> bool:
         ref = self._ref(user_id, connection_id)
@@ -198,7 +199,7 @@ class FirestoreDriveConnectionRepository(DriveConnectionRepository):
             })
             return current
 
-        before = await _transition(self._db.transaction())
+        before: Optional[ConnectionState] = await _transition(self._db.transaction())
         if before is None:
             return False
         logger.info(f"🔗 Drive connection {connection_id[:8]} of user={user_id[:8]}: {before.value} -> {to.value}")
