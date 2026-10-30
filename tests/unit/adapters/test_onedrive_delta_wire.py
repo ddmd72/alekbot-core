@@ -13,7 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
-from src.domain.drive_card import content_hash_of, effective_date, photo_location
+from src.domain.drive_card import content_key_of, effective_date, photo_location
+from src.domain.drive_content_identity import ContentIdentity
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
@@ -108,7 +110,7 @@ class TestEnumeration:
     async def test_drive_and_root_ids_come_from_the_approot_item(self):
         adapter, _ = _adapter()
         results, _ = await _drain(adapter, _load("initial_enumeration.json")["pages"])
-        assert {(r.drive_id, r.root_item_id) for r in results} == {(DRIVE_ID, ROOT_ID)}
+        assert {(r.drive_identity, r.root_item_id) for r in results} == {(f"microsoft_onedrive:{DRIVE_ID}", ROOT_ID)}
 
     async def test_approot_is_read_fresh_for_every_page(self):
         # The indexer service never sees a disconnect, so a cached root could name the previous drive.
@@ -123,7 +125,8 @@ class TestEnumeration:
         session = _session([_resp(other), _resp(pages[1])])
         with patch("aiohttp.ClientSession", return_value=session):
             second = await adapter.get_changes(HANDLE, unbound)
-        assert (first.drive_id, second.drive_id) == (DRIVE_ID, "OTHER")
+        assert (first.drive_identity, second.drive_identity) == (f"microsoft_onedrive:{DRIVE_ID}",
+                                                                 "microsoft_onedrive:OTHER")
         assert session.get.call_args_list[0].args[0] == f"{_GRAPH}/me/drive/special/approot"
 
     async def test_approot_is_reported_on_every_page_as_an_ordinary_change(self):
@@ -158,7 +161,8 @@ class TestChangeMapping:
         dead = {c.item_id: c for r in results for c in r.changes if c.deleted}
         assert set(dead) == {fixture["_meta"]["folder_id"], fixture["_meta"]["child_id"]}
         for c in dead.values():   # only item_id and deleted are relied on (§3.1)
-            assert (c.name, c.parent_id, c.is_folder, c.content_version, c.facets) == ("", "", False, "", {})
+            assert (c.name, c.parent_id, c.is_folder, c.content_version, c.media, c.content_identity) == (
+                "", "", False, "", DriveMediaFacts(), None)
 
     async def test_delete_then_restore_in_one_round_keeps_feed_order(self):
         fixture = _load("delete_restore.json")
@@ -199,7 +203,9 @@ class TestChangeMapping:
         assert c.modified_at == datetime.fromisoformat(item["lastModifiedDateTime"].replace("Z", "+00:00"))
         assert c.fs_modified_at == datetime.fromisoformat(
             item["fileSystemInfo"]["lastModifiedDateTime"].replace("Z", "+00:00"))
-        assert c.facets["hashes"] == item["file"]["hashes"] and c.is_folder is False
+        # MULTI_DRIVE_RFC §7.2: the quickXorHash is the content identity (family quickxor); raw hashes are not kept
+        assert c.content_identity == ContentIdentity("quickxor", item["file"]["hashes"]["quickXorHash"], item["size"])
+        assert c.is_folder is False
 
     async def test_folder_fields(self):
         pages = _load("initial_enumeration.json")["pages"]
@@ -215,18 +221,22 @@ class TestChangeMapping:
         adapter, _ = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(heic)])):
             c = await adapter.get_change(HANDLE, heic["id"])
-        assert {"photo", "image", "location", "hashes"} <= set(c.facets)
-        assert photo_location(c.facets) == (heic["location"]["latitude"], heic["location"]["longitude"])
+        # typed media facts (MULTI_DRIVE_RFC §7.2) in place of the raw photo/image/location/hashes facets
+        assert (c.media.camera_make, c.media.camera_model) == (heic["photo"]["cameraMake"], heic["photo"]["cameraModel"])
+        assert (c.media.image_width, c.media.image_height) == (heic["image"]["width"], heic["image"]["height"])
+        assert photo_location(c.media) == (heic["location"]["latitude"], heic["location"]["longitude"])
         assert effective_date(c, datetime(2000, 1, 1, tzinfo=timezone.utc)) == datetime(
             2025, 8, 14, 18, 22, 5, tzinfo=timezone.utc)                      # takenDateTime wins
-        assert content_hash_of(c) == f"{heic['file']['hashes']['quickXorHash']}:{heic['size']}"
+        assert content_key_of(c.content_identity) == f"quickxor:{heic['file']['hashes']['quickXorHash']}:{heic['size']}"
 
     async def test_empty_photo_facet_is_kept_and_dates_fall_back(self):
         jpeg = _load("facets.json")["jpeg_empty_photo"]
         adapter, _ = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(jpeg)])):
             c = await adapter.get_change(HANDLE, jpeg["id"])
-        assert c.facets["photo"] == {} and "image" in c.facets
+        # an empty photo facet gives no taken date; the image facet still gives the size (MULTI_DRIVE_RFC §7.2)
+        assert c.media.taken_at is None and c.media.camera_make == ""
+        assert (c.media.image_width, c.media.image_height) == (jpeg["image"]["width"], jpeg["image"]["height"])
         assert effective_date(c, datetime(2000, 1, 1, tzinfo=timezone.utc)) == c.fs_modified_at
 
     async def test_video_facet(self):
@@ -234,7 +244,7 @@ class TestChangeMapping:
         adapter, _ = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(video)])):
             c = await adapter.get_change(HANDLE, video["id"])
-        assert c.facets["video"]["duration"] == video["video"]["duration"]
+        assert c.media.video_duration_ms == video["video"]["duration"]
 
     async def test_remote_package_malware_facets_are_carried(self):
         raw = {"id": "X!1", "name": "n", "file": {"mimeType": "x"}, "parentReference": {"id": "P!1"},
@@ -242,7 +252,8 @@ class TestChangeMapping:
         adapter, _ = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(raw)])):
             c = await adapter.get_change(HANDLE, "X!1")
-        assert {"remoteItem", "package", "malware"} <= set(c.facets) and "hashes" not in c.facets
+        # typed: remoteItem is an alias, package and malware are flags; no hash, no content identity (§7.2)
+        assert c.media.is_alias and c.media.package and c.media.malware and c.content_identity is None
 
 
 class TestResync:
