@@ -59,12 +59,15 @@ Open bound and paging (RFC §29; built, not deployed): why a long file was not o
 | What `_Transcripts` is, why a file appears, moves or vanishes there, what the archive is, how to find a deleted recording's transcript; why the bot refuses to write into the folder | §4.23 (the mirror folder) |
 | The mirror looks stuck: which counters, the status script, the errors and what each does | §4.23 (errors), §7 (mirror operations) |
 | How Smart reaches the drive: the drive specialist, its model and fallback, statuses, receipts, logs, evals | §6.7; `src/agents/CLAUDE.md` → Drive — Logs; [DRIVE_SPECIALIST_RFC.md](../../10_rfcs/DRIVE_SPECIALIST_RFC.md) |
-| Deploy order, owner steps, and why there is no rollback to Slice 1; the Search v2 rollout (D30 gate, rebuild); the transcripts switches and rollback | §7.2 |
+| Deploy order, owner steps, and why there is no rollback to Slice 1; the Search v2 rollout (D30 gate, rebuild); the transcripts switches and rollback; the multi-drive deploy (wipe and rebuild) | §7.2 |
 | The drive specialist's rollout and rollback | `docs/07_deployment/README.md` → "The drive specialist" and "Standing levers"; RFC §13 (the order) |
 | What the owner's note on a file is; which tool writes what; why a note was refused or not written on a reminder run | §4.24 |
 | What `noted by the owner:` in a card or an opened file means; why a note matches as About | §4.24 (how search gets it, how it is read) |
 | Where a deleted file's note went; how to find, change, undo or erase it; `$drive-notes erase-all` | §4.24 (deleted files, erase) |
 | "What does the file say about X": how the specialist reads stored passages instead of opening files; the write gate after passages; why a scan is still opened | §4.25 |
+| Which drive a file is on; what a connection, a handle, a ref tag and the primary are; why a ref says "search again" | §1.2, §2.1 |
+| What a disconnect removes and what it keeps; why a connect failed or removed its grant | §1.2, §4.23 (mirror folder) |
+| Which keys carry the connection and which belong to the user or the drive; why the transcript store survives a purge | §3 (keys by scope) |
 | Where a piece of code lives | §8 |
 
 ---
@@ -73,8 +76,8 @@ Open bound and paging (RFC §29; built, not deployed): why a long file was not o
 
 The user's long-term file area: their OneDrive App Folder, behind the provider-neutral `UserDrivePort`.
 - **Step 1, live** ([USER_DRIVE_RFC.md](../../10_rfcs/USER_DRIVE_RFC.md)): the bot lists, opens, saves, moves,
-  creates folders in, appends to and deletes files. The model and history see only `drive:<item_id>` refs and
-  `[Drive: …]` labels, never a provider name.
+  creates folders in, appends to and deletes files. The model and history see only tagged `drive:<tag>:<item_id>` refs
+  (§1.2) and `[Drive: …]` labels, never a provider name.
 - **The drive specialist** ([DRIVE_SPECIALIST_RFC.md](../../10_rfcs/DRIVE_SPECIALIST_RFC.md), §6.7 below): Smart
   reaches the drive through one intent, `work_with_drive_files`; the `DriveAgent` specialist does the work through
   local tools over the user's `DriveOperations` (FileManagement's former drive code). It replaced the 8 drive intents
@@ -100,8 +103,8 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
 - **Transcripts of recordings, T1 live since 2026-10-21, owner only** (RFC §27): an opt-in **on top of** indexing.
   A user's audio and video are transcribed in the background by Gemini Flash on the Batch API, under a hard monthly dollar cap,
   and the transcript is indexed like any text file, so a recording is found by what was said and Smart opens its transcript.
-  Two switches must both be on: the indexer's kill switch (`DRIVE_TRANSCRIBE_ENABLED`, off by default) and the user's own flag
-  (`drive_transcribe_enabled`, off by default, set by the owner's script). The T2 mirror folder (live since 2026-10-21, owner) writes the
+  Two switches must both be on: the indexer's kill switch (`DRIVE_TRANSCRIBE_ENABLED`, off by default) and the connection's own flag
+  (`DriveConnection.transcribe_enabled`, off by default, set by the owner's script). The T2 mirror folder (live since 2026-10-21, owner) writes the
   transcripts to `_Transcripts` on the drive (§4.23); there is no summary yet (T3).
 - **T2 read side (live since 2026-10-21 with T2; RFC §27.9.8, §27.9.11).** Chat drive writes are refused under, into
   or over the bot's `_Transcripts` folder (the Step 1 guard in `UserDriveService`; the agent answers one localized line).
@@ -111,6 +114,43 @@ The user's long-term file area: their OneDrive App Folder, behind the provider-n
   says that `_Transcripts` and its Archive stay on the drive after an indexing opt-out (wording to be reviewed by the owner).
 
 The drive is the source of truth; the index is a disposable mirror. Everything in it can be rebuilt from the drive.
+
+### 1.2 Connections, handles and refs (MULTI_DRIVE_RFC, slice 1b)
+
+A drive is a first-class **connection**, not a property of the user. The grant (tokens, provider account) is the
+`OAuthCredential`; the **mount** it reads is a `DriveConnection` (`src/domain/drive_connection.py`): `connection_id`
+(random, no `:` or `/`), `credential_id`, `kind` (the connector kind, from the registry), `drive_identity` (adapter-built
+`{id_space}:{…}`), `ref_tag`, `mount_name` (default `Drive`), the two switches `indexing_enabled` and `transcribe_enabled`
+(on the connection only), `provider_account` (realm and subject, the key of the initial build), `state` (`ACTIVE`,
+`NEEDS_RECONNECT`, `DISCONNECTED`; DISCONNECTED is terminal and keeps its tag reserved) and `disconnected_at`. The credential
+holds no drive id; the connection's `drive_identity` names the drive.
+- **Stores.** `{prefix}drive_connections/{user_id}:{connection_id}` and `{prefix}drive_user_settings/{user_id}` (the
+  **primary** pointer, `primary_connection_id`, read fresh on every use). Repository `FirestoreDriveConnectionRepository`
+  (port `DriveConnectionRepository`); no composite index. A stored document whose `user_id` or `connection_id`
+  contradicts its address is treated as absent and logged at ERROR.
+- **Service.** `DriveConnectionService` is the one owner. `activate(credential, drive_identity)` runs after a drive
+  consent: the same `credential_id`, else the same `drive_identity`, of a live connection of that kind is a **reconnect**
+  (same id and tag, `ACTIVE` again); otherwise a new connection with a fresh tag and the lowest free name (`Drive`,
+  `Drive 2`, …). The first live connection becomes the primary; a disconnect of the primary hands it to the oldest other
+  `ACTIVE` one, or clears it. A connect whose drive identity cannot be read fails, and the connect service removes the
+  credential it just saved.
+- **Handle and router.** Every `UserDrivePort` method takes a `DriveHandle(user_id, connection_id, credential_id, kind)`.
+  `DriveProviderRouter` (`src/composition/drive_provider_router.py`) holds `{kind: adapter}` and forwards each call to the
+  adapter of `handle.kind`; a kind with no adapter raises `DriveNotConnectedError`. Adapters key their caches and token
+  caches by `(user_id, credential_id)` or the connection, never by user alone.
+- **Refs.** Every ref the model or the history sees is `drive:<tag>:<item_id>` (`src/domain/drive_ref.py`; the tag is 2 to
+  6 characters of `[a-z0-9]`, starting with a letter; the item id may hold `:`, parsing splits on the first one after the
+  tag). `DriveConnectionService.resolve_ref` finds the connection. An **untagged** ref (written before the connections) is
+  never resolved: the answer is "Ref … is from before the drives were reorganised; search for the file again." A tag of a
+  DISCONNECTED connection answers "belongs to a drive that is no longer connected."
+- **Stage 1 behaviour.** Search, the Cabinet card and the deep-research copy act on the primary connection (else the
+  oldest live one). Several connections, mounts in paths and a connection list are stage 2.
+- **Disconnect** (`DELETE /api/drive/disconnect`): the connection ends first (DISCONNECTED, primary handed on), then its
+  grant is removed under the revoke rule (only when no other connection uses the credential), the adapter's caches are
+  dropped (`forget`), and a `drive_sync` task lets the indexer purge the connection's index. The purge keeps the user's
+  transcript store and first marks the heads the connection's records carried `retained` (I8), so a later connection of
+  the same content re-attaches them without a paid window (§4.23). Mirror roots and ledger describe files on the drive
+  and stay. A disconnect that leaves no primary also turns the deep-research copy off.
 
 ### 1.1 Deep research copies (opt-in)
 
@@ -132,29 +172,32 @@ HTML, with no indexer change.
 
 ```
 Cabinet  PUT /api/drive/indexing {"enabled": true|false}
-           → UserBotConfig.drive_indexing_enabled + drive_sync task (toggle key)
+           → DriveConnection.indexing_enabled (the card's connection) + drive_sync task (toggle key)
 Cloud Scheduler every 10 min (minutes 3, 13, …) → main /worker start_drive_sync
-           → DriveSyncSchedulerService: one drive_sync task per user (tick key), staleness alert, cap alert, reconnect notice
-Step 1 mutation (save, move, delete, …) → UserDriveService → drive_sync task (nudge key, item ids)
+           → DriveSyncSchedulerService: one drive_sync task {user_id, connection_id} per ACTIVE connection with indexing on
+             (tick key `{connection_id}:tick:…`), staleness alert, cap alert, reconnect notice
+Step 1 mutation (save, move, delete, …) → UserDriveService → drive_sync task (nudge key, item ids) of the connection written to
 
 Cloud Tasks queue drive-sync-dev (max-concurrent-dispatches=1)
   → alek-bot-indexer-dev /worker (indexer_main.py; ingress internal + OIDC, RFC Δ21)
-      → DriveIndexingService.tick(user_id, nudge)
+      → DriveIndexingService.tick(scope = (user_id, connection_id), nudge)
           gate (incl. the D30 v2 gate) → lease → observe (nudged items, then delta pages)
           → content classes 0-2 → enrichment → classes 3-4 (keys work incl.) → upgrade pass → continue
-          → UserDrivePort (get_changes / get_change / list_children_changes; download_to_file, get_thumbnail)
+          → UserDrivePort by DriveHandle, through DriveProviderRouter (get_changes / get_change / list_children_changes;
+              download_to_file, get_thumbnail(max_edge_px))
           → ContentExtractorPort: SubprocessContentExtractor (parser, child process) → DriveReaderRunner
               (DriveDocumentReaderAgent, only when the §9 router sends a file on)
           → ImageTriagePort: DriveTriageRunner (DriveImageTriageAgent, batches of 8 thumbnails, triage v2)
           → DocumentProfilerPort: DriveProfilerRunner (DriveProfilerAgent, one profile per text file)
           → PassageHintPort: DrivePassageRunner (DrivePassageAgent, 2 chunks per call)
-          → transcript stage (only with the kill switch and the user's flag on, §4.23): MediaAudioPort
-              (SubprocessMediaExtractor: ffprobe/ffmpeg in the parser sandbox, reads the Graph download URL)
+          → transcript stage (only with the kill switch and the connection's flag on, §4.23): MediaAudioPort
+              (SubprocessMediaExtractor: ffprobe/ffmpeg in the parser sandbox, reads a header-less media URL from the
+              adapter's MediaSource; a source that needs request headers is refused)
               → BatchTranscriptionPort (GeminiBatchAdapter: Files upload, batch submit/poll/collect)
               → DriveTranscriptRunner (DriveTranscriberAgent), then the ordinary text path
           → GeminiEmbeddingAdapter (card, chunk and hint vectors)
           → FirestoreDriveIndexRepository ({prefix}drive_index_records, {prefix}drive_index_chunks,
-              {prefix}drive_index_hints, {prefix}drive_sync_state, {prefix}drive_model_usage; transcripts:
+              {prefix}drive_index_hints, {prefix}drive_sync_state (doc id = connection id), {prefix}drive_model_usage; transcripts:
               {prefix}drive_transcript_jobs (+ {prefix}drive_transcript_windows), {prefix}drive_transcript_batches,
               {prefix}drive_transcripts (+ {prefix}drive_transcript_parts))
 
@@ -182,7 +225,8 @@ The indexer's URL is read through the chain `INDEXER_URL_DEV` → `_INDEXER_URL`
 
 | Port | Adapter(s) | Role |
 |---|---|---|
-| `UserDrivePort` | `OneDriveAdapter` | Step 1 CRUD, plus `get_changes` (delta), `get_change`, paged `list_children_changes(limit, cursor)`, `connection`, `flag_reconnect`; from Slice 2+4 `download_to_file` (streamed, cut at a byte cap) and `get_thumbnail` (a provider rendition, never decoded by us) |
+| `UserDrivePort` (every method takes a `DriveHandle`) | `DriveProviderRouter` (the one port services hold; dispatches by `handle.kind`) over `OneDriveAdapter` | Step 1 CRUD, plus `get_changes` (delta), `get_change`, paged `list_children_changes(limit, cursor)`, `media_source` (url, headers, expiry), `capabilities` (`DriveCapabilities`, e.g. `max_path_chars`), `forget` (drop a handle's caches); `download_to_file` (streamed, cut at a byte cap) and `get_thumbnail(handle, item_id, max_edge_px)` (a provider rendition, never decoded by us). Items and changes carry adapter-built neutral shapes: `identity`, `ContentIdentity` and typed `DriveMediaFacts` |
+| `DriveConnectionRepository` | `FirestoreDriveConnectionRepository` | connections and the primary pointer (§1.2) |
 | `DriveIndexRepository` | `FirestoreDriveIndexRepository`, `InMemoryDriveIndexRepository` | records, chunks, hint documents, sync state, lease, card / chunk / hint kNN, name keys, about / word / hint key queries, the enrichment queue, usage and initial-build documents, filter queries. The in-memory one runs the tests and the eval |
 | `EmbeddingService` | `GeminiEmbeddingAdapter` (`gemini-embedding-2/768`) | card, chunk and hint vectors, query vectors |
 | `ContentExtractorPort` (Slice 2+4) | `SubprocessContentExtractor` (`parser`), `DriveReaderRunner` (`reader`) | one downloaded file to text; chained per kind by `EXTRACTOR_CHAINS` |
@@ -194,7 +238,7 @@ The indexer's URL is read through the chain `INDEXER_URL_DEV` → `_INDEXER_URL`
 | `MediaAudioPort` (§27) | `SubprocessMediaExtractor` (`drive_parser/media*.py`) | `probe(url)` and `extract_windows(url, windows)`: audio-only Opus windows of a recording, in the parser sandbox (§4.23) |
 | `BatchTranscriptionPort` (§27) | `GeminiBatchAdapter` | upload a window, submit/poll/collect a batch, delete the provider file; the only batch boundary |
 
-**Graph modules and paths.** The Graph code lives in `src/adapters/microsoft/` (`graph_auth.py`, `todo_adapter.py`, `onedrive_adapter.py`). Graph returns paths raw-encoded and writes the same location two ways, `/drive/root:/…` and `/drives/<id>/root:/…` (create-folder responses), so `OneDriveAdapter` unquotes the path (a no-op on a raw one) and strips either prefix before anything reaches the model or the history. Token refresh is shared with To Do (`GraphTokenProvider`): concurrent forced refreshes are deduped, and the cache is keyed by `(user_id, credential_id)` and lives at most 5 minutes, so a disconnect reaches every instance within 5 minutes. The drive connects through the generic `GET /auth/connect/microsoft_onedrive` and the one callback `/auth/connect/callback` (`docs/06_runtime/API_REFERENCE.md`); the credential is looked up by `kind` through the credential port, and its activation stores the drive id read by `OneDriveAdapter.read_drive_id` onto the credential. The provider's own search does not work inside the App Folder (spike A6), so finding files goes through our own index.
+**Graph modules and paths.** The Graph code lives in `src/adapters/microsoft/` (`graph_auth.py`, `todo_adapter.py`, `onedrive_adapter.py`). Graph returns paths raw-encoded and writes the same location two ways, `/drive/root:/…` and `/drives/<id>/root:/…` (create-folder responses), so `OneDriveAdapter` unquotes the path (a no-op on a raw one) and strips either prefix before anything reaches the model or the history. Token refresh is shared with To Do (`GraphTokenProvider`): concurrent forced refreshes are deduped, and the cache is keyed by `(user_id, credential_id)` and lives at most 5 minutes, so a disconnect reaches every instance within 5 minutes. The drive connects through the generic `GET /auth/connect/microsoft_onedrive` and the one callback `/auth/connect/callback` (`docs/06_runtime/API_REFERENCE.md`); after the credential is saved, the drive activation reads the drive's identity (`get_root(handle).drive_identity`) and calls `DriveConnectionService.activate` (§1.2): the drive identity lives on the connection, the credential holds no drive id. The adapter finds its grant by `handle.credential_id`. The provider's own search does not work inside the App Folder (spike A6), so finding files goes through our own index.
 
 No port for the policy, the planner, the card builder, the run rules, the text gate, the chunker, the keyer, the
 enrichment plan, the grounding, the tiers or the place lookup: they are pure domain code (`src/domain/drive_*.py`,
@@ -208,7 +252,19 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
 
 ## 3. The index
 
-- **One record per drive item** (`DriveIndexRecord`, doc id `{user_id}:{item_id}`). It stores the last observation
+- **Keys by scope (slice 1b).** Connection-scoped documents carry the connection id first, `{connection_id}:…`, with
+  `user_id` a stored field that every read checks: index records `{connection_id}:{item_id}`, chunks and hints
+  `{connection_id}:{item_id}:{generation}:{index}`, the sync state `{connection_id}`, transcript jobs and batches
+  `{connection_id}:…` (escaped), and the `drive_sync` task keys. A connection id is random and holds neither `:` nor `/`,
+  so no two connections collide. **User- or drive-scoped on purpose:** the monthly usage `{user_id}:{YYYY-MM}`, the initial
+  build `{user_id}:initial:{realm}:{subject}` (one per provider account, so a reconnect opens no new budget), the stored
+  transcripts `{user_id}:{family}:{digest}:{size}` (or the fallback `item:{identity}:{content_version}`, so two copies of a
+  recording on any connection share one), the mirror roots `{user_id}:{drive_identity}`, the mirror ledger
+  `{user_id}:{kind}:{sha256(mirror identity / source identity)[:32]}`, and owner notes. Firestore indexes use
+  `connection_id` (records, chunks) or `drive_identity` (the ledger) in place of `user_id` forms.
+- **One record per drive item** (`DriveIndexRecord`, doc id `{connection_id}:{item_id}`). Besides the observation it stores
+  the neutral `identity`, the `content_identity` (family, digest, size; None when the provider gave no hash) and the typed
+  `media` facts (taken date, camera, location, image and video size, durations, `package`, `malware`, `alias_of`). It stores the last observation
   (name, parent id, kind, size, raw facets), `scope` and `state`/`reason`, scheduling fields (`due_at`, `priority`),
   `name_tokens` and the card (`card_hash`, `has_card`, plus the `card_vector` field in Firestore). Two flags sit
   beside the structural state and never change its scope or reason: `card_capped` (no card headroom, RFC Δ23) and
@@ -235,7 +291,7 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   (they replace v1's `caption`), a collapsed folder's `readme_excerpt`, `script_rendered`, and the coverage gap
   `describe_gap` (§6.3). `lead_text` is still written but shown in the card only for machine text.
 - **One chunk document per chunk** (`DriveChunk`, `{prefix}drive_index_chunks`, doc id
-  `{user_id}:{item_id}:{generation}:{index}`): `text`, `char_start`/`char_end` in the extracted text, `kind`,
+  `{connection_id}:{item_id}:{generation}:{index}`): `text`, `char_start`/`char_end` in the extracted text, `kind`,
   `word_keys` (§3.1, at most `WORD_KEYS_PER_CHUNK` = 1 500) and `keys_version`, a 768-dim `vector`. v2 writes
   `content_terms` empty: the number terms now live in `word_keys` as `n:` keys. The text, the vector and the keys are
   exempt from single-field indexing.
@@ -246,9 +302,10 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   its generation; deleted before the chunks wherever a generation is collected, by the purge and by the sweep.
 - **Model usage (Search v2)**, `{prefix}drive_model_usage`, outside the sync state so a purge keeps it:
   `{user_id}:{YYYY-MM}` (dollars per class — reader, triage, profile, passage — the fallback's share, calls, a daily
-  map, and per class the share the initial build paid; TTL 400 days) and `{user_id}:initial` (the one-time initial
-  build: allowance, spent, opened, closed; no TTL). §4.11.
-- **One sync state per user** (`DriveSyncState`, doc id `user_id`): delta cursor, drive and root ids, epoch and
+  map, and per class the share the initial build paid; TTL 400 days; increments are server-side) and
+  `{user_id}:initial:{realm}:{subject}` (the one-time initial build of a provider account: allowance, spent, opened,
+  closed; no TTL; keyed from the connection's `provider_account`, so a tick never decrypts the credential). §4.11.
+- **One sync state per connection** (`DriveSyncState`, doc id `connection_id`, with `user_id` and `connection_id` fields): delta cursor, drive and root ids, epoch and
   phase, lease, `observed_as_of`, `access_lost_at`, `purging`, `systemic_failures`, applied versions and
   `applied_space` (the embedding space the cards are in), `upgrade_parked_month` (§4.12), counters. From Slice 2+4
   also `model_backoff_until` and `model_failures` (the reader's and triage's outage backoff) and the counters
@@ -258,7 +315,7 @@ the cost and the fallback's share; the reader still raises `DriveModelUnavailabl
   `described_count` / `described_grew_at`, and the alert flags `migration_alerted`, `stall_alerted`,
   `fallback_alerted_day`, and the cap alert's `card_cap_alerted` / `chunk_cap_alerted`; v1's `usage_month`, `model_pages_used` and `triage_images_used` are retired and left
   unread (the usage documents above replace them). The fan-out creates
-  a minimal one for a user with indexing on, a working grant and none yet, so staleness covers ticks that never land
+  a minimal one for an `ACTIVE` connection with indexing on and none yet, so staleness covers ticks that never land
   (RFC Δ28).
 - **Lease fence (RFC Δ26).** `save_sync_state` never writes the lease fields, and `release_lease` clears them only
   for the owner. A tick writes nothing once its clock reaches `lease_until - LEASE_MARGIN`, and `save_sync_state` /
@@ -869,10 +926,10 @@ itself makes no model call, only one query embedding):
 | **Profile** (Search v2: one call per text file, re-profiled at most once per 24 h after an edit; templates cost $0) | ≈ 3 500 in + 750 out ≈ $0.0008 a file | `PROFILE_USD_PER_MONTH` $4, after the initial build |
 | **Passage hints** (Search v2: 2 chunks per call, the first 100 chunks of a file, no EPUB, sheets or JSON) | ≈ 750 in + 650 out ≈ $0.0004 a chunk | `PASSAGE_USD_PER_MONTH` $20, after the initial build; an edit reuses its unchanged chunks' hints; re-hinted at most once per 24 h |
 | **Transcription** (RFC §27: Gemini Flash on the Batch API, audio windows of ≈ 30 min; opt-in per user) | batch = half the interactive price on input and output; billed at the **held** final price of `gemini-3.8-flash`, ≈ $0.16 per audio hour (≈ 400–450 output tokens per audio minute, thoughts included); a window's output is capped | `TRANSCRIBE_USD_PER_MONTH` $20, **hard**: a file's estimate (`TRANSCRIBE_HOUR_USD_ESTIMATE` $0.30/h plus a fixed prompt allowance per window, overlaps paid) is reserved before its first window; an optional `DRIVE_TRANSCRIBE_USD_CAP` can only lower it; no initial-build share |
-| **Initial build** (D27) | the first full description of a drive, every class | `INITIAL_BUILD_USD` $40 once per user; the monthly ceiling after it is $31 ($4 + $3 + $4 + $20) |
+| **Initial build** (D27) | the first full description of a drive, every class | `INITIAL_BUILD_USD` $40 once per provider account (keyed by the connection's `provider_account`; a reconnect of the same account, a new connection included, finds the same record and opens no new budget); the monthly ceiling after it is $31 ($4 + $3 + $4 + $20), shared by the user's connections |
 | **Reader** (scans, screenshots, images with text, PDFs the parser cannot read) | GPT-6 Luna by default (or Haiku 5.5), $0.10 / $0.50 per million input / output tokens; a page ≈ $0.0006. A failover call runs on Gemini Flash (`gemini-3.8-flash`, $1.50 / $7.50, promotional until 2026-12-31 — 15× the primary's token price), priced per model that ran | `READER_USD_PER_MONTH` $4 per user (Search v2; ≈ 6 666 pages, `MODEL_EXTRACT_PAGES_PER_MONTH` derived from it), after the one-time initial build (D27), 200 pages per file; an edit re-reads at most once per 24 h (`MODEL_REREAD_COOLDOWN`); a file whose reads keep failing as an outage at most `MAX_ATTEMPTS` times; a refused page or image is never retried |
 | **Triage** (every image, 8 thumbnails of 800 px per call; triage v2 adds ≈ 250 output tokens a photo) | the same models and fallback; an 800 px thumbnail costs more input tokens than the 176 px one did; not priced per image yet — the live model check's triage leg prints the real cost | `TRIAGE_USD_PER_MONTH` $3 per user (Search v2, after the initial build; the 20 000-image cap is retired); a failing batch costs its call and parse retry, a refused one halves only down to the refused image |
-| **Embeddings** (card, chunk and hint vectors, `gemini-embedding-2`) | not priced in `billing.py` and not billed to the user; Google's charge is not in the daily summary | **no monthly cap.** Bounded by size: 25 000 cards and 150 000 readable chunks per user, 1 000 chunks per file; a card is re-embedded only when its text changes; an edit embeds only its changed chunks (vectors reused by text hash); a space change re-embeds stored text without reading the file again |
+| **Embeddings** (card, chunk and hint vectors, `gemini-embedding-2`) | not priced in `billing.py` and not billed to the user; Google's charge is not in the daily summary | **no monthly cap.** Bounded by size: 25 000 cards and 150 000 readable chunks per connection (stage 1 has one; the split across connections is revisited with the second drive, RFC E36), 1 000 chunks per file; a card is re-embedded only when its text changes; an edit embeds only its changed chunks (vectors reused by text hash); a space change re-embeds stored text without reading the file again |
 | **Firestore** (records, chunks, kNN, term and count queries) | reads and writes at Firestore prices; a kNN reads 1 per 100 index entries scanned under the user filter | linear in the user's chunks, so bounded by the chunk cap; spike S3 measures it before the slice ships |
 | **Indexer CPU** | Cloud Run, scale to zero, one instance | `TICK_FILE_BUDGET` 50 runs per tick, a 30-minute tick deadline |
 
@@ -1317,7 +1374,7 @@ open the transcript and answer from it. Nothing is read aloud or sent to a chat 
 **Where it runs.** The job states (`transcript_state`: `none ready working waiting current held parked failed`) are advanced across ticks by `DriveTranscriptStage` (`src/services/drive_transcript_stage.py`) on the indexer; the mirror folder is reconciled by `DriveTranscriptMirror` (`src/services/drive_transcript_mirror.py`, ports only). **Live deploy values:** the kill switch's deploy key `DRIVE_TRANSCRIBE_ENABLED_DEV` is `on` (the substitution `_DRIVE_TRANSCRIBE_ENABLED`; the Makefile default is off) and `DRIVE_TRANSCRIBE_USD_CAP_DEV` lowers the cap to $10 under the code's $20; the user flag is on for the owner only, until the zero-credential parser service exists.
 
 **Who gets it.** Two switches, both off by default. (1) The **kill switch** `DRIVE_TRANSCRIBE_ENABLED` on the indexer: off means the
-transcription stage is not even built. (2) The user's own flag `drive_transcribe_enabled`, separate from "index my drive": indexing alone
+transcription stage is not even built. (2) The connection's own flag `DriveConnection.transcribe_enabled`, separate from "index my drive": indexing alone
 never sends a recording anywhere. It is set by the owner's script; there is no Cabinet toggle yet, and only the owner has it on (the
 decoder surface of ffmpeg on other people's files waits for the zero-credential parser service). The Cabinet shows a sentence about it
 only while the flag is on.
@@ -1419,9 +1476,9 @@ is instead of moving to the Archive) is no exception: it keeps its stored copy u
   localized line. The folder is the bot's.
 
 **What keeps it honest** (the pieces, not the code; names in RFC §27.9, Δ218–Δ234):
-- **Two collections that no purge deletes.** `drive_mirror_roots` (one document per user and drive: which folder is the bot's, plus the mirror's cursors, clocks, holds and
+- **Two collections that no purge deletes.** `drive_mirror_roots` (one document per user and drive, `{user_id}:{drive_identity}`: keyed by the drive, not the connection, so the folder outlives a connection and a reconnect finds it; which folder is the bot's, plus the mirror's cursors, clocks, holds and
   loss marks) and `drive_transcript_mirror` (the ledger: one document per mirrored file, source folder and archive folder). Without them a purge would let the bot create a
-  second root and index the first as documents. The ledger key has no drive id (OneDrive item ids are drive-unique), so every ledger read filters `drive_id`.
+  second root and index the first as documents. The ledger key is `{user_id}:{kind}:{sha256(mirror drive identity / source identity)[:32]}` and each document stores `drive_identity` and `source_identity`, so two connections that see one source item keep separate mirrors; every ledger read filters `drive_identity`.
 - **Idempotent writes.** `conflictBehavior=fail` everywhere; a create records its intent first and a re-run reads the name back and adopts only what the app created
   after the intent with the rendered size, so a foreign file is never overwritten. The owner's `_README.md` is never adopted. Every write is checked to end under the
   current root (a folder the owner moved out gets no write until it is moved back).
@@ -1467,6 +1524,11 @@ first run makes the bot create `_Transcripts (Alek)`.
 (Δ136–Δ244) and §27.19.
 
 ### 4.24 The owner's notes on files (DRIVE_FILE_NOTES_RFC rev 3.3; deployed)
+
+**Keys with connections (slice 1b).** A note stays user-scoped. It matches an item by two keys: `i:{identity}`, the
+adapter-built item identity (it outlives a connection, so a reconnect finds the note again), and the tagged ref key
+`r:{tag}:{item_id}` (`drive_note.tagged_ref_key`), which resolves a `drive:<tag>:<item_id>` ref. A note's binding carries
+the connection's ref tag. Notes written before the connections were wiped at the slice 1b deploy; nothing is migrated.
 
 **In plain English.** The owner tells the bot what a file or folder is ("this one is the bathroom repair invoice from Reformas
 Exemplo; it's an invoice, not a receipt"), or says "yes" when the bot proposes it. The bot keeps that as a **note**
@@ -1652,12 +1714,16 @@ citations: RFC §28.10. Decisions: `decisions/drive_content_write_gate.md`, `dri
 
 ## 5. The tick
 
-`DriveIndexingService.tick(user_id, nudge)` runs only on the indexer service, one user at a time.
-1. **Gate**, from Firestore, never from the agent cache: indexing off with anything stored → purge; indexing off with
-   nothing stored → `disabled`, nothing read or written; no credentials (the encrypted credential store, `decisions/credential_store_cutover.md`;
-   after the cutover every user has none until one reconnect, which resumes from the stored cursor when the drive is the same, and a
-   decrypt or KMS error raises and is never read as "no credentials") or `needs_reconnect` → stamp `access_lost_at`
-   once and stop; past 30 days → purge; a different `drive_id` → purge. The delta cursor carries the drive id and App
+`DriveIndexingService.tick(scope, nudge)` runs only on the indexer service, one connection at a time. The `drive_sync`
+payload is `{user_id, connection_id}` (plus the nudge); a payload without a connection is refused. The fan-out lists the
+`ACTIVE` connections with indexing on, so a user with two drives gets two ticks, each under its own lease.
+1. **Gate** (`access_action` in `drive_index_planner.py`), from Firestore, never from the agent cache, on the connection
+   and its sync state: connection absent or DISCONNECTED → purge, retaining the paid transcripts its records carried (I8;
+   nothing stored → `disabled`); indexing off with anything stored → purge; indexing off with nothing stored →
+   `disabled`, nothing read or written; connection `NEEDS_RECONNECT` (the state the drive reads from the connection,
+   never from the credential; a decrypt or KMS error is never read as "no credentials") → stamp `access_lost_at` once and
+   stop; past 30 days → purge; a stored `drive_identity` that differs from the connection's → purge (drive switch). A
+   reconnect resumes from the stored cursor when the drive is the same. The delta cursor carries the drive id and App
    Folder id it came from: a mismatch with a fresh App Folder read restarts the enumeration before the old cursor is
    followed, and a page from another drive purges and re-onboards. A 404 on a stored cursor restarts the enumeration
    like a 410 (RFC Δ40). **The Search v2 gate (D30):** a sync state whose `applied_versions` lacks the `keys` key was
@@ -1665,7 +1731,7 @@ citations: RFC §28.10. Decisions: `decisions/drive_content_write_gate.md`, `dri
    instance until the fan-out's one ops alert, then INFO) until the owner's rebuild purges it. A purge and a fresh
    onboarding (which stamps every version) are never caught by it.
 2. **Lease** in a transaction. A live lease answers `busy`: a nudge re-enqueues itself under a new key, any other
-   tick comes back once per holder after 60 s (`{user}:cont:busy-{holder}`, RFC Δ27).
+   tick comes back once per holder after 60 s (`{connection_id}:cont:busy-{holder}`, RFC Δ27).
 3. **Observe**: items named in a nudge first (`get_change`, their cards due in class 0), then delta pages until the
    round completes or the 8-minute start budget is spent. A full enumeration (onboarding, an expired cursor) opens an
    epoch; the sweep at its end deletes what it did not see, then sweeps orphan chunks.
@@ -1694,7 +1760,7 @@ citations: RFC §28.10. Decisions: `decisions/drive_content_write_gate.md`, `dri
 
 Purge is keyed on facts only, never on an exception: a rejected refresh (`invalid_grant`, `interaction_required`,
 `consent_required`, RFC Δ41) sets `needs_reconnect` and stops. A purge deletes chunks first, then records, then the
-sync state (Search v2: hint documents before chunks; the usage and initial-build documents are kept). Errors are classified by what the call is about (§8.2):
+sync state of the connection (Search v2: hint documents before chunks; the usage and initial-build documents are kept; the user's stored transcripts are kept by a rebuild, by a disconnect and whenever the user has another connection, DISCONNECTED ones included). Errors are classified by what the call is about (§8.2):
 - **Per item.** A probe, a parent lookup or a re-listing page that fails defers that one item (retried with
   backoff); a successful step resets the item's attempts. After `MAX_ATTEMPTS` a probe or a re-listing is settled
   without it (not dense; the subtree not re-listed). A parent lookup that keeps failing transiently keeps the record
@@ -2260,8 +2326,17 @@ and index-time descriptions instead of query-time ranking. The full delta table 
 - **Search metrics (planned, not built):** live search and drive-turn metrics, an LLM judge and a weekly report —
   [DRIVE_SEARCH_METRICS_RFC.md](../../10_rfcs/DRIVE_SEARCH_METRICS_RFC.md).
 - **Deploy and rollback**: §7.2.
-- **Rebuild.** `scripts/infrastructure/drive_index_rebuild.py --user <user_id>` (dry run) / `--apply`: takes the
-  user's lease (refused while a tick runs: retry in a few minutes), marks the sync state `purging` and releases it;
+- **Scripts take a connection.** The drive scripts that act on one drive (`drive_index_rebuild.py`,
+  `drive_transcribe_flag.py`, `drive_initial_build_reset.py`, `drive_transcribe_requeue.py`, `drive_mirror_status.py`,
+  `drive_transcript_sweep.py`) accept `--connection <id>` next to `--user`. Without it the user's one live connection
+  (ACTIVE or NEEDS_RECONNECT) is taken; a user with none or several is refused with the list of ids. The shared helper is
+  `scripts/infrastructure/drive_connection_arg.py`. A manual `drive_sync` body is `{"user_id": …, "connection_id": …}`.
+- **Wipe.** `scripts/infrastructure/drive_wipe.py --user <user_id> [--apply]` deletes every drive document of one user
+  (index, chunks, hints, transcript jobs, batches and store, sync states, mirror roots and ledger, notes, initial-build
+  records, connections, settings) and keeps the monthly usage, the credentials and the note erase requests. Dry run by
+  default; run it only with the drive queue and the fan-out paused. It never touches the drive itself. §7.2.
+- **Rebuild.** `scripts/infrastructure/drive_index_rebuild.py --user <user_id> [--connection <id>]` (dry run) / `--apply`: takes the
+  connection's lease (refused while a tick runs: retry in a few minutes), marks the sync state `purging` and releases it;
   the next tick (the fan-out's within 10 minutes, or a queued continuation) purges the index and re-onboards from
   epoch 1. Project and credentials from the environment / ADC, collections from `APP_ENV`. The purge shows as the
   indexer's `index purged` line. Turning indexing off and on again also rebuilds, but a quick off/on can find the
@@ -2301,8 +2376,8 @@ and index-time descriptions instead of query-time ranking. The full delta table 
 
 ### 7.1 Why was file X not indexed?
 
-Read the record first, then the logs. The record (`{prefix}drive_index_records`, doc id `{user_id}:{item_id}`; the
-item id is the one in the file's `drive:` ref) answers most cases on its own:
+Read the record first, then the logs. The record (`{prefix}drive_index_records`, doc id `{connection_id}:{item_id}`; the
+item id is the last part of the file's `drive:<tag>:<item_id>` ref, the connection the one whose tag it carries) answers most cases on its own:
 - `state` / `reason`: the outcome (§4.10). `unresolved` with a reason is a scope hold that keeps that outcome (§4
   step 1);
 - `card_capped`: no card headroom, so content and triage wait (§4 step 2);
@@ -2354,6 +2429,17 @@ same per file on its `index: <state> (<reason>)` line, so a filter-only search (
 failed and why.
 
 ### 7.2 Deploy order, owner steps, rollback
+
+**Multi-drive slice 1b (owner decision 2026-10-30: wipe and rebuild, no migration, no rollback;
+[decision](../../04_solution_strategy/decisions/multi_drive_wipe_not_migrate.md), RFC §12).** The new composite and vector
+indexes (`connection_id` and `drive_identity` forms) are `READY` before the new code serves; the drive queue holds no task
+of the old payload (no `connection_id`); main and the indexer deploy from one revision; the user's drive data is wiped with
+`drive_wipe.py` (§7); the drive is reconnected in the Cabinet, which creates the connection, the primary and the provider
+account; indexing is switched on and the indexer rebuilds from zero under the caps. Effects: search answers from a growing
+index with its coverage line, every older `drive:` ref answers "search again", stored transcripts and drive notes start
+empty (a recording is transcribed again, and paid again, when transcription is on). The previous revision cannot read the
+new documents: there is no rollback; the levers are indexing off per connection and the transcription flag off. The order
+and commands are in the private runbook.
 
 **Search v2** has its own runbook in the rollout notes (ops). In short: the gates (the v2 eval, G3 with no hard failure, the caption-shift check and the
 live model check of the new agents); back up the prompt layer; every new composite and the `hint_vector` indexes
@@ -2451,7 +2537,8 @@ The levers are forward ones; the first two are a code change plus a deploy, the 
 | Owner notes on files (§4.24) | `src/domain/drive_note*.py`, `src/services/drive_note_service.py`, `drive_note_lifecycle.py`, `drive_note_deleted_search.py`, `src/infrastructure/drive_note_tools.py`, `src/adapters/firestore_drive_note_repo.py`, `src/composition/drive_note_setup.py`; prompt `prompts_snapshot/tokens/system/PROTOCOL_DRIVE_NOTES.groovy` |
 | Place lookup | `src/domain/place_lookup.py`, `src/adapters/geo_place_table.py`, `src/assets/geo/` |
 | Search result, wrapper, render; Cabinet status | `src/domain/drive_search.py`, `src/domain/drive_indexing_status.py` |
-| Ports | `src/ports/user_drive_port.py`, `src/ports/drive_index_repository.py` |
+| Connections (§1.2) | domain `src/domain/drive_connection.py`, `drive_connection_state.py`, `drive_connection_status.py`, `drive_handle.py`, `connection_scope.py`, `drive_user_settings.py`, `drive_ref.py`, `drive_untagged_ref.py`, `drive_ref_refusal.py`, `drive_resolved_ref.py`, `drive_capabilities.py`, `drive_media_facts.py`, `drive_content_identity.py`, `drive_media_source.py`; port `src/ports/drive_connection_repository.py`; adapter `src/adapters/firestore_drive_connection_repo.py`; service `src/services/drive_connection_service.py`; wiring `src/composition/drive_connection_setup.py` (the drive activation), `drive_provider_router.py`, `connector_registry.py`; scripts `scripts/infrastructure/drive_wipe.py`, `drive_connection_arg.py` |
+| Ports | `src/ports/user_drive_port.py`, `src/ports/drive_index_repository.py`, `src/ports/drive_connection_repository.py` |
 | Adapters | `src/adapters/microsoft/onedrive_adapter.py`, `src/adapters/firestore_drive_index_repo.py`, `src/adapters/in_memory_drive_index_repo.py` |
 | Services | `src/services/drive_indexing_service.py`, `drive_search_service.py`, `drive_sync_scheduler_service.py`, `user_drive_service.py` |
 | Wiring, indexer routes | `src/composition/drive_indexing_setup.py`, `indexer_main.py`, `src/web/indexer_worker_app.py` |
