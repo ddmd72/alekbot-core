@@ -1,8 +1,9 @@
-from uuid import uuid4
+import base64
+import secrets
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 
-from ..domain.invite_code import InviteCode, InviteType
+from ..domain.invite_code import InviteCode, InviteType, group_invite_code, invite_hint
 from ..ports.iam_port import Role
 from ..ports.invite_code_repository import InviteCodeRepository
 from ..ports.user_repository import UserRepository
@@ -41,16 +42,15 @@ class InviteCodeService:
         role: str = "MEMBER"
     ) -> InviteCode:
         """Internal helper to create and save an invite code."""
-        # Generate a secure random code
-        # Format: 3 segments of 3 chars (e.g. ABC-XYZ-123)
-        # Using uuid4 for simplicity and entropy, taking first 12 chars roughly
-        raw_uuid = str(uuid4()).upper().replace("-", "")
-        code = f"{raw_uuid[:3]}-{raw_uuid[3:6]}-{raw_uuid[6:9]}"
-        
+        # 128 bits, 26 base32 characters (unpadded), grouped for display; shown once, stored only as a digest.
+        plain = base64.b32encode(secrets.token_bytes(16)).decode("ascii").rstrip("=")
+        code = group_invite_code(plain)
+
         expires_at = datetime.now(timezone.utc) + timedelta(days=self.code_ttl_days)
         
         invite = InviteCode(
             code=code,
+            hint=invite_hint(code),
             user_id=user_id,
             account_id=account_id,
             type=invite_type,
@@ -60,7 +60,7 @@ class InviteCodeService:
         )
         
         await self.repo.create(invite)
-        logger.info(f"Generated {invite_type.value} code: {code} for user {user_id}")
+        logger.info(f"Generated {invite_type.value} code for user {user_id}")
         return invite
 
     async def generate_self_link(self, user_id: str, account_id: str, platform: str) -> InviteCode:
@@ -97,7 +97,7 @@ class InviteCodeService:
         """
         Consume a team invite code to join a user to an account.
         """
-        logger.info(f"User {new_member_user_id} attempting to consume invite {code}")
+        logger.info(f"User {new_member_user_id} attempting to consume an invite")
         
         # 1. Validate code
         invite = await self.validate_code(code)

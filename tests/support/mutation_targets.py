@@ -266,6 +266,8 @@ TARGETS: tuple[MutationTarget, ...] = (
                    "tests/unit/adapters/firestore_credential_store_equivalent_mutants.txt"),
     # Secrets at rest, slice S4: the voice-ticket store keys; header-only equivalent file.
     MutationTarget("src.domain.voice_ticket_keys", "tests/unit/domain/voice_ticket_keys_equivalent_mutants.txt"),
+    # Secrets at rest, slice S5: invite codes (normalisation, grouping, hint); header-only equivalent file.
+    MutationTarget("src.domain.invite_code", "tests/unit/domain/invite_code_equivalent_mutants.txt"),
 )
 
 

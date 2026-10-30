@@ -201,7 +201,7 @@ def create_oauth_blueprint(
             if pending_code and invite_service:
                 try:
                     await invite_service.consume_team_invite(pending_code, user.user_id)
-                    logger.info(f"✅ Auto-consumed invite code {pending_code} for user {user.user_id}")
+                    logger.info(f"✅ Auto-consumed invite code for user {user.user_id}")
                     # Refresh account as it might have changed (e.g. joined team)
                     # For simplicity, we just proceed, user will see updated state on reload
                 except Exception as e:
