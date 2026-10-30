@@ -4516,8 +4516,8 @@ indexer is the same image.
   display name (at most 3 lookups, at least 15 min, scan of at most 2 000 jobs), else the windows are released once. A poll client error **books** its
   reservations instead of releasing them. A copy waits while a record with the same key is working, waiting, parked or held (Δ178, T-R30).
 - **Cost accounting (Δ105).** `billing.py` has no audio input rate and no batch discount today (`calculate_cost`,
-  `src/domain/billing.py:258-282`, prices one token class per model). Required, per CLAUDE.md "cost is priced per
-  model that RAN": a **single** input rate for `gemini-3.8-flash` (T0: no separate audio rate; $0.75 / $3.75 per million until 2026-12-31, $1.50 / $7.50
+  `src/domain/billing.py:258-282`, prices one token class per model). Required, per `decisions/billing_per_model_pricing.md` ("cost is priced per
+  model that RAN"): a **single** input rate for `gemini-3.8-flash` (T0: no separate audio rate; $0.75 / $3.75 per million until 2026-12-31, $1.50 / $7.50
   after, as dated `PRICE_SCHEDULE` entries with `make check-pricing` coverage, Δ132), a `batch` multiplier (0.5) applied to **both** the input and
   the output leg, and a `ModelUsage` leg keyed by (model, batch) with the audio and text token counts kept apart (the provider prices them
   alike; the split is for accounting) and thought tokens added to the output leg. **As built (Δ141, Δ157):** the price rows are untouched —

@@ -140,7 +140,7 @@ help: ## Show this help message
 	@echo "  make auth            Authenticate with Google Cloud"
 	@echo ""
 	@echo "🧪 TESTING & QUALITY:"
-	@echo "  make check           Local pre-commit gate: ruff lint + mypy + unit/architecture tests (no slow tests, no coverage)"
+	@echo "  make check           ruff lint + mypy + unit/architecture tests (no slow tests, no coverage) + G2"
 	@echo "  make test            Run all tests"
 	@echo "  make test-unit       Run unit tests"
 	@echo "  make test-affected   Inner loop: only the unit tests testmon selects for your changes"
@@ -271,7 +271,7 @@ test-coverage: ## Unit tests + global + per-file coverage gate (RFC § 8.4)
 # testmon never runs together with coverage. A fresh worktree gets the main checkout's .testmondata (the first
 # entry of `git worktree list`; copied with SQLite's backup API, testmon uses WAL), so its first run is not a cold suite.
 # testmon selects by executed Python lines: it can miss a test whose input is a data file or code run in a child
-# process, so `make check` before a commit is mandatory.
+# process: such a test is selected by hand (or runs in `make check` / CI).
 # --testmon-forceselect: without it testmon switches selection off whenever -m is given (testmon 2.2.0).
 TESTMON_SEED = $(shell git -c safe.directory='*' worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -n 1)
 
@@ -323,7 +323,7 @@ test-ci: ## Unit suite once: slow tests and the coverage gate (part of `make ci`
 	@echo "🚦 Enforcing per-layer coverage floors..."
 	@$(PYTHON) scripts/check_coverage_layers.py
 
-check: lint typecheck test-unit test-g2-offline ## Local pre-commit gate: ruff lint + mypy (domain/ports) + unit/architecture tests + offline G2 (CI runs `make ci`)
+check: lint typecheck test-unit test-g2-offline ## ruff lint + mypy (domain/ports) + unit/architecture tests + offline G2 (CI runs `make ci`)
 	@echo "✅ All checks passed"
 
 ci: lint typecheck test-ci test-g2-offline ## PR job: lint + mypy + the unit suite once (slow tests, coverage gate) + offline G2

@@ -3,7 +3,7 @@
 Multi-agent system with ActorModel-like coordination — specialists, not one LLM for everything.
 Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live in
 [`src/adapters/CLAUDE.md`](../adapters/CLAUDE.md)). This file holds what any edit in `src/agents/` needs: rules,
-conventions and per-agent traps. What an agent does lives in `docs/` (map below) and in the root roster table.
+conventions and per-agent traps. What an agent does lives in `docs/` (map below); intents and tiers live in code (below).
 
 ## Structure
 
@@ -43,7 +43,8 @@ Follow [`docs/how_to/NEW_AGENT_PLAYBOOK.md`](../../docs/how_to/NEW_AGENT_PLAYBOO
 
 ## Agent Roster
 
-Map: agent → where it is documented (the root `CLAUDE.md` table has tiers and intents). Code is in the same-named
+Map: agent → where it is documented (intents: `src/infrastructure/agent_manifest.py`; default tiers:
+`_DEFAULT_AGENT_TIERS` in `src/domain/user.py`). Code is in the same-named
 `*_agent.py` unless noted.
 
 | Agent | Documentation |
@@ -178,4 +179,12 @@ Map: agent → where it is documented (the root `CLAUDE.md` table has tiers and 
 
 ## Traps from the root CLAUDE.md
 
-<!-- Filled by a later step. -->
+- **Token accounting is per execution:** usage goes into the `TokenLedger` of `_execution_billing_scope()` (a `ContextVar`),
+  never onto the instance (per-user singletons, `asyncio.gather` fan-out); its `reset(token)` is load-bearing (`decisions/billing_execution_scoped_ledger.md`).
+- **Consolidator input:** model parts serialize as `p.text`, never `p.full_text` (verbose + web search context); user parts as
+  `p.consolidation_text or p.text` (`domain/consolidation_serialization.py`).
+- **Time:** `include_datetime=False` by default; time reaches the model via `_inject_timestamps()` in user messages and a UTC
+  prefix on delegation queries. A date in the system prompt changes the cached static prefix.
+- **Large static payloads** (a triage batch, a corpus) go through `extra_static_blocks` on `build_for_agent()`, never into the
+  user message (pollutes history, bypasses caching; `docs/08_concepts/prompt_assembly_guide.md`).
+- **Drive notes:** Smart has no note tool; a note's words go in the `work_with_drive_files` query, never in `file_contents`.

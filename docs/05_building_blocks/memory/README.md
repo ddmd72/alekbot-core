@@ -458,7 +458,8 @@ Each batch runs under the account's **memory-write lease** (`_consolidate_one`, 
   hourly sweep has no lease and keeps the old 1800 s threshold, and counts the same way. Neither zombie reset touches a
   `failed` batch; the sweep's separate revival step does (below);
 - takes the **oldest** pending batch (`pending` or `retry_pending`, `order_by created_at`, `:37-44`; the composite
-  index in `config/firestore.indexes.json` must be `READY`). With less than 60 s of the run budget left it starts
+  index in `config/firestore.indexes.json` must be `READY` before the code is deployed; the companion extraction queue,
+  `{prefix}companion_extraction_queue`, takes its oldest batch the same way and has its own composite index under the same gate). With less than 60 s of the run budget left it starts
   nothing: the batch stays pending, the lease is released and a deferral is enqueued (`:261-262`);
 - marks it `processing`, runs the agent with `consolidate_full`, the time left on the lease as its timeout and a single
   attempt (no whole-run transient retry, `base_agent.py:560-572`), and on success **deletes the batch** (`_process_one_batch`, `:251-310`);
@@ -1532,7 +1533,7 @@ eval (2026-07-15, older models and prices) put Sonnet ≈ $0.5 and Opus ≈ $1.5
   S3 kit's), so a re-run starts from what was spent. Apply and a small `--ids-file` re-run cost cents.
 
 **Where it is recorded.** Every model call goes through `BaseAgent._call_llm`, which bills the account per model that
-ran (`TokenLedger`, root `CLAUDE.md` → Token accounting) and writes a `prompt_content` row per turn (§9.1). The 📊 line
+ran (`TokenLedger`, `decisions/billing_execution_scoped_ledger.md`) and writes a `prompt_content` row per turn (§9.1). The 📊 line
 carries no cost.
 
 **Embeddings.** One batch call of 3 texts per create, merge or content update; one of up to 3 texts per search

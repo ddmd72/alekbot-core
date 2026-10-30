@@ -240,3 +240,13 @@ retry) lives with each agent (see `src/agents/CLAUDE.md`).
   never sends an empty cell (`SLACK_EMPTY_CELL`): Slack rejects uneven rows and empty `raw_text`
   with `invalid_blocks`. If Slack rejects the blocks anyway (row/column/10k-char limits), the table
   is re-sent as plain text via `send_long_text` — the reply is never lost to a block schema error.
+
+## Traps from the root CLAUDE.md
+
+- **Usage legs never overlap:** `prompt_tokens` is always uncached input; `calculate_cost` bills it, `cache_read_tokens` and
+  `cache_creation_tokens` as disjoint legs. OpenAI/Gemini report cached inside the input total, so the adapter subtracts both cache legs.
+- **xAI realtime `billable_audio_seconds`** on `response.done` is the session's running total: `XaiRealtimeAdapter` emits the
+  increment (`decisions/billing_cache_write_and_voice_seconds.md`).
+- **Workspace bucket (versioned):** `GcsWorkspaceAdapter` deletes by metadata patch + delete of the live object under
+  `if_generation_match`, never a generation-addressed delete (that erases the version).
+- **Slack voice memo** is detected by the file name `audio_message.*`, never by mimetype (seen as `audio/mp4` and `video/mp4`).

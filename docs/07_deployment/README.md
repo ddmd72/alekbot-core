@@ -97,7 +97,7 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 ### Transcripts switch and cap
 
 - `DRIVE_TRANSCRIBE_ENABLED_DEV` — `on` turns the indexer's transcription kill switch on, `off` turns it off; no other
-  value is accepted. `make deploy` refuses unless it is exactly `on` or `off`, and echoes the effective switch and cap
+  value is accepted. **Live value: `on`** (T1 is live for the owner since 2026-10-21; the Makefile default is `off`). `make deploy` refuses unless it is exactly `on` or `off`, and echoes the effective switch and cap
   before it submits. It also reaches the main service, where the Cabinet shows the disclosure only if it is on. It is a
   substitution, not a by-hand variable, because `--set-env-vars` replaces every variable on each deploy. A manual
   `gcloud builds submit` without the Makefile deploys `off`.
