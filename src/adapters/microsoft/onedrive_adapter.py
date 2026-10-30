@@ -619,7 +619,6 @@ class OneDriveAdapter(UserDrivePort):
             cursor=new_cursor,
             complete=complete,
             full_enumeration=full,
-            drive_id=drive_id,
             root_item_id=root_id,
             drive_identity=onedrive_drive_identity(drive_id, self._id_space),
         )

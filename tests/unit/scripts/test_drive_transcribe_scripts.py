@@ -13,6 +13,7 @@ from src.domain.drive_index import DriveIndexRecord, DriveIndexStoreUnavailable,
 from src.domain.drive_transcript import JobWindow, StoredTranscript, TranscriptBatch, TranscriptJob, WindowSpec
 
 from src.domain.connection_scope import ConnectionScope
+from src.domain.drive_media_facts import DriveMediaFacts
 
 from tests.unit.services.drive_index_fakes import T0
 
@@ -49,7 +50,7 @@ def _rec(item_id, kind, size=1_000_000, **kw):
 
 
 def test_backlog_sums_video_duration_and_counts_audio_by_bytes(backlog):
-    records = [_rec("v", "video", facets={"video": {"duration": 3_600_000}}),   # 1 h exactly
+    records = [_rec("v", "video", media=DriveMediaFacts(video_duration_ms=3_600_000)),   # 1 h exactly
                _rec("a", "audio", size=int(10.8e6)),                              # 1 h by bytes
                _rec("d", "pdf")]
     result = backlog.tally(records)
@@ -63,7 +64,7 @@ def test_backlog_sums_video_duration_and_counts_audio_by_bytes(backlog):
 def test_backlog_leaves_out_transcribed_and_stub_sized_files(backlog):
     records = [_rec("c", "audio", transcript_state="current"),
                _rec("big", "video", size=9 * 1024 ** 3),
-               _rec("long", "video", facets={"video": {"duration": 5 * 3_600_000}}),
+               _rec("long", "video", media=DriveMediaFacts(video_duration_ms=5 * 3_600_000)),
                _rec("folder", "video", is_folder=True)]
     result = backlog.tally(records)
     assert result.counts == {"already_transcribed": 1, "too_large": 1, "too_long": 1}
@@ -85,7 +86,7 @@ async def test_backlog_scan_pages_through_the_index(backlog, monkeypatch):
     monkeypatch.setattr(backlog, "_PAGE", 2)
     repo = InMemoryDriveIndexRepository()
     await repo.upsert_records([_rec(f"a{i}", "audio", size=int(10.8e6)) for i in range(5)])
-    result = await backlog.scan(repo, "u")
+    result = await backlog.scan(repo, SCOPE)
     assert result.counts == {"audio_by_bytes": 5}
 
 

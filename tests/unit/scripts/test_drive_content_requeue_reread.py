@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import (
     TRIAGE_VERSION, DriveIndexRecord, DriveSyncState, Priority, Reason, RecordState, TriageVerdict,
@@ -15,10 +16,12 @@ from src.domain.drive_index import (
 from src.domain.drive_index_planner import content_due, triage_due
 
 from tests.unit.services.drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
-from tests.unit.services.drive_index_fakes import T0
+from tests.unit.services.drive_index_fakes import T0, U_SCOPE
 
 _DIR = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure"
 U = "user-1"
+C = "conn-1"
+SCOPE = ConnectionScope(U, C)
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -35,7 +38,7 @@ def _rec(item_id, kind="pdf", state=RecordState.INDEXED, reason=None, truncated=
     fields = dict(name=f"{item_id}.{kind}", has_card=True, card_hash="h", indexed_generation=1, indexed_version="c1",
                   extraction_version=1, chunk_count=12, extracted_by="parser@3")
     fields.update(kw)
-    return DriveIndexRecord(user_id=U, item_id=item_id, kind=kind, content_version="c1",
+    return DriveIndexRecord(user_id=U, connection_id=C, item_id=item_id, kind=kind, content_version="c1",
                             state=state, reason=reason, truncated=truncated, **fields)
 
 
@@ -49,7 +52,7 @@ def _image(item_id, verdict=TriageVerdict.TEXT, **kw):
 
 async def _repo(records):
     repo = InMemoryDriveIndexRepository()
-    await repo.save_sync_state(DriveSyncState(user_id=U, epoch=1, root_item_id="root", created_at=T0))
+    await repo.save_sync_state(DriveSyncState(user_id=U, connection_id=C, epoch=1, root_item_id="root", created_at=T0))
     await repo.upsert_records(records)
     return repo
 
@@ -108,9 +111,9 @@ def test_summaries_count_by_kind_name_no_file_and_count_the_reader(rq):
 async def test_dry_run_writes_nothing(rq, select, first):
     repo = await _repo(_mixed())
     before = dict(repo.records)
-    code, message = await rq.requeue(repo, U, reason=None, kind=None, apply=False, now=T0, owner="r", select=select)
+    code, message = await rq.requeue(repo, SCOPE, reason=None, kind=None, apply=False, now=T0, owner="r", select=select)
     assert code == 0 and message.startswith(first) and "--apply" in message
-    assert dict(repo.records) == before and (await repo.get_sync_state(U)).lease_owner is None
+    assert dict(repo.records) == before and (await repo.get_sync_state(SCOPE)).lease_owner is None
 
 
 @pytest.mark.parametrize("select, selected", [("truncated", {"item-1", "item-2", "item-10"}),
@@ -118,26 +121,26 @@ async def test_dry_run_writes_nothing(rq, select, first):
 async def test_apply_writes_exactly_the_selected_records_and_releases_the_lease(rq, select, selected):
     repo = await _repo(_mixed())
     before = dict(repo.records)
-    code, message = await rq.requeue(repo, U, reason=None, kind=None, apply=True, now=T0, owner="r", select=select)
+    code, message = await rq.requeue(repo, SCOPE, reason=None, kind=None, apply=True, now=T0, owner="r", select=select)
     after = dict(repo.records)
     assert code == 0 and message.startswith("requeued: ")
     assert {k[1] for k in after if after[k] != before[k]} == selected and after.keys() == before.keys()
-    assert {r.item_id for r in await repo.due_records(U, T0, 10)} == selected
-    assert (await repo.get_sync_state(U)).lease_owner is None
+    assert {r.item_id for r in await repo.due_records(SCOPE, T0, 10)} == selected
+    assert (await repo.get_sync_state(SCOPE)).lease_owner is None
 
 
 @pytest.mark.parametrize("select", ["truncated", "no_text"])
 async def test_a_failure_reason_with_a_re_read_selection_is_refused(rq, select):
     with pytest.raises(ValueError):
-        await rq.requeue(await _repo([]), U, reason=Reason.EXTRACT_ERROR, kind=None, apply=False, now=T0, owner="r",
+        await rq.requeue(await _repo([]), SCOPE, reason=Reason.EXTRACT_ERROR, kind=None, apply=False, now=T0, owner="r",
                          select=select)
 
 
 async def test_a_busy_lease_writes_nothing(rq):
     repo = await _repo(_mixed())
-    await repo.acquire_lease(U, "tick", T0, T0 + timedelta(minutes=30), create=False)
+    await repo.acquire_lease(SCOPE, "tick", T0, T0 + timedelta(minutes=30), create=False)
     before = dict(repo.records)
-    code, message = await rq.requeue(repo, U, reason=None, kind=None, apply=True, now=T0, owner="r",
+    code, message = await rq.requeue(repo, SCOPE, reason=None, kind=None, apply=True, now=T0, owner="r",
                                      select=rq.TRUNCATED)
     assert code == 1 and "retry" in message and dict(repo.records) == before
 
@@ -179,7 +182,7 @@ async def test_a_truncated_read_is_read_in_full_by_the_next_tick_only_after_the_
     await w.settle()
     assert w.rec(doc).truncated and len(w.parser.requests) == reads   # the outcome stands
 
-    code, _ = await rq.requeue(w.repo, "u", reason=None, kind="docx", apply=True, now=w.clock.now, owner="r",
+    code, _ = await rq.requeue(w.repo, U_SCOPE, reason=None, kind="docx", apply=True, now=w.clock.now, owner="r",
                                select=rq.TRUNCATED)
     assert code == 0
     await w.settle()
@@ -206,7 +209,7 @@ async def test_a_text_image_with_no_text_goes_to_the_reader_again_and_is_not_tri
     await w.settle()
     assert w.rec(img).reason is Reason.NO_TEXT and len(w.reader.requests) == reads   # the outcome stands
 
-    code, message = await rq.requeue(w.repo, "u", reason=None, kind=None, apply=True, now=w.clock.now, owner="r",
+    code, message = await rq.requeue(w.repo, U_SCOPE, reason=None, kind=None, apply=True, now=w.clock.now, owner="r",
                                      select=rq.NO_TEXT)
     assert code == 0 and "1 images with no text" in message
     await w.settle()

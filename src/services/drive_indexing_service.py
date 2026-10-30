@@ -4471,7 +4471,7 @@ class DriveIndexingService:
         helper is called until its cursor is None. Without pins it is the plain delete, as before T2."""
         for key, deleter in (("purged_transcript_jobs", self._repo.delete_user_transcript_jobs),
                              ("purged_transcript_batches", self._repo.delete_user_batches)):
-            deleted = await deleter(handle.user_id, RECORD_WRITE_BATCH)
+            deleted = await deleter(handle.scope, RECORD_WRITE_BATCH)
             if deleted:
                 summary[key] = summary.get(key, 0) + deleted
                 return True

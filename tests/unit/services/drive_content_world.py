@@ -15,8 +15,8 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain import drive_index_policy as policy
 from src.domain.drive_extraction import PARSER, READER, ExtractionOutcome, ExtractionRequest
 from src.domain.drive_index import DriveChunk, DriveIndexRecord
-from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS
 from src.domain.drive_media_facts import DriveMediaFacts
+from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS
 from src.services.drive_indexing_service import DriveIndexingService, TickResult
 
 from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
