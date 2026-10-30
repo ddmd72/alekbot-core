@@ -659,7 +659,7 @@ def _media(**kw: Any) -> DriveIndexRecord:
 
 def test_leaves_job_only_when_the_record_leaves_or_changes_version():
     ctx = TranscriptContext(now=T0, enabled=True, month_usd=0.0, reserved_usd=0.0, cap_usd=20.0)
-    working = _media(transcript_state="working", transcript_key="item:m:c1")
+    working = _media(transcript_state="working", transcript_key="item:fake:d1:m:c1")
     assert not leaves_job(working, transcript_plan(working, ctx))                       # same version: kept
     edited = replace(working, content_version="c2")
     assert leaves_job(edited, transcript_plan(edited, ctx))                             # a new version resets it
