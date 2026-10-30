@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from src.domain.drive_connection_status import DriveConnectionStatus
 from src.domain.drive_index import MIGRATION_GATE_KEY, DriveSyncState
 from src.domain.drive_line import DriveLine
 from src.domain.drive_preflight import DrivePreflight
@@ -59,7 +60,7 @@ def _ops(drive=None, search=None):
 
 async def test_preflight_reads_both_lines():
     drive = AsyncMock(spec=UserDriveService)
-    drive.connection.return_value = DriveConnection(connected=False)
+    drive.status.return_value = DriveConnectionStatus(connected=False)
     search = AsyncMock(spec=DriveSearchService)
     search.search_state.return_value = SearchLine.REBUILDING
     assert await _ops(drive, search).preflight("u1") == DrivePreflight(DriveLine.NOT_CONNECTED, SearchLine.REBUILDING)
@@ -73,7 +74,7 @@ async def test_preflight_without_a_drive_is_not_configured_and_reads_nothing():
 
 async def test_a_failed_read_leaves_its_line_optimistic():
     drive = AsyncMock(spec=UserDriveService)
-    drive.connection.side_effect = RuntimeError("graph down")
+    drive.status.side_effect = RuntimeError("graph down")
     search = AsyncMock(spec=DriveSearchService)
     search.search_state.side_effect = RuntimeError("firestore down")
     assert await _ops(drive, search).preflight("u1") == DrivePreflight(DriveLine.CONNECTED, SearchLine.ON)
@@ -81,5 +82,5 @@ async def test_a_failed_read_leaves_its_line_optimistic():
 
 async def test_without_a_search_service_the_search_line_is_off():
     drive = AsyncMock(spec=UserDriveService)
-    drive.connection.return_value = DriveConnection(connected=True)
+    drive.status.return_value = DriveConnectionStatus(connected=True)
     assert await _ops(drive, None).preflight("u1") == DrivePreflight(DriveLine.CONNECTED, SearchLine.OFF)
