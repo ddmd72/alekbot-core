@@ -4,14 +4,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
-from src.adapters.microsoft import ONEDRIVE_PROVIDER
 from src.composition import drive_indexing_setup as setup
 from src.composition.service_container import ServiceContainer
 from src.config.environment import EnvironmentConfig
 from src.domain.place_lookup import PlaceRow
 from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
-from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 
 
@@ -79,18 +77,23 @@ def test_place_lookup_uses_the_bundled_table(monkeypatch):
     assert place_of(0.0, 0.0) is None
 
 
-async def test_scheduler_lists_users_by_the_drive_provider():
-    oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.list_user_ids.return_value = ["u1"]
-    repo = AsyncMock()
-    repo.list_sync_user_ids.return_value = []
-    users = AsyncMock()
-    users.get_user.return_value = None
-    scheduler = setup.build_drive_sync_scheduler(repo=repo, queue=AsyncMock(), drive=AsyncMock(), users=users,
+async def test_scheduler_lists_the_active_indexing_connections():
+    """The built fan-out lists ACTIVE connections with indexing on from the connection repository (MULTI_DRIVE_RFC
+    §8), not credential holders: one candidate, ticked with its connection's payload."""
+    from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+    from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+    from tests.support.drive_connection_service_fake import connection
+    from tests.unit.services.drive_index_fakes import FakeQueue
+    connections = FakeDriveConnectionRepository()
+    await connections.create(connection("u1", "conn-1", indexing=True))
+    await connections.create(connection("u2", "conn-2", indexing=False))
+    queue = FakeQueue()
+    scheduler = setup.build_drive_sync_scheduler(repo=InMemoryDriveIndexRepository(), queue=queue,
+                                                 connections=connections, connection_service=None,
                                                  notifier=None, alert_sink=None)
     summary = await scheduler.fan_out()
-    oauth.list_user_ids.assert_awaited_once_with(ONEDRIVE_PROVIDER)
     assert summary["candidates"] == 1
+    assert [t["payload"] for t in queue.tasks] == [{"user_id": "u1", "connection_id": "conn-1"}]
 
 
 def _container(monkeypatch, **extra):
