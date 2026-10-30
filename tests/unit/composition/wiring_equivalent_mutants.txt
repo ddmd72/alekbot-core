@@ -5,7 +5,6 @@
 # ---- src.composition.application_graph
 0156052b  # wire-drop log_sink (application_graph.py:262): GcpLogSink is built only `if not env_config.is_development` (application_graph.py:247); the deploy sets APP_ENV=development (cloudbuild-dev.yaml:23, environment.py:30,42), so log_sink is already None in production
 f3984c72  # wire-drop service_account_path (application_graph.py:583): the value is GOOGLE_APPLICATION_CREDENTIALS via AuthConfig._get (config/auth.py:62,110-114), absent from load_settings() and from cloudbuild-dev.yaml --set-env-vars/--set-secrets and the Dockerfile, so None in production; None takes the ADC branch (firebase_auth_adapter.py:76-81) as production already does
-caec9351  # wire-drop scopes=GMAIL_SCOPES (application_graph.py:606): the callee maps None to the same object, `scopes if scopes is not None else GMAIL_SCOPES` (google_oauth_service.py:56), and application_graph.py:85 imports that GMAIL_SCOPES (google_oauth_service.py:31)
 1a1ca851  # call-skip slack_adapter.register_handlers() (application_graph.py:814): the factory only returns HTTPModeAdapter (slack_adapter_factory.py:157, no subclass), whose register_handlers is one log line, handlers are implicit via routes (slack/http_adapter.py:625-626)
 
 # ---- src.composition.service_container
