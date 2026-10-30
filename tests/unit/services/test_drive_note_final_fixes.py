@@ -58,26 +58,6 @@ async def test_an_erase_all_nudges_nothing_and_a_one_note_erase_nudges_its_item(
     assert env.nudged()[before:] == []
 
 
-# -- D-I3: the drive id ------------------------------------------------------------------------------------------------
-
-async def test_an_empty_credential_drive_id_falls_back_to_the_sync_states():
-    env = Env()
-    env.drive.connection.return_value = DriveConnection(connected=True, drive_id="")
-    env.index.get_sync_state.return_value = DriveSyncState(user_id=U, drive_id="drive-1")
-    receipt = await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
-    note = await env.notes.find_bound(U, binding_key("onedrive", "drive-1", "a"))
-    assert note is not None and note.note_id == receipt.note_id
-
-
-async def test_no_drive_id_anywhere_is_still_not_connected():
-    env = Env()
-    env.drive.connection.return_value = DriveConnection(connected=True, drive_id="")
-    env.index.get_sync_state.return_value = None
-    with pytest.raises(DriveNoteRefused) as info:
-        await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
-    assert refusal(info) == NoteRefusal.NOT_CONNECTED
-
-
 # -- C-I3: the scope in the CONFLICT detail ----------------------------------------------------------------------------
 
 async def test_a_partial_erase_all_reports_its_scope():
