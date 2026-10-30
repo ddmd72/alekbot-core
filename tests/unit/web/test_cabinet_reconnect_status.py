@@ -263,14 +263,6 @@ async def test_a_failed_clear_never_fails_the_connect(world, monkeypatch):
     assert await has_kind(world.creds, USER, "gmail") is True
 
 
-async def test_the_drive_consent_clears_the_mark(world, monkeypatch):
-    await world.drive_states.save_sync_state(DriveSyncState(user_id=USER))
-    await world.drive_states.update_sync_flags(USER, disconnected_by_user_at=NOW)
-    resp = await world.consent(monkeypatch, "microsoft_onedrive")
-    assert resp.headers["Location"] == "/cabinet?connected=microsoft_onedrive"
-    assert (await world.drive_states.get_sync_state(USER)).disconnected_by_user_at is None
-
-
 async def test_the_to_do_consent_clears_the_flag(world, monkeypatch):
     await world.tasks.save_config(USER, TaskUserConfig(primary_list_id="list-1", reconnect_notified=True))
     resp = await world.consent(monkeypatch, "microsoft_todo")

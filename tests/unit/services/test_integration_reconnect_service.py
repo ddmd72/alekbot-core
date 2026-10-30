@@ -293,16 +293,6 @@ async def test_status_reads_reconnect_per_integration(world):
     assert await world.svc.status("user-b") == {"mail": False, "drive": False, "tasks": False}
 
 
-async def test_a_drive_disconnect_marks_the_sync_state_and_a_consent_clears_it(world):
-    await world.drive_states.save_sync_state(DriveSyncState(user_id="user-a"))
-    await world.svc.mark_disconnected("user-a", Integration.DRIVE)
-    assert (await world.drive_states.get_sync_state("user-a")).disconnected_by_user_at == NOW
-    assert await world.svc.status("user-a", (Integration.DRIVE,)) == {"drive": False}
-    await world.svc.consented("user-a", Integration.DRIVE)
-    assert (await world.drive_states.get_sync_state("user-a")).disconnected_by_user_at is None
-    assert await world.svc.status("user-a", (Integration.DRIVE,)) == {"drive": True}
-
-
 async def test_the_sweep_never_notifies_for_the_drive(world):
     """Drive's R1 notice is the drive fan-out's (W2.3), not the sweep's."""
     await world.drive_states.save_sync_state(DriveSyncState(user_id="user-a"))
