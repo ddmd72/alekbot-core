@@ -62,7 +62,7 @@ async def _raise_for_gmail_status(resp) -> None:
                 if status:
                     reasons.append(status)
         except Exception:
-            pass  # unreadable body: the status alone is logged
+            logger.debug("Gmail API error body unreadable: the status alone is logged", exc_info=True)
         logger.warning(f"⚠️ Gmail API {exc.status}: error.status={status or '-'} reasons={sorted(set(reasons)) or '-'}")
         if exc.status == 403 and _SCOPE_REASONS & set(reasons):
             raise OAuthScopeInsufficientError(
