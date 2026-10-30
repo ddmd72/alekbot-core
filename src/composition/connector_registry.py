@@ -50,10 +50,10 @@ _SPECS = (
     ConnectorSpec(kind=MICROSOFT_TODO, integration=Integration.TASKS, realm=_MICROSOFT,
                   required_scopes=("Tasks.ReadWrite",), multiple=False,
                   id_space="", label="Microsoft To Do"),
-    # multiple=False until slice 1b brings the drive connection: a consent of another account replaces the drive
-    # credential exactly as today; 1b flips it to True.
+    # multiple=True (slice 1b, E15, E27): a consent of another account is another credential and another drive
+    # connection; a consent of the same account keeps its credential and reconnects its connection.
     ConnectorSpec(kind=MICROSOFT_ONEDRIVE, integration=Integration.DRIVE, realm=_MICROSOFT,
-                  required_scopes=("Files.ReadWrite.AppFolder",), multiple=False,
+                  required_scopes=("Files.ReadWrite.AppFolder",), multiple=True,
                   id_space=MICROSOFT_ONEDRIVE, label="OneDrive"),
 )
 

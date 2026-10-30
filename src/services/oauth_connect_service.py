@@ -11,7 +11,7 @@ from typing import Awaitable, Callable, Mapping, Optional
 
 from src.domain.connect_outcome import ConnectOutcome, ConnectStatus
 from src.domain.connector_spec import ConnectorSpec
-from src.domain.exceptions import OAuthScopeNotGrantedError
+from src.domain.exceptions import ConnectActivationFailed, OAuthScopeNotGrantedError
 from src.domain.flow_intent import FlowIntent
 from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
@@ -123,6 +123,16 @@ class OAuthConnectService:
         if activation is not None:
             try:
                 await activation(saved)
+            except ConnectActivationFailed as exc:
+                # No credential may outlive a refused activation (a drive grant without its connection): removed under
+                # the revoke rule, and the connect reads failed.
+                logger.error(f"OAuth activation refused the consent: user={session_user_id[:8]} kind={kind}: {exc}")
+                try:
+                    await self._remove_credential(saved.user_id, saved.credential_id)
+                except Exception as remove_exc:
+                    logger.error(f"💥 Removing the refused credential failed: user={session_user_id[:8]} kind={kind}: "
+                                 f"{type(remove_exc).__name__}", exc_info=True)
+                return self._done(kind, "activation", session_user_id, return_path)
             except Exception as exc:
                 logger.error(f"OAuth activation failed: user={session_user_id[:8]} kind={kind}: "
                              f"{type(exc).__name__}", exc_info=True)

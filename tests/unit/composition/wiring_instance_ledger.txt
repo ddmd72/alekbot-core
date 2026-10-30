@@ -22,6 +22,7 @@ src.adapters.firestore_companion_memory_repository.FirestoreCompanionMemoryRepos
 src.adapters.firestore_consolidation_queue.FirestoreConsolidationQueue 1  # by-design single instance
 src.adapters.firestore_credential_store.FirestoreCredentialStore 1  # by-design single instance, held by the ServiceContainer as oauth_credentials over the graph's one cipher (SECRETS_AT_REST_RFC §2.3)
 src.adapters.firestore_dedup_store.FirestoreDedupStore 3  # by-design three stores on three TTLs: worker daily-review marks (application_graph.py WorkerHandler), deep-research webhook claims, Telegram update dedup
+src.adapters.firestore_drive_connection_repo.FirestoreDriveConnectionRepository 1  # by-design one connection store, held by the ServiceContainer and its DriveConnectionService (MULTI_DRIVE_RFC 4.4)
 src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
 src.adapters.firestore_drive_note_repo.FirestoreDriveNoteRepository 1  # by-design single instance
@@ -88,6 +89,7 @@ src.adapters.xml_prompt_assembler.XmlPromptAssembler 1  # by-design single insta
 src.composition.application_graph.ApplicationGraph 1  # by-design the root of the graph, built once by build_application_graph
 src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-design single instance shared by both extractor agents
 src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
+src.composition.drive_provider_router.DriveProviderRouter 1  # by-design one router over the registry's drive adapters is the container's user_drive (MULTI_DRIVE_RFC 6, E6)
 src.composition.service_container.ServiceContainer 1  # by-design one container owns every shared adapter; a second would be a second set of repositories
 src.composition.user_agent_factory.UserAgentFactory 1  # by-design one factory owns the per-user agent cache; a second would split it
 src.composition.user_agent_factory._UserContext 1  # by-design one per cached user; the test seeds one user
@@ -112,6 +114,7 @@ src.services.consolidation_service.ConsolidationService 1  # by-design single in
 src.services.credential_revocation_service.CredentialRevocationService 1  # by-design the one revoke rule, held by the connect service and the Cabinet disconnects (application_graph.py, MULTI_DRIVE_RFC 4.3)
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
+src.services.drive_connection_service.DriveConnectionService 1  # by-design the one owner of drive connections and the primary pointer (MULTI_DRIVE_RFC 4.4)
 src.services.drive_note_deleted_search.DriveNoteDeletedSearch 1  # by-design single instance
 src.services.drive_note_service.DriveNoteService 1  # by-design single instance
 src.services.drive_search_service.DriveSearchService 1  # by-design single instance

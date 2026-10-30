@@ -274,6 +274,12 @@ class OAuthScopeInsufficientError(OAuthGrantRevokedError):
     a subclass: every ``except OAuthGrantRevokedError`` site already flags a reconnect for it."""
 
 
+class ConnectActivationFailed(Exception):
+    """An integration's activation could not finish a consent it needs (the drive: the grant's drive identity could not
+    be read, so no connection can exist for it). The connect fails: the just-saved credential is removed under the revoke
+    rule and the user sees the ordinary connect error (MULTI_DRIVE_RFC §4.4: no credential without its connection)."""
+
+
 class OAuthScopeNotGrantedError(ValueError):
     """A consent finished without the scope the integration needs (Google's granular consent lets the user
     leave the service checkbox unticked). Nothing is stored; the user must reconnect and tick it."""
