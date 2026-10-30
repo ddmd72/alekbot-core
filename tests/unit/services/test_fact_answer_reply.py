@@ -198,7 +198,7 @@ class TestDigit:
 # ------------------------------------------------------------------------------------------------ words
 
 class TestWords:
-    async def test_words_are_recorded_and_nothing_is_applied_or_released(self):
+    async def test_words_to_the_current_question_are_recorded_nothing_is_applied_and_the_next_is_released(self):
         world = ReviewWorld()
         await world.seed_state(account_id=ACC, current_question_id="q1")
         fact = await stale_fact(world)
@@ -214,8 +214,9 @@ class TestWords:
         assert waiting["status"] == "asked" and waiting["reply_text"] == "yes, still the case, twice a week"
         assert waiting["offered_at"] is None
         assert world.docs == docs_before                          # the fact is the review's to decide
-        assert next_tasks(world) == []
-        assert (await world.review_store.get_state(ACC)).current_question_id == "q1"
+        assert next_tasks(world) == [{"task_type": "fact_review", "user_id": USER, "account_id": ACC, "mode": "next"}]
+        assert (await world.review_store.get_state(ACC)).current_question_id is None     # the words gave up the slot
+        assert stored(world, "q2")["status"] == "queued"      # released for a later run, not sent here
         row = await day_row(world)
         assert row is None or (row.answered_by_digit, row.reply_intake_failed) == (0, 0)
 

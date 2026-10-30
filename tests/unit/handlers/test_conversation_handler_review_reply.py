@@ -211,7 +211,7 @@ class TestReplyTaken:
             "closed", "owner", "ended", "digit")
         assert next_tasks(world) == [{"task_type": "fact_review", "user_id": USER, "account_id": ACC, "mode": "next"}]
 
-    async def test_a_thread_reply_in_words_is_recorded_noted_and_applies_and_releases_nothing(self):
+    async def test_a_thread_reply_in_words_is_recorded_noted_applies_nothing_and_releases_the_next(self):
         world, fact = await world_with_question()
         docs = {k: dict(v) for k, v in world.docs.items()}
         rig = Rig(world)
@@ -222,8 +222,10 @@ class TestReplyTaken:
         assert rig.posted == [ack(world, UIMessage.MEMORY_REPLY_NOTED)]
         waiting = stored(world)
         assert waiting["status"] == "asked" and waiting["reply_text"] == "yes, still the case"
-        assert world.docs == docs and next_tasks(world) == []
-        assert (await world.review_store.get_state(ACC)).current_question_id == "q1"
+        assert world.docs == docs                                  # the fact is the review's to decide
+        assert next_tasks(world) == [{"task_type": "fact_review", "user_id": USER, "account_id": ACC, "mode": "next"}]
+        assert (await world.review_store.get_state(ACC)).current_question_id is None     # the words gave up the slot
+        assert stored(world, "q2")["status"] == "queued"           # released for a later run, not sent here
 
     async def test_a_reply_to_a_closed_question_is_already_answered_and_never_reaches_the_model(self):
         world, fact = await world_with_question()

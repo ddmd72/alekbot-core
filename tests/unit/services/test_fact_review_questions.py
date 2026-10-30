@@ -22,6 +22,7 @@ from src.domain.fact_review_answer_kind import AnswerKind
 from src.domain.fact_review_frame import NOT_DELIVERED_REPLY, not_delivered_frame, question_text, review_frame
 from src.domain.fact_review_language import labels_digest
 from src.domain.fact_review_question import ClosedBy, FactReviewQuestion, QuestionStatus
+from src.domain.fact_review_reply_record import ReplyRecord
 from src.domain.fact_review_rules import MAX_QUESTIONS_PER_DAY
 from src.domain.fact_review_state import FactReviewState
 from src.domain.fact_review_task_keys import FACT_REVIEW_TASK
@@ -582,7 +583,8 @@ class TestCrashAfterThePost:
         assert not_delivered_frame("q1") not in texts
         assert texts.count(review_frame("q1")) == 1
         assert posted_ids(world) == ["q1", "q2"]                   # not sent again; the next one went
-        assert await world.review_store.record_reply("q1", "still there, twice a week", world.now)
+        assert world.state_doc(ACC)["current_question_id"] == "q2"            # the reply is to an earlier, no longer current question
+        assert await world.review_store.record_reply("q1", "still there, twice a week", world.now) is ReplyRecord.RECORDED
         assert await r.answers.apply(ACC, USER, "q1", AnswerKind.STILL_TRUE, "button", world.now) is AnswerResult.APPLIED
 
 
