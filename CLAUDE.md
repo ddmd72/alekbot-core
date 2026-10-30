@@ -577,7 +577,7 @@ confirmed" history and a **digest question**, listed in the weekly digest and an
 debt is asked `paid`. The fact is **current while its question waits**; the janitor skips it and
 counts it in the *pool* (stale + waiting facts, capped at 50). An answer is only a reply to the question message, a Slack
 button (`POST /slack/interactivity`: signature checked on the raw bytes first, the work done by the `interactive_choice` task)
-or a Cabinet click, applied by `FactAnswerService` (no model, no lease, same preconditions); words are read by the review once.
+or a Cabinet click, applied by `FactAnswerService` (no model, no lease, same preconditions); words are read by the review once. A reply in words to the current question releases the next question at once.
 Silence for 14 days applies the question's fallback: revive (twice the last window, 14 to 365 days), archive (noise only),
 or history (the question's "unknown" text written through the typed path under the `timeout` actor and listed in the
 digest; a failed write is retried on the next runs, at most 3 attempts, then the question closes `resolved_elsewhere`).
