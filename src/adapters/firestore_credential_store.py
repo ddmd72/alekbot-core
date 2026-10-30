@@ -1,24 +1,25 @@
 """
-FirestoreCredentialStore — the integration credentials at rest (SECRETS_AT_REST_RFC §2.3, §2.4; invariants I1-I5, I9).
+FirestoreCredentialStore — the integration credentials at rest (MULTI_DRIVE_RFC §4.1, §4.2; SECRETS_AT_REST_RFC §2.3,
+§2.4; invariants I1-I4, I9).
 
 Collection `{prefix}credentials`, doc id `{user_id}:{credential_id}`. `credential_id` is opaque, random and immutable:
 it survives every refresh and every consent of the same account (I5). Plaintext fields are the ones queried or
-operational: `user_id`, `credential_id`, `kind`, `account.realm`, `account.subject`, `scopes`, `token_expiry`,
-`needs_reconnect`, `created_at`, `updated_at`, and `drive_id` on a OneDrive record. `secret` is ONE `CipherPort`
-ciphertext of `{access_token, refresh_token, account_label}`, AAD `credentials/{user_id}:{credential_id}`, so a
-ciphertext moved to another record does not decrypt (I2) and a read or write is one cipher call.
+operational: `user_id`, `credential_id`, `kind`, `integration`, `account_id`, `account.realm`, `account.subject`,
+`scopes`, `token_expiry`, `needs_reconnect`, `created_at`, `updated_at`, and `drive_id` on a OneDrive record. `secret`
+is ONE `CipherPort` ciphertext of `{access_token, refresh_token, account_label}`, AAD `credentials/{user_id}:
+{credential_id}`, so a ciphertext moved to another record does not decrypt (I2) and a read or write is one cipher call.
 
-- At most one record per (user, kind) (stage 0), found by an equality query on `user_id` + `kind`.
-- `save_credentials` (a consent): refuses a credential without `account_subject` and writes nothing (I9). One
-  transaction: the same account (realm + subject) keeps its `credential_id`; another account gets a new id and the old
-  record is deleted.
-- `update_credentials` (a refresh or a flag write): a transaction, exists-or-False. It keeps the stored `credential_id`,
-  `kind`, `account.realm`, `account.subject` and never takes them from its argument (plan D-P2): every refresh rebuilds
-  the credential field by field.
-- `is_connected` and the two listings read plaintext fields only: no cipher call.
+- Any number of records per (user, kind): cardinality is the connect service's policy (E15), not the store's.
+- `save` (a consent): refuses a credential without its account subject, `integration` or `account_id` and writes
+  nothing (I9). One transaction: the same (user, kind, account realm + subject) keeps its `credential_id` and
+  `created_at`; any other consent gets a new record and deletes none.
+- `update` (a refresh or a flag write): a transaction on the one document, exists-or-False. It keeps the stored
+  `credential_id`, `kind`, `integration`, `account_id`, `account.realm`, `account.subject` and never takes them from
+  its argument (plan D-P2).
+- A record written before `integration` / `account_id` existed reads them as None, never derived here: the backfill
+  sets them.
+- `list_by_account` and `list_user_ids` read plaintext fields only: no cipher call.
 - A decrypt or cipher failure raises (I4); it is never "not connected".
-
-No legacy branch (§2.7): the old `oauth_credentials` collection is never read or written here.
 """
 
 import json
@@ -26,12 +27,14 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from google.api_core.exceptions import NotFound
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter
 
 from ..config.environment import EnvironmentConfig
-from ..domain.email import OAuthCredentials
+from ..domain.credential_key import CredentialKey
+from ..domain.integration import Integration
+from ..domain.oauth_credential import OAuthCredential
+from ..domain.provider_account import ProviderAccount
 from ..ports.cipher_port import CipherPort
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..utils.logger import logger
@@ -66,38 +69,30 @@ class FirestoreCredentialStore(OAuthCredentialsPort):
     def _aad(doc_id: str) -> str:
         return f"{_AAD_STORE}/{doc_id}"
 
-    def _of_kind(self, user_id: str, kind: str) -> Any:
-        return (self._col.where(filter=FieldFilter("user_id", "==", user_id))
-                .where(filter=FieldFilter("kind", "==", kind)))
+    def _of_user(self, user_id: str, kind: Optional[str] = None) -> Any:
+        query = self._col.where(filter=FieldFilter("user_id", "==", user_id))
+        return query if kind is None else query.where(filter=FieldFilter("kind", "==", kind))
 
-    async def _seal(self, doc_id: str, credentials: OAuthCredentials) -> str:
-        payload = json.dumps({"access_token": credentials.access_token, "refresh_token": credentials.refresh_token,
-                              "account_label": credentials.email_address})
+    async def _seal(self, doc_id: str, credential: OAuthCredential) -> str:
+        payload = json.dumps({"access_token": credential.access_token, "refresh_token": credential.refresh_token,
+                              "account_label": credential.account.label})
         return await self._cipher.encrypt(payload, aad=self._aad(doc_id))
 
     @staticmethod
-    def _plain_fields(credentials: OAuthCredentials, now: datetime) -> Dict[str, Any]:
-        """The mutable plaintext fields a consent or an update writes (identity and created_at excluded)."""
+    def _plain_fields(credential: OAuthCredential, kind: str, now: datetime) -> Dict[str, Any]:
+        """The mutable plaintext fields a consent or an update writes (identity and created_at excluded). `kind` is the
+        record's stored kind on an update, never the argument's."""
         fields: Dict[str, Any] = {
-            "scopes": list(credentials.scopes or []),
-            "token_expiry": credentials.token_expiry,
-            "needs_reconnect": bool(credentials.needs_reconnect),
+            "scopes": list(credential.scopes or []),
+            "token_expiry": credential.token_expiry,
+            "needs_reconnect": bool(credential.needs_reconnect),
             "updated_at": now,
         }
-        if credentials.provider == _ONEDRIVE_KIND:
-            fields["drive_id"] = credentials.drive_id or ""
+        if kind == _ONEDRIVE_KIND:
+            fields["drive_id"] = credential.drive_id or ""
         return fields
 
-    @staticmethod
-    def _single(snaps: List[Any], user_id: str, kind: str) -> Optional[Any]:
-        found = [s for s in snaps if s.exists]
-        if len(found) > 1:
-            # stage 0 holds at most one record per (user, kind) (I5): two is a broken invariant, never a guess
-            logger.error(f"💥 {len(found)} credential records for user={user_id[:8]} kind={kind}; expected at most one")
-            raise RuntimeError(f"More than one credential record for kind {kind}")
-        return found[0] if found else None
-
-    async def _open(self, snap: Any) -> OAuthCredentials:
+    async def _open(self, snap: Any) -> OAuthCredential:
         data = snap.to_dict()
         try:
             payload = json.loads(await self._cipher.decrypt(data["secret"], aad=self._aad(snap.id)))
@@ -106,101 +101,131 @@ class FirestoreCredentialStore(OAuthCredentialsPort):
                          f"credential={str(data.get('credential_id'))[:8]}: {type(exc).__name__}")
             raise
         account = data["account"]
-        return OAuthCredentials(
+        integration = data.get("integration")
+        return OAuthCredential(
+            credential_id=data["credential_id"],
             user_id=data["user_id"],
-            provider=data["kind"],
+            account_id=data.get("account_id"),
+            kind=data["kind"],
+            integration=None if integration is None else Integration(integration),
+            account=ProviderAccount(realm=account["realm"], subject=account["subject"],
+                                    label=payload["account_label"]),
             access_token=payload["access_token"],
             refresh_token=payload["refresh_token"],
             token_expiry=_utc(data["token_expiry"]),
             scopes=list(data["scopes"]),
-            email_address=payload["account_label"],
             needs_reconnect=bool(data["needs_reconnect"]),
             drive_id=str(data.get("drive_id") or ""),
-            credential_id=data["credential_id"],
-            account_realm=account["realm"],
-            account_subject=account["subject"],
         )
+
+    @staticmethod
+    def _created(snap: Any) -> Any:
+        created = (snap.to_dict() or {}).get("created_at")
+        return created if created is not None else datetime.min.replace(tzinfo=timezone.utc)
 
     # ------------------------------------------------------------------ port
 
-    async def get_credentials(self, user_id: str, provider: str) -> Optional[OAuthCredentials]:
-        snap = self._single(await self._of_kind(user_id, provider).get(), user_id, provider)
-        return None if snap is None else await self._open(snap)
+    async def get(self, user_id: str, credential_id: str) -> Optional[OAuthCredential]:
+        if not credential_id:
+            return None
+        snap = await self._col.document(self._doc_id(user_id, credential_id)).get()
+        if not snap.exists:
+            return None
+        if (snap.to_dict() or {}).get("user_id") != user_id:
+            # the doc id names the user; a record whose stored user differs is a broken invariant, never served
+            logger.error(f"💥 Credential {credential_id[:8]} stored under another user; not returned")
+            return None
+        return await self._open(snap)
 
-    async def save_credentials(self, credentials: OAuthCredentials) -> None:
-        user_id, kind = credentials.user_id, credentials.provider
-        if not (credentials.account_subject or "").strip():
-            logger.error(f"💥 Credential not saved: no account identity (user={user_id[:8]} kind={kind})")
-            raise ValueError("A credential needs its account identity (account_subject); nothing was stored")
-        query = self._of_kind(user_id, kind)
+    async def save(self, credential: OAuthCredential) -> None:
+        user_id, kind = credential.user_id, credential.kind
+        missing = [name for name, value in (("account subject", (credential.account.subject or "").strip()),
+                                            ("integration", credential.integration),
+                                            ("account_id", (credential.account_id or "").strip()))
+                   if not value]
+        if missing:
+            logger.error(f"💥 Credential not saved: no {', '.join(missing)} (user={user_id[:8]} kind={kind})")
+            raise ValueError(f"A credential needs its {', '.join(missing)}; nothing was stored")
+        integration = credential.integration
+        if integration is None:   # refused above; for the type checker
+            raise ValueError("A credential needs its integration; nothing was stored")
+        realm, subject = credential.account.realm, credential.account.subject
+        query = self._of_user(user_id, kind)
 
         @firestore.async_transactional
         async def _save(transaction: Any) -> str:
             rows = [s for s in await query.get(transaction=transaction) if s.exists]
             same = [s for s in rows
-                    if (s.to_dict().get("account") or {}) == {"realm": credentials.account_realm,
-                                                             "subject": credentials.account_subject}]
+                    if (s.to_dict().get("account") or {}) == {"realm": realm, "subject": subject}]
             kept = same[0].to_dict() if same else None
             credential_id = kept["credential_id"] if kept else secrets.token_hex(16)
             doc_id = self._doc_id(user_id, credential_id)
             now = datetime.now(timezone.utc)
-            sealed = await self._seal(doc_id, credentials)
+            sealed = await self._seal(doc_id, credential)
             doc = {
                 "user_id": user_id,
                 "credential_id": credential_id,
                 "kind": kind,
-                "account": {"realm": credentials.account_realm, "subject": credentials.account_subject},
+                "integration": integration.value,
+                "account_id": credential.account_id,
+                "account": {"realm": realm, "subject": subject},
                 "created_at": kept["created_at"] if kept else now,
                 "secret": sealed,
-                **self._plain_fields(credentials, now),
+                **self._plain_fields(credential, kind, now),
             }
             transaction.set(self._col.document(doc_id), doc)
-            for snap in rows:
-                if snap.id != doc_id:
-                    transaction.delete(snap.reference)
             return credential_id
 
         credential_id = await _save(self._db.transaction())
         logger.info(f"💾 Credential saved: user={user_id[:8]} kind={kind} credential={credential_id[:8]}")
 
-    async def update_credentials(self, credentials: OAuthCredentials) -> bool:
-        user_id, kind = credentials.user_id, credentials.provider
-        query = self._of_kind(user_id, kind)
+    async def update(self, credential: OAuthCredential) -> bool:
+        user_id, credential_id = credential.user_id, credential.credential_id
+        if not credential_id:
+            logger.error(f"💥 Credential update without a credential_id (user={user_id[:8]} kind={credential.kind})")
+            return False
+        doc_id = self._doc_id(user_id, credential_id)
+        ref = self._col.document(doc_id)
 
         @firestore.async_transactional
-        async def _update(transaction: Any) -> Optional[str]:
-            snap = self._single(await query.get(transaction=transaction), user_id, kind)
-            if snap is None:
-                return None
-            sealed = await self._seal(snap.id, credentials)
-            transaction.update(snap.reference, {"secret": sealed,
-                                                **self._plain_fields(credentials, datetime.now(timezone.utc))})
-            return snap.id
+        async def _update(transaction: Any) -> bool:
+            snap = await ref.get(transaction=transaction)
+            stored = snap.to_dict() if snap.exists else None
+            if stored is None or stored.get("user_id") != user_id:
+                return False
+            sealed = await self._seal(doc_id, credential)
+            transaction.update(ref, {"secret": sealed,
+                                     **self._plain_fields(credential, stored["kind"], datetime.now(timezone.utc))})
+            return True
 
-        try:
-            doc_id = await _update(self._db.transaction())
-        except NotFound:
-            doc_id = None
-        if doc_id is None:
-            logger.info(f"Credential not updated, record gone: user={user_id[:8]} kind={kind}")
+        if not await _update(self._db.transaction()):
+            logger.info(f"Credential not updated, record gone: user={user_id[:8]} credential={credential_id[:8]}")
             return False
-        logger.debug(f"💾 Credential updated: user={user_id[:8]} kind={kind}")
+        logger.debug(f"💾 Credential updated: user={user_id[:8]} credential={credential_id[:8]}")
         return True
 
-    async def revoke_credentials(self, user_id: str, provider: str) -> None:
-        for snap in await self._of_kind(user_id, provider).get():
-            await snap.reference.delete()
-        logger.info(f"🗑️ Credential deleted: user={user_id[:8]} kind={provider}")
+    async def delete(self, user_id: str, credential_id: str) -> None:
+        if not credential_id:
+            return
+        await self._col.document(self._doc_id(user_id, credential_id)).delete()
+        logger.info(f"🗑️ Credential deleted: user={user_id[:8]} credential={credential_id[:8]}")
 
-    async def is_connected(self, user_id: str, provider: str) -> bool:
-        return any(s.exists for s in await self._of_kind(user_id, provider).get())
+    async def list_for_user(self, user_id: str, kind: Optional[str] = None) -> List[OAuthCredential]:
+        snaps = sorted((s for s in await self._of_user(user_id, kind).get() if s.exists), key=self._created)
+        return [await self._open(snap) for snap in snaps]
 
-    async def list_connected_providers(self, user_id: str) -> List[str]:
-        snaps = await self._col.where(filter=FieldFilter("user_id", "==", user_id)).get()
-        return [s.to_dict()["kind"] for s in snaps if s.exists]
+    async def list_by_account(self, realm: str, subject: str) -> List[CredentialKey]:
+        snaps = await (self._col.where(filter=FieldFilter("account.realm", "==", realm))
+                       .where(filter=FieldFilter("account.subject", "==", subject)).get())
+        keys: List[CredentialKey] = []
+        for snap in snaps:
+            data = snap.to_dict() or {}
+            if snap.exists and data.get("user_id") and data.get("credential_id"):
+                keys.append(CredentialKey(user_id=data["user_id"], credential_id=data["credential_id"]))
+        return keys
 
-    async def list_users_by_provider(self, provider: str) -> List[str]:
-        snaps = await self._col.where(filter=FieldFilter("kind", "==", provider)).get()
+    async def list_user_ids(self, kind: str) -> List[str]:
+        snaps = await self._col.where(filter=FieldFilter("kind", "==", kind)).get()
         users: List[str] = []
         for snap in snaps:
             user_id = (snap.to_dict() or {}).get("user_id")
