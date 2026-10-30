@@ -4,7 +4,7 @@ import pytest
 
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import Reason, RecordState, TriageVerdict
-from src.domain.drive_index_params import READER_RENDITION_EDGE_PX, READER_RENDITION_STEPS
+from src.domain.drive_index_params import READER_RENDITION_EDGE_PX, READER_RENDITION_STEPS, TRIAGE_THUMBNAIL_EDGE_PX
 from src.domain.drive_index_run import READER_IMAGE_MAX_BYTES
 from src.domain.user_drive import DriveThumbnailTooLarge
 
@@ -93,7 +93,7 @@ async def test_an_over_cap_triage_thumbnail_counts_as_no_rendition(w, monkeypatc
     original = w.drive.get_thumbnail
 
     async def renditions(user_id, item_id, size):
-        if size == "large":
+        if size == TRIAGE_THUMBNAIL_EDGE_PX:
             raise DriveThumbnailTooLarge(size, 1)
         return await original(user_id, item_id, size)
     monkeypatch.setattr(w.drive, "get_thumbnail", renditions)
