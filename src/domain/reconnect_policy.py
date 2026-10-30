@@ -3,11 +3,10 @@
 An integration whose own feature state shows a past connection (Gmail indexing state, drive sync state, To Do config
 with a primary list) but whose credential is gone needs a reconnect. Two exceptions: a deliberate disconnect marks the
 feature state "disconnected by user" (F1; Gmail and Drive only, D-P5), and the one notice is sent once per transition,
-through a flag on the feature state (F2).
+through a flag on the feature state (F2). R1 keys on `domain/integration.py`'s `Integration`: MAIL (Gmail), TASKS (To
+Do; R1's tasks pass covers To Do users only) and DRIVE.
 
 Public interface:
-    Integration                                   `domain/integration.py`'s enum: R1 covers MAIL (Gmail), TASKS (To Do;
-                                                  R1's tasks pass covers To Do users only) and DRIVE
     Cleared.MARK                                  "clear the stored value" for a field-level flag update
     R1_NOTICES[integration]                       the English system_alert of the one notice
     reconnect_needed(has_credential, past_connection, disconnected_by_user) -> bool     Cabinet shows Reconnect
@@ -19,7 +18,7 @@ from enum import Enum
 
 from .integration import Integration
 
-__all__ = ["Integration", "Cleared", "R1_NOTICES", "reconnect_needed", "r1_due"]
+__all__ = ["Cleared", "R1_NOTICES", "reconnect_needed", "r1_due"]
 
 
 class Cleared(Enum):
