@@ -5,8 +5,9 @@ import pytest
 
 from src.domain.drive_index import (
     CURRENT_VERSIONS, DriveChange, DriveIndexRecord, DriveSyncState,
-    EpochPhase, Priority, record_key,
+    EpochPhase, Priority, record_doc_id,
 )
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain import drive_index_params as P
 
@@ -46,8 +47,9 @@ def test_versions_are_ints_keyed_by_name():
     assert all(isinstance(v, int) and v >= 1 for v in CURRENT_VERSIONS.values())
 
 
-def test_record_key_is_stable():
-    assert record_key("u1", "ABC!s12") == "u1:ABC!s12"
+def test_record_doc_id_is_stable():
+    # MULTI_DRIVE_RFC §8 (E8): a record is keyed by its connection, not its user
+    assert record_doc_id(ConnectionScope(user_id="usr-1", connection_id="conn-1"), "ABC!s12") == "conn-1:ABC!s12"
 
 
 def test_params_match_rfc_15():
