@@ -9,14 +9,12 @@ import pytest
 from quart import Quart
 
 from src.domain.drive_indexing_status import DriveIndexingStatus
-from src.domain.user import UserBotConfig
-from src.domain.user_drive import DriveConnection
-from src.ports.user_drive_port import UserDrivePort
 from src.services.drive_search_service import DriveSearchService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 
 from .test_cabinet_drive_index_strings import LANGS, _dicts
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.cabinet_drive import cabinet_drive
 
 _HTML = Path("src/web/static/cabinet.html").read_text(encoding="utf-8")
 
@@ -65,24 +63,20 @@ def test_the_clause_is_used_in_two_places_and_defined_in_four():
 
 # -- the status flag -----------------------------------------------------------------------------------------
 
-def _app(has_root):
-    drive = MagicMock(spec=UserDrivePort)
-    drive.connection = AsyncMock(return_value=DriveConnection(connected=True))
-    drive.display_name = "OneDrive"
+async def _app(has_root):
+    drive = await cabinet_drive(transcribe=False)   # the connection's transcription switch off (MULTI_DRIVE_RFC §4.4)
     search = AsyncMock(spec=DriveSearchService)
     search.indexing_status.return_value = DriveIndexingStatus(enabled=False, counters={})
     search.has_mirror_root.return_value = has_root
-    user = MagicMock()
-    user.config = UserBotConfig(drive_transcribe_enabled=False)
     user_repo = MagicMock()
-    user_repo.get_user = AsyncMock(return_value=user)
     session_service = MagicMock()
     session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1", "role": "owner"})
     app = Quart("test_mirror_flag")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=drive,
-        drive_search_service=search, drive_task_queue=AsyncMock(), drive_transcribe_switch_on=True, connectors=ConnectorRegistry()))
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None,
+        drive_search_service=search, drive_task_queue=AsyncMock(), drive_transcribe_switch_on=True, connectors=ConnectorRegistry(),
+        drive_connections=drive.connections, oauth_credentials_port=drive.credentials))
     return app, search
 
 
@@ -92,18 +86,18 @@ async def _status(app):
 
 
 async def test_status_flags_a_mirror_root_even_with_indexing_off_and_the_transcription_flag_off():
-    app, _ = _app(True)
+    app, _ = await _app(True)
     body = await _status(app)
     assert body["indexing"]["mirror_root"] is True and body["indexing"]["transcribe_enabled"] is False
 
 
 async def test_status_flag_is_false_without_a_root():
-    app, _ = _app(False)
+    app, _ = await _app(False)
     assert (await _status(app))["indexing"]["mirror_root"] is False
 
 
 async def test_a_failing_lookup_never_breaks_the_status():
-    app, search = _app(True)
+    app, search = await _app(True)
     search.has_mirror_root.side_effect = RuntimeError("boom")
     body = await _status(app)
     assert body["connected"] is True and body["indexing"]["mirror_root"] is False
