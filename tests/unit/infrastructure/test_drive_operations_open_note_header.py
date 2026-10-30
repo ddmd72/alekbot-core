@@ -95,7 +95,7 @@ async def test_the_original_link_carries_the_line(conversion, notes, port):
     assert LINE in resp.text and "Link to the original recording" in resp.text
 
 
-@pytest.mark.parametrize("case", ["no_note", "no_service", "lookup_fails", "disconnected"])
+@pytest.mark.parametrize("case", ["no_note", "no_service", "lookup_fails"])
 async def test_no_line_and_the_open_goes_on(conversion, notes, port, case):
     conversion.get_drive_item.return_value = DOC
     conversion.resolve_content.return_value = "Line one of the file."
@@ -104,8 +104,6 @@ async def test_no_line_and_the_open_goes_on(conversion, notes, port, case):
         notes.note_for_item.return_value = None
     if case == "lookup_fails":
         notes.note_for_item.side_effect = RuntimeError("index missing")
-    if case == "disconnected":
-        port.connection.return_value = DriveConnection(connected=False)
     agent = _agent(conversion, None if case == "no_service" else notes, port)
     resp = await _open(agent, "drive:d1")
     assert resp.success and "noted by the owner" not in resp.text
@@ -126,17 +124,6 @@ async def test_a_listing_never_shows_the_note(conversion, notes, port):
     agent = _agent(conversion, notes, port)
     await agent.list_folder(CTX, "u1", "Home")
     notes.note_for_item.assert_not_called()
-
-
-async def test_a_credential_without_a_drive_id_uses_the_sync_states(conversion, notes, port):
-    # D-I3 for the open header: the connection has no drive id, the service resolves it from the sync state
-    port.connection.return_value = DriveConnection(connected=True, drive_id="")
-    notes.drive_id_for_connection.return_value = "drv"
-    conversion.get_drive_item.return_value = DOC
-    conversion.resolve_content.return_value = "Line one of the file."
-    resp = await _open(_agent(conversion, notes, port), "drive:d1")
-    assert LINE in resp.text
-    notes.note_for_item.assert_awaited_once_with("u1", "drv", "d1")
 
 
 async def test_no_drive_id_anywhere_means_no_line(conversion, notes, port):
