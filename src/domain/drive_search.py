@@ -264,14 +264,16 @@ class _Gate:
 def search_gate(enabled: bool, state: Optional[DriveSyncState], connection: Optional[DriveConnection],
                 now: datetime) -> _Gate:
     """§10.1 step 0, over facts read uncached: `enabled` is the connection's indexing switch, `state` its sync state,
-    `connection` the connection searched (MULTI_DRIVE_RFC §8; None: the user has none). Past ACCESS_LOSS_TTL, or once a
-    purge has started, the index is being deleted: an expired grant answers `disconnected`, a connected drive answers
+    `connection` the connection searched (MULTI_DRIVE_RFC §8; None: the user has none, which answers `disconnected`
+    whatever `enabled` says: there is no switch to read). Past ACCESS_LOSS_TTL, or once a purge has started, the index is being deleted: an expired grant answers `disconnected`, a connected drive answers
     with no results and `building` (the tick finishes the purge and starts epoch 1, §7.6). A sync state of another
     drive identity hides the index until the purge runs."""
+    if connection is None:
+        return _Gate(STATUS_DISCONNECTED)
     if not enabled:
         return _Gate(STATUS_DISABLED)
     status = DriveConnectionStatus.of(connection)
-    if connection is None or not status.connected:
+    if not status.connected:
         return _Gate(STATUS_DISCONNECTED)
     past_ttl = (state is not None and state.access_lost_at is not None
                 and now >= state.access_lost_at + ACCESS_LOSS_TTL)

@@ -91,6 +91,8 @@ class TestPassagesRequests:
 class TestGateAndLines:
     def test_no_connection_is_disconnected_and_the_switch_off_is_disabled(self):
         assert search_gate(True, None, None, NOW).status == STATUS_DISCONNECTED
+        assert search_gate(False, None, None, NOW).status == STATUS_DISCONNECTED   # no switch to read
+        assert search_line(False, None, None, NOW) is SearchLine.ON              # the drive line says it
         assert search_gate(False, None, _conn(), NOW).status == STATUS_DISABLED
 
     def test_a_disconnected_connection_is_disconnected(self):
