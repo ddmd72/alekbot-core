@@ -28,6 +28,8 @@ from src.infrastructure.drive_operations import NOT_CONNECTED, STILL_RUNNING, Dr
 from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+from tests.support.drive_service_connections import seed_user, seeded_connections
 
 FILE = DriveItem(item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", is_folder=False,
                  size_bytes=2048, mime_type="application/pdf")
@@ -42,6 +44,7 @@ HEIC = DriveItem(item_id="h1", name="IMG_0001.HEIC", path="IMG_0001.HEIC", is_fo
                  size_bytes=1024, mime_type="image/heic")
 SMALL_PNG = DriveItem(item_id="i2", name="a.png", path="a.png", is_folder=False,
                       size_bytes=100, mime_type="image/png")
+HANDLE = seed_user(FakeDriveConnectionRepository(), "u1").handle   # the handle of u1's one (primary) connection
 
 
 def _msg(intent, **payload):
@@ -60,7 +63,14 @@ def conversion():
 
 @pytest.fixture
 def drive():
-    return AsyncMock(spec=UserDriveService)
+    """A spec mock of the service's drive operations; its connection reads are the service's own over u1's one
+    connection (MULTI_DRIVE_RFC §6, §9)."""
+    d = AsyncMock(spec=UserDriveService)
+    reads = UserDriveService(drive=None, connections=seeded_connections("u1"))
+    d.primary.side_effect = reads.primary
+    d.resolve_ref.side_effect = reads.resolve_ref
+    d.status.side_effect = reads.status
+    return d
 
 
 @pytest.fixture
@@ -125,18 +135,18 @@ class TestStoreGuards:
         conversion.resolve_bytes.assert_not_called()
         drive.save.assert_not_called()
 
-    async def test_open_file_is_lenient_with_drive_ref(self, agent, conversion):
-        conversion.get_drive_item.return_value = NOTE
+    async def test_open_file_is_lenient_with_drive_ref(self, agent, conversion, drive):
+        drive.get_item.return_value = NOTE
         conversion.resolve_content.return_value = "[File: Notes/todo.md]\nx\n[/File: Notes/todo.md]"
         resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:n1"))
         assert resp.status == AgentStatus.SUCCESS
         conversion.resolve_content.assert_awaited_once_with("drive:n1", "u1")
 
-    async def test_open_file_from_drive_is_lenient_with_chat_ref(self, ops, conversion):
+    async def test_open_file_from_drive_is_lenient_with_chat_ref(self, ops, conversion, drive):
         conversion.resolve_content.return_value = "text"
         out = await ops.open(CTX, "u1", "notes.txt")
         assert out.success and out.text == "text"
-        conversion.get_drive_item.assert_not_called()
+        drive.get_item.assert_not_called()
 
     async def test_unknown_intent_lists_no_search(self, agent):
         resp = await agent.execute(_msg("search_files_in_drive", search_text="x"))
@@ -144,35 +154,35 @@ class TestStoreGuards:
 
 
 class TestOpenCaps:
-    async def test_large_image_refused_without_download(self, ops, conversion):
-        conversion.get_drive_item.return_value = BIG_IMAGE
+    async def test_large_image_refused_without_download(self, ops, conversion, drive):
+        drive.get_item.return_value = BIG_IMAGE
         out = await ops.open(CTX, "u1", "drive:i1")
         assert out.success and "cannot be opened yet" in out.text
         conversion.resolve_bytes.assert_not_called()
 
-    async def test_large_pdf_refused_without_download(self, agent, conversion):
-        conversion.get_drive_item.return_value = BIG_PDF
+    async def test_large_pdf_refused_without_download(self, agent, conversion, drive):
+        drive.get_item.return_value = BIG_PDF
         resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:p1"))
         assert resp.status == AgentStatus.SUCCESS and "cannot be opened yet" in resp.result
         conversion.resolve_bytes.assert_not_called()
 
-    async def test_heic_refused_without_download(self, ops, conversion):
-        conversion.get_drive_item.return_value = HEIC
+    async def test_heic_refused_without_download(self, ops, conversion, drive):
+        drive.get_item.return_value = HEIC
         out = await ops.open(CTX, "u1", "drive:h1")
         assert out.success and "cannot be viewed yet" in out.text
         conversion.resolve_bytes.assert_not_called()
         conversion.resolve_content.assert_not_called()
 
-    async def test_small_image_is_attached_for_vision(self, agent, conversion):
-        conversion.get_drive_item.return_value = SMALL_PNG
+    async def test_small_image_is_attached_for_vision(self, agent, conversion, drive):
+        drive.get_item.return_value = SMALL_PNG
         conversion.resolve_bytes.return_value = b"\x89PNG"
         resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:i2"))
         assert resp.status == AgentStatus.SUCCESS
         assert resp.metadata["file_data"]["mime_type"] == "image/png"
         assert resp.history_context == {"drive_context": [{"path": "a.png", "ref": "drive:i2", "op": "opened"}]}
 
-    async def test_folder_is_pointed_to_listing(self, ops, conversion):
-        conversion.get_drive_item.return_value = FOLDER
+    async def test_folder_is_pointed_to_listing(self, ops, conversion, drive):
+        drive.get_item.return_value = FOLDER
         out = await ops.open(CTX, "u1", "drive:d1")
         assert not out.success and out.text == "'Meetings/2025' is a folder; list it instead."
 
@@ -183,7 +193,7 @@ class TestSaveAndList:
         drive.save.return_value = SaveOutcome(item=FILE, created=["Inbox"])
         ref = "docs/u1/3f2b8c1e-9a4d-4e2f-8b7a-1c2d3e4f5a6b-lease.pdf"
         out = await ops.copy(CTX, "u1", ref, wait_s=WAIT)
-        drive.save.assert_awaited_once_with("u1", b"%PDF", "lease.pdf", "application/pdf", None)
+        drive.save.assert_awaited_once_with(HANDLE, b"%PDF", "lease.pdf", "application/pdf", None)
         assert "[Drive: Inbox/lease.pdf" in out.text
         assert out.drive_context() == [{"path": "Inbox/lease.pdf", "ref": "drive:f1"}]
 
@@ -237,7 +247,7 @@ class TestReceipts:
         drive.append_text.return_value = UpdateOutcome(item=NOTE, before_size=10, mode="append")
         out = await ops.append(CTX, "u1", "drive:n1", "- two", wait_s=WAIT)
         assert out.success and out.text.startswith("Appended to")
-        drive.append_text.assert_awaited_once_with("u1", "n1", "- two")
+        drive.append_text.assert_awaited_once_with(HANDLE, "n1", "- two")
         notifier.notify_raw.assert_not_called()
 
     async def test_move_has_no_receipt(self, ops, drive, notifier):
@@ -277,7 +287,7 @@ class TestShield:
     async def test_cancelled_delete_still_completes_with_receipt(self, ops, drive, notifier):
         gate = asyncio.Event()
 
-        async def slow_delete(user_id, item_id):
+        async def slow_delete(handle, item_id):
             await gate.wait()
             return DeleteOutcome(item=FILE, file_count=1)
 
@@ -298,7 +308,7 @@ class TestMutationBudget:
     async def test_slow_mutation_answers_still_running(self, ops, drive, notifier):
         gate = asyncio.Event()
 
-        async def slow_delete(user_id, item_id):
+        async def slow_delete(handle, item_id):
             await gate.wait()
             return DeleteOutcome(item=FILE, file_count=1)
 
@@ -384,8 +394,9 @@ class TestErrors:
         out = await ops.delete(CTX, "u1", "drive:zz", wait_s=WAIT)
         assert not out.success and "no longer on the drive" in out.text
 
-    async def test_conversion_not_wired_is_not_configured(self, agent, conversion):
-        conversion.get_drive_item.side_effect = FileNotFoundError("unavailable")
+    async def test_conversion_not_wired_is_not_configured(self, agent, conversion, drive):
+        drive.get_item.return_value = NOTE   # the open reads the item through the drive service, then the conversion
+        conversion.resolve_content.side_effect = FileNotFoundError("unavailable")
         resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:n1"))
         assert resp.status == AgentStatus.FAILED and resp.error == "The drive is not configured."
 
