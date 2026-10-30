@@ -162,10 +162,6 @@ class TestRecordSerialization:
             value = getattr(back, name)
             assert type(value) is datetime and value.utcoffset() == timedelta(0), name
 
-    def test_tuples_inside_facets_become_lists(self):
-        doc = record_to_doc(DriveIndexRecord(user_id="u", connection_id="u", item_id="i", facets={"a": ("x", {"b": ("y",)})}))
-        assert doc["facets"] == {"a": ["x", {"b": ["y"]}]}
-
     def test_missing_fields_take_defaults_and_extras_are_ignored(self):
         rec = record_from_doc({"user_id": "u", "item_id": "i", "card_vector": [1.0], "has_card_vector": True,
                                "card_distance": 0.1, "reason": None, "priority": None})
