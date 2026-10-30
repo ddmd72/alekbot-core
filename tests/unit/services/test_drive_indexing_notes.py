@@ -379,7 +379,7 @@ async def test_a_keys_version_re_key_keeps_the_note_keys(w):
     await w.put_note(a, "the contractor's invoice")
     await w.settle()
     w.repo.records[("u", a)] = replace(w.rec(a), keys_version=KEYS_VERSION - 1)
-    await w.svc._commit("u", [w.rec(a)], set())   # any later write re-plans it (`planned`)
+    await w.svc._commit((await w.svc._connections.get("u", "u")).handle, [w.rec(a)], set())   # any later write re-plans it (`planned`)
     assert set(note_keys("the contractor's invoice")) <= set(w.rec(a).about_keys)
 
 
@@ -846,7 +846,8 @@ async def test_an_archived_note_whose_record_is_live_is_reactivated_by_the_notes
     stored = await w.notes.get("u", note.note_id)
     assert stored.state == "active" and stored.archived_at is None
     assert w.rec(a) is not None and w.rec(a).owner_note_id == note.note_id
-    search = DriveSearchService(w.repo, w.emb, w.users, w.drive, embedding_space=SPACE, clock=w.clock)
+    search = DriveSearchService(w.repo, w.emb, w.drive, LegacyConnections(w.users, w.drive), embedding_space=SPACE,
+                                clock=w.clock)
     result = await search.search("u", DriveSearchRequest(query="zanzibar"))
     assert [c.owner_note for c in result.cards if c.tier == "about"]
 
