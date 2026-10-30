@@ -324,6 +324,9 @@ class UserBotConfig(BaseModel):
     gmail_daily_review: bool = False
     gmail_daily_review_hour: int = 9
 
+    # MOVED to the drive connection (MULTI_DRIVE_RFC §3, §4.4: `DriveConnection.indexing_enabled` /
+    # `transcribe_enabled`, set by DriveConnectionService; the Cabinet writes there). These two fields stay only until
+    # their last readers move (slice 1b parts) and the cut-over copies them; then they are deleted.
     # User drive indexing (USER_DRIVE_INDEXING_RFC §6): off until the user turns it on in the Cabinet;
     # turning it off purges the index. Read uncached by the tick's gate and by search.
     drive_indexing_enabled: bool = False
