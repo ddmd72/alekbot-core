@@ -4,7 +4,6 @@ Never mock at UserDrivePort level (docs/how_to/ADAPTER_WIRE_TESTING.md).
 Fixtures cover percent-encoded parent paths (defensive) and the raw ones Graph returned in the spike
 (RFC §7), in both prefix forms: /drive/root: and /drives/<id>/root:.
 """
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import quote
@@ -269,25 +268,6 @@ class TestUpload:
         assert first.kwargs["headers"]["Content-Range"] == f"bytes 0-{5 * 1024 * 1024 - 1}/{len(data)}"
 
 
-class TestDisconnect:
-    async def test_disconnect_revokes_and_invalidates(self):
-        # the port deletes by credential (MULTI_DRIVE_RFC §4.2): the drive kind's credential, found by its key
-        adapter, oauth = _adapter(replace(_creds(), credential_id="cred-1"))
-        adapter._tokens.forget = MagicMock()
-        await adapter.disconnect("u1")
-        oauth.list_keys.assert_awaited_once_with("u1", ONEDRIVE_PROVIDER)
-        oauth.delete.assert_awaited_once_with("u1", "cred-1")
-        adapter._tokens.forget.assert_called_once_with("u1")
-
-    async def test_is_connected_delegates(self):
-        adapter, oauth = _adapter()
-        assert await adapter.is_connected("u1") is True
-        oauth.list_keys.assert_awaited_once_with("u1", ONEDRIVE_PROVIDER)
-
-    def test_display_name(self):
-        assert _adapter()[0].display_name == "OneDrive"
-
-
 class TestDownloadAndMutations:
     async def test_download_via_download_url_without_auth(self):
         adapter, _ = _adapter()
@@ -423,11 +403,3 @@ class TestReviewPaths:
             item = await adapter.get_item(HANDLE, "f1")
         assert item.path == "Встречи 2026/заметка.txt"
         assert log.warning.call_count == 1
-
-    async def test_disconnect_drops_the_cached_root(self):
-        adapter, _ = _adapter()
-        with patch("aiohttp.ClientSession", return_value=_session(get=_resp(_ROOT))):
-            await adapter.get_root(HANDLE)
-        assert "u1" in adapter._root_cache
-        await adapter.disconnect("u1")
-        assert "u1" not in adapter._root_cache

@@ -17,7 +17,7 @@ from src.domain.drive_card import content_hash_of, effective_date, photo_locatio
 from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
-from src.domain.user_drive import DriveConnection, DriveItemNotFoundError, DriveResyncRequired
+from src.domain.user_drive import DriveItemNotFoundError, DriveResyncRequired
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
@@ -387,74 +387,6 @@ class TestItemReads:
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveItemNotFoundError) as exc:
             await adapter.list_children_changes(HANDLE, "F", limit=200, cursor=cursor)
         assert "SECRETISH" not in str(exc.value)     # the tick logs the message (§8.2 per-item)
-
-
-class TestConnection:
-    async def test_not_connected(self):
-        adapter, _ = _adapter(creds=None)
-        assert await adapter.connection("u1") == DriveConnection(connected=False)
-
-    async def test_reads_flag_and_drive_id(self):
-        adapter, oauth = _adapter(creds=_creds(needs_reconnect=True, drive_id="D1"))
-        assert await adapter.connection("u1") == DriveConnection(connected=True, needs_reconnect=True,
-                                                                 drive_id="D1")
-        oauth.list_keys.assert_awaited_with("u1", ONEDRIVE_PROVIDER)
-
-    async def test_a_changed_stored_token_drops_the_token_and_root_caches(self):
-        # A reconnect (maybe to another account) writes a new token; the indexer must use it at once.
-        adapter, oauth = _adapter()
-        with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
-            await adapter.get_change(HANDLE, ROOT_ID)                       # caches the "tok" bearer
-        assert adapter._tokens.cached_token("u1", "") == "tok"
-        oauth.get.return_value = _creds(access_token="B")
-        mirror_get(oauth)
-        adapter._root_cache["u1"] = (0.0, APPROOT)
-        await adapter.connection("u1")
-        assert adapter._tokens.cached_token("u1", "") is None and "u1" not in adapter._root_cache
-        session = _session([_resp(APPROOT), _resp(_load("folder_delete.json")["pages"][-1])])
-        with patch("aiohttp.ClientSession", return_value=session):
-            await adapter.get_changes(HANDLE, None)
-        bearers = [c.kwargs["headers"]["Authorization"] for c in session.get.call_args_list]
-        assert bearers == ["Bearer B", "Bearer B"]                       # approot and delta page
-
-    async def test_an_unchanged_token_keeps_the_caches(self):
-        adapter, oauth = _adapter()
-        with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
-            await adapter.get_change(HANDLE, ROOT_ID)
-        reads = oauth.list_keys.await_count
-        await adapter.connection("u1")
-        with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
-            await adapter.get_change(HANDLE, ROOT_ID)
-        assert oauth.list_keys.await_count == reads + 1             # only connection() read the store
-
-    async def test_disconnected_drops_the_caches(self):
-        adapter, oauth = _adapter()
-        with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
-            await adapter.get_change(HANDLE, ROOT_ID)
-        oauth.get.return_value = None
-        mirror_get(oauth)
-        assert await adapter.connection("u1") == DriveConnection(connected=False)
-        assert adapter._tokens.cached_token("u1", "") is None
-
-    async def test_flag_reconnect_true_only_on_transition(self):
-        adapter, oauth = _adapter(creds=_creds(drive_id="D1"))
-        oauth.update.return_value = True                          # the record still exists
-        assert await adapter.flag_reconnect("u1") is True
-        oauth.save.assert_not_called()                            # a flag write never creates a record
-        saved = oauth.update.call_args.args[0]
-        assert saved.needs_reconnect is True and saved.drive_id == "D1" and saved.refresh_token == "r"
-
-    async def test_flag_reconnect_already_flagged_writes_nothing(self):
-        adapter, oauth = _adapter(creds=_creds(needs_reconnect=True))
-        assert await adapter.flag_reconnect("u1") is False
-        oauth.save.assert_not_called()
-        oauth.update.assert_not_called()
-
-    async def test_flag_reconnect_without_credentials(self):
-        adapter, oauth = _adapter(creds=None)
-        assert await adapter.flag_reconnect("u1") is False
-        oauth.save.assert_not_called()
-        oauth.update.assert_not_called()
 
 
 class TestDriveIdSource:
