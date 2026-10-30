@@ -13,6 +13,7 @@ from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.drive_operations import DriveOperations
 from src.ports.file_storage_port import FileStoragePort
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_spec_mock import spec_drive_service
 from tests.unit.infrastructure.test_drive_operations_open_bound import FakeExtentSearch, long_text
 from tests.unit.infrastructure.test_drive_operations_uncovered_paths import FakeConversion
 
@@ -31,7 +32,8 @@ def _msg(ref):
 
 
 def _agent(conversion, search):
-    drive = AsyncMock(spec=UserDriveService)
+    drive = spec_drive_service("u1")
+    drive.get_item.return_value = RULES   # the open reads the item through the drive service (MULTI_DRIVE_RFC §6)
     ops = DriveOperations(conversion_service=conversion, drive_service=drive, drive_search=search)
     return FileManagementAgent(
         config=AgentConfig(agent_id="file_management_agent_u1", agent_type="file_management", capabilities={},
