@@ -46,7 +46,7 @@ class InviteStore:
             ACCOUNTS: "development_domain_accounts_v2", WHITELIST: "development_domain_whitelist_v1"})
         env = SimpleNamespace(domain_invite_codes_collection=INVITES, domain_users_collection=USERS,
                               domain_whitelist_collection=WHITELIST, is_production=False)
-        self.repo = FirestoreInviteCodeRepository(self.db, env)
+        self.repo = FirestoreInviteCodeRepository(self.db, env, digest_key=b"k" * 32)
         self.accounts = FirestoreAccountRepository(self.db, ACCOUNTS)
         self.users = FirestoreUserRepository(self.db, env, self.accounts)
         self.service = InviteCodeService(self.repo, self.users, self.accounts, FirestoreWhitelistRepository(self.db, env))

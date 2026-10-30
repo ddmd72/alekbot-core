@@ -37,7 +37,7 @@ def mock_env_config():
 
 @pytest.fixture
 def repo(mock_db, mock_env_config):
-    return FirestoreInviteCodeRepository(mock_db, mock_env_config)
+    return FirestoreInviteCodeRepository(mock_db, mock_env_config, digest_key=b"k" * 32)
 
 @pytest.mark.asyncio
 async def test_create_invite_code(repo, mock_db):
