@@ -9,15 +9,21 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.batch_transcription import BatchRef, BatchStatus, FileRef
+from src.domain.drive_content_identity import ContentIdentity
+from src.domain.drive_handle import DriveHandle
+from src.domain.drive_media_source import MediaSource
 from src.domain.drive_index import EXTRACTION_VERSION, DriveIndexRecord, RecordState, Scope
 from src.domain.drive_index_params import TRANSCRIBE_MAX_SECONDS
 from src.domain.drive_index_planner import drops_readable, month_key
 from src.domain.drive_transcript import (
-    MediaProbe, MediaProbeOutcome, MediaStatus, MediaUnreadable, MediaWindowsOutcome, WindowInput, WindowSpec,
+    MediaProbe, MediaProbeOutcome, MediaStatus, MediaWindowsOutcome, WindowInput, WindowSpec,
 )
 from src.domain.drive_transcript_plan import TranscriptContext, transcript_plan
 
 USER = "u-test"
+# the connection the stage runs for (MULTI_DRIVE_RFC §8); its id is the user's, so a repository key reads as before
+HANDLE = DriveHandle(user_id=USER, connection_id=USER, credential_id="cred-test", kind="fake")
+SCOPE = HANDLE.scope
 NOW = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
 OLD = NOW - timedelta(days=3)
 URL_PREFIX = "https://graph.invalid/download/"
@@ -41,8 +47,9 @@ class Clock:
 
 def record(item_id: str, *, kind: str = "audio", content_hash: Optional[str] = None, day: str = "2026-10-01",
            **kw: Any) -> DriveIndexRecord:
-    base: Dict[str, Any] = dict(user_id=USER, item_id=item_id, kind=kind, scope=Scope.NORMAL, state=RecordState.PENDING,
-                                content_version="c1", content_hash=content_hash or f"hash-{item_id}",
+    base: Dict[str, Any] = dict(user_id=USER, connection_id=USER, item_id=item_id, identity=f"fake:d1:{item_id}",
+                                kind=kind, scope=Scope.NORMAL, state=RecordState.PENDING, content_version="c1",
+                                content_identity=ContentIdentity("fam", content_hash or f"hash-{item_id}", 1_000_000),
                                 name=f"{item_id}.webm", mime_type="audio/webm", size_bytes=1_000_000,
                                 modified_at=OLD, effective_day=day, parent_id="p")
     base.update(kw)
@@ -50,17 +57,20 @@ def record(item_id: str, *, kind: str = "audio", content_hash: Optional[str] = N
 
 
 class FakeDrive:
-    """`download_url` hands out a new URL on every call (the URL lives ~60 min, Δ134)."""
+    """`media_source` hands out a new header-free URL on every call (the URL lives ~60 min, Δ134); `headers` makes it a
+    source that needs request headers (E24)."""
 
     def __init__(self) -> None:
         self.calls: List[str] = []
         self.raise_for: Dict[str, Exception] = {}
+        self.headers: Dict[str, str] = {}
 
-    async def download_url(self, user_id: str, item_id: str) -> str:
+    async def media_source(self, handle: Any, item_id: str) -> MediaSource:
         if item_id in self.raise_for:
             raise self.raise_for[item_id]
         self.calls.append(item_id)
-        return f"{URL_PREFIX}{item_id}/{len(self.calls)}?token=secret-{len(self.calls)}"
+        return MediaSource(url=f"{URL_PREFIX}{item_id}/{len(self.calls)}?token=secret-{len(self.calls)}",
+                           headers=dict(self.headers))
 
 
 @dataclass
@@ -237,6 +247,7 @@ class FakeHost:
         self.events: List[Tuple[str, float, str]] = []   # ("spend" | "reserve" | "release", usd, month), in order
         self.file_slots: Optional[int] = None            # the tick's TICK_FILE_BUDGET slots left (G32); None = no limit
         self.on_index: Optional[Callable[[DriveIndexRecord], Any]] = None   # runs inside `index_transcript`
+        self.handle = HANDLE                              # the connection the tick is for (MULTI_DRIVE_RFC §8)
 
     def fence(self) -> None:
         self.fences += 1
@@ -268,7 +279,7 @@ class FakeHost:
                        index_generation=rec.index_generation + 1, indexed_version=rec.content_version,
                        extraction_version=EXTRACTION_VERSION, extracted_by=extracted_by, text_chars=len(body))
         await self.commit([done], {rec.item_id: rec})
-        return (await self.repo.get_records(rec.user_id, [rec.item_id]))[rec.item_id]
+        return (await self.repo.get_records(self.handle.scope, [rec.item_id]))[rec.item_id]
 
     async def spend(self, cls: str, usd: float, calls: int, month: str) -> None:
         self.spends.append((cls, usd, calls, month))

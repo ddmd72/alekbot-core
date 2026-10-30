@@ -28,6 +28,8 @@ from src.services.drive_indexing_service import DriveIndexingService
 from .drive_index_fakes import Clock, FakeEmbeddings, FakeQueue, FakeUsers
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 APPROOT = json.loads((_FIX / "approot.json").read_text(encoding="utf-8"))
@@ -106,15 +108,15 @@ class TestParentLookupTransportFailureIsPerItem:
         adapter = OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
         repo, queue, users, clock = InMemoryDriveIndexRepository(), FakeQueue(), FakeUsers(), Clock()
         svc = DriveIndexingService(adapter, repo, FakeEmbeddings(), queue, users, lambda lat, lon: "", "test-space/8",
-                                   clock=clock, monotonic=clock.monotonic)
+                                   connections=LegacyConnections(users, adapter), clock=clock, monotonic=clock.monotonic)
         graph = _FakeGraph(error)
         with patch("aiohttp.ClientSession", side_effect=lambda *a, **k: graph.session()):
-            result = await svc.tick("u")
+            result = await svc.tick(U_SCOPE)
         assert graph.item_gets >= 1, "the parent lookup never ran"
         assert result.status == "done", f"a per-item transport failure ended the tick: {result.status}"
         rec = repo.records[("u", CHILD)]
         assert rec.state is RecordState.UNRESOLVED
         assert rec.attempts == 1 and rec.priority == int(Priority.RETRY)
         assert rec.due_at is not None and rec.due_at > clock.now, "the record did not back off"
-        state = await repo.get_sync_state("u")
+        state = await repo.get_sync_state(U_SCOPE)
         assert state.last_error is None and state.systemic_failures == 0

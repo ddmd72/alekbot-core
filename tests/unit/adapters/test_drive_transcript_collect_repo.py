@@ -12,6 +12,7 @@ from src.domain.drive_transcript import JobWindow, TranscriptJob, WindowSpec
 from tests.unit.adapters.firestore_drive_eval_fakes import RECS, EvalDb, eval_transactions, make_eval_repo
 from tests.unit.adapters.firestore_drive_transcript_fakes import transcript_doc_fakes
 from tests.unit.adapters.test_firestore_drive_index_v2_provisioning import _exempt, _required
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 LIVE_RECS = "development_drive_index_records"
 T = datetime(2026, 10, 21, 9, 30, tzinfo=timezone.utc)
@@ -52,19 +53,19 @@ async def test_the_firestore_read_is_equality_only(adapter):
 
 async def test_batch_resubmits_roundtrips_on_the_job(adapter, mock_env_config):
     repo, _ = adapter
-    job = TranscriptJob(user_id="u", item_id="i1", content_key="k1", duration_s=600.0, windows=(
+    job = TranscriptJob(user_id="u", connection_id="u", item_id="i1", content_key="k1", duration_s=600.0, windows=(
         JobWindow(WindowSpec(0, 0.0, 600.0), state="uploaded", file_ref="files/1", batch_resubmits=1,
                   files_expire_at=T),))
     await repo.save_transcript_job(job)
-    assert (await repo.get_transcript_job("u", "i1")).windows[0].batch_resubmits == 1
+    assert (await repo.get_transcript_job(U_SCOPE, "i1")).windows[0].batch_resubmits == 1
 
 
 async def test_refused_roundtrips_on_the_job(adapter):
     repo, _ = adapter
-    job = TranscriptJob(user_id="u", item_id="i2", content_key="k2", duration_s=600.0, windows=(
+    job = TranscriptJob(user_id="u", connection_id="u", item_id="i2", content_key="k2", duration_s=600.0, windows=(
         JobWindow(WindowSpec(0, 0.0, 600.0), state="done", gap=True, refused=True),))
     await repo.save_transcript_job(job)
-    assert (await repo.get_transcript_job("u", "i2")).windows[0].refused
+    assert (await repo.get_transcript_job(U_SCOPE, "i2")).windows[0].refused
 
 
 async def test_batch_booked_at_roundtrips(adapter):
@@ -73,6 +74,6 @@ async def test_batch_booked_at_roundtrips(adapter):
     batch = TranscriptBatch(name="batches/b9", user_id="u", request_keys=("i:0",), submitted_at=T, created_at=T,
                             next_poll_at=T)
     await repo.create_batch(batch)
-    assert (await repo.get_open_batches("u", T, 5))[0].booked_at is None
+    assert (await repo.get_open_batches(U_SCOPE, T, 5))[0].booked_at is None
     await repo.save_batch(TranscriptBatch(**{**batch.__dict__, "booked_at": T}))
-    assert (await repo.get_open_batches("u", T, 5))[0].booked_at == T
+    assert (await repo.get_open_batches(U_SCOPE, T, 5))[0].booked_at == T

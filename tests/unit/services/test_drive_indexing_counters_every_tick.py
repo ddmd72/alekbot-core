@@ -4,6 +4,7 @@ from dataclasses import replace
 import pytest
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -25,7 +26,7 @@ async def test_an_unsettled_tick_writes_the_full_counters(monkeypatch):
     before = len(w.queue.tasks)
     await w.tick()
     assert any(":cont:" in (t["key"] or "") for t in w.queue.tasks[before:])   # more work is left
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.counters.get("indexed", 0) >= 1      # per-state counts, not only `unread`
     assert state.counters.get("chunks", 0) >= 1
 
@@ -33,11 +34,11 @@ async def test_an_unsettled_tick_writes_the_full_counters(monkeypatch):
 async def test_counters_grow_between_unsettled_ticks(monkeypatch):
     w = _unsettled_world(monkeypatch)
     await w.tick()
-    first = (await w.repo.get_sync_state("u")).counters.get("indexed", 0)
+    first = (await w.repo.get_sync_state(U_SCOPE)).counters.get("indexed", 0)
     w.add_doc("late.md", prose(5))
     w.clock.advance(3600)
     await w.tick()
-    second = (await w.repo.get_sync_state("u")).counters.get("indexed", 0)
+    second = (await w.repo.get_sync_state(U_SCOPE)).counters.get("indexed", 0)
     assert second > first
 
 
@@ -53,5 +54,5 @@ async def test_a_lost_lease_before_the_counter_write_writes_nothing(monkeypatch)
     w.repo.count_by_state = stolen
     result = await w.tick()
     assert result.status == "lease_lost"
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.lease_owner == "B" and not state.counters.get("indexed")

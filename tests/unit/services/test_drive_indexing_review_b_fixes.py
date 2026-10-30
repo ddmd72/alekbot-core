@@ -8,6 +8,8 @@ from src.domain.drive_index import RecordState
 from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -160,7 +162,7 @@ async def test_an_unknown_error_in_a_run_is_a_counted_per_file_retry(w):
     good = w.add_doc("good.md", prose(20))
     result = await w.tick()
     rec = w.rec(bad)
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert result.status == "done" and state.systemic_failures == 0
     assert (rec.state, rec.attempts, rec.attempt_started_at) == (RecordState.PENDING, 1, None)
     assert rec.defer_until is not None
@@ -227,7 +229,7 @@ async def test_an_unknown_error_after_the_commit_keeps_the_outcome_and_the_tick(
 
 def _switch_space(w, space):
     w.svc = svc_mod.DriveIndexingService(w.drive, w.repo, w.emb, w.queue, w.users, lambda lat, lon: None, space,
-                                         extractors=w.svc._extractors, triage=w.svc._triage, clock=w.clock,
+                                         extractors=w.svc._extractors, triage=w.svc._triage, connections=LegacyConnections(w.users, w.drive), clock=w.clock,
                                          monotonic=w.clock.monotonic)
 
 
@@ -242,7 +244,7 @@ async def test_a_new_space_re_embeds_chunks_from_their_stored_text(w):
     w.emb.calls.clear()
     await w.settle()
     rec = w.rec(doc)
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert (len(w.drive.downloads), len(w.parser.requests)) == (downloads, parses)   # no download, no extraction
     assert rec.chunk_space == "new-space/768" and not rec.chunk_reembed_pending
     assert rec.indexed_generation == before.indexed_generation + 1 and rec.state is RecordState.INDEXED
@@ -256,9 +258,9 @@ async def test_the_space_is_not_applied_while_chunks_are_in_the_old_one(w):
     await w.settle()
     _switch_space(w, "new-space/768")
     await w.tick()   # the upgrade pass schedules the chunks; the search keeps their stream off meanwhile
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert w.rec(doc).chunk_reembed_pending and w.rec(doc).chunk_space == "test-space/8"
     assert not state.cards_in_space("new-space/768")
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert not w.rec(doc).chunk_reembed_pending and state.cards_in_space("new-space/768")

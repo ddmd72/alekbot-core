@@ -75,11 +75,12 @@ MODEL_EXTRACT_MAX_PAGES = 200
 MODEL_PAGES_PER_CALL = 10                   # far below the 100k-token price step (§24.3)
 MODEL_IN_FLIGHT = 4
 TRIAGE_BATCH = 8                            # Search v2 (§25.4.3): enriched triage, 8 photos per call (was 16)
-TRIAGE_THUMBNAIL_SIZE = "large"             # Graph 800 px, chosen after the live check (2026-10-13): captions more
-                                            # precise than at 176 px ("medium"). TRIAGE_VERSION is not bumped: images
-                                            # already triaged keep their verdict until the owner rebuilds the index
-READER_RENDITION_SIZE = "c2048x2048"        # Graph custom size for the reader's image input (S0g)
-READER_RENDITION_STEPS = (READER_RENDITION_SIZE, "c1536x1536", "c1024x1024")   # tried in order while one is over the cap
+TRIAGE_THUMBNAIL_EDGE_PX = 800             # the longer edge of triage's rendition, chosen after the live check
+                                            # (2026-10-13): captions more precise than at 176 px. TRIAGE_VERSION is not
+                                            # bumped: images already triaged keep their verdict until a rebuild
+READER_RENDITION_EDGE_PX = 2048             # the longer edge of the reader's image input (S0g)
+READER_RENDITION_STEPS = (READER_RENDITION_EDGE_PX, 1536, 1024)   # px, tried in order while one is over the cap
+                                            # (`UserDrivePort.get_thumbnail(..., max_edge_px)`, MULTI_DRIVE_RFC §6)
 MODEL_BACKOFF_BASE_S = 60                   # model outage backoff, doubled per consecutive outage (§24.8)
 MODEL_BACKOFF_CAP_S = 3600
 MODEL_REREAD_COOLDOWN = timedelta(hours=24)  # a file the reader read is not read by it again sooner: the edits made

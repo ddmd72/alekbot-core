@@ -266,13 +266,13 @@ def test_states_and_actions_are_stored_as_plain_strings():
 # -- searchability, receipts, the gate ----------------------------------------------------------------------------------------
 
 def test_searchability_statuses():
-    rec = DriveIndexRecord(user_id="u", item_id="i", state=RecordState.INDEXED, has_card=True)
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", state=RecordState.INDEXED, has_card=True)
     assert searchability(False, rec) == STATUS_INDEXING_OFF
     assert searchability(True, None) == STATUS_NOT_INDEXED
     assert searchability(True, rec) == STATUS_SOON
-    assert searchability(True, DriveIndexRecord(user_id="u", item_id="i", state=RecordState.PENDING)) == STATUS_SOON
+    assert searchability(True, DriveIndexRecord(user_id="u", connection_id="u", item_id="i", state=RecordState.PENDING)) == STATUS_SOON
     for capped in (dict(card_capped=True), dict(card_refused=True), dict(state=RecordState.UNRESOLVED)):
-        assert searchability(True, DriveIndexRecord(user_id="u", item_id="i", **capped)) == STATUS_NO_CARD
+        assert searchability(True, DriveIndexRecord(user_id="u", connection_id="u", item_id="i", **capped)) == STATUS_NO_CARD
 
 
 def test_the_receipt_data_and_the_history_line():
@@ -315,7 +315,7 @@ def test_format_characters_are_removed_too():
 
 
 def test_a_record_being_deleted_shows_no_card():
-    assert searchability(True, DriveIndexRecord(user_id="u", item_id="i", state=RecordState.DELETING)) == STATUS_NO_CARD
+    assert searchability(True, DriveIndexRecord(user_id="u", connection_id="u", item_id="i", state=RecordState.DELETING)) == STATUS_NO_CARD
 
 
 def test_valid_from_is_never_before_the_previous_version():

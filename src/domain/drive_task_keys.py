@@ -6,7 +6,6 @@ component that is never reused.
 Per connection (MULTI_DRIVE_RFC §8): `tick_task_key`, `continuation_task_key`, `nudge_task_key`, `toggle_task_key`
 take a `ConnectionScope` and start with the connection id, so two connections of one user never share a key; the
 payload is `{user_id, connection_id}` (`scope_payload`), and `payload_scope` refuses (None) a payload without either.
-The `user_id` forms above them are the single-drive ones, kept until their callers move (slice 1b).
 """
 from __future__ import annotations
 
@@ -18,31 +17,6 @@ from .drive_index import Nudge
 from .drive_index_params import TICK_INTERVAL
 
 DRIVE_SYNC_TASK = "drive_sync"
-
-
-def tick_key(user_id: str, now: datetime) -> str:
-    bucket = int(now.timestamp() // TICK_INTERVAL.total_seconds())
-    return f"{user_id}:tick:{bucket}"
-
-
-def continuation_key(user_id: str, tick_id: str) -> str:
-    return f"{user_id}:cont:{tick_id}"
-
-
-def nudge_key(user_id: str, mutation_id: str, attempt: int) -> str:
-    return f"{user_id}:nudge:{mutation_id}" + (f":r{attempt}" if attempt else "")
-
-
-def toggle_key(user_id: str, now: datetime) -> str:
-    return f"{user_id}:toggle:{int(now.timestamp() * 1000)}"
-
-
-def tick_payload(user_id: str, nudge: Optional[Nudge] = None) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {"user_id": user_id}
-    if nudge is not None:
-        payload["nudge"] = {"mutation_id": nudge.mutation_id, "item_ids": list(nudge.item_ids),
-                            "attempt": nudge.attempt}
-    return payload
 
 
 def tick_task_key(scope: ConnectionScope, now: datetime) -> str:

@@ -13,7 +13,7 @@ NOW = datetime(2026, 10, 11, 12, tzinfo=timezone.utc)
 
 
 def rec(item_id, **kw):
-    return DriveIndexRecord(user_id="u", item_id=item_id, state=RecordState.METADATA_ONLY, **kw)
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, state=RecordState.METADATA_ONLY, **kw)
 
 
 async def test_in_memory_release_reads_the_flag():

@@ -24,6 +24,7 @@ from src.domain.drive_index_params import CONCEPT_KEYS_MAX, INITIAL_BUILD_USD
 from tests.unit.adapters.firestore_drive_eval_fakes import (
     CHUNKS, RECS, EvalDb, EvalDocRef, eval_transactions, make_eval_repo,
 )
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 T = datetime(2026, 10, 13, tzinfo=timezone.utc)
 TOO_MANY = [f"w:k{i}" for i in range(CONCEPT_KEYS_MAX + 1)]
@@ -84,7 +85,7 @@ class TestChunksPageReadsIds:
         db, (_, repo) = adapters
         chunk = DriveChunk("u", "a", 1, 0, "long text", 0, 9, "pdf", ("1250",), ("w:x",) * 3, 1)
         await repo.write_chunks([chunk], [[1.0, 0.0]])
-        (page,) = await repo.chunks_page("u", None, 5)
+        (page,) = await repo.chunks_page(U_SCOPE, None, 5)
         (ops,) = db.cols[CHUNKS].executed
         selected = next(op[1] for op in ops if op[0] == "select")
         assert not {"text", "word_keys", "content_terms", "vector"} & set(selected)

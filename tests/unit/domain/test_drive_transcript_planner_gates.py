@@ -65,13 +65,13 @@ def test_schedule_gives_media_no_content_work():
 def test_transcribe_link_never_extractor_stale():
     for kind in ("audio", "video"):
         for version in ("1", "2", "99"):
-            rec = DriveIndexRecord(user_id="u", item_id="m", kind=kind, extracted_by=f"transcribe-gemini@{version}")
+            rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="m", kind=kind, extracted_by=f"transcribe-gemini@{version}")
             assert not extractor_stale(rec, {"parser": 1}), (kind, version)
             assert not extractor_stale(rec, {"transcribe-gemini": 7})
 
 
 def test_parser_link_on_audio_still_stale():
-    rec = DriveIndexRecord(user_id="u", item_id="m", kind="audio", extracted_by="parser@1")
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="m", kind="audio", extracted_by="parser@1")
     assert extractor_stale(rec, {"parser": 2})
-    assert not extractor_stale(DriveIndexRecord(user_id="u", item_id="p", kind="pdf", extracted_by="parser@1"),
+    assert not extractor_stale(DriveIndexRecord(user_id="u", connection_id="u", item_id="p", kind="pdf", extracted_by="parser@1"),
                                {"parser": 1})

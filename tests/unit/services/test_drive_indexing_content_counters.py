@@ -6,6 +6,7 @@ from src.domain.drive_index_params import MAX_ATTEMPTS, RETRY_CAP
 from src.domain.drive_search import UNREAD_COUNTER
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -27,7 +28,7 @@ async def test_settled_counters_carry_readable_chunks_and_unread(w):
         await w.settle()
         w.clock.advance(RETRY_CAP.total_seconds())
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.counters["chunks"] == w.rec(read).chunk_count
     assert state.counters[UNREAD_COUNTER] == 2    # no_text and failed
     assert state.counters["indexed"] == 1 and state.counters["failed"] == 1
@@ -36,7 +37,7 @@ async def test_settled_counters_carry_readable_chunks_and_unread(w):
 async def test_zero_content_counters_are_left_out(w):
     w.drive.add_file("main.py", b"print(1)")
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert "chunks" not in state.counters and UNREAD_COUNTER not in state.counters
 
 
@@ -47,7 +48,7 @@ async def test_a_pending_document_is_unread_until_indexed(w):
     await w.settle()
     w.clock.advance(3600 * 24)   # the model backoff ends, the reader is still out: the tick settles anyway
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.counters[UNREAD_COUNTER] == 1
 
 

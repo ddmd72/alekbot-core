@@ -39,7 +39,7 @@ def _note(state: str = "active", drive_id: str = "d1", provider: str = ONEDRIVE_
 
 
 def _rec(**kw) -> DriveIndexRecord:
-    return DriveIndexRecord(user_id="u", item_id="i1", name="a.pdf", kind="pdf", **kw)
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id="i1", name="a.pdf", kind="pdf", **kw)
 
 
 def test_set_change_and_clear_are_idempotent():
@@ -116,7 +116,7 @@ def test_note_store_keys():
 
 
 def test_notes_query_start():
-    state = DriveSyncState(user_id="u")
+    state = DriveSyncState(user_id="u", connection_id="u")
     assert notes_query_start(state) == (None, "")
     paging = replace(state, notes_applied_at=T, notes_applied_id="n9", notes_paging=True)
     assert notes_query_start(paging) == (T, "n9")

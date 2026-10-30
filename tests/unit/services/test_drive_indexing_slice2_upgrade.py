@@ -18,6 +18,7 @@ from src.domain.drive_keys import name_keys_v2
 
 from .drive_content_world import ContentWorld, prose
 from .drive_index_fakes import ROOT, T0
+from .drive_index_fakes import U_SCOPE
 
 SLICE1_VERSIONS = {"policy": 1, "card": 1, "geo_table": 1, "name_keys": 1}
 # the state's stamps: the older versions above, with the Search v2 keys and `accuracy` (the migration gate key since
@@ -87,7 +88,7 @@ async def test_the_scheduled_work_runs_and_the_versions_apply(w):
     assert (img.reason, img.triage_verdict) == (Reason.PHOTOGRAPH, TriageVerdict.PHOTO)
     for rec in (pdf, img, code, w.rec(w.folder)):
         assert rec.card_version == CURRENT_VERSIONS["card"] and rec.has_card and rec.due_at is None
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert dict(state.applied_versions) == {**CURRENT_VERSIONS, "extractor:parser": 1, "extractor:reader": 1}
     assert state.applied_space == SPACE
 

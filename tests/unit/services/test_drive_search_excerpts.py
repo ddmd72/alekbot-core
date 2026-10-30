@@ -95,7 +95,7 @@ class PassageWorld(V2World):
         return item
 
     def stale_chunk(self, item: str, generation: int, index: int, text: str, d: float) -> None:
-        chunk = DriveChunk(user_id="u", item_id=item, generation=generation, index=index, text=text, char_start=0,
+        chunk = DriveChunk(user_id="u", connection_id="u", item_id=item, generation=generation, index=index, text=text, char_start=0,
                            char_end=len(text), kind="docx", word_keys=word_keys(text))
         self.repo.chunks[("u", item, generation, index)] = (chunk, toward(d))
 

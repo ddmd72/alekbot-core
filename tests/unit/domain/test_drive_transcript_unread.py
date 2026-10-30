@@ -13,6 +13,7 @@ from src.domain.drive_search import is_not_read_yet, is_unread
 
 from tests.unit.adapters.firestore_drive_chunk_fakes import ChunkDb, make_chunk_repo
 from tests.unit.adapters.firestore_drive_fakes import RECS, executed
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 MEDIA = frozenset(TRANSCRIBED_KINDS)
 DOCS = frozenset({"pdf"})
@@ -104,7 +105,7 @@ class TestRepositories:
         db = ChunkDb()
         repo = make_chunk_repo(db, mock_env_config)
         for pending in (True, False, None):
-            await repo.count_unread("u", {"pdf"}, {"image"}, pending=pending, transcribed=MEDIA)
+            await repo.count_unread(U_SCOPE, {"pdf"}, {"image"}, pending=pending, transcribed=MEDIA)
         declared = _declared("development_drive_index_records")
         seen = executed(db, RECS)
         assert seen
@@ -115,7 +116,7 @@ class TestRepositories:
     async def test_the_media_classes_leave_out_no_text(self, mock_env_config):
         db = ChunkDb()
         repo = make_chunk_repo(db, mock_env_config)
-        await repo.count_unread("u", frozenset(), frozenset(), transcribed=MEDIA)
+        await repo.count_unread(U_SCOPE, frozenset(), frozenset(), transcribed=MEDIA)
         reasons = [op[3] for ops in executed(db, RECS) for op in ops if op[:3] == ("where", "reason", "==")]
         assert sorted(reasons) == ["machine_text", "too_large", "user_chunk_cap"]
         for ops in executed(db, RECS):
@@ -124,5 +125,5 @@ class TestRepositories:
     async def test_default_queries_are_unchanged(self, mock_env_config):
         db = ChunkDb()
         repo = make_chunk_repo(db, mock_env_config)
-        await repo.count_unread("u", {"pdf"})
+        await repo.count_unread(U_SCOPE, {"pdf"})
         assert len(executed(db, RECS)) == 6

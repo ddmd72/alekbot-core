@@ -25,7 +25,7 @@ def _stored(value):
 
 def test_round_trip():
     checks = (NoteCheck("n1", "i1", WHY_GONE, T), NoteCheck("n2", "i2", WHY_UNSTORED, None))
-    state = DriveSyncState(user_id="u", note_checks=checks, notes_audited_at=T)
+    state = DriveSyncState(user_id="u", connection_id="u", note_checks=checks, notes_audited_at=T)
     doc = _stored(state_to_doc(state))
     assert doc["note_checks"][0] == {"note_id": "n1", "item_id": "i1", "why": "gone", "last_seen_at": T}
     back = state_from_doc("u", doc)

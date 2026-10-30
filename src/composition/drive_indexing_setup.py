@@ -12,28 +12,28 @@ nudges and runs no fan-out, and nothing else changes.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Optional
 
 from ..adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
 from ..adapters.firestore_drive_mirror_repo import FirestoreDriveMirrorRepository
 from ..adapters.gcp_task_queue import GcpTaskQueue
 from ..adapters.geo_place_table import load_place_rows
 from ..config.environment import EnvironmentConfig
-from .connector_registry import MICROSOFT_ONEDRIVE
 from ..domain.drive_index_planner import PlaceOf
 from ..domain.place_lookup import PlaceIndex
+from ..domain.provider_account import ProviderAccount
 from ..ports.alert_sink import AlertSinkPort
+from ..ports.drive_connection_repository import DriveConnectionRepository
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.drive_mirror_repository import DriveMirrorRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.task_queue import TaskQueue
-from ..ports.user_drive_port import UserDrivePort
-from ..ports.user_repository import UserRepository
 from ..services.drive_sync_scheduler_service import DriveSyncSchedulerService
 from ..utils.logger import logger
 
 if TYPE_CHECKING:
     from ..ports.language_service_port import LanguageServicePort
+    from ..services.drive_connection_service import DriveConnectionService
     from ..services.localization_service import LocalizationService
     from ..services.user_notification_service import UserNotificationService
 
@@ -80,20 +80,29 @@ def build_place_lookup() -> PlaceOf:
     return PlaceIndex(load_place_rows()).place
 
 
-def build_drive_sync_scheduler(*, repo: DriveIndexRepository, queue: TaskQueue, drive: UserDrivePort,
-                               users: UserRepository, oauth_credentials: OAuthCredentialsPort,
+def account_reader(oauth_credentials: OAuthCredentialsPort) -> Callable[[str, str], Awaitable[Optional[ProviderAccount]]]:
+    """`(user_id, credential_id) -> ProviderAccount | None`: the provider account of a connection's grant, the key of its
+    initial build (MULTI_DRIVE_RFC §10, D8). None when the credential is gone. Shared by the fan-out and the tick."""
+    async def account_of(user_id: str, credential_id: str) -> Optional[ProviderAccount]:
+        credential = await oauth_credentials.get(user_id, credential_id)
+        return credential.account if credential is not None else None
+    return account_of
+
+
+def build_drive_sync_scheduler(*, repo: DriveIndexRepository, queue: TaskQueue,
+                               connections: DriveConnectionRepository,
+                               connection_service: Optional["DriveConnectionService"],
+                               oauth_credentials: OAuthCredentialsPort,
                                notifier: Optional["UserNotificationService"],
                                alert_sink: Optional[AlertSinkPort],
                                ensure_agents: Optional[Callable[[str], Awaitable[Any]]] = None,
                                localization: Optional["LocalizationService"] = None,
                                language: Optional["LanguageServicePort"] = None,
                                ) -> DriveSyncSchedulerService:
-    """The `start_drive_sync` fan-out (RFC Δ5, Δ6). The drive kind stays here, in composition (the registry's):
-    the service only sees a callable listing the users with stored drive credentials. `localization` and
-    `language` render the notice about files the bot cannot open (USER_DRIVE_INDEXING_RFC §26.2)."""
-    def connected_users() -> Awaitable[List[str]]:
-        return oauth_credentials.list_user_ids(MICROSOFT_ONEDRIVE)
-
-    return DriveSyncSchedulerService(repo=repo, queue=queue, drive=drive, users=users,
-                                     connected_users=connected_users, notifier=notifier, alert_sink=alert_sink,
-                                     ensure_agents=ensure_agents, localization=localization, language=language)
+    """The `start_drive_sync` fan-out (RFC Δ5, Δ6), per connection (MULTI_DRIVE_RFC §8): it lists the connections from
+    the connection repository and reads each one's initial build by its provider account (`account_reader`).
+    `localization` and `language` render the notice about files the bot cannot open (USER_DRIVE_INDEXING_RFC §26.2)."""
+    return DriveSyncSchedulerService(repo=repo, queue=queue, connections=connections, notifier=notifier,
+                                     alert_sink=alert_sink, connection_service=connection_service,
+                                     account_of=account_reader(oauth_credentials), ensure_agents=ensure_agents,
+                                     localization=localization, language=language)

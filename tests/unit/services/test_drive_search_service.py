@@ -20,6 +20,8 @@ from src.services.drive_search_service import DriveSearchService
 
 from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
 from .drive_index_fakes import Clock, FakeEmbeddings, FakeQueue, FakeUsers
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 
 class SpyRepo(InMemoryDriveIndexRepository):
@@ -58,7 +60,7 @@ class World:
         self.indexer = DriveIndexingService(self.drive, self.repo, self.emb, FakeQueue(), self.users,
                                             lambda lat, lon: "Rome (Roma), Italy", "test-space/8",
                                             extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)},
-                                            triage=FakeTriage(), clock=self.clock, monotonic=self.clock.monotonic)
+                                            triage=FakeTriage(), connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)
         counter = itertools.count(1)
         self.search_svc = DriveSearchService(self.repo, self.emb, self.users, self.drive, clock=self.clock,
                                              nonce=lambda: f"nonce{next(counter):04d}",
@@ -66,8 +68,8 @@ class World:
 
     async def settle(self, max_ticks=50):
         for _ in range(max_ticks):
-            await self.indexer.tick("u")
-            state = await self.repo.get_sync_state("u")
+            await self.indexer.tick(U_SCOPE)
+            state = await self.repo.get_sync_state(U_SCOPE)
             if state is None or state.continuation_enqueued_at is None:
                 return
             self.clock.advance(1)
@@ -117,7 +119,7 @@ class TestGate:
         w.drive.add("lease.pdf")
         await w.settle()
         w.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
-        await w.indexer.tick("u")   # the gate stamps access_lost_at
+        await w.indexer.tick(U_SCOPE)   # the gate stamps access_lost_at
         result = await w.search("lease")
         assert result.status == STATUS_OK and result.envelope.reconnect_needed and paths(result) == ["lease.pdf"]
         assert "reconnect the drive" in render_results(result)
@@ -146,7 +148,7 @@ class TestEnvelope:
         w.drive.add("doc.pdf")
         await w.settle()
         result = await w.search("doc")
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         assert not result.envelope.building and result.envelope.index_as_of == state.observed_as_of
         assert result.envelope.content_search is True and result.envelope.enabled   # the flip (§24.1, §10.2)
 
@@ -156,7 +158,7 @@ class TestEnvelope:
     async def test_an_epoch_not_idle_is_building(self, w, change):
         w.drive.add("doc.pdf")
         await w.settle()
-        w.repo.states["u"] = replace(await w.repo.get_sync_state("u"), **change)
+        w.repo.states["u"] = replace(await w.repo.get_sync_state(U_SCOPE), **change)
         assert (await w.search("doc")).envelope.building
 
     async def test_edits_and_cascades_do_not_set_building(self, w):
@@ -178,14 +180,14 @@ class TestEnvelope:
     async def test_a_purge_in_progress_answers_building_with_no_results(self, w):
         w.drive.add("lease.pdf")
         await w.settle()
-        w.repo.states["u"] = replace(await w.repo.get_sync_state("u"), purging=True)
+        w.repo.states["u"] = replace(await w.repo.get_sync_state(U_SCOPE), purging=True)
         result = await w.search("lease")
         assert result.status == STATUS_OK and result.cards == () and result.envelope.building
 
     async def test_reconnected_after_the_ttl_answers_building_not_the_half_purged_index(self, w):
         w.drive.add("lease.pdf")
         await w.settle()
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         w.repo.states["u"] = replace(state, access_lost_at=w.clock.now - ACCESS_LOSS_TTL)
         result = await w.search("lease")
         assert result.status == STATUS_OK and result.cards == () and result.envelope.building
@@ -194,7 +196,7 @@ class TestEnvelope:
     async def test_unread_comes_from_the_counters(self, w):
         w.drive.add("doc.pdf")
         await w.settle()
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         w.repo.states["u"] = replace(state, counters={**state.counters, "unread": 3})
         assert (await w.search("doc")).envelope.unread == 3
 

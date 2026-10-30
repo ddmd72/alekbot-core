@@ -210,7 +210,7 @@ async def test_no_round_end_or_audit_without_an_item_call():
     budget = SimpleNamespace(item_call_allowed=lambda: False, item_calls=0)
     token = svc_mod._TICK_NOTES.set(svc_mod._TickNotes(drive_id="d1", lifecycle=True))
     try:
-        state = DriveSyncState(user_id="u", drive_id="d1", note_checks=(NoteCheck("n", "i", WHY_GONE, None),))
+        state = DriveSyncState(user_id="u", connection_id="u", drive_id="d1", note_checks=(NoteCheck("n", "i", WHY_GONE, None),))
         summary: dict = {}
         assert await w.svc._notes_round_end("u", state, budget, summary) == state
     finally:

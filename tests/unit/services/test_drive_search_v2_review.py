@@ -84,7 +84,7 @@ V1_ROME_TICKETS = (
 
 async def test_m3_a_state_not_rebuilt_reads_no_v1_record_and_says_it_is_being_rebuilt():
     w = V2World(migrated=False)
-    v1 = DriveIndexRecord(user_id="u", item_id="V1", parent_id="root", name="Rome tickets.pdf", kind="pdf",
+    v1 = DriveIndexRecord(user_id="u", connection_id="u", item_id="V1", parent_id="root", name="Rome tickets.pdf", kind="pdf",
                           scope=Scope.NORMAL, state=RecordState.INDEXED, has_card=True,
                           name_tokens=V1_ROME_TICKETS)   # a v1 record's name keys
     w.repo.records[("u", "V1")] = v1

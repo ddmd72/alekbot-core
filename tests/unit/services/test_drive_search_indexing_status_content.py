@@ -19,7 +19,7 @@ async def _settled_world() -> World:
 
 
 def _chunks(item_id, generation, n):
-    return [DriveChunk(user_id="u", item_id=item_id, generation=generation, index=i, text="t", char_start=0,
+    return [DriveChunk(user_id="u", connection_id="u", item_id=item_id, generation=generation, index=i, text="t", char_start=0,
                        char_end=1, kind="pdf") for i in range(n)]
 
 

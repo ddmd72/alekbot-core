@@ -20,6 +20,7 @@ from src.domain.drive_index_params import RECORD_WRITE_BATCH
 
 from tests.unit.adapters.firestore_drive_chunk_fakes import CHUNKS, ChunkDb, chunk, chunk_snap, make_chunk_repo
 from tests.unit.adapters.firestore_drive_fakes import RECS, executed, snap
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 
 @pytest.fixture
@@ -155,7 +156,7 @@ class TestGetChunks:
     async def test_by_doc_id_in_index_order_without_vectors(self, repo, db):
         for c in (chunk(index=2), chunk(index=0)):
             db.stored[chunk_key("u", "a", 1, c.index)] = chunk_to_doc(c)
-        found = await repo.get_chunks("u", "a", 1, [2, 1, 0, 2])
+        found = await repo.get_chunks(U_SCOPE, "a", 1, [2, 1, 0, 2])
         assert [c.index for c in found] == [0, 2]
         ((ids, paths),) = db.get_all_calls
         assert ids == ["u:a:1:0", "u:a:1:1", "u:a:1:2"] and CHUNK_VECTOR not in paths
@@ -171,14 +172,14 @@ class TestGetChunks:
 class TestReadableTotal:
     async def test_sum_over_records_with_a_readable_generation(self, repo, db):
         db.cols[RECS].respond = lambda ops: [[SimpleNamespace(alias="n", value=1234)]]
-        assert await repo.readable_chunk_total("u") == 1234
+        assert await repo.readable_chunk_total(U_SCOPE) == 1234
         (ops,) = executed(db, RECS)
         assert ops == [("where", "user_id", "==", "u"), ("where", "indexed_generation", ">=", 0),
                        ("sum", "chunk_count", "n")]
 
     async def test_no_match_is_zero(self, repo, db):
         db.cols[RECS].respond = lambda ops: [[SimpleNamespace(alias="n", value=None)]]
-        assert await repo.readable_chunk_total("u") == 0
+        assert await repo.readable_chunk_total(U_SCOPE) == 0
 
     async def test_the_sent_aggregation(self, monkeypatch, mock_env_config):
         sent = []
@@ -201,14 +202,14 @@ class TestReadableTotal:
 class TestChunksPage:
     async def test_first_page(self, repo, db):
         db.cols[CHUNKS].respond = lambda ops: [chunk_snap(chunk())]
-        assert [c.item_id for c in await repo.chunks_page("u", None, 50)] == ["a"]
+        assert [c.item_id for c in await repo.chunks_page(U_SCOPE, None, 50)] == ["a"]
         (ops,) = executed(db, CHUNKS)
         assert ops == [("where", "user_id", "==", "u"), ("order_by", "item_id", "ASCENDING"),
                        ("order_by", "generation", "ASCENDING"), ("order_by", "index", "ASCENDING"),
                        ("select", CHUNK_LEAN_FIELDS), ("limit", 50)]   # ids only (review m3)
 
     async def test_starts_after_the_key(self, repo, db):
-        await repo.chunks_page("u", ("a", 2, 9), 50)
+        await repo.chunks_page(U_SCOPE, ("a", 2, 9), 50)
         (ops,) = executed(db, CHUNKS)
         assert ("start_after", {"item_id": "a", "generation": 2, "index": 9}) in ops
 

@@ -88,7 +88,7 @@ class V2World:
         self.service = DriveSearchService(self.repo, self.emb, self.users, self.drive, embedding_space=SPACE,
                                           clock=lambda: self.now, nonce=lambda: f"nonce{next(counter):04d}")
         versions = {MIGRATION_GATE_KEY: KEYS_VERSION} if migrated else {}
-        self.repo.states["u"] = DriveSyncState(user_id="u", drive_id="d1", root_item_id=ROOT, applied_space=SPACE,
+        self.repo.states["u"] = DriveSyncState(user_id="u", connection_id="u", drive_id="d1", root_item_id=ROOT, applied_space=SPACE,
                                                applied_versions=versions, observed_as_of=AS_OF,
                                                initial_enumeration_done=True)
         self._items = itertools.count(1)
@@ -97,7 +97,7 @@ class V2World:
 
     def folder(self, name: str, parent: str = ROOT, item: Optional[str] = None) -> str:
         item = item or f"F{next(self._items):03d}"
-        rec = DriveIndexRecord(user_id="u", item_id=item, parent_id=parent, name=name, is_folder=True, kind="folder",
+        rec = DriveIndexRecord(user_id="u", connection_id="u", item_id=item, parent_id=parent, name=name, is_folder=True, kind="folder",
                                scope=Scope.NORMAL, state=RecordState.INDEXED, has_card=True,
                                name_tokens=name_keys_v2(name))
         self._put(rec, vec("card:" + name))
@@ -140,7 +140,7 @@ class V2World:
         offset = 0
         for index, text in enumerate(texts):
             keys = word_keys(text)
-            chunk = DriveChunk(user_id="u", item_id=item, generation=generation, index=index, text=text,
+            chunk = DriveChunk(user_id="u", connection_id="u", item_id=item, generation=generation, index=index, text=text,
                                char_start=offset, char_end=offset + len(text), kind=kind, word_keys=keys,
                                keys_version=KEYS_VERSION)
             self.repo.chunks[("u", item, generation, index)] = (chunk, vec(f"chunk:{item}:{index}"))
@@ -153,7 +153,7 @@ class V2World:
                     items.append(HintItem(keyword, "keyword", evidence, start, start + len(evidence)))
                 held = set(keys)
                 hint_keys = tuple(k for i in items for k in word_form_keys(i.text) if k not in held)
-                doc = DriveHintDoc(user_id="u", item_id=item, generation=generation, index=index, kind=kind,
+                doc = DriveHintDoc(user_id="u", connection_id="u", item_id=item, generation=generation, index=index, kind=kind,
                                    chunk_text_hash=f"t{index}", items=tuple(items),
                                    hint_keys=tuple(dict.fromkeys(hint_keys)), passages_version=1)
                 self.repo.hints[("u", item, generation, index)] = (doc, vec(f"hint:{item}:{index}"))

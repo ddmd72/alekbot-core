@@ -17,7 +17,7 @@ LIVE = NOW + timedelta(hours=47)
 
 
 def _job(duration=5000.0, windows=(), reserved=1.0):
-    return TranscriptJob(user_id="u", item_id="i", content_key="k", duration_s=duration, windows=tuple(windows),
+    return TranscriptJob(user_id="u", connection_id="u", item_id="i", content_key="k", duration_s=duration, windows=tuple(windows),
                          reserved_usd=reserved, reserved_month="2026-10")
 
 

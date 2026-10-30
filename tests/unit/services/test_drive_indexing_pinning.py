@@ -15,6 +15,7 @@ from src.services import drive_indexing_service as svc_mod
 
 from .drive_index_fakes import ROOT, FakeEmbeddings
 from .test_drive_indexing_service import World
+from .drive_index_fakes import U_SCOPE
 
 
 class _Runaway(BaseException):
@@ -67,9 +68,9 @@ class TestVersionUpgradeVerification:
         _bump_card_version(monkeypatch)
         result = await w.tick()
         assert result.summary.get("upgraded") == 3
-        assert dict((await w.repo.get_sync_state("u")).applied_versions)["card"] == CARD_VERSION
+        assert dict((await w.repo.get_sync_state(U_SCOPE)).applied_versions)["card"] == CARD_VERSION
         await w.settle()
-        assert dict((await w.repo.get_sync_state("u")).applied_versions)["card"] == CARD_VERSION + 1
+        assert dict((await w.repo.get_sync_state(U_SCOPE)).applied_versions)["card"] == CARD_VERSION + 1
 
 
 class TestMaintenanceShare:
@@ -82,7 +83,7 @@ class TestMaintenanceShare:
         await w.settle()
         _bump_card_version(monkeypatch)
         await w.tick()   # the upgrade pass schedules 250 class-3 re-embeddings
-        due = await w.repo.due_records("u", w.clock.now, 1000)
+        due = await w.repo.due_records(U_SCOPE, w.clock.now, 1000)
         assert len(due) == 250 and all(r.priority == 3 for r in due)
         orig = w.emb.get_embedding
 
@@ -121,10 +122,10 @@ class TestBookkeeping:
         await w.settle()
         w.drive.raise_next = DriveThrottled(retry_after_s=30)
         assert (await w.tick()).status == "throttled"
-        assert (await w.repo.get_sync_state("u")).systemic_failures == 1
+        assert (await w.repo.get_sync_state(U_SCOPE)).systemic_failures == 1
         w.clock.advance(30)
         assert (await w.tick()).status == "done"
-        assert (await w.repo.get_sync_state("u")).systemic_failures == 0
+        assert (await w.repo.get_sync_state(U_SCOPE)).systemic_failures == 0
 
     def _stalled_tick_world(self):
         """A settled drive whose next change page eats the whole tick budget and carries nothing."""
@@ -133,7 +134,7 @@ class TestBookkeeping:
         return w
 
     async def _stall(self, w):
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
 
         async def stalled(user_id, cursor):
             w.clock.advance(TICK_START_BUDGET.total_seconds())
@@ -150,7 +151,7 @@ class TestBookkeeping:
         before = await self._stall(w)
         result = await w.tick()
         assert result.status == "done" and len(_conts(w)) >= 1
-        after = await w.repo.get_sync_state("u")
+        after = await w.repo.get_sync_state(U_SCOPE)
         assert before.last_success_at is not None
         assert after.last_success_at == before.last_success_at
 
@@ -164,7 +165,7 @@ class TestBookkeeping:
         before = len(w.queue.tasks)
         await w.tick()
         assert len(_conts(w, before)) == 1
-        assert (await w.repo.get_sync_state("u")).continuation_enqueued_at == tick_now
+        assert (await w.repo.get_sync_state(U_SCOPE)).continuation_enqueued_at == tick_now
 
     async def test_observed_as_of_is_the_round_start(self):
         """§12.1: a round spanning ticks is as fresh as its start, not as its last page."""
@@ -183,7 +184,7 @@ class TestBookkeeping:
         while True:
             await w.tick()
             ticks += 1
-            state = await w.repo.get_sync_state("u")
+            state = await w.repo.get_sync_state(U_SCOPE)
             if state.round_complete:
                 break
             assert ticks < 20
@@ -210,7 +211,7 @@ class TestSweepContinues:
         w.repo.records_seen_before = slow
         before = len(w.queue.tasks)
         await w.tick()
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         assert state.round_complete and state.epoch_phase is EpochPhase.SWEEPING
         assert len(_conts(w, before)) == 1
 
@@ -221,7 +222,7 @@ class TestSecondResync:
         w = World()
         w.drive.add("a.pdf")
         await w.settle()
-        epoch = (await w.repo.get_sync_state("u")).epoch
+        epoch = (await w.repo.get_sync_state(U_SCOPE)).epoch
         calls = {"n": 0}
 
         async def always_410(user_id, cursor):
@@ -233,7 +234,7 @@ class TestSecondResync:
         w.drive.get_changes = always_410
         result = await w.tick()
         assert result.status == "error" and calls["n"] == 2
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         assert state.epoch == epoch + 1 and state.last_error is ErrorCategory.PROVIDER_ERROR
 
 

@@ -14,6 +14,7 @@ from src.services.drive_indexing_service import DriveIndexingService
 from src.services.drive_transcript_stage import DriveTranscriptStage
 
 from .test_drive_indexing_transcripts import SPACE, StageSpy, TranscriptWorld
+from .drive_index_fakes import LegacyConnections
 
 DRIVE = "d1"   # the drive id FakeDrive's pages and connection carry
 MIRROR_WRITES = ("save_root", "mark_root_gone", "clear_root_gone", "save_doc", "delete_doc", "mark_gone", "clear_mark",
@@ -118,7 +119,7 @@ class MirrorWorld(TranscriptWorld):
             extractors={"parser": self.parser, "reader": self.reader}, triage=self.triage,
             profiler=self.profiler if enrich else None, passages=self.passages if enrich else None,
             transcripts=self.stage, transcribe_enabled=switch, transcribe_cap_usd=tick_cap, mirror_repo=repo,
-            clock=self.clock, monotonic=self.clock.monotonic)
+            connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)
         self.commits: List[Tuple[Tuple[str, ...], Optional[dict]]] = []   # (deletes, gone) of every _commit with deletes
         real_commit = self.svc._commit
 

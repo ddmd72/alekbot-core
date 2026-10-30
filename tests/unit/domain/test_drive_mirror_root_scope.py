@@ -26,7 +26,7 @@ def ch(item_id: str, name: str, parent: str = ROOT, folder: bool = False, **kw) 
 
 
 def folder_rec(item_id: str, name: str, scope: Scope = Scope.NORMAL, parent: str = ROOT, **kw) -> DriveIndexRecord:
-    return DriveIndexRecord(user_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True, kind="folder",
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True, kind="folder",
                             content_class=ContentClass.FOLDER, scope=scope, state=RecordState.METADATA_ONLY,
                             reason=Reason.FOLDER, policy_version=POLICY_VERSION, **kw)
 
@@ -104,7 +104,7 @@ def test_files_directly_under_the_root_get_no_record_before_its_own_record_exist
 
 def test_a_stored_file_under_the_root_is_deleted_on_its_next_observation():
     root = folder_rec(MIRROR, "_Transcripts", scope=Scope.INSIDE_OPAQUE)
-    stored = DriveIndexRecord(user_id="u", item_id="x", name="a.md", parent_id=MIRROR, kind="markdown")
+    stored = DriveIndexRecord(user_id="u", connection_id="u", item_id="x", name="a.md", parent_id=MIRROR, kind="markdown")
     plan = plan_observation(ch("x", "a.md", parent=MIRROR), stored, root, None, ctx(MIRROR))
     assert plan.upsert is None and plan.delete_item_id == "x"
 

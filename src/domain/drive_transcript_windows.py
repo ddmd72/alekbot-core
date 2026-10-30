@@ -59,14 +59,6 @@ def times_ok(window: WindowSpec, segments: Sequence[Segment]) -> bool:
     return True
 
 
-def content_key(rec: DriveIndexRecord) -> Tuple[str, bool]:
-    """(key, shared). `quickXorHash:size` is shared across copies; without it the key is the item and its cTag and is
-    not shared. There is no other hash fallback (Δ135)."""
-    if rec.content_hash:
-        return rec.content_hash, True
-    return f"item:{rec.item_id}:{rec.content_version}", False
-
-
 def transcript_content_key(content_identity: Optional[ContentIdentity], identity: str,
                            content_version: str) -> Tuple[str, bool]:
     """(key, shared) of a recording's stored transcript (MULTI_DRIVE_RFC §10): the rendered content identity
@@ -79,4 +71,10 @@ def transcript_content_key(content_identity: Optional[ContentIdentity], identity
     if not identity:
         raise ValueError("a transcript content key without a content identity needs the item identity")
     return f"item:{identity}:{content_version}", False
+
+
+def record_content_key(rec: DriveIndexRecord) -> Tuple[str, bool]:
+    """`transcript_content_key` of a record (its content identity, item identity and content version). There is no
+    other hash fallback (Δ135)."""
+    return transcript_content_key(rec.content_identity, rec.identity, rec.content_version)
 

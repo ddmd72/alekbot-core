@@ -56,7 +56,7 @@ from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple, Union
 
 from ..domain.drive_accuracy import scorable
-from ..domain.drive_card import card_text, note_line
+from ..domain.drive_card import card_text, content_key_of, note_line
 from ..domain.drive_enrich_plan import COVERAGE_COUNTERS, GAP_HELD, GAP_NO_PASSAGES, GAP_WAITING
 from ..domain.drive_enrichment import USD_CAPS, HintItem, JobState, UsageClass
 from ..domain.drive_excerpt_chunk import ExcerptChunk, display_number, stored_index
@@ -364,7 +364,7 @@ def _readable(rec: DriveIndexRecord) -> bool:
 
 def _copy_hash(rec: DriveIndexRecord) -> Optional[str]:
     """The `_collapse` copy rule: a non-empty content hash that is not an empty file's."""
-    digest = rec.content_hash
+    digest = content_key_of(rec.content_identity)
     return digest if digest and not digest.endswith(":0") else None
 
 
@@ -1168,7 +1168,7 @@ class DriveSearchService:
         candidates = [(tier, item) for tier in _TIERS for item in tiered.get(tier, [])[:_SHOWN[tier]]]
 
         def collapsible(item: str) -> Optional[str]:
-            digest = pool.leans[item].content_hash
+            digest = content_key_of(pool.leans[item].content_identity)
             return digest if digest and not digest.endswith(":0") else None
 
         keeper: Dict[str, str] = {}
@@ -1553,7 +1553,7 @@ class DriveSearchService:
             generation=int(rec.indexed_generation or 0), chunk_count=rec.chunk_count, size_bytes=rec.size_bytes,
             modified_at=rec.modified_at, web_url=rec.web_url, stale=rec.stale, truncated=rec.truncated,
             capture=rec.capture, card_accuracy=rec.card_accuracy if scorable(rec) else None,
-            content_hash=rec.content_hash, also_at=tuple(also_at),
+            content_hash=content_key_of(rec.content_identity), also_at=tuple(also_at),
             chunks=tuple(ExcerptChunk(c.item_id, c.generation, c.index, c.text, c.char_start, c.char_end)
                          for c in sorted(chunks, key=lambda c: c.index)))
 
@@ -1708,7 +1708,7 @@ class DriveSearchService:
         by_hash: Dict[str, int] = {}
         for rec in ranked:
             path = paths[rec.item_id]
-            same_as = rec.content_hash if rec.size_bytes > 0 else None
+            same_as = content_key_of(rec.content_identity) if rec.size_bytes > 0 else None
             if same_as and same_as in by_hash:
                 first = by_hash[same_as]
                 cards[first] = replace(cards[first], also_at=cards[first].also_at + (path,))

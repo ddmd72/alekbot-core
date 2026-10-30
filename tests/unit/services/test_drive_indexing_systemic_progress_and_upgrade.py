@@ -15,6 +15,7 @@ from src.domain.user_drive import (
 from src.services import drive_indexing_service as svc_mod
 
 from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
+from .drive_index_fakes import U_SCOPE
 
 
 class _Runaway(BaseException):
@@ -49,7 +50,7 @@ class TestSystemicErrorKeepsObserveProgress:
             w.drive.add(f"f{i}.pdf")
         _fail_on_call(w, 3, exc)
         assert (await w.tick()).status == status
-        st = await w.repo.get_sync_state("u")
+        st = await w.repo.get_sync_state(U_SCOPE)
         assert st.cursor == "full:10", st.cursor
         assert st.epoch == 1
         assert st.last_error is category
@@ -60,7 +61,7 @@ class TestSystemicErrorKeepsObserveProgress:
             w.drive.add(f"f{i}.pdf")
         _fail_on_call(w, 3, DriveThrottled(retry_after_s=30))
         await w.tick()
-        st = await w.repo.get_sync_state("u")
+        st = await w.repo.get_sync_state(U_SCOPE)
         assert st.systemic_failures == 1 and st.continuation_enqueued_at == w.clock.now
 
     async def test_onboarding_liveness_under_periodic_throttling(self):
@@ -81,7 +82,7 @@ class TestSystemicErrorKeepsObserveProgress:
         for _ in range(40):
             await w.tick()
             w.clock.advance(5)
-        st = await w.repo.get_sync_state("u")
+        st = await w.repo.get_sync_state(U_SCOPE)
         assert st.initial_enumeration_done, (st.cursor, st.epoch_phase)
 
 
@@ -92,7 +93,7 @@ class TestSystemicErrorKeepsObserveProgress:
         for i in range(20):
             w.drive.add(f"f{i}.pdf")
         await w.settle()
-        epoch = (await w.repo.get_sync_state("u")).epoch
+        epoch = (await w.repo.get_sync_state(U_SCOPE)).epoch
         w.drive.resync_next = True
         orig = w.drive.get_changes
         calls = {"n": 0}
@@ -105,7 +106,7 @@ class TestSystemicErrorKeepsObserveProgress:
 
         w.drive.get_changes = throttle_after_410
         assert (await w.tick()).status == "throttled"
-        st = await w.repo.get_sync_state("u")
+        st = await w.repo.get_sync_state(U_SCOPE)
         assert st.epoch == epoch + 1
         assert st.cursor == "full:0", st.cursor
         assert st.last_error is ErrorCategory.THROTTLED
@@ -259,7 +260,7 @@ class TestUpgradePassDoesNotSpin:
             w.drive.add(f"f{i}.pdf")
         await w.settle()
         monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 1, "geo_table": 2})
-        st = await w.repo.get_sync_state("u")
+        st = await w.repo.get_sync_state(U_SCOPE)
         assert await w.svc._has_more("u", replace(st, upgrade_cursor="i00003"), w.clock.now)
         assert not await w.svc._has_more("u", replace(st, upgrade_cursor=None), w.clock.now)
 
@@ -271,7 +272,7 @@ class TestUpgradePassDoesNotSpin:
             w.drive.add(f"f{i}.pdf")
         await w.settle()
         monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 1, "geo_table": 2})
-        st = replace(await w.repo.get_sync_state("u"), upgrade_cursor=None)
+        st = replace(await w.repo.get_sync_state(U_SCOPE), upgrade_cursor=None)
         assert await w.svc._has_more("u", st, w.clock.now, upgrade_wrote=True)
         assert not await w.svc._has_more("u", st, w.clock.now, upgrade_wrote=False)
 
@@ -294,7 +295,7 @@ class TestRfcBehaviourPinned:
         res = await w.tick()
         assert res.status == "purged" and w.repo.records == {}
         await w.settle()
-        st = await w.repo.get_sync_state("u")
+        st = await w.repo.get_sync_state(U_SCOPE)
         assert st.drive_id == "d2" and w.rec(a) is not None
 
     @pytest.mark.slow
@@ -361,7 +362,7 @@ async def _converge_with_fanout(w, target, rounds=10):
     for _ in range(rounds):
         _, chain = await _run_chain(w, 100)
         longest = max(longest, chain)
-        if dict((await w.repo.get_sync_state("u")).applied_versions) == target:
+        if dict((await w.repo.get_sync_state(U_SCOPE)).applied_versions) == target:
             return longest
         w.clock.advance(RETRY_CAP.total_seconds())
     pytest.fail("the version bump never applied")

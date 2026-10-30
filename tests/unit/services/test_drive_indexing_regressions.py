@@ -14,6 +14,7 @@ from src.domain.user_drive import DriveAccessDenied, DriveResyncRequired
 from src.services import drive_indexing_service as svc_mod
 
 from .test_drive_indexing_service import EXTRACTOR_VERSIONS, World
+from .drive_index_fakes import U_SCOPE
 
 
 async def test_card_version_bump_reembeds_and_completes(monkeypatch):
@@ -27,7 +28,7 @@ async def test_card_version_bump_reembeds_and_completes(monkeypatch):
     w.emb.calls.clear()
     await w.settle(max_ticks=60)          # raises "did not settle" if the upgrade never completes
     assert len(w.emb.calls) == 3
-    assert dict((await w.repo.get_sync_state("u")).applied_versions)["card"] == CARD_VERSION + 1
+    assert dict((await w.repo.get_sync_state(U_SCOPE)).applied_versions)["card"] == CARD_VERSION + 1
 
 
 # 2. §8.2: a re-listing that keeps failing is dropped after MAX_ATTEMPTS; the chain must stop.
@@ -180,7 +181,7 @@ async def test_resync_in_the_middle_of_the_onboarding_enumeration():
 
     w.drive.get_changes = gone_mid_enumeration
     await w.settle()
-    st = await w.repo.get_sync_state("u")
+    st = await w.repo.get_sync_state(U_SCOPE)
     assert st.epoch_phase is EpochPhase.IDLE and st.epoch == 2
     assert {i for (_, i) in w.repo.records} == set(ids[1:])
 
@@ -223,7 +224,7 @@ async def test_nudge_during_sweeping_survives_the_sweep():
     w.drive.resync_next = True
     b = w.drive.add("b.pdf")
     w.drive.log.pop()
-    st = await w.repo.get_sync_state("u")
+    st = await w.repo.get_sync_state(U_SCOPE)
     await w.repo.save_sync_state(replace(st, epoch_phase=EpochPhase.SWEEPING, epoch=st.epoch + 1))
     from src.domain.drive_index import Nudge
     await w.tick(Nudge("m", (b,)))
@@ -249,7 +250,7 @@ async def test_every_version_bump_completes_and_applies(monkeypatch, constant, m
     target = {**CURRENT_VERSIONS, constant: bumped}
     monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", target)
     await w.settle_due(max_ticks=60)
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert dict(state.applied_versions) == {**target, **EXTRACTOR_VERSIONS}
     assert not planner.stale_versions(next(iter(w.repo.records.values())))
 

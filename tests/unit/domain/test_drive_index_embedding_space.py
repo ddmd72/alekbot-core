@@ -28,5 +28,5 @@ def test_a_card_in_another_space_is_due_for_a_new_embedding_and_keeps_its_vector
 
 
 def test_the_state_says_whether_its_cards_are_in_a_space():
-    state = DriveSyncState(user_id="u", applied_space="s1")
+    state = DriveSyncState(user_id="u", connection_id="u", applied_space="s1")
     assert state.cards_in_space("s1") and not state.cards_in_space("s2")

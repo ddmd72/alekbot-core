@@ -8,7 +8,7 @@ below decide from them when they are unambiguous (`detected`). The reader and tr
 it is a photo already, by its `k:` words (Δ57).
 
 Rules, in order (`detect`):
-  1. EXIF Make or Model in the JPEG a page is made of, or Graph's camera facet on an image read as text
+  1. EXIF Make or Model in the JPEG a page is made of, or the provider's camera facts on an image read as text
      -> document_photo;
   2. every page one full-page raster (at least FULL_PAGE_COVER of the page), an effective resolution within
      SCAN_DPI_MIN..SCAN_DPI_MAX, no page larger than a scanner glass (SCAN_GLASS_MAX_MM) -> scan, with or without a
@@ -21,7 +21,7 @@ Public interface:
     CaptureSignals                              what the parser child reports for a PDF
     signals_to_json(signals) -> dict, signals_from_json(value) -> CaptureSignals | None   the child's wire form
     detect(signals) -> Capture | None           rules 1-3 over a PDF's signals
-    camera_capture(facets) -> Capture | None    rule 1 for an image: Graph's camera facet
+    camera_capture(media) -> Capture | None     rule 1 for an image: the provider's camera facts
     model_capture(value) -> Capture | None      a model's answer, or None when it is not one of the values
     settle(detected, model) -> (capture, source)   the deterministic answer wins; ("", "") when neither has one
     file_capture(kind, ...) -> (capture, source)   a file's capture from everything known; non-PDF, non-image kinds are digital (Δ79)
@@ -35,6 +35,7 @@ from enum import Enum
 from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .drive_index_params import SCAN_DPI_MAX, SCAN_DPI_MIN, SCAN_GLASS_MAX_MM
+from .drive_media_facts import DriveMediaFacts
 
 
 class Capture(str, Enum):
@@ -131,11 +132,10 @@ def detect(signals: Optional[CaptureSignals]) -> Optional[Capture]:
     return None
 
 
-def camera_capture(facets: Mapping[str, Any]) -> Optional[Capture]:
-    """Rule 1 for an image read as text: Graph's `photo.cameraMake` or `photo.cameraModel` (the EXIF the provider
-    read). A taken date alone is no camera: a screenshot can carry one."""
-    photo = facets.get("photo") or {}
-    if isinstance(photo, Mapping) and (photo.get("cameraMake") or photo.get("cameraModel")):
+def camera_capture(media: DriveMediaFacts) -> Optional[Capture]:
+    """Rule 1 for an image read as text: the camera make or model the provider read from the file's EXIF (typed media
+    facts, MULTI_DRIVE_RFC §7.2). A taken date alone is no camera: a screenshot can carry one."""
+    if media.camera_make or media.camera_model:
         return Capture.DOCUMENT_PHOTO
     return None
 
@@ -160,14 +160,14 @@ def settle(detected: Optional[Capture], model: Optional[Capture]) -> Tuple[str, 
     return "", ""
 
 
-def file_capture(kind: str, *, signals: Optional[CaptureSignals] = None, facets: Optional[Mapping[str, Any]] = None,
+def file_capture(kind: str, *, signals: Optional[CaptureSignals] = None, media: Optional[DriveMediaFacts] = None,
                  model: str = "", triaged: str = "") -> Tuple[str, str]:
     """(capture, source) of a text-bearing file (§26.3, Δ79). A PDF has the parser's signals, then the reader's word
-    (`model`); an image read as text has Graph's camera facet, then the reader's word, then triage's (`triaged`).
+    (`model`); an image read as text has the provider's camera facts, then the reader's word, then triage's (`triaged`).
     Any other kind the parser reads (office files, plain text, HTML, mail, ...) is software-made by definition:
     `digital`, `detected`."""
     if kind == "pdf":
         return settle(detect(signals), model_capture(model))
     if kind == "image":
-        return settle(camera_capture(facets or {}), model_capture(model) or model_capture(triaged))
+        return settle(camera_capture(media or DriveMediaFacts()), model_capture(model) or model_capture(triaged))
     return Capture.DIGITAL.value, CaptureSource.DETECTED.value

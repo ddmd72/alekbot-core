@@ -53,8 +53,8 @@ def test_call_share():
 class TestChecksOf:
 
     def test_only_records_with_a_note_report_one(self):
-        recs = [DriveIndexRecord(user_id="u", item_id="a", owner_note_id="n1"),
-                DriveIndexRecord(user_id="u", item_id="b")]
+        recs = [DriveIndexRecord(user_id="u", connection_id="u", item_id="a", owner_note_id="n1"),
+                DriveIndexRecord(user_id="u", connection_id="u", item_id="b")]
         assert checks_of(recs, WHY_UNSTORED, T) == (NoteCheck("n1", "a", WHY_UNSTORED, T),)
 
     def test_no_record_no_check(self):
@@ -110,10 +110,10 @@ class TestAudit:
         assert audit_key(notes[0]) < audit_key(notes[1]) < audit_key(notes[2])
 
     def test_the_cursor_of_the_state(self):
-        assert audit_cursor(DriveSyncState(user_id="u")) is None
-        never = audit_cursor(DriveSyncState(user_id="u", notes_audit_after_id="n1"))
+        assert audit_cursor(DriveSyncState(user_id="u", connection_id="u")) is None
+        never = audit_cursor(DriveSyncState(user_id="u", connection_id="u", notes_audit_after_id="n1"))
         assert never is not None and never[1] == "n1" and never == audit_key(_note("n1"))
-        dated = audit_cursor(DriveSyncState(user_id="u", notes_audit_after_at=T, notes_audit_after_id="n2"))
+        dated = audit_cursor(DriveSyncState(user_id="u", connection_id="u", notes_audit_after_at=T, notes_audit_after_id="n2"))
         assert dated == (T, "n2")
 
 

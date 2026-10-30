@@ -16,10 +16,10 @@ class TestPlannerClearsRelistingOnOpaqueScope:
                                    place_of=lambda lat, lon: None)
 
     def test_a_folder_rescoped_inside_an_opaque_root_drops_its_relisting(self):
-        parent = DriveIndexRecord(user_id="u", item_id="repo", parent_id=ROOT, name="repo", is_folder=True,
+        parent = DriveIndexRecord(user_id="u", connection_id="u", item_id="repo", parent_id=ROOT, name="repo", is_folder=True,
                                   scope=Scope.OPAQUE_ROOT, state=RecordState.METADATA_ONLY, reason=Reason.OPAQUE_ROOT,
                                   policy_version=planner.POLICY_VERSION)
-        kid = DriveIndexRecord(user_id="u", item_id="pkg", parent_id="repo", name="pkg", is_folder=True,
+        kid = DriveIndexRecord(user_id="u", connection_id="u", item_id="pkg", parent_id="repo", name="pkg", is_folder=True,
                                scope=Scope.NORMAL, state=RecordState.METADATA_ONLY, reason=Reason.FOLDER,
                                reobserve_pending=True, reobserve_cursor="200", policy_version=planner.POLICY_VERSION)
         plan = planner.plan_observation(planner.change_from_record(kid), kid, parent, None, self._ctx(), parent,
@@ -28,7 +28,7 @@ class TestPlannerClearsRelistingOnOpaqueScope:
         assert not plan.upsert.reobserve_pending and plan.upsert.reobserve_cursor is None
 
     def test_a_marker_child_closing_its_folder_drops_the_folders_relisting(self):
-        folder = DriveIndexRecord(user_id="u", item_id="site", parent_id=ROOT, name="site", is_folder=True,
+        folder = DriveIndexRecord(user_id="u", connection_id="u", item_id="site", parent_id=ROOT, name="site", is_folder=True,
                                   scope=Scope.NORMAL, state=RecordState.METADATA_ONLY, reason=Reason.FOLDER,
                                   reobserve_pending=True, reobserve_cursor="200",
                                   policy_version=planner.POLICY_VERSION)
@@ -40,7 +40,7 @@ class TestPlannerClearsRelistingOnOpaqueScope:
 
     def test_an_unresolved_folder_keeps_its_relisting_until_its_probe(self):
         """A reopened big folder waits for its density probe: if it turns out walkable, its subtree is listed."""
-        folder = DriveIndexRecord(user_id="u", item_id="big", parent_id=ROOT, name="big", is_folder=True,
+        folder = DriveIndexRecord(user_id="u", connection_id="u", item_id="big", parent_id=ROOT, name="big", is_folder=True,
                                   child_count=600, scope=Scope.UNRESOLVED, state=RecordState.UNRESOLVED,
                                   probe_pending=True, reobserve_pending=True, policy_version=planner.POLICY_VERSION)
         plan = planner.plan_observation(planner.change_from_record(folder), folder, None, None, self._ctx(), None,

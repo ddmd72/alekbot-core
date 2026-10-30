@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.unit.adapters.firestore_drive_fakes import NOW, RECS, Db, executed, make_repo, rec_doc, snap
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -48,11 +49,11 @@ def _covered(required, index):
 
 
 async def test_every_record_query_has_a_declared_index(repo, db):
-    await repo.due_records("u", NOW, 10)
-    await repo.oldest_due_at("u", 0)
-    await repo.children("u", "p", "a", 5)
-    await repo.records_page("u", "a", 5)
-    await repo.records_seen_before("u", 2, 5)
+    await repo.due_records(U_SCOPE, NOW, 10)
+    await repo.oldest_due_at(U_SCOPE, 0)
+    await repo.children(U_SCOPE, "p", "a", 5)
+    await repo.records_page(U_SCOPE, "a", 5)
+    await repo.records_seen_before(U_SCOPE, 2, 5)
     await repo.card_capped("u", 5)
     await repo.find_by_name_keys("u", ["w:a"], 5)
     await repo.find_by_name_keys("u", ["w:a"], 5, kind="pdf")
@@ -60,7 +61,7 @@ async def test_every_record_query_has_a_declared_index(repo, db):
     await repo.filter_records("u", "pdf", NOW, NOW, 8)
     await repo.find_nearest_cards("u", [1.0], 5)
     await repo.find_nearest_cards("u", [1.0], 5, kind="pdf")
-    await repo.count_by_state("u")
+    await repo.count_by_state(U_SCOPE)
     await repo.delete_user_records("u", 5)
     db.cols[RECS].respond = lambda ops: ([snap(rec_doc("x", card_rank=2))]
                                          if ("order_by", "card_rank", "DESCENDING") in ops else [])
@@ -97,7 +98,7 @@ def test_indexes_are_declared_for_the_live_collection_only():
 async def test_the_not_read_yet_counts_have_their_composites(repo, db):
     """count_unread(pending=True) adds `card_capped == False` to the pending class (final review F5-2): one count
     per kind list, documents and text images, each served by a composite of exactly its equality fields."""
-    await repo.count_unread("u", {"pdf", "docx"}, {"jpg"}, pending=True)
+    await repo.count_unread(U_SCOPE, {"pdf", "docx"}, {"jpg"}, pending=True)
     queries = executed(db)
     assert len(queries) == 2
     declared = _declared_indexes()

@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
-from google.api_core.exceptions import InvalidArgument
+from google.api_core.exceptions import AlreadyExists, InvalidArgument
 from google.cloud import firestore
 from google.cloud.firestore_v1.transforms import Increment
 from google.cloud.firestore_v1.types import StructuredQuery
@@ -193,6 +193,12 @@ class EvalDocRef:
     async def update(self, data: Dict[str, Any]) -> None:
         assert self.id in self.col.docs, "update of a missing document"
         _write(self.col, self.id, data, merge=list(data))
+
+    async def create(self, data: Dict[str, Any]) -> None:
+        """Firestore's create: AlreadyExists when the document is there, nothing written."""
+        if self.id in self.col.docs:
+            raise AlreadyExists(f"{self.col.name}/{self.id}")
+        _write(self.col, self.id, data, False)
 
     async def delete(self) -> None:
         self.col.docs.pop(self.id, None)

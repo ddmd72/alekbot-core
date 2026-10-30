@@ -247,18 +247,10 @@ def safe_doc_id(raw: str) -> str:
     return out
 
 
-def job_doc_id(user_id: str, item_id: str) -> str:
-    return safe_doc_id(f"{user_id}:{item_id}")
-
-
-def batch_doc_id(user_id: str, name: str) -> str:
-    """A provider batch name is a path (`batches/<id>`); the id carries it escaped."""
-    return safe_doc_id(f"{user_id}:{name}")
-
-
 def transcript_doc_id(user_id: str, content_key: str) -> str:
-    """The content key is `quickXorHash:size` (base64, which has `/`) or the fallback `item:{id}:{cTag}`; the raw key
-    stays a field of the document."""
+    """The content key is the rendered content identity `{family}:{digest}:{size}` (a digest may hold `/`) or the
+    fallback `item:{identity}:{content_version}` (`drive_transcript_windows.transcript_content_key`); the raw key stays a
+    field of the document. User-scoped by design (MULTI_DRIVE_RFC §10)."""
     return safe_doc_id(f"{user_id}:{content_key}")
 
 
@@ -286,7 +278,7 @@ def normalized_batch(batch: TranscriptBatch) -> TranscriptBatch:
 
 def url_fields(**fields: str) -> List[str]:
     """Names of the given string fields that hold a URL (a `http:` / `https:` scheme or a `://`):
-    §27.4 keeps every URL, a Graph download URL or a Gemini file URI, out of any persisted document. A scheme, not the
+    §27.4 keeps every URL, a drive's download URL or a model provider's file URI, out of any persisted document. A scheme, not the
     letters `http`: a content key is base64 and may begin with them (`:` is not in that alphabet)."""
     return [name for name, value in fields.items() if _is_url(value)]
 

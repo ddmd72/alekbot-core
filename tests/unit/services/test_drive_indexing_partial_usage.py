@@ -12,6 +12,7 @@ from src.domain.drive_index_params import MODEL_BACKOFF_BASE_S
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
 from .drive_usage_helpers import month_calls, month_usd
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -36,7 +37,7 @@ async def test_a_120_page_file_failing_on_window_9_counts_windows_1_to_8(w):
     note = w.add_doc("note.md", prose(5))
     result = await w.settle()
     assert result.status == "done" and w.rec(note).state is RecordState.INDEXED
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert await month_usd(w.repo, UsageClass.READER, "2026-10") == pytest.approx(0.008)
     assert await month_calls(w.repo, "2026-10") == 9
     assert sum(r.model_cost for r in w.results) == pytest.approx(0.008)
@@ -54,7 +55,7 @@ async def test_an_outage_with_nothing_spent_keeps_the_doubling_backoff(w):
     await w.settle()
     w.clock.advance(MODEL_BACKOFF_BASE_S)
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.model_failures == 2   # no usage: the outage is not reset
     assert await month_usd(w.repo, UsageClass.READER, "2026-10") == 0.0 and await month_calls(w.repo, "2026-10") == 0
 
@@ -70,7 +71,7 @@ async def test_a_triage_outage_counts_the_images_answered_before_it(w):
     w.triage.triage = partial
     ids = [w.add_image(f"p{n}.jpg") for n in range(4)]
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert await month_usd(w.repo, UsageClass.TRIAGE, "2026-10") == pytest.approx(0.003)
     assert state.model_backoff_until is not None
     assert sum(r.model_cost for r in w.results) == pytest.approx(0.003)

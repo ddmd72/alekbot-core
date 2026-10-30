@@ -10,6 +10,7 @@ from src.domain.drive_index import DriveIndexRecord
 from tests.unit.adapters.firestore_drive_eval_fakes import RECS, eval_transactions, make_eval_repo
 from tests.unit.adapters.firestore_drive_mirror_fakes import NameAwareDb
 from tests.unit.adapters.test_firestore_drive_index_v2_provisioning import _exempt, _required
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 T = datetime(2026, 10, 21, 9, 30, tzinfo=timezone.utc)
 
@@ -38,8 +39,8 @@ async def test_mirror_queue_newest_first(adapter):
         _rec("held", mirror_due=False, mirror_retry_at=T, mirror_held_digest="d", effective_day="2026-12-02"),
         _rec("other", user="v", mirror_due=True, effective_day="2026-12-03"),
     ])
-    assert [r.item_id for r in await repo.mirror_queue("u", 10)] == ["new-a", "new-b", "old"]
-    assert [r.item_id for r in await repo.mirror_queue("u", 2)] == ["new-a", "new-b"]
+    assert [r.item_id for r in await repo.mirror_queue(U_SCOPE, 10)] == ["new-a", "new-b", "old"]
+    assert [r.item_id for r in await repo.mirror_queue(U_SCOPE, 2)] == ["new-a", "new-b"]
     assert await repo.mirror_queue("nobody", 10) == []
 
 

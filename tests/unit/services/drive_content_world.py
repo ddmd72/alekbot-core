@@ -18,6 +18,8 @@ from src.services.drive_indexing_service import DriveIndexingService, TickResult
 
 from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
 from .drive_index_fakes import Clock, FakeEmbeddings, FakeQueue, FakeUsers
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 PDF_HEAD = b"%PDF-1.7\n"
 # a ZIP local header naming [Content_Types].xml: what an OOXML file starts with, so sniff_kind keeps its kind
@@ -60,11 +62,11 @@ class ContentWorld:
         self.svc = DriveIndexingService(self.drive, self.repo, self.emb, self.queue, self.users,
                                         lambda lat, lon: "Rome (Roma), Italy", "test-space/8",
                                         extractors=extractors, triage=self.triage if wired else None,
-                                        clock=self.clock, monotonic=self.clock.monotonic)
+                                        connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)
         self.results: List[TickResult] = []
 
     async def tick(self, nudge=None) -> TickResult:
-        result = await self.svc.tick("u", nudge)
+        result = await self.svc.tick(U_SCOPE, nudge)
         self.results.append(result)
         return result
 

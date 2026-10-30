@@ -32,7 +32,7 @@ def _failing(exc):
 async def test_a_transient_write_error_is_a_store_outage(monkeypatch, mock_env_config, exc):
     monkeypatch.setattr(AsyncWriteBatch, "commit", _failing(exc))
     with pytest.raises(DriveIndexStoreUnavailable) as raised:
-        await _repo(mock_env_config).upsert_records([DriveIndexRecord(user_id="u", item_id="i")])
+        await _repo(mock_env_config).upsert_records([DriveIndexRecord(user_id="u", connection_id="u", item_id="i")])
     assert raised.value.__cause__ is exc
 
 

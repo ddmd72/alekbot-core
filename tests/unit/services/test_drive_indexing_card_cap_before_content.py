@@ -9,6 +9,7 @@ from src.domain.drive_index import RecordState, TriageVerdict
 from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -34,7 +35,7 @@ async def test_files_beyond_the_card_cap_are_never_read(w, monkeypatch):
         rec = w.rec(d)
         assert (rec.state, rec.has_card, rec.due_at) == (RecordState.PENDING, False, None)
         assert w.chunks(d) == []
-    assert await w.repo.readable_chunk_total("u") == sum(w.rec(d).chunk_count for d in read)
+    assert await w.repo.readable_chunk_total(U_SCOPE) == sum(w.rec(d).chunk_count for d in read)
 
 
 async def test_images_beyond_the_card_cap_are_never_triaged(w, monkeypatch):
@@ -62,7 +63,7 @@ async def test_an_evicted_record_loses_its_chunks_and_is_read_again_only_when_re
     assert evicted.card_capped and not evicted.has_card
     assert (evicted.state, evicted.indexed_generation) == (RecordState.PENDING, None)
     assert w.chunks(img) == []
-    assert await w.repo.readable_chunk_total("u") == w.rec(doc).chunk_count
+    assert await w.repo.readable_chunk_total(U_SCOPE) == w.rec(doc).chunk_count
     reads = len(w.reader.requests)
     w.clock.advance(3600)
     await w.settle()

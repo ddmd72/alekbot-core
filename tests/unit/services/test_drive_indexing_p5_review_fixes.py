@@ -265,7 +265,7 @@ def test_pending_keys_are_due_now_whatever_the_record_waits_for():
 
     from src.domain.drive_index import DriveIndexRecord, Scope
     now = datetime(2026, 10, 13, 9, tzinfo=timezone.utc)
-    held = DriveIndexRecord(user_id="u", item_id="d", parent_id="root", name="scan.pdf", kind="pdf",
+    held = DriveIndexRecord(user_id="u", connection_id="u", item_id="d", parent_id="root", name="scan.pdf", kind="pdf",
                             scope=Scope.NORMAL, state=RecordState.PENDING, indexed_generation=1, chunk_count=2,
                             keys_version=KEYS_VERSION - 1, due_at=next_month_start(now),
                             defer_until=next_month_start(now), priority=int(Priority.MAINTENANCE))

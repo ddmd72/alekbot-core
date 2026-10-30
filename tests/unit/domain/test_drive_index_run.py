@@ -19,7 +19,7 @@ NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
 
 
 def rec(item_id="a", name="contract.pdf", kind="pdf", **kw):
-    return DriveIndexRecord(user_id="u", item_id=item_id, name=name, kind=kind, content_version="c1", **kw)
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, name=name, kind=kind, content_version="c1", **kw)
 
 
 def refused(item_id, chunks, rank=0, days=0):

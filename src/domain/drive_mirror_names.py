@@ -2,8 +2,8 @@
 Drive transcript mirror — names, collisions, path length, placement and move order
 (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §27.9.5, §27.9.6, §27.9.7; Δ189, Δ192, Δ193, Δ216). Pure: no I/O, no clock.
 
-Names are compared case-insensitively after NFC (OneDrive refuses names that differ only by case). Paths are counted as
-OneDrive counts them: the decoded path from the drive root, App Folder path included, as `/`-joined components with no
+Names are compared case-insensitively after NFC (the drive refuses names that differ only by case). Paths are counted as
+the drive counts them: the decoded path from the drive root, App Folder path included, as `/`-joined components with no
 leading slash.
 
 Several public classes in one module, by decision: Sibling, Placement and Move are the value types of one contract (the
@@ -139,7 +139,7 @@ def full_path_length(area_path: str, root_path: str, parts: Sequence[str]) -> in
 
 
 def fits(area_path: str, root_path: str, parts: Sequence[str]) -> bool:
-    """True when the path is within ONEDRIVE_PATH_MAX minus MIRROR_PATH_MARGIN."""
+    """True when the path is within the drive's path limit minus MIRROR_PATH_MARGIN."""
     return full_path_length(area_path, root_path, parts) <= ONEDRIVE_PATH_MAX - MIRROR_PATH_MARGIN
 
 

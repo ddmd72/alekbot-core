@@ -13,6 +13,7 @@ from src.domain.drive_index import DriveIndexRecord
 from tests.unit.adapters.firestore_drive_eval_fakes import (
     CHUNKS, HINTS, RECS, EvalDb, eval_transactions, make_eval_repo,
 )
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 _ROOT = Path(__file__).resolve().parents[3]
 LIVE = {RECS: "development_drive_index_records", CHUNKS: "development_drive_index_chunks",
@@ -77,7 +78,7 @@ async def test_every_v2_query_has_a_declared_index(run):
     await repo.upsert_records([DriveIndexRecord("u", "c")])   # the cursor record exists: its page query runs
     await repo.find_by_about_keys("u", ["e:a"], 5, after="c")
     await repo.find_expiring("u", ["lv:a"], date(2026, 10, 13), 5)
-    await repo.enrich_queue("u", 5)
+    await repo.enrich_queue(U_SCOPE, 5)
     await repo.enrich_wakeups("u", T, 5)
     await repo.count_by_job_state("u", {"pdf", "docx"})
     await repo.keys_pending_page("u", None, 5)
@@ -88,10 +89,10 @@ async def test_every_v2_query_has_a_declared_index(run):
     await repo.find_hints_by_keys("u", ["w:a"], 5, after_item_id="a")
     await repo.find_nearest_hints("u", [1.0], 5)
     await repo.find_nearest_hints("u", [1.0], 5, kind="pdf")
-    await repo.get_hints("u", "a", 1)
+    await repo.get_hints(U_SCOPE, "a", 1)
     await repo.get_hints_with_vectors("u", "a", 1)
-    await repo.hints_page("u", None, 5)
-    await repo.hints_page("u", ("a", 1, 0), 5)
+    await repo.hints_page(U_SCOPE, None, 5)
+    await repo.hints_page(U_SCOPE, ("a", 1, 0), 5)
     await repo.delete_hints_except("u", "a", 1)
     await repo.delete_user_hints("u", 5)
     missing, needing = [], 0

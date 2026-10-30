@@ -28,7 +28,7 @@ def ctx(place_of=lambda lat, lon: None, epoch=1, phase=EpochPhase.IDLE):
 
 
 def folder_rec(item_id, name, scope=Scope.NORMAL, reason=Reason.FOLDER, parent=ROOT, **kw):
-    return DriveIndexRecord(user_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True,
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id=item_id, name=name, parent_id=parent, is_folder=True,
                             kind="folder", content_class=ContentClass.FOLDER, scope=scope,
                             state=RecordState.METADATA_ONLY, reason=reason, policy_version=POLICY_VERSION, **kw)
 
@@ -40,7 +40,7 @@ def folder_change(item_id, name, child_count, parent=ROOT):
 class TestStaleness:
     def test_lost_access_is_never_stale(self):
         """stale_access_lost_off — §12.1: a user who lost access gets the reconnect notice, not a stale alert."""
-        state = DriveSyncState(user_id="u", created_at=NOW - timedelta(days=3),
+        state = DriveSyncState(user_id="u", connection_id="u", created_at=NOW - timedelta(days=3),
                                last_success_at=NOW - STALE_ALERT_AFTER * 5, access_lost_at=NOW - timedelta(hours=1))
         assert is_stale(state, NOW - STALE_ALERT_AFTER * 5, NOW) is False
 
@@ -48,7 +48,7 @@ class TestStaleness:
 class TestVersionUpgrades:
     def test_geo_table_bump_marks_a_located_photo_stale(self):
         """stale_versions_geo_off — §8.5, §12.3: a new place table re-resolves place names."""
-        photo = DriveIndexRecord(user_id="u", item_id="p", name="IMG_1.jpg", kind="image", scope=Scope.NORMAL,
+        photo = DriveIndexRecord(user_id="u", connection_id="u", item_id="p", name="IMG_1.jpg", kind="image", scope=Scope.NORMAL,
                                  state=RecordState.METADATA_ONLY, policy_version=POLICY_VERSION,
                                  name_keys_version=NAME_KEYS_VERSION, facets={"location": LISBON}, place_name="Lisbon",
                                  geo_table_version=GEO_TABLE_VERSION - 1)

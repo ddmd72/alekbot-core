@@ -12,6 +12,7 @@ from src.domain.drive_index_params import MODEL_BACKOFF_BASE_S
 
 from .drive_content_world import ContentWorld, admitted  # noqa: F401  (fixture)
 from .drive_usage_helpers import month_calls, month_usd
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -30,11 +31,11 @@ async def test_a_reader_outage_after_partial_usage_keeps_doubling():
     w.reader.before = _outage(calls, pages_sent=20, model_calls=2, model_cost=0.002)
     w.add_doc("long.pdf", "")
     await w.settle()
-    first = await w.repo.get_sync_state("u")
+    first = await w.repo.get_sync_state(U_SCOPE)
     assert first.model_failures == 1
     w.clock.advance(MODEL_BACKOFF_BASE_S)
     await w.settle()
-    second = await w.repo.get_sync_state("u")
+    second = await w.repo.get_sync_state(U_SCOPE)
     assert len(calls) == 2 and await month_usd(w.repo, UsageClass.READER, "2026-10") == pytest.approx(0.004)
     assert w.summary_total("model_pages") == 40
     assert second.model_failures == 2
@@ -58,7 +59,7 @@ async def test_a_triage_outage_after_partial_usage_keeps_doubling():
     await w.settle()
     w.clock.advance(MODEL_BACKOFF_BASE_S)
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.model_failures == 2 and w.summary_total("triage_images") == 2
     assert await month_usd(w.repo, UsageClass.TRIAGE, "2026-10") == pytest.approx(0.002)
     assert await month_calls(w.repo, "2026-10") == 2

@@ -25,7 +25,7 @@ async def test_the_lean_read_projects_the_mark_fields(repo):
 
 
 def test_the_counters_need_no_other_field():
-    full = DriveIndexRecord(user_id="u", item_id="a", parent_id="p", name="a.pdf", kind="pdf",
+    full = DriveIndexRecord(user_id="u", connection_id="u", item_id="a", parent_id="p", name="a.pdf", kind="pdf",
                             state=RecordState.PENDING, inaccessible_since=None, profile_state="ready", text_chars=9)
     lean = DriveIndexRecord(**{name: getattr(full, name) for name in ACCESS_MARK_FIELDS})
     assert is_not_read_yet(lean) == is_not_read_yet(full)

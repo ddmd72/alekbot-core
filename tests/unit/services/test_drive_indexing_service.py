@@ -14,6 +14,8 @@ from src.services.drive_indexing_service import DriveIndexingService
 
 from .drive_content_fakes import FakeContentDrive, FakeExtractor, FakeTriage
 from .drive_index_fakes import ROOT, Clock, FakeEmbeddings, FakeQueue, FakeUsers
+from .drive_index_fakes import LegacyConnections
+from .drive_index_fakes import U_SCOPE
 
 
 # The version keys the harness's wired extractors add to the verified map (CORE-DELTA 5, §9, §12.3).
@@ -33,10 +35,10 @@ class World:
         self.svc = DriveIndexingService(self.drive, self.repo, self.emb, self.queue, self.users,
                                         lambda lat, lon: "Rome (Roma), Italy", "test-space/8",
                                         extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)},
-                                        triage=FakeTriage(), clock=self.clock, monotonic=self.clock.monotonic)
+                                        triage=FakeTriage(), connections=LegacyConnections(self.users, self.drive), clock=self.clock, monotonic=self.clock.monotonic)
 
     async def tick(self, nudge=None):
-        return await self.svc.tick("u", nudge)
+        return await self.svc.tick(U_SCOPE, nudge)
 
     async def settle(self, max_ticks=50):
         """Run ticks while each one enqueues a continuation, as the drive queue would (delays elapse)."""
@@ -87,7 +89,7 @@ async def test_onboarding_builds_records_cards_and_epoch_one(w):
     contracts = w.drive.add("Contracts", folder=True)
     doc = w.drive.add("Договор_ред3.docx", parent=contracts)
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.epoch == 1 and state.epoch_phase is EpochPhase.IDLE and state.initial_enumeration_done
     assert state.cursor.startswith("delta:") and state.root_item_id == ROOT and state.observed_as_of is not None
     assert w.rec(doc).reason is Reason.KIND_NOT_ADMITTED and w.rec(doc).has_card
@@ -97,7 +99,7 @@ async def test_onboarding_builds_records_cards_and_epoch_one(w):
 
 
 async def test_busy_lease_returns_busy_and_requeues_a_nudge(w):
-    await w.repo.acquire_lease("u", "other", w.clock.now, w.clock.now + timedelta(minutes=31), create=True)
+    await w.repo.acquire_lease(U_SCOPE, "other", w.clock.now, w.clock.now + timedelta(minutes=31), create=True)
     assert (await w.tick()).status == "busy"
     assert (await w.tick(Nudge("m1", ("x",)))).status == "busy"
     keys = [t["key"] for t in w.queue.tasks]
@@ -120,23 +122,23 @@ async def test_loss_stamps_once_and_writes_nothing_else(w):
     before = dict(w.repo.records)
     w.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
     assert (await w.tick()).status == "access_lost"
-    first = (await w.repo.get_sync_state("u")).access_lost_at
+    first = (await w.repo.get_sync_state(U_SCOPE)).access_lost_at
     w.clock.advance(3600)
     await w.tick()
-    assert (await w.repo.get_sync_state("u")).access_lost_at == first and w.repo.records == before
+    assert (await w.repo.get_sync_state(U_SCOPE)).access_lost_at == first and w.repo.records == before
 
 
 async def test_regain_within_ttl_continues_from_cursor(w):
     w.drive.add("a.pdf")
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     w.drive.connection_state = DriveConnection(connected=False)
     await w.tick()
     w.clock.advance(timedelta(days=3).total_seconds())
     w.drive.connection_state = DriveConnection(connected=True, drive_id="d1")
     b = w.drive.add("b.pdf")
     await w.settle()
-    after = await w.repo.get_sync_state("u")
+    after = await w.repo.get_sync_state(U_SCOPE)
     assert after.access_lost_at is None and after.epoch == state.epoch and w.rec(b) is not None
 
 
@@ -267,7 +269,7 @@ async def test_resync_starts_new_epoch_and_sweeps_unseen(w):
     w.drive.items.pop(b)            # gone, and the log never says so
     w.drive.resync_next = True
     await w.settle()
-    state = await w.repo.get_sync_state("u")
+    state = await w.repo.get_sync_state(U_SCOPE)
     assert state.epoch == 2 and state.epoch_phase is EpochPhase.IDLE
     assert w.rec(a) is not None and w.rec(b) is None
 
@@ -321,7 +323,7 @@ async def test_throttled_continues_with_delay(w):
     w.drive.raise_next = DriveThrottled(retry_after_s=45)
     assert (await w.tick()).status == "throttled"
     assert w.queue.tasks[-1]["delay"] == 45
-    assert (await w.repo.get_sync_state("u")).last_error is ErrorCategory.THROTTLED
+    assert (await w.repo.get_sync_state(U_SCOPE)).last_error is ErrorCategory.THROTTLED
 
 
 async def test_reauth_flags_once_and_never_purges(w):
@@ -330,7 +332,7 @@ async def test_reauth_flags_once_and_never_purges(w):
     w.drive.raise_next = DriveReauthRequired("invalid_grant")
     assert (await w.tick()).status == "access_lost"
     assert w.drive.flagged == 1 and len(w.repo.records) == 1
-    assert (await w.repo.get_sync_state("u")).last_error is ErrorCategory.RECONNECT_NEEDED
+    assert (await w.repo.get_sync_state(U_SCOPE)).last_error is ErrorCategory.RECONNECT_NEEDED
 
 
 async def test_version_bump_restamps_and_applies_after_clean_pass(w, monkeypatch):
@@ -343,4 +345,4 @@ async def test_version_bump_restamps_and_applies_after_clean_pass(w, monkeypatch
     monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {**CURRENT_VERSIONS, "policy": bumped})
     await w.settle()
     assert all(r.policy_version == bumped for r in w.repo.records.values())
-    assert dict((await w.repo.get_sync_state("u")).applied_versions)["policy"] == bumped
+    assert dict((await w.repo.get_sync_state(U_SCOPE)).applied_versions)["policy"] == bumped

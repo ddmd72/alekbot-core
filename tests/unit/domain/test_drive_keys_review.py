@@ -205,7 +205,7 @@ def test_m8_a_cross_script_entity_is_a_translation_and_a_stored_spelling_exact()
 # -- the record type itself is keyed (the core now carries every §25.2.1 field) ------------------------------------
 
 def test_a_drive_index_record_is_keyed_directly():
-    rec = DriveIndexRecord(user_id="u", item_id="i", kind="image", triage_verdict=TriageVerdict.PHOTO,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", kind="image", triage_verdict=TriageVerdict.PHOTO,
                            effective_date=datetime(2023, 5, 1, tzinfo=timezone.utc), place_forms=("Berlin",))
     assert {"e:berlin", "y:2023", "k:photo"} <= set(about_keys_of(rec))
 

@@ -158,7 +158,7 @@ async def test_a_folder_of_more_than_thirty_files_is_searched_in_batches_and_kee
 # -- the merge --------------------------------------------------------------------------------------------------------
 
 def _chunk(item: str, index: int) -> DriveChunk:
-    return DriveChunk(user_id="u", item_id=item, generation=1, index=index, text="", char_start=0, char_end=1,
+    return DriveChunk(user_id="u", connection_id="u", item_id=item, generation=1, index=index, text="", char_start=0, char_end=1,
                       kind="md")
 
 

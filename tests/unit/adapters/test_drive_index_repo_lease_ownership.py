@@ -21,6 +21,7 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index import DriveSyncState, LeaseLost
 
 from tests.unit.adapters.firestore_drive_fakes import NOW, STATES, Db, make_repo, snap
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 LEASE = ("lease_owner", "lease_until")
 SPAN = timedelta(minutes=31)
@@ -31,29 +32,29 @@ SPAN = timedelta(minutes=31)
 class TestInMemoryLeaseOwnership:
     async def test_save_keeps_the_stored_lease(self):
         repo = InMemoryDriveIndexRepository()
-        await repo.acquire_lease("u", "b", NOW, NOW + SPAN, create=True)
-        await repo.save_sync_state(DriveSyncState(user_id="u", epoch=3, lease_owner="a", lease_until=NOW), "b")
-        st = await repo.get_sync_state("u")
+        await repo.acquire_lease(U_SCOPE, "b", NOW, NOW + SPAN, create=True)
+        await repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", epoch=3, lease_owner="a", lease_until=NOW), "b")
+        st = await repo.get_sync_state(U_SCOPE)
         assert st.epoch == 3
         assert (st.lease_owner, st.lease_until) == ("b", NOW + SPAN)
 
     async def test_save_without_a_stored_state_writes_no_lease(self):
         repo = InMemoryDriveIndexRepository()
-        await repo.save_sync_state(DriveSyncState(user_id="u", lease_owner="a", lease_until=NOW + SPAN))
-        st = await repo.get_sync_state("u")
+        await repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", lease_owner="a", lease_until=NOW + SPAN))
+        st = await repo.get_sync_state(U_SCOPE)
         assert (st.lease_owner, st.lease_until) == (None, None)
 
     async def test_zombie_tick_cannot_release_the_new_holders_lease(self):
         repo = InMemoryDriveIndexRepository()
-        zombie = await repo.acquire_lease("u", "a", NOW, NOW + SPAN, create=True)
+        zombie = await repo.acquire_lease(U_SCOPE, "a", NOW, NOW + SPAN, create=True)
         later = NOW + SPAN + timedelta(minutes=1)
-        assert await repo.acquire_lease("u", "b", later, later + SPAN, create=True) is not None
+        assert await repo.acquire_lease(U_SCOPE, "b", later, later + SPAN, create=True) is not None
         with pytest.raises(LeaseLost):                # the stalled tick resumes; its write is refused (§7.1)
             await repo.save_sync_state(replace(zombie, epoch=9), "a")
-        await repo.release_lease("u", "a")            # ... then its finally runs
-        assert (await repo.get_sync_state("u")).lease_owner == "b"
-        assert (await repo.get_sync_state("u")).epoch == 0
-        assert await repo.acquire_lease("u", "c", later, later + SPAN, create=True) is None
+        await repo.release_lease(U_SCOPE, "a")            # ... then its finally runs
+        assert (await repo.get_sync_state(U_SCOPE)).lease_owner == "b"
+        assert (await repo.get_sync_state(U_SCOPE)).epoch == 0
+        assert await repo.acquire_lease(U_SCOPE, "c", later, later + SPAN, create=True) is None
 
 
 # -- Firestore through the recording fakes ---------------------------------------------------------
@@ -69,8 +70,8 @@ class TestFirestoreLeaseOwnership:
         db = Db()
         repo = make_repo(db, mock_env_config)
         doc = db.cols[STATES].document("u")
-        doc.get = AsyncMock(return_value=snap(state_to_doc(DriveSyncState(user_id="u", lease_owner="a")), "u"))
-        await repo.save_sync_state(DriveSyncState(user_id="u", epoch=3, lease_owner="a", lease_until=NOW), "a")
+        doc.get = AsyncMock(return_value=snap(state_to_doc(DriveSyncState(user_id="u", connection_id="u", lease_owner="a")), "u"))
+        await repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", epoch=3, lease_owner="a", lease_until=NOW), "a")
         ref, data = db.tx.set.call_args.args
         merge = db.tx.set.call_args.kwargs["merge"]
         assert ref is doc
@@ -81,7 +82,7 @@ class TestFirestoreLeaseOwnership:
     async def test_create_path_still_writes_the_lease(self, mock_env_config, passthrough_transactions):
         db = Db()
         repo = make_repo(db, mock_env_config)
-        await repo.acquire_lease("u", "a", NOW, NOW + SPAN, create=True)
+        await repo.acquire_lease(U_SCOPE, "a", NOW, NOW + SPAN, create=True)
         _, data = db.tx.set.call_args.args
         assert (data["lease_owner"], data["lease_until"]) == ("a", NOW + SPAN)
 
@@ -90,7 +91,7 @@ class TestFirestoreLeaseOwnership:
         db = Db()
         repo = make_repo(db, mock_env_config)
         later = NOW + SPAN + timedelta(minutes=1)
-        stored = {**state_to_doc(DriveSyncState(user_id="u", lease_owner="b", lease_until=later + SPAN))}
+        stored = {**state_to_doc(DriveSyncState(user_id="u", connection_id="u", lease_owner="b", lease_until=later + SPAN))}
         doc = db.cols[STATES].document("u")
         doc.get = AsyncMock(side_effect=lambda **kw: snap(stored, "u"))
 
@@ -101,13 +102,13 @@ class TestFirestoreLeaseOwnership:
         db.tx.set.side_effect = lambda ref, data, merge: stored.update({k: v for k, v in data.items() if k in merge})
         db.tx.update.side_effect = lambda ref, changes: stored.update(changes)
 
-        zombie = DriveSyncState(user_id="u", epoch=2, cursor="c2", lease_owner="a", lease_until=NOW + SPAN)
+        zombie = DriveSyncState(user_id="u", connection_id="u", epoch=2, cursor="c2", lease_owner="a", lease_until=NOW + SPAN)
         with pytest.raises(LeaseLost):                # refused in the transaction: "b" holds the lease (§7.1)
             await repo.save_sync_state(zombie, "a")
-        await repo.release_lease("u", "a")
+        await repo.release_lease(U_SCOPE, "a")
         assert (stored["lease_owner"], stored["lease_until"]) == ("b", later + SPAN)
         assert stored["epoch"] == 0 and stored["cursor"] is None
-        assert await repo.acquire_lease("u", "c", later, later + SPAN, create=True) is None
+        assert await repo.acquire_lease(U_SCOPE, "c", later, later + SPAN, create=True) is None
 
 
 # -- Firestore through the SDK's own encoding ------------------------------------------------------
@@ -149,7 +150,7 @@ class TestWriteEncoding:
     async def test_save_sync_state_never_writes_the_lease(self, sdk):
         repo, sent = sdk
         until = datetime(2026, 10, 11, 13, tzinfo=timezone.utc)
-        await repo.save_sync_state(DriveSyncState(user_id="u", epoch=3, lease_owner="a", lease_until=until), "a")
+        await repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", epoch=3, lease_owner="a", lease_until=until), "a")
         (write,) = sent
         assert write.update.name.endswith("/documents/test_drive_sync_state/u")
         mask = set(write.update_mask.field_paths)

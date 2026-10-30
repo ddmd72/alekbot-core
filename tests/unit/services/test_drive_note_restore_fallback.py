@@ -15,6 +15,7 @@ from src.services.drive_indexing_service import DriveIndexingService
 
 from .drive_content_fakes import FakeExtractor, FakeTriage
 from .test_drive_note_invariants import SPACE, U, World, _archived
+from .drive_index_fakes import LegacyConnections
 
 
 @pytest.fixture
@@ -27,7 +28,7 @@ def _without_notes(w: World) -> DriveIndexingService:
     return DriveIndexingService(
         w.drive, w.repo, w.emb, w.queue, w.users, lambda lat, lon: None, SPACE,
         extractors={PARSER: FakeExtractor(PARSER), READER: FakeExtractor(READER)}, triage=FakeTriage(),
-        clock=w.clock, monotonic=w.clock.monotonic)
+        connections=LegacyConnections(w.users, w.drive), clock=w.clock, monotonic=w.clock.monotonic)
 
 
 async def _back(w: World, item: str, nid: str) -> None:

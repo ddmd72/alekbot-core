@@ -63,7 +63,7 @@ class TestInitialBuild:
 def test_lean_of_takes_exactly_the_lean_fields():
     assert RECORD_LEAN_FIELDS == tuple(f.name for f in fields(DriveRecordLean))
     assert set(RECORD_LEAN_FIELDS) <= {f.name for f in fields(DriveIndexRecord)}
-    rec = DriveIndexRecord(user_id="u", item_id="i", parent_id="p", name="n", kind="pdf", effective_date=T,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="i", parent_id="p", name="n", kind="pdf", effective_date=T,
                            about_keys=("e:x",), name_tokens=("w:n",), state=RecordState.INDEXED, has_card=True,
                            indexed_generation=3, content_hash="h", valid_until=T, readme_excerpt="not lean")
     lean = lean_of(rec)

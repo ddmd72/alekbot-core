@@ -60,7 +60,7 @@ async def test_a_fresh_or_rebuilt_index_does_not_alert(env):
     svc, repo, alerts, clock = env
     repo.states["u"] = v2_state(clock)
     await svc.fan_out()
-    repo.states["u"] = DriveSyncState(user_id="u", created_at=clock.now)   # the fan-out's minimal state
+    repo.states["u"] = DriveSyncState(user_id="u", connection_id="u", created_at=clock.now)   # the fan-out's minimal state
     await svc.fan_out()
     assert not [p for p in alerts.posts if "rebuild" in p]
 
@@ -85,7 +85,7 @@ async def test_a_small_fallback_share_does_not_alert(env):
 
 
 def _ready_record() -> DriveIndexRecord:
-    return DriveIndexRecord(user_id="u", item_id="d1", name="a.pdf", kind="pdf", scope=Scope.NORMAL,
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id="d1", name="a.pdf", kind="pdf", scope=Scope.NORMAL,
                             state=RecordState.INDEXED, indexed_generation=1, profile_state="ready",
                             enrich_ready=True)
 

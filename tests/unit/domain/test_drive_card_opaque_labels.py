@@ -8,7 +8,7 @@ from src.domain.drive_index import DriveIndexRecord, Reason, RecordState, Scope
 
 
 def _root(name, reason, child_count=0):
-    return DriveIndexRecord(user_id="u", item_id="f", name=name, is_folder=True, kind="folder",
+    return DriveIndexRecord(user_id="u", connection_id="u", item_id="f", name=name, is_folder=True, kind="folder",
                             scope=Scope.OPAQUE_ROOT, state=RecordState.METADATA_ONLY, reason=reason,
                             child_count=child_count)
 

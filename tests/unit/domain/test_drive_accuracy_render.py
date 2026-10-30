@@ -37,13 +37,13 @@ def test_no_score_no_line():
 
 def test_make_card_carries_the_score():
     # a record that carries a score (§26.4 "What carries it"): readable, with a model profile
-    rec = DriveIndexRecord(user_id="u", item_id="x", name="scan.pdf", kind="pdf", scope=Scope.NORMAL,
+    rec = DriveIndexRecord(user_id="u", connection_id="u", item_id="x", name="scan.pdf", kind="pdf", scope=Scope.NORMAL,
                            state=RecordState.INDEXED, indexed_generation=1, profile_source="model",
                            profile=DriveProfile(title="t", what_it_is="w", language="en", doc_type="other"),
                            card_accuracy=71)
     assert make_card(rec, "/Docs/scan.pdf", "s", "abcdefgh").card_accuracy == 71
-    assert make_card(DriveIndexRecord(user_id="u", item_id="x"), "/", "s", "abcdefgh").card_accuracy is None
+    assert make_card(DriveIndexRecord(user_id="u", connection_id="u", item_id="x"), "/", "s", "abcdefgh").card_accuracy is None
     # a stored score on a record that no longer carries one (a photograph now) is never shown
-    photo = DriveIndexRecord(user_id="u", item_id="p", name="a.jpg", kind="image", state=RecordState.METADATA_ONLY,
+    photo = DriveIndexRecord(user_id="u", connection_id="u", item_id="p", name="a.jpg", kind="image", state=RecordState.METADATA_ONLY,
                              triage_verdict=TriageVerdict.PHOTO, card_accuracy=71)
     assert make_card(photo, "/a.jpg", "s", "abcdefgh").card_accuracy is None

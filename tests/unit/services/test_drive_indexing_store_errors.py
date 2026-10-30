@@ -9,6 +9,7 @@ from src.domain.drive_index_params import MAX_ATTEMPTS
 from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import ContentWorld, admitted, prose  # noqa: F401  (fixture)
+from .drive_index_fakes import LegacyConnections
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -42,7 +43,7 @@ async def test_a_store_outage_in_an_index_run_is_not_counted():
 
 def _switch_space(w, space):
     w.svc = svc_mod.DriveIndexingService(w.drive, w.repo, w.emb, w.queue, w.users, lambda lat, lon: None, space,
-                                         extractors=w.svc._extractors, triage=w.svc._triage, clock=w.clock,
+                                         extractors=w.svc._extractors, triage=w.svc._triage, connections=LegacyConnections(w.users, w.drive), clock=w.clock,
                                          monotonic=w.clock.monotonic)
 
 

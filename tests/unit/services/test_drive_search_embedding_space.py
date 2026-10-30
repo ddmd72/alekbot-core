@@ -61,7 +61,7 @@ async def test_onboarding_is_building_not_refreshing():
     """A minimal state has no space yet: it is onboarding (building), never a refresh."""
     from src.domain.drive_index import DriveSyncState
     w = World()
-    assert await w.repo.create_sync_state_if_absent(DriveSyncState(user_id="u", created_at=w.clock()))
+    assert await w.repo.create_sync_state_if_absent(DriveSyncState(user_id="u", connection_id="u", created_at=w.clock()))
     result = await _service(w, "test-space/8").search("u", DriveSearchRequest(query="lease"))
     assert result.envelope.building and not result.envelope.refreshing
 

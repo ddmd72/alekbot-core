@@ -10,6 +10,7 @@ from src.domain.drive_index import (
 from src.services import drive_indexing_service as svc_mod
 
 from .test_drive_indexing_service import World
+from .drive_index_fakes import U_SCOPE
 
 
 class TestDeletedRepositoryStaysDeleted:
@@ -75,7 +76,7 @@ class TestSweepSpanningTicks:
             user_id="u", item_id="zz-ghost", name="ghost.pdf", parent_id=docs, kind="pdf",
             scope=Scope.NORMAL, state=RecordState.METADATA_ONLY, reason=Reason.KIND_NOT_ADMITTED,
             policy_version=0, seen_epoch=1)
-        state = await w.repo.get_sync_state("u")
+        state = await w.repo.get_sync_state(U_SCOPE)
         # older policy/card/geo stamps start an upgrade pass; the Search v2 keys and `accuracy` (the migration gate
         # key since Δ65) stay stamped, as on any current index — a state without the gate key is one the migration
         # gate stops before any work (D30)
