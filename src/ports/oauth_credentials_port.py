@@ -34,8 +34,9 @@ class OAuthCredentialsPort(ABC):
         there is none. A record with needs_reconnect True is returned; the caller decides."""
 
     @abstractmethod
-    async def save(self, credential: OAuthCredential) -> None:
-        """Store `credential` (the consent path): create, or replace the whole record of the same account.
+    async def save(self, credential: OAuthCredential) -> str:
+        """Store `credential` (the consent path): create, or replace the whole record of the same account. Returns the
+        `credential_id` of the stored record.
 
         The store chooses `credential_id` on the first save; the argument's `credential_id` is never used. A save of
         the same (user, kind, account realm + subject) keeps its record's id and `created_at` and rewrites the rest, so

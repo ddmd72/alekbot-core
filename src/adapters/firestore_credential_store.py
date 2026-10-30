@@ -138,7 +138,7 @@ class FirestoreCredentialStore(OAuthCredentialsPort):
             return None
         return await self._open(snap)
 
-    async def save(self, credential: OAuthCredential) -> None:
+    async def save(self, credential: OAuthCredential) -> str:
         user_id, kind = credential.user_id, credential.kind
         missing = [name for name, value in (("account subject", (credential.account.subject or "").strip()),
                                             ("integration", credential.integration),
@@ -179,6 +179,7 @@ class FirestoreCredentialStore(OAuthCredentialsPort):
 
         credential_id = await _save(self._db.transaction())
         logger.info(f"💾 Credential saved: user={user_id[:8]} kind={kind} credential={credential_id[:8]}")
+        return credential_id
 
     async def update(self, credential: OAuthCredential) -> bool:
         user_id, credential_id = credential.user_id, credential.credential_id

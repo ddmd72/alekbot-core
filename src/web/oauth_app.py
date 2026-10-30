@@ -118,15 +118,13 @@ def create_oauth_blueprint(
         single-credential kind (`spec.multiple` False, every kind in slice 1a) the route keeps today's effect: a
         consent of another account replaces the user's record of that kind (deleted, never revoked at the provider,
         as the store did before). Saved first, so a failure in between leaves the old grant, never none."""
-        await oauth_credentials_port.save(credential)
+        saved_id = await oauth_credentials_port.save(credential)
         if spec.multiple:
             return
         user_id = credential.user_id
-        # plaintext keys only: the saved account's records (any kind) are kept, the kind's others go
-        same_account = {key.credential_id for key in await oauth_credentials_port.list_by_account(
-            credential.account.realm, credential.account.subject) if key.user_id == user_id}
+        # plaintext keys only: the saved record stays (the same account keeps its id), the kind's others go
         for key in await oauth_credentials_port.list_keys(user_id, spec.kind):
-            if key.credential_id not in same_account:
+            if key.credential_id != saved_id:
                 await oauth_credentials_port.delete(user_id, key.credential_id)
 
     # ========================================================================
