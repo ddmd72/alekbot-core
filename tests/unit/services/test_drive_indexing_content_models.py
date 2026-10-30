@@ -15,7 +15,7 @@ from src.domain.drive_index_params import (
 from src.domain.drive_index_run import READER_IMAGE_MAX_BYTES
 
 from .drive_content_world import JPEG, PNG, ContentWorld, admitted, prose  # noqa: F401  (fixture)
-from .drive_usage_helpers import affordable, close_initial_build, month_calls, month_usd, spend
+from .drive_usage_helpers import affordable, close_initial_build, initial_build, month_calls, month_usd, spend
 from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
@@ -49,7 +49,7 @@ async def test_a_scan_goes_to_the_reader(w):
     assert (request.kind, request.max_model_pages, request.account_id) == ("pdf", every_page, "a")
     # the dollars the reader spent, priced by the runner, are in the month's document and the initial build paid them
     assert await month_usd(w.repo, UsageClass.READER, "2026-10") == pytest.approx(0.002)
-    assert (await w.repo.get_initial_build("u")).spent_usd == pytest.approx(0.002)
+    assert (await initial_build(w.repo)).spent_usd == pytest.approx(0.002)
     assert w.summary_total("model_pages") == 3 and w.summary_total("model_calls") == 1
     assert sum(r.model_cost for r in w.results) == pytest.approx(0.002)
 

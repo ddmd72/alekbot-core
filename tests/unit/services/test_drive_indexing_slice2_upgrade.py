@@ -30,8 +30,8 @@ SPACE = "test-space/8"
 def slice1_record(change, kind, cclass, rank, *, folder=False):
     """A record exactly as Slice 1 left it: metadata only, carded under card version 1."""
     return DriveIndexRecord(
-        user_id="u", item_id=change.item_id, parent_id=change.parent_id, name=change.name, is_folder=folder,
-        size_bytes=change.size_bytes, mime_type=change.mime_type, facets=dict(change.facets), kind=kind,
+        user_id="u", connection_id="u", item_id=change.item_id, parent_id=change.parent_id, name=change.name, is_folder=folder,
+        size_bytes=change.size_bytes, mime_type=change.mime_type, media=change.media, kind=kind,
         content_class=cclass, scope=Scope.NORMAL, state=RecordState.METADATA_ONLY,
         reason=Reason.FOLDER if folder else Reason.KIND_NOT_ADMITTED, content_version=change.content_version,
         modified_at=change.modified_at, fs_modified_at=change.fs_modified_at, effective_date=change.fs_modified_at,
@@ -62,7 +62,7 @@ async def w():
     await world.repo.upsert_records([git])
     await world.repo.upsert_records(records, {r.item_id: [0.5] * 8 for r in records})
     world.repo.states["u"] = DriveSyncState(
-        user_id="u", drive_id="d1", root_item_id=ROOT, cursor=f"delta:{len(world.drive.log)}", round_complete=True,
+        user_id="u", connection_id="u", drive_identity="fake:d1", root_item_id=ROOT, cursor=f"delta:{len(world.drive.log)}", round_complete=True,
         epoch=1, epoch_phase=EpochPhase.IDLE, initial_enumeration_done=True, created_at=T0,
         applied_versions=APPLIED_VERSIONS, applied_space=SPACE, observed_as_of=T0)
     world.clock.advance(timedelta(days=1).total_seconds())

@@ -20,6 +20,7 @@ from src.services import drive_indexing_service as svc_mod
 
 from .drive_content_world import JPEG, admitted, prose  # noqa: F401  (fixture)
 from .drive_enrich_world import EnrichWorld
+from .drive_usage_helpers import initial_key
 
 pytestmark = pytest.mark.usefixtures("admitted")
 S = ModelReplyStatus
@@ -105,7 +106,7 @@ async def test_a_first_seen_file_is_profiled_in_its_content_run_and_carded_once(
 async def test_the_initial_build_pays_first_and_closes_when_the_build_settles(w):
     doc = w.add_doc("lease.md", doc_text())
     await w.settle()
-    build = w.repo.initial["u"]
+    build = w.repo.initial[initial_key()]
     usage = w.repo.usage[("u", "2026-10")]
     spent = w.profiler.usd + w.passages.usd_per_chunk * w.rec(doc).chunk_count
     assert build.spent_usd == pytest.approx(spent) and build.opened_at is not None
@@ -114,7 +115,7 @@ async def test_the_initial_build_pays_first_and_closes_when_the_build_settles(w)
 
 
 async def test_spent_caps_park_the_jobs_until_the_month_turns(w):
-    w.repo.initial["u"] = InitialBuild(allowance_usd=40.0, spent_usd=40.0, closed_at=w.clock.now)
+    w.repo.initial[initial_key()] = InitialBuild(allowance_usd=40.0, spent_usd=40.0, closed_at=w.clock.now)
     w.repo.usage[("u", "2026-10")] = ModelUsageMonth(profile_usd=4.0, passage_usd=20.0)
     doc = w.add_doc("lease.md", doc_text())
     await w.settle()
@@ -141,7 +142,7 @@ async def test_the_readers_pages_are_paid_in_dollars(w):
 
 
 async def test_a_spent_reader_month_defers_the_scan_to_the_next_month(w):
-    w.repo.initial["u"] = InitialBuild(allowance_usd=40.0, spent_usd=40.0, closed_at=w.clock.now)
+    w.repo.initial[initial_key()] = InitialBuild(allowance_usd=40.0, spent_usd=40.0, closed_at=w.clock.now)
     w.repo.usage[("u", "2026-10")] = ModelUsageMonth(reader_usd=4.0)
     w.parser.outcomes["scan.pdf"] = ExtractionOutcome(status=ExtractionStatus.NO_TEXT, pages_total=2)
     doc = w.add_doc("scan.pdf", "x")
