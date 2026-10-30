@@ -265,7 +265,7 @@ class FixtureDrive(UserDrivePort):
 
     async def get_changes(self, handle: DriveHandle, cursor: Optional[str]) -> DriveChanges:
         if cursor == _DELTA:
-            return DriveChanges((_ROOT_CHANGE,), _DELTA, True, False, DRIVE_ID, ROOT_ID, onedrive_drive_identity(DRIVE_ID))
+            return DriveChanges((_ROOT_CHANGE,), _DELTA, True, False, ROOT_ID, onedrive_drive_identity(DRIVE_ID))
         if cursor is not None and not cursor.startswith(_FULL):
             raise DriveResyncRequired(f"{_FULL}0")
         start = int(cursor[len(_FULL):]) if cursor else 0
@@ -274,7 +274,7 @@ class FixtureDrive(UserDrivePort):
             page = (_ROOT_CHANGE,) + page
         end = start + self.page_size >= len(self._order)
         return DriveChanges(page, _DELTA if end else f"{_FULL}{start + self.page_size}", end, True,
-                            DRIVE_ID, ROOT_ID, onedrive_drive_identity(DRIVE_ID))
+                            ROOT_ID, onedrive_drive_identity(DRIVE_ID))
 
     async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
         if item_id == ROOT_ID:

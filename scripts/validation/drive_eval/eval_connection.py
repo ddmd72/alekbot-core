@@ -18,6 +18,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import List, Optional, Union
 
+from scripts.validation.drive_eval.fixture_drive import DRIVE_ID
+from src.adapters.microsoft.onedrive_adapter import onedrive_drive_identity
 from src.domain import drive_ref
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
@@ -33,7 +35,7 @@ EVAL_CONNECTION_ID = "conn-eval"
 EVAL_REF_TAG = "ev"
 EVAL_KIND = "fixture_drive"
 _EVAL_CREDENTIAL = "cred-eval"
-_EVAL_DRIVE_IDENTITY = "fixture_drive:eval"
+_EVAL_DRIVE_IDENTITY = onedrive_drive_identity(DRIVE_ID)   # the identity the fixture drive reports: no drive switch
 _CREATED = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
