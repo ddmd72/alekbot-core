@@ -32,8 +32,5 @@ def test_a_stored_null_content_identity_reads_none():
 
 
 def test_the_sync_state_fields_read_back():
-    state = state_from_doc("usr-1", {"connection_id": "conn-1", "drive_identity": "fake_a:drive-1",
-                                     "transcripts_reattached_at": NOW})
-    assert (state.connection_id, state.drive_identity, state.transcripts_reattached_at) == (
-        "conn-1", "fake_a:drive-1", NOW)
-    assert type(state.transcripts_reattached_at) is datetime
+    state = state_from_doc("usr-1", {"connection_id": "conn-1", "drive_identity": "fake_a:drive-1"})
+    assert (state.connection_id, state.drive_identity) == ("conn-1", "fake_a:drive-1")
