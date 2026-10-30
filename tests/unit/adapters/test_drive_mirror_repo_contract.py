@@ -69,6 +69,16 @@ def keys(docs):
     return [d.key for d in docs]
 
 
+def k(item, kind=KIND_FILE, drive=D1, user=U) -> str:
+    """The ledger key of that document (MULTI_DRIVE_RFC §10: hashed over the drive and source identities)."""
+    return doc(item, kind, drive, user).key
+
+
+def by_key(*items, kind=KIND_FILE, drive=D1):
+    """The keys of those documents in key order (the order every key-ordered read returns)."""
+    return sorted(k(i, kind, drive) for i in items)
+
+
 # -- roots ------------------------------------------------------------------------------------------------------------
 
 async def test_roots_lists_every_drive(repo):
@@ -127,9 +137,10 @@ async def test_doc_roundtrip_carries_every_field(adapter):
 async def test_get_delete_and_other_users(repo):
     a, b = doc("a"), doc("b")
     await save(repo, a, b, doc("a", user="other"))
-    assert keys((await repo.get_docs(U, [a.key, b.key, "u:file:none", "other:file:a"])).values()) == [a.key, b.key]
-    await repo.delete_doc(U, "other:file:a")      # another user's key is never touched
-    assert (await repo.get_docs("other", ["other:file:a"]))
+    other_a = k("a", user="other")
+    assert keys((await repo.get_docs(U, [a.key, b.key, k("none"), other_a])).values()) == [a.key, b.key]
+    await repo.delete_doc(U, other_a)             # another user's key is never touched
+    assert (await repo.get_docs("other", [other_a]))
     await repo.delete_doc(U, a.key)
     await repo.delete_doc(U, a.key)               # missing is a no-op
     assert list(await repo.get_docs(U, [a.key, b.key])) == [b.key]
@@ -150,44 +161,44 @@ async def test_mark_gone_updates_existing_only(repo):
                                      notice("never-mirrored", GONE, T), notice("x", GONE, T)],
                                 drive_identity=D1)
     assert count == 2
-    got = await repo.get_docs(U, ["u:file:a", "u:folder:f1", "u:file:never-mirrored", "u:folder:never-mirrored"])
-    assert sorted(got) == ["u:file:a", "u:folder:f1"]                 # nothing was created
-    a = got["u:file:a"]
+    got = await repo.get_docs(U, [k("a"), k("f1", KIND_FOLDER), k("never-mirrored"), k("never-mirrored", KIND_FOLDER)])
+    assert sorted(got) == sorted([k("a"), k("f1", KIND_FOLDER)])      # nothing was created
+    a = got[k("a")]
     assert (a.gone_pending, a.gone_why, a.gone_at, a.mark_ready_at, a.source_name) == (
         True, GONE, T, T + MIRROR_ARCHIVE_GRACE, "keep")
-    assert got["u:folder:f1"].gone_why == UNSTORED
-    assert not (await repo.get_docs("o", ["o:file:x"]))["o:file:x"].gone_pending
+    assert got[k("f1", KIND_FOLDER)].gone_why == UNSTORED
+    assert not (await repo.get_docs("o", [k("x", user="o")]))[k("x", user="o")].gone_pending
 
 
 async def test_mark_gone_merges_a_repeated_notice(repo):
     await save(repo, doc("a"))
     await repo.mark_gone(U, [notice("a", UNKNOWN, T)], drive_identity=D1)
     await repo.mark_gone(U, [notice("a", GONE, T + timedelta(hours=2))], drive_identity=D1)
-    a = (await repo.get_docs(U, ["u:file:a"]))["u:file:a"]
+    a = (await repo.get_docs(U, [k("a")]))[k("a")]
     assert (a.gone_why, a.gone_at, a.mark_ready_at) == (GONE, T, T + timedelta(hours=2) + MIRROR_ARCHIVE_GRACE)
 
 
 async def test_clear_mark(repo):
     await save(repo, doc("a"), doc("b"))
     await repo.mark_gone(U, [notice("a", GONE, T), notice("b", GONE, T)], drive_identity=D1)
-    await repo.clear_mark(U, "u:file:a")
-    await repo.clear_mark(U, "u:file:none")       # missing is a no-op, nothing created
-    got = await repo.get_docs(U, ["u:file:a", "u:file:b", "u:file:none"])
-    assert (got["u:file:a"].gone_pending, got["u:file:a"].gone_why, got["u:file:a"].gone_at,
-            got["u:file:a"].mark_ready_at) == (False, "", None, None)
-    assert got["u:file:b"].gone_pending and "u:file:none" not in got
+    await repo.clear_mark(U, k("a"))
+    await repo.clear_mark(U, k("none"))           # missing is a no-op, nothing created
+    got = await repo.get_docs(U, [k("a"), k("b"), k("none")])
+    assert (got[k("a")].gone_pending, got[k("a")].gone_why, got[k("a")].gone_at,
+            got[k("a")].mark_ready_at) == (False, "", None, None)
+    assert got[k("b")].gone_pending and k("none") not in got
 
 
 async def test_hold_mark(repo):
     await save(repo, doc("a"))
     await repo.mark_gone(U, [notice("a", GONE, T)], drive_identity=D1)
     ripe = T + MIRROR_ARCHIVE_GRACE
-    await repo.hold_mark(U, "u:file:a", ripe + timedelta(hours=5))
-    assert (await repo.get_docs(U, ["u:file:a"]))["u:file:a"].mark_ready_at == ripe + timedelta(hours=5)
-    await repo.hold_mark(U, "u:file:a", ripe)     # never earlier
-    assert (await repo.get_docs(U, ["u:file:a"]))["u:file:a"].mark_ready_at == ripe + timedelta(hours=5)
-    await repo.hold_mark(U, "u:file:none", ripe)
-    assert not await repo.get_docs(U, ["u:file:none"])
+    await repo.hold_mark(U, k("a"), ripe + timedelta(hours=5))
+    assert (await repo.get_docs(U, [k("a")]))[k("a")].mark_ready_at == ripe + timedelta(hours=5)
+    await repo.hold_mark(U, k("a"), ripe)         # never earlier
+    assert (await repo.get_docs(U, [k("a")]))[k("a")].mark_ready_at == ripe + timedelta(hours=5)
+    await repo.hold_mark(U, k("none"), ripe)
+    assert not await repo.get_docs(U, [k("none")])
 
 
 async def test_ready_marks_exclude_held_and_unripe(repo):
@@ -197,11 +208,11 @@ async def test_ready_marks_exclude_held_and_unripe(repo):
                              notice("held", GONE, T - timedelta(hours=9)),
                              notice("fresh", GONE, T - timedelta(minutes=5))], drive_identity=D1)
     await repo.mark_gone(U, [notice("o2", GONE, T - timedelta(hours=9), drive=D2)], drive_identity=D2)
-    await repo.hold_mark(U, "u:file:held", T + timedelta(hours=1))
+    await repo.hold_mark(U, k("held"), T + timedelta(hours=1))
     got = await repo.ready_marks(U, D1, T, 10)
-    assert keys(got) == ["u:file:early", "u:file:late"]          # earliest ripe first; held, fresh, unmarked, D2 out
-    assert keys(await repo.ready_marks(U, D1, T, 1)) == ["u:file:early"]
-    assert keys(await repo.ready_marks(U, D2, T, 10)) == ["u:file:o2"]
+    assert keys(got) == [k("early"), k("late")]                  # earliest ripe first; held, fresh, unmarked, D2 out
+    assert keys(await repo.ready_marks(U, D1, T, 1)) == [k("early")]
+    assert keys(await repo.ready_marks(U, D2, T, 10)) == [k("o2", drive=D2)]
 
 
 # -- the step's reads --------------------------------------------------------------------------------------------------
@@ -209,31 +220,33 @@ async def test_ready_marks_exclude_held_and_unripe(repo):
 async def test_children_by_parent(repo):
     await save(repo, doc("b", mirror_parent_id="p"), doc("a", mirror_parent_id="p"), doc("c", mirror_parent_id="q"),
                doc("d", mirror_parent_id="p", drive=D2))
-    assert keys(await repo.children(U, D1, "p", 10)) == ["u:file:a", "u:file:b"]
-    assert keys(await repo.children(U, D1, "p", 1)) == ["u:file:a"]
+    assert keys(await repo.children(U, D1, "p", 10)) == by_key("a", "b")
+    assert keys(await repo.children(U, D1, "p", 1)) == by_key("a", "b")[:1]
     assert await repo.children(U, D1, "none", 10) == []
 
 
 async def test_folder_docs_and_scan_filter_kind(repo):
     await save(repo, doc("f1", KIND_FOLDER), doc("a", KIND_FILE), doc("z", KIND_ARCHIVE), doc("f2", KIND_FOLDER, drive=D2))
-    assert keys(await repo.folder_docs(U, D1, None, 10)) == ["u:archive:z", "u:folder:f1"]
-    assert keys(await repo.scan_page(U, D1, None, 10)) == ["u:file:a"]
+    assert keys(await repo.folder_docs(U, D1, None, 10)) == sorted([k("z", KIND_ARCHIVE), k("f1", KIND_FOLDER)])
+    assert keys(await repo.scan_page(U, D1, None, 10)) == [k("a")]
 
 
 async def test_folder_docs_cursor(repo):
     await save(repo, *[doc(f"f{i}", KIND_FOLDER) for i in range(1, 5)], doc("z", KIND_ARCHIVE))
+    walk = sorted([k(f"f{i}", KIND_FOLDER) for i in range(1, 5)] + [k("z", KIND_ARCHIVE)])
     first = await repo.folder_docs(U, D1, None, 2)
-    assert keys(first) == ["u:archive:z", "u:folder:f1"]
+    assert keys(first) == walk[:2]
     second = await repo.folder_docs(U, D1, first[-1].key, 2)
-    assert keys(second) == ["u:folder:f2", "u:folder:f3"]
-    assert keys(await repo.folder_docs(U, D1, "u:folder:f4", 2)) == []
+    assert keys(second) == walk[2:4]
+    assert keys(await repo.folder_docs(U, D1, walk[-1], 2)) == []
 
 
 async def test_scan_page_cursor(repo):
     await save(repo, *[doc(f"a{i}") for i in range(1, 6)])
+    walk = by_key(*[f"a{i}" for i in range(1, 6)])
     page = await repo.scan_page(U, D1, None, 2)
-    assert keys(page) == ["u:file:a1", "u:file:a2"]
-    assert keys(await repo.scan_page(U, D1, page[-1].key, 10)) == ["u:file:a3", "u:file:a4", "u:file:a5"]
+    assert keys(page) == walk[:2]
+    assert keys(await repo.scan_page(U, D1, page[-1].key, 10)) == walk[2:]
 
 
 async def test_detached_due_before(repo):
@@ -242,9 +255,9 @@ async def test_detached_due_before(repo):
                doc("new", state=MIRROR_DETACHED, checked_at=recent), doc("act", state=MIRROR_ACTIVE, checked_at=old),
                doc("o2", state=MIRROR_DETACHED, drive=D2, checked_at=old))
     before = T - timedelta(days=7)
-    assert keys(await repo.detached_due(U, D1, before, 10)) == ["u:file:never", "u:file:old"]
-    assert keys(await repo.detached_due(U, D1, before, 1)) == ["u:file:never"]
-    assert keys(await repo.detached_due(U, D1, T - timedelta(days=30), 10)) == ["u:file:never"]
+    assert keys(await repo.detached_due(U, D1, before, 10)) == [k("never"), k("old")]
+    assert keys(await repo.detached_due(U, D1, before, 1)) == [k("never")]
+    assert keys(await repo.detached_due(U, D1, T - timedelta(days=30), 10)) == [k("never")]
 
 
 async def test_every_step_query_scoped_to_the_drive(repo):
@@ -265,8 +278,8 @@ async def test_archived_newest(repo):
     await save(repo, doc("a", state=MIRROR_ARCHIVED, archived_at=T - timedelta(days=2)),
                doc("b", state=MIRROR_ARCHIVED, archived_at=T), doc("c", state=MIRROR_ARCHIVED, archived_at=T - timedelta(days=1), drive=D2),
                doc("d", state=MIRROR_ACTIVE, archived_at=T), doc("e", state=MIRROR_ARCHIVED, archived_at=T, user="o"))
-    assert keys(await repo.archived_newest(U, 10)) == ["u:file:b", "u:file:c", "u:file:a"]
-    assert keys(await repo.archived_newest(U, 2)) == ["u:file:b", "u:file:c"]
+    assert keys(await repo.archived_newest(U, 10)) == [k("b"), k("c", drive=D2), k("a")]
+    assert keys(await repo.archived_newest(U, 2)) == [k("b"), k("c", drive=D2)]
 
 
 async def test_archived_by_keys_filters_state_across_drives(repo):
@@ -274,9 +287,10 @@ async def test_archived_by_keys_filters_state_across_drives(repo):
                doc("b", state=MIRROR_ARCHIVED, drive=D2, archive_keys=("w:y",), name_keys=("w:nb",)),
                doc("c", state=MIRROR_DETACHED, archive_keys=("w:x",)), doc("d", state=MIRROR_ARCHIVED, user="o", archive_keys=("w:x",)),
                doc("e", state=MIRROR_ARCHIVED, archive_keys=("w:z",)))
-    assert keys(await repo.archived_by_keys(U, ARCHIVE_FAMILY, ["w:x", "w:y"], 10)) == ["u:file:a", "u:file:b"]
-    assert keys(await repo.archived_by_keys(U, ARCHIVE_FAMILY, ["w:y"], 1)) == ["u:file:a"]
-    assert keys(await repo.archived_by_keys(U, NAME_FAMILY, ["w:nb", "w:na"], 10)) == ["u:file:a", "u:file:b"]
+    a_b = sorted([k("a"), k("b", drive=D2)])
+    assert keys(await repo.archived_by_keys(U, ARCHIVE_FAMILY, ["w:x", "w:y"], 10)) == a_b
+    assert keys(await repo.archived_by_keys(U, ARCHIVE_FAMILY, ["w:y"], 1)) == a_b[:1]
+    assert keys(await repo.archived_by_keys(U, NAME_FAMILY, ["w:nb", "w:na"], 10)) == a_b
     assert await repo.archived_by_keys(U, ARCHIVE_FAMILY, [], 10) == []
     with pytest.raises(ValueError):
         await repo.archived_by_keys(U, "other", ["w:x"], 10)
