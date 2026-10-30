@@ -273,8 +273,7 @@ class FakeDriveAdapter(UserDrivePort):
         identity = f"{self.id_space}:{tree.drive_id}"
         if cursor is None:
             rows = [self._change(tree, tree.root)] + [self._change(tree, n) for n in tree.nodes.values() if n is not tree.root]
-            return DriveChanges(tuple(rows), f"{tree.epoch}:{len(tree.log)}", True, True, tree.drive_id, tree.root.item_id,
-                                identity)
+            return DriveChanges(tuple(rows), f"{tree.epoch}:{len(tree.log)}", True, True, tree.root.item_id, identity)
         epoch, _, pos = cursor.partition(":")
         if int(epoch) != tree.epoch:
             raise DriveResyncRequired(f"{tree.epoch}:0")
@@ -284,8 +283,7 @@ class FakeDriveAdapter(UserDrivePort):
                 latest[item_id] = deleted
         rows = [DriveChange(item_id=i, deleted=True, identity=self._item_identity(tree, i)) if gone or i not in tree.nodes
                 else self._change(tree, tree.nodes[i]) for i, gone in latest.items()]
-        return DriveChanges(tuple(rows), f"{tree.epoch}:{len(tree.log)}", True, False, tree.drive_id, tree.root.item_id,
-                            identity)
+        return DriveChanges(tuple(rows), f"{tree.epoch}:{len(tree.log)}", True, False, tree.root.item_id, identity)
 
     async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
         tree = self._enter("get_change", handle)
