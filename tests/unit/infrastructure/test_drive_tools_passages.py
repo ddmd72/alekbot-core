@@ -42,7 +42,7 @@ def outcome_of(found: ExcerptResult, *, shown_folders=frozenset(), described_fil
     return DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK if found.files else OutcomeClass.NOT_FOUND,
                         text=rendered.text, success=True, items=tuple(f.drive_item() for f in found.files),
                         facts=ReadFacts(excerpts=bool(found.files), owner_note=rendered.plan.has_owner_line),
-                        excerpts=found, excerpt_plan=rendered.plan, request_text=QUESTION)
+                        excerpts=found, excerpt_plan=rendered.plan, request_text=QUESTION, ref_tag="a1")
 
 
 def _ops(*finds: ExcerptResult, ranged=None):
@@ -124,7 +124,7 @@ async def test_a_second_find_gets_the_ledgers_sets_and_prints_the_context_no_mor
 
 
 async def test_a_repeated_match_is_listed_by_id():
-    again = result(question=QUESTION, repeated=(("item-1", 1, 2),))
+    again = result(question=QUESTION, repeated=(("item-1", 1, 2),), ref_tag="a1")
     ops = _ops(FIRST, again)
     run, _ = _run(ops)
     await _call(run, tt.FIND_PASSAGES, question=QUESTION)
