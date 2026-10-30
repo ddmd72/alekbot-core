@@ -21,7 +21,7 @@ from tests.unit.adapters.firestore_drive_eval_fakes import eval_transactions
 from tests.unit.adapters.firestore_drive_mirror_fakes import LEDGER, ROOTS, NameAwareDb
 
 T = datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc)
-U, D1, D2 = "u", "drive1", "drive2"
+U, D1, D2 = "u", "microsoft_onedrive:drive1", "microsoft_onedrive:drive2"   # drive identities (MULTI_DRIVE_RFC §7.2)
 
 
 @pytest.fixture(params=["memory", "firestore"])
@@ -42,12 +42,22 @@ def repo(adapter):
     return adapter[0]
 
 
+def sid(item, drive=D1) -> str:
+    """The source item's adapter-built identity on `drive` (MULTI_DRIVE_RFC §7.2)."""
+    return f"{drive}:{item}"
+
+
 def doc(item="a", kind=KIND_FILE, drive=D1, user=U, **kw) -> MirrorDoc:
-    return MirrorDoc(user_id=user, drive_id=drive, kind=kind, source_item_id=item, **kw)
+    return MirrorDoc(user_id=user, drive_identity=drive, kind=kind, source_item_id=item, source_identity=sid(item, drive),
+                     **kw)
+
+
+def notice(item, why, at, drive=D1) -> DeletionNotice:
+    return DeletionNotice(item, why, at, source_identity=sid(item, drive))
 
 
 def root(drive=D1, user=U, item="r1", **kw) -> MirrorRoot:
-    return MirrorRoot(user_id=user, drive_id=drive, root_item_id=item, root_name="_Transcripts", **kw)
+    return MirrorRoot(user_id=user, drive_identity=drive, root_item_id=item, root_name="_Transcripts", **kw)
 
 
 async def save(repo, *docs):
@@ -65,7 +75,7 @@ async def test_roots_lists_every_drive(repo):
     await repo.save_root(root(D2, item="r2"))
     await repo.save_root(root(D1))
     await repo.save_root(root(D1, user="other"))
-    assert [r.drive_id for r in await repo.roots(U)] == [D1, D2]
+    assert [r.drive_identity for r in await repo.roots(U)] == [D1, D2]
     assert await repo.roots("nobody") == []
 
 
@@ -102,7 +112,7 @@ async def test_root_gone_mark_and_clear(repo):
 async def test_doc_roundtrip_carries_every_field(adapter):
     repo, _ = adapter
     full = MirrorDoc(
-        user_id=U, drive_id=D1, kind=KIND_FILE, source_item_id="a", source_name="n", source_parent_id="sp",
+        user_id=U, drive_identity=D1, kind=KIND_FILE, source_item_id="a", source_identity=sid("a"), source_name="n", source_parent_id="sp",
         content_key="ck", mirror_item_id="mi", mirror_parent_id="mp", mirror_name="mn", mirror_ctag="ct",
         rendered_hash="h", render_version=3, render_language="uk", state=MIRROR_ARCHIVED, source_path="/x/y",
         seconds=12.5, speakers=2, languages=("uk", "en"), gone_pending=True, gone_why=GONE, gone_at=T,
@@ -136,8 +146,9 @@ async def test_by_mirror_item(repo):
 
 async def test_mark_gone_updates_existing_only(repo):
     await save(repo, doc("a", source_name="keep"), doc("f1", kind=KIND_FOLDER), doc("x", user="o"))
-    count = await repo.mark_gone(U, [DeletionNotice("a", GONE, T), DeletionNotice("f1", UNSTORED, T),
-                                     DeletionNotice("never-mirrored", GONE, T), DeletionNotice("x", GONE, T)])
+    count = await repo.mark_gone(U, [notice("a", GONE, T), notice("f1", UNSTORED, T),
+                                     notice("never-mirrored", GONE, T), notice("x", GONE, T)],
+                                drive_identity=D1)
     assert count == 2
     got = await repo.get_docs(U, ["u:file:a", "u:folder:f1", "u:file:never-mirrored", "u:folder:never-mirrored"])
     assert sorted(got) == ["u:file:a", "u:folder:f1"]                 # nothing was created
@@ -150,15 +161,15 @@ async def test_mark_gone_updates_existing_only(repo):
 
 async def test_mark_gone_merges_a_repeated_notice(repo):
     await save(repo, doc("a"))
-    await repo.mark_gone(U, [DeletionNotice("a", UNKNOWN, T)])
-    await repo.mark_gone(U, [DeletionNotice("a", GONE, T + timedelta(hours=2))])
+    await repo.mark_gone(U, [notice("a", UNKNOWN, T)], drive_identity=D1)
+    await repo.mark_gone(U, [notice("a", GONE, T + timedelta(hours=2))], drive_identity=D1)
     a = (await repo.get_docs(U, ["u:file:a"]))["u:file:a"]
     assert (a.gone_why, a.gone_at, a.mark_ready_at) == (GONE, T, T + timedelta(hours=2) + MIRROR_ARCHIVE_GRACE)
 
 
 async def test_clear_mark(repo):
     await save(repo, doc("a"), doc("b"))
-    await repo.mark_gone(U, [DeletionNotice("a", GONE, T), DeletionNotice("b", GONE, T)])
+    await repo.mark_gone(U, [notice("a", GONE, T), notice("b", GONE, T)], drive_identity=D1)
     await repo.clear_mark(U, "u:file:a")
     await repo.clear_mark(U, "u:file:none")       # missing is a no-op, nothing created
     got = await repo.get_docs(U, ["u:file:a", "u:file:b", "u:file:none"])
@@ -169,7 +180,7 @@ async def test_clear_mark(repo):
 
 async def test_hold_mark(repo):
     await save(repo, doc("a"))
-    await repo.mark_gone(U, [DeletionNotice("a", GONE, T)])
+    await repo.mark_gone(U, [notice("a", GONE, T)], drive_identity=D1)
     ripe = T + MIRROR_ARCHIVE_GRACE
     await repo.hold_mark(U, "u:file:a", ripe + timedelta(hours=5))
     assert (await repo.get_docs(U, ["u:file:a"]))["u:file:a"].mark_ready_at == ripe + timedelta(hours=5)
@@ -181,11 +192,11 @@ async def test_hold_mark(repo):
 
 async def test_ready_marks_exclude_held_and_unripe(repo):
     await save(repo, doc("late"), doc("early"), doc("held"), doc("fresh"), doc("unmarked"), doc("o2", drive=D2))
-    await repo.mark_gone(U, [DeletionNotice("late", GONE, T - timedelta(hours=3)),
-                             DeletionNotice("early", GONE, T - timedelta(hours=9)),
-                             DeletionNotice("held", GONE, T - timedelta(hours=9)),
-                             DeletionNotice("fresh", GONE, T - timedelta(minutes=5)),
-                             DeletionNotice("o2", GONE, T - timedelta(hours=9))])
+    await repo.mark_gone(U, [notice("late", GONE, T - timedelta(hours=3)),
+                             notice("early", GONE, T - timedelta(hours=9)),
+                             notice("held", GONE, T - timedelta(hours=9)),
+                             notice("fresh", GONE, T - timedelta(minutes=5))], drive_identity=D1)
+    await repo.mark_gone(U, [notice("o2", GONE, T - timedelta(hours=9), drive=D2)], drive_identity=D2)
     await repo.hold_mark(U, "u:file:held", T + timedelta(hours=1))
     got = await repo.ready_marks(U, D1, T, 10)
     assert keys(got) == ["u:file:early", "u:file:late"]          # earliest ripe first; held, fresh, unmarked, D2 out
@@ -240,7 +251,7 @@ async def test_every_step_query_scoped_to_the_drive(repo):
     mine = [doc("a", mirror_parent_id="p", state=MIRROR_DETACHED, checked_at=T - timedelta(days=9))]
     await save(repo, *mine, doc("a2", drive=D2, mirror_parent_id="p", state=MIRROR_DETACHED, checked_at=T - timedelta(days=9)),
                doc("f", KIND_FOLDER, drive=D2), doc("g", drive=D2))
-    await repo.mark_gone(U, [DeletionNotice("g", GONE, T - timedelta(hours=9))])
+    await repo.mark_gone(U, [notice("g", GONE, T - timedelta(hours=9), drive=D2)], drive_identity=D2)
     assert await repo.ready_marks(U, D1, T, 10) == []
     assert keys(await repo.children(U, D1, "p", 10)) == [mine[0].key]
     assert await repo.folder_docs(U, D1, None, 10) == []
@@ -277,7 +288,7 @@ async def test_pinned_archived_detached_and_gone_pending_not_active(repo):
     await save(repo, doc("a", state=MIRROR_ARCHIVED, content_key="k-arch"), doc("b", state=MIRROR_DETACHED, content_key="k-det"),
                doc("c", state=MIRROR_ACTIVE, content_key="k-pend"), doc("d", state=MIRROR_ACTIVE, content_key="k-act"),
                doc("e", state=MIRROR_ACTIVE, content_key=""), doc("f", user="o", state=MIRROR_ARCHIVED, content_key="k-other"))
-    await repo.mark_gone(U, [DeletionNotice("c", GONE, T)])
+    await repo.mark_gone(U, [notice("c", GONE, T)], drive_identity=D1)
     assert [await repo.pinned(U, k) for k in ("k-arch", "k-det", "k-pend", "k-act", "k-other", "", "none")] == [
         True, True, True, False, False, False, False]
     assert await repo.pinned_keys(U) == frozenset({"k-arch", "k-det", "k-pend"})
@@ -298,7 +309,7 @@ async def test_pinned_keys_paged(adapter, monkeypatch):
     many = [doc(f"i{n:02d}", state=MIRROR_ARCHIVED, content_key=f"k{n % 7:02d}") for n in range(12)]   # duplicates too
     pending = [doc(f"p{n}", content_key=f"pk{n}") for n in range(4)]
     await save(repo, *many, *pending)
-    await repo.mark_gone(U, [DeletionNotice(f"p{n}", GONE, T) for n in range(4)])
+    await repo.mark_gone(U, [notice(f"p{n}", GONE, T) for n in range(4)], drive_identity=D1)
     want = frozenset({f"k{n:02d}" for n in range(7)} | {f"pk{n}" for n in range(4)})
     assert await repo.pinned_keys(U) == want
 
