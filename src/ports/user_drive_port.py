@@ -11,13 +11,6 @@ An implementation raises DriveNotConnectedError when access is missing or expire
 DriveItemNotFoundError for a missing item and DriveNameConflictError when a create hits a taken name.
 Every write may also raise DriveStorageFull (the drive is full) or DrivePathTooLong (the resulting path
 exceeds the provider's limit).
-
-TRANSITIONAL (slice 1b, removed when the callers move; listed in the C1b report): the block at the end
-keeps the single-drive members `display_name`, `is_connected`, `disconnect`, `connection`,
-`flag_reconnect` and `download_url` (addressed by `user_id`, no longer abstract), and declares
-`media_source`, `capabilities` and `forget` with a NotImplementedError body instead of abstract, so the
-existing adapters stay instantiable until they implement the handle form. Neither is part of the final
-port.
 """
 from abc import ABC, abstractmethod
 from typing import List, Literal, Optional
@@ -26,7 +19,7 @@ from src.domain.drive_capabilities import DriveCapabilities
 from src.domain.drive_handle import DriveHandle
 from src.domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
 from src.domain.drive_media_source import MediaSource
-from src.domain.user_drive import DriveConnection, DriveItem
+from src.domain.user_drive import DriveItem
 
 
 class UserDrivePort(ABC):
@@ -123,46 +116,16 @@ class UserDrivePort(ABC):
 
     # -- per connection (MULTI_DRIVE_RFC §6, §7.1) ---------------------------------------------------------------
 
+    @abstractmethod
     async def media_source(self, handle: DriveHandle, item_id: str) -> MediaSource:
         """Where a tool may stream the file's bytes from (replaces the bare download URL). The url and headers are
         secrets: never logged, stored or put in an error. Raises DriveItemNotFoundError for a missing item or one with
-        no downloadable content. TRANSITIONAL: abstract once the adapters implement it (slice 1b)."""
-        raise NotImplementedError
+        no downloadable content."""
 
+    @abstractmethod
     async def capabilities(self, handle: DriveHandle) -> DriveCapabilities:
-        """What this connection's drive can do (§7.1). TRANSITIONAL: abstract once the adapters implement it."""
-        raise NotImplementedError
+        """What this connection's drive can do (§7.1)."""
 
+    @abstractmethod
     async def forget(self, handle: DriveHandle) -> None:
-        """Drop every cache, lock and token cache the adapter holds for this connection (after a disconnect).
-        TRANSITIONAL: abstract once the adapters implement it."""
-        raise NotImplementedError
-
-    # -- TRANSITIONAL: the single-drive members, by user_id; they leave the port when their callers move (slice 1b).
-    # Labels move to the registry, state to the drive connection service, the download URL to `media_source`.
-
-    @property
-    def display_name(self) -> str:
-        """Human name of the provider, for the Cabinet only."""
-        raise NotImplementedError
-
-    async def is_connected(self, user_id: str) -> bool:
-        """True when credentials are stored (token validity is not checked)."""
-        raise NotImplementedError
-
-    async def disconnect(self, user_id: str) -> None:
-        """Forget the user's credentials."""
-        raise NotImplementedError
-
-    async def connection(self, user_id: str) -> DriveConnection:
-        """Connected?, refresh rejected earlier?, and the connected drive's id (§10.1 step 0)."""
-        raise NotImplementedError
-
-    async def flag_reconnect(self, user_id: str) -> bool:
-        """Mark the stored grant as needing a reconnect; True only on the False->True transition (§7.7)."""
-        raise NotImplementedError
-
-    async def download_url(self, user_id: str, item_id: str) -> str:
-        """The provider's short-lived, pre-authenticated download URL for a file (USER_DRIVE_INDEXING_RFC §27.4). A
-        secret: never log it. Raises DriveItemNotFoundError for a missing item."""
-        raise NotImplementedError
+        """Drop every cache, lock and token cache the adapter holds for this connection (after a disconnect)."""
