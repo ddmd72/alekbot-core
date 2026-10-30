@@ -4,9 +4,10 @@ stored, and an unreadable cache file is rebuilt, never trusted."""
 import json
 from typing import List
 
+from scripts.validation.drive_eval.eval_connection import EvalDriveConnections, eval_connection
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive
 from scripts.validation.drive_eval.index_cache import cache_key, load_or_build
-from scripts.validation.drive_eval.runner import EvalClock, _EnabledUsers, index_fixture
+from scripts.validation.drive_eval.runner import EVAL_USER, EvalClock, index_fixture
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_search import DriveSearchRequest
 from src.services.drive_search_service import DriveSearchService
@@ -32,7 +33,8 @@ def _builder(drive, clock, builds: List[int], misses=None):
 
 
 async def _found(drive, repo, clock):
-    search = DriveSearchService(repo, FakeEmbeddings(), _EnabledUsers(), drive, clock=clock, embedding_space="fake/8")
+    search = DriveSearchService(repo, FakeEmbeddings(), drive, EvalDriveConnections(eval_connection(EVAL_USER)),
+                                clock=clock, embedding_space="fake/8")
     result = await search.search("eval-user", DriveSearchRequest(query="Scan_0012"))
     return sorted(c.path for c in result.cards), clock.now
 

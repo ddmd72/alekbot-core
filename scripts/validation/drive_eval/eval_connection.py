@@ -28,6 +28,7 @@ from src.domain.drive_handle import DriveHandle
 from src.domain.drive_ref import DriveRef
 from src.domain.drive_ref_refusal import DriveRefRefusal, disconnected_ref_line, stale_ref_line
 from src.domain.drive_resolved_ref import ResolvedDriveRef
+from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveNotConnectedError
 from src.services.drive_connection_service import DriveConnectionService
 
@@ -36,6 +37,8 @@ EVAL_REF_TAG = "ev"
 EVAL_KIND = "fixture_drive"
 _EVAL_CREDENTIAL = "cred-eval"
 _EVAL_DRIVE_IDENTITY = onedrive_drive_identity(DRIVE_ID)   # the identity the fixture drive reports: no drive switch
+# A technical value: the eval counts an initial build as production does, which needs a provider account.
+_EVAL_PROVIDER_ACCOUNT = ProviderAccount(realm="eval", subject="eval-subject", label="")
 _CREATED = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
@@ -44,7 +47,7 @@ def eval_connection(user_id: str, *, indexing_enabled: bool = True, transcribe_e
     """The eval user's one connection: ACTIVE, primary, tag `ev`."""
     return DriveConnection(connection_id=EVAL_CONNECTION_ID, user_id=user_id, account_id=account_id,
                            credential_id=_EVAL_CREDENTIAL, kind=EVAL_KIND, drive_identity=_EVAL_DRIVE_IDENTITY,
-                           ref_tag=EVAL_REF_TAG, indexing_enabled=indexing_enabled,
+                           ref_tag=EVAL_REF_TAG, provider_account=_EVAL_PROVIDER_ACCOUNT, indexing_enabled=indexing_enabled,
                            transcribe_enabled=transcribe_enabled, created_at=_CREATED)
 
 

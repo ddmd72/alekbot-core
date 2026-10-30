@@ -33,8 +33,8 @@ Search v2 (§25.4, P5):
   reader's pages and triage's images are cost estimates against them, no longer monthly counters.
 
 Transcripts of audio and video (§27.3, §27.10-§27.13; plan Task 14): `transcripts` is the DriveTranscriptStage (injected;
-REQ-ARCH-22) and `transcribe_enabled` the kill switch. Only for a user with the switch AND `drive_transcribe_enabled` on
-(read with the opt-in flag at the tick's gate, kept for the tick) does any transcript step run, any transcript query go
+REQ-ARCH-22) and `transcribe_enabled` the kill switch. Only for a user with the switch AND the connection's `transcribe_enabled` on
+(read at the tick's gate, kept for the tick) does any transcript step run, any transcript query go
 out, or a recording count as waiting; otherwise the tick is today's. Every record write runs `transcript_plan` (with it
 off the job state is still planned, never acted on). The tick lends the stage a per-user `_TickHost`: its cheap steps
 (poll, collect, finalize) run first in the work-off with no share, a finalize taking a file slot (G32); the extraction

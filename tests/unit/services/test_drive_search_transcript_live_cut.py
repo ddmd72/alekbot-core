@@ -7,11 +7,11 @@ from dataclasses import replace
 import pytest
 
 from src.domain import drive_open_texts as T
+from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_index import Scope
 from src.domain.drive_index_params import OPEN_MAX_CHARS
 from src.domain.drive_text_extent import ExtentWhy
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
-from src.domain.user_drive import DriveConnection
 
 from .test_drive_search_excerpts import PassageWorld
 
@@ -39,8 +39,8 @@ async def _world(*, chunks=CHUNKS, parent=None, **fields):
     return w, item
 
 
-async def _text(w, item):
-    return await w.service.transcript_text("u", item)
+async def _text(w, item, conn=None):
+    return await w.service.transcript_text(conn or await w.connection(), item)
 
 
 def _line(text):
@@ -70,8 +70,9 @@ async def test_indexing_off_names_that_reason():
 
 async def test_a_disconnected_drive_names_that_reason():
     w, item = await _world()
-    w.drive.connection_state = DriveConnection(connected=False)
-    assert T.WHY[ExtentWhy.NOT_CONNECTED] in _line(await _text(w, item))
+    # a disconnect is the connection's state now (MULTI_DRIVE_RFC §4.4), not the drive port's `connection` (§6)
+    gone = replace(await w.connection(), state=ConnectionState.DISCONNECTED, disconnected_at=w.now)
+    assert T.WHY[ExtentWhy.NOT_CONNECTED] in _line(await _text(w, item, gone))
 
 
 async def test_a_rebuilding_index_names_that_reason():

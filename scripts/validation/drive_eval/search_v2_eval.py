@@ -37,7 +37,7 @@ from src.composition.drive_reader_runner import READER_VERSION as _RUNNER_READER
 from src.domain.drive_extraction import PARSER, READER
 from src.domain.drive_index_planner import PlaceOf
 from src.domain.drive_search import DriveSearchResult, render_results
-from scripts.validation.drive_eval.eval_connection import ref_item_id
+from scripts.validation.drive_eval.eval_connection import EvalDriveConnections, eval_connection, ref_item_id
 from src.ports.content_extractor_port import ContentExtractorPort
 from src.ports.embedding_service import EmbeddingService
 from src.services.drive_search_service import DriveSearchService
@@ -47,7 +47,7 @@ from .enrichment_replay import replay_ports
 from .enrichment_snapshot import EnrichmentSnapshot
 from .fixture_drive import FixtureDrive
 from .metrics import normalize_snippet
-from .runner import EVAL_USER, EvalClock, EvalError, _EnabledUsers, index_fixture, load_gold, request_for, validate_gold
+from .runner import EVAL_USER, EvalClock, EvalError, index_fixture, load_gold, request_for, validate_gold
 
 _REPO = Path(__file__).resolve().parents[3]
 FIXTURES = _REPO / "tests" / "fixtures" / "drive_eval"
@@ -232,7 +232,8 @@ async def evaluate(*, tree: Path, overlay: Path, gold_v2_path: Path, gold_v1_pat
     if facts["misses"] and not allow_misses:
         report["verdict"] = "stale_snapshot"
         return report
-    search = TierCapture(repo, embeddings, _EnabledUsers(), drive, clock=clock, embedding_space=space)
+    search = TierCapture(repo, embeddings, drive, EvalDriveConnections(eval_connection(EVAL_USER)), clock=clock,
+                         embedding_space=space)
     rows = await run_rows(search, drive, gold_v2)
     rows_v1_gold = await run_rows(search, drive, gold_v1)
     errors = sorted(cid for cid, r in {**rows, **rows_v1_gold}.items() if r.get("error"))

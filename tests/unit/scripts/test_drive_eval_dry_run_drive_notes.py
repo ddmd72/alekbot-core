@@ -19,12 +19,12 @@ from tests.unit.services.test_drive_note_service import ACC, U, Env
 PROV = NoteProvenance(origin="chat", session_id="s1", turn_id="t1")
 # method: (positional arguments after user_id [and account_id], keywords)
 CALLS = {
-    "set": ((ACC, "drive:a", REPAIR), {"doc_type": "contract"}),
-    "create": ((ACC, "drive:a", NoteContent(REPAIR)), {}),
-    "update": ((ACC, "drive:a", NoteChange.append_text("second invoice")), {}),
-    "clear": ((ACC, "drive:a"), {}),
-    "undo": ((ACC, "drive:a"), {}),
-    "request_erase": (("drive:a",), {}),
+    "set": ((ACC, "drive:a1:a", REPAIR), {"doc_type": "contract"}),
+    "create": ((ACC, "drive:a1:a", NoteContent(REPAIR)), {}),
+    "update": ((ACC, "drive:a1:a", NoteChange.append_text("second invoice")), {}),
+    "clear": ((ACC, "drive:a1:a"), {}),
+    "undo": ((ACC, "drive:a1:a"), {}),
+    "request_erase": (("drive:a1:a",), {}),
     "request_erase_all": ((), {}),
     "erase": (("c0000",), {}),
 }
@@ -86,17 +86,17 @@ async def test_the_log_names_the_target_and_never_the_words():
     env = Env()
     log = DriveOpLog()
     with DryRunDriveNotes(log):
-        await env.service.create(U, ACC, "drive:a", NoteContent(REPAIR, "contract", ("home",)), PROV)
-        await env.service.update(U, ACC, "drive:a", NoteChange.append_text("second invoice"), PROV)
-    assert log.entries[0]["args"] == {"ref": "drive:a"}
+        await env.service.create(U, ACC, "drive:a1:a", NoteContent(REPAIR, "contract", ("home",)), PROV)
+        await env.service.update(U, ACC, "drive:a1:a", NoteChange.append_text("second invoice"), PROV)
+    assert log.entries[0]["args"] == {"ref": "drive:a1:a"}
     assert "second invoice" not in str(log.entries) and REPAIR not in str(log.entries)
 
 
 async def test_reads_still_run_under_the_dry_run():
     env = Env()
-    await env.service.set(U, ACC, "drive:a", REPAIR, "", [], PROV)
+    await env.service.set(U, ACC, "drive:a1:a", REPAIR, "", [], PROV)
     with DryRunDriveNotes(DriveOpLog()):
-        view = await env.service.get(U, "drive:a")
+        view = await env.service.get(U, "drive:a1:a")
     assert view is not None and view.text == REPAIR
 
 

@@ -43,7 +43,8 @@ from src.ports.content_extractor_port import ContentExtractorPort
 
 from .fixture_drive import FixtureDrive
 from .lexical_embeddings import EMBEDDING_SPACE, AnchoredLexicalEmbeddings
-from .runner import EVAL_USER, EvalClock, _EnabledUsers, index_fixture
+from .eval_connection import EvalDriveConnections, eval_connection
+from .runner import EVAL_USER, EvalClock, index_fixture
 from .scale_corpus import TOPICS, Corpus, SyntheticPorts, make_corpus
 from .search_v2_eval import TierCapture
 
@@ -149,7 +150,8 @@ async def run_size(n: int, seed: int = 7) -> Dict[str, Any]:
                                   throttle_pause_s=0, extractors={PARSER: TextParser()}, triage=ports["triage"],
                                   profiler=ports["profiler"], passages=ports["passages"], max_ticks=5000)
     index_s = time.perf_counter() - started
-    search = TierCapture(repo, embeddings, _EnabledUsers(), drive, clock=clock, embedding_space=EMBEDDING_SPACE)
+    search = TierCapture(repo, embeddings, drive, EvalDriveConnections(eval_connection(EVAL_USER)), clock=clock,
+                         embedding_space=EMBEDDING_SPACE)
     item_topic = {item: corpus.truth.get(drive.path_of(item) or "", {}).get("topic", "") for item in
                   [k[1] for k in repo.records]}
     negatives = [await _query(search, repo, q) for q in corpus.negatives]

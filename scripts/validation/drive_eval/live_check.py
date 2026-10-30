@@ -120,15 +120,14 @@ def manifest_from_folder(root: Path) -> Dict[str, Any]:
 
 @dataclass
 class _Users:
-    """The synthetic user, indexing on until the purge."""
+    """The synthetic user; the indexing switch lives on the connection."""
     user_id: str
-    enabled: bool = True
 
     async def get_user(self, user_id: str) -> Optional[UserProfile]:
         if user_id != self.user_id:
             return None
         return UserProfile(user_id=user_id, account_id=f"{self.user_id}-account",
-                           config=UserBotConfig(drive_indexing_enabled=self.enabled))
+                           config=UserBotConfig())
 
 
 @dataclass
@@ -172,7 +171,6 @@ async def _purge(drive: FixtureDrive, repo: DriveIndexRepository, embeddings: Em
                  place_of: PlaceOf, embedding_space: str, clock: EvalClock,
                  extractors: Optional[Mapping[str, ContentExtractorPort]], triage: Optional[ImageTriagePort]) -> None:
     """Indexing off, then the production gate purges (§7.6); checked down to the last chunk."""
-    users.enabled = False
     content: Dict[str, Any] = {}
     if extractors is not None:
         content["extractors"] = extractors

@@ -33,7 +33,7 @@ class _EvalUsers:
 
         providers = {"drive_reader": self._provider, "drive_triage": self._provider} if self._provider else None
         return UserProfile(user_id=user_id, account_id="eval-account",
-                           config=UserBotConfig(drive_indexing_enabled=True, agent_providers=providers))
+                           config=UserBotConfig(agent_providers=providers))
 
 
 def reader_provider() -> str:

@@ -67,7 +67,7 @@ async def test_a_graph_refresh_after_a_disconnect_is_not_connected_and_writes_no
 
 
 async def test_a_graph_refresh_of_a_connected_grant_is_stored_and_served(store):
-    await store.repo.save(creds(USER, "microsoft_onedrive", token_expiry=SOON, drive_id="D1"))
+    await store.repo.save(creds(USER, "microsoft_onedrive", token_expiry=SOON))
     tokens = MicrosoftGraphTokenProvider(store.repo, "cid", "secret", "microsoft_onedrive", "scope")
     resp = MagicMock(status=200)
     resp.json = AsyncMock(return_value={"access_token": "new", "expires_in": 3600})
@@ -80,7 +80,7 @@ async def test_a_graph_refresh_of_a_connected_grant_is_stored_and_served(store):
     with patch("aiohttp.ClientSession", return_value=session):
         assert await tokens.user_headers(USER) == {"Authorization": "Bearer new"}
     stored = await one(store.repo, USER, "microsoft_onedrive")
-    assert (stored.access_token, stored.drive_id) == ("new", "D1")
+    assert stored.access_token == "new"
 
 
 # ------------------------------------------------------------------------------------------------ Google Tasks

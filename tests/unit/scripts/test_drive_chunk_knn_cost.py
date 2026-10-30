@@ -115,4 +115,5 @@ async def test_purge_only_deletes_a_synthetic_users_leftovers_and_refuses_a_real
     await repo.write_chunks(s3.synthetic_chunks("owner-1", 0, 1), [[1.0]])
     assert await s3.purge_only(repo, "owner-1") == 1
     assert await s3.purge_only(repo, "zz-synthetic-s3") == 0
-    assert [k[0] for k in repo.chunks] == ["owner-1"]
+    # chunks are keyed by connection (MULTI_DRIVE_RFC §8): the spike's made-up connection; the one left is owner-1's
+    assert [(k[0], chunk.user_id) for k, (chunk, _) in repo.chunks.items()] == [("s3-conn", "owner-1")]
