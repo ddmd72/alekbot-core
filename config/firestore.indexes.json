@@ -199,28 +199,9 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "priority", "order": "ASCENDING" },
-      { "fieldPath": "due_at", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "priority", "order": "ASCENDING" },
       { "fieldPath": "due_at", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "parent_id", "order": "ASCENDING" },
       { "fieldPath": "item_id", "order": "ASCENDING" }
     ]
   },
@@ -237,24 +218,7 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "seen_epoch", "order": "ASCENDING" },
       { "fieldPath": "item_id", "order": "ASCENDING" }
     ]
   },
@@ -271,29 +235,9 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "has_card_vector", "order": "ASCENDING" },
-      { "fieldPath": "card_rank", "order": "DESCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "has_card_vector", "order": "ASCENDING" },
       { "fieldPath": "card_rank", "order": "DESCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "has_card_vector", "order": "ASCENDING" },
-      { "fieldPath": "card_rank", "order": "ASCENDING" },
-      { "fieldPath": "modified_at", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
     ]
   },
   {
@@ -311,16 +255,6 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "card_capped", "order": "ASCENDING" },
-      { "fieldPath": "card_rank", "order": "ASCENDING" },
-      { "fieldPath": "modified_at", "order": "DESCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "card_capped", "order": "ASCENDING" },
       { "fieldPath": "card_rank", "order": "ASCENDING" },
@@ -331,26 +265,7 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "name_tokens", "arrayConfig": "CONTAINS" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
-      { "fieldPath": "name_tokens", "arrayConfig": "CONTAINS" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" },
       { "fieldPath": "name_tokens", "arrayConfig": "CONTAINS" },
       { "fieldPath": "item_id", "order": "ASCENDING" }
     ]
@@ -369,24 +284,7 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "effective_date", "order": "DESCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
-      { "fieldPath": "effective_date", "order": "DESCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" },
       { "fieldPath": "effective_date", "order": "DESCENDING" }
     ]
   },
@@ -397,15 +295,6 @@
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" },
       { "fieldPath": "effective_date", "order": "DESCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
-      { "fieldPath": "chunk_count", "order": "ASCENDING" }
     ]
   },
   {
@@ -415,18 +304,6 @@
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "indexed_generation", "order": "ASCENDING" },
       { "fieldPath": "chunk_count", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "state", "order": "ASCENDING" },
-      { "fieldPath": "reason", "order": "ASCENDING" },
-      { "fieldPath": "card_rank", "order": "ASCENDING" },
-      { "fieldPath": "modified_at", "order": "DESCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
     ]
   },
   {
@@ -445,7 +322,7 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "state", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" }
     ]
@@ -456,37 +333,7 @@
     "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "state", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "state", "order": "ASCENDING" },
       { "fieldPath": "indexed_generation", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "connection_id", "order": "ASCENDING" },
-      { "fieldPath": "state", "order": "ASCENDING" },
-      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "state", "order": "ASCENDING" },
-      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
-      { "fieldPath": "card_capped", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" }
     ]
   },
@@ -498,16 +345,6 @@
       { "fieldPath": "state", "order": "ASCENDING" },
       { "fieldPath": "indexed_generation", "order": "ASCENDING" },
       { "fieldPath": "card_capped", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "state", "order": "ASCENDING" },
-      { "fieldPath": "reason", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" }
     ]
   },
@@ -525,7 +362,7 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
+      { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "state", "order": "ASCENDING" },
       { "fieldPath": "triage_verdict", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" }
@@ -537,40 +374,7 @@
     "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "state", "order": "ASCENDING" },
-      { "fieldPath": "triage_verdict", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "state", "order": "ASCENDING" },
       { "fieldPath": "indexed_generation", "order": "ASCENDING" },
-      { "fieldPath": "triage_verdict", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "connection_id", "order": "ASCENDING" },
-      { "fieldPath": "state", "order": "ASCENDING" },
-      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
-      { "fieldPath": "triage_verdict", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "state", "order": "ASCENDING" },
-      { "fieldPath": "indexed_generation", "order": "ASCENDING" },
-      { "fieldPath": "card_capped", "order": "ASCENDING" },
       { "fieldPath": "triage_verdict", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" }
     ]
@@ -591,17 +395,6 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "state", "order": "ASCENDING" },
-      { "fieldPath": "reason", "order": "ASCENDING" },
-      { "fieldPath": "triage_verdict", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "state", "order": "ASCENDING" },
       { "fieldPath": "reason", "order": "ASCENDING" },
@@ -613,24 +406,7 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "card_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
-      { "fieldPath": "card_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" },
       { "fieldPath": "card_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
     ]
   },
@@ -647,30 +423,7 @@
     "collectionGroup": "development_drive_index_chunks",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "content_terms", "arrayConfig": "CONTAINS" },
-      { "fieldPath": "item_id", "order": "ASCENDING" },
-      { "fieldPath": "generation", "order": "ASCENDING" },
-      { "fieldPath": "index", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_chunks",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
-      { "fieldPath": "content_terms", "arrayConfig": "CONTAINS" },
-      { "fieldPath": "item_id", "order": "ASCENDING" },
-      { "fieldPath": "generation", "order": "ASCENDING" },
-      { "fieldPath": "index", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_chunks",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" },
       { "fieldPath": "content_terms", "arrayConfig": "CONTAINS" },
       { "fieldPath": "item_id", "order": "ASCENDING" },
       { "fieldPath": "generation", "order": "ASCENDING" },
@@ -693,16 +446,6 @@
     "collectionGroup": "development_drive_index_chunks",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" },
-      { "fieldPath": "generation", "order": "ASCENDING" },
-      { "fieldPath": "index", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_chunks",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "item_id", "order": "ASCENDING" },
       { "fieldPath": "generation", "order": "ASCENDING" },
@@ -713,24 +456,7 @@
     "collectionGroup": "development_drive_index_chunks",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_chunks",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
-      { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_chunks",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" },
       { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
     ]
   },
@@ -740,15 +466,6 @@
     "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" },
-      { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_chunks",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" },
       { "fieldPath": "vector", "vectorConfig": { "dimension": 768, "flat": {} } }
     ]
   },
@@ -775,28 +492,7 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "about_keys", "arrayConfig": "CONTAINS" },
-      { "fieldPath": "effective_date", "order": "DESCENDING" },
-      { "fieldPath": "item_id", "order": "DESCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
-      { "fieldPath": "about_keys", "arrayConfig": "CONTAINS" },
-      { "fieldPath": "effective_date", "order": "DESCENDING" },
-      { "fieldPath": "item_id", "order": "DESCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" },
       { "fieldPath": "about_keys", "arrayConfig": "CONTAINS" },
       { "fieldPath": "effective_date", "order": "DESCENDING" },
       { "fieldPath": "item_id", "order": "DESCENDING" }
@@ -817,30 +513,9 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "about_keys", "arrayConfig": "CONTAINS" },
-      { "fieldPath": "valid_until", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "about_keys", "arrayConfig": "CONTAINS" },
       { "fieldPath": "valid_until", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "enrich_ready", "order": "ASCENDING" },
-      { "fieldPath": "effective_day", "order": "DESCENDING" },
-      { "fieldPath": "parent_id", "order": "ASCENDING" },
       { "fieldPath": "item_id", "order": "ASCENDING" }
     ]
   },
@@ -859,30 +534,8 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "profile_state", "order": "ASCENDING" },
-      { "fieldPath": "effective_day", "order": "DESCENDING" },
-      { "fieldPath": "parent_id", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "profile_state", "order": "ASCENDING" },
-      { "fieldPath": "effective_day", "order": "DESCENDING" },
-      { "fieldPath": "parent_id", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "passages_state", "order": "ASCENDING" },
       { "fieldPath": "effective_day", "order": "DESCENDING" },
       { "fieldPath": "parent_id", "order": "ASCENDING" },
       { "fieldPath": "item_id", "order": "ASCENDING" }
@@ -896,15 +549,6 @@
       { "fieldPath": "passages_state", "order": "ASCENDING" },
       { "fieldPath": "effective_day", "order": "DESCENDING" },
       { "fieldPath": "parent_id", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "enrich_wake_at", "order": "ASCENDING" },
       { "fieldPath": "item_id", "order": "ASCENDING" }
     ]
   },
@@ -921,26 +565,8 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "profile_state", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "profile_state", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "passages_state", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" }
     ]
   },
@@ -957,26 +583,9 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "keys_pending", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "keys_pending", "order": "ASCENDING" },
       { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "inaccessible_since", "order": "ASCENDING" }
     ]
   },
   {
@@ -991,30 +600,8 @@
     "collectionGroup": "development_drive_index_chunks",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "word_keys", "arrayConfig": "CONTAINS" },
-      { "fieldPath": "item_id", "order": "ASCENDING" },
-      { "fieldPath": "generation", "order": "ASCENDING" },
-      { "fieldPath": "index", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_chunks",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "word_keys", "arrayConfig": "CONTAINS" },
-      { "fieldPath": "item_id", "order": "ASCENDING" },
-      { "fieldPath": "generation", "order": "ASCENDING" },
-      { "fieldPath": "index", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_hints",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "hint_keys", "arrayConfig": "CONTAINS" },
       { "fieldPath": "item_id", "order": "ASCENDING" },
       { "fieldPath": "generation", "order": "ASCENDING" },
       { "fieldPath": "index", "order": "ASCENDING" }
@@ -1035,16 +622,6 @@
     "collectionGroup": "development_drive_index_hints",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" },
-      { "fieldPath": "generation", "order": "ASCENDING" },
-      { "fieldPath": "index", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_hints",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "item_id", "order": "ASCENDING" },
       { "fieldPath": "generation", "order": "ASCENDING" },
@@ -1055,24 +632,7 @@
     "collectionGroup": "development_drive_index_hints",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "hint_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_hints",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
-      { "fieldPath": "hint_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_hints",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" },
       { "fieldPath": "hint_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
     ]
   },
@@ -1082,15 +642,6 @@
     "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" },
-      { "fieldPath": "hint_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_hints",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" },
       { "fieldPath": "hint_vector", "vectorConfig": { "dimension": 768, "flat": {} } }
     ]
   },
@@ -1167,30 +718,10 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "transcript_state", "order": "ASCENDING" },
-      { "fieldPath": "effective_day", "order": "DESCENDING" },
-      { "fieldPath": "parent_id", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "transcript_state", "order": "ASCENDING" },
       { "fieldPath": "effective_day", "order": "DESCENDING" },
       { "fieldPath": "parent_id", "order": "ASCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "transcript_wake_at", "order": "ASCENDING" },
       { "fieldPath": "item_id", "order": "ASCENDING" }
     ]
   },
@@ -1207,24 +738,8 @@
     "collectionGroup": "development_drive_transcript_jobs",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "content_key", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_transcript_jobs",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "content_key", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_transcript_batches",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "next_poll_at", "order": "ASCENDING" }
     ]
   },
   {
@@ -1241,14 +756,6 @@
     "fields": [
       { "fieldPath": "user_id", "order": "ASCENDING" },
       { "fieldPath": "last_used_at", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_transcript_windows",
-    "queryScope": "COLLECTION_GROUP",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "index", "order": "ASCENDING" }
     ]
   },
   {
@@ -1291,28 +798,9 @@
     "collectionGroup": "development_drive_index_records",
     "queryScope": "COLLECTION",
     "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "mirror_due", "order": "ASCENDING" },
-      { "fieldPath": "effective_day", "order": "DESCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
       { "fieldPath": "connection_id", "order": "ASCENDING" },
       { "fieldPath": "mirror_due", "order": "ASCENDING" },
       { "fieldPath": "effective_day", "order": "DESCENDING" },
-      { "fieldPath": "item_id", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_index_records",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "mirror_retry_at", "order": "ASCENDING" },
       { "fieldPath": "item_id", "order": "ASCENDING" }
     ]
   },
@@ -1330,28 +818,9 @@
     "queryScope": "COLLECTION",
     "fields": [
       { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "drive_id", "order": "ASCENDING" },
-      { "fieldPath": "gone_pending", "order": "ASCENDING" },
-      { "fieldPath": "mark_ready_at", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_transcript_mirror",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
       { "fieldPath": "drive_identity", "order": "ASCENDING" },
       { "fieldPath": "gone_pending", "order": "ASCENDING" },
       { "fieldPath": "mark_ready_at", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_transcript_mirror",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "drive_id", "order": "ASCENDING" },
-      { "fieldPath": "mirror_parent_id", "order": "ASCENDING" }
     ]
   },
   {
@@ -1368,29 +837,9 @@
     "queryScope": "COLLECTION",
     "fields": [
       { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "drive_id", "order": "ASCENDING" },
-      { "fieldPath": "kind", "order": "ASCENDING" },
-      { "fieldPath": "__name__", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_transcript_mirror",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
       { "fieldPath": "drive_identity", "order": "ASCENDING" },
       { "fieldPath": "kind", "order": "ASCENDING" },
       { "fieldPath": "__name__", "order": "ASCENDING" }
-    ]
-  },
-  {
-    "collectionGroup": "development_drive_transcript_mirror",
-    "queryScope": "COLLECTION",
-    "fields": [
-      { "fieldPath": "user_id", "order": "ASCENDING" },
-      { "fieldPath": "drive_id", "order": "ASCENDING" },
-      { "fieldPath": "state", "order": "ASCENDING" },
-      { "fieldPath": "checked_at", "order": "ASCENDING" }
     ]
   },
   {

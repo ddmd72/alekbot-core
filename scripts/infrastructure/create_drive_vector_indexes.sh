@@ -5,7 +5,7 @@
 #          (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md §12.5, §24.6, §25.2.5). `make deploy-indexes` skips vector
 #          indexes, so these six are created here. They are also declared in config/firestore.indexes.json.
 #          Every pre-filter is `connection_id` since MULTI_DRIVE_RFC §8 (slice 1b: one index per connection); the
-#          user_id forms created before stay live until the slice is accepted, then the owner deletes them.
+#          user_id forms created before are dropped by the owner at the 1b deploy (the drive data is wiped then).
 # Usage:   PROJECT_ID=<project> [COLLECTION_PREFIX=development_] ./scripts/infrastructure/create_drive_vector_indexes.sh
 # ==============================================================================
 
