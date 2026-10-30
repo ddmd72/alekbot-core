@@ -47,7 +47,7 @@ class MultiWorld:
 
         self.svc = DriveIndexingService(self.router, self.repo, FakeEmbeddings(), self.queue, self.users,
                                         lambda lat, lon: None, "test-space/8", connections=self.connections,
-                                        account_of=account_of, notes=notes, clock=self.clock,
+                                        notes=notes, clock=self.clock,
                                         monotonic=self.clock.monotonic)
 
     async def connect(self, connection_id: str = "conn-1", *, ref_tag: str = "a1",

@@ -21,7 +21,7 @@ class TestSchedulerBuilderPassThrough:
 
         scheduler = setup.build_drive_sync_scheduler(
             repo=AsyncMock(), queue=AsyncMock(), drive=AsyncMock(), users=AsyncMock(),
-            oauth_credentials=AsyncMock(spec=OAuthCredentialsPort), notifier=notifier,
+            notifier=notifier,
             alert_sink=alert_sink, ensure_agents=ensure_agents)
         assert scheduler._notifier is notifier
         assert scheduler._alert_sink is alert_sink

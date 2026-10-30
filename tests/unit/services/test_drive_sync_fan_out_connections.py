@@ -45,7 +45,7 @@ class World:
             return self.accounts.get(credential_id)
 
         self.svc = DriveSyncSchedulerService(self.repo, self.queue, self.connections.repo, self.notifier, None,
-                                             connection_service=self.connections, account_of=account_of,
+                                             connection_service=self.connections,
                                              clock=self.clock)
 
 

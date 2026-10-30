@@ -87,7 +87,7 @@ async def test_scheduler_lists_users_by_the_drive_provider():
     users = AsyncMock()
     users.get_user.return_value = None
     scheduler = setup.build_drive_sync_scheduler(repo=repo, queue=AsyncMock(), drive=AsyncMock(), users=users,
-                                                 oauth_credentials=oauth, notifier=None, alert_sink=None)
+                                                 notifier=None, alert_sink=None)
     summary = await scheduler.fan_out()
     oauth.list_user_ids.assert_awaited_once_with(ONEDRIVE_PROVIDER)
     assert summary["candidates"] == 1
