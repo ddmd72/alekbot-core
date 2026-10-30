@@ -34,8 +34,9 @@ async def test_every_chunk_read_runs_once_and_nothing_is_written(smoke, mock_env
     assert any(op[0] == "start_after" for ops in chunk_queries for op in ops)
     assert any(op[0] == "sum" for ops in db.cols[RECS].executed for op in ops)
     chunk_reads = [ids for ids, _ in db.get_all_calls if ids and ids[0].count(":") == 3]
-    # get_chunks, get_chunks_with_vectors; + Search v2's get_chunk_keys and get_hint_keys (same ids, by id)
-    assert chunk_reads == [["smoke-user:smoke-item:1:0", "smoke-user:smoke-item:1:1"]] * 4
+    # get_chunks, get_chunks_with_vectors; + Search v2's get_chunk_keys and get_hint_keys (same ids, by id); the ids
+    # are the smoke's made-up connection's (`{connection_id}:…`, MULTI_DRIVE_RFC §8)
+    assert chunk_reads == [["smoke-conn:smoke-item:1:0", "smoke-conn:smoke-item:1:1"]] * 4
     assert db.batches == [] and not db.tx.method_calls
 
 
