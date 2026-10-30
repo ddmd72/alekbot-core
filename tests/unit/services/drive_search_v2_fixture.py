@@ -10,16 +10,19 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_enrichment import DriveHintDoc, DriveProfile, HintItem, PhotoObject
 from src.domain.drive_index import (
     KEYS_VERSION, MIGRATION_GATE_KEY, DriveChunk, DriveIndexRecord, DriveSyncState, RecordState, Scope,
     TriageVerdict,
 )
 from src.domain.drive_keys import about_keys_of, name_keys_v2, word_form_keys, word_keys
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_search import DriveSearchRequest
 from src.domain.user_drive import DriveConnection
 from src.services.drive_search_service import DriveSearchService
 
+from .drive_harness_connections import harness_connections
 from .drive_index_fakes import FakeUsers
 
 SPACE = "test-space/8"
@@ -85,10 +88,11 @@ class V2World:
         self.drive = Drive()
         self.now = AS_OF
         counter = itertools.count(1)
-        self.service = DriveSearchService(self.repo, self.emb, self.users, self.drive, embedding_space=SPACE,
+        self.service = DriveSearchService(self.repo, self.emb, self.drive,
+                                          harness_connections(self.users, self.drive), embedding_space=SPACE,
                                           clock=lambda: self.now, nonce=lambda: f"nonce{next(counter):04d}")
         versions = {MIGRATION_GATE_KEY: KEYS_VERSION} if migrated else {}
-        self.repo.states["u"] = DriveSyncState(user_id="u", connection_id="u", drive_id="d1", root_item_id=ROOT, applied_space=SPACE,
+        self.repo.states["u"] = DriveSyncState(user_id="u", connection_id="u", drive_identity="fake:d1", root_item_id=ROOT, applied_space=SPACE,
                                                applied_versions=versions, observed_as_of=AS_OF,
                                                initial_enumeration_done=True)
         self._items = itertools.count(1)
@@ -111,12 +115,13 @@ class V2World:
              card_vector: Optional[List[float]] = None, generation: int = 1, **fields) -> str:
         item = item or f"I{next(self._items):03d}"
         when = _day(taken or effective or "2026-01-01")
-        facets = {"photo": {"takenDateTime": f"{taken}T10:00:00Z"}} if taken else {}
+        media = DriveMediaFacts(taken_at=_day(taken).replace(hour=10)) if taken else DriveMediaFacts()
         text = "\n\n".join(chunks)
         rec = DriveIndexRecord(
-            user_id="u", item_id=item, parent_id=parent, name=name, kind=kind, scope=Scope.NORMAL,
+            user_id="u", connection_id="u", item_id=item, parent_id=parent, name=name, kind=kind, scope=Scope.NORMAL,
             state=RecordState.INDEXED, has_card=True, name_tokens=name_keys_v2(name), effective_date=when,
-            facets=facets, size_bytes=100 + len(text), content_hash=f"h{item}:{100 + len(text)}", profile=profile,
+            media=media, size_bytes=100 + len(text),
+            content_identity=ContentIdentity("fakehash", f"h{item}", 100 + len(text)), profile=profile,
             place_forms=place_forms, place_name=place_forms[0] if place_forms else None,
             photo_description=photo or "", photo_objects=photo_objects,
             triage_verdict=TriageVerdict.PHOTO if kind == "image" else None,
