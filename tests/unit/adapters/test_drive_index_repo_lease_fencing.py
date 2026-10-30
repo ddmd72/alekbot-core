@@ -13,6 +13,7 @@ from src.domain.drive_index import DriveSyncState, LeaseLost
 
 from tests.unit.adapters.firestore_drive_fakes import NOW, STATES, Db, make_repo, snap
 from tests.unit.services.drive_index_fakes import U_SCOPE
+from src.domain.connection_scope import ConnectionScope
 
 SPAN = timedelta(minutes=31)
 LATER = NOW + SPAN + timedelta(minutes=1)
@@ -56,7 +57,7 @@ class TestInMemory:
             await repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", epoch=3))
         with pytest.raises(LeaseLost):
             await repo.delete_sync_state(U_SCOPE)
-        await repo.delete_sync_state("x")        # nothing stored: nothing to fence
+        await repo.delete_sync_state(ConnectionScope(user_id="u", connection_id="x"))   # nothing stored: nothing to fence
 
 
 @pytest.fixture

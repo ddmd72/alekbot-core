@@ -19,6 +19,7 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_enrichment import DriveHintDoc
 from src.domain.drive_index import DriveChunk
 from src.domain.drive_index_params import KNN_ITEM_IDS_MAX
+from tests.unit.services.drive_index_fakes import U_SCOPE
 
 _ROOT = Path(__file__).resolve().parents[3]
 CHUNKS = "test_drive_index_chunks"
@@ -72,7 +73,7 @@ def _filters(query):
 class TestFirestoreChunks:
     async def test_user_and_item_ids_filter_before_the_nearest(self, repo, sent):
         sent["rows"] = [{**chunk_to_doc(_chunk("book-2")), CHUNK_DISTANCE: 0.25}]
-        hits = await repo.find_nearest_chunks_in("u", [1.0, 0.0], 300, ["book-1", "book-2", "book-1"])
+        hits = await repo.find_nearest_chunks_in(U_SCOPE, [1.0, 0.0], 300, ["book-1", "book-2", "book-1"])
         assert [(c.item_id, d) for c, d in hits] == [("book-2", 0.25)]
         ((collection, query),) = sent["queries"]
         assert collection == CHUNKS
@@ -86,18 +87,18 @@ class TestFirestoreChunks:
 
     async def test_thirty_ids_go_out_in_one_query(self, repo, sent):
         ids = [f"book-{n:02d}" for n in range(KNN_ITEM_IDS_MAX)]
-        await repo.find_nearest_chunks_in("u", [1.0], 5, ids)
+        await repo.find_nearest_chunks_in(U_SCOPE, [1.0], 5, ids)
         ((_, query),) = sent["queries"]
         assert _filters(query)[1] == ("item_id", "IN", ids)
 
     async def test_more_than_thirty_distinct_ids_are_refused_before_any_query(self, repo, sent):
         ids = [f"book-{n:02d}" for n in range(KNN_ITEM_IDS_MAX + 1)]
         with pytest.raises(ValueError, match="at most 30"):
-            await repo.find_nearest_chunks_in("u", [1.0], 5, ids)
+            await repo.find_nearest_chunks_in(U_SCOPE, [1.0], 5, ids)
         assert sent["queries"] == []
 
     async def test_no_ids_is_no_query(self, repo, sent):
-        assert await repo.find_nearest_chunks_in("u", [1.0], 5, []) == []
+        assert await repo.find_nearest_chunks_in(U_SCOPE, [1.0], 5, []) == []
         assert sent["queries"] == []
 
 
@@ -105,7 +106,7 @@ class TestFirestoreHints:
     async def test_user_and_item_ids_filter_before_the_nearest(self, repo, sent):
         sent["rows"] = [{"user_id": "u", "item_id": "book-1", "generation": 1, "index": 0, "kind": "epub",
                          "hint_keys": ["w:chapter"], HINT_DISTANCE: 0.5}]
-        hits = await repo.find_nearest_hints_in("u", [1.0, 0.0], 300, ["book-1"])
+        hits = await repo.find_nearest_hints_in(U_SCOPE, [1.0, 0.0], 300, ["book-1"])
         assert [(h.item_id, h.hint_keys, d) for h, d in hits] == [("book-1", ("w:chapter",), 0.5)]
         ((collection, query),) = sent["queries"]
         assert collection == HINTS
@@ -117,7 +118,7 @@ class TestFirestoreHints:
 
     async def test_more_than_thirty_distinct_ids_are_refused_before_any_query(self, repo, sent):
         with pytest.raises(ValueError, match="at most 30"):
-            await repo.find_nearest_hints_in("u", [1.0], 5, [f"book-{n:02d}" for n in range(KNN_ITEM_IDS_MAX + 1)])
+            await repo.find_nearest_hints_in(U_SCOPE, [1.0], 5, [f"book-{n:02d}" for n in range(KNN_ITEM_IDS_MAX + 1)])
         assert sent["queries"] == []
 
 
@@ -126,23 +127,23 @@ class TestInMemory:
         repo = InMemoryDriveIndexRepository()
         await repo.write_chunks([_chunk("notes", 0), _chunk("book-1", 0), _chunk("book-1", 1), _chunk("book-2", 0)],
                                 [[1.0, 0.0], [1.0, 0.5], [1.0, 1.0], [1.0, 2.0]])
-        hits = await repo.find_nearest_chunks_in("u", [1.0, 0.0], 2, ["book-1", "book-2"])
+        hits = await repo.find_nearest_chunks_in(U_SCOPE, [1.0, 0.0], 2, ["book-1", "book-2"])
         assert [(c.item_id, c.index) for c, _ in hits] == [("book-1", 0), ("book-1", 1)]
-        assert await repo.find_nearest_chunks_in("u", [1.0, 0.0], 2, []) == []
+        assert await repo.find_nearest_chunks_in(U_SCOPE, [1.0, 0.0], 2, []) == []
 
     async def test_hints_of_other_files_never_answer(self):
         repo = InMemoryDriveIndexRepository()
         await repo.write_hints([_hint("notes"), _hint("book-1")], [[1.0, 0.0], [1.0, 1.0]])
-        hits = await repo.find_nearest_hints_in("u", [1.0, 0.0], 5, ["book-1"])
+        hits = await repo.find_nearest_hints_in(U_SCOPE, [1.0, 0.0], 5, ["book-1"])
         assert [h.item_id for h, _ in hits] == ["book-1"]
 
     async def test_more_than_thirty_distinct_ids_are_refused(self):
         repo = InMemoryDriveIndexRepository()
         ids = [f"book-{n:02d}" for n in range(KNN_ITEM_IDS_MAX + 1)]
         with pytest.raises(ValueError):
-            await repo.find_nearest_chunks_in("u", [1.0], 5, ids)
+            await repo.find_nearest_chunks_in(U_SCOPE, [1.0], 5, ids)
         with pytest.raises(ValueError):
-            await repo.find_nearest_hints_in("u", [1.0], 5, ids)
+            await repo.find_nearest_hints_in(U_SCOPE, [1.0], 5, ids)
 
 
 @pytest.mark.parametrize("collection, vector", [("development_drive_index_chunks", CHUNK_VECTOR),
