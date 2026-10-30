@@ -8,6 +8,7 @@ import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.connection_scope import ConnectionScope
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_enrichment import DriveHintDoc, HintItem, InitialBuild, ModelUsageMonth
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, RecordState, Scope
 from src.domain.drive_index_lean import DriveChunkLean, DriveHintLean, DriveRecordLean
@@ -20,6 +21,7 @@ NOW = datetime(2026, 10, 13, 12, tzinfo=timezone.utc)
 U = ConnectionScope(user_id="u", connection_id="u")
 OTHER = ConnectionScope(user_id="other", connection_id="other")
 NOBODY = ConnectionScope(user_id="nobody", connection_id="nobody")
+CID = ContentIdentity(family="quickxor", digest="h", size=1)   # the content identity the lean projection carries
 REALM, SUBJECT = "microsoft", "acct-1"   # the provider account an initial build is keyed by (MULTI_DRIVE_RFC §10)
 
 
@@ -150,13 +152,13 @@ class TestFindByAboutKeys:
 
     async def test_the_lean_projection(self, pair):
         full = rec("a", eff=D, keys=("e:rome",), name_tokens=("w:a",), has_card=True, indexed_generation=2,
-                   content_hash="h", valid_until=D, profile_state="ready", readme_excerpt="long text")
+                   content_identity=CID, valid_until=D, profile_state="ready", readme_excerpt="long text")
         await pair.write(records=[full])
         (lean,) = await pair.both("find_by_about_keys", U, ["e:rome"], 1)
         assert lean == DriveRecordLean(item_id="a", parent_id="root", name="a.pdf", kind="pdf", effective_date=D,
                                        about_keys=("e:rome",), name_tokens=("w:a",), state=RecordState.INDEXED,
-                                       scope=Scope.NORMAL, has_card=True, indexed_generation=2, content_hash="h",
-                                       valid_until=D)
+                                       scope=Scope.NORMAL, has_card=True, indexed_generation=2, valid_until=D,
+                                       content_identity=CID)
 
 
 class TestFindExpiring:
