@@ -10,6 +10,7 @@ import pytest
 
 from src.domain import drive_index_params as P
 from src.domain import drive_search_texts as T
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_enrichment import (
     JOB_USAGE_CLASS, UNGROUNDED, USD_CAPS, DriveHintDoc, DriveProfile, EnrichContext, EnrichJob, HintItem, HintType,
     HoldReason, InitialBuild, JobState, KeyValue, ModelUsageMonth, PhotoDescription, PhotoObject, ProfileDate,
@@ -232,7 +233,8 @@ class TestTypes:
         (PhotoObject, ["name", "forms"]),
         (HintItem, ["text", "type", "evidence", "evidence_start", "evidence_end"]),
         (DriveHintDoc, ["user_id", "item_id", "generation", "index", "kind", "chunk_text_hash", "items", "hint_keys",
-                        "passages_version"]),
+                        "passages_version",
+                        "connection_id"]),   # MULTI_DRIVE_RFC §8 (E8), appended (positional construction unchanged)
         (EnrichContext, ["now", "month_usd", "caps_usd", "initial_balance_usd", "initial_open"]),
         # P5 review M1: per-class initial-build share, appended (positional construction unchanged)
         (ModelUsageMonth, ["reader_usd", "triage_usd", "profile_usd", "passage_usd", "fallback_usd", "calls",
@@ -243,8 +245,9 @@ class TestTypes:
                            "transcribe_usd", "transcribe_initial_usd", "transcribe_reserved_usd"]),
         (InitialBuild, ["allowance_usd", "spent_usd", "opened_at", "closed_at"]),
         (DriveRecordLean, ["item_id", "parent_id", "name", "kind", "effective_date", "about_keys", "name_tokens", "state",
-                           "scope", "has_card", "indexed_generation", "content_hash", "valid_until",
-                           "owner_note_id"]),   # DRIVE_FILE_NOTES_RFC §3.3 (review I7)
+                           "scope", "has_card", "indexed_generation", "valid_until",
+                           "owner_note_id",     # DRIVE_FILE_NOTES_RFC §3.3 (review I7)
+                           "content_identity"]),   # MULTI_DRIVE_RFC §7.2: replaces content_hash
         (DriveChunkLean, ["user_id", "item_id", "generation", "index", "kind"]),
         (DriveHintLean, ["user_id", "item_id", "generation", "index", "kind", "hint_keys"]),
         (QueryConcepts, ["concepts", "ignored", "cut"]),
@@ -281,7 +284,7 @@ class TestTypes:
         doc = DriveHintDoc("u", "i", 2, 0, "pdf", "h", (item,), ("w:rome",), PASSAGES_VERSION)
         assert doc.items[0].evidence_end - doc.items[0].evidence_start == len(item.evidence)
         lean = DriveRecordLean("i", "p", "entry.pdf", "pdf", NOW, ("e:rome",), ("w:rome",), RecordState.INDEXED, Scope.NORMAL,
-                               True, 2, "q:1", None)
+                               True, 2, None, content_identity=ContentIdentity("quickxor", "q", 1))
         assert lean.state is RecordState.INDEXED
         assert DriveHintLean("u", "i", 2, 0, "pdf", ("w:rome",)).hint_keys == ("w:rome",)
         assert DriveChunkLean("u", "i", 2, 0, "pdf").index == 0
