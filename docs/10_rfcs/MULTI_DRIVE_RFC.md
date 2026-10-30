@@ -1,6 +1,6 @@
 # RFC: Multi-drive, stages 1 and 2: connections, handles, tagged refs, mounts
 
-**Status:** ACCEPTED (rev 1.2, 2026-10-30). Slice 1a built.
+**Status:** ACCEPTED (rev 1.3, 2026-10-30). Slices 1a and 1b built (1b: code final, deploy by wipe and rebuild, D20).
 **Owner:** AI Engineering
 **Milestone:** Multi-drive programme. Stage 0 (secrets at rest) is done: [SECRETS_AT_REST_RFC.md](SECRETS_AT_REST_RFC.md),
 S1–S5. This RFC is stage 1 (connections: preparatory, the user sees nothing change) and stage 2 (the product core for
@@ -9,7 +9,8 @@ adapter work only (the Google drive adapter with its native-document emulation, 
 and out of scope; §6, §7 and §11.3 define the seams it plugs into.
 **Revisions:** rev 1 (2026-10-30); rev 1.1 (2026-10-30, review round 1: cut-over keeps paid transcripts, provider-neutral
 scopes and the account-wide feed moved into stage 2); rev 1.2 (2026-10-30, accepted; slice 1a built: the engineering decisions of the slice added as
-E26–E32, the port signatures `save -> str` and `list_keys`, `authorization_url(..., *, state)`; the flow no longer stores the hint label).
+E26–E32, the port signatures `save -> str` and `list_keys`, `authorization_url(..., *, state)`; the flow no longer stores the hint label); rev 1.3 (2026-10-30, slice 1b built: owner decision D20, no migration, so §12 is "wipe and rebuild" and the
+cut-over script, copy-back, purge-new and the I6/I7 re-attachment machinery are dropped; the engineering decisions of the slice added as E33–E38).
 **Builds on:** [USER_DRIVE_RFC.md](USER_DRIVE_RFC.md), [USER_DRIVE_INDEXING_RFC.md](USER_DRIVE_INDEXING_RFC.md) (index,
 tick, transcripts, mirror), [DRIVE_SPECIALIST_RFC.md](DRIVE_SPECIALIST_RFC.md), [DRIVE_FILE_NOTES_RFC.md](DRIVE_FILE_NOTES_RFC.md).
 **Peer:** [EXTERNAL_FILES_RFC.md](EXTERNAL_FILES_RFC.md) (accepted, not built). The tagged ref of §9 is the drive row of
@@ -88,8 +89,9 @@ These are not reopened. Dates are the owner's rounds.
 | D12 | Hexagonal with no crutches; several connections of one provider must work; the cleanup is the first, preparatory stage. | 2026-10-29 |
 | D13 | Old `drive:` refs in stored history are ignored: no rewrite, no legacy resolver; they answer "search again" once. | 2026-10-29 (stage-1 round) |
 | D14 | New redirect URIs are an owner action before the stage-1 deploy. | 2026-10-29 (stage-1 round) |
-| D15 | Stage 1 changes nothing the user sees, except the index rebuild after cut-over and D13. Canonical `<mount>/` printing is stage 2. | 2026-10-29 / 2026-10-30 |
-| D16 | The live drive index is not migrated: it is purged and rebuilt by the indexer after cut-over; the owner accepts the model spend. Stored transcripts, owner notes, the `_Transcripts` mirror roots and ledger, monthly model usage and the initial-build record survive by stable keys. | 2026-10-30 |
+| D15 | Stage 1 changes nothing the user sees, except the index rebuild after the deploy (D20) and D13. Canonical `<mount>/` printing is stage 2. | 2026-10-29 / 2026-10-30 |
+| D16 | The live drive index is not migrated: it is purged and rebuilt by the indexer after the deploy; the owner accepts the model spend. Stored transcripts, owner notes, the `_Transcripts` mirror roots and ledger, monthly model usage and the initial-build record survive by stable keys (superseded by D20 for the first deploy: they are wiped). | 2026-10-30 |
+| D20 | Slice 1b ships with no migration, no cut-over script and no rollback: at the deploy all of the user's drive data is wiped, the drive is reconnected and the index rebuilt. Only the facts database and the Gmail index are precious. Supersedes D16's "survive by stable keys" for the first deploy. | 2026-10-30 |
 | D17 | The user names each drive; the name is what paths and the model use. | 2026-10-30 |
 | D18 | Every per-connection setting (name, folders or whole drive, searched by default, write folder, primary, indexing, transcription, connect, disconnect) is set in the Cabinet only; in chat the bot only points to the Cabinet. | 2026-10-30 |
 | D19 | In chat the bot keeps only notes about a drive: the owner's note on a whole connection, written through the drive specialist like file and folder notes. | 2026-10-30 |
@@ -132,7 +134,7 @@ composition the only layer that crosses all others.
 | `ConnectorRegistry` (kind → spec, drive adapter, OAuth edge) | `src/composition/connector_registry.py` | 1 |
 | `DriveProviderRouter(UserDrivePort)` (precedent: `UserAgentFactory` implements `AgentFactoryPort`) | `src/composition/drive_provider_router.py` | 1 |
 | Generic connect routes (the four per-integration pairs go); `GET /api/connectors` (the registry's kinds and labels per integration, which the Cabinet renders its connect buttons from) | `src/web/oauth_app.py`, `src/web/user_cabinet_app.py` | 1 |
-| Cut-over script (§12) | `scripts/infrastructure/multi_drive_cutover.py` | 1 |
+| Wipe script (§12, D20; replaces the cut-over script of rev 1 to 1.2) | `scripts/infrastructure/drive_wipe.py` | 1 |
 
 Removed: `services/google_oauth_service.py`; `OAuthCredentialsPort.list_users_by_provider` and `list_connected_providers`
 (the latter has no caller, `oauth_credentials_port.py:86`); `UserDrivePort.display_name`, `is_connected`, `disconnect`,
@@ -206,8 +208,8 @@ Doc `{prefix}drive_connections/{user_id}:{connection_id}` (structural tenancy, a
   (SECRETS_AT_REST R1, `decisions/reconnect_notice_r1.md`) reads connections: an `ACTIVE` connection with no credential,
   or `NEEDS_RECONNECT`, gets the one notice; `DISCONNECTED` never does.
 - The primary pointer is `DriveUserSettings.primary_connection_id`, doc `{prefix}drive_user_settings/{user_id}`, read
-  fresh on every use and written only by `DriveConnectionService` (E2). Stage 1: the cut-over sets it to the one
-  connection. Invariant I2: the primary is `ACTIVE` and has a write folder (stage 1: the App Folder root).
+  fresh on every use and written only by `DriveConnectionService` (E2). Stage 1: the first activation sets it to
+  the new connection (`DriveConnectionService.activate`). Invariant I2: the primary is `ACTIVE` and has a write folder (stage 1: the App Folder root).
 
 ## 5. The OAuth edge
 
@@ -383,12 +385,14 @@ Domain and services see an ordinary file.
   with an untagged ref answers the first line once, and the model's next search produces tagged refs.
 - `FileConversionService` (`file_conversion_service.py:57-66,109-150`) resolves the tag to a handle before
   `get_item` / `download`, through `DriveConnectionService` injected by constructor.
-- Notes' ref key becomes `r:{tag}:{item_id}` (`drive_note.py:466-468`); existing notes gain it by the cut-over (§12).
+- Notes' ref key becomes `r:{tag}:{item_id}` (`drive_note.py:466-468`); every note written from stage 1 on carries it (notes written before were wiped, D20, §12).
 - Any prompt text that shows a ref example moves to the tagged form in the same deploy.
 
-## 10. Keys that survive the rebuild
+## 10. Keys of the user-scoped stores
 
-Everything the indexer re-derives is purged (§12). What survives, and whether its key changes:
+Everything the indexer re-derives is connection-scoped (§8). The stores below are user-scoped or drive-scoped on purpose: they hold paid or
+owner-written state that outlives one connection. **Under D20 (§12) the first deploy wipes them; nothing is copied.** The "Key today"
+column is the key before slice 1b, kept for the record; "Key after" is what the runtime computes and the only form it reads.
 
 | Store | Key today | Key after | Change and why |
 |---|---|---|---|
@@ -399,29 +403,21 @@ Everything the indexer re-derives is purged (§12). What survives, and whether i
 | Monthly model usage | `{user}:{YYYY-MM}` (`drive_usage.py:33-34`) | unchanged | Per user by D8. |
 | Initial-build record | `{user}:initial` (`drive_usage.py:37-38`) | `safe_doc_id({user}:initial:{realm}:{subject})` | **Re-keyed, state carried.** D8: one build per connection, none for a reconnect of the same account; keyed by the account, a reconnect (a new connection of the same account) finds the same record. The cut-over copies the record with its spent and closed state to the user's one OneDrive account, so it opens no new budget. |
 
-The copy steps live in the cut-over script (§12): dry run by default, idempotent (a re-run writes nothing new), counts
-per collection, copy (old documents kept until `--cleanup`, so a rollback finds them).
+Rev 1 to 1.2 planned a copy of these stores to the new keys by a cut-over script. D20 dropped it: the wipe leaves them empty, and the runtime
+writes only the new keys from the first call. The mirror root is keyed by the drive, not the connection, so a reconnect or a second connection
+of one drive finds its `_Transcripts` folder again.
 
-**I5 (mirror after a rebuild).** After a purge with keep and a rebuild, the mirror moves or archives no file whose
-recording still exists and whose stored transcript exists. Today's mirror code holds it, given I6: the purge never
-writes the mirror collections, a loss mark clears when the record is present, only `current` recordings are due, and
-the scan reads an item before archiving it. The acceptance test runs the cut-over sequence on the in-memory world.
+**I5 (mirror after a rebuild).** After a purge with keep (the owner's rebuild script, or a disconnect and reconnect) and a rebuild, the mirror
+moves or archives no file whose recording still exists and whose stored transcript exists. The mirror code holds it: the purge never writes the
+mirror collections, a loss mark clears when the record is present, only `current` recordings are due, and the scan reads an item before archiving it.
 
-**I6 (keys are the runtime's).** Every key the script writes is byte-identical to the key the new code computes at run
-time for the same item, drive and account. The script imports the product's key functions and the OneDrive adapter's
-identity functions and copies no formula. Its preflight refuses unless each mirror root's `drive_id` and the drive part
-of every note's `i:` key equal the credential's `drive_id`; its dry run prints the computed initial-build key with that
-record's spent and closed state. A mismatch would, at run time, create a second `_Transcripts` root and rewrite every
-transcript into it, unbind notes from their files, or open a fresh $40 build against D8. Test T-14.
+**I6 (keys are the runtime's).** Every user-scoped key is computed by one product function from adapter-built identities (`drive_mirror.ledger_key`,
+`archive_folder_key`, `mirror_root_doc_id`, `drive_transcript.transcript_doc_id`, `drive_usage.initial_build_doc_id`, `drive_note.tagged_ref_key`).
+With the cut-over script gone (D20) no second writer exists; the rule stays as the reason no formula is repeated elsewhere. Test T-14.
 
-**I7 (no orphan sweep before re-attachment).** The daily orphan sweep of stored transcripts
-(`drive_transcript_stage.py:1480-1500`, `TRANSCRIPT_ORPHAN_TTL` 30 days, `drive_index_params.py:241`) keeps a head only
-when a record carries its key or the ledger pins it. After a purge no record carries any key until the transcript stage
-re-attaches the stored transcripts (`drive_transcript_stage.py:421-429`), and the sweep runs at the start of the first
-work-off. So: each sync state gets `transcripts_reattached_at`, set when the transcript stage finishes its first pass
-over the connection's recordings after the state was created; the user's sweep runs only when every `ACTIVE`
-connection of the user has it set. A connection with transcription off never re-attaches, so its user is not swept
-(the store keeps more, never pays twice). The cut-over's `last_used_at` stamp is the second guard (E22).
+**I7 (dropped by D20).** The orphan-sweep gate (`transcripts_reattached_at`, E22) existed only for a purge that kept the store while records lost
+their transcript keys. The wipe empties the store, so the daily sweep needs no gate; the code has none. A rebuild by the owner's script keeps the
+store and relies on the transcript stage re-attaching by content key (`drive_transcript_stage.py`), as before the connections.
 
 **I8 (paid transcripts outlive a disconnect, D9).** Before a disconnect purges a connection, every stored transcript
 head that one of its records carries gets `retained_at` (and `retained_reason: disconnect`); the sweep never deletes a
@@ -622,76 +618,55 @@ root is protected and has no card; binding by `drive_identity`: the same mismatc
 is, and two connections can cover one drive); a plain `description` field on the connection doc: it would lose
 versions, undo, erase and receipts that notes already have.
 
-## 12. Cut-over on live data (stage 1)
+## 12. Deploy of the stage: wipe and rebuild (stage 1)
 
-Slice 1b ships with a one-off cut-over; slice 1a and stage 2 need none (new fields default; their deploys are ordinary).
+**Owner decision D20 (2026-10-30): no migration, no cut-over script, no rollback.** At the slice 1b deploy every drive
+document is deleted, the drive is reconnected in the Cabinet and the index is rebuilt from zero. Only the facts database
+and the Gmail index are precious; the drive index, the stored transcripts, the owner's drive notes, the mirror roots and
+ledger and the initial-build record are not worth a migration, and the owner accepts re-paying for them. This replaces
+the cut-over of rev 1 to 1.2, whose machinery is dropped from stage 1:
+- the cut-over modes (`--apply`, `--purge-new`, `--copy-back`, `--cleanup`) and the copy steps of §10;
+- the legacy-key purge with keep, and the copy of transcript heads, parts, ledger, roots and initial-build record to
+  re-keyed documents;
+- I6 as a script rule (the script that imported the product's key functions): the runtime is now the only writer of
+  every key, so there is nothing to keep equal;
+- I7 and the re-attachment stamp `transcripts_reattached_at`: the store is empty after the wipe, so no sweep can race a
+  re-attachment (E22 is dropped with it).
+What stays: I8 and E23 (a disconnect retains the paid transcripts its records carried) are runtime behaviour, not
+migration.
 
-**Slice 1a (owner, before its deploy):** register the new callback `<service URL>/auth/connect/callback` in the Google
-and Azure consoles (D14). The old URIs stay registered until stage 1 is accepted, so either revision can be rolled back
-to. The 1a deploy changes no stored credential except the `integration` field the old code ignores.
+**The tool.** `scripts/infrastructure/drive_wipe.py --user <id> [--apply]`, one user per run, dry run by default. It
+deletes, by the `user_id` field and children first: index records, chunks, hints, transcript jobs (with their window
+results) and batches, every sync state (the old per-user one and any connection's), stored transcripts (with their
+parts), mirror roots, the mirror ledger, notes (with their versions), the initial-build record(s) in the usage
+collection, drive connections and the user's drive settings. It keeps the monthly model usage (money already spent),
+the credentials (the reconnect reuses or replaces them) and the short-lived note erase requests (TTL). It never touches
+the drive: the `_Transcripts` folder is the owner's to delete or move out of the App Folder before the rebuild, or the
+index takes it for ordinary files. A re-run finds nothing. It runs only with the drive queue and the periodic fan-out
+paused, because a tick would write while it deletes.
 
-**Slice 1b (owner, before its deploy):**
-- create the new composite and vector indexes and wait for `READY`;
-- **drain transcription with it on.** With a user's transcription flag off no transcript step runs (poll, collect,
-  finalize and extract are all gated, `drive_indexing_service.py:1754-1775`, `:4603-4607`), so an in-flight job and its
-  batch would freeze, and a purge would book the submitted batch as spend and drop it (`:4424-4432`). So: run the
-  cut-over dry run with transcription **on** until it shows no job in `working` or `waiting` and no open reservation
-  (starts happen only on new recordings or at a month turn); then switch transcription off and confirm with a second
-  dry run. If a job started in between, switch it back on and wait again.
+**The deploy itself** is an ordinary one plus the wipe: the composite and vector indexes of §8 are `READY` before the new
+code serves, the drive queue holds no task of the old payload shape (it carries no `connection_id`), and the drive is
+reconnected in the Cabinet after the wipe, which creates the `DriveConnection`, the primary pointer and the provider
+account the initial build is keyed by. The order and the commands live in the private runbook.
 
-**Order:**
-1. **Pause** `drive-sync-dev` and the Cloud Scheduler jobs `start_drive_sync` and `reconnect_notice_sweep` (the old main
-   service keeps enqueueing ticks, nudges and toggles, and between the deploy and step 3a the new one would see users
-   with no `DriveConnection`); **purge the queue's tasks** (old payloads carry no `connection_id` and would be refused
-   and retried).
-2. **Deploy** the main service and the indexer from the same revision.
-3. **Cut-over script, `--apply`** (`multi_drive_cutover.py` in `scripts/infrastructure/`). Its preflight refuses unless:
-   the queue is paused and empty (if tasks arrived, purge again and re-run), the two Scheduler jobs are paused, no
-   transcript job is in flight and no reservation is open, every old sync state's lease is free, **no connection has a
-   sync state yet** (so a re-run after the resume can never purge the rebuilt index), the new indexes are `READY`, and
-   the I6 equality checks pass. The dry run prints the counts per collection and, per user, the computed initial-build
-   key with that record's spent and closed state.
-   a. per user with an OneDrive credential: create the `DriveConnection` (new id and tag, name `Drive`, kind, credential,
-      `drive_identity` from the OneDrive adapter's identity function, the two flags copied from `UserBotConfig`) and the
-      primary pointer;
-   b. **purge with keep** of the old per-user index. First write `purging=True, purge_keep_transcripts=True` on the old
-      sync state under its lease (the trigger today's rebuild path writes), so an old revision, if rolled back to before
-      the step completes, finishes the purge itself. Then, with the rules of today's purge
-      (`drive_indexing_service.py:4329-4445`): settle open reservations (the preflight expects none); delete transcript
-      jobs and batches, hints, chunks and records whose doc ids carry the old `{user_id}:` prefix (never a
-      connection-scoped id), then the sync state doc `{user_id}`. The transcript store and its pins, notes, mirror roots
-      and ledger, and usage docs are not touched. The old key shapes are known only to this script (E14);
-   c. the copies of §10: transcript heads with all their parts and `last_used_at` = now, ledger, mirror roots,
-      initial-build record; notes gain `r:{tag}:{item}`;
-   d. print counts per collection.
-4. **Resume** the queue and the two Scheduler jobs. The fan-out finds each `ACTIVE` connection with indexing on and no
-   sync state, creates a fresh one and the indexer rebuilds: one full enumeration, then content and enrichment under the
-   monthly caps. The orphan sweep stays off for the user until re-attachment (I7).
-5. **Transcription back on** per connection (the owner's flag script) after the connection's first complete round. The
-   transcript stage then re-attaches every stored transcript by content key, paying nothing, and sets
-   `transcripts_reattached_at`. Until this step, opening a recording returns no transcript.
-6. **Owner checks**, after that first transcript pass plus `MIRROR_ARCHIVE_GRACE`: `drive_mirror_status.py` (no archive
-   moves, no new `_Transcripts` root: I5, I6), no paid window for a recording that had a stored transcript, the index
-   growing, one chat search, a drive file note read, a To Do and a Gmail action.
+**Accepted visible effects (D15, D20):** the rebuild (search answers from a growing index, with its coverage line);
+"search again" for every `drive:` ref written before the deploy (D13); stored transcripts, owner drive notes and the
+mirror's ledger gone (a recording is transcribed again if transcription is switched on, and paid again; a note is
+written again); a new initial-build budget.
 
-**Accepted visible effects (D15):** the rebuild (search answers from a growing index, with its coverage line), the
-"search again" line for refs older than the cut-over, and transcripts missing until step 5.
+**No rollback.** The previous revision cannot read the new documents and the old ones are gone. The levers are forward:
+indexing off per connection (the purge removes the index), the transcription flag off, the kill switches of the
+deploy README.
 
-**Rollback** (queue and Scheduler jobs paused again first):
-- **Before step 5:** redeploy the previous revision and run `--purge-new`, which deletes only the connection-scoped
-  documents of the four index collections, the connections' sync states and the connection documents; it never touches
-  the transcript store, ledger, mirror roots, notes or usage. The old revision finds its sync state flagged `purging`
-  (or gone) and rebuilds under the old keys, which the copies never deleted (the credentials kept `drive_id`,
-  `UserBotConfig` kept the flags, the old redirect URIs are still registered). If the initial build was still open at
-  the cut-over, the old record lacks the spend made since (the dry run line shows it), so that part can be spent twice.
-- **After step 5:** first `--copy-back`: transcript heads with their parts and ledger documents written or changed
-  under the new keys since the cut-over are copied to the old keys (with the old revision's own key functions), so the
-  old revision neither pays for them again nor meets unknown files in `_Transcripts`. Then as above.
+**Revisit trigger.** A migration is worth writing when a second user has drive data worth keeping (paid transcripts or
+notes in volume), or when a later slice changes a key of a store that cannot be rebuilt. Until then each stage that
+re-keys a drive store is a wipe, recorded in `decisions/multi_drive_wipe_not_migrate.md`.
 
-**After acceptance:** `--cleanup` deletes the old-key heads together with their parts, the old ledger, root and
-initial-build documents, the `r:{item}` note keys, the credentials' `drive_id`, the `UserBotConfig` flags and the
-`user_id` index forms; the owner removes the old redirect URIs. `drive_index_rebuild.py`, `drive_transcribe_flag.py` and
-`drive_initial_build_reset.py` take a connection (or an account) from stage 1 on.
+The scripts that act on a drive take a connection from stage 1 on: `drive_index_rebuild.py`, `drive_transcribe_flag.py`,
+`drive_initial_build_reset.py`, `drive_transcribe_requeue.py`, `drive_mirror_status.py` and `drive_transcript_sweep.py`
+accept `--connection <id>`. Without it the user's one live connection is taken; a user with none or several is refused
+with the list of ids, so a script never guesses which drive it writes to.
 
 ## 13. Architecture and contract tests
 
@@ -708,12 +683,12 @@ New requirement ids continue the series (the last is REQ-ARCH-32). The plan name
 | T-7 | Capabilities | every `DriveCapabilities` field has a service reader and a contract case per value. |
 | T-8 | Router | every `DriveProviderRouter` method body is a single dispatch call. |
 | T-9 | Money parity | two connections' ticks under `asyncio.gather` lose no monthly-spend increment or transcribe reservation. |
-| T-10 | Cut-over (script, in-memory Firestore) | dry run writes nothing; `--apply` twice equals once; counts per collection; kept stores untouched by the purge; every transcript part copied and `last_used_at` stamped; the purge deletes only `{user_id}:`-prefixed ids; the preflight refuses with a busy lease, with tasks queued, and once a connection has a sync state; `--purge-new` leaves the store, ledger, roots, notes and usage alone; `--copy-back` restores what the old revision needs; I5 on the rebuilt world. |
+| T-10 | Wipe script (in-memory Firestore; D20 replaces the rev 1 cut-over test) | a dry run counts per collection and writes nothing; `--apply` deletes every drive document of the user and nothing else (other users', the monthly usage and the credentials stay); a re-run finds nothing; an empty user id is refused (`tests/unit/scripts/test_drive_wipe.py`). |
 | T-11 | OAuth flow | a flow is single use, expires at 10 min, is refused for another session user, and a reconnect with another subject stores and revokes nothing. |
 | T-12 | Drive names | `validate_mount_name` cases (length, portable set, casefold uniqueness, reserved names, held former names); a rename keeps every ref and resolves a former-name path for 30 days with the notice; no tool, agent or background path can write a connection setting (the specialist's tool list has no settings writer; a settings commission returns the Cabinet line). |
 | T-13 | Drive notes | a `c:` note is written, undone and erased through the note tools by `whole_drive_name`; a folder note with `file_ref` never lands on the drive; exactly one target; owner-turn gating; shown in the preflight bounded; skipped by the indexer's notes step; archived on disconnect and found by the deleted-files search; kept across a reconnect. |
-| T-14 | Keys are the runtime's (I6) | for the same item, drive and account, every key the cut-over script writes equals the key the new runtime computes (transcript store, fallback, ledger, archive, mirror root, initial build, `i:`, `r:`); the script imports those functions (AST: no key formula in the script). |
-| T-15 | Paid transcripts kept (I7, I8) | after a purge, no stored transcript is swept before the connection's `transcripts_reattached_at`; with transcription off on one connection, its user is never swept; a disconnect retains the heads its records carried, and the sweep skips them after 30 days; a later connection with the same content re-attaches without a paid window. |
+| T-14 | Keys are the runtime's (I6) | every user-scoped key (transcript store, ledger, archive, mirror root, initial build, `i:`, `r:`) is built by the product function named in I6; the key tests pin each form, and no second formula is written elsewhere (a review rule; the script that was its second writer is gone). |
+| T-15 | Paid transcripts kept (I8) | a disconnect retains the heads its records carried, and the sweep skips them after 30 days; with another connection of the user (disconnected ones included) the purge keeps the store; a later connection with the same content re-attaches without a paid window. |
 
 ## 14. Slices
 
@@ -722,7 +697,7 @@ Each slice ships and is deployed before the next deploys.
 | Slice | Content | User sees | Done when |
 |---|---|---|---|
 | **1a** Credentials and the OAuth edge | `OAuthCredential`, `Integration`, `ProviderAccount`; port re-keyed and the ~39 call sites migrated; `OAuthProviderPort` with the Google and Microsoft edges; server-side flow and the generic routes; `GET /api/connectors` and the Cabinet's connect buttons rendered from it; the revoke rule; TD-V6 closed, REQ-ARCH-18 on `src/web`; T-2, T-6, T-11, the OAuth half of T-3. The drive port still addresses by user; the OneDrive adapter finds the user's one drive credential through `list_for_user`. | nothing (the connect buttons point to the new routes; consent screens as today) | every integration connects, reconnects and disconnects through the generic routes; `integration` is set on every credential (a small idempotent backfill in the slice). Owner: new redirect URIs before the deploy. |
-| **1b** Drive connections | `DriveConnection`, repository, service, primary pointer; `DriveHandle`, router, registry; port by handle; capabilities (`max_path_chars`); neutral shapes; `ConnectionScope` keys and indexes; per-connection ticks and fan-out; flags moved; tagged refs and the stale-ref lines; money transactions; the sweep gate and disconnect retention (I7, I8); T-1, T-3 drive half, T-4 (stage-1 part), T-5, T-7 to T-10, T-14, T-15; the cut-over script; prompt ref examples. | the rebuild; "search again" for old refs | the cut-over of §12 ran; G2 equal to before on the rebuilt fixture; a G3 dry run equal to before; the owner's checks of §12 step 5 pass. |
+| **1b** Drive connections | `DriveConnection`, repository, service, primary pointer; `DriveHandle`, router, registry; port by handle; capabilities (`max_path_chars`); neutral shapes; `ConnectionScope` keys and indexes; per-connection ticks and fan-out; flags moved; tagged refs and the stale-ref lines; money transactions; the sweep gate and disconnect retention (I7, I8); T-1, T-3 drive half, T-4 (stage-1 part), T-5, T-7 to T-10, T-14, T-15; the wipe script (D20); prompt ref examples. | the rebuild; "search again" for old refs; transcripts and drive notes start empty (D20) | the wipe of §12 ran for the user and the drive was reconnected; G2 equal to before on the rebuilt fixture; a G3 dry run equal to before; the owner's checks pass (the index growing, one chat search, a drive file note read, a To Do and a Gmail action). |
 | **2a** Mount tree | `drive_mounts.py`; canonical printing; `drives` fields; preflight per connection; prompt tokens; the stage-2 half of the specialist eval | every path shows its mount (`Drive/…` until renamed) | G3 before/after shows no regression; old primary-relative paths still resolve. |
 | **2b** Second connection | Cabinet list and actions (kind picker from `/api/connectors`, names with validation and former names, scope picker and "whole drive", write folder, primary, searched by default, indexing, disconnect); `feed_scope` and the planner's ancestry filter; the scope rows of the access policy; the Cabinet line in Smart's and the specialist's tokens and `capabilities.py`; drive notes (`c:` binding, `whole_drive_name` target); T-4 (stage-2 part, account-wide `fake_b`); T-12, T-13; access policy with `ItemAccess` and `writable`; the `ADD` intent (account chooser) and reconnect hints; search across connections and "also on"; bot-owned artefact placement; per-connection disconnect with note archive; initial build per account | a second drive | live acceptance on a second OneDrive App Folder account under the same app registration: add, name it in the Cabinet, write a note on it in chat, ask "find the plan on my work drive", choose a write folder, search both, "also on" for one file copied to both, set primary, disconnect the second (purged, notes archived, the first untouched). |
 
@@ -735,7 +710,7 @@ column to connection-scoped keys and names the user-scoped stores; §4.13 (initi
 (transcripts, mirror) names the per-connection mirror and the identity-keyed ledger and roots; §4.24 (notes) the tagged
 `r:` key, the disconnect archive and the note on a whole drive (`c:`); §4.23 also the sweep gate and the retention on
 disconnect; §5 (the tick) is per connection, with the account-wide feed's ancestry filter and scopes (stage 2); §6
-(search) gains `drives`, the merge and "also on" (stage 2); §7.2 (deploy order) gains the cut-over; §8 (code references) the new files. Root `CLAUDE.md`'s "User
+(search) gains `drives`, the merge and "also on" (stage 2); §7.2 (deploy order) becomes "wipe and rebuild" (D20); §8 (code references) the new files. Root `CLAUDE.md`'s "User
 Drive" and "User Drive indexing" paragraphs and `src/agents/CLAUDE.md` → Drive change in the same PR as each slice.
 
 ## 16. Engineering decisions
@@ -755,7 +730,7 @@ Drive" and "User Drive indexing" paragraphs and `src/agents/CLAUDE.md` → Drive
 | E11 | Default mount names `Drive`, `Drive 2`, …, never the provider or the account label. | Provider names never reach the model; the account label is personal. | The provider's display name; the email address. |
 | E12 | Canonical `<mount>/` printing always in stage 2, also with one connection. | One rule; a conditional prefix would change a file's printed path the day a second drive is added. | Printing the mount only when there are two or more connections. |
 | E13 | A new connection of a drive does not revive notes archived by an earlier disconnect (v1). | Rare; the archived note is findable; revival needs a new lifecycle transition. | Automatic revival by identity on the first round. |
-| E14 | The legacy purge is a step of the one-off cut-over script; product code knows only the new keys. | No legacy branch in `src/` (D12); the script is deleted after acceptance. | Purging on the old revision before the deploy: needs a "purge now" release first, and the old fan-out can restart a rebuild between purge and pause. Teaching the new purge the old shapes: a legacy special case. |
+| E14 | (Superseded by D20: no legacy purge exists.) Product code knows only the new keys; the old data is wiped by `drive_wipe.py`. | No legacy branch in `src/` (D12); the script is deleted after acceptance. | Purging on the old revision before the deploy: needs a "purge now" release first, and the old fan-out can restart a rebuild between purge and pause. Teaching the new purge the old shapes: a legacy special case. |
 | E15 | `ConnectorSpec.multiple` decides cardinality in `OAuthConnectService`, not in the store. | Product policy, not storage; the store stops raising on two records of a kind. | Keeping the store's one-per-kind check (it would forbid two drives). |
 | E16 | The flow carries an intent (`CONNECT`, `ADD`, `RECONNECT`) and a hint; each edge maps them to its realm's parameters; stage 1 uses only today's. | Services hold no OAuth parameter names; Google must merge `consent` and `select_account`; stage 1 looks the same (D15). | Static `auth_params` on the spec plus service-added prompts. |
 | E17 | A drive note is a note with a connection binding `c:{connection_id}`. | Reuses versions, undo, erase, receipts and gating; the note says what this connection is. | The drive root item's `i:` binding (outlives the connection, no single root on full drives); a `description` field (no versions or undo). |
@@ -763,7 +738,7 @@ Drive" and "User Drive indexing" paragraphs and `src/agents/CLAUDE.md` → Drive
 | E19 | Drive phrases are resolved by the model from names and notes in the preflight; code accepts only exact (casefold) names. | A wrong guess is refused, never applied to the wrong drive. | Fuzzy matching in code; an alias list per connection. |
 | E20 | The account-wide feed filter, selected-folder scopes, "whole drive", their access rows and the scope picker are stage 2, proven by an account-wide fake. | They are provider-neutral; leaving them to stage 3 would make the next provider change planner, policy and Cabinet, failing D12. | Deferring them to stage 3; weakening the bar to "providers inside the current capability set". |
 | E21 | Native documents are adapter emulation (export on `download`, `can_write_content=False`, not downloadable over the cap); no `native_documents` capability. | Domain sees an ordinary file; the existing policy and cannot-open path cover it. | A capability and an open-path branch. |
-| E22 | No orphan sweep for a user until every connection has re-attached since its sync state was created; the cut-over also stamps `last_used_at`. | After a purge no record carries a transcript key, and the sweep runs first in the work-off; a stamp alone only delays the loss by 30 days. | Only stamping `last_used_at`; pinning every copied head forever (defeats the sweep for recordings truly deleted). |
+| E22 | (Dropped by D20.) The orphan-sweep gate and the `last_used_at` stamp were for a purge that kept the store; the wipe empties it. | See I7. | - |
 | E23 | A disconnect marks the transcripts its records carried `retained`; the sweep never deletes a retained head. | Realises D9 beyond the sweep's 30 days. | Relying on the 30-day window; deleting with the index. |
 | E24 | The network-capable parser sandbox gets a header-less URL or streamed bytes, never provider headers. | A full-drive bearer token must not enter the sandbox; deciding now keeps stage 3 a pure adapter. | Passing `MediaSource.headers` to ffmpeg. |
 | E25 | Single-credential services filter by the `kind` of an injected `ConnectorSpec`, not by integration. | `TASKS` has two kinds (Google Tasks and To Do); an integration filter is the overloaded argument relocated. | `list_for_user(user, integration)`. |
@@ -774,10 +749,15 @@ Drive" and "User Drive indexing" paragraphs and `src/agents/CLAUDE.md` → Drive
 | E30 | One `Integration` enum (`domain/integration.py`: `MAIL`, `TASKS`, `DRIVE`) serves the Cabinet grouping and R1's reconnect notices; `reconnect_policy` imports it and no second enum of the name exists. The ops alert path strings of R1 changed with it (`mail_`, `tasks_`, `drive_reconnect_notice`). | Two enums of one name drift; the notice texts are unchanged. | Keeping R1's `GMAIL/TODO/DRIVE` enum beside it. |
 | E31 | `ConnectorSpec.required_scopes` holds product scopes only; each edge adds the identity scopes it needs, and Microsoft's granted scopes are normalised to the short form before the check. `ConnectorSpec.offered` is False for Google Tasks (frozen: stored grants work, no button, no entry in `GET /api/connectors`). | The scope check compares like with like; the registry is the single place that knows which kinds the Cabinet offers. | Identity scopes in every spec; a Cabinet-side list of kinds. |
 | E32 | `GMAIL_INDEX_PROVIDER` (`domain/email.py`) is the email index's own key, not a credential kind; the credential kind literals live in the registry. | The email index job and the credential are different records; the index key names a provider of mail, not a grant, and T-6 keeps credential kind literals in the registry. | Reusing the `gmail` kind constant for the index. |
+| E33 | A connect is a reconnect of a live connection of the same kind when it carries the same `credential_id`, else the same `drive_identity`; otherwise a new connection. DISCONNECTED is terminal and its tag stays reserved. | The credential store keeps one record per user, kind and provider account, so a consent of the same account keeps its credential id; the identity also catches an account whose credential was deleted while the connection stayed `ACTIVE`. | Matching by account label (personal, not stable); reviving a DISCONNECTED connection. |
+| E34 | A connect whose drive identity cannot be read fails, and the connect service removes the credential it just saved. A reconnect falls back to the matching connection's stored identity. | No credential without its connection, and no connection with a guessed identity (the mirror roots and ledger key on it). | Storing an empty identity and healing later. |
+| E35 | `DriveConnection` carries `provider_account` (realm and subject; the label stays in the credential). The fan-out backfills it on a connection stored without it. | The initial build is keyed by the account (D8); a tick reads the key from the connection and never decrypts the credential, so a KMS failure cannot read as "no initial build". | Reading the credential on every tick. |
+| E36 | Caps (carded records, readable chunks) are per connection in stage 1; the monthly dollars and the initial build stay per user and per account. Revisit in 2b, where several connections share one user. | Stage 1 has one connection, so the two readings agree; the choice matters only with a second drive. | Deciding the per-user split before a second connection exists. |
+| E37 | E24's streaming path is not built: the transcript stage refuses a `MediaSource` that needs request headers (charges the file, logs an ERROR, never logs the URL or headers). | OneDrive gives a pre-signed URL; building a byte stream for a header-carrying source belongs with the first adapter that needs it (stage 3). | Passing headers to the parser sandbox (the bearer token would enter it). |
+| E38 | Money keeps its existing server-side increments (`firestore.Increment` on the usage document and the initial-build spend under one in-process lock plus a transaction); no new money store for connections. | Two connections' ticks add to the same user documents; increments lose nothing under concurrency (T-9). | A per-connection money document summed at read time. |
 
 ## 17. Owner-only questions
 
 None open after the owner decisions of §2. Owner **actions** (not questions): register the new redirect URI before
-slice 1a deploys (D14); drain transcription with it on, then switch it off, before the cut-over, and back on after the first round (§12); run the cut-over
-script and the checks; for stage 2, consent a second Microsoft account to the app; remove the old redirect URIs after
+slice 1a deploys (D14); run the wipe for the user, reconnect the drive in the Cabinet and run the checks (§12); for stage 2, consent a second Microsoft account to the app; remove the old redirect URIs after
 acceptance.
