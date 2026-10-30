@@ -9,6 +9,7 @@ from src.domain.drive_search import NOT_READ_YET_COUNTER, UNREAD_COUNTER
 
 from src.domain.drive_handle import DriveHandle
 
+from .drive_index_fakes import U_SCOPE
 from .test_drive_search_service import World
 
 # the single-drive harness's connection (`LegacyConnections`: connection id = user id)
@@ -37,8 +38,8 @@ async def test_off_the_calls_are_exactly_the_old_ones():
     out = await w.indexer._unread_counters(HANDLE, {})
     calls = sorted((c.args, tuple(sorted(c.kwargs.items()))) for c in spy.call_args_list)
     assert calls == sorted([
-        (("u", policy.ADMITTED_KINDS, policy.TRIAGED_KINDS), (("pending", True),)),
-        (("u", policy.ADMITTED_KINDS, policy.TRIAGED_KINDS), (("pending", False),)),
+        ((U_SCOPE, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS), (("pending", True),)),
+        ((U_SCOPE, policy.ADMITTED_KINDS, policy.TRIAGED_KINDS), (("pending", False),)),
     ], key=lambda c: (c[0], c[1]))
     assert out[NOT_READ_YET_COUNTER] == 1 and out[UNREAD_COUNTER] == 1     # only the pdf
 
