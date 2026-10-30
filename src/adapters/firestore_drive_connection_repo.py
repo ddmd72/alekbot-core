@@ -26,6 +26,7 @@ from ..domain.connection_scope import ConnectionScope
 from ..domain.drive_connection import DriveConnection, connection_doc_id
 from ..domain.drive_connection_state import ConnectionState, can_transition
 from ..domain.drive_user_settings import DriveUserSettings
+from ..domain.provider_account import ProviderAccount
 from ..ports.drive_connection_repository import DriveConnectionRepository
 from ..utils.logger import logger
 
@@ -57,8 +58,14 @@ def _to_doc(connection: DriveConnection, now: datetime) -> Dict[str, Any]:
         "state": connection.state.value,
         "created_at": connection.created_at,
         "disconnected_at": connection.disconnected_at,
+        **_account_fields(connection.provider_account),
         "updated_at": now,
     }
+
+
+def _account_fields(account: Optional[ProviderAccount]) -> Dict[str, Any]:
+    """The stored form of the provider account: realm and subject only (the label is ciphertext in the credential)."""
+    return {"provider_realm": account.realm if account else "", "provider_subject": account.subject if account else ""}
 
 
 def _from_doc(data: Dict[str, Any]) -> DriveConnection:
@@ -79,6 +86,8 @@ def _from_doc(data: Dict[str, Any]) -> DriveConnection:
         state=ConnectionState(data["state"]),
         created_at=created_at,
         disconnected_at=_utc(data.get("disconnected_at")),
+        provider_account=ProviderAccount(realm=data["provider_realm"], subject=data["provider_subject"], label="")
+        if data.get("provider_realm") and data.get("provider_subject") else None,
     )
 
 
@@ -161,10 +170,13 @@ class FirestoreDriveConnectionRepository(DriveConnectionRepository):
     async def update(self, user_id: str, connection_id: str, *, credential_id: Optional[str] = None,
                      drive_identity: Optional[str] = None, mount_name: Optional[str] = None,
                      indexing_enabled: Optional[bool] = None,
-                     transcribe_enabled: Optional[bool] = None) -> Optional[DriveConnection]:
+                     transcribe_enabled: Optional[bool] = None,
+                     provider_account: Optional[ProviderAccount] = None) -> Optional[DriveConnection]:
         given = {"credential_id": credential_id, "drive_identity": drive_identity, "mount_name": mount_name,
                  "indexing_enabled": indexing_enabled, "transcribe_enabled": transcribe_enabled}
         fields = {name: value for name, value in given.items() if value is not None}
+        if provider_account is not None:
+            fields.update(_account_fields(provider_account))
         for name in _TEXT_FIELDS:
             if name in fields and not fields[name]:
                 raise ValueError(f"a drive connection's {name} cannot be emptied")

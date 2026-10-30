@@ -465,6 +465,12 @@ class DriveTranscriptMirror:
             ctx.area_path = await self._drive.area_path(ctx.handle)
         return ctx.area_path
 
+    async def _max_path(self, ctx: "_Run") -> int:
+        """The connection's longest accepted path (`DriveCapabilities.max_path_chars`), read once per run."""
+        if ctx.max_path is None:
+            ctx.max_path = (await self._drive.capabilities(ctx.handle)).max_path_chars
+        return ctx.max_path
+
     async def _root_path(self, ctx: "_Run") -> str:
         """The root's current path below the App Folder, from its record (a rename or move of the root is followed);
         the creation name when the root has no record yet."""
@@ -784,7 +790,8 @@ class DriveTranscriptMirror:
         day = local_day(doc.gone_at or ctx.now, ctx.host.tz_name)
         active_parts = await self._mirror_parts(ctx, doc)
         placement = archive_place(day, active_parts, area_path=await self._area_path(ctx),
-                                  root_path=await self._root_path(ctx))
+                                  root_path=await self._root_path(ctx),
+                                  max_path=await self._max_path(ctx))
         target = await self._archive_chain(ctx, day, placement)
         old_parent = doc.mirror_parent_id
         in_day = len(placement.parts) == 3 and placement.parts[2] != LONG_PATHS_NAME
@@ -983,7 +990,8 @@ class DriveTranscriptMirror:
         long = bool(doc.long_path_source) and doc.long_path_source == placement_source(rec)
         if not long:
             folder_names = [await self._chain_name(ctx, a) for a in work.chain]
-            long = not fits(await self._area_path(ctx), await self._root_path(ctx), [*folder_names, name])
+            long = not fits(await self._area_path(ctx), await self._root_path(ctx), [*folder_names, name],
+                               await self._max_path(ctx))
         if long:
             parent = await self._fixed_folder(ctx, archive_folder_key(ctx.user_id, ctx.drive_identity, "", LONG_PATHS_NAME),
                                               ctx.need_root.root_item_id, LONG_PATHS_NAME)
@@ -2116,6 +2124,7 @@ class _Run:
     root_created: bool = False
     area_root_id: Optional[str] = None
     area_path: Optional[str] = None
+    max_path: Optional[int] = None
     root_path: Optional[str] = None
     recs: Dict[str, Optional[DriveIndexRecord]] = field(default_factory=dict)
     taken: Dict[str, Set[str]] = field(default_factory=dict)

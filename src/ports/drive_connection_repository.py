@@ -19,6 +19,7 @@ from typing import List, Optional, Sequence
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_user_settings import DriveUserSettings
+from src.domain.provider_account import ProviderAccount
 
 
 class DriveConnectionRepository(ABC):
@@ -45,7 +46,8 @@ class DriveConnectionRepository(ABC):
     async def update(self, user_id: str, connection_id: str, *, credential_id: Optional[str] = None,
                      drive_identity: Optional[str] = None, mount_name: Optional[str] = None,
                      indexing_enabled: Optional[bool] = None,
-                     transcribe_enabled: Optional[bool] = None) -> Optional[DriveConnection]:
+                     transcribe_enabled: Optional[bool] = None,
+                     provider_account: Optional[ProviderAccount] = None) -> Optional[DriveConnection]:
         """Set the fields given (None keeps a field) and return the stored connection after the write; None when the
         connection does not exist (nothing written). Never changes `state` or `disconnected_at`."""
 

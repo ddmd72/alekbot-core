@@ -40,8 +40,10 @@ with the count and the fix only, through `notify_raw` (no formatter model, no hi
 attached text file through `notify_file_bytes`, sent first. The records are marked notified before the send and
 unmarked when the list was not sent; this fan-out is the only writer of `inaccessible_notified_since`.
 
-The initial build is keyed by the connection's provider account (MULTI_DRIVE_RFC §10, D8): `account_of(user_id,
-credential_id)` (composition) gives it; without one (the credential is gone) the stall check counts no initial build.
+The initial build is keyed by the connection's provider account (MULTI_DRIVE_RFC §10, D8), read from the connection's
+`provider_account`. A connection stored before that field gets it here: `account_of(user_id, credential_id)`
+(composition) decrypts the credential once and the account is written back; without an account (the credential is
+gone) the stall check counts no initial build.
 
 Public interface:
     DriveSyncSchedulerService(repo, queue, connections, notifier, alert_sink, *, connection_service, account_of,
@@ -204,7 +206,13 @@ class DriveSyncSchedulerService:
     async def _initial_build(self, connection: DriveConnection) -> InitialBuild:
         """The initial build of the connection's provider account (D8); a closed one when the account is unknown (no
         `account_of`, or the credential is gone), so only the month's caps count."""
-        account = await self._account_of(connection.user_id, connection.credential_id) if self._account_of else None
+        account = connection.provider_account
+        if account is None and self._account_of:
+            # a connection stored before the field: one decrypt, then the account is kept on the connection
+            account = await self._account_of(connection.user_id, connection.credential_id)
+            if account is not None:
+                await self._connections.update(connection.user_id, connection.connection_id,
+                                               provider_account=ProviderAccount(account.realm, account.subject, ""))
         if account is None:
             return closed_initial(new_initial_build(), self._clock())
         return await self._repo.get_initial_build(connection.user_id, account.realm, account.subject)

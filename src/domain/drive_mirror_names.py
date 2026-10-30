@@ -138,9 +138,10 @@ def full_path_length(area_path: str, root_path: str, parts: Sequence[str]) -> in
     return sum(len(c) for c in comps) + max(len(comps) - 1, 0)
 
 
-def fits(area_path: str, root_path: str, parts: Sequence[str]) -> bool:
-    """True when the path is within the drive's path limit minus MIRROR_PATH_MARGIN."""
-    return full_path_length(area_path, root_path, parts) <= ONEDRIVE_PATH_MAX - MIRROR_PATH_MARGIN
+def fits(area_path: str, root_path: str, parts: Sequence[str], max_path: int = ONEDRIVE_PATH_MAX) -> bool:
+    """True when the path is within the drive's path limit (`max_path`, the connection's `max_path_chars`; default
+    OneDrive's) minus MIRROR_PATH_MARGIN."""
+    return full_path_length(area_path, root_path, parts) <= max_path - MIRROR_PATH_MARGIN
 
 
 @dataclass(frozen=True)
@@ -150,22 +151,24 @@ class Placement:
     long_path: bool = False
 
 
-def place(active_parts: Sequence[str], *, area_path: str, root_path: str) -> Placement:
+def place(active_parts: Sequence[str], *, area_path: str, root_path: str,
+          max_path: int = ONEDRIVE_PATH_MAX) -> Placement:
     """The active location, or `Long paths/<name>` when the path does not fit (§27.9.7)."""
     parts = tuple(active_parts)
     if not parts:
         raise ValueError("place: active_parts is empty")
-    if fits(area_path, root_path, parts):
+    if fits(area_path, root_path, parts, max_path):
         return Placement(parts)
     return Placement((LONG_PATHS_NAME, parts[-1]), True)
 
 
-def archive_place(day: str, active_parts: Sequence[str], *, area_path: str, root_path: str) -> Placement:
+def archive_place(day: str, active_parts: Sequence[str], *, area_path: str, root_path: str,
+                  max_path: int = ONEDRIVE_PATH_MAX) -> Placement:
     """`Archive/<day>/<mirror path>`, or `Archive/<day>/Long paths/<name>` when it does not fit (§27.9.6, Δ189)."""
     if not active_parts:
         raise ValueError("archive_place: active_parts is empty")
     parts = (ARCHIVE_NAME, day, *active_parts)
-    if fits(area_path, root_path, parts):
+    if fits(area_path, root_path, parts, max_path):
         return Placement(parts)
     return Placement((ARCHIVE_NAME, day, LONG_PATHS_NAME, active_parts[-1]), True)
 

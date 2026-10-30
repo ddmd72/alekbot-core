@@ -56,6 +56,7 @@ from ..domain.drive_ref_refusal import DriveRefRefusal, disconnected_ref_line, s
 from ..domain.drive_resolved_ref import ResolvedDriveRef
 from ..domain.drive_user_settings import DriveUserSettings
 from ..domain.oauth_credential import OAuthCredential
+from ..domain.provider_account import ProviderAccount
 from ..domain.user_drive import DriveNotConnectedError
 from ..ports.drive_connection_repository import DriveConnectionRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
@@ -67,6 +68,11 @@ _LIVE = (ConnectionState.ACTIVE, ConnectionState.NEEDS_RECONNECT)
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _stored_account(credential: OAuthCredential) -> ProviderAccount:
+    """The credential's provider account as a connection keeps it: realm and subject, the label stays in the ciphertext."""
+    return ProviderAccount(realm=credential.account.realm, subject=credential.account.subject, label="")
 
 
 def _random_id() -> str:
@@ -134,9 +140,11 @@ class DriveConnectionService:
         if current.drive_identity != drive_identity:
             logger.warning(f"🔗 Drive connection {connection_id[:8]} of user={user_id[:8]} now reads another drive "
                            f"identity on reconnect; stored the new one")
-        if current.credential_id != credential.credential_id or current.drive_identity != drive_identity:
+        account = _stored_account(credential)
+        if (current.credential_id != credential.credential_id or current.drive_identity != drive_identity
+                or current.provider_account != account):
             await self._connections.update(user_id, connection_id, credential_id=credential.credential_id,
-                                           drive_identity=drive_identity)
+                                           drive_identity=drive_identity, provider_account=account)
         if current.state is ConnectionState.NEEDS_RECONNECT:
             await self._connections.transition(user_id, connection_id, ConnectionState.ACTIVE, self._clock())
         stored = await self._connections.get(user_id, connection_id)
@@ -157,7 +165,8 @@ class DriveConnectionService:
             connection = DriveConnection(
                 connection_id=self._new_id(), user_id=credential.user_id, account_id=credential.account_id or "",
                 credential_id=credential.credential_id, kind=credential.kind, drive_identity=drive_identity,
-                ref_tag=tag, mount_name=name, created_at=self._clock())
+                ref_tag=tag, mount_name=name, created_at=self._clock(),
+                provider_account=_stored_account(credential))
             if await self._connections.create(connection):
                 return connection
             taken_tags.add(tag)        # the id was taken: try another id and tag

@@ -844,7 +844,7 @@ class DriveIndexingService:
             state = replace(state, notes_merge_version=0)
         saved = _Saved(state)
         models = _Models(state, saved=saved)
-        account = await self._account(handle)
+        account = await self._account(handle, connection)
         spend = _Spend(now, await self._repo.get_model_usage(handle.user_id, month_key(now)),
                        await self._initial_build(handle, account), account=account)
         spend_token = _TICK_SPEND.set(spend)
@@ -4706,7 +4706,11 @@ class DriveIndexingService:
             return closed_initial(new_initial_build(), self._clock())
         return await self._repo.get_initial_build(handle.user_id, account.realm, account.subject)
 
-    async def _account(self, handle: DriveHandle) -> Optional[ProviderAccount]:
+    async def _account(self, handle: DriveHandle, connection: Optional[DriveConnection] = None) -> Optional[ProviderAccount]:
+        """The connection's provider account, from the connection when it holds one (no decrypt); otherwise (a
+        connection stored before the field, or no connection at hand) from the credential through `account_of`."""
+        if connection is not None and connection.provider_account is not None:
+            return connection.provider_account
         if self._account_of is None:
             return None
         account = await self._account_of(handle.user_id, handle.credential_id)

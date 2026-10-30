@@ -13,6 +13,9 @@ Fields (stage 1; stage 2 adds the scope, write folder and searched-by-default fi
 - `ref_tag`: the tag of every `drive:<tag>:<item_id>` ref of this connection (§9); immutable, never reused.
 - `mount_name`: the user's name for the drive (D17); `DEFAULT_MOUNT_NAME` for the first one (E11).
 - `indexing_enabled`, `transcribe_enabled`: the per-connection switches that were per user before.
+- `provider_account`: the provider account (realm, subject; label empty) of the grant the connection was activated with,
+  the key of its initial build, so a tick reads it here and never decrypts the credential; None on a connection stored
+  before the field (the fan-out backfills it).
 - `state`, `created_at`, `disconnected_at`: `disconnected_at` is set exactly when the state is DISCONNECTED.
 
 Drives read reconnect state only from here (`state`), never from the credential.
@@ -34,6 +37,7 @@ from .connection_scope import ConnectionScope, check_connection_id
 from .drive_connection_state import ConnectionState, can_transition
 from .drive_handle import DriveHandle
 from .drive_ref import is_valid_tag
+from .provider_account import ProviderAccount
 
 DEFAULT_MOUNT_NAME = "Drive"
 
@@ -53,6 +57,7 @@ class DriveConnection:
     state: ConnectionState = ConnectionState.ACTIVE
     created_at: datetime
     disconnected_at: Optional[datetime] = None
+    provider_account: Optional[ProviderAccount] = None
 
     def __post_init__(self) -> None:
         check_connection_id(self.connection_id)
