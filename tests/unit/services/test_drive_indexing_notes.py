@@ -24,7 +24,7 @@ from src.domain.drive_index_params import (
 )
 from src.domain.drive_keys import note_keys
 from src.domain.drive_note import (
-    ONEDRIVE_PROVIDER_KEY, DriveNote, NoteAction, NoteBinding, NoteContent, NoteProvenance, NoteSnapshot, NoteState,
+    DriveNote, NoteAction, NoteBinding, NoteContent, NoteProvenance, NoteSnapshot, NoteState,
     note_after_write, next_version,
 )
 from src.domain.drive_note_merge import NOTE_EMBED_PER_TICK, NOTE_STEP_S, NOTE_WATERMARK_SKEW_S
@@ -120,7 +120,8 @@ class World:
         now = self.clock()
         version = next_version(base.current_version, NoteContent(text, doc_type, areas), NoteAction.SET,
                                NoteProvenance(turn_id="t"), now)
-        binding = NoteBinding(provider_key=ONEDRIVE_PROVIDER_KEY, drive_id=drive_id, item_id=item_id, bound_at=now)
+        # bound by the item identity on the harness connection (tag a1), as the note tools bind (MULTI_DRIVE_RFC §7.2, §9)
+        binding = NoteBinding(item_id=item_id, identity=f"fake:{drive_id}:{item_id}", ref_tag="a1", bound_at=now)
         written = note_after_write(base, version, NoteState.ACTIVE, NoteProvenance(turn_id="t"), now,
                                    vector=[0.1] * 8, embedding_space=SPACE, embedding_pending=False, binding=binding,
                                    snapshot=NoteSnapshot(name=item_id))

@@ -4,7 +4,7 @@ import pytest
 
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import Reason, RecordState, TriageVerdict
-from src.domain.drive_index_params import READER_RENDITION_SIZE, READER_RENDITION_STEPS
+from src.domain.drive_index_params import READER_RENDITION_EDGE_PX, READER_RENDITION_STEPS
 from src.domain.drive_index_run import READER_IMAGE_MAX_BYTES
 from src.domain.user_drive import DriveThumbnailTooLarge
 
@@ -41,7 +41,7 @@ async def test_over_cap_big_rendition_steps_down_and_the_reader_runs(w, monkeypa
     w.triage.default = TriageVerdict.TEXT
     w.reader.outcomes["scan.png"] = _read()
     img = w.add_image("scan.png", thumbnail=JPEG)
-    _over_cap(w, monkeypatch, {READER_RENDITION_SIZE})
+    _over_cap(w, monkeypatch, {READER_RENDITION_EDGE_PX})
     await w.settle()
     assert w.rec(img).state is RecordState.INDEXED
     assert [s for i, s in w.drive.thumbnail_calls if i == img and s in READER_RENDITION_STEPS] == \

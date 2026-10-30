@@ -10,7 +10,7 @@ from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import DocumentBrief, Priority, Reason, RecordState, TriageVerdict
 from src.domain.drive_enrichment import UsageClass
 from src.domain.drive_index_params import (
-    INITIAL_BUILD_USD, MODEL_BACKOFF_BASE_S, READER_PAGE_USD_ESTIMATE, READER_RENDITION_SIZE, READER_USD_PER_MONTH,
+    INITIAL_BUILD_USD, MODEL_BACKOFF_BASE_S, READER_PAGE_USD_ESTIMATE, READER_RENDITION_EDGE_PX, READER_USD_PER_MONTH,
 )
 from src.domain.drive_index_run import READER_IMAGE_MAX_BYTES
 
@@ -193,7 +193,7 @@ async def test_a_text_image_is_read_from_the_large_rendition(w):
     await w.settle()
     rec = w.rec(img)
     assert (rec.state, rec.extracted_by) == (RecordState.INDEXED, "reader@1")
-    assert (img, READER_RENDITION_SIZE) in w.drive.thumbnail_calls and img not in w.drive.downloads
+    assert (img, READER_RENDITION_EDGE_PX) in w.drive.thumbnail_calls and img not in w.drive.downloads
     (request,) = w.reader.requests
     assert request.kind == "image" and seen == [PNG]
 
@@ -205,7 +205,7 @@ async def test_without_a_rendition_a_small_jpeg_original_is_read(w, monkeypatch)
     original = w.drive.get_thumbnail
 
     async def renditions(user_id, item_id, size):   # a triage thumbnail, but no large rendition
-        return None if size == READER_RENDITION_SIZE else await original(user_id, item_id, size)
+        return None if size == READER_RENDITION_EDGE_PX else await original(user_id, item_id, size)
     monkeypatch.setattr(w.drive, "get_thumbnail", renditions)
     await w.settle()
     assert img in w.drive.downloads and w.rec(img).state is RecordState.INDEXED
@@ -217,7 +217,7 @@ async def test_without_a_rendition_heic_is_never_decoded(w, monkeypatch):
     original = w.drive.get_thumbnail
 
     async def renditions(user_id, item_id, size):
-        return None if size == READER_RENDITION_SIZE else await original(user_id, item_id, size)
+        return None if size == READER_RENDITION_EDGE_PX else await original(user_id, item_id, size)
     monkeypatch.setattr(w.drive, "get_thumbnail", renditions)
     await w.settle()
     assert w.rec(img).reason is Reason.NO_TEXT and w.drive.downloads == [] and w.reader.requests == []
@@ -230,7 +230,7 @@ async def test_a_big_original_is_not_sent(w, monkeypatch):
     original = w.drive.get_thumbnail
 
     async def renditions(user_id, item_id, size):
-        return None if size == READER_RENDITION_SIZE else await original(user_id, item_id, size)
+        return None if size == READER_RENDITION_EDGE_PX else await original(user_id, item_id, size)
     monkeypatch.setattr(w.drive, "get_thumbnail", renditions)
     await w.settle()
     assert w.rec(img).reason is Reason.NO_TEXT and w.drive.downloads == []

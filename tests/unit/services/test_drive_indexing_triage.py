@@ -10,7 +10,7 @@ from src.domain.drive_enrichment_calls import ModelReplyStatus, TriageReply
 from src.domain.drive_index import Priority, Reason, RecordState, TriageVerdict
 from src.domain.drive_enrichment import UsageClass
 from src.domain.drive_index_params import (
-    MAX_ATTEMPTS, QUIET, RETRY_CAP, TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_SIZE, TRIAGE_USD_PER_MONTH,
+    MAX_ATTEMPTS, QUIET, RETRY_CAP, TRIAGE_BATCH, TRIAGE_IMAGE_USD_ESTIMATE, TRIAGE_THUMBNAIL_EDGE_PX, TRIAGE_USD_PER_MONTH,
 )
 from src.domain.user_drive import DriveAccessDenied
 
@@ -39,7 +39,7 @@ async def test_holiday_photos_cost_only_batched_triage(w, photos):
     assert len(w.triage.calls) == math.ceil(photos / TRIAGE_BATCH)
     assert all(len(batch) <= TRIAGE_BATCH for batch in w.triage.calls)
     assert w.reader.requests == [] and w.drive.downloads == []
-    assert {size for _, size in w.drive.thumbnail_calls} == {TRIAGE_THUMBNAIL_SIZE}
+    assert {size for _, size in w.drive.thumbnail_calls} == {TRIAGE_THUMBNAIL_EDGE_PX}
     for n, item in enumerate(ids):
         rec = w.rec(item)
         assert (rec.state, rec.reason, rec.photo_description) == (RecordState.METADATA_ONLY, Reason.PHOTOGRAPH,
