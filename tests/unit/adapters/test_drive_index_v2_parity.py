@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_enrichment import DriveHintDoc, HintItem, InitialBuild, ModelUsageMonth
 from src.domain.drive_index import DriveChunk, DriveIndexRecord, RecordState, Scope
 from src.domain.drive_index_lean import DriveChunkLean, DriveHintLean, DriveRecordLean
@@ -16,22 +17,26 @@ from tests.unit.adapters.firestore_drive_eval_fakes import EvalDb, eval_transact
 
 D = datetime(2026, 5, 1, tzinfo=timezone.utc)
 NOW = datetime(2026, 10, 13, 12, tzinfo=timezone.utc)
+U = ConnectionScope(user_id="u", connection_id="u")
+OTHER = ConnectionScope(user_id="other", connection_id="other")
+NOBODY = ConnectionScope(user_id="nobody", connection_id="nobody")
+REALM, SUBJECT = "microsoft", "acct-1"   # the provider account an initial build is keyed by (MULTI_DRIVE_RFC §10)
 
 
 def rec(item, *, user="u", kind="pdf", eff=None, keys=(), **kw):
     kw.setdefault("parent_id", "root")
-    return DriveIndexRecord(user_id=user, item_id=item, kind=kind, effective_date=eff, about_keys=tuple(keys),
+    return DriveIndexRecord(user_id=user, connection_id=user, item_id=item, kind=kind, effective_date=eff, about_keys=tuple(keys),
                             name=f"{item}.{kind}", state=RecordState.INDEXED, scope=Scope.NORMAL, **kw)
 
 
 def chunk(item, gen=1, index=0, *, user="u", kind="pdf", keys=()):
-    return DriveChunk(user_id=user, item_id=item, generation=gen, index=index, text=f"text {item}/{gen}/{index}",
+    return DriveChunk(user_id=user, connection_id=user, item_id=item, generation=gen, index=index, text=f"text {item}/{gen}/{index}",
                       char_start=index * 10, char_end=index * 10 + 10, kind=kind, word_keys=tuple(keys),
                       keys_version=1)
 
 
 def hint(item, gen=1, index=0, *, user="u", kind="pdf", keys=()):
-    return DriveHintDoc(user_id=user, item_id=item, generation=gen, index=index, kind=kind, chunk_text_hash=f"h{index}",
+    return DriveHintDoc(user_id=user, connection_id=user, item_id=item, generation=gen, index=index, kind=kind, chunk_text_hash=f"h{index}",
                         items=(HintItem("Rome", "keyword", "in Roma", 3, 10),
                                HintItem("Where to stay?", "question", "hotel", -1, -1)),
                         hint_keys=tuple(keys), passages_version=1)
@@ -95,59 +100,59 @@ class TestFindByAboutKeys:
         return pair
 
     async def test_newest_first_ties_by_item_desc_undated_last(self, seeded):
-        got = await seeded.both("find_by_about_keys", "u", ["e:rome", "k:ticket"], 10)
+        got = await seeded.both("find_by_about_keys", U, ["e:rome", "k:ticket"], 10)
         assert [r.item_id for r in got] == ["c", "b", "a", "f", "d"]
         assert all(isinstance(r, DriveRecordLean) for r in got)
 
     async def test_a_record_matching_two_keys_is_returned_once(self, seeded):
-        got = await seeded.both("find_by_about_keys", "u", ["e:rome", "k:ticket"], 10)
+        got = await seeded.both("find_by_about_keys", U, ["e:rome", "k:ticket"], 10)
         assert [r.item_id for r in got].count("a") == 1
 
     async def test_limit(self, seeded):
-        got = await seeded.both("find_by_about_keys", "u", ["e:rome", "k:ticket"], 2)
+        got = await seeded.both("find_by_about_keys", U, ["e:rome", "k:ticket"], 2)
         assert [r.item_id for r in got] == ["c", "b"]
 
     async def test_cursor_pages_read_the_whole_order(self, seeded):
-        got = await paged(seeded, "find_by_about_keys", 2, "u", ["e:rome", "k:ticket"], cursor_of=lambda r: r.item_id)
+        got = await paged(seeded, "find_by_about_keys", 2, U, ["e:rome", "k:ticket"], cursor_of=lambda r: r.item_id)
         assert [r.item_id for r in got] == ["c", "b", "a", "f", "d"]
 
     async def test_a_vanished_cursor_record_ends_the_paging(self, seeded):
-        assert await seeded.both("find_by_about_keys", "u", ["e:rome"], 5, after="gone") == []
+        assert await seeded.both("find_by_about_keys", U, ["e:rome"], 5, after="gone") == []
 
     async def test_a_cursor_record_outside_the_keys_still_positions_the_page(self, seeded):
-        got = await seeded.both("find_by_about_keys", "u", ["e:rome"], 5, after="e")   # e: berlin, D-9
+        got = await seeded.both("find_by_about_keys", U, ["e:rome"], 5, after="e")   # e: berlin, D-9
         assert [r.item_id for r in got] == ["d"]
 
     async def test_single_kind(self, seeded):
-        got = await seeded.both("find_by_about_keys", "u", ["e:rome", "e:berlin"], 10, kind="image")
+        got = await seeded.both("find_by_about_keys", U, ["e:rome", "e:berlin"], 10, kind="image")
         assert [r.item_id for r in got] == ["f", "e"]
 
     async def test_dates_are_inclusive_and_exclude_undated(self, seeded):
-        got = await seeded.both("find_by_about_keys", "u", ["e:rome", "k:ticket"], 10,
+        got = await seeded.both("find_by_about_keys", U, ["e:rome", "k:ticket"], 10,
                                 date_from=D - timedelta(days=1), date_to=D)
         assert [r.item_id for r in got] == ["b", "a", "f"]
-        got = await seeded.both("find_by_about_keys", "u", ["e:rome"], 10, date_from=D)
+        got = await seeded.both("find_by_about_keys", U, ["e:rome"], 10, date_from=D)
         assert [r.item_id for r in got] == ["b", "a"]
 
     async def test_thirty_keys_are_read_and_a_thirty_first_is_refused(self, seeded):
         """Review M1 (arbiter): a list over 30 distinct keys is a ValueError on both adapters, never a silent cut; the
         30th key still counts."""
-        expected = await seeded.both("find_by_about_keys", "u", ["e:rome"], 10)
+        expected = await seeded.both("find_by_about_keys", U, ["e:rome"], 10)
         assert expected
         thirty = [f"w:filler{i}" for i in range(29)] + ["e:rome"]
-        assert await seeded.both("find_by_about_keys", "u", thirty, 10) == expected
+        assert await seeded.both("find_by_about_keys", U, thirty, 10) == expected
         for repo in (seeded.mem, seeded.fs):
             with pytest.raises(ValueError, match="30"):
-                await repo.find_by_about_keys("u", [f"w:filler{i}" for i in range(30)] + ["e:rome"], 10)
+                await repo.find_by_about_keys(U, [f"w:filler{i}" for i in range(30)] + ["e:rome"], 10)
 
     async def test_no_keys_no_records(self, seeded):
-        assert await seeded.both("find_by_about_keys", "u", [], 10) == []
+        assert await seeded.both("find_by_about_keys", U, [], 10) == []
 
     async def test_the_lean_projection(self, pair):
         full = rec("a", eff=D, keys=("e:rome",), name_tokens=("w:a",), has_card=True, indexed_generation=2,
                    content_hash="h", valid_until=D, profile_state="ready", readme_excerpt="long text")
         await pair.write(records=[full])
-        (lean,) = await pair.both("find_by_about_keys", "u", ["e:rome"], 1)
+        (lean,) = await pair.both("find_by_about_keys", U, ["e:rome"], 1)
         assert lean == DriveRecordLean(item_id="a", parent_id="root", name="a.pdf", kind="pdf", effective_date=D,
                                        about_keys=("e:rome",), name_tokens=("w:a",), state=RecordState.INDEXED,
                                        scope=Scope.NORMAL, has_card=True, indexed_generation=2, content_hash="h",
@@ -164,9 +169,9 @@ class TestFindExpiring:
             rec("e", keys=("lv:valid",), valid_until=datetime(2026, 11, 1, tzinfo=timezone.utc)),
             rec("f", keys=("w:other",), valid_until=datetime(2026, 10, 20, tzinfo=timezone.utc)),
         ])
-        got = await pair.both("find_expiring", "u", ["lv:expir", "lv:valid"], date(2026, 10, 13), 10)
+        got = await pair.both("find_expiring", U, ["lv:expir", "lv:valid"], date(2026, 10, 13), 10)
         assert [r.item_id for r in got] == ["b", "a", "e"]
-        got = await pair.both("find_expiring", "u", ["lv:expir", "lv:valid"], date(2026, 10, 13), 2)
+        got = await pair.both("find_expiring", U, ["lv:expir", "lv:valid"], date(2026, 10, 13), 2)
         assert [r.item_id for r in got] == ["b", "a"]
 
 
@@ -182,31 +187,31 @@ class TestWordKeys:
         return pair
 
     async def test_ordered_by_item_generation_index_lean(self, seeded):
-        got = await seeded.both("find_chunks_by_word_keys", "u", ["w:rome", "w:ticket"], 10)
+        got = await seeded.both("find_chunks_by_word_keys", U, ["w:rome", "w:ticket"], 10)
         assert [(c.item_id, c.generation, c.index) for c in got] == [("a", 1, 3), ("b", 1, 0), ("b", 1, 1),
                                                                      ("b", 2, 0), ("d", 1, 0)]
         assert got[-1] == DriveChunkLean(user_id="u", item_id="d", generation=1, index=0, kind="image")
 
     async def test_limit_and_the_item_cursor_skips_every_chunk_of_the_item(self, seeded):
-        page = await seeded.both("find_chunks_by_word_keys", "u", ["w:rome", "w:ticket"], 2)
+        page = await seeded.both("find_chunks_by_word_keys", U, ["w:rome", "w:ticket"], 2)
         assert [(c.item_id, c.index) for c in page] == [("a", 3), ("b", 0)]
-        rest = await seeded.both("find_chunks_by_word_keys", "u", ["w:rome", "w:ticket"], 10, after_item_id="b")
+        rest = await seeded.both("find_chunks_by_word_keys", U, ["w:rome", "w:ticket"], 10, after_item_id="b")
         assert [c.item_id for c in rest] == ["d"]
 
     async def test_get_chunk_keys_reads_the_existing_ids(self, seeded):
-        got = await seeded.both("get_chunk_keys", "u", [("b", 1, 1), ("a", 1, 3), ("a", 9, 9), ("z", 1, 0)])
+        got = await seeded.both("get_chunk_keys", U, [("b", 1, 1), ("a", 1, 3), ("a", 9, 9), ("z", 1, 0)])
         assert got == {("b", 1, 1): ("w:rome", "w:ticket"), ("a", 1, 3): ("w:rome",)}
 
     async def test_thirty_keys_are_read_and_a_thirty_first_is_refused(self, seeded):
         """Review M1 (arbiter): a list over 30 distinct keys is a ValueError on both adapters, never a silent cut; the
         30th key still counts."""
-        expected = await seeded.both("find_chunks_by_word_keys", "u", ["w:rome"], 10)
+        expected = await seeded.both("find_chunks_by_word_keys", U, ["w:rome"], 10)
         assert expected
         thirty = [f"w:filler{i}" for i in range(29)] + ["w:rome"]
-        assert await seeded.both("find_chunks_by_word_keys", "u", thirty, 10) == expected
+        assert await seeded.both("find_chunks_by_word_keys", U, thirty, 10) == expected
         for repo in (seeded.mem, seeded.fs):
             with pytest.raises(ValueError, match="30"):
-                await repo.find_chunks_by_word_keys("u", [f"w:filler{i}" for i in range(30)] + ["w:rome"], 10)
+                await repo.find_chunks_by_word_keys(U, [f"w:filler{i}" for i in range(30)] + ["w:rome"], 10)
 
 
 class TestHints:
@@ -220,59 +225,59 @@ class TestHints:
         return pair
 
     async def test_find_by_keys_ordered_lean_with_the_cursor(self, seeded):
-        got = await seeded.both("find_hints_by_keys", "u", ["w:roma", "w:billete"], 10)
+        got = await seeded.both("find_hints_by_keys", U, ["w:roma", "w:billete"], 10)
         assert [(h.item_id, h.generation, h.index) for h in got] == [("a", 1, 2), ("b", 1, 0), ("b", 1, 1),
                                                                      ("b", 2, 0)]
         assert got[1] == DriveHintLean(user_id="u", item_id="b", generation=1, index=0, kind="pdf",
                                        hint_keys=("w:roma", "w:billete"))
-        assert len(await seeded.both("find_hints_by_keys", "u", ["w:roma", "w:billete"], 2)) == 2
-        rest = await seeded.both("find_hints_by_keys", "u", ["w:roma", "w:billete"], 10, after_item_id="a")
+        assert len(await seeded.both("find_hints_by_keys", U, ["w:roma", "w:billete"], 2)) == 2
+        rest = await seeded.both("find_hints_by_keys", U, ["w:roma", "w:billete"], 10, after_item_id="a")
         assert [h.item_id for h in rest] == ["b", "b", "b"]
-        assert await seeded.both("find_hints_by_keys", "u", ["w:roma"], 10, after_item_id="b") == []
+        assert await seeded.both("find_hints_by_keys", U, ["w:roma"], 10, after_item_id="b") == []
 
     async def test_get_hint_keys(self, seeded):
-        got = await seeded.both("get_hint_keys", "u", [("b", 1, 0), ("c", 1, 0), ("c", 2, 0), ("z", 1, 0)])
+        got = await seeded.both("get_hint_keys", U, [("b", 1, 0), ("c", 1, 0), ("c", 2, 0), ("z", 1, 0)])
         assert got == {("b", 1, 0): ("w:roma", "w:billete"), ("c", 1, 0): ("w:berlin",)}
 
     async def test_get_hints_of_one_generation_by_index(self, seeded):
-        got = await seeded.both("get_hints", "u", "b", 1)
+        got = await seeded.both("get_hints", U, "b", 1)
         assert [h.index for h in got] == [0, 1]
         assert got[0] == hint("b", 1, 0, keys=("w:roma", "w:billete"))
-        assert await seeded.both("get_hints", "u", "b", 7) == []
+        assert await seeded.both("get_hints", U, "b", 7) == []
 
     async def test_get_hints_with_vectors(self, seeded):
-        got = await seeded.both("get_hints_with_vectors", "u", "b", 1)
+        got = await seeded.both("get_hints_with_vectors", U, "b", 1)
         assert [(h.index, v) for h, v in got] == [(0, vec(1)), (1, vec(0))]
 
     async def test_nearest_by_kind(self, seeded):
-        got = await seeded.both("find_nearest_hints", "u", vec(3), 3)
+        got = await seeded.both("find_nearest_hints", U, vec(3), 3)
         assert [(h.item_id, h.generation, h.index) for h, _ in got] == [("a", 1, 2), ("c", 1, 0), ("b", 2, 0)]
         assert [round(d, 9) for _, d in got] == sorted(round(d, 9) for _, d in got)
-        only = await seeded.both("find_nearest_hints", "u", vec(3), 5, kind="docx")
+        only = await seeded.both("find_nearest_hints", U, vec(3), 5, kind="docx")
         assert [(h.item_id, h.kind) for h, _ in only] == [("a", "docx")]
         assert isinstance(only[0][0], DriveHintLean)
 
     async def test_hints_page_with_the_cursor(self, seeded):
-        first = await seeded.both("hints_page", "u", None, 3)
+        first = await seeded.both("hints_page", U, None, 3)
         assert [(h.item_id, h.generation, h.index) for h in first] == [("a", 1, 2), ("b", 1, 0), ("b", 1, 1)]
-        rest = await seeded.both("hints_page", "u", ("b", 1, 1), 10)
+        rest = await seeded.both("hints_page", U, ("b", 1, 1), 10)
         assert [(h.item_id, h.generation, h.index) for h in rest] == [("b", 2, 0), ("c", 1, 0)]
 
     async def test_delete_except_keeps_one_generation(self, seeded):
-        assert await seeded.both("delete_hints_except", "u", "b", 2) == 2
-        assert [(h.item_id, h.generation) for h in await seeded.both("hints_page", "u", None, 10)] == [
+        assert await seeded.both("delete_hints_except", U, "b", 2) == 2
+        assert [(h.item_id, h.generation) for h in await seeded.both("hints_page", U, None, 10)] == [
             ("a", 1), ("b", 2), ("c", 1)]
-        assert await seeded.both("delete_hints_except", "u", "a", None) == 1
+        assert await seeded.both("delete_hints_except", U, "a", None) == 1
 
     async def test_delete_user_hints_by_limit_leaves_other_users(self, seeded):
-        assert await seeded.both("delete_user_hints", "u", 3) == 3
-        assert await seeded.both("delete_user_hints", "u", 10) == 2
-        assert await seeded.both("delete_user_hints", "u", 10) == 0
-        assert [h.item_id for h in await seeded.both("hints_page", "other", None, 10)] == ["z"]
+        assert await seeded.both("delete_user_hints", U, 3) == 3
+        assert await seeded.both("delete_user_hints", U, 10) == 2
+        assert await seeded.both("delete_user_hints", U, 10) == 0
+        assert [h.item_id for h in await seeded.both("hints_page", OTHER, None, 10)] == ["z"]
 
     async def test_a_rewrite_replaces_the_document(self, seeded):
         await seeded.write(hints=[hint("c", 1, 0, keys=("w:hamburg",))])
-        assert await seeded.both("get_hint_keys", "u", [("c", 1, 0)]) == {("c", 1, 0): ("w:hamburg",)}
+        assert await seeded.both("get_hint_keys", U, [("c", 1, 0)]) == {("c", 1, 0): ("w:hamburg",)}
 
 
 class TestEnrichmentReads:
@@ -285,9 +290,9 @@ class TestEnrichmentReads:
             rec("e", enrich_ready=False, effective_day="2026-07-01"),
             rec("f", enrich_ready=True, effective_day="2026-05-01", parent_id="p1"),
         ])
-        got = await pair.both("enrich_queue", "u", 10)
+        got = await pair.both("enrich_queue", U, 10)
         assert [r.item_id for r in got] == ["c", "b", "f", "a", "d"]
-        assert [r.item_id for r in await pair.both("enrich_queue", "u", 2)] == ["c", "b"]
+        assert [r.item_id for r in await pair.both("enrich_queue", U, 2)] == ["c", "b"]
 
     async def test_wakeups_due_earliest_first(self, pair):
         await pair.write(records=[
@@ -295,14 +300,14 @@ class TestEnrichmentReads:
             rec("c", enrich_wake_at=NOW + timedelta(seconds=1)), rec("d"),
             rec("e", enrich_wake_at=NOW - timedelta(hours=1)),
         ])
-        got = await pair.both("enrich_wakeups", "u", NOW, 10)
+        got = await pair.both("enrich_wakeups", U, NOW, 10)
         assert [r.item_id for r in got] == ["b", "e", "a"]
-        assert [r.item_id for r in await pair.both("enrich_wakeups", "u", NOW, 1)] == ["b"]
+        assert [r.item_id for r in await pair.both("enrich_wakeups", U, NOW, 1)] == ["b"]
 
     async def test_keys_pending_page(self, pair):
         await pair.write(records=[rec(i, keys_pending=i != "c") for i in "abcde"])
-        assert [r.item_id for r in await pair.both("keys_pending_page", "u", None, 2)] == ["a", "b"]
-        assert [r.item_id for r in await pair.both("keys_pending_page", "u", "b", 10)] == ["d", "e"]
+        assert [r.item_id for r in await pair.both("keys_pending_page", U, None, 2)] == ["a", "b"]
+        assert [r.item_id for r in await pair.both("keys_pending_page", U, "b", 10)] == ["d", "e"]
 
     async def test_count_by_job_state_over_more_kinds_than_one_query_takes(self, pair):
         kinds = {f"kind{i:02d}" for i in range(35)}
@@ -313,14 +318,14 @@ class TestEnrichmentReads:
             rec("d", kind="image", profile_state="ready"),
             rec("e", kind="kind20"),
         ])
-        got = await pair.both("count_by_job_state", "u", kinds)
+        got = await pair.both("count_by_job_state", U, kinds)
         assert got == {"profile": {"ready": 2, "held": 1, "none": 1},
                        "passages": {"parked": 1, "none": 2, "ready": 1}}
-        assert await pair.both("count_by_job_state", "u", set()) == {"profile": {}, "passages": {}}
+        assert await pair.both("count_by_job_state", U, set()) == {"profile": {}, "passages": {}}
 
     async def test_get_records_lean(self, pair):
         await pair.write(records=[rec("a", eff=D, keys=("e:rome",)), rec("b")])
-        got = await pair.both("get_records_lean", "u", ["a", "b", "gone", "a"])
+        got = await pair.both("get_records_lean", U, ["a", "b", "gone", "a"])
         assert set(got) == {"a", "b"} and got["a"].about_keys == ("e:rome",)
 
 
@@ -348,32 +353,32 @@ class TestUsage:
 
 class TestInitialBuild:
     async def test_unopened_by_default_and_reading_never_writes(self, pair):
-        assert await pair.both("get_initial_build", "u") == InitialBuild(allowance_usd=INITIAL_BUILD_USD)
+        assert await pair.both("get_initial_build", "u", REALM, SUBJECT) == InitialBuild(allowance_usd=INITIAL_BUILD_USD)
         assert pair.fs._db.cols.get("eval_drive_model_usage") is None or not pair.fs._db.cols[
             "eval_drive_model_usage"].docs
 
     async def test_spend_opens_covers_then_closes(self, pair):
         t1, t2 = NOW, NOW + timedelta(hours=1)
-        assert await pair.both("spend_initial_build", "u", 30.0, t1) == (
+        assert await pair.both("spend_initial_build", "u", REALM, SUBJECT, 30.0, t1) == (
             InitialBuild(INITIAL_BUILD_USD, 30.0, t1, None), 30.0)
-        assert await pair.both("spend_initial_build", "u", 15.0, t2) == (
+        assert await pair.both("spend_initial_build", "u", REALM, SUBJECT, 15.0, t2) == (
             InitialBuild(INITIAL_BUILD_USD, INITIAL_BUILD_USD, t1, t2), 10.0)
-        assert await pair.both("spend_initial_build", "u", 5.0, t2 + timedelta(hours=1)) == (
+        assert await pair.both("spend_initial_build", "u", REALM, SUBJECT, 5.0, t2 + timedelta(hours=1)) == (
             InitialBuild(INITIAL_BUILD_USD, INITIAL_BUILD_USD, t1, t2), 0.0)
-        assert await pair.both("get_initial_build", "u") == InitialBuild(INITIAL_BUILD_USD, INITIAL_BUILD_USD, t1, t2)
+        assert await pair.both("get_initial_build", "u", REALM, SUBJECT) == InitialBuild(INITIAL_BUILD_USD, INITIAL_BUILD_USD, t1, t2)
 
     async def test_close_never_reopens_and_keeps_its_time(self, pair):
-        await pair.both("spend_initial_build", "u", 1.0, NOW)
-        await pair.both("close_initial_build", "u", NOW + timedelta(days=1))
-        await pair.both("close_initial_build", "u", NOW + timedelta(days=2))
-        assert await pair.both("get_initial_build", "u") == InitialBuild(INITIAL_BUILD_USD, 1.0, NOW,
+        await pair.both("spend_initial_build", "u", REALM, SUBJECT, 1.0, NOW)
+        await pair.both("close_initial_build", "u", REALM, SUBJECT, NOW + timedelta(days=1))
+        await pair.both("close_initial_build", "u", REALM, SUBJECT, NOW + timedelta(days=2))
+        assert await pair.both("get_initial_build", "u", REALM, SUBJECT) == InitialBuild(INITIAL_BUILD_USD, 1.0, NOW,
                                                                           NOW + timedelta(days=1))
-        assert (await pair.both("spend_initial_build", "u", 1.0, NOW + timedelta(days=3)))[1] == 0.0
+        assert (await pair.both("spend_initial_build", "u", REALM, SUBJECT, 1.0, NOW + timedelta(days=3)))[1] == 0.0
 
     async def test_closing_an_unopened_build(self, pair):
-        await pair.both("close_initial_build", "u", NOW)
-        assert await pair.both("get_initial_build", "u") == InitialBuild(INITIAL_BUILD_USD, 0.0, None, NOW)
+        await pair.both("close_initial_build", "u", REALM, SUBJECT, NOW)
+        assert await pair.both("get_initial_build", "u", REALM, SUBJECT) == InitialBuild(INITIAL_BUILD_USD, 0.0, None, NOW)
 
     async def test_the_usage_documents_are_per_user(self, pair):
-        await pair.both("spend_initial_build", "u", 2.0, NOW)
-        assert await pair.both("get_initial_build", "other") == InitialBuild(allowance_usd=INITIAL_BUILD_USD)
+        await pair.both("spend_initial_build", "u", REALM, SUBJECT, 2.0, NOW)
+        assert await pair.both("get_initial_build", "other", REALM, SUBJECT) == InitialBuild(allowance_usd=INITIAL_BUILD_USD)
