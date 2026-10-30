@@ -21,8 +21,8 @@ from src.domain.user_drive import DrivePathError, DriveRefRefused
 from src.ports.embedding_service import EmbeddingService
 from src.services.drive_search_service import DriveSearchService
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
-from tests.support.drive_connection_service_stand_in import StandInDriveConnectionService, seed
-from tests.support.handle_keyed_drive import HandleKeyedDrive
+from tests.support.drive_connections import connection_service, seed
+from tests.support.fake_drive_adapter import FakeDriveAdapter
 
 NOW = datetime(2026, 3, 1, tzinfo=timezone.utc)
 T1 = datetime(2026, 1, 2, tzinfo=timezone.utc)
@@ -47,8 +47,8 @@ async def world():
     w = World()
     w.repo = FakeDriveConnectionRepository()
     w.index = _GateRepo()
-    w.service = DriveSearchService(w.index, AsyncMock(spec=EmbeddingService), HandleKeyedDrive(),
-                                   StandInDriveConnectionService(w.repo), embedding_space="space-a",
+    w.service = DriveSearchService(w.index, AsyncMock(spec=EmbeddingService), FakeDriveAdapter("fake_a"),
+                                   connection_service(w.repo), embedding_space="space-a",
                                    clock=lambda: NOW)
     return w
 

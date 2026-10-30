@@ -20,8 +20,8 @@ from src.services.file_conversion_service import FileConversionService
 from src.services.localization_service import LocalizationService
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
-from tests.support.drive_connection_service_stand_in import StandInDriveConnectionService, seed
-from tests.support.handle_keyed_drive import HandleKeyedDrive
+from tests.support.drive_connections import connection_service, seed
+from tests.support.fake_drive_adapter import FakeDriveAdapter
 
 T1 = datetime(2026, 1, 2, tzinfo=timezone.utc)
 NOW = datetime(2026, 10, 14, 9, 30, tzinfo=timezone.utc)
@@ -33,12 +33,12 @@ async def world():
         pass
     w = World()
     w.repo = FakeDriveConnectionRepository()
-    w.drive = HandleKeyedDrive()
-    w.connections = StandInDriveConnectionService(w.repo)
+    w.drive = FakeDriveAdapter("fake_a")
+    w.connections = connection_service(w.repo)
     w.one = await seed(w.repo, connection_id="conn-1", tag="a1")
     w.two = await seed(w.repo, connection_id="conn-2", tag="b2", kind="fake_b", primary=False, created_at=T1)
-    w.drive.add_file(w.one.handle, "item-1", "one.txt", b"from one")
-    w.drive.add_file(w.two.handle, "item-1", "two.txt", b"from two")
+    assert w.drive.plant(w.one.handle, "root", "one.txt", b"from one") == "item-1"
+    assert w.drive.plant(w.two.handle, "root", "two.txt", b"from two") == "item-1"   # the same item id on purpose (T-4)
     w.conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
                                          connections=w.connections)
     return w
@@ -65,6 +65,10 @@ class TestConversionResolvesTheTag:
             await bare.get_drive_item("drive:a1:item-1", "usr-1")
 
 
+def _names(world, connection):
+    return {node.name for node in world.drive.tree(connection.handle).nodes.values()}
+
+
 def _copy_service(world) -> DeepResearchDriveCopyService:
     users = AsyncMock(spec=UserRepository)
     users.get_user.side_effect = lambda user_id: UserProfile(
@@ -80,11 +84,12 @@ class TestDeepResearchCopyGoesToThePrimary:
     async def test_the_copy_lands_on_the_primary_only(self, world):
         line = await _copy_service(world).copy_report("usr-1", b"<html><title>Plan</title></html>", "plan")
         assert line is not None and "2026-10-14" in line
-        assert any(i.name.endswith(".html") for i in world.drive.items["conn-1"].values())
-        assert not any(i.name.endswith(".html") for i in world.drive.items["conn-2"].values())
+        assert any(name.endswith(".html") for name in _names(world, world.one))
+        assert not any(name.endswith(".html") for name in _names(world, world.two))
 
     async def test_no_primary_is_not_connected_and_writes_nothing(self, world):
         line = await _copy_service(world).copy_report("usr-2", b"<html><title>Plan</title></html>", "plan")
         assert line == LocalizationService(FileLocalizationAdapter()).get_ui_string(
             LanguageCode.EN, UIMessage.DEEP_RESEARCH_DRIVE_NOT_CONNECTED)
-        assert not any(i.name.endswith(".html") for tree in world.drive.items.values() for i in tree.values())
+        assert not any(node.name.endswith(".html")                     # on any connection's tree the fake holds
+                       for tree in world.drive._trees.values() for node in tree.nodes.values())

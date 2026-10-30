@@ -15,8 +15,8 @@ from src.ports.file_storage_port import FileStoragePort
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from tests.support.drive_connection_repo import FakeDriveConnectionRepository
-from tests.support.drive_connection_service_stand_in import StandInDriveConnectionService, seed
-from tests.support.handle_keyed_drive import HandleKeyedDrive
+from tests.support.drive_connections import connection_service, seed
+from tests.support.fake_drive_adapter import FakeDriveAdapter
 
 T1 = datetime(2026, 1, 2, tzinfo=timezone.utc)
 CTX = {"account_id": "acc-1"}
@@ -28,17 +28,26 @@ async def world():
         pass
     w = World()
     w.repo = FakeDriveConnectionRepository()
-    w.drive = HandleKeyedDrive()
-    connections = StandInDriveConnectionService(w.repo)
+    w.drive = FakeDriveAdapter("fake_a")
+    connections = connection_service(w.repo)
     w.one = await seed(w.repo, connection_id="conn-1", tag="a1")
     w.two = await seed(w.repo, connection_id="conn-2", tag="b2", kind="fake_b", primary=False, created_at=T1)
-    w.drive.add_file(w.one.handle, "item-1", "on-one.txt", b"one")
-    w.drive.add_file(w.two.handle, "item-1", "on-two.txt", b"two")
-    w.drive.add_folder(w.two.handle, "folder-2", "Work")
+    assert w.drive.plant(w.one.handle, "root", "on-one.txt", b"one") == "item-1"
+    assert w.drive.plant(w.two.handle, "root", "on-two.txt", b"two") == "item-1"     # the same item id on purpose (T-4)
+    w.folder = w.drive.plant(w.two.handle, "root", "Work", folder=True)               # generated: item-2
     conversion = FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=w.drive,
                                        connections=connections)
     w.ops = DriveOperations(conversion_service=conversion, drive_service=UserDriveService(w.drive, connections))
     return w
+
+
+def _names(world, connection):
+    return {node.name for node in world.drive.tree(connection.handle).nodes.values()}
+
+
+def _recycled(world):
+    """The recycle bins of conn-1 and conn-2 (what a delete removed on each)."""
+    return (set(world.drive.tree(world.one.handle).recycle), set(world.drive.tree(world.two.handle).recycle))
 
 
 class TestRefsActOnTheirConnection:
@@ -49,13 +58,13 @@ class TestRefsActOnTheirConnection:
         assert out.drive_context() == [{"path": "on-two.txt", "ref": "drive:b2:item-1"}]
 
     async def test_list_by_folder_ref_lists_that_connection(self, world):
-        out = await world.ops.list_folder(CTX, "usr-1", "drive:b2:folder-2")
-        assert out.success and out.text.startswith("[Drive folder: Work/ ref=drive:b2:folder-2]")
+        out = await world.ops.list_folder(CTX, "usr-1", f"drive:b2:{world.folder}")
+        assert out.success and out.text.startswith(f"[Drive folder: Work/ ref=drive:b2:{world.folder}]")
 
     async def test_a_delete_by_ref_deletes_on_that_connection_only(self, world):
         out = await world.ops.delete(CTX, "usr-1", "drive:b2:item-1", wait_s=5)
         assert out.success
-        assert world.drive.deleted == {"conn-1": [], "conn-2": ["item-1"]}
+        assert _recycled(world) == (set(), {"item-1"})
 
     async def test_a_move_answers_with_the_tagged_label(self, world):
         out = await world.ops.move(CTX, "usr-1", "drive:b2:item-1", folder="Work", wait_s=5)
@@ -71,8 +80,8 @@ class TestPathsAreThePrimarys:
     async def test_a_saved_text_goes_to_the_primary(self, world):
         out = await world.ops.save_text(CTX, "usr-1", "hello", file_name="note.md", folder="Notes", wait_s=5)
         assert out.success and "ref=drive:a1:" in out.text
-        assert any(i.name == "note.md" for i in world.drive.items["conn-1"].values())
-        assert not any(i.name == "note.md" for i in world.drive.items["conn-2"].values())
+        assert "note.md" in _names(world, world.one)
+        assert "note.md" not in _names(world, world.two)
 
     async def test_no_primary_is_not_connected(self, world):
         await world.repo.save_settings(type(await world.repo.get_settings("usr-1"))(user_id="usr-1"))
@@ -94,8 +103,8 @@ class TestRefsOfNoConnection:
             out = await world.ops.delete(CTX, "usr-1", ref, wait_s=5)
         assert not out.success and out.cls is OutcomeClass.NOT_FOUND
         assert out.text == stale_ref_line(ref)
-        assert world.drive.deleted == {"conn-1": [], "conn-2": []}
-        assert world.drive.data["conn-1"]["item-1"] == b"one"
+        assert _recycled(world) == (set(), set())
+        assert world.drive.tree(world.one.handle).nodes["item-1"].data == b"one"
 
     async def test_a_disconnected_connections_ref_says_so(self, world):
         await seed(world.repo, connection_id="conn-9", tag="z9", state=ConnectionState.DISCONNECTED, primary=False)
@@ -109,5 +118,5 @@ class TestPreflight:
         assert (await world.ops.preflight("usr-2")).drive is DriveLine.NOT_CONNECTED
 
     async def test_a_folder_ref_becomes_its_path(self, world):
-        assert await world.ops.folder_path("usr-1", "drive:b2:folder-2") == "Work"
+        assert await world.ops.folder_path("usr-1", f"drive:b2:{world.folder}") == "Work"
         assert await world.ops.folder_path("usr-1", "drive:item-1") == "drive:item-1"   # stale: as given

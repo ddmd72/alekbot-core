@@ -13,6 +13,8 @@ from src.ports.file_storage_port import FileStoragePort
 from src.ports.user_drive_port import UserDrivePort
 from src.services.file_conversion_service import FileConversionService
 from src.utils.file_conversion import MAX_FILE_BYTES
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+from tests.support.drive_connections import connection_service, seed
 
 
 def _item(size, name="notes.md", mime="text/markdown", folder=False):
@@ -26,8 +28,15 @@ def drive():
 
 
 @pytest.fixture
-def svc(drive):
-    return FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=drive)
+async def connection():
+    repo = FakeDriveConnectionRepository()
+    conn = await seed(repo, "u1", "conn-1", tag="a1")
+    return conn, connection_service(repo)
+
+
+@pytest.fixture
+def svc(drive, connection):
+    return FileConversionService(storage=AsyncMock(spec=FileStoragePort), drive=drive, connections=connection[1])
 
 
 class TestDriveRefs:
@@ -36,43 +45,43 @@ class TestDriveRefs:
         drive.download.return_value = b"# hello"
         conv = AsyncMock(return_value="[File: Docs/notes.md]\n# hello\n[/File: Docs/notes.md]")
         with patch("src.services.file_conversion_service.convert_file_to_text", new=conv):
-            out = await svc.resolve_content("drive:i1", "u1")
+            out = await svc.resolve_content("drive:a1:i1", "u1")
         assert "# hello" in out
         assert conv.call_args.args[1:3] == ("Docs/notes.md", "text/markdown")
 
     async def test_text_over_cap_refused_before_download(self, svc, drive):
         drive.get_item.return_value = _item(MAX_FILE_BYTES + 1)
-        assert (await svc.resolve_content("drive:i1", "u1")).startswith("[System:")
+        assert (await svc.resolve_content("drive:a1:i1", "u1")).startswith("[System:")
         drive.download.assert_not_called()
 
     async def test_folder_is_not_readable(self, svc, drive):
         drive.get_item.return_value = _item(0, name="Docs", mime="", folder=True)
-        out = await svc.resolve_content("drive:i1", "u1")
+        out = await svc.resolve_content("drive:a1:i1", "u1")
         assert "folder" in out and "List the folder to see what is inside." in out
         drive.download.assert_not_called()
 
     async def test_bytes_over_cap_raise_before_download(self, svc, drive):
         drive.get_item.return_value = _item(MAX_DRIVE_DOWNLOAD_BYTES + 1, name="v.mp4", mime="video/mp4")
         with pytest.raises(DriveFileTooLargeError):
-            await svc.resolve_bytes("drive:i1", "u1")
+            await svc.resolve_bytes("drive:a1:i1", "u1")
         drive.download.assert_not_called()
 
     async def test_bytes_at_cap_are_downloaded(self, svc, drive):
         drive.get_item.return_value = _item(MAX_DRIVE_DOWNLOAD_BYTES, name="v.mp4", mime="video/mp4")
         drive.download.return_value = b"data"
-        assert await svc.resolve_bytes("drive:i1", "u1") == b"data"
+        assert await svc.resolve_bytes("drive:a1:i1", "u1") == b"data"
 
     async def test_folder_bytes_refused_before_download(self, svc, drive):
         drive.get_item.return_value = _item(0, name="Docs", mime="", folder=True)
         with pytest.raises(DrivePathError):
-            await svc.resolve_bytes("drive:i1", "u1")
+            await svc.resolve_bytes("drive:a1:i1", "u1")
         drive.download.assert_not_called()
 
-    async def test_label_punctuation_ref_resolves(self, svc, drive):
+    async def test_label_punctuation_ref_resolves(self, svc, drive, connection):
         drive.get_item.return_value = _item(3)
         drive.download.return_value = b"abc"
-        await svc.resolve_bytes("ref=drive:i1]", "u1")
-        drive.get_item.assert_awaited_once_with("u1", "i1")
+        await svc.resolve_bytes("ref=drive:a1:i1]", "u1")
+        drive.get_item.assert_awaited_once_with(connection[0].handle, "i1")
 
     async def test_no_drive_wired_is_not_found(self):
         with pytest.raises(FileNotFoundError):
@@ -80,7 +89,7 @@ class TestDriveRefs:
 
     async def test_no_provider_name_in_alerts(self, svc, drive):
         drive.get_item.return_value = _item(MAX_FILE_BYTES + 1)
-        out = await svc.resolve_content("drive:i1", "u1")
+        out = await svc.resolve_content("drive:a1:i1", "u1")
         for word in ("onedrive", "microsoft", "google"):
             assert word not in out.lower()
 
