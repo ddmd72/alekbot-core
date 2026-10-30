@@ -75,7 +75,7 @@ async def test_the_firestore_cursor_read_is_served_by_single_field_indexes(adapt
     db.cols[RECS].executed.clear()
     await repo.transcript_records(U_SCOPE, "current", 5, after="c0")
     (ops,) = db.cols[RECS].executed
-    assert [op[1:3] for op in ops if op[0] == "where"] == [("user_id", "=="), ("transcript_state", "=="), ("__name__", ">")]
+    assert [op[1:3] for op in ops if op[0] == "where"] == [("connection_id", "=="), ("transcript_state", "=="), ("__name__", ">")]
     assert not [op for op in ops if op[0] == "order_by"]      # the implicit document-id order: no composite
-    assert not {"user_id", "transcript_state"} & _exempt("development_drive_index_records")
+    assert not {"connection_id", "transcript_state"} & _exempt("development_drive_index_records")
     assert _required([op for op in ops if op[0] == "where" and op[1] != "__name__"]) is None
