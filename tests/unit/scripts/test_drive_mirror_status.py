@@ -27,13 +27,14 @@ def status():
 
 
 def _doc(item, kind=KIND_FILE, state=MIRROR_ACTIVE, **kw):
-    return MirrorDoc(user_id="u", drive_id="d1", kind=kind, source_item_id=item, state=state, **kw)
+    return MirrorDoc(user_id="u", drive_identity="d1", kind=kind, source_item_id=item, source_identity=f"d1:{item}",
+                     state=state, **kw)
 
 
 async def _world():
     repo = InMemoryDriveMirrorRepository()
     await repo.save_root(MirrorRoot(
-        user_id="u", drive_id="d1", root_item_id="r1", root_name="_Transcripts", created_at=T0 - timedelta(days=30),
+        user_id="u", drive_identity="d1", root_item_id="r1", root_name="_Transcripts", created_at=T0 - timedelta(days=30),
         audited_at=T0 - timedelta(days=2), seed_version="s3", seed_cursor="s3|x", scan_cursor="f|k", audit_folder_key="u:folder:f",
         audit_page_cursor="@confirm", orphans_reported=True, quota_hold_until=T0 + timedelta(hours=2),
         root_gone_at=T0 - timedelta(hours=3), previous_root_ids=("old",), readme_blocked_at=T0 - timedelta(days=1)))
@@ -78,7 +79,7 @@ async def test_report_carries_the_roots_cursors_clocks_holds_and_loss_marks(stat
 
 async def test_reset_under_way_is_reported(status, tmp_path):
     repo = InMemoryDriveMirrorRepository()
-    await repo.save_root(MirrorRoot(user_id="u", drive_id="d1", root_item_id="old", root_name="_Transcripts",
+    await repo.save_root(MirrorRoot(user_id="u", drive_identity="d1", root_item_id="old", root_name="_Transcripts",
                                     previous_root_ids=("old",)))
     _, path = await status.run(repo, ["u"], T0, out_dir=tmp_path)
     assert json.loads(path.read_text())["users"][0]["roots"][0]["ledger_reset_under_way"] is True

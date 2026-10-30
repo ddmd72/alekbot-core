@@ -2,8 +2,9 @@
 # ==============================================================================
 # Script: create_drive_scoped_vector_indexes.sh
 # Purpose: Create the two vector indexes of the folder-scoped kNN (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md Δ246):
-#          the chunk `vector` and the hint `hint_vector` under user_id + item_id, which `find_nearest_chunks_in` and
-#          `find_nearest_hints_in` pre-filter with `user_id ==` and `item_id in [...]` (at most 30 ids).
+#          the chunk `vector` and the hint `hint_vector` under connection_id + item_id, which `find_nearest_chunks_in` and
+#          `find_nearest_hints_in` pre-filter with `connection_id ==` and `item_id in [...]` (at most 30 ids).
+#          Per connection since MULTI_DRIVE_RFC §8 (slice 1b); the user_id forms stay live until acceptance.
 #          `make deploy-indexes` skips vector indexes, so they are created here; they are also declared in
 #          config/firestore.indexes.json. Both must be READY before the code that queries them is deployed.
 # Owner-run, once, before the deploy; wait for READY (the status commands are printed at the end). A dry run by default:
@@ -50,26 +51,26 @@ echo "   Database:   $DATABASE_ID"
 echo "   Collection: $CHUNK_COLLECTION, $HINT_COLLECTION"
 echo ""
 
-# find_nearest_chunks_in(user_id, ..., item_ids) — pre-filter user_id + item_id in [...]
-echo "📌 chunk vector under user_id + item_id..."
-create_index "vector (user_id, item_id)" \
+# find_nearest_chunks_in(scope, ..., item_ids) — pre-filter connection_id + item_id in [...]
+echo "📌 chunk vector under connection_id + item_id..."
+create_index "vector (connection_id, item_id)" \
   --project="$PROJECT_ID" \
   --database="$DATABASE_ID" \
   --collection-group="$CHUNK_COLLECTION" \
   --query-scope=COLLECTION \
-  --field-config=order=ASCENDING,field-path=user_id \
+  --field-config=order=ASCENDING,field-path=connection_id \
   --field-config=order=ASCENDING,field-path=item_id \
   --field-config=vector-config="$VECTOR_CONFIG",field-path=vector \
   --async
 
-# find_nearest_hints_in(user_id, ..., item_ids) — pre-filter user_id + item_id in [...]
-echo "📌 hint_vector under user_id + item_id..."
-create_index "hint_vector (user_id, item_id)" \
+# find_nearest_hints_in(scope, ..., item_ids) — pre-filter connection_id + item_id in [...]
+echo "📌 hint_vector under connection_id + item_id..."
+create_index "hint_vector (connection_id, item_id)" \
   --project="$PROJECT_ID" \
   --database="$DATABASE_ID" \
   --collection-group="$HINT_COLLECTION" \
   --query-scope=COLLECTION \
-  --field-config=order=ASCENDING,field-path=user_id \
+  --field-config=order=ASCENDING,field-path=connection_id \
   --field-config=order=ASCENDING,field-path=item_id \
   --field-config=vector-config="$VECTOR_CONFIG",field-path=hint_vector \
   --async
