@@ -21,21 +21,24 @@ from urllib.parse import urlencode
 import aiohttp
 
 from ..domain.email import ACCOUNT_REALM_GOOGLE, OAuthCredentials
+from ..domain.exceptions import OAuthScopeNotGrantedError
 from ..utils.logger import logger
 
 _AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 _USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+_GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+_TASKS_SCOPE = "https://www.googleapis.com/auth/tasks"
 
 GMAIL_SCOPES = [
-    "https://www.googleapis.com/auth/gmail.readonly",
+    _GMAIL_SCOPE,
     "openid",
     "email",
 ]
 # openid + email on every consent: exchange_code reads the account identity (SECRETS_AT_REST_RFC §2.3, I9)
 GOOGLE_TASKS_SCOPES = [
-    "https://www.googleapis.com/auth/tasks",
+    _TASKS_SCOPE,
     "openid",
     "email",
 ]
@@ -49,6 +52,9 @@ class GoogleOAuthService:
         client_id: Google OAuth 2.0 client ID.
         client_secret: Google OAuth 2.0 client secret.
         scopes: OAuth scopes to request. Defaults to GMAIL_SCOPES for backward compat.
+
+        The consent must grant the Gmail or Tasks scope found in ``scopes`` (``openid`` / ``email`` do not count);
+        a list with neither raises ValueError.
     """
 
     def __init__(
@@ -60,6 +66,10 @@ class GoogleOAuthService:
         self._client_id = client_id
         self._client_secret = client_secret
         self._scopes = scopes if scopes is not None else GMAIL_SCOPES
+        required = next((sc for sc in self._scopes if sc in (_GMAIL_SCOPE, _TASKS_SCOPE)), None)
+        if required is None:
+            raise ValueError("GoogleOAuthService scopes must include the Gmail or the Tasks scope")
+        self._required_scope = required
 
     def get_authorization_url(self, state: str, redirect_uri: str) -> str:
         """Build Google OAuth URL requesting the configured scopes."""
@@ -86,6 +96,7 @@ class GoogleOAuthService:
 
         Reads the account identity (`sub`, email) from Google userinfo: the scopes must include `openid email`.
         Raises ValueError on an HTTP error or when the identity is missing (I9: the caller then stores nothing).
+        Raises OAuthScopeNotGrantedError when the token response does not list the service scope (nothing stored).
         """
         payload = {
             "code": code,
@@ -110,6 +121,13 @@ class GoogleOAuthService:
             expires_in = int(token_data.get("expires_in", 3600))
             token_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
 
+            # 1b. Granular consent: an unticked service checkbox still yields a token (openid email only).
+            #     The granted scopes, not the requested ones, decide.
+            granted = str(token_data.get("scope") or "").split()
+            if self._required_scope not in granted:
+                logger.warning(f"⚠️ Google consent without the service scope: user={user_id[:8]} granted={len(granted)} scopes")
+                raise OAuthScopeNotGrantedError("Google did not grant the required scope")
+
             # 2. The account identity (I9, SECRETS_AT_REST_RFC §2.3): OpenID `sub` + email from userinfo. A failed
             #    or incomplete read raises, so the consent stores nothing.
             async with session.get(
@@ -131,7 +149,7 @@ class GoogleOAuthService:
             access_token=access_token,
             refresh_token=refresh_token,
             token_expiry=token_expiry,
-            scopes=self._scopes,
+            scopes=granted,
             email_address=email_address,
             account_realm=ACCOUNT_REALM_GOOGLE,
             account_subject=subject,

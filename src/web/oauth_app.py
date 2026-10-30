@@ -25,7 +25,7 @@ from ..services.google_oauth_service import GoogleOAuthService
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..config.auth import AuthConfig
 from ..domain.email import ACCOUNT_REALM_MICROSOFT
-from ..domain.exceptions import AccessDeniedError
+from ..domain.exceptions import AccessDeniedError, OAuthScopeNotGrantedError
 from ..domain.reconnect_policy import Integration
 from ..domain.safe_redirect import safe_return_path
 from ..utils.logger import logger
@@ -593,6 +593,9 @@ def create_oauth_blueprint(
             await oauth_credentials_port.save_credentials(credentials)
             logger.info(f"✅ Gmail connected for user={user_id[:8]}")
             await _consented(user_id, Integration.GMAIL)
+        except OAuthScopeNotGrantedError:
+            logger.warning(f"⚠️ Gmail consent without the Gmail scope: user={user_id[:8]}")
+            return redirect("/cabinet?gmail_error=scope")
         except Exception as exc:
             logger.error(f"💥 Gmail OAuth callback failed: {exc}")
             return redirect("/cabinet?gmail_error=exchange")
@@ -680,6 +683,9 @@ def create_oauth_blueprint(
             )
             await oauth_credentials_port.save_credentials(credentials)
             logger.info(f"✅ Google Tasks connected for user={user_id[:8]}")
+        except OAuthScopeNotGrantedError:
+            logger.warning(f"⚠️ Google Tasks consent without the Tasks scope: user={user_id[:8]}")
+            return redirect("/cabinet?tasks_error=scope")
         except Exception as exc:
             logger.error(f"💥 Google Tasks OAuth callback failed: {exc}")
             return redirect("/cabinet?tasks_error=exchange")

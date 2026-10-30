@@ -134,7 +134,9 @@ class World:
             onedrive_redirect_uri="https://example.test/auth/connect-onedrive/callback",
             task_queue=self.queue))
         self.http.route("POST", GOOGLE_TOKEN, body={"access_token": "at-g", "refresh_token": "rt-g",
-                                                    "expires_in": 3600})
+                                                    "expires_in": 3600,  # Google always lists the granted scopes
+                                                    "scope": "https://www.googleapis.com/auth/gmail.readonly openid "
+                                                             "https://www.googleapis.com/auth/userinfo.email"})
         self.http.route("POST", MS_TOKEN, body={"access_token": "at-m", "refresh_token": "rt-m", "expires_in": 3600,
                                                 "scope": "Files.ReadWrite.AppFolder offline_access User.Read"})
         self.http.route("GET", USERINFO, body={"sub": "sub-g", "email": "user@example.com"})

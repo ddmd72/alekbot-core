@@ -26,6 +26,14 @@ APPROOT = "https://graph.microsoft.com/v1.0/me/drive/special/approot"
 USER = "user-a"
 
 GOOGLE_TOKEN_BODY = {"access_token": "at-google", "refresh_token": "rt-google", "expires_in": 3600}
+# Google's token endpoint always lists the GRANTED scopes (space-delimited; `email` comes back as userinfo.email);
+# each consent is granted its own service scope, told apart by the posted redirect_uri.
+GOOGLE_GRANTED = {
+    "https://example.test/auth/connect-gmail/callback":
+        "https://www.googleapis.com/auth/gmail.readonly openid https://www.googleapis.com/auth/userinfo.email",
+    "https://example.test/auth/connect-google-tasks/callback":
+        "https://www.googleapis.com/auth/tasks openid https://www.googleapis.com/auth/userinfo.email",
+}
 MS_TOKEN_BODY = {"access_token": "at-ms", "refresh_token": "rt-ms", "expires_in": 3600, "scope": "x offline_access"}
 
 # (callback path, state cookie, user cookie, kind, success redirect, error prefix)
@@ -65,7 +73,9 @@ class World:
             ms_todo_redirect_uri="https://example.test/auth/connect-microsoft-todo/callback",
             onedrive_redirect_uri="https://example.test/auth/connect-onedrive/callback",
         ))
-        self.http.route("POST", GOOGLE_TOKEN, body=GOOGLE_TOKEN_BODY)
+        # an unknown redirect_uri gets the bare GOOGLE_TOKEN_BODY (no `scope`), which test_consent_scope_check relies on
+        self.http.route("POST", GOOGLE_TOKEN, handler=lambda r: (200, {**GOOGLE_TOKEN_BODY, **(
+            {"scope": GOOGLE_GRANTED[r.data["redirect_uri"]]} if r.data["redirect_uri"] in GOOGLE_GRANTED else {})}))
         self.http.route("POST", MS_TOKEN, body=MS_TOKEN_BODY)
         self.http.route("GET", USERINFO, body={"sub": "sub-g", "email": "user@example.com"})
         self.http.route("GET", GRAPH_ME, body={"id": "sub-m", "mail": "user@example.test"})

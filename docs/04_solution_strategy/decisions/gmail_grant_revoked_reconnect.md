@@ -68,3 +68,12 @@ The flag write (and every token refresh write) now goes through `OAuthCredential
 writes only if the record still exists, so it cannot bring back a grant the user disconnected meanwhile;
 `save_credentials` stays the consent write. The method set pinned by `tests/unit/ports/test_email_ports.py` includes
 `update_credentials`. The get-then-write shape and its accepted race described above are unchanged.
+
+## Update 2026-10-30 (insufficient scope)
+
+A Gmail 403 whose body names `insufficientPermissions` or `ACCESS_TOKEN_SCOPE_INSUFFICIENT` raises
+`OAuthScopeInsufficientError`, a subclass of `OAuthGrantRevokedError`, so it takes the same path (`needs_reconnect`, one
+notice, Cabinet "Reconnect"). Google's granular consent can yield a token without the service scope, so
+`GoogleOAuthService.exchange_code` checks the granted `scope` of the token response and raises
+`OAuthScopeNotGrantedError` (nothing stored; the callbacks redirect with `gmail_error=scope` / `tasks_error=scope`);
+stored `scopes` are the granted ones. Every non-2xx Gmail answer logs its status and reason values (no tokens or content).
