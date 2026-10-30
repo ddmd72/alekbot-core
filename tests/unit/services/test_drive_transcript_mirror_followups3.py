@@ -9,7 +9,7 @@ from src.domain.drive_index import Scope
 from src.domain.drive_index_params import MIRROR_FAILED_RETRY, MIRROR_MAX_ATTEMPTS
 from src.domain.drive_index_planner import backoff
 
-from .drive_mirror_fakes import AREA, DRIVE, USER, MirrorWorld
+from .drive_mirror_fakes import AREA, DRIVE_IDENTITY, MirrorWorld, USER
 from .test_drive_transcript_mirror_audit import folder_record, mirrored
 
 HOUR = timedelta(hours=1)
@@ -71,15 +71,15 @@ async def test_a_backed_off_or_parked_mark_is_not_ready_and_a_parked_one_is_quie
     folder, _ = await _blocked_pruned_folder(w)
     w.advance(2 * HOUR)
     await w.run()
-    assert await w.mirror.ready_marks(USER, DRIVE, w.clock, 10) == []     # backed off: no reserve for it
+    assert await w.mirror.ready_marks(USER, DRIVE_IDENTITY, w.clock, 10) == []     # backed off: no reserve for it
     for _ in range(MIRROR_MAX_ATTEMPTS - 1):
         w.advance(w.folder_doc(folder).retry_at - w.clock)
         await w.run()
     assert w.folder_doc(folder).failed_at is not None
     w.advance(MIRROR_FAILED_RETRY - HOUR)
-    assert await w.mirror.ready_marks(USER, DRIVE, w.clock, 10) == []     # parked: quiet for the whole week
+    assert await w.mirror.ready_marks(USER, DRIVE_IDENTITY, w.clock, 10) == []     # parked: quiet for the whole week
     w.reset_calls()
     await w.run()
     assert w.write_calls() == [] and not [c for c in w.drive.calls if c[0] == "get_change"]
     w.advance(2 * HOUR)
-    assert [d.key for d in await w.mirror.ready_marks(USER, DRIVE, w.clock, 10)] == [w.folder_doc(folder).key]
+    assert [d.key for d in await w.mirror.ready_marks(USER, DRIVE_IDENTITY, w.clock, 10)] == [w.folder_doc(folder).key]

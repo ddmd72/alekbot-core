@@ -11,7 +11,7 @@ import pytest
 from src.domain.drive_index import Scope
 from src.domain.drive_mirror_plan import MIRROR_PLAN_VERSION, RENDER_VERSION, seed_version
 
-from .drive_mirror_fakes import AREA, USER, FakeMirrorHost, MirrorWorld
+from .drive_mirror_fakes import AREA, HANDLE, FakeMirrorHost, MirrorWorld
 from .test_drive_transcript_mirror_audit import folder_record, mirrored, writes_outside
 
 HOUR = timedelta(hours=1)
@@ -37,7 +37,7 @@ async def test_a_host_stop_exception_raised_by_a_drive_call_passes_through_uncha
     await w.recording("a.mp4")
     host = StopHost(w.repo, events=w.events, clock=w.clock)
     with pytest.raises(HostStop):
-        await w.service.run(USER, host)
+        await w.service.run(HANDLE, host)
     assert w.drive.faults[0].times == 99                    # raised once, and the step never called the drive again
     assert w.drive.calls[-1][0] == method
     assert not host.commits and w.mirror.docs == {}         # and nothing was written after it
@@ -58,7 +58,7 @@ async def test_a_host_stop_exception_raised_by_a_commit_ends_the_run_and_writes_
     host = CommitStop(w.repo, events=w.events, clock=w.clock)
     w.reset_calls()
     with pytest.raises(HostStop):
-        await w.service.run(USER, host)
+        await w.service.run(HANDLE, host)
     assert len(seen) == 1
 
 
