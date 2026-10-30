@@ -154,18 +154,18 @@ async def test_a_workspace_file_of_an_other_kind_is_read_as_text():
 # -- a drive video, no notification --------------------------------------------------------------------------------
 
 async def test_opening_a_drive_video_with_no_notification_fails_after_reading_the_bytes():
-    conv = FakeConversion(items={"drive:v1": CLIP})
+    conv = FakeConversion(items={"drive:a1:v1": CLIP})
     ops = _ops(conversion_service=conv, drive_service=FakeDrive(items={"v1": CLIP}))
-    out = await ops.open(CTX, "u1", "drive:v1")
+    out = await ops.open(CTX, "u1", "drive:a1:v1")
     assert (out.op, out.cls, out.success) == (DriveOp.OPEN, OutcomeClass.FAILED, False)
     assert out.text == "File delivery is not configured — cannot send the video."
-    assert conv.byte_reads == ["drive:v1"] and conv.text_reads == []
+    assert conv.byte_reads == ["drive:a1:v1"] and conv.text_reads == []
 
 
 async def test_opening_a_drive_video_with_a_notification_sends_it():
-    conv, note = FakeConversion(items={"drive:v1": CLIP}, data=b"frames"), FakeNotification()
+    conv, note = FakeConversion(items={"drive:a1:v1": CLIP}, data=b"frames"), FakeNotification()
     ops = _ops(conversion_service=conv, notification=note, drive_service=FakeDrive(items={"v1": CLIP}))
-    out = await ops.open(CTX, "u1", "drive:v1")
+    out = await ops.open(CTX, "u1", "drive:a1:v1")
     assert out.cls is OutcomeClass.OK and "has been sent to the user as a file" in out.text
     assert [(f["filename"], f["file_bytes"]) for f in note.files] == [("shed-tour.mp4", b"frames")]
 
