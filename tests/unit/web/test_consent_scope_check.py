@@ -45,6 +45,7 @@ async def test_exchange_code_raises_without_the_service_scope(world, scopes, gra
 
 
 async def test_exchange_code_raises_when_scope_field_is_absent(world):
+    world.http.route("POST", GOOGLE_TOKEN, body=dict(GOOGLE_TOKEN_BODY))  # no `scope` field, routed explicitly
     with pytest.raises(OAuthScopeNotGrantedError):
         await GoogleOAuthService("cid", "csecret", scopes=GMAIL_SCOPES).exchange_code("c", "https://x.test/cb", "user-a")
     assert world.http.requests_to("GET", USERINFO) == []  # refused before the identity read
