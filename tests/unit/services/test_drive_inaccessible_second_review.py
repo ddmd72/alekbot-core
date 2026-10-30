@@ -16,9 +16,10 @@ from src.domain.drive_index_params import INACCESSIBLE_RETRY_MIN
 from src.domain.drive_search import INACCESSIBLE_COUNTER, INACCESSIBLE_UNNOTIFIED_COUNTER
 from src.domain.ui_messages import UIMessage
 from src.services.drive_sync_scheduler_service import DriveSyncSchedulerService
+from tests.support.drive_connection_service_fake import single_connection_repository
 
 from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
-from .drive_index_fakes import T0, Clock, FakeDrive, FakeQueue, FakeUsers
+from .drive_index_fakes import T0, Clock, FakeQueue
 from .drive_inaccessible_world import ClosedWorld
 
 MARKED = T0 + timedelta(minutes=1)
@@ -86,11 +87,8 @@ async def test_the_fan_out_reads_the_marked_records_lean():
     localization = SimpleNamespace(get_ui_string=lambda lang, m: "{count} closed"
                                    if m is UIMessage.DRIVE_INACCESSIBLE_NOTICE else "Closed")
 
-    async def connected_users():
-        return ["u"]
-
-    svc = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(), drive=FakeDrive(),
-                                    users=FakeUsers(enabled={"u": True}), connected_users=connected_users,
+    # the fan-out lists connections, not users (MULTI_DRIVE_RFC §8): the user's one connection, indexing on
+    svc = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(), connections=single_connection_repository("u"),
                                     notifier=notifier, alert_sink=None, clock=clock, localization=localization)
     await svc.fan_out()
     assert calls == [{"lean": True}]
