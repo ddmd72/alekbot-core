@@ -21,7 +21,8 @@ from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.domain.notification_kind import NotificationKind
 from src.domain.notify_result import NotifyResult
-from src.domain.reconnect_policy import R1_NOTICES, Integration
+from src.domain.integration import Integration
+from src.domain.reconnect_policy import R1_NOTICES
 from src.domain.task import TaskUserConfig
 from src.domain.user_drive import DriveConnection
 from src.services.integration_reconnect_service import IntegrationReconnectService

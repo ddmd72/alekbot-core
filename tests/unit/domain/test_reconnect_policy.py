@@ -4,7 +4,8 @@ from itertools import product
 
 import pytest
 
-from src.domain.reconnect_policy import Integration, r1_due, reconnect_needed
+from src.domain.integration import Integration
+from src.domain.reconnect_policy import r1_due, reconnect_needed
 
 
 def test_a_past_connection_without_a_credential_needs_a_reconnect_and_one_notice():

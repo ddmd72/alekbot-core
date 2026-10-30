@@ -12,7 +12,8 @@ from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepos
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.domain.email import IndexingState
-from src.domain.reconnect_policy import R1_NOTICES, Integration
+from src.domain.integration import Integration
+from src.domain.reconnect_policy import R1_NOTICES
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.redelivery_world import deliver
