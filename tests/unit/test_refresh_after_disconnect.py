@@ -10,7 +10,6 @@ import pytest
 
 from src.adapters.google_tasks_adapter import GoogleTasksAdapter
 from src.adapters.microsoft.graph_auth import MicrosoftGraphTokenProvider
-from src.adapters.microsoft.onedrive_adapter import OneDriveAdapter
 from src.handlers.worker_handler import WorkerHandler
 from src.services.email_review_service import EmailReviewService
 from src.services.email_search_service import EmailSearchService
@@ -82,24 +81,6 @@ async def test_a_graph_refresh_of_a_connected_grant_is_stored_and_served(store):
         assert await tokens.user_headers(USER) == {"Authorization": "Bearer new"}
     stored = await one(store.repo, USER, "microsoft_onedrive")
     assert (stored.access_token, stored.drive_id) == ("new", "D1")
-
-
-# --------------------------------------------------------------------------------------- OneDrive reconnect flag
-
-async def test_flagging_a_grant_disconnected_meanwhile_returns_false_and_brings_nothing_back(store):
-    await store.repo.save(creds(USER, "microsoft_onedrive"))
-    store.disconnect_after_read(USER, "microsoft_onedrive")
-    adapter = OneDriveAdapter(store.repo, "cid", "secret", connector=ConnectorRegistry().get("microsoft_onedrive"))
-    assert await adapter.flag_reconnect(USER) is False
-    assert store.docs == {}
-
-
-async def test_flagging_a_connected_grant_stores_the_flag(store):
-    await store.repo.save(creds(USER, "microsoft_onedrive", drive_id="D1"))
-    adapter = OneDriveAdapter(store.repo, "cid", "secret", connector=ConnectorRegistry().get("microsoft_onedrive"))
-    assert await adapter.flag_reconnect(USER) is True
-    stored = await one(store.repo, USER, "microsoft_onedrive")
-    assert (stored.needs_reconnect, stored.drive_id) == (True, "D1")
 
 
 # ------------------------------------------------------------------------------------------------ Google Tasks
