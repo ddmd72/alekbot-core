@@ -693,26 +693,46 @@ def test_no_env_var_access_in_core_layers():
 # REQ-ARCH-18 — No HTTP client libraries in core layers
 #
 # aiohttp, httpx, requests must not be imported in domain/, ports/,
-# agents/, handlers/, or infrastructure/. HTTP calls belong in adapters/.
-# services/ exceptions: see arch_tech_debt.py → HTTP_CLIENT_WHITELIST_FILES.
+# agents/, handlers/, infrastructure/, services/ or web/ (MULTI_DRIVE_RFC
+# §5.3, T-2). HTTP calls belong in adapters/. Both import forms count:
+# `from aiohttp import …` and a plain `import aiohttp`.
+# Exceptions: see arch_tech_debt.py → HTTP_CLIENT_WHITELIST_FILES (empty).
 # ---------------------------------------------------------------------------
 
 _HTTP_CLIENT_PACKAGES = ["aiohttp", "httpx", "requests"]
 _HTTP_CLIENT_LAYERS = [
     "src/domain", "src/ports", "src/agents", "src/handlers",
-    "src/infrastructure", "src/services",
+    "src/infrastructure", "src/services", "src/web",
 ]
+
+
+def _collect_plain_imports(layer_path: str) -> list[tuple[str, str, int]]:
+    """(file_path, module, lineno) for every runtime `import X` (an `ast.Import`) in a layer, outside
+    `if TYPE_CHECKING:` blocks; `_collect_imports` reads `from X import …` only."""
+    results = []
+    for fp in _iter_py_files(layer_path):
+        tree = _parse(fp)
+        tc_lines: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If) and _is_type_checking_guard(node):
+                for child in ast.walk(node):
+                    if hasattr(child, "lineno"):
+                        tc_lines.add(child.lineno)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and node.lineno not in tc_lines:
+                results.extend((fp, alias.name, node.lineno) for alias in node.names)
+    return results
 
 
 @pytest.mark.slow
 @pytest.mark.requirement("REQ-ARCH-18")
 def test_no_http_client_libs_in_core_layers():
     """HTTP client libraries (aiohttp, httpx, requests) must not be imported
-    in domain/, ports/, agents/, handlers/, infrastructure/, or services/
+    in domain/, ports/, agents/, handlers/, infrastructure/, services/ or web/
     — HTTP calls belong in adapters/."""
     violations = []
     for layer in _HTTP_CLIENT_LAYERS:
-        for fp, module, lineno in _collect_imports(layer):
+        for fp, module, lineno in _collect_imports(layer) + _collect_plain_imports(layer):
             if os.path.normpath(fp) in HTTP_CLIENT_WHITELIST_FILES:
                 continue
             for pkg in _HTTP_CLIENT_PACKAGES:
@@ -722,6 +742,18 @@ def test_no_http_client_libs_in_core_layers():
         "HTTP client library in core layer "
         "(move HTTP calls to adapters/):\n" + "\n".join(violations)
     )
+
+
+@pytest.mark.requirement("REQ-ARCH-18")
+def test_the_http_client_scan_sees_both_import_forms(tmp_path, monkeypatch):
+    """The scan's own control: a plain `import aiohttp` and a `from httpx import …` in a scanned layer are both
+    found (a plain import went unseen before T-2)."""
+    layer = tmp_path / "src" / "web"
+    layer.mkdir(parents=True)
+    (layer / "probe.py").write_text("import aiohttp\nfrom httpx import AsyncClient\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    found = {m for _, m, _ in _collect_imports("src/web") + _collect_plain_imports("src/web")}
+    assert {"aiohttp", "httpx"} <= found
 
 
 # ---------------------------------------------------------------------------
