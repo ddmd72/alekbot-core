@@ -139,21 +139,22 @@ relay; only the main service needs credentials, to mint SFU sessions.
    `VOICE_WEB_REASONING_EFFORT` (default `medium`) and `VOICE_WEB_CALLER_OPENING` (`on`/`off`, default `on`).
 
 **OneDrive App Folder (user drive)** (`docs/10_rfcs/USER_DRIVE_RFC.md`). It reuses the To Do app registration
-(`MICROSOFT_TODO_CLIENT_ID` / `_SECRET`); the adapter is wired only when both are set. The main service mounts
-`ONEDRIVE_REDIRECT_URI_DEV` unconditionally.
+(`MICROSOFT_TODO_CLIENT_ID` / `_SECRET`); the adapter is wired only when both are set.
 1. Azure registration `Alek-bot`: add the delegated permission `Files.ReadWrite.AppFolder`.
-2. Create the secret and grant access:
-   ```bash
-   printf '%s' "<SERVICE_URL>/auth/connect-onedrive/callback" | \
-     gcloud secrets create ONEDRIVE_REDIRECT_URI_DEV --data-file=- --project=<PROJECT_ID>
-   gcloud secrets add-iam-policy-binding ONEDRIVE_REDIRECT_URI_DEV --project=<PROJECT_ID> \
-     --member="serviceAccount:<RUNTIME_SA_OF_THE_SERVICE_THAT_MOUNTS_IT>" --role=roles/secretmanager.secretAccessor
-   ```
-3. Register the same URI as a redirect URI (platform "Web") on the `Alek-bot` registration.
-4. After the deploy, connect the drive from the Cabinet (Integrations, "Connect drive").
+2. The redirect is the shared `OAUTH_CONNECT_REDIRECT_URI` (below); there is no OneDrive-specific key.
+3. After the deploy, connect the drive from the Cabinet (Integrations, "Connect drive").
 
-Local runs read `ONEDRIVE_REDIRECT_URI` from `.env` (a separate key, so a localhost value never reaches a deployed
-revision). Unset, `/auth/connect-onedrive` answers 501.
+**Integration connect redirect (`OAUTH_CONNECT_REDIRECT_URI`).** One callback serves every integration connect, Google and
+Microsoft alike: `<SERVICE_URL>/auth/connect/callback` (`docs/10_rfcs/MULTI_DRIVE_RFC.md` §5.2, E4). Deployed, the key
+comes from the secret `OAUTH_CONNECT_REDIRECT_URI_DEV` mounted as `OAUTH_CONNECT_REDIRECT_URI` (`cloudbuild-dev.yaml`
+`--set-secrets`); the secret is created and granted to the runtime SA like the other `_DEV` secrets. Register the same
+URI as an authorized redirect URI on the Google OAuth client and as a redirect URI (platform "Web") on the `Alek-bot`
+registration.
+
+Local runs read `OAUTH_CONNECT_REDIRECT_URI` from `.env` (default `http://localhost:8080/auth/connect/callback`; the
+deployed value comes from the `_DEV` secret, so a localhost value never reaches a deployed revision). The four earlier
+per-integration keys (`GMAIL_OAUTH_REDIRECT_URI`, `GOOGLE_TASKS_OAUTH_REDIRECT_URI`, `MICROSOFT_TODO_REDIRECT_URI`,
+`ONEDRIVE_REDIRECT_URI`) are gone. A connect for a kind whose realm has no OAuth client configured answers 501.
 
 **Agent workspace bucket** (`docs/10_rfcs/AGENT_WORKSPACE_RFC.md` §14). The main service mounts `GCS_WORKSPACE_BUCKET`.
 1. Bucket in the main service's region: uniform access, public access prevention, soft delete off (versioning is the
@@ -227,6 +228,7 @@ are never deleted (nothing breaks).
 | `<prefix>memory_fact_drafts` | unconfirmed memory-fact drafts (7 days) |
 | `<prefix>worker_task_dedup` | Cloud Tasks claims (1 h), daily-review marks (48 h), deep-research webhook claims (72 h) |
 | `<prefix>drive_model_usage` | monthly drive model-usage documents (the `{user}:initial` document has no `expires_at`) |
+| `<prefix>oauth_flows` | server-side integration connect flows (10 minutes); the ephemeral store reads the expiry itself, the policy only sweeps abandoned flows |
 
 ```bash
 gcloud firestore fields ttls update expires_at --collection-group=<collection-group> \

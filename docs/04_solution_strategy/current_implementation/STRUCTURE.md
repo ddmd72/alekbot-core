@@ -435,7 +435,7 @@ The core application follows **Hexagonal Architecture (Ports & Adapters)** with 
 -   **`email_exclusions_port.py`**: 🆕 `EmailExclusionsPort` ABC — `get_exclusions`, `add_exclusion`. Adapter: `FirestoreEmailExclusionsAdapter`.
 -   **`indexed_email_repository.py`**: 🆕 `IndexedEmailRepository` ABC — upsert, semantic search (4-vector RRF), `get_by_id`, `get_pending_embeddings`. Adapter: `FirestoreIndexedEmailRepository`.
 -   **`email_indexing_job_repository.py`**: 🆕 `EmailIndexingJobRepository` ABC — create, update, get, list stale running jobs. Adapter: `FirestoreEmailJobRepository`.
--   **`oauth_credentials_port.py`**: 🆕 `OAuthCredentialsPort` ABC — `get_credentials`, `save_credentials`, `delete_credentials`. Adapter: `FirestoreOAuthCredentialsAdapter`.
+-   **`oauth_credentials_port.py`**: 🆕 `OAuthCredentialsPort` ABC — `get`, `save`, `update`, `delete`, `list_for_user`, `list_keys`, `list_by_account`, `list_user_ids`. Adapter: `FirestoreCredentialStore`. Companion `oauth_provider_port.py`: `OAuthProviderPort` (one OAuth edge per realm; `GoogleOAuthProvider`, `MicrosoftOAuthProvider`).
 -   **`notification_state_port.py`**: 🆕 `NotificationStatePort` ABC — `get_channel`, `update_channel`. Adapter: `FirestoreNotificationStateAdapter`.
 -   **`notification_channel_factory_port.py`**: 🆕 `NotificationChannelFactoryPort` ABC — `get_channel(platform)` → platform response adapter. Implemented by `NotificationChannelFactory`.
 
