@@ -37,11 +37,11 @@ def test_enums():
 def test_oauth_credential_fields_and_defaults():
     assert _fields(OAuthCredential) == [
         "credential_id", "user_id", "account_id", "kind", "integration", "account", "access_token", "refresh_token",
-        "token_expiry", "scopes", "needs_reconnect", "drive_id"]
+        "token_expiry", "scopes", "needs_reconnect"]
     cred = OAuthCredential(user_id="user-alex", account_id="acct-1", kind="microsoft_onedrive",
                            integration=Integration.DRIVE, account=ACCOUNT, access_token="at", refresh_token="rt",
                            token_expiry=WHEN, scopes=[])
-    assert (cred.credential_id, cred.needs_reconnect, cred.drive_id) == ("", False, "")
+    assert (cred.credential_id, cred.needs_reconnect) == ("", False)
 
 
 def test_oauth_credential_is_keyword_only_and_needs_its_identity():
