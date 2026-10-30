@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from src.adapters.file_localization_adapter import FileLocalizationAdapter
 from src.adapters.gcs_file_storage_adapter import GcsFileStorageAdapter
 from src.agents.drive_agent import DriveAgent
+from src.domain import drive_ref
 from src.domain import drive_tool_texts as tt
 from src.domain.agent import AgentConfig, AgentStatus
 from src.domain.drive_handle import DriveHandle
@@ -31,7 +32,7 @@ from src.infrastructure.drive_operations import DriveOperations
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from src.services.user_notification_service import UserNotificationService
-from tests.support.drive_service_connections import seeded_connections
+from tests.support.drive_service_connections import ref, seeded_connections
 from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_review_world import FakeLanguageService, FakeNotificationState, RecordingChannelFactory
 from tests.support.gcs_fake import FakeGcs
@@ -127,13 +128,13 @@ class World:
         return self
 
     def seed(self, path: str, data: bytes) -> str:
-        """A file already on the drive; returns its `drive:` ref."""
+        """A file already on the drive; returns its tagged `drive:a1:` ref."""
         parent = AREA
         *folders, name = path.split("/")
         for folder in folders:
             found = self.drive.child(parent, folder)
             parent = found.item_id if found else self.drive.add_folder(parent, folder)
-        return f"drive:{self.drive.add_file(parent, name, data)}"
+        return ref(self.drive.add_file(parent, name, data))
 
     def content(self, path: str) -> Optional[bytes]:
         node = self.drive.find(path)
@@ -241,7 +242,7 @@ async def test_create_folder():
 async def test_move_with_folder_and_new_name():
     world = await World().start()
     ref = world.seed("Inbox/boiler-warranty.md", b"Boiler warranty WB-55-1093.\n")
-    item_id = ref.split(":", 1)[1]
+    item_id = drive_ref.parse(ref).item_id
     smart = ScriptedLLM([tools(delegate()), text("Moved.")])
     drive = specialist([(tt.MOVE_FILE, with_ref(MOVE, file_ref=ref))])
 
