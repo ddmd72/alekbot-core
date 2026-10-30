@@ -52,8 +52,9 @@ class GoogleOAuthService:
         client_id: Google OAuth 2.0 client ID.
         client_secret: Google OAuth 2.0 client secret.
         scopes: OAuth scopes to request. Defaults to GMAIL_SCOPES for backward compat.
-        required_scope: the scope the consent must actually grant. Defaults to the Gmail or Tasks scope found
-            among ``scopes`` (``openid`` / ``email`` do not count).
+
+        The consent must grant the Gmail or Tasks scope found in ``scopes`` (``openid`` / ``email`` do not count);
+        a list with neither raises ValueError.
     """
 
     def __init__(
@@ -61,14 +62,14 @@ class GoogleOAuthService:
         client_id: str,
         client_secret: str,
         scopes: Optional[List[str]] = None,
-        required_scope: Optional[str] = None,
     ):
         self._client_id = client_id
         self._client_secret = client_secret
         self._scopes = scopes if scopes is not None else GMAIL_SCOPES
-        self._required_scope = required_scope or next(
-            (sc for sc in self._scopes if sc in (_GMAIL_SCOPE, _TASKS_SCOPE)), None
-        )
+        required = next((sc for sc in self._scopes if sc in (_GMAIL_SCOPE, _TASKS_SCOPE)), None)
+        if required is None:
+            raise ValueError("GoogleOAuthService scopes must include the Gmail or the Tasks scope")
+        self._required_scope = required
 
     def get_authorization_url(self, state: str, redirect_uri: str) -> str:
         """Build Google OAuth URL requesting the configured scopes."""
@@ -123,7 +124,7 @@ class GoogleOAuthService:
             # 1b. Granular consent: an unticked service checkbox still yields a token (openid email only).
             #     The granted scopes, not the requested ones, decide.
             granted = str(token_data.get("scope") or "").split()
-            if self._required_scope and self._required_scope not in granted:
+            if self._required_scope not in granted:
                 logger.warning(f"⚠️ Google consent without the service scope: user={user_id[:8]} granted={len(granted)} scopes")
                 raise OAuthScopeNotGrantedError("Google did not grant the required scope")
 
@@ -148,7 +149,7 @@ class GoogleOAuthService:
             access_token=access_token,
             refresh_token=refresh_token,
             token_expiry=token_expiry,
-            scopes=granted if self._required_scope else self._scopes,
+            scopes=granted,
             email_address=email_address,
             account_realm=ACCOUNT_REALM_GOOGLE,
             account_subject=subject,
