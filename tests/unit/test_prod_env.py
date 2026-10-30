@@ -32,7 +32,9 @@ def test_the_makefile_defaults_are_read_and_the_live_overrides_name_real_ones():
     assert defaults["_DRIVE_UPGRADE_PASS"] == "on"
     assert set(prod_env.LIVE_OVERRIDES) <= set(defaults)
     table = prod_env.substitutions()
-    assert table["_DRIVE_TRANSCRIBE_ENABLED"].value == "on" and "CLAUDE.md" in table["_DRIVE_TRANSCRIBE_ENABLED"].source
+    # the live value is stated in the deployment docs, not the root CLAUDE.md (slimmed 2026-10-30)
+    assert table["_DRIVE_TRANSCRIBE_ENABLED"].value == "on"
+    assert "docs/07_deployment/README.md" in table["_DRIVE_TRANSCRIBE_ENABLED"].source
     assert all(row.source for row in table.values())
 
 
