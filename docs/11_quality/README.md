@@ -11,5 +11,5 @@ Quality is enforced by gates that run, not by documents. Where each one lives:
 | Adapter contracts | wire tests at the SDK boundary plus named per-provider contract rules | `docs/how_to/ADAPTER_WIRE_TESTING.md`, `tests/contracts/adapter_contracts.py` |
 | Timing tests | wall-clock / CPU thresholds, kept off the everyday gate | `make test-timing` (CI, after a merge to `main`) |
 
-Test rules (fakes over call assertions, the offline unit suite, which command to run when, the reviewer rule for
-editing an existing test): [`tests/CLAUDE.md`](../../tests/CLAUDE.md).
+Test rules (fakes over call assertions, the offline unit suite, the reviewer rule for
+editing an existing test): [`tests/CLAUDE.md`](../../tests/CLAUDE.md). Which commands exist: the root `CLAUDE.md` Commands section.

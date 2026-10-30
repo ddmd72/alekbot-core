@@ -2,36 +2,24 @@
 
 pytest + pytest-asyncio, `asyncio_mode=auto`. Why these rules: `docs/10_rfcs/TEST_COVERAGE_SYSTEMIC_RFC.md`.
 
-## Running — which command when
+## Where tests run
 
-This table is the one place that says which test command to run when. Other docs point here.
+Which commands exist and what they do: the root `CLAUDE.md` "Commands" section. This file keeps the structure of the suite and the rules for writing tests.
 
-| When | Command | What it runs |
-|---|---|---|
-| While editing | `pytest <path>::<test>` or `make test-affected` | the tests you name, or the unit tests testmon selects for your diff (it can miss a test whose input is a data file or code in a child process) |
-| An intermediate commit | `make test-affected` + the tests of the files you changed; **when the commit touches a data file or code run in a child process, also that folder's tests** (e.g. `pytest tests/unit/prompts` for `prompts_snapshot/`) | what testmon selects, plus the tests it cannot see |
-| Before a push | `make check`, **once per push**, on the branch head (not per commit; owner, 2026-10-27) | lint + mypy + the unit suite without `slow` tests + the offline G2 test |
-| Before you call a package done, and whenever you report coverage | `make ci` | everything in `make check` + `slow` tests + the coverage gates (per file and per layer); CI runs exactly this on every PR |
-| Mutation check, by hand, optional | `python -m tests.support.semantic_mutants --module <m> --tests $(python -m tests.support.mutation_targets --tests-for <m>) [--operators wiring] [--equivalent <file>]` | one module's mutants; nobody has to run it: the weekly run is the only mutation pass ("Mutation check" below; wiring command in "The production graph") |
-| Only when the task needs them | `make test-integration`, `make test-e2e-all` | some integration tests and all e2e tests call real services |
-| Fake against the real thing (P5) | `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 pytest tests/unit/support/test_firestore_parity.py`, and `make test-cloud` | the Firestore parity scenarios on the emulator and on the test database; the GCS scenarios run on the fake in `make check` (`tests/unit/support/test_gcs_parity.py`) and, with `TEST_GCS_BUCKET` set, on the test bucket in `make test-cloud` (see below) |
-| Docs-only PR | (automatic) | `make ci` is skipped (F3; also on a push to `main` and in the `timing` job; dependencies are still installed, the PII gate and the CI Slack notice still run). Docs: every file under `docs/` (any extension), `CLAUDE.md` anywhere except under `src/skills/` (nothing there is docs), root `*.md`, `.github/**/*.md`. The doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`) still run; the meta-test is an equality check (fails when an unlisted test reads docs and when a listed one stops). Known gap: a test reading a root `*.md` or a `CLAUDE.md` is not detected |
-| Weekly cloud runs (nothing to do by hand) | `Mutation survivors` (`mutation.yml`) and `Firestore parity` (`parity.yml`), Sunday; after a package: `gh workflow run mutation.yml -f module=<module>` (works once the module is registered on `main`, or with `--ref <branch>`; `Firestore parity` runs on `main` only, WIF is bound to it) | artifacts `survivors` and `parity` and as check-run annotations (≤ 10 per step, 4000 chars each) for the cloud reader, read by the Monday routine, which fixes survivors by PR; never red for a survivor or a failed scenario, never Slack |
-| Re-pin the URL map | `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` | single file, no `-n`; rewrites `main_boots_offline_url_map.txt` from the booted app; the implementer commits the rewritten pin and the task reviewer reads its diff (no separate approval); a new route must also be refused or listed in `PUBLIC` of `tests/unit/web/test_every_route_refuses_anonymous.py` |
-| Wall-clock tests | `make test-timing`, by hand (CI runs it after a merge to `main`) | `timing` tests only |
-
-Never: re-run a suite because a `timing` test failed; combine `--testmon` with `--cov`; run two full suites at once
-(the lock below makes the second wait).
+- `tests/unit/` is offline and runs on every PR in CI; `slow` and `timing` tests are skipped unless their switch is set (see "Markers").
+- Some integration tests and all e2e tests call real services and are not part of the CI gate.
+- Two weekly cloud workflows write artifacts a scheduled routine reads (never Slack, never red for a survivor or a failed scenario): `Mutation survivors` (`mutation.yml`) and `Firestore parity` (`parity.yml`, `main` only, WIF is bound to it).
+- Docs-only PRs skip the CI suite but still run the doc-reading tests listed in `scripts/ci/docs_only.py` (`DOC_READING_TESTS`; the root `CLAUDE.md` "Commands" section and that file's docstring define "docs").
 
 ```
 tests/
   conftest.py     — fixtures + the plugin in tests/plugins/ (suite lock)
   plugins/        — pytest plugins: the suite lock, `network_guard.py` (the offline G2 run)
   unit/           — offline, no real service. Fakes and in-memory repositories. conftest.py = the network guard
-  integration/    — mocked or scripted services; the offline G2 end-to-end test runs in `make check`
+  integration/    — mocked or scripted services; the offline G2 end-to-end test is part of the offline gate
   support/        — shared fakes (fact_store.py, firestore_eval.py), network_guard.py, plugin_runs.py, semantic_mutants/
   contracts/      — adapter contract rules (adapter_contracts.py)
-  cloud/          — the cloud gate: real writes to the Firestore test database and, with `TEST_GCS_BUCKET` set, the GCS test bucket (`make test-cloud`); never in check or ci, weekly in the cloud (`Firestore parity`, Firestore only until P12)
+  cloud/          — the cloud gate: real writes to the Firestore test database and, with `TEST_GCS_BUCKET` set, the GCS test bucket (`make test-cloud`); never in the CI gate, weekly in the cloud (`Firestore parity`, Firestore only until P12)
 ```
 
 ## The convention
@@ -90,7 +78,7 @@ children (drive parser, sandbox engine, ffmpeg).
 ## Fake against the real thing: the parity scenarios (P5)
 
 `tests/support/firestore_parity.py` holds one set of scenarios, each with ONE documented expected value, run on three backends:
-H1 in `make check` (`tests/unit/support/test_firestore_parity.py`),
+H1 in the unit suite (`tests/unit/support/test_firestore_parity.py`),
 the Firestore emulator in the same file when `FIRESTORE_EMULATOR_HOST` is set (`npx -y firebase-tools@latest setup:emulators:firestore`,
 then `java -jar ~/.cache/firebase/emulators/cloud-firestore-emulator-v*.jar --host=127.0.0.1 --port=8085`; it does not refuse a
 query for a missing index, so those scenarios skip), and the test database in `tests/cloud/` (`make test-cloud`). The test database
@@ -100,9 +88,9 @@ refuses to start unless the database ends in `-test`, is not the live one and th
 impersonated credentials, and creates the scenarios' indexes once (up to 15 minutes; a run that creates indexes may fail scenarios of those collections even after READY (seen once, cause unknown): re-run). The weekly `Firestore parity` workflow (`.github/workflows/parity.yml`, Sunday 03:00 UTC and `workflow_dispatch`) authenticates through Workload
 Identity Federation as the test service account and runs `make test-cloud` (artifact `parity`: `parity.xml`, `parity.log`; never red for a failed scenario).
 `tests/cloud/conftest.py` accepts default credentials that already identify as the test service account, otherwise it impersonates as before; every guard
-is unchanged. The parity artifact is redacted (four values are replaced before upload: the three secrets plus `TEST_WIF_PROVIDER` and the ids inside it); the job is red when a secret is empty, federation fails, zero tests ran, or `parity.xml` is missing or unreadable; when the redaction itself fails both files are deleted and the upload is skipped. The Sunday 03:00 UTC run can collide with a manual `make test-cloud` (no lease yet): do not run it by hand at that time. One runner at a time: the workflow runs under a `concurrency` group (no lease document).
+is unchanged. The parity artifact is redacted (four values are replaced before upload: the three secrets plus `TEST_WIF_PROVIDER` and the ids inside it); the job is red when a secret is empty, federation fails, zero tests ran, or `parity.xml` is missing or unreadable; when the redaction itself fails both files are deleted and the upload is skipped. The Sunday 03:00 UTC run can collide with a manual `make test-cloud` (no lease yet). One runner at a time: the workflow runs under a `concurrency` group (no lease document).
 
-**GCS has its own set** (`tests/support/gcs_parity.py`, run against the fake in `tests/support/gcs_fake.py`): on the fake in `make check` (`tests/unit/support/test_gcs_parity.py`), and on a versioned test bucket in `make test-cloud` through `tests/cloud/test_gcs_parity_cloud.py`, which skips without `TEST_GCS_BUCKET` (the weekly workflow does not pass it yet: P12). A new GCS feature = a new scenario in `tests/support/gcs_parity.py`.
+**GCS has its own set** (`tests/support/gcs_parity.py`, run against the fake in `tests/support/gcs_fake.py`): on the fake in the unit suite (`tests/unit/support/test_gcs_parity.py`), and on a versioned test bucket in `make test-cloud` through `tests/cloud/test_gcs_parity_cloud.py`, which skips without `TEST_GCS_BUCKET` (the weekly workflow does not pass it yet: P12). A new GCS feature = a new scenario in `tests/support/gcs_parity.py`.
 
 Extending the fake with a new Firestore feature = a new scenario in `tests/support/firestore_parity.py`, run on the emulator and with `make test-cloud`; an adapter that starts using a feature the fake lacks fails loudly (unsupported operator / no such method) — extend the fake then, never work around it in the test.
 
@@ -120,18 +108,18 @@ Extending the fake with a new Firestore feature = a new scenario in `tests/suppo
 
 ## Coverage floors and the untested-module list
 
-- `.coveragerc` has `branch = True` and measures `src/` plus the root `*_main.py`; `make ci` fails under the global
+- `.coveragerc` has `branch = True` and measures `src/` plus the root `*_main.py`; CI fails under the global
   `--cov-fail-under`, the per-file table (`scripts/check_coverage_thresholds.py`) and the **per-layer floors**
-  (`scripts/check_coverage_layers.py`, branch-aware percent per layer). Floors rise, or are lowered with a reason line and the reviewer's OK: raise a floor only to min(local `make ci`, the CI 'Coverage per layer' notice) − 0.3. The script
+  (`scripts/check_coverage_layers.py`, branch-aware percent per layer). Floors rise, or are lowered with a reason line and the reviewer's OK: a floor is read from the CI run's 'Coverage per layer' output, never from a local run, and is raised only to that number − 0.3. The script
   prints "floor can rise to X" when that would be 0.5 above the floor; raise it in the same change. A floor may be lowered in the same PR that needs it, with a one-line reason comment next to the value and the reviewer's OK; the owner reads it in the diff (R9).
 - The per-file table holds the auth files (verifiers, sign-in, MCP authorization, the gated webhooks and routes) at 100 % lines (P7):
-  a refusal line no test runs fails `make ci`.
+  a refusal line no test runs fails the CI coverage gate.
 - `tests/unit/web/test_every_route_refuses_anonymous.py` probes every route of every deployed blueprint with an anonymous request: a new
   route or blueprint must be refused (nothing touched or written) or listed in its `PUBLIC` with a reason.
 - `tests/unit/test_every_src_module_is_imported_by_a_test.py`: every module under `src/` and every root `*_main.py` is
   imported by some test, or listed with a reason in `tests/unit/untested_modules_allowlist.txt`. A new module needs a
   test, not an allowlist line. The list only shrinks: the test fails when a listed module is now imported. The check is `slow`,
-  so it fails only in `make ci`.
+  so it fails only in CI (or with `RUN_SLOW_TESTS=1`).
 
 ## The production graph: wiring and reachability (P9)
 
@@ -144,11 +132,10 @@ The main service's non-web objects are built by `build_application_graph(config,
   A test that needs the deploy's values uses this, never a hand-made `config` dict.
 - **The fixture** (`prod_graph`, imported from `tests/support/prod_graph.py`): the built and started graph over the H1 fake and a recording Cloud Tasks
   client, with one user's eager and lazy agents built. Use it for any "is X wired in production" question.
-- **Which tests are slow, and what that means for you.** The tests that build the graph (each builds it, starts it and builds one user's
+- **Which tests are slow.** The tests that build the graph (each builds it, starts it and builds one user's
   eager and every lazy agent) or boot `main()` (and send every trigger) are `slow`; most source-reading guards are fast (the execution-context
   test, the main.py construction allowlist, the checker self-tests); a guard that parses all of `src/` is `slow` (the enqueue-site tests of
-  `test_worker_triggers.py` and `test_worker_payload_fields.py`). A forgotten dependency therefore shows up as an unledgered `None`
-  in `make ci` or with `RUN_SLOW_TESTS=1`, **not in `make check`**; a bare `pytest <file>` skips those tests silently.
+  `test_worker_triggers.py` and `test_worker_payload_fields.py`). A forgotten dependency shows up as an unledgered `None` only when `slow` tests run (`RUN_SLOW_TESTS=1`); a bare `pytest <file>` skips them silently.
 - **Producer and consumer payloads** (`tests/unit/test_worker_payload_fields.py`) tie every `/worker` producer to its consumer's reads: a new task
   type or payload key is added on both sides or listed in the test's allowlist with a reason.
 - **The boot test** (`tests/unit/test_main_boots_offline.py`): runs the real `main()` offline, pins the full `url_map`
@@ -161,22 +148,12 @@ The main service's non-web objects are built by `build_application_graph(config,
   and a listed line whose `None` or count is gone). The reason is one of `off-in-prod`, `optional-knob`, `lazy`, `runtime`,
   `by-design`, `defect:D<n>` (the id from the P9 defect list), followed by evidence of at least two words. A count-1 line of `wiring_instance_ledger.txt` is a registration and
   is the implementer's to add; counts above 1 and every line of `wiring_none_ledger.txt` are the reviewer's decision, not a way to make a
-  test pass. A `defect:` line is a wiring fault someone owns. `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py`
-  rewrites `main_boots_offline_url_map.txt` from the booted app (header kept, sorted); without the variable nothing is written. The implementer commits the rewritten pin and the task reviewer reads its diff (no separate approval); a new route must also be refused or listed in `PUBLIC` of `tests/unit/web/test_every_route_refuses_anonymous.py`. Line forms:
+  test pass. A `defect:` line is a wiring fault someone owns. The URL-map pin `main_boots_offline_url_map.txt` is rewritten from the booted app (header kept, sorted) by `UPDATE_PINS=1 RUN_SLOW_TESTS=1 pytest tests/unit/test_main_boots_offline.py` (single file, no `-n`); without the variable nothing is written. The implementer commits the rewritten pin and the task reviewer reads its diff (no separate approval); a new route must also be refused or listed in `PUBLIC` of `tests/unit/web/test_every_route_refuses_anonymous.py`. Line forms:
   - `wiring_none_ledger.txt`: `<key>  # <reason> <evidence>`, the key a path from `app` (exact), `Class.attr` (None on every walked
     instance of the class) or `Class.attr*` (any instance may be None; refused on adapter, service, handler and composition classes);
   - `wiring_instance_ledger.txt`: `<module.Class> <count>  # <reason> <evidence>`; a count above 1 names where each instance is built.
 - **Mutation** (`wire-drop` replaces one argument or dict value with `None`; `call-skip` drops one `attach_*`, `register_*` or `set_*`
-  call). The weekly run covers the builder and `main.py` (registered targets). By hand and optional, one run per module, in the background
-  (a full set of about 950 mutants takes about 2.5-3 hours; each mutant runs the graph tests in a child process):
-  ```bash
-  for m in src.composition.application_graph main src.composition.service_container src.composition.user_agent_factory \
-           src.composition.slack_adapter_factory src.composition.telegram_adapter_factory; do
-    python -m tests.support.semantic_mutants --module "$m" --operators wiring \
-      --equivalent tests/unit/composition/wiring_equivalent_mutants.txt \
-      --tests $(python -m tests.support.mutation_targets --tests-for "$m")
-  done
-  ```
+  call). The weekly run covers the builder and `main.py` (registered targets); each mutant runs the graph tests in a child process (about 950 mutants).
   A survivor gets a new assertion in a new file; the reviewer alone rules a mutant equivalent in `wiring_equivalent_mutants.txt`.
 - **Not covered, by decision:** a wrong but non-None object of the right type; producer and consumer payload fields that disagree;
   an enqueue literal in dead code; the rollback env switches; the wiring of `indexer_main`, `job_main`, `relay_main`; a secret that is
@@ -184,8 +161,7 @@ The main service's non-web objects are built by `build_application_graph(config,
 
 ## Mutation check: the weekly run
 
-Mutation testing is the weekly cloud run, nothing else (owner decision 2026-10-27: mutant hunting during normal work only adds cost). Between
-runs the code lives with its survivors; no package waits for a clean local pass. The driver below stays as a tool anyone may run by hand. Mutants: a dropped `order_by`/`where`/`select` field/`model_dump` field/dict key of a
+Mutation testing is the weekly cloud run (owner decision 2026-10-27). The driver below is the tool the run uses. Mutants: a dropped `order_by`/`where`/`select` field/`model_dump` field/dict key of a
 written document/write/forwarded keyword, a flipped sort direction, an `except` that returns success.
 
 ```bash
@@ -209,12 +185,11 @@ fails → `code-bug` (a real defect in current code; the weekly routine has no `
 8-hex key in the report) and is the reviewer's tool, never the implementer's.
 
 Registering a package's modules in `tests/support/mutation_targets.py` (`MutationTarget(module, equivalent, operators="default", graph_group=False, extra=())` in `TARGETS`)
-is part of "package done" (the run itself is not); a unit test fails when a `*_equivalent_mutants.txt` file has no registered target. The driver takes
+is part of "package done"; a unit test fails when a `*_equivalent_mutants.txt` file has no registered target. The driver takes
 `--report PATH` (JSON) and `--no-fail` (exit 0 whatever survived). The `Mutation survivors` workflow (`.github/workflows/mutation.yml`,
 Sunday 02:00 UTC and `workflow_dispatch` with an optional `module`) runs one job per registered module with `--report --no-fail` and
 uploads `mutation-<slug>` per module and `survivors` (`survivors.md`, `survivors.json`). `survivors.md` lists every registered module: `missing` when a job produced no report (baseline failed, timed out), `partial (N of M)` when the job was cut; the report is rewritten after each mutant. The verdict is also printed as check-run annotations (≤ 10 per step, 4000 chars each) for the cloud reader. Survivors are read by the Monday routine (a
-scheduled cloud session), which writes the killing assertion or proposes an `equivalent` line, as a test-only PR. A local run is optional and
-never a condition of "done".
+scheduled cloud session), which writes the killing assertion or proposes an `equivalent` line, as a test-only PR.
 
 ## Clock tests (P16)
 
@@ -297,15 +272,15 @@ never a condition of "done".
 ## Markers and the machine lock (P1, `tests/plugins/`)
 
 - **`@pytest.mark.slow`** — the test takes over 0.5 s with coverage on (setup + call + teardown). Skipped unless
-  `RUN_SLOW_TESTS=1`; `make ci` sets it. Put it on the test, or `pytestmark` when the cost is a module- or class-scoped
+  `RUN_SLOW_TESTS=1` (CI sets it). Put it on the test, or `pytestmark` when the cost is a module- or class-scoped
   fixture (under xdist whichever test uses the fixture first on a worker pays, so mark all its users). Do not mark a test
   slow to get a green run before asking whether it can be fast.
 - **Other markers.** `timing`: asserts on wall-clock or CPU time; skipped unless `RUN_TIMING_TESTS=1` (`make test-timing`,
-  CI after a merge to main); never in `make check`. `docker`: needs the built sandbox image and a daemon; skipped unless
+  CI after a merge to main); never in the everyday gate. `docker`: needs the built sandbox image and a daemon; skipped unless
   `SANDBOX_TEST_IMAGE` is set. `requirement("REQ-XXX")`: ties a test to a business requirement. `performance`: manual
   benchmarks against real Firestore.
-- **`make test-affected` selects by executed Python lines**, so it can miss a test whose input is a data file or code run
-  in a child process; so an intermediate commit adds the tests of any data folder it touched, and `make check` before a push is mandatory (once per push, not per commit). It passes `-n`, so it takes the one-suite lock and waits behind another session's
+- **`make test-affected` selects by executed Python lines** (`pytest --testmon`), so it can miss a test whose input is a data file or code run
+  in a child process (e.g. `prompts_snapshot/` -> `tests/unit/prompts`). Never combine testmon with coverage. It passes `-n`, so it takes the one-suite lock and waits behind another session's
   full run.
 - **One full suite at a time** — a session with `-n`, or with 2000+ tests, takes a `flock` on
   `$TMPDIR/alekbot-pytest-suite.lock` (`tests/plugins/suite_lock.py`), prints the holder every 30 s while it waits and
