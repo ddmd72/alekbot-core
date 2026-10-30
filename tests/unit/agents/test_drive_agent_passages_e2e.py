@@ -97,24 +97,24 @@ async def test_a_chat_turn_finds_passages_in_a_folder_then_reads_the_neighbours_
     agent = w.agent()
     agent._call_llm, seen = script(
         calls((tt.FIND_PASSAGES, {"question": QUESTION, "folder": "R&D"})),
-        calls((tt.READ_PASSAGES, {"file_ref": f"drive:{w.plan}", "passages": "9-12"})),
+        calls((tt.READ_PASSAGES, {"file_ref": f"drive:a1:{w.plan}", "passages": "9-12"})),
         calls(REPORT))
     resp = await agent.execute(_msg({"interactive_delivery": True}))
 
     assert resp.status == AgentStatus.SUCCESS and len(seen) == 3
     found = _tool_result(seen[-1], tt.FIND_PASSAGES)
     # the specialist's model reads the passages in full, numbered per file from 1; at most 8 from one file
-    assert f"[id drive:{w.plan}:1-8 · \"R&D/Tom's plan.docx\" · passages 1–8 of 12]" in found
+    assert f"[id drive:a1:{w.plan}:1-8 · \"R&D/Tom's plan.docx\" · passages 1–8 of 12]" in found
     assert all(text in found for text in PLAN_TEXTS[:8]) and PLAN_TEXTS[8] not in found
     assert "Lunch options" not in found and "stale:" not in found   # outside the folder; the readable version
     neighbours = _tool_result(seen[-1], tt.READ_PASSAGES)
-    assert f"[id drive:{w.plan}:9-12 · \"R&D/Tom's plan.docx\" · passages 9–12 of 12]" in neighbours
+    assert f"[id drive:a1:{w.plan}:9-12 · \"R&D/Tom's plan.docx\" · passages 9–12 of 12]" in neighbours
     assert all(text in neighbours for text in PLAN_TEXTS[8:])
     # every passage retrieved reaches the orchestrator, and the file enters drive_context once per call, with the
     # passage numbers that call read (§7.4, 2026-10-29: the history line says which passages were read)
     for text in PLAN_TEXTS:
         assert text in resp.result
-    entry = {"path": "R&D/Tom's plan.docx", "ref": f"drive:{w.plan}", "op": "passages"}
+    entry = {"path": "R&D/Tom's plan.docx", "ref": f"drive:a1:{w.plan}", "op": "passages"}
     assert resp.history_context["drive_context"] == [{**entry, "passages": list(range(1, 9))},
                                                      {**entry, "passages": [9, 10, 11, 12]}]
     w.drive_service.move.assert_not_called()
@@ -125,8 +125,8 @@ async def test_a_reminder_run_that_read_passages_has_its_later_move_refused():
     w = World()
     agent = w.agent()
     agent._call_llm, seen = script(
-        calls((tt.FIND_PASSAGES, {"question": QUESTION, "file_refs": f"drive:{w.plan}"})),
-        calls((tt.MOVE_FILE, {"file_ref": f"drive:{w.plan}", "folder": "Archive"})),
+        calls((tt.FIND_PASSAGES, {"question": QUESTION, "file_refs": f"drive:a1:{w.plan}"})),
+        calls((tt.MOVE_FILE, {"file_ref": f"drive:a1:{w.plan}", "folder": "Archive"})),
         calls(REPORT))
     resp = await agent.execute(_msg({"run_origin": "background:reminder"}))
 
@@ -143,7 +143,7 @@ async def test_the_same_move_co_emitted_with_the_find_runs_on_a_reminder_run():
     agent = w.agent()
     agent._call_llm, seen = script(
         calls((tt.FIND_PASSAGES, {"question": QUESTION}),
-              (tt.MOVE_FILE, {"file_ref": f"drive:{w.plan}", "folder": "Archive"})),
+              (tt.MOVE_FILE, {"file_ref": f"drive:a1:{w.plan}", "folder": "Archive"})),
         calls(REPORT))
     resp = await agent.execute(_msg({"run_origin": "background:reminder"}))
 

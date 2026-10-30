@@ -78,7 +78,7 @@ def _tool_result(request, name: str) -> str:
 async def test_a_refused_open_is_followed_by_a_page_and_smart_reads_both(context):
     w = World()
     agent = w.agent()
-    ref = f"drive:{w.annex}"
+    ref = f"drive:a1:{w.annex}"
     agent._call_llm, seen = script(
         calls((tt.OPEN_DRIVE_FILE, {"file_ref": ref})),
         calls((tt.READ_PASSAGES, {"file_ref": ref, "passages": "from 1"})),
@@ -107,7 +107,7 @@ async def test_a_refused_open_is_followed_by_a_page_and_smart_reads_both(context
 async def test_a_find_after_a_page_gives_a_mixed_answer():
     w = World()
     agent = w.agent()
-    ref = f"drive:{w.annex}"
+    ref = f"drive:a1:{w.annex}"
     w.emb.pinned["gate hours"] = [1.0] + [0.0] * 7
     agent._call_llm, seen = script(
         calls((tt.READ_PASSAGES, {"file_ref": ref, "passages": "from 1"})),
