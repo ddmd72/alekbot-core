@@ -9,7 +9,7 @@ It reads the values production builds, so it needs no map from constructor param
   prompt builder are not counted. `store_counts(walk(root))` counts the persistent-store adapters over the full walk.
 
 What is walked: instances of classes defined under `src.`, plus the containers that hold them (list, tuple, set,
-dict), bound methods (through `__self__`), closures (through the cells) and `functools.partial` (function, arguments).
+dict, and the read-only `types.MappingProxyType` view of a dict), bound methods (through `__self__`), closures (through the cells) and `functools.partial` (function, arguments).
 Third-party objects (the Slack app, the Quart app, SDK clients) are leaves. Pydantic models and classes under
 `src/domain/` are traversed but never reported: their `None` fields are data, not wiring.
 """
@@ -88,7 +88,7 @@ def children(path: str, obj: Any) -> Iterator[Tuple[str, Any]]:
             except ValueError:  # an empty cell
                 continue
             yield f"{path}.<closure {name}>", value
-    elif isinstance(obj, dict):
+    elif isinstance(obj, (dict, types.MappingProxyType)):
         for key in sorted(obj, key=lambda k: (type(k).__qualname__, repr(k))):
             label = repr(key) if isinstance(key, (str, int, float, bool, tuple)) else f"<{type(key).__name__}>"
             yield f"{path}[{label}]", obj[key]
@@ -104,7 +104,8 @@ def children(path: str, obj: Any) -> Iterator[Tuple[str, Any]]:
 
 
 def _walkable(obj: Any) -> bool:
-    return isinstance(obj, (functools.partial, types.MethodType, types.FunctionType, dict, list, tuple, set, frozenset)) \
+    return isinstance(obj, (functools.partial, types.MethodType, types.FunctionType, dict, types.MappingProxyType,
+                            list, tuple, set, frozenset)) \
         or is_src_instance(obj)
 
 
