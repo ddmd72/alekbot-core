@@ -20,7 +20,7 @@ from src.domain.drive_index_params import (
     MIRROR_RESERVE_S, MIRROR_STAMPS_PER_TICK, TICK_DEADLINE_S, TICK_START_BUDGET, TRANSCRIBE_EXTRACT_WALL_S,
     TRANSCRIBE_SHARE, TRANSCRIBE_UPLOAD_S,
 )
-from src.domain.drive_mirror import KIND_FILE, MIRROR_ACTIVE, MIRROR_ARCHIVED, doc_key
+from src.domain.drive_mirror import KIND_FILE, MIRROR_ACTIVE, MIRROR_ARCHIVED
 from src.domain.drive_mirror_plan import mirror_plan
 from src.domain.language import LanguageCode
 from src.services import drive_indexing_service as svc_mod
@@ -30,7 +30,7 @@ from src.services.drive_transcript_mirror import seed_version
 from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
 from .drive_index_fakes import ROOT
 from .drive_mirror_tick_step_world import StepWorld
-from .drive_mirror_tick_world import DRIVE
+from .drive_mirror_tick_world import DRIVE_IDENTITY, mirror_key, source_identity
 from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
@@ -60,7 +60,8 @@ async def _clones(w: StepWorld, base: str, count: int, *, day: str = "2026-12-01
     rec = w.rec(base)
     ids = []
     for i in range(count):
-        clone = replace(rec, item_id=f"p{i:03d}", name=f"new{i:03d}.m4a", effective_day=day, mirrored_digest="",
+        clone = replace(rec, item_id=f"p{i:03d}", identity=source_identity(f"p{i:03d}"), name=f"new{i:03d}.m4a",
+                        effective_day=day, mirrored_digest="",
                         mirror_due=False, mirror_retry_at=None, mirror_held_digest="", has_card=False, card_hash=None)
         await w.repo.upsert_records([mirror_plan(clone)])
         ids.append(clone.item_id)
@@ -161,7 +162,7 @@ async def test_reserve_for_the_first_root_and_an_unfinished_seed(world):
     assert w.root_doc() is not None and w.root_doc().seed_version == seed_version()
     await w.tick()
     assert w.budgets[-1].mirror_reserve == 0.0
-    w.mirror.root_docs[("u", DRIVE)] = replace(w.root_doc(), seed_version="0.0")   # a version bump: the seed again
+    w.mirror.root_docs[("u", DRIVE_IDENTITY)] = replace(w.root_doc(), seed_version="0.0")   # a version bump: the seed again
     await w.tick()
     assert w.budgets[-1].mirror_reserve == MIRROR_RESERVE_S
 
@@ -199,10 +200,10 @@ async def test_no_reserve_when_the_only_work_is_held(world, held):
     elif held == "held_mark":
         w.drive.delete(audio)
         await w.tick()
-        doc = w.mirror.docs[doc_key("u", KIND_FILE, audio)]
+        doc = w.mirror.docs[mirror_key(audio, KIND_FILE)]
         assert doc.gone_pending and doc.mark_ready_at > w.clock()
     elif held == "full_drive":
-        w.mirror.root_docs[("u", DRIVE)] = replace(w.root_doc(), quota_hold_until=w.clock() + timedelta(hours=6))
+        w.mirror.root_docs[("u", DRIVE_IDENTITY)] = replace(w.root_doc(), quota_hold_until=w.clock() + timedelta(hours=6))
         w.drive.rename(audio, "Renamed.mp4")   # due, but the step holds for the full drive
     else:
         w.drive.delete(w.root_doc().root_item_id)   # the owner deletes `_Transcripts`: the tick marks the root lost
@@ -358,12 +359,12 @@ async def test_host_budgets_and_facts(world):
     run = w.runs[-1]
     assert (run["ops"], run["reads"], run["stamps"]) == (MIRROR_OPS_PER_TICK, MIRROR_READS_PER_TICK,
                                                          MIRROR_STAMPS_PER_TICK)
-    assert run["drive_id"] == DRIVE and run["language"] == "uk" and run["tz"] == "Europe/Madrid"
+    assert run["drive_identity"] == DRIVE_IDENTITY and run["language"] == "uk" and run["tz"] == "Europe/Madrid"
     assert run["round_complete"] and run["epoch_idle"]
     readme = w.writes.content("_Transcripts/_README.md").decode()
     assert "Archive/" in readme and "Розшифровки" in readme
     assert "Цей файл веде бот" in w.writes.content("_Transcripts/Interview.mp4.md").decode()   # the managed line
-    assert w.mirror.docs[doc_key("u", KIND_FILE, audio)].render_language == "uk"
+    assert w.mirror.docs[mirror_key(audio, KIND_FILE)].render_language == "uk"
 
 
 async def test_the_index_item_call_budget_is_untouched(world):
@@ -385,9 +386,9 @@ async def test_epoch_idle_needs_the_initial_enumeration(world):
 
 async def test_root_mark_changed_keeps_the_ticks_list(world):
     w = world()
-    host = svc_mod._TickHost(w.svc, "u", _Budget(started=0.0, monotonic=lambda: 0.0), None, {},
+    host = svc_mod._TickHost(w.svc, (await w.connection()).handle, _Budget(started=0.0, monotonic=lambda: 0.0), None, {},
                              svc_mod._Transcription(on=True))
-    mirror = _Mirror(root_ids=frozenset({"r"}), current_ids=frozenset({"r"}), gone_ids=set(), drive_id=DRIVE)
+    mirror = _Mirror(root_ids=frozenset({"r"}), current_ids=frozenset({"r"}), gone_ids=set(), drive_identity=DRIVE_IDENTITY)
     token = svc_mod._TICK_MIRROR.set(mirror)
     try:
         host.root_mark_changed("r", True)
@@ -465,7 +466,7 @@ async def test_fake_drive_lifecycle(world):
     w = world()
     audio = await _mirrored(w)
     root = w.root_doc()
-    key = doc_key("u", KIND_FILE, audio)
+    key = mirror_key(audio, KIND_FILE)
     body = w.writes.content("_Transcripts/Interview.mp4.md").decode()
     assert body.startswith("# Interview.mp4\n") and "Managed by the bot" in body
     w.drive.rename(audio, "Renamed.mp4")
