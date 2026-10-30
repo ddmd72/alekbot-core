@@ -166,7 +166,7 @@ A stale code (an older draft of the same name) still saves exactly the content i
 
 **Recommended trial** (in `skill-creator`): save, then try the skill in a **new thread**, then revise. A same-context trial is weak: the model still sees the conversation the skill came from. Trying a procedure can cause real side effects (tasks, reminders, errands); the skill says so.
 
-**Commands** (the requesting user, own skills only): `$skill save <code>`, `$skill list`, `$skill delete <name>`. Delete removes the index document **and** its `versions/*` documents. Editing is a new draft plus `save`.
+**Commands** (the requesting user, own skills only): `$skill save <code>`, `$skill list`, `$skill delete <name>`. Delete removes the index document **and** its `versions/*` documents. Editing is a new draft plus `save`. Both adapters strip a whole-text backtick wrapper (`domain/chat_text.unwrapped`) before the `$` check, so a copied `` `$skill save 7f3a` `` still dispatches. `draft_skill` is declared only on interactive turns: `ConversationHandler` alone sets `agent_context["interactive_delivery"]`, and `notify`, `ask_alek`, `send_to_chat` and `/worker` never do. Drafts live in the collection named by `EnvironmentConfig.skill_drafts_collection`.
 
 **Checks** (at draft and at save): name format, no collision with a system skill, pydantic validation, size caps, `SecurityPort` — a flagged description or body is **rejected**, never stored sanitized (a skill is followed verbatim). These are hygiene; the security boundary is the command.
 

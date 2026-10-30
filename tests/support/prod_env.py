@@ -97,11 +97,11 @@ def makefile_defaults() -> Dict[str, str]:
 
 _SERVICE_URL = "https://alek-bot-dev.test.example"
 
-# A documented live value that differs from the Makefile default (root CLAUDE.md), and values the Makefile takes
+# A documented live value that differs from the Makefile default (docs/07_deployment/README.md), and values the Makefile takes
 # from the owner's `.env`, which the tests never read: fakes shaped like the real ones.
 LIVE_OVERRIDES: Dict[str, Substitution] = {
-    "_DRIVE_TRANSCRIBE_ENABLED": Substitution("on", "root CLAUDE.md: transcription T1 is live (Makefile default is off)"),
-    "_SANDBOX_RENDER": Substitution("inprocess", "root CLAUDE.md: the sandbox S1 is not deployed (equals the Makefile default)"),
+    "_DRIVE_TRANSCRIBE_ENABLED": Substitution("on", "docs/07_deployment/README.md (Transcripts switch and cap): transcription T1 is live (Makefile default is off)"),
+    "_SANDBOX_RENDER": Substitution("inprocess", "decisions/sandbox_render_service.md: the sandbox S1 is not deployed (equals the Makefile default)"),
 }
 FAKE_SUBSTITUTIONS: Dict[str, Substitution] = {
     "PROJECT_ID": Substitution("p9-test-project", "Cloud Build built-in; a fake project id"),

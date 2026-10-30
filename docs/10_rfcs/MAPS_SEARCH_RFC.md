@@ -351,3 +351,8 @@ The `<gmp-place-contextual>` component requires the token to be set via the Java
 `MAPS_JS_KEY` mentioned in §7.1 maps to `GOOGLE_SEARCH_API_KEY` in practice — the existing
 Google Search API key (already in Secret Manager) also has access to the Maps JavaScript API
 and Places API. No new secret needed.
+
+### 11.6 Latency tuning
+
+The agent sets `thinking="low"` on every turn (the allowed providers reason at the model default otherwise), and
+tool calls emitted in the same turn run concurrently through `asyncio.gather`.

@@ -97,7 +97,7 @@ indexer's first pass and the sandbox keys before the sandbox exists.
 ### Transcripts switch and cap
 
 - `DRIVE_TRANSCRIBE_ENABLED_DEV` — `on` turns the indexer's transcription kill switch on, `off` turns it off; no other
-  value is accepted. `make deploy` refuses unless it is exactly `on` or `off`, and echoes the effective switch and cap
+  value is accepted. **Live value: `on`** (T1 is live for the owner since 2026-10-21; the Makefile default is `off`). `make deploy` refuses unless it is exactly `on` or `off`, and echoes the effective switch and cap
   before it submits. It also reaches the main service, where the Cabinet shows the disclosure only if it is on. It is a
   substitution, not a by-hand variable, because `--set-env-vars` replaces every variable on each deploy. A manual
   `gcloud builds submit` without the Makefile deploys `off`.
@@ -533,7 +533,7 @@ remains): `gcloud storage rm --all-versions "gs://<WORKSPACE_BUCKET>/<USER_ID>/*
 
 **Fact janitor.** Stop it at once: `gcloud scheduler jobs pause alek-bot-dev-fact-lifecycle-sweep --location=us-central1
 --project=<PROJECT_ID>`. It writes since the deploy of 2026-10-27 (`FACT_LIFECYCLE_SWEEP_DRY_RUN=0` in the main
-service's `--set-env-vars`); the rollback lever is removing that variable (a deploy: `--set-env-vars` replaces every variable), which makes it log-only again (root `CLAUDE.md`; [SCHEDULERS.md](SCHEDULERS.md) § Fact Lifecycle Sweep).
+service's `--set-env-vars`); the rollback lever is removing that variable (a deploy: `--set-env-vars` replaces every variable), which makes it log-only again ([memory map](../05_building_blocks/memory/README.md) §5.5; [SCHEDULERS.md](SCHEDULERS.md) § Fact Lifecycle Sweep).
 
 **Memory telemetry.** `MEMORY_TELEMETRY=off` disables the sampler; `MEMORY_SAMPLE_INTERVAL_S` sets the idle interval
 (§ Memory telemetry sink above).

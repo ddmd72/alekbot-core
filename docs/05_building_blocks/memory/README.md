@@ -458,7 +458,8 @@ Each batch runs under the account's **memory-write lease** (`_consolidate_one`, 
   hourly sweep has no lease and keeps the old 1800 s threshold, and counts the same way. Neither zombie reset touches a
   `failed` batch; the sweep's separate revival step does (below);
 - takes the **oldest** pending batch (`pending` or `retry_pending`, `order_by created_at`, `:37-44`; the composite
-  index in `config/firestore.indexes.json` must be `READY`). With less than 60 s of the run budget left it starts
+  index in `config/firestore.indexes.json` must be `READY` before the code is deployed; the companion extraction queue,
+  `{prefix}companion_extraction_queue`, takes its oldest batch the same way and has its own composite index under the same gate). With less than 60 s of the run budget left it starts
   nothing: the batch stays pending, the lease is released and a deferral is enqueued (`:261-262`);
 - marks it `processing`, runs the agent with `consolidate_full`, the time left on the lease as its timeout and a single
   attempt (no whole-run transient retry, `base_agent.py:560-572`), and on success **deletes the batch** (`_process_one_batch`, `:251-310`);
@@ -1317,6 +1318,20 @@ call (P2's answers and silence included: the texts are written when the question
 question). A review pass is one model loop whose fixed prompt is about 25,000 tokens: about $0.08–0.10 (Sonnet 5.5) or $0.15–0.20
 (Opus 5.5) for a pass of 2 facts, and about $0.22–0.30 or $0.45–0.60 for a pass of 20 (§8).
 
+**Agent code notes** (`src/agents/consolidation_agent.py`). The review pass's typed write port is the agent's own required
+`fact_updates` dependency (a `FactUpdatePort`; the agent refuses to be built without one, and composition passes the adapter
+twice, as the model port and as the typed port); every run's tracker is `_TrackingFactUpdates(model port, typed port)`.
+`translations` are read through `report_translations` (`domain/fact_review_quote_translation.py`): one line, no `[`, link or
+control character, at most 500 characters, the source's digit runs unchanged; refusals are logged by fact id, never by text.
+The keys are each listed fact's id (its quote) and `<fact_id>:<text key>` for every text the pass wrote (`history`, each ask
+text, each `payment` text), checked against the English texts the scope collected; a key naming no written text is refused.
+Task messages ask for `translations` through `_TRANSLATIONS_RULE` (mirror mode, `message_language` not `en`) or
+`_fixed_translation_instruction` (fixed mode, `task.language` other than `en`). For every pass kind, `ConsolidationPassStats`
+records each turn's tool outcomes and the agent builds a typed `PassCall` per call (`_pass_call`) and renders the 📊 line
+and the 🚨 alerts itself (`_summary_line`, `_limit_alert`, `_abandoned_alert`); the stats never see a tool argument. The
+close-out (an abandoned-refusal alert, the expiry errors added to the account's day) runs in a `finally` capped at
+`CLOSE_OUT_TIMEOUT_S` (10 s), best effort, never raises.
+
 ---
 
 ## 6. Outcomes: tool calls and failures
@@ -1518,7 +1533,7 @@ eval (2026-07-15, older models and prices) put Sonnet ≈ $0.5 and Opus ≈ $1.5
   S3 kit's), so a re-run starts from what was spent. Apply and a small `--ids-file` re-run cost cents.
 
 **Where it is recorded.** Every model call goes through `BaseAgent._call_llm`, which bills the account per model that
-ran (`TokenLedger`, root `CLAUDE.md` → Token accounting) and writes a `prompt_content` row per turn (§9.1). The 📊 line
+ran (`TokenLedger`, `decisions/billing_execution_scoped_ledger.md`) and writes a `prompt_content` row per turn (§9.1). The 📊 line
 carries no cost.
 
 **Embeddings.** One batch call of 3 texts per create, merge or content update; one of up to 3 texts per search

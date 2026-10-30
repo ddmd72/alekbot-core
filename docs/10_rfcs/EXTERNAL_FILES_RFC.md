@@ -641,7 +641,7 @@ look-alike check covers both words. Drive output, the `drive-search` skill and t
   - Every other mention of the removed intent changes in U4:
     - the read-only dry-run set in `scripts/validation/ab_agent_models.py:84` gains `open_email_attachment`;
       `send_file_to_user` stays out of it;
-    - root `CLAUDE.md:181`, `:347`; `src/agents/CLAUDE.md:49`, `:463`, `:496`;
+    - the root `CLAUDE.md` roster and Gmail paragraph (their detail now lives in `src/agents/CLAUDE.md` and the Gmail building block); `src/agents/CLAUDE.md:49`, `:463`, `:496`;
     - the building-block READMEs `agent_registry`, `quick_agent_delegation`, `multi_agent_system`,
       `gmail_email_indexing`; `docs/04_solution_strategy/current_implementation/STRUCTURE.md:511`.
   - **Tests** that encode the removed intent, named for the reviewer, with this section as their spec:

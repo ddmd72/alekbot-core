@@ -3,7 +3,7 @@
 Agent instances are per-user singletons that serve concurrent executions (`DelegationEngine` gathers a tool batch), so a
 write to `self.*` outside the constructor is state shared by every request the instance is serving at that moment. The
 3.6x billing inflation was such a write: a per-instance token accumulator on `BaseAgent`, read by each concurrent
-execution as its own total (fixed 2026-07-28, root `CLAUDE.md` -> "Token accounting is per-execution"). This check reads
+execution as its own total (fixed 2026-07-28, `docs/04_solution_strategy/decisions/billing_execution_scoped_ledger.md`). This check reads
 the source of every agent class, present and future, and fails on a write nobody has explained.
 
 Which classes: `BaseAgent` from `src/agents/base_agent.py` (scanned too, the accumulator lived there) and every class

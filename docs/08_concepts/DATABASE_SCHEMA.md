@@ -49,7 +49,7 @@ drive. This page says where to look, so it does not copy field lists that would 
 | `{p}channel_bindings` | a channel bound to an agent (companion channels) | `channel_id` | `ChannelBinding`, `src/domain/channel_binding.py` |
 
 Account usage counters written before 2026-07-28 are inflated. For historical cost, use BigQuery `prompt_content`, not
-`usage.*` (root `CLAUDE.md`, Token accounting).
+`usage.*` (`decisions/billing_execution_scoped_ledger.md`).
 
 ### 3.2 Memory
 
@@ -82,6 +82,8 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 | `{p}user_notification_state` | the user's last active channel, for background notifications | `user_id` | `NotificationChannel`, `src/domain/notification.py` |
 | `{p}user_primary_channel` | the user's primary channel | `user_id` | `src/adapters/firestore_notification_state_adapter.py` |
 | `{p}short_links` | short code to URL mappings (TTL on `expires_at`, re-checked on read) | the code | `src/adapters/firestore_short_link_repository.py` |
+
+**Sessions per channel.** `session_id = f"{user_id}:{channel_id}"` is deterministic: each channel (Slack `C…`/`D…`, Telegram `chat_id`; a DM is just a channel `D…`) has its own session, history and consolidation stream. Adapters resolve the session id synchronously. Async delivery uses the `origin_channel_id` carried in the message context (propagated through the delegation engine's passthrough, see `BOUND_THREAD_AGENTS_RFC.md`); system notifications go to the primary channel. `GcpTaskQueue` serialises Cloud Task payloads with `_DomainEncoder`, which handles Pydantic models, datetimes and enums transparently.
 
 ### 3.4 Prompts
 

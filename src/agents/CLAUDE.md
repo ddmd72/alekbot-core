@@ -2,876 +2,189 @@
 
 Multi-agent system with ActorModel-like coordination — specialists, not one LLM for everything.
 Tiers: ECO/BALANCED/PERFORMANCE (tier→model resolution + capability gates live in
-[`src/adapters/CLAUDE.md`](../adapters/CLAUDE.md)).
+[`src/adapters/CLAUDE.md`](../adapters/CLAUDE.md)). This file holds what any edit in `src/agents/` needs: rules,
+conventions and per-agent traps. What an agent does lives in `docs/` (map below); intents and tiers live in code (below).
 
 ## Structure
 
 - `base_agent.py` — ABC. All agents inherit `BaseAgent`.
 - `core/` — orchestrators: `RouterAgent`, `SmartResponseAgent`, `QuickResponseAgent` (fallback/formatter).
 - `infrastructure/` — system agents: `BillingAgent`, `LoggerAgent`.
-- All other files — specialist agents (roster below).
+- All other files — specialist agents (map below).
 
-## Agent Roster (Multi-Agent Network)
+## Rules for every agent
 
-- Router (Gemini) — LLM triage on every request: complexity, tone, semantic lens, search intent;
-  triggers memory/web enrichment. **Always routes to Smart** (`_apply_routing_rules`); complexity
-  drives Smart's per-request tier, not a Quick-vs-Smart split. `_classify_request` = rule-based
-  fallback only. Vision (attachments) forces `task_complexity=DEEP_REASONING` (enum, not a numeric score).
-- Smart — provider-agnostic (tier/model from execution context per user config). Primary path for
-  every request; re-evaluates for follow-up delegation after tool results. Thinking via
-  `UserBotConfig.agent_thinking["smart"]`; `message.context["thinking_effort"]` overrides.
-- Quick — no longer primary-path (Router never routes to it). Two roles: (1) emergency fallback when
-  Smart fails/times out (`AgentFallbackService.try_quick_fallback`); (2) default formatter for
-  `UserNotificationService.notify` — caller may override `agent_id_override` (reminders and
-  daily-email-review override to Smart). Functionally ≈ Smart minus post-tool re-evaluation.
-  Deferred-deletion tech debt — see `docs/04_solution_strategy/decisions/quick_agent_deferred_deletion.md`.
-- WebSearch — provider-native grounded search (`use_grounding=True`; each adapter injects its own:
-  Gemini Google Search, OpenAI `web_search`, Claude `web_search_20250305`+`web_fetch_20250910`),
-  called by Smart. QUICK/RESEARCH cognitive triage. Intents: `search_web`, `fetch_url`.
-  - **JSON output is prompt-only, NOT schema-enforced.** `use_grounding` makes the OpenAI adapter
-    suppress `text.format` (Web Search + JSON mode → 400), so the findings/source/url shape comes
-    from the `WEBSEARCH_OUTPUT_FORMAT` token alone. The agent has **no `_parse_response`** either —
-    `_call_grounded_llm` hands `response.text` to the orchestrator verbatim. Malformed JSON
-    therefore never raises; it just degrades what Smart can compose. `confidence` is
-    `len(text)/500`, so a terse answer reads as low-confidence downstream.
-  - **Per-intent tier.** `search_web` runs on the agent's resolved tier (BALANCED); `fetch_url`
-    runs on `WebSearchAgentConfig.fetch_url_tier` (ECO), resolved to a model by the provider via
-    `LLMPort.get_model_for_tier` — the agent names a tier, never a model. `None` disables the
-    downgrade. Measured 2026-07-29, `scripts/websearch/`. See
-    `decisions/websearch_per_intent_tier.md`.
-  - `fetch_url`'s system prompt is an inline constant (`_FALLBACK_FETCH_SYSTEM`), not a Firestore
-    prompt — tracked exception, IMPLEMENTATION_ROADMAP.md TD-6. Its wording is tuned and
-    load-bearing; read the comment before editing it.
-- Memory — MemorySearchAgent (ECO): LLM extracts search keys → multi-vector RRF. Intents:
-  `search_memory` only. There is no save intent: facts read from a document go through Smart's local tool
-  `propose_memory_facts` and the owner's `$memory save` (`MEMORY_FACT_CONFIRMATION_RFC.md`).
-- EmailSearch — EmailSearchAgent (ECO, `internal=False`). Intents: `search_emails`,
-  `get_email_details`, `get_email_attachment` (markitdown).
-- EmailClassification — shared ServiceContainer singleton, called by EmailIndexingService (not agents);
-  tool-calling triage, extracts fact sentences. OUTPUT_FORMAT exception: markdown-block extraction in
-  `_parse_response()` (see inline comment).
-- DriveDocumentReader (`drive_reader`) and DriveImageTriage (`drive_triage`) — the drive index's two model calls
-  (USER_DRIVE_INDEXING_RFC §24.2–§24.5, building block `docs/05_building_blocks/user_drive/README.md` §4).
-  - **Tier / provider:** both ECO, default OpenAI (`gpt-6-luna`) since the owner's live check 2026-10-13 (Claude
-    Haiku 5.5 shifted a triage batch's captions by one image); a user's `agent_providers` switches either to Claude
-    (`claude-haiku-5-5`), and so does the user's global `provider_preference` when the agent has no override.
-    **Fallback: Gemini Flash** (`gemini-3.8-flash`) — `STRATEGIES` in `agent_context_builder.py` sets `fallback:
-    "gemini"` with `fallback_tier: BALANCED`, as the Search v2 enrichment agents do: without it the fallback would resolve at
-    ECO, which on Gemini is flash-lite (D7 rev 3.17). Gemini is the fallback only: it is not in `allowed_providers`,
-    so no setting makes flash-lite the primary. A 4xx on the primary is not failed over; a non-account 4xx from Gemini
-    on a failover call is `LLMFallbackClientError`, a charged outage retried on the primary (§25.4.4 N7), and so is a
-    safety block Gemini returns as a response (`served_by_fallback` on the response, `drive_model_call.safety_stop`).
-    Thinking `low` unless the user's `agent_thinking` says otherwise; `allow_provider_storage=False` (OpenAI
-    `store=false` only — not a zero-retention guarantee; Claude and Gemini have no such flag). Limits in `agent_config.py`
-    (`DRIVE_READER`: 180 s, 16 000 tokens; `DRIVE_TRIAGE`: 120 s, 8 192 tokens; one parse retry).
-  - **Where they run:** on the indexer service only (`indexer_main.py` → `composition/drive_model_setup.py`), never on
-    the main service. No manifest descriptor (`can_handle` false), no tools, no history, no biography, no user prompt
-    overrides: like `EmailClassificationAgent` they are not routed to, and like the companion extractors they are
-    built per call with the user's own configuration by a runner in `composition/` (`DriveReaderRunner` implements
-    `ContentExtractorPort`, `DriveTriageRunner` implements `ImageTriagePort`; services/ cannot import agents/).
-  - **What they return:** the reader takes one PDF window (`MODEL_PAGES_PER_CALL` = 10 pages, cut on demand by the
-    sandboxed parser) or one image rendition and returns verbatim text, plus on the first window a brief (`doc_type`,
-    one-line `description`, `doc_date` → `effective_date` per D13, `parties`, `amount`) in structured output
-    (`OUTPUT_FORMAT_DRIVE_READER`); a reply stopped at the output limit is reported, never parsed. Triage takes up to
-    `TRIAGE_BATCH` (8) 800 px thumbnails, each after its "Image N" label with the camera prior as text, and returns per
-    image `text` or `photo` with a description, objects with their spellings, a scene and the visible text (triage v2,
-    §25.4.3; `OUTPUT_FORMAT_DRIVE_TRIAGE`); missing indexes, and byte-identical images given different verdicts, get
-    one correction turn. Its runner returns the v2 `TriageReply` (statuses, capped and refused ids, never an
-    exception).
-  - **Failures** (`infrastructure/drive_model_call.py`): when the Gemini fallback fails too (or a non-failover error
-    hits), a 429/5xx/timeout/account error or a missing prompt raises
-    `DriveModelUnavailable` (model work waits, nothing else does,
-    `decisions/drive_model_outage_defers_model_work.md`), carrying what was spent before it and `charges_file`: a
-    5xx, a timeout or an unexpected error may be the file's own, so a reader outage after a call for that file is
-    charged to it (`model_outages`, `failed` at `MAX_ATTEMPTS`); a 429, an account error, a network failure or an open
-    breaker never charges. The reader runner halves
-    a window at the output limit or a timeout once (a half that times out again fails the file, `error`) and a
-    413/400/422 down to one page; a single page still refused is skipped (file `truncated`, `pages_refused`), and only
-    a refusal of every page or of an image is terminal (`too_large` / `unsupported`). Triage halves a refused batch
-    down to the refused image (`refused_item_ids`) and a batch stopped at the cap down to the image
-    (`capped_item_ids`); invalid output leaves its images unsettled for a per-file retry. Calls are billed to the user's account through the runner's quota service. Prompts are
-    owner-uploaded Firestore tokens; no fallback prompt.
-- DriveProfiler (`drive_profiler`) and DrivePassages (`drive_passages`) — Search v2's index-time enrichment
-  (USER_DRIVE_INDEXING_RFC §25.3, §25.4.1, §25.4.2, §25.4.4).
-  - **Tier / provider:** as the reader without vision: ECO, default OpenAI (`gpt-6-luna`), Claude
-    (`claude-haiku-5-5`) by `agent_providers`, fallback Gemini Flash (`gemini-3.8-flash`, `fallback_tier: BALANCED`),
-    `allow_provider_storage=False`, thinking `low`. Limits in `agent_config.py` (`DRIVE_PROFILER` and
-    `DRIVE_PASSAGES`: 60 s, 4 096 tokens; one parse retry).
-  - **What they do** (building block `docs/05_building_blocks/user_drive/README.md` §4.17): the profiler describes one
-    text file once from its own stored text (`drive_profile.profile_input`:
-    head, tail, headings, a collapsed folder's README and child names; never its path) into a `DriveProfile` — title,
-    `what_it_is`, `doc_type` / `life_domains` from the fixed label set, dates, entities, key values, topics and the
-    index-time word lists in en/es/uk/ru; the caller verifies it against the text (`drive_profile.verify`). The
-    passages agent writes, per chunk under an opaque index, keywords and questions each with an evidence quote; the
-    caller grounds them (`drive_hints.ground`: the quote verbatim on word boundaries, numbers among the chunk's terms).
-  - **Where they run:** on the indexer only, built per call by `DriveProfilerRunner` (`DocumentProfilerPort`) and
-    `DrivePassageRunner` (`PassageHintPort`) in `composition/` (`build_drive_models`). Every outcome is a
-    `ModelReplyStatus` (§25.4.6), never an exception, with the model that served, the cost and the fallback's share.
-    A profile stopped at the cap is asked once more with halved list caps; a passage batch stopped at the cap or
-    refused is halved down to the chunk. Prompts are owner-uploaded tokens (`COGNITIVE_PROCESS_` / `OUTPUT_FORMAT_`
-    `DRIVE_PROFILER`, `DRIVE_PASSAGES`); no fallback prompt.
-- DriveTranscriber (`drive_transcriber`) — audio-window transcription for the drive's recordings
-  (USER_DRIVE_INDEXING_RFC §27.5, Δ102; T1 live since 2026-10-21, owner only).
-  - **Not a `_call_llm` agent** (Δ102): a Gemini **Batch** request is not a call, so no retry, failover, `TokenLedger` scope,
-    `prompt_content` row or Logfire span is inherited. `DriveTranscriberAgent` only builds the request (prompt + schema + the
-    uploaded provider file's name) and parses the answer; `DriveTranscriptRunner` (`composition/`) submits through
-    `BatchTranscriptionPort` (`GeminiBatchAdapter`), parses each collected answer and bills it with `BatchUsage.cost()`
-    through `QuotaService.record_usage`. `can_handle` is False; no tools, no history.
-  - **Tier / provider:** Gemini only, the BALANCED model `gemini-3.8-flash` (read from `GeminiAdapter.MODEL_TIERS` by the
-    composition and passed to the batch adapter, REQ-ARCH-23), never flash-lite (D44); `agent_providers` does not apply;
-    `thinking_level=LOW` on every request; per-window `max_output_tokens = min(65 536, max(4 096, ceil(1 000 × audio minutes)))`
-    (`DRIVE_TRANSCRIBER` in `agent_config.py`).
-  - **Output:** `{language_codes, speakers, no_speech, segments: [{start: "MM:SS"|"H:MM:SS", speaker: int|null, text}]}`,
-    `json.loads` once, strict field checks, **no regex fallback**; `DriveOutputInvalid` is the window's failed attempt. `start` is
-    never integer seconds (T0: ≈ +40 % stretch). Prompts are owner-uploaded tokens `COGNITIVE_PROCESS_DRIVE_TRANSCRIBER` /
-    `OUTPUT_FORMAT_DRIVE_TRANSCRIBER` + blueprint + profile; a missing prompt is a model outage for the class, no fallback prompt.
-  - **Where it runs:** the indexer only, from `DriveTranscriptStage` (`build_drive_transcription`, built only with
-    `DRIVE_TRANSCRIBE_ENABLED` on). Which outcome costs a file an attempt is the stage's decision (T-R18); a provider outage is an uncharged backoff
-    (`drive_transcriber` key). Building block: `docs/05_building_blocks/user_drive/README.md` §4.23.
-- DocPlanner (ASYNC, PERFORMANCE, intent `create_document`) — LLM → JSON layout spec →
-  fire-and-forget delegate to DocGenerator → DeliveryItem("file_upload").
-- DocGenerator (internal, BALANCED, intent `generate_docx_code`) — LLM writes Node.js script →
-  DocxRunnerPort → DOCX bytes (the runner is `NodeDocxRunner` in-process, or `SandboxDocxRunner`, the zero-role render service, when `SANDBOX_RENDER=sandbox`).
-- PdfGenerator (ASYNC, BALANCED, intent `create_pdf`, `internal=False`) — one LLM call → HTML+CSS →
-  NodePuppeteerRunner → PDF; two DeliveryItem("document"): HTML (GCS) + PDF (GCS + Slack upload).
-  Filename from `<title>`; PromptBuilder required; LLM picks from a 12-style catalogue.
-- HtmlPageGenerator (ASYNC, PERFORMANCE, intent `create_html_page`, `internal=False`) — one LLM call →
-  complete HTML+CSS+JS → DeliveryItem("document") (GCS public link, no subprocess). PromptBuilder
-  mandatory; design enforced by `COGNITIVE_PROCESS_HTML_PAGE`. **Unsplash:** LLM writes
-  `source.unsplash.com/WxH/?keywords` placeholders → `_resolve_unsplash_placeholders` swaps real photos
-  via `UnsplashAdapter` (`ImageSearchPort`); needs `UNSPLASH_ACCESS_KEY`, graceful no-op when absent.
-  - **Default provider is `grok` since 2026-08-15** (grok-4.6; grok-4.7 since 2026-10-03, on par in
-    a 2-run HTML probe), fallback `gemini`. Owner judgement on
-    output quality, measured on the same input by `scripts/html_page/ab_grok.py`: $0.1332 / 229s vs
-    gemini-pro-latest's $0.1999 / 120s. The latency is affordable *because the intent is ASYNC* —
-    do not copy this trade-off to a synchronous agent.
-  - **`request_timeout_s=900`** (raised from 420s 2026-10-07) bounds one call's TOTAL wall time
-    (adapters wrap it in `asyncio.wait_for`, so SDK retries are inside the bound). Without it a
-    call overrunning the provider's client ceiling is retried twice and three generations are
-    paid for and discarded before `timeout_ms` (1,100,000ms) kills the agent anyway. See
-    `decisions/html_page_grok_default.md`.
-  - **The declared Gemini fallback was dead until 2026-10-07** — `HtmlPageGeneratorAgent` (like
-    `PdfGeneratorAgent`/`DocPlannerAgent`/`DocGeneratorAgent`) never called
-    `BaseAgent._set_execution_context()`, so `_call_llm`'s cross-provider failover branch was
-    structurally unreachable regardless of the `fallback` entry in
-    `AgentProviderStrategy.STRATEGIES`; any FAILOVER-triggering error (a Grok timeout at 420s)
-    raised `BothProvidersUnavailableError` straight away. Fixed by calling
-    `_set_execution_context()` in all four constructors, mirroring the pattern NotesAgent already
-    used. See `decisions/html_page_fallback_context_wiring.md` (addendum 2026-10-23: five more agents wired,
-    `ConsolidationAgent` and `TutorExtractorAgent` get no fallback by owner ruling; `test_agents_set_execution_context.py` guards the class).
-  - **Recitation handling is Gemini-specific.** `_call_llm_recitation_aware` retries an empty-200
-    block; only `GeminiAdapter` maps `finish_reason`, so on Grok the retry never fires. Probed
-    2026-08-15: xAI refuses verbatim-reproduction with `status='completed'` and refusal **text**,
-    not an empty 200 — so there is nothing to retry. The residual gap is the opposite shape: a
-    refusal string is non-empty, so it passes the `if not html_code` guard and would be published
-    as the page.
-- FileManagement (SYNC, zero-LLM) — chat files, delivered documents, skill files and workspace copies: `open_file`
-  (download + text/vision conversion via `FileConversionService`/`FileStoragePort`) and `delete_file`;
-  `context_schemas`: `file_ref` (from the `[File: name (size)]` label). Binary → temp file + metadata for vision.
-  `open_file` on a `drive:` ref is the lenient drive read, through the user's `DriveOperations` (the same instance the
-  drive specialist holds); `delete_file` on a `drive:` ref is refused ("delete it through work_with_drive_files").
-  `prefetch_file_ref=False` on its descriptor (the coordinator does not pre-download its `file_ref`). The 8 drive
-  intents it held until DRIVE_SPECIALIST_RFC are gone; their code is `DriveOperations`.
-- Drive (`DriveAgent`, BALANCED = Claude `claude-sonnet-5-5`, adaptive thinking medium; fallback OpenAI at
-  PERFORMANCE = `gpt-6.1-sol`, only when Claude is the primary; intent `work_with_drive_files`, SYNC, lazy) — the
-  user's drive through one LLM specialist (`docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`, `decisions/drive_specialist.md`).
-  Per user: provider `agent_providers["drive"]` → `provider_preference` → `claude`, tier `agent_tiers["drive"]` →
-  BALANCED, thinking `agent_thinking["drive"]` → `medium`. A global `provider_preference: openai` moves the specialist
-  to OpenAI BALANCED = `gpt-6-luna`, the model RFC §15.5 rejected: pin `agent_providers["drive"]="claude"`.
-  - **What Smart sends:** a natural-language commission (the user's words to find as written, every `drive:` ref,
-    `[File: …]` label and delivered document key) plus one field, `file_contents` (one item per text to save or
-    append; bound by code to `t1`, `t2` …, never retyped). `PROTOCOL_AGENT_SELECTION` exempts the words to find from
-    `query_language` ("Always English").
-  - **How it works:** `DelegationEngine` with local tools only (`allow_delegation=False`, no
-    `delegate_to_specialist`), `terminal_tool="report_to_orchestrator"`, ≤ 6 turns, a soft deadline of 150 s (lower
-    under Smart's turn clock or `CURRENT_RUN_DEADLINE`), `NO_RETRY_POLICY` (a whole-execution retry would repeat a
-    write). A turn-cap exit without a report (the Sonnet 5.5 filler-tool stall) is logged at ERROR and posts one 🚨
-    line through `alert_sink`, the ops sink the consolidation agent gets; the sol fallback covers provider errors on
-    the first call only. Every tool calls one method of the user's `DriveOperations` (`src/infrastructure/drive_operations.py`:
-    FileManagement's former drive code — error mapping, per-user lock, shield, still-running, receipts, late-failure
-    notices keyed on `DriveOp`; receipts and notices such as `🗑️ Deleted from the drive: {path}` and
-    `⚠️ Deleting {path} did not complete.` (`src/locales/*.py`) go out literally, `notify_raw(literal=True)` →
-    `send_literal`, so a path is never formatted, linked or read as a mention), built once per user by
-    the factory and shared with FileManagement. An identical
-    search in one commission is not re-run (code skips it). No search cap in production (the owner dropped a 3-search
-    cap): ≤ 6 turns, one re-search after a "Without X" line. A subject is searched once, in the user's words; a list of
-    alternative words is not a list of searches, and synonyms and translations are not searched (RFC rev 4.5 #7,
-    `execute_as_given` in `COGNITIVE_PROCESS_DRIVE`; Smart's side: "one language, no synonyms or translations" in the
-    commission). G3 fails a case run above 3 search calls (`SEARCH_CALL_CEILING`): an eval check, not a production cap. Prompt: profile `drive`, blueprint `drive_agent_v1`, tokens
-    `COGNITIVE_PROCESS_DRIVE`, `PROTOCOL_DRIVE_SEARCH`, `PROTOCOL_DRIVE_NOTES` (branch), `OUTPUT_FORMAT_DRIVE` (all non-overridable),
-    `include_biographical=False`, `include_directives=False`, `include_location=False`; no fallback prompt. The tokens are one
-    procedure, each rule once (RFC §0.0.2 rows 8-9); answering, quoting and computing rules are Smart-side reading lines.
-    `date_from`/`date_to` filter the file's own date; a date written inside a document goes in `query` with the subject.
-  - **What Smart gets back:** always `AgentResponse.success` (the engine's "Correct your input" suffix never reaches a
-    drive answer): `Drive result: <status>`, a "What to do" line, one op line per change, reading lines (the former
-    `drive-search` skill's Smart-side rules, selected by code from the blocks: the `R_*` texts of
-    `src/domain/drive_answer_texts.py`, chosen by `drive_answer.reading_lines`; changing one is a code deploy, changing
-    `PROTOCOL_DRIVE_SEARCH` a Firestore upload), the specialist's note (a plain-text final reply beside `report_to_orchestrator` fills it when the report's note is
-    empty), then every read
-    block verbatim in run order. The specialist's model sees search cards and listings in full but only a stand-in for
-    an opened file; images and PDFs reach Smart as a `file_data` list. `history_context["drive_context"]` is one flat
-    list (no dedup) of `{path, ref}` entries that also name the operation (`drive_history.history_entries`);
-    ConversationHandler renders the turn's entries into full_text as one `[Drive: <path> ref=… — <what was done>]`
-    line per file (`drive_history_lines` via `history_context_block`), never JSON, never in the summary;
-    FileManagement's open_file builds its entries with the same helper.
-    **The open bound** (USER_DRIVE_INDEXING_RFC §29, built, not deployed): a drive text above
-    `OPEN_MAX_CHARS` (60 000) is never handed to a model whole. `DriveOperations._open_drive_item` asks
-    `DriveSearchService.text_extent` once (not for `original`); a pageable extent over the cap (or truncated) is
-    refused before any download (`REFUSED`, `ReadFacts.too_long`, a tool-free text from `drive_open_bound`); any other
-    text is cut after the conversion (head at a paragraph + a cut line outside the wrapper, `ReadFacts.cut`). A failed
-    lookup counts as not indexed (one WARNING). The specialist's `_seen` appends `ROUTE_SPECIALIST` to a refusal and
-    shows a cut body as `stand_in_cut`; FileManagement's `_respond` answers a refusal as `AgentResponse.success` with
-    `ROUTE_ORCHESTRATOR` (a failure would invite the same open again). Vision opens are unchanged (one log line). One page per commission:
-    `DriveToolRun` answers a second paged `read_passages` in a run with `ONE_PAGE` (set before the await, so a
-    co-emitted second page is refused too); Smart commissions the next page with the history line's `next: from N`.
-  - **Search** (`search_drive` → `DriveSearchService` over the opt-in index; USER_DRIVE_INDEXING_RFC §10.4, §24.10,
-    Search v2 §25.5): parameters `query`, `folder`, `kind`, `date_from`, `date_to`, described in
-    `domain/drive_tool_texts.py`. `query` is the subject in the user's words (a name, place, person, topic, a document
-    type or purpose such as "tickets" or "what expires", or a phrase, number, amount or id inside); a file format goes
-    in `kind`, a time span in the date fields. No concept left plus a filter is filter-only (newest first, a count);
-    nothing at all is refused with a correction (RFC Δ36). `kind` is a format, an extension, a plural or a family
-    (`spreadsheet`, `document` incl. PDF, Markdown and text, `word`, `presentation`, `photo`), anything else is
-    refused. A folder whose contents are not indexed (repository, generated, dense) says so and points to listing it.
-    **Search v2:** per query word, exact key streams (about, name, chunk words, passage hints) with strict AND (an
-    absent word blocks and gets the D29 "Without X: N files match" line; one lowest-idf word and common words may be
-    missed, numbers never) put each file in one tier — About / Mentioned in (exact), By translation / Labelled
-    (automatic), Related by meaning only (≤ 3, unverified) — with a searched line, a coverage line, per-card
-    `matched:` sources, a date with its source, and a passage around the match. An index built by v1 is not searched
-    (D30: "being rebuilt"). No model call at search time. Results come inside a nonce-tagged `<drive_document>`
-    wrapper (only wrapper-tag look-alikes are neutralised, so `R&D` paths read as written; RFC Δ34; the same wrapper
-    carries opened text, and vision and video results carry the reference-material reminder with the label
-    unescaped). Indexing off → `disabled`, read uncached; the off and disconnected results say not to search the drive
-    again in this conversation. A `drive:` ref prefetched by the coordinator for DocPlanner, PdfGenerator or
-    HtmlPageGenerator still arrives raw (wrapper in Slice 3, RFC Δ35). Text in drive results and opened files is data
-    (the `untrusted` line of `PROTOCOL_AGENT_SELECTION`, re-voiced in `COGNITIVE_PROCESS_DRIVE`; G3's injected case
-    bars any act on it). Building block: `docs/05_building_blocks/user_drive/README.md` §6.
-  - **Gotchas:** a `still_running` mutation ends the commission: a later change in it is `not started: an earlier
-    change in this request is still running`, and a still-running move, copy, save or append gets no later message
-    (only delete and replace post a receipt or a "did not complete" notice). The status is set by code, the model can
-    only lower it (`question` → `ambiguous`, `not_done` → `not_possible`). The evals stub drive writes at the DriveOperations
-    class (`scripts/validation/drive_eval/dry_run_drive.py`), never at `DelegationEngine.dispatch`: the specialist's
-    tools do not pass through it. G3 (`smart_dry_run.py`) can run the branch's prompt files before any upload and pick
-    the specialist's provider and tier (`--prompts-from-snapshot`, `--specialist-provider`, `--specialist-tier`); its
-    `--record` writes no bars while Smart fails a hard check. **Before/after:** before = G3 on `main` with the Firestore
-    prompts, after = G3 on the branch with `--prompts-from-snapshot`, both at the same `--repeats`; compare the two
-    reports `scripts/memory/drive_g3/g3_<stamp>.json` (`scores`, `wall_p50_s`). `specialist_ab` has
-    `--compare <report> --compare-design today` and `--prompts-from-snapshot` (the branch's prompt files, no upload first).
-  - **Passages** (`find_passages(question, folder, file_refs)` and `read_passages(file_ref, passages)`; USER_DRIVE_INDEXING_RFC
-    §28, built, not deployed; `DriveOp.PASSAGES`, a read, not in `MUTATING_OPS`): the stored chunks nearest the question
-    (vector kNN of the question, RRF with a lexical rank over the 30 nearest; `DriveSearchService.excerpts` /
-    `excerpt_range`), whole chunks, ≤ 10 per call and 24 000 characters, adjacent ones merged into a run. The specialist
-    sees them in full (`_seen`), judges only whether they suffice, and never writes the answer. Code keeps a per-run chunk
-    ledger (`ExcerptLedger`); the answer to Smart prints every passage once in one block `[Result r…: passages]` (head
-    lines outside the nonce wrapper, `[passages i–j]` markers inside), after a `Searched:` line that replaces the
-    specialist's note on passage runs. Folder notes and each file's own note and description ride with the passages
-    (`EXCERPT_FOLDER_NOTES_CHARS_MAX` caps the folder notes). Low-accuracy values: passages for born-digital files, an
-    open for image text or an unknown capture (`ReadFacts.low_accuracy_image`, `R_ACCURACY_IMAGE`). Code:
-    `src/domain/drive_excerpt*.py`, `drive_excerpts.py`, `drive_content_gate.py`; `drive_operations.py`
-    `find_passages` / `read_passages`; `drive_tools.py`. **Pages** (§29.5): `read_passages(file_ref, passages="from N")` reads up
-    to 10 passages from N (`range_request` → `ExcerptRangeRequest.page`); the service returns a `PageSpan`
-    (`drive_excerpt_page.py`: first, last, total, version, next from the request, end, past_end); a page line replaces
-    `CONTINUE` on a page only, and Smart's block gets a `pages read:` line per paged file (`ExcerptLedger` keeps the
-    spans and the chunks a find matched, so `nearest the question` says which is which) and `R_PAGED`.
-  - **The content write gate** (`decisions/drive_content_write_gate.md`): `content_gate_applies(context)` is
-    `not interactive_delivery` (set only by `ConversationHandler`), so a reminder, the daily review, any `notify` run, a
-    call and a run with no origin are gated; a chat turn is not. `DriveToolRun.run` refuses a change (any `MUTATING_OPS`
-    op and the note writers) in a step after the first one whose passages reached the model (`write_refused`); a change
-    co-emitted with the first passages read is not refused. A `search_deleted_recordings_and_notes` result with a
-    transcript passage arms it too (`DriveOutcome.stored_text_shown`); `search_drive` snippets do not. The refusal is `REFUSED` (never settled by a later call),
-    text `WRITE_AFTER_PASSAGES`, and one INFO line `[DriveAgent] <kind> refused: passages were read in step N of this run`.
-  - **Logs** (`make fetch-logs`, then `grep '\[DriveAgent\]\|\[DriveOperations\]' alek_debug.log`): one
-    `[DriveAgent] user=<8> status=<status> model=<model> ops=<op>:<class>,… turns=N ms=…` line per commission, where
-    `model=` is the model that ran (read from the execution's billing ledger, so a cross-provider failover shows the
-    fallback model; models joined by `+`; the failover itself is the `llm_fallback claude→openai` WARNING); one
-    `[DriveOperations] <op>: <ref or folder>` line per operation; `[DriveOperations] opened: <ref> chars=<n>` per whole-file open (the converted length, before the bound), then
-    `open refused: <ref> chars=… passages=… truncated=…`, `open cut: <ref> chars=… kept=… extent=…` or, for a PDF or an image,
-    `opened vision: <ref> mime=… bytes=… pages=…`; one
-    `[DriveSearch] user=<8> status=… mode=excerpts|excerpt_range scope=… files=… repeated=… no_text=…` line per passages call
-    (counts, no text), next to the search's `mode=query|filter` line; a turn-cap exit is
-    `ERROR [DriveAgent] user=<8> hit the turn limit (6) without a report; tools per turn: …`. `prompt_content` records
-    the request's model, so it cannot show a failover.
-  - **Gotchas of the bound:** a refusal is `REFUSED` and never settled by a later open; it arms no content gate (a page does);
-    a live transcript's cut line is the open bound's, an archived one keeps `[Transcript cut at …]`.
-  - **Owner notes** (`DRIVE_FILE_NOTES_RFC.md` rev 3.3, specialist RFC §9; built on `feat/drive-notes`): `notes`
-    (`DriveNoteService`) and `notes_enabled` (`DRIVE_NOTES_ENABLED`) are injected by composition. With both and a user,
-    `DriveNoteToolRun` (`src/infrastructure/drive_note_tools.py`) runs on the same `DriveToolRun` (collector, step,
-    deadline, ordering lock): `get_note` always, the ten writers only when `is_owner_turn(message.context)` (never the
-    payload), each re-checked per call; each tool is one service call. Writes go under `asyncio.shield` in a task
-    `DriveOperations.keep_alive` holds; a write the deadline cuts is `NOTE_STILL_RUNNING` and posts its receipt late
-    (`post_late_note_receipt`). Receipts and `drive_note_context` come from the collector (`answer.delivery_items`,
-    `history_context`), never from the engine. Op lines carry no note words; only `get_note`'s block does, wrapped.
-  - **Tests:** the twelve tools are a P14 tool-field surface (`drive`, `delegate:work_with_drive_files`,
-    `tests/support/tool_fields.py`), e2e card `tests/unit/agents/test_drive_agent_tool_fields_e2e.py`; the modules run
-    in the weekly mutation job (`tests/support/mutation_targets.py`). The note tools are the surface `drive_notes`
-    (`get_note` read-only), e2e card `tests/unit/agents/test_drive_agent_note_tool_fields_e2e.py`.
-- Notes / Proactive Self-Reminders (PERFORMANCE, OpenAI, intent `manage_self_reminders`) — deferred
-  instructions the system writes to itself that fire autonomously as new conversations. Two-field model:
-  `text` (≤15-word label) + `instruction` (self-contained execution context). Optional `workspace_file`
-  (AGENT_WORKSPACE_RFC §8.3, D15): a `manage_self_reminders` context field read from the payload, validated before any
-  LLM call (any valid workspace path, any folder, need not exist; refused when no workspace is configured), bound by code
-  to exactly one create/update (a `_run`-local guard; several create/update calls in one response are all refused),
-  announced by a code-appended system line, cleared by `"remove"` (`""`/`none`/`null`/`n/a` mean not provided). The alert
-  renders it as one line, `Workspace file: workspace:<path>`; what to do with the file is the instruction's business.
-  Tools: create/update/delete + `delegate_to_specialist` (multi-turn, max 3). **Schedule = RFC 5545 RRULE string** (no
-  `DTSTART` — `due` is the anchor and first fire), validated/expanded via `RecurrencePort` →
-  `DateutilRecurrenceAdapter`: one reminder covers several weekdays, several times a day or "last
-  Sunday of the month" — never duplicate reminders. `COUNT`/`UNTIL` rejected (a reminder ends by
-  deletion); `clear_recurrence` turns a repeating one back into a one-off; create snaps `due` onto
-  the rule. Both context blocks (orchestrator + specialist) render the rule verbatim plus
-  `complexity`/`last_fired`. See `decisions/reminder_rrule_schedules.md`. Firing:
-  Cloud Scheduler every 15 min → `fire_due_reminders` → per-fire `_build_reminder_alert` →
-  `notify(agent_id_override=smart_response_agent_…)` → **Smart** runs it. One-time deleted after firing;
-  recurrent (`hourly/daily/weekly/monthly`) → `reschedule()` (DST-safe, user timezone). Idempotency:
-  `last_fired` 4-min guard. Soft cap 20. Every CRUD → `notify_raw()` to channel. See
-  `docs/10_rfcs/PROACTIVE_SELF_REMINDERS_RFC.md`.
-- Tasks (intent `manage_user_tasks`) — TasksAgent over `TasksProviderPort`. Tools: list/search/create/
-  update/delete (max 6 turns). Search-before-mutate → `task_ref` (8-char `md5(task_id)[:8]`). Recurrence:
-  5 patterns. Active provider: `MicrosoftToDoAdapter` (Graph API CRUD + webhook subscriptions; implements
-  TasksProviderPort+TaskLifecyclePort; worker tasks `setup_microsoft_todo`/`reindex_task_list`/
-  `renew_task_subscriptions`). `GoogleTasksAdapter` is frozen/deactivated. `TaskIndexingService`
-  (embed→index + `resolve_short_id`), `TaskSearchIndex` (2-vector RRF). See `docs/05_building_blocks/tasks_integration/`.
-- Consolidation (PERFORMANCE, Claude; Cloud Tasks) — background long-term memory formation
-  (mechanism in root `CLAUDE.md` → Consolidation). **Stage 2b `_review_directives`** (unconditional,
-  every pass) curates the `agent_directive` rulebook → `standing_directives` block; hard cap 15 via
-  prompt + code backstop `_enforce_directive_cap`. See root `CLAUDE.md` → Standing Directives +
-  `decisions/standing_directives.md`.
-  - **Three stages, one system prompt, different user messages** — Stage 1 (conversation → facts),
-    Stage 2a (fact-cluster review, *conditional*: skipped when Stage 1 wrote nothing), Stage 2b
-    (directive rulebook, *unconditional*). `_run_consolidation_loop` starts `history` from scratch
-    per stage, so Stage 2b cannot see Stage 1 — do not explain its behaviour by what ran before it.
-  - **Stage 2b removes as well as rewrites** (2026-08-18): DEMOTE to `PREFERENCE` / INVALIDATE /
-    MERGE on every pass, not only at the cap; the SCOPE criterion is referenced from
-    `Directive_Maintenance` in the shared system prompt rather than restated; a checklist forces one
-    line per record before any operation. Bench:
-    `scripts/consolidation/test_directive_review_dryrun.py` (`--prompt`, `--provider`, `--tier`,
-    `--stage1`, `--runs N` over identical input). **Run-to-run spread is large** — 0 vs 6 demotions
-    on identical production input; measure with `--runs 3`, never 1. See
-    `decisions/directive_applicability_gate.md`.
-  - **The tools take `expiry` (Facts S3).** `create_fact` / `merge_facts` (`fact_attributes.expiry`, required unless the fact
-    is pinned or closing) and a version-making `update_fact` (`updates.expiry`) carry `{kind: date|horizon|none, …}`; the
-    schema is the module constant `_EXPIRY_SCHEMA` (never read through `self`: tests call `_get_tool_declarations` unbound),
-    `merge_facts` reuses create's property set (`_FACT_ATTRIBUTE_PROPERTIES`), `ttl_days` is gone, and `STALE` and `SUPERSEDED` are
-    not offered on create or merge. `_execute_one` moves a top-level `expiry` into place. Every pass builds a
-    `FactWriteContext` (`_write_context(label, zone, span)`: `model_dates` only for `stage1` and `email`) that rides into every
-    port write; an `expiry` refusal comes back `status: failed, refused: "expiry"` before any embedding. Rules and the
-    cleanup-pass floor: map §2.7. A new field or example in a token must land in the token and the code schema together
-    (`tests/unit/prompts/test_consolidation_vocabulary.py`, `test_consolidation_expiry_prompt.py`).
-  - **One timestamp format.** The conversation lines, the span and the `Today: …` line of every pass use `domain/local_time.py`
-    in the owner's zone (`message.context["owner_timezone"]`, UTC when absent), the same `local_stamp` Smart's
-    `_inject_timestamps` calls; `_message_time` is the one reader for a line's stamp and the span. Never format a time inline.
-  - **Stats lines.** `ConsolidationPassStats` records each turn's tool outcomes (`ok` / `error` / `expiry` / `born_due`): the 📊
-    line and the turn-limit 🚨 carry `tool-error turns N (expiry N[, born due N], abandoned M)`. An abandoned refusal (an `expiry` refusal
-    no later success answers) posts a 🚨 **also with `CONSOLIDATION_STATS_ALERTS` off**, and the pass's expiry errors are added to
-    the account's day, both in a `finally` capped at 10 s (`CLOSE_OUT_TIMEOUT_S`, best effort, never raises). `_enforce_directive_cap`
-    reports no op and posts a 🚨 when the backstop's update is not `updated`. The agent builds a typed `PassCall` per call
-    (`_pass_call`, through the write path's parsers) and renders the lines itself (`_summary_line`, `_limit_alert`,
-    `_abandoned_alert`); the stats never see a tool argument.
-  - **The review pass (Facts S4)** — a fourth task of this agent, `review_stale_facts` (`payload["task"] ==
-    Intent.REVIEW_STALE_FACTS` → `_handle_review_stale_facts`). It is never sent by a user message: `FactReviewService` (under the
-    account's memory-write lease) routes it. Owner's map `docs/05_building_blocks/memory/README.md` §5.6.
-    - **Task and message.** The payload is a `FactReviewTask` (`domain/fact_review_task.py`: items with versions and neighbours,
-      open questions, `mirror`, `owner_messages`, and `language`, the fixed message language, only when not mirrored) in its one plain-data form (`encode_review_task` / `decode_review_task`). The
-      prompt is `consolidation_review` (profile over `CONSOLIDATION_TAXONOMY` and `CONSOLIDATION_LIFECYCLE`; no fallback: a build
-      failure is `AgentResponse.failure`); no baseline conversation, no standing directives. The message (`_build_review_message`)
-      is code-built from `fact_view` (`domain/search.py`, the one view Stage 2a and the search hits use too); in mirror mode it
-      carries `owner_messages` and the request to report `message_language` and, for a language without UI strings, `labels`.
-      Both modes ask for `translations` (the content of every listed fact, one line, numbers unchanged, translated into the message
-      language; `_TRANSLATIONS_RULE`): in mirror mode when `message_language` is not `en`, in fixed mode (`_fixed_translation_instruction`)
-      when `task.language` is a code other than `en`; a fixed-language task in English or with no language asks for none.
-    - **Tools and loop.** `_get_tool_declarations("review")` gives `update_fact` (with `basis`, `history`, `as_history` and
-      `payment`, no `reported_date`), `ask_owner(fact_id, fallback, question?, texts?, folds?, noise?)` and `count_words`; no
-      search, create or merge (P2 revised, RFC §9: `fallback_date` left the schema; the parser still reads it so that its
-      refusal can name it). `question` is `still_true` (default), `happened`, `renewed` or `paid`; `texts` are the facts code
-      writes for each answer (`happened`/`not_happened`/`unknown`, `renewed`/`not_renewed`/`not_needed`/`unknown`,
-      `paid`/`not_paid`/`unknown`; none for `still_true`), one line, English, at most 40 words by the domain `word_count`,
-      checked by code with no `count_words` call; `folds` are other batch facts that are parts of the same plan, superseded by
-      the asked fact only after its question is queued.
-      `_run_consolidation_loop(pass_kind="review", max_turns=CONSOLIDATION.review_max_turns (15), review_scope=…)` sends the first
-      two to `FactReviewScope` (`infrastructure/fact_review_scope.py`); the pass kind must match the write context's actor
-      (`PassActor.REVIEW`). The typed write port is the agent's own required `fact_updates` dependency (a `FactUpdatePort`, refused
-      when the agent is built without one; composition passes the adapter twice); every run's tracker is
-      `_TrackingFactUpdates(model port, typed port)`.
-    - **Scope rules (code, not prompt).** One lock first in every command, so calls apply in the order written. A `fact_id` outside the
-      batch is refused; a fact with a result in this pass is refused (a follow-up write to a lineage the pass made current is
-      allowed); a call that leaves a stale fact stale is refused. `basis` (`evidence`, `reply` with a `quote` found in the owner's
-      reply, `date_passed`) is read from the top level or `updates.basis`: invalidate and rewrite need evidence or a reply,
-      **an archive needs the owner's reply** (P2 revised: no archive on evidence or `date_passed`), **a revive needs evidence or
-      a reply**, an `as_history` rewrite (`{state: CURRENT, content, expiry: {kind: none}}`) takes evidence, a reply or
-      `date_passed`, and `date_passed` backs nothing else; `history` goes only with an archive on a reply that says a standing
-      fact ended (never on a dated plan or noise); evidence must be a current fact of the account outside the fact's own
-      lineage, and never a fact this pass rewrote as history on `date_passed` (`not_evidence`). `payment` goes only with an
-      `as_history` rewrite of a received invoice. An ask needs a fact in the batch with no result and no open question (its
-      folds too); `fallback` is `revive`, `archive` or `history`: `archive` only with `noise`, `history` only for `happened`,
-      `renewed` or `paid`, and a `date` fact is asked `happened`, `renewed` or `paid`, or `still_true` with `archive` + `noise`.
-      On a `renewed` question's reply a non-history rewrite with an expiry gets `confirmed_expiry` from code. Every refusal names the argument and the fix and is tagged `basis`, `scope` or `ask`; a
-      `reported_date` is dropped with the review's own note. All review refusals go to `review_refusals`; only born-due and `scope`
-      refusals can be abandoned (a basis or ask refusal leaves the fact kept), and any success of the same fact in the pass
-      answers them (`PassActor.one_result_per_fact`).
-    - **Result.** The scope's outcomes (`revived`, `rewritten`, `archived`, `invalidated`, `superseded`; a decision carries
-      `as_history`), asks (with `question`, `texts`, `folds`), `invoices` (one `InvoiceRequest` per routine-invoice history with
-      its `payment` texts) and kept ids, plus
-      `message_language` and `labels` read from the final report through `parse_message_language` / `check_labels` (None when
-      malformed), and `translations` read through `report_translations` (`domain/fact_review_quote_translation.py`: one line, no `[`,
-      link or control character, at most 500 characters, the source's digit runs unchanged; refusals are logged by fact id, never
-      by text; the language is the task's fixed one or the reported one). Since P2 revised the keys are each listed fact's id
-      (its quote) and `<fact_id>:<text key>` for every text the pass wrote (`history` for a rewrite's content, each ask text,
-      each `payment` text), checked against the English texts the scope collected; a key naming no written text is refused. The agent writes no question and posts or appends nothing: `FactReviewService` queues the asks, sends the questions
-      and applies timeouts, and `FactAnswerService` applies the owner's answers (no model).
-    - **The queue and the answer path (outside the agent).** A fact the pass asks about is made current under its precondition and
-      gets a `queued` question (`FactReviewQuestion`, `fact_review_questions`); questions go out one at a time through
-      `InteractiveMessagePort`; an answer is only a reply to the question message, a Slack button or a Cabinet click and is applied
-      by `FactAnswerService.apply` (the `owner` actor, the same preconditions, no lease; an answer that is not one of its
-      question's options is `not_applied`); a reply in words is recorded and read by the next review run once. After the pass
-      the service supersedes the folds of each queued ask and creates a `paid` **digest question** (delivery `digest`, never
-      sent in chat, answered in the Cabinet) for each invoice; a timed-out `history` question writes its "unknown" text through
-      the typed port under `PassActor.TIMEOUT`. See the map, §5.6.
-    - **The echo-trap exception, narrowed.** `Domain_Scope.memory_review_reply` in `CONSOLIDATION_POLICIES` is the one definition: a
-      USER message that begins `[Reply to memory review q=<id>]` answers a question the earlier pair `[System: memory review q=<id> …]`
-      framed; the quoted fact belongs to the review, and Stage 1 records only what the answer adds (a correction's true value). The
-      other echo-trap lines refer to it; do not restate it in a token. The quote in that pair may be the stored fact translated into the
-      message language (it is the same fact; `case_4_translated_quote` in `example_3b`). A bare digit with no marker is read by the ordinary rules.
-- DeepResearch (async, provider-agnostic, intent `deep_research`) — `create_interaction()` returns
-  ACK (job_id); result delivered by adapter. **Default Claude** (`ClaudeDeepResearchRunnerAgent`,
-  `NO_RETRY`) runs as a **Cloud Run Job** (`job_main.py`, task-timeout 18000s) via `JobRunnerPort`+
-  `CloudRunJobsAdapter`; OpenAI backend = webhook. Gemini backend removed 2026-05-29. Two-pass critic via
-  `UserBotConfig.deep_research_second_pass`. Every path ends in `deliver_deep_research` → HtmlPageGenerator
-  task; its context carries `deep_research_report_query`, and once that HTML is delivered `AgentWorkerHandler`
-  copies it to the user's drive when `UserBotConfig.drive_copy_deep_research` (Cabinet opt-in) is on, posting one
-  line after the link (`decisions/deep_research_drive_copy.md`). Job logs: `make logs-job` / `make fetch-logs-job [K]` →
-  `alek_debug_job.log`; single run: `make logs-execution EXECUTION=<name>`.
-- MapsSearch (SYNC, BALANCED, OpenAI `gpt-6-luna` default (5.6-luna until 2026-10-03), intent `maps_query`, **`internal=True`**) — place
-  search, routes, weather via Google Maps AI Grounding (MCP, `MapsToolsPort`). Not shown to LLMs;
-  auto-triggered via `intent_fanout` when the orchestrator dispatches `search_web`, results merged
-  under labeled sections. Latency-tuned: `thinking="low"` on every turn (all allowed providers reason
-  at model default otherwise) + same-turn tool calls run concurrently via `asyncio.gather`.
-- Compute (SYNC, ECO) — intents `compute_math`/`compute_datetime`/`compute_finance`/`compute`; runs
-  Python in Gemini `code_execution` sandbox (`use_code_execution=True`). No external data — compute-only.
-- ImageGeneration (ASYNC, `internal=False`, intents `generate_image`/`edit_image`) — generates/edits
-  images via `grok-imagine-image-2.0` ("Aurora") through `ImageGenerationPort`. One LLM call crafts an
-  Aurora-ready prompt (photoreal / text-heavy-layout / asset-set technique clusters —
-  `COGNITIVE_PROCESS_IMAGE_GEN`, RFC §2.1), then `.generate()`/`.edit()` renders pixels; delivers
-  `DeliveryItem(type="document")` (GCS link + native inline upload) — same zero-new-plumbing mechanism
-  as `PdfGenerator`/`HtmlPageGenerator`. No fixed tier default yet (`_DEFAULT_AGENT_TIERS` has no
-  `image_generation` entry — falls back to the user's global `default_tier`, ECO unless configured).
-  - **Two independent provider axes, one resolved name.** Text-LLM step: standard
-    `AgentProviderStrategy`/`ProviderRegistry[LLMPort]` path (`agent_type="image_generation"`).
-    Pixel-rendering step: a separate `ProviderRegistry[ImageGenerationPort]` (`image_registry`, wired
-    in `build_application_graph`), resolved via `AgentContextBuilder.resolve_image_generation_context()`. Both axes
-    read the same resolved provider name, so a future per-user override switches text-crafting and
-    pixel-rendering together. `allowed_providers: ["grok"]`, no fallback (RFC §6 decision #8) —
-    `GrokImageAdapter` is the only registered implementation today.
-  - **`edit_image` uses `context_schemas["image_refs"]` (array, 1-3 filenames), not `file_ref`** —
-    each resolved directly via `FileConversionService.resolve_bytes()` (concurrent, fail-fast via
-    `asyncio.gather(..., return_exceptions=True)`), bypassing `AgentCoordinator._resolve_file_refs()`'s
-    generic `file_ref` text-injection path (which would run image bytes through a markitdown text
-    converter and break). `image_refs` is the first array-typed `context_schemas` field in the
-    codebase — `_build_delegate_tool_declaration` accepts either a plain description string
-    (shorthand for a string param) or an already-JSON-schema-shaped dict. xAI's wire format
-    branches on count: 1 reference uses `image`, 2-3 use a separate `images` array field; the
-    crafting LLM call is told the count so it can address them as `<IMAGE_0>`/`<IMAGE_1>`/`<IMAGE_2>`
-    per xAI's convention. See `docs/10_rfcs/IMAGE_GENERATION_RFC.md` §3.4 and
-    `decisions/image_edit_multi_reference.md`.
-  - **No retry, anywhere.** `RETRY_POLICY = NO_RETRY_POLICY` on the agent and `max_retries=0` on the
-    adapter's `AsyncOpenAI` client — a transient 5xx after xAI has already rendered (and billed for)
-    an image must not trigger a second paid render.
-- Tutor (SYNC, BALANCED, OpenAI `gpt-6-luna` default, intent `tutor_chat`, **`internal=True`**) —
-  the pilot companion agent (`docs/10_rfcs/COMPANION_AGENTS_RFC.md`, Phases A-G): bound-channel-only,
-  never reachable from normal conversation — a channel must be explicitly bound via `$agent tutor`.
-  Structural mirror of DomainResearcherAgent: reads history from `message.context["history"]`, but
-  as of Phase G the SOURCE differs by binding — companion bindings (Tutor) resolve to
-  `history_source="session_store"` in `ConversationHandler._resolve_session_mode`, so history comes
-  from **SessionStore**; DomainResearcherAgent (no `companion_config`) still resolves to
-  `history_source="platform"`. uses `DelegationEngine` for its own tool loop with `search_web` as the **only**
-  allowed intent (`search_memory` was considered and declined — it would reach Alek's full personal
-  biography, bypassing the `include_biographical=False` permission boundary the companion-context
-  assembler otherwise enforces). Injects `CompanionContextAssemblerService`'s read-side output (this
-  session's own `CompanionRecord`s + cached summary) as a static `companion_context {}` prompt block
-  via the same `extra_static_blocks` mechanism SmartResponseAgent uses for email-triage payloads.
-  **Provider:** default OpenAI (BALANCED → `gpt-5.6-luna`, `gpt-6-luna` since 2026-10-03) since 2026-08-31 — owner judgement that
-  Claude Haiku 4.5 (BALANCED's Claude default) felt too weak for live tutoring conversation
-  (`agent_context_builder.py` STRATEGIES["tutor"]).
-  **Write path:** `$agent tutor` auto-attaches `AgentDescriptor.companion_default_config`
-  (`CompanionConfig(window_threshold=20, batch_size=10)`, retuned 2026-09-17 — companion
-  extraction has no time/idle sweep, only `window_threshold` overflow, so the threshold is sized
-  to reliably cross within one active tutoring session rather than mirroring Alek's own
-  slow-drip consolidation cadence) to the `ChannelBinding` — without this no `ChannelBinding` ever
-  carried a non-None `companion_config` and the whole companion pipeline was unreachable (Critical
-  #1, final whole-branch review 2026-08-31). See `decisions/companion_write_path.md`.
-  **Phase G — structured output + Smart-parity history:** JSON-schema reply (`_RESPONSE_SCHEMA`:
-  `full_response`/`response_summary`) via `response_schema` on Claude/Gemini/OpenAI, same
-  `deliver_response` terminal-tool path as Smart on Grok and on Claude with tools (Claude without tools keeps
-  `output_config.format`; `extract_structured_response`, shared
-  helper factored out of `SmartResponseAgent`). Summary compression is in-band when the model
-  emits `response_summary`, else async fallback via `HistorySummaryService`
-  (fire-and-forget `asyncio.create_task`, mirrors Quick's own-configured-service guard). History
-  reconstruction uses the same `_apply_history_tier(max_full_turns=...)` tiering as Smart/Quick,
-  but the depth itself is **per-channel-binding, not per-user**: `CompanionConfig.
-  history_recent_full_turns` (default 5, matching Smart's own value) is resolved by
-  `ConversationHandler._resolve_session_mode` from the CURRENT channel's binding and threaded via
-  `SessionMode.history_recent_full_turns` → `message.context["history_recent_full_turns"]` — read
-  fresh on every `TutorAgent._converse` call, not fixed at construction. This is deliberate: one
-  `TutorAgent` instance is a per-user singleton shared across every channel that user binds it to,
-  so two channels can carry two different depths (an earlier version threaded Alek's own per-user
-  config value through `UserAgentFactory._UserContext` instead — that coupled Tutor's depth to
-  Alek's Smart/Quick setting and couldn't vary per channel; superseded 2026-09-02, see
-  `decisions/companion_history_recent_full_turns_per_channel.md`). Blueprint `tutor_agent_v1.json`
-  needs `output_format` in `class_order` for `OUTPUT_FORMAT_TUTOR` to render.
-  - **TutorExtractorAgent** — the tutor's extractor, same architectural slot `ConsolidationAgent`
-    fills for Alek. NOT manifest-registered (never reached via `delegate_to_specialist`, same shape
-    as ConsolidationAgent) — constructed fresh per batch by
-    `composition/companion_extractor_runner.py` (services/ cannot import agents/ directly,
-    REQ-ARCH-22). Single LLM call, structured JSON out (`{"records": [...], "summary": str}`) — no
-    multi-turn tool loop, no dedup-before-write. **Default Claude, PERFORMANCE tier** — "same
-    judgment-call quality bar as consolidation" (`domain/user.py::_DEFAULT_AGENT_TIERS["tutor_extractor"]`).
-    `CompanionConfig.text_mode` defaults to `SUMMARY` — since Phase G it receives Tutor's real
-    ≤300-char `response_summary`, not `full_response` (dormant pre-Phase-G, when Tutor produced no
-    summary and `text == full_text`).
-- Lelik (`lelik_agent.py`, **`internal=True`, `capabilities={}`, `eager=False`**) — the voice
-  companion (`docs/10_rfcs/VOICE_COMPANION_RFC.md` §4.6/§4.7/§4.13), and as of Slice 2 a **standard
-  delegating agent**, not just a call originator: it has **no `Intent` of its own** (`capabilities={}`),
-  so it is still unreachable via `delegate_to_specialist` or `AgentCoordinator` and `can_handle()`
-  still returns `False` unconditionally — but its `LELIK` descriptor now carries `allowed_intents=
-  {search_memory, search_web_light, ask_alek}` and no fan-out (revised 2026-09-29, RFC §4.15; it was
-  `search_web` + Maps fan-out; `tell_alek` left it 2026-10-29 for the `send_to_chat` tool), the same shape Tutor's descriptor has. Three entry points, one instance:
-  - **`execute(purpose, ticket, answer_url, to_number)`** — places the callback via
-    `TelephonyPort.originate_call`. No LLM call, no tier (there is no `_DEFAULT_AGENT_TIERS["lelik"]`
-    entry, and none is needed for this method).
-  - **`session_config(user_id, account_id)`** — builds the realtime session's instructions and tool
-    declaration. `LelikPersonaService.assemble()` supplies only the *context* (`LelikContext`:
-    biographical facts + primary-channel history, RFC §4.8) — `LelikAgent` itself calls
-    `prompt_builder.build_for_agent(agent_type="lelik", ...)` to turn that context into instructions,
-    and builds the `delegate_to_specialist` declaration from `coordinator.get_available_intents_for(LELIK)`
-    the same way Smart/Tutor do, plus a second top-level tool `send_to_chat(request)` when the registry
-    knows that intent (description: the intent's `capability_descriptions` entry on `ALEK`). Raises on
-    failure — no call opens on an empty context.
-  - **`send_to_chat` is a channel, not a worker** (RFC §4.15 delta 2026-10-29,
-    `decisions/lelik_send_to_chat.md`): something for the caller's chat, Lelik does not hear back. The
-    relay turns the call into the `send_to_chat` intent (`domain/voice_errand.delegation_arguments`, the
-    one mapping) and treats it as an errand (no filler, no waiting notes, no abandon); `delegate()` runs
-    it like any delegation. It is not in `LELIK.allowed_intents`, so the delegate tool never offers it.
-    Actions (reminders, tasks, saving) go to `ask_alek`, whose answer Lelik confirms by voice.
-  - **`delegate(user_id, account_id, arguments, call_context)`** — runs one `delegate_to_specialist`
-    call from the live realtime session through `DelegationEngine(coordinator).dispatch(...)` (public,
-    made for this second caller — see Orchestration Patterns below), exactly as a text orchestrator's
-    single-call dispatch would. Seeds `context[CALL_CHAIN_KEY]=[lelik_agent]`, attaches the primary
-    channel's `session_id`/`origin_channel_id`/`origin_platform` from `persona.primary_channel(user_id)`
-    when resolvable. Each intent runs in its manifest-declared mode — no caller can override it
-    (see Orchestration Patterns → Sync/async is the intent's).
-  - **`delegate()` posts nothing to chat** (RFC §4.15.3, 2026-09-29). The rule-2 link copy for
-    every non-Alek specialist was withdrawn: it filled the chat with every search's links. The
-    `notifications` constructor argument is now unused, kept for construction compatibility. When
-    the caller wants something in chat, Lelik calls `send_to_chat`.
-  - **Persona is a context source, not a prompt author.** `services/lelik_persona_service.py` never
-    calls the LLM and never renders prompt text — it assembles facts/history (RFC §4.8); rendering is
-    `LelikAgent`'s job via the shared `PromptBuilderPort`, same division as every other agent in this
-    file.
-  - **Constructor:** `(config, telephony: TelephonyPort, from_number, status_callback_url,
-    prompt_builder, persona: LelikPersonaService)` — built lazily by
-    `UserAgentFactory._build_lelik(user_id, ctx)` like any other per-user specialist, reached via
-    `UserAgentFactory.get_lelik(user_id)`. `get_lelik` calls `ensure_agents_for_user(user_id)` on
-    every use — refreshes `last_used` so the TTL sweep can't unregister the user's Router mid-call,
-    and as a side effect keeps that Router warm for `ask_alek`. `main.py` passes `get_lelik` into the
-    webhook blueprint (`lelik_agent_provider`) and into `voice_control_plane_app.py`'s `/voice/delegate`
-    route. Call sites: `voice_webhook_app.py`'s `/voice/inbound-status` awaits `execute()`,
-    `/voice/answer` awaits `session_config()`; `voice_control_plane_app.py`'s `/voice/delegate` awaits
-    `delegate()`.
-  - **It deliberately does not catch `originate_call` failures.** The auth webhook's own try/except is
-    what deletes the ticket and releases the one-call marker; swallowing the exception into an
-    `AgentResponse.failure()` would strand both for up to `one_call_ttl_s` with no alert.
-  - **LelikSummarizerAgent** (`lelik_summarizer_agent.py`) — Lelik's extractor, the same slot
-    `TutorExtractorAgent` fills for Tutor and `ConsolidationAgent` fills for Alek. NOT
-    manifest-registered; constructed fresh per call by `composition/companion_extractor_runner.py`
-    (`_EXTRACTORS["voice"]`; services/ cannot import agents/, REQ-ARCH-22). Reached from
-    `main.py`'s `_voice_summary_consumer`, which `voice_control_plane_app.py`'s
-    `POST /voice/submit-transcript` invokes at end of call → `notify_call_summary`.
-    Constructor `(config, execution_context, prompt_builder)`; single LLM call, no tool loop, no
-    dedup-before-write. **Output is plain text, not JSON** — unlike `TutorExtractorAgent` there is
-    nothing to parse: Lelik has no `CompanionRecord` store, so `result["records"]` is hardcoded `[]`
-    and never asked of the model. Its profile carries Lelik's `VOICE_*_LELIK` tokens and its role
-    token has it write the note as Lelik in the first person (2026-10-21, RFC §4.9 revision).
-    **Tier: `PerformanceTier.ECO`, explicitly pinned** in `domain/user.py::_DEFAULT_AGENT_TIERS
-    ["lelik_summarizer"]` — end-of-call summarization is mechanical bulk work, not
-    `tutor_extractor`'s judgment call. The pin is load-bearing precisely *because* the agent is not
-    manifest-registered: `test_every_llm_agent_has_a_default_tier` cannot see it, so without the
-    entry it would silently fall through to the user's `default_tier`.
-    **Provider: `STRATEGIES["lelik_summarizer"]`, quick's providers (claude default) with `fallback: None`** —
-    a conscious trade-off (owner, 2026-10-23, P9 D8): when the provider fails, the call note is lost rather than
-    written by a second model. Call notes are rarely critical, a second summarizer would need its own prompt and
-    quality work, and the failure is loud: `/voice/submit-transcript` logs it and posts an ops alert ("end-of-call
-    summary failed"); there is no retry. Until then it had no entry and inherited quick's claude → gemini.
-- AlekGatewayAgent (`alek_gateway_agent.py`, `agent_type="alek"`, **`internal=True`**, `eager=False`,
-  intent `ask_alek`) — Alek as a specialist behind a zero-LLM gateway (RFC §4.7), named only by
-  `LELIK.allowed_intents` (see the registry rule below — an internal intent an explicit allowlist
-  names). `RETRY_POLICY = NO_RETRY_POLICY`: a retry re-runs Router + Smart + specialists, so it would
-  double the spend and the chat copy.
-  - **`send_to_chat` — errands (RFC §4.15.2; the `tell_alek` intent until 2026-10-29).** The same gateway declares `send_to_chat` as `ExecutionMode.ASYNC`
-    (`dispatch_deadline_s=720`), so an errand runs as a Cloud Task and reaches `execute()` as
-    `AgentIntent.DELEGATE` from `AgentWorkerHandler`. `can_handle` accepts both intents. The
-    commission gets an `[Errand from Lelik…]` header, and Smart's whole answer is posted to chat,
-    links or not, with a 30 s bound. A failure is reported by `AgentWorkerHandler._notify_errand_failure`.
-  - **Routes to the Router, not to Smart.** `execute()` builds an `AgentMessage` addressed to
-    `router_agent_{user_id}` and calls `coordinator.route_message()` — exactly what
-    `ConversationHandler` does for a normal turn, because `router_agent.py` is where `enrich_context`
-    (RRF memory search) runs; Smart without it is Alek without memory.
-  - **`current_message_parts`.** Smart builds its user turn from `context["current_message_parts"]`
-    only, so the routed message's `context` carries `[MessagePart(text=commission_text)]` alongside
-    the forwarded `message.context` — the commission text (the call's question, plus the last
-    exchanges and Lelik's reasoning, `_commission()`) is what Smart actually sees, not a bare string.
-  - **`response_summary_task` is cancelled.** Smart may schedule an async history-summary task on its
-    response metadata; on this path nothing writes history (see below), so the summary would be paid
-    for and discarded — the gateway cancels it explicitly rather than letting it run to waste.
-  - **The rule-2 chat copy goes through `notify_answer_copy`, with a text-scanned fallback.** When
-    Alek's answer is reading-shaped (`SmartResponse.link_list` or `.structured_data`), the gateway
-    posts it via `UserNotificationService.notify_answer_copy` unchanged — links/tables land in chat
-    the moment Alek answers (RFC §4.10 rule 2). When BOTH are empty, it falls back to
-    `domain/result_links.build_link_copy(answer.text)` — the same shared builder `LelikAgent.delegate`
-    uses for every other specialist — so a plain-text answer with bare URLs still gets a bare-anchor
-    copy instead of silently posting nothing. A `file` / `widget` rich content goes through the platform's
-    `RichContentService.deliver`, so it arrives as a real file/image, as in a chat turn (until 2026-10-29 only
-    its fallback line arrived, `decisions/rich_content_one_delivery_path.md`). Wrapped in `asyncio.wait_for(...,
-    _ANSWER_COPY_TIMEOUT_S=5.0)`, same as Lelik's own copy; failure (including a timeout) is logged,
-    not raised, because the spoken answer matters more than its chat copy. `VoiceSessionService`'s
-    late-answer note (a different mechanism, in `services/`) names the request it answers and uses
-    distinct wording for a timeout, so it never reads as an answer that "just arrived" when none did.
-  - **The gateway's path writes no history.** `ConversationHandler` is the only writer of session
-    history (root `CLAUDE.md` → Per-channel sessions), and `notify_answer_copy` only sends chat
-    messages/rich content — it does not append to history either. ASYNC generators Smart may have
-    dispatched along the way (e.g. `create_html_page`) still write document links through their own
-    normal async delivery path, by design — that is a separate mechanism from this gateway's
-    synchronous return.
-  - **Known limit:** sync `delivery_items` a Smart response may carry are dropped on this path — only
-    `full_response`/`link_list`/`structured_data` are read. Today the only sync `delivery_item` Smart
-    ever produces is WebSearch grounding attribution, and `ENABLE_GROUNDING_ATTRIBUTION` is off by
-    default, so this has not been observed in practice.
-
-## Orchestration Patterns
-
-- **AgentConfig** — central registry of tunable behavior parameters in `src/infrastructure/agent_config.py`.
-  Agents read typed `@dataclass` values as class-level constants at definition time
-  (`CONTEXT_WINDOW = QUICK.context_window`). Structured for Level 2 upgrade: replace class-level
-  assignments with constructor-injected `self._cfg = get_agent_config(type, user_id)` backed by
-  an `AgentConfigPort` + Firestore adapter — agents don't change. Provider selection is a separate
-  concern — see `AgentProviderStrategy` in `src/services/agent_context_builder.py`.
-- **AgentDescriptor** (`agent_registry.py`; instances in `agent_manifest.py`) — one per agent
-  (specialist + orchestrator). Three parts: (A) `capabilities` — intents it exposes (`internal=True`
-  hides it from LLM tool declarations); (B) `requirements` — `allowed_intents` (`None` = all
-  non-internal) + `intent_remap` (dispatch-time intent substitution; currently unused — Quick's is `{}`);
-  (C) `context_schemas` — per-intent typed param contracts; when present the orchestrator fills
-  structured `context` instead of a bare `query` (used by `get_email_details`,
-  `get_email_attachment`). **Every field a `capability_descriptions` prose names in `payload: {…}` /
-  `context={…}` must be declared here** — `context` is generated from `context_schemas` only, and an
-  undeclared key the prose asks for caused 64k-token whitespace runaways on OpenAI (2026-10-07/09).
-  Enforced by `tests/unit/infrastructure/test_manifest_prose_matches_tool_schema.py`; see
-  `decisions/delegate_tool_contract_and_strict.md`. `eager: bool` (default True): eager → created in `ensure_agents_for_user()`;
-  lazy (`eager=False`) → created on first delegation via `AgentFactoryPort.create_agent_on_demand()`
-  (DocGenerator/DocPlanner/Pdf/Html/DeepResearch/ClaudeDeepResearchRunner/FileManagement). Specialists
-  registered via `ALL_DESCRIPTORS` in `build_application_graph`; orchestrators set a class-level `_descriptor`
-  (coordinator never routes TO them via registry).
-  **Registry rule (2026-09-23):** `internal=True` means "not offered by default" — excluded from
-  `get_available_intents()` and from `get_available_intents_for(d)` when `d.allowed_intents is None`.
-  A descriptor with an explicit `allowed_intents` may still name an internal intent —
-  `get_available_intents_for` then returns it for that caller only. This is how `LELIK` names
-  `ask_alek` without making it visible to Smart or Quick. See
-  `docs/04_solution_strategy/decisions/allowlist_names_internal_intent.md`.
-  See **Creating a New Agent** below for the complete checklist.
-- **Intent** — typed string constants for all agent intent names. Defined in `agent_manifest.py`
-  as `class Intent`. Import `Intent.SEARCH_MEMORY` etc. instead of raw string literals everywhere.
-- **Specialist delegation** — the LLM has a single delegation tool: `delegate_to_specialist(intent, query, context?)`.
-  Semantically it operates as **commissioning**: the LLM issues an assignment to a specialist
-  who owns that capability. The LLM selects the specialist by matching purpose to manifest
-  `capability_descriptions`, not by naming intent strings directly.
-  Intent names must semantically reflect the nature of the operation being commissioned —
-  the name is the primary signal the LLM uses to match a delegation need to the right specialist.
-
-  **`query` field** — natural language commission text: self-contained, goal-oriented, describing
-  what needs to be done and with what content. **Never put JSON or structured data in `query`** —
-  that breaks the commissioning model. Structured inputs go in `context` (typed fields declared
-  in `AgentDescriptor.context_schemas`). Plain content (report text, analysis) goes in `query`.
-
-  **Formulating instructions for LLM** — all three forms are valid and understood by the LLM
-  in the context of the tool declaration:
-  - `"Use intent search_memory to retrieve facts about X"` — explicit intent name
-  - `"Delegate to specialist with intent get_email_attachment"` — explicit intent name
-  - `"Delegate to specialist for HTML page creation"` — purpose-based (LLM resolves intent)
-  Use explicit intent names when precision matters (e.g. `search_memory` vs `search_web`).
-  Use purpose-based phrasing when the specialist owns the decision (e.g. document creation).
-- **DelegationEngine** (`src/infrastructure/delegation_engine.py`) — reusable multi-turn
-  tool-calling loop. Owns: loop iteration, tool dispatch via AgentCoordinator, memory-first
-  parallel execution (search_memory sequential, others via asyncio.gather), history management
-  via `build_tool_turn()` (model message with raw_content, tool response parts with file_data).
-  **Delegation datetime:** `AgentCoordinator.handle_delegation()` prepends `[Mon DD, HH:MM UTC]`
-  timestamp to every delegation query so all specialists have temporal context.
-  Does NOT own: LLM parameters (agent builds `LLMRequest`), response parsing (agent
-  post-processes `DelegationResult`).
-  **Context passthrough:** `execute()` accepts `message.context` dict directly (no intermediate
-  DTO). Engine spreads `**context` into delegation_context, adding only `memory_context` and
-  `params`. All context fields (`origin_channel_id`, `session_id`, etc.) propagate automatically
-  to downstream tasks including async Cloud Task payloads. Agents pass `context=message.context`
-  — zero knowledge of routing, channels, or session format.
-  **`dispatch()` is public** — the single-call step `_execute_loop` uses internally, exposed for a
-  caller with no loop of its own: `LelikAgent.delegate_outcome()` runs one `delegate_to_specialist`
-  call from the live realtime session through it, getting remap/fan-out/mode/coordinator/
-  chain-guard/spans/billing for free instead of a second implementation. It returns
-  `VoiceDelegationOutcome(text, failed)` (`src/domain/voice_delegation_outcome.py`) so a caller can
-  tell a real answer from a failure without parsing text — added for the UAT-round-1 late-answer
-  protocol (RFC `VOICE_WEB_TRANSPORT_RFC.md` §12), which must never post a failed delegation's raw
-  error to chat. `delegate()` is kept as a thin wrapper (`(await delegate_outcome(...)).text`) — no
-  production caller uses it any more (`/voice/delegate` calls `delegate_outcome` directly), but it
-  stays for anything that only needs the text and not the failure flag.
-  **Local tools** (`local_tools: Mapping[str, LocalToolHandler]`) — a tool the agent serves itself
-  (Smart's `use_skill`, built by `src/infrastructure/skill_tools.py`, `propose_memory_facts`, built by
-  `src/infrastructure/memory_fact_tools.py`, and `workspace`, built by `src/infrastructure/workspace_tools.py` (one
-  lock taken first by every command, mutations shielded, a per-execution `{path: generation}` session,
-  AGENT_WORKSPACE_RFC §7.6) — not `agents/core/`, since
-  REQ-ARCH-24 forbids an agent importing a sibling `agents/` module). Dispatched to the handler,
-  never the coordinator; results, `delivery_items` and `history_context` fold exactly like a
-  delegation's; one `delegation.local_tool` span each. On the terminal-sibling path a local tool's
-  `history_context` is dropped (nobody read it). Handlers are built per execution — never stored on
-  the agent (concurrent executions, provider rotation).
-- **Cycle guard** (`AgentCoordinator._refuse_if_looping`, 2026-08-25) — `context["_call_chain"]`
-  accumulates the agent ids already entered; re-entering one is refused with the path named
-  (`tutor → smart → tutor`), and `MAX_DELEGATION_DEPTH=8` additionally caps runaway chains of
-  all-distinct agents, which a cycle check by construction never trips. Refusal also posts to the
-  ops `AlertSinkPort`: a specialist failure is wrapped as a tool result and the orchestrator still
-  returns SUCCESS, so without the alert a loop is invisible. **The chain rides in `context`, so it
-  survives the Cloud Task payload** — the async loop (`A →(async)→ B →(async)→ A`) is the case this
-  exists for, since every hop acks immediately and blocks nobody. An agent that rebuilds its own
-  context instead of forwarding `message.context` silently resets the chain (that was
-  `notes_agent`'s bug). Static complement: `AgentDescriptor.allowed_intents` restricts who may call
-  what by design; the chain catches what design missed. **Lelik seeds `_call_chain=[lelik_agent]`**
-  on every `delegate()` call; `AlekGatewayAgent` forwards `message.context` whole into the routed
-  message, so the chain — and therefore the cycle guard — reaches through the Router into Smart.
-- **Sync/async is the intent's, not the caller's** — `handle_delegation` dispatches by
-  `manifest.capabilities[intent]` only. The per-call `mode: "now" | "later"` override
-  (2026-08-25) was **removed 2026-10-06**: "later" had no path back to the caller (an ASYNC
-  result goes to the *user* via `AgentWorkerHandler`, and only for generator intents — a
-  SYNC-declared intent forced async computed its answer and dropped it), and "now" on a
-  generator pulled it into the orchestrator's turn, where on the `notify()` path its document
-  was lost. So the switch chose the result's *recipient*, not the timing. A stray `mode`
-  argument is ignored. A real "async with the result returned to the orchestrator" is a
-  separate, undesigned feature (backlog), not a re-add of this flag. See
-  `decisions/delegate_mode_parameter_removed.md`.
-  API: `engine.execute(call_llm, base_request, context, max_turns, terminal_tool?, intent_remap?,
-  intent_fanout?)`.
-  Smart, Quick and Tutor pass `terminal_tool="deliver_response"`. **This branch is live and provider-dependent —
-  it is NOT vestigial** (that claim was true until 2026-08-15 and is now retracted; TD-3 is closed
-  as invalid, do not "clean up" the machinery):
-  - **Grok** — constrained JSON and function calling compete on xAI, so `GrokAdapter` moves the
-    answer off the text channel and onto a synthesized `deliver_response` function whose parameters
-    ARE `_RESPONSE_SCHEMA`. The loop ends via the **terminal-tool** branch and
-    `_build_smart_response` reads `terminal_tool_args`. This is Smart's only reply path on Grok.
-  - **Claude** (since 2026-10-23, `decisions/claude_deliver_response_string_tool.md`) — a request with
-    a schema **and** client tools: `ClaudeAdapter` drops `output_config.format` and appends
-    `deliver_response(response: string)`; the schema is not in the tool, it comes from the prompt
-    (the agent's OUTPUT_FORMAT token: Smart/Quick `OUTPUT_FORMAT_JSON`, Tutor `OUTPUT_FORMAT_TUTOR`). The args (`{"response": "<string>"}`) reach `extract_structured_response`,
-    which runs `parse_llm_response` on the string — one parser, all repairs, `first_object` recovery.
-    Under `max_tokens` the SDK drops an unfinished string, so a cut `response` arrives as `{}` and the adapter drops every tool call of the response. A schema
-    request without client tools keeps `output_config.format` (JSON as text, loop ends on no tool calls).
-  - **Gemini / OpenAI** — native JSON via `response_schema`. The loop ends via *no-tool-calls → return
-    text* and `_build_smart_response` parses `result.text`.
-  - **Observability and failure.** Every parse logs one `llm_response_parse` event (`source`, `outcome`:
-    parsed / first_object / repaired / unparseable / truncated, `via`). An orchestrator turn that ends
-    with empty user text, no rich content and no delivery items fails as `empty_answer` (Smart, Quick,
-    Tutor, all providers), unless the turn dispatched an ASYNC intent or a SYNC intent acknowledged as
-    started (deep research, video; `async_dispatches`). Tutor checks only the text; its empty answer goes through
-    the Quick fallback inside the Tutor channel, like its other failures. In chat the Quick
-    fallback runs only before the 90 s mark (then the localized "turn failed" late answer; synthetic apology
-    if Quick fails too) and raises the "Smart primary FAILED" ops alert; in background `notify()` an
-    `empty_answer` is final: one ERROR `background_empty_answer`, one ops alert, the work item marked done, 200,
-    no retry (`decisions/claude_deliver_response_string_tool.md`). Cloud Logging drops the `extra=` fields: grep `[LlmResponseParse]`,
-    `empty_answer agent=`, `empty_text_after_async`, `terminal_sync_sibling`.
-
-  **A terminal tool can arrive alongside real work in the same batch.** The model may dispatch an
-  async hop and answer in one breath (`create_html_page` + `deliver_response` — exactly what the
-  briefing protocol asks for). The engine dispatches every co-emitted non-terminal call, folds its
-  `delivery_items`/`history_context` into the result, and *then* returns the terminal answer; no
-  result is fed back, since the model has already written its reply. Returning before that dispatch
-  silently dropped the 2026-08-17 briefing page — see `decisions/terminal_tool_co_emitted_calls.md`.
-  Quick: `intent_remap={}` (disabled), `terminal_tool="deliver_response"`, `intent_fanout` from descriptor.
-  Bound agents: plain text response, no terminal tool, no remap, no fanout.
-  `DelegationResult` carries: `text` (also the text written beside a terminal call), `terminal_tool_args`,
-  `total_tokens`, `delivery_items`, `history_contexts`, `structured_data`, `messages`, `failed`,
-  `async_dispatches` (work dispatched that the user will receive later: ASYNC intents, and SYNC intents that
-  acknowledge and deliver in the background; an orchestrator turn that has one is not an `empty_answer` —
-  the user gets the result, a retry would send a second one; the skip logs INFO `empty_text_after_async`).
-  The engine logs `terminal_sync_sibling` when a SYNC call is co-emitted with the terminal one (log only).
-  **Intent fan-out** (`intent_fanout`): declarative 1:N dispatch-time expansion. Configured via
-  `FanoutSpec(intents, hint)` on `AgentDescriptor`. When LLM dispatches an intent that has a
-  fan-out mapping (e.g. `search_web`), the engine runs the primary + all secondary intents
-  (e.g. `maps_query`) in parallel via `asyncio.gather`. Results merged into a single
-  `ToolResult` with labeled sections (`[Primary specialist: ...]`, `[Additional specialist: ...]`)
-  and a reconciliation hint for the LLM. Secondary failures silently skipped — primary always
-  returned. `FanoutSpec.hint` provides per-mapping conflict resolution instructions
-  (e.g. "trust Maps for geodata, trust Web for reviews"). Both Quick and Smart pass
-  `intent_fanout=dict(self._descriptor.intent_fanout)` to the engine.
-- **BaseAgent lifecycle hooks** — `_on_agent_start(text)`, `_on_agent_success(char_count, token_count,
-  output_text)`, `_on_agent_error(error, context)`, `_on_delegation(intent, query)`. All agents
-  call these instead of direct `logger.*` calls. Changing infrastructure logging = edit BaseAgent
-  only. `_on_agent_success(output_text=...)` auto-logs final text to debug bucket.
-- **`build_tool_turn(response, tool_results)`** — domain-level function (`src/domain/llm.py`)
-  for standard multi-turn tool history formatting. Builds model message (with `raw_content` for
-  adapter-specific serialization) + tool response messages (with `tool_response` parts).
-  `BaseAgent._build_tool_turn()` is a thin wrapper. Used by DelegationEngine and NotesAgent.
-  `tool_results`: list of `(ToolCall, result_str)` or `(ToolCall, result_str, file_data)` tuples.
-- **BaseAgent LLM-content capture** — `_call_llm(request, turn)` is the single LLM call site and the
-  one capture point: it records the full request+response to the **BigQuery content store** via
-  `PromptContentStore.record_turn()` (wired only when `DEBUG_PROMPTS=true` AND `BIGQUERY_PROMPT_DATASET`
-  set — see root `CLAUDE.md` → Debugging Cloud Run for how to read it). Changing capture = edit this
-  method only. **Escape hatch for raw SDK callers** — agents bypassing `LLMPort` (e.g.
-  `ClaudeDeepResearchRunnerAgent` with native built-in tools) call `_debug_raw_turn(...)` (summary-only
-  `logger.info`, no GCS). The legacy GCS prompt-dump (`PromptDebugLogger`, `DEBUG_PROMPTS_BUCKET`) was
-  removed (TD-1, 2026-06-29) — BigQuery is the only content-capture path now.
-- **Provider blocks are 200s, not exceptions.** `LLMResponse.finish_reason` (domain `FinishReason`)
-  carries why generation stopped; a blocked reply arrives with `text=""` exactly like a stall.
-  Single-shot generation agents call `BaseAgent._call_llm_recitation_aware()` instead of `_call_llm`
-  — one retry with `RECITATION_RETRY_DIRECTIVE` folded into the last user message. **Not for
-  delegation loops** (the directive assumes that message is the whole assignment). Empty output is
-  reported via `describe_empty_output(finish_reason)`, never as a bare "returned nothing". Only
-  `GeminiAdapter` maps the reason today; other adapters return `None` → unchanged behavior. See
-  `decisions/gemini_finish_reason_surfaced.md`.
-- **CircuitBreaker** — in BaseAgent, protects against cascading failures.
-- **Transcript integrity — one delegation transcript = one provider.** `_call_llm` cross-provider-
-  fails-over only when `request.messages` is NOT provider-locked (no `tool_call`/`tool_response` part,
-  no `raw_content`). Once locked (mid delegation-loop), a transient FAILOVER error retries the **same**
-  provider (`_SAME_PROVIDER_RETRY_ATTEMPTS`) and otherwise raises terminal `TranscriptLockedError`
-  — never a mixed transcript (would orphan `tool_use` ids / break thinking-replay / cache). See
-  `decisions/transcript_integrity_one_provider.md`.
-- **Cross-provider execution retry (provider rotation) — Smart.** `TranscriptLockedError` does NOT go
-  straight to Quick. `SmartResponseAgent.execute()` catches it and **rotates**: rebuilds the full run
-  on the next `allowed_provider` at the **same tier** (`AgentContextBuilder.resolve_next_provider` →
-  walks `allowed_providers`, skips already-tried + breaker-open; `TaskExecutionResolver.next_provider_override`
-  → `ExecutionOverride`) and re-runs from scratch (`event="smart_provider_rotation"`). Only exhausting
-  the provider list falls through to the existing `AgentFallbackService` Quick rung. L2 retry, not a
-  degradation — zero domain/handler/fallback change; `_run` re-raises the lock, `execute` owns the loop.
-  See `decisions/cross_provider_execution_retry.md`. **Read before touching `smart_response_agent.execute`
-  / `_run` / `resolve_next_provider` / `next_provider_override`.**
+- Agents do NOT access the database directly — only through services/ports.
+- Prompts live in Firestore (token + blueprint via PromptBuilder). NO inline or fallback prompts in code — if
+  `build_for_agent()` fails, return `AgentResponse.failure()`. Fail fast.
+- `AgentExecutionContext` holds model_name, tier, provider — the agent does not select the model itself
+  (see `AgentProviderStrategy`).
+- `_call_llm(request, turn)` from BaseAgent is the single billing + debug-logging + capture point. Never call the
+  provider port directly. Changing capture = edit that method only. Agents bypassing `LLMPort` (native SDK tools, e.g.
+  `ClaudeDeepResearchRunnerAgent`) call `_debug_raw_turn(...)`. BigQuery is the only content-capture path.
+- CircuitBreaker is built into BaseAgent — do not duplicate.
+- Every LLM agent constructor calls `_set_execution_context()`; without it `_call_llm`'s cross-provider failover is
+  structurally unreachable (guard: `test_agents_set_execution_context.py`; `decisions/html_page_fallback_context_wiring.md`).
+- Multi-turn tool loops: use `infrastructure/delegation_engine.py`, do not hand-roll.
+- Log through the lifecycle hooks (`_on_agent_start`, `_on_agent_success(char_count, token_count, output_text)`,
+  `_on_agent_error`, `_on_delegation`), not direct `logger.*`; changing infrastructure logging = edit BaseAgent only.
+- Tool history: `build_tool_turn(response, tool_results)` (`src/domain/llm.py`; `BaseAgent._build_tool_turn` wraps it).
+- Structured-output agents follow the Agent Output Format Standards in [`src/adapters/CLAUDE.md`](../adapters/CLAUDE.md)
+  (OUTPUT_FORMAT token, `_parse_response`, retry).
+- Tunables live in `src/infrastructure/agent_config.py` as typed dataclasses read as class constants
+  (`CONTEXT_WINDOW = QUICK.context_window`); provider selection is separate (`AgentProviderStrategy` in
+  `src/services/agent_context_builder.py`).
 
 ## Creating a New Agent
 
-Follow [`docs/how_to/NEW_AGENT_PLAYBOOK.md`](../../docs/how_to/NEW_AGENT_PLAYBOOK.md) — mandatory protocol.
-Short version:
+Follow [`docs/how_to/NEW_AGENT_PLAYBOOK.md`](../../docs/how_to/NEW_AGENT_PLAYBOOK.md) — mandatory protocol (manifest
+`Intent` + `AgentDescriptor` in `ALL_DESCRIPTORS`, `user_agent_factory.py` wiring, eager or lazy,
+`src/utils/capabilities.py`).
 
-1. Add `Intent` constant + `AgentDescriptor` to `infrastructure/agent_manifest.py`
-   (include in `ALL_DESCRIPTORS`).
-2. Inherit `BaseAgent`, implement `can_handle()` and `execute()`.
-   Dependencies — via constructor (LLMPort, SessionStore, PromptBuilderPort).
-3. Return `AgentResponse.success()` / `AgentResponse.failure()`.
-4. Wire creation in `composition/user_agent_factory.py` (eager, or `eager=False`
-   for on-demand creation via `AgentFactoryPort`).
-5. Update `src/utils/capabilities.py` (user-facing `get_help` reference).
+## Agent Roster
 
-Structured-output agents must also follow the Agent Output Format Standards in
-[`src/adapters/CLAUDE.md`](../adapters/CLAUDE.md) (OUTPUT_FORMAT token, `_parse_response`, retry).
+Map: agent → where it is documented (intents: `src/infrastructure/agent_manifest.py`; default tiers:
+`_DEFAULT_AGENT_TIERS` in `src/domain/user.py`). Code is in the same-named
+`*_agent.py` unless noted.
 
-## Important
+| Agent | Documentation |
+|---|---|
+| Router, Smart | `docs/05_building_blocks/smart_agent_execution/README.md`, `decisions/two_layer_provider_override.md` |
+| Quick | `docs/05_building_blocks/quick_agent_delegation/README.md`, `decisions/quick_agent_deferred_deletion.md` |
+| WebSearch | `decisions/websearch_per_intent_tier.md` |
+| Memory, Consolidation, review pass | `docs/05_building_blocks/memory/README.md` (§5.6 review, §2.7 expiry), `decisions/standing_directives.md`, `decisions/directive_applicability_gate.md`, `docs/10_rfcs/MEMORY_FACT_CONFIRMATION_RFC.md`, `docs/10_rfcs/FACT_LIFECYCLE_RFC.md` |
+| EmailSearch, EmailClassification | `docs/05_building_blocks/gmail_email_indexing/README.md` |
+| Drive model agents (reader, triage, profiler, passages), DriveTranscriber | `docs/05_building_blocks/user_drive/README.md` §4.16, §4.17, §4.23; `decisions/drive_model_extractor_agents.md`, `decisions/drive_model_outage_defers_model_work.md` |
+| Drive (`DriveAgent`), FileManagement | `docs/10_rfcs/DRIVE_SPECIALIST_RFC.md`, `decisions/drive_specialist.md`, `docs/05_building_blocks/user_drive/README.md` §6.7, `docs/05_building_blocks/file_storage/README.md` §3.4, `decisions/drive_content_write_gate.md`, `decisions/drive_open_bound.md`, `docs/10_rfcs/DRIVE_FILE_NOTES_RFC.md` |
+| DocPlanner, DocGenerator, PdfGenerator, HtmlPageGenerator | `docs/05_building_blocks/document_generation/README.md`, `decisions/html_page_grok_default.md` |
+| Notes / Self-Reminders | `docs/10_rfcs/PROACTIVE_SELF_REMINDERS_RFC.md`, `decisions/reminder_rrule_schedules.md`, `docs/10_rfcs/AGENT_WORKSPACE_RFC.md` §8.3 |
+| Tasks | `docs/05_building_blocks/tasks_integration/README.md` |
+| DeepResearch | `docs/10_rfcs/DEEP_RESEARCH_RFC.md`, `decisions/deep_research_drive_copy.md` |
+| MapsSearch | `docs/10_rfcs/MAPS_SEARCH_RFC.md` |
+| Compute | `docs/10_rfcs/COMPUTE_AGENT_RFC.md` |
+| ImageGeneration | `docs/10_rfcs/IMAGE_GENERATION_RFC.md`, `decisions/image_edit_multi_reference.md` |
+| Tutor, TutorExtractor | `docs/10_rfcs/COMPANION_AGENTS_RFC.md`, `decisions/companion_write_path.md`, `decisions/companion_history_recent_full_turns_per_channel.md` |
+| Lelik, LelikSummarizer, AlekGateway | `docs/10_rfcs/VOICE_COMPANION_RFC.md` (§4.7, §4.8, §4.10, §4.15), `decisions/lelik_send_to_chat.md`, `docs/04_solution_strategy/current_implementation/STRUCTURE.md` |
 
-- Agents do NOT access the database directly — only through services/ports.
-- Prompts live in Firestore (token + blueprint via PromptBuilder). NO inline or
-  fallback prompts in code — if `build_for_agent()` fails, return
-  `AgentResponse.failure()`. Fail fast.
-- CircuitBreaker is built into BaseAgent — do not duplicate.
-- `AgentExecutionContext` contains model_name, tier, provider — the agent does not
-  select the model itself (see `AgentProviderStrategy`).
-- Use `_call_llm(request, turn)` from BaseAgent — it is the single billing + debug
-  logging point. Never call the provider port directly.
-- Multi-turn tool loops: use `infrastructure/delegation_engine.py`, do not hand-roll.
+### Traps by agent
+
+- **WebSearch:** JSON output is prompt-only (`WEBSEARCH_OUTPUT_FORMAT`); `use_grounding` makes the OpenAI adapter drop
+  `text.format`, and there is no `_parse_response`, so malformed JSON never raises. `confidence` is `len(text)/500`.
+- **WebSearch `fetch_url`:** its system prompt is the inline `_FALLBACK_FETCH_SYSTEM` (tracked exception, TD-6); the
+  wording is tuned and load-bearing, read the comment before editing.
+- **Drive model agents** (`drive_reader`/`drive_triage`/`drive_profiler`/`drive_passages`): their `STRATEGIES` entries need
+  `fallback: "gemini"` with `fallback_tier: BALANCED`, else the fallback resolves to flash-lite; Gemini is not in
+  `allowed_providers`. They run on the indexer only and are built per call by `composition/` runners (services/ cannot
+  import agents/).
+- **DriveTranscriber** is not a `_call_llm` agent (a Gemini Batch request is not a call): no retry, failover, ledger scope,
+  `prompt_content` row or span. The agent builds the request and parses the answer; `DriveTranscriptRunner` submits and bills.
+- **HtmlPageGenerator:** `_call_llm_recitation_aware` retries only on Gemini; a Grok refusal is non-empty text, passes the
+  `if not html_code` guard and would be published as the page.
+- **Drive specialist:** a `still_running` mutation ends the commission (a later change is `not started`); the status is set
+  by code, the model can only lower it. Evals stub drive writes at the `DriveOperations` class
+  (`scripts/validation/drive_eval/dry_run_drive.py`), never at `DelegationEngine.dispatch` (the specialist's tools do not
+  pass through it). A global `provider_preference: openai` moves it to the rejected `gpt-6-luna`: pin
+  `agent_providers["drive"]="claude"`. `DriveAgent` is `NO_RETRY_POLICY` (a retry would repeat a write).
+- **Drive open bound:** a refusal is `REFUSED` and never settled by a later open, and arms no content gate (a page does).
+- **FileManagement:** `prefetch_file_ref=False`; `delete_file` on a `drive:` ref is refused (route through
+  `work_with_drive_files`).
+- **Consolidation:** history restarts per stage (Stage 1, 2a, 2b), so Stage 2b cannot see Stage 1.
+- **Consolidation `expiry`:** the schema is the module constant `_EXPIRY_SCHEMA`, never read through `self` (tests call
+  `_get_tool_declarations` unbound); a new field or example must land in the token and the code schema together
+  (`test_consolidation_vocabulary.py`, `test_consolidation_expiry_prompt.py`).
+- **Consolidation time:** use `domain/local_time.local_stamp` and `_message_time`; never format a time inline.
+- **Echo-trap exception:** `Domain_Scope.memory_review_reply` in `CONSOLIDATION_POLICIES` is the one definition; other
+  lines refer to it, do not restate it in a token.
+- **ImageGeneration:** `NO_RETRY_POLICY` and `max_retries=0` on the adapter's client: a transient 5xx after xAI rendered
+  (and billed) must not trigger a second paid render. `edit_image` takes `context_schemas["image_refs"]` (array), not `file_ref`.
+- **Tutor:** the agent is a per-user singleton shared by channels, so `history_recent_full_turns` is read per call from
+  `message.context`, never fixed at construction. Blueprint `tutor_agent_v1` needs `output_format` in `class_order` for
+  `OUTPUT_FORMAT_TUTOR` to render.
+- **Lelik `execute()`** must not catch `originate_call` failures: the webhook's own except deletes the ticket and releases
+  the one-call marker; swallowing strands both.
+- **LelikSummarizer** is not manifest-registered: its ECO tier is pinned in `domain/user.py::_DEFAULT_AGENT_TIERS`
+  because `test_every_llm_agent_has_a_default_tier` cannot see it. Its provider has no fallback by decision.
+- **AlekGateway:** routes to the Router (not Smart) so `enrich_context` runs; Smart reads only
+  `context["current_message_parts"]`, so the commission goes there; cancel `response_summary_task` (nothing writes history
+  on this path); `NO_RETRY_POLICY`.
+
+## Drive — Logs
+
+`make fetch-logs`, then `grep '\[DriveAgent\]\|\[DriveOperations\]\|\[DriveSearch\]' alek_debug.log`:
+
+- One `[DriveAgent] user=<8> status=<status> model=<model> ops=<op>:<class>,… turns=N ms=…` line per commission;
+  `model=` is the model that ran (from the execution's billing ledger, models joined by `+`; a cross-provider failover is
+  the `llm_fallback claude→openai` WARNING). `prompt_content` records the request's model, so it cannot show a failover.
+- One `[DriveOperations] <op>: <ref or folder>` line per operation; `opened: <ref> chars=<n>` per whole-file open (before
+  the bound), then `open refused: <ref> chars=… passages=… truncated=…`, `open cut: <ref> chars=… kept=… extent=…`, or
+  for a PDF or image `opened vision: <ref> mime=… bytes=… pages=…`.
+- One `[DriveSearch] user=<8> status=… mode=excerpts|excerpt_range scope=… files=… repeated=… no_text=…` line per
+  passages call (counts, no text), next to the search's `mode=query|filter` line.
+- A turn-cap exit: `ERROR [DriveAgent] user=<8> hit the turn limit (6) without a report; tools per turn: …`.
+- A change refused after passages were read: INFO `[DriveAgent] <kind> refused: passages were read in step N of this run`.
+- Indexer lines (`[DriveIndex]`, model agents): `make fetch-logs-indexer`. More: `docs/05_building_blocks/user_drive/README.md` §7.
+
+## Orchestration Patterns
+
+- **AgentDescriptor** (`agent_registry.py`; instances in `agent_manifest.py`) — one per agent. Parts: (A) `capabilities`
+  (`internal=True` hides it from LLM tool declarations); (B) `requirements`: `allowed_intents` (`None` = all non-internal)
+  and `intent_remap`; (C) `context_schemas`: per-intent typed param contracts. `eager` (default True) creates the agent in
+  `ensure_agents_for_user()`, `eager=False` on first delegation via `AgentFactoryPort.create_agent_on_demand()`.
+  Specialists register via `ALL_DESCRIPTORS` in `build_application_graph`; orchestrators set a class-level `_descriptor`
+  (the coordinator never routes TO them via the registry). Registry rule: an explicit `allowed_intents` may name an
+  internal intent for that caller only (Lelik names `ask_alek`; `decisions/allowlist_names_internal_intent.md`).
+  Building block: `docs/05_building_blocks/agent_registry/README.md`.
+- **Every field a `capability_descriptions` prose names in `payload: {…}` / `context={…}` must be declared in
+  `context_schemas`:** `context` is generated from the schemas only, and an undeclared key the prose asks for caused
+  64k-token whitespace runaways on OpenAI (`test_manifest_prose_matches_tool_schema.py`,
+  `decisions/delegate_tool_contract_and_strict.md`).
+- **Intent** — typed string constants (`class Intent` in `agent_manifest.py`). Import `Intent.X`, never a raw string.
+- **Specialist delegation** — the LLM has one tool, `delegate_to_specialist(intent, query, context?)`, which works as
+  commissioning: the LLM matches purpose to the manifest `capability_descriptions`. Intent names must reflect the
+  operation being commissioned (the name is the primary matching signal). `query` is natural language, self-contained and
+  goal-oriented — never JSON; structured inputs go in `context` (fields declared in `context_schemas`).
+- **Sync/async is the manifest's.** `handle_delegation` dispatches by `manifest.capabilities[intent]` only; the per-call
+  `mode` argument is gone and ignored (`decisions/delegate_mode_parameter_removed.md`).
+- **DelegationEngine** (`src/infrastructure/delegation_engine.py`) owns the multi-turn loop, tool dispatch via
+  AgentCoordinator, memory-first parallel execution and history via `build_tool_turn()`. It does not own LLM parameters
+  (the agent builds `LLMRequest`) or response parsing. `dispatch()` is public for a caller with no loop of its own
+  (Lelik). Fan-out: `FanoutSpec` on the descriptor. Details: `docs/05_building_blocks/multi_agent_system/README.md`.
+- **Pass `context=message.context` whole** to `engine.execute` and to any downstream message. Rebuilding the context
+  loses `origin_channel_id`, `session_id` and `_call_chain`, and an agent that does so silently resets the cycle guard
+  (that was `notes_agent`'s bug). `AgentCoordinator._refuse_if_looping` refuses re-entering an agent in `_call_chain`;
+  `MAX_DELEGATION_DEPTH=8` (`decisions/delegation_cycle_guard.md`). Lelik seeds `_call_chain=[lelik_agent]`.
+- **Local tools** (`local_tools`: `use_skill`, `propose_memory_facts`, `workspace`) are built per execution and never
+  stored on the agent (concurrent executions, provider rotation); their builders live in `src/infrastructure/`, since
+  REQ-ARCH-24 forbids an agent importing a sibling `agents/` module.
+- **Terminal tool `deliver_response`** (Smart, Quick, Tutor) is live and provider-dependent (Grok: synthesized function
+  with `_RESPONSE_SCHEMA`; Claude with schema + tools: `deliver_response(response: string)`; Gemini/OpenAI: native JSON).
+  It is NOT vestigial: TD-3 is closed as invalid, do not "clean up" the machinery
+  (`decisions/claude_deliver_response_string_tool.md`). Failure semantics (`empty_answer`) and the log greps are in that
+  decision.
+- **A terminal tool can arrive with real work in the same batch:** the engine must dispatch every co-emitted
+  non-terminal call and fold its `delivery_items`/`history_context` before returning the terminal answer
+  (`decisions/terminal_tool_co_emitted_calls.md`).
+- **Provider blocks are 200s, not exceptions** (`LLMResponse.finish_reason`). Single-shot generation agents use
+  `_call_llm_recitation_aware()`; **never in delegation loops** (the directive assumes the last user message is the
+  whole assignment). Only `GeminiAdapter` maps the reason (`decisions/gemini_finish_reason_surfaced.md`).
+- **Transcript integrity — one delegation transcript = one provider.** `_call_llm` fails over across providers only when
+  `request.messages` is not provider-locked (no `tool_call`/`tool_response` part, no `raw_content`); once locked it retries
+  the same provider and otherwise raises `TranscriptLockedError`, never a mixed transcript
+  (`decisions/transcript_integrity_one_provider.md`).
+- **Cross-provider execution retry (provider rotation) — Smart.** `SmartResponseAgent.execute()` catches
+  `TranscriptLockedError` and rotates: rebuilds the run on the next `allowed_provider` at the same tier
+  (`resolve_next_provider`, `next_provider_override`), only then falls to the Quick rung. `_run` re-raises the lock,
+  `execute` owns the loop. **Read `decisions/cross_provider_execution_retry.md` before touching
+  `smart_response_agent.execute` / `_run` / `resolve_next_provider` / `next_provider_override`.**
+
+## Traps from the root CLAUDE.md
+
+- **Token accounting is per execution:** usage goes into the `TokenLedger` of `_execution_billing_scope()` (a `ContextVar`),
+  never onto the instance (per-user singletons, `asyncio.gather` fan-out); its `reset(token)` is load-bearing (`decisions/billing_execution_scoped_ledger.md`).
+- **Consolidator input:** model parts serialize as `p.text`, never `p.full_text` (verbose + web search context); user parts as
+  `p.consolidation_text or p.text` (`domain/consolidation_serialization.py`).
+- **Time:** `include_datetime=False` by default; time reaches the model via `_inject_timestamps()` in user messages and a UTC
+  prefix on delegation queries. A date in the system prompt changes the cached static prefix.
+- **Large static payloads** (a triage batch, a corpus) go through `extra_static_blocks` on `build_for_agent()`, never into the
+  user message (pollutes history, bypasses caching; `docs/08_concepts/prompt_assembly_guide.md`).
+- **Drive notes:** Smart has no note tool; a note's words go in the `work_with_drive_files` query, never in `file_contents`.

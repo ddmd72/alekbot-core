@@ -8,6 +8,8 @@
 **Depends on:** ACP_V2_SIMPLIFIED_RFC.md (ASYNC infrastructure)
 **Delta 2026-10-22:** OpenAI webhook events carry only data.id; the handler retrieves the response.
 
+**Current state:** the `deep_research_polling` task type and the polling enqueue described below belong to the removed Gemini backend and no longer exist. Delivery is by the Claude Cloud Run Job, the OpenAI webhook (`deep_research_webhook_event`) and the in-service runner; see `docs/07_deployment/SCHEDULERS.md`.
+
 ---
 
 ## 1. Executive Summary

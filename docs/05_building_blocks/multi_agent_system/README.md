@@ -63,6 +63,15 @@ The central hub for all agent interactions.
 5. **Specialization (Bound channel path):** `ConversationHandler` calls `coordinator.handle_delegation()` directly with the binding's intent. Bound agents (e.g. `DomainResearcherAgent`) use `DelegationEngine` for tool calling when `allowed_intents` is configured on their descriptor.
 6. **Aggregation:** Results are synthesized and returned to the user.
 
+**Delegation details.** `AgentCoordinator.handle_delegation()` prepends a `[Mon DD, HH:MM UTC]` timestamp to every
+delegation query, so every specialist has temporal context. `DelegationResult` carries `text` (also the text written
+beside a terminal call), `terminal_tool_args`, `total_tokens`, `delivery_items`, `history_contexts`, `structured_data`,
+`messages`, `failed` and `async_dispatches` (work dispatched that the user receives later: ASYNC intents, and SYNC intents
+that acknowledge and deliver in the background; a turn that has one is not an `empty_answer`, and the skip logs INFO
+`empty_text_after_async`). The engine logs `terminal_sync_sibling` when a SYNC call is co-emitted with the terminal one.
+The Quick path passes `intent_remap={}`, `terminal_tool="deliver_response"` and the descriptor's `intent_fanout`; bound
+agents use a plain text response with no terminal tool, remap or fan-out.
+
 ### 3.3 ACP v2: Agent Registry Pattern
 
 ACP v1 had SmartAgent hardcoding tool schemas per specialist (tight coupling). ACP v2 replaces this with a dynamic registry:

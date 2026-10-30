@@ -9,5 +9,5 @@ write/forwarded argument, a flipped sort direction, an `except` that reports suc
 
 Pieces: operators.py (AST -> numbered mutants), loader.py (the import hook compiling one mutant of ONE module),
 activate.py (the pytest plugin a child process loads to arm the hook from the environment), driver.py (the CLI).
-tests/CLAUDE.md says when to run it.
+The weekly cloud run uses it (tests/CLAUDE.md -> "Mutation check: the weekly run").
 """

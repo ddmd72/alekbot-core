@@ -240,6 +240,8 @@ Note: `update` uses `--update-headers`, `create` uses `--headers`. This is a `gc
 | **Residuals** | Local dev without `OPENAI_API_KEY` cannot deliver webhook events (422). An event that exhausts its Cloud Tasks retries (retrieval keeps failing) loses the report silently: OpenAI was already acked |
 | **Report task** | The HTML report agent task has the dedup key `deep_research_report:<job_id>` (also from `job_main.py`); its Cloud Tasks name is `agent_execution-<sha256(key)[:32]>`, so a retried create is idempotent; `deliver_deep_research` retries the create by that name twice more (0.5 s, 1 s), `AlreadyExists` counts as handed off, and only then tells the user |
 
+**Delivery to the asking channel.** The origin channel and platform travel on every live delivery path (Claude Cloud Run Job, OpenAI webhook, in-service runner), so the report and any failure notice reach the channel that asked. `deliver_deep_research` returns whether the report was handed off and notifies the user when it was not. There is no polling task type: the `deep_research_polling` path is gone.
+
 ---
 
 ## Cost
@@ -259,6 +261,7 @@ Current active jobs: 4 (prod) / 5 (dev with keep-alive).
 | **Payload** | `{"task_type": "billing_daily_summary"}` |
 | **Purpose** | Sends a daily billing report to each account owner with activity today. Shows daily / monthly / total token consumption and cost per account. Skips accounts with zero daily usage. |
 | **Handler** | `WorkerHandler._handle_billing_daily_summary()` |
+| **Cost basis** | The summary posts yesterday's `prev_daily_tokens` / `prev_daily_cost` snapshot. Cached input is priced by a per-model `cache_read` multiplier in `_PRICING_PER_MILLION_TOKENS` (`src/domain/billing.py`): 0.1x for Claude, OpenAI and Gemini in general, 0.05x for the newer Claude (Opus 5.5, Sonnet 5.5) and OpenAI (`gpt-6.1-sol`) models. That table is the authority. |
 | **Env** | active on the single live service |
 
 ---

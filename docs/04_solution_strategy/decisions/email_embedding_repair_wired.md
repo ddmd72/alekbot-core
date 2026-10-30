@@ -56,7 +56,7 @@ interval. Batch cap of 100/run holds per-task API budget bounded.
 - `cloudbuild-{dev,prod}.yaml` — Cloud Scheduler entries with 300s
   attempt-deadline (room for 100 emails × ~3s embedding each, with margin).
 - `docs/07_deployment/SCHEDULERS.md` — full reference entry.
-- `CLAUDE.md` — `WorkerHandler` task-type list.
+- `docs/07_deployment/SCHEDULERS.md` — `WorkerHandler` task-type list.
 
 ## Rejected alternatives
 
