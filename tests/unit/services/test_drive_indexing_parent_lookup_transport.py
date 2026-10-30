@@ -34,7 +34,6 @@ from .drive_index_fakes import U_SCOPE
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 APPROOT = json.loads((_FIX / "approot.json").read_text(encoding="utf-8"))
 ROOT_ID = APPROOT["id"]
-DRIVE_ID = APPROOT["parentReference"]["driveId"]
 GHOST = "GHOSTPARENT!7"   # a parent the feed never delivered: the child is stored unresolved (§3.4)
 CHILD = "CHILD!8"
 
@@ -50,7 +49,6 @@ def _creds():
         refresh_token="r",
         token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
         scopes=[],
-        drive_id=DRIVE_ID,
     )
 
 
