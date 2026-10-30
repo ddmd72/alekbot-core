@@ -22,6 +22,7 @@ from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveReauthRequired
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.drive_handles import drive_handle
 from tests.support.oauth_credentials_store import mirror_get
 
 _INTERACTION = {"error": "interaction_required",
@@ -94,7 +95,7 @@ class TestSignInRequiredIsReauth:
         adapter = OneDriveAdapter(_oauth(), "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
         with patch("aiohttp.ClientSession", return_value=_session([_resp(body, status=400)])), \
                 pytest.raises(DriveReauthRequired):
-            await adapter.get_changes("u1", None)
+            await adapter.get_changes(drive_handle(user_id="u1"), None)
 
     async def test_a_server_error_is_still_not_reauth(self):
         oauth = _oauth()
