@@ -8,9 +8,14 @@ T-R31 (a long window accepted short is stored truncated).
 
 Public interface:
     DriveTranscriptStage(repo, drive, media, batch, runner, *, clock, monotonic, monthly_cap_usd, temp_root, mirror)
-        async extract_step(user_id, host, *, stop_at) -> {counter: n}     one extraction step of one user's tick
-        async cheap_steps(user_id, host, *, stop_at) -> {counter: n}      poll, collect, finalize, the orphan sweep
-        async drop_jobs(user_id, host, item_ids) -> int                   jobs of records that left the pipeline
+        async extract_step(handle, host, *, stop_at) -> {counter: n}      one extraction step of one connection's tick
+        async cheap_steps(handle, host, *, stop_at) -> {counter: n}       poll, collect, finalize, the orphan sweep
+        async drop_jobs(handle, host, item_ids) -> int                    jobs of records that left the pipeline
+
+Per connection (MULTI_DRIVE_RFC §8): jobs and batches are the connection's (`handle.scope`); the money, the store of
+transcripts and the orphan sweep are the user's (a store hit on any connection pays nothing). The sweep keeps a head a
+record of any connection carries, one the ledger pins and one retained by a disconnect (I8), and runs only once every
+ACTIVE connection of the user re-attached its transcripts (`host.sweep_allowed`, I7).
     TranscriptHost        what the tick lends the stage (a Protocol; DriveIndexingService implements it, Task 14)
     TranscriptRunner      the runner the stage submits through (a Protocol; DriveTranscriptRunner in composition/)
     TRANSCRIBER_AGENT     the model backoff key of this class (§25.4.6; defined in drive_transcript_plan, re-exported)
@@ -80,7 +85,8 @@ else the tick does goes on. Nothing from a transcript, no download URL and no pr
    (its reservation released after every cost was booked), record `current`. No text is the `no_speech` stub (G20).
    Every window a gap marker and none refused is no transcript: the job is dropped and the file charged an attempt
    (T-R23). No slot left ends the finalizing; a run the §7.4 fence dropped goes on to the next file.
-5. once a day per user, deletes stored transcripts unused for TRANSCRIPT_ORPHAN_TTL that no record carries (§27.8 b).
+5. once a day per user, deletes stored transcripts unused for TRANSCRIPT_ORPHAN_TTL that no record carries, no ledger
+   document pins and no disconnect retained (§27.8 b, I8), and only when the user's connections all re-attached (I7).
 """
 from __future__ import annotations
 
@@ -99,6 +105,7 @@ from typing import Callable, Dict, List, Mapping, Optional, Protocol, Sequence, 
 from ..domain.batch_transcription import BatchRef, BatchStatus, FileRef
 from ..domain.drive_enrichment import UsageClass
 from ..domain.drive_extraction import TRANSCRIBE_LINK, DriveModelUnavailable
+from ..domain.drive_handle import DriveHandle
 from ..domain.drive_index import TRANSCRIBE_VERSION, DriveIndexRecord
 from ..domain.drive_index_params import (
     BATCH_ERROR_BACKOFF_S, BATCH_POLL_FIRST_S, BATCH_POLLS_PER_TICK, BATCH_SUBMIT_LOOKUP_MIN_AGE_S,
@@ -122,7 +129,7 @@ from ..domain.drive_transcript_plan import (
 )
 from ..domain.drive_transcript_plan import WindowResult as WindowDecision
 from ..domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION, render_body
-from ..domain.drive_transcript_windows import content_key, plan_windows
+from ..domain.drive_transcript_windows import plan_windows, record_content_key
 from ..domain.exceptions import BatchLookupInconclusive, LLMAccountError, LLMClientError, LLMError, LLMRateLimitError
 from ..domain.user_drive import (
     DriveAccessDenied, DriveItemNotFoundError, DriveNotConnectedError, DriveReauthRequired, DriveThrottled,
@@ -153,10 +160,11 @@ _SUBMIT_REFUSED = (LLMClientError, LLMRateLimitError, DriveModelUnavailable)
 
 
 class TranscriptHost(Protocol):
-    """What the tick lends the stage, for one user. Every method is the tick's own rule, so the stage writes nothing
-    the tick would not."""
+    """What the tick lends the stage, for one connection. Every method is the tick's own rule, so the stage writes
+    nothing the tick would not."""
 
     account_id: str   # the user's account: the runner bills collected windows to it (Δ105)
+    handle: DriveHandle   # the connection the tick is for (MULTI_DRIVE_RFC §8)
 
     def fence(self) -> None:
         """Raise `LeaseLost` once the tick's lease is about to end (§7.1). Called before every store write."""
@@ -188,6 +196,10 @@ class TranscriptHost(Protocol):
 
     async def agent_outage(self, agent: str) -> None:
         """An uncharged outage of the agent type: its backoff, persisted with the tick's state."""
+
+    async def sweep_allowed(self) -> bool:
+        """I7 (MULTI_DRIVE_RFC §10): every ACTIVE connection of the user re-attached its stored transcripts since its
+        sync state was created; until then the user's orphan sweep does not run."""
 
 
 class TranscriptRunner(Protocol):
@@ -269,58 +281,58 @@ class DriveTranscriptStage:
     # The step
     # ------------------------------------------------------------------------------------------------------------
 
-    async def extract_step(self, user_id: str, host: TranscriptHost, *, stop_at: float) -> Dict[str, int]:
+    async def extract_step(self, handle: DriveHandle, host: TranscriptHost, *, stop_at: float) -> Dict[str, int]:
         summary: Dict[str, int] = {}
         started = self._monotonic()
         if not host.agent_available(TRANSCRIBER_AGENT):
             _inc(summary, "transcript_backed_off")   # §25.4.6: the backoff gates the stage's reads, records stay
             return summary
-        step = _Step(ctx=await self._context(user_id, self._clock()), stop_at=stop_at)
+        step = _Step(ctx=await self._context(handle, self._clock()), stop_at=stop_at)
         try:
-            woken = await self._repo.transcript_wakeups(user_id, step.ctx.now, _PAGE)
+            woken = await self._repo.transcript_wakeups(handle.scope, step.ctx.now, _PAGE)
             if woken:   # re-planned: a retry, park, cooldown or quiet hold ended (a woken mid-job park is `working`)
                 await host.commit(woken, {r.item_id: r for r in woken})
                 _inc(summary, "transcript_woken", len(woken))
-            for rec in await self._repo.transcript_records(user_id, WORKING, _PAGE):
+            for rec in await self._repo.transcript_records(handle.scope, WORKING, _PAGE):
                 if step.outage:
                     break
-                await self._guarded(user_id, host, rec, step, summary, waiting=False)
-            for rec in await self._repo.transcript_records(user_id, WAITING, _PAGE):
+                await self._guarded(handle, host, rec, step, summary, waiting=False)
+            for rec in await self._repo.transcript_records(handle.scope, WAITING, _PAGE):
                 if step.outage or not self._may_start(step):
                     break
-                await self._guarded(user_id, host, rec, step, summary, waiting=True)
-            for rec in await self._repo.transcript_queue(user_id, _PAGE):
+                await self._guarded(handle, host, rec, step, summary, waiting=True)
+            for rec in await self._repo.transcript_queue(handle.scope, _PAGE):
                 if step.outage or not self._may_start(step):
                     break
-                await self._guarded(user_id, host, rec, step, summary, waiting=False)
+                await self._guarded(handle, host, rec, step, summary, waiting=False)
             if not step.outage:
-                await self._submit(user_id, host, step, summary)
+                await self._submit(handle, host, step, summary)
         finally:
             if summary:
-                logger.info(f"[DriveTranscript] extract user={user_id[:8]} {summary} "
+                logger.info(f"[DriveTranscript] extract user={handle.user_id[:8]} {summary} "
                             f"duration={self._monotonic() - started:.1f}s")
         return summary
 
-    async def drop_jobs(self, user_id: str, host: TranscriptHost, item_ids: Sequence[str]) -> int:
+    async def drop_jobs(self, handle: DriveHandle, host: TranscriptHost, item_ids: Sequence[str]) -> int:
         """The jobs of records that left the pipeline (deleted, or `transcript_state` now `none`; the tick calls this
         for its deletes and for writes that took a record out, Task 14): each job's reservation is released once,
         its provider files deleted, the document removed. Returns how many jobs were dropped."""
         dropped = 0
         for item_id in item_ids:
             try:
-                job = await self._repo.get_transcript_job(user_id, item_id)
+                job = await self._repo.get_transcript_job(handle.scope, item_id)
             except ValueError:
                 logger.error(f"[DriveTranscript] job document of {_short(item_id)} is unreadable: deleted, "
                              f"its reservation cannot be read")
                 host.fence()
-                await self._repo.delete_transcript_job(user_id, item_id)
+                await self._repo.delete_transcript_job(handle.scope, item_id)
                 dropped += 1
                 continue
-            if job is not None and await self._abandon(user_id, host, job, None):
+            if job is not None and await self._abandon(handle, host, job, None):
                 dropped += 1
         return dropped
 
-    async def cheap_steps(self, user_id: str, host: TranscriptHost, *, stop_at: float) -> Dict[str, int]:
+    async def cheap_steps(self, handle: DriveHandle, host: TranscriptHost, *, stop_at: float) -> Dict[str, int]:
         """Part B of the step (Task 13), in this order: (1) poll at most BATCH_POLLS_PER_TICK open batches that are due,
         one poll per batch; a succeeded batch is collected and settled, a failed, expired or cancelled one sends its
         windows back once; (2) finalize the files whose windows are all answered, each starting only while
@@ -330,12 +342,12 @@ class DriveTranscriptStage:
         started = self._monotonic()
         finished: List[str] = []
         try:
-            await self._poll_batches(user_id, host, summary, finished)
-            await self._finalize_step(user_id, host, stop_at, summary, finished)
-            await self._sweep_orphans(user_id, host, summary)
+            await self._poll_batches(handle, host, summary, finished)
+            await self._finalize_step(handle, host, stop_at, summary, finished)
+            await self._sweep_orphans(handle, host, summary)
         finally:
             if summary:
-                logger.info(f"[DriveTranscript] collect user={user_id[:8]} {summary} "
+                logger.info(f"[DriveTranscript] collect user={handle.user_id[:8]} {summary} "
                             f"duration={self._monotonic() - started:.1f}s")
         return summary
 
@@ -343,44 +355,44 @@ class DriveTranscriptStage:
     # One file
     # ------------------------------------------------------------------------------------------------------------
 
-    async def _guarded(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, step: _Step,
+    async def _guarded(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, step: _Step,
                        summary: Dict[str, int], *, waiting: bool) -> None:
         """A job document the store cannot read or write (plain ValueError of its codec) is this file's problem:
         dropped and charged one attempt, so neither the tick fails nor the file loops forever."""
         if rec.item_id in step.charged:
             return   # charged earlier in this step: its retry hold decides when it is tried again (T-R21)
         try:
-            job = await self._repo.get_transcript_job(user_id, rec.item_id)
+            job = await self._repo.get_transcript_job(handle.scope, rec.item_id)
         except ValueError:
-            await self._drop_unreadable(user_id, host, rec, step, summary, "unreadable")
+            await self._drop_unreadable(handle, host, rec, step, summary, "unreadable")
             return
         try:
             if waiting:
-                await self._waiting_copy(user_id, host, rec, job, step, summary)
+                await self._waiting_copy(handle, host, rec, job, step, summary)
             else:
-                await self._file(user_id, host, rec, job, step, summary)
+                await self._file(handle, host, rec, job, step, summary)
         except _JobUnwritable:
-            await self._drop_unreadable(user_id, host, rec, step, summary, "refused by the store")
+            await self._drop_unreadable(handle, host, rec, step, summary, "refused by the store")
 
-    async def _drop_unreadable(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, step: _Step,
+    async def _drop_unreadable(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, step: _Step,
                                summary: Dict[str, int], why: str) -> None:
         logger.error(f"[DriveTranscript] job document of {_short(rec.item_id)} {why}: deleted, the file charged "
                      f"one attempt (an open reservation of it stays counted: the safe direction)")
         host.fence()
-        await self._repo.delete_transcript_job(user_id, rec.item_id)
-        latest = (await self._repo.get_records(user_id, [rec.item_id])).get(rec.item_id, rec)
+        await self._repo.delete_transcript_job(handle.scope, rec.item_id)
+        latest = (await self._repo.get_records(handle.scope, [rec.item_id])).get(rec.item_id, rec)
         await self._commit(host, charge_attempt(latest, now=self._clock()), latest)
         step.charged.add(rec.item_id)
         _inc(summary, "transcript_jobs_dropped")
         _inc(summary, "transcript_attempts_charged")
 
-    async def _file(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
+    async def _file(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
                     step: _Step, summary: Dict[str, int]) -> None:
-        key = content_key(rec)[0]
+        key = record_content_key(rec)[0]
         if job is not None and job.content_key != key:
             # the plan reset the job on a new version: released once — unless a window of it is still in a batch,
             # which collection settles first (G33, T-R20); the file waits for that
-            if not await self._abandon(user_id, host, job, step):
+            if not await self._abandon(handle, host, job, step):
                 _inc(summary, "transcript_waiting_for_settle")
                 return
             _inc(summary, "transcript_jobs_abandoned")
@@ -392,7 +404,7 @@ class DriveTranscriptStage:
                     step.ready[rec.item_id] = (rec, job)
                 elif windows_to_extract(job, now, pass_mode=False):
                     if self._may_start(step):
-                        await self._extract(user_id, host, rec, job, step, summary, url=None, probe=None)
+                        await self._extract(handle, host, rec, job, step, summary, url=None, probe=None)
                 elif state_for_job(job) == WAITING:   # submitted, the record write lost (a crash): repaired
                     await self._commit(host, replace(rec, transcript_state=WAITING), rec)
                 return
@@ -400,56 +412,56 @@ class DriveTranscriptStage:
                            f"(a crash between writes): started again")
             _inc(summary, "transcript_restarted")
         if self._may_start(step):
-            await self._start(user_id, host, rec, job, step, summary)
+            await self._start(handle, host, rec, job, step, summary)
 
-    async def _waiting_copy(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord,
+    async def _waiting_copy(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord,
                             job: Optional[TranscriptJob], step: _Step, summary: Dict[str, int]) -> None:
         """G12: a `waiting` record with no job of its own waits on another file with the same shared key. A waiting
         record WITH a job has its windows in a batch: collection's (Task 13)."""
         if job is not None:
             return
-        key, shared = content_key(rec)
-        stored = await self._repo.get_transcript(user_id, key)
+        key, shared = record_content_key(rec)
+        stored = await self._repo.get_transcript(handle.user_id, key)
         if stored is not None:
-            await self._from_store(user_id, host, rec, stored, summary)
+            await self._from_store(handle, host, rec, stored, summary)
             return
-        if shared and await self._copy_in_flight(user_id, rec, key):
+        if shared and await self._copy_in_flight(handle, rec, key):
             return
         await self._commit(host, replace(rec, transcript_state=READY), rec)   # the other is gone: on its own now
         _inc(summary, "transcript_copies_released")
 
-    async def _start(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
+    async def _start(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
                      step: _Step, summary: Dict[str, int]) -> None:
-        key, shared = content_key(rec)
-        stored = await self._repo.get_transcript(user_id, key)
+        key, shared = record_content_key(rec)
+        stored = await self._repo.get_transcript(handle.user_id, key)
         if stored is not None:
-            await self._from_store(user_id, host, rec, stored, summary)
+            await self._from_store(handle, host, rec, stored, summary)
             if job is not None:
-                await self._abandon(user_id, host, job, step)
+                await self._abandon(handle, host, job, step)
             return
-        if shared and await self._copy_in_flight(user_id, rec, key):
+        if shared and await self._copy_in_flight(handle, rec, key):
             await self._commit(host, wait_for_copy(rec), rec)
             _inc(summary, "transcript_copies_waiting")
             if job is not None:
-                await self._abandon(user_id, host, job, step)
+                await self._abandon(handle, host, job, step)
             return
-        url = await self._url(user_id, host, rec, job, step, summary)
+        url = await self._url(handle, host, rec, job, step, summary)
         if url is None:
             return
-        probe = await self._probe(user_id, host, rec, job, step, summary, url)
+        probe = await self._probe(handle, host, rec, job, step, summary, url)
         if probe is None:
             return
         start = start_file(rec, step.ctx, probe)
         step.ctx = start.ctx
         if start.outcome is StartOutcome.STUBBED:
-            await self._stubbed(user_id, host, rec, start.rec, job, step, summary)
+            await self._stubbed(handle, host, rec, start.rec, job, step, summary)
             return
         if start.outcome is not StartOutcome.STARTED or start.reservation is None:
             out = start.rec
             if start.outcome is StartOutcome.UNREADABLE:
                 out = charge_attempt(rec, now=self._clock())   # the same charge, with its retry hold (T-R21)
                 step.charged.add(rec.item_id)
-                await self._job_after_charge(user_id, host, out, job, step)
+                await self._job_after_charge(handle, host, out, job, step)
                 _inc(summary, "transcript_attempts_charged")
             await self._commit(host, out, rec)
             _inc(summary, f"transcript_{start.outcome.value}")
@@ -458,7 +470,8 @@ class DriveTranscriptStage:
         host.fence()
         await host.reserve(reservation.usd, reservation.month)   # written before anything it pays for (G39)
         await self._commit(host, start.rec, rec)
-        base = job if job is not None else TranscriptJob(user_id=user_id, item_id=rec.item_id, content_key=key)
+        base = job if job is not None else TranscriptJob(user_id=handle.user_id, item_id=rec.item_id, content_key=key,
+                                                                 connection_id=handle.connection_id)
         learned = base.duration_s if base.duration_s > 0 else 0.0   # a duration a run measured wins (T-R16)
         duration = learned or (probe.duration_s if probe.duration_known else 0.0)
         new_job = replace(base, content_key=key, content_version=TRANSCRIBE_VERSION, duration_s=duration,
@@ -472,31 +485,31 @@ class DriveTranscriptStage:
                     f"{'duration unknown' if not duration else f'{duration:.0f}s'}, reserved ${reservation.usd:.4f}")
         working = start.rec
         if duration > 0:
-            settled = await self._resettle(user_id, host, working, new_job, duration, step, summary)
+            settled = await self._resettle(handle, host, working, new_job, duration, step, summary)
             if settled is None:
                 return
             working, new_job = settled
-        await self._extract(user_id, host, working, new_job, step, summary, url=url, probe=probe)
+        await self._extract(handle, host, working, new_job, step, summary, url=url, probe=probe)
 
     # ------------------------------------------------------------------------------------------------------------
     # Extraction and upload
     # ------------------------------------------------------------------------------------------------------------
 
-    async def _extract(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
+    async def _extract(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
                        step: _Step, summary: Dict[str, int], *, url: Optional[str],
                        probe: Optional[MediaProbe]) -> None:
         """As many windows as the step's wall allows (§27.4): the first run gets the whole TRANSCRIBE_EXTRACT_WALL_S,
         a further one (the next pass of a file without a duration) starts only with TRANSCRIBE_MIN_RUN_WALL_S left.
         Each window is uploaded as the run returns it and recorded after the provider answered."""
         if url is None or probe is None:
-            url = await self._url(user_id, host, rec, job, step, summary)   # fresh for every step (Δ98, Δ134)
+            url = await self._url(handle, host, rec, job, step, summary)   # fresh for every step (Δ98, Δ134)
             if url is None:
                 return
-            probe = await self._probe(user_id, host, rec, job, step, summary, url)
+            probe = await self._probe(handle, host, rec, job, step, summary, url)
             if probe is None:
                 return
         if not probe.has_audio:
-            await self._charge(user_id, host, rec, job, step, summary, "the probe lost the audio stream")
+            await self._charge(handle, host, rec, job, step, summary, "the probe lost the audio stream")
             return
         pass_mode = job.duration_s <= 0 or not probe.duration_known
         out_dir = tempfile.mkdtemp(prefix="drive-transcript-", dir=self._temp_root)
@@ -513,14 +526,14 @@ class DriveTranscriptStage:
                                                                 container=probe.container,
                                                                 duration_known=not pass_mode)
                 except MediaUnreadable as exc:
-                    await self._charge(user_id, host, rec, job, step, summary, f"unreadable ({exc.detail[:80]})")
+                    await self._charge(handle, host, rec, job, step, summary, f"unreadable ({exc.detail[:80]})")
                     return
                 except ValueError:
                     logger.error(f"[DriveTranscript] {_short(rec.item_id)}: the extractor refused the window slice")
-                    await self._charge(user_id, host, rec, job, step, summary, "window slice refused")
+                    await self._charge(handle, host, rec, job, step, summary, "window slice refused")
                     return
                 wall_left -= self._monotonic() - began
-                advanced = await self._after_run(user_id, host, rec, job, outcome, step, summary, full_wall=first)
+                advanced = await self._after_run(handle, host, rec, job, outcome, step, summary, full_wall=first)
                 if advanced is None:
                     return
                 rec, job = advanced
@@ -532,7 +545,7 @@ class DriveTranscriptStage:
         if not step.outage and ready_to_submit(job, self._clock()):
             step.ready[rec.item_id] = (rec, job)
 
-    async def _after_run(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
+    async def _after_run(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
                          outcome: MediaWindowsOutcome, step: _Step, summary: Dict[str, int], *,
                          full_wall: bool) -> Optional[Tuple[DriveIndexRecord, TranscriptJob]]:
         """One run's outcome: the record and job after it, or None when the file's step is over (charged, stubbed,
@@ -540,32 +553,32 @@ class DriveTranscriptStage:
         produced = list(outcome.windows)
         if not produced and outcome.status is not MediaStatus.OK:
             if outcome.status is MediaStatus.MEMORY or full_wall:
-                await self._charge(user_id, host, rec, job, step, summary,
+                await self._charge(handle, host, rec, job, step, summary,
                                    f"{outcome.status.value} before the first window")
             return None   # a later, shorter run cut empty is no attempt: the next step starts with the whole wall
         if outcome.reached_bound:
-            await self._too_long(user_id, host, rec, job, step, summary)
+            await self._too_long(handle, host, rec, job, step, summary)
             return None
         if outcome.eof:
             if outcome.duration_s > TRANSCRIBE_MAX_SECONDS:
-                await self._too_long(user_id, host, rec, job, step, summary)
+                await self._too_long(handle, host, rec, job, step, summary)
                 return None
-            settled = await self._resettle(user_id, host, rec, job, outcome.duration_s, step, summary)
+            settled = await self._resettle(handle, host, rec, job, outcome.duration_s, step, summary)
             if settled is None:
                 return None
             rec, job = settled
             planned = {s.index for s in plan_windows(outcome.duration_s)}
             produced = [(spec, path) for spec, path in produced if spec.index in planned]
         elif not produced:
-            await self._charge(user_id, host, rec, job, step, summary, "a run produced nothing")
+            await self._charge(handle, host, rec, job, step, summary, "a run produced nothing")
             return None
         _inc(summary, "windows_extracted", len(produced))
-        uploaded = await self._upload(user_id, host, rec, job, produced, step, summary)
+        uploaded = await self._upload(handle, host, rec, job, produced, step, summary)
         if uploaded is None:
             return None
         return rec, uploaded
 
-    async def _upload(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
+    async def _upload(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
                       produced: Sequence[Tuple[WindowSpec, str]], step: _Step,
                       summary: Dict[str, int]) -> Optional[TranscriptJob]:
         for spec, path in produced:
@@ -575,13 +588,13 @@ class DriveTranscriptStage:
                 await self._outage(host, step, summary, f"upload: {type(exc).__name__}")
                 return None
             except LLMClientError as exc:
-                await self._charge(user_id, host, rec, job, step, summary, f"upload refused ({type(exc).__name__})")
+                await self._charge(handle, host, rec, job, step, summary, f"upload refused ({type(exc).__name__})")
                 return None
             except LLMError as exc:
                 await self._outage(host, step, summary, f"upload: {type(exc).__name__}")
                 return None
             except OSError as exc:
-                await self._charge(user_id, host, rec, job, step, summary, f"window file ({type(exc).__name__})")
+                await self._charge(handle, host, rec, job, step, summary, f"window file ({type(exc).__name__})")
                 return None
             job = with_uploaded(job, spec, ref.name, ref.expires_at)
             await self._save_job(host, job)
@@ -590,7 +603,7 @@ class DriveTranscriptStage:
                 os.unlink(path)
         return job
 
-    async def _resettle(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
+    async def _resettle(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
                         duration_s: float, step: _Step,
                         summary: Dict[str, int]) -> Optional[Tuple[DriveIndexRecord, TranscriptJob]]:
         """The real duration is known (`eof`, or a duration measured by an earlier run): the plan, the windows and the
@@ -637,7 +650,7 @@ class DriveTranscriptStage:
     # Submission
     # ------------------------------------------------------------------------------------------------------------
 
-    async def _submit(self, user_id: str, host: TranscriptHost, step: _Step, summary: Dict[str, int]) -> None:
+    async def _submit(self, handle: DriveHandle, host: TranscriptHost, step: _Step, summary: Dict[str, int]) -> None:
         """One batch for every file whose windows are all uploaded (Δ103). A window collection sent back is a new
         purchase: reserved here (`resume_window`, T-R8), its sum carried by the batch document (T-R11); when it does
         not fit, its file is parked mid-job (`park(..., resubmit=True)`) and goes in no batch.
@@ -679,16 +692,16 @@ class DriveTranscriptStage:
             return
         month = month_key(step.ctx.now)   # the month every reservation of this step was decided in (G9)
         slot = f"{_SUBMITTING_PREFIX}{uuid.uuid4().hex}"
-        pending = TranscriptBatch(name=slot, user_id=user_id,
+        pending = TranscriptBatch(name=slot, user_id=handle.user_id, connection_id=handle.connection_id,
                                   request_keys=tuple(i.key for _, _, inputs in files for i in inputs),
                                   created_at=now, reserved_usd=held, reserved_month=month if held > 0 else "",
                                   state=BATCH_SUBMITTING, next_poll_at=now + timedelta(seconds=BATCH_POLL_FIRST_S),
-                                  display_name=f"{user_id}:{slot}")
+                                  display_name=f"{handle.user_id}:{slot}")
         host.fence()
         if held > 0:
             await host.reserve(held, month)   # written before the purchase it pays for
         if not await self._repo.create_batch(pending):
-            logger.error(f"[DriveTranscript] a submitting batch document for user={user_id[:8]} already existed: "
+            logger.error(f"[DriveTranscript] a submitting batch document for user={handle.user_id[:8]} already existed: "
                          f"nothing submitted")
             if held > 0:
                 await host.release(held, month)
@@ -720,7 +733,7 @@ class DriveTranscriptStage:
             await self._outage(host, step, summary, f"submit: {type(exc).__name__}")
             return
         except LLMError as exc:   # outcome unknown: possibly bought, never bought twice (T-R28)
-            logger.warning(f"[DriveTranscript] submit for user={user_id[:8]} ended {type(exc).__name__}: the batch "
+            logger.warning(f"[DriveTranscript] submit for user={handle.user_id[:8]} ended {type(exc).__name__}: the batch "
                            f"may exist; looked up by its display name at the next poll, windows kept in it")
             _inc(summary, "batch_submit_unknown")
             await self._outage(host, step, summary, f"submit: {type(exc).__name__}")
@@ -728,13 +741,13 @@ class DriveTranscriptStage:
         # no fence between the provider's answer and the record of it: the purchase is never lost (T-R28)
         pending = replace(pending, provider_name=ref.name, request_keys=tuple(i.key for i in inputs))
         await self._repo.save_batch(pending)
-        await self._complete_submission(user_id, host, pending, now, marked=[(rec, done) for rec, _, done, _ in marked])
+        await self._complete_submission(handle, host, pending, now, marked=[(rec, done) for rec, _, done, _ in marked])
         _inc(summary, "windows_submitted", len(inputs))
         _inc(summary, "transcript_batches")
-        logger.info(f"[DriveTranscript] submitted user={user_id[:8]} files={len(marked)} windows={len(inputs)} "
+        logger.info(f"[DriveTranscript] submitted user={handle.user_id[:8]} files={len(marked)} windows={len(inputs)} "
                     f"reserved_resubmits=${held:.4f}")
 
-    async def _complete_submission(self, user_id: str, host: TranscriptHost, pending: TranscriptBatch, now: datetime,
+    async def _complete_submission(self, handle: DriveHandle, host: TranscriptHost, pending: TranscriptBatch, now: datetime,
                                    *, marked: Optional[Sequence[Tuple[DriveIndexRecord, TranscriptJob]]] = None
                                    ) -> TranscriptBatch:
         """T-R28: a `submitting` document whose provider batch is known (`provider_name`) moves to that name, in an
@@ -745,7 +758,7 @@ class DriveTranscriptStage:
         them, with their records (the submission itself); otherwise the jobs are read (a completion after a stop)."""
         real_name = pending.provider_name
         if marked is None:
-            loaded = await self._load_files(user_id, self._items_of(pending))
+            loaded = await self._load_files(handle, self._items_of(pending))
             pairs = [(rec, job) for rec, job, unreadable in loaded.values() if job is not None]
         else:
             pairs = [(rec, job) for rec, job in marked]
@@ -765,14 +778,15 @@ class DriveTranscriptStage:
         if records:
             await host.commit(records, before)
         created = pending.created_at or now
-        real = TranscriptBatch(name=real_name, user_id=user_id, request_keys=pending.request_keys,
+        real = TranscriptBatch(name=real_name, user_id=handle.user_id, connection_id=handle.connection_id,
+                               request_keys=pending.request_keys,
                                submitted_at=created, created_at=created, reserved_usd=pending.reserved_usd,
                                reserved_month=pending.reserved_month, state="submitted",
                                next_poll_at=max(now, created + timedelta(seconds=BATCH_POLL_FIRST_S)))
         host.fence()
         if not await self._repo.create_batch(real):
-            logger.info(f"[DriveTranscript] batch document for user={user_id[:8]} existed: a completion repeated")
-        await self._repo.delete_batch(user_id, pending.name)
+            logger.info(f"[DriveTranscript] batch document for user={handle.user_id[:8]} existed: a completion repeated")
+        await self._repo.delete_batch(handle.scope, pending.name)
         return real
 
     async def _drop_pending(self, host: TranscriptHost, pending: TranscriptBatch, summary: Dict[str, int]) -> None:
@@ -798,7 +812,7 @@ class DriveTranscriptStage:
     # Outcomes
     # ------------------------------------------------------------------------------------------------------------
 
-    async def _from_store(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, stored: StoredTranscript,
+    async def _from_store(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, stored: StoredTranscript,
                           summary: Dict[str, int]) -> None:
         """Δ112, G18, G31: finalize from the stored result, embeddings only. A stub, or a transcript with no text (G20:
         a media `no_text` is always a stub), is a stub record."""
@@ -819,55 +833,55 @@ class DriveTranscriptStage:
                                 languages=transcript.language_codes, truncated=transcript.truncated)
             await self._commit(host, done, indexed)
         host.fence()
-        await self._repo.touch_transcript(user_id, stored.content_key, now)
+        await self._repo.touch_transcript(handle.user_id, stored.content_key, now)
         _inc(summary, "transcript_store_hits")
 
-    async def _stubbed(self, user_id: str, host: TranscriptHost, before: DriveIndexRecord, stub_rec: DriveIndexRecord,
+    async def _stubbed(self, handle: DriveHandle, host: TranscriptHost, before: DriveIndexRecord, stub_rec: DriveIndexRecord,
                        job: Optional[TranscriptJob], step: _Step, summary: Dict[str, int]) -> None:
         """A stub decided with no model call (`no_audio`, `too_long`): stored under the content key, so a copy finds
         it, and the record `current`; a readable generation it drops is collected by the host (`before`)."""
         host.fence()
-        await self._repo.put_transcript(user_id, StoredTranscript(
+        await self._repo.put_transcript(handle.user_id, StoredTranscript(
             content_key=stub_rec.transcript_key, transcript=None, stub=stub_rec.transcript_stub,
             transcribe_version=TRANSCRIBE_VERSION, render_version=TRANSCRIPT_BODY_VERSION,
             last_used_at=self._clock()))
         await self._commit(host, stub_rec, before)
         if job is not None:
-            await self._abandon(user_id, host, job, step)
+            await self._abandon(handle, host, job, step)
         _inc(summary, f"transcript_stub_{stub_rec.transcript_stub}")
 
-    async def _too_long(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
+    async def _too_long(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
                         step: _Step, summary: Dict[str, int]) -> None:
         """A file without a duration header that runs past TRANSCRIBE_MAX_SECONDS (`reached_bound`, T-R15): the
         `too_long` stub; nothing was bought, the reservation goes back."""
-        await self._stubbed(user_id, host, rec, stub_record(rec, TranscriptStub.TOO_LONG, self._clock()), job, step,
+        await self._stubbed(handle, host, rec, stub_record(rec, TranscriptStub.TOO_LONG, self._clock()), job, step,
                             summary)
 
-    async def _charge(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
+    async def _charge(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
                       step: _Step, summary: Dict[str, int], why: str) -> None:
         """A file-level failed attempt (Δ100): `failed` at MAX_ATTEMPTS with no stub, the job dropped; below it the
         reservation goes back and the uploaded windows stay for the next try."""
         out = charge_attempt(rec, now=self._clock())
         step.charged.add(rec.item_id)
-        await self._job_after_charge(user_id, host, out, job, step)
+        await self._job_after_charge(handle, host, out, job, step)
         await self._commit(host, out, rec)
         _inc(summary, "transcript_attempts_charged")
         if out.transcript_state == FAILED:
             _inc(summary, "transcript_failed")
         logger.info(f"[DriveTranscript] {_short(rec.item_id)} attempt {out.transcript_attempts}: {why}")
 
-    async def _job_after_charge(self, user_id: str, host: TranscriptHost, charged: DriveIndexRecord,
+    async def _job_after_charge(self, handle: DriveHandle, host: TranscriptHost, charged: DriveIndexRecord,
                                 job: Optional[TranscriptJob], step: _Step) -> None:
         """A `failed` file's job is dropped (files deleted, reservation released); below MAX_ATTEMPTS it keeps its
         windows and gives its reservation back (the record is `ready`, and a `ready` file holds no money)."""
         if job is None:
             return
         if charged.transcript_state == FAILED:
-            await self._abandon(user_id, host, job, step)
+            await self._abandon(handle, host, job, step)
         else:
-            await self._release_job(user_id, host, job, step)
+            await self._release_job(handle, host, job, step)
 
-    async def _release_job(self, user_id: str, host: TranscriptHost, job: Optional[TranscriptJob],
+    async def _release_job(self, handle: DriveHandle, host: TranscriptHost, job: Optional[TranscriptJob],
                            step: Optional[_Step]) -> None:
         """The job keeps its windows and gives its reservation back: the document first, the release once after it.
         Not while a window of it is in a batch (T-R20): that batch may still run and bill against the reservation, which
@@ -883,7 +897,7 @@ class DriveTranscriptStage:
         if step is not None:
             step.freed(usd, month)
 
-    async def _abandon(self, user_id: str, host: TranscriptHost, job: TranscriptJob, step: Optional[_Step]) -> bool:
+    async def _abandon(self, handle: DriveHandle, host: TranscriptHost, job: TranscriptJob, step: Optional[_Step]) -> bool:
         """The job ends without a transcript (a new content version, a stub, a failure, a record gone): the document
         goes first, its reservation is released once after it, and its provider files are deleted (§27.5). True when
         it was dropped.
@@ -895,7 +909,7 @@ class DriveTranscriptStage:
             logger.info(f"[DriveTranscript] job of {_short(job.item_id)} has windows in a batch: left for collection")
             return False
         host.fence()
-        await self._repo.delete_transcript_job(user_id, job.item_id)
+        await self._repo.delete_transcript_job(handle.scope, job.item_id)
         if job.reserved_usd > 0:
             await host.release(job.reserved_usd, job.reserved_month)
             if step is not None:
@@ -913,7 +927,7 @@ class DriveTranscriptStage:
     # Part B: poll, collect, settle (Task 13)
     # ------------------------------------------------------------------------------------------------------------
 
-    async def _poll_batches(self, user_id: str, host: TranscriptHost, summary: Dict[str, int],
+    async def _poll_batches(self, handle: DriveHandle, host: TranscriptHost, summary: Dict[str, int],
                             finished: List[str]) -> None:
         """One poll per due batch, at most BATCH_POLLS_PER_TICK (Δ104). A provider outage ends the polling of this
         step and backs the agent off; the batch stays as it was and is polled again next step. One batch's own error
@@ -921,19 +935,19 @@ class DriveTranscriptStage:
         the others go on."""
         now = self._clock()
         try:
-            due = await self._repo.get_open_batches(user_id, now, BATCH_POLLS_PER_TICK)
+            due = await self._repo.get_open_batches(handle.scope, now, BATCH_POLLS_PER_TICK)
         except ValueError as exc:
-            logger.error(f"[DriveTranscript] a batch document of user={user_id[:8]} is unreadable: "
+            logger.error(f"[DriveTranscript] a batch document of user={handle.user_id[:8]} is unreadable: "
                          f"{type(exc).__name__}; polling skipped this step")
             _inc(summary, "batch_unreadable")
             return
         for batch in due:
             track = _Tracked(batch)
             try:
-                if not await self._poll_one(user_id, host, track, now, summary, finished):
+                if not await self._poll_one(handle, host, track, now, summary, finished):
                     return
             except _BATCH_LOCAL as exc:
-                logger.error(f"[DriveTranscript] a batch of user={user_id[:8]} could not be handled "
+                logger.error(f"[DriveTranscript] a batch of user={handle.user_id[:8]} could not be handled "
                              f"({type(exc).__name__}): polled again in {BATCH_ERROR_BACKOFF_S // 60} min")
                 _inc(summary, "batch_errors")
                 if not track.gone and track.batch.state not in BATCH_CLOSED_STATES:
@@ -941,14 +955,14 @@ class DriveTranscriptStage:
                     await self._repo.save_batch(replace(track.batch, last_polled_at=now,
                                                         next_poll_at=now + timedelta(seconds=BATCH_ERROR_BACKOFF_S)))
 
-    async def _poll_one(self, user_id: str, host: TranscriptHost, track: _Tracked, now: datetime,
+    async def _poll_one(self, handle: DriveHandle, host: TranscriptHost, track: _Tracked, now: datetime,
                         summary: Dict[str, int], finished: List[str]) -> bool:
         """One due batch; False when an outage ends this step's polling."""
         batch = track.batch
         if batch.state == BATCH_SUBMITTING:
-            return await self._poll_submitting(user_id, host, track, now, summary)
+            return await self._poll_submitting(handle, host, track, now, summary)
         if not batch.request_keys:   # nothing to collect, ever: closed, never rescheduled forever
-            logger.error(f"[DriveTranscript] a batch of user={user_id[:8]} has no request keys: closed as failed")
+            logger.error(f"[DriveTranscript] a batch of user={handle.user_id[:8]} has no request keys: closed as failed")
             await self._close_batch(host, track, "failed", now, summary)
             return True
         ref = BatchRef(name=batch.name, keys=batch.request_keys)   # keys: collect needs them (Task 10)
@@ -959,7 +973,7 @@ class DriveTranscriptStage:
             await self._collect_outage(host, summary, f"poll: {type(exc).__name__}")
             return False
         except LLMClientError as exc:   # the provider no longer knows the batch: nothing can be collected
-            logger.error(f"[DriveTranscript] a batch of user={user_id[:8]} is gone at the provider "
+            logger.error(f"[DriveTranscript] a batch of user={handle.user_id[:8]} is gone at the provider "
                          f"({type(exc).__name__}, status={exc.http_status}): settled as failed, booked as bought")
             status, unknown = BatchStatus.FAILED, True
         except LLMError as exc:
@@ -969,12 +983,12 @@ class DriveTranscriptStage:
         if status in (BatchStatus.PENDING, BatchStatus.RUNNING):
             await self._reschedule(host, track, now)
         elif status is BatchStatus.SUCCEEDED:
-            return await self._collect(user_id, host, track, ref, summary, finished)
+            return await self._collect(handle, host, track, ref, summary, finished)
         else:
-            await self._failed_batch(user_id, host, track, status, summary, finished, unknown=unknown)
+            await self._failed_batch(handle, host, track, status, summary, finished, unknown=unknown)
         return True
 
-    async def _poll_submitting(self, user_id: str, host: TranscriptHost, track: _Tracked, now: datetime,
+    async def _poll_submitting(self, handle: DriveHandle, host: TranscriptHost, track: _Tracked, now: datetime,
                                summary: Dict[str, int]) -> bool:
         """T-R28: a submission whose provider call failed with an unknown outcome (or whose move a stop cut short). A
         known provider name completes the move. Otherwise the provider batch is looked up by the display name: found,
@@ -988,7 +1002,7 @@ class DriveTranscriptStage:
             except BatchLookupInconclusive:
                 # Neither found nor a miss: the money stays held, no miss is counted, the transcriber is not backed
                 # off and the other batches go on; this document is asked again after the error backoff.
-                logger.error(f"[DriveTranscript] the lookup of a submission of user={user_id[:8]} was inconclusive "
+                logger.error(f"[DriveTranscript] the lookup of a submission of user={handle.user_id[:8]} was inconclusive "
                              f"(scan bound): money held, asked again in {BATCH_ERROR_BACKOFF_S // 60} min")
                 _inc(summary, "batch_lookup_inconclusive")
                 host.fence()
@@ -1003,7 +1017,7 @@ class DriveTranscriptStage:
                 lookups = pending.lookups + 1
                 age = now - (pending.created_at or now)
                 if lookups >= BATCH_SUBMIT_LOOKUPS and age >= timedelta(seconds=BATCH_SUBMIT_LOOKUP_MIN_AGE_S):
-                    await self._never_created(user_id, host, track, now, summary)
+                    await self._never_created(handle, host, track, now, summary)
                     return True
                 track.batch = replace(pending, lookups=lookups, last_polled_at=now,
                                       next_poll_at=poll_after(pending, now))
@@ -1012,21 +1026,21 @@ class DriveTranscriptStage:
                 return True
             track.batch = replace(pending, provider_name=found.name)
             await self._repo.save_batch(track.batch)   # no fence: the purchase is on record first
-            logger.warning(f"[DriveTranscript] a submission of user={user_id[:8]} with an unknown outcome was found "
+            logger.warning(f"[DriveTranscript] a submission of user={handle.user_id[:8]} with an unknown outcome was found "
                            f"at the provider: moved to it")
             _inc(summary, "batch_submit_found")
-        await self._complete_submission(user_id, host, track.batch, now)
+        await self._complete_submission(handle, host, track.batch, now)
         track.gone = True
         _inc(summary, "batch_submit_completed")
         return True
 
-    async def _never_created(self, user_id: str, host: TranscriptHost, track: _Tracked, now: datetime,
+    async def _never_created(self, handle: DriveHandle, host: TranscriptHost, track: _Tracked, now: datetime,
                              summary: Dict[str, int]) -> None:
         """T-R28: the provider never listed the submission: nothing was bought. Each job's windows in it go back as
         they were (`unsubmitted`) and its record follows them (a job whose record is gone or changed is dropped, its
         reservation released once); then the document goes and its own reservation is released once."""
         pending = track.batch
-        files = await self._load_files(user_id, self._items_of(pending))
+        files = await self._load_files(handle, self._items_of(pending))
         for item_id, (rec, job, unreadable) in files.items():
             if job is None or not in_batch(job, pending.name):
                 continue
@@ -1034,13 +1048,13 @@ class DriveTranscriptStage:
             try:
                 await self._save_job(host, back)
                 if rec is None or not self._live(rec, job):
-                    await self._abandon(user_id, host, back, None)
+                    await self._abandon(handle, host, back, None)
                 else:
                     await self._after_windows(host, rec, back, [])
             except _JobUnwritable:
                 logger.error(f"[DriveTranscript] job of {_short(item_id)} refused by the store after a submission "
                              f"that was never created")
-        logger.warning(f"[DriveTranscript] a submission of user={user_id[:8]} was never created at the provider "
+        logger.warning(f"[DriveTranscript] a submission of user={handle.user_id[:8]} was never created at the provider "
                        f"({pending.lookups + 1} lookups): {len(pending.request_keys)} windows handed back")
         await self._drop_pending(host, pending, summary)
         track.gone = True
@@ -1051,7 +1065,7 @@ class DriveTranscriptStage:
         host.fence()
         await self._repo.save_batch(track.batch)
 
-    async def _collect(self, user_id: str, host: TranscriptHost, track: _Tracked, ref: BatchRef,
+    async def _collect(self, handle: DriveHandle, host: TranscriptHost, track: _Tracked, ref: BatchRef,
                        summary: Dict[str, int], finished: List[str]) -> bool:
         """A succeeded batch: the runner parses and bills every answer; the real cost is booked first, in the month of
         the reservation that paid for each window (G9); then each file takes its answers (G37, G33); then the batch is
@@ -1065,17 +1079,17 @@ class DriveTranscriptStage:
             await self._collect_outage(host, summary, f"collect: {type(exc).__name__}")
             return False
         except ValueError as exc:   # not succeeded when collected (a race with the poll): polled again
-            logger.error(f"[DriveTranscript] collect refused for a batch of user={user_id[:8]}: {type(exc).__name__}")
+            logger.error(f"[DriveTranscript] collect refused for a batch of user={handle.user_id[:8]}: {type(exc).__name__}")
             await self._reschedule(host, track, now)
             return True
         answers = self._by_item(batch, results)
-        files = await self._load_files(user_id, list(answers))
+        files = await self._load_files(handle, list(answers))
         if not booked:
             batch = track.batch = await self._book(host, batch, answers, files, now)
         for item_id, by_index in answers.items():
             rec, job, unreadable = files[item_id]
             try:
-                await self._take_answers(user_id, host, batch, rec, job, unreadable, item_id, by_index, now, summary,
+                await self._take_answers(handle, host, batch, rec, job, unreadable, item_id, by_index, now, summary,
                                          finished)
             except _JobUnwritable:
                 logger.error(f"[DriveTranscript] job of {_short(item_id)} refused by the store at collection: "
@@ -1099,14 +1113,14 @@ class DriveTranscriptStage:
                                                                                   outcome=WindowOutcome.ERROR)
         return out
 
-    async def _load_files(self, user_id: str, item_ids: Sequence[str]
+    async def _load_files(self, handle: DriveHandle, item_ids: Sequence[str]
                           ) -> Dict[str, Tuple[Optional[DriveIndexRecord], Optional[TranscriptJob], bool]]:
         """(record or None, job or None, job unreadable) per file."""
-        records = await self._repo.get_records(user_id, list(item_ids)) if item_ids else {}
+        records = await self._repo.get_records(handle.scope, list(item_ids)) if item_ids else {}
         out: Dict[str, Tuple[Optional[DriveIndexRecord], Optional[TranscriptJob], bool]] = {}
         for item_id in item_ids:
             try:
-                out[item_id] = (records.get(item_id), await self._repo.get_transcript_job(user_id, item_id), False)
+                out[item_id] = (records.get(item_id), await self._repo.get_transcript_job(handle.scope, item_id), False)
             except ValueError:
                 out[item_id] = (records.get(item_id), None, True)
         return out
@@ -1147,7 +1161,7 @@ class DriveTranscriptStage:
         await self._repo.save_batch(out)
         return out
 
-    async def _take_answers(self, user_id: str, host: TranscriptHost, batch: TranscriptBatch,
+    async def _take_answers(self, handle: DriveHandle, host: TranscriptHost, batch: TranscriptBatch,
                             rec: Optional[DriveIndexRecord], job: Optional[TranscriptJob], unreadable: bool,
                             item_id: str, by_index: Mapping[int, WindowResult], now: datetime,
                             summary: Dict[str, int], finished: List[str]) -> None:
@@ -1156,7 +1170,7 @@ class DriveTranscriptStage:
                          f"answers are booked and dropped")
             if rec is None:
                 host.fence()
-                await self._repo.delete_transcript_job(user_id, item_id)
+                await self._repo.delete_transcript_job(handle.scope, item_id)
             return   # a record still there: stage A drops the document and charges the file (`_guarded`)
         if job is None:
             logger.warning(f"[DriveTranscript] answers for {_short(item_id)} have no job: booked and dropped")
@@ -1165,7 +1179,7 @@ class DriveTranscriptStage:
         if not carried:
             return   # applied before (a collection repeated after a crash): booked again, the safe direction
         if rec is None or not self._live(rec, job):
-            await self._settle_dropped(user_id, host, job, carried, summary)
+            await self._settle_dropped(handle, host, job, carried, summary)
             return
         saves: List[Tuple[int, WindowTranscript]] = []
         retired: List[JobWindow] = []
@@ -1181,7 +1195,7 @@ class DriveTranscriptStage:
             new_windows[window.spec.index] = new
         for index, transcript in saves:   # the answers first: a job that says `done` always has its answer stored
             host.fence()
-            await self._repo.save_window_result(user_id, item_id, index, transcript)
+            await self._repo.save_window_result(handle.scope, item_id, index, transcript)
         windows = tuple(new_windows.get(w.spec.index, w) for w in job.windows)
         still = any(w.state == SUBMITTED for w in windows)
         out_job = replace(job, windows=windows, batch_name=job.batch_name if still else "", transcribed_at=now)
@@ -1256,9 +1270,9 @@ class DriveTranscriptStage:
         """The job still belongs to its record (G33, T-R20): the record exists, is in the pipeline, has not failed or
         finished otherwise (a copy finalized from the store), and is at the job's content version."""
         return (rec is not None and rec.transcript_state not in (NONE, FAILED, CURRENT)
-                and content_key(rec)[0] == job.content_key)
+                and record_content_key(rec)[0] == job.content_key)
 
-    async def _settle_dropped(self, user_id: str, host: TranscriptHost, job: TranscriptJob,
+    async def _settle_dropped(self, handle: DriveHandle, host: TranscriptHost, job: TranscriptJob,
                               carried: Sequence[JobWindow], summary: Dict[str, int]) -> None:
         """G33, T-R20: answers for a record that is gone, out of the pipeline, finished otherwise or at another content
         version. Their cost is booked already; the windows are dropped, and once no window of the job is in a batch the
@@ -1273,11 +1287,11 @@ class DriveTranscriptStage:
                                                                   else w for w in windows)))
             await self._delete_files(carried)
             return
-        await self._abandon(user_id, host, out, None)
+        await self._abandon(handle, host, out, None)
         logger.info(f"[DriveTranscript] answers for {_short(job.item_id)} dropped (record gone or changed): "
                     f"settled, job deleted")
 
-    async def _failed_batch(self, user_id: str, host: TranscriptHost, track: _Tracked, status: BatchStatus,
+    async def _failed_batch(self, handle: DriveHandle, host: TranscriptHost, track: _Tracked, status: BatchStatus,
                             summary: Dict[str, int], finished: List[str], *, unknown: bool = False) -> None:
         """A batch that failed, expired or was cancelled whole (§27.5, Δ104): nothing to collect or book. Its windows
         go back once (`after_failed_batch`: re-extracted once when the provider file will not outlive a batch, a gap
@@ -1290,7 +1304,7 @@ class DriveTranscriptStage:
         now = self._clock()
         batch = track.batch
         item_ids = self._items_of(batch)
-        files = await self._load_files(user_id, item_ids)
+        files = await self._load_files(handle, item_ids)
         if unknown and batch.booked_at is None:
             batch = track.batch = await self._book_unknown(host, batch, files, now)
         for item_id in item_ids:
@@ -1298,14 +1312,14 @@ class DriveTranscriptStage:
             if unreadable or job is None:
                 if unreadable and rec is None:
                     host.fence()
-                    await self._repo.delete_transcript_job(user_id, item_id)
+                    await self._repo.delete_transcript_job(handle.scope, item_id)
                 continue
             carried = in_batch(job, batch.name)
             if not carried:
                 continue
             try:
                 if rec is None or not self._live(rec, job):   # booked above when `unknown`; the job goes
-                    await self._settle_dropped(user_id, host, job, carried, summary)
+                    await self._settle_dropped(handle, host, job, carried, summary)
                     continue
                 retired: List[JobWindow] = []
                 new_windows: Dict[int, JobWindow] = {}
@@ -1324,7 +1338,7 @@ class DriveTranscriptStage:
                 await self._after_windows(host, rec, out_job, finished)
             except _JobUnwritable:
                 logger.error(f"[DriveTranscript] job of {_short(item_id)} refused by the store after a failed batch")
-        logger.warning(f"[DriveTranscript] a batch of user={user_id[:8]} ended {status.value}: "
+        logger.warning(f"[DriveTranscript] a batch of user={handle.user_id[:8]} ended {status.value}: "
                        f"{len(batch.request_keys)} windows sent back")
         _inc(summary, f"batch_{status.value}")
         await self._close_batch(host, track, "failed", now, summary)
@@ -1380,36 +1394,36 @@ class DriveTranscriptStage:
     # Part B: finalize and the orphan sweep (Task 13)
     # ------------------------------------------------------------------------------------------------------------
 
-    async def _finalize_step(self, user_id: str, host: TranscriptHost, stop_at: float, summary: Dict[str, int],
+    async def _finalize_step(self, handle: DriveHandle, host: TranscriptHost, stop_at: float, summary: Dict[str, int],
                              finished: Sequence[str]) -> None:
         """Files answered in full: those collected now first, then every `waiting` record whose job is complete (a
         finalize a crash or a full tick left, which is therefore idempotent). Each starts only before `stop_at`; no file
         slot left ends this step's finalizing, a run the §7.4 fence dropped goes on to the next file."""
         candidates: Dict[str, None] = dict.fromkeys(finished)
-        for rec in await self._repo.transcript_records(user_id, WAITING, _PAGE):
+        for rec in await self._repo.transcript_records(handle.scope, WAITING, _PAGE):
             candidates.setdefault(rec.item_id, None)
         for item_id in candidates:
             if self._monotonic() >= stop_at:
                 _inc(summary, "transcript_finalize_deferred")
                 return
             try:
-                job = await self._repo.get_transcript_job(user_id, item_id)
+                job = await self._repo.get_transcript_job(handle.scope, item_id)
             except ValueError:
                 continue   # stage A drops the document and charges the file
             if job is None or not all_done(job):
                 continue
-            found = (await self._repo.get_records(user_id, [item_id])).get(item_id)
+            found = (await self._repo.get_records(handle.scope, [item_id])).get(item_id)
             try:
                 if found is None or not self._live(found, job):
-                    if await self._abandon(user_id, host, job, None):
+                    if await self._abandon(handle, host, job, None):
                         _inc(summary, "transcript_results_dropped")
                     continue
-                if await self._finalize(user_id, host, found, job, summary) == _NO_SLOT:
+                if await self._finalize(handle, host, found, job, summary) == _NO_SLOT:
                     return
             except _JobUnwritable:
                 logger.error(f"[DriveTranscript] job of {_short(item_id)} refused by the store at finalize")
 
-    async def _finalize(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
+    async def _finalize(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: TranscriptJob,
                         summary: Dict[str, int]) -> str:
         """Stitch (§27.6), index the body through the host (gate, chunks, embeddings, the §7.4 fence; one of the tick's
         file slots, G32), then store the structured result (sharded by the store), drop the job (its reservation
@@ -1424,14 +1438,14 @@ class DriveTranscriptStage:
         file charged an attempt (`charge_attempt`, the T-R21 retry hold, `failed` at MAX_ATTEMPTS with no stub). With a
         refusal among them it is final, `truncated` (§27.5: never dropped). Returns "done", "no_slot" or "fenced"."""
         now = self._clock()
-        results = await self._repo.get_window_results(user_id, job.item_id)
+        results = await self._repo.get_window_results(handle.scope, job.item_id)
         missing = [w.spec.index for w in job.windows if not w.gap and w.spec.index not in results]
         if missing:
             logger.error(f"[DriveTranscript] {_short(job.item_id)}: {len(missing)} answered windows have no stored "
                          f"answer: stitched as gap markers")
         if (all(w.gap or w.spec.index in missing for w in job.windows)
                 and not any(w.refused for w in job.windows)):
-            await self._abandon(user_id, host, job, None)
+            await self._abandon(handle, host, job, None)
             charged = charge_attempt(rec, now=now)
             await self._commit(host, charged, rec)
             _inc(summary, "transcript_all_gaps_charged")
@@ -1452,12 +1466,12 @@ class DriveTranscriptStage:
         else:
             indexed = await host.index_transcript(rec, body, EXTRACTED_BY)
             if indexed is None:   # no file slot left (the record unchanged), or the §7.4 fence dropped the run
-                latest = (await self._repo.get_records(user_id, [job.item_id])).get(job.item_id)
+                latest = (await self._repo.get_records(handle.scope, [job.item_id])).get(job.item_id)
                 if latest == rec:
                     _inc(summary, "transcript_finalize_no_slot")
                     return _NO_SLOT
                 _inc(summary, "transcript_finalize_fenced")
-                if not self._live(latest, job) and await self._abandon(user_id, host, job, None):
+                if not self._live(latest, job) and await self._abandon(handle, host, job, None):
                     _inc(summary, "transcript_results_dropped")   # another version now: the job is settled at once
                 return _FENCED
             stored = StoredTranscript(content_key=job.content_key, transcript=stitched,
@@ -1467,8 +1481,8 @@ class DriveTranscriptStage:
             done = mark_current(indexed, now, seconds=int(round(stitched.duration_s)), speakers=stitched.speakers,
                                 languages=stitched.language_codes, truncated=stitched.truncated)
         host.fence()
-        await self._repo.put_transcript(user_id, stored)
-        await self._abandon(user_id, host, job, None)
+        await self._repo.put_transcript(handle.user_id, stored)
+        await self._abandon(handle, host, job, None)
         await self._commit(host, done, before)
         interpolated = sum(1 for s in stitched.segments if s.interpolated)
         _inc(summary, "transcript_stub_no_speech" if stored.transcript is None else "transcripts_finalized")
@@ -1477,7 +1491,7 @@ class DriveTranscriptStage:
                     f"uncertain_seam={stitched.uncertain_seam}, truncated={stitched.truncated}")
         return _DONE
 
-    async def _sweep_orphans(self, user_id: str, host: TranscriptHost, summary: Dict[str, int]) -> None:
+    async def _sweep_orphans(self, handle: DriveHandle, host: TranscriptHost, summary: Dict[str, int]) -> None:
         """§27.8 b, once a day per user: a stored transcript no record has used for TRANSCRIPT_ORPHAN_TTL is deleted.
         One a record still carries (`transcript_key`, any state) is kept and touched instead: a re-finalize (G18, G31)
         reads it with no model call, so sweeping it would re-buy the audio (Δ122); the touch also keeps it out of the
@@ -1485,62 +1499,78 @@ class DriveTranscriptStage:
         file, or a pending deletion mark, on any drive of the user: §27.9.6, Δ186, Δ217): the touch moves pinned heads
         off the front of the page, so they never crowd out the real orphans."""
         now = self._clock()
-        if self._swept.get(user_id) == now.date():
+        if self._swept.get(handle.user_id) == now.date():
             return
-        keys = await self._repo.orphan_transcripts(user_id, now - TRANSCRIPT_ORPHAN_TTL, _ORPHAN_PAGE)
+        if not await host.sweep_allowed():
+            # I7 (MULTI_DRIVE_RFC §10, E22): a connection of the user has not re-attached its stored transcripts since
+            # its sync state was created (a purge and rebuild): no record carries their keys yet, so none is swept
+            _inc(summary, "transcript_sweep_waiting")
+            return
+        keys = await self._repo.orphan_transcripts(handle.user_id, now - TRANSCRIPT_ORPHAN_TTL, _ORPHAN_PAGE)
         for key in keys:
             host.fence()
-            if (await self._repo.transcript_key_in_use(user_id, key)
-                    or (self._mirror is not None and await self._mirror.pinned(user_id, key))):
-                await self._repo.touch_transcript(user_id, key, now)
+            if (await self._repo.transcript_key_in_use(handle.user_id, key)
+                    or await self._repo.transcript_retained(handle.user_id, key)
+                    or (self._mirror is not None and await self._mirror.pinned(handle.user_id, key))):
+                await self._repo.touch_transcript(handle.user_id, key, now)
                 _inc(summary, "transcript_orphans_kept")
             else:
-                await self._repo.delete_transcript(user_id, key)
+                await self._repo.delete_transcript(handle.user_id, key)
                 _inc(summary, "transcript_orphans_deleted")
-        self._swept[user_id] = now.date()
+        self._swept[handle.user_id] = now.date()
 
     # ------------------------------------------------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------------------------------------------------
 
-    async def _context(self, user_id: str, now: datetime) -> TranscriptContext:
+    async def _context(self, handle: DriveHandle, now: datetime) -> TranscriptContext:
         """The hard cap's context from THIS month's usage document (Δ106, G9): what the cap paid, and the open
         reservations clamped at 0 (the port's reader rule)."""
-        usage = await self._repo.get_model_usage(user_id, month_key(now))
+        usage = await self._repo.get_model_usage(handle.user_id, month_key(now))
         return TranscriptContext(now=now, enabled=True, month_usd=usage.cap_usd(UsageClass.TRANSCRIBE.value),
                                  reserved_usd=max(0.0, usage.transcribe_reserved_usd), cap_usd=self._cap)
 
     def _may_start(self, step: _Step) -> bool:
         return self._monotonic() < step.stop_at
 
-    async def _url(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
+    async def _url(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
                    step: _Step, summary: Dict[str, int]) -> Optional[str]:
+        """The URL the media sandbox streams the file from (MULTI_DRIVE_RFC §6, E24): only a header-free media source (a
+        pre-signed URL) is ever passed; the url and headers are secrets, never logged. A source that needs headers would
+        put a provider token in the network-capable sandbox: it is refused (the file is charged an attempt) and logged
+        at ERROR, until the stream-into-the-workdir path exists for the provider that needs it."""
         try:
-            return await self._drive.download_url(user_id, rec.item_id)
+            source = await self._drive.media_source(handle, rec.item_id)
         except _DRIVE_SYSTEMIC:
             raise
         except _URL_ERRORS as exc:
-            await self._charge(user_id, host, rec, job, step, summary, f"download URL ({type(exc).__name__})")
+            await self._charge(handle, host, rec, job, step, summary, f"download URL ({type(exc).__name__})")
             return None
+        if not source.header_free:
+            logger.error(f"[DriveTranscript] {_short(rec.item_id)}: the drive's media source needs request headers; "
+                         f"no provider credential enters the media sandbox (E24): not transcribed")
+            await self._charge(handle, host, rec, job, step, summary, "media source needs headers")
+            return None
+        return source.url
 
-    async def _probe(self, user_id: str, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
+    async def _probe(self, handle: DriveHandle, host: TranscriptHost, rec: DriveIndexRecord, job: Optional[TranscriptJob],
                      step: _Step, summary: Dict[str, int], url: str) -> Optional[MediaProbe]:
         try:
             outcome = await self._media.probe(url)
         except MediaUnreadable as exc:
-            await self._charge(user_id, host, rec, job, step, summary, f"probe unreadable ({exc.detail[:80]})")
+            await self._charge(handle, host, rec, job, step, summary, f"probe unreadable ({exc.detail[:80]})")
             return None
         if outcome.status is not MediaStatus.OK or outcome.probe is None:
-            await self._charge(user_id, host, rec, job, step, summary, f"probe {outcome.status.value}")
+            await self._charge(handle, host, rec, job, step, summary, f"probe {outcome.status.value}")
             return None
         return outcome.probe
 
-    async def _copy_in_flight(self, user_id: str, rec: DriveIndexRecord, key: str) -> bool:
+    async def _copy_in_flight(self, handle: DriveHandle, rec: DriveIndexRecord, key: str) -> bool:
         """G12, T-R30: another file of the user with this shared key has a job and holds the key in a state that is not
         final: `working`, `waiting`, `parked` (the cap, or a mid-job resubmit) or `held` (any hold: a T-R21 retry backs
         off with its windows kept). A copy waits for it rather than buying the same audio a second time."""
         try:
-            jobs = await self._repo.jobs_by_content_key(user_id, key)
+            jobs = await self._repo.jobs_by_content_key(handle.scope, key)
         except ValueError:
             logger.error(f"[DriveTranscript] a job document with the key of {_short(rec.item_id)} is unreadable: "
                          f"no copy assumed in flight")
@@ -1548,7 +1578,7 @@ class DriveTranscriptStage:
         others = [j.item_id for j in jobs if j.item_id != rec.item_id]
         if not others:
             return False
-        recs = await self._repo.get_records(user_id, others)
+        recs = await self._repo.get_records(handle.scope, others)
         return any(r.transcript_state in _IN_FLIGHT and r.transcript_key == key for r in recs.values())
 
     async def _save_job(self, host: TranscriptHost, job: TranscriptJob) -> None:

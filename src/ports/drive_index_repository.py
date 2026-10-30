@@ -97,6 +97,13 @@ class DriveIndexRepository(ABC):
         """The records that exist among `item_ids`, keyed by item id."""
 
     @abstractmethod
+    async def records_by_identity(self, scope: ConnectionScope,
+                                  identities: Sequence[str]) -> Dict[str, DriveIndexRecord]:
+        """The connection's records whose item `identity` is among `identities`, keyed by identity (the owner notes'
+        binding by identity, MULTI_DRIVE_RFC §7.2). Any number of identities: the adapter batches its queries. An
+        identity no record carries is absent."""
+
+    @abstractmethod
     async def upsert_records(self, records: Sequence[DriveIndexRecord],
                              card_vectors: Optional[Mapping[str, Sequence[float]]] = None) -> None:
         """Write whole records. A vector given for an item is stored as its card vector; a record

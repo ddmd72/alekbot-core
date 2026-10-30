@@ -70,7 +70,11 @@ the file's name is the heading.
 Public interface:
     MirrorHost                                  the tick's side (a Protocol; Task 21C's `_TickHost` implements it)
     DriveTranscriptMirror(repo, mirror, drive)
-        run(user_id, host) -> Dict[str, int]    steps 0-7 for one user; the counters of the run
+        run(handle, host) -> Dict[str, int]     steps 0-7 for one connection's mirror; the counters of the run
+
+Keys (MULTI_DRIVE_RFC §10): the root is the user's root of the connection's drive identity; a file's or folder's ledger
+document is `ledger_key(user, kind, drive identity, source item identity)`, so two connections that see one source item
+keep their own mirror, and every drive-scoped read filters the drive identity.
 """
 from __future__ import annotations
 
@@ -84,6 +88,7 @@ from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Set, Tuple, Type
 
 from src.domain import drive_mirror_plan as plan
+from src.domain.drive_handle import DriveHandle
 from src.domain.drive_index import (
     DriveChange, DriveIndexRecord, DriveIndexStoreUnavailable, LeaseLost, RecordState, Scope,
 )
@@ -93,7 +98,7 @@ from src.domain.drive_index_params import (
 from src.domain.drive_keys import name_keys_v2
 from src.domain.drive_mirror import (
     ARCHIVE_NAME, GONE, KIND_ARCHIVE, KIND_FILE, KIND_FOLDER, LONG_PATHS_NAME, MIRROR_ACTIVE, MIRROR_ARCHIVED,
-    MIRROR_DETACHED, README_NAME, UNKNOWN, DeletionNotice, MirrorDoc, MirrorRoot, archive_folder_key, doc_key,
+    MIRROR_DETACHED, README_NAME, UNKNOWN, DeletionNotice, MirrorDoc, MirrorRoot, archive_folder_key, ledger_key,
 )
 from src.domain.drive_mirror_names import (
     LEVEL_DAY, LEVEL_OTHER, LEVEL_ROOT, Move, Placement, Sibling, archive_place, assign_names, fits, fold,
@@ -144,7 +149,7 @@ _TMP = re.compile(r"~tmp[0-9a-f]{8}$")
 class MirrorHost(Protocol):
     """What the tick lends the step, for one user. Every write the step makes goes through the tick's rules."""
 
-    drive_id: str          # the connected drive (`connection.drive_id`, else `state.drive_id`); "" → the step skips
+    drive_identity: str    # the mirror's drive: the connection's drive identity (MULTI_DRIVE_RFC §10); "" → skips
     tz_name: str           # `UserBotConfig.timezone` ("" → UTC): the archive day of `gone_at`
     language: str          # the UI language the strings are in, stored as `render_language`
     round_complete: bool   # the change feed's round is complete (marks wait for it)
@@ -200,18 +205,19 @@ class DriveTranscriptMirror:
         self._repo = repo
         self._mirror = mirror
         self._drive = drive
-        # (user, item id) -> holds of a record whose document cannot be read or written (`_hold_record`)
+        # (connection id, item id) -> holds of a record whose document cannot be read or written (`_hold_record`)
         self._held_attempts: Dict[Tuple[str, str], int] = {}
 
-    async def run(self, user_id: str, host: MirrorHost) -> Dict[str, int]:
+    async def run(self, handle: DriveHandle, host: MirrorHost) -> Dict[str, int]:
         """Steps 0-5 for one user, within the host's budgets. Raises only the systemic classes; every other failure is
         contained in its action (charged), and anything outside an action (a page read, a decode) is logged at ERROR and
         counted (`mirror_errors`), so the tick's counter refresh after the step always runs. Returns the counters."""
         counters: Counter = Counter()
-        if not host.drive_id:
+        user_id = handle.user_id
+        if not host.drive_identity:
             counters["mirror_no_drive_id"] += 1
             return dict(counters)
-        ctx = _Run(user_id, host, counters)
+        ctx = _Run(user_id, handle, host, counters)
         try:
             await self._steps(ctx)
         except _StopStep:
@@ -231,8 +237,8 @@ class DriveTranscriptMirror:
     # =================================================================================================================
 
     async def _steps(self, ctx: "_Run") -> None:
-        root = await self._mirror.get_root(ctx.user_id, ctx.drive_id)
-        if root is not None and root.drive_id != ctx.drive_id:
+        root = await self._mirror.get_root(ctx.user_id, ctx.drive_identity)
+        if root is not None and root.drive_identity != ctx.drive_identity:
             logger.error(f"[DriveMirror] user={ctx.user_id[:8]} root document of another drive returned: skipped")
             return
         if not await self._root_step(ctx, root):
@@ -302,7 +308,7 @@ class DriveTranscriptMirror:
         folder's whose listing answered 404, before anything beneath it is discarded)."""
         self._take_read(ctx)
         try:
-            await self._drive.get_change(ctx.user_id, item_id)
+            await self._drive.get_change(ctx.handle, item_id)
             return True
         except DriveItemNotFoundError:
             return False
@@ -351,10 +357,10 @@ class DriveTranscriptMirror:
         while True:
             self._check_time(ctx)
             if phase == _RESET_FILES:
-                page = await self._mirror.scan_page(ctx.user_id, ctx.drive_id, after or None, RESET_PAGE)
+                page = await self._mirror.scan_page(ctx.user_id, ctx.drive_identity, after or None, RESET_PAGE)
             else:
-                page = await self._mirror.folder_docs(ctx.user_id, ctx.drive_id, after or None, RESET_PAGE)
-            await self._reset_docs(ctx, [d for d in page if d.drive_id == ctx.drive_id])
+                page = await self._mirror.folder_docs(ctx.user_id, ctx.drive_identity, after or None, RESET_PAGE)
+            await self._reset_docs(ctx, [d for d in page if d.drive_identity == ctx.drive_identity])
             if len(page) >= RESET_PAGE:
                 after = page[-1].key
             elif phase == _RESET_FILES:
@@ -420,12 +426,12 @@ class DriveTranscriptMirror:
             if done:
                 ctx.done.add(rec.item_id)
                 if rec.mirror_retry_at is None:                # settled with no hold: its ladder starts again
-                    self._held_attempts.pop((ctx.user_id, rec.item_id), None)
+                    self._held_attempts.pop((ctx.handle.connection_id, rec.item_id), None)
 
     async def _records(self, ctx: "_Run", item_ids: Sequence[str]) -> Dict[str, DriveIndexRecord]:
         missing = [i for i in dict.fromkeys(item_ids) if i and i not in ctx.recs]
         if missing:
-            found = await self._repo.get_records(ctx.user_id, missing)
+            found = await self._repo.get_records(ctx.handle.scope, missing)
             for item_id in missing:
                 ctx.recs[item_id] = found.get(item_id)
         return {i: r for i in item_ids if (r := ctx.recs.get(i)) is not None}
@@ -435,28 +441,28 @@ class DriveTranscriptMirror:
 
     async def _doc(self, ctx: "_Run", key: str) -> Optional[MirrorDoc]:
         doc = (await self._mirror.get_docs(ctx.user_id, [key])).get(key)
-        if doc is not None and doc.drive_id != ctx.drive_id:
-            raise _OtherDrive(key)        # keys carry no drive id: never treated as absent, never overwritten
+        if doc is not None and doc.drive_identity != ctx.drive_identity:
+            raise _OtherDrive(key)        # the key carries the drive: a mismatch is a corrupt document, never overwritten
         return doc
 
     async def _doc_by_item(self, ctx: "_Run", mirror_item_id: str) -> Optional[MirrorDoc]:
         doc = await self._mirror.by_mirror_item(ctx.user_id, mirror_item_id)
-        return doc if doc is not None and doc.drive_id == ctx.drive_id else None
+        return doc if doc is not None and doc.drive_identity == ctx.drive_identity else None
 
     async def _area_root_id(self, ctx: "_Run") -> str:
         if ctx.area_root_id is None:
-            state = await self._repo.get_sync_state(ctx.user_id)
+            state = await self._repo.get_sync_state(ctx.handle.scope)
             if state is not None and state.root_item_id:
                 ctx.area_root_id = state.root_item_id
             else:
                 self._take_read(ctx)
-                ctx.area_root_id = (await self._drive.get_root(ctx.user_id)).item_id
+                ctx.area_root_id = (await self._drive.get_root(ctx.handle)).item_id
         return ctx.area_root_id
 
     async def _area_path(self, ctx: "_Run") -> str:
         if ctx.area_path is None:
             self._take_read(ctx)
-            ctx.area_path = await self._drive.area_path(ctx.user_id)
+            ctx.area_path = await self._drive.area_path(ctx.handle)
         return ctx.area_path
 
     async def _root_path(self, ctx: "_Run") -> str:
@@ -536,15 +542,15 @@ class DriveTranscriptMirror:
             area_root = await self._area_root_id(ctx)
             for name in root_name_candidates():
                 self._take_read(ctx)
-                if await self._drive.child_by_name(ctx.user_id, area_root, name) is not None:
+                if await self._drive.child_by_name(ctx.handle, area_root, name) is not None:
                     continue
                 self._take_op(ctx)
                 try:
-                    item = await self._drive.create_folder(ctx.user_id, area_root, name)
+                    item = await self._drive.create_folder(ctx.handle, area_root, name)
                 except DriveNameConflictError:
                     continue
                 if base is None:
-                    root = MirrorRoot(user_id=ctx.user_id, drive_id=ctx.drive_id, root_item_id=item.item_id,
+                    root = MirrorRoot(user_id=ctx.user_id, drive_identity=ctx.drive_identity, root_item_id=item.item_id,
                                       root_name=name, created_at=ctx.now)
                 else:
                     root = replace(base, root_item_id=item.item_id, root_name=name, created_at=ctx.now,
@@ -594,7 +600,7 @@ class DriveTranscriptMirror:
             data = readme_bytes(ctx.host.strings())
             if not ctx.root_created:
                 self._take_read(ctx)
-                found = await self._drive.child_by_name(ctx.user_id, root.root_item_id, README_NAME)
+                found = await self._drive.child_by_name(ctx.handle, root.root_item_id, README_NAME)
                 if found is not None:
                     pending = ctx.need_root.readme_pending_at
                     if pending is not None and _ours(found.is_folder, found.created_at, found.size_bytes, pending,
@@ -613,7 +619,7 @@ class DriveTranscriptMirror:
             self._take_op(ctx)
             await self._save_root(ctx, replace(ctx.need_root, readme_pending_at=ctx.now))
             try:
-                item = await self._drive.upload(ctx.user_id, root.root_item_id, README_NAME, data, MD_TYPE,
+                item = await self._drive.upload(ctx.handle, root.root_item_id, README_NAME, data, MD_TYPE,
                                                 conflict="fail")
             except DriveNameConflictError:
                 ctx.counters["mirror_foreign"] += 1
@@ -621,7 +627,7 @@ class DriveTranscriptMirror:
                                f"{MIRROR_AUDIT_DAYS} days")
                 await self._save_root(ctx, replace(ctx.need_root, readme_pending_at=None, readme_blocked_at=ctx.now))
                 return
-            await self._save_root(ctx, replace(ctx.need_root, readme_item_id=item.item_id, readme_ctag=item.ctag,
+            await self._save_root(ctx, replace(ctx.need_root, readme_item_id=item.item_id, readme_ctag=item.content_version,
                                                readme_pending_at=None, readme_blocked_at=None))
             ctx.counters["mirror_readme_written"] += 1
 
@@ -638,7 +644,7 @@ class DriveTranscriptMirror:
             return
         prefix, _, after = root.seed_cursor.partition("|")
         start = after if prefix == target and after else None
-        page = await self._repo.transcript_records(ctx.user_id, "current", MIRROR_SEED_PAGE, after=start)
+        page = await self._repo.transcript_records(ctx.handle.scope, "current", MIRROR_SEED_PAGE, after=start)
         changed = [planned for rec in page if (planned := mirror_plan(rec)) != rec]
         await self._commit(ctx, changed, done=False)
         ctx.counters["mirror_seeded"] += len(changed)
@@ -650,8 +656,8 @@ class DriveTranscriptMirror:
     # -- step 3: marks ---------------------------------------------------------------------------------------------
 
     async def _marks(self, ctx: "_Run") -> None:
-        marks = [m for m in await self._mirror.ready_marks(ctx.user_id, ctx.drive_id, ctx.now, MARKS_PAGE)
-                 if m.drive_id == ctx.drive_id]
+        marks = [m for m in await self._mirror.ready_marks(ctx.user_id, ctx.drive_identity, ctx.now, MARKS_PAGE)
+                 if m.drive_identity == ctx.drive_identity]
         marks.sort(key=lambda m: 0 if m.kind == KIND_FILE else 1)      # stable: files before the folders above them
         for doc in marks:
             self._check_time(ctx)
@@ -680,7 +686,7 @@ class DriveTranscriptMirror:
         if decision is Decision.CHECK:
             self._take_read(ctx)
             try:
-                await self._drive.get_change(ctx.user_id, doc.source_item_id)
+                await self._drive.get_change(ctx.handle, doc.source_item_id)
                 found = True
             except DriveItemNotFoundError:
                 found = False                       # Δ211: read as "gone" for a source the index no longer holds
@@ -752,7 +758,7 @@ class DriveTranscriptMirror:
         if found is None:
             return
         doc = found
-        kids = await self._mirror.children(ctx.user_id, ctx.drive_id, doc.mirror_item_id, CHILDREN_MAX)
+        kids = await self._mirror.children(ctx.user_id, ctx.drive_identity, doc.mirror_item_id, CHILDREN_MAX)
         if kids and all(k.state == MIRROR_DETACHED for k in kids):
             await self._detach(ctx, doc)
         elif kids:
@@ -821,12 +827,12 @@ class DriveTranscriptMirror:
         """`Archive`, the day folder, then the folders of the mirror path (or the day's `Long paths`), each an archive
         folder document keyed by (drive, day, path). Returns the target folder's item id."""
         root_id = ctx.need_root.root_item_id
-        parent = await self._fixed_folder(ctx, archive_folder_key(ctx.user_id, ctx.drive_id, "", ARCHIVE_NAME),
+        parent = await self._fixed_folder(ctx, archive_folder_key(ctx.user_id, ctx.drive_identity, "", ARCHIVE_NAME),
                                           root_id, ARCHIVE_NAME)
         parent = await self._archive_folder(ctx, day, "", parent, day, LEVEL_OTHER)
         dirs = placement.parts[2:-1]
         if placement.long_path or tuple(dirs) == (LONG_PATHS_NAME,):     # a file of the active `Long paths` too
-            return await self._fixed_folder(ctx, archive_folder_key(ctx.user_id, ctx.drive_id, day, LONG_PATHS_NAME),
+            return await self._fixed_folder(ctx, archive_folder_key(ctx.user_id, ctx.drive_identity, day, LONG_PATHS_NAME),
                                             parent, LONG_PATHS_NAME)
         path: List[str] = []
         for name in dirs:
@@ -836,7 +842,7 @@ class DriveTranscriptMirror:
         return parent
 
     async def _archive_folder(self, ctx: "_Run", day: str, path: str, parent: str, name: str, level: str) -> str:
-        key = archive_folder_key(ctx.user_id, ctx.drive_id, day, path)
+        key = archive_folder_key(ctx.user_id, ctx.drive_identity, day, path)
         doc = await self._doc(ctx, key) or _archive_doc(ctx, key, name)
         if doc.pending_op and not doc.mirror_item_id:
             doc = await self._resolve_intent(ctx, doc, None)
@@ -869,13 +875,13 @@ class DriveTranscriptMirror:
     # -- step 4: due records ---------------------------------------------------------------------------------------
 
     async def _due(self, ctx: "_Run") -> None:
-        wakeups = await self._repo.mirror_wakeups(ctx.user_id, ctx.now, WAKEUP_PAGE)
+        wakeups = await self._repo.mirror_wakeups(ctx.handle.scope, ctx.now, WAKEUP_PAGE)
         if wakeups:
             await self._commit(ctx, [woken(r) for r in wakeups], done=False)
             ctx.counters["mirror_woken"] += len(wakeups)
         seen: Set[str] = set()
         while True:
-            page = await self._repo.mirror_queue(ctx.user_id, QUEUE_PAGE)
+            page = await self._repo.mirror_queue(ctx.handle.scope, QUEUE_PAGE)
             fresh = [r for r in page if r.item_id not in seen and r.item_id not in ctx.done]
             if not fresh:
                 return
@@ -892,7 +898,7 @@ class DriveTranscriptMirror:
                 return
 
     async def _charge(self, ctx: "_Run", rec: DriveIndexRecord) -> None:
-        key = doc_key(ctx.user_id, KIND_FOLDER if rec.is_folder else KIND_FILE, rec.item_id)
+        key = _ledger_key(ctx, KIND_FOLDER if rec.is_folder else KIND_FILE, rec)
         try:
             doc = await self._doc(ctx, key) or (_folder_doc(ctx, rec) if rec.is_folder else _file_doc(ctx, rec))
         except (_SYSTEMIC + (_StopStep,) + ctx.stops):
@@ -915,7 +921,7 @@ class DriveTranscriptMirror:
         Δ227): the same ladder as a charged document's — a growing back-off, then parked for MIRROR_FAILED_RETRY at
         MIRROR_MAX_ATTEMPTS — instead of the first back-off every time, which made such a record ripe again (and the
         reserve taken) for good (final review, deploy Minor 3). A restart starts the ladder again: bounded."""
-        slot = (ctx.user_id, rec.item_id)
+        slot = (ctx.handle.connection_id, rec.item_id)
         attempts = self._held_attempts.get(slot, 0)
         self._held_attempts[slot] = attempts + 1
         base = replace(_folder_doc(ctx, rec) if rec.is_folder else _file_doc(ctx, rec), attempts=attempts)
@@ -949,7 +955,7 @@ class DriveTranscriptMirror:
         source_path = "/".join(a.name for a in chain)
         data = render_file(stored, rec, ctx.host.strings(), source_path=source_path, recorded_on=rec.effective_day)
         work = _FileWork(rec, chain, source_path, data, rendered_hash(data))
-        key = doc_key(ctx.user_id, KIND_FILE, rec.item_id)
+        key = _ledger_key(ctx, KIND_FILE, rec)
         doc = reset_charges(await self._doc(ctx, key) or _file_doc(ctx, rec), mirror_digest(rec))
         if doc.pending_op and not doc.mirror_item_id:
             doc = await self._resolve_intent(ctx, doc, len(data))
@@ -979,7 +985,7 @@ class DriveTranscriptMirror:
             folder_names = [await self._chain_name(ctx, a) for a in work.chain]
             long = not fits(await self._area_path(ctx), await self._root_path(ctx), [*folder_names, name])
         if long:
-            parent = await self._fixed_folder(ctx, archive_folder_key(ctx.user_id, ctx.drive_id, "", LONG_PATHS_NAME),
+            parent = await self._fixed_folder(ctx, archive_folder_key(ctx.user_id, ctx.drive_identity, "", LONG_PATHS_NAME),
                                               ctx.need_root.root_item_id, LONG_PATHS_NAME)
             level = LEVEL_OTHER
             prefix_parts: Tuple[str, ...] = (LONG_PATHS_NAME,)
@@ -1014,12 +1020,12 @@ class DriveTranscriptMirror:
             await self._ensure_inside(ctx, doc.mirror_parent_id)     # and its folder
             self._take_op(ctx)
             try:
-                item = await self._drive.replace_content(ctx.user_id, doc.mirror_item_id, work.data, MD_TYPE)
+                item = await self._drive.replace_content(ctx.handle, doc.mirror_item_id, work.data, MD_TYPE)
             except DriveItemNotFoundError:            # no read here: `_item_gone` says why
                 return await self._item_gone(ctx, doc, work), False
             work.wrote = True
             ctx.counters["mirror_replaced"] += 1
-            return await self._saved(ctx, _snapshot(replace(doc, rendered_hash=work.hash, mirror_ctag=item.ctag,
+            return await self._saved(ctx, _snapshot(replace(doc, rendered_hash=work.hash, mirror_ctag=item.content_version,
                                                             render_version=plan.RENDER_VERSION,
                                                             render_language=ctx.host.language), work)), False
         # CREATE, MOVE, RESTORE: a placement in `parent`
@@ -1070,7 +1076,7 @@ class DriveTranscriptMirror:
 
     async def _chain_name(self, ctx: "_Run", folder: DriveIndexRecord) -> str:
         """The name a source folder has in the mirror: its document's, else the source's."""
-        doc = await self._doc(ctx, doc_key(ctx.user_id, KIND_FOLDER, folder.item_id))
+        doc = await self._doc(ctx, _ledger_key(ctx, KIND_FOLDER, folder))
         return doc.mirror_name if doc is not None and doc.mirror_item_id else folder.name
 
     async def _source_chain(self, ctx: "_Run", rec: DriveIndexRecord) -> List[DriveIndexRecord]:
@@ -1096,7 +1102,7 @@ class DriveTranscriptMirror:
         a Graph write happened."""
         parent, level, wrote = ctx.need_root.root_item_id, LEVEL_ROOT, False
         for folder in chain:
-            key = doc_key(ctx.user_id, KIND_FOLDER, folder.item_id)
+            key = _ledger_key(ctx, KIND_FOLDER, folder)
             doc = await self._doc(ctx, key) or _folder_doc(ctx, folder)
             if doc.pending_op and not doc.mirror_item_id:
                 doc = await self._resolve_intent(ctx, doc, None)
@@ -1188,7 +1194,7 @@ class DriveTranscriptMirror:
         stale record) or was moved back now (its own move, or an ancestor's, which `_move_back` ensures first)."""
         self._take_read(ctx)
         try:
-            change = await self._drive.get_change(ctx.user_id, folder_item_id)
+            change = await self._drive.get_change(ctx.handle, folder_item_id)
         except DriveItemNotFoundError:
             return False
         parent = change.parent_id
@@ -1216,8 +1222,8 @@ class DriveTranscriptMirror:
         file and folder documents of the folder (wanted names from their records when those are mirror-eligible in the
         same folder, else from the document); fixed: archive folders, detached and archived documents, every document
         of a frozen (archive) folder, and the names foreign items hold this run."""
-        kids = await self._mirror.children(ctx.user_id, ctx.drive_id, parent, CHILDREN_MAX)
-        kids = [k for k in kids if k.drive_id == ctx.drive_id and (subject is None or k.key != subject.key)]
+        kids = await self._mirror.children(ctx.user_id, ctx.drive_identity, parent, CHILDREN_MAX)
+        kids = [k for k in kids if k.drive_identity == ctx.drive_identity and (subject is None or k.key != subject.key)]
         movable = [] if frozen else [k for k in kids if k.kind in (KIND_FILE, KIND_FOLDER) and k.state == MIRROR_ACTIVE
                                      and k.mirror_item_id and k.key not in ctx.fixed]
         movable_keys = {k.key for k in movable}
@@ -1296,7 +1302,7 @@ class DriveTranscriptMirror:
         self._take_op(ctx)
         new_name = move.to_name if move.to_name != doc.mirror_name else None
         try:
-            item = await self._drive.move(ctx.user_id, doc.mirror_item_id, new_parent_id=new_parent,
+            item = await self._drive.move(ctx.handle, doc.mirror_item_id, new_parent_id=new_parent,
                                           new_name=new_name)
         except DriveNameConflictError:
             raise _NameTaken(move.to_parent, move.to_name)
@@ -1309,7 +1315,7 @@ class DriveTranscriptMirror:
         # a move never changes content: the recorded cTag stays the reference (an owner's edit made before the move would
         # otherwise become it, and never be rewritten; Δ242)
         moved = replace(doc, mirror_parent_id=move.to_parent, mirror_name=move.to_name,
-                        mirror_ctag=doc.mirror_ctag or item.ctag)
+                        mirror_ctag=doc.mirror_ctag or item.content_version)
         if doc.kind != KIND_FILE:
             ctx.inside[doc.mirror_item_id] = True          # placed inside by this run: its record is stale until seen
         if sibling:
@@ -1325,12 +1331,12 @@ class DriveTranscriptMirror:
         destination resets that folder's document (`_ChainReset`); both present raises."""
         self._take_read(ctx)
         try:
-            await self._drive.get_change(ctx.user_id, doc.mirror_item_id)
+            await self._drive.get_change(ctx.handle, doc.mirror_item_id)
         except DriveItemNotFoundError:
             return True
         self._take_read(ctx)
         try:
-            await self._drive.get_change(ctx.user_id, dest)
+            await self._drive.get_change(ctx.handle, dest)
         except DriveItemNotFoundError:
             await self._reset_folder_item(ctx, dest)
             raise _ChainReset()
@@ -1370,13 +1376,13 @@ class DriveTranscriptMirror:
         root_id = ctx.need_root.root_item_id
         self._take_read(ctx)
         try:
-            await self._drive.get_change(ctx.user_id, root_id)
+            await self._drive.get_change(ctx.handle, root_id)
         except DriveItemNotFoundError:
             await self._root_missing(ctx)
         if parent != root_id:
             self._take_read(ctx)
             try:
-                await self._drive.get_change(ctx.user_id, parent)
+                await self._drive.get_change(ctx.handle, parent)
             except DriveItemNotFoundError:
                 await self._reset_folder_item(ctx, parent)
                 raise _ChainReset()
@@ -1391,7 +1397,7 @@ class DriveTranscriptMirror:
         and the re-run (the UI language, the header link, a new transcript version) would otherwise judge the bot's own
         file foreign and leave it in the mirror for good."""
         self._take_read(ctx)
-        found = await self._drive.child_by_name(ctx.user_id, doc.pending_parent_id, doc.pending_name)
+        found = await self._drive.child_by_name(ctx.handle, doc.pending_parent_id, doc.pending_name)
         cleared = replace(doc, pending_op="", pending_name="", pending_parent_id="", pending_at=None, pending_size=0)
         if found is None:
             return cleared
@@ -1420,28 +1426,28 @@ class DriveTranscriptMirror:
         await self._ensure_inside(ctx, parent)
         doc = await self._intent(ctx, doc, parent, name)
         try:
-            item = await self._drive.create_folder(ctx.user_id, parent, name)
+            item = await self._drive.create_folder(ctx.handle, parent, name)
         except DriveNameConflictError:
             raise _NameTaken(parent, name)
         except DriveItemNotFoundError:
             await self._create_404(ctx, parent)
             raise
         return await self._saved(ctx, replace(doc, mirror_item_id=item.item_id, mirror_parent_id=parent,
-                                              mirror_name=name, mirror_ctag=item.ctag, pending_op="",
+                                              mirror_name=name, mirror_ctag=item.content_version, pending_op="",
                                               pending_name="", pending_parent_id="", pending_at=None, pending_size=0))
 
     async def _upload(self, ctx: "_Run", work: "_FileWork", doc: MirrorDoc, parent: str, name: str) -> MirrorDoc:
         await self._ensure_inside(ctx, parent)
         doc = await self._intent(ctx, _snapshot(doc, work), parent, name, len(work.data))
         try:
-            item = await self._drive.upload(ctx.user_id, parent, name, work.data, MD_TYPE, conflict="fail")
+            item = await self._drive.upload(ctx.handle, parent, name, work.data, MD_TYPE, conflict="fail")
         except DriveNameConflictError:
             raise _NameTaken(parent, name)
         except DriveItemNotFoundError:
             await self._create_404(ctx, parent)
             raise
         return await self._saved(ctx, replace(doc, mirror_item_id=item.item_id, mirror_parent_id=parent,
-                                              mirror_name=name, mirror_ctag=item.ctag, rendered_hash=work.hash,
+                                              mirror_name=name, mirror_ctag=item.content_version, rendered_hash=work.hash,
                                               render_version=plan.RENDER_VERSION, render_language=ctx.host.language,
                                               pending_op="", pending_name="", pending_parent_id="", pending_at=None,
                                               pending_size=0))
@@ -1457,7 +1463,7 @@ class DriveTranscriptMirror:
             folder = await self._doc_by_item(ctx, folder_id)
             if folder is None or folder.state != MIRROR_ACTIVE:
                 return
-            long_paths = archive_folder_key(ctx.user_id, ctx.drive_id, "", LONG_PATHS_NAME)
+            long_paths = archive_folder_key(ctx.user_id, ctx.drive_identity, "", LONG_PATHS_NAME)
             if folder.kind == KIND_ARCHIVE and folder.key != long_paths:
                 return
             level = LEVEL_OTHER
@@ -1499,7 +1505,7 @@ class DriveTranscriptMirror:
         inside → kept and counted, listed again a week later; already gone → the document goes."""
         self._take_read(ctx)
         try:
-            page = await self._drive.list_children_changes(ctx.user_id, doc.mirror_item_id, 1)
+            page = await self._drive.list_children_changes(ctx.handle, doc.mirror_item_id, 1)
         except DriveItemNotFoundError:
             ctx.host.fence()
             await self._mirror.delete_doc(ctx.user_id, doc.key)
@@ -1512,7 +1518,7 @@ class DriveTranscriptMirror:
         await self._ensure_inside(ctx, doc.mirror_item_id)
         self._take_op(ctx)
         try:
-            await self._drive.delete(ctx.user_id, doc.mirror_item_id)
+            await self._drive.delete(ctx.handle, doc.mirror_item_id)
         except DriveItemNotFoundError:
             logger.debug(f"[DriveMirror] user={ctx.user_id[:8]} a pruned folder was already gone")
         ctx.host.fence()
@@ -1531,9 +1537,9 @@ class DriveTranscriptMirror:
         (store only), the reads after; the cursor moves only once the page is done, so a stopped page is read again."""
         if not (ctx.host.round_complete and ctx.host.epoch_idle):
             return
-        page = await self._mirror.scan_page(ctx.user_id, ctx.drive_id, ctx.need_root.scan_cursor or None,
+        page = await self._mirror.scan_page(ctx.user_id, ctx.drive_identity, ctx.need_root.scan_cursor or None,
                                             MIRROR_SCAN_PAGE)
-        docs = [d for d in page if d.drive_id == ctx.drive_id and d.kind == KIND_FILE]
+        docs = [d for d in page if d.drive_identity == ctx.drive_identity and d.kind == KIND_FILE]
         recs = await self._records(ctx, [d.source_item_id for d in docs])
         lost = [d for d in docs if d.state == MIRROR_ACTIVE and not d.gone_pending and d.source_item_id not in recs]
         if lost:
@@ -1556,7 +1562,8 @@ class DriveTranscriptMirror:
     async def _scan_marks(self, ctx: "_Run", docs: Sequence[MirrorDoc]) -> None:
         ctx.host.fence()
         marked_n = await self._mirror.mark_gone(
-            ctx.user_id, [DeletionNotice(d.source_item_id, UNKNOWN, ctx.now) for d in docs], drive_id=ctx.drive_id)
+            ctx.user_id, [DeletionNotice(d.source_item_id, UNKNOWN, ctx.now, source_identity=d.source_identity)
+                          for d in docs], drive_identity=ctx.drive_identity)
         ctx.counters["mirror_scan_marked"] += marked_n
 
     async def _recheck(self, ctx: "_Run", doc: MirrorDoc) -> None:
@@ -1565,7 +1572,7 @@ class DriveTranscriptMirror:
         after the grace (Δ211: a 404 is read as gone for a source the index no longer holds)."""
         self._take_read(ctx)
         try:
-            await self._drive.get_change(ctx.user_id, doc.source_item_id)
+            await self._drive.get_change(ctx.handle, doc.source_item_id)
             found = True
         except DriveItemNotFoundError:
             found = False
@@ -1574,7 +1581,8 @@ class DriveTranscriptMirror:
             return
         checked = replace(reset_charges(fresh), checked_at=ctx.now)
         if not found:
-            checked = marked(checked, DeletionNotice(doc.source_item_id, GONE, ctx.now))
+            checked = marked(checked, DeletionNotice(doc.source_item_id, GONE, ctx.now,
+                                                     source_identity=doc.source_identity))
             ctx.counters["mirror_detached_gone"] += 1
         await self._save_doc(ctx, checked)
         ctx.counters["mirror_rechecked"] += 1
@@ -1641,7 +1649,7 @@ class DriveTranscriptMirror:
         Folder root, unless an orphan was reported already; after that: the end (None)."""
         if stage == AUDIT_AREA:
             return None
-        nxt = await self._mirror.folder_docs(ctx.user_id, ctx.drive_id, stage or None, 1)
+        nxt = await self._mirror.folder_docs(ctx.user_id, ctx.drive_identity, stage or None, 1)
         if nxt:
             return nxt[0].key
         return None if ctx.need_root.orphans_reported else AUDIT_AREA
@@ -1663,8 +1671,8 @@ class DriveTranscriptMirror:
             if not listed:
                 return False
         threshold = root.audited_at or root.created_at
-        for doc in await self._mirror.children(ctx.user_id, ctx.drive_id, folder_id, CHILDREN_MAX):
-            if doc.drive_id != ctx.drive_id or not doc.mirror_item_id or doc.key in ctx.audit_seen:
+        for doc in await self._mirror.children(ctx.user_id, ctx.drive_identity, folder_id, CHILDREN_MAX):
+            if doc.drive_identity != ctx.drive_identity or not doc.mirror_item_id or doc.key in ctx.audit_seen:
                 continue
             if threshold is not None and doc.audit_seen_at is not None and doc.audit_seen_at > threshold:
                 continue                                     # seen on an earlier page of this cycle
@@ -1691,7 +1699,7 @@ class DriveTranscriptMirror:
         async def listing() -> None:
             self._take_read(ctx)
             try:
-                box.append(await self._drive.list_children_changes(ctx.user_id, folder_id, AUDIT_PAGE,
+                box.append(await self._drive.list_children_changes(ctx.handle, folder_id, AUDIT_PAGE,
                                                                    root.audit_page_cursor or None))
             except DriveItemNotFoundError:
                 box.append(None)
@@ -1707,8 +1715,8 @@ class DriveTranscriptMirror:
                 return True
             await self._save_root(ctx, replace(ctx.need_root, audit_page_cursor=AUDIT_GONE))
             return await self._audit_folder_gone(ctx, folder)
-        kids = await self._mirror.children(ctx.user_id, ctx.drive_id, folder_id, CHILDREN_MAX)
-        by_item = {k.mirror_item_id: k for k in kids if k.drive_id == ctx.drive_id and k.mirror_item_id}
+        kids = await self._mirror.children(ctx.user_id, ctx.drive_identity, folder_id, CHILDREN_MAX)
+        by_item = {k.mirror_item_id: k for k in kids if k.drive_identity == ctx.drive_identity and k.mirror_item_id}
         for change in page.changes:
             self._check_time(ctx)
             if folder is None and root.readme_item_id and change.item_id == root.readme_item_id:
@@ -1748,7 +1756,7 @@ class DriveTranscriptMirror:
         (`_audit_archived`, Δ241, Δ243)."""
         if doc.state in (MIRROR_ARCHIVED, MIRROR_DETACHED):
             return True
-        return doc.kind == KIND_ARCHIVE and doc.key != archive_folder_key(ctx.user_id, ctx.drive_id, "",
+        return doc.kind == KIND_ARCHIVE and doc.key != archive_folder_key(ctx.user_id, ctx.drive_identity, "",
                                                                           LONG_PATHS_NAME)
 
     async def _audit_listed(self, ctx: "_Run", doc: MirrorDoc, change: DriveChange, folder_id: str) -> None:
@@ -1817,9 +1825,9 @@ class DriveTranscriptMirror:
         await self._ensure_inside(ctx, doc.mirror_item_id)
         await self._ensure_inside(ctx, doc.mirror_parent_id)
         self._take_op(ctx)
-        item = await self._drive.replace_content(ctx.user_id, doc.mirror_item_id, data, MD_TYPE)
+        item = await self._drive.replace_content(ctx.handle, doc.mirror_item_id, data, MD_TYPE)
         ctx.counters["mirror_archive_rewritten"] += 1
-        return await self._saved(ctx, replace(doc, mirror_ctag=item.ctag, rendered_hash=rendered_hash(data),
+        return await self._saved(ctx, replace(doc, mirror_ctag=item.content_version, rendered_hash=rendered_hash(data),
                                               render_language=ctx.host.language, audit_seen_at=ctx.now))
 
     async def _move_back(self, ctx: "_Run", doc: MirrorDoc, change: DriveChange) -> bool:
@@ -1851,7 +1859,7 @@ class DriveTranscriptMirror:
             return True
         self._take_op(ctx)
         try:
-            item = await self._drive.move(ctx.user_id, doc.mirror_item_id, new_parent_id=new_parent,
+            item = await self._drive.move(ctx.handle, doc.mirror_item_id, new_parent_id=new_parent,
                                           new_name=new_name)
         except (DriveNameConflictError, DriveItemNotFoundError):
             ctx.counters["mirror_move_back_blocked"] += 1
@@ -1872,7 +1880,7 @@ class DriveTranscriptMirror:
             if edited:
                 ctx.counters["mirror_rewrite_due"] += 1
             return False
-        await self._save_doc(ctx, replace(doc, mirror_ctag=doc.mirror_ctag or item.ctag, audit_seen_at=ctx.now, **redo))
+        await self._save_doc(ctx, replace(doc, mirror_ctag=doc.mirror_ctag or item.content_version, audit_seen_at=ctx.now, **redo))
         ctx.counters["mirror_moved_back"] += 1
         if edited:
             await self._make_due(ctx, doc)
@@ -1896,7 +1904,7 @@ class DriveTranscriptMirror:
         inside the mirror, and a move out of it ends the document like a deletion."""
         self._take_read(ctx)
         try:
-            change = await self._drive.get_change(ctx.user_id, doc.mirror_item_id)
+            change = await self._drive.get_change(ctx.handle, doc.mirror_item_id)
         except DriveItemNotFoundError:
             await self._audit_gone(ctx, doc)
             return
@@ -1928,7 +1936,7 @@ class DriveTranscriptMirror:
                 continue
             self._take_read(ctx)
             try:
-                parent_id = (await self._drive.get_change(ctx.user_id, parent_id)).parent_id
+                parent_id = (await self._drive.get_change(ctx.handle, parent_id)).parent_id
             except DriveItemNotFoundError:
                 return False
         return False
@@ -1947,8 +1955,8 @@ class DriveTranscriptMirror:
         if depth > MAX_CHAIN_DEPTH:
             raise _Unplaceable("mirror folders nested too deep")
         for _ in range(MAX_CHAIN_DEPTH * 64):
-            kids = [k for k in await self._mirror.children(ctx.user_id, ctx.drive_id, folder.mirror_item_id,
-                                                           CHILDREN_MAX) if k.drive_id == ctx.drive_id]
+            kids = [k for k in await self._mirror.children(ctx.user_id, ctx.drive_identity, folder.mirror_item_id,
+                                                           CHILDREN_MAX) if k.drive_identity == ctx.drive_identity]
             for kid in kids:
                 self._check_time(ctx)
                 if kid.kind in (KIND_FOLDER, KIND_ARCHIVE) and kid.mirror_item_id:
@@ -1985,7 +1993,7 @@ class DriveTranscriptMirror:
         if change is None:
             self._take_read(ctx)
             try:
-                change = await self._drive.get_change(ctx.user_id, root.readme_item_id)
+                change = await self._drive.get_change(ctx.handle, root.readme_item_id)
             except DriveItemNotFoundError:
                 change = None
         if change is None or change.parent_id != root.root_item_id or fold(change.name) != fold(README_NAME):
@@ -1999,9 +2007,9 @@ class DriveTranscriptMirror:
             await self._save_root(ctx, replace(root, readme_ctag=change.content_version))
             return
         self._take_op(ctx)
-        item = await self._drive.replace_content(ctx.user_id, root.readme_item_id, readme_bytes(ctx.host.strings()),
+        item = await self._drive.replace_content(ctx.handle, root.readme_item_id, readme_bytes(ctx.host.strings()),
                                                  MD_TYPE)
-        await self._save_root(ctx, replace(ctx.need_root, readme_ctag=item.ctag))
+        await self._save_root(ctx, replace(ctx.need_root, readme_ctag=item.content_version))
         ctx.counters["mirror_readme_written"] += 1
 
     async def _audit_area(self, ctx: "_Run") -> bool:
@@ -2017,7 +2025,7 @@ class DriveTranscriptMirror:
 
         async def listing() -> None:
             self._take_read(ctx)
-            box.append(await self._drive.list_children_changes(ctx.user_id, area, AUDIT_PAGE,
+            box.append(await self._drive.list_children_changes(ctx.handle, area, AUDIT_PAGE,
                                                                root.audit_page_cursor or None))
 
         await self._guard(ctx, "audit app folder listing", listing(), None)
@@ -2101,6 +2109,7 @@ class _Run:
     """One run's state: the root, the lazily read paths, the records read, the names foreign items hold, the records
     written, the folders to prune, and what the audit saw."""
     user_id: str
+    handle: DriveHandle   # the connection the tick is for: every drive call and record read (MULTI_DRIVE_RFC §8)
     host: MirrorHost
     counters: Counter
     root: Optional[MirrorRoot] = None
@@ -2124,8 +2133,8 @@ class _Run:
         return tuple(self.host.stop_exceptions)
 
     @property
-    def drive_id(self) -> str:
-        return self.host.drive_id
+    def drive_identity(self) -> str:
+        return self.host.drive_identity
 
     @property
     def now(self) -> datetime:
@@ -2208,18 +2217,25 @@ def _ours(is_folder: bool, created_at: Optional[datetime], size: int, pending_at
     return folder or (want_size is not None and size == want_size)
 
 
+def _ledger_key(ctx: _Run, kind: str, rec: DriveIndexRecord) -> str:
+    """The ledger key of the record's file or folder document on this mirror: by the mirror's drive identity and the
+    record's item identity (MULTI_DRIVE_RFC §10; ValueError for a record without an identity)."""
+    return ledger_key(ctx.user_id, kind, ctx.drive_identity, rec.identity)
+
+
 def _file_doc(ctx: _Run, rec: DriveIndexRecord) -> MirrorDoc:
-    return MirrorDoc(user_id=ctx.user_id, drive_id=ctx.drive_id, kind=KIND_FILE, source_item_id=rec.item_id,
-                     source_name=rec.name, source_parent_id=rec.parent_id, content_key=rec.transcript_key)
+    return MirrorDoc(user_id=ctx.user_id, drive_identity=ctx.drive_identity, kind=KIND_FILE, source_item_id=rec.item_id,
+                     source_identity=rec.identity, source_name=rec.name, source_parent_id=rec.parent_id,
+                     content_key=rec.transcript_key)
 
 
 def _folder_doc(ctx: _Run, rec: DriveIndexRecord) -> MirrorDoc:
-    return MirrorDoc(user_id=ctx.user_id, drive_id=ctx.drive_id, kind=KIND_FOLDER, source_item_id=rec.item_id,
-                     source_name=rec.name, source_parent_id=rec.parent_id)
+    return MirrorDoc(user_id=ctx.user_id, drive_identity=ctx.drive_identity, kind=KIND_FOLDER, source_item_id=rec.item_id,
+                     source_identity=rec.identity, source_name=rec.name, source_parent_id=rec.parent_id)
 
 
 def _archive_doc(ctx: _Run, key: str, name: str) -> MirrorDoc:
-    return MirrorDoc(user_id=ctx.user_id, drive_id=ctx.drive_id, kind=KIND_ARCHIVE,
+    return MirrorDoc(user_id=ctx.user_id, drive_identity=ctx.drive_identity, kind=KIND_ARCHIVE,
                      source_item_id=key.rsplit(":", 1)[1], source_name=name)
 
 

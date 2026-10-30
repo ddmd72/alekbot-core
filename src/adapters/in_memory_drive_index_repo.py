@@ -189,6 +189,12 @@ class InMemoryDriveIndexRepository(DriveIndexRepository):
         found = {i: self._record(scope, i) for i in dict.fromkeys(item_ids)}
         return {i: r for i, r in found.items() if r is not None}
 
+    async def records_by_identity(self, scope: ConnectionScope,
+                                  identities: Sequence[str]) -> Dict[str, DriveIndexRecord]:
+        wanted = set(identities)
+        return {r.identity: r for r in sorted(self._conn(scope), key=lambda r: r.item_id)
+                if r.identity and r.identity in wanted}
+
     async def upsert_records(self, records: Sequence[DriveIndexRecord],
                              card_vectors: Optional[Mapping[str, Sequence[float]]] = None) -> None:
         stuck = [rec.item_id for rec in records if rec.due_at is not None and rec.priority is None]

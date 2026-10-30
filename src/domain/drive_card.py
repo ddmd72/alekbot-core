@@ -58,6 +58,12 @@ def content_key_of(identity: Optional[ContentIdentity]) -> Optional[str]:
     return identity.render() if identity is not None else None
 
 
+def content_hash_of(change: DriveChange) -> Optional[str]:
+    """TRANSITIONAL (slice 1b): `content_key_of(change.content_identity)`, kept only so part D's note modules of the
+    frozen core import in this branch; part D's branch no longer calls it, and it is deleted at assembly."""
+    return content_key_of(change.content_identity)
+
+
 def effective_date(change: DriveChange, fallback: datetime) -> datetime:
     """The date a user means (§3.1): taken, else filesystem-modified, else server time."""
     return change.media.taken_at or change.fs_modified_at or change.modified_at or fallback

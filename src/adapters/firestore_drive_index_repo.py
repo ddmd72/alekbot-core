@@ -885,6 +885,16 @@ class FirestoreDriveIndexRepository(DriveIndexRepository):
                         found[rec.item_id] = rec
         return found
 
+    async def records_by_identity(self, scope: ConnectionScope,
+                                  identities: Sequence[str]) -> Dict[str, DriveIndexRecord]:
+        """`connection_id ==` and `identity in [...]`, IN_VALUES_MAX identities per query (equality filters only)."""
+        found: Dict[str, DriveIndexRecord] = {}
+        for part in _chunks(sorted(set(i for i in identities if i)), IN_VALUES_MAX):
+            query = self._conn_query(scope).where(filter=FieldFilter("identity", "in", list(part)))
+            for rec in await self._read(scope, query):
+                found.setdefault(rec.identity, rec)
+        return found
+
     async def upsert_records(self, records: Sequence[DriveIndexRecord],
                              card_vectors: Optional[Mapping[str, Sequence[float]]] = None) -> None:
         stuck = [rec.item_id for rec in records if rec.due_at is not None and rec.priority is None]
