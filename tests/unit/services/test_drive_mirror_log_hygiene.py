@@ -9,6 +9,7 @@ from src.domain.drive_mirror import KIND_FILE, MIRROR_ARCHIVED, MirrorDoc
 from src.ports.drive_mirror_repository import DriveMirrorRepository
 from src.services.drive_search_service import DriveSearchService
 from src.utils.logger import exc_brief
+from tests.support.drive_connection_service_fake import connection
 
 SECRET = "drive item not found: /Apps/Alek/Secret Interview.mp4"
 
@@ -28,7 +29,7 @@ async def test_mirror_path_lookup_failure_logs_no_message(caplog):
     mirror = AsyncMock(spec=DriveMirrorRepository)
     mirror.get_docs.side_effect = RuntimeError(SECRET)
     with caplog.at_level(logging.DEBUG):
-        assert await _service(mirror)._active_mirror_path("u", "item") == ""
+        assert await _service(mirror)._active_mirror_path(connection("u"), "fake_a:drive-1:item") == ""
     lines = [r for r in caplog.records if "mirror path lookup failed" in r.getMessage()]
     assert lines and all(r.exc_info is None for r in lines)
     assert not any("Secret" in r.getMessage() for r in caplog.records)
@@ -39,7 +40,7 @@ async def test_deleted_search_store_read_failure_logs_no_message(caplog):
     repo.get_transcript.side_effect = RuntimeError(SECRET)
     svc = DriveSearchService(repo, MagicMock(), MagicMock(), AsyncMock(), embedding_space="s",
                              mirror=AsyncMock(spec=DriveMirrorRepository))
-    doc = MirrorDoc(user_id="u", drive_id="d", kind=KIND_FILE, source_item_id="s", state=MIRROR_ARCHIVED,
+    doc = MirrorDoc(user_id="u", drive_identity="d", kind=KIND_FILE, source_item_id="s", state=MIRROR_ARCHIVED,
                     content_key="k")
     with caplog.at_level(logging.DEBUG):
         assert await svc._stored("u", doc) is None
