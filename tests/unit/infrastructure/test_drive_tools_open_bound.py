@@ -37,17 +37,19 @@ PAGEABLE = TextExtent(ExtentState.PAGEABLE, text_chars=200_000, passages=130, ve
 
 def _refusal():
     return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.REFUSED, text=refusal_text(PATH, PAGEABLE), success=False,
-                        items=(ITEM,), facts=ReadFacts(too_long=True), open_bound=OpenBoundInfo(PAGEABLE))
+                        items=(ITEM,), facts=ReadFacts(too_long=True), open_bound=OpenBoundInfo(PAGEABLE),
+                        ref_tag="a1")
 
 
 def _cut(extent):
     info = OpenBoundInfo(extent, chars=90_000, kept=59_000, cut_state=extent.state)
     return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text="HEAD + cut line", success=True, items=(ITEM,),
-                        body=True, facts=ReadFacts(cut=True), open_bound=info)
+                        body=True, facts=ReadFacts(cut=True), open_bound=info, ref_tag="a1")
 
 
 def _whole():
-    return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text="x" * 500, success=True, items=(ITEM,), body=True)
+    return DriveOutcome(op=DriveOp.OPEN, cls=OutcomeClass.OK, text="x" * 500, success=True, items=(ITEM,), body=True,
+                        ref_tag="a1")
 
 
 def _page():
@@ -56,7 +58,8 @@ def _page():
                  request=ExcerptRangeRequest("drive:item-1", 1, 10, page=True), page=span)
     rendered = render_excerpts(res, nonce=nonces())
     return DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text=rendered.text, success=True, items=(ITEM,),
-                        facts=ReadFacts(excerpts=True, paged=True), excerpts=res, excerpt_plan=rendered.plan)
+                        facts=ReadFacts(excerpts=True, paged=True), excerpts=res, excerpt_plan=rendered.plan,
+                        ref_tag="a1")
 
 
 def _run(open_outcome=None, context=REMINDER):
