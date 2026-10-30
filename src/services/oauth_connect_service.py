@@ -75,7 +75,7 @@ class OAuthConnectService:
         sealed = await self._cipher.encrypt(verifier, aad=f"oauth_flows/{digest}")
         await self._flows.set(f"oauth_flow:{digest}", {
             "user_id": user_id, "kind": kind, "intent": intent.value, "target_id": target_id,
-            "expected_subject": expected_subject, "hint_label": hint_label, "pkce_verifier_ct": sealed,
+            "expected_subject": expected_subject, "pkce_verifier_ct": sealed,
             "return_path": return_path, "expires_at": expires_at.isoformat(),
         }, ttl_s=_FLOW_TTL_S)
         logger.info(f"OAuth flow started: user={user_id[:8]} kind={kind} intent={intent.value}")
@@ -105,7 +105,7 @@ class OAuthConnectService:
             return self._done(kind, "state", session_user_id, return_path)
         flow = OAuthFlow(user_id=record["user_id"], kind=kind, intent=FlowIntent(record["intent"]),
                          target_id=record["target_id"], expected_subject=record["expected_subject"],
-                         hint_label=record["hint_label"], pkce_verifier=verifier, return_path=return_path,
+                         hint_label="", pkce_verifier=verifier, return_path=return_path,
                          expires_at=datetime.fromisoformat(record["expires_at"]))
         try:
             grant = await edge.exchange(code, flow, spec, self._redirect_uri)

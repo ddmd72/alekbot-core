@@ -247,3 +247,16 @@ async def test_activation_receives_the_id_save_returned():
     await w.complete(await w.start())
     assert len(returned) == 1 and returned[0]
     assert [a.credential_id for a in w.activated] == returned
+
+
+async def test_reconnect_start_stores_no_label_but_url_carries_the_hint():
+    w = World()
+    await w.complete(await w.start())
+    (old,) = await w.held()
+    seen = []
+    w.edge.authorization_url = lambda flow, spec, redirect_uri, *, state: seen.append(flow.hint_label) or "https://idp.example/auth?state=" + state
+    w.flows.data.clear()
+    await w.start(credential_id=old.credential_id)
+    assert seen == ["alex@example.com"]
+    (record,) = w.flows.data.values()
+    assert "alex@example.com" not in repr(record) and "hint_label" not in record
