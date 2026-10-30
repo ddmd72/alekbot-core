@@ -8,12 +8,13 @@ import pytest
 
 from src.domain.drive_card import card_hash, card_text
 from src.domain.drive_enrichment import DriveProfile
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index import (
     CARD_VERSION, ContentClass, DocumentBrief, DriveIndexRecord, Reason, RecordState, Scope, TriageVerdict,
 )
 
-PHOTO_FACETS = {"photo": {"takenDateTime": "2025-08-01T10:00:00Z", "cameraMake": "Apple", "cameraModel": "iPhone 15"},
-                "image": {"width": 4032, "height": 3024}}
+PHOTO_FACETS = DriveMediaFacts(taken_at=datetime(2025, 8, 1, 10, 0, tzinfo=timezone.utc), camera_make="Apple",
+                               camera_model="iPhone 15", image_width=4032, image_height=3024)
 
 
 def rec(name="Договор.pdf", kind="pdf", **kw):
@@ -25,9 +26,9 @@ def rec(name="Договор.pdf", kind="pdf", **kw):
 # Slice 1 shapes and the exact text Slice 1 embedded for them.
 SLICE1 = [
     (rec(), "Договор.pdf | PDF document"),
-    (rec("IMG_1.jpg", "image", facets=PHOTO_FACETS, place_name="Rome (Roma), Italy"),
+    (rec("IMG_1.jpg", "image", media=PHOTO_FACETS, place_name="Rome (Roma), Italy"),
      "IMG_1.jpg | image | taken 2025-08-01 | camera Apple iPhone 15 | place Rome (Roma), Italy | 4032x3024"),
-    (rec("clip.mp4", "video", facets={"video": {"duration": 125000, "width": 1920, "height": 1080}}),
+    (rec("clip.mp4", "video", media=DriveMediaFacts(video_duration_ms=125000, video_width=1920, video_height=1080)),
      "clip.mp4 | video | video 2:05 1920x1080"),
     (rec("notes", "other"), "notes | file"),
     (DriveIndexRecord(user_id="u", connection_id="u", item_id="f", name="Docs", is_folder=True, kind="folder",
@@ -72,14 +73,14 @@ class TestContentSegments:
 
     def test_photograph_description_before_the_key_facets(self):
         # v2: the triage description (§25.4.3) takes the v1 caption's place, still before the key facets
-        r = rec("IMG_2.jpg", "image", facets=PHOTO_FACETS, reason=Reason.PHOTOGRAPH,
+        r = rec("IMG_2.jpg", "image", media=PHOTO_FACETS, reason=Reason.PHOTOGRAPH,
                 triage_verdict=TriageVerdict.PHOTO, photo_description="a cathedral at night")
         assert card_text(r) == ("IMG_2.jpg | image | a cathedral at night | taken 2025-08-01 | "
                                 "camera Apple iPhone 15 | 4032x3024")
 
     def test_read_image_brief_then_facets_and_no_lead_text(self):
         # v2 (§25.2.7): a read image keeps brief-then-facets; lead text left the card (machine text only)
-        r = rec("IMG_3.jpg", "image", facets=PHOTO_FACETS, brief=DocumentBrief(doc_type="receipt"),
+        r = rec("IMG_3.jpg", "image", media=PHOTO_FACETS, brief=DocumentBrief(doc_type="receipt"),
                 lead_text="TOTAL 12,50")
         assert card_text(r) == ("IMG_3.jpg | image | taken 2025-08-01 | camera Apple iPhone 15 | "
                                 "4032x3024")   # Δ64: no brief doc type
