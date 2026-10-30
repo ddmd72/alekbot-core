@@ -1,7 +1,7 @@
 """Provisioning of the transcript documents (USER_DRIVE_INDEXING_RFC §27.3-§27.5, §27.8 b): the three collections are
 env-prefixed; the subcollections hang off them; every new repository method keeps the `_store_errors` mapping; the one
 query 7A sends (open batches) has the shape its composite index (`user_id + next_poll_at`, declared with the queues)
-serves. Index declarations themselves are asserted with the queries that need them."""
+serves (`connection_id + next_poll_at` since MULTI_DRIVE_RFC §8). Index declarations themselves are asserted with the queries that need them."""
 import inspect
 from datetime import datetime, timezone
 
@@ -62,7 +62,7 @@ async def test_open_batches_query_matches_its_index_shape(run):
     db, repo = run
     await repo.get_open_batches(U_SCOPE, NOW, 5)
     ops = db.collection("t_batches").executed[0]
-    assert _required(ops) == ({("user_id", "EQ")}, [("next_poll_at", "ASCENDING")])
+    assert _required(ops) == ({("connection_id", "EQ")}, [("next_poll_at", "ASCENDING")])
 
 
 def test_every_new_method_is_wrapped_by_store_errors():
