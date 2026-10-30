@@ -7,7 +7,7 @@ Firestore's FAILED_PRECONDITION (and its index link) instead of on the first tic
 fine: index selection happens before any document is read. Run it after `make deploy-indexes` and
 create_drive_vector_indexes.sh report READY, and before indexing is turned on for anyone.
 
-The connection-scoped reads run under a made-up connection id, the user id (MULTI_DRIVE_RFC §8): the queries are the
+The connection-scoped reads run under a made-up connection id, `smoke-conn` (MULTI_DRIVE_RFC §8): the queries are the
 same whatever the id, and an index is per collection, so no real connection is needed.
 
 Usage (project and credentials from the environment / ADC, collections from APP_ENV, default development):
@@ -37,9 +37,12 @@ from src.ports.drive_mirror_repository import ARCHIVE_FAMILY, NAME_FAMILY  # noq
 _VECTOR = [1.0] + [0.0] * 767   # any non-zero 768-dim vector
 
 
+SMOKE_CONNECTION = "smoke-conn"
+
+
 def smoke_scope(user_id: str) -> ConnectionScope:
-    """The scope the connection-scoped reads run under: a connection id equal to the user id (any id works for a read)."""
-    return ConnectionScope(user_id, user_id)
+    """The scope the connection-scoped reads run under: the made-up connection `SMOKE_CONNECTION`."""
+    return ConnectionScope(user_id, SMOKE_CONNECTION)
 
 
 def checks(repo: FirestoreDriveIndexRepository, user_id: str,

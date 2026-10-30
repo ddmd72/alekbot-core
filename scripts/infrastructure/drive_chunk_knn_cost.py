@@ -61,9 +61,12 @@ def require_synthetic(user_id: str) -> None:
         raise ValueError(f"refusing user {user_id!r}: the spike writes only for a {SYNTHETIC_PREFIX}… user")
 
 
+S3_CONNECTION = "s3-conn"   # the made-up connection the spike's chunks belong to; the synthetic user has no real one
+
+
 def scope_of(user_id: str) -> ConnectionScope:
-    """The scope of the synthetic user's chunks: one made-up connection, whose id is the user id (MULTI_DRIVE_RFC §8)."""
-    return ConnectionScope(user_id, user_id)
+    """The scope of the synthetic user's chunks: the made-up connection `S3_CONNECTION` (MULTI_DRIVE_RFC §8)."""
+    return ConnectionScope(user_id, S3_CONNECTION)
 
 
 def unit_vector(rng: random.Random, dims: int = DIMENSIONS) -> List[float]:
@@ -79,7 +82,7 @@ def synthetic_chunks(user_id: str, start: int, stop: int) -> List[DriveChunk]:
         item = n // CHUNKS_PER_ITEM
         out.append(DriveChunk(user_id=user_id, item_id=f"s3-item-{item:05d}", generation=1,
                               index=n % CHUNKS_PER_ITEM, text=TEXT, char_start=0, char_end=len(TEXT),
-                              kind="docx" if item % 5 == 4 else "pdf", connection_id=user_id))
+                              kind="docx" if item % 5 == 4 else "pdf", connection_id=S3_CONNECTION))
     return out
 
 
