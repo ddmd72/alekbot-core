@@ -19,6 +19,12 @@ dumps a collection). S1 builds the primitives and applies them to the MCP store;
 - **Keyed digest for verify-only values** (`src/domain/secret_digest.py`): hex HMAC-SHA256 over `purpose || 0x00 || value` under
   `SECRET_DIGEST_KEY` (hex, at least 32 bytes). MCP authorization codes are stored under their digest as the doc id, with no raw
   code in any field; lookup digests the presented value. `purpose` separates uses.
+- **Voice tickets are verify-only too (S4)**: every store key built from a ticket (`voice_ticket`, `voice_call_kind`, `voice_amd`,
+  the delegation result and abandoned markers) is `{prefix}:{keyed digest}` under its own purpose (`src/domain/voice_ticket_keys.py`);
+  the redeeming route digests the presented ticket. The two hand-out records that must give the ticket back to whoever builds the URL
+  (`voice_pending_callback:`, `voice_web_call:`) hold `CipherPort` ciphertext with AAD `voice/<the record's store key>`; a decrypt
+  failure raises. Logs and alerts print `fingerprint(ticket)`. The relay holds neither key. No legacy read: a call set up exactly at
+  the deploy is dialled again (raw documents age out in 300 s).
 - **MCP refresh tokens stay unkeyed sha256**: 384 random bits gain nothing from a key.
 - **Fail closed in the composition root.** `build_application_graph` builds the cipher and the digest key first
   (`composition/cipher_setup.py`). They are not built inside the MCP build, whose errors `main.py` swallows ("continue without

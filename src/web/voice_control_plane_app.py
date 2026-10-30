@@ -58,7 +58,9 @@ from src.domain.billing import calculate_realtime_cost, realtime_token_count
 from src.domain.llm import LLMRequest, LLMResponse, Message, MessagePart
 from src.domain.request_context import RequestContext
 from src.domain.voice_amd import is_voicemail
+from src.domain.secret_digest import fingerprint
 from src.domain.voice_delegation_outcome import VoiceDelegationOutcome
+from src.domain.voice_ticket_keys import abandoned_key, amd_key, result_key, ticket_key
 from src.utils.logger import logger
 from src.utils.telemetry import set_request_context, start_span
 
@@ -83,14 +85,6 @@ def _forget_delegation(task: asyncio.Task) -> None:
         task.exception()
 
 
-def _result_key(ticket: str, call_id: str) -> str:
-    return f"voice_delegation_result:{ticket}:{call_id}"
-
-
-def _abandoned_key(ticket: str, call_id: str) -> str:
-    return f"voice_delegation_abandoned:{ticket}:{call_id}"
-
-
 if TYPE_CHECKING:  # type-only: web/ must not import agents/ at runtime (REQ-ARCH-15)
     from src.agents.lelik_agent import LelikAgent
 
@@ -106,6 +100,8 @@ def create_voice_control_plane_blueprint(
     one_call_ttl_s: int = 3600,
     late_answer_sink: Optional[Callable[..., Awaitable[None]]] = None,
     relay_warmup: Optional[Callable[[], Awaitable[int]]] = None,
+    *,
+    digest_key: bytes,
 ) -> Blueprint:
     """`late_answer_sink(user_id=, account_id=, request=, output=, failed=)` posts an answer the
     relay stopped waiting for to the user's chat; `failed` means the delegation failed and `output`
@@ -114,18 +110,18 @@ def create_voice_control_plane_blueprint(
 
     async def _post_claimed(ticket: str, call_id: str) -> None:
         # The only claim: two racing callers cannot both get the record back.
-        claimed = await ephemeral_store.get_and_delete(_result_key(ticket, call_id))
+        claimed = await ephemeral_store.get_and_delete(result_key(digest_key, ticket, call_id))
         if claimed is None:
             return
         if late_answer_sink is None:
-            logger.warning(f"voice call {ticket}: late answer to {call_id} dropped, no sink configured")
+            logger.warning(f"voice call {fingerprint(ticket)}: late answer to {call_id} dropped, no sink configured")
             return
         await late_answer_sink(
             user_id=claimed["user_id"], account_id=claimed["account_id"],
             request=claimed.get("request", ""), output=claimed.get("output", ""),
             failed=bool(claimed.get("failed")),
         )
-        logger.info(f"voice call {ticket}: late answer to {call_id} posted to chat")
+        logger.info(f"voice call {fingerprint(ticket)}: late answer to {call_id} posted to chat")
 
     async def _verify_or_401() -> Response | None:
         auth_header = request.headers.get("Authorization", "")
@@ -151,7 +147,7 @@ def create_voice_control_plane_blueprint(
         # config exactly once per call
         # (`HttpCallControlPlaneAdapter.fetch_session_config`), so single use
         # costs the legitimate caller nothing.
-        config = await ephemeral_store.get_and_delete(f"voice_ticket:{ticket}")
+        config = await ephemeral_store.get_and_delete(ticket_key(digest_key, ticket))
         if config is None:
             return jsonify({"error": "unknown or expired ticket"}), 404
         # The one-call-per-user marker was written at the short setup-window TTL
@@ -168,7 +164,7 @@ def create_voice_control_plane_blueprint(
             if marker is not None:
                 await ephemeral_store.set(marker_key, marker, ttl_s=one_call_ttl_s)
         except Exception:
-            logger.error(f"voice session-config: extending the one-call marker failed for ticket {ticket}",
+            logger.error(f"voice session-config: extending the one-call marker failed for ticket {fingerprint(ticket)}",
                         exc_info=True)
         return jsonify(config), 200
 
@@ -186,27 +182,27 @@ def create_voice_control_plane_blueprint(
             for model, tokens in body.get("usage_by_model", {}).items():
                 try:
                     cost = calculate_realtime_cost(model, tokens) if isinstance(tokens, dict) else 0.0
-                    logger.info(f"voice call {call_id}: model={model} tokens={tokens} cost={cost}")
+                    logger.info(f"voice call {fingerprint(call_id)}: model={model} tokens={tokens} cost={cost}")
                     total_tokens = realtime_token_count(tokens) if isinstance(tokens, dict) else tokens
                     await quota_service.record_usage(account_id, model, total_tokens, cost)
                 except Exception:
                     logger.error(
-                        f"voice call {call_id}: usage recording failed for model={model}",
+                        f"voice call {fingerprint(call_id)}: usage recording failed for model={model}",
                         exc_info=True,
                     )
 
             answered_by = None
             try:
-                amd = await ephemeral_store.get(f"voice_amd:{call_id}")
+                amd = await ephemeral_store.get(amd_key(digest_key, call_id))
                 answered_by = amd.get("answered_by") if isinstance(amd, dict) else None
             except Exception:
                 # Unknown verdict = live call: losing a real summary is worse than keeping voicemail's.
-                logger.error(f"voice call {call_id}: AMD verdict lookup failed", exc_info=True)
+                logger.error(f"voice call {fingerprint(call_id)}: AMD verdict lookup failed", exc_info=True)
             caller_texts = [turn.get("request_text", "") for turn in body.get("turns", [])]
             voicemail = is_voicemail(answered_by, caller_texts)
             if voicemail:
                 # RFC §4.6: a voicemail greeting must never become a memory.
-                logger.info(f"voice call {call_id}: voicemail ({answered_by}), summary skipped")
+                logger.info(f"voice call {fingerprint(call_id)}: voicemail ({answered_by}), summary skipped")
             try:
                 if not voicemail:
                     await summary_consumer(
@@ -229,14 +225,14 @@ def create_voice_control_plane_blueprint(
                 # runner raises -> here). The artefacts are fixed, but the
                 # failure CLASS is permanent — any future missing/broken prompt
                 # lands in this same block.
-                logger.error(f"voice call {call_id}: summary consumer failed", exc_info=True)
+                logger.error(f"voice call {fingerprint(call_id)}: summary consumer failed", exc_info=True)
                 try:
                     await alert_sink.post(
-                        f"Voice: end-of-call summary failed for call {call_id} "
+                        f"Voice: end-of-call summary failed for call {fingerprint(call_id)} "
                         f"(user {user_id}) — nothing delivered to chat or memory: {exc}"
                     )
                 except Exception:
-                    logger.error(f"voice call {call_id}: summary failure alert failed", exc_info=True)
+                    logger.error(f"voice call {fingerprint(call_id)}: summary failure alert failed", exc_info=True)
 
             try:
                 turns = body.get("turns", [])
@@ -278,7 +274,7 @@ def create_voice_control_plane_blueprint(
                             provider=provider,
                         )
             except Exception:
-                logger.error(f"voice call {call_id}: turn content recording failed", exc_info=True)
+                logger.error(f"voice call {fingerprint(call_id)}: turn content recording failed", exc_info=True)
         finally:
             # Every write above (turns, and the summarizer's own LLM turn) is scheduled in
             # the background. Cloud Run throttles the CPU once this response is sent, and
@@ -286,7 +282,7 @@ def create_voice_control_plane_blueprint(
             try:
                 await prompt_content_store.flush()
             except Exception:
-                logger.error(f"voice call {call_id}: prompt content flush failed", exc_info=True)
+                logger.error(f"voice call {fingerprint(call_id)}: prompt content flush failed", exc_info=True)
             # Release the one-call-per-user marker (written by the auth webhook
             # before dialing out) regardless of usage-recording or
             # summary-consumer outcome — a stuck marker would permanently lock
@@ -314,12 +310,12 @@ def create_voice_control_plane_blueprint(
         # Result first, abandoned check second — the abandon route writes and reads in the
         # opposite order, so whichever lands second always sees the other's marker.
         try:
-            await ephemeral_store.set(_result_key(ticket, call_id), record, ttl_s=_LATE_ANSWER_TTL_S)
-            if await ephemeral_store.get(_abandoned_key(ticket, call_id)) is not None:
+            await ephemeral_store.set(result_key(digest_key, ticket, call_id), record, ttl_s=_LATE_ANSWER_TTL_S)
+            if await ephemeral_store.get(abandoned_key(digest_key, ticket, call_id)) is not None:
                 await _post_claimed(ticket, call_id)
         except Exception:
             # The relay may still be waiting: its answer must not turn into an error.
-            logger.error(f"voice call {ticket}: keeping/posting the answer to {call_id} failed", exc_info=True)
+            logger.error(f"voice call {fingerprint(ticket)}: keeping/posting the answer to {call_id} failed", exc_info=True)
 
     async def _run_delegation(body: dict, user_id: str, account_id: str) -> str:
         arguments = body.get("arguments") or {}
@@ -402,13 +398,13 @@ def create_voice_control_plane_blueprint(
             return unauthorized
         body = await request.get_json()
         ticket, call_id = body["ticket"], body["call_id"]
-        logger.info(f"voice call {ticket}: relay abandoned delegation {call_id}")
+        logger.info(f"voice call {fingerprint(ticket)}: relay abandoned delegation {call_id}")
         try:
-            await ephemeral_store.set(_abandoned_key(ticket, call_id), {"abandoned": True},
+            await ephemeral_store.set(abandoned_key(digest_key, ticket, call_id), {"abandoned": True},
                                       ttl_s=_LATE_ANSWER_TTL_S)
             await _post_claimed(ticket, call_id)
         except Exception:
-            logger.error(f"voice call {ticket}: posting the abandoned answer to {call_id} failed", exc_info=True)
+            logger.error(f"voice call {fingerprint(ticket)}: posting the abandoned answer to {call_id} failed", exc_info=True)
         return jsonify({"ok": True}), 200
 
     return bp

@@ -260,18 +260,20 @@ async def main():
                     )
                     summary = extraction.get("summary") or ""
                     if not summary:
-                        logger.warning(f"voice call {call_id}: summarizer returned an empty summary, nothing to deliver")
+                        logger.warning(f"voice call {fingerprint(call_id)}: summarizer returned an empty summary, nothing to deliver")
                         return
+                    from src.domain.secret_digest import fingerprint
                     from src.domain.voice_call_note import call_event_from_turns
+                    from src.domain.voice_ticket_keys import call_kind_key
                     profile = await app.user_repo.get_user(user_id)
                     try:
-                        kind_record = await voice_ephemeral_store.get(f"voice_call_kind:{call_id}")
+                        kind_record = await voice_ephemeral_store.get(call_kind_key(app.digest_key, call_id))
                         call_kind = (kind_record or {}).get("call_kind", "phone")
                     except Exception:
                         # The summary is the last stop of the call pipeline — a
                         # lookup failure here must not lose it. Fall back to the
                         # default header and keep delivering.
-                        logger.warning(f"voice call {call_id}: failed to read call kind, defaulting to phone", exc_info=True)
+                        logger.warning(f"voice call {fingerprint(call_id)}: failed to read call kind, defaulting to phone", exc_info=True)
                         call_kind = "phone"
                     await app.notification_service.notify_call_summary(
                         user_id, account_id, summary,
@@ -325,6 +327,7 @@ async def main():
                         lelik_agent_provider=app.agent_factory.get_lelik,
                         late_answer_sink=_voice_late_answer_sink,
                         relay_warmup=_relay_warmup if _relay_http_url else None,
+                        digest_key=app.digest_key,
                     )
                 )
                 logger.info(
@@ -351,6 +354,8 @@ async def main():
                         answer_url=f"{config.get('CLOUD_RUN_SERVICE_URL') or 'http://localhost:8080'}/voice/answer",
                         signature_verifier=_voice_twilio_signature_verifier,
                         relay_stream_url=config.get("VOICE_RELAY_STREAM_URL", ""),
+                        cipher=app.cipher,
+                        digest_key=app.digest_key,
                     )
                 )
                 logger.info(
@@ -378,10 +383,15 @@ async def main():
                     relay_parts = urlsplit(config.get("VOICE_RELAY_STREAM_URL", ""))
                     main_app.register_blueprint(create_voice_web_call_blueprint(
                         session_service=app.session_service,
-                        call_setup=VoiceCallSetupService(voice_ephemeral_store, app.alert_sink, app.agent_factory.get_lelik),
+                        call_setup=VoiceCallSetupService(
+                            voice_ephemeral_store, app.alert_sink, app.agent_factory.get_lelik,
+                            digest_key=app.digest_key,
+                        ),
                         media_room=CloudflareSfuAdapter(config["CLOUDFLARE_SFU_APP_ID"], config["CLOUDFLARE_SFU_APP_SECRET"]),
                         ephemeral_store=voice_ephemeral_store,
                         relay_base_url=f"{relay_parts.scheme}://{relay_parts.netloc}",
+                        cipher=app.cipher,
+                        digest_key=app.digest_key,
                     ))
                     logger.info(
                         "✅ Voice web-call blueprint registered at /cabinet/call, /api/voice/web-call"

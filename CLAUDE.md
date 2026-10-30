@@ -411,7 +411,9 @@ contradicted each other until 2026-09-28; see `decisions/lelik_delivery_single_s
 - **The ticket is the only identity handoff between them.** It rides in the webhook **query string**
   (Twilio leaves it untouched and its HMAC covers the full URL, so it cannot be swapped) and is
   **atomically consumed** by `/voice/session-config` via `get_and_delete` — single use, so a captured
-  ticket cannot be replayed to read back the owner's persona and facts.
+  ticket cannot be replayed to read back the owner's persona and facts. Nothing stores or logs it raw: store keys are
+  keyed digests of the ticket (`domain/voice_ticket_keys.py`), the two hand-out records hold KMS ciphertext bound to their
+  key, logs carry an 8-hex fingerprint, and the relay holds no key (`SECRETS_AT_REST_RFC`, S4).
 - **Audio is μ-law 8 kHz end to end** — Twilio and OpenAI Realtime both speak it, so the relay is a
   byte forward with no decode/resample. Turn detection is `semantic_vad` (eagerness low) with the
   provider's `interrupt_response` **off**, so `VoiceSessionService` alone owns barge-in. It reads
