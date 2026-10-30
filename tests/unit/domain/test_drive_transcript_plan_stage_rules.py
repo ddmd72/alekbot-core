@@ -61,7 +61,7 @@ def test_a_webm_without_audio_is_still_a_no_audio_stub():
 
 def _current(**kw):
     return _rec(state=RecordState.INDEXED, indexed_generation=1, indexed_version="c1", transcript_state="current",
-                transcript_key="h1", transcript_version=TRANSCRIBE_VERSION,
+                transcript_key=_cid("h1").render(), transcript_version=TRANSCRIBE_VERSION,
                 transcript_body_version=TRANSCRIPT_BODY_VERSION, **kw)
 
 
@@ -73,7 +73,7 @@ def test_a_record_read_under_another_extraction_version_is_queued_again():
 
 def test_a_copy_waits_at_its_key_and_the_plan_keeps_it():
     waiting = wait_for_copy(_rec())
-    assert waiting.transcript_state == "waiting" and waiting.transcript_key == "h1"
+    assert waiting.transcript_state == "waiting" and waiting.transcript_key == _cid("h1").render()
     assert transcript_plan(waiting, _ctx()).transcript_state == "waiting"
     edited = replace(waiting, content_identity=_cid("h2"), content_version="c2")
     assert transcript_plan(edited, _ctx()).transcript_state == "ready"
@@ -86,7 +86,7 @@ def test_a_charge_with_now_is_held_for_retry_until_its_wake_up():
     from src.domain.drive_transcript_plan import charge_attempt
     held = charge_attempt(_rec(), now=NOW)
     assert (held.transcript_state, held.transcript_hold, held.transcript_attempts) == ("held", "retry", 1)
-    assert held.transcript_wake_at == NOW + RETRY_BASE and held.transcript_hold_version == "h1"
+    assert held.transcript_wake_at == NOW + RETRY_BASE and held.transcript_hold_version == _cid("h1").render()
     assert transcript_plan(held, _ctx(now=NOW + RETRY_BASE / 2)).transcript_state == "held"
     woken = transcript_plan(held, _ctx(now=NOW + RETRY_BASE))
     assert woken.transcript_state == "ready" and woken.transcript_attempts == 1 and woken.transcript_wake_at is None
