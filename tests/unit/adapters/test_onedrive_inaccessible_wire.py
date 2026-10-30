@@ -94,7 +94,7 @@ async def test_every_id_addressed_call_answers_404_as_not_found(call, tmp_path):
     session = _session([_resp(_NOT_FOUND, status=404)])
     args = {"get_item": (HANDLE, "CLOSED!7"),
             "download_to_file": (HANDLE, "CLOSED!7", str(tmp_path / "f"), 1024),
-            "get_thumbnail": (HANDLE, "CLOSED!7", "large"),
+            "get_thumbnail": (HANDLE, "CLOSED!7", 800),
             "list_children_changes": (HANDLE, "CLOSED!7", 10),
             "list_children": (HANDLE, "CLOSED!7")}[call]
     with patch("aiohttp.ClientSession", return_value=session):
