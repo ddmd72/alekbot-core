@@ -231,6 +231,6 @@ class TestNeutralFieldsOnItemAndChange:
     def test_drive_change_and_page_defaults(self):
         change = DriveChange(item_id="item-1")
         assert (change.identity, change.content_identity, change.media) == ("", None, DriveMediaFacts())
-        page = DriveChanges(changes=(change,), cursor="c", complete=True, full_enumeration=False, drive_id="d",
+        page = DriveChanges(changes=(change,), cursor="c", complete=True, full_enumeration=False,
                             root_item_id="r")
         assert page.drive_identity == ""

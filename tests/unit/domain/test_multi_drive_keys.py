@@ -18,10 +18,10 @@ from src.domain.drive_index import Nudge, chunk_doc_id, record_doc_id, sync_stat
 from src.domain.drive_mirror import (
     KIND_ARCHIVE, KIND_FILE, KIND_FOLDER, archive_folder_key, ledger_key, mirror_root_doc_id,
 )
-from src.domain.drive_note import binding_key, item_binding_key, tagged_ref_key
+from src.domain.drive_note import item_binding_key, tagged_ref_key
 from src.domain.drive_ref import DriveRef
 from src.domain.drive_task_keys import (
-    continuation_task_key, nudge_task_key, parse_nudge, payload_scope, scope_payload, tick_payload, tick_task_key,
+    continuation_task_key, nudge_task_key, parse_nudge, payload_scope, scope_payload, tick_task_key,
     toggle_task_key,
 )
 from src.domain.drive_transcript import transcript_batch_doc_id, transcript_doc_id, transcript_job_doc_id
@@ -97,8 +97,9 @@ class TestConnectionScopedKeys:
             ConnectionScope("usr-1", "conn:1")
 
     def test_the_tick_bucket_is_the_single_drive_one(self):
-        from src.domain.drive_task_keys import tick_key
-        assert tick_task_key(A1.scope, NOW).split(":tick:")[1] == tick_key("usr-1", NOW).split(":tick:")[1]
+        from src.domain.drive_index_params import TICK_INTERVAL
+        single_drive_bucket = str(int(NOW.timestamp() // TICK_INTERVAL.total_seconds()))
+        assert tick_task_key(A1.scope, NOW).split(":tick:")[1] == single_drive_bucket
 
 
 class TestSyncPayload:
@@ -114,7 +115,7 @@ class TestSyncPayload:
         assert scope_payload(B1.scope) == {"user_id": "usr-1", "connection_id": "conn-3"}
 
     @pytest.mark.parametrize("payload", [
-        tick_payload("usr-1"),                                   # a single-drive payload: refused
+        {"user_id": "usr-1"},                                    # a single-drive payload: refused
         {"connection_id": "conn-1"},
         {"user_id": "usr-1", "connection_id": ""},
         {"user_id": "", "connection_id": "conn-1"},
@@ -198,8 +199,8 @@ class TestUserScopedSet:
 
     def test_the_binding_by_identity_is_byte_identical_to_todays_key(self):
         # §7.2: the adapter's item identity `{id_space}:{driveId}:{itemId}` rebuilds today's binding key: no re-binding
-        assert item_binding_key("microsoft_onedrive:drv-1:item-1") == binding_key("microsoft_onedrive", "drv-1",
-                                                                                  "item-1")
+        # today's key was `i:{provider_key}:{drive_id}:{item_id}` (the removed `binding_key`)
+        assert item_binding_key("microsoft_onedrive:drv-1:item-1") == "i:microsoft_onedrive:drv-1:item-1"
 
 
 class TestRefsAcrossConnections:
