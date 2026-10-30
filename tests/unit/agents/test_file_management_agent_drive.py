@@ -138,9 +138,9 @@ class TestStoreGuards:
     async def test_open_file_is_lenient_with_drive_ref(self, agent, conversion, drive):
         drive.get_item.return_value = NOTE
         conversion.resolve_content.return_value = "[File: Notes/todo.md]\nx\n[/File: Notes/todo.md]"
-        resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:n1"))
+        resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:a1:n1"))
         assert resp.status == AgentStatus.SUCCESS
-        conversion.resolve_content.assert_awaited_once_with("drive:n1", "u1")
+        conversion.resolve_content.assert_awaited_once_with("drive:a1:n1", "u1")
 
     async def test_open_file_from_drive_is_lenient_with_chat_ref(self, ops, conversion, drive):
         conversion.resolve_content.return_value = "text"
@@ -156,19 +156,19 @@ class TestStoreGuards:
 class TestOpenCaps:
     async def test_large_image_refused_without_download(self, ops, conversion, drive):
         drive.get_item.return_value = BIG_IMAGE
-        out = await ops.open(CTX, "u1", "drive:i1")
+        out = await ops.open(CTX, "u1", "drive:a1:i1")
         assert out.success and "cannot be opened yet" in out.text
         conversion.resolve_bytes.assert_not_called()
 
     async def test_large_pdf_refused_without_download(self, agent, conversion, drive):
         drive.get_item.return_value = BIG_PDF
-        resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:p1"))
+        resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:a1:p1"))
         assert resp.status == AgentStatus.SUCCESS and "cannot be opened yet" in resp.result
         conversion.resolve_bytes.assert_not_called()
 
     async def test_heic_refused_without_download(self, ops, conversion, drive):
         drive.get_item.return_value = HEIC
-        out = await ops.open(CTX, "u1", "drive:h1")
+        out = await ops.open(CTX, "u1", "drive:a1:h1")
         assert out.success and "cannot be viewed yet" in out.text
         conversion.resolve_bytes.assert_not_called()
         conversion.resolve_content.assert_not_called()
@@ -176,14 +176,14 @@ class TestOpenCaps:
     async def test_small_image_is_attached_for_vision(self, agent, conversion, drive):
         drive.get_item.return_value = SMALL_PNG
         conversion.resolve_bytes.return_value = b"\x89PNG"
-        resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:i2"))
+        resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:a1:i2"))
         assert resp.status == AgentStatus.SUCCESS
         assert resp.metadata["file_data"]["mime_type"] == "image/png"
-        assert resp.history_context == {"drive_context": [{"path": "a.png", "ref": "drive:i2", "op": "opened"}]}
+        assert resp.history_context == {"drive_context": [{"path": "a.png", "ref": "drive:a1:i2", "op": "opened"}]}
 
     async def test_folder_is_pointed_to_listing(self, ops, conversion, drive):
         drive.get_item.return_value = FOLDER
-        out = await ops.open(CTX, "u1", "drive:d1")
+        out = await ops.open(CTX, "u1", "drive:a1:d1")
         assert not out.success and out.text == "'Meetings/2025' is a folder; list it instead."
 
 
@@ -195,7 +195,7 @@ class TestSaveAndList:
         out = await ops.copy(CTX, "u1", ref, wait_s=WAIT)
         drive.save.assert_awaited_once_with(HANDLE, b"%PDF", "lease.pdf", "application/pdf", None)
         assert "[Drive: Inbox/lease.pdf" in out.text
-        assert out.drive_context() == [{"path": "Inbox/lease.pdf", "ref": "drive:f1"}]
+        assert out.drive_context() == [{"path": "Inbox/lease.pdf", "ref": "drive:a1:f1"}]
 
     async def test_save_already_existed_and_renamed_messages(self, ops, conversion, drive):
         conversion.resolve_bytes.return_value = b"x"
@@ -223,14 +223,14 @@ class TestSaveAndList:
 class TestReceipts:
     async def test_delete_folder_receipt_with_count(self, ops, drive, notifier):
         drive.delete.return_value = DeleteOutcome(item=FOLDER, file_count=14)
-        out = await ops.delete(CTX, "u1", "drive:d1", wait_s=WAIT)
+        out = await ops.delete(CTX, "u1", "drive:a1:d1", wait_s=WAIT)
         assert out.success
         notifier.notify_raw.assert_awaited_once_with(
             "u1", "a1", "DELDIR Meetings/2025 14", channel_id_override="C1", platform_override="slack", literal=True)
 
     async def test_delete_file_receipt(self, ops, drive, notifier):
         drive.delete.return_value = DeleteOutcome(item=FILE, file_count=1)
-        await ops.delete(CTX, "u1", "drive:f1", wait_s=WAIT)
+        await ops.delete(CTX, "u1", "drive:a1:f1", wait_s=WAIT)
         assert notifier.notify_raw.call_args.args[2] == "DEL Inbox/lease.pdf"
 
     async def test_replace_receipt_with_sizes(self, ops, conversion, drive, notifier):
@@ -239,13 +239,13 @@ class TestReceipts:
                           size_bytes=3000, mime_type="application/pdf")
         drive.get_item.return_value = FILE
         drive.replace_with.return_value = UpdateOutcome(item=after, before_size=2048, mode="replace")
-        out = await ops.replace(CTX, "u1", "drive:f1", "new.pdf", wait_s=WAIT)
+        out = await ops.replace(CTX, "u1", "drive:a1:f1", "new.pdf", wait_s=WAIT)
         assert out.success
         assert notifier.notify_raw.call_args.args[2] == "REP Inbox/lease.pdf 2KB 3KB"
 
     async def test_append_has_no_receipt(self, ops, drive, notifier):
         drive.append_text.return_value = UpdateOutcome(item=NOTE, before_size=10, mode="append")
-        out = await ops.append(CTX, "u1", "drive:n1", "- two", wait_s=WAIT)
+        out = await ops.append(CTX, "u1", "drive:a1:n1", "- two", wait_s=WAIT)
         assert out.success and out.text.startswith("Appended to")
         drive.append_text.assert_awaited_once_with(HANDLE, "n1", "- two")
         notifier.notify_raw.assert_not_called()
@@ -253,7 +253,7 @@ class TestReceipts:
     async def test_move_has_no_receipt(self, ops, drive, notifier):
         moved = DriveItem(item_id="f1", name="lease.pdf", path="Contracts/lease.pdf", is_folder=False)
         drive.move.return_value = MoveOutcome(before=FILE, after=moved, created=[])
-        out = await ops.move(CTX, "u1", "drive:f1", folder="Contracts", wait_s=WAIT)
+        out = await ops.move(CTX, "u1", "drive:a1:f1", folder="Contracts", wait_s=WAIT)
         assert "Inbox/lease.pdf → [Drive: Contracts/lease.pdf" in out.text
         notifier.notify_raw.assert_not_called()
 
@@ -274,12 +274,12 @@ class TestReceipts:
     async def test_receipt_failure_does_not_fail_the_delete(self, ops, drive, notifier):
         drive.delete.return_value = DeleteOutcome(item=FILE, file_count=1)
         notifier.notify_raw.side_effect = RuntimeError("slack down")
-        out = await ops.delete(CTX, "u1", "drive:f1", wait_s=WAIT)
+        out = await ops.delete(CTX, "u1", "drive:a1:f1", wait_s=WAIT)
         assert out.success
 
     async def test_receipt_text_uses_the_users_language(self, ops, drive, localization):
         drive.delete.return_value = DeleteOutcome(item=FILE, file_count=1)
-        await ops.delete(CTX, "u1", "drive:f1", wait_s=WAIT)
+        await ops.delete(CTX, "u1", "drive:a1:f1", wait_s=WAIT)
         assert localization.get_ui_string.call_args.args[0] == LanguageCode.UK
 
 
@@ -292,7 +292,7 @@ class TestShield:
             return DeleteOutcome(item=FILE, file_count=1)
 
         drive.delete.side_effect = slow_delete
-        task = asyncio.create_task(ops.delete(CTX, "u1", "drive:f1", wait_s=WAIT))
+        task = asyncio.create_task(ops.delete(CTX, "u1", "drive:a1:f1", wait_s=WAIT))
         for _ in range(3):
             await asyncio.sleep(0)
         task.cancel()
@@ -313,7 +313,7 @@ class TestMutationBudget:
             return DeleteOutcome(item=FILE, file_count=1)
 
         drive.delete.side_effect = slow_delete
-        out = await ops.delete(CTX, "u1", "drive:f1", wait_s=0.01)
+        out = await ops.delete(CTX, "u1", "drive:a1:f1", wait_s=0.01)
         assert out.success and "still running" in out.text
         assert "search" not in out.text.lower() and "listing" in out.text
         gate.set()
@@ -325,7 +325,7 @@ class TestMutationBudget:
         """A TimeoutError raised BY the mutation (aiohttp's socket timeouts subclass it) is not
         the agent's own wait running out: the model must hear "failed", never "still running"."""
         drive.delete.side_effect = asyncio.TimeoutError("socket timed out")
-        out = await ops.delete(CTX, "u1", "drive:f1", wait_s=WAIT)
+        out = await ops.delete(CTX, "u1", "drive:a1:f1", wait_s=WAIT)
         assert not out.success
         assert "still running" not in (out.text or "")
         assert out.text.startswith("Drive operation failed")
@@ -333,11 +333,11 @@ class TestMutationBudget:
 
     async def test_lock_is_released_after_a_failed_mutation(self, ops, drive):
         drive.move.side_effect = DrivePathError("bad")
-        first = await ops.move(CTX, "u1", "drive:f1", folder="A", wait_s=WAIT)
+        first = await ops.move(CTX, "u1", "drive:a1:f1", folder="A", wait_s=WAIT)
         assert not first.success
         drive.move.side_effect = None
         drive.move.return_value = MoveOutcome(before=FILE, after=FILE, created=[])
-        second = await ops.move(CTX, "u1", "drive:f1", folder="A", wait_s=0.05)
+        second = await ops.move(CTX, "u1", "drive:a1:f1", folder="A", wait_s=0.05)
         assert second.success and second.text.startswith("Moved")
 
     async def test_one_users_mutations_run_one_at_a_time(self, ops, conversion, drive):
@@ -391,28 +391,28 @@ class TestErrors:
 
     async def test_not_found_message(self, ops, drive):
         drive.delete.side_effect = DriveItemNotFoundError("x")
-        out = await ops.delete(CTX, "u1", "drive:zz", wait_s=WAIT)
+        out = await ops.delete(CTX, "u1", "drive:a1:zz", wait_s=WAIT)
         assert not out.success and "no longer on the drive" in out.text
 
     async def test_conversion_not_wired_is_not_configured(self, agent, conversion, drive):
         drive.get_item.return_value = NOTE   # the open reads the item through the drive service, then the conversion
         conversion.resolve_content.side_effect = FileNotFoundError("unavailable")
-        resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:n1"))
+        resp = await agent.execute(_msg(Intent.OPEN_FILE, file_ref="drive:a1:n1"))
         assert resp.status == AgentStatus.FAILED and resp.error == "The drive is not configured."
 
     async def test_name_conflict_is_a_clear_refusal(self, ops, drive):
         drive.move.side_effect = DriveNameConflictError("taken")
-        out = await ops.move(CTX, "u1", "drive:f1", folder="X", wait_s=WAIT)
+        out = await ops.move(CTX, "u1", "drive:a1:f1", folder="X", wait_s=WAIT)
         assert not out.success and out.text == "A file with that name already exists there."
 
     async def test_path_error_passthrough(self, ops, drive):
         drive.move.side_effect = DrivePathError("'A' cannot be moved into itself")
-        out = await ops.move(CTX, "u1", "drive:f1", folder="A/B", wait_s=WAIT)
+        out = await ops.move(CTX, "u1", "drive:a1:f1", folder="A/B", wait_s=WAIT)
         assert out.text == "'A' cannot be moved into itself"
 
     async def test_root_protected_passthrough(self, ops, drive):
         drive.delete.side_effect = DriveRootProtectedError("The drive area itself cannot be deleted or moved")
-        out = await ops.delete(CTX, "u1", "drive:r", wait_s=WAIT)
+        out = await ops.delete(CTX, "u1", "drive:a1:r", wait_s=WAIT)
         assert not out.success and "cannot be deleted" in out.text
 
     async def test_unexpected_error_is_named_not_leaked(self, ops, drive):
