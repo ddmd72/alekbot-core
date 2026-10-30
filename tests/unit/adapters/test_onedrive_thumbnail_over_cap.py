@@ -16,6 +16,9 @@ from src.domain.provider_account import ProviderAccount
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
+from tests.support.drive_handles import drive_handle
+
+HANDLE = drive_handle("u1")
 
 
 def _adapter():
@@ -76,11 +79,11 @@ async def test_over_cap_rendition_raises_with_size_and_limit():
     session = _session([_resp(_thumbs("c2048x2048")), _resp(chunks=big)])
     with patch("aiohttp.ClientSession", return_value=session):
         with pytest.raises(DriveThumbnailTooLarge) as caught:
-            await _adapter().get_thumbnail("u1", "f1", "c2048x2048")
+            await _adapter().get_thumbnail(HANDLE, "f1", 2048)
     assert caught.value.size == "c2048x2048" and caught.value.limit_bytes > 0
 
 
 async def test_no_rendition_is_still_none():
     session = _session([_resp(_thumbs("c2048x2048"), status=200), _resp(status=404)])
     with patch("aiohttp.ClientSession", return_value=session):
-        assert await _adapter().get_thumbnail("u1", "f1", "c2048x2048") is None
+        assert await _adapter().get_thumbnail(HANDLE, "f1", 2048) is None

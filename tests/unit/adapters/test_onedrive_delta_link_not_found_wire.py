@@ -21,6 +21,9 @@ from src.domain.user_drive import DriveItemNotFoundError, DriveResyncRequired
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
+from tests.support.drive_handles import drive_handle
+
+HANDLE = drive_handle("u1")
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _GRAPH = "https://graph.microsoft.com/v1.0"
@@ -81,7 +84,7 @@ async def test_404_on_a_stored_delta_link_restarts_from_the_delta_start():
     cursor = _cursor(f"{_GRAPH}/me/drive/special/approot/delta?token=EXPIRED")
     session = _session([_resp(APPROOT), _resp(_NOT_FOUND, status=404)])
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
-        await adapter.get_changes("u1", cursor)
+        await adapter.get_changes(HANDLE, cursor)
     restart = json.loads(exc.value.restart_cursor)
     assert restart == {"url": _DELTA_START, "full": True}
     assert session.get.call_args_list[-1].args[0].endswith("token=EXPIRED")   # the stored link was followed
@@ -92,7 +95,7 @@ async def test_404_on_a_stored_next_link_mid_enumeration_restarts_too():
     cursor = _cursor(f"{_GRAPH}/me/drive/special/approot/delta?$skiptoken=GONE", full=True)
     session = _session([_resp(APPROOT), _resp(_NOT_FOUND, status=404)])
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveResyncRequired) as exc:
-        await adapter.get_changes("u1", cursor)
+        await adapter.get_changes(HANDLE, cursor)
     assert json.loads(exc.value.restart_cursor) == {"url": _DELTA_START, "full": True}
 
 
@@ -101,7 +104,7 @@ async def test_404_on_a_fresh_enumeration_is_not_a_resync():
     adapter = _adapter()
     session = _session([_resp(APPROOT), _resp(_NOT_FOUND, status=404)])
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveItemNotFoundError):
-        await adapter.get_changes("u1", None)
+        await adapter.get_changes(HANDLE, None)
 
 
 async def test_404_on_a_stored_restart_cursor_is_not_a_resync():
@@ -109,7 +112,7 @@ async def test_404_on_a_stored_restart_cursor_is_not_a_resync():
     adapter = _adapter()
     session = _session([_resp(APPROOT), _resp(_NOT_FOUND, status=404)])
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveItemNotFoundError):
-        await adapter.get_changes("u1", _cursor(_DELTA_START, full=True, bound=False))
+        await adapter.get_changes(HANDLE, _cursor(_DELTA_START, full=True, bound=False))
 
 
 async def test_404_on_the_app_folder_read_is_not_a_resync():
@@ -118,4 +121,4 @@ async def test_404_on_the_app_folder_read_is_not_a_resync():
     cursor = _cursor(f"{_GRAPH}/me/drive/special/approot/delta?token=OK")
     session = _session([_resp(_NOT_FOUND, status=404)])
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveItemNotFoundError):
-        await adapter.get_changes("u1", cursor)
+        await adapter.get_changes(HANDLE, cursor)
