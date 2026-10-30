@@ -194,18 +194,18 @@ class TestRecordWrites:
         assert db.batches[0].set.call_count == 1
 
     async def test_delete_records_by_key_deduplicated(self, repo, db):
-        await repo.delete_records("u", ["a", "b", "a"])
+        await repo.delete_records(U_SCOPE, ["a", "b", "a"])
         assert [c.args[0].doc_id for c in db.batches[0].delete.call_args_list] == ["u:a", "u:b"]
         db.batches[0].commit.assert_awaited_once()
 
     async def test_delete_user_records_is_bounded_and_counts(self, repo, db):
         db.cols[RECS].respond = lambda ops: [snap({}, "u:a"), snap({}, "u:b")]
-        assert await repo.delete_user_records("u", 2) == 2
+        assert await repo.delete_user_records(U_SCOPE, 2) == 2
         assert executed(db) == [[("where", "user_id", "==", "u"), ("select", ("__name__",)), ("limit", 2)]]
         assert [c.args[0].doc_id for c in db.batches[0].delete.call_args_list] == ["u:a", "u:b"]
 
     async def test_delete_user_records_when_empty(self, repo, db):
-        assert await repo.delete_user_records("u", 400) == 0
+        assert await repo.delete_user_records(U_SCOPE, 400) == 0
         assert db.batches == []
 
 
@@ -273,7 +273,7 @@ class TestRecordReads:
                                  ("limit", 400), PROJECTION]]
 
     async def test_card_capped_best_rank_then_newest(self, repo, db):
-        await repo.card_capped("u", 7)
+        await repo.card_capped(U_SCOPE, 7)
         assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "card_capped", "==", True),
                                  ("order_by", "card_rank", "ASCENDING"),
                                  ("order_by", "modified_at", "DESCENDING"), ("limit", 7), PROJECTION]]
@@ -299,7 +299,7 @@ class TestCountsAndEviction:
         assert len(executed(db)) == 7 and all(q[-1] == ("count", "n") for q in executed(db))
 
     async def test_lowest_ranked_none_when_nothing_carded(self, repo, db):
-        assert await repo.lowest_ranked_carded("u") is None
+        assert await repo.lowest_ranked_carded(U_SCOPE) is None
         assert len(executed(db)) == 1
 
     async def test_lowest_ranked_takes_the_oldest_dated_record_of_the_top_rank(self, repo, db):
@@ -308,7 +308,7 @@ class TestCountsAndEviction:
                 return [snap(rec_doc("x", card_rank=2))]
             return [snap(rec_doc("old", card_rank=2, modified_at=NOW))]
         db.cols[RECS].respond = respond
-        assert (await repo.lowest_ranked_carded("u")).item_id == "old"
+        assert (await repo.lowest_ranked_carded(U_SCOPE)).item_id == "old"
         carded = [("where", "user_id", "==", "u"), ("where", "has_card_vector", "==", True)]
         assert executed(db) == [
             carded + [("order_by", "card_rank", "DESCENDING"), ("limit", 1), PROJECTION],
@@ -324,7 +324,7 @@ class TestCountsAndEviction:
                 return [snap(rec_doc("undated", card_rank=3))]
             return []
         db.cols[RECS].respond = respond
-        assert (await repo.lowest_ranked_carded("u")).item_id == "undated"
+        assert (await repo.lowest_ranked_carded(U_SCOPE)).item_id == "undated"
         assert executed(db)[2] == [("where", "user_id", "==", "u"), ("where", "has_card_vector", "==", True),
                                    ("where", "card_rank", "==", 3), ("where", "modified_at", "IS_NULL", None),
                                    ("order_by", "item_id", "ASCENDING"), ("limit", 1), PROJECTION]
@@ -336,7 +336,7 @@ class TestSearchReads:
     async def test_find_nearest_prefilters_user_and_returns_distances(self, repo, db):
         db.cols[RECS].respond = lambda ops: [snap({**rec_doc("a"), "card_vector": Vector([1.0]),
                                                    "card_distance": 0.25})]
-        hits = await repo.find_nearest_cards("u", [1, 0], 50)
+        hits = await repo.find_nearest_cards(U_SCOPE, [1, 0], 50)
         assert [(r.item_id, d) for r, d in hits] == [("a", 0.25)]
         (ops,) = executed(db)
         assert ops[0] == ("where", "user_id", "==", "u")
@@ -347,23 +347,23 @@ class TestSearchReads:
             "distance_measure": DistanceMeasure.COSINE, "distance_result_field": "card_distance"}
 
     async def test_find_nearest_kind_prefilter(self, repo, db):
-        await repo.find_nearest_cards("u", [1.0], 5, kind="image")
+        await repo.find_nearest_cards(U_SCOPE, [1.0], 5, kind="image")
         assert executed(db)[0][:2] == [("where", "user_id", "==", "u"), ("where", "kind", "==", "image")]
 
     async def test_name_keys_array_contains_any_capped_at_30(self, repo, db):
         keys = [f"t:k{n:02d}" for n in range(40)] + ["t:k00"]
-        await repo.find_by_name_keys("u", keys, 100, kind="pdf")
+        await repo.find_by_name_keys(U_SCOPE, keys, 100, kind="pdf")
         assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "kind", "==", "pdf"),
                                  ("where", "name_tokens", "array_contains_any", keys[:30]),
                                  ("order_by", "item_id", "ASCENDING"), ("limit", 100), PROJECTION]]
 
     async def test_no_name_keys_no_query(self, repo, db):
-        assert await repo.find_by_name_keys("u", [], 100) == []
+        assert await repo.find_by_name_keys(U_SCOPE, [], 100) == []
         assert executed(db) == []
 
     async def test_filter_only_newest_effective_date_first_without_dateless(self, repo, db):
-        await repo.filter_records("u", None, None, None, 8)
-        await repo.filter_records("u", "pdf", NOW - timedelta(days=7), NOW, 8)
+        await repo.filter_records(U_SCOPE, None, None, None, 8)
+        await repo.filter_records(U_SCOPE, "pdf", NOW - timedelta(days=7), NOW, 8)
         assert executed(db) == [
             [("where", "user_id", "==", "u"), ("where", "effective_date", ">=", TS_MIN),
              ("order_by", "effective_date", "DESCENDING"), ("limit", 8), PROJECTION],
