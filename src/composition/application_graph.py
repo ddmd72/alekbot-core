@@ -117,6 +117,7 @@ from src.services.session_service import SessionService
 from src.services.short_link_service import ShortLinkService
 from src.services.task_dispatch_service import TaskDispatchService
 from src.services.task_setup_service import TaskSetupService
+from src.composition.connector_registry import GMAIL, MICROSOFT_TODO
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.services.user_notification_service import UserNotificationService
 from src.utils.logger import logger
@@ -653,6 +654,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             task_search_index=container.task_search_index,
             task_queue=agent_task_queue,
             notification_url_base=service_url,
+            connector=container.connectors.get(MICROSOFT_TODO),
         )
 
     # Twilio Verify client for phone-binding OTP (Voice Companion RFC §4.6,
@@ -744,6 +746,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         drive=container.user_drive,
         alert_sink=_alert_webhook,
         ensure_agents=agent_factory.ensure_agents_for_user,
+        mail_connector=container.connectors.get(GMAIL),
+        todo_connector=container.connectors.get(MICROSOFT_TODO),
     )
 
     # The fact janitor (FACT_LIFECYCLE_RFC D4). Log-only unless FACT_LIFECYCLE_SWEEP_DRY_RUN is an explicit off value:
@@ -891,6 +895,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         fact_review=_fact_review_service,
         interactive_choice=_interactive_choice,
         reconnect=_reconnect_service,
+        mail_connector=container.connectors.get(GMAIL),
     )
 
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.

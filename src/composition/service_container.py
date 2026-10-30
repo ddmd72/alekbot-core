@@ -46,6 +46,7 @@ from ..services.email_review_service import EmailReviewService
 from ..services.prompt_builder import PromptBuilder
 from ..adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepository
 from ..adapters.firestore_credential_store import FirestoreCredentialStore
+from .connector_registry import GMAIL, MICROSOFT_ONEDRIVE, MICROSOFT_TODO, ConnectorRegistry
 from ..adapters.gmail_provider_adapter import GmailProviderAdapter
 from ..adapters.firestore_email_job_repo import FirestoreEmailJobRepository
 from ..adapters.firestore_email_exclusions_adapter import FirestoreEmailExclusionsAdapter
@@ -145,6 +146,9 @@ class ServiceContainer:
         self.indexed_email_repo = FirestoreIndexedEmailRepository(db_client, env_config)
         # Credentials at rest (SECRETS_AT_REST_RFC §2.3): the graph passes its one cipher; a caller without one (an
         # owner-run script) gets the real KMS cipher from its own config, which refuses an empty key (I6). Never a no-op.
+        # Every connector kind and its spec (MULTI_DRIVE_RFC §4.2): services take their spec from here, never a literal.
+        # No OAuth edge is wired yet.
+        self.connectors = ConnectorRegistry()
         self.oauth_credentials = FirestoreCredentialStore(
             db_client, env_config,
             cipher=cipher if cipher is not None else cipher_setup.build_cipher(config.get("KMS_CRYPTO_KEY")))
@@ -157,6 +161,7 @@ class ServiceContainer:
             oauth_credentials=self.oauth_credentials,
             gmail_provider=self.gmail_provider,
             embedding_service=self.embedding_service,
+            connector=self.connectors.get(GMAIL),
         )
 
         # Email indexing adapters (shared, stateless)
@@ -177,6 +182,7 @@ class ServiceContainer:
                 client_id=config["MICROSOFT_TODO_CLIENT_ID"],
                 client_secret=config["MICROSOFT_TODO_CLIENT_SECRET"],
                 webhook_secret=config.get("MICROSOFT_TASKS_WEBHOOK_SECRET"),
+                connector=self.connectors.get(MICROSOFT_TODO),
             )
 
         self.task_indexing: Optional[TaskIndexingService] = None
@@ -207,6 +213,7 @@ class ServiceContainer:
                 oauth_credentials=self.oauth_credentials,
                 client_id=config["MICROSOFT_TODO_CLIENT_ID"],
                 client_secret=config["MICROSOFT_TODO_CLIENT_SECRET"],
+                connector=self.connectors.get(MICROSOFT_ONEDRIVE),
             )
             self.drive_index_repo = build_drive_index_repository(db_client, env_config)
             self.drive_task_queue = build_drive_task_queue(config, env_config)
@@ -359,10 +366,12 @@ class ServiceContainer:
             embedding=self.embedding_service,
             oauth=self.oauth_credentials,
             alert_sink=alert_webhook,
+            connector=self.connectors.get(GMAIL),
         )
         self.email_review_service = EmailReviewService(
             email_provider=self.gmail_provider,
             oauth_credentials=self.oauth_credentials,
+            connector=self.connectors.get(GMAIL),
         )
 
         # ------------------------------------------------------------------

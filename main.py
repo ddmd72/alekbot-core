@@ -103,6 +103,7 @@ async def main():
             onedrive_redirect_uri=config.get("ONEDRIVE_REDIRECT_URI", ""),
             task_queue=app.agent_task_queue,
             reconnect=app.reconnect_service,
+            connectors=app.container.connectors,
         )
 
         cabinet_bp = create_user_cabinet_blueprint(
@@ -133,6 +134,7 @@ async def main():
             fact_answer_service=app.fact_answers,
             localization=app.localization,
             reconnect=app.reconnect_service,
+            connectors=app.container.connectors,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

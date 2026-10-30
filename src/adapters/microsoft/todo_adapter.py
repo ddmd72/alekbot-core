@@ -21,7 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 
-from ...domain.email import OAuthCredentials
+from ...domain.connector_spec import ConnectorSpec
+from ...domain.oauth_credential import OAuthCredential
 from ...domain.task import (
     ChecklistItem,
     LinkedResource,
@@ -44,7 +45,6 @@ from ...utils.logger import logger
 from .graph_auth import MicrosoftGraphTokenProvider
 
 _GRAPH_BASE = "https://graph.microsoft.com/v1.0/me/todo"
-_PROVIDER = "microsoft_todo"
 _PRIMARY_LIST_NAME = "Alek Bot Tasks"
 _BATCH_SEMAPHORE = asyncio.Semaphore(5)  # Graph API throttling for personal accounts
 
@@ -89,7 +89,7 @@ def _dt_payload(dt: Optional[datetime]) -> Optional[Dict[str, str]]:
 class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
     """
     Implements TasksProviderPort and TaskLifecyclePort via MS Graph API.
-    OAuthCredentials are fetched and refreshed internally by user_id.
+    The user's credential is found by the kind of the injected `connector` spec, fetched and refreshed internally.
     """
 
     def __init__(
@@ -99,6 +99,8 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
         client_id: str,
         client_secret: str,
         webhook_secret: Optional[str] = None,
+        *,
+        connector: ConnectorSpec,
     ) -> None:
         self._oauth = oauth_credentials
         self._task_config = task_config
@@ -108,7 +110,7 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
         # Per-instance in-memory primary_list_id cache: {user_id: list_id}
         self._primary_list_cache: Dict[str, str] = {}
         self._tokens = MicrosoftGraphTokenProvider(
-            oauth_credentials, client_id, client_secret, _PROVIDER, "Tasks.ReadWrite offline_access",
+            oauth_credentials, client_id, client_secret, connector.kind, "Tasks.ReadWrite offline_access",
         )
         logger.info("✅ MicrosoftToDoAdapter initialized")
 
@@ -118,12 +120,12 @@ class MicrosoftToDoAdapter(TasksProviderPort, TaskLifecyclePort):
 
     async def _get_headers(self, user_id: str) -> Dict[str, str]:
         """Return Authorization headers with a valid (refreshed if needed) access token."""
-        headers = await self._tokens.headers(user_id)
+        headers = await self._tokens.user_headers(user_id)
         if headers is None:
             raise ValueError(f"No MS To Do credentials for user {user_id[:8]}")
         return headers
 
-    async def _refresh_token(self, creds: OAuthCredentials) -> Optional[OAuthCredentials]:
+    async def _refresh_token(self, creds: OAuthCredential) -> Optional[OAuthCredential]:
         """Exchange refresh_token → new access_token and persist (None when the grant was disconnected meanwhile)."""
         return await self._tokens.refresh(creds)
 

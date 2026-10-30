@@ -2,8 +2,8 @@
 GoogleTasksAdapter — implements TasksProviderPort using Google Tasks REST API.
 
 Auth strategy:
-  - Fetches OAuthCredentials from OAuthCredentialsPort by user_id
-    (provider="google_tasks")
+  - Fetches OAuthCredential from OAuthCredentialsPort by user_id
+    of the kind of the injected `connector` spec
   - Refreshes access_token when expired (same pattern as GmailProviderAdapter)
 
 Dedicated list:
@@ -17,6 +17,7 @@ OAuth scope required: https://www.googleapis.com/auth/tasks
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
@@ -25,13 +26,14 @@ import aiohttp
 from ..domain.task import Task, TaskCreate, TaskStatus, TaskUpdate
 from ..ports.tasks_provider_port import TasksProviderPort
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
-from ..domain.email import OAuthCredentials
+from ..domain.connector_spec import ConnectorSpec
+from ..domain.oauth_credential import OAuthCredential
 from ..utils.logger import logger
 
 _TASKS_BASE = "https://tasks.googleapis.com/tasks/v1"
+_PROVIDER = "google_tasks"   # the `provider` of the Task values this adapter returns
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _TASKLIST_NAME = "Alek Bot Tasks"
-_PROVIDER = "google_tasks"
 
 
 class GoogleTasksAdapter(TasksProviderPort):
@@ -50,8 +52,11 @@ class GoogleTasksAdapter(TasksProviderPort):
         oauth_credentials_repo: OAuthCredentialsPort,
         client_id: str,
         client_secret: str,
+        *,
+        connector: ConnectorSpec,
     ) -> None:
         self._credentials_repo = oauth_credentials_repo
+        self._kind = connector.kind
         self._client_id = client_id
         self._client_secret = client_secret
         # In-memory cache: user_id → tasklist_id (avoids Firestore lookup on every call)
@@ -214,14 +219,13 @@ class GoogleTasksAdapter(TasksProviderPort):
     # Auth helpers
     # ------------------------------------------------------------------
 
-    async def _get_fresh_credentials(self, user_id: str) -> OAuthCredentials:
+    async def _get_fresh_credentials(self, user_id: str) -> OAuthCredential:
         """
-        Fetch OAuthCredentials from Firestore. Refresh if expired.
+        Fetch OAuthCredential from Firestore. Refresh if expired.
         Raises ValueError if no credentials found for user.
         """
-        creds = await self._credentials_repo.get_credentials(
-            user_id=user_id, provider=_PROVIDER
-        )
+        found = await self._credentials_repo.list_for_user(user_id, self._kind)
+        creds = found[0] if found else None
         if not creds:
             raise ValueError(
                 f"No Google Tasks credentials found for user {user_id[:8]}. "
@@ -232,7 +236,7 @@ class GoogleTasksAdapter(TasksProviderPort):
         now = datetime.now(timezone.utc)
         if creds.token_expiry and (creds.token_expiry - now).total_seconds() < 300:
             creds = await self._refresh_token(creds)
-            if not await self._credentials_repo.update_credentials(creds):
+            if not await self._credentials_repo.update(creds):
                 # Disconnected while the token endpoint answered: not connected, as when no record is found.
                 raise ValueError(
                     f"No Google Tasks credentials found for user {user_id[:8]}. "
@@ -241,7 +245,7 @@ class GoogleTasksAdapter(TasksProviderPort):
 
         return creds
 
-    async def _refresh_token(self, credentials: OAuthCredentials) -> OAuthCredentials:
+    async def _refresh_token(self, credentials: OAuthCredential) -> OAuthCredential:
         """Exchange refresh_token for a new access_token."""
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -262,14 +266,13 @@ class GoogleTasksAdapter(TasksProviderPort):
             )
 
         logger.info(f"🔑 Google Tasks token refreshed for user={credentials.user_id[:8]}")
-        return OAuthCredentials(
-            user_id=credentials.user_id,
-            provider=credentials.provider,
+        # Every other field (the identity included) is carried over; needs_reconnect is cleared.
+        return replace(
+            credentials,
             access_token=data["access_token"],
             refresh_token=data.get("refresh_token") or credentials.refresh_token,
             token_expiry=datetime.now(timezone.utc) + timedelta(seconds=data["expires_in"]),
-            scopes=credentials.scopes,
-            email_address=credentials.email_address,
+            needs_reconnect=False,
         )
 
     # ------------------------------------------------------------------
@@ -277,7 +280,7 @@ class GoogleTasksAdapter(TasksProviderPort):
     # ------------------------------------------------------------------
 
     async def _get_or_create_tasklist(
-        self, user_id: str, credentials: OAuthCredentials
+        self, user_id: str, credentials: OAuthCredential
     ) -> str:
         """
         Returns the ID of the user's dedicated tasklist.

@@ -7,7 +7,7 @@ Google OAuth flow with the same code exchange logic.
 
 Handles the "Connect Google Service" OAuth flow:
   1. Build Google OAuth authorization URL (specified scopes, offline access).
-  2. Exchange authorization code for OAuthCredentials (access + refresh tokens).
+  2. Exchange authorization code for OAuthCredential (access + refresh tokens).
   3. Revoke access token at Google on disconnect.
 
 Uses aiohttp (already a project dependency). Not a port — one implementation,
@@ -20,7 +20,9 @@ from urllib.parse import urlencode
 
 import aiohttp
 
-from ..domain.email import ACCOUNT_REALM_GOOGLE, OAuthCredentials
+from ..domain.email import ACCOUNT_REALM_GOOGLE
+from ..domain.oauth_credential import OAuthCredential
+from ..domain.provider_account import ProviderAccount
 from ..domain.exceptions import OAuthScopeNotGrantedError
 from ..utils.logger import logger
 
@@ -90,9 +92,9 @@ class GoogleOAuthService:
         redirect_uri: str,
         user_id: str,
         provider_override: Optional[str] = None,
-    ) -> OAuthCredentials:
+    ) -> OAuthCredential:
         """
-        Exchange authorization code for OAuthCredentials.
+        Exchange authorization code for OAuthCredential.
 
         Reads the account identity (`sub`, email) from Google userinfo: the scopes must include `openid email`.
         Raises ValueError on an HTTP error or when the identity is missing (I9: the caller then stores nothing).
@@ -143,16 +145,18 @@ class GoogleOAuthService:
                 raise ValueError("Google userinfo carried no sub or email: no account identity")
 
         logger.info(f"✅ Google OAuth connected: user={user_id[:8]}")
-        return OAuthCredentials(
+        # integration and account_id are the caller's (the connect route sets them from the connector spec and the
+        # signed-in session); None here, and the store refuses a save without them.
+        return OAuthCredential(
             user_id=user_id,
-            provider=provider_override or "gmail",
+            account_id=None,
+            kind=provider_override or "gmail",
+            integration=None,
+            account=ProviderAccount(realm=ACCOUNT_REALM_GOOGLE, subject=subject, label=email_address),
             access_token=access_token,
             refresh_token=refresh_token,
             token_expiry=token_expiry,
             scopes=granted,
-            email_address=email_address,
-            account_realm=ACCOUNT_REALM_GOOGLE,
-            account_subject=subject,
         )
 
     async def revoke_token(self, access_token: str) -> None:

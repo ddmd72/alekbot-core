@@ -23,7 +23,8 @@ from typing import Any, Dict, List, Optional
 
 from ..agents.base_agent import BaseAgent
 from ..domain.agent import AgentConfig, AgentMessage, AgentResponse
-from ..domain.email import EmailClassificationResult, EmailMetadata, OAuthCredentials
+from ..domain.email import EmailClassificationResult, EmailMetadata
+from ..domain.oauth_credential import OAuthCredential
 from ..domain.exceptions import LLMRateLimitError, LLMUnavailableError
 from ..ports.email_classifier_port import EmailClassifierPort
 from ..ports.email_provider_port import EmailProviderPort
@@ -92,7 +93,7 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
         self,
         emails: List[EmailMetadata],
         user_id: str,
-        credentials: Optional[OAuthCredentials] = None,
+        credentials: Optional[OAuthCredential] = None,
     ) -> List[EmailClassificationResult]:
         """
         Classify up to 100 emails in an agentic tool-calling loop.
@@ -295,7 +296,7 @@ class EmailClassificationAgent(BaseAgent, EmailClassifierPort):
     async def _fetch_email_details(
         self,
         email_ids: List[str],
-        credentials: Optional[OAuthCredentials],
+        credentials: Optional[OAuthCredential],
     ) -> List[Dict[str, Any]]:
         """Fetch full body + attachment filenames for the given email IDs."""
         if not self._gmail or not credentials or not email_ids:

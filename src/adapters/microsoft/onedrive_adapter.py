@@ -38,6 +38,7 @@ from urllib.parse import quote, unquote
 
 import aiohttp  # module import on purpose: tests patch aiohttp.ClientSession
 
+from ...domain.connector_spec import ConnectorSpec
 from ...domain.drive_image_mime import MAX_VISION_IMAGE_BYTES
 from ...domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
 from ...domain.drive_index_params import DOWNLOAD_TIMEOUT_S, TICK_DEADLINE_S
@@ -57,6 +58,7 @@ from ...domain.user_drive import (
     DriveThrottled,
     join_drive_path,
 )
+from ...domain.oauth_credential import OAuthCredential
 from ...ports.oauth_credentials_port import OAuthCredentialsPort
 from ...ports.user_drive_port import UserDrivePort
 from ...utils.logger import logger
@@ -227,10 +229,14 @@ class _CursorGone(ValueError):
 
 
 class OneDriveAdapter(UserDrivePort):
-    def __init__(self, oauth_credentials: OAuthCredentialsPort, client_id: str, client_secret: str) -> None:
+    def __init__(self, oauth_credentials: OAuthCredentialsPort, client_id: str, client_secret: str, *,
+                 connector: ConnectorSpec) -> None:
+        """`connector` is the drive kind's spec: the user's credential is the one of `connector.kind` (slice 1b passes
+        it by handle)."""
         self._oauth = oauth_credentials
+        self._kind = connector.kind
         self._tokens = MicrosoftGraphTokenProvider(oauth_credentials, client_id, client_secret,
-                                                   ONEDRIVE_PROVIDER, _SCOPE)
+                                                   connector.kind, _SCOPE)
         # user_id → (fetched_at, root json); the owner may rename/move the folder, hence a TTL.
         self._root_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
         logger.info("✅ OneDriveAdapter initialized")
@@ -241,12 +247,18 @@ class OneDriveAdapter(UserDrivePort):
     def display_name(self) -> str:
         return "OneDrive"
 
+    async def _credential(self, user_id: str) -> Optional[OAuthCredential]:
+        """The user's credential of the drive kind (the oldest when several), or None."""
+        found = await self._oauth.list_for_user(user_id, self._kind)
+        return found[0] if found else None
+
     async def is_connected(self, user_id: str) -> bool:
-        return await self._oauth.is_connected(user_id, ONEDRIVE_PROVIDER)
+        return bool(await self._oauth.list_for_user(user_id, self._kind))
 
     async def disconnect(self, user_id: str) -> None:
-        await self._oauth.revoke_credentials(user_id, ONEDRIVE_PROVIDER)
-        self._tokens.invalidate(user_id)
+        for credential in await self._oauth.list_for_user(user_id, self._kind):
+            await self._oauth.delete(user_id, credential.credential_id)
+        self._tokens.forget(user_id)
         self._root_cache.pop(user_id, None)
 
     # -- reads --------------------------------------------------------------
@@ -529,10 +541,11 @@ class OneDriveAdapter(UserDrivePort):
         """Read on every tick (the gate). When the stored access token is not the one cached here, the
         grant changed under this process (a reconnect, maybe to another account, or a refresh by the
         other service): drop the token and root caches, so the next call reads the new grant at once."""
-        creds = await self._oauth.get_credentials(user_id, ONEDRIVE_PROVIDER)
-        cached = self._tokens.cached_token(user_id)
-        if creds is None or (cached is not None and cached != creds.access_token):
-            self._tokens.invalidate(user_id)
+        creds = await self._credential(user_id)
+        cached = None if creds is None else self._tokens.cached_token(user_id, creds.credential_id)
+        if creds is None or (cached is not None and cached != creds.access_token) \
+                or self._tokens.held_credential_id(user_id) not in (None, creds.credential_id):
+            self._tokens.forget(user_id)
             self._root_cache.pop(user_id, None)
         if creds is None:
             return DriveConnection(connected=False)
@@ -541,10 +554,10 @@ class OneDriveAdapter(UserDrivePort):
     async def flag_reconnect(self, user_id: str) -> bool:
         """Get, then update with the flag set (Gmail precedent, decisions/gmail_grant_revoked_reconnect.md:
         no port change for an atomic set). A reconnect saves fresh credentials, which clears it."""
-        creds = await self._oauth.get_credentials(user_id, ONEDRIVE_PROVIDER)
+        creds = await self._credential(user_id)
         if creds is None or creds.needs_reconnect:
             return False
-        if not await self._oauth.update_credentials(replace(creds, needs_reconnect=True)):
+        if not await self._oauth.update(replace(creds, needs_reconnect=True)):
             return False                     # disconnected meanwhile: nothing to flag, and none is brought back
         logger.warning(f"Drive marked needs_reconnect for user {user_id[:8]}")
         return True
@@ -572,7 +585,7 @@ class OneDriveAdapter(UserDrivePort):
 
     async def _headers(self, user_id: str, *, force_refresh: bool = False) -> Dict[str, str]:
         try:
-            headers = await self._tokens.headers(user_id, force_refresh=force_refresh)
+            headers = await self._tokens.user_headers(user_id, force_refresh=force_refresh)
         except GraphReauthRequired as exc:
             logger.warning(f"Drive token refresh rejected for user {user_id[:8]}; reconnect needed")
             raise DriveReauthRequired("Drive access expired; reconnect needed") from exc

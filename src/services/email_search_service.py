@@ -29,7 +29,9 @@ from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.embedding_service import EmbeddingService
+from ..domain.connector_spec import ConnectorSpec
 from ..domain.email import IndexedEmail
+from ..domain.oauth_credential import OAuthCredential
 from ..utils.file_conversion import (
     convert_file_to_text,
     truncate_with_alert,
@@ -56,9 +58,13 @@ class EmailSearchService:
         oauth_credentials: OAuthCredentialsPort,
         gmail_provider: EmailProviderPort,
         embedding_service: EmbeddingService,
+        *,
+        connector: ConnectorSpec,
     ) -> None:
+        """`connector` is the mail kind's spec: the user's Gmail credential is the one of `connector.kind`."""
         self._email_repo = indexed_email_repo
         self._oauth = oauth_credentials
+        self._kind = connector.kind
         self._gmail = gmail_provider
         self._embedding = embedding_service
 
@@ -162,7 +168,7 @@ class EmailSearchService:
         """
         logger.info(f"📧 EmailSearchService.get_details: {email_id} user={user_id[:8]}")
 
-        creds = await self._oauth.get_credentials(user_id, "gmail")
+        creds = await self._credential(user_id)
         if not creds:
             return "[Error: Gmail is not connected for this user. Ask the user to reconnect via /link-gmail.]"
 
@@ -202,7 +208,7 @@ class EmailSearchService:
             f"📧 EmailSearchService.get_attachment: {email_id}/{filename} user={user_id[:8]}"
         )
 
-        creds = await self._oauth.get_credentials(user_id, "gmail")
+        creds = await self._credential(user_id)
         if not creds:
             return "[Error: Gmail is not connected for this user.]"
 
@@ -280,6 +286,11 @@ class EmailSearchService:
         top_ids = sorted(scores, key=lambda x: scores[x], reverse=True)
         return [seen[eid] for eid in top_ids]
 
+    async def _credential(self, user_id: str) -> Optional[OAuthCredential]:
+        """The user's credential of the mail kind (the oldest when several), or None."""
+        found = await self._oauth.list_for_user(user_id, self._kind)
+        return found[0] if found else None
+
     async def _maybe_refresh(self, creds):
         """Refresh access token if expired."""
         now = datetime.now(timezone.utc)
@@ -289,7 +300,7 @@ class EmailSearchService:
         if expiry and expiry <= now:
             logger.info("📧 EmailSearchService: refreshing expired Gmail token")
             creds = await self._gmail.refresh_token(creds)
-            if not await self._oauth.update_credentials(creds):
+            if not await self._oauth.update(creds):
                 logger.info("📧 EmailSearchService: Gmail disconnected during token refresh")
                 return None
         return creds

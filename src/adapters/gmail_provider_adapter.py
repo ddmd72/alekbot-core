@@ -3,7 +3,7 @@ GmailProviderAdapter — implements EmailProviderPort using Gmail REST API.
 See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §2.1.2.
 
 Auth:
-  - Uses stored access_token from OAuthCredentials (Bearer token)
+  - Uses stored access_token from OAuthCredential (Bearer token)
   - Caller checks expiry and calls refresh_token() before passing credentials
   - Token refresh calls Google's OAuth2 token endpoint directly
 
@@ -18,6 +18,7 @@ import base64
 import html as _html_lib
 import json
 import re
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
@@ -29,8 +30,8 @@ import aiohttp
 from ..domain.email import (
     EmailFullContent,
     EmailMetadata,
-    OAuthCredentials,
 )
+from ..domain.oauth_credential import OAuthCredential
 from ..domain.exceptions import OAuthGrantRevokedError, OAuthScopeInsufficientError
 from ..ports.email_provider_port import EmailProviderPort
 from ..utils.logger import logger
@@ -90,7 +91,7 @@ class GmailProviderAdapter(EmailProviderPort):
 
     async def list_emails(
         self,
-        credentials: OAuthCredentials,
+        credentials: OAuthCredential,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
         page_token: Optional[str] = None,
@@ -186,7 +187,7 @@ class GmailProviderAdapter(EmailProviderPort):
 
     async def batch_get_full_content(
         self,
-        credentials: OAuthCredentials,
+        credentials: OAuthCredential,
         email_ids: List[str],
         deep: bool = False,
     ) -> Dict[str, EmailFullContent]:
@@ -248,7 +249,7 @@ class GmailProviderAdapter(EmailProviderPort):
     # refresh_token
     # ------------------------------------------------------------------
 
-    async def refresh_token(self, credentials: OAuthCredentials) -> OAuthCredentials:
+    async def refresh_token(self, credentials: OAuthCredential) -> OAuthCredential:
         """Exchange refresh_token for a new access_token via Google OAuth2 endpoint."""
         async with aiohttp.ClientSession() as session:
             async with session.post(
@@ -272,17 +273,17 @@ class GmailProviderAdapter(EmailProviderPort):
 
         logger.info(
             f"🔑 Gmail token refreshed for user={credentials.user_id[:8]} "
-            f"provider={credentials.provider}"
+            f"provider={credentials.kind}"
         )
-        return OAuthCredentials(
-            user_id=credentials.user_id,
-            provider=credentials.provider,
+        # Every other field (the identity included) is carried over; needs_reconnect is cleared, since the refresh
+        # succeeded.
+        return replace(
+            credentials,
             access_token=data["access_token"],
             # Google may not return a new refresh_token; keep the existing one
             refresh_token=data.get("refresh_token") or credentials.refresh_token,
             token_expiry=datetime.now(timezone.utc) + timedelta(seconds=data["expires_in"]),
-            scopes=credentials.scopes,
-            email_address=credentials.email_address,
+            needs_reconnect=False,
         )
 
     # ------------------------------------------------------------------
@@ -389,7 +390,7 @@ class GmailProviderAdapter(EmailProviderPort):
 
     async def _fetch_attachment_binaries(
         self,
-        credentials: OAuthCredentials,
+        credentials: OAuthCredential,
         email_id: str,
         payload: dict,
         headers: dict,

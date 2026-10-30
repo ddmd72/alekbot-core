@@ -14,6 +14,7 @@ Endpoints:
 - GET  /auth/me - Get current user info
 """
 import secrets
+from dataclasses import replace
 from typing import Optional, TYPE_CHECKING
 from quart import Blueprint, request, jsonify, redirect, make_response
 import jwt
@@ -24,7 +25,10 @@ from ..services.auth_provider_registry import AuthProviderRegistry
 from ..services.google_oauth_service import GoogleOAuthService
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..config.auth import AuthConfig
-from ..domain.email import ACCOUNT_REALM_MICROSOFT
+from ..composition.connector_registry import GMAIL, GOOGLE_TASKS, MICROSOFT_ONEDRIVE, MICROSOFT_TODO
+from ..domain.connector_spec import ConnectorSpec
+from ..domain.oauth_credential import OAuthCredential
+from ..domain.provider_account import ProviderAccount
 from ..domain.exceptions import AccessDeniedError, OAuthScopeNotGrantedError
 from ..domain.reconnect_policy import Integration
 from ..domain.safe_redirect import safe_return_path
@@ -33,6 +37,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from ..services.invite_code_service import InviteCodeService
     from ..services.integration_reconnect_service import IntegrationReconnectService
+    from ..composition.connector_registry import ConnectorRegistry
 
 
 _ACCESS_DENIED_PAGE = (
@@ -61,6 +66,7 @@ def create_oauth_blueprint(
     onedrive_redirect_uri: Optional[str] = None,
     task_queue=None,
     reconnect: Optional['IntegrationReconnectService'] = None,
+    connectors: Optional['ConnectorRegistry'] = None,
 ) -> Blueprint:
     """
     Create Quart Blueprint with OAuth endpoints.
@@ -71,6 +77,8 @@ def create_oauth_blueprint(
         auth_registry: OAuth provider registry
         auth_config: OAuth configuration
         invite_service: Optional service to consume invite codes on callback
+        connectors: the connector registry; the four connect callbacks build the saved credential's kind and
+            integration from its spec (a connect is "not configured" without it)
 
     Returns:
         Configured Blueprint
@@ -88,6 +96,35 @@ def create_oauth_blueprint(
         except Exception as exc:
             logger.error(f"💥 Clearing the reconnect state of {integration.value} failed for user={user_id[:8]}: {exc}",
                          exc_info=True)
+
+    def _session_account_id(user_id: str) -> Optional[str]:
+        """The account_id of the signed-in session (the `access_token` cookie's verified payload) when it is the
+        session of `user_id`; None otherwise. A connect callback stores nothing without it: a credential is never
+        saved under a guessed tenant."""
+        token = request.cookies.get("access_token")
+        if not token:
+            return None
+        try:
+            payload = session_service.verify_access_token(token)
+        except (jwt.InvalidTokenError, ValueError):
+            return None
+        if payload.get("sub") != user_id:
+            return None
+        account_id = payload.get("account_id")
+        return account_id if isinstance(account_id, str) and account_id else None
+
+    async def _save_consent(spec: ConnectorSpec, credential: OAuthCredential) -> None:
+        """Store a consent. The store keeps any number of records per kind (MULTI_DRIVE_RFC E15), so for a
+        single-credential kind (`spec.multiple` False, every kind in slice 1a) the route keeps today's effect: a
+        consent of another account replaces the user's record of that kind (deleted, never revoked at the provider,
+        as the store did before). Saved first, so a failure in between leaves the old grant, never none."""
+        await oauth_credentials_port.save(credential)
+        if spec.multiple:
+            return
+        account = (credential.account.realm, credential.account.subject)
+        for other in await oauth_credentials_port.list_for_user(credential.user_id, spec.kind):
+            if (other.account.realm, other.account.subject) != account:
+                await oauth_credentials_port.delete(other.user_id, other.credential_id)
 
     # ========================================================================
     # GET /auth/login - Redirect to OAuth provider
@@ -560,11 +597,12 @@ def create_oauth_blueprint(
         """
         Handle Gmail OAuth callback: exchange code, persist credentials, redirect.
 
-        Verifies CSRF state cookie. Saves OAuthCredentials to Firestore.
+        Verifies CSRF state cookie and the signed-in session. Saves the credential to Firestore.
         Redirects to /cabinet on success, or /cabinet?gmail_error=1 on failure.
         """
-        if not gmail_oauth_service or not oauth_credentials_port:
+        if not gmail_oauth_service or not oauth_credentials_port or connectors is None:
             return jsonify({"error": "Gmail integration not configured"}), 501
+        spec = connectors.get(GMAIL)
 
         code = request.args.get("code")
         state = request.args.get("state")
@@ -580,6 +618,10 @@ def create_oauth_blueprint(
         if not stored_state or stored_state != state or not user_id:
             logger.warning("⚠️ Gmail OAuth callback CSRF validation failed")
             return redirect("/cabinet?gmail_error=state")
+        account_id = _session_account_id(user_id)
+        if account_id is None:
+            logger.warning(f"⚠️ Gmail OAuth callback without the signed-in session of user={user_id[:8]}")
+            return redirect("/cabinet?gmail_error=state")
 
         if not code:
             return redirect("/cabinet?gmail_error=no_code")
@@ -590,7 +632,8 @@ def create_oauth_blueprint(
                 redirect_uri=auth_config.gmail_oauth_redirect_uri,
                 user_id=user_id,
             )
-            await oauth_credentials_port.save_credentials(credentials)
+            await _save_consent(spec, replace(credentials, kind=spec.kind, integration=spec.integration,
+                                              account_id=account_id))
             logger.info(f"✅ Gmail connected for user={user_id[:8]}")
             await _consented(user_id, Integration.GMAIL)
         except OAuthScopeNotGrantedError:
@@ -650,11 +693,12 @@ def create_oauth_blueprint(
         """
         Handle Google Tasks OAuth callback: exchange code, persist credentials, redirect.
 
-        Verifies CSRF state cookie. Saves OAuthCredentials (provider=google_tasks) to Firestore.
+        Verifies CSRF state cookie and the signed-in session. Saves the credential (kind google_tasks) to Firestore.
         Redirects to /cabinet on success, or /cabinet?tasks_error=1 on failure.
         """
-        if not google_tasks_oauth_service or not oauth_credentials_port:
+        if not google_tasks_oauth_service or not oauth_credentials_port or connectors is None:
             return jsonify({"error": "Google Tasks integration not configured"}), 501
+        spec = connectors.get(GOOGLE_TASKS)
 
         code = request.args.get("code")
         state = request.args.get("state")
@@ -670,6 +714,10 @@ def create_oauth_blueprint(
         if not stored_state or stored_state != state or not user_id:
             logger.warning("⚠️ Google Tasks OAuth callback CSRF validation failed")
             return redirect("/cabinet?tasks_error=state")
+        account_id = _session_account_id(user_id)
+        if account_id is None:
+            logger.warning(f"⚠️ Google Tasks OAuth callback without the signed-in session of user={user_id[:8]}")
+            return redirect("/cabinet?tasks_error=state")
 
         if not code:
             return redirect("/cabinet?tasks_error=no_code")
@@ -679,9 +727,10 @@ def create_oauth_blueprint(
                 code=code,
                 redirect_uri=auth_config.google_tasks_oauth_redirect_uri,
                 user_id=user_id,
-                provider_override="google_tasks",
+                provider_override=spec.kind,
             )
-            await oauth_credentials_port.save_credentials(credentials)
+            await _save_consent(spec, replace(credentials, kind=spec.kind, integration=spec.integration,
+                                              account_id=account_id))
             logger.info(f"✅ Google Tasks connected for user={user_id[:8]}")
         except OAuthScopeNotGrantedError:
             logger.warning(f"⚠️ Google Tasks consent without the Tasks scope: user={user_id[:8]}")
@@ -770,11 +819,13 @@ def create_oauth_blueprint(
         """
         Handle Microsoft To Do OAuth callback.
 
-        Exchanges code for tokens, persists OAuthCredentials, enqueues setup task.
+        Exchanges code for tokens, persists OAuthCredential, enqueues setup task.
         Redirects to /cabinet?microsoft_todo_connected=1 on success.
         """
-        if not ms_todo_client_id or not ms_todo_client_secret or not ms_todo_redirect_uri:
+        if (not ms_todo_client_id or not ms_todo_client_secret or not ms_todo_redirect_uri
+                or not oauth_credentials_port or connectors is None):
             return jsonify({"error": "Microsoft To Do integration not configured"}), 501
+        spec = connectors.get(MICROSOFT_TODO)
 
         code = request.args.get("code")
         state = request.args.get("state")
@@ -790,6 +841,10 @@ def create_oauth_blueprint(
         if not stored_state or stored_state != state or not user_id:
             logger.warning("⚠️ MS To Do OAuth callback CSRF validation failed")
             return redirect("/cabinet?microsoft_todo_error=state")
+        account_id = _session_account_id(user_id)
+        if account_id is None:
+            logger.warning(f"⚠️ MS To Do OAuth callback without the signed-in session of user={user_id[:8]}")
+            return redirect("/cabinet?microsoft_todo_error=state")
 
         if not code:
             return redirect("/cabinet?microsoft_todo_error=no_code")
@@ -797,7 +852,6 @@ def create_oauth_blueprint(
         try:
             import aiohttp
             from datetime import datetime, timedelta, timezone
-            from ..domain.email import OAuthCredentials
 
             token_url = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
             async with aiohttp.ClientSession() as session:
@@ -819,18 +873,18 @@ def create_oauth_blueprint(
                 ms_subject, ms_label = await _read_microsoft_identity(session, token_data["access_token"])
 
             expires_in = int(token_data.get("expires_in", 3600))
-            credentials = OAuthCredentials(
+            credentials = OAuthCredential(
                 user_id=user_id,
-                provider="microsoft_todo",
+                account_id=account_id,
+                kind=spec.kind,
+                integration=spec.integration,
+                account=ProviderAccount(realm=spec.realm, subject=ms_subject, label=ms_label),
                 access_token=token_data["access_token"],
                 refresh_token=token_data.get("refresh_token"),
                 token_expiry=datetime.now(timezone.utc) + timedelta(seconds=expires_in),
                 scopes=token_data.get("scope", "").split(),
-                email_address=ms_label,
-                account_realm=ACCOUNT_REALM_MICROSOFT,
-                account_subject=ms_subject,
             )
-            await oauth_credentials_port.save_credentials(credentials)
+            await _save_consent(spec, credentials)
             logger.info(f"✅ MS To Do connected for user={user_id[:8]}")
             # before the setup task: its read-modify-save of the config then reads the cleared flag
             await _consented(user_id, Integration.TODO)
@@ -858,7 +912,6 @@ def create_oauth_blueprint(
     # GET /auth/connect-onedrive — the user's drive (USER_DRIVE_RFC §4.1)
     # Same Microsoft app registration as To Do; its own redirect URI and scope.
     # ========================================================================
-    _ONEDRIVE_PROVIDER = "microsoft_onedrive"  # == adapters.microsoft.ONEDRIVE_PROVIDER (tested)
     _ONEDRIVE_SCOPE = "Files.ReadWrite.AppFolder offline_access User.Read"
     _ONEDRIVE_APPROOT = "https://graph.microsoft.com/v1.0/me/drive/special/approot"
 
@@ -923,8 +976,10 @@ def create_oauth_blueprint(
     @bp.route("/auth/connect-onedrive/callback", methods=["GET"])
     async def connect_onedrive_callback():
         """Exchange the code, persist credentials under the drive provider key."""
-        if not ms_todo_client_id or not ms_todo_client_secret or not onedrive_redirect_uri:
+        if (not ms_todo_client_id or not ms_todo_client_secret or not onedrive_redirect_uri
+                or not oauth_credentials_port or connectors is None):
             return jsonify({"error": "Drive integration not configured"}), 501
+        spec = connectors.get(MICROSOFT_ONEDRIVE)
         if request.args.get("error"):
             logger.warning(f"⚠️ Drive OAuth denied by user: {request.args.get('error')}")
             return redirect("/cabinet?drive_error=denied")
@@ -937,13 +992,16 @@ def create_oauth_blueprint(
                 or not secrets.compare_digest(stored_state, state)):
             logger.warning("⚠️ Drive OAuth callback CSRF validation failed")
             return redirect("/cabinet?drive_error=state")
+        account_id = _session_account_id(user_id)
+        if account_id is None:
+            logger.warning(f"⚠️ Drive OAuth callback without the signed-in session of user={user_id[:8]}")
+            return redirect("/cabinet?drive_error=state")
         if not code:
             return redirect("/cabinet?drive_error=no_code")
 
         try:
             import aiohttp
             from datetime import datetime, timedelta, timezone
-            from ..domain.email import OAuthCredentials
 
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -964,17 +1022,17 @@ def create_oauth_blueprint(
                 ms_subject, ms_label = await _read_microsoft_identity(session, token_data["access_token"])
                 drive_id = await _read_drive_id(session, token_data["access_token"])
 
-            await oauth_credentials_port.save_credentials(OAuthCredentials(
+            await _save_consent(spec, OAuthCredential(
                 user_id=user_id,
-                provider=_ONEDRIVE_PROVIDER,
+                account_id=account_id,
+                kind=spec.kind,
+                integration=spec.integration,
+                account=ProviderAccount(realm=spec.realm, subject=ms_subject, label=ms_label),
                 access_token=token_data["access_token"],
                 refresh_token=token_data.get("refresh_token"),
                 token_expiry=datetime.now(timezone.utc) + timedelta(seconds=int(token_data.get("expires_in", 3600))),
                 scopes=token_data.get("scope", "").split(),
-                email_address=ms_label,
                 drive_id=drive_id,
-                account_realm=ACCOUNT_REALM_MICROSOFT,
-                account_subject=ms_subject,
             ))
             logger.info(f"✅ Drive connected for user={user_id[:8]}")
             await _consented(user_id, Integration.DRIVE)

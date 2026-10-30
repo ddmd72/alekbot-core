@@ -19,7 +19,7 @@ mark; `status` answers whether the Cabinet shows Reconnect for an integration th
 
 Public interface:
     IntegrationReconnectService(credentials, users, notifier, *, email_states, task_config, drive_states, drive,
-                                alert_sink, ensure_agents, clock)
+                                alert_sink, ensure_agents, clock, mail_connector, todo_connector)
     await sweep() -> Dict[str, int]
     await mark_disconnected(user_id, integration) -> None
     await consented(user_id, integration) -> None
@@ -30,6 +30,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Iterable, Optional
 
+from ..domain.connector_spec import ConnectorSpec
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import empty_answer_alert, is_empty_answer
 from ..domain.reconnect_policy import R1_NOTICES, Cleared, Integration, r1_due, reconnect_needed
@@ -45,8 +46,7 @@ from ..utils.logger import logger
 if TYPE_CHECKING:
     from .user_notification_service import UserNotificationService
 
-GMAIL_PROVIDER = "gmail"
-TODO_PROVIDER = "microsoft_todo"
+GMAIL_PROVIDER = "gmail"   # the provider key of the Gmail indexing state (not a credential kind)
 ALL = tuple(Integration)
 
 FlagWriter = Callable[[bool], Awaitable[None]]
@@ -65,7 +65,12 @@ class IntegrationReconnectService:
                  drive: Optional[UserDrivePort] = None,
                  alert_sink: Optional[AlertSinkPort] = None,
                  ensure_agents: Optional[Callable[[str], Awaitable[Any]]] = None,
-                 clock: Callable[[], datetime] = _utcnow) -> None:
+                 clock: Callable[[], datetime] = _utcnow,
+                 mail_connector: ConnectorSpec, todo_connector: ConnectorSpec) -> None:
+        """`mail_connector` / `todo_connector` are the Gmail and To Do kinds' specs: a user "has a credential" when a
+        record of that kind exists."""
+        self._mail_kind = mail_connector.kind
+        self._todo_kind = todo_connector.kind
         self._credentials = credentials
         self._users = users
         self._notifier = notifier
@@ -111,7 +116,7 @@ class IntegrationReconnectService:
         async def flag(value: bool) -> None:
             await email.set_reconnect_flags(user_id, GMAIL_PROVIDER, reconnect_notified=value)
 
-        has_credential = await self._credentials.is_connected(user_id, GMAIL_PROVIDER)
+        has_credential = await self._has_credential(user_id, self._mail_kind)
         if has_credential:
             if state.reconnect_notified:
                 await flag(False)
@@ -130,7 +135,7 @@ class IntegrationReconnectService:
             # a field write: never a config rewrite, which could undo a concurrent save of the subscriptions
             await task_config.set_reconnect_notified(user_id, value)
 
-        has_credential = await self._credentials.is_connected(user_id, TODO_PROVIDER)
+        has_credential = await self._has_credential(user_id, self._todo_kind)
         if has_credential:
             if config.reconnect_notified:
                 await flag(False)
@@ -139,6 +144,9 @@ class IntegrationReconnectService:
         if not r1_due(has_credential, bool(config.primary_list_id), False, config.reconnect_notified):
             return 0
         return await self._notice(user_id, Integration.TODO, flag)
+
+    async def _has_credential(self, user_id: str, kind: str) -> bool:
+        return bool(await self._credentials.list_for_user(user_id, kind))
 
     async def _notice(self, user_id: str, integration: Integration, flag: FlagWriter) -> int:
         """Send the one notice under the flag (module docstring). Returns 1 when it was delivered."""
@@ -231,7 +239,7 @@ class IntegrationReconnectService:
             state = await self._email.get_indexing_state(user_id, GMAIL_PROVIDER)
             if state is None:
                 return False
-            return reconnect_needed(await self._credentials.is_connected(user_id, GMAIL_PROVIDER), True,
+            return reconnect_needed(await self._has_credential(user_id, self._mail_kind), True,
                                     state.disconnected_by_user_at is not None)
         if integration is Integration.DRIVE:
             if self._drive_states is None or self._drive is None:
@@ -244,5 +252,5 @@ class IntegrationReconnectService:
         if self._task_config is None:
             return False
         config = await self._task_config.get_config(user_id)
-        return reconnect_needed(await self._credentials.is_connected(user_id, TODO_PROVIDER),
+        return reconnect_needed(await self._has_credential(user_id, self._todo_kind),
                                 bool(config.primary_list_id), False)

@@ -78,13 +78,15 @@ def get_google_credentials():
     return creds
 
 
-def build_oauth_credentials(google_creds, user_id: str) -> "OAuthCredentials":
-    """Convert google.oauth2.credentials.Credentials → OAuthCredentials domain object."""
-    from src.domain.email import OAuthCredentials
+def build_oauth_credentials(google_creds, user_id: str) -> "OAuthCredential":
+    """Convert google.oauth2.credentials.Credentials → an OAuthCredential (never stored by this script)."""
+    from src.composition.connector_registry import GMAIL, ConnectorRegistry
+    from src.domain.oauth_credential import OAuthCredential
+    from src.domain.provider_account import ProviderAccount
 
     expiry = google_creds.expiry
     if expiry and expiry.tzinfo is not None:
-        # Strip timezone info — OAuthCredentials uses naive UTC datetimes
+        # Strip timezone info — this script uses naive UTC datetimes
         expiry = expiry.replace(tzinfo=None)
     if not expiry:
         # No expiry info → set far future so the adapter doesn't trigger a refresh
@@ -94,14 +96,17 @@ def build_oauth_credentials(google_creds, user_id: str) -> "OAuthCredentials":
     if isinstance(email_address, dict):
         email_address = email_address.get("email", "")
 
-    return OAuthCredentials(
+    spec = ConnectorRegistry().get(GMAIL)
+    return OAuthCredential(
         user_id=user_id,
-        provider="gmail",
+        account_id=None,
+        kind=spec.kind,
+        integration=spec.integration,
+        account=ProviderAccount(realm=spec.realm, subject="", label=email_address or ""),
         access_token=google_creds.token,
         refresh_token=google_creds.refresh_token or "",
         token_expiry=expiry,
         scopes=list(google_creds.scopes or SCOPES),
-        email_address=email_address or "",
     )
 
 
@@ -124,6 +129,7 @@ async def main(args):
     from src.agents.email_classification_agent import EmailClassificationAgent
     from src.domain.agent import AgentConfig
     from src.domain.user import PerformanceTier, UserBotConfig
+    from src.composition.connector_registry import GMAIL, ConnectorRegistry
     from src.services.email_indexing_service import EmailIndexingService, GMAIL_DEFAULT_QUERY
     from src.services.provider_registry import ProviderRegistry
     from src.services.agent_context_builder import AgentContextBuilder
@@ -162,7 +168,7 @@ async def main(args):
     print("Loading Gmail OAuth credentials...")
     google_creds = get_google_credentials()
     credentials = build_oauth_credentials(google_creds, user_id)
-    print(f"  Authenticated as: {credentials.email_address or '(email unknown)'}")
+    print(f"  Authenticated as: {credentials.account.label or '(email unknown)'}")
 
     # --- Firestore ---
     print(f"Connecting to Firestore database: {firestore_db}")
@@ -246,6 +252,7 @@ async def main(args):
         classifier=classifier,
         embedding=embedding,
         oauth=None,
+        connector=ConnectorRegistry().get(GMAIL),
     )
 
     # --- Job ---

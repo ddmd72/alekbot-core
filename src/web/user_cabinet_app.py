@@ -29,6 +29,8 @@ from ..ports.user_repository import UserRepository
 from ..ports.repository import FactRepository
 from ..ports.fact_review_store import FactReviewStore
 from ..ports.embedding_service import EmbeddingService
+from ..composition.connector_registry import GMAIL, GOOGLE_TASKS, ConnectorRegistry
+from ..domain.oauth_credential import OAuthCredential
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
@@ -82,6 +84,7 @@ def create_user_cabinet_blueprint(
     fact_answer_service: Optional[FactAnswerService] = None,
     localization: Optional[LocalizationService] = None,
     reconnect: Optional[IntegrationReconnectService] = None,
+    connectors: Optional[ConnectorRegistry] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
@@ -98,6 +101,21 @@ def create_user_cabinet_blueprint(
         except Exception as exc:
             logger.warning(f"{integration.value} status: reading the reconnect state failed: {exc_brief(exc)}")
             return False
+
+    async def _credential(user_id: str, kind_name: str) -> Optional[OAuthCredential]:
+        """The user's credential of the registry kind `kind_name` (the oldest when several), or None. Callers check
+        that the port and the registry are wired."""
+        if oauth_credentials_port is None or connectors is None:
+            raise RuntimeError("credential store or connector registry not wired")
+        found = await oauth_credentials_port.list_for_user(user_id, connectors.get(kind_name).kind)
+        return found[0] if found else None
+
+    async def _delete_all(user_id: str, kind_name: str) -> None:
+        """Delete every record of the user of that kind (a disconnect; no provider-side revoke here)."""
+        if oauth_credentials_port is None or connectors is None:
+            raise RuntimeError("credential store or connector registry not wired")
+        for credential in await oauth_credentials_port.list_for_user(user_id, connectors.get(kind_name).kind):
+            await oauth_credentials_port.delete(user_id, credential.credential_id)
 
     # Calculate absolute paths
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1036,10 +1054,10 @@ def create_user_cabinet_blueprint(
     @auth_required
     async def gmail_status():
         """Return Gmail connection state for the authenticated user."""
-        if not oauth_credentials_port:
+        if not oauth_credentials_port or connectors is None:
             return jsonify({"connected": False}), 200
         try:
-            creds = await oauth_credentials_port.get_credentials(g.user_id, "gmail")
+            creds = await _credential(g.user_id, GMAIL)
             if not creds:
                 body: dict = {"connected": False}
                 if reconnect is not None:
@@ -1064,7 +1082,7 @@ def create_user_cabinet_blueprint(
 
             return jsonify({
                 "connected": True,
-                "email_address": creds.email_address or None,
+                "email_address": creds.account.label or None,
                 "indexed_through": indexed_through,
                 "oldest_indexed_through": oldest_indexed_through,
                 "indexing_active": indexing_active,
@@ -1091,7 +1109,7 @@ def create_user_cabinet_blueprint(
         Async path (production): returns 202 immediately with job_id.
         Sync fallback (local dev): runs one page, returns job summary.
         """
-        if not email_indexing_service or not oauth_credentials_port:
+        if not email_indexing_service or not oauth_credentials_port or connectors is None:
             return jsonify({"error": "Gmail indexing not configured"}), 501
 
         body = await request.get_json(silent=True) or {}
@@ -1108,7 +1126,7 @@ def create_user_cabinet_blueprint(
                 return jsonify({"error": "Invalid backfill_until format, expected YYYY-MM-DD"}), 400
 
         try:
-            creds = await oauth_credentials_port.get_credentials(g.user_id, "gmail")
+            creds = await _credential(g.user_id, GMAIL)
             if not creds:
                 return jsonify({"error": "Gmail not connected"}), 404
 
@@ -1218,10 +1236,10 @@ def create_user_cabinet_blueprint(
     @auth_required
     async def gmail_disconnect():
         """Revoke Gmail access token and delete credentials. Indexed data is preserved."""
-        if not oauth_credentials_port:
+        if not oauth_credentials_port or connectors is None:
             return jsonify({"error": "Gmail integration not configured"}), 501
         try:
-            creds = await oauth_credentials_port.get_credentials(g.user_id, "gmail")
+            creds = await _credential(g.user_id, GMAIL)
             if not creds:
                 return jsonify({"error": "Gmail not connected"}), 404
 
@@ -1235,7 +1253,7 @@ def create_user_cabinet_blueprint(
                 await gmail_oauth_service.revoke_token(creds.access_token)
 
             # Delete credentials only — indexed data stays intact
-            await oauth_credentials_port.revoke_credentials(g.user_id, "gmail")
+            await _delete_all(g.user_id, GMAIL)
 
             logger.info(f"🔌 Gmail disconnected for user={g.user_id[:8]} (indexed data preserved)")
             return jsonify({"success": True}), 200
@@ -1376,15 +1394,15 @@ def create_user_cabinet_blueprint(
     @auth_required
     async def tasks_status():
         """Return task list connection state for the authenticated user."""
-        if not oauth_credentials_port:
+        if not oauth_credentials_port or connectors is None:
             return jsonify({"connected": False}), 200
         try:
-            creds = await oauth_credentials_port.get_credentials(g.user_id, "google_tasks")
+            creds = await _credential(g.user_id, GOOGLE_TASKS)
             if not creds:
                 return jsonify({"connected": False}), 200
             return jsonify({
                 "connected": True,
-                "email_address": creds.email_address or None,
+                "email_address": creds.account.label or None,
             }), 200
         except Exception as exc:
             logger.error(f"Error fetching Tasks status: {exc}", exc_info=True)
@@ -1394,15 +1412,15 @@ def create_user_cabinet_blueprint(
     @auth_required
     async def tasks_disconnect():
         """Revoke task list access token and delete credentials."""
-        if not oauth_credentials_port:
+        if not oauth_credentials_port or connectors is None:
             return jsonify({"error": "Tasks integration not configured"}), 501
         try:
-            creds = await oauth_credentials_port.get_credentials(g.user_id, "google_tasks")
+            creds = await _credential(g.user_id, GOOGLE_TASKS)
             if not creds:
                 return jsonify({"error": "Tasks not connected"}), 404
             if google_tasks_oauth_service:
                 await google_tasks_oauth_service.revoke_token(creds.access_token)
-            await oauth_credentials_port.revoke_credentials(g.user_id, "google_tasks")
+            await _delete_all(g.user_id, GOOGLE_TASKS)
             logger.info(f"🔌 Tasks disconnected for user={g.user_id[:8]}")
             return jsonify({"success": True}), 200
         except Exception as exc:
