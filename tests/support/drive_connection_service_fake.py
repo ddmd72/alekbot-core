@@ -70,3 +70,15 @@ class FakeDriveConnectionService:
         return [c for c in await self.list_for_user(user_id)
                 if c.state is ConnectionState.NEEDS_RECONNECT
                 or (c.state is ConnectionState.ACTIVE and (user_id, c.connection_id) in self.credential_gone)]
+
+
+def single_connection_repository(user_id: str, *, account_id: str = "a",
+                                 provider_account: Optional[ProviderAccount] = None,
+                                 **kw: object) -> FakeDriveConnectionRepository:
+    """A connection repository holding one ACTIVE connection of `user_id` whose connection id IS the user id, so a
+    single-drive test's keys read as before (indexing on unless `indexing=False` is passed)."""
+    repo = FakeDriveConnectionRepository()
+    conn = connection(user_id, user_id, account_id=account_id, provider_account=provider_account,
+                      **kw)  # type: ignore[arg-type]
+    repo.connections[(user_id, user_id)] = conn
+    return repo
