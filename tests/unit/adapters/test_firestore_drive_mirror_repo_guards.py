@@ -65,11 +65,12 @@ def test_every_field_has_a_supported_codec_shape():
 
 async def test_delete_doc_checks_the_documents_owner(run):
     db, repo = run
-    await repo.save_doc(MirrorDoc(user_id="u", drive_identity=DRIVE, kind="file", source_item_id="a", source_identity=f"{DRIVE}:a"))
-    await repo.delete_doc("v", "u:file:a")      # a key that is another user's document
-    assert "u:file:a" in db.collection(LEDGER).docs
-    await repo.delete_doc("u", "u:file:a")
-    assert "u:file:a" not in db.collection(LEDGER).docs
+    doc = MirrorDoc(user_id="u", drive_identity=DRIVE, kind="file", source_item_id="a", source_identity=f"{DRIVE}:a")
+    await repo.save_doc(doc)
+    await repo.delete_doc("v", doc.key)         # a key that is another user's document
+    assert doc.key in db.collection(LEDGER).docs
+    await repo.delete_doc("u", doc.key)
+    assert doc.key not in db.collection(LEDGER).docs
 
 
 async def test_a_write_path_backend_error_is_store_unavailable(run, monkeypatch):
