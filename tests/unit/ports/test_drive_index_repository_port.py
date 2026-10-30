@@ -6,7 +6,9 @@ from src.ports.drive_index_repository import DriveIndexRepository
 _EXPECTED = {
     "get_sync_state", "save_sync_state", "create_sync_state_if_absent", "update_sync_flags", "delete_sync_state",
     "acquire_lease",
-    "release_lease", "list_sync_user_ids", "get_records", "upsert_records", "delete_records", "due_records",
+    "release_lease", "get_records", "upsert_records", "delete_records", "due_records",
+    "list_sync_scopes",   # the fan-out visits connections (MULTI_DRIVE_RFC §8)
+    "records_by_identity",   # owner notes bind by item identity, per connection (MULTI_DRIVE_RFC §7.2)
     "oldest_due_at", "children", "records_page", "records_seen_before", "count_carded", "lowest_ranked_carded",
     "card_capped", "count_by_state", "delete_user_records", "find_nearest_cards", "find_by_name_keys",
     "filter_records", "card_vectors", "has_record_in",
@@ -45,6 +47,8 @@ _EXPECTED = {
     "mirror_queue", "mirror_wakeups", "delete_user_transcripts_except",
     # a folder past FOLDER_INMEM_CHUNKS: kNN restricted to the walked files' ids (RFC Δ246)
     "find_nearest_chunks_in", "find_nearest_hints_in",
+    # paid transcripts outlive a disconnect (MULTI_DRIVE_RFC §10 I8, E23)
+    "retain_transcript", "transcript_retained",
 }
 
 

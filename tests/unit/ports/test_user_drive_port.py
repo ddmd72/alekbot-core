@@ -2,8 +2,10 @@
 Port contract test for UserDrivePort (docs/10_rfcs/USER_DRIVE_RFC.md §4.2).
 
 Pins the abstract surface Tasks 4-6 of the step-1 plan build on: the method names, that
-every operation is async (display_name is the one property), and the parameter names the
-service and adapter tests call by keyword (`limit`, `new_parent_id`, `new_name`).
+every operation is async, and the parameter names the service and adapter tests call by keyword
+(`limit`, `new_parent_id`, `new_name`). MULTI_DRIVE_RFC §6: every method takes a `DriveHandle` where
+it took `user_id`; `display_name`, `is_connected` and `disconnect` left the port (labels to the
+registry, state to DriveConnectionService).
 """
 import inspect
 
@@ -16,18 +18,18 @@ _EXPECTED = {
     "search", "download", "upload", "replace_content", "move", "create_folder", "delete",
 }
 
-# Positional/keyword parameter names after `self`, per method (RFC §4.2; plan Tasks 4-6).
+# Positional/keyword parameter names after `self`, per method (RFC §4.2; plan Tasks 4-6; MULTI_DRIVE_RFC §6).
 _SIGNATURES = {
-    "get_root": ["user_id"],
-    "get_item": ["user_id", "item_id"],
-    "list_children": ["user_id", "folder_id"],
-    "search": ["user_id", "query", "limit"],
-    "download": ["user_id", "item_id"],
-    "upload": ["user_id", "parent_id", "filename", "data", "content_type", "conflict"],
-    "replace_content": ["user_id", "item_id", "data", "content_type"],
-    "move": ["user_id", "item_id", "new_parent_id", "new_name"],
-    "create_folder": ["user_id", "parent_id", "name"],
-    "delete": ["user_id", "item_id"],
+    "get_root": ["handle"],
+    "get_item": ["handle", "item_id"],
+    "list_children": ["handle", "folder_id"],
+    "search": ["handle", "query", "limit"],
+    "download": ["handle", "item_id"],
+    "upload": ["handle", "parent_id", "filename", "data", "content_type", "conflict"],
+    "replace_content": ["handle", "item_id", "data", "content_type"],
+    "move": ["handle", "item_id", "new_parent_id", "new_name"],
+    "create_folder": ["handle", "parent_id", "name"],
+    "delete": ["handle", "item_id"],
 }
 
 
