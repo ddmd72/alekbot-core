@@ -61,7 +61,7 @@ async def test_the_summary_line_counts_content_work(w, caplog):
     w.add_image("IMG_1.jpg")
     caplog.set_level("INFO")
     await w.settle()
-    line = next(r.getMessage() for r in caplog.records if "tick user=u end=done" in r.getMessage()
+    line = next(r.getMessage() for r in caplog.records if "tick user=u conn=u end=done" in r.getMessage()
                 and "'indexed'" in r.getMessage())
     for key in ("'indexed': 2", "'chunks':", "'embed_ms':", "'model_pages': 2", "'model_calls': 1",
                 "'triage_images': 1", "'triage_calls': 1", "model_cost=$0.0012"):

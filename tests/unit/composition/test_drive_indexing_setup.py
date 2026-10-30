@@ -80,21 +80,23 @@ def test_place_lookup_uses_the_bundled_table(monkeypatch):
     assert place_of(0.0, 0.0) is None
 
 
-async def test_scheduler_lists_connections_from_the_connection_repository():
-    """MULTI_DRIVE_RFC §8: the fan-out lists ACTIVE connections with indexing on from the connection repository (it
-    no longer lists users by the drive provider's credentials)."""
+async def test_scheduler_lists_the_active_indexing_connections():
+    """The built fan-out lists ACTIVE connections with indexing on from the connection repository (MULTI_DRIVE_RFC
+    §8), not credential holders: one candidate, ticked with its connection's payload."""
+    from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+    from tests.support.drive_connection_repo import FakeDriveConnectionRepository
+    from tests.support.drive_connection_service_fake import connection
+    from tests.unit.services.drive_index_fakes import FakeQueue
     connections = FakeDriveConnectionRepository()
-    await connections.create(DriveConnection(
-        connection_id="conn-1", user_id="usr-1", account_id="acc-1", credential_id="cred-1",
-        kind="microsoft_onedrive", drive_identity="microsoft_onedrive:drv-1", ref_tag="a1",
-        indexing_enabled=True, created_at=datetime(2026, 10, 30, tzinfo=timezone.utc)))
-    repo = AsyncMock()
-    repo.list_sync_scopes.return_value = []
-    repo.get_sync_state.return_value = None
-    scheduler = setup.build_drive_sync_scheduler(repo=repo, queue=AsyncMock(), connections=connections,
-                                                 connection_service=None, notifier=None, alert_sink=None)
+    await connections.create(connection("u1", "conn-1", indexing=True))
+    await connections.create(connection("u2", "conn-2", indexing=False))
+    queue = FakeQueue()
+    scheduler = setup.build_drive_sync_scheduler(repo=InMemoryDriveIndexRepository(), queue=queue,
+                                                 connections=connections, connection_service=None,
+                                                 notifier=None, alert_sink=None)
     summary = await scheduler.fan_out()
     assert summary["candidates"] == 1
+    assert [t["payload"] for t in queue.tasks] == [{"user_id": "u1", "connection_id": "conn-1"}]
 
 
 def _container(monkeypatch, **extra):

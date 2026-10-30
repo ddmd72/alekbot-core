@@ -8,15 +8,18 @@ from typing import Dict, List, Optional
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.connection_scope import ConnectionScope
+from src.domain.drive_connection import DriveConnection as Connection
+from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, ErrorCategory, Priority
 from src.domain.drive_index_params import STALE_ALERT_AFTER, TICK_DEADLINE_S
-from src.domain.drive_task_keys import DRIVE_SYNC_TASK, tick_key
+from src.domain.drive_task_keys import DRIVE_SYNC_TASK, tick_task_key
 from src.domain.notification_kind import NotificationKind
 from src.domain.notify_result import NotifyResult
 from src.domain.agent import AgentStatus
 from src.domain.user_drive import DriveConnection
 from src.services.drive_sync_scheduler_service import RECONNECT_NOTICE, DriveSyncSchedulerService
-from tests.unit.services.drive_index_fakes import Clock, FakeDrive, FakeQueue, FakeUsers
+from tests.unit.services.drive_index_fakes import T0, Clock, FakeDrive, FakeQueue, FakeUsers, legacy_account
 from .drive_index_fakes import U_SCOPE
 
 
@@ -61,6 +64,44 @@ class PerUserDrive(FakeDrive):
         return self.per_user.get(user_id, self.connection_state)
 
 
+class LegacyConnectionRepository:
+    """The scheduler's connection repository (MULTI_DRIVE_RFC §4.4, §8) over this file's single-drive flags: one
+    connection per user in `connected` (a credential holder), whose id IS the user id (so every key reads as before),
+    indexing from the user's `drive_indexing_enabled`, account from the profile, and state from the drive's per-user
+    connection: connected and not flagged ACTIVE, flagged NEEDS_RECONNECT, not connected DISCONNECTED (a deliberate
+    disconnect). A user with no profile (deleted) or no credential has no connection. Read live, as the flags were."""
+
+    def __init__(self, users: FakeUsers, drive: "PerUserDrive", connected: List[str]) -> None:
+        self.users = users
+        self.drive = drive
+        self.connected = connected
+
+    async def get(self, user_id: str, connection_id: str) -> Optional[Connection]:
+        if connection_id != user_id or user_id not in self.connected:
+            return None
+        profile = await self.users.get_user(user_id)
+        if profile is None:
+            return None
+        legacy = await self.drive.connection(user_id)
+        state = (ConnectionState.DISCONNECTED if not legacy.connected
+                 else ConnectionState.NEEDS_RECONNECT if legacy.needs_reconnect else ConnectionState.ACTIVE)
+        return Connection(connection_id=user_id, user_id=user_id, account_id=profile.account_id, credential_id="cred",
+                          kind="fake", drive_identity="fake:d1", ref_tag="a1",
+                          indexing_enabled=bool(profile.config.drive_indexing_enabled), state=state, created_at=T0,
+                          disconnected_at=T0 if state is ConnectionState.DISCONNECTED else None,
+                          provider_account=legacy_account(user_id))
+
+    async def list_by_state(self, states, *, indexing_enabled: Optional[bool] = None) -> List[Connection]:
+        found = [await self.get(u, u) for u in self.connected]
+        return [c for c in found if c is not None and c.state in set(states)
+                and (indexing_enabled is None or c.indexing_enabled is indexing_enabled)]
+
+
+def scope(user_id: str) -> ConnectionScope:
+    """The scope of a user's one connection in this environment (connection id = user id)."""
+    return ConnectionScope(user_id=user_id, connection_id=user_id)
+
+
 @pytest.fixture
 def env():
     clock = Clock()
@@ -72,14 +113,11 @@ def env():
     alerts = FakeAlerts()
     notifier = FakeNotifier(queue)
 
-    async def connected_users():
-        return list(connected)
-
-    svc = DriveSyncSchedulerService(repo=repo, queue=queue, drive=drive, users=users,
-                                    connected_users=connected_users, notifier=notifier, alert_sink=alerts,
-                                    clock=clock)
+    connections = LegacyConnectionRepository(users, drive, connected)
+    svc = DriveSyncSchedulerService(repo=repo, queue=queue, connections=connections, notifier=notifier,
+                                    alert_sink=alerts, clock=clock)
     return SimpleNamespace(svc=svc, clock=clock, repo=repo, drive=drive, queue=queue, users=users,
-                           connected=connected, alerts=alerts, notifier=notifier)
+                           connected=connected, alerts=alerts, notifier=notifier, connections=connections)
 
 
 def _drive_tasks(queue: FakeQueue):
@@ -91,8 +129,8 @@ class TestFanOut:
         summary = await env.svc.fan_out()
         assert summary["enqueued"] == 1
         [task] = _drive_tasks(env.queue)
-        assert task["payload"] == {"user_id": "u"}
-        assert task["key"] == tick_key("u", env.clock.now)
+        assert task["payload"] == {"user_id": "u", "connection_id": "u"}
+        assert task["key"] == tick_task_key(U_SCOPE, env.clock.now)
         assert task["deadline"] == TICK_DEADLINE_S
 
     async def test_second_fan_out_in_same_bucket_is_deduplicated(self, env):
@@ -101,9 +139,11 @@ class TestFanOut:
         assert len(_drive_tasks(env.queue)) == 1   # Cloud Tasks reserves the name (FakeQueue too)
 
     async def test_disabled_user_without_state_is_skipped(self, env):
+        """A connection with indexing off is not listed (only ACTIVE connections with indexing on are, MULTI_DRIVE_RFC
+        §8); with no stored state it is no candidate at all."""
         env.users.enabled["u"] = False
         summary = await env.svc.fan_out()
-        assert summary["skipped"] == 1 and _drive_tasks(env.queue) == []
+        assert summary["candidates"] == 0 and _drive_tasks(env.queue) == []
 
     async def test_disabled_user_with_state_is_ticked_so_the_purge_runs(self, env):
         env.users.enabled["u"] = False
@@ -114,13 +154,13 @@ class TestFanOut:
     async def test_state_without_credentials_is_still_visited(self, env):
         """Union of credential holders and stored states (§7.1): an orphaned index is purged."""
         env.users.enabled["gone"] = False   # "gone" holds no credentials, only a stored state
-        await env.repo.save_sync_state(DriveSyncState(user_id="gone"))
+        await env.repo.save_sync_state(DriveSyncState(user_id="gone", connection_id="gone"))
         summary = await env.svc.fan_out()
         assert summary["candidates"] == 2
         assert {t["payload"]["user_id"] for t in _drive_tasks(env.queue)} == {"u", "gone"}
 
     async def test_deleted_user_with_state_is_ticked(self, env):
-        await env.repo.save_sync_state(DriveSyncState(user_id="ghost"))
+        await env.repo.save_sync_state(DriveSyncState(user_id="ghost", connection_id="ghost"))
         await env.svc.fan_out()
         assert "ghost" in {t["payload"]["user_id"] for t in _drive_tasks(env.queue)}
 
@@ -139,14 +179,14 @@ class TestFanOut:
     async def test_one_failing_user_does_not_stop_the_rest(self, env):
         env.connected.append("v")
         env.users.enabled["v"] = True
-        original = env.users.get_user
+        original = env.repo.get_sync_state
 
-        async def flaky(user_id):
-            if user_id == "u":
+        async def flaky(scope):   # the fan-out reads no user profile any more: a connection's own read fails
+            if scope.user_id == "u":
                 raise RuntimeError("firestore blip")
-            return await original(user_id)
+            return await original(scope)
 
-        env.users.get_user = flaky
+        env.repo.get_sync_state = flaky
         summary = await env.svc.fan_out()
         assert summary["errors"] == 1
         assert [t["payload"]["user_id"] for t in _drive_tasks(env.queue)] == ["v"]
@@ -201,7 +241,7 @@ class TestStaleness:
     async def test_overdue_class0_record_is_stale(self, env):
         await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", last_success_at=env.clock.now))
         await env.repo.upsert_records([DriveIndexRecord(
-            user_id="u", item_id="a", due_at=env.clock.now - STALE_ALERT_AFTER - timedelta(seconds=1),
+            user_id="u", connection_id="u", item_id="a", due_at=env.clock.now - STALE_ALERT_AFTER - timedelta(seconds=1),
             priority=int(Priority.EDIT))])
         await env.svc.fan_out()
         assert len(env.alerts.posts) == 1
@@ -209,7 +249,7 @@ class TestStaleness:
     async def test_overdue_cascade_is_not_stale(self, env):
         await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u", last_success_at=env.clock.now))
         await env.repo.upsert_records([DriveIndexRecord(
-            user_id="u", item_id="a", due_at=env.clock.now - STALE_ALERT_AFTER - timedelta(seconds=1),
+            user_id="u", connection_id="u", item_id="a", due_at=env.clock.now - STALE_ALERT_AFTER - timedelta(seconds=1),
             priority=int(Priority.CASCADE))])
         await env.svc.fan_out()
         assert env.alerts.posts == []
@@ -304,7 +344,7 @@ class TestReconnectNotice:
         env.connected.append("v")
         env.users.enabled["v"] = True
         for user in ("u", "v"):
-            await env.repo.save_sync_state(DriveSyncState(user_id=user))
+            await env.repo.save_sync_state(DriveSyncState(user_id=user, connection_id=user))
         env.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
         env.notifier.raises = RuntimeError("formatter down")
         summary = await env.svc.fan_out()
@@ -315,14 +355,14 @@ class TestReconnectNotice:
         env.connected.append("v")
         env.users.enabled["v"] = True
         await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u"))
-        await env.repo.save_sync_state(DriveSyncState(user_id="v"))
-        await env.repo.update_sync_flags("v", reconnect_notified=True)
+        await env.repo.save_sync_state(DriveSyncState(user_id="v", connection_id="v"))
+        await env.repo.update_sync_flags(scope("v"), reconnect_notified=True)
         env.drive.per_user["u"] = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
         env.drive.per_user["v"] = DriveConnection(connected=True, drive_id="d1")
         await env.svc.fan_out()
         assert [c["user_id"] for c in env.notifier.calls] == ["u"]
         assert (await env.repo.get_sync_state(U_SCOPE)).reconnect_notified is True
-        assert (await env.repo.get_sync_state("v")).reconnect_notified is False
+        assert (await env.repo.get_sync_state(scope("v"))).reconnect_notified is False
 
     async def test_deliberate_disconnect_sends_no_notice_and_keeps_flag(self, env):
         await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u"))

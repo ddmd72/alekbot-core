@@ -28,7 +28,7 @@ from src.services import drive_indexing_service as svc_mod
 from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
 from .drive_enrich_world import EnrichWorld
 from .test_drive_indexing_enrichment_life import paragraphs
-from .drive_usage_helpers import close_initial_build, spend
+from .drive_usage_helpers import close_initial_build, initial_build, spend
 
 pytestmark = pytest.mark.usefixtures("admitted")
 S = ModelReplyStatus
@@ -213,7 +213,7 @@ async def test_a_paid_reply_is_recorded_when_the_file_budget_cuts_the_run(w, mon
     await asyncio.sleep(0.5)   # the shielded writes finish after the cut
     usage = await w.repo.get_model_usage("u", month_key(w.clock.now))
     assert usage.profile_usd == pytest.approx(0.5) and usage.profile_initial_usd == pytest.approx(0.5)
-    assert (await w.repo.get_initial_build("u")).spent_usd >= 0.5
+    assert (await initial_build(w.repo)).spent_usd >= 0.5
 
 
 @pytest.mark.timing  # wall-clock assertion: off the main gate, `make test-timing`

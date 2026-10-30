@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index import EXTRACTION_VERSION, Reason, RecordState
 from src.domain.drive_index_params import (
     BATCH_POLL_FIRST_S, MAX_ATTEMPTS, RETRY_BASE, TRANSCRIBE_EXTRACT_WALL_S, TRANSCRIBE_MAX_SECONDS,
@@ -22,7 +23,7 @@ from src.domain.exceptions import LLMClientError, LLMUnavailableError
 from src.services.drive_transcript_stage import EXTRACTED_BY, TRANSCRIBER_AGENT, DriveTranscriptStage
 
 from tests.unit.services.drive_transcript_fakes import (
-    NOW, OLD, URL_PREFIX, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner, Recording, record,
+    ckey, cid, HANDLE, SCOPE, NOW, OLD, URL_PREFIX, USER, Clock, FakeBatch, FakeDrive, FakeHost, FakeMedia, FakeRunner, Recording, record,
 )
 
 MONTH = "2026-10"
@@ -49,11 +50,11 @@ async def _add(env, *recs, **recordings):
 
 
 async def _step(env, stop_in=600.0):
-    return await env.stage.extract_step(USER, env.host, stop_at=env.clock.mono + stop_in)
+    return await env.stage.extract_step(HANDLE, env.host, stop_at=env.clock.mono + stop_in)
 
 
 async def _get(env, item_id):
-    return (await env.repo.get_records(USER, [item_id]))[item_id]
+    return (await env.repo.get_records(SCOPE, [item_id]))[item_id]
 
 
 def _job(env, item_id):
@@ -79,7 +80,7 @@ def _stitched(*texts, duration=120.0, speakers=1, languages=("uk",)):
 async def test_cache_hit_finalizes_with_no_ffmpeg_and_no_model(tmp_path):
     env = _env(tmp_path)
     transcript = _stitched("hello there", "and again")
-    await env.repo.put_transcript(USER, StoredTranscript("hash-a", transcript, last_used_at=OLD))
+    await env.repo.put_transcript(USER, StoredTranscript(ckey("hash-a"), transcript, last_used_at=OLD))
     await _add(env, record("a"))
     summary = await _step(env)
     assert env.drive.calls == [] and env.media.probes == [] and env.media.runs == []
@@ -88,7 +89,7 @@ async def test_cache_hit_finalizes_with_no_ffmpeg_and_no_model(tmp_path):
     rec = await _get(env, "a")
     assert rec.transcript_state == "current" and rec.transcript_stub == "" and rec.transcript_seconds == 120
     assert rec.transcript_languages == ("uk",) and rec.transcript_body_version == TRANSCRIPT_BODY_VERSION
-    assert env.repo.transcripts[(USER, "hash-a")].last_used_at == NOW
+    assert env.repo.transcripts[(USER, ckey("hash-a"))].last_used_at == NOW
     assert summary["transcript_store_hits"] == 1
 
 
@@ -96,9 +97,9 @@ async def test_cache_hit_finalizes_with_no_ffmpeg_and_no_model(tmp_path):
 async def test_body_or_extraction_version_mismatch_refinalizes_without_model(tmp_path, stale):
     env = _env(tmp_path)
     transcript = _stitched("one", "two")
-    await env.repo.put_transcript(USER, StoredTranscript("hash-a", transcript, last_used_at=OLD))
+    await env.repo.put_transcript(USER, StoredTranscript(ckey("hash-a"), transcript, last_used_at=OLD))
     done = replace(record("a"), state=RecordState.INDEXED, indexed_generation=1, index_generation=1,
-                   indexed_version="c1", transcript_state="current", transcript_key="hash-a", transcript_version=1,
+                   indexed_version="c1", transcript_state="current", transcript_key=ckey("hash-a"), transcript_version=1,
                    transcript_body_version=0 if stale == "body" else TRANSCRIPT_BODY_VERSION,
                    extraction_version=EXTRACTION_VERSION - 1 if stale == "extraction" else EXTRACTION_VERSION,
                    transcript_seconds=120)
@@ -114,7 +115,7 @@ async def test_body_or_extraction_version_mismatch_refinalizes_without_model(tmp
 
 async def test_an_empty_stored_transcript_is_a_no_speech_stub(tmp_path):
     env = _env(tmp_path)
-    await env.repo.put_transcript(USER, StoredTranscript("hash-a", _stitched("  ", ""), last_used_at=OLD))
+    await env.repo.put_transcript(USER, StoredTranscript(ckey("hash-a"), _stitched("  ", ""), last_used_at=OLD))
     await _add(env, record("a"))
     await _step(env)
     rec = await _get(env, "a")
@@ -125,7 +126,7 @@ async def test_an_empty_stored_transcript_is_a_no_speech_stub(tmp_path):
 
 async def test_a_dropped_index_run_leaves_the_record_for_the_next_step(tmp_path):
     env = _env(tmp_path)
-    await env.repo.put_transcript(USER, StoredTranscript("hash-a", _stitched("x"), last_used_at=OLD))
+    await env.repo.put_transcript(USER, StoredTranscript(ckey("hash-a"), _stitched("x"), last_used_at=OLD))
     await _add(env, record("a"))
     env.host.drop_index_result = True
     summary = await _step(env)
@@ -145,7 +146,7 @@ async def test_copy_shares_one_transcription(tmp_path):
     assert (await _get(env, "b")).transcript_state == "waiting" and _job(env, "b") is None
     assert summary["transcript_copies_waiting"] == 1
     # collection (Task 13) lands the transcript of "a"
-    await env.repo.put_transcript(USER, StoredTranscript("shared", _stitched("words"), last_used_at=env.clock.now))
+    await env.repo.put_transcript(USER, StoredTranscript(ckey("shared"), _stitched("words"), last_used_at=env.clock.now))
     a = await _get(env, "a")
     await env.host.commit([mark_current(a, env.clock.now, seconds=600, speakers=1, languages=("uk",))], {"a": a})
     await _step(env)
@@ -156,7 +157,7 @@ async def test_copy_shares_one_transcription(tmp_path):
 
 async def test_a_copy_whose_other_file_is_gone_starts_on_its_own(tmp_path):
     env = _env(tmp_path)
-    b = replace(record("b", content_hash="shared"), transcript_state="waiting", transcript_key="shared")
+    b = replace(record("b", content_hash="shared"), transcript_state="waiting", transcript_key=ckey("shared"))
     await _add(env, b, b=Recording(600))
     assert (await _get(env, "b")).transcript_state == "waiting"
     summary = await _step(env)
@@ -193,7 +194,7 @@ async def test_url_never_persisted(tmp_path, caplog):
 
 async def test_probe_duration_beats_facet(tmp_path):
     env = _env(tmp_path)
-    await _add(env, record("a", kind="video", facets={"video": {"duration": 10_000}}), a=Recording(3600))
+    await _add(env, record("a", kind="video", media=DriveMediaFacts(video_duration_ms=10_000)), a=Recording(3600))
     await _step(env)
     job = _job(env, "a")
     assert job.duration_s == 3600 and [w.spec.index for w in job.windows] == [0, 1, 2]
@@ -209,7 +210,7 @@ async def test_too_long_stub_no_model(tmp_path):
     assert env.media.runs == [] and env.batch.uploads == [] and env.runner.submits == [] and env.host.reserves == []
     assert rec.transcript_state == "current" and rec.transcript_stub == "too_long"
     assert (rec.state, rec.reason) == (RecordState.METADATA_ONLY, Reason.TOO_LARGE)
-    stored = env.repo.transcripts[(USER, "hash-a")]
+    stored = env.repo.transcripts[(USER, ckey("hash-a"))]
     assert stored.stub == "too_long" and stored.transcript is None and stored.last_used_at == NOW
 
 
@@ -220,7 +221,7 @@ async def test_no_audio_stub_no_model(tmp_path):
     rec = await _get(env, "a")
     assert env.media.runs == [] and env.runner.submits == [] and env.host.reserves == []
     assert rec.transcript_stub == "no_audio" and (rec.state, rec.reason) == (RecordState.METADATA_ONLY, Reason.NO_TEXT)
-    assert env.repo.transcripts[(USER, "hash-a")].last_used_at is not None
+    assert env.repo.transcripts[(USER, ckey("hash-a"))].last_used_at is not None
 
 
 async def test_a_probe_stub_collects_the_previous_readable_generation(tmp_path):
@@ -324,11 +325,11 @@ async def test_a_woken_mid_job_park_resubmits_through_its_job(tmp_path):
     env = _env(tmp_path)
     window = JobWindow(spec=WindowSpec(0, 0.0, 600.0), state="uploaded", file_ref="files/x", request_key="a:0",
                        attempts=1, files_expire_at=NOW + timedelta(hours=40))
-    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, item_id="a", content_key="hash-a",
+    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key=ckey("hash-a"),
                                                           duration_s=600.0, windows=(window,), reserved_usd=0.05,
                                                           reserved_month="2026-09")
-    parked = replace(record("a"), transcript_state="parked", transcript_hold="resubmit", transcript_key="hash-a",
-                     transcript_hold_version="hash-a", transcript_wake_at=NOW - timedelta(minutes=1))
+    parked = replace(record("a"), transcript_state="parked", transcript_hold="resubmit", transcript_key=ckey("hash-a"),
+                     transcript_hold_version=ckey("hash-a"), transcript_wake_at=NOW - timedelta(minutes=1))
     await _add(env, parked)
     assert (await _get(env, "a")).transcript_state == "working"   # the plan wakes it as working, never ready
     await _step(env)
@@ -342,10 +343,10 @@ async def test_a_resubmit_that_does_not_fit_parks_the_file_mid_job(tmp_path):
     env = _env(tmp_path, cap=0.0001)
     window = JobWindow(spec=WindowSpec(0, 0.0, 600.0), state="uploaded", file_ref="files/x", request_key="a:0",
                        attempts=1, files_expire_at=NOW + timedelta(hours=40))
-    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, item_id="a", content_key="hash-a",
+    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key=ckey("hash-a"),
                                                           duration_s=600.0, windows=(window,), reserved_usd=0.05,
                                                           reserved_month=MONTH)
-    await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"))
+    await _add(env, replace(record("a"), transcript_state="working", transcript_key=ckey("hash-a")))
     await _step(env)
     rec = await _get(env, "a")
     assert env.runner.submits == [] and env.host.reserves == []
@@ -457,7 +458,7 @@ async def test_wall_bounds_one_step(tmp_path):
 
 async def test_a_working_record_without_a_job_starts_again(tmp_path):
     env = _env(tmp_path)
-    await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"), a=Recording(600))
+    await _add(env, replace(record("a"), transcript_state="working", transcript_key=ckey("hash-a")), a=Recording(600))
     summary = await _step(env)
     assert summary["transcript_restarted"] == 1 and summary["transcript_started"] == 1
     assert (await _get(env, "a")).transcript_state == "waiting"
@@ -465,16 +466,27 @@ async def test_a_working_record_without_a_job_starts_again(tmp_path):
 
 async def test_an_unreadable_job_document_is_dropped_and_charged(tmp_path, monkeypatch):
     env = _env(tmp_path)
-    await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"), a=Recording(600))
-    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, item_id="a", content_key="hash-a")
+    await _add(env, replace(record("a"), transcript_state="working", transcript_key=ckey("hash-a")), a=Recording(600))
+    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key=ckey("hash-a"))
     real = env.repo.get_transcript_job
 
-    async def corrupt(user_id, item_id):
-        if item_id == "a" and (user_id, item_id) in env.repo.transcript_jobs:
+    async def corrupt(scope, item_id):
+        if item_id == "a" and (scope.connection_id, item_id) in env.repo.transcript_jobs:
             raise ValueError("unknown window state 'planned'")
-        return await real(user_id, item_id)
+        return await real(scope, item_id)
+
+    real_delete = env.repo.delete_transcript_job
+
+    async def delete(scope, item_id):
+        # the store's delete checks only the owner field, never the unreadable body (Firestore reads user_id alone)
+        monkeypatch.setattr(env.repo, "get_transcript_job", real)
+        try:
+            await real_delete(scope, item_id)
+        finally:
+            monkeypatch.setattr(env.repo, "get_transcript_job", corrupt)
 
     monkeypatch.setattr(env.repo, "get_transcript_job", corrupt)
+    monkeypatch.setattr(env.repo, "delete_transcript_job", delete)
     summary = await _step(env)   # never fails the tick
     assert summary["transcript_jobs_dropped"] == 1
     assert (await _get(env, "a")).transcript_attempts == 1
@@ -485,13 +497,13 @@ async def test_a_new_content_version_drops_the_old_job_and_releases_it_once(tmp_
     await _add(env, record("a"), a=Recording(5000, cut_after=1))
     await _step(env)
     held = _job(env, "a").reserved_usd
-    edited = replace(await _get(env, "a"), content_version="c2", content_hash="hash-new", modified_at=OLD)
+    edited = replace(await _get(env, "a"), content_version="c2", content_identity=cid("hash-new"), modified_at=OLD)
     env.clock.advance(TRANSCRIBE_REREAD_COOLDOWN.total_seconds() + 60)   # past the edit cooldown (T-R9)
     await _add(env, edited, a=Recording(600))
     await _step(env)
     assert env.host.releases[0] == (pytest.approx(held), MONTH)
     assert env.batch.deleted == ["files/f1"]
-    assert _job(env, "a").content_key == "hash-new"
+    assert _job(env, "a").content_key == ckey("hash-new")
 
 
 async def test_drop_jobs_releases_and_deletes(tmp_path):
@@ -499,7 +511,7 @@ async def test_drop_jobs_releases_and_deletes(tmp_path):
     await _add(env, record("a"), a=Recording(5000, cut_after=1))
     await _step(env)
     held = _job(env, "a").reserved_usd
-    assert await env.stage.drop_jobs(USER, env.host, ["a", "missing"]) == 1
+    assert await env.stage.drop_jobs(HANDLE, env.host, ["a", "missing"]) == 1
     assert _job(env, "a") is None and env.host.releases == [(pytest.approx(held), MONTH)]
     assert env.batch.deleted == ["files/f1"] and _reserved(env) == pytest.approx(0.0)
 
@@ -552,10 +564,10 @@ async def test_an_upload_the_provider_refuses_is_charged(tmp_path):
 
 async def test_edit_cooldown_holds(tmp_path):
     env = _env(tmp_path)
-    bought = replace(record("a", content_hash="hash-old"), transcript_state="current", transcript_key="hash-old",
+    bought = replace(record("a", content_hash="hash-old"), transcript_state="current", transcript_key=ckey("hash-old"),
                      transcript_version=1, transcript_body_version=TRANSCRIPT_BODY_VERSION,
                      model_read_at=NOW - timedelta(hours=1))
-    edited = replace(bought, content_version="c2", content_hash="hash-new")
+    edited = replace(bought, content_version="c2", content_identity=cid("hash-new"))
     await _add(env, edited, a=Recording(600))
     rec = await _get(env, "a")
     assert rec.transcript_state == "held" and rec.transcript_hold == "cooldown"
@@ -567,10 +579,10 @@ async def test_a_working_record_whose_windows_are_all_submitted_is_repaired_to_w
     env = _env(tmp_path)
     window = JobWindow(spec=WindowSpec(0, 0.0, 600.0), state="submitted", file_ref="files/x", request_key="a:0",
                        batch_name="batches/b0", files_expire_at=NOW + timedelta(hours=40))
-    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, item_id="a", content_key="hash-a",
+    env.repo.transcript_jobs[(USER, "a")] = TranscriptJob(user_id=USER, connection_id=USER, item_id="a", content_key=ckey("hash-a"),
                                                           duration_s=600.0, windows=(window,), reserved_usd=0.05,
                                                           reserved_month=MONTH)
-    await _add(env, replace(record("a"), transcript_state="working", transcript_key="hash-a"), a=Recording(600))
+    await _add(env, replace(record("a"), transcript_state="working", transcript_key=ckey("hash-a")), a=Recording(600))
     await _step(env)
     assert env.drive.calls == [] and env.media.probes == [] and env.runner.submits == []
     assert (await _get(env, "a")).transcript_state == "waiting"

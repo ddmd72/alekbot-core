@@ -11,7 +11,8 @@ from src.domain.drive_index import DriveIndexRecord, DriveSyncState, RecordState
 from src.domain.drive_search import INACCESSIBLE_COUNTER, INACCESSIBLE_UNNOTIFIED_COUNTER
 from src.domain.ui_messages import UIMessage
 from src.services.drive_sync_scheduler_service import DriveSyncSchedulerService
-from tests.unit.services.drive_index_fakes import T0, Clock, FakeDrive, FakeQueue, FakeUsers
+from tests.support.drive_connection_service_fake import single_connection_repository
+from tests.unit.services.drive_index_fakes import T0, Clock, FakeQueue
 
 MARKED = T0 + timedelta(minutes=1)
 
@@ -54,11 +55,7 @@ def env():
         return await real(user_id, limit, **kw)
     repo.inaccessible_records = spy
 
-    async def connected_users():
-        return ["u"]
-
-    svc = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(), drive=FakeDrive(),
-                                    users=FakeUsers(enabled={"u": True}), connected_users=connected_users,
+    svc = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(), connections=single_connection_repository("u"),
                                     notifier=notifier, alert_sink=None, clock=clock, localization=Localization())
     return SimpleNamespace(svc=svc, repo=repo, notifier=notifier, clock=clock, reads=reads)
 

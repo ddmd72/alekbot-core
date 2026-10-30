@@ -11,9 +11,11 @@ import pytest
 from src.domain.drive_enrichment import PhotoDescription
 from src.domain.drive_extraction import TriageResult
 from src.domain.drive_index import DriveChange, EpochPhase, Reason, TriageVerdict
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index_planner import PlanContext, plan_observation, triage_due, triaged
 
 from .drive_content_world import ContentWorld, admitted  # noqa: F401  (fixture)
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -21,10 +23,10 @@ NOW = datetime(2026, 10, 13, tzinfo=timezone.utc)
 
 
 def test_a_photo_renamed_away_and_back_is_triaged_again():
-    ctx = PlanContext(user_id="u", root_item_id="root", epoch=1, phase=EpochPhase.IDLE, now=NOW,
+    ctx = PlanContext(scope=U_SCOPE, root_item_id="root", epoch=1, phase=EpochPhase.IDLE, now=NOW,
                       place_of=lambda *a: None)
     ch = DriveChange(item_id="i1", parent_id="root", name="beach.jpg", size_bytes=100000, mime_type="image/jpeg",
-                     content_version="v1", modified_at=NOW - timedelta(days=3), facets={"image": {"width": 4000}})
+                     content_version="v1", modified_at=NOW - timedelta(days=3), media=DriveMediaFacts(image_width=4000))
     photo = triaged(plan_observation(ch, None, None, None, ctx).upsert,
                     TriageResult(item_id="i1", verdict=TriageVerdict.PHOTO), NOW,
                     photo=PhotoDescription(description="Sunset over a beach", scene="beach"))

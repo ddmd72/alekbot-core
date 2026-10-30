@@ -19,7 +19,7 @@ class TestSchedulerBuilderPassThrough:
             return {}
 
         scheduler = setup.build_drive_sync_scheduler(
-            repo=AsyncMock(), queue=AsyncMock(), connections=AsyncMock(), connection_service=None,
+            repo=AsyncMock(), queue=AsyncMock(), connections=AsyncMock(), connection_service=AsyncMock(),
             notifier=notifier,
             alert_sink=alert_sink, ensure_agents=ensure_agents)
         assert scheduler._notifier is notifier

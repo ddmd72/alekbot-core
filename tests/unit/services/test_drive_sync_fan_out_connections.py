@@ -2,6 +2,7 @@
 indexing on and per stored sync state, payload `{user_id, connection_id}` and a key of the connection; a minimal state
 only for an ACTIVE connection; the reconnect notice per connection, read from the connections (R1); the initial build of
 the connection's provider account. Technical ids only."""
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -125,11 +126,11 @@ async def test_a_disconnected_connection_is_never_notified(w):
 
 
 async def test_the_initial_build_read_is_the_connections_account(w):
-    conn = await w.connections.add(connection(USER, "conn-1"))
+    conn = await w.connections.add(connection(USER, "conn-1", provider_account=w.accounts["cred-1"]))
     await w.repo.spend_initial_build(USER, "realm-x", "sub-1", 40.0, w.clock.now)
     assert (await w.svc._initial_build(conn)).spent_usd == 40.0
-    w.accounts.clear()   # the credential is gone: no build counts, read as closed
-    assert (await w.svc._initial_build(conn)).closed_at is not None
+    # a connection holding no account (activation always stores one): no build counts, read as closed
+    assert (await w.svc._initial_build(replace(conn, provider_account=None))).closed_at is not None
 
 
 async def test_a_state_of_another_users_connection_id_is_never_read_as_this_one(w):

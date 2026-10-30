@@ -11,6 +11,7 @@ from typing import List, Optional, Set, Tuple
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.drive_handle import DriveHandle
+from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveNotConnectedError
 
 from .drive_connection_repo import FakeDriveConnectionRepository
@@ -21,10 +22,12 @@ T_CREATED = datetime(2026, 10, 1, tzinfo=timezone.utc)
 def connection(user_id: str = "usr-1", connection_id: str = "conn-1", *, ref_tag: str = "a1",
                drive_identity: str = "fake_a:drive-1", kind: str = "fake_a", indexing: bool = True,
                transcribe: bool = False, credential_id: str = "cred-1", account_id: str = "acc-1",
-               created_at: datetime = T_CREATED) -> DriveConnection:
+               created_at: datetime = T_CREATED,
+               provider_account: Optional[ProviderAccount] = None) -> DriveConnection:
     return DriveConnection(connection_id=connection_id, user_id=user_id, account_id=account_id,
                            credential_id=credential_id, kind=kind, drive_identity=drive_identity, ref_tag=ref_tag,
-                           indexing_enabled=indexing, transcribe_enabled=transcribe, created_at=created_at)
+                           indexing_enabled=indexing, transcribe_enabled=transcribe, created_at=created_at,
+                           provider_account=provider_account)
 
 
 class FakeDriveConnectionService:
@@ -67,3 +70,15 @@ class FakeDriveConnectionService:
         return [c for c in await self.list_for_user(user_id)
                 if c.state is ConnectionState.NEEDS_RECONNECT
                 or (c.state is ConnectionState.ACTIVE and (user_id, c.connection_id) in self.credential_gone)]
+
+
+def single_connection_repository(user_id: str, *, account_id: str = "a",
+                                 provider_account: Optional[ProviderAccount] = None,
+                                 **kw: object) -> FakeDriveConnectionRepository:
+    """A connection repository holding one ACTIVE connection of `user_id` whose connection id IS the user id, so a
+    single-drive test's keys read as before (indexing on unless `indexing=False` is passed)."""
+    repo = FakeDriveConnectionRepository()
+    conn = connection(user_id, user_id, account_id=account_id, provider_account=provider_account,
+                      **kw)  # type: ignore[arg-type]
+    repo.connections[(user_id, user_id)] = conn
+    return repo

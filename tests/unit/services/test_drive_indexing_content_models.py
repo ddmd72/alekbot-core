@@ -10,12 +10,12 @@ from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus
 from src.domain.drive_index import DocumentBrief, Priority, Reason, RecordState, TriageVerdict
 from src.domain.drive_enrichment import UsageClass
 from src.domain.drive_index_params import (
-    INITIAL_BUILD_USD, MODEL_BACKOFF_BASE_S, READER_PAGE_USD_ESTIMATE, READER_RENDITION_SIZE, READER_USD_PER_MONTH,
+    INITIAL_BUILD_USD, MODEL_BACKOFF_BASE_S, READER_PAGE_USD_ESTIMATE, READER_RENDITION_EDGE_PX, READER_USD_PER_MONTH,
 )
 from src.domain.drive_index_run import READER_IMAGE_MAX_BYTES
 
 from .drive_content_world import JPEG, PNG, ContentWorld, admitted, prose  # noqa: F401  (fixture)
-from .drive_usage_helpers import affordable, close_initial_build, month_calls, month_usd, spend
+from .drive_usage_helpers import affordable, close_initial_build, initial_build, month_calls, month_usd, spend
 from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
@@ -49,7 +49,7 @@ async def test_a_scan_goes_to_the_reader(w):
     assert (request.kind, request.max_model_pages, request.account_id) == ("pdf", every_page, "a")
     # the dollars the reader spent, priced by the runner, are in the month's document and the initial build paid them
     assert await month_usd(w.repo, UsageClass.READER, "2026-10") == pytest.approx(0.002)
-    assert (await w.repo.get_initial_build("u")).spent_usd == pytest.approx(0.002)
+    assert (await initial_build(w.repo)).spent_usd == pytest.approx(0.002)
     assert w.summary_total("model_pages") == 3 and w.summary_total("model_calls") == 1
     assert sum(r.model_cost for r in w.results) == pytest.approx(0.002)
 
@@ -193,7 +193,7 @@ async def test_a_text_image_is_read_from_the_large_rendition(w):
     await w.settle()
     rec = w.rec(img)
     assert (rec.state, rec.extracted_by) == (RecordState.INDEXED, "reader@1")
-    assert (img, READER_RENDITION_SIZE) in w.drive.thumbnail_calls and img not in w.drive.downloads
+    assert (img, READER_RENDITION_EDGE_PX) in w.drive.thumbnail_calls and img not in w.drive.downloads
     (request,) = w.reader.requests
     assert request.kind == "image" and seen == [PNG]
 
@@ -205,7 +205,7 @@ async def test_without_a_rendition_a_small_jpeg_original_is_read(w, monkeypatch)
     original = w.drive.get_thumbnail
 
     async def renditions(user_id, item_id, size):   # a triage thumbnail, but no large rendition
-        return None if size == READER_RENDITION_SIZE else await original(user_id, item_id, size)
+        return None if size == READER_RENDITION_EDGE_PX else await original(user_id, item_id, size)
     monkeypatch.setattr(w.drive, "get_thumbnail", renditions)
     await w.settle()
     assert img in w.drive.downloads and w.rec(img).state is RecordState.INDEXED
@@ -217,7 +217,7 @@ async def test_without_a_rendition_heic_is_never_decoded(w, monkeypatch):
     original = w.drive.get_thumbnail
 
     async def renditions(user_id, item_id, size):
-        return None if size == READER_RENDITION_SIZE else await original(user_id, item_id, size)
+        return None if size == READER_RENDITION_EDGE_PX else await original(user_id, item_id, size)
     monkeypatch.setattr(w.drive, "get_thumbnail", renditions)
     await w.settle()
     assert w.rec(img).reason is Reason.NO_TEXT and w.drive.downloads == [] and w.reader.requests == []
@@ -230,7 +230,7 @@ async def test_a_big_original_is_not_sent(w, monkeypatch):
     original = w.drive.get_thumbnail
 
     async def renditions(user_id, item_id, size):
-        return None if size == READER_RENDITION_SIZE else await original(user_id, item_id, size)
+        return None if size == READER_RENDITION_EDGE_PX else await original(user_id, item_id, size)
     monkeypatch.setattr(w.drive, "get_thumbnail", renditions)
     await w.settle()
     assert w.rec(img).reason is Reason.NO_TEXT and w.drive.downloads == []

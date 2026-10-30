@@ -138,7 +138,7 @@ class TestBookkeeping:
 
         async def stalled(user_id, cursor):
             w.clock.advance(TICK_START_BUDGET.total_seconds())
-            return DriveChanges((), cursor, False, False, "d1", ROOT)
+            return DriveChanges((), cursor, False, False, ROOT, drive_identity="fake:d1")
 
         w.drive.get_changes = stalled
         return state

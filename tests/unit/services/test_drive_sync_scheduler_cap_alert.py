@@ -10,7 +10,8 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, Reason, RecordState, Scope
 from src.domain.drive_index_params import MAX_CARD_RECORDS_PER_USER, MAX_CHUNKS_PER_USER
 from src.services.drive_sync_scheduler_service import DriveSyncSchedulerService
-from tests.unit.services.drive_index_fakes import Clock, FakeDrive, FakeQueue, FakeUsers
+from tests.support.drive_connection_service_fake import single_connection_repository
+from tests.unit.services.drive_index_fakes import Clock, FakeQueue
 
 USER = "user-a-0001"
 
@@ -32,12 +33,8 @@ def env():
     repo = InMemoryDriveIndexRepository()
     alerts = Alerts()
 
-    async def connected():
-        return [USER]
-
-    svc = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(), drive=FakeDrive(),
-                                    users=FakeUsers(enabled={USER: True}), connected_users=connected, notifier=None,
-                                    alert_sink=alerts, clock=clock)
+    svc = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(), connections=single_connection_repository(USER),
+                                    notifier=None, alert_sink=alerts, clock=clock)
     repo.states[USER] = DriveSyncState(user_id=USER, created_at=clock.now, last_success_at=clock.now)
     return svc, repo, alerts, clock
 
@@ -139,8 +136,7 @@ async def test_the_alert_counts_in_the_fan_out_summary(env):
 
 async def test_without_an_alert_sink_no_flag_goes_up(env):
     svc, repo, alerts, clock = env
-    unsinked = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(), drive=FakeDrive(),
-                                         users=FakeUsers(enabled={USER: True}), connected_users=svc._connected_users,
+    unsinked = DriveSyncSchedulerService(repo=repo, queue=FakeQueue(), connections=svc._connections,
                                          notifier=None, alert_sink=None, clock=clock)
     _card_capped(repo, 2)
     await unsinked.fan_out()

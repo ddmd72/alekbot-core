@@ -17,7 +17,7 @@ from src.domain.user_drive import (
     DriveThrottled,
 )
 
-from .drive_mirror_fakes import AREA, MirrorWorld
+from .drive_mirror_fakes import AREA, HANDLE, MirrorWorld
 
 HOUR = timedelta(hours=1)
 
@@ -182,7 +182,7 @@ async def test_store_unavailable_and_lease_lost_re_raise():
 
     host.fence = lost                                     # type: ignore[assignment]
     with pytest.raises(LeaseLost):
-        await w2.service.run("user-1", host)
+        await w2.service.run(HANDLE, host)
 
 
 async def test_unexpected_error_is_logged_and_charged(caplog):
@@ -230,7 +230,7 @@ async def test_failed_archive_holds_the_mark():
 async def test_no_drive_id_skips_the_step():
     w = MirrorWorld()
     await w.recording("a.mp4", AREA)
-    counters = await w.run(drive_id="")
+    counters = await w.run(drive_identity="")
     assert counters == {"mirror_no_drive_id": 1} and w.drive.calls == []
 
 

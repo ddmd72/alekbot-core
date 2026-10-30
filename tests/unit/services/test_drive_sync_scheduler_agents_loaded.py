@@ -14,11 +14,7 @@ from .drive_index_fakes import U_SCOPE
 
 
 def _with_ensure_agents(env, ensure_agents):  # noqa: F811
-    async def connected_users():
-        return list(env.connected)
-
-    return DriveSyncSchedulerService(repo=env.repo, queue=env.queue, drive=env.drive, users=env.users,
-                                     connected_users=connected_users, notifier=env.notifier,
+    return DriveSyncSchedulerService(repo=env.repo, queue=env.queue, connections=env.connections, notifier=env.notifier,
                                      alert_sink=env.alerts, clock=env.clock, ensure_agents=ensure_agents)
 
 

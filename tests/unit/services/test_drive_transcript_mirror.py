@@ -19,7 +19,7 @@ from src.domain.drive_mirror_plan import local_day, mirror_digest
 from src.domain.drive_mirror_render import RENDER_VERSION
 from src.services.drive_transcript_mirror import seed_version
 
-from .drive_mirror_fakes import AREA, DRIVE, START, UK, USER, Crash, MirrorWorld, stored
+from .drive_mirror_fakes import AREA, Crash, DRIVE_IDENTITY, MirrorWorld, START, UK, USER, identity, mirror_key, stored
 
 HOUR = timedelta(hours=1)
 
@@ -100,7 +100,7 @@ async def test_readme_crash_rerun_adopts_its_own_file():
 async def _bare_root(w: MirrorWorld, **kw) -> MirrorRoot:
     root_id = w.drive.add_folder(AREA, ROOT_NAME)
     readme = w.drive.add_file(root_id, README_NAME, b"readme")
-    root = MirrorRoot(USER, DRIVE, root_id, ROOT_NAME, readme_item_id=readme, created_at=START, **kw)
+    root = MirrorRoot(USER, DRIVE_IDENTITY, root_id, ROOT_NAME, readme_item_id=readme, created_at=START, **kw)
     await w.mirror.save_root(root)
     return root
 
@@ -799,12 +799,12 @@ async def test_document_of_another_drive_is_never_written():
     a = await w.recording("a.mp4")
     from src.domain.drive_mirror import KIND_FILE, MirrorDoc
     other = MirrorDoc(USER, "drive-2", KIND_FILE, a, source_name="a.mp4", state=MIRROR_ARCHIVED,
-                      mirror_item_id="elsewhere")
-    await w.mirror.save_doc(other)
+                      mirror_item_id="elsewhere", source_identity=identity(a))
+    w.mirror.docs[mirror_key(KIND_FILE, a)] = other     # the key carries the drive: only corrupt data puts it there
     w.reset_calls()
     counters = await w.run()
     assert counters["mirror_other_drive"] == 1 and w.drive.writes() == []
-    assert w.mirror.docs[other.key] == other
+    assert w.mirror.docs[mirror_key(KIND_FILE, a)] == other
 
 
 async def test_long_paths_file_not_moved_back_every_tick():
@@ -875,7 +875,8 @@ async def test_archive_frees_a_name_and_the_suffix_goes():
     new = await w.recording("a.mp4")
     await w.run()
     assert w.mirror_path(new).startswith("a.mp4~")
-    await w.mirror.mark_gone(USER, [DeletionNotice(old, GONE, w.clock)], drive_id=DRIVE)
+    await w.mirror.mark_gone(USER, [DeletionNotice(old, GONE, w.clock, source_identity=identity(old))],
+                             drive_identity=DRIVE_IDENTITY)
     w.advance(2 * HOUR)
     await w.run()
     assert w.doc(old).state == MIRROR_ARCHIVED and w.mirror_path(new) == "a.mp4.md"
@@ -939,7 +940,8 @@ async def test_intent_never_adopts_a_file_another_document_holds():
     assert size > 0
     theirs = w.drive.add_file(w.root.root_item_id, "x.mp4.md", b"y" * size)      # ours by time and size, but ...
     from src.domain.drive_mirror import KIND_FILE, MirrorDoc
-    await w.mirror.save_doc(MirrorDoc(USER, DRIVE, KIND_FILE, "ghost", source_name="other.mp4",
+    await w.mirror.save_doc(MirrorDoc(USER, DRIVE_IDENTITY, KIND_FILE, "ghost", source_identity=identity("ghost"),
+                                      source_name="other.mp4",
                                       mirror_item_id=theirs, mirror_parent_id=w.root.root_item_id,
                                       mirror_name="x.mp4.md"))                 # ... another document's item
     await w.run()

@@ -14,6 +14,7 @@ from src.domain.drive_search import INACCESSIBLE_COUNTER, INACCESSIBLE_UNNOTIFIE
 
 from .drive_content_world import admitted, prose  # noqa: F401  (fixture)
 from .drive_inaccessible_world import ClosedWorld
+from .drive_index_fakes import U_SCOPE
 
 pytestmark = pytest.mark.usefixtures("admitted")
 
@@ -162,7 +163,7 @@ async def test_the_tick_never_writes_the_notified_flag(w):
     w.drive.closed.add(doc)
     await w.settle()
     since = w.rec(doc).inaccessible_since
-    await w.repo.set_inaccessible_notified("u", {doc: since})
+    await w.repo.set_inaccessible_notified(U_SCOPE, {doc: since})
     w.clock.advance(INACCESSIBLE_RETRY_SLOW.total_seconds())
     await w.settle()   # a failed re-check rewrites the record
     rec = w.rec(doc)
@@ -179,6 +180,6 @@ async def test_counters_count_inaccessible_files_apart_from_not_read_yet(w):
     c = counters(w)
     assert c.get(INACCESSIBLE_COUNTER) == 1 and c.get(INACCESSIBLE_UNNOTIFIED_COUNTER) == 1
     assert c.get(NOT_READ_YET_COUNTER, 0) == (0 if w.readable(waiting) else 1)   # the closed file is not "waiting"
-    await w.repo.set_inaccessible_notified("u", {doc: w.rec(doc).inaccessible_since})
+    await w.repo.set_inaccessible_notified(U_SCOPE, {doc: w.rec(doc).inaccessible_since})
     await w.settle()
     assert counters(w).get(INACCESSIBLE_UNNOTIFIED_COUNTER, 0) == 0 and counters(w).get(INACCESSIBLE_COUNTER) == 1
