@@ -126,8 +126,12 @@ class TestNudgePerConnection:
 class TestMirrorGuardPerDrive:
     async def _root_on(self, world, handle, drive_identity: str) -> None:
         mirror = world.drive.plant(handle, ROOT, "_Transcripts", folder=True)
-        await world.mirror.save_root(MirrorRoot(user_id="usr-1", drive_id="", root_item_id=mirror,
-                                                root_name="_Transcripts", drive_identity=drive_identity))
+        root = MirrorRoot(user_id="usr-1", root_item_id=mirror, root_name="_Transcripts",
+                          drive_identity=drive_identity)
+        if drive_identity:
+            await world.mirror.save_root(root)
+        else:   # a stored root read without an identity: save_root refuses to key one, so it is placed in the store
+            world.mirror.root_docs[("usr-1", "")] = root
 
     async def test_the_mirror_of_this_drive_is_refused(self, world):
         one, _ = await _two(world)
