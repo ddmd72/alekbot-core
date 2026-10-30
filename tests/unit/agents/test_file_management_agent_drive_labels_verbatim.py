@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from src.domain import drive_ref
 from src.domain.drive_search import REFERENCE_REMINDER_ATTACHED
 from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import DriveOperations
@@ -29,6 +30,6 @@ async def test_the_label_keeps_the_real_path(item):
     search.archived_text.return_value = None   # §27.9.11: not a file of the bot's _Transcripts folder
     agent = DriveOperations(conversion_service=conversion, notification=AsyncMock(),
                             drive_service=drive, drive_search=search)
-    resp = await agent.open({"user_id": "u1", "account_id": "a1"}, "u1", item.ref)
+    resp = await agent.open({"user_id": "u1", "account_id": "a1"}, "u1", drive_ref.format("a1", item.item_id))
     assert resp.text.startswith(REFERENCE_REMINDER_ATTACHED + "\n")
     assert f"[Drive: {item.path} (" in resp.text and "&amp;" not in resp.text and "&#x27;" not in resp.text
