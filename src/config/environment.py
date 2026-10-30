@@ -469,6 +469,22 @@ class EnvironmentConfig:
         return f"{self.firestore_collection_prefix}drive_note_erase_requests"
 
     @property
+    def drive_connections_collection(self) -> str:
+        """
+        Drive connections, one document per mounted drive under `{user_id}:{connection_id}`; never deleted (a
+        DISCONNECTED document keeps its ref tag reserved; MULTI_DRIVE_RFC §4.4). Dev: development_drive_connections
+        """
+        return f"{self.firestore_collection_prefix}drive_connections"
+
+    @property
+    def drive_user_settings_collection(self) -> str:
+        """
+        The user's drive settings that are not one connection's (the primary pointer), under `{user_id}`
+        (MULTI_DRIVE_RFC §4.4, E2). Dev: development_drive_user_settings
+        """
+        return f"{self.firestore_collection_prefix}drive_user_settings"
+
+    @property
     def oauth_flows_collection(self) -> str:
         """
         Pending integration connect flows under `oauth_flow:<keyed digest of the state>`, single use, ten minutes
