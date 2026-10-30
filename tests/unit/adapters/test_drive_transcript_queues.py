@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveIndexRecord
 from src.domain.drive_index_params import KEYED_DELETE_BATCH
 from src.domain.drive_transcript import (
@@ -26,6 +27,12 @@ LIVE = {"windows": "development_drive_transcript_windows", "parts": "development
         "jobs": "development_drive_transcript_jobs", "batches": "development_drive_transcript_batches",
         "store": "development_drive_transcripts"}
 _ROOT = Path(__file__).resolve().parents[3]
+# one connection per user here, its id the user's (MULTI_DRIVE_RFC §8): the document paths below read `{connection}:…`
+V_SCOPE = ConnectionScope("v", "v")
+
+
+def _scope(user):
+    return ConnectionScope(user, user)
 
 
 @pytest.fixture(params=["memory", "firestore"])
@@ -44,7 +51,7 @@ def adapter(request, mock_env_config):
 
 
 def _rec(item_id, user="u", **kw):
-    return DriveIndexRecord(user, item_id, **kw)
+    return DriveIndexRecord(user, item_id, connection_id=user, **kw)
 
 
 def _stored(key, last_used_at, text="x"):
@@ -83,16 +90,16 @@ async def test_wakeups_due_only(adapter):
         _rec("unset", transcript_state="ready"),
         _rec("other-user", user="v", transcript_wake_at=T - timedelta(days=1)),
     ])
-    assert [r.item_id for r in await repo.transcript_wakeups("u", T, 10)] == ["early", "a", "b"]
-    assert [r.item_id for r in await repo.transcript_wakeups("u", T, 2)] == ["early", "a"]
+    assert [r.item_id for r in await repo.transcript_wakeups(U_SCOPE, T, 10)] == ["early", "a", "b"]
+    assert [r.item_id for r in await repo.transcript_wakeups(U_SCOPE, T, 2)] == ["early", "a"]
 
 
 async def test_open_batches_by_next_poll(adapter):
     repo, _ = adapter
     for name, at in (("batches/c", T), ("batches/a", T - timedelta(minutes=9)), ("batches/b", T + timedelta(hours=1))):
-        await repo.create_batch(TranscriptBatch(name=name, user_id="u", next_poll_at=at))
-    await repo.create_batch(TranscriptBatch(name="batches/z", user_id="v", next_poll_at=T - timedelta(days=1)))
-    await repo.create_batch(TranscriptBatch(name="batches/closed", user_id="u", state="done", next_poll_at=T))
+        await repo.create_batch(TranscriptBatch(name=name, user_id="u", connection_id="u", next_poll_at=at))
+    await repo.create_batch(TranscriptBatch(name="batches/z", user_id="v", connection_id="v", next_poll_at=T - timedelta(days=1)))
+    await repo.create_batch(TranscriptBatch(name="batches/closed", user_id="u", connection_id="u", state="done", next_poll_at=T))
     assert [b.name for b in await repo.get_open_batches(U_SCOPE, T, 10)] == ["batches/a", "batches/c"]
 
 
@@ -104,10 +111,10 @@ async def test_jobs_by_content_key(adapter):
     await repo.save_transcript_job(TranscriptJob(user_id="u", connection_id="u", item_id="i2", content_key=key))
     await repo.save_transcript_job(TranscriptJob(user_id="u", connection_id="u", item_id="i1", content_key=key))
     await repo.save_transcript_job(TranscriptJob(user_id="u", connection_id="u", item_id="i3", content_key="other"))
-    await repo.save_transcript_job(TranscriptJob(user_id="v", item_id="i4", content_key=key))
-    assert [j.item_id for j in await repo.jobs_by_content_key("u", key)] == ["i1", "i2"]
-    assert await repo.jobs_by_content_key("u", "absent") == []
-    assert await repo.jobs_by_content_key("w", key) == []
+    await repo.save_transcript_job(TranscriptJob(user_id="v", connection_id="v", item_id="i4", content_key=key))
+    assert [j.item_id for j in await repo.jobs_by_content_key(U_SCOPE, key)] == ["i1", "i2"]
+    assert await repo.jobs_by_content_key(U_SCOPE, "absent") == []
+    assert await repo.jobs_by_content_key(_scope("w"), key) == []
 
 
 # -- orphans ----------------------------------------------------------------------------------------------------------
@@ -131,29 +138,32 @@ async def test_orphans_by_last_used(adapter):
 async def _fill(repo):
     for user in ("u", "v"):
         for i in (1, 2):
-            await repo.save_transcript_job(TranscriptJob(user_id=user, item_id=f"i{i}", content_key=f"k{i}"))
-            await repo.save_window_result(user, f"i{i}", 0, _result())
-            await repo.save_window_result(user, f"i{i}", 1, _result())
-            await repo.create_batch(TranscriptBatch(name=f"batches/{i}", user_id=user, next_poll_at=T))
+            await repo.save_transcript_job(TranscriptJob(user_id=user, connection_id=user, item_id=f"i{i}",
+                                                         content_key=f"k{i}"))
+            await repo.save_window_result(_scope(user), f"i{i}", 0, _result())
+            await repo.save_window_result(_scope(user), f"i{i}", 1, _result())
+            await repo.create_batch(TranscriptBatch(name=f"batches/{i}", user_id=user, connection_id=user,
+                                                    next_poll_at=T))
             await repo.put_transcript(user, _stored(f"k{i}", T))
 
 
 async def test_purge_helpers_delete_only_the_user(adapter):
     repo, db = adapter
     await _fill(repo)
-    assert await repo.delete_user_transcript_jobs("u", 100) == 2
-    assert await repo.delete_user_batches("u", 100) == 2
+    assert await repo.delete_user_transcript_jobs(U_SCOPE, 100) == 2
+    assert await repo.delete_user_batches(U_SCOPE, 100) == 2
     assert await repo.delete_user_transcripts("u", 100) == 2
-    for call in (repo.delete_user_transcript_jobs, repo.delete_user_batches, repo.delete_user_transcripts):
-        assert await call("u", 100) == 0
+    for call, owner in ((repo.delete_user_transcript_jobs, U_SCOPE), (repo.delete_user_batches, U_SCOPE),
+                        (repo.delete_user_transcripts, "u")):
+        assert await call(owner, 100) == 0
     for i in (1, 2):
         assert await repo.get_transcript_job(U_SCOPE, f"i{i}") is None
         assert await repo.get_window_results(U_SCOPE, f"i{i}") == {}
         assert await repo.get_transcript("u", f"k{i}") is None
-        assert len(await repo.get_window_results("v", f"i{i}")) == 2
-        assert (await repo.get_transcript_job("v", f"i{i}")) is not None
+        assert len(await repo.get_window_results(V_SCOPE, f"i{i}")) == 2
+        assert (await repo.get_transcript_job(V_SCOPE, f"i{i}")) is not None
         assert (await repo.get_transcript("v", f"k{i}")) is not None
-    assert [b.name for b in await repo.get_open_batches("v", T, 10)] == ["batches/1", "batches/2"]
+    assert [b.name for b in await repo.get_open_batches(V_SCOPE, T, 10)] == ["batches/1", "batches/2"]
     if db is not None:   # the other user's subdocuments are all still there, the user's are gone
         assert len(db.collection(f"{LIVE['jobs']}/v:i1/{LIVE['windows']}").docs) == 2
         assert db.collection(f"{LIVE['jobs']}/u:i1/{LIVE['windows']}").docs == {}
@@ -162,9 +172,9 @@ async def test_purge_helpers_delete_only_the_user(adapter):
 async def test_purge_respects_the_limit_and_resumes(adapter):
     repo, _ = adapter
     await _fill(repo)
-    assert await repo.delete_user_transcript_jobs("u", 1) == 1
-    assert await repo.delete_user_transcript_jobs("u", 1) == 1
-    assert await repo.delete_user_transcript_jobs("u", 1) == 0
+    assert await repo.delete_user_transcript_jobs(U_SCOPE, 1) == 1
+    assert await repo.delete_user_transcript_jobs(U_SCOPE, 1) == 1
+    assert await repo.delete_user_transcript_jobs(U_SCOPE, 1) == 0
 
 
 @pytest.fixture
@@ -191,8 +201,10 @@ async def _plant_orphans(db, repo, monkeypatch):
     parts.docs["deadbeef-0"] = {"user_id": "u", "index": 0, "token": "deadbeef", "segments": []}
     db.collection(f"{LIVE['store']}/u:gone/{LIVE['parts']}").docs["t-0"] = {"user_id": "u", "index": 0, "token": "t"}
     db.collection(f"{LIVE['store']}/v:gone/{LIVE['parts']}").docs["t-0"] = {"user_id": "v", "index": 0, "token": "t"}
-    db.collection(f"{LIVE['jobs']}/u:gone/{LIVE['windows']}").docs["0"] = {"user_id": "u", "index": 0, "segments": []}
-    db.collection(f"{LIVE['jobs']}/v:gone/{LIVE['windows']}").docs["0"] = {"user_id": "v", "index": 0, "segments": []}
+    db.collection(f"{LIVE['jobs']}/u:gone/{LIVE['windows']}").docs["0"] = {"user_id": "u", "connection_id": "u",
+                                                                          "index": 0, "segments": []}
+    db.collection(f"{LIVE['jobs']}/v:gone/{LIVE['windows']}").docs["0"] = {"user_id": "v", "connection_id": "v",
+                                                                          "index": 0, "segments": []}
     return parts
 
 
@@ -200,10 +212,10 @@ async def test_helpers_reach_parts_of_any_token_and_never_use_a_collection_group
     db, repo = fs
     parts = await _plant_orphans(db, repo, monkeypatch)
     await repo.save_transcript_job(TranscriptJob(user_id="u", connection_id="u", item_id="i1", content_key="k1"))
-    await repo.save_window_result("u", "i1", 0, _result())
+    await repo.save_window_result(U_SCOPE, "i1", 0, _result())
     assert await repo.delete_user_transcripts("u", 100) == 1
     assert parts.docs == {}
-    assert await repo.delete_user_transcript_jobs("u", 100) == 1
+    assert await repo.delete_user_transcript_jobs(U_SCOPE, 100) == 1
     assert db.collection(f"{LIVE['jobs']}/u:i1/{LIVE['windows']}").docs == {}
     assert await repo.delete_user_transcripts("u", 100) == 0
     assert getattr(db, "group_executed", {}) == {}   # no collection-group query was sent
@@ -218,31 +230,31 @@ async def test_orphan_sweep_deletes_only_the_users_parentless_subdocs(fs, monkey
     await repo.delete_user_transcripts("u", 100)
     # a same-named group that is not ours (bare name) is not in the prefixed group
     db.collection("somewhere_else/u:x/parts").docs["0"] = {"user_id": "u", "index": 0}
-    assert await repo.delete_user_transcript_orphans("u", 100, keep_transcripts=False) == 2
+    assert await repo.delete_user_transcript_orphans(U_SCOPE, 100, keep_transcripts=False) == 2
     assert db.collection(f"{LIVE['store']}/u:gone/{LIVE['parts']}").docs == {}
     assert db.collection(f"{LIVE['jobs']}/u:gone/{LIVE['windows']}").docs == {}
     assert len(db.collection(f"{LIVE['store']}/v:gone/{LIVE['parts']}").docs) == 1
     assert len(db.collection(f"{LIVE['jobs']}/v:gone/{LIVE['windows']}").docs) == 1
     assert len(db.collection("somewhere_else/u:x/parts").docs) == 1
-    assert await repo.delete_user_transcript_orphans("u", 100, keep_transcripts=False) == 0
+    assert await repo.delete_user_transcript_orphans(U_SCOPE, 100, keep_transcripts=False) == 0
 
 
 async def test_orphan_sweep_respects_the_limit(fs, monkeypatch):
     db, repo = fs
     await _plant_orphans(db, repo, monkeypatch)
     await repo.delete_user_transcripts("u", 100)
-    assert await repo.delete_user_transcript_orphans("u", 1, keep_transcripts=False) == 1
-    assert await repo.delete_user_transcript_orphans("u", 1, keep_transcripts=False) == 1
-    assert await repo.delete_user_transcript_orphans("u", 1, keep_transcripts=False) == 0
+    assert await repo.delete_user_transcript_orphans(U_SCOPE, 1, keep_transcripts=False) == 1
+    assert await repo.delete_user_transcript_orphans(U_SCOPE, 1, keep_transcripts=False) == 1
+    assert await repo.delete_user_transcript_orphans(U_SCOPE, 1, keep_transcripts=False) == 0
 
 
 async def test_orphan_windows_are_swept_on_both_adapters(adapter):
     repo, _ = adapter
-    await repo.save_window_result("u", "gone", 0, _result())   # its job is gone (the helpers already returned 0)
-    await repo.save_window_result("v", "gone", 0, _result())
-    assert await repo.delete_user_transcript_orphans("u", 10, keep_transcripts=False) == 1
+    await repo.save_window_result(U_SCOPE, "gone", 0, _result())   # its job is gone (the helpers already returned 0)
+    await repo.save_window_result(V_SCOPE, "gone", 0, _result())
+    assert await repo.delete_user_transcript_orphans(U_SCOPE, 10, keep_transcripts=False) == 1
     assert await repo.get_window_results(U_SCOPE, "gone") == {}
-    assert len(await repo.get_window_results("v", "gone")) == 1
+    assert len(await repo.get_window_results(V_SCOPE, "gone")) == 1
 
 
 async def test_a_failing_group_query_fails_only_the_orphan_method(fs):
@@ -258,20 +270,20 @@ async def test_a_failing_group_query_fails_only_the_orphan_method(fs):
     from tests.unit.adapters import firestore_drive_transcript_fakes as fakes
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(fakes._GroupQuery, "get", boom)
-        assert await repo.delete_user_transcript_jobs("u", 100) == 2
-        assert await repo.delete_user_batches("u", 100) == 2
+        assert await repo.delete_user_transcript_jobs(U_SCOPE, 100) == 2
+        assert await repo.delete_user_batches(U_SCOPE, 100) == 2
         assert await repo.delete_user_transcripts("u", 100) == 2
         with pytest.raises(DriveIndexStoreUnavailable):
-            await repo.delete_user_transcript_orphans("u", 100, keep_transcripts=False)
+            await repo.delete_user_transcript_orphans(U_SCOPE, 100, keep_transcripts=False)
 
 
 async def test_purge_deletes_in_keyed_batches(fs):
     db, repo = fs
     n = 2 * KEYED_DELETE_BATCH + 3
     for i in range(n):
-        await repo.create_batch(TranscriptBatch(name=f"batches/{i}", user_id="u"))
+        await repo.create_batch(TranscriptBatch(name=f"batches/{i}", user_id="u", connection_id="u"))
     db.commits.clear()
-    assert await repo.delete_user_batches("u", n) == n
+    assert await repo.delete_user_batches(U_SCOPE, n) == n
     assert [len(c) for c in db.commits] == [KEYED_DELETE_BATCH, KEYED_DELETE_BATCH, 3]
 
 
@@ -281,8 +293,8 @@ async def test_purge_queries_filter_on_the_user_only(fs):
     for col in db.cols.values():
         col.executed.clear()
     db.group_executed = {}
-    await repo.delete_user_transcript_jobs("u", 100)
-    await repo.delete_user_batches("u", 100)
+    await repo.delete_user_transcript_jobs(U_SCOPE, 100)
+    await repo.delete_user_batches(U_SCOPE, 100)
     await repo.delete_user_transcripts("u", 100)
     top = [LIVE["jobs"], LIVE["batches"], LIVE["store"]]
     for name in top:
@@ -298,12 +310,12 @@ async def test_every_new_query_has_its_index(fs):
     db, repo = fs
     await repo.upsert_records([_rec("c")])   # the records collection exists
     await repo.transcript_queue(U_SCOPE, 5)
-    await repo.transcript_wakeups("u", T, 5)
-    await repo.jobs_by_content_key("u", "k")
+    await repo.transcript_wakeups(U_SCOPE, T, 5)
+    await repo.jobs_by_content_key(U_SCOPE, "k")
     await repo.get_open_batches(U_SCOPE, T, 5)
     await repo.orphan_transcripts("u", T, 5)
-    await repo.delete_user_transcript_jobs("u", 5)
-    await repo.delete_user_batches("u", 5)
+    await repo.delete_user_transcript_jobs(U_SCOPE, 5)
+    await repo.delete_user_batches(U_SCOPE, 5)
     await repo.delete_user_transcripts("u", 5)
     executed = {LIVE_RECS: db.cols[RECS].executed, **{LIVE[k]: db.cols[LIVE[k]].executed for k in ("jobs", "batches", "store")}}
     needing = 0
@@ -318,7 +330,7 @@ async def test_every_new_query_has_its_index(fs):
     assert needing == 4
     # the equality-only copy check still has its composite (the brief's), and the sweep's group reads theirs
     assert [("user_id", "ASCENDING"), ("content_key", "ASCENDING")] in _declared(LIVE["jobs"])
-    await repo.delete_user_transcript_orphans("u", 5, keep_transcripts=False)
+    await repo.delete_user_transcript_orphans(U_SCOPE, 5, keep_transcripts=False)
     for group in (LIVE["windows"], LIVE["parts"]):
         (ops,) = db.group_executed[group][:1]
         required = _required(ops)
@@ -405,9 +417,9 @@ async def test_keep_transcripts_leaves_a_sharded_transcript_readable(adapter, mo
     big = StoredTranscript("k1", StitchedTranscript(tuple(Segment(i * 1.0, None, "w" * 80) for i in range(30)),
                                                     ("uk",), 1, 30.0), last_used_at=T)
     await repo.put_transcript("u", big)
-    await repo.save_window_result("u", "i1", 0, _result())
+    await repo.save_window_result(U_SCOPE, "i1", 0, _result())
     assert db is None or len(db.collection(f"{LIVE['store']}/u:k1/{LIVE['parts']}").docs) > 1
-    assert await repo.delete_user_transcript_orphans("u", 100, keep_transcripts=True) == 1   # the window only
+    assert await repo.delete_user_transcript_orphans(U_SCOPE, 100, keep_transcripts=True) == 1   # the window only
     assert await repo.get_window_results(U_SCOPE, "i1") == {}
     assert await repo.get_transcript("u", "k1") == big
     if db is not None:
@@ -424,13 +436,13 @@ async def test_without_keep_transcripts_the_parts_go_too(adapter, monkeypatch):
                                                     ("uk",), 1, 30.0), last_used_at=T)
     await repo.put_transcript("u", big)
     count = len(db.collection(f"{LIVE['store']}/u:k1/{LIVE['parts']}").docs)
-    assert await repo.delete_user_transcript_orphans("u", 100, keep_transcripts=False) == count
+    assert await repo.delete_user_transcript_orphans(U_SCOPE, 100, keep_transcripts=False) == count
     assert db.collection(f"{LIVE['store']}/u:k1/{LIVE['parts']}").docs == {}
 
 
 async def test_keep_transcripts_is_a_required_keyword(adapter):
     repo, _ = adapter
     with pytest.raises(TypeError):
-        await repo.delete_user_transcript_orphans("u", 5)
+        await repo.delete_user_transcript_orphans(U_SCOPE, 5)
     with pytest.raises(TypeError):
-        await repo.delete_user_transcript_orphans("u", 5, True)
+        await repo.delete_user_transcript_orphans(U_SCOPE, 5, True)
