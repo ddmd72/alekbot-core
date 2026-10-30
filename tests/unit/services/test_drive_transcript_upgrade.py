@@ -25,7 +25,7 @@ async def w():
     change = world.drive.items[world.audio]
     old_policy = {**{k: v for k, v in CURRENT_VERSIONS.items()}, "policy": 2}
     rec = DriveIndexRecord(
-        user_id="u", item_id=change.item_id, parent_id=change.parent_id, name=change.name,
+        user_id="u", connection_id="u", item_id=change.item_id, identity=change.identity, parent_id=change.parent_id, name=change.name,
         size_bytes=change.size_bytes, mime_type=change.mime_type, kind="audio", content_class=ContentClass.MEDIA,
         scope=Scope.NORMAL, state=RecordState.METADATA_ONLY, reason=Reason.KIND_NOT_ADMITTED,
         content_version=change.content_version, modified_at=change.modified_at, fs_modified_at=change.fs_modified_at,
@@ -36,7 +36,7 @@ async def w():
     rec = replace(rec, card_hash=card_hash(rec))
     await world.repo.upsert_records([rec], {rec.item_id: [0.5] * 8})
     world.repo.states["u"] = DriveSyncState(
-        user_id="u", drive_id="d1", root_item_id=ROOT, cursor=f"delta:{len(world.drive.log)}", round_complete=True,
+        user_id="u", connection_id="u", drive_identity="fake:d1", root_item_id=ROOT, cursor=f"delta:{len(world.drive.log)}", round_complete=True,
         epoch=1, epoch_phase=EpochPhase.IDLE, initial_enumeration_done=True, created_at=T0,
         applied_versions=old_policy, applied_space=SPACE, observed_as_of=T0)
     world.clock.advance(timedelta(days=1).total_seconds())
