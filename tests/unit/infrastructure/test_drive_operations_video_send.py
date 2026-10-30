@@ -45,7 +45,7 @@ def _ops(result: bool) -> tuple[DriveOperations, Notification]:
 async def test_a_failed_upload_is_a_failure_outcome(call):
     ops, note = _ops(False)
     if call == "open":
-        out = await ops.open(CTX, "u1", "drive:v1")
+        out = await ops.open(CTX, "u1", "drive:a1:v1")
     else:
         out = await ops.fetch_stored(CTX, "u1", "workspace:files/clip.mp4")
     assert (out.op, out.cls, out.success) == (DriveOp.OPEN, OutcomeClass.FAILED, False)
@@ -58,7 +58,7 @@ async def test_a_failed_upload_is_a_failure_outcome(call):
 async def test_a_successful_upload_is_unchanged(call, tail):
     ops, _ = _ops(True)
     if call == "open":
-        out = await ops.open(CTX, "u1", "drive:v1")
+        out = await ops.open(CTX, "u1", "drive:a1:v1")
     else:
         out = await ops.fetch_stored(CTX, "u1", "workspace:files/clip.mp4")
     assert out.cls is OutcomeClass.OK and out.success and out.text.endswith(tail)
