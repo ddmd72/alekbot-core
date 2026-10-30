@@ -475,7 +475,18 @@ async def test_an_unreadable_job_document_is_dropped_and_charged(tmp_path, monke
             raise ValueError("unknown window state 'planned'")
         return await real(scope, item_id)
 
+    real_delete = env.repo.delete_transcript_job
+
+    async def delete(scope, item_id):
+        # the store's delete checks only the owner field, never the unreadable body (Firestore reads user_id alone)
+        monkeypatch.setattr(env.repo, "get_transcript_job", real)
+        try:
+            await real_delete(scope, item_id)
+        finally:
+            monkeypatch.setattr(env.repo, "get_transcript_job", corrupt)
+
     monkeypatch.setattr(env.repo, "get_transcript_job", corrupt)
+    monkeypatch.setattr(env.repo, "delete_transcript_job", delete)
     summary = await _step(env)   # never fails the tick
     assert summary["transcript_jobs_dropped"] == 1
     assert (await _get(env, "a")).transcript_attempts == 1
