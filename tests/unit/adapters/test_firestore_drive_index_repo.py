@@ -14,6 +14,7 @@ from google.cloud.firestore_v1.vector import Vector
 from src.adapters.firestore_drive_index_repo import (
     _DOC_OVERHEAD_BYTES, CARD_DISTANCE, RECORD_FIELDS, STATE_FIELDS, _write_bytes, state_to_doc,
 )
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveIndexRecord, DriveSyncState, Priority
 from src.domain.drive_index_params import RECORD_WRITE_BATCH, WRITE_BATCH_BYTES
 
@@ -62,8 +63,12 @@ class TestSyncState:
         assert data["epoch"] == 3
 
     async def test_update_flags_writes_only_the_given_flags(self, repo, db):
+        doc = db.cols[STATES].document("u")
+        doc.get = AsyncMock(return_value=snap(state_to_doc(DriveSyncState(user_id="u", connection_id="u")), "u"))
         await repo.update_sync_flags(U_SCOPE, reconnect_notified=True)
-        db.cols[STATES].docs["u"].update.assert_awaited_once_with({"reconnect_notified": True})
+        assert doc.get.call_args.kwargs["transaction"] is db.tx    # the owner check reads in the transaction (I3)
+        db.tx.update.assert_called_once_with(doc, {"reconnect_notified": True})
+        doc.update.assert_not_awaited()
 
     async def test_update_flags_without_values_writes_nothing(self, repo, db):
         await repo.update_sync_flags(U_SCOPE)
@@ -81,10 +86,11 @@ class TestSyncState:
         await repo.delete_sync_state(U_SCOPE)
         db.tx.delete.assert_called_once_with(doc)                    # in the fencing transaction (§7.1)
 
-    async def test_list_user_ids_reads_names_only(self, repo, db):
-        db.cols[STATES].respond = lambda ops: [snap({}, "u2"), snap({}, "u1")]
-        assert await repo.list_sync_user_ids() == ["u1", "u2"]
-        assert db.cols[STATES].executed == [[("select", ("__name__",))]]
+    async def test_list_sync_scopes_reads_the_user_id_only(self, repo, db):
+        db.cols[STATES].respond = lambda ops: [snap({"user_id": "u"}, "conn-2"), snap({"user_id": "u"}, "conn-1")]
+        assert await repo.list_sync_scopes() == [ConnectionScope(user_id="u", connection_id="conn-1"),
+                                                 ConnectionScope(user_id="u", connection_id="conn-2")]
+        assert db.cols[STATES].executed == [[("select", ("user_id",))]]
 
 
 class TestLease:
