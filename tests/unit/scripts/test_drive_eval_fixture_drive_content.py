@@ -73,13 +73,14 @@ async def test_a_folder_or_a_missing_item_is_not_found(drive, tmp_path, path):
 
 
 async def test_renditions(drive):
-    assert await drive.get_thumbnail(USER, item_id_for("Pics/IMG_1.HEIC"), "medium") == b"\xff\xd8\xffthumb"
-    assert await drive.get_thumbnail(USER, item_id_for("Pics/IMG_1.HEIC"), "c2048x2048") == b"\xff\xd8\xffthumb"
-    assert await drive.get_thumbnail(USER, item_id_for("Pics/receipt.jpg"), "medium") == b"\xff\xd8\xffreceipt"
-    assert await drive.get_thumbnail(USER, item_id_for("Docs/lease.pdf"), "medium") is None
+    """`max_edge_px` is the rendition's longer edge in pixels (MULTI_DRIVE_RFC §6): 176 is the old "medium"."""
+    assert await drive.get_thumbnail(USER, item_id_for("Pics/IMG_1.HEIC"), 176) == b"\xff\xd8\xffthumb"
+    assert await drive.get_thumbnail(USER, item_id_for("Pics/IMG_1.HEIC"), 2048) == b"\xff\xd8\xffthumb"
+    assert await drive.get_thumbnail(USER, item_id_for("Pics/receipt.jpg"), 176) == b"\xff\xd8\xffreceipt"
+    assert await drive.get_thumbnail(USER, item_id_for("Docs/lease.pdf"), 176) is None
     with pytest.raises(DriveItemNotFoundError):
-        await drive.get_thumbnail(USER, "fx-unknown", "medium")
-    assert drive.thumbnail_calls[0] == (item_id_for("Pics/IMG_1.HEIC"), "medium")
+        await drive.get_thumbnail(USER, "fx-unknown", 176)
+    assert drive.thumbnail_calls[0] == (item_id_for("Pics/IMG_1.HEIC"), 176)
 
 
 async def test_templates_render_per_item(drive, tmp_path):
