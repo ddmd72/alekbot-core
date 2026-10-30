@@ -97,17 +97,19 @@ def ops(drive, search, notifier):
 ])
 async def test_each_exception_maps_to_its_class_with_todays_text(ops, drive, exc, cls, text):
     drive.move.side_effect = exc
-    out = await ops.move(CTX, "u1", "drive:f1", folder="Archive", wait_s=5)
+    out = await ops.move(CTX, "u1", "drive:a1:f1", folder="Archive", wait_s=5)
     assert (out.op, out.cls, out.text, out.success) == (DriveOp.MOVE, cls, text, False)
 
 
 async def test_an_item_the_bot_cannot_open_is_refused_with_the_index_sentence(ops, drive, search):
     drive.delete.side_effect = DriveItemNotFoundError("x")
     search.access_note.return_value = "The file exists, but the bot cannot open it"
-    out = await ops.delete(CTX, "u1", "drive:f1", wait_s=5)
+    out = await ops.delete(CTX, "u1", "drive:a1:f1", wait_s=5)
     assert out.cls is OutcomeClass.REFUSED and out.facts.inaccessible
     assert out.text == "The file exists, but the bot cannot open it"
-    search.access_note.assert_awaited_once_with("u1", item_id="f1")
+    (conn,), kw = search.access_note.await_args   # once, on the ref's connection (MULTI_DRIVE_RFC §9)
+    assert search.access_note.await_count == 1
+    assert (conn.user_id, conn.ref_tag, kw) == ("u1", "a1", {"item_id": "f1"})
 
 
 async def test_not_configured_answers_before_any_call():
@@ -132,7 +134,8 @@ async def test_a_listing_is_ok_with_its_items(ops, drive):
     drive.list_folder.return_value = ListOutcome(folder=FOLDER, items=[FILE], truncated=False)
     out = await ops.list_folder(CTX, "u1", "Inbox")
     assert out.cls is OutcomeClass.OK and out.success
-    assert out.drive_context() == [{"path": "Inbox", "ref": "drive:d1"}, {"path": "Inbox/lease.pdf", "ref": "drive:f1"}]
+    assert out.drive_context() == [{"path": "Inbox", "ref": "drive:a1:d1"},
+                                   {"path": "Inbox/lease.pdf", "ref": "drive:a1:f1"}]
 
 
 def _card(**kw):
@@ -207,14 +210,14 @@ async def _settle(ops):
 
 async def test_still_running_is_a_success_of_its_own_class(ops, drive):
     drive.move.side_effect = _late()
-    out = await ops.move(CTX, "u1", "drive:f1", folder="X", wait_s=0.01)
+    out = await ops.move(CTX, "u1", "drive:a1:f1", folder="X", wait_s=0.01)
     assert (out.cls, out.text, out.success) == (OutcomeClass.STILL_RUNNING, STILL_RUNNING, True)
     await _settle(ops)
 
 
 async def test_a_late_failing_delete_posts_its_notice_keyed_on_the_op(ops, drive, notifier):
     drive.delete.side_effect = _late(RuntimeError("boom"))
-    out = await ops.delete(CTX, "u1", "drive:f1", wait_s=0.01)
+    out = await ops.delete(CTX, "u1", "drive:a1:f1", wait_s=0.01)
     assert out.cls is OutcomeClass.STILL_RUNNING
     await _settle(ops)
     notifier.notify_raw.assert_awaited_once()
@@ -226,7 +229,7 @@ async def test_a_late_failing_append_posts_no_notice(ops, drive, notifier):
         await asyncio.sleep(0.15)
         raise RuntimeError("boom")
     drive.append_text.side_effect = late_append
-    out = await ops.append(CTX, "u1", "drive:f1", "more", wait_s=0.01)
+    out = await ops.append(CTX, "u1", "drive:a1:f1", "more", wait_s=0.01)
     assert out.cls is OutcomeClass.STILL_RUNNING
     await _settle(ops)
     notifier.notify_raw.assert_not_called()
@@ -265,8 +268,8 @@ async def test_one_user_one_lock_across_two_holders(ops, drive):
     first, second = _agent(ops), _agent(ops)
     # Reviewer edit at the cut: FileManagement has no drive mutation intent any more (DRIVE_SPECIALIST_RFC §5.5); the
     # first holder's mutation goes through the operations object it holds, the order assertion is unchanged
-    await asyncio.gather(first.drive_operations.move(CTX, "u1", "drive:f1", folder="A", wait_s=5),
-                         ops.move(CTX, "u1", "drive:f1", folder="B", wait_s=5))
+    await asyncio.gather(first.drive_operations.move(CTX, "u1", "drive:a1:f1", folder="A", wait_s=5),
+                         ops.move(CTX, "u1", "drive:a1:f1", folder="B", wait_s=5))
     assert order == [("start", "A"), ("end", "A"), ("start", "B"), ("end", "B")]
     assert second.drive_operations is first.drive_operations
 
