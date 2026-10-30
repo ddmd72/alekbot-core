@@ -10,7 +10,7 @@ from src.domain.drive_excerpt_file import ExcerptFile
 from src.domain.drive_excerpt_request import ExcerptRequest
 from src.domain.drive_excerpt_result import ExcerptResult
 from src.domain.drive_search import STATUS_OK
-from src.domain.user_drive import make_drive_ref
+from src.domain import drive_ref
 
 TOMS_PLAN = "R&D/Tom's plan.docx"
 LEASE = "lease_porto.pdf"
@@ -34,8 +34,11 @@ def chunks_of(source: str, item_id: str = "item-1", *, generation: int = 1) -> L
 def excerpt_file(item_id: str = "item-1", path: str = TOMS_PLAN, chunks: Sequence[ExcerptChunk] = (), *,
                  kind: str = "docx", generation: int = 1, chunk_count: int = 12, capture: str = "digital",
                  card_accuracy: Optional[int] = None, stale: bool = False, truncated: bool = False,
-                 also_at: Tuple[str, ...] = ()) -> ExcerptFile:
-    return ExcerptFile(item_id=item_id, ref=make_drive_ref(item_id), name=path.rsplit("/", 1)[-1], path=path,
+                 also_at: Tuple[str, ...] = (), ref_tag: str = "") -> ExcerptFile:
+    """`ref_tag` given: the file's ref is the tagged `drive:<tag>:<item_id>` (MULTI_DRIVE_RFC §9); without it the ref
+    keeps the untagged form this builder always wrote (`make_drive_ref`, removed from src)."""
+    ref = drive_ref.format(ref_tag, item_id) if ref_tag else f"{drive_ref.REF_PREFIX}{item_id}"
+    return ExcerptFile(item_id=item_id, ref=ref, name=path.rsplit("/", 1)[-1], path=path,
                        kind=kind, generation=generation, chunk_count=chunk_count, size_bytes=2048,
                        web_url=f"https://example.com/{item_id}", stale=stale, truncated=truncated, capture=capture,
                        card_accuracy=card_accuracy, also_at=also_at, chunks=tuple(chunks))
