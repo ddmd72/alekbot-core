@@ -15,7 +15,8 @@ from typing import List
 import pytest
 
 from scripts.validation.drive_eval.fixture_drive import FixtureDrive
-from scripts.validation.drive_eval.runner import EvalClock, _EnabledUsers, index_fixture, run_cases
+from scripts.validation.drive_eval.eval_connection import EvalDriveConnections, eval_connection
+from scripts.validation.drive_eval.runner import EVAL_USER, EvalClock, index_fixture, run_cases
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.subprocess_content_extractor import SubprocessContentExtractor
 from src.domain import drive_index_policy as policy
@@ -70,7 +71,8 @@ async def test_text_layer_g2_cases_find_their_substring_in_the_window(admitted):
     # a PDF without a text layer goes past the parser to the reader (§24.3)
     assert "Scan_0012.pdf" in {r.name for r in reader.requests}
 
-    search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock, embedding_space=SPACE)
+    search = DriveSearchService(repo, embeddings, drive, EvalDriveConnections(eval_connection(EVAL_USER)), clock=clock,
+                                embedding_space=SPACE)
     run = await run_cases(search, drive, gold)
     missed = {row["id"]: row.get("windows") or row["top"] for row in run.cases if not row["hit"]}
     assert not missed, (missed, f"accepted_loss: {accepted}", f"requires_enrichment: {enrichment}")
