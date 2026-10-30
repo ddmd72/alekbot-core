@@ -9,6 +9,7 @@ from google.api_core.exceptions import FailedPrecondition
 from pydantic import ValidationError
 
 from src.domain.fact_review_answer_kind import AnswerKind
+from src.domain.fact_review_reply_record import ReplyRecord
 from src.domain.fact_review_question import (
     MAX_REPLY_CHARS, QUESTION_RETENTION, ClosedBy, FactReviewQuestion, QuestionStatus,
 )
@@ -78,7 +79,7 @@ async def test_a_queued_question_round_trips_with_no_message_fields(world):
 async def test_a_write_round_trips_the_moved_question(world):
     asked = await world.seed_question(QuestionStatus.ASKED, question_id="q1")
 
-    assert await world.review_store.record_reply("q1", "still true", AT) is True
+    assert await world.review_store.record_reply("q1", "still true", AT) is ReplyRecord.RECORDED
 
     assert await world.review_store.get_questions(["q1"]) == [asked.with_reply("still true", AT)]
 
@@ -179,8 +180,8 @@ async def test_a_reply_is_taken_on_an_asked_or_unanswered_question(world):
     await world.seed_question(QuestionStatus.ASKED, question_id="asked")
     await world.seed_question(QuestionStatus.UNANSWERED, question_id="unanswered")
 
-    assert await world.review_store.record_reply("asked", "  yes, still  ", AT) is True
-    assert await world.review_store.record_reply("unanswered", "no", AT) is True
+    assert await world.review_store.record_reply("asked", "  yes, still  ", AT) is ReplyRecord.RECORDED
+    assert await world.review_store.record_reply("unanswered", "no", AT) is ReplyRecord.RECORDED
 
     assert stored(world, "asked")["reply_text"] == "yes, still" and stored(world, "asked")["reply_at"] == AT
     assert stored(world, "unanswered")["reply_text"] == "no"
@@ -191,7 +192,7 @@ async def test_a_second_reply_is_appended_on_a_new_line(world):
     later = AT + timedelta(minutes=3)
 
     await world.review_store.record_reply("q1", "first", AT)
-    assert await world.review_store.record_reply("q1", "second", later) is True
+    assert await world.review_store.record_reply("q1", "second", later) is ReplyRecord.RECORDED
 
     assert stored(world, "q1")["reply_text"] == "first\nsecond" and stored(world, "q1")["reply_at"] == later
 
@@ -205,7 +206,7 @@ async def test_a_reply_is_refused_on_a_question_not_open_and_sent(world, status,
     await world.seed_question(status, question_id="q1", **over)
     before = dict(stored(world, "q1"))
 
-    assert await world.review_store.record_reply("q1", "words", AT) is False
+    assert await world.review_store.record_reply("q1", "words", AT) is ReplyRecord.REFUSED
     assert stored(world, "q1") == before
 
 
@@ -215,14 +216,14 @@ async def test_a_reply_is_refused_once_the_review_was_shown_the_reply(world):
     assert await world.review_store.mark_offered("q1", AT) is True
     before = dict(stored(world, "q1"))
 
-    assert await world.review_store.record_reply("q1", "more", AT) is False
+    assert await world.review_store.record_reply("q1", "more", AT) is ReplyRecord.REFUSED
     assert stored(world, "q1") == before
 
 
 async def test_a_reply_with_no_words_is_not_recorded(world):
     await world.seed_question(QuestionStatus.ASKED, question_id="q1")
 
-    assert await world.review_store.record_reply("q1", "   ", AT) is False
+    assert await world.review_store.record_reply("q1", "   ", AT) is ReplyRecord.REFUSED
     assert stored(world, "q1")["reply_text"] is None
 
 
@@ -230,13 +231,13 @@ async def test_the_reply_is_bounded_and_a_reply_that_no_longer_fits_is_false(wor
     await world.seed_question(QuestionStatus.ASKED, question_id="q1")
     store = world.review_store
 
-    assert await store.record_reply("q1", "a" * (MAX_REPLY_CHARS - 10), AT) is True
-    assert await store.record_reply("q1", "b" * 50, AT + timedelta(minutes=1)) is True
+    assert await store.record_reply("q1", "a" * (MAX_REPLY_CHARS - 10), AT) is ReplyRecord.RECORDED
+    assert await store.record_reply("q1", "b" * 50, AT + timedelta(minutes=1)) is ReplyRecord.RECORDED
     kept = stored(world, "q1")["reply_text"]
     assert len(kept) == MAX_REPLY_CHARS and kept.endswith("\n" + "b" * 9)
     before = dict(stored(world, "q1"))
 
-    assert await store.record_reply("q1", "c" * 20, AT + timedelta(minutes=2)) is False
+    assert await store.record_reply("q1", "c" * 20, AT + timedelta(minutes=2)) is ReplyRecord.REFUSED
     assert stored(world, "q1") == before
 
 
@@ -277,7 +278,7 @@ async def test_purge_after_is_set_only_by_the_close(world):
     await world.seed_question(QuestionStatus.ASKED, question_id="q1")
     store = world.review_store
     assert await store.set_message_ref("posted", REF) is True
-    assert await store.record_reply("q1", "it ended", NOW) is True
+    assert await store.record_reply("q1", "it ended", NOW) is ReplyRecord.RECORDED
     assert await store.mark_offered("q1", NOW) is True
     assert "purge_after" not in stored(world, "posted") and "purge_after" not in stored(world, "q1")
 
@@ -310,7 +311,7 @@ async def test_every_write_on_a_missing_question_is_false(world):
     store = world.review_store
 
     assert await store.set_message_ref("nope", REF) is False
-    assert await store.record_reply("nope", "x", AT) is False
+    assert await store.record_reply("nope", "x", AT) is ReplyRecord.REFUSED
     assert await store.mark_offered("nope", AT) is False
     assert await store.close("nope", ClosedBy.REVIEW, None, None, AT) is False
     assert world.question_docs == {}
