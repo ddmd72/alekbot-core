@@ -53,9 +53,9 @@ def _whole():
 
 
 def _page():
-    span = PageSpan(first=1, last=10, total=130, version=1, next=11, path=PATH, ref="drive:item-1")
+    span = PageSpan(first=1, last=10, total=130, version=1, next=11, path=PATH, ref="drive:a1:item-1")
     res = result(excerpt_file("item-1", PATH, [chunk("item-1", i, f"Clause {i + 1}.") for i in range(10)]),
-                 request=ExcerptRangeRequest("drive:item-1", 1, 10, page=True), page=span)
+                 request=ExcerptRangeRequest("drive:a1:item-1", 1, 10, page=True), page=span)
     rendered = render_excerpts(res, nonce=nonces())
     return DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text=rendered.text, success=True, items=(ITEM,),
                         facts=ReadFacts(excerpts=True, paged=True), excerpts=res, excerpt_plan=rendered.plan,
@@ -79,44 +79,44 @@ async def _call(run, name, **args):
 
 async def test_a_refusal_ends_with_the_specialists_route_naming_the_ref():
     _, run, _ = _run(_refusal())
-    seen = await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:item-1")
-    assert seen.result_str == f"[r1]\n{refusal_text(PATH, PAGEABLE)}\n" + ROUTE_SPECIALIST.format(ref="drive:item-1")
+    seen = await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:a1:item-1")
+    assert seen.result_str == f"[r1]\n{refusal_text(PATH, PAGEABLE)}\n" + ROUTE_SPECIALIST.format(ref="drive:a1:item-1")
 
 
 async def test_a_cut_body_gets_the_cut_stand_in():
     extent = TextExtent(ExtentState.NOT_INDEXED)
     _, run, _ = _run(_cut(extent))
-    seen = await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:item-1")
-    expected = stand_in_cut("r1", drive_label(ITEM), BoundText("", 90_000, 59_000, extent.state), "drive:item-1", extent)
+    seen = await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:a1:item-1")
+    expected = stand_in_cut("r1", drive_label(ITEM, "a1"), BoundText("", 90_000, 59_000, extent.state), "drive:a1:item-1", extent)
     assert seen.result_str == expected and "HEAD" not in seen.result_str
 
 
 async def test_a_stale_cut_stand_in_names_the_find_route():
     extent = TextExtent(ExtentState.STALE, passages=77)
     _, run, _ = _run(_cut(extent))
-    seen = await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:item-1")
-    assert "find_passages with file_refs=drive:item-1" in seen.result_str
+    seen = await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:a1:item-1")
+    assert "find_passages with file_refs=drive:a1:item-1" in seen.result_str
 
 
 async def test_a_whole_body_keeps_the_old_stand_in():
     _, run, _ = _run(_whole())
-    seen = await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:item-1")
-    assert seen.result_str == t.STAND_IN_TEXT.format(handle="r1", label=drive_label(ITEM), chars=500)
+    seen = await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:a1:item-1")
+    assert seen.result_str == t.STAND_IN_TEXT.format(handle="r1", label=drive_label(ITEM, "a1"), chars=500)
 
 
 async def test_a_refusal_does_not_arm_the_content_gate():
     ops, run, _ = _run(_refusal())
-    await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:item-1")
+    await _call(run, tt.OPEN_DRIVE_FILE, file_ref="drive:a1:item-1")
     run.step = 2
-    await _call(run, tt.MOVE_FILE, file_ref="drive:item-1", folder="Archive")
+    await _call(run, tt.MOVE_FILE, file_ref="drive:a1:item-1", folder="Archive")
     ops.move.assert_awaited_once()
 
 
 async def test_a_page_arms_it_like_any_passages_read():
     ops, run, collector = _run(_refusal())
-    await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1")
+    await _call(run, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages="from 1")
     run.step = 2
-    await _call(run, tt.MOVE_FILE, file_ref="drive:item-1", folder="Archive")
+    await _call(run, tt.MOVE_FILE, file_ref="drive:a1:item-1", folder="Archive")
     ops.move.assert_not_called()
     assert collector.results[-1].outcome.cls is OutcomeClass.REFUSED
 
@@ -124,15 +124,15 @@ async def test_a_page_arms_it_like_any_passages_read():
 @pytest.mark.parametrize("passages", ["from 1", "6-8"])
 async def test_the_passages_argument_reaches_the_operation_unchanged(passages):
     ops, run, _ = _run(_refusal())
-    await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages=passages)
+    await _call(run, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages=passages)
     assert ops.read_passages.await_args.kwargs["passages"] == passages
 
 
 async def test_one_page_per_commission_a_second_page_is_refused_without_a_call():
     ops, run, collector = _run(_refusal())
-    await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1")
+    await _call(run, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages="from 1")
     run.step = 2
-    seen = await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 11")
+    seen = await _call(run, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages="from 11")
     assert seen.result_str == t.ONE_PAGE
     assert ops.read_passages.await_count == 1 and len(collector.results) == 1
 
@@ -141,34 +141,34 @@ async def test_a_co_emitted_second_page_is_refused_too():
     import asyncio
     ops, run, collector = _run(_refusal())
     first, second = await asyncio.gather(
-        _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1"),
-        _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 11"))
+        _call(run, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages="from 1"),
+        _call(run, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages="from 11"))
     assert sorted([first.result_str == t.ONE_PAGE, second.result_str == t.ONE_PAGE]) == [False, True]
     assert ops.read_passages.await_count == 1
 
 
 async def test_neighbour_ranges_and_finds_are_not_limited_by_the_page_rule():
     ops, run, _ = _run(_refusal())
-    await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1")
+    await _call(run, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages="from 1")
     run.step = 2
     for rng in ("6-8", "9"):
-        seen = await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages=rng)
+        seen = await _call(run, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages=rng)
         assert seen.result_str != t.ONE_PAGE
     assert ops.read_passages.await_count == 3
 
 
 async def test_a_malformed_page_does_not_use_up_the_page():
     ops, run, _ = _run(_refusal())
-    await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 0")
-    seen = await _call(run, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1")
+    await _call(run, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages="from 0")
+    seen = await _call(run, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages="from 1")
     assert seen.result_str != t.ONE_PAGE
 
 
 async def test_a_new_run_starts_with_a_fresh_page():
     _, first, _ = _run(_refusal())
-    await _call(first, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1")
+    await _call(first, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages="from 1")
     _, second, _ = _run(_refusal())
-    seen = await _call(second, tt.READ_PASSAGES, file_ref="drive:item-1", passages="from 1")
+    seen = await _call(second, tt.READ_PASSAGES, file_ref="drive:a1:item-1", passages="from 1")
     assert seen.result_str != t.ONE_PAGE
 
 
