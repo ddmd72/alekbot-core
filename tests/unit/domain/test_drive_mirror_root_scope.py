@@ -4,6 +4,7 @@
 from dataclasses import replace
 from datetime import datetime, timezone
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_card import card_eligible
 from src.domain.drive_index import (
     POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, EpochPhase, Reason, RecordState, Scope,
@@ -16,7 +17,7 @@ MIRROR = "m-root"
 
 
 def ctx(*roots: str) -> PlanContext:
-    return PlanContext(user_id="u", root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=NOW,
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=NOW,
                        place_of=lambda lat, lon: None, mirror_root_ids=frozenset(roots))
 
 
@@ -32,7 +33,7 @@ def folder_rec(item_id: str, name: str, scope: Scope = Scope.NORMAL, parent: str
 
 
 def test_default_context_has_no_mirror_roots():
-    c = PlanContext(user_id="u", root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=NOW,
+    c = PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=NOW,
                     place_of=lambda lat, lon: None)
     assert c.mirror_root_ids == frozenset()
 

@@ -4,7 +4,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_card import card_hash
+from src.domain.drive_content_identity import ContentIdentity
 from src.domain.drive_index import (
     GEO_TABLE_VERSION, POLICY_VERSION, ContentClass, DriveChange, DriveIndexRecord, DriveSyncState, EpochPhase,
     FolderProbe, Priority, Reason, RecordState, Scope,
@@ -13,6 +15,7 @@ from src.domain.drive_index_planner import (
     AccessAction, PlanContext, access_action, capped, change_from_record, classify, is_stale, needs_probe,
     parent_scope, plan_observation, schedule, stale_versions, with_card, with_retry,
 )
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index_params import ACCESS_LOSS_TTL, STALE_ALERT_AFTER
 from src.domain.user_drive import DriveConnection
 
@@ -21,7 +24,7 @@ ROOT = "root"
 
 
 def ctx(epoch=1, phase=EpochPhase.IDLE, place_of=lambda lat, lon: "Rome (Roma), Italy"):
-    return PlanContext(user_id="u", root_item_id=ROOT, epoch=epoch, phase=phase, now=NOW, place_of=place_of)
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=epoch, phase=phase, now=NOW, place_of=place_of)
 
 
 def ch(item_id, name, parent=ROOT, folder=False, **kw):
@@ -210,7 +213,7 @@ class TestObservation:
             calls.append((lat, lon))
             return "Rome (Roma), Italy"
 
-        photo = ch("a", "IMG.HEIC", facets={"location": {"latitude": 41.9, "longitude": 12.5}})
+        photo = ch("a", "IMG.HEIC", media=DriveMediaFacts(latitude=41.9, longitude=12.5))
         stored = observe(photo, c=ctx(place_of=place_of)).upsert
         # stamped with the current geo table (§25.4.8: v2); the constant itself is pinned in test_place_forms_v2
         assert stored.place_name == "Rome (Roma), Italy" and stored.geo_table_version == GEO_TABLE_VERSION
@@ -224,7 +227,7 @@ class TestObservation:
 
     def test_change_from_record_round_trips(self):
         change = ch("a", "x.pdf", size_bytes=5, content_version="c", modified_at=NOW, fs_modified_at=NOW,
-                    facets={"hashes": {"quickXorHash": "q"}})
+                    content_identity=ContentIdentity("quickxor", "q", 5))
         rec = observe(change).upsert
         assert change_from_record(rec) == change
 

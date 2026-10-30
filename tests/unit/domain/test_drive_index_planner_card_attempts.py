@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain import drive_index_policy as policy
 from src.domain.drive_card import card_hash
 from src.domain.drive_index import DriveChange, EpochPhase, Reason
@@ -25,7 +26,7 @@ def admitted(monkeypatch):
 def first(name="a.pdf", **kw):
     change = DriveChange(item_id="a", name=name, parent_id="root", size_bytes=10, content_version="c1",
                          modified_at=NOW - timedelta(days=1), **kw)
-    ctx = PlanContext(user_id="u", root_item_id="root", epoch=1, phase=EpochPhase.IDLE, now=NOW,
+    ctx = PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id="root", epoch=1, phase=EpochPhase.IDLE, now=NOW,
                       place_of=lambda lat, lon: None)
     return plan_observation(change, None, None, None, ctx).upsert
 

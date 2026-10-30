@@ -7,6 +7,7 @@ from src.domain.drive_index import (
     CURRENT_VERSIONS, DriveChange, DriveIndexRecord, DriveSyncState,
     EpochPhase, Priority, record_key,
 )
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain import drive_index_params as P
 
 NOW = datetime(2026, 10, 11, tzinfo=timezone.utc)
@@ -14,7 +15,7 @@ NOW = datetime(2026, 10, 11, tzinfo=timezone.utc)
 
 def test_change_is_frozen_and_defaults_live():
     ch = DriveChange(item_id="a")
-    assert ch.deleted is False and ch.facets == {}
+    assert ch.deleted is False and ch.media == DriveMediaFacts()
     with pytest.raises(FrozenInstanceError):
         ch.name = "x"  # type: ignore[misc]
 

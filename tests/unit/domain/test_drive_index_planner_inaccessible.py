@@ -5,6 +5,7 @@ a regained item back on the ordinary content path."""
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain import drive_enrich_plan as enrich
 from src.domain.drive_card import card_hash
 from src.domain.drive_index import (
@@ -21,7 +22,7 @@ ROOT = "root"
 
 
 def ctx(now=NOW):
-    return PlanContext(user_id="u", root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=now,
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id=ROOT, epoch=1, phase=EpochPhase.IDLE, now=now,
                        place_of=lambda lat, lon: None)
 
 
