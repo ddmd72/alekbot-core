@@ -79,13 +79,13 @@ class TestLeanProjections:
         await repo.find_by_about_keys(U_SCOPE, ["e:rome"], 5, kind="pdf", date_from=T, date_to=T)
         await repo.find_expiring(U_SCOPE, ["lv:expir"], date(2026, 10, 13), 5)
         for ops in db.cols[RECS].executed:
-            assert selected(ops) == RECORD_LEAN_FIELDS
+            assert selected(ops) == (*RECORD_LEAN_FIELDS, "user_id")   # the owner check (I3)
             assert not set(selected(ops)) & set(HEAVY)
 
     async def test_get_records_lean_reads_only_the_lean_fields(self, repo, db):
         await repo.get_records_lean(U_SCOPE, ["a", "b"])
         ((ids, paths),) = db.get_all_calls
-        assert ids == ["u:a", "u:b"] and tuple(paths) == RECORD_LEAN_FIELDS
+        assert ids == ["u:a", "u:b"] and tuple(paths) == (*RECORD_LEAN_FIELDS, "user_id")
 
     async def test_chunk_and_hint_streams_read_no_text_keys_items_or_vectors(self, repo, db):
         await repo.find_chunks_by_word_keys(U_SCOPE, ["w:rome"], 5, after_item_id="a")
@@ -105,8 +105,8 @@ class TestLeanProjections:
         await repo.get_chunk_keys(U_SCOPE, [("a", 1, 0)])
         await repo.get_hint_keys(U_SCOPE, [("a", 1, 0)])
         assert [(ids, tuple(paths)) for ids, paths in db.get_all_calls] == [
-            (["u:a:1:0"], ("item_id", "generation", "index", "word_keys")),
-            (["u:a:1:0"], ("item_id", "generation", "index", "hint_keys"))]
+            (["u:a:1:0"], ("user_id", "item_id", "generation", "index", "word_keys")),
+            (["u:a:1:0"], ("user_id", "item_id", "generation", "index", "hint_keys"))]
 
     async def test_windows_read_whole_hint_documents_and_only_the_keys_pass_reads_vectors(self, repo, db):
         await repo.get_hints(U_SCOPE, "a", 1)
@@ -304,7 +304,7 @@ class TestTheSdkBuildsTheQueries:
             ("effective_date", "DESCENDING"), ("item_id", "DESCENDING")]
         assert not query.start_at.before
         assert [v.string_value or v.timestamp_value for v in query.start_at.values][1] == "c"
-        assert {f.field_path for f in query.select.fields} == set(RECORD_LEAN_FIELDS)
+        assert {f.field_path for f in query.select.fields} == set(RECORD_LEAN_FIELDS) | {"user_id"}
 
     async def test_a_missing_index_on_a_v2_read_is_a_store_outage(self, monkeypatch, mock_env_config):
         exc = gexc.FailedPrecondition("The query requires an index.")

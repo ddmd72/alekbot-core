@@ -372,6 +372,7 @@ class TestSearchReads:
              ("order_by", "effective_date", "DESCENDING"), ("limit", 8), PROJECTION]]
 
     async def test_card_vectors_read_only_the_vector(self, repo, db):
-        db.stored = {"u:a": {"item_id": "a", "card_vector": Vector([0.5, 0.5])}, "u:b": {"item_id": "b"}}
+        db.stored = {"u:a": {"user_id": "u", "item_id": "a", "card_vector": Vector([0.5, 0.5])},
+                     "u:b": {"user_id": "u", "item_id": "b"}}
         assert await repo.card_vectors(U_SCOPE, ["a", "b", "zz"]) == {"a": [0.5, 0.5]}
-        assert db.get_all_calls == [(["u:a", "u:b", "u:zz"], ["item_id", "card_vector"])]
+        assert db.get_all_calls == [(["u:a", "u:b", "u:zz"], ["user_id", "item_id", "card_vector"])]

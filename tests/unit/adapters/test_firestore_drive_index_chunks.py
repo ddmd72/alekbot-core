@@ -95,7 +95,8 @@ class TestDeleteChunksExcept:
                                                                                                (3, 0))]
         assert await repo.delete_chunks_except(U_SCOPE, "a", 2) == 2
         (ops,) = executed(db, CHUNKS)
-        assert ops == [("where", "connection_id", "==", "u"), ("where", "item_id", "==", "a"), ("select", ("generation",))]
+        assert ops == [("where", "connection_id", "==", "u"), ("where", "item_id", "==", "a"),
+                       ("select", ("user_id", "generation"))]
         deleted = [c.args[0].doc_id for c in db.batches[0].delete.call_args_list]
         assert deleted == ["u:a:1:0", "u:a:3:0"]
 
