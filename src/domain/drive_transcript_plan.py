@@ -41,7 +41,7 @@ The state table, first match wins (`DriveIndexRecord.transcript_state`, plain st
     failed    `transcript_attempts >= MAX_ATTEMPTS` for this content version (ffmpeg cannot read it, or the probe's
               duration is unusable): NO stub (Δ100).
     waiting   windows submitted, batches open (written by the stage). Kept while the content key is unchanged, ahead of
-    working   every hold below: a same-key edit (new cTag, same bytes) must not demote an in-flight job, which would buy
+    working   every hold below: a same-key edit (new content version, same bytes) must not demote an in-flight job, which would buy
               it twice. `working`: some windows to extract or upload; the file's estimate is reserved from the moment it
               fit, before its first window (G39).
     parked    the whole file's estimate does not fit the month's cap after pending reservations; `transcript_wake_at` is
@@ -297,7 +297,7 @@ def _is_current(rec: DriveIndexRecord, key: str) -> bool:
     `extraction_version == 0` (never stamped) is not stale: the planner's own rule (`stale_versions`).
 
     Nor is a record that is `pending` again (T-R24): its reading is gone while the transcript stands — the chunk cap
-    released it (`chunk_released`), a failed re-embed sent it to a re-read, a new cTag with the same bytes re-planned it
+    released it (`chunk_released`), a failed re-embed sent it to a re-read, a new content version with the same bytes re-planned it
     — and no index run reads a media file (`content_due` is false for TRANSCRIBE kinds), so it would stay `pending` for
     good; the stage's store path indexes it again with no model call. A finished file is never `pending`: a transcript
     leaves it `indexed`, a stub or a gate or cap refusal `metadata_only`."""
@@ -327,7 +327,7 @@ def transcript_plan(rec: DriveIndexRecord, ctx: TranscriptContext) -> DriveIndex
         return stub_record(rec, TranscriptStub.TOO_LARGE, ctx.now)
     if rec.transcript_attempts >= MAX_ATTEMPTS:
         return _settle(rec, FAILED)
-    # an in-flight job for this very content key stands ahead of every hold: a same-key edit (new cTag, same bytes)
+    # an in-flight job for this very content key stands ahead of every hold: a same-key edit (new content version, same bytes)
     # must not demote it to held/ready, which would start it, and pay for it, a second time
     if rec.transcript_state in (WORKING, WAITING) and rec.transcript_key == key:
         return _settle(rec, rec.transcript_state)

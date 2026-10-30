@@ -278,7 +278,7 @@ def normalized_batch(batch: TranscriptBatch) -> TranscriptBatch:
 
 def url_fields(**fields: str) -> List[str]:
     """Names of the given string fields that hold a URL (a `http:` / `https:` scheme or a `://`):
-    §27.4 keeps every URL, a Graph download URL or a Gemini file URI, out of any persisted document. A scheme, not the
+    §27.4 keeps every URL, a drive's download URL or a model provider's file URI, out of any persisted document. A scheme, not the
     letters `http`: a content key is base64 and may begin with them (`:` is not in that alphabet)."""
     return [name for name, value in fields.items() if _is_url(value)]
 

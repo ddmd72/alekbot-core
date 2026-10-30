@@ -169,7 +169,7 @@ def file_action(rec: DriveIndexRecord, doc: Optional[MirrorDoc], rendered_hash: 
     Detached (the record is back): reattach. Active: move when the source name or parent changed or the drive name is
     not the final one (a temporary name left by a stopped tick, see the module note); replace only when the rendered
     hash differs; otherwise only the digest is stamped. A document with no `mirror_item_id` holds only a create's intent
-    (written before the Graph call, Δ210): it is a create, whatever its state."""
+    (written before the drive call, Δ210): it is a create, whatever its state."""
     if doc is None or not doc.mirror_item_id:
         return Action.CREATE
     if doc.state == MIRROR_ARCHIVED:
