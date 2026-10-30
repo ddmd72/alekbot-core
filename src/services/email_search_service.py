@@ -289,8 +289,8 @@ class EmailSearchService:
 
     async def _credential(self, user_id: str) -> Optional[OAuthCredential]:
         """The user's credential of the mail kind (the oldest when several), or None."""
-        found = await self._oauth.list_for_user(user_id, self._kind)
-        return found[0] if found else None
+        keys = await self._oauth.list_keys(user_id, self._kind)
+        return await self._oauth.get(user_id, keys[0].credential_id) if keys else None
 
     async def _maybe_refresh(self, creds):
         """Refresh access token if expired."""

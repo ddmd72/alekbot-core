@@ -195,7 +195,7 @@ class EmailIndexingService:
                 skipped += 1
                 continue
 
-            if not await self._oauth.list_for_user(user_id, self._kind):
+            if not await self._oauth.list_keys(user_id, self._kind):
                 logger.warning(
                     "[EmailIndexing] no credentials for %s", user_id[:8]
                 )
@@ -251,8 +251,8 @@ class EmailIndexingService:
             )
             return None, None, job.status  # actual status: "completed", "failed", etc.
 
-        found = await self._oauth.list_for_user(job.user_id, self._kind)
-        creds = found[0] if found else None
+        keys = await self._oauth.list_keys(job.user_id, self._kind)
+        creds = await self._oauth.get(job.user_id, keys[0].credential_id) if keys else None
         if not creds:
             await self._job_repo.update_job(
                 job_id, {"status": "failed_auth", "updated_at": datetime.now(timezone.utc)}

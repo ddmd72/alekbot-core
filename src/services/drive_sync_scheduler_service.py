@@ -62,7 +62,8 @@ from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_key, tick_payload
 from ..domain.language import LanguageCode
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import empty_answer_alert, is_empty_answer
-from ..domain.reconnect_policy import R1_NOTICES, Integration, r1_due
+from ..domain.integration import Integration
+from ..domain.reconnect_policy import R1_NOTICES, r1_due
 from ..domain.ui_messages import UIMessage
 from ..domain.user_drive import DriveConnection
 from ..ports.alert_sink import AlertSinkPort

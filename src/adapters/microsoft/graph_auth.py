@@ -111,11 +111,11 @@ class MicrosoftGraphTokenProvider:
             hit = self._credential_ids.get(user_id)
             if hit and hit[1] > now - CACHE_TTL:
                 return hit[0]
-            found = await self._oauth.list_for_user(user_id, self._kind)
-            if not found:
+            keys = await self._oauth.list_keys(user_id, self._kind)   # plaintext only: no cipher call
+            if not keys:
                 self._credential_ids.pop(user_id, None)
                 return None
-            credential_id = found[0].credential_id
+            credential_id = keys[0].credential_id
             self._credential_ids[user_id] = (credential_id, datetime.now(timezone.utc))
             return credential_id
 

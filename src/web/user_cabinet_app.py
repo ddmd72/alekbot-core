@@ -15,7 +15,7 @@ from ..services.cabinet_fact_service import CabinetFactService
 from ..services.fact_answer_service import FactAnswerService
 from ..services.localization_service import LocalizationService
 from ..services.integration_reconnect_service import IntegrationReconnectService
-from ..domain.reconnect_policy import Integration
+from ..domain.integration import Integration
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
@@ -107,15 +107,15 @@ def create_user_cabinet_blueprint(
         that the port and the registry are wired."""
         if oauth_credentials_port is None or connectors is None:
             raise RuntimeError("credential store or connector registry not wired")
-        found = await oauth_credentials_port.list_for_user(user_id, connectors.get(kind_name).kind)
-        return found[0] if found else None
+        keys = await oauth_credentials_port.list_keys(user_id, connectors.get(kind_name).kind)
+        return await oauth_credentials_port.get(user_id, keys[0].credential_id) if keys else None
 
     async def _delete_all(user_id: str, kind_name: str) -> None:
         """Delete every record of the user of that kind (a disconnect; no provider-side revoke here)."""
         if oauth_credentials_port is None or connectors is None:
             raise RuntimeError("credential store or connector registry not wired")
-        for credential in await oauth_credentials_port.list_for_user(user_id, connectors.get(kind_name).kind):
-            await oauth_credentials_port.delete(user_id, credential.credential_id)
+        for key in await oauth_credentials_port.list_keys(user_id, connectors.get(kind_name).kind):   # no decrypt
+            await oauth_credentials_port.delete(user_id, key.credential_id)
 
     # Calculate absolute paths
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1061,7 +1061,7 @@ def create_user_cabinet_blueprint(
             if not creds:
                 body: dict = {"connected": False}
                 if reconnect is not None:
-                    body["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.GMAIL)
+                    body["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.MAIL)
                 return jsonify(body), 200
 
             indexed_through = None
@@ -1246,7 +1246,7 @@ def create_user_cabinet_blueprint(
             # A deliberate disconnect is not a loss (R1, F1): marked before the credential goes, so no sweep in
             # between reads a past connection without a credential and no mark; a failed mark deletes nothing.
             if reconnect is not None:
-                await reconnect.mark_disconnected(g.user_id, Integration.GMAIL)
+                await reconnect.mark_disconnected(g.user_id, Integration.MAIL)
 
             # Best-effort token revocation at Google
             if gmail_oauth_service:
@@ -1641,7 +1641,7 @@ def create_user_cabinet_blueprint(
         try:
             status = await task_setup.get_status(g.user_id)
             if reconnect is not None and not status.get("connected"):
-                status["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.TODO)
+                status["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.TASKS)
             return jsonify(status), 200
         except Exception as exc:
             logger.error(f"Error fetching MS Tasks status: {exc}", exc_info=True)

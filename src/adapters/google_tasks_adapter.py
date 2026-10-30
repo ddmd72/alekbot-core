@@ -224,8 +224,8 @@ class GoogleTasksAdapter(TasksProviderPort):
         Fetch OAuthCredential from Firestore. Refresh if expired.
         Raises ValueError if no credentials found for user.
         """
-        found = await self._credentials_repo.list_for_user(user_id, self._kind)
-        creds = found[0] if found else None
+        keys = await self._credentials_repo.list_keys(user_id, self._kind)
+        creds = await self._credentials_repo.get(user_id, keys[0].credential_id) if keys else None
         if not creds:
             raise ValueError(
                 f"No Google Tasks credentials found for user {user_id[:8]}. "

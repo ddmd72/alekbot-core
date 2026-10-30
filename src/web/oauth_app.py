@@ -30,7 +30,7 @@ from ..domain.connector_spec import ConnectorSpec
 from ..domain.oauth_credential import OAuthCredential
 from ..domain.provider_account import ProviderAccount
 from ..domain.exceptions import AccessDeniedError, OAuthScopeNotGrantedError
-from ..domain.reconnect_policy import Integration
+from ..domain.integration import Integration
 from ..domain.safe_redirect import safe_return_path
 from ..utils.logger import logger
 
@@ -121,10 +121,13 @@ def create_oauth_blueprint(
         await oauth_credentials_port.save(credential)
         if spec.multiple:
             return
-        account = (credential.account.realm, credential.account.subject)
-        for other in await oauth_credentials_port.list_for_user(credential.user_id, spec.kind):
-            if (other.account.realm, other.account.subject) != account:
-                await oauth_credentials_port.delete(other.user_id, other.credential_id)
+        user_id = credential.user_id
+        # plaintext keys only: the saved account's records (any kind) are kept, the kind's others go
+        same_account = {key.credential_id for key in await oauth_credentials_port.list_by_account(
+            credential.account.realm, credential.account.subject) if key.user_id == user_id}
+        for key in await oauth_credentials_port.list_keys(user_id, spec.kind):
+            if key.credential_id not in same_account:
+                await oauth_credentials_port.delete(user_id, key.credential_id)
 
     # ========================================================================
     # GET /auth/login - Redirect to OAuth provider
@@ -635,7 +638,7 @@ def create_oauth_blueprint(
             await _save_consent(spec, replace(credentials, kind=spec.kind, integration=spec.integration,
                                               account_id=account_id))
             logger.info(f"✅ Gmail connected for user={user_id[:8]}")
-            await _consented(user_id, Integration.GMAIL)
+            await _consented(user_id, Integration.MAIL)
         except OAuthScopeNotGrantedError:
             logger.warning(f"⚠️ Gmail consent without the Gmail scope: user={user_id[:8]}")
             return redirect("/cabinet?gmail_error=scope")
@@ -887,7 +890,7 @@ def create_oauth_blueprint(
             await _save_consent(spec, credentials)
             logger.info(f"✅ MS To Do connected for user={user_id[:8]}")
             # before the setup task: its read-modify-save of the config then reads the cleared flag
-            await _consented(user_id, Integration.TODO)
+            await _consented(user_id, Integration.TASKS)
 
             # Enqueue setup (idempotent): ensure_primary_list + register subscriptions
             if task_queue:

@@ -249,15 +249,15 @@ class OneDriveAdapter(UserDrivePort):
 
     async def _credential(self, user_id: str) -> Optional[OAuthCredential]:
         """The user's credential of the drive kind (the oldest when several), or None."""
-        found = await self._oauth.list_for_user(user_id, self._kind)
-        return found[0] if found else None
+        keys = await self._oauth.list_keys(user_id, self._kind)
+        return await self._oauth.get(user_id, keys[0].credential_id) if keys else None
 
     async def is_connected(self, user_id: str) -> bool:
-        return bool(await self._oauth.list_for_user(user_id, self._kind))
+        return bool(await self._oauth.list_keys(user_id, self._kind))
 
     async def disconnect(self, user_id: str) -> None:
-        for credential in await self._oauth.list_for_user(user_id, self._kind):
-            await self._oauth.delete(user_id, credential.credential_id)
+        for key in await self._oauth.list_keys(user_id, self._kind):
+            await self._oauth.delete(user_id, key.credential_id)
         self._tokens.forget(user_id)
         self._root_cache.pop(user_id, None)
 

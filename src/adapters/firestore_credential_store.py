@@ -18,7 +18,8 @@ is ONE `CipherPort` ciphertext of `{access_token, refresh_token, account_label}`
   its argument (plan D-P2).
 - A record written before `integration` / `account_id` existed reads them as None, never derived here: the backfill
   sets them.
-- `list_by_account` and `list_user_ids` read plaintext fields only: no cipher call.
+- `list_keys`, `list_by_account` and `list_user_ids` read plaintext fields only: no cipher call (an existence check
+  never decrypts, so a cipher failure is never "not connected").
 - A decrypt or cipher failure raises (I4); it is never "not connected".
 """
 
@@ -213,6 +214,10 @@ class FirestoreCredentialStore(OAuthCredentialsPort):
     async def list_for_user(self, user_id: str, kind: Optional[str] = None) -> List[OAuthCredential]:
         snaps = sorted((s for s in await self._of_user(user_id, kind).get() if s.exists), key=self._created)
         return [await self._open(snap) for snap in snaps]
+
+    async def list_keys(self, user_id: str, kind: Optional[str] = None) -> List[CredentialKey]:
+        snaps = sorted((s for s in await self._of_user(user_id, kind).get() if s.exists), key=self._created)
+        return [CredentialKey(user_id=user_id, credential_id=(s.to_dict() or {})["credential_id"]) for s in snaps]
 
     async def list_by_account(self, realm: str, subject: str) -> List[CredentialKey]:
         snaps = await (self._col.where(filter=FieldFilter("account.realm", "==", realm))

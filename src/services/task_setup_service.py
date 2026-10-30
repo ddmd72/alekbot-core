@@ -256,8 +256,8 @@ class TaskSetupService:
                     f"⚠️ Failed to delete subscription {sub.sub_id[:8]}: {e}"
                 )
 
-        for credential in await self._oauth_credentials.list_for_user(user_id, self._kind):
-            await self._oauth_credentials.delete(user_id, credential.credential_id)
+        for key in await self._oauth_credentials.list_keys(user_id, self._kind):
+            await self._oauth_credentials.delete(user_id, key.credential_id)
         await self._search_index.delete_all_for_user(user_id)
         await self._task_config.save_config(user_id, TaskUserConfig())
         logger.info(f"✅ MS To Do disconnected for user {user_id[:8]}")
@@ -268,7 +268,7 @@ class TaskSetupService:
 
     async def get_status(self, user_id: str) -> Dict[str, Any]:
         """Return connection status and active subscription info."""
-        connected = bool(await self._oauth_credentials.list_for_user(user_id, self._kind))
+        connected = bool(await self._oauth_credentials.list_keys(user_id, self._kind))
         config = await self._task_config.get_config(user_id)
         return {
             "connected": connected,

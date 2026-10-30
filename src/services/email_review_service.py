@@ -87,8 +87,8 @@ class EmailReviewService:
         Raises OAuthGrantRevokedError when Google rejected the refresh token — the
         caller must tell the user to reconnect; a retry cannot succeed.
         """
-        found = await self._oauth.list_for_user(user_id, self._kind)
-        creds = found[0] if found else None
+        keys = await self._oauth.list_keys(user_id, self._kind)
+        creds = await self._oauth.get(user_id, keys[0].credential_id) if keys else None
         if not creds:
             logger.warning(f"[EmailReview] no credentials for {user_id[:8]}")
             return None

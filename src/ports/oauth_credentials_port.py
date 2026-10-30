@@ -63,6 +63,12 @@ class OAuthCredentialsPort(ABC):
         """Every record of the user, or only those of `kind`. Order: oldest first (`created_at`)."""
 
     @abstractmethod
+    async def list_keys(self, user_id: str, kind: Optional[str] = None) -> List[CredentialKey]:
+        """The key of every record of the user, or only those of `kind`: the existence check (is connected, status,
+        disconnect). Reads plaintext fields only, never a cipher call, so a cipher failure never reads as "not
+        connected". Order: oldest first (`created_at`)."""
+
+    @abstractmethod
     async def list_by_account(self, realm: str, subject: str) -> List[CredentialKey]:
         """The key of every record of the provider account (realm + subject), across users (the revoke rule, §4.3).
         Reads plaintext fields only. Order: none."""

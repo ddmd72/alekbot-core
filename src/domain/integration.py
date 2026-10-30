@@ -4,7 +4,8 @@ Not a kind: one integration can have several kinds (`TASKS` has Google Tasks and
 own credential filters by the kind of its injected `ConnectorSpec`, never by integration (E25). The value is stored as
 the plaintext field `integration` of a credential record.
 
-The R1 reconnect enum `reconnect_policy.Integration` is a different, older type (GMAIL / DRIVE / TODO).
+R1's reconnect notices (`reconnect_policy`) key on it too: MAIL is Gmail, TASKS is To Do there (its tasks pass covers
+To Do users only), DRIVE the drive.
 """
 from enum import Enum
 

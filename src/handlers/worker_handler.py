@@ -1095,8 +1095,8 @@ class WorkerHandler:
             logger.warning("[Worker] Gmail grant revoked but oauth_credentials not configured")
             return
         try:
-            found = await self._oauth_credentials.list_for_user(user_id, self._mail_connector.kind)
-            creds = found[0] if found else None
+            keys = await self._oauth_credentials.list_keys(user_id, self._mail_connector.kind)
+            creds = await self._oauth_credentials.get(user_id, keys[0].credential_id) if keys else None
             if creds is None or creds.needs_reconnect:
                 return
             # Before the save: a failure here must leave the flag down so the next run retries the notice.
