@@ -126,13 +126,14 @@ def _thumbs(size, url="https://thumbs.example/t1"):
 
 
 class TestGetThumbnail:
-    async def test_standard_size_through_the_thumbnail_set(self):
-        session = _session([_resp(_thumbs("medium")), _resp(chunks=[b"\xff\xd8\xff", b"jpeg"])])
+    async def test_an_edge_through_the_thumbnail_set(self):
+        # MULTI_DRIVE_RFC §6: a thumbnail is asked by its longest edge in px; Graph's named sizes left the port
+        session = _session([_resp(_thumbs("c176x176")), _resp(chunks=[b"\xff\xd8\xff", b"jpeg"])])
         with patch("aiohttp.ClientSession", return_value=session):
-            data = await _adapter().get_thumbnail(HANDLE, "f1", "medium")
+            data = await _adapter().get_thumbnail(HANDLE, "f1", 176)
         assert data == b"\xff\xd8\xffjpeg"
         first, last = session.get.call_args_list
-        assert first.args[0].endswith("/me/drive/items/f1/thumbnails?select=medium")
+        assert first.args[0].endswith("/me/drive/items/f1/thumbnails?select=c176x176")
         assert last.args[0] == "https://thumbs.example/t1" and "headers" not in last.kwargs
 
     async def test_custom_size(self):
