@@ -58,7 +58,7 @@ Open bound and paging (RFC §29; built, not deployed): why a long file was not o
 | A recording shows "transcript: none" or sits in "waiting": which state it is in and why | §4.23 (states) |
 | What `_Transcripts` is, why a file appears, moves or vanishes there, what the archive is, how to find a deleted recording's transcript; why the bot refuses to write into the folder | §4.23 (the mirror folder) |
 | The mirror looks stuck: which counters, the status script, the errors and what each does | §4.23 (errors), §7 (mirror operations) |
-| How Smart reaches the drive: the drive specialist, its model and fallback, statuses, receipts, logs, evals | §6.7; `src/agents/CLAUDE.md` → Drive; [DRIVE_SPECIALIST_RFC.md](../../10_rfcs/DRIVE_SPECIALIST_RFC.md) |
+| How Smart reaches the drive: the drive specialist, its model and fallback, statuses, receipts, logs, evals | §6.7; `src/agents/CLAUDE.md` → Drive — Logs; [DRIVE_SPECIALIST_RFC.md](../../10_rfcs/DRIVE_SPECIALIST_RFC.md) |
 | Deploy order, owner steps, and why there is no rollback to Slice 1; the Search v2 rollout (D30 gate, rebuild); the transcripts switches and rollback | §7.2 |
 | The drive specialist's rollout and rollback | `docs/07_deployment/README.md` → "The drive specialist" and "Standing levers"; RFC §13 (the order) |
 | What the owner's note on a file is; which tool writes what; why a note was refused or not written on a reminder run | §4.24 |
@@ -1016,6 +1016,20 @@ reader-decided file of every user, §4.12). Before switching for real, compare t
 `scripts/validation/drive_model_check.py read <folder> --providers claude,openai`, and re-record the eval bars with
 `DRIVE_EVAL_PROVIDER=openai` (the bars pin the reader's provider, §7).
 
+**Runtime shape.** The four agents (and the transcriber, §4.23) run on the indexer service only (`indexer_main.py` →
+`composition/drive_model_setup.py`), never on the main service. They have no manifest descriptor (`can_handle` is false),
+no tools, no history, no biography and no user prompt overrides, and are not routed to. Like the companion extractors,
+each is built per call with the user's own configuration by a runner in `composition/` (`DriveReaderRunner` implements
+`ContentExtractorPort`, `DriveTriageRunner` `ImageTriagePort`, `DriveProfilerRunner` `DocumentProfilerPort`,
+`DrivePassageRunner` `PassageHintPort`), because `services/` cannot import `agents/`. Thinking is `low` unless the user's
+`agent_thinking` says otherwise; `allow_provider_storage=False` (OpenAI `store=false` only, not a zero-retention
+guarantee). Limits live in `agent_config.py` (`DRIVE_READER` 180 s / 16 000 tokens, `DRIVE_TRIAGE` 120 s / 8 192,
+`DRIVE_PROFILER` and `DRIVE_PASSAGES` 60 s / 4 096; one parse retry each). Calls are billed to the user's account through
+the runner's quota service. A 4xx on the primary is not failed over; a non-account 4xx from Gemini on a failover call is
+`LLMFallbackClientError`, a charged outage retried on the primary, and so is a safety block Gemini returns as a response
+(`served_by_fallback`, `drive_model_call.safety_stop`). The `STRATEGIES` entries of these agents in
+`agent_context_builder.py` must keep `fallback_tier: BALANCED`; without it the fallback resolves to flash-lite.
+
 ### 4.17 Enrichment: the profile and the passage hints (Search v2)
 
 RFC §25.3, §25.4. Principle P1: the intelligence is spent **once, at index time**; a search makes no model call. A
@@ -1550,6 +1564,13 @@ can show an un-noted copy of a noted file without the note line.
 `src/infrastructure/drive_note_tools.py` (in `DriveAgent`, `src/agents/drive_agent.py`); store
 `src/adapters/firestore_drive_note_repo.py`; wiring `src/composition/drive_note_setup.py`; prompt
 `prompts_snapshot/tokens/system/PROTOCOL_DRIVE_NOTES.groovy`. Decision `decisions/drive_file_notes.md`.
+
+The note tools run as `DriveNoteToolRun` (`src/infrastructure/drive_note_tools.py`) on the same `DriveToolRun` as the
+other drive tools (collector, step, deadline, ordering lock). `get_note` is declared whenever the service is wired, the
+switch is on and there is a user; the ten writers only when `is_owner_turn(message.context)` (read from the context, never
+the payload), re-checked per call. A write runs under `asyncio.shield` in a task `DriveOperations.keep_alive` holds; one the
+deadline cuts is `NOTE_STILL_RUNNING` and posts its receipt late (`post_late_note_receipt`). Receipts and
+`drive_note_context` come from the collector (`answer.delivery_items`, `history_context`), never from the engine.
 
 ### 4.25 Answer from content: passages (RFC §28; deployed 2026-10-29)
 

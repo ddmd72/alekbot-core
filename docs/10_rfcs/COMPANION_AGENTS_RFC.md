@@ -204,6 +204,14 @@ companion ever used it (Lelik stripped it). Sync/async is the intent's declared 
 real async-with-return for an orchestrator needs its own design. See
 `decisions/delegate_mode_parameter_removed.md`.
 
+**Tutor notes.** Tutor's own tool loop allows `search_web` as its only intent: `search_memory` was declined because it
+would reach the owner's full personal biography and bypass the `include_biographical=False` boundary the companion context
+assembler enforces. Its reply is a JSON schema (`full_response` / `response_summary`); the summary is compressed in-band
+when the model emits `response_summary`, otherwise by an async `HistorySummaryService` fallback (fire-and-forget task).
+`TutorExtractorAgent` is not manifest-registered; its default tier is pinned in `domain/user.py::_DEFAULT_AGENT_TIERS`
+(`tutor_extractor`, PERFORMANCE, Claude), and `CompanionConfig.text_mode` defaults to `SUMMARY`, so it receives Tutor's
+`response_summary` (at most 300 characters), not `full_response`.
+
 ## 8. Scope: conversational channels only
 
 The axis governs the memory policy of a **conversation**. Email indexing is not an instance of

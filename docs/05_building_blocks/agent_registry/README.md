@@ -95,6 +95,12 @@ class AgentDescriptor:
 AgentManifest = AgentDescriptor
 ```
 
+**Registry rule: `internal=True` and an explicit allowlist.** `internal=True` means "not offered by default": the intent
+is excluded from `get_available_intents()` and from `get_available_intents_for(d)` when `d.allowed_intents is None`. A
+descriptor with an explicit `allowed_intents` may still name an internal intent, and `get_available_intents_for` then
+returns it for that caller only. This is how `LELIK` names `ask_alek` without making it visible to Smart or Quick
+(`decisions/allowlist_names_internal_intent.md`).
+
 ### 3.2 ExecutionMode
 
 ```python

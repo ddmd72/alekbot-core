@@ -403,6 +403,9 @@ delivered documents under `files/` (read through `FileConversionService.resolve_
 workspace tool"); `delete_file` refuses every `workspace:` ref. A `workspace:` ref prefetched for another specialist
 arrives without the workspace view header (writer, generation) — accepted, like every uploaded file today (RFC §12).
 
+`delete_file` on a `drive:` ref is refused with the instruction to delete it through `work_with_drive_files`; deletion on
+the drive is the specialist's (`DriveOperations`), with its receipts.
+
 ---
 
 ## 4. Configuration

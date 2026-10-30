@@ -280,7 +280,7 @@ ask, using a mechanism the codebase already trusts (2 of its 3 production usages
 storage_class})` already does everything needed, confirmed by reading `document_delivery_service.py`
 and `conversation_handler.py:217-246`: uploads to private GCS (`/f/<token>` capability link) **and**
 calls `response_channel.send_file()` for native inline upload when `file_upload: True` — exactly
-the mechanism `PdfGenerator` already uses ("PDF + Slack upload", per `src/agents/CLAUDE.md`). Both
+the mechanism `PdfGenerator` already uses ("PDF + Slack upload", per `docs/05_building_blocks/document_generation/README.md`). Both
 `SlackResponseChannel.send_file` and `TelegramResponseChannel.send_file` exist. No new
 `DeliveryItem` type, no new delivery service.
 

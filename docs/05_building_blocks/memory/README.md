@@ -1317,6 +1317,20 @@ call (P2's answers and silence included: the texts are written when the question
 question). A review pass is one model loop whose fixed prompt is about 25,000 tokens: about $0.08–0.10 (Sonnet 5.5) or $0.15–0.20
 (Opus 5.5) for a pass of 2 facts, and about $0.22–0.30 or $0.45–0.60 for a pass of 20 (§8).
 
+**Agent code notes** (`src/agents/consolidation_agent.py`). The review pass's typed write port is the agent's own required
+`fact_updates` dependency (a `FactUpdatePort`; the agent refuses to be built without one, and composition passes the adapter
+twice, as the model port and as the typed port); every run's tracker is `_TrackingFactUpdates(model port, typed port)`.
+`translations` are read through `report_translations` (`domain/fact_review_quote_translation.py`): one line, no `[`, link or
+control character, at most 500 characters, the source's digit runs unchanged; refusals are logged by fact id, never by text.
+The keys are each listed fact's id (its quote) and `<fact_id>:<text key>` for every text the pass wrote (`history`, each ask
+text, each `payment` text), checked against the English texts the scope collected; a key naming no written text is refused.
+Task messages ask for `translations` through `_TRANSLATIONS_RULE` (mirror mode, `message_language` not `en`) or
+`_fixed_translation_instruction` (fixed mode, `task.language` other than `en`). For every pass kind, `ConsolidationPassStats`
+records each turn's tool outcomes and the agent builds a typed `PassCall` per call (`_pass_call`) and renders the 📊 line
+and the 🚨 alerts itself (`_summary_line`, `_limit_alert`, `_abandoned_alert`); the stats never see a tool argument. The
+close-out (an abandoned-refusal alert, the expiry errors added to the account's day) runs in a `finally` capped at
+`CLOSE_OUT_TIMEOUT_S` (10 s), best effort, never raises.
+
 ---
 
 ## 6. Outcomes: tool calls and failures
