@@ -1,6 +1,6 @@
 # RFC: Secrets at Rest — every persisted secret, one credential store
 
-**Status:** S1 built, S2 built, S3 built (v2, rewritten 2026-10-29; v1 dated 2026-07-20/22): the cipher, the keyed digest, the MCP store, the R1 reconnect notice and the credential store (`decisions/credential_store_cutover.md`) are in code; S4 onward are PROPOSED
+**Status:** S1 built, S2 built, S3 built, S5 built (v2, rewritten 2026-10-29; v1 dated 2026-07-20/22): the cipher, the keyed digest, the MCP store, the R1 reconnect notice and the credential store (`decisions/credential_store_cutover.md`) are in code; S4 onward are PROPOSED
 **Owner:** AI Engineering
 **Milestone:** Security — stage 0 of the multi-drive programme (runs before any multi-drive work)
 

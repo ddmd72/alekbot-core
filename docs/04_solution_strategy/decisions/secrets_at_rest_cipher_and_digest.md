@@ -19,6 +19,13 @@ dumps a collection). S1 builds the primitives and applies them to the MCP store;
 - **Keyed digest for verify-only values** (`src/domain/secret_digest.py`): hex HMAC-SHA256 over `purpose || 0x00 || value` under
   `SECRET_DIGEST_KEY` (hex, at least 32 bytes). MCP authorization codes are stored under their digest as the doc id, with no raw
   code in any field; lookup digests the presented value. `purpose` separates uses.
+- **Invite codes (S5)** are the second verify-only value. A new code is 16 random bytes (128 bits) as 26 unpadded base32
+  characters, shown grouped `XXXXX-XXXXX-XXXXX-XXXXX-XXXXXX` once, at creation (the Cabinet says "copy it now"). Typed input is
+  normalised before every digest (`domain/invite_code.normalise_invite_code`: upper case, spaces and dashes removed). The store
+  (`FirestoreInviteCodeRepository`, `digest_key` required) uses `keyed_digest(key, "invite", normalised)` as the doc id and stores
+  no `code` field, only `hint` (the last 4 characters); a lookup rebuilds the invite from the presented value, so `InviteCode.code`
+  is optional and `None` on a list. The list shows type, state, expiry and the hint. No log line carries the code. New collection
+  `{prefix}invite_codes_v2`; the old `domain_invite_codes_v1` is never read (outstanding 9-hex codes stop working).
 - **MCP refresh tokens stay unkeyed sha256**: 384 random bits gain nothing from a key.
 - **Fail closed in the composition root.** `build_application_graph` builds the cipher and the digest key first
   (`composition/cipher_setup.py`). They are not built inside the MCP build, whose errors `main.py` swallows ("continue without
