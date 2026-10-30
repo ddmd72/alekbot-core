@@ -3,7 +3,7 @@ import unicodedata
 
 from src.domain.drive_index_params import MIRROR_NAME_MAX, MIRROR_PATH_MARGIN
 from src.domain.drive_keys import query_concepts
-from src.domain.drive_mirror import archive_folder_key, doc_key
+from src.domain.drive_mirror import archive_folder_key, ledger_key, mirror_root_doc_id
 from src.domain.drive_mirror_names import (
     LEVEL_DAY, LEVEL_OTHER, LEVEL_ROOT, Sibling, archive_place, assign_names, driver_keys, fits, full_path_length,
     mirror_file_name, place, reserved_names, root_name_candidates,
@@ -20,7 +20,8 @@ def _h(text):
 
 
 def test_keys():
-    assert doc_key("u", "file", "i1") == "u:file:i1"
+    assert ledger_key("u", "file", "d", "s1") == "u:file:" + hashlib.sha256(b"d/s1").hexdigest()[:32]
+    assert mirror_root_doc_id("u", "d") == "u:d"
     k = archive_folder_key("u", "d", "2026-10-21", "A/B")
     assert k == "u:archive:" + hashlib.sha256(b"d/2026-10-21/A/B").hexdigest()[:32]
 
