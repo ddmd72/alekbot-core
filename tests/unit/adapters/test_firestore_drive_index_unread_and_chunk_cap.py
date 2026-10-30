@@ -37,7 +37,7 @@ class TestChunkCapped:
                                                           reason=Reason.USER_CHUNK_CAP))]
         assert [r.item_id for r in await repo.chunk_capped(U_SCOPE, 20)] == ["a"]
         (ops,) = executed(db)
-        assert ops[:3] == [("where", "user_id", "==", "u"), ("where", "state", "==", "metadata_only"),
+        assert ops[:3] == [("where", "connection_id", "==", "u"), ("where", "state", "==", "metadata_only"),
                            ("where", "reason", "==", "user_chunk_cap")]
         assert ops[3:6] == [("order_by", "card_rank", "ASCENDING"), ("order_by", "modified_at", "DESCENDING"),
                             ("order_by", "item_id", "ASCENDING")]
@@ -63,7 +63,7 @@ class TestCountUnread:
         queries = executed(db)
         assert len(queries) == 6 and all(ops[-1] == ("count", "n") for ops in queries)
         assert all(("where", "kind", "in", ["docx", "pdf"]) in ops for ops in queries)
-        classes = [tuple(op[1:] for op in ops if op[0] == "where" and op[1] not in ("user_id", "kind"))
+        classes = [tuple(op[1:] for op in ops if op[0] == "where" and op[1] not in ("connection_id", "kind"))
                    for ops in queries]
         assert classes == [
             (("state", "==", "failed"),),

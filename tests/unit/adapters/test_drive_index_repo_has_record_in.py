@@ -41,7 +41,7 @@ def repo(db, mock_env_config):
 async def test_firestore_is_one_limit_one_equality_query(repo, db):
     db.cols[RECS].respond = lambda ops: [snap(rec_doc("a"))]
     assert await repo.has_record_in(U_SCOPE, RecordState.UNRESOLVED, Priority.CASCADE)
-    assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "state", "==", "unresolved"),
+    assert executed(db) == [[("where", "connection_id", "==", "u"), ("where", "state", "==", "unresolved"),
                              ("where", "priority", "==", 1), ("select", (FieldPath.document_id(),)),
                              ("limit", 1)]]
 

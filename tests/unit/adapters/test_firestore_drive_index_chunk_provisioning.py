@@ -77,7 +77,7 @@ async def test_the_readable_sum_has_its_records_index(db, mock_env_config):
     await make_chunk_repo(db, mock_env_config).readable_chunk_total(U_SCOPE)
     (ops,) = executed(db, RECS)
     required = _required(ops)
-    assert required == ({("user_id", "EQ")}, [("indexed_generation", "ASCENDING"), ("chunk_count", "ASCENDING")])
+    assert required == ({("connection_id", "EQ")}, [("indexed_generation", "ASCENDING"), ("chunk_count", "ASCENDING")])
     assert any(_covered(required, i) for i in _declared("development_drive_index_records"))
 
 
@@ -85,9 +85,9 @@ def test_chunk_indexes_are_declared_for_the_live_collection_only():
     # 4 composites (+ Search v2's word_keys stream, §25.2.5) + 3 vector entries (+ Δ246's user_id, item_id, vector)
     assert len(_declared("development_drive_index_chunks")) == 7
     assert [i for i in _declared("development_drive_index_chunks") if i[-1] == ("vector", "VECTOR")] == [
-        [("user_id", "ASCENDING"), ("vector", "VECTOR")],
-        [("user_id", "ASCENDING"), ("kind", "ASCENDING"), ("vector", "VECTOR")],
-        [("user_id", "ASCENDING"), ("item_id", "ASCENDING"), ("vector", "VECTOR")]]
+        [("connection_id", "ASCENDING"), ("vector", "VECTOR")],
+        [("connection_id", "ASCENDING"), ("kind", "ASCENDING"), ("vector", "VECTOR")],
+        [("connection_id", "ASCENDING"), ("item_id", "ASCENDING"), ("vector", "VECTOR")]]
     assert _declared("drive_index_chunks") == []
 
 

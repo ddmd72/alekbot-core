@@ -201,7 +201,7 @@ class TestRecordWrites:
     async def test_delete_user_records_is_bounded_and_counts(self, repo, db):
         db.cols[RECS].respond = lambda ops: [snap({}, "u:a"), snap({}, "u:b")]
         assert await repo.delete_user_records(U_SCOPE, 2) == 2
-        assert executed(db) == [[("where", "user_id", "==", "u"), ("select", ("__name__",)), ("limit", 2)]]
+        assert executed(db) == [[("where", "connection_id", "==", "u"), ("select", ("__name__",)), ("limit", 2)]]
         assert [c.args[0].doc_id for c in db.batches[0].delete.call_args_list] == ["u:a", "u:b"]
 
     async def test_delete_user_records_when_empty(self, repo, db):
@@ -232,7 +232,7 @@ class TestRecordReads:
         assert [r.item_id for r in out] == ["b", "a", "c"]
         queries = executed(db)
         assert [q[1][3] for q in queries] == [0, 1, 2, 3, 4]
-        assert queries[0] == [("where", "user_id", "==", "u"), ("where", "priority", "==", 0),
+        assert queries[0] == [("where", "connection_id", "==", "u"), ("where", "priority", "==", 0),
                               ("where", "due_at", "<=", NOW), ("order_by", "due_at", "ASCENDING"),
                               ("order_by", "item_id", "ASCENDING"), ("limit", 10), PROJECTION]
         assert queries[2][5] == ("limit", 9)
@@ -245,7 +245,7 @@ class TestRecordReads:
     async def test_oldest_due_at_excludes_undated_and_uses_the_due_index(self, repo, db):
         db.cols[RECS].respond = lambda ops: [snap(rec_doc("a", due_at=NOW, priority=2))]
         assert await repo.oldest_due_at(U_SCOPE, 2) == NOW
-        assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "priority", "==", 2),
+        assert executed(db) == [[("where", "connection_id", "==", "u"), ("where", "priority", "==", 2),
                                  ("where", "due_at", ">=", TS_MIN), ("order_by", "due_at", "ASCENDING"),
                                  ("order_by", "item_id", "ASCENDING"), ("limit", 1), PROJECTION]]
 
@@ -256,25 +256,25 @@ class TestRecordReads:
         await repo.children(U_SCOPE, "p", None, 5)
         await repo.children(U_SCOPE, "p", "a", 2)
         assert executed(db) == [
-            [("where", "user_id", "==", "u"), ("where", "parent_id", "==", "p"),
+            [("where", "connection_id", "==", "u"), ("where", "parent_id", "==", "p"),
              ("order_by", "item_id", "ASCENDING"), ("limit", 5), PROJECTION],
-            [("where", "user_id", "==", "u"), ("where", "parent_id", "==", "p"), ("where", "item_id", ">", "a"),
+            [("where", "connection_id", "==", "u"), ("where", "parent_id", "==", "p"), ("where", "item_id", ">", "a"),
              ("order_by", "item_id", "ASCENDING"), ("limit", 2), PROJECTION]]
 
     async def test_records_page(self, repo, db):
         await repo.records_page(U_SCOPE, "m", 100)
-        assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "item_id", ">", "m"),
+        assert executed(db) == [[("where", "connection_id", "==", "u"), ("where", "item_id", ">", "m"),
                                  ("order_by", "item_id", "ASCENDING"), ("limit", 100), PROJECTION]]
 
     async def test_records_seen_before(self, repo, db):
         await repo.records_seen_before(U_SCOPE, 3, 400)
-        assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "seen_epoch", "<", 3),
+        assert executed(db) == [[("where", "connection_id", "==", "u"), ("where", "seen_epoch", "<", 3),
                                  ("order_by", "seen_epoch", "ASCENDING"), ("order_by", "item_id", "ASCENDING"),
                                  ("limit", 400), PROJECTION]]
 
     async def test_card_capped_best_rank_then_newest(self, repo, db):
         await repo.card_capped(U_SCOPE, 7)
-        assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "card_capped", "==", True),
+        assert executed(db) == [[("where", "connection_id", "==", "u"), ("where", "card_capped", "==", True),
                                  ("order_by", "card_rank", "ASCENDING"),
                                  ("order_by", "modified_at", "DESCENDING"), ("limit", 7), PROJECTION]]
 
@@ -290,7 +290,7 @@ class TestCountsAndEviction:
     async def test_count_carded_is_an_aggregation_on_the_vector_mirror(self, repo, db):
         db.cols[RECS].respond = self._counts({True: 4})
         assert await repo.count_carded(U_SCOPE) == 4
-        assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "has_card_vector", "==", True),
+        assert executed(db) == [[("where", "connection_id", "==", "u"), ("where", "has_card_vector", "==", True),
                                  ("count", "n")]]
 
     async def test_count_by_state_omits_empty_states_and_adds_carded(self, repo, db):
@@ -309,7 +309,7 @@ class TestCountsAndEviction:
             return [snap(rec_doc("old", card_rank=2, modified_at=NOW))]
         db.cols[RECS].respond = respond
         assert (await repo.lowest_ranked_carded(U_SCOPE)).item_id == "old"
-        carded = [("where", "user_id", "==", "u"), ("where", "has_card_vector", "==", True)]
+        carded = [("where", "connection_id", "==", "u"), ("where", "has_card_vector", "==", True)]
         assert executed(db) == [
             carded + [("order_by", "card_rank", "DESCENDING"), ("limit", 1), PROJECTION],
             carded + [("where", "card_rank", "==", 2), ("where", "modified_at", ">=", TS_MIN),
@@ -325,7 +325,7 @@ class TestCountsAndEviction:
             return []
         db.cols[RECS].respond = respond
         assert (await repo.lowest_ranked_carded(U_SCOPE)).item_id == "undated"
-        assert executed(db)[2] == [("where", "user_id", "==", "u"), ("where", "has_card_vector", "==", True),
+        assert executed(db)[2] == [("where", "connection_id", "==", "u"), ("where", "has_card_vector", "==", True),
                                    ("where", "card_rank", "==", 3), ("where", "modified_at", "IS_NULL", None),
                                    ("order_by", "item_id", "ASCENDING"), ("limit", 1), PROJECTION]
 
@@ -339,7 +339,7 @@ class TestSearchReads:
         hits = await repo.find_nearest_cards(U_SCOPE, [1, 0], 50)
         assert [(r.item_id, d) for r, d in hits] == [("a", 0.25)]
         (ops,) = executed(db)
-        assert ops[0] == ("where", "user_id", "==", "u")
+        assert ops[0] == ("where", "connection_id", "==", "u")
         assert ops[1] == ("select", (*RECORD_FIELDS, CARD_DISTANCE))   # the projection comes before the search
         kind, kw = ops[2]
         assert kind == "find_nearest" and kw == {
@@ -348,12 +348,12 @@ class TestSearchReads:
 
     async def test_find_nearest_kind_prefilter(self, repo, db):
         await repo.find_nearest_cards(U_SCOPE, [1.0], 5, kind="image")
-        assert executed(db)[0][:2] == [("where", "user_id", "==", "u"), ("where", "kind", "==", "image")]
+        assert executed(db)[0][:2] == [("where", "connection_id", "==", "u"), ("where", "kind", "==", "image")]
 
     async def test_name_keys_array_contains_any_capped_at_30(self, repo, db):
         keys = [f"t:k{n:02d}" for n in range(40)] + ["t:k00"]
         await repo.find_by_name_keys(U_SCOPE, keys, 100, kind="pdf")
-        assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "kind", "==", "pdf"),
+        assert executed(db) == [[("where", "connection_id", "==", "u"), ("where", "kind", "==", "pdf"),
                                  ("where", "name_tokens", "array_contains_any", keys[:30]),
                                  ("order_by", "item_id", "ASCENDING"), ("limit", 100), PROJECTION]]
 
@@ -365,9 +365,9 @@ class TestSearchReads:
         await repo.filter_records(U_SCOPE, None, None, None, 8)
         await repo.filter_records(U_SCOPE, "pdf", NOW - timedelta(days=7), NOW, 8)
         assert executed(db) == [
-            [("where", "user_id", "==", "u"), ("where", "effective_date", ">=", TS_MIN),
+            [("where", "connection_id", "==", "u"), ("where", "effective_date", ">=", TS_MIN),
              ("order_by", "effective_date", "DESCENDING"), ("limit", 8), PROJECTION],
-            [("where", "user_id", "==", "u"), ("where", "kind", "==", "pdf"),
+            [("where", "connection_id", "==", "u"), ("where", "kind", "==", "pdf"),
              ("where", "effective_date", ">=", NOW - timedelta(days=7)), ("where", "effective_date", "<=", NOW),
              ("order_by", "effective_date", "DESCENDING"), ("limit", 8), PROJECTION]]
 

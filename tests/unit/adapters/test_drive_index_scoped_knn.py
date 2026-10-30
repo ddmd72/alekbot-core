@@ -77,7 +77,7 @@ class TestFirestoreChunks:
         assert [(c.item_id, d) for c, d in hits] == [("book-2", 0.25)]
         ((collection, query),) = sent["queries"]
         assert collection == CHUNKS
-        assert _filters(query) == [("user_id", "EQUAL", "u"), ("item_id", "IN", ["book-1", "book-2"])]   # distinct
+        assert _filters(query) == [("connection_id", "EQUAL", "u"), ("item_id", "IN", ["book-1", "book-2"])]   # distinct
         assert query.find_nearest.vector_field.field_path == CHUNK_VECTOR
         assert query.find_nearest.limit == 300
         assert query.find_nearest.distance_result_field == CHUNK_DISTANCE
@@ -110,7 +110,7 @@ class TestFirestoreHints:
         assert [(h.item_id, h.hint_keys, d) for h, d in hits] == [("book-1", ("w:chapter",), 0.5)]
         ((collection, query),) = sent["queries"]
         assert collection == HINTS
-        assert _filters(query) == [("user_id", "EQUAL", "u"), ("item_id", "IN", ["book-1"])]
+        assert _filters(query) == [("connection_id", "EQUAL", "u"), ("item_id", "IN", ["book-1"])]
         assert query.find_nearest.vector_field.field_path == HINT_VECTOR
         assert query.find_nearest.distance_result_field == HINT_DISTANCE
         selected = {f.field_path for f in query.select.fields}
@@ -150,6 +150,6 @@ class TestInMemory:
                                                 ("development_drive_index_hints", HINT_VECTOR)])
 def test_the_scoped_vector_index_is_declared(collection, vector):
     raw = json.loads((_ROOT / "config" / "firestore.indexes.json").read_text())
-    wanted = [{"fieldPath": "user_id", "order": "ASCENDING"}, {"fieldPath": "item_id", "order": "ASCENDING"},
+    wanted = [{"fieldPath": "connection_id", "order": "ASCENDING"}, {"fieldPath": "item_id", "order": "ASCENDING"},
               {"fieldPath": vector, "vectorConfig": {"dimension": 768, "flat": {}}}]
     assert sum(idx["collectionGroup"] == collection and idx.get("fields") == wanted for idx in raw) == 1

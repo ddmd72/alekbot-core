@@ -73,8 +73,8 @@ async def test_firestore_counts_with_aggregations_never_reading_a_record(repos, 
         assert ops[-1][0] == "count"                                       # an aggregation, no document returned
         filters = ops[:-1]
         assert all(op[0] == "where" and op[2] == "==" for op in filters)   # equality filters only, no order, no limit
-    assert {op[1:] for op in card[:-1]} == {("user_id", "==", "user-a"), ("card_capped", "==", True)}
-    assert {op[1:] for op in chunk[:-1]} == {("user_id", "==", "user-a"), ("state", "==", "metadata_only"),
+    assert {op[1:] for op in card[:-1]} == {("connection_id", "==", "user-a"), ("card_capped", "==", True)}
+    assert {op[1:] for op in chunk[:-1]} == {("connection_id", "==", "user-a"), ("state", "==", "metadata_only"),
                                              ("reason", "==", "user_chunk_cap")}
 
 
@@ -84,7 +84,7 @@ def test_the_count_fields_keep_their_single_field_indexes():
     raw = json.loads((_ROOT / "config" / "firestore.indexes.json").read_text())
     exempt = {idx["fieldPath"] for idx in raw
               if idx["collectionGroup"] == "development_drive_index_records" and "fields" not in idx}
-    assert not exempt & {"user_id", "card_capped", "state", "reason"}
+    assert not exempt & {"connection_id", "card_capped", "state", "reason"}
 
 
 async def test_update_sync_flags_writes_the_cap_flags_and_a_save_leaves_them(repos, db):

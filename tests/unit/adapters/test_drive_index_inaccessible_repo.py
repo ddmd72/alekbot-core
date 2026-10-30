@@ -69,7 +69,7 @@ class TestFirestore:
         recs = await repo.inaccessible_records(U_SCOPE, 50)
         assert [r.item_id for r in recs] == ["a"] and recs[0].inaccessible_notified_since == T
         ops = executed(db)[-1]
-        assert ("where", "user_id", "==", "u") in ops and ("where", "inaccessible_since", ">=", TS_MIN) in ops
+        assert ("where", "connection_id", "==", "u") in ops and ("where", "inaccessible_since", ">=", TS_MIN) in ops
         assert ("order_by", "inaccessible_since", "ASCENDING") in ops and ("limit", 50) in ops
         projection = next(op for op in ops if op[0] == "select")[1]
         assert NOTIFIED in projection and set(RECORD_FIELDS) <= set(projection)

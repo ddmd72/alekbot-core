@@ -95,7 +95,7 @@ class TestDeleteChunksExcept:
                                                                                                (3, 0))]
         assert await repo.delete_chunks_except(U_SCOPE, "a", 2) == 2
         (ops,) = executed(db, CHUNKS)
-        assert ops == [("where", "user_id", "==", "u"), ("where", "item_id", "==", "a"), ("select", ("generation",))]
+        assert ops == [("where", "connection_id", "==", "u"), ("where", "item_id", "==", "a"), ("select", ("generation",))]
         deleted = [c.args[0].doc_id for c in db.batches[0].delete.call_args_list]
         assert deleted == ["u:a:1:0", "u:a:3:0"]
 
@@ -145,7 +145,7 @@ class TestFindByTerm:
         found = await repo.find_chunks_by_term(U_SCOPE, "20240012", 100)
         assert [c.content_terms for c in found] == [("20240012",)]
         (ops,) = executed(db, CHUNKS)
-        assert ops == [("where", "user_id", "==", "u"), ("where", "content_terms", "array_contains", "20240012"),
+        assert ops == [("where", "connection_id", "==", "u"), ("where", "content_terms", "array_contains", "20240012"),
                        ("order_by", "item_id", "ASCENDING"), ("order_by", "generation", "ASCENDING"),
                        ("order_by", "index", "ASCENDING"), ("limit", 100), ("select", STREAM_FIELDS)]
 
@@ -177,7 +177,7 @@ class TestReadableTotal:
         db.cols[RECS].respond = lambda ops: [[SimpleNamespace(alias="n", value=1234)]]
         assert await repo.readable_chunk_total(U_SCOPE) == 1234
         (ops,) = executed(db, RECS)
-        assert ops == [("where", "user_id", "==", "u"), ("where", "indexed_generation", ">=", 0),
+        assert ops == [("where", "connection_id", "==", "u"), ("where", "indexed_generation", ">=", 0),
                        ("sum", "chunk_count", "n")]
 
     async def test_no_match_is_zero(self, repo, db):
@@ -198,7 +198,7 @@ class TestReadableTotal:
         assert agg.sum.field.field_path == "chunk_count" and agg.alias == "n"
         filters = proto.structured_query.where.composite_filter.filters
         assert [(f.field_filter.field.field_path, f.field_filter.op.name) for f in filters] == [
-            ("user_id", "EQUAL"), ("indexed_generation", "GREATER_THAN_OR_EQUAL")]
+            ("connection_id", "EQUAL"), ("indexed_generation", "GREATER_THAN_OR_EQUAL")]
         assert filters[1].field_filter.value.integer_value == 0
 
 
@@ -207,7 +207,7 @@ class TestChunksPage:
         db.cols[CHUNKS].respond = lambda ops: [chunk_snap(chunk())]
         assert [c.item_id for c in await repo.chunks_page(U_SCOPE, None, 50)] == ["a"]
         (ops,) = executed(db, CHUNKS)
-        assert ops == [("where", "user_id", "==", "u"), ("order_by", "item_id", "ASCENDING"),
+        assert ops == [("where", "connection_id", "==", "u"), ("order_by", "item_id", "ASCENDING"),
                        ("order_by", "generation", "ASCENDING"), ("order_by", "index", "ASCENDING"),
                        ("select", CHUNK_LEAN_FIELDS), ("limit", 50)]   # ids only (review m3)
 
@@ -236,7 +236,7 @@ class TestDeleteUserChunks:
         db.cols[CHUNKS].respond = lambda ops: [snap({}, f"u:a:1:{i}") for i in range(3)]
         assert await repo.delete_user_chunks(U_SCOPE, 3) == 3
         (ops,) = executed(db, CHUNKS)
-        assert ops[0] == ("where", "user_id", "==", "u") and ops[-1] == ("limit", 3)
+        assert ops[0] == ("where", "connection_id", "==", "u") and ops[-1] == ("limit", 3)
         assert db.batches[0].delete.call_count == 3
 
 

@@ -60,7 +60,7 @@ class TestFirestore:
         found = await repo.find_next_file_with_term(U_SCOPE, "2024", "a")
         assert found.item_id == "b"
         (ops,) = executed(db, CHUNKS)
-        assert ops == [("where", "user_id", "==", "u"), ("where", "content_terms", "array_contains", "2024"),
+        assert ops == [("where", "connection_id", "==", "u"), ("where", "content_terms", "array_contains", "2024"),
                        ("order_by", "item_id", "ASCENDING"), ("order_by", "generation", "ASCENDING"),
                        ("order_by", "index", "ASCENDING"), ("start_after", {"item_id": "a"}), ("limit", 1),
                        ("select", STREAM_FIELDS)]

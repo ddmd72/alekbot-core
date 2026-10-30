@@ -34,6 +34,6 @@ async def test_firestore_release_queries_the_flag(mock_env_config):
     db = Db()
     repo = make_repo(db, mock_env_config)
     await repo.card_capped(U_SCOPE, 7)
-    assert executed(db) == [[("where", "user_id", "==", "u"), ("where", "card_capped", "==", True),
+    assert executed(db) == [[("where", "connection_id", "==", "u"), ("where", "card_capped", "==", True),
                              ("order_by", "card_rank", "ASCENDING"),
                              ("order_by", "modified_at", firestore.Query.DESCENDING), ("limit", 7), PROJECTION]]

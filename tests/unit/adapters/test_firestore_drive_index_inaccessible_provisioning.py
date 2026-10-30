@@ -29,9 +29,9 @@ async def test_the_query_and_its_index(repo):
     store, db = repo
     await store.inaccessible_records(U_SCOPE, 7)
     ops = [op for op in executed(db, RECS)[-1] if op[0] != "select"]
-    assert ops == [("where", "user_id", "==", "u"), ("where", "inaccessible_since", ">=", TS_MIN),
+    assert ops == [("where", "connection_id", "==", "u"), ("where", "inaccessible_since", ">=", TS_MIN),
                    ("order_by", "inaccessible_since", "ASCENDING"), ("limit", 7)]
-    assert [("user_id", "ASCENDING"), ("inaccessible_since", "ASCENDING")] in _declared(
+    assert [("connection_id", "ASCENDING"), ("inaccessible_since", "ASCENDING")] in _declared(
         "development_drive_index_records")
 
 

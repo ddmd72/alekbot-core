@@ -79,18 +79,18 @@ def test_indexes_are_declared_for_the_live_collection_only():
     # count_unread's three for images triaged as text, review D-M4; the not-read-yet count's two, documents and text
     # images, final review F5-2) + 8 Search v2 composites (§25.2.5: about, about by kind, expiring, enrichment queue,
     # wake-ups, profile and passages state counts, keys pending) + 2 per-job enrichment queues (P5 review MINOR 6)
-    # + 1 for the records the bot cannot open (user_id + inaccessible_since, §26.2, §26.9 step 3) + 2 transcript
+    # + 1 for the records the bot cannot open (connection_id + inaccessible_since, §26.2, §26.9 step 3) + 2 transcript
     # queues (the ready queue and the wake-ups, §27.3) + 2 transcript mirror queues (the mirror queue and its wake-ups,
     # §27.15 step 8c) + 2 vector entries
     assert len(_declared_indexes()) == 38
-    assert _declared_indexes().count([("user_id", "ASCENDING"), ("transcript_state", "ASCENDING"),
+    assert _declared_indexes().count([("connection_id", "ASCENDING"), ("transcript_state", "ASCENDING"),
                                       ("effective_day", "DESCENDING"), ("parent_id", "ASCENDING"),
                                       ("item_id", "ASCENDING")]) == 1
-    assert _declared_indexes().count([("user_id", "ASCENDING"), ("transcript_wake_at", "ASCENDING"),
+    assert _declared_indexes().count([("connection_id", "ASCENDING"), ("transcript_wake_at", "ASCENDING"),
                                       ("item_id", "ASCENDING")]) == 1
-    assert _declared_indexes().count([("user_id", "ASCENDING"), ("mirror_due", "ASCENDING"),
+    assert _declared_indexes().count([("connection_id", "ASCENDING"), ("mirror_due", "ASCENDING"),
                                       ("effective_day", "DESCENDING"), ("item_id", "ASCENDING")]) == 1
-    assert _declared_indexes().count([("user_id", "ASCENDING"), ("mirror_retry_at", "ASCENDING"),
+    assert _declared_indexes().count([("connection_id", "ASCENDING"), ("mirror_retry_at", "ASCENDING"),
                                       ("item_id", "ASCENDING")]) == 1
     assert _declared_indexes("drive_index_records") == []   # RFC Δ22: the unprefixed collections were deleted
 
@@ -135,29 +135,29 @@ def test_deploy_creates_the_drive_composites_and_leaves_the_vectors_to_their_scr
     assert len(drive) == len(declared) == 36
     mirror_queue = [c for c in drive if "--field-config=field-path=mirror_due,order=ascending" in c]
     assert len(mirror_queue) == 1 and mirror_queue[0][-4:] == [
-        "--field-config=field-path=user_id,order=ascending",
+        "--field-config=field-path=connection_id,order=ascending",
         "--field-config=field-path=mirror_due,order=ascending",
         "--field-config=field-path=effective_day,order=descending",
         "--field-config=field-path=item_id,order=ascending"]
     mirror_wakeups = [c for c in drive if "--field-config=field-path=mirror_retry_at,order=ascending" in c]
     assert len(mirror_wakeups) == 1 and mirror_wakeups[0][-3:] == [
-        "--field-config=field-path=user_id,order=ascending",
+        "--field-config=field-path=connection_id,order=ascending",
         "--field-config=field-path=mirror_retry_at,order=ascending",
         "--field-config=field-path=item_id,order=ascending"]
     transcript_queue = [c for c in drive if "--field-config=field-path=transcript_state,order=ascending" in c]
     assert len(transcript_queue) == 1 and transcript_queue[0][-5:] == [
-        "--field-config=field-path=user_id,order=ascending",
+        "--field-config=field-path=connection_id,order=ascending",
         "--field-config=field-path=transcript_state,order=ascending",
         "--field-config=field-path=effective_day,order=descending",
         "--field-config=field-path=parent_id,order=ascending",
         "--field-config=field-path=item_id,order=ascending"]
     wakeups = [c for c in drive if "--field-config=field-path=transcript_wake_at,order=ascending" in c]
     assert len(wakeups) == 1 and wakeups[0][-3:] == [
-        "--field-config=field-path=user_id,order=ascending",
+        "--field-config=field-path=connection_id,order=ascending",
         "--field-config=field-path=transcript_wake_at,order=ascending",
         "--field-config=field-path=item_id,order=ascending"]
     inaccessible = [c for c in drive if "--field-config=field-path=inaccessible_since,order=ascending" in c]
-    assert len(inaccessible) == 1 and "--field-config=field-path=user_id,order=ascending" in inaccessible[0]
+    assert len(inaccessible) == 1 and "--field-config=field-path=connection_id,order=ascending" in inaccessible[0]
     not_read_yet = [c for c in drive if "--field-config=field-path=card_capped,order=ascending" in c
                     and "--field-config=field-path=indexed_generation,order=ascending" in c]
     assert len(not_read_yet) == 2
