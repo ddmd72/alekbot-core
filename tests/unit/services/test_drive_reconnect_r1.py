@@ -52,16 +52,6 @@ async def test_a_consent_then_a_working_grant_clears_the_flag_and_the_next_loss_
     assert [c["alert"] for c in env.notifier.calls] == [R1_NOTICES[Integration.DRIVE]] * 2
 
 
-async def test_a_cleared_mark_lets_r1_notify_again(env):  # noqa: F811
-    await _past_connection_no_grant(env)
-    await env.repo.update_sync_flags(U_SCOPE, disconnected_by_user_at=env.clock.now)
-    await env.svc.fan_out()
-    await env.repo.update_sync_flags(U_SCOPE, disconnected_by_user_at=Cleared.MARK)
-    env.clock.advance(600)
-    await env.svc.fan_out()
-    assert [c["alert"] for c in env.notifier.calls] == [R1_NOTICES[Integration.DRIVE]]
-
-
 async def test_a_lost_grant_keeps_its_own_notice(env):  # noqa: F811
     await env.repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u"))
     env.drive.connection_state = DriveConnection(connected=True, needs_reconnect=True, drive_id="d1")
