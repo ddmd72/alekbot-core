@@ -318,56 +318,57 @@ class TestLinkOauth:
         assert w.user_docs()["user-a"]["external_user_id"] == "google|sub-1"
 
 
-# --------------------------------------------------------------------------- /auth/connect-*
+# --------------------------------------------------------------------------- /auth/connect/<kind>, /auth/connect/callback
+# The four per-integration route pairs and their state / user cookies are gone (MULTI_DRIVE_RFC §5.2): one start route
+# per kind and the one callback, the flow held server-side by the connect service. The gates before that service are
+# the route's own: the signed-in session at both ends, the state and the code at the callback.
 
-_CONNECT = {
-    "/auth/connect-gmail": "gmail_oauth_state",
-    "/auth/connect-google-tasks": "tasks_oauth_state",
-    "/auth/connect-microsoft-todo": "microsoft_todo_oauth_state",
-    "/auth/connect-onedrive": "drive_oauth_state",
-}
+_KINDS = ("gmail", "google_tasks", "microsoft_todo", "microsoft_onedrive")
+
+
+def _session_cookie(w: World, cookie: Optional[str]) -> None:
+    if cookie == "forged":
+        w.client.set_cookie("localhost", "access_token", forged_token())
+    elif cookie == "expired":
+        w.client.set_cookie("localhost", "access_token", expired_token())
 
 
 class TestConnect:
-    @pytest.mark.parametrize("path", sorted(_CONNECT))
+    @pytest.mark.parametrize("kind", _KINDS)
     @pytest.mark.parametrize("cookie", [None, "forged", "expired"])
-    async def test_without_a_valid_session_redirects_to_login_and_sets_no_state(self, path, cookie):
+    async def test_without_a_valid_session_redirects_to_login_and_sets_no_state(self, kind, cookie):
         w = World()
-        if cookie == "forged":
-            w.client.set_cookie("localhost", "access_token", forged_token())
-        elif cookie == "expired":
-            w.client.set_cookie("localhost", "access_token", expired_token())
-        resp = await w.client.get(path)
+        _session_cookie(w, cookie)
+        resp = await w.client.get(f"/auth/connect/{kind}")
         assert resp.status_code == 302
         assert resp.headers["Location"] == "/auth/login?next=/cabinet"
-        cookies = _set_cookies(resp)
-        assert _CONNECT[path] not in cookies and "connect_user_id" not in cookies
+        assert _set_cookies(resp) == ""
         assert w.touched == []
 
 
-_CALLBACKS = {
-    "/auth/connect-gmail/callback": ("gmail_oauth_state", "gmail_connect_user_id", "gmail_error=state"),
-    "/auth/connect-google-tasks/callback": ("tasks_oauth_state", "tasks_connect_user_id", "tasks_error=state"),
-    "/auth/connect-microsoft-todo/callback": ("microsoft_todo_oauth_state", "microsoft_todo_connect_user_id",
-                                              "microsoft_todo_error=state"),
-}
-
-
 class TestConnectCallback:
-    @pytest.mark.parametrize("path", sorted(_CALLBACKS))
-    @pytest.mark.parametrize("state_cookie,user_cookie", [
-        (None, "user-a"),          # state cookie missing
-        ("other-state", "user-a"),  # state mismatch
-        ("s1", None),              # no *_connect_user_id
+    @pytest.mark.parametrize("query,error", [
+        ("?code=c", "/cabinet?connect_error=state"),        # no state
+        ("?state=s1", "/cabinet?connect_error=no_code"),    # no code
+        ("?error=access_denied&state=s1", "/cabinet?connect_error=denied"),
     ])
-    async def test_bad_state_or_missing_user_saves_nothing(self, path, state_cookie, user_cookie):
+    async def test_a_missing_state_or_code_or_a_refusal_saves_nothing(self, query, error):
         w = World()
-        state_name, user_name, error = _CALLBACKS[path]
-        if state_cookie is not None:
-            w.client.set_cookie("localhost", state_name, state_cookie)
-        if user_cookie is not None:
-            w.client.set_cookie("localhost", user_name, user_cookie)
-        resp = await w.client.get(f"{path}?code=c&state=s1")
+        w.client.set_cookie("localhost", "access_token", access_token())
+        resp = await w.client.get(f"/auth/connect/callback{query}")
         assert resp.status_code == 302
-        assert resp.headers["Location"] == f"/cabinet?{error}"
-        assert w.touched == []   # no code exchange, no credential saved, no setup task
+        assert resp.headers["Location"] == error
+        assert w.touched == []   # no flow consumed, no code exchange, no credential saved, no setup task
+
+    @pytest.mark.parametrize("cookie", [None, "forged", "expired", "no-account"])
+    async def test_without_a_valid_session_the_callback_goes_to_login_and_saves_nothing(self, cookie):
+        w = World()
+        if cookie == "no-account":
+            w.client.set_cookie("localhost", "access_token", access_token(account_id=""))
+        else:
+            _session_cookie(w, cookie)
+        resp = await w.client.get("/auth/connect/callback?code=c&state=s1")
+        assert resp.status_code == 302
+        assert resp.headers["Location"] == "/auth/login?next=/cabinet"
+        assert _set_cookies(resp) == ""
+        assert w.touched == []
