@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index import DriveIndexRecord
 
 from tests.unit.adapters.firestore_drive_eval_fakes import RECS, eval_transactions, make_eval_repo
@@ -26,7 +27,7 @@ def adapter(request, mock_env_config):
 
 
 def _rec(item_id, user="u", **kw):
-    return DriveIndexRecord(user, item_id, **kw)
+    return DriveIndexRecord(user, item_id, connection_id=user, **kw)   # one connection per user here (U_SCOPE)
 
 
 async def test_mirror_queue_newest_first(adapter):
@@ -41,7 +42,7 @@ async def test_mirror_queue_newest_first(adapter):
     ])
     assert [r.item_id for r in await repo.mirror_queue(U_SCOPE, 10)] == ["new-a", "new-b", "old"]
     assert [r.item_id for r in await repo.mirror_queue(U_SCOPE, 2)] == ["new-a", "new-b"]
-    assert await repo.mirror_queue("nobody", 10) == []
+    assert await repo.mirror_queue(ConnectionScope("nobody", "nobody"), 10) == []
 
 
 async def test_mirror_wakeups(adapter):
@@ -51,19 +52,19 @@ async def test_mirror_wakeups(adapter):
         _rec("early", mirror_retry_at=T - timedelta(hours=1)), _rec("later", mirror_retry_at=T + timedelta(hours=1)),
         _rec("none"), _rec("other", user="v", mirror_retry_at=T),
     ])
-    assert [r.item_id for r in await repo.mirror_wakeups("u", T, 10)] == ["early", "a", "b"]
-    assert [r.item_id for r in await repo.mirror_wakeups("u", T, 2)] == ["early", "a"]
-    assert [r.item_id for r in await repo.mirror_wakeups("u", T - timedelta(hours=2), 10)] == []
+    assert [r.item_id for r in await repo.mirror_wakeups(U_SCOPE, T, 10)] == ["early", "a", "b"]
+    assert [r.item_id for r in await repo.mirror_wakeups(U_SCOPE, T, 2)] == ["early", "a"]
+    assert [r.item_id for r in await repo.mirror_wakeups(U_SCOPE, T - timedelta(hours=2), 10)] == []
 
 
 async def test_transcript_records_after_cursor(adapter):
     repo, _ = adapter
     await repo.upsert_records([_rec(f"c{n}", transcript_state="current") for n in range(1, 6)]
                               + [_rec("c3x", user="v", transcript_state="current"), _rec("w", transcript_state="working")])
-    assert [r.item_id for r in await repo.transcript_records("u", "current", 10)] == ["c1", "c2", "c3", "c4", "c5"]
-    assert [r.item_id for r in await repo.transcript_records("u", "current", 2, after="c2")] == ["c3", "c4"]
-    assert [r.item_id for r in await repo.transcript_records("u", "current", 10, after="c5")] == []
-    assert [r.item_id for r in await repo.transcript_records("u", "current", 10, after=None)][0] == "c1"
+    assert [r.item_id for r in await repo.transcript_records(U_SCOPE, "current", 10)] == ["c1", "c2", "c3", "c4", "c5"]
+    assert [r.item_id for r in await repo.transcript_records(U_SCOPE, "current", 2, after="c2")] == ["c3", "c4"]
+    assert [r.item_id for r in await repo.transcript_records(U_SCOPE, "current", 10, after="c5")] == []
+    assert [r.item_id for r in await repo.transcript_records(U_SCOPE, "current", 10, after=None)][0] == "c1"
 
 
 async def test_the_firestore_cursor_read_is_served_by_single_field_indexes(adapter):
@@ -72,7 +73,7 @@ async def test_the_firestore_cursor_read_is_served_by_single_field_indexes(adapt
         pytest.skip("Firestore wire only")
     await repo.upsert_records([_rec("c1", transcript_state="current")])
     db.cols[RECS].executed.clear()
-    await repo.transcript_records("u", "current", 5, after="c0")
+    await repo.transcript_records(U_SCOPE, "current", 5, after="c0")
     (ops,) = db.cols[RECS].executed
     assert [op[1:3] for op in ops if op[0] == "where"] == [("user_id", "=="), ("transcript_state", "=="), ("__name__", ">")]
     assert not [op for op in ops if op[0] == "order_by"]      # the implicit document-id order: no composite
