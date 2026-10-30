@@ -125,4 +125,4 @@ async def test_shown_mirror_files_reach_drive_context(search, drive_service):
     search.search_deleted.return_value = DeletedSearchResult("Deleted files (1):\n...", [item], ref_tag="a1")
     resp = await _agent(search, drive_service).search_deleted(CTX, "u1")
     assert resp.drive_context() == [
-        {"path": "_Transcripts/Archive/2026-10-05/call1.md", "ref": "drive:m1"}]    # "open the second one" has a ref
+        {"path": "_Transcripts/Archive/2026-10-05/call1.md", "ref": "drive:a1:m1"}]    # "open the second one" has a ref
