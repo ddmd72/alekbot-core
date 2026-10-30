@@ -285,7 +285,8 @@ stale `running` jobs.
   the daily review / indexing worker sets `OAuthCredentials.needs_reconnect` and notifies the user
   only on the False→True transition (a reconnect or successful refresh clears it implicitly).
   `/api/gmail/status` returns the flag and the Cabinet shows **Reconnect Gmail**. Until 2026-10-10
-  a revoked grant failed silently while the Cabinet said "Connected". See
+  a revoked grant failed silently while the Cabinet said "Connected". A 403 for an insufficient scope takes the same path
+  (`OAuthScopeInsufficientError`), and a Gmail/Tasks consent without the service scope stores nothing (`OAuthScopeNotGrantedError`). See
   `decisions/gmail_grant_revoked_reconnect.md`. **Credentials are encrypted** (S3, `decisions/credential_store_cutover.md`): Gmail, Google
   Tasks, To Do and OneDrive grants live in `{prefix}credentials` (`FirestoreCredentialStore`; doc `{user_id}:{credential_id}`, account
   identity in plaintext, tokens + label one KMS ciphertext); the old `oauth_credentials` is never read, so each integration is reconnected

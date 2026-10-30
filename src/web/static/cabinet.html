@@ -2592,8 +2592,12 @@
             showToast(t("toast.team_joined"), "success");
           if (qs.get("gmail_connected") === "1")
             showToast(t("toast.gmail_connected"), "success");
-          if (qs.get("gmail_error"))
+          if (qs.get("gmail_error") === "scope")
+            showToast("Google did not grant access to your mail — reconnect and tick the Gmail checkbox", "error");
+          else if (qs.get("gmail_error"))
             showToast("Gmail connection error", "error");
+          if (qs.get("tasks_error") === "scope")
+            showToast("Google did not grant access to your tasks — reconnect and tick the Tasks checkbox", "error");
           if (qs.get("microsoft_todo_connected") === "1")
             showToast(t("toast.todo_connected"), "success");
           if (qs.get("microsoft_todo_error"))

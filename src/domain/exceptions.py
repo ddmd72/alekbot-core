@@ -268,6 +268,17 @@ class OAuthGrantRevokedError(ValueError):
     """
 
 
+class OAuthScopeInsufficientError(OAuthGrantRevokedError):
+    """The provider answered 403 because the access token lacks the service scope (granted too narrowly at
+    consent, or the access was removed later in the Google account). Same remedy as a revoked grant, so it is
+    a subclass: every ``except OAuthGrantRevokedError`` site already flags a reconnect for it."""
+
+
+class OAuthScopeNotGrantedError(ValueError):
+    """A consent finished without the scope the integration needs (Google's granular consent lets the user
+    leave the service checkbox unticked). Nothing is stored; the user must reconnect and tick it."""
+
+
 class AccessDeniedError(Exception):
     """An authenticated identity is not allowed into the system (whitelist gate).
 
