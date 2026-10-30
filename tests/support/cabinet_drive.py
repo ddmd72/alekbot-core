@@ -5,7 +5,8 @@ connection, its switches, its state and whether its grant is stored the way prod
     world = await cabinet_drive()                     # user u1, one ACTIVE OneDrive connection, its grant stored
     world = await cabinet_drive(state=None)           # no connection at all
     create_user_cabinet_blueprint(..., drive_connections=world.connections,
-                                  oauth_credentials_port=world.credentials, connectors=ConnectorRegistry())
+                                  oauth_credentials_port=world.credentials,
+                                  credential_revocation=world.revocation, connectors=ConnectorRegistry())
 """
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from typing import Optional
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState
 from src.domain.provider_account import ProviderAccount
+from src.services.credential_revocation_service import CredentialRevocationService
 from src.services.drive_connection_service import DriveConnectionService
 
 from .drive_connection_repo import FakeDriveConnectionRepository
@@ -36,6 +38,15 @@ class CabinetDrive:
     def credentials(self):
         """The credential port the Cabinet checks the grant with (`list_keys`)."""
         return self.store.repo
+
+    @property
+    def revocation(self) -> CredentialRevocationService:
+        """The revoke rule over the same store, with no provider edge (a removal never revokes at a provider)."""
+        return CredentialRevocationService(self.store.repo, {})
+
+    async def has_grant(self) -> bool:
+        keys = await self.store.repo.list_keys(self.user_id, KIND)
+        return self.connection is not None and any(k.credential_id == self.connection.credential_id for k in keys)
 
     async def stored(self) -> Optional[DriveConnection]:
         return await self.repo.get(self.user_id, CONNECTION_ID)
