@@ -22,6 +22,7 @@ from src.infrastructure.drive_operations import DriveOperations
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_connections import ConnectionReads
 from tests.unit.domain.drive_excerpt_builders import chunk, excerpt_file, result
 
 LAB = DriveItem(item_id="abc123", name="lab-report.pdf", path="Health/lab-report.pdf", is_folder=False)
@@ -34,10 +35,11 @@ def _drive_context():
     """One commission's entries as Smart's engine folds them: search, then passages of the lab report (3 entries)."""
     c = PassThroughCollector()
     c.add(1, t.KIND_SEARCH, DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text="cards", success=True,
-                                         items=(LAB, LEASE), request_text="lab report"))
+                                         items=(LAB, LEASE), request_text="lab report", ref_tag="a1"))
     f = excerpt_file(LAB.item_id, LAB.path, [chunk(LAB.item_id, 2, "a"), chunk(LAB.item_id, 3, "b")])
     c.add(2, t.KIND_PASSAGES, DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text="p", success=True,
-                                           items=(LAB,), excerpts=result(f, question="LAB-2025-03-0417 values")))
+                                           items=(LAB,), excerpts=result(f, question="LAB-2025-03-0417 values"),
+                                           ref_tag="a1"))
     return [c.drive_context()]
 
 
@@ -119,9 +121,10 @@ async def test_the_next_turn_sees_the_line_and_its_ref_resolves_through_drive_op
     ref = next(w for w in LAB_LINE.split() if w.startswith("ref="))[len("ref="):]   # what Smart copies
 
     drive = AsyncMock(spec=UserDriveService)
+    drive.resolve_ref.side_effect = ConnectionReads().resolve_ref
     moved = DriveItem(item_id="abc123", name="lab-report.pdf", path="Archive/lab-report.pdf", is_folder=False)
 
-    async def move(user_id, item_id, folder, new_name):
+    async def move(handle, item_id, folder, new_name):
         if item_id != LAB.item_id:
             raise DriveItemNotFoundError(item_id)
         return MoveOutcome(before=LAB, after=moved, created=[])
