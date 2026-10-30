@@ -16,6 +16,7 @@ from src.services.drive_search_service import DriveSearchService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 
 from .test_cabinet_drive_index_strings import LANGS, _dicts
+from src.composition.connector_registry import ConnectorRegistry
 
 _HTML = Path("src/web/static/cabinet.html").read_text(encoding="utf-8")
 
@@ -81,7 +82,7 @@ def _app(has_root):
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
         fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=drive,
-        drive_search_service=search, drive_task_queue=AsyncMock(), drive_transcribe_switch_on=True))
+        drive_search_service=search, drive_task_queue=AsyncMock(), drive_transcribe_switch_on=True, connectors=ConnectorRegistry()))
     return app, search
 
 

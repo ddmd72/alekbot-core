@@ -16,6 +16,7 @@ from src.services.email_indexing_service import EmailIndexingService
 from tests.support.clock_instants import UTC_MIDNIGHT
 from tests.support.firestore_eval import EvalDb
 from tests.support.redelivery_world import require
+from src.composition.connector_registry import ConnectorRegistry
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 JOBS = "eval_email_indexing_jobs_v1"
@@ -50,7 +51,7 @@ class World:
 
 
 def _service(jobs) -> EmailIndexingService:
-    return EmailIndexingService(None, None, jobs, None, None, None, None)
+    return EmailIndexingService(None, None, jobs, None, None, None, None, connector=ConnectorRegistry().get("gmail"))
 
 
 async def _silent_running_job(world: World, job_id: str = "j1") -> None:

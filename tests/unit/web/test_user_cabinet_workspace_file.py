@@ -9,6 +9,7 @@ from quart import Quart
 
 from src.domain.agent_note import AgentNote
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from src.composition.connector_registry import ConnectorRegistry
 
 _AUTH = {"Authorization": "Bearer token"}
 _HTML = Path(__file__).resolve().parents[3] / "src" / "web" / "static" / "cabinet.html"
@@ -25,7 +26,7 @@ def _app(notes):
     app = Quart("test_reminder_workspace_file")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=users, fact_repo=MagicMock(),
-        embedding_service=MagicMock(), agent_note_port=notes_port,
+        embedding_service=MagicMock(), agent_note_port=notes_port, connectors=ConnectorRegistry(),
     ))
     return app
 

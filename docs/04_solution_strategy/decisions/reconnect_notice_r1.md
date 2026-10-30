@@ -16,7 +16,10 @@ fire only on a rejected refresh, which needs a credential to reject.
 
 1. **R1.** A feature state that shows a past connection (Gmail: an indexing state; Drive: a sync state; To Do: a config
    with a primary list) and no credential means Reconnect in the Cabinet and one chat notice per user and integration.
-   The rule is pure (`reconnect_needed`, `r1_due`).
+   The rule is pure (`reconnect_needed`, `r1_due`). It keys on the shared `Integration` enum (`domain/integration.py`: `MAIL` is Gmail,
+   `TASKS` is To Do, `DRIVE` is the drive), the same enum the Cabinet groups credentials by; there is no second enum. The ops alert
+   path of an empty notice reads `mail_reconnect_notice`, `tasks_reconnect_notice`, `drive_reconnect_notice`. Existence of a
+   credential is read with the cipher-free `OAuthCredentialsPort.list_keys`, so a decrypt failure never reads as "no credential".
 2. **F1, deliberate disconnect.** A Cabinet disconnect of Gmail or Drive marks the feature state
    (`disconnected_by_user_at`), so R1 skips it; a new consent clears the mark. To Do needs no mark: its disconnect
    resets the config, so no primary list remains (D-P5).
@@ -40,7 +43,7 @@ fire only on a rejected refresh, which needs a credential to reject.
 
 - The hourly scheduler job (Gmail, To Do) and the drive fan-out (Drive).
 - The Cabinet status calls, which show Reconnect without sending anything.
-- The three OAuth callbacks, which clear the deliberate-disconnect mark.
+- The one connect callback (`/auth/connect/callback`; the activation per integration), which clears the deliberate-disconnect mark.
 
 ## Consequences
 

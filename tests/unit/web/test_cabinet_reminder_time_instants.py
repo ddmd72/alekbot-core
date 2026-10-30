@@ -26,6 +26,7 @@ from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.clock_instants import REPEATED_HOUR, SKIPPED_HOUR, ZONES
 from tests.support.firestore_eval import EvalDb
 from tests.unit.web.gate_fakes import Tripwire, access_token, session_service
+from src.composition.connector_registry import ConnectorRegistry
 
 UTC = timezone.utc
 USER = ("u1", "a1")
@@ -50,7 +51,7 @@ class World:
             fact_repo=Tripwire("fact_repo", self.touched),
             embedding_service=Tripwire("embedding_service", self.touched),
             agent_note_port=self.notes,
-            recurrence_port=DateutilRecurrenceAdapter(),
+            recurrence_port=DateutilRecurrenceAdapter(), connectors=ConnectorRegistry(),
         ))
         self.client = app.test_client()
 

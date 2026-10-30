@@ -15,6 +15,7 @@ from src.services.task_setup_service import TaskSetupService
 from src.web.microsoft_tasks_webhook import create_microsoft_tasks_webhook_blueprint
 from tests.support.firestore_eval import EvalDb
 from tests.unit.web.gate_fakes import RecordingTaskQueue, Tripwire
+from src.composition.connector_registry import ConnectorRegistry
 
 SECRET = "p7-graph-client-state"
 
@@ -56,7 +57,7 @@ class World:
             lifecycle=self.lifecycle, task_config=self.config, tasks_provider=Tripwire("tasks_provider", self.touched),
             oauth_credentials=Tripwire("oauth_credentials", self.touched),
             task_search_index=Tripwire("task_search_index", self.touched), task_queue=self.queue,
-            notification_url_base="https://app.example/webhook/microsoft-tasks")
+            notification_url_base="https://app.example/webhook/microsoft-tasks", connector=ConnectorRegistry().get("microsoft_todo"))
         app = Quart("graph_webhook_c1")
         app.register_blueprint(create_microsoft_tasks_webhook_blueprint(
             task_indexing=self.index, task_setup=setup, webhook_secret=SECRET))

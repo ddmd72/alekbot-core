@@ -20,6 +20,7 @@ from src.ports.user_drive_port import UserDrivePort
 from src.services.drive_search_service import DriveSearchService
 from src.web import user_cabinet_app
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from src.composition.connector_registry import ConnectorRegistry
 
 _AUTH = {"Authorization": "Bearer token"}
 
@@ -47,7 +48,7 @@ def _app(user_drive=None, search=None, queue=None, user_repo=None):
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo or MagicMock(),
         fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=user_drive,
-        drive_search_service=search, drive_task_queue=queue,
+        drive_search_service=search, drive_task_queue=queue, connectors=ConnectorRegistry(),
     ))
     return app
 

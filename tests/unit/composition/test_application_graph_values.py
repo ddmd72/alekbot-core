@@ -141,8 +141,14 @@ def test_the_auth_services_hold_the_configured_values(variant_graph):
     assert firebase.web_api_key == config["FIREBASE_WEB_API_KEY"]
     assert firebase.oauth_client_id == config["GOOGLE_OAUTH_CLIENT_ID"]
     assert firebase.oauth_client_secret == config["GOOGLE_OAUTH_CLIENT_SECRET"]
-    assert app.gmail_oauth_service._client_id == config["GOOGLE_OAUTH_CLIENT_ID"]
-    assert app.gmail_oauth_service._client_secret == config["GOOGLE_OAUTH_CLIENT_SECRET"]
+    # the Google connect edge replaced GoogleOAuthService (MULTI_DRIVE_RFC §5.1); the connect service holds it
+    google = app.container.connectors.realm_edge("google")
+    assert google._client_id == config["GOOGLE_OAUTH_CLIENT_ID"]
+    assert google._client_secret == config["GOOGLE_OAUTH_CLIENT_SECRET"]
+    assert app.connect_service._edges["google"] is google
+    # the one connect callback (MULTI_DRIVE_RFC §5.2, E4) reaches the connect service
+    assert auth.oauth_connect_redirect_uri == prod_env.SECRET_VALUES["OAUTH_CONNECT_REDIRECT_URI"]
+    assert app.connect_service._redirect_uri == auth.oauth_connect_redirect_uri
 
 
 @pytest.mark.slow

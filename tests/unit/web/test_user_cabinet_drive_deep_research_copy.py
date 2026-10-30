@@ -13,6 +13,7 @@ from quart import Quart
 
 from src.domain.user import UserBotConfig
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from src.composition.connector_registry import ConnectorRegistry
 
 _AUTH = {"Authorization": "Bearer token"}
 _URL = "/api/drive/deep-research-copy"
@@ -36,7 +37,7 @@ def _app(user_repo):
     app = Quart("test_drive_dr_copy")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
-        fact_repo=MagicMock(), embedding_service=MagicMock(),
+        fact_repo=MagicMock(), embedding_service=MagicMock(), connectors=ConnectorRegistry(),
     ))
     return app
 

@@ -116,7 +116,7 @@ async def _auto_index_user(graph: Any) -> None:
     await graph.app.user_repo.update_user(UserProfile(
         user_id="u1", account_id="a1",
         config=UserBotConfig(timezone="Europe/Berlin", gmail_auto_index=True, gmail_auto_index_hour=9)))
-    await graph.app.worker_handler._email_indexing._oauth.save_credentials(creds("u1", "gmail"))
+    await graph.app.worker_handler._email_indexing._oauth.save(creds("u1", "gmail"))
 
 
 def _jobs(graph: Any) -> List[dict]:

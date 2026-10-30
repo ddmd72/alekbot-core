@@ -20,6 +20,7 @@ from tests.unit.services.test_email_indexing_service import (
     _make_job,
     _make_meta,
 )
+from src.composition.connector_registry import ConnectorRegistry
 
 
 class FakeAlertSink(AlertSinkPort):
@@ -52,7 +53,7 @@ def _service(results, sink):
     return EmailIndexingService(
         gmail=gmail, email_repo=repo, job_repo=AsyncMock(spec=EmailIndexingJobRepository),
         exclusions_repo=exclusions, classifier=classifier,
-        embedding=AsyncMock(spec=EmbeddingService), oauth=None, alert_sink=sink,
+        embedding=AsyncMock(spec=EmbeddingService), oauth=None, alert_sink=sink, connector=ConnectorRegistry().get("gmail"),
     )
 
 

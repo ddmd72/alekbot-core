@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from ..domain.email_dates import to_naive_utc
 from ..domain.email import (
+    GMAIL_INDEX_PROVIDER,
     EmailClassificationResult,
     EmailExclusion,
     EmailMetadata,
@@ -22,8 +23,9 @@ from ..domain.email import (
     IndexedEmail,
     IndexingJob,
     IndexingState,
-    OAuthCredentials,
 )
+from ..domain.connector_spec import ConnectorSpec
+from ..domain.oauth_credential import OAuthCredential
 from ..ports.alert_sink import AlertSinkPort
 from ..ports.email_exclusions_port import EmailExclusionsPort
 from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
@@ -58,7 +60,11 @@ class EmailIndexingService:
         embedding: EmbeddingService,
         oauth: Optional[OAuthCredentialsPort],
         alert_sink: Optional[AlertSinkPort] = None,
+        *,
+        connector: ConnectorSpec,
     ):
+        """`connector` is the mail kind's spec: the user's Gmail credential is the one of `connector.kind`."""
+        self._kind = connector.kind
         self._gmail = gmail
         self._email_repo = email_repo
         self._job_repo = job_repo
@@ -103,8 +109,8 @@ class EmailIndexingService:
         self,
         user_id: str,
         account_id: str,
-        credentials: OAuthCredentials,
-        provider: str = "gmail",
+        credentials: OAuthCredential,
+        provider: str = GMAIL_INDEX_PROVIDER,
         triggered_by: str = "cabinet",
         max_pages: Optional[int] = None,
         date_from: Optional[datetime] = None,
@@ -161,7 +167,7 @@ class EmailIndexingService:
             logger.warning("[EmailIndexing] start_indexing_for_eligible_users: oauth not configured")
             return [], 0, 0
 
-        user_ids = await self._oauth.list_users_by_provider("gmail")
+        user_ids = await self._oauth.list_user_ids(self._kind)
         job_ids: List[str] = []
         started = skipped = 0
 
@@ -182,7 +188,7 @@ class EmailIndexingService:
                 skipped += 1
                 continue
 
-            latest_job = await self._job_repo.get_latest_job(user_id, "gmail")
+            latest_job = await self._job_repo.get_latest_job(user_id, GMAIL_INDEX_PROVIDER)
             if latest_job and latest_job.status == "running":
                 logger.info(
                     "[EmailIndexing] job already running for %s, skipping", user_id[:8]
@@ -190,8 +196,7 @@ class EmailIndexingService:
                 skipped += 1
                 continue
 
-            creds = await self._oauth.get_credentials(user_id, "gmail")
-            if not creds:
+            if not await self._oauth.list_keys(user_id, self._kind):
                 logger.warning(
                     "[EmailIndexing] no credentials for %s", user_id[:8]
                 )
@@ -200,7 +205,7 @@ class EmailIndexingService:
 
             job = self.create_job(
                 user_id=user_id,
-                provider="gmail",
+                provider=GMAIL_INDEX_PROVIDER,
                 triggered_by="scheduler",
                 mode="incremental",
                 account_id=profile.account_id,
@@ -220,7 +225,7 @@ class EmailIndexingService:
 
     async def load_job_for_execution(
         self, job_id: str
-    ) -> Tuple[Optional[IndexingJob], Optional[OAuthCredentials], Optional[str]]:
+    ) -> Tuple[Optional[IndexingJob], Optional[OAuthCredential], Optional[str]]:
         """
         Load a job and its OAuth credentials for page execution.
 
@@ -247,7 +252,8 @@ class EmailIndexingService:
             )
             return None, None, job.status  # actual status: "completed", "failed", etc.
 
-        creds = await self._oauth.get_credentials(job.user_id, job.provider)
+        keys = await self._oauth.list_keys(job.user_id, self._kind)
+        creds = await self._oauth.get(job.user_id, keys[0].credential_id) if keys else None
         if not creds:
             await self._job_repo.update_job(
                 job_id, {"status": "failed_auth", "updated_at": datetime.now(timezone.utc)}
@@ -277,7 +283,7 @@ class EmailIndexingService:
     async def run_indexing_job(
         self,
         job: IndexingJob,
-        credentials: OAuthCredentials,
+        credentials: OAuthCredential,
         account_id: str,
         max_pages: Optional[int] = None,
         date_from: Optional[datetime] = None,

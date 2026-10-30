@@ -72,6 +72,7 @@ from src.adapters.microsoft import OneDriveAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.adapters.subprocess_content_extractor import PARSER_USER_ENV, SubprocessContentExtractor
 from src.composition.cipher_setup import build_cipher
+from src.composition.connector_registry import MICROSOFT_ONEDRIVE, ConnectorRegistry
 from src.composition.drive_indexing_setup import (
     build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue, build_place_lookup,
 )
@@ -141,6 +142,7 @@ def build_app() -> Quart:
         oauth_credentials=oauth_credentials,
         client_id=os.environ["MICROSOFT_TODO_CLIENT_ID"],
         client_secret=os.environ["MICROSOFT_TODO_CLIENT_SECRET"],
+        connector=ConnectorRegistry().get(MICROSOFT_ONEDRIVE),
     )
     index_repo = build_drive_index_repository(db, env_config)
     # The transcript mirror's roots and ledger (§27.9.2-§27.9.4): ALWAYS built, whatever the kill switch — the bot's

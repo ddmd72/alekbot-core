@@ -2590,22 +2590,7 @@
           const qs = new URLSearchParams(window.location.search);
           if (qs.get("joined") === "true")
             showToast(t("toast.team_joined"), "success");
-          if (qs.get("gmail_connected") === "1")
-            showToast(t("toast.gmail_connected"), "success");
-          if (qs.get("gmail_error") === "scope")
-            showToast("Google did not grant access to your mail — reconnect and tick the Gmail checkbox", "error");
-          else if (qs.get("gmail_error"))
-            showToast("Gmail connection error", "error");
-          if (qs.get("tasks_error") === "scope")
-            showToast("Google did not grant access to your tasks — reconnect and tick the Tasks checkbox", "error");
-          if (qs.get("microsoft_todo_connected") === "1")
-            showToast(t("toast.todo_connected"), "success");
-          if (qs.get("microsoft_todo_error"))
-            showToast("To Do connection error", "error");
-          if (qs.get("drive_connected") === "1")
-            showToast(t("toast.drive_connected"), "success");
-          if (qs.get("drive_error"))
-            showToast("Drive connection error", "error");
+          await showConnectToasts(qs);
 
           const tab = qs.get("tab");
           navigate(tab && document.getElementById(`section-${tab}`) ? tab : "integrations");
@@ -3300,6 +3285,67 @@
         }
       }
 
+      /* ── Connectors (MULTI_DRIVE_RFC §5.2): the connect links come from GET /api/connectors ── */
+      // Keyed by integration, never by connector kind: the Cabinet holds no kind of its own.
+      const CONNECTED_TOAST_KEYS = {
+        mail: "toast.gmail_connected",
+        tasks: "toast.todo_connected",
+        drive: "toast.drive_connected",
+      };
+      const SCOPE_TOASTS = {
+        mail: "Google did not grant access to your mail — reconnect and tick the Gmail checkbox",
+        tasks: "Google did not grant access to your tasks — reconnect and tick the Tasks checkbox",
+      };
+      let _connectorsPromise = null;
+
+      function loadConnectors() {
+        if (!_connectorsPromise) {
+          _connectorsPromise = fetch(`${API}/api/connectors`, { credentials: "include" })
+            .then((res) => (res.ok ? res.json() : { connectors: [] }))
+            .then((body) => body.connectors || [])
+            .catch(() => {
+              _connectorsPromise = null; // a failed read is retried on the next render
+              return [];
+            });
+        }
+        return _connectorsPromise;
+      }
+
+      // The connect (or, with a credential id, reconnect) link of an integration; "" when no connector offers it.
+      async function connectHref(integration, credentialId) {
+        const connector = (await loadConnectors()).find((c) => c.integration === integration);
+        if (!connector) return "";
+        const base = `/auth/connect/${encodeURIComponent(connector.kind)}`;
+        return credentialId ? `${base}?credential=${encodeURIComponent(credentialId)}` : base;
+      }
+
+      // An <a> button to `href`, or nothing when the integration has no connector here.
+      function connectButton(href, label) {
+        return href ? `<a href="${escapeHtml(href)}" class="btn btn-black">${label}</a>` : "";
+      }
+
+      // The callback's ?connected=<kind> / ?connect_error=<status>&kind=<kind>, named by the connector's label.
+      async function showConnectToasts(qs) {
+        const connected = qs.get("connected");
+        const error = qs.get("connect_error");
+        if (!connected && !error) return;
+        const connectors = await loadConnectors();
+        const connector = connectors.find((c) => c.kind === (connected || qs.get("kind")));
+        const label = connector ? connector.label : "Integration";
+        if (connected) {
+          const key = connector && CONNECTED_TOAST_KEYS[connector.integration];
+          showToast(key ? t(key) : `${label} connected`, "success");
+          return;
+        }
+        if (error === "scope")
+          showToast((connector && SCOPE_TOASTS[connector.integration]) ||
+            `${label} did not get the access it needs — reconnect and allow every permission asked`, "error");
+        else if (error === "account")
+          showToast(`${label}: you signed in with another account — reconnect with the account this connection uses`, "error");
+        else
+          showToast(`${label} connection error`, "error");
+      }
+
       async function loadGmailStatus() {
         try {
           const [statusRes, autoIndexRes, dailyReviewRes] = await Promise.all([
@@ -3319,6 +3365,8 @@
             data.daily_review_enabled = dr.enabled;
             data.daily_review_hour = dr.hour;
           }
+          data.connect_href = await connectHref("mail");
+          data.reconnect_href = await connectHref("mail", data.credential_id);
           renderGmailStatus(data);
         } catch {
           // Graceful degradation
@@ -3449,11 +3497,11 @@
         }
 
         let actionButtons = missing
-          ? `<a href="/auth/connect-gmail" class="btn btn-black">${t("gmail.reconnect")}</a>`
+          ? connectButton(data.connect_href, t("gmail.reconnect"))
           : !linked
-          ? `<a href="/auth/connect-gmail" class="btn btn-black">${t("platform.connect_gmail")}</a>`
+          ? connectButton(data.connect_href, t("platform.connect_gmail"))
           : needsReconnect
-          ? `<a href="/auth/connect-gmail" class="btn btn-black">${t("gmail.reconnect")}</a>
+          ? `${connectButton(data.reconnect_href, t("gmail.reconnect"))}
              <button onclick="disconnectGmail()" class="btn btn-secondary">${t("platform.disconnect")}</button>`
           : `<button onclick="triggerGmailIndex()" class="btn btn-primary" ${indexActive ? "disabled" : ""}>${indexActive ? t("platform.indexing") : t("platform.index_emails")}</button>
              ${indexActive && activeJobId ? `<button data-job-id="${escapeHtml(activeJobId)}" onclick="cancelGmailIndex(this.dataset.jobId, this)" class="btn btn-secondary">${t("platform.cancel")}</button>` : ""}
@@ -3635,11 +3683,13 @@
             credentials: "include",
           });
           if (!res.ok) throw new Error();
+          const data = await res.json();
+          data.connect_href = await connectHref("tasks");
           renderServiceStatus(
             "tasks",
             "Microsoft To Do",
             t("platform.tasks_desc"),
-            await res.json(),
+            data,
           );
         } catch {}
       }
@@ -3652,6 +3702,8 @@
           if (!res.ok) throw new Error();
           const data = await res.json();
           data.dr_copy = await loadDeepResearchCopy();
+          data.connect_href = await connectHref("drive");
+          data.reconnect_href = await connectHref("drive", data.credential_id);
           // The search disclosure mentions the copies while the copy is on (they are indexed like any file).
           if (data.indexing) data.indexing.dr_copy = data.dr_copy === true;
           const snapshot = JSON.stringify(data);
@@ -3727,11 +3779,11 @@
           ? renderDeepResearchCopy(data.dr_copy)
           : "";
         const actionButtons = missing
-          ? `<a href="/auth/connect-onedrive" class="btn btn-black">${t("drive.reconnect")}</a>`
+          ? connectButton(data.connect_href, t("drive.reconnect"))
           : !linked
-          ? `<a href="/auth/connect-onedrive" class="btn btn-black">${t("platform.connect_drive")}</a>`
+          ? connectButton(data.connect_href, t("platform.connect_drive"))
           : needsReconnect
-          ? `<a href="/auth/connect-onedrive" class="btn btn-black">${t("drive.reconnect")}</a>
+          ? `${connectButton(data.reconnect_href, t("drive.reconnect"))}
              <button onclick="disconnectDrive()" class="btn btn-secondary">${t("platform.disconnect")}</button>`
           : `<button onclick="disconnectDrive()" class="btn btn-secondary">${t("platform.disconnect_account")}</button>`;
         container.innerHTML = `
@@ -3926,8 +3978,8 @@
         const actionButtons = linked
           ? `<button onclick="disconnectService('${id}')" class="btn btn-secondary">${t("platform.disconnect_account")}</button>`
           : missing
-          ? `<a href="/auth/connect-microsoft-todo" class="btn btn-black">${t("todo.reconnect")}</a>`
-          : `<a href="/auth/connect-microsoft-todo" class="btn btn-black">${t("platform.connect_todo")}</a>`;
+          ? connectButton(data.connect_href, t("todo.reconnect"))
+          : connectButton(data.connect_href, t("platform.connect_todo"));
 
         container.innerHTML = `
           <div class="card integration-card tasks-card reveal">
@@ -3953,7 +4005,7 @@
       }
 
       async function disconnectService(id) {
-        const name = id === "gmail" ? "Gmail" : "MS ToDo";
+        const name = "MS ToDo";
         if (!confirm(`Disconnect ${name}?`)) return;
         try {
           const res = await fetch(`${API}/api/tasks/microsoft/disconnect`, {

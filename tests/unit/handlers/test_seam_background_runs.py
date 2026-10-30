@@ -27,6 +27,7 @@ from tests.support.redelivery_world import RedeliveryWorld, ScriptedReview, deli
 from tests.support.seam_world import (
     ACCOUNT, OTHER_SLACK, PRIMARY, T0, USER, Delegation, SeamWorld, Step, page, require, says,
 )
+from src.composition.connector_registry import ConnectorRegistry
 
 CREATED = T0 - timedelta(days=1)
 EMAILS = [
@@ -211,9 +212,9 @@ async def test_a_daily_review_is_enqueued_named_by_its_mark_with_the_digest_dead
     `gcp:380-384` (name), `:391-392` (`dispatch_deadline`)."""
     oauth = CredentialsStore()
     world = RedeliveryWorld(
-        email_review=EmailReviewService(email_provider=None, oauth_credentials=oauth.repo),  # type: ignore[arg-type]
+        email_review=EmailReviewService(email_provider=None, oauth_credentials=oauth.repo, connector=ConnectorRegistry().get("gmail")),  # type: ignore[arg-type]
     )
-    await oauth.repo.save_credentials(creds(USER, "gmail"))
+    await oauth.repo.save(creds(USER, "gmail"))
     world.users.put(UserProfile(user_id=USER, account_id=ACCOUNT, config=UserBotConfig(
         timezone="Europe/Berlin", gmail_daily_review=True, gmail_daily_review_hour=9)))
     pin_datetime(monkeypatch, worker_handler, T0)   # 09:00 in Berlin: inside the review window

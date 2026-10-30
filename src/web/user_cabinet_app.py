@@ -8,14 +8,15 @@ import re
 
 from ..services.invite_code_service import InviteCodeService
 from ..services.session_service import SessionService
-from ..services.google_oauth_service import GoogleOAuthService
+from ..services.credential_revocation_service import CredentialRevocationService
 from ..services.email_indexing_service import EmailIndexingService
 from ..services.drive_search_service import DriveSearchService
 from ..services.cabinet_fact_service import CabinetFactService
 from ..services.fact_answer_service import FactAnswerService
 from ..services.localization_service import LocalizationService
 from ..services.integration_reconnect_service import IntegrationReconnectService
-from ..domain.reconnect_policy import Integration
+from ..domain.email import GMAIL_INDEX_PROVIDER
+from ..domain.integration import Integration
 from ..domain.drive_index_params import TICK_DEADLINE_S
 from ..domain.drive_indexing_status import DriveIndexingStatus
 from ..domain.drive_task_keys import DRIVE_SYNC_TASK, tick_payload, toggle_key
@@ -29,6 +30,8 @@ from ..ports.user_repository import UserRepository
 from ..ports.repository import FactRepository
 from ..ports.fact_review_store import FactReviewStore
 from ..ports.embedding_service import EmbeddingService
+from ..composition.connector_registry import GMAIL, GOOGLE_TASKS, MICROSOFT_ONEDRIVE, ConnectorRegistry
+from ..domain.oauth_credential import OAuthCredential
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.indexed_email_repository import IndexedEmailRepository
 from ..ports.email_indexing_job_repository import EmailIndexingJobRepository
@@ -61,8 +64,7 @@ def create_user_cabinet_blueprint(
     fact_repo: FactRepository,
     embedding_service: EmbeddingService,
     oauth_credentials_port: Optional[OAuthCredentialsPort] = None,
-    gmail_oauth_service: Optional[GoogleOAuthService] = None,
-    google_tasks_oauth_service: Optional[GoogleOAuthService] = None,
+    credential_revocation: Optional[CredentialRevocationService] = None,
     indexed_email_repo: Optional[IndexedEmailRepository] = None,
     email_indexing_service: Optional[EmailIndexingService] = None,
     email_job_repo: Optional[EmailIndexingJobRepository] = None,
@@ -82,9 +84,14 @@ def create_user_cabinet_blueprint(
     fact_answer_service: Optional[FactAnswerService] = None,
     localization: Optional[LocalizationService] = None,
     reconnect: Optional[IntegrationReconnectService] = None,
+    connectors: Optional[ConnectorRegistry] = None,
 ) -> Blueprint:
     """
     Create and configure the User Cabinet Blueprint.
+
+    `credential_revocation` removes a stored grant under the revoke rule (MULTI_DRIVE_RFC §4.3): the Gmail and Google
+    Tasks disconnects go through it (501 without it). `connectors` is the connector registry: the cards' kinds and
+    `GET /api/connectors`.
     """
     bp = Blueprint("cabinet", __name__)
 
@@ -98,6 +105,22 @@ def create_user_cabinet_blueprint(
         except Exception as exc:
             logger.warning(f"{integration.value} status: reading the reconnect state failed: {exc_brief(exc)}")
             return False
+
+    async def _credential(user_id: str, kind_name: str) -> Optional[OAuthCredential]:
+        """The user's credential of the registry kind `kind_name` (the oldest when several), or None. Callers check
+        that the port and the registry are wired."""
+        if oauth_credentials_port is None or connectors is None:
+            raise RuntimeError("credential store or connector registry not wired")
+        keys = await oauth_credentials_port.list_keys(user_id, connectors.get(kind_name).kind)
+        return await oauth_credentials_port.get(user_id, keys[0].credential_id) if keys else None
+
+    async def _remove_all(user_id: str, kind_name: str) -> None:
+        """Remove every record of the user of that kind through the revocation service: each is deleted, and Google is
+        revoked only when no stored credential of that account remains (the revoke rule, §4.3)."""
+        if oauth_credentials_port is None or connectors is None or credential_revocation is None:
+            raise RuntimeError("credential store, connector registry or revocation service not wired")
+        for key in await oauth_credentials_port.list_keys(user_id, connectors.get(kind_name).kind):   # no decrypt
+            await credential_revocation.remove(user_id, key.credential_id)
 
     # Calculate absolute paths
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1032,24 +1055,39 @@ def create_user_cabinet_blueprint(
     # Gmail integration API
     # ========================================================================
 
+    @bp.route("/api/connectors", methods=["GET"])
+    @auth_required
+    async def list_connectors():
+        """The connectors the Cabinet offers a connect button for (MULTI_DRIVE_RFC §14 row 1a): kind, integration and
+        label, in the registry's order; a kind whose realm has no OAuth edge on this deployment is left out (its
+        connect would answer 501). The Cabinet builds its connect links (`/auth/connect/<kind>`) from these and holds
+        no kind of its own."""
+        if connectors is None:
+            return jsonify({"connectors": []}), 200
+        edges = connectors.edges()
+        return jsonify({"connectors": [
+            {"kind": spec.kind, "integration": spec.integration.value, "label": spec.label}
+            for spec in connectors.offered() if spec.realm in edges
+        ]}), 200
+
     @bp.route("/api/gmail/status", methods=["GET"])
     @auth_required
     async def gmail_status():
         """Return Gmail connection state for the authenticated user."""
-        if not oauth_credentials_port:
+        if not oauth_credentials_port or connectors is None:
             return jsonify({"connected": False}), 200
         try:
-            creds = await oauth_credentials_port.get_credentials(g.user_id, "gmail")
+            creds = await _credential(g.user_id, GMAIL)
             if not creds:
                 body: dict = {"connected": False}
                 if reconnect is not None:
-                    body["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.GMAIL)
+                    body["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.MAIL)
                 return jsonify(body), 200
 
             indexed_through = None
             oldest_indexed_through = None
             if indexed_email_repo:
-                state = await indexed_email_repo.get_indexing_state(g.user_id, "gmail")
+                state = await indexed_email_repo.get_indexing_state(g.user_id, GMAIL_INDEX_PROVIDER)
                 if state:
                     indexed_through = state.indexed_through.isoformat() if state.indexed_through else None
                     oldest_indexed_through = state.oldest_indexed_through.isoformat() if state.oldest_indexed_through else None
@@ -1057,14 +1095,16 @@ def create_user_cabinet_blueprint(
             indexing_active = False
             active_job_id = None
             if email_job_repo:
-                latest_job = await email_job_repo.get_latest_job(g.user_id, "gmail")
+                latest_job = await email_job_repo.get_latest_job(g.user_id, GMAIL_INDEX_PROVIDER)
                 if latest_job and latest_job.status == "running":
                     indexing_active = True
                     active_job_id = latest_job.job_id
 
             return jsonify({
                 "connected": True,
-                "email_address": creds.email_address or None,
+                # the Cabinet's Reconnect link names it (`/auth/connect/<kind>?credential=<id>`)
+                "credential_id": creds.credential_id,
+                "email_address": creds.account.label or None,
                 "indexed_through": indexed_through,
                 "oldest_indexed_through": oldest_indexed_through,
                 "indexing_active": indexing_active,
@@ -1091,7 +1131,7 @@ def create_user_cabinet_blueprint(
         Async path (production): returns 202 immediately with job_id.
         Sync fallback (local dev): runs one page, returns job summary.
         """
-        if not email_indexing_service or not oauth_credentials_port:
+        if not email_indexing_service or not oauth_credentials_port or connectors is None:
             return jsonify({"error": "Gmail indexing not configured"}), 501
 
         body = await request.get_json(silent=True) or {}
@@ -1108,7 +1148,7 @@ def create_user_cabinet_blueprint(
                 return jsonify({"error": "Invalid backfill_until format, expected YYYY-MM-DD"}), 400
 
         try:
-            creds = await oauth_credentials_port.get_credentials(g.user_id, "gmail")
+            creds = await _credential(g.user_id, GMAIL)
             if not creds:
                 return jsonify({"error": "Gmail not connected"}), 404
 
@@ -1116,7 +1156,7 @@ def create_user_cabinet_blueprint(
             if task_queue and email_job_repo:
                 job = email_indexing_service.create_job(
                     user_id=g.user_id,
-                    provider="gmail",
+                    provider=GMAIL_INDEX_PROVIDER,
                     triggered_by="cabinet",
                     mode=mode,
                     account_id=g.account_id,
@@ -1217,25 +1257,22 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/gmail/disconnect", methods=["DELETE"])
     @auth_required
     async def gmail_disconnect():
-        """Revoke Gmail access token and delete credentials. Indexed data is preserved."""
-        if not oauth_credentials_port:
+        """Remove the Gmail credential (Google revoked only when no other credential of the account remains, §4.3).
+        Indexed data is preserved."""
+        if not oauth_credentials_port or connectors is None or credential_revocation is None:
             return jsonify({"error": "Gmail integration not configured"}), 501
         try:
-            creds = await oauth_credentials_port.get_credentials(g.user_id, "gmail")
+            creds = await _credential(g.user_id, GMAIL)
             if not creds:
                 return jsonify({"error": "Gmail not connected"}), 404
 
             # A deliberate disconnect is not a loss (R1, F1): marked before the credential goes, so no sweep in
             # between reads a past connection without a credential and no mark; a failed mark deletes nothing.
             if reconnect is not None:
-                await reconnect.mark_disconnected(g.user_id, Integration.GMAIL)
+                await reconnect.mark_disconnected(g.user_id, Integration.MAIL)
 
-            # Best-effort token revocation at Google
-            if gmail_oauth_service:
-                await gmail_oauth_service.revoke_token(creds.access_token)
-
-            # Delete credentials only — indexed data stays intact
-            await oauth_credentials_port.revoke_credentials(g.user_id, "gmail")
+            # Credentials only — indexed data stays intact
+            await _remove_all(g.user_id, GMAIL)
 
             logger.info(f"🔌 Gmail disconnected for user={g.user_id[:8]} (indexed data preserved)")
             return jsonify({"success": True}), 200
@@ -1376,15 +1413,15 @@ def create_user_cabinet_blueprint(
     @auth_required
     async def tasks_status():
         """Return task list connection state for the authenticated user."""
-        if not oauth_credentials_port:
+        if not oauth_credentials_port or connectors is None:
             return jsonify({"connected": False}), 200
         try:
-            creds = await oauth_credentials_port.get_credentials(g.user_id, "google_tasks")
+            creds = await _credential(g.user_id, GOOGLE_TASKS)
             if not creds:
                 return jsonify({"connected": False}), 200
             return jsonify({
                 "connected": True,
-                "email_address": creds.email_address or None,
+                "email_address": creds.account.label or None,
             }), 200
         except Exception as exc:
             logger.error(f"Error fetching Tasks status: {exc}", exc_info=True)
@@ -1393,16 +1430,14 @@ def create_user_cabinet_blueprint(
     @bp.route("/api/tasks/disconnect", methods=["DELETE"])
     @auth_required
     async def tasks_disconnect():
-        """Revoke task list access token and delete credentials."""
-        if not oauth_credentials_port:
+        """Remove the Google Tasks credential (Google revoked only when no other credential of the account remains)."""
+        if not oauth_credentials_port or connectors is None or credential_revocation is None:
             return jsonify({"error": "Tasks integration not configured"}), 501
         try:
-            creds = await oauth_credentials_port.get_credentials(g.user_id, "google_tasks")
+            creds = await _credential(g.user_id, GOOGLE_TASKS)
             if not creds:
                 return jsonify({"error": "Tasks not connected"}), 404
-            if google_tasks_oauth_service:
-                await google_tasks_oauth_service.revoke_token(creds.access_token)
-            await oauth_credentials_port.revoke_credentials(g.user_id, "google_tasks")
+            await _remove_all(g.user_id, GOOGLE_TASKS)
             logger.info(f"🔌 Tasks disconnected for user={g.user_id[:8]}")
             return jsonify({"success": True}), 200
         except Exception as exc:
@@ -1478,6 +1513,11 @@ def create_user_cabinet_blueprint(
             }
             if reconnect is not None and not connection.connected:
                 body["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.DRIVE)
+            if connection.connected and oauth_credentials_port is not None and connectors is not None:
+                # the Cabinet's Reconnect link names it (`/auth/connect/<kind>?credential=<id>`); plaintext keys only
+                keys = await oauth_credentials_port.list_keys(g.user_id, connectors.get(MICROSOFT_ONEDRIVE).kind)
+                if keys:
+                    body["credential_id"] = keys[0].credential_id
         except Exception as exc:
             logger.error(f"Error fetching drive status: {exc}", exc_info=True)
             return jsonify({"error": "Internal server error"}), 500
@@ -1623,7 +1663,7 @@ def create_user_cabinet_blueprint(
         try:
             status = await task_setup.get_status(g.user_id)
             if reconnect is not None and not status.get("connected"):
-                status["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.TODO)
+                status["reconnect_needed"] = await _reconnect_needed(g.user_id, Integration.TASKS)
             return jsonify(status), 200
         except Exception as exc:
             logger.error(f"Error fetching MS Tasks status: {exc}", exc_info=True)

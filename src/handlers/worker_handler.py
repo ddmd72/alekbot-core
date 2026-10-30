@@ -79,6 +79,7 @@ if TYPE_CHECKING:
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
 from ..domain.complexity_settings import resolve_complexity_settings
+from ..domain.connector_spec import ConnectorSpec
 from ..domain import deep_research_notices as dr_notices
 from ..domain.exceptions import OAuthGrantRevokedError
 from ..domain.fact_review_task_keys import FACT_REVIEW_TASK, REVIEW_MODES
@@ -150,8 +151,11 @@ class WorkerHandler:
         fact_review: "Optional[FactReviewService]" = None,
         interactive_choice: "Optional[InteractiveChoiceService]" = None,
         reconnect: "Optional[IntegrationReconnectService]" = None,
+        mail_connector: Optional[ConnectorSpec] = None,
     ) -> None:
         self._reconnect = reconnect
+        # the mail kind's spec: the Gmail credential `_flag_gmail_reconnect` flags is the one of its kind
+        self._mail_connector = mail_connector
         self._fact_lifecycle_sweep = fact_lifecycle_sweep
         self._fact_review = fact_review
         self._interactive_choice = interactive_choice
@@ -1087,17 +1091,18 @@ class WorkerHandler:
         clears the flag, so the next breakage notifies again. Best-effort: a
         failure here is logged, never raised into the task.
         """
-        if not self._oauth_credentials:
+        if not self._oauth_credentials or self._mail_connector is None:
             logger.warning("[Worker] Gmail grant revoked but oauth_credentials not configured")
             return
         try:
-            creds = await self._oauth_credentials.get_credentials(user_id, "gmail")
+            keys = await self._oauth_credentials.list_keys(user_id, self._mail_connector.kind)
+            creds = await self._oauth_credentials.get(user_id, keys[0].credential_id) if keys else None
             if creds is None or creds.needs_reconnect:
                 return
             # Before the save: a failure here must leave the flag down so the next run retries the notice.
             await self._agent_factory.ensure_agents_for_user(user_id)
             creds.needs_reconnect = True
-            if not await self._oauth_credentials.update_credentials(creds):
+            if not await self._oauth_credentials.update(creds):
                 logger.info(f"[Worker] Gmail disconnected meanwhile for {user_id[:8]}, nothing to flag")
                 return
             logger.warning(f"[Worker] Gmail marked needs_reconnect for {user_id[:8]}")

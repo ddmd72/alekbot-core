@@ -16,7 +16,7 @@ The **Gmail Email Indexing** pipeline extends Alek-Core's memory with the user's
 
 ```
 Driving side (user initiates):
-  Cabinet UI → GET /auth/connect-gmail → GoogleOAuthService → FirestoreCredentialStore (encrypted)
+  Cabinet UI → GET /auth/connect/gmail → OAuthConnectService → FirestoreCredentialStore (encrypted)
   Cabinet UI → POST /api/gmail/start-indexing → WorkerHandler → Cloud Tasks
 
 Driven side (background processing):
@@ -57,14 +57,14 @@ Gmail access requires an incremental OAuth grant (`gmail.readonly` scope) separa
 
 ```
 User clicks "Connect Gmail" in Cabinet
-  → GET /auth/connect-gmail (requires auth JWT)
-       → GmailOAuthService.get_authorization_url()
+  → GET /auth/connect/gmail (requires the Cabinet session)
+       → OAuthConnectService.start() stores the flow server-side (only the digest of the state)
        → 302 → Google consent screen
 
-User approves → GET /auth/connect-gmail/callback
-  → GoogleOAuthService.exchange_code(code)
+User approves → GET /auth/connect/callback (the one callback of every integration)
+  → OAuthConnectService.complete() → GoogleOAuthProvider.exchange(code)
   → credentials persisted to the encrypted credential store (keyed by user_id and credential_id)
-  → WorkerHandler enqueues email_indexing Cloud Task
+  → the mail activation clears the deliberate-disconnect mark and the reconnect-notice flag (indexing is started from the Cabinet or by the hourly auto-index)
   → 302 → Cabinet UI (success)
 ```
 
@@ -76,7 +76,7 @@ Gmail, Google Tasks, Microsoft To Do and OneDrive grants live in `{prefix}creden
 
 ### 3.2 Revoked grant and reconnect
 
-`invalid_grant` on refresh raises `OAuthGrantRevokedError`. The daily review and the indexing worker set `OAuthCredentials.needs_reconnect` and notify the user only on the False-to-True transition; a reconnect or a successful refresh clears the flag. A 403 for an insufficient scope takes the same path (`OAuthScopeInsufficientError`, a subclass), and a Gmail or Tasks consent without the service scope stores nothing (`OAuthScopeNotGrantedError`). `/api/gmail/status` returns the flag and the Cabinet shows **Reconnect Gmail**. A feature state that shows a past connection (Gmail indexing state, drive sync state, To Do config with a primary list) with no credential also shows Reconnect and sends one notice, unless the user disconnected on purpose; the hourly `reconnect_notice_sweep` lists users from the feature stores. See `decisions/gmail_grant_revoked_reconnect.md` and `decisions/reconnect_notice_r1.md`.
+`invalid_grant` on refresh raises `OAuthGrantRevokedError`. The daily review and the indexing worker set `OAuthCredential.needs_reconnect` and notify the user only on the False-to-True transition; a reconnect or a successful refresh clears the flag. A 403 for an insufficient scope takes the same path (`OAuthScopeInsufficientError`, a subclass), and a Gmail or Tasks consent without the service scope stores nothing (`OAuthScopeNotGrantedError`). `/api/gmail/status` returns the flag and the Cabinet shows **Reconnect Gmail**. A feature state that shows a past connection (Gmail indexing state, drive sync state, To Do config with a primary list) with no credential also shows Reconnect and sends one notice, unless the user disconnected on purpose; the hourly `reconnect_notice_sweep` lists users from the feature stores. See `decisions/gmail_grant_revoked_reconnect.md` and `decisions/reconnect_notice_r1.md`.
 
 Token refresh is handled transparently by `GmailProviderAdapter` before each API call. A refresh rejected with `invalid_grant` raises `OAuthGrantRevokedError`; the background paths then flag the credentials `needs_reconnect` and notify the user once (see `docs/04_solution_strategy/decisions/gmail_grant_revoked_reconnect.md`).
 
@@ -123,7 +123,7 @@ Users can enable daily incremental indexing from Cabinet UI > Integrations > Gma
 
 **Flow:** Cloud Scheduler fires `start_email_indexing` hourly → `WorkerHandler._handle_start_email_indexing()` iterates all Gmail users → checks `gmail_auto_index=True` and `current_local_hour == gmail_auto_index_hour` → creates incremental job and enqueues first Cloud Task.
 
-Skips users with a job already running. Uses `OAuthCredentialsPort.list_users_by_provider("gmail")` for fan-out.
+Skips users with a job already running. Uses `OAuthCredentialsPort.list_user_ids("gmail")` for fan-out.
 
 See [../../07_deployment/SCHEDULERS.md](../../07_deployment/SCHEDULERS.md) for scheduler details.
 
@@ -219,17 +219,17 @@ The Cabinet web UI (`src/web/user_cabinet_app.py`) exposes management endpoints:
 
 ## 10. Code References
 
-- `src/domain/email.py`: All email domain models (EmailMetadata, IndexedEmail, IndexingJob, OAuthCredentials, etc.)
+- `src/domain/email.py`: All email domain models (EmailMetadata, IndexedEmail, IndexingJob, etc.); the email-index key `GMAIL_INDEX_PROVIDER` is not a credential kind
 - `src/services/email_indexing_service.py`: Indexing pipeline orchestration.
 - `src/services/email_search_service.py`: Search, details, and attachment retrieval.
-- `src/services/google_oauth_service.py`: OAuth token exchange and refresh.
+- `src/services/oauth_connect_service.py`: the connect flow (start, complete); `src/adapters/google/google_oauth_provider.py`: Google consent URL, code exchange, revoke. Token refresh lives in `GmailProviderAdapter`.
 - `src/adapters/firestore_credential_store.py`: encrypted credential store.
 - `src/services/user_notification_service.py`: System alert delivery.
 - `src/agents/email_search_agent.py`: Specialist agent (3 intents).
 - `src/agents/email_classification_agent.py`: Batch classifier (shared singleton).
 - `src/handlers/worker_handler.py`: Cloud Tasks dispatcher.
 - `src/adapters/gmail_provider_adapter.py`: Gmail API client.
-- `src/web/oauth_app.py`: `/auth/connect-gmail` and `/auth/connect-gmail/callback`.
+- `src/web/oauth_app.py`: `/auth/connect/<kind>` and `/auth/connect/callback`.
 - `src/web/user_cabinet_app.py`: `/api/gmail/*` management endpoints.
 
 ---

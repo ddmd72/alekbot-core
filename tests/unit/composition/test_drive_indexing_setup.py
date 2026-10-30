@@ -81,7 +81,7 @@ def test_place_lookup_uses_the_bundled_table(monkeypatch):
 
 async def test_scheduler_lists_users_by_the_drive_provider():
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.list_users_by_provider.return_value = ["u1"]
+    oauth.list_user_ids.return_value = ["u1"]
     repo = AsyncMock()
     repo.list_sync_user_ids.return_value = []
     users = AsyncMock()
@@ -89,7 +89,7 @@ async def test_scheduler_lists_users_by_the_drive_provider():
     scheduler = setup.build_drive_sync_scheduler(repo=repo, queue=AsyncMock(), drive=AsyncMock(), users=users,
                                                  oauth_credentials=oauth, notifier=None, alert_sink=None)
     summary = await scheduler.fan_out()
-    oauth.list_users_by_provider.assert_awaited_once_with(ONEDRIVE_PROVIDER)
+    oauth.list_user_ids.assert_awaited_once_with(ONEDRIVE_PROVIDER)
     assert summary["candidates"] == 1
 
 

@@ -307,7 +307,7 @@ Each fact row has two action buttons (subtle, muted until hover):
 
 ## Tasks Management (Microsoft To Do)
 
-Tasks management is available after connecting Microsoft To Do via `/auth/connect-microsoft-todo`.
+Tasks management is available after connecting Microsoft To Do via `/auth/connect/microsoft_todo`.
 
 ### `GET /api/tasks/microsoft/status`
 

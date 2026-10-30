@@ -7,27 +7,43 @@ import pytest
 from src.adapters.gmail_provider_adapter import GmailProviderAdapter
 from src.adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.credential_key import CredentialKey
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.task import TaskUserConfig
 from tests.support import http_boundary_fake as hbf
 from tests.support.oauth_credentials_store import creds
+from src.composition.connector_registry import ConnectorRegistry
 
 _GRAPH = "https://graph.microsoft.com/v1.0"
 _HOOK = "https://hooks.example.com/services/T1/B1/x"
 
 
 class _Creds:
-    async def get_credentials(self, user_id, provider=None, *a, **k):
-        return OAuthCredentials(
-            user_id=user_id, provider="microsoft_todo", access_token="tok",
-            refresh_token="ref", token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
-            scopes=["Tasks.ReadWrite"], email_address="u1@example.com",
+    async def list_for_user(self, user_id, kind=None, *a, **k):
+        return [await self.get(user_id, "")]
+
+    async def list_keys(self, user_id, kind=None, *a, **k):
+        return [CredentialKey(user_id=user_id, credential_id="")]
+
+    async def get(self, user_id, credential_id=None, *a, **k):
+        return OAuthCredential(
+            user_id=user_id,
+            account_id="acct-1",
+            kind="microsoft_todo",
+            integration=Integration.TASKS,
+            account=ProviderAccount(realm="microsoft", subject="", label="u1@example.com"),
+            access_token="tok",
+            refresh_token="ref",
+            token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+            scopes=["Tasks.ReadWrite"],
         )
 
-    async def save_credentials(self, *a, **k):
+    async def save(self, *a, **k):
         return None
 
-    async def update_credentials(self, *a, **k):
+    async def update(self, *a, **k):
         return True
 
 
@@ -44,7 +60,7 @@ class _TaskConfig:
 
 def _todo() -> MicrosoftToDoAdapter:
     return MicrosoftToDoAdapter(oauth_credentials=_Creds(), task_config=_TaskConfig(),
-                                client_id="cid", client_secret="sec")
+                                client_id="cid", client_secret="sec", connector=ConnectorRegistry().get("microsoft_todo"))
 
 
 async def test_ensure_primary_list_creates_the_list_with_one_post(monkeypatch):

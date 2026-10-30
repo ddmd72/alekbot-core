@@ -11,19 +11,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.adapters.gmail_provider_adapter import GmailProviderAdapter
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.exceptions import OAuthGrantRevokedError
 
 
-def _creds() -> OAuthCredentials:
-    return OAuthCredentials(
+def _creds() -> OAuthCredential:
+    return OAuthCredential(
         user_id="user-1",
-        provider="gmail",
+        account_id="acct-1",
+        kind="gmail",
+        integration=Integration.MAIL,
+        account=ProviderAccount(realm="google", subject="", label="user@example.com"),
         access_token="old",
         refresh_token="rtok",
         token_expiry=datetime(2026, 10, 10, tzinfo=timezone.utc),
         scopes=["https://www.googleapis.com/auth/gmail.readonly"],
-        email_address="user@example.com",
         needs_reconnect=True,
     )
 

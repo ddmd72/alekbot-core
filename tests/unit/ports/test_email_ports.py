@@ -85,33 +85,26 @@ class TestOAuthCredentialsPort:
             OAuthCredentialsPort()
 
     def test_abstract_method_count(self):
+        # re-keyed by credential (MULTI_DRIVE_RFC §4.2): no method takes a provider
         assert _abstract_methods(OAuthCredentialsPort) == {
-            "get_credentials", "save_credentials", "update_credentials", "revoke_credentials",
-            "is_connected", "list_connected_providers", "list_users_by_provider"
+            "get", "save", "update", "delete", "list_for_user", "list_keys", "list_by_account", "list_user_ids"
         }
 
-    def test_get_credentials_signature(self):
-        params = _params(OAuthCredentialsPort, "get_credentials")
-        assert "user_id" in params
-        assert "provider" in params
+    def test_get_signature(self):
+        assert _params(OAuthCredentialsPort, "get") == ["self", "user_id", "credential_id"]
 
-    def test_save_credentials_signature(self):
-        params = _params(OAuthCredentialsPort, "save_credentials")
-        assert "credentials" in params
+    def test_save_and_update_signature(self):
+        assert _params(OAuthCredentialsPort, "save") == ["self", "credential"]
+        assert _params(OAuthCredentialsPort, "update") == ["self", "credential"]
 
-    def test_revoke_credentials_signature(self):
-        params = _params(OAuthCredentialsPort, "revoke_credentials")
-        assert "user_id" in params
-        assert "provider" in params
+    def test_delete_signature(self):
+        assert _params(OAuthCredentialsPort, "delete") == ["self", "user_id", "credential_id"]
 
-    def test_is_connected_signature(self):
-        params = _params(OAuthCredentialsPort, "is_connected")
-        assert "user_id" in params
-        assert "provider" in params
-
-    def test_list_connected_providers_signature(self):
-        params = _params(OAuthCredentialsPort, "list_connected_providers")
-        assert "user_id" in params
+    def test_listing_signatures(self):
+        assert _params(OAuthCredentialsPort, "list_for_user") == ["self", "user_id", "kind"]
+        assert _params(OAuthCredentialsPort, "list_keys") == ["self", "user_id", "kind"]
+        assert _params(OAuthCredentialsPort, "list_by_account") == ["self", "realm", "subject"]
+        assert _params(OAuthCredentialsPort, "list_user_ids") == ["self", "kind"]
 
 
 # =============================================================================

@@ -38,6 +38,7 @@ from urllib.parse import quote, unquote
 
 import aiohttp  # module import on purpose: tests patch aiohttp.ClientSession
 
+from ...domain.connector_spec import ConnectorSpec
 from ...domain.drive_image_mime import MAX_VISION_IMAGE_BYTES
 from ...domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
 from ...domain.drive_index_params import DOWNLOAD_TIMEOUT_S, TICK_DEADLINE_S
@@ -57,6 +58,7 @@ from ...domain.user_drive import (
     DriveThrottled,
     join_drive_path,
 )
+from ...domain.oauth_credential import OAuthCredential
 from ...ports.oauth_credentials_port import OAuthCredentialsPort
 from ...ports.user_drive_port import UserDrivePort
 from ...utils.logger import logger
@@ -84,9 +86,11 @@ THUMBNAIL_MAX_BYTES = MAX_VISION_IMAGE_BYTES
 # Graph's named sizes and custom `c{w}x{h}[_crop]`; anything else never reaches the URL.
 _THUMBNAIL_SIZE_RE = re.compile(
     r"(?:small|medium|large|smallSquare|mediumSquare|largeSquare|c[1-9]\d{0,3}x[1-9]\d{0,3}(?:_crop)?)")
-# The App Folder item. Its parentReference.driveId is the drive id; the OAuth callback
-# (src/web/oauth_app.py, _read_drive_id) reads the same field of the same call, so the two compare equal.
+# The App Folder item. Its parentReference.driveId is the drive id; the connect's drive activation
+# (`read_drive_id`, below) reads the same field of the same call, so the two compare equal.
 _APPROOT = "/me/drive/special/approot"
+# Bound on the drive-id read at connect: the OAuth callback waits for it.
+DRIVE_ID_READ_TIMEOUT_S = 10.0
 _DELTA_START = f"{_APPROOT}/delta?$top=200"   # S0a: $top paginates delta
 # Facets stored raw on the record (§3.2); `hashes` comes from file.hashes.
 _FACETS = ("photo", "image", "video", "audio", "location", "remoteItem", "package", "malware")
@@ -227,10 +231,14 @@ class _CursorGone(ValueError):
 
 
 class OneDriveAdapter(UserDrivePort):
-    def __init__(self, oauth_credentials: OAuthCredentialsPort, client_id: str, client_secret: str) -> None:
+    def __init__(self, oauth_credentials: OAuthCredentialsPort, client_id: str, client_secret: str, *,
+                 connector: ConnectorSpec) -> None:
+        """`connector` is the drive kind's spec: the user's credential is the one of `connector.kind` (slice 1b passes
+        it by handle)."""
         self._oauth = oauth_credentials
+        self._kind = connector.kind
         self._tokens = MicrosoftGraphTokenProvider(oauth_credentials, client_id, client_secret,
-                                                   ONEDRIVE_PROVIDER, _SCOPE)
+                                                   connector.kind, _SCOPE)
         # user_id → (fetched_at, root json); the owner may rename/move the folder, hence a TTL.
         self._root_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
         logger.info("✅ OneDriveAdapter initialized")
@@ -241,12 +249,40 @@ class OneDriveAdapter(UserDrivePort):
     def display_name(self) -> str:
         return "OneDrive"
 
+    async def _credential(self, user_id: str) -> Optional[OAuthCredential]:
+        """The user's credential of the drive kind (the oldest when several), or None."""
+        keys = await self._oauth.list_keys(user_id, self._kind)
+        return await self._oauth.get(user_id, keys[0].credential_id) if keys else None
+
+    async def read_drive_id(self, access_token: str) -> str:
+        """The drive id of a just-granted token, for the index's drive-switch check (USER_DRIVE_INDEXING_RFC §10.1
+        step 0), read by the drive connect's activation before the credential carries it. Read from the App Folder
+        item: it answers under Files.ReadWrite.AppFolder (spike A6 saw other calls refused with 401), and
+        `parentReference.driveId` is the field `get_changes` binds its cursor to, so both sides compare the same
+        string. Best effort: "" (any failure, a non-2xx, a body without the field, past DRIVE_ID_READ_TIMEOUT_S)
+        only skips the check, so it never fails the connect. Not on UserDrivePort: slice 1b's `get_root(handle)`
+        replaces it (MULTI_DRIVE_RFC §5.1)."""
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{_GRAPH}{_APPROOT}", headers={"Authorization": f"Bearer {access_token}"},
+                                 timeout=aiohttp.ClientTimeout(total=DRIVE_ID_READ_TIMEOUT_S)) as resp:
+                    if not resp.ok:
+                        logger.warning(f"⚠️ Drive id not read at connect ({resp.status})")
+                        return ""
+                    body = await resp.json()
+            drive_id = (body.get("parentReference") or {}).get("driveId") if isinstance(body, dict) else None
+            return drive_id if isinstance(drive_id, str) else ""
+        except Exception as exc:
+            logger.warning(f"⚠️ Drive id not read at connect: {type(exc).__name__}")
+            return ""
+
     async def is_connected(self, user_id: str) -> bool:
-        return await self._oauth.is_connected(user_id, ONEDRIVE_PROVIDER)
+        return bool(await self._oauth.list_keys(user_id, self._kind))
 
     async def disconnect(self, user_id: str) -> None:
-        await self._oauth.revoke_credentials(user_id, ONEDRIVE_PROVIDER)
-        self._tokens.invalidate(user_id)
+        for key in await self._oauth.list_keys(user_id, self._kind):
+            await self._oauth.delete(user_id, key.credential_id)
+        self._tokens.forget(user_id)
         self._root_cache.pop(user_id, None)
 
     # -- reads --------------------------------------------------------------
@@ -529,10 +565,11 @@ class OneDriveAdapter(UserDrivePort):
         """Read on every tick (the gate). When the stored access token is not the one cached here, the
         grant changed under this process (a reconnect, maybe to another account, or a refresh by the
         other service): drop the token and root caches, so the next call reads the new grant at once."""
-        creds = await self._oauth.get_credentials(user_id, ONEDRIVE_PROVIDER)
-        cached = self._tokens.cached_token(user_id)
-        if creds is None or (cached is not None and cached != creds.access_token):
-            self._tokens.invalidate(user_id)
+        creds = await self._credential(user_id)
+        cached = None if creds is None else self._tokens.cached_token(user_id, creds.credential_id)
+        if creds is None or (cached is not None and cached != creds.access_token) \
+                or self._tokens.held_credential_id(user_id) not in (None, creds.credential_id):
+            self._tokens.forget(user_id)
             self._root_cache.pop(user_id, None)
         if creds is None:
             return DriveConnection(connected=False)
@@ -541,10 +578,10 @@ class OneDriveAdapter(UserDrivePort):
     async def flag_reconnect(self, user_id: str) -> bool:
         """Get, then update with the flag set (Gmail precedent, decisions/gmail_grant_revoked_reconnect.md:
         no port change for an atomic set). A reconnect saves fresh credentials, which clears it."""
-        creds = await self._oauth.get_credentials(user_id, ONEDRIVE_PROVIDER)
+        creds = await self._credential(user_id)
         if creds is None or creds.needs_reconnect:
             return False
-        if not await self._oauth.update_credentials(replace(creds, needs_reconnect=True)):
+        if not await self._oauth.update(replace(creds, needs_reconnect=True)):
             return False                     # disconnected meanwhile: nothing to flag, and none is brought back
         logger.warning(f"Drive marked needs_reconnect for user {user_id[:8]}")
         return True
@@ -572,7 +609,7 @@ class OneDriveAdapter(UserDrivePort):
 
     async def _headers(self, user_id: str, *, force_refresh: bool = False) -> Dict[str, str]:
         try:
-            headers = await self._tokens.headers(user_id, force_refresh=force_refresh)
+            headers = await self._tokens.user_headers(user_id, force_refresh=force_refresh)
         except GraphReauthRequired as exc:
             logger.warning(f"Drive token refresh rejected for user {user_id[:8]}; reconnect needed")
             raise DriveReauthRequired("Drive access expired; reconnect needed") from exc

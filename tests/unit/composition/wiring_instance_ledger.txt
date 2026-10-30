@@ -25,7 +25,7 @@ src.adapters.firestore_dedup_store.FirestoreDedupStore 3  # by-design three stor
 src.adapters.firestore_drive_index_repo.FirestoreDriveIndexRepository 1  # by-design single instance
 src.adapters.firestore_drive_mirror_repo.FirestoreDriveMirrorRepository 1  # by-design single instance
 src.adapters.firestore_drive_note_repo.FirestoreDriveNoteRepository 1  # by-design single instance
-src.adapters.firestore_ephemeral_store.FirestoreEphemeralStore 1  # by-design single instance
+src.adapters.firestore_ephemeral_store.FirestoreEphemeralStore 2  # by-design one per collection: the drive notes' erase requests (drive_note_setup.py) and the connect flows, {prefix}oauth_flows (oauth_connect_setup.py, MULTI_DRIVE_RFC 5.2)
 src.adapters.firestore_email_exclusions_adapter.FirestoreEmailExclusionsAdapter 1  # by-design single instance
 src.adapters.firestore_email_job_repo.FirestoreEmailJobRepository 1  # by-design single instance
 src.adapters.firestore_fact_lifecycle_counters.FirestoreFactLifecycleCounters 1  # by-design single instance, held by the ServiceContainer (Facts S3, FACT_LIFECYCLE_RFC D10); the consolidator adds to it, the janitor shares it (application_graph.py FactLifecycleSweepService)
@@ -87,6 +87,7 @@ src.adapters.unsplash_adapter.UnsplashAdapter 1  # by-design single instance
 src.adapters.xml_prompt_assembler.XmlPromptAssembler 1  # by-design single instance
 src.composition.application_graph.ApplicationGraph 1  # by-design the root of the graph, built once by build_application_graph
 src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-design single instance shared by both extractor agents
+src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
 src.composition.service_container.ServiceContainer 1  # by-design one container owns every shared adapter; a second would be a second set of repositories
 src.composition.user_agent_factory.UserAgentFactory 1  # by-design one factory owns the per-user agent cache; a second would split it
 src.composition.user_agent_factory._UserContext 1  # by-design one per cached user; the test seeds one user
@@ -108,6 +109,7 @@ src.services.companion_extraction_service.CompanionExtractionService 1  # by-des
 src.services.companion_window_resolver.CompanionWindowResolver 1  # by-design single instance
 src.services.configuration_service.ConfigurationService 1  # by-design single instance
 src.services.consolidation_service.ConsolidationService 1  # by-design single instance
+src.services.credential_revocation_service.CredentialRevocationService 1  # by-design the one revoke rule, held by the connect service and the Cabinet disconnects (application_graph.py, MULTI_DRIVE_RFC 4.3)
 src.services.deep_research_drive_copy_service.DeepResearchDriveCopyService 1  # by-design single instance
 src.services.document_delivery_service.DocumentDeliveryService 1  # by-design single instance
 src.services.drive_note_deleted_search.DriveNoteDeletedSearch 1  # by-design single instance
@@ -127,7 +129,6 @@ src.services.file_access_token_service.FileAccessTokenService 1  # by-design sin
 src.services.file_conversion_service.FileConversionService 1  # by-design single instance
 src.services.file_link_service.FileLinkService 1  # by-design single instance
 src.services.file_upload_service.FileUploadService 1  # by-design single instance
-src.services.google_oauth_service.GoogleOAuthService 2  # by-design Gmail scopes and Google Tasks scope, two flows (application_graph.py)
 src.services.history_summary_service.HistorySummaryService 1  # by-design single instance
 src.services.iam_service.IAMService 1  # by-design single instance
 src.services.interactive_choice_service.InteractiveChoiceService 1  # by-design the one click path, held by WorkerHandler for the interactive_choice task over IAMService, the one InteractiveMessageRouter and FactAnswerService (application_graph.py, Facts S4 T8g)
@@ -137,6 +138,7 @@ src.services.language_preference_service.LanguagePreferenceService 1  # by-desig
 src.services.localization_service.LocalizationService 1  # by-design single instance
 src.services.long_turn_service.LongTurnService 1  # by-design single instance
 src.services.memory_fact_service.MemoryFactService 1  # by-design single instance
+src.services.oauth_connect_service.OAuthConnectService 1  # by-design the one connect flow behind the generic connect routes (application_graph.py, MULTI_DRIVE_RFC 5.2)
 src.services.overflow_routing_service.OverflowRoutingService 1  # by-design single instance
 src.services.owner_timezone_resolver.OwnerTimezoneResolver 1  # by-design single instance, built once as _owner_zones in application_graph.py and held by the one ConsolidationService; FactReviewService and FactAnswerService take the same one (Facts S4 T7c, T8a, T8e)
 src.services.prompt_builder.PromptBuilder 1  # by-design single instance

@@ -6,6 +6,7 @@ from quart import Quart
 from src.domain.user_drive import DriveConnection
 from src.ports.user_drive_port import UserDrivePort
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from src.composition.connector_registry import ConnectorRegistry
 
 _AUTH = {"Authorization": "Bearer token"}
 
@@ -16,7 +17,7 @@ def _app(user_drive):
     app = Quart("test_drive_cabinet")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=user_drive,
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=user_drive, connectors=ConnectorRegistry(),
     ))
     return app
 

@@ -6,7 +6,8 @@ See docs/10_rfcs/GMAIL_EMAIL_INDEXING_RFC.md §4.
 from abc import ABC, abstractmethod
 from typing import List, Optional
 
-from src.domain.email import EmailClassificationResult, EmailMetadata, OAuthCredentials
+from src.domain.email import EmailClassificationResult, EmailMetadata
+from src.domain.oauth_credential import OAuthCredential
 
 
 class EmailClassifierPort(ABC):
@@ -16,7 +17,7 @@ class EmailClassifierPort(ABC):
         self,
         emails: List[EmailMetadata],
         user_id: str,
-        credentials: Optional[OAuthCredentials] = None,
+        credentials: Optional[OAuthCredential] = None,
     ) -> List[EmailClassificationResult]:
         """
         Classify a batch of email metadata.

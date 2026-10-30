@@ -11,6 +11,7 @@ from src.services.cabinet_fact_service import CabinetFactService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from tests.support.fact_kit import ACC, OTHER, T0, USER, make_fact
 from tests.support.fact_store import INDEXES_FILE, FactStore
+from src.composition.connector_registry import ConnectorRegistry
 
 
 def _app(store, cabinet_facts):
@@ -19,7 +20,7 @@ def _app(store, cabinet_facts):
     app = Quart("test_cabinet_invalidate_service_route")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(),
-        fact_repo=store.repo, embedding_service=MagicMock(), cabinet_facts=cabinet_facts,
+        fact_repo=store.repo, embedding_service=MagicMock(), cabinet_facts=cabinet_facts, connectors=ConnectorRegistry(),
     ))
     return app
 

@@ -2,8 +2,6 @@
 import inspect
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from src.agents.file_management_agent import FileManagementAgent
 from src.composition import user_agent_factory
 from src.composition.service_container import ServiceContainer
@@ -59,7 +57,12 @@ class TestContainerDriveWiring:
         assert absent.file_conversion_service._drive is None and absent.user_drive_service is None
 
 
-@pytest.mark.parametrize("key", ["ONEDRIVE_REDIRECT_URI"])
-def test_redirect_uri_registered_in_settings(key):
+def test_the_drive_connects_through_the_one_redirect_key(monkeypatch):
+    """The drive connects through the one callback of every realm (MULTI_DRIVE_RFC §5.2, E4): its own
+    ONEDRIVE_REDIRECT_URI is gone, and OAUTH_CONNECT_REDIRECT_URI is read by AuthConfig (load_settings' dict, then
+    the environment), so the deploy's value is never a silently dead config.get() of an unlisted key."""
     from src.config import settings
-    assert key in inspect.getsource(settings)
+    from src.config.auth import AuthConfig
+    assert "ONEDRIVE_REDIRECT_URI" not in inspect.getsource(settings)
+    monkeypatch.setenv("OAUTH_CONNECT_REDIRECT_URI", "https://service.example/auth/connect/callback")
+    assert AuthConfig({}).oauth_connect_redirect_uri == "https://service.example/auth/connect/callback"

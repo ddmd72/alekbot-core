@@ -22,6 +22,7 @@ from tests.support.fact_lifecycle_world import NOW
 from tests.support.fact_write import EXPIRY_NONE, ctx
 from tests.support.fact_review_world import ReviewWorld
 from tests.support.review_rule_builders import REF
+from src.composition.connector_registry import ConnectorRegistry
 
 TOKEN = {"Authorization": "Bearer t"}
 TEXT_TEA = "drinks green tea every morning"
@@ -53,7 +54,7 @@ def _app(world: ReviewWorld, account: str = ACC, user: str = USER, store: Any = 
     app = Quart("test_cabinet_review_queue_view")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=MagicMock(), fact_repo=world.repo,
-        embedding_service=MagicMock(), fact_review_store=store, fact_answer_service=_service(world, store),
+        embedding_service=MagicMock(), fact_review_store=store, fact_answer_service=_service(world, store), connectors=ConnectorRegistry(),
     ))
     return app
 

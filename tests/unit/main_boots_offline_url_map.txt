@@ -7,6 +7,7 @@ DELETE /api/tasks/microsoft/disconnect
 DELETE /api/user/link-platform
 DELETE /api/user/reminders/<note_id>
 GET /
+GET /api/connectors
 GET /api/drive/deep-research-copy
 GET /api/drive/indexing
 GET /api/drive/status
@@ -31,14 +32,8 @@ GET /api/user/timezone
 GET /api/user/voice-languages
 GET /api/voice/web-call/<call_id>/status
 GET /auth/callback
-GET /auth/connect-gmail
-GET /auth/connect-gmail/callback
-GET /auth/connect-google-tasks
-GET /auth/connect-google-tasks/callback
-GET /auth/connect-microsoft-todo
-GET /auth/connect-microsoft-todo/callback
-GET /auth/connect-onedrive
-GET /auth/connect-onedrive/callback
+GET /auth/connect/<kind>
+GET /auth/connect/callback
 GET /auth/login
 GET /auth/me
 GET /cabinet

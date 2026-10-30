@@ -13,17 +13,22 @@ from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepos
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
+from src.composition.connector_registry import ConnectorRegistry
 from src.domain.agent import AgentStatus
 from src.domain.drive_index import DriveSyncState
-from src.domain.email import IndexingState, OAuthCredentials
+from src.domain.email import IndexingState
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.notification_kind import NotificationKind
 from src.domain.notify_result import NotifyResult
-from src.domain.reconnect_policy import R1_NOTICES, Integration
+from src.domain.integration import Integration
+from src.domain.reconnect_policy import R1_NOTICES
 from src.domain.task import TaskUserConfig
 from src.domain.user_drive import DriveConnection
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.firestore_eval import EvalDb
+from tests.support.oauth_credentials_store import delete_kind
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 NOW = datetime(2026, 10, 29, 9, 30, tzinfo=timezone.utc)
@@ -91,14 +96,15 @@ class World:
         self.svc = IntegrationReconnectService(
             credentials=self.creds, users=Users("user-a", "user-b"), notifier=self.notifier,
             email_states=self.email, task_config=self.tasks, drive_states=self.drive_states, drive=self.drive,
-            alert_sink=self.alerts, ensure_agents=ensure, clock=lambda: NOW)
+            alert_sink=self.alerts, ensure_agents=ensure, clock=lambda: NOW, mail_connector=ConnectorRegistry().get("gmail"), todo_connector=ConnectorRegistry().get("microsoft_todo"))
 
     async def connect(self, user_id: str, provider: str) -> None:
-        await self.creds.save_credentials(OAuthCredentials(
-            user_id=user_id, provider=provider, access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[],
-            email_address="user@example.com",
-            account_realm="microsoft" if provider.startswith("microsoft") else "google",
-            account_subject=f"sub-{user_id}"))
+        await self.creds.save(OAuthCredential(
+            user_id=user_id, account_id="acct-1", kind=provider,
+            integration=ConnectorRegistry().get(provider).integration,
+            account=ProviderAccount(realm="microsoft" if provider.startswith("microsoft") else "google",
+                                    subject=f"sub-{user_id}", label="user@example.com"),
+            access_token="at", refresh_token="rt", token_expiry=NOW, scopes=[]))
 
     async def gmail_state(self, user_id: str) -> None:
         await self.email.update_indexing_state(IndexingState(user_id=user_id, provider="gmail",
@@ -124,9 +130,9 @@ async def test_a_past_connection_without_a_credential_gets_one_notice_per_integr
     summary = await world.svc.sweep()
     assert summary == {"candidates": 2, "notices": 2, "errors": 0}
     assert world.notifier.calls == [
-        {"user_id": "user-a", "account_id": "acc-user-a", "alert": R1_NOTICES[Integration.GMAIL],
+        {"user_id": "user-a", "account_id": "acc-user-a", "alert": R1_NOTICES[Integration.MAIL],
          "kind": NotificationKind.DOCUMENT_DELIVERY},
-        {"user_id": "user-a", "account_id": "acc-user-a", "alert": R1_NOTICES[Integration.TODO],
+        {"user_id": "user-a", "account_id": "acc-user-a", "alert": R1_NOTICES[Integration.TASKS],
          "kind": NotificationKind.DOCUMENT_DELIVERY},
     ]
     assert world.ensured == ["user-a", "user-a"]
@@ -159,12 +165,12 @@ async def test_a_consent_clears_the_flag_and_the_next_loss_notifies_again(world)
     await world.svc.sweep()
     await world.connect("user-a", "gmail")
     await world.connect("user-a", "microsoft_todo")
-    await world.svc.consented("user-a", Integration.GMAIL)
-    await world.svc.consented("user-a", Integration.TODO)
+    await world.svc.consented("user-a", Integration.MAIL)
+    await world.svc.consented("user-a", Integration.TASKS)
     assert (await world.email.get_indexing_state("user-a", "gmail")).reconnect_notified is False
     assert (await world.tasks.get_config("user-a")).reconnect_notified is False
-    await world.creds.revoke_credentials("user-a", "gmail")
-    await world.creds.revoke_credentials("user-a", "microsoft_todo")
+    await delete_kind(world.creds, "user-a", "gmail")
+    await delete_kind(world.creds, "user-a", "microsoft_todo")
     assert (await world.svc.sweep())["notices"] == 2
     assert len(world.notifier.calls) == 4
 
@@ -183,12 +189,12 @@ async def test_a_credential_that_is_back_lowers_the_flag_without_a_consent(world
 
 async def test_a_deliberate_gmail_disconnect_sends_none_and_a_consent_clears_the_mark(world):
     await world.gmail_state("user-a")
-    await world.svc.mark_disconnected("user-a", Integration.GMAIL)
+    await world.svc.mark_disconnected("user-a", Integration.MAIL)
     assert world.db.collection(STATE).docs["user-a_gmail"]["disconnected_by_user_at"] == NOW
     assert (await world.svc.sweep())["notices"] == 0
     assert world.notifier.calls == []
-    assert await world.svc.status("user-a", (Integration.GMAIL,)) == {"gmail": False}
-    await world.svc.consented("user-a", Integration.GMAIL)
+    assert await world.svc.status("user-a", (Integration.MAIL,)) == {"mail": False}
+    await world.svc.consented("user-a", Integration.MAIL)
     assert (await world.email.get_indexing_state("user-a", "gmail")).disconnected_by_user_at is None
 
 
@@ -202,7 +208,7 @@ async def test_a_reset_to_do_config_sends_none(world):
 
 async def test_to_do_has_no_disconnect_mark(world):
     with pytest.raises(ValueError):
-        await world.svc.mark_disconnected("user-a", Integration.TODO)
+        await world.svc.mark_disconnected("user-a", Integration.TASKS)
 
 
 async def test_notify_raising_leaves_the_flag_down_and_the_next_sweep_retries(world):
@@ -279,12 +285,12 @@ async def test_status_reads_reconnect_per_integration(world):
     await world.gmail_state("user-a")
     await world.todo_config("user-a")
     await world.drive_states.save_sync_state(DriveSyncState(user_id="user-a"))
-    assert await world.svc.status("user-a") == {"gmail": True, "drive": True, "todo": True}
+    assert await world.svc.status("user-a") == {"mail": True, "drive": True, "tasks": True}
     await world.connect("user-a", "gmail")
     world.drive.per_user["user-a"] = DriveConnection(connected=True, drive_id="d1")
-    assert await world.svc.status("user-a") == {"gmail": False, "drive": False, "todo": True}
+    assert await world.svc.status("user-a") == {"mail": False, "drive": False, "tasks": True}
     # nothing stored: never connected, nothing to reconnect
-    assert await world.svc.status("user-b") == {"gmail": False, "drive": False, "todo": False}
+    assert await world.svc.status("user-b") == {"mail": False, "drive": False, "tasks": False}
 
 
 async def test_a_drive_disconnect_marks_the_sync_state_and_a_consent_clears_it(world):

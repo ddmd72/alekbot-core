@@ -18,8 +18,8 @@ from ..adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
 from ..adapters.firestore_drive_mirror_repo import FirestoreDriveMirrorRepository
 from ..adapters.gcp_task_queue import GcpTaskQueue
 from ..adapters.geo_place_table import load_place_rows
-from ..adapters.microsoft import ONEDRIVE_PROVIDER
 from ..config.environment import EnvironmentConfig
+from .connector_registry import MICROSOFT_ONEDRIVE
 from ..domain.drive_index_planner import PlaceOf
 from ..domain.place_lookup import PlaceIndex
 from ..ports.alert_sink import AlertSinkPort
@@ -88,11 +88,11 @@ def build_drive_sync_scheduler(*, repo: DriveIndexRepository, queue: TaskQueue, 
                                localization: Optional["LocalizationService"] = None,
                                language: Optional["LanguageServicePort"] = None,
                                ) -> DriveSyncSchedulerService:
-    """The `start_drive_sync` fan-out (RFC Δ5, Δ6). The provider name stays here, in composition:
+    """The `start_drive_sync` fan-out (RFC Δ5, Δ6). The drive kind stays here, in composition (the registry's):
     the service only sees a callable listing the users with stored drive credentials. `localization` and
     `language` render the notice about files the bot cannot open (USER_DRIVE_INDEXING_RFC §26.2)."""
     def connected_users() -> Awaitable[List[str]]:
-        return oauth_credentials.list_users_by_provider(ONEDRIVE_PROVIDER)
+        return oauth_credentials.list_user_ids(MICROSOFT_ONEDRIVE)
 
     return DriveSyncSchedulerService(repo=repo, queue=queue, drive=drive, users=users,
                                      connected_users=connected_users, notifier=notifier, alert_sink=alert_sink,

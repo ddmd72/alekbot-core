@@ -36,7 +36,7 @@ CONFIG_COLLECTION = EnvironmentConfig().task_config_collection
 
 
 async def _connect(graph: Any) -> None:
-    await graph.app.task_setup_service._oauth_credentials.save_credentials(
+    await graph.app.task_setup_service._oauth_credentials.save(
         creds("u1", "microsoft_todo", token_expiry=datetime.now(timezone.utc) + timedelta(hours=1)))
 
 

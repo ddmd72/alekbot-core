@@ -24,7 +24,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import pytest
 from google.api_core.exceptions import DeadlineExceeded
 
-from src.domain.email import EmailClassificationResult, EmailMetadata, IndexingJob, OAuthCredentials
+from src.domain.email import EmailClassificationResult, EmailMetadata, IndexingJob
+from src.domain.oauth_credential import OAuthCredential
 from src.ports.email_classifier_port import EmailClassifierPort
 from src.services import email_indexing_service
 from tests.support import http_boundary_fake
@@ -50,7 +51,7 @@ class ValuableClassifier(EmailClassifierPort):
     """Every email is valuable, with a fact (no LLM)."""
 
     async def classify_batch(self, emails: List[EmailMetadata], user_id: str,
-                             credentials: Optional[OAuthCredentials] = None) -> List[EmailClassificationResult]:
+                             credentials: Optional[OAuthCredential] = None) -> List[EmailClassificationResult]:
         return [EmailClassificationResult(email_id=e.email_id, valuable=True, category="personal",
                                           fact=f"The user received '{e.subject}'.", tags=["mail"]) for e in emails]
 
@@ -85,7 +86,7 @@ async def _running_job(graph: ProdGraph, monkeypatch: Any) -> Any:
     classifier on the built service; the service's clock at `T0`. Returns the service."""
     service = graph.app.worker_handler._email_indexing
     pin_datetime(monkeypatch, email_indexing_service, T0)
-    await service._oauth.save_credentials(creds(USER_ID, "gmail", token_expiry=T0 + timedelta(hours=1)))
+    await service._oauth.save(creds(USER_ID, "gmail", token_expiry=T0 + timedelta(hours=1)))
     await service._job_repo.create_job(IndexingJob(
         job_id=JOB, user_id=USER_ID, account_id=ACCOUNT_ID, provider="gmail", triggered_by="scheduler",
         status="running", mode="incremental", started_at=T0, updated_at=T0,

@@ -13,12 +13,14 @@ Responsibilities:
   - System alert framing for SmartAgent
 """
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..domain.daily_review_window import EligibleReviewUser, review_slot_date
-from ..domain.email import OAuthCredentials
+from ..domain.connector_spec import ConnectorSpec
+from ..domain.oauth_credential import OAuthCredential
 from ..domain.exceptions import OAuthGrantRevokedError
 from ..ports.email_provider_port import EmailProviderPort
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
@@ -34,9 +36,13 @@ class EmailReviewService:
         self,
         email_provider: EmailProviderPort,
         oauth_credentials: OAuthCredentialsPort,
+        *,
+        connector: ConnectorSpec,
     ) -> None:
+        """`connector` is the mail kind's spec: the user's Gmail credential is the one of `connector.kind`."""
         self._email_provider = email_provider
         self._oauth = oauth_credentials
+        self._kind = connector.kind
 
     async def find_eligible_users(
         self, user_repo: Any, now_utc: datetime
@@ -45,7 +51,7 @@ class EmailReviewService:
         Gmail users with gmail_daily_review=True whose local time is inside the review
         window (first 3 hours from gmail_daily_review_hour), with the slot's local date.
         """
-        user_ids = await self._oauth.list_users_by_provider("gmail")
+        user_ids = await self._oauth.list_user_ids(self._kind)
         eligible: List[EligibleReviewUser] = []
         for user_id in user_ids:
             profile = await user_repo.get_user(user_id)
@@ -81,7 +87,8 @@ class EmailReviewService:
         Raises OAuthGrantRevokedError when Google rejected the refresh token — the
         caller must tell the user to reconnect; a retry cannot succeed.
         """
-        creds = await self._oauth.get_credentials(user_id, "gmail")
+        keys = await self._oauth.list_keys(user_id, self._kind)
+        creds = await self._oauth.get(user_id, keys[0].credential_id) if keys else None
         if not creds:
             logger.warning(f"[EmailReview] no credentials for {user_id[:8]}")
             return None
@@ -197,12 +204,15 @@ class EmailReviewService:
             f"they need to act on today."
         )
 
-    async def _refresh_if_needed(self, creds: OAuthCredentials) -> Optional[OAuthCredentials]:
+    async def _refresh_if_needed(self, creds: OAuthCredential) -> Optional[OAuthCredential]:
         now_utc = datetime.now(timezone.utc)
         if creds.token_expiry and creds.token_expiry <= now_utc + timedelta(minutes=5):
             try:
-                creds = await self._email_provider.refresh_token(creds)
-                if not await self._oauth.update_credentials(creds):
+                # the refreshed record is the one read (D-P2): its credential_id keys the update
+                refreshed = await self._email_provider.refresh_token(creds)
+                creds = (replace(refreshed, credential_id=creds.credential_id)
+                         if creds.credential_id and not refreshed.credential_id else refreshed)
+                if not await self._oauth.update(creds):
                     logger.warning(f"[EmailReview] Gmail disconnected during refresh for {creds.user_id[:8]}")
                     return None
             except OAuthGrantRevokedError:

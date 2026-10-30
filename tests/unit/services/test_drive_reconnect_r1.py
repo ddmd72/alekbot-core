@@ -4,7 +4,8 @@ skips a state marked "disconnected by user", and a working grant clears the flag
 world (in-memory repository, a drive per user, the recording notifier)."""
 from src.domain.drive_index import DriveSyncState
 from src.domain.notification_kind import NotificationKind
-from src.domain.reconnect_policy import R1_NOTICES, Cleared, Integration
+from src.domain.integration import Integration
+from src.domain.reconnect_policy import R1_NOTICES, Cleared
 from src.domain.user_drive import DriveConnection
 from src.services.drive_sync_scheduler_service import RECONNECT_NOTICE
 from tests.unit.services.test_drive_sync_scheduler_service import env  # noqa: F401  (fixture)

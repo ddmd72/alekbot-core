@@ -100,7 +100,6 @@ from src.services.fact_review_service import FactReviewService
 from src.services.file_access_token_service import FileAccessTokenService
 from src.services.file_link_service import FileLinkService
 from src.services.file_upload_service import FileUploadService
-from src.services.google_oauth_service import GMAIL_SCOPES, GOOGLE_TASKS_SCOPES, GoogleOAuthService
 from src.services.iam_service import IAMService
 from src.services.interactive_choice_service import InteractiveChoiceService
 from src.services.invite_code_service import InviteCodeService
@@ -117,6 +116,11 @@ from src.services.session_service import SessionService
 from src.services.short_link_service import ShortLinkService
 from src.services.task_dispatch_service import TaskDispatchService
 from src.services.task_setup_service import TaskSetupService
+from src.adapters.microsoft import OneDriveAdapter
+from src.composition.connector_registry import GMAIL, MICROSOFT_TODO
+from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
+from src.services.credential_revocation_service import CredentialRevocationService
+from src.services.oauth_connect_service import OAuthConnectService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.services.user_notification_service import UserNotificationService
 from src.utils.logger import logger
@@ -146,8 +150,9 @@ class ApplicationGraph:
     auth_service: AuthenticationService
     auth_registry: AuthProviderRegistry
     auth_config: AuthConfig
-    gmail_oauth_service: GoogleOAuthService
-    google_tasks_oauth_service: GoogleOAuthService
+    # the integration connect flow and the Cabinet's credential removal (MULTI_DRIVE_RFC §4.3, §5.2)
+    connect_service: OAuthConnectService
+    credential_revocation: CredentialRevocationService
     task_setup_service: Optional[TaskSetupService]
     reconnect_service: IntegrationReconnectService
     twilio_verify_client: Any
@@ -623,19 +628,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         refresh_token_ttl=auth_config.refresh_token_ttl
     )
 
-    # Gmail OAuth (web-only service for OAuth flow, not part of indexing pipeline)
-    gmail_oauth_service = GoogleOAuthService(
-        client_id=auth_config.google_oauth_client_id,
-        client_secret=auth_config.google_oauth_client_secret,
-        scopes=GMAIL_SCOPES,
-    )
-    # Google Tasks OAuth — same flow, different scope
-    google_tasks_oauth_service = GoogleOAuthService(
-        client_id=auth_config.google_oauth_client_id,
-        client_secret=auth_config.google_oauth_client_secret,
-        scopes=GOOGLE_TASKS_SCOPES,
-    )
-
     # Email adapters — reuse from ServiceContainer (no duplicate instantiation)
     oauth_credentials_port = container.oauth_credentials
     indexed_email_repo = container.indexed_email_repo
@@ -653,6 +645,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             task_search_index=container.task_search_index,
             task_queue=agent_task_queue,
             notification_url_base=service_url,
+            connector=container.connectors.get(MICROSOFT_TODO),
         )
 
     # Twilio Verify client for phone-binding OTP (Voice Companion RFC §4.6,
@@ -744,6 +737,30 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         drive=container.user_drive,
         alert_sink=_alert_webhook,
         ensure_agents=agent_factory.ensure_agents_for_user,
+        mail_connector=container.connectors.get(GMAIL),
+        todo_connector=container.connectors.get(MICROSOFT_TODO),
+    )
+
+    # The integration connect flow (MULTI_DRIVE_RFC §4.3, §5.2): one revocation service (the provider-side revoke
+    # rule, also the Cabinet's disconnects) and one connect service over the registry's specs and realm edges, with
+    # one activation per integration. The drive id is read by the concrete OneDrive adapter (not a port method).
+    _credential_revocation = CredentialRevocationService(oauth_credentials_port, container.connectors.edges())
+    _drive_adapter = container.user_drive if isinstance(container.user_drive, OneDriveAdapter) else None
+    _connect_service = build_oauth_connect_service(
+        db_client, env_config,
+        connectors=container.connectors,
+        credentials=oauth_credentials_port,
+        cipher=cipher,
+        digest_key=secret_digest_key,
+        revocation=_credential_revocation,
+        activations=build_connect_activations(
+            credentials=oauth_credentials_port,
+            reconnect=_reconnect_service,
+            todo_connector=container.connectors.get(MICROSOFT_TODO),
+            task_queue=agent_task_queue,
+            read_drive_id=_drive_adapter.read_drive_id if _drive_adapter is not None else None,
+        ),
+        redirect_uri=auth_config.oauth_connect_redirect_uri,
     )
 
     # The fact janitor (FACT_LIFECYCLE_RFC D4). Log-only unless FACT_LIFECYCLE_SWEEP_DRY_RUN is an explicit off value:
@@ -891,6 +908,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         fact_review=_fact_review_service,
         interactive_choice=_interactive_choice,
         reconnect=_reconnect_service,
+        mail_connector=container.connectors.get(GMAIL),
     )
 
     # 72 h = OpenAI's webhook retry window; liveness follows each doc's own expires_at.
@@ -1071,8 +1089,8 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
         auth_service=auth_service,
         auth_registry=auth_registry,
         auth_config=auth_config,
-        gmail_oauth_service=gmail_oauth_service,
-        google_tasks_oauth_service=google_tasks_oauth_service,
+        connect_service=_connect_service,
+        credential_revocation=_credential_revocation,
         task_setup_service=task_setup_service,
         reconnect_service=_reconnect_service,
         twilio_verify_client=twilio_verify_client,

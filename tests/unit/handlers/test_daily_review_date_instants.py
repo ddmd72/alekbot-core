@@ -22,6 +22,7 @@ from src.services.task_dispatch_service import TaskDispatchService
 from tests.support.clock_instants import BERLIN, HELSINKI, NEW_YORK, UTC, pin_datetime
 from tests.support.oauth_credentials_store import CredentialsStore, creds
 from tests.support.recording_task_queue import make_task_queue
+from src.composition.connector_registry import ConnectorRegistry
 
 _USER = "u1"
 _ACCOUNT = "a1"
@@ -56,7 +57,8 @@ class _RecordingReview(EmailReviewService):
     """The real eligibility rule; the Gmail fetch is one email, and the alert date is recorded."""
 
     def __init__(self, oauth) -> None:
-        super().__init__(email_provider=None, oauth_credentials=oauth)  # type: ignore[arg-type]
+        super().__init__(email_provider=None, oauth_credentials=oauth,  # type: ignore[arg-type]
+                         connector=ConnectorRegistry().get("gmail"))
         self.alert_dates: List[str] = []
 
     async def fetch_review_payload(self, user_id: str):
@@ -83,7 +85,7 @@ class _Factory:
 
 async def _world(zone: str, hour: int):
     store = CredentialsStore()
-    await store.repo.save_credentials(creds(_USER, "gmail"))
+    await store.repo.save(creds(_USER, "gmail"))
     profile = UserProfile(user_id=_USER, account_id=_ACCOUNT,
                           config=UserBotConfig(timezone=zone, gmail_daily_review=True, gmail_daily_review_hour=hour))
     review = _RecordingReview(store.repo)

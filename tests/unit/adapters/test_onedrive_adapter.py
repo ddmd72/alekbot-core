@@ -4,6 +4,7 @@ Never mock at UserDrivePort level (docs/how_to/ADAPTER_WIRE_TESTING.md).
 Fixtures cover percent-encoded parent paths (defensive) and the raw ones Graph returned in the spike
 (RFC §7), in both prefix forms: /drive/root: and /drives/<id>/root:.
 """
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import quote
@@ -11,12 +12,16 @@ from urllib.parse import quote
 import pytest
 
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import (
     DriveAccessDenied, DriveItemNotFoundError, DriveNameConflictError, DriveNotConnectedError, DriveThrottled,
 )
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.ports.user_drive_port import UserDrivePort
+from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _ROOT = {"id": "root1", "name": "Alek-bot", "folder": {"childCount": 1},
          "parentReference": {"path": "/drive/root:/Apps"}}
@@ -26,9 +31,17 @@ _FILE = {"id": "f1", "name": "заметка.txt", "size": 12, "file": {"mimeTyp
 
 
 def _creds():
-    return OAuthCredentials(user_id="u1", provider=ONEDRIVE_PROVIDER, access_token="tok", refresh_token="r",
-                            token_expiry=datetime.now(timezone.utc) + timedelta(hours=1), scopes=[],
-                            email_address="")
+    return OAuthCredential(
+        user_id="u1",
+        account_id="acct-1",
+        kind=ONEDRIVE_PROVIDER,
+        integration=Integration.DRIVE,
+        account=ProviderAccount(realm="microsoft", subject="", label=""),
+        access_token="tok",
+        refresh_token="r",
+        token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+        scopes=[],
+    )
 
 
 def _resp(json_data=None, status=200, body=b"", headers=None):
@@ -59,9 +72,9 @@ def _session(**methods):
 
 def _adapter(creds="default"):
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.get_credentials.return_value = _creds() if creds == "default" else creds
-    oauth.is_connected.return_value = creds is not None
-    return OneDriveAdapter(oauth, "cid", "csecret"), oauth
+    oauth.get.return_value = _creds() if creds == "default" else creds
+    mirror_get(oauth)
+    return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive")), oauth
 
 
 class TestPortCompliance:
@@ -255,16 +268,18 @@ class TestUpload:
 
 class TestDisconnect:
     async def test_disconnect_revokes_and_invalidates(self):
-        adapter, oauth = _adapter()
-        adapter._tokens.invalidate = MagicMock()
+        # the port deletes by credential (MULTI_DRIVE_RFC §4.2): the drive kind's credential, found by its key
+        adapter, oauth = _adapter(replace(_creds(), credential_id="cred-1"))
+        adapter._tokens.forget = MagicMock()
         await adapter.disconnect("u1")
-        oauth.revoke_credentials.assert_awaited_once_with("u1", ONEDRIVE_PROVIDER)
-        adapter._tokens.invalidate.assert_called_once_with("u1")
+        oauth.list_keys.assert_awaited_once_with("u1", ONEDRIVE_PROVIDER)
+        oauth.delete.assert_awaited_once_with("u1", "cred-1")
+        adapter._tokens.forget.assert_called_once_with("u1")
 
     async def test_is_connected_delegates(self):
         adapter, oauth = _adapter()
         assert await adapter.is_connected("u1") is True
-        oauth.is_connected.assert_awaited_once_with("u1", ONEDRIVE_PROVIDER)
+        oauth.list_keys.assert_awaited_once_with("u1", ONEDRIVE_PROVIDER)
 
     def test_display_name(self):
         assert _adapter()[0].display_name == "OneDrive"

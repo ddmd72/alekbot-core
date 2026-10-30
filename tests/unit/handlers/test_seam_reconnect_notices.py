@@ -12,11 +12,13 @@ from src.adapters.firestore_indexed_email_repo import FirestoreIndexedEmailRepos
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.firestore_task_config_repository import FirestoreTaskConfigRepository
 from src.domain.email import IndexingState
-from src.domain.reconnect_policy import R1_NOTICES, Integration
+from src.domain.integration import Integration
+from src.domain.reconnect_policy import R1_NOTICES
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from tests.support.redelivery_world import deliver
 from tests.support.seam_world import PRIMARY, TELEGRAM, USER, SeamWorld, require, says
+from src.composition.connector_registry import ConnectorRegistry
 
 NOW = datetime(2026, 10, 29, 9, 30, tzinfo=timezone.utc)
 TEXT = "Your Gmail connection needs to be made again: Cabinet, Gmail, Reconnect."
@@ -31,7 +33,7 @@ def _world(monkeypatch):
     world.handler._reconnect = IntegrationReconnectService(
         credentials=FirestoreCredentialStore(world.db, world.env, cipher=AesGcmTestCipher()), users=world.users, notifier=world.notifier,
         email_states=email, task_config=FirestoreTaskConfigRepository(world.db, world.env),
-        ensure_agents=world.factory.ensure_agents_for_user, clock=lambda: NOW)
+        ensure_agents=world.factory.ensure_agents_for_user, clock=lambda: NOW, mail_connector=ConnectorRegistry().get("gmail"), todo_connector=ConnectorRegistry().get("microsoft_todo"))
     return world, email
 
 
@@ -52,7 +54,7 @@ async def test_the_sweep_notice_lands_on_the_primary_not_the_last_active_channel
     assert answer == ({"candidates": 1, "notices": 1, "errors": 0}, 200)
     assert [(p.kind, p.value) for p in world.posts_to(*PRIMARY)] == [("text", TEXT)]
     assert world.posts_to(*TELEGRAM) == []
-    assert R1_NOTICES[Integration.GMAIL] in _alert_of(quick.received[0])
+    assert R1_NOTICES[Integration.MAIL] in _alert_of(quick.received[0])
     assert [role for role, _, _ in world.history(f"{USER}:C1")] == ["user", "model"]
     assert (await email.get_indexing_state(USER, "gmail")).reconnect_notified is True
 

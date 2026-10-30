@@ -58,8 +58,8 @@ and de-indexing on delete.
 
 ```
 Driving side (user initiates):
-  Cabinet UI → GET /auth/connect-microsoft-todo → OAuth consent (Azure consumers tenant)
-             → GET /auth/connect-microsoft-todo/callback → OAuthCredentials (Firestore)
+  Cabinet UI → GET /auth/connect/microsoft_todo → OAuth consent (Azure consumers tenant)
+             → GET /auth/connect/callback → OAuthCredential (encrypted credential store)
              → enqueue setup_microsoft_todo Cloud Task
 
   Cabinet UI → POST /api/tasks/microsoft/reindex → TaskSetupService.reindex_all()
@@ -369,7 +369,7 @@ the old config is kept and retried next day.
 Full teardown:
 
 1. Delete all Graph API webhook subscriptions (best-effort — errors are logged, not fatal).
-2. Revoke OAuth credentials via `OAuthCredentialsPort.revoke_credentials()`.
+2. Delete the stored credential via `OAuthCredentialsPort.delete()`.
 3. Delete all vector search index entries via `TaskSearchIndex.delete_all_for_user()`.
 4. Clear persisted config (`TaskUserConfig()` empty object).
 
@@ -440,24 +440,21 @@ context (e.g. known preferences, ongoing projects) when creating or interpreting
 
 ```
 User clicks "Connect Microsoft To Do" in Cabinet
-  → GET /auth/connect-microsoft-todo (requires auth JWT cookie)
+  → GET /auth/connect/microsoft_todo (requires the Cabinet session)
        → Validate session → extract user_id
-       → Generate CSRF state token
-       → Set cookies: microsoft_todo_oauth_state, microsoft_todo_connect_user_id (10-min TTL)
+       → OAuthConnectService.start() stores the flow server-side (state digest, PKCE); no cookie is set
        → 302 → Microsoft consent page
               Tenant: consumers (personal accounts)
               Scopes: Tasks.ReadWrite offline_access
               Response mode: query
 
-User approves → GET /auth/connect-microsoft-todo/callback
-  → Validate CSRF state (cookie vs. query param)
-  → Validate authorization code present
-  → POST https://login.microsoftonline.com/consumers/oauth2/v2.0/token
-       → exchange code for access_token + refresh_token
-  → Persist OAuthCredentials (provider="microsoft_todo") to Firestore
-  → Delete CSRF cookies
-  → Enqueue setup_microsoft_todo Cloud Task (user_id)
-  → 302 → /cabinet?microsoft_todo_connected=1
+User approves → GET /auth/connect/callback (the one callback of every integration)
+  → Validate the stored flow (state digest, one use) against the Cabinet session
+  → MicrosoftOAuthProvider.exchange(code): POST https://login.microsoftonline.com/consumers/oauth2/v2.0/token
+       → access_token + refresh_token; Graph /me id is the account identity
+  → Persist OAuthCredential (kind="microsoft_todo") to the credential store
+  → Activation enqueues setup_microsoft_todo Cloud Task (user_id)
+  → 302 → /cabinet?connected=microsoft_todo
 ```
 
 Token storage fields: `access_token`, `refresh_token`, `token_expiry`, `provider="microsoft_todo"`,
@@ -538,7 +535,7 @@ have not triggered self-healing recently.
 | `setup_microsoft_todo` | `TaskSetupService.setup(user_id)` | Onboarding: ensure primary list + subscriptions + enqueue reindex. Enqueued after OAuth callback. |
 | `reindex_task_list` | `TaskIndexingService.reindex_list(user_id, list_id)` | Fetch all tasks in a list, embed, upsert index. Enqueued by `ensure_subscriptions` for new lists. |
 | `renew_task_subscriptions` | `TaskSetupService.renew_expiring_subscriptions(user_id)` | Renew subscriptions expiring within 24h for one user. |
-| `renew_all_task_subscriptions` | Fan-out via `OAuthCredentialsPort.list_users_by_provider("microsoft_todo")` | Daily scheduler task: enqueues `renew_task_subscriptions` for every connected user. |
+| `renew_all_task_subscriptions` | Fan-out via `OAuthCredentialsPort.list_user_ids("microsoft_todo")` | Daily scheduler task: enqueues `renew_task_subscriptions` for every connected user. |
 
 ---
 
@@ -603,7 +600,7 @@ implementation.
 - `src/services/task_setup_service.py` — Integration lifecycle orchestration.
 - `src/agents/tasks_agent.py` — Specialist agent (intent: manage_user_tasks).
 - `src/handlers/worker_handler.py` — Cloud Tasks dispatcher (MS To Do task types).
-- `src/web/oauth_app.py` — `/auth/connect-microsoft-todo` and callback.
+- `src/web/oauth_app.py` — `/auth/connect/<kind>` and `/auth/connect/callback`.
 - `src/web/user_cabinet_app.py` — `/api/tasks/microsoft/*` endpoints.
 - `src/web/microsoft_tasks_webhook.py` — Graph change notification handler.
 

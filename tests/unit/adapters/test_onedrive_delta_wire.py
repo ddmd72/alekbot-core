@@ -14,9 +14,13 @@ import pytest
 
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
 from src.domain.drive_card import content_hash_of, effective_date, photo_location
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveConnection, DriveItemNotFoundError, DriveResyncRequired
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _GRAPH = "https://graph.microsoft.com/v1.0"
@@ -34,9 +38,10 @@ DRIVE_ID = APPROOT["parentReference"]["driveId"]
 
 
 def _creds(**kw):
-    base = dict(user_id="u1", provider=ONEDRIVE_PROVIDER, access_token="tok", refresh_token="r",
-                token_expiry=datetime.now(timezone.utc) + timedelta(hours=1), scopes=[], email_address="")
-    return OAuthCredentials(**{**base, **kw})
+    base = dict(user_id="u1", account_id="acct-1", kind=ONEDRIVE_PROVIDER, integration=Integration.DRIVE,
+                account=ProviderAccount(realm="microsoft", subject="", label=""), access_token="tok", refresh_token="r",
+                token_expiry=datetime.now(timezone.utc) + timedelta(hours=1), scopes=[])
+    return OAuthCredential(**{**base, **kw})
 
 
 def _resp(json_data=None, status=200, headers=None):
@@ -61,8 +66,9 @@ def _session(get):
 
 def _adapter(creds="default"):
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.get_credentials.return_value = _creds() if creds == "default" else creds
-    return OneDriveAdapter(oauth, "cid", "csecret"), oauth
+    oauth.get.return_value = _creds() if creds == "default" else creds
+    mirror_get(oauth)
+    return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive")), oauth
 
 
 async def _drain(adapter, pages, cursor=None):
@@ -389,18 +395,19 @@ class TestConnection:
         adapter, oauth = _adapter(creds=_creds(needs_reconnect=True, drive_id="D1"))
         assert await adapter.connection("u1") == DriveConnection(connected=True, needs_reconnect=True,
                                                                  drive_id="D1")
-        oauth.get_credentials.assert_awaited_with("u1", ONEDRIVE_PROVIDER)
+        oauth.list_keys.assert_awaited_with("u1", ONEDRIVE_PROVIDER)
 
     async def test_a_changed_stored_token_drops_the_token_and_root_caches(self):
         # A reconnect (maybe to another account) writes a new token; the indexer must use it at once.
         adapter, oauth = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
             await adapter.get_change("u1", ROOT_ID)                       # caches the "tok" bearer
-        assert adapter._tokens.cached_token("u1") == "tok"
-        oauth.get_credentials.return_value = _creds(access_token="B")
+        assert adapter._tokens.cached_token("u1", "") == "tok"
+        oauth.get.return_value = _creds(access_token="B")
+        mirror_get(oauth)
         adapter._root_cache["u1"] = (0.0, APPROOT)
         await adapter.connection("u1")
-        assert adapter._tokens.cached_token("u1") is None and "u1" not in adapter._root_cache
+        assert adapter._tokens.cached_token("u1", "") is None and "u1" not in adapter._root_cache
         session = _session([_resp(APPROOT), _resp(_load("folder_delete.json")["pages"][-1])])
         with patch("aiohttp.ClientSession", return_value=session):
             await adapter.get_changes("u1", None)
@@ -411,51 +418,54 @@ class TestConnection:
         adapter, oauth = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
             await adapter.get_change("u1", ROOT_ID)
-        reads = oauth.get_credentials.await_count
+        reads = oauth.list_keys.await_count
         await adapter.connection("u1")
         with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
             await adapter.get_change("u1", ROOT_ID)
-        assert oauth.get_credentials.await_count == reads + 1             # only connection() read the store
+        assert oauth.list_keys.await_count == reads + 1             # only connection() read the store
 
     async def test_disconnected_drops_the_caches(self):
         adapter, oauth = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
             await adapter.get_change("u1", ROOT_ID)
-        oauth.get_credentials.return_value = None
+        oauth.get.return_value = None
+        mirror_get(oauth)
         assert await adapter.connection("u1") == DriveConnection(connected=False)
-        assert adapter._tokens.cached_token("u1") is None
+        assert adapter._tokens.cached_token("u1", "") is None
 
     async def test_flag_reconnect_true_only_on_transition(self):
         adapter, oauth = _adapter(creds=_creds(drive_id="D1"))
-        oauth.update_credentials.return_value = True                          # the record still exists
+        oauth.update.return_value = True                          # the record still exists
         assert await adapter.flag_reconnect("u1") is True
-        oauth.save_credentials.assert_not_called()                            # a flag write never creates a record
-        saved = oauth.update_credentials.call_args.args[0]
+        oauth.save.assert_not_called()                            # a flag write never creates a record
+        saved = oauth.update.call_args.args[0]
         assert saved.needs_reconnect is True and saved.drive_id == "D1" and saved.refresh_token == "r"
 
     async def test_flag_reconnect_already_flagged_writes_nothing(self):
         adapter, oauth = _adapter(creds=_creds(needs_reconnect=True))
         assert await adapter.flag_reconnect("u1") is False
-        oauth.save_credentials.assert_not_called()
-        oauth.update_credentials.assert_not_called()
+        oauth.save.assert_not_called()
+        oauth.update.assert_not_called()
 
     async def test_flag_reconnect_without_credentials(self):
         adapter, oauth = _adapter(creds=None)
         assert await adapter.flag_reconnect("u1") is False
-        oauth.save_credentials.assert_not_called()
-        oauth.update_credentials.assert_not_called()
+        oauth.save.assert_not_called()
+        oauth.update.assert_not_called()
 
 
 class TestDriveIdSource:
     def test_connect_and_change_feed_read_the_same_field_of_the_same_call(self):
-        # The drive-switch check compares these two strings; both readers must stay on one source.
+        # The drive-switch check compares these two strings; both readers must stay on one source. The connect side
+        # moved from the OneDrive callback to the adapter's own `read_drive_id` (MULTI_DRIVE_RFC §5.1), which reads
+        # the same `_APPROOT` constant the change feed starts from.
         import inspect
         from src.adapters.microsoft import onedrive_adapter
-        from src.web import oauth_app
         approot = f"{onedrive_adapter._GRAPH}{onedrive_adapter._APPROOT}"
         assert approot == f"{_GRAPH}/me/drive/special/approot"
-        assert f'"{approot}"' in inspect.getsource(oauth_app)
-        assert '.get("driveId")' in inspect.getsource(oauth_app)
+        connect = inspect.getsource(onedrive_adapter.OneDriveAdapter.read_drive_id)
+        assert 'f"{_GRAPH}{_APPROOT}"' in connect
+        assert '.get("driveId")' in connect
         assert '.get("driveId"' in inspect.getsource(onedrive_adapter.OneDriveAdapter.get_changes)
 
 

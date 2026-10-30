@@ -21,8 +21,12 @@ import pytest
 
 from src.adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
 from src.agents.tasks_agent import TasksAgent
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.credential_key import CredentialKey
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.task import TaskCreate, TaskUserConfig
+from src.composition.connector_registry import ConnectorRegistry
 
 _UID = "u1"
 _LIST = {"id": "L1", "displayName": "Tasks", "isOwner": True, "isShared": False}
@@ -31,17 +35,29 @@ _BERLIN = ZoneInfo("Europe/Berlin")
 
 
 class _FakeCreds:
-    async def get_credentials(self, user_id, provider=None, *a, **k):
-        return OAuthCredentials(
-            user_id=user_id, provider="microsoft_todo", access_token="tok",
-            refresh_token="ref", token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
-            scopes=["Tasks.ReadWrite"], email_address="u1@example.com",
+    async def list_for_user(self, user_id, kind=None, *a, **k):
+        return [await self.get(user_id, "")]
+
+    async def list_keys(self, user_id, kind=None, *a, **k):
+        return [CredentialKey(user_id=user_id, credential_id="")]
+
+    async def get(self, user_id, credential_id=None, *a, **k):
+        return OAuthCredential(
+            user_id=user_id,
+            account_id="acct-1",
+            kind="microsoft_todo",
+            integration=Integration.TASKS,
+            account=ProviderAccount(realm="microsoft", subject="", label="u1@example.com"),
+            access_token="tok",
+            refresh_token="ref",
+            token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+            scopes=["Tasks.ReadWrite"],
         )
 
-    async def save_credentials(self, *a, **k):
+    async def save(self, *a, **k):
         return None
 
-    async def update_credentials(self, *a, **k):
+    async def update(self, *a, **k):
         return True
 
 
@@ -96,7 +112,7 @@ class _Session:
 def _adapter() -> MicrosoftToDoAdapter:
     return MicrosoftToDoAdapter(
         oauth_credentials=_FakeCreds(), task_config=_FakeTaskConfig(),
-        client_id="cid", client_secret="sec",
+        client_id="cid", client_secret="sec", connector=ConnectorRegistry().get("microsoft_todo"),
     )
 
 

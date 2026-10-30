@@ -4,7 +4,8 @@ from itertools import product
 
 import pytest
 
-from src.domain.reconnect_policy import Integration, r1_due, reconnect_needed
+from src.domain.integration import Integration
+from src.domain.reconnect_policy import r1_due, reconnect_needed
 
 
 def test_a_past_connection_without_a_credential_needs_a_reconnect_and_one_notice():
@@ -34,4 +35,5 @@ def test_due_exactly_when_needed_and_not_notified_over_every_input():
 
 
 def test_the_three_integrations_have_stable_names():
-    assert [i.value for i in Integration] == ["gmail", "drive", "todo"]
+    # one Integration enum for credentials and R1 (MULTI_DRIVE_RFC §4.1): mail / tasks / drive
+    assert [i.value for i in Integration] == ["mail", "tasks", "drive"]

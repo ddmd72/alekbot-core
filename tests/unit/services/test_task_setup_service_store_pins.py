@@ -17,6 +17,7 @@ from src.services.task_setup_service import TaskSetupService
 from tests.support.clock_instants import UTC_MIDNIGHT, pin_datetime
 from tests.support.firestore_eval import EvalDb
 from tests.support.redelivery_world import require
+from src.composition.connector_registry import ConnectorRegistry
 
 INDEXES_FILE = Path(__file__).resolve().parents[3] / "config" / "firestore.indexes.json"
 COL = "eval_task_config"
@@ -56,7 +57,7 @@ class World:
 
 
 def _service(repo, queue) -> TaskSetupService:
-    return TaskSetupService(_Lifecycle(), repo, None, None, None, queue, "https://example.com")
+    return TaskSetupService(_Lifecycle(), repo, None, None, None, queue, "https://example.com", connector=ConnectorRegistry().get("microsoft_todo"))
 
 
 @pytest.fixture

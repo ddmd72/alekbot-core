@@ -19,11 +19,15 @@ import pytest
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
 from src.domain.drive_index import Priority, RecordState
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.services.drive_indexing_service import DriveIndexingService
 
 from .drive_index_fakes import Clock, FakeEmbeddings, FakeQueue, FakeUsers
+from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 APPROOT = json.loads((_FIX / "approot.json").read_text(encoding="utf-8"))
@@ -34,9 +38,18 @@ CHILD = "CHILD!8"
 
 
 def _creds():
-    return OAuthCredentials(user_id="u", provider=ONEDRIVE_PROVIDER, access_token="tok", refresh_token="r",
-                            token_expiry=datetime.now(timezone.utc) + timedelta(hours=1), scopes=[],
-                            email_address="", drive_id=DRIVE_ID)
+    return OAuthCredential(
+        user_id="u",
+        account_id="acct-1",
+        kind=ONEDRIVE_PROVIDER,
+        integration=Integration.DRIVE,
+        account=ProviderAccount(realm="microsoft", subject="", label=""),
+        access_token="tok",
+        refresh_token="r",
+        token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+        scopes=[],
+        drive_id=DRIVE_ID,
+    )
 
 
 def _resp(json_data):
@@ -88,8 +101,9 @@ class TestParentLookupTransportFailureIsPerItem:
                              ids=["timeout", "socket-timeout", "disconnected"])
     async def test_get_change_failure_in_a_parent_lookup_backs_off_the_record_not_the_tick(self, error):
         oauth = AsyncMock(spec=OAuthCredentialsPort)
-        oauth.get_credentials.return_value = _creds()
-        adapter = OneDriveAdapter(oauth, "cid", "csecret")
+        oauth.get.return_value = _creds()
+        mirror_get(oauth)
+        adapter = OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
         repo, queue, users, clock = InMemoryDriveIndexRepository(), FakeQueue(), FakeUsers(), Clock()
         svc = DriveIndexingService(adapter, repo, FakeEmbeddings(), queue, users, lambda lat, lon: "", "test-space/8",
                                    clock=clock, monotonic=clock.monotonic)

@@ -5,7 +5,7 @@ Port is justified: 2+ implementations
   (1) MicrosoftToDoAdapter — Graph API + OAuth
   (2) GoogleTasksAdapter — frozen, retained for reference
 
-Design note: OAuthCredentials are NOT passed via method parameters.
+Design note: OAuthCredential are NOT passed via method parameters.
 Each adapter resolves auth internally by user_id, using OAuthCredentialsPort
 injected at construction time.
 

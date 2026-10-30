@@ -41,6 +41,7 @@ class AuthConfig:
 
         # OAuth Flow
         OAUTH_REDIRECT_URI: OAuth callback URL
+        OAUTH_CONNECT_REDIRECT_URI: the integration connect callback (every realm)
         OAUTH_SESSION_SECRET: CSRF protection secret
         DEFAULT_AUTH_PROVIDER: Provider name (default: firebase)
 
@@ -71,14 +72,11 @@ class AuthConfig:
             "http://localhost:8080/auth/callback",  # Dev default
             config
         )
-        self.gmail_oauth_redirect_uri = self._get(
-            "GMAIL_OAUTH_REDIRECT_URI",
-            "http://localhost:5001/auth/connect-gmail/callback",  # Dev default
-            config
-        )
-        self.google_tasks_oauth_redirect_uri = self._get(
-            "GOOGLE_TASKS_OAUTH_REDIRECT_URI",
-            "http://localhost:5001/auth/connect-google-tasks/callback",  # Dev default
+        # The one callback of every integration connect, for every realm (MULTI_DRIVE_RFC §5.2, E4): registered at
+        # the Google OAuth client and the Microsoft app registration alike.
+        self.oauth_connect_redirect_uri = self._get(
+            "OAUTH_CONNECT_REDIRECT_URI",
+            "http://localhost:8080/auth/connect/callback",  # Dev default
             config
         )
         # CRITICAL: Load from config (Secret Manager) or fall back to the local

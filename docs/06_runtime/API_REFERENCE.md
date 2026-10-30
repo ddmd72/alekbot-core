@@ -22,10 +22,8 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `POST` | `/auth/logout` | cookie | Revoke the refresh token, clear cookies |
 | `GET` | `/auth/me` | JWT | Current user and account |
 | `POST` | `/auth/link-oauth` | JWT | Link another OAuth identity to the user |
-| `GET` | `/auth/connect-gmail` (+ `/callback`) | JWT / OAuth state | Connect Gmail (read-only scope) |
-| `GET` | `/auth/connect-microsoft-todo` (+ `/callback`) | JWT / OAuth state | Connect Microsoft To Do; the callback enqueues `setup_microsoft_todo` |
-| `GET` | `/auth/connect-onedrive` (+ `/callback`) | JWT / OAuth state | Connect the user drive (OneDrive App Folder) |
-| `GET` | `/auth/connect-google-tasks` (+ `/callback`) | JWT / OAuth state | Google Tasks (frozen provider) |
+| `GET` | `/auth/connect/<kind>` | Cabinet session | Start an integration connect; `kind` is `gmail`, `google_tasks`, `microsoft_todo` or `microsoft_onedrive`. `?credential=<id>` reconnects that stored credential. Unknown kind 404; a realm with no OAuth client on this deployment 501 |
+| `GET` | `/auth/connect/callback` | Cabinet session / server-side flow state | The one callback of every integration (Google and Microsoft). The flow is stored server-side and consumed once; the user returns to the Cabinet with `?connected=<kind>` or `?connect_error=<status>`. The To Do activation enqueues `setup_microsoft_todo`. Google Tasks is frozen: no connect button, stored grants keep working |
 
 ## Cabinet API (`src/web/user_cabinet_app.py`, JWT on every route)
 
@@ -48,6 +46,7 @@ Twilio, OpenAI webhooks and the claude.ai connector. No version prefix; breaking
 | `GET`, `PUT` | `/api/user/deep-research` | Deep research settings |
 | `GET`, `POST` | `/api/user/reminders` | List / create reminders |
 | `PUT`, `DELETE` | `/api/user/reminders/<note_id>` | Edit / delete a reminder |
+| `GET` | `/api/connectors` | The connectors the Cabinet offers a connect button for: `kind`, `integration`, `label` (a kind whose realm has no OAuth client here is left out) |
 | `GET` | `/api/gmail/status` | Gmail connection, `needs_reconnect`, indexing cursor |
 | `POST` | `/api/gmail/index` | Start an indexing job (`incremental` / `backfill` / `reindex`) |
 | `GET` | `/api/gmail/jobs/<job_id>` | Job status |

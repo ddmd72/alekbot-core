@@ -152,10 +152,8 @@ SECRET_VALUES: Dict[str, str] = {
     "BILLING_SLACK_WEBHOOK_URL": "https://hooks.slack.test.example/services/T000/B000/xxxxxxxx",
     "OPENAI_DEEP_RESEARCH_WEBHOOK_URL": "https://alek-bot-dev.test.example/webhook/openai-deep-research",
     "GCS_WORKSPACE_BUCKET": "alek-workspace-test",
-    "GMAIL_OAUTH_REDIRECT_URI": f"{_SERVICE_URL}/auth/connect-gmail/callback",
-    "GOOGLE_TASKS_OAUTH_REDIRECT_URI": f"{_SERVICE_URL}/auth/connect-google-tasks/callback",
-    "MICROSOFT_TODO_REDIRECT_URI": f"{_SERVICE_URL}/auth/connect-microsoft-todo/callback",
-    "ONEDRIVE_REDIRECT_URI": f"{_SERVICE_URL}/auth/connect-onedrive/callback",
+    # the one integration connect callback of every realm (MULTI_DRIVE_RFC §5.2, E4)
+    "OAUTH_CONNECT_REDIRECT_URI": f"{_SERVICE_URL}/auth/connect/callback",
     # secrets at rest (SECRETS_AT_REST_RFC §2.5-§2.6): a KMS key resource name and a hex digest key of 32 bytes, both shaped
     # as the deploy's; the KMS client itself is the SDK-shaped fake `install_offline_services` installs
     "KMS_CRYPTO_KEY": "projects/p9-test-project/locations/us-central1/keyRings/r-test/cryptoKeys/k-test",

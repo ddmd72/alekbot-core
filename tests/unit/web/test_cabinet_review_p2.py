@@ -17,6 +17,7 @@ from src.domain.fact_review_options import OPTIONS
 from src.domain.fact_review_overview import QueueEntry
 from src.domain.fact_review_question import TEXT_KEYS, FactReviewQuestion
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from src.composition.connector_registry import ConnectorRegistry
 
 TOKEN = {"Authorization": "Bearer t"}
 ACC, USER, OTHER = "acc-1", "user-1", "user-2"
@@ -67,7 +68,7 @@ def _app(service: StubService, store: StubStore) -> Quart:
     app = Quart("test_cabinet_review_p2")
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=sessions, user_repo=MagicMock(), fact_repo=MagicMock(),
-        embedding_service=MagicMock(), fact_review_store=store, fact_answer_service=service,
+        embedding_service=MagicMock(), fact_review_store=store, fact_answer_service=service, connectors=ConnectorRegistry(),
     ))
     return app
 

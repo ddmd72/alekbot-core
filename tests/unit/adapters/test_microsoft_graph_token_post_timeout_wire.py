@@ -18,15 +18,27 @@ import pytest
 
 from src.adapters.microsoft.graph_auth import MicrosoftGraphTokenProvider
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveThrottled
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 
-def _creds() -> OAuthCredentials:
-    return OAuthCredentials(user_id="u1", provider=ONEDRIVE_PROVIDER, access_token="old", refresh_token="r1",
-                            token_expiry=datetime.now(timezone.utc) - timedelta(minutes=1), scopes=[],
-                            email_address="")
+def _creds() -> OAuthCredential:
+    return OAuthCredential(
+        user_id="u1",
+        account_id="acct-1",
+        kind=ONEDRIVE_PROVIDER,
+        integration=Integration.DRIVE,
+        account=ProviderAccount(realm="microsoft", subject="", label=""),
+        access_token="old",
+        refresh_token="r1",
+        token_expiry=datetime.now(timezone.utc) - timedelta(minutes=1),
+        scopes=[],
+    )
 
 
 def _resp(json_data, status=200):
@@ -51,7 +63,8 @@ def _session(post):
 
 def _oauth():
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.get_credentials.return_value = _creds()
+    oauth.get.return_value = _creds()
+    mirror_get(oauth)
     return oauth
 
 
@@ -64,7 +77,7 @@ class TestTokenPostTimeout:
     async def test_token_post_carries_its_own_30s_bound(self):
         session = _session([_resp({"access_token": "new", "expires_in": 3600})])
         with patch("aiohttp.ClientSession", return_value=session):
-            await _provider(_oauth()).headers("u1")
+            await _provider(_oauth()).user_headers("u1")
         timeout = session.post.call_args.kwargs["timeout"]
         assert isinstance(timeout, aiohttp.ClientTimeout) and timeout.total == 30
 
@@ -75,14 +88,14 @@ class TestTokenPostTimeout:
             raise asyncio.TimeoutError()
 
         with patch("aiohttp.ClientSession", return_value=_session(hang)), pytest.raises(asyncio.TimeoutError):
-            await _provider(oauth).headers("u1")
-        oauth.save_credentials.assert_not_called()
+            await _provider(oauth).user_headers("u1")
+        oauth.save.assert_not_called()
 
     async def test_drive_keeps_a_timed_out_refresh_a_systemic_throttle(self):
         def hang(*args, **kwargs):
             raise asyncio.TimeoutError()
 
-        adapter = OneDriveAdapter(_oauth(), "cid", "csecret")
+        adapter = OneDriveAdapter(_oauth(), "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
         with patch("aiohttp.ClientSession", return_value=_session(hang)), pytest.raises(DriveThrottled) as exc:
             await adapter.get_changes("u1", None)
         assert exc.value.retry_after_s == 60.0

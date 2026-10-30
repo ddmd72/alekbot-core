@@ -25,7 +25,9 @@ import pytest
 
 from src.domain.drive_card import effective_date
 from src.domain.drive_index_params import TICK_DEADLINE_S
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveNotConnectedError, DriveResyncRequired, DriveThrottled
 from src.domain.drive_outcome_class import OutcomeClass
 from src.infrastructure.drive_operations import DriveOperations
@@ -34,6 +36,8 @@ from src.services.drive_indexing_service import _PER_ITEM_ERRORS
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
+from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _GRAPH = "https://graph.microsoft.com/v1.0"
@@ -52,9 +56,17 @@ APPROOT_RECREATED = {**APPROOT, "id": "NEWROOT!1"}
 
 
 def _creds():
-    return OAuthCredentials(user_id="u1", provider=ONEDRIVE_PROVIDER, access_token="tok", refresh_token="r",
-                            token_expiry=datetime.now(timezone.utc) + timedelta(hours=1), scopes=[],
-                            email_address="")
+    return OAuthCredential(
+        user_id="u1",
+        account_id="acct-1",
+        kind=ONEDRIVE_PROVIDER,
+        integration=Integration.DRIVE,
+        account=ProviderAccount(realm="microsoft", subject="", label=""),
+        access_token="tok",
+        refresh_token="r",
+        token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
+        scopes=[],
+    )
 
 
 def _resp(json_data=None, status=200, headers=None):
@@ -81,8 +93,9 @@ def _session(get=(), **methods):
 
 def _adapter():
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.get_credentials.return_value = _creds()
-    return OneDriveAdapter(oauth, "cid", "csecret")
+    oauth.get.return_value = _creds()
+    mirror_get(oauth)
+    return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
 
 
 async def _page(adapter, approot, page, cursor=None):

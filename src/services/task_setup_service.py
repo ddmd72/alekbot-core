@@ -11,6 +11,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
+from ..domain.connector_spec import ConnectorSpec
 from ..domain.task import TaskSubscriptionConfig, TaskUserConfig
 from ..ports.oauth_credentials_port import OAuthCredentialsPort
 from ..ports.task_config_port import TaskConfigPort
@@ -20,7 +21,6 @@ from ..ports.task_search_index import TaskSearchIndex
 from ..ports.tasks_provider_port import TasksProviderPort
 from ..utils.logger import logger
 
-_MS_PROVIDER = "microsoft_todo"
 _SUB_RENEWAL_THRESHOLD_H = 48  # renew if expiring within 48 hours (webhook renewal)
 _SUB_EXPIRING_THRESHOLD_H = 24  # renew if expiring within 24 hours (scheduler sweep)
 
@@ -37,7 +37,11 @@ class TaskSetupService:
         task_search_index: TaskSearchIndex,
         task_queue: TaskQueue,
         notification_url_base: str,
+        *,
+        connector: ConnectorSpec,
     ) -> None:
+        """`connector` is the To Do kind's spec: the user's credential is the one of `connector.kind`."""
+        self._kind = connector.kind
         self._lifecycle = lifecycle
         self._task_config = task_config
         self._tasks_provider = tasks_provider
@@ -52,7 +56,7 @@ class TaskSetupService:
 
     async def list_microsoft_users(self) -> List[str]:
         """Return all user_ids with stored Microsoft To Do credentials."""
-        return await self._oauth_credentials.list_users_by_provider(_MS_PROVIDER)
+        return await self._oauth_credentials.list_user_ids(self._kind)
 
     async def setup(self, user_id: str) -> None:
         """
@@ -252,7 +256,8 @@ class TaskSetupService:
                     f"⚠️ Failed to delete subscription {sub.sub_id[:8]}: {e}"
                 )
 
-        await self._oauth_credentials.revoke_credentials(user_id, _MS_PROVIDER)
+        for key in await self._oauth_credentials.list_keys(user_id, self._kind):
+            await self._oauth_credentials.delete(user_id, key.credential_id)
         await self._search_index.delete_all_for_user(user_id)
         await self._task_config.save_config(user_id, TaskUserConfig())
         logger.info(f"✅ MS To Do disconnected for user {user_id[:8]}")
@@ -263,7 +268,7 @@ class TaskSetupService:
 
     async def get_status(self, user_id: str) -> Dict[str, Any]:
         """Return connection status and active subscription info."""
-        connected = await self._oauth_credentials.is_connected(user_id, _MS_PROVIDER)
+        connected = bool(await self._oauth_credentials.list_keys(user_id, self._kind))
         config = await self._task_config.get_config(user_id)
         return {
             "connected": connected,

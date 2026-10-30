@@ -17,6 +17,7 @@ from src.ports.email_indexing_job_repository import EmailIndexingJobRepository
 from src.services.email_indexing_service import EmailIndexingService
 from tests.support.clock_instants import BERLIN, HELSINKI, NEW_YORK, REPEATED_HOUR, SKIPPED_HOUR, UTC, ZONES
 from tests.support.oauth_credentials_store import CredentialsStore, creds
+from src.composition.connector_registry import ConnectorRegistry
 
 
 class _Journal(EmailIndexingJobRepository):
@@ -68,10 +69,10 @@ def _profile(user_id: str, zone: str, hour: int) -> UserProfile:
 async def _service(*profiles: UserProfile):
     store = CredentialsStore()
     for p in profiles:
-        await store.repo.save_credentials(creds(p.user_id, "gmail"))
+        await store.repo.save(creds(p.user_id, "gmail"))
     journal = _Journal()
     service = EmailIndexingService(gmail=None, email_repo=None, job_repo=journal, exclusions_repo=None,  # type: ignore[arg-type]
-                                   classifier=None, embedding=None, oauth=store.repo)  # type: ignore[arg-type]
+                                   classifier=None, embedding=None, oauth=store.repo, connector=ConnectorRegistry().get("gmail"))  # type: ignore[arg-type]
     return service, journal, _Users(*profiles)
 
 
@@ -149,7 +150,7 @@ async def test_a_running_job_blocks_the_second_pass_of_the_repeated_hour(zone):
 @pytest.mark.xfail(**_D1)
 async def test_one_user_with_an_unknown_zone_does_not_stop_the_next_user():
     service, journal, users = await _service(_profile("u1", "Mars/Base", 8), _profile("u2", BERLIN, 8))
-    assert await service._oauth.list_users_by_provider("gmail") == ["u1", "u2"], "the bad zone must come first"
+    assert await service._oauth.list_user_ids("gmail") == ["u1", "u2"], "the bad zone must come first"
     tick = datetime(2026, 10, 27, 8, 12, tzinfo=ZoneInfo(BERLIN)).astimezone(UTC)
     refused = False
     try:

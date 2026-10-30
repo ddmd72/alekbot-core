@@ -19,6 +19,7 @@ from src.services.email_review_service import EmailReviewService
 from tests.support.gmail_wire import sent_list_params
 from tests.support.clock_instants import UTC, ZONES, pin_datetime, transition
 from tests.support.oauth_credentials_store import CredentialsStore, creds
+from src.composition.connector_registry import ConnectorRegistry
 
 _USER = "u1"
 _FAR = datetime(2099, 1, 1, tzinfo=UTC)
@@ -43,9 +44,9 @@ class _RecordingProvider(EmailProviderPort):
 
 async def _review_at(monkeypatch, instant: datetime) -> dict:
     store = CredentialsStore()
-    await store.repo.save_credentials(creds(_USER, "gmail", token_expiry=_FAR))
+    await store.repo.save(creds(_USER, "gmail", token_expiry=_FAR))
     provider = _RecordingProvider()
-    service = EmailReviewService(provider, store.repo)
+    service = EmailReviewService(provider, store.repo, connector=ConnectorRegistry().get("gmail"))
     pin_datetime(monkeypatch, email_review_service, instant)
     assert await service.fetch_review_payload(_USER) == []
     (call,) = provider.calls

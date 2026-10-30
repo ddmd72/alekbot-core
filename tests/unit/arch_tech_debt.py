@@ -81,21 +81,17 @@ MODEL_NAME_WHITELIST_FILES: set[str] = {
 
 
 # ---------------------------------------------------------------------------
-# TD-V6 — HTTP client libraries in services/
-#
-# Root cause: GmailOAuthService makes direct HTTP calls to Google OAuth2
-# endpoints (token exchange, userinfo). This is a thin wrapper, not a
-# general pattern — it's a single implementation called only by web endpoints.
-#
-# Fix: extract into an OAuthHttpPort + GoogleOAuthAdapter if a second
-# OAuth provider is ever added. Until then, whitelisting is pragmatic.
+# TD-V6 — FIXED (2026-10-30)
+# GoogleOAuthService is deleted: the Google token exchange, userinfo and revoke moved to the OAuth edge
+# src/adapters/google/google_oauth_provider.py (OAuthProviderPort, MULTI_DRIVE_RFC §5.1, §5.3).
+# The scan (REQ-ARCH-18) now also reads plain `import aiohttp` statements and covers src/web; the
+# /worker OIDC verifier (E5) imports `google.auth.transport.requests`, which is not an HTTP client package
+# import the scan matches, so it needs no entry.
 #
 # Format: normalized file path strings.
-# Consumed by REQ-ARCH-17.
+# Consumed by REQ-ARCH-18.
 # ---------------------------------------------------------------------------
-HTTP_CLIENT_WHITELIST_FILES: set[str] = {
-    os.path.normpath("src/services/google_oauth_service.py"),
-}
+HTTP_CLIENT_WHITELIST_FILES: set[str] = set()
 
 
 # ---------------------------------------------------------------------------

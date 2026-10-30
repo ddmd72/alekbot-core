@@ -278,7 +278,7 @@ async def _seed_rows(boot: Boot) -> None:
     now = datetime.now(timezone.utc)
     expiry = now + timedelta(hours=1)
     for provider in ("microsoft_todo", "gmail"):
-        await worker._oauth_credentials.save_credentials(creds("u1", provider, token_expiry=expiry))
+        await worker._oauth_credentials.save(creds("u1", provider, token_expiry=expiry))
     await worker._email_indexing._job_repo.create_job(IndexingJob(
         job_id=INDEXING_JOB_ID, user_id="u1", account_id="a1", provider="gmail", triggered_by="scheduler",
         status="running", started_at=now, updated_at=now))

@@ -99,9 +99,8 @@ def load_settings():
         # Microsoft To Do OAuth + webhook (TASKS_LOCAL_FIRST_RFC.md §11)
         "MICROSOFT_TODO_CLIENT_ID": os.getenv("MICROSOFT_TODO_CLIENT_ID", ""),
         "MICROSOFT_TODO_CLIENT_SECRET": os.getenv("MICROSOFT_TODO_CLIENT_SECRET", ""),
-        "MICROSOFT_TODO_REDIRECT_URI": os.getenv("MICROSOFT_TODO_REDIRECT_URI", ""),
-        # User drive — OneDrive App Folder (USER_DRIVE_RFC §4.1); same app registration as To Do
-        "ONEDRIVE_REDIRECT_URI": os.getenv("ONEDRIVE_REDIRECT_URI", ""),
+        # The drive (OneDrive App Folder, USER_DRIVE_RFC §4.1) uses the same app registration; both connect through
+        # the one callback OAUTH_CONNECT_REDIRECT_URI (read by AuthConfig, MULTI_DRIVE_RFC §5.2).
         "MICROSOFT_TASKS_WEBHOOK_SECRET": os.getenv("MICROSOFT_TASKS_WEBHOOK_SECRET", ""),
         # Unsplash image search (HtmlPageGeneratorAgent)
         "UNSPLASH_ACCESS_KEY": os.getenv("UNSPLASH_ACCESS_KEY", ""),

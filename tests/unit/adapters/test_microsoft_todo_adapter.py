@@ -28,7 +28,9 @@ import aiohttp
 import pytest
 
 from src.adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
-from src.domain.email import OAuthCredentials
+from src.domain.integration import Integration
+from src.domain.oauth_credential import OAuthCredential
+from src.domain.provider_account import ProviderAccount
 from src.domain.task import (
     ChecklistItem,
     Task,
@@ -44,29 +46,35 @@ from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.ports.task_config_port import TaskConfigPort
 from src.ports.task_lifecycle_port import SubscriptionNotFoundError, TaskLifecyclePort
 from src.ports.tasks_provider_port import TasksProviderPort
+from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _USER_ID = "user-abc123"
 _LIST_ID = "list-1"
 _TASK_ID = "task-1"
 
-_VALID_CREDS = OAuthCredentials(
+_VALID_CREDS = OAuthCredential(
     user_id=_USER_ID,
-    provider="microsoft_todo",
+    account_id="acct-1",
+    kind="microsoft_todo",
+    integration=Integration.TASKS,
+    account=ProviderAccount(realm="microsoft", subject="", label="user@example.com"),
     access_token="tok-valid",
     refresh_token="ref-valid",
     token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
     scopes=["Tasks.ReadWrite"],
-    email_address="user@example.com",
 )
 
-_EXPIRED_CREDS = OAuthCredentials(
+_EXPIRED_CREDS = OAuthCredential(
     user_id=_USER_ID,
-    provider="microsoft_todo",
+    account_id="acct-1",
+    kind="microsoft_todo",
+    integration=Integration.TASKS,
+    account=ProviderAccount(realm="microsoft", subject="", label="user@example.com"),
     access_token="tok-expired",
     refresh_token="ref-valid",
     token_expiry=datetime.now(timezone.utc) - timedelta(hours=1),
     scopes=["Tasks.ReadWrite"],
-    email_address="user@example.com",
 )
 
 _MS_TASK = {
@@ -86,9 +94,10 @@ _MS_LIST = {"id": _LIST_ID, "displayName": "Alek Bot Tasks", "isOwner": True, "i
 
 def _make_adapter(creds=_VALID_CREDS):
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.get_credentials.return_value = creds
-    oauth.save_credentials.return_value = None
-    oauth.update_credentials.return_value = True         # the record exists: a refresh replaces it
+    oauth.get.return_value = creds
+    mirror_get(oauth)
+    oauth.save.return_value = None
+    oauth.update.return_value = True         # the record exists: a refresh replaces it
 
     task_config = AsyncMock(spec=TaskConfigPort)
     task_config.get_config.return_value = TaskUserConfig()
@@ -100,7 +109,7 @@ def _make_adapter(creds=_VALID_CREDS):
             oauth_credentials=oauth,
             task_config=task_config,
             client_id="client-id",
-            client_secret="client-secret",
+            client_secret="client-secret", connector=ConnectorRegistry().get("microsoft_todo"),
         ),
         oauth,
         task_config,
@@ -179,9 +188,9 @@ class TestTokenRefresh:
         with _patch_session(session):
             await adapter.list_task_lists(_USER_ID)
 
-        oauth.save_credentials.assert_not_called()           # a refresh never creates a record
-        oauth.update_credentials.assert_called_once()
-        saved: OAuthCredentials = oauth.update_credentials.call_args.args[0]
+        oauth.save.assert_not_called()           # a refresh never creates a record
+        oauth.update.assert_called_once()
+        saved: OAuthCredential = oauth.update.call_args.args[0]
         assert saved.access_token == "new-token"
 
     async def test_no_refresh_when_token_valid(self):
@@ -193,8 +202,8 @@ class TestTokenRefresh:
         with _patch_session(session):
             await adapter.list_task_lists(_USER_ID)
 
-        oauth.save_credentials.assert_not_called()
-        oauth.update_credentials.assert_not_called()
+        oauth.save.assert_not_called()
+        oauth.update.assert_not_called()
 
 
 # =============================================================================
