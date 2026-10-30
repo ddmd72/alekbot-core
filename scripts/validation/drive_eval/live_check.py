@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_index_planner import PlaceOf
 from src.domain.drive_search import render_results
 from src.domain.user import UserBotConfig, UserProfile
@@ -42,6 +43,7 @@ from src.ports.image_triage_port import ImageTriagePort
 from src.services.drive_indexing_service import DriveIndexingService
 from src.services.drive_search_service import DriveSearchService
 
+from .eval_connection import EVAL_CONNECTION_ID, EvalDriveConnections, eval_connection
 from .fixture_drive import FixtureDrive
 from .runner import EvalClock, _RecordingQueue, index_fixture, request_for
 
@@ -143,7 +145,7 @@ async def live_check(folder: Path, user_id: str, queries: Sequence[Mapping[str, 
                      triage: Optional[ImageTriagePort] = None, throttle_pause_s: float = 30.0) -> LiveReport:
     if not user_id.startswith(SYNTHETIC_PREFIX):
         raise LiveCheckError(f"the live check writes only under a {SYNTHETIC_PREFIX}… user id, not {user_id!r}")
-    if await repo.get_sync_state(user_id) is not None:
+    if await repo.get_sync_state(ConnectionScope(user_id, EVAL_CONNECTION_ID)) is not None:
         raise LiveCheckError(f"{user_id} already has an index; pick a new synthetic id")
     drive = FixtureDrive(manifest_from_folder(folder), base_dir=folder)
     users = _Users(user_id)
@@ -154,7 +156,6 @@ async def live_check(folder: Path, user_id: str, queries: Sequence[Mapping[str, 
                                       throttle_pause_s=throttle_pause_s, extractors=extractors, triage=triage,
                                       user_id=user_id, users=users)
         report.indexed, report.summary = indexed.records, indexed.summary
-        from .eval_connection import EvalDriveConnections, eval_connection
         search = DriveSearchService(repo, embeddings, drive, EvalDriveConnections(eval_connection(user_id)),
                                     clock=clock, embedding_space=embedding_space)
         for query in queries:
@@ -177,17 +178,21 @@ async def _purge(drive: FixtureDrive, repo: DriveIndexRepository, embeddings: Em
         content["extractors"] = extractors
     if triage is not None:
         content["triage"] = triage
+    scope = ConnectionScope(users.user_id, EVAL_CONNECTION_ID)
+    # the indexing switch lives on the connection (MULTI_DRIVE_RFC §8): the purge is the tick of the same connection, off
+    connections = EvalDriveConnections(eval_connection(users.user_id, indexing_enabled=False,
+                                                       account_id=f"{users.user_id}-account"))
     service = DriveIndexingService(drive, repo, embeddings, _RecordingQueue(), users, place_of, embedding_space,
-                                   clock=clock, **content)
+                                   clock=clock, connections=connections, **content)
     for _ in range(MAX_PURGE_TICKS):
-        if await repo.get_sync_state(users.user_id) is None and not await repo.records_page(users.user_id, None, 1):
+        if await repo.get_sync_state(scope) is None and not await repo.records_page(scope, None, 1):
             break
-        await service.tick(users.user_id)
+        await service.tick(scope)
         clock.advance(60)
     left = {
-        "sync_state": await repo.get_sync_state(users.user_id) is not None,
-        "records": bool(await repo.records_page(users.user_id, None, 1)),
-        "chunks": bool(await repo.chunks_page(users.user_id, None, 1)),
+        "sync_state": await repo.get_sync_state(scope) is not None,
+        "records": bool(await repo.records_page(scope, None, 1)),
+        "chunks": bool(await repo.chunks_page(scope, None, 1)),
     }
     if any(left.values()):
         raise LiveCheckError(f"the purge left data under {users.user_id}: {left}")

@@ -16,13 +16,14 @@ user's chunk cap is demoted user_chunk_cap by that read, like any other read (re
 
 Dry run by default: prints counts by kind and selection (never names or paths), how many would still be held (a record
 the bot cannot open, or one waiting for card headroom) and how many go to the reader (each re-read is billed), and writes
-nothing. `--apply` takes the user's lease (refused while a tick runs: retry in a few minutes), selects the records again
-under it, writes them and releases it.
+nothing. `--apply` takes the connection's lease (refused while a tick runs: retry in a few minutes), selects the
+records again under it, writes them and releases it. The script acts on one connection (MULTI_DRIVE_RFC §8):
+`--connection` names it, else the user's one live connection.
 
 Usage (project and credentials from the environment / ADC, collections from APP_ENV, default development):
-    python scripts/infrastructure/drive_content_requeue.py --user <user_id>
+    python scripts/infrastructure/drive_content_requeue.py --user <user_id> [--connection <id>]
         [--reason extract_error | --truncated | --no-text] [--kind <kind>] [--apply]
-Exit code: 0 (also for a dry run or nothing to requeue), 1 when nothing is stored for the user or the lease is busy.
+Exit code: 0 (also for a dry run or nothing to requeue), 1 when nothing is stored for the connection or the lease is busy.
 """
 import argparse
 import asyncio
@@ -37,6 +38,8 @@ from typing import List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from scripts.infrastructure.drive_connection_arg import resolve_connection  # noqa: E402
+from src.domain.connection_scope import ConnectionScope  # noqa: E402
 from src.domain.drive_extraction import READER, chain_for  # noqa: E402
 from src.domain.drive_index import DriveIndexRecord, Reason, RecordState  # noqa: E402
 from src.domain.drive_index_planner import (  # noqa: E402
@@ -106,19 +109,19 @@ def summary(plan: Plan) -> str:
     return f"{len(plan.records)} {_NOUN[plan.select]} ({counts}){held}{reader}"
 
 
-async def load_plan(repo: DriveIndexRepository, user_id: str, reason: Optional[Reason], kind: Optional[str],
+async def load_plan(repo: DriveIndexRepository, scope: ConnectionScope, reason: Optional[Reason], kind: Optional[str],
                     now: datetime, select: str = FAILED) -> Plan:
     records: List[DriveIndexRecord] = []
     after: Optional[str] = None
     while True:
-        page = await repo.records_page(user_id, after, _PAGE)
+        page = await repo.records_page(scope, after, _PAGE)
         records.extend(r for r in page if is_selected(r, reason, kind, select))
         if len(page) < _PAGE:
             return build_plan(records, reason, kind, now, select)
         after = page[-1].item_id
 
 
-async def requeue(repo: DriveIndexRepository, user_id: str, *, reason: Optional[Reason], kind: Optional[str],
+async def requeue(repo: DriveIndexRepository, scope: ConnectionScope, *, reason: Optional[Reason], kind: Optional[str],
                   apply: bool, now: datetime, owner: str, select: str = FAILED) -> Tuple[int, str]:
     """Returns (exit code, message). `select` is FAILED (with a per-file `reason`), TRUNCATED or NO_TEXT (no
     `reason`). With `apply` the selection is made again under the lease, so a record a tick changed since the dry run
@@ -127,21 +130,21 @@ async def requeue(repo: DriveIndexRepository, user_id: str, *, reason: Optional[
         raise ValueError(f"{reason.value if reason else None} is not a per-file failure")
     if select not in _NOUN or (select != FAILED and reason is not None):
         raise ValueError(f"selection {select} takes no failure reason")
-    if await repo.get_sync_state(user_id) is None:
-        return 1, "no sync state: nothing is indexed for this user"
+    if await repo.get_sync_state(scope) is None:
+        return 1, "no sync state: nothing is indexed for this connection"
     if not apply:
-        plan = await load_plan(repo, user_id, reason, kind, now, select)
+        plan = await load_plan(repo, scope, reason, kind, now, select)
         if not plan.records:
             return 0, "nothing to requeue"
         return 0, f"dry run: {summary(plan)} would be read again on the next tick; re-run with --apply"
-    if await repo.acquire_lease(user_id, owner, now, now + _HOLD, create=False) is None:
+    if await repo.acquire_lease(scope, owner, now, now + _HOLD, create=False) is None:
         return 1, "a tick holds the lease (or the state just went away); retry in a few minutes"
     try:
-        plan = await load_plan(repo, user_id, reason, kind, now, select)
+        plan = await load_plan(repo, scope, reason, kind, now, select)
         for start in range(0, len(plan.records), _WRITE_BATCH):
             await repo.upsert_records(plan.records[start:start + _WRITE_BATCH])
     finally:
-        await repo.release_lease(user_id, owner)
+        await repo.release_lease(scope, owner)
     if not plan.records:
         return 0, "nothing to requeue"
     return 0, f"requeued: {summary(plan)}; the next tick reads them again"
@@ -159,6 +162,7 @@ def selection_of(args: argparse.Namespace) -> Tuple[str, Optional[Reason]]:
 def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=(__doc__ or "").strip().split("\n\n")[0])
     p.add_argument("--user", required=True, help="the user whose files are read again")
+    p.add_argument("--connection", default=None, help="the connection (default: the user's one live connection)")
     which = p.add_mutually_exclusive_group()
     which.add_argument("--reason", default=None, choices=REASONS,
                        help="failed records with this failure reason (the default selection: extract_error)")
@@ -170,15 +174,23 @@ def parser() -> argparse.ArgumentParser:
     return p
 
 
-async def _main(user_id: str, select: str, reason: Optional[Reason], kind: Optional[str], apply: bool) -> int:
+async def _main(user_id: str, connection_id: Optional[str], select: str, reason: Optional[Reason],
+                kind: Optional[str], apply: bool) -> int:
     from google.cloud import firestore
 
+    from src.adapters.firestore_drive_connection_repo import FirestoreDriveConnectionRepository
     from src.adapters.firestore_drive_index_repo import FirestoreDriveIndexRepository
     from src.config.environment import EnvironmentConfig
 
     env = EnvironmentConfig()
     db = firestore.AsyncClient(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None, database=env.firestore_database_id)
-    code, message = await requeue(FirestoreDriveIndexRepository(db, env), user_id, reason=reason, kind=kind,
+    connections = FirestoreDriveConnectionRepository(db, env.drive_connections_collection,
+                                                     env.drive_user_settings_collection)
+    conn, why = await resolve_connection(connections, user_id, connection_id)
+    if conn is None:
+        print(f"refused: {why}")
+        return 1
+    code, message = await requeue(FirestoreDriveIndexRepository(db, env), conn.scope, reason=reason, kind=kind,
                                   apply=apply, now=datetime.now(timezone.utc), owner=f"requeue-{uuid.uuid4().hex}",
                                   select=select)
     print(message)
@@ -188,4 +200,4 @@ async def _main(user_id: str, select: str, reason: Optional[Reason], kind: Optio
 if __name__ == "__main__":
     args = parser().parse_args()
     select, reason = selection_of(args)
-    sys.exit(asyncio.run(_main(args.user, select, reason, args.kind, args.apply)))
+    sys.exit(asyncio.run(_main(args.user, args.connection, select, reason, args.kind, args.apply)))

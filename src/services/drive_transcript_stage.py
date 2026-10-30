@@ -101,6 +101,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Set, Tuple
 
+from ..domain.connection_scope import ConnectionScope
 from ..domain.batch_transcription import BatchRef, BatchStatus, FileRef
 from ..domain.drive_enrichment import UsageClass
 from ..domain.drive_extraction import TRANSCRIBE_LINK, DriveModelUnavailable
@@ -788,7 +789,7 @@ class DriveTranscriptStage:
         """A `submitting` document whose batch was certainly never created: deleted first, then its reservation is
         released once (the jobs it named were handed back before)."""
         host.fence()
-        await self._repo.delete_batch(pending.user_id, pending.name)
+        await self._repo.delete_batch(ConnectionScope(pending.user_id, pending.connection_id), pending.name)
         if pending.reserved_usd > 0:
             await host.release(pending.reserved_usd, pending.reserved_month)
         _inc(summary, "batches_never_created")

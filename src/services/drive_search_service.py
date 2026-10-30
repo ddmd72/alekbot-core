@@ -58,7 +58,8 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, FrozenSet, Ite
 from ..domain.drive_accuracy import scorable
 from ..domain.drive_card import card_text, content_key_of, note_line
 from ..domain.drive_enrich_plan import COVERAGE_COUNTERS, GAP_HELD, GAP_NO_PASSAGES, GAP_WAITING
-from ..domain.drive_enrichment import USD_CAPS, HintItem, JobState, UsageClass
+from ..domain.drive_enrichment import USD_CAPS, HintItem, InitialBuild, JobState, UsageClass
+from ..domain.drive_usage import closed_initial, new_initial_build
 from ..domain.drive_excerpt_chunk import ExcerptChunk, display_number, stored_index
 from ..domain.drive_excerpt_context import ExcerptContext, file_description
 from ..domain.drive_excerpt_file import ExcerptFile
@@ -2153,6 +2154,16 @@ class DriveSearchService:
             self._repo.has_record_in(conn.scope, RecordState.UNRESOLVED, int(Priority.CASCADE)))
         return first_seen is not None or resolving
 
+    async def _initial_build(self, conn: DriveConnection) -> InitialBuild:
+        """The initial build of the connection's provider account (MULTI_DRIVE_RFC §10, D8), as the indexer reads it. A
+        connection without an account is a programming error: logged at ERROR, and no initial build is reported."""
+        account = conn.provider_account
+        if account is None:
+            logger.error(f"[DriveSearch] connection {conn.connection_id[:8]} of {conn.user_id[:8]} has no provider "
+                         f"account: no initial build reported")
+            return closed_initial(new_initial_build(), self._clock())
+        return await self._repo.get_initial_build(conn.user_id, account.realm, account.subject)
+
     async def indexing_status(self, user_id: str) -> DriveIndexingStatus:
         """The Cabinet card (§6): counters, last sync, error category, index full, building, of the searched connection
         (stage 1: the primary; its own indexing switch). Usage and the initial build stay the user's (§8, §10)."""
@@ -2163,7 +2174,7 @@ class DriveSearchService:
             return DriveIndexingStatus(enabled=enabled, counters={}, building=enabled)
         now = self._clock()
         usage, build = await asyncio.gather(self._repo.get_model_usage(user_id, month_key(now)),
-                                            self._repo.get_initial_build(user_id))
+                                            self._initial_build(conn))
         return DriveIndexingStatus(
             awaiting_rebuild=MIGRATION_GATE_KEY not in state.applied_versions and not state.purging,
             enabled=enabled, counters=dict(state.counters), last_success_at=state.last_success_at,
