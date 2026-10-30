@@ -10,6 +10,7 @@ import pytest
 
 from src.domain.agent import AgentStatus
 from src.domain.integration import Integration
+from src.domain.credential_key import CredentialKey
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.domain.exceptions import OAuthGrantRevokedError
@@ -39,8 +40,11 @@ class _Store:
         )
         self.saves = []
 
-    async def list_for_user(self, user_id, kind=None):
-        return [replace(self.creds)] if self.creds is not None else []
+    async def list_keys(self, user_id, kind=None):
+        return [CredentialKey(user_id=user_id, credential_id=self.creds.credential_id)] if self.creds is not None else []
+
+    async def get(self, user_id, credential_id):
+        return replace(self.creds) if self.creds is not None else None
 
     async def update(self, creds):
         if self.creds is None:

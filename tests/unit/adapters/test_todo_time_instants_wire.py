@@ -22,6 +22,7 @@ import pytest
 from src.adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
 from src.agents.tasks_agent import TasksAgent
 from src.domain.integration import Integration
+from src.domain.credential_key import CredentialKey
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.domain.task import TaskCreate, TaskUserConfig
@@ -36,6 +37,9 @@ _BERLIN = ZoneInfo("Europe/Berlin")
 class _FakeCreds:
     async def list_for_user(self, user_id, kind=None, *a, **k):
         return [await self.get(user_id, "")]
+
+    async def list_keys(self, user_id, kind=None, *a, **k):
+        return [CredentialKey(user_id=user_id, credential_id="")]
 
     async def get(self, user_id, credential_id=None, *a, **k):
         return OAuthCredential(

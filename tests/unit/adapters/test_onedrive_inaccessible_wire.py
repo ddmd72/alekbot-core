@@ -20,6 +20,7 @@ from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveItemNotFoundError
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _NOT_FOUND = {"error": {"code": "itemNotFound", "message": "The resource could not be found."}}
 
@@ -61,7 +62,7 @@ def _session(responses):
 def _adapter():
     oauth = AsyncMock(spec=OAuthCredentialsPort)
     oauth.get.return_value = _creds()
-    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    mirror_get(oauth)
     return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
 
 

@@ -7,9 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
+from unittest.mock import AsyncMock
 
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.composition.connector_registry import ConnectorRegistry
+from src.domain.credential_key import CredentialKey
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
@@ -20,6 +22,7 @@ COLLECTION = "eval_credentials"
 EXPIRY = datetime(2026, 10, 10, 11, 12, 13, tzinfo=timezone.utc)
 ACCOUNT_ID = "acct-1"
 _REGISTRY = ConnectorRegistry()
+_KINDS = ("gmail", "google_tasks", "microsoft_todo", "microsoft_onedrive")
 
 
 async def one(repo: Any, user_id: str, kind: str) -> Optional[OAuthCredential]:
@@ -81,16 +84,28 @@ def creds(user_id: str, kind: str, **over) -> OAuthCredential:
 
 
 async def delete_kind(repo: Any, user_id: str, kind: str) -> None:
-    """Delete every credential of the user of `kind` (what a disconnect of that integration does)."""
-    for credential in await repo.list_for_user(user_id, kind):
-        await repo.delete(user_id, credential.credential_id)
+    """Delete every credential of the user of `kind` (what a disconnect of that integration does; no decrypt)."""
+    for key in await repo.list_keys(user_id, kind):
+        await repo.delete(user_id, key.credential_id)
 
 
 async def has_kind(repo: Any, user_id: str, kind: str) -> bool:
-    """True when the user has a credential of `kind`."""
-    return bool(await repo.list_for_user(user_id, kind))
+    """True when the user has a credential of `kind` (the existence check: plaintext only, no decrypt)."""
+    return bool(await repo.list_keys(user_id, kind))
 
 
 async def kinds_of(repo: Any, user_id: str) -> list:
-    """The kind of every credential of the user."""
-    return [credential.kind for credential in await repo.list_for_user(user_id)]
+    """The kind of every credential of the user, one entry per record (plaintext only, no decrypt)."""
+    return [kind for kind in _KINDS for _ in await repo.list_keys(user_id, kind)]
+
+
+def mirror_get(port: Any) -> None:
+    """Script a mock credential port whose one stored credential is `port.get.return_value` (None: none stored):
+    `list_keys` and `list_for_user` answer from it at each call, so the three reads agree as the store's do."""
+    def held() -> list:
+        credential = port.get.return_value
+        return [] if credential is None else [credential]
+
+    port.list_keys = AsyncMock(side_effect=lambda *a, **k: [
+        CredentialKey(user_id=c.user_id, credential_id=c.credential_id) for c in held()])
+    port.list_for_user = AsyncMock(side_effect=lambda *a, **k: held())

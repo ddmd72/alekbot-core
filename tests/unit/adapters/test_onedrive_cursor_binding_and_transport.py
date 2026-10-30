@@ -37,6 +37,7 @@ from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _GRAPH = "https://graph.microsoft.com/v1.0"
@@ -93,7 +94,7 @@ def _session(get=(), **methods):
 def _adapter():
     oauth = AsyncMock(spec=OAuthCredentialsPort)
     oauth.get.return_value = _creds()
-    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    mirror_get(oauth)
     return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
 
 

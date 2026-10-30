@@ -23,6 +23,7 @@ from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.services.email_indexing_service import EmailIndexingService
 from src.services.email_review_service import EmailReviewService
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _USER = "user-revoked"
 _ACC = "acc-revoked"
@@ -71,7 +72,8 @@ def _worker(*, stored_creds, oauth_configured: bool = True):
     email_review.fetch_review_payload = AsyncMock(side_effect=_REVOKED)
 
     oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.list_for_user.return_value = [stored_creds]
+    oauth.get.return_value = stored_creds
+    mirror_get(oauth)
     oauth.update.return_value = stored_creds is not None   # writes only while the record exists
 
     notification = AsyncMock()

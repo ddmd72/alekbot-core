@@ -14,6 +14,7 @@ from src.domain.provider_account import ProviderAccount
 from src.domain.exceptions import OAuthGrantRevokedError
 from src.services.email_review_service import EmailReviewService
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 
 def _service(refresh_error: Exception):
@@ -21,7 +22,7 @@ def _service(refresh_error: Exception):
     provider.refresh_token = AsyncMock(side_effect=refresh_error)
     provider.list_emails = AsyncMock()
     oauth = MagicMock()
-    oauth.list_for_user = AsyncMock(return_value=[OAuthCredential(
+    oauth.get = AsyncMock(return_value=OAuthCredential(
         user_id="user-1",
         account_id="acct-1",
         kind="gmail",
@@ -31,7 +32,8 @@ def _service(refresh_error: Exception):
         refresh_token="rtok",
         token_expiry=datetime.now(timezone.utc) - timedelta(minutes=1),
         scopes=[],
-    )])
+    ))
+    mirror_get(oauth)
     oauth.save = AsyncMock()
     return EmailReviewService(email_provider=provider, oauth_credentials=oauth, connector=ConnectorRegistry().get("gmail")), provider, oauth
 

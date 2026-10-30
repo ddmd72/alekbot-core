@@ -18,6 +18,7 @@ from src.ports.indexed_email_repository import IndexedEmailRepository
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.services.email_search_service import EmailSearchService, _RRF_K
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 
 # ---------------------------------------------------------------------------
@@ -218,14 +219,16 @@ class TestVectorSearch:
 class TestGetDetails:
 
     async def test_no_credentials_returns_error(self, service, mock_oauth):
-        mock_oauth.list_for_user.return_value = []
+        mock_oauth.get.return_value = None
+        mirror_get(mock_oauth)
 
         result = await service.get_details("email_id_1", "user123")
 
         assert "not connected" in result.lower() or "error" in result.lower()
 
     async def test_email_not_found_returns_error(self, service, mock_oauth, mock_gmail):
-        mock_oauth.list_for_user.return_value = [_make_creds()]
+        mock_oauth.get.return_value = _make_creds()
+        mirror_get(mock_oauth)
         mock_gmail.batch_get_full_content.return_value = {}  # empty — email missing
 
         result = await service.get_details("email_id_1", "user123")
@@ -233,7 +236,8 @@ class TestGetDetails:
         assert "not found" in result.lower() or "error" in result.lower()
 
     async def test_success_returns_body_preview(self, service, mock_oauth, mock_gmail):
-        mock_oauth.list_for_user.return_value = [_make_creds()]
+        mock_oauth.get.return_value = _make_creds()
+        mirror_get(mock_oauth)
         full = EmailFullContent(
             email_id="e1",
             body_text="Important flight confirmation ref XYZ",
@@ -251,7 +255,8 @@ class TestGetDetails:
     async def test_expired_token_triggers_refresh(self, service, mock_oauth, mock_gmail):
         expired_creds = _make_creds(expired=True)
         fresh_creds = _make_creds(expired=False)
-        mock_oauth.list_for_user.return_value = [expired_creds]
+        mock_oauth.get.return_value = expired_creds
+        mirror_get(mock_oauth)
         mock_oauth.update.return_value = True        # the record still exists
         mock_gmail.refresh_token.return_value = fresh_creds
         mock_gmail.batch_get_full_content.return_value = {}
@@ -263,7 +268,8 @@ class TestGetDetails:
         mock_oauth.save.assert_not_awaited()          # a refresh never creates a record
 
     async def test_no_attachments_no_attachments_line(self, service, mock_oauth, mock_gmail):
-        mock_oauth.list_for_user.return_value = [_make_creds()]
+        mock_oauth.get.return_value = _make_creds()
+        mirror_get(mock_oauth)
         full = EmailFullContent(
             email_id="e1",
             body_text="Body only",
@@ -285,14 +291,16 @@ class TestGetDetails:
 class TestGetAttachment:
 
     async def test_no_credentials_returns_error(self, service, mock_oauth):
-        mock_oauth.list_for_user.return_value = []
+        mock_oauth.get.return_value = None
+        mirror_get(mock_oauth)
 
         result = await service.get_attachment("e1", "file.pdf", "user123")
 
         assert "not connected" in result.lower() or "error" in result.lower()
 
     async def test_email_not_found_returns_error(self, service, mock_oauth, mock_gmail):
-        mock_oauth.list_for_user.return_value = [_make_creds()]
+        mock_oauth.get.return_value = _make_creds()
+        mirror_get(mock_oauth)
         mock_gmail.batch_get_full_content.return_value = {}
 
         result = await service.get_attachment("e1", "file.pdf", "user123")
@@ -300,7 +308,8 @@ class TestGetAttachment:
         assert "not found" in result.lower() or "error" in result.lower()
 
     async def test_attachment_not_found_lists_available(self, service, mock_oauth, mock_gmail):
-        mock_oauth.list_for_user.return_value = [_make_creds()]
+        mock_oauth.get.return_value = _make_creds()
+        mirror_get(mock_oauth)
         full = EmailFullContent(
             email_id="e1",
             body_text="body",
@@ -316,7 +325,8 @@ class TestGetAttachment:
         assert "other.pdf" in result
 
     async def test_too_large_returns_size_error(self, service, mock_oauth, mock_gmail):
-        mock_oauth.list_for_user.return_value = [_make_creds()]
+        mock_oauth.get.return_value = _make_creds()
+        mirror_get(mock_oauth)
         big_data = b"x" * (4 * 1024 * 1024)  # 4 MB > 3 MB limit
         full = EmailFullContent(
             email_id="e1",
@@ -332,7 +342,8 @@ class TestGetAttachment:
         assert "4.0 MB" in result or "exceeds" in result
 
     async def test_success_returns_converted_text(self, service, mock_oauth, mock_gmail):
-        mock_oauth.list_for_user.return_value = [_make_creds()]
+        mock_oauth.get.return_value = _make_creds()
+        mirror_get(mock_oauth)
         full = EmailFullContent(
             email_id="e1",
             body_text="body",

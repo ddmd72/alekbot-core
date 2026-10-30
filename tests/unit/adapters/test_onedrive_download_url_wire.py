@@ -16,6 +16,7 @@ from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveItemNotFoundError
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _URL = "https://download.example.invalid/secret-token-abc123/clip.mp4"
 _FILE = {"id": "f1", "name": "clip.mp4", "size": 10, "file": {"mimeType": "video/mp4"},
@@ -36,7 +37,7 @@ def _adapter():
         token_expiry=datetime.now(timezone.utc) + timedelta(hours=1),
         scopes=[],
     )
-    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    mirror_get(oauth)
     return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
 
 

@@ -8,6 +8,7 @@ from src.adapters.gmail_provider_adapter import GmailProviderAdapter
 from src.adapters.microsoft.todo_adapter import MicrosoftToDoAdapter
 from src.adapters.slack.webhook_adapter import SlackWebhookAdapter
 from src.domain.integration import Integration
+from src.domain.credential_key import CredentialKey
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.domain.task import TaskUserConfig
@@ -22,6 +23,9 @@ _HOOK = "https://hooks.example.com/services/T1/B1/x"
 class _Creds:
     async def list_for_user(self, user_id, kind=None, *a, **k):
         return [await self.get(user_id, "")]
+
+    async def list_keys(self, user_id, kind=None, *a, **k):
+        return [CredentialKey(user_id=user_id, credential_id="")]
 
     async def get(self, user_id, credential_id=None, *a, **k):
         return OAuthCredential(

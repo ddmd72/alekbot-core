@@ -12,6 +12,7 @@ from src.domain.notification_kind import NotificationKind
 from src.handlers.worker_handler import WorkerHandler
 from src.services.deep_research_delivery import deliver_deep_research
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 
 # --- WorkerHandler ---------------------------------------------------------
@@ -229,7 +230,8 @@ class TestEnsureBeforeNotify:
     async def test_gmail_reconnect_flag_notice(self):
         creds = MagicMock(needs_reconnect=False)
         oauth = AsyncMock()
-        oauth.list_for_user.return_value = [creds]
+        oauth.get.return_value = creds
+        mirror_get(oauth)
         email_review = AsyncMock()
         email_review.fetch_review_payload.side_effect = OAuthGrantRevokedError("revoked")
         worker, log = _ordered_worker(oauth_credentials=oauth, email_review=email_review, mail_connector=ConnectorRegistry().get("gmail"))
@@ -280,7 +282,8 @@ class TestGmailReconnectEnsureFailure:
     async def test_ensure_failure_saves_nothing_and_next_run_notifies(self):
         creds = MagicMock(needs_reconnect=False)
         oauth = AsyncMock()
-        oauth.list_for_user.return_value = [creds]
+        oauth.get.return_value = creds
+        mirror_get(oauth)
         oauth.update.return_value = True        # the record still exists
         worker, log = _ordered_worker(oauth_credentials=oauth, mail_connector=ConnectorRegistry().get("gmail"))
         worker._agent_factory.ensure_agents_for_user.side_effect = RuntimeError("cold")

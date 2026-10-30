@@ -20,6 +20,7 @@ from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveConnection, DriveItemNotFoundError, DriveResyncRequired
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 _GRAPH = "https://graph.microsoft.com/v1.0"
@@ -66,7 +67,7 @@ def _session(get):
 def _adapter(creds="default"):
     oauth = AsyncMock(spec=OAuthCredentialsPort)
     oauth.get.return_value = _creds() if creds == "default" else creds
-    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    mirror_get(oauth)
     return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive")), oauth
 
 
@@ -394,7 +395,7 @@ class TestConnection:
         adapter, oauth = _adapter(creds=_creds(needs_reconnect=True, drive_id="D1"))
         assert await adapter.connection("u1") == DriveConnection(connected=True, needs_reconnect=True,
                                                                  drive_id="D1")
-        oauth.list_for_user.assert_awaited_with("u1", ONEDRIVE_PROVIDER)
+        oauth.list_keys.assert_awaited_with("u1", ONEDRIVE_PROVIDER)
 
     async def test_a_changed_stored_token_drops_the_token_and_root_caches(self):
         # A reconnect (maybe to another account) writes a new token; the indexer must use it at once.
@@ -403,7 +404,7 @@ class TestConnection:
             await adapter.get_change("u1", ROOT_ID)                       # caches the "tok" bearer
         assert adapter._tokens.cached_token("u1", "") == "tok"
         oauth.get.return_value = _creds(access_token="B")
-        oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+        mirror_get(oauth)
         adapter._root_cache["u1"] = (0.0, APPROOT)
         await adapter.connection("u1")
         assert adapter._tokens.cached_token("u1", "") is None and "u1" not in adapter._root_cache
@@ -417,18 +418,18 @@ class TestConnection:
         adapter, oauth = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
             await adapter.get_change("u1", ROOT_ID)
-        reads = oauth.list_for_user.await_count
+        reads = oauth.list_keys.await_count
         await adapter.connection("u1")
         with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
             await adapter.get_change("u1", ROOT_ID)
-        assert oauth.list_for_user.await_count == reads + 1             # only connection() read the store
+        assert oauth.list_keys.await_count == reads + 1             # only connection() read the store
 
     async def test_disconnected_drops_the_caches(self):
         adapter, oauth = _adapter()
         with patch("aiohttp.ClientSession", return_value=_session([_resp(APPROOT)])):
             await adapter.get_change("u1", ROOT_ID)
         oauth.get.return_value = None
-        oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+        mirror_get(oauth)
         assert await adapter.connection("u1") == DriveConnection(connected=False)
         assert adapter._tokens.cached_token("u1", "") is None
 

@@ -10,6 +10,7 @@ from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from tests.support.oauth_credentials_store import mirror_get
 
 
 def _creds(delta: timedelta, token: str = "old") -> OAuthCredential:
@@ -47,7 +48,7 @@ def _session(post_resp):
 def _provider(creds):
     oauth = AsyncMock(spec=OAuthCredentialsPort)
     oauth.get.return_value = creds
-    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    mirror_get(oauth)
     return MicrosoftGraphTokenProvider(oauth, "cid", "csecret", "microsoft_onedrive",
                                        "Files.ReadWrite.AppFolder offline_access"), oauth
 
@@ -114,7 +115,7 @@ class TestCacheIsolationAndInvalidation:
         token, _, fetched_at = provider._cache[("u1", "")]
         provider._cache[("u1", "")] = (token, datetime.now(timezone.utc) + timedelta(minutes=4), fetched_at)
         oauth.get.return_value = _creds(timedelta(minutes=4))
-        oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+        mirror_get(oauth)
         session = _session(_resp({"access_token": "new", "expires_in": 3600}))
         with patch("aiohttp.ClientSession", return_value=session):
             assert await provider.user_headers("u1") == {"Authorization": "Bearer new"}

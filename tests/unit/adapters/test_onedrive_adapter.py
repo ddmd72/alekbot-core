@@ -20,6 +20,7 @@ from src.domain.user_drive import (
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.ports.user_drive_port import UserDrivePort
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _ROOT = {"id": "root1", "name": "Alek-bot", "folder": {"childCount": 1},
          "parentReference": {"path": "/drive/root:/Apps"}}
@@ -71,7 +72,7 @@ def _session(**methods):
 def _adapter(creds="default"):
     oauth = AsyncMock(spec=OAuthCredentialsPort)
     oauth.get.return_value = _creds() if creds == "default" else creds
-    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    mirror_get(oauth)
     return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive")), oauth
 
 

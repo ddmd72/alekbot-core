@@ -27,6 +27,7 @@ from src.services.drive_indexing_service import DriveIndexingService
 
 from .drive_index_fakes import Clock, FakeEmbeddings, FakeQueue, FakeUsers
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _FIX = Path(__file__).resolve().parents[2] / "fixtures" / "onedrive_delta"
 APPROOT = json.loads((_FIX / "approot.json").read_text(encoding="utf-8"))
@@ -101,7 +102,7 @@ class TestParentLookupTransportFailureIsPerItem:
     async def test_get_change_failure_in_a_parent_lookup_backs_off_the_record_not_the_tick(self, error):
         oauth = AsyncMock(spec=OAuthCredentialsPort)
         oauth.get.return_value = _creds()
-        oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+        mirror_get(oauth)
         adapter = OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
         repo, queue, users, clock = InMemoryDriveIndexRepository(), FakeQueue(), FakeUsers(), Clock()
         svc = DriveIndexingService(adapter, repo, FakeEmbeddings(), queue, users, lambda lat, lon: "", "test-space/8",

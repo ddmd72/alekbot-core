@@ -12,6 +12,7 @@ from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 MARKER = "SECRET-TRANSCRIPT-MARKER"
 
@@ -50,7 +51,7 @@ def _oauth():
         token_expiry=datetime.now(timezone.utc) - timedelta(minutes=1),
         scopes=[],
     )
-    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    mirror_get(oauth)
     return oauth
 
 

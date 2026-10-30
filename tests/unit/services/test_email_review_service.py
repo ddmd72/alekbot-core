@@ -39,6 +39,7 @@ from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.services.email_review_service import EmailReviewService
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +53,8 @@ def _make_service():
     email_provider.refresh_token = AsyncMock()
 
     oauth = MagicMock()
-    oauth.list_for_user = AsyncMock()
+    oauth.get = AsyncMock()
+    mirror_get(oauth)
     oauth.list_user_ids = AsyncMock()
     oauth.save = AsyncMock()
     oauth.update = AsyncMock(return_value=True)   # the record exists: a refresh replaces it
@@ -203,7 +205,8 @@ class TestFetchReviewPayload:
 
     async def test_no_credentials_returns_none(self):
         svc, _, oauth = _make_service()
-        oauth.list_for_user = AsyncMock(return_value=[])
+        oauth.get = AsyncMock(return_value=None)
+        mirror_get(oauth)
 
         result = await svc.fetch_review_payload("user-1")
 
@@ -212,7 +215,8 @@ class TestFetchReviewPayload:
     async def test_token_refresh_fails_returns_none(self):
         svc, email_provider, oauth = _make_service()
         creds = _make_creds(expiring_soon=True)
-        oauth.list_for_user = AsyncMock(return_value=[creds])
+        oauth.get = AsyncMock(return_value=creds)
+        mirror_get(oauth)
         email_provider.refresh_token = AsyncMock(side_effect=RuntimeError("revoked"))
 
         result = await svc.fetch_review_payload("user-1")
@@ -222,7 +226,8 @@ class TestFetchReviewPayload:
     async def test_no_emails_returns_empty_list(self):
         svc, email_provider, oauth = _make_service()
         creds = _make_creds()
-        oauth.list_for_user = AsyncMock(return_value=[creds])
+        oauth.get = AsyncMock(return_value=creds)
+        mirror_get(oauth)
         email_provider.list_emails = AsyncMock(return_value=([], None))
 
         result = await svc.fetch_review_payload("user-1")
@@ -232,7 +237,8 @@ class TestFetchReviewPayload:
     async def test_single_page_returns_structured_list(self):
         svc, email_provider, oauth = _make_service()
         creds = _make_creds()
-        oauth.list_for_user = AsyncMock(return_value=[creds])
+        oauth.get = AsyncMock(return_value=creds)
+        mirror_get(oauth)
         meta = _make_metadata("e1")
         email_provider.list_emails = AsyncMock(return_value=([meta], None))
         fc = _make_full_content("e1", body_text="Full body", attachments=["doc.pdf"])
@@ -249,7 +255,8 @@ class TestFetchReviewPayload:
     async def test_pagination_fetches_all_pages(self):
         svc, email_provider, oauth = _make_service()
         creds = _make_creds()
-        oauth.list_for_user = AsyncMock(return_value=[creds])
+        oauth.get = AsyncMock(return_value=creds)
+        mirror_get(oauth)
 
         meta1 = _make_metadata("e1")
         meta2 = _make_metadata("e2")
@@ -273,7 +280,8 @@ class TestFetchReviewPayload:
     async def test_email_missing_from_full_content_has_empty_body(self):
         svc, email_provider, oauth = _make_service()
         creds = _make_creds()
-        oauth.list_for_user = AsyncMock(return_value=[creds])
+        oauth.get = AsyncMock(return_value=creds)
+        mirror_get(oauth)
         meta = _make_metadata("e1")
         email_provider.list_emails = AsyncMock(return_value=([meta], None))
         email_provider.batch_get_full_content = AsyncMock(return_value={})  # e1 absent

@@ -16,6 +16,7 @@ from quart import Quart
 from src.domain.email import IndexingJob
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _USER_ID = "user-1"
 _ACCOUNT_ID = "account-1"
@@ -74,7 +75,8 @@ class TestGmailIndexAsyncPath:
         )
 
         oauth_credentials_port = MagicMock()
-        oauth_credentials_port.list_for_user = AsyncMock(return_value=[MagicMock()])
+        oauth_credentials_port.get = AsyncMock(return_value=MagicMock())
+        mirror_get(oauth_credentials_port)
 
         app = _app(
             email_indexing_service=email_indexing_service,

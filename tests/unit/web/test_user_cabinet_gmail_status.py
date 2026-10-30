@@ -12,6 +12,7 @@ from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _USER_ID = "user-1"
 
@@ -22,7 +23,8 @@ def _app(creds):
         return_value={"sub": _USER_ID, "account_id": "account-1", "role": "owner"}
     )
     oauth = MagicMock()
-    oauth.list_for_user = AsyncMock(return_value=[creds])
+    oauth.get = AsyncMock(return_value=creds)
+    mirror_get(oauth)
     bp = create_user_cabinet_blueprint(
         invite_service=MagicMock(),
         session_service=session_service,

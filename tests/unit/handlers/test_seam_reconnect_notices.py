@@ -53,7 +53,7 @@ async def test_the_sweep_notice_lands_on_the_primary_not_the_last_active_channel
     assert answer == ({"candidates": 1, "notices": 1, "errors": 0}, 200)
     assert [(p.kind, p.value) for p in world.posts_to(*PRIMARY)] == [("text", TEXT)]
     assert world.posts_to(*TELEGRAM) == []
-    assert R1_NOTICES[Integration.GMAIL] in _alert_of(quick.received[0])
+    assert R1_NOTICES[Integration.MAIL] in _alert_of(quick.received[0])
     assert [role for role, _, _ in world.history(f"{USER}:C1")] == ["user", "model"]
     assert (await email.get_indexing_state(USER, "gmail")).reconnect_notified is True
 

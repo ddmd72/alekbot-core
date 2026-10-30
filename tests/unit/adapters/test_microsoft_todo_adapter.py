@@ -47,6 +47,7 @@ from src.ports.task_config_port import TaskConfigPort
 from src.ports.task_lifecycle_port import SubscriptionNotFoundError, TaskLifecyclePort
 from src.ports.tasks_provider_port import TasksProviderPort
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _USER_ID = "user-abc123"
 _LIST_ID = "list-1"
@@ -94,7 +95,7 @@ _MS_LIST = {"id": _LIST_ID, "displayName": "Alek Bot Tasks", "isOwner": True, "i
 def _make_adapter(creds=_VALID_CREDS):
     oauth = AsyncMock(spec=OAuthCredentialsPort)
     oauth.get.return_value = creds
-    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    mirror_get(oauth)
     oauth.save.return_value = None
     oauth.update.return_value = True         # the record exists: a refresh replaces it
 

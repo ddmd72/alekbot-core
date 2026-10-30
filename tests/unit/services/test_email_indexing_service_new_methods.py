@@ -22,6 +22,7 @@ from src.ports.indexed_email_repository import IndexedEmailRepository
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.services.email_indexing_service import EmailIndexingService
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +95,8 @@ def mock_job_repo():
 @pytest.fixture
 def mock_oauth():
     m = AsyncMock(spec=OAuthCredentialsPort)
-    m.list_for_user.return_value = [_make_creds()]
+    m.get.return_value = _make_creds()
+    mirror_get(m)
     m.list_user_ids.return_value = []
     return m
 
@@ -135,7 +137,8 @@ class TestLoadJobForExecution:
     async def test_returns_job_and_creds_when_all_ok(self, service, mock_job_repo, mock_oauth):
         job = _make_job(status="running")
         mock_job_repo.get_job.return_value = job
-        mock_oauth.list_for_user.return_value = [_make_creds()]
+        mock_oauth.get.return_value = _make_creds()
+        mirror_get(mock_oauth)
 
         result_job, result_creds, skip_reason = await service.load_job_for_execution(_JOB_ID)
 
@@ -175,7 +178,8 @@ class TestLoadJobForExecution:
 
     async def test_missing_creds_returns_failed_auth(self, service, mock_job_repo, mock_oauth):
         mock_job_repo.get_job.return_value = _make_job(status="running")
-        mock_oauth.list_for_user.return_value = []
+        mock_oauth.get.return_value = None
+        mirror_get(mock_oauth)
 
         job, creds, reason = await service.load_job_for_execution(_JOB_ID)
 
@@ -184,7 +188,8 @@ class TestLoadJobForExecution:
 
     async def test_missing_creds_updates_job_status(self, service, mock_job_repo, mock_oauth):
         mock_job_repo.get_job.return_value = _make_job(status="running")
-        mock_oauth.list_for_user.return_value = []
+        mock_oauth.get.return_value = None
+        mirror_get(mock_oauth)
 
         await service.load_job_for_execution(_JOB_ID)
 
@@ -199,7 +204,7 @@ class TestLoadJobForExecution:
 
         await service.load_job_for_execution(_JOB_ID)
 
-        mock_oauth.list_for_user.assert_called_once_with(job.user_id, job.provider)
+        mock_oauth.list_keys.assert_called_once_with(job.user_id, job.provider)
 
 
 # ===========================================================================
@@ -324,7 +329,8 @@ class TestStartIndexingForEligibleUsers:
 
     async def test_no_credentials_is_skipped(self, service, mock_oauth, mock_job_repo):
         mock_oauth.list_user_ids.return_value = [_USER_ID]
-        mock_oauth.list_for_user.return_value = []
+        mock_oauth.get.return_value = None
+        mirror_get(mock_oauth)
         mock_job_repo.get_latest_job.return_value = None
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(
@@ -340,7 +346,8 @@ class TestStartIndexingForEligibleUsers:
 
     async def test_eligible_user_creates_job(self, service, mock_oauth, mock_job_repo):
         mock_oauth.list_user_ids.return_value = [_USER_ID]
-        mock_oauth.list_for_user.return_value = [_make_creds()]
+        mock_oauth.get.return_value = _make_creds()
+        mirror_get(mock_oauth)
         mock_job_repo.get_latest_job.return_value = None
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(
@@ -358,7 +365,8 @@ class TestStartIndexingForEligibleUsers:
 
     async def test_created_job_has_correct_provider_and_mode(self, service, mock_oauth, mock_job_repo):
         mock_oauth.list_user_ids.return_value = [_USER_ID]
-        mock_oauth.list_for_user.return_value = [_make_creds()]
+        mock_oauth.get.return_value = _make_creds()
+        mirror_get(mock_oauth)
         mock_job_repo.get_latest_job.return_value = None
         user_repo = MagicMock()
         user_repo.get_user = AsyncMock(

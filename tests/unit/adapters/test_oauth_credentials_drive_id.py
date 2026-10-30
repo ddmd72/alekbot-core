@@ -12,6 +12,7 @@ from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
+from tests.support.oauth_credentials_store import mirror_get
 
 
 def _creds(**kw) -> OAuthCredential:
@@ -49,7 +50,7 @@ class TestRefresh:
         oauth.get.return_value = _creds(
             drive_id="D1", needs_reconnect=True,
             token_expiry=datetime.now(timezone.utc) + timedelta(minutes=1))
-        oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+        mirror_get(oauth)
         oauth.update.return_value = True                          # the record still exists
         provider = MicrosoftGraphTokenProvider(oauth, "cid", "csecret", "microsoft_onedrive",
                                                "Files.ReadWrite.AppFolder offline_access")

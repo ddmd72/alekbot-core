@@ -129,9 +129,9 @@ async def test_a_past_connection_without_a_credential_gets_one_notice_per_integr
     summary = await world.svc.sweep()
     assert summary == {"candidates": 2, "notices": 2, "errors": 0}
     assert world.notifier.calls == [
-        {"user_id": "user-a", "account_id": "acc-user-a", "alert": R1_NOTICES[Integration.GMAIL],
+        {"user_id": "user-a", "account_id": "acc-user-a", "alert": R1_NOTICES[Integration.MAIL],
          "kind": NotificationKind.DOCUMENT_DELIVERY},
-        {"user_id": "user-a", "account_id": "acc-user-a", "alert": R1_NOTICES[Integration.TODO],
+        {"user_id": "user-a", "account_id": "acc-user-a", "alert": R1_NOTICES[Integration.TASKS],
          "kind": NotificationKind.DOCUMENT_DELIVERY},
     ]
     assert world.ensured == ["user-a", "user-a"]
@@ -164,8 +164,8 @@ async def test_a_consent_clears_the_flag_and_the_next_loss_notifies_again(world)
     await world.svc.sweep()
     await world.connect("user-a", "gmail")
     await world.connect("user-a", "microsoft_todo")
-    await world.svc.consented("user-a", Integration.GMAIL)
-    await world.svc.consented("user-a", Integration.TODO)
+    await world.svc.consented("user-a", Integration.MAIL)
+    await world.svc.consented("user-a", Integration.TASKS)
     assert (await world.email.get_indexing_state("user-a", "gmail")).reconnect_notified is False
     assert (await world.tasks.get_config("user-a")).reconnect_notified is False
     await delete_kind(world.creds, "user-a", "gmail")
@@ -188,12 +188,12 @@ async def test_a_credential_that_is_back_lowers_the_flag_without_a_consent(world
 
 async def test_a_deliberate_gmail_disconnect_sends_none_and_a_consent_clears_the_mark(world):
     await world.gmail_state("user-a")
-    await world.svc.mark_disconnected("user-a", Integration.GMAIL)
+    await world.svc.mark_disconnected("user-a", Integration.MAIL)
     assert world.db.collection(STATE).docs["user-a_gmail"]["disconnected_by_user_at"] == NOW
     assert (await world.svc.sweep())["notices"] == 0
     assert world.notifier.calls == []
-    assert await world.svc.status("user-a", (Integration.GMAIL,)) == {"gmail": False}
-    await world.svc.consented("user-a", Integration.GMAIL)
+    assert await world.svc.status("user-a", (Integration.MAIL,)) == {"gmail": False}
+    await world.svc.consented("user-a", Integration.MAIL)
     assert (await world.email.get_indexing_state("user-a", "gmail")).disconnected_by_user_at is None
 
 
@@ -207,7 +207,7 @@ async def test_a_reset_to_do_config_sends_none(world):
 
 async def test_to_do_has_no_disconnect_mark(world):
     with pytest.raises(ValueError):
-        await world.svc.mark_disconnected("user-a", Integration.TODO)
+        await world.svc.mark_disconnected("user-a", Integration.TASKS)
 
 
 async def test_notify_raising_leaves_the_flag_down_and_the_next_sweep_retries(world):

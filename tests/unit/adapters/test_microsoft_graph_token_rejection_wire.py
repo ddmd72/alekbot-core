@@ -22,6 +22,7 @@ from src.domain.provider_account import ProviderAccount
 from src.domain.user_drive import DriveReauthRequired
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
+from tests.support.oauth_credentials_store import mirror_get
 
 _INTERACTION = {"error": "interaction_required",
                 "error_description": "AADSTS50076: Due to a configuration change made by your administrator, "
@@ -70,7 +71,7 @@ def _session(post):
 def _oauth():
     oauth = AsyncMock(spec=OAuthCredentialsPort)
     oauth.get.return_value = _creds()
-    oauth.list_for_user.side_effect = lambda *a, **k: [oauth.get.return_value] if oauth.get.return_value else []
+    mirror_get(oauth)
     return oauth
 
 
