@@ -88,13 +88,7 @@ class World:
                 google_tasks_oauth_redirect_uri="https://app.example/auth/connect-google-tasks/callback",
                 access_token_ttl=86400, refresh_token_ttl=86400,
             ),
-            gmail_oauth_service=Tripwire("gmail_oauth_service", self.touched),
-            oauth_credentials_port=self.credentials,
-            google_tasks_oauth_service=Tripwire("google_tasks_oauth_service", self.touched),
-            ms_todo_client_id="ms-client", ms_todo_client_secret="ms-secret",
-            ms_todo_redirect_uri="https://app.example/auth/connect-microsoft-todo/callback",
-            onedrive_redirect_uri="https://app.example/auth/connect-onedrive/callback",
-            task_queue=self.task_queue, connectors=ConnectorRegistry(),
+            connect_service=Tripwire("connect_service", self.touched), connectors=ConnectorRegistry(),
         ))
         self.client = self.app.test_client()
 

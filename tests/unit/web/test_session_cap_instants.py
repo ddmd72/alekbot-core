@@ -83,13 +83,7 @@ async def _world():
             google_tasks_oauth_redirect_uri="https://app.example/auth/connect-google-tasks/callback",
             access_token_ttl=DAY, refresh_token_ttl=DAY,
         ),
-        gmail_oauth_service=Tripwire("gmail_oauth_service", touched),
-        oauth_credentials_port=Tripwire("oauth_credentials_port", touched),
-        google_tasks_oauth_service=Tripwire("google_tasks_oauth_service", touched),
-        ms_todo_client_id="ms-client", ms_todo_client_secret="ms-secret",
-        ms_todo_redirect_uri="https://app.example/auth/connect-microsoft-todo/callback",
-        onedrive_redirect_uri="https://app.example/auth/connect-onedrive/callback",
-        task_queue=Tripwire("task_queue", touched), connectors=ConnectorRegistry(),
+        connect_service=Tripwire("connect_service", touched), connectors=ConnectorRegistry(),
     ))
     return app.test_client()
 
