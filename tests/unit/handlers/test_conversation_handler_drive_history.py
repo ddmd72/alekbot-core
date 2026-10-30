@@ -36,9 +36,10 @@ def _drive_context():
     c = PassThroughCollector()
     c.add(1, t.KIND_SEARCH, DriveOutcome(op=DriveOp.SEARCH, cls=OutcomeClass.OK, text="cards", success=True,
                                          items=(LAB, LEASE), request_text="lab report", ref_tag="a1"))
-    f = excerpt_file(LAB.item_id, LAB.path, [chunk(LAB.item_id, 2, "a"), chunk(LAB.item_id, 3, "b")])
+    f = excerpt_file(LAB.item_id, LAB.path, [chunk(LAB.item_id, 2, "a"), chunk(LAB.item_id, 3, "b")], ref_tag="a1")
     c.add(2, t.KIND_PASSAGES, DriveOutcome(op=DriveOp.PASSAGES, cls=OutcomeClass.OK, text="p", success=True,
-                                           items=(LAB,), excerpts=result(f, question="LAB-2025-03-0417 values"),
+                                           items=(LAB,), excerpts=result(f, question="LAB-2025-03-0417 values",
+                                                                         ref_tag="a1"),
                                            ref_tag="a1"))
     return [c.drive_context()]
 

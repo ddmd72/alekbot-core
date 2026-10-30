@@ -32,8 +32,9 @@ RD = FolderNote("f-rd", "R&D", 1, "noted by the owner: «Acme specifications; th
 OWN = "noted by the owner: «Tom's draft, not final»"
 NOTED = ExcerptContext(files=(FileContext("item-1", TOMS_PLAN, ("f-rd",), "Tom Baker's plan for the review", OWN),),
                        folders={"f-rd": RD})
-FIRST = result(excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 2, "After the first review, Acme signs off.")]),
-               question=QUESTION, context=NOTED)
+FIRST = result(excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 2, "After the first review, Acme signs off.")],
+                            ref_tag="a1"),
+               question=QUESTION, context=NOTED, ref_tag="a1")
 
 
 def outcome_of(found: ExcerptResult, *, shown_folders=frozenset(), described_files=frozenset()) -> DriveOutcome:
@@ -108,8 +109,9 @@ async def test_a_found_passage_enters_the_ledger_and_drive_context():
 
 
 async def test_a_second_find_gets_the_ledgers_sets_and_prints_the_context_no_more():
-    second = result(excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 5, "The second review closes the plan.")]),
-                    question=QUESTION, context=NOTED)
+    second = result(excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 5, "The second review closes the plan.")],
+                                 ref_tag="a1"),
+                    question=QUESTION, context=NOTED, ref_tag="a1")
     ops = _ops(FIRST, second)
     run, _ = _run(ops)
     first_seen = await _call(run, tt.FIND_PASSAGES, question=QUESTION)
@@ -134,8 +136,9 @@ async def test_a_repeated_match_is_listed_by_id():
 
 async def test_read_passages_makes_one_call_with_the_context_sets_only():
     ranged = result(excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 2, "After the first review, Acme signs off."),
-                                                       chunk("item-1", 3, "Then Lukas Weber approves the budget.")]),
-                    request=ExcerptRangeRequest("drive:a1:item-1", 3, 4), context=NOTED)
+                                                       chunk("item-1", 3, "Then Lukas Weber approves the budget.")],
+                                 ref_tag="a1"),
+                    request=ExcerptRangeRequest("drive:a1:item-1", 3, 4), context=NOTED, ref_tag="a1")
     ops = _ops(FIRST, ranged=ranged)
     run, collector = _run(ops)
     await _call(run, tt.FIND_PASSAGES, question=QUESTION)

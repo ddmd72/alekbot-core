@@ -31,8 +31,9 @@ from tests.unit.domain.drive_excerpt_builders import LEASE, TOMS_PLAN, chunk, ex
 
 CTX = {"user_id": "u1", "account_id": "a1"}
 QUESTION = "What does Tom's plan say happens after the first review?"
-PLAN = excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 2, "After the first review, Acme signs off.")])
-LEASE_FILE = excerpt_file("item-2", LEASE, [chunk("item-2", 0, "The rent is due on the first day.")], kind="pdf")
+PLAN = excerpt_file("item-1", TOMS_PLAN, [chunk("item-1", 2, "After the first review, Acme signs off.")], ref_tag="a1")
+LEASE_FILE = excerpt_file("item-2", LEASE, [chunk("item-2", 0, "The rent is due on the first day.")], kind="pdf",
+                          ref_tag="a1")
 RD_NOTE = "noted by the owner: «Acme specifications; the review process lives here»"
 RD = FolderNote("f-rd", "R&D", 1, RD_NOTE)
 NOTED = ExcerptContext(files=(FileContext("item-1", TOMS_PLAN, ("f-rd",)),), folders={"f-rd": RD})
