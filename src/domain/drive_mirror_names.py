@@ -28,7 +28,7 @@ import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from .drive_index_params import MIRROR_NAME_MAX, MIRROR_PATH_MARGIN, ONEDRIVE_PATH_MAX
+from .drive_index_params import MIRROR_NAME_MAX, MIRROR_PATH_MARGIN
 from .drive_match import Concept
 from .user_drive import name_key
 from .drive_mirror import ARCHIVE_NAME, LONG_PATHS_NAME, README_NAME, ROOT_NAME
@@ -138,9 +138,9 @@ def full_path_length(area_path: str, root_path: str, parts: Sequence[str]) -> in
     return sum(len(c) for c in comps) + max(len(comps) - 1, 0)
 
 
-def fits(area_path: str, root_path: str, parts: Sequence[str], max_path: int = ONEDRIVE_PATH_MAX) -> bool:
-    """True when the path is within the drive's path limit (`max_path`, the connection's `max_path_chars`; default
-    OneDrive's) minus MIRROR_PATH_MARGIN."""
+def fits(area_path: str, root_path: str, parts: Sequence[str], max_path: int) -> bool:
+    """True when the path is within the drive's path limit (`max_path`, the connection's `max_path_chars`) minus
+    MIRROR_PATH_MARGIN."""
     return full_path_length(area_path, root_path, parts) <= max_path - MIRROR_PATH_MARGIN
 
 
@@ -152,7 +152,7 @@ class Placement:
 
 
 def place(active_parts: Sequence[str], *, area_path: str, root_path: str,
-          max_path: int = ONEDRIVE_PATH_MAX) -> Placement:
+          max_path: int) -> Placement:
     """The active location, or `Long paths/<name>` when the path does not fit (§27.9.7)."""
     parts = tuple(active_parts)
     if not parts:
@@ -163,7 +163,7 @@ def place(active_parts: Sequence[str], *, area_path: str, root_path: str,
 
 
 def archive_place(day: str, active_parts: Sequence[str], *, area_path: str, root_path: str,
-                  max_path: int = ONEDRIVE_PATH_MAX) -> Placement:
+                  max_path: int) -> Placement:
     """`Archive/<day>/<mirror path>`, or `Archive/<day>/Long paths/<name>` when it does not fit (§27.9.6, Δ189)."""
     if not active_parts:
         raise ValueError("archive_place: active_parts is empty")

@@ -41,12 +41,10 @@ attached text file through `notify_file_bytes`, sent first. The records are mark
 unmarked when the list was not sent; this fan-out is the only writer of `inaccessible_notified_since`.
 
 The initial build is keyed by the connection's provider account (MULTI_DRIVE_RFC §10, D8), read from the connection's
-`provider_account`. A connection stored before that field gets it here: `account_of(user_id, credential_id)`
-(composition) decrypts the credential once and the account is written back; without an account (the credential is
-gone) the stall check counts no initial build.
+`provider_account`; a connection without one is a programming error (logged) and counts no initial build.
 
 Public interface:
-    DriveSyncSchedulerService(repo, queue, connections, notifier, alert_sink, *, connection_service, account_of,
+    DriveSyncSchedulerService(repo, queue, connections, notifier, alert_sink, *, connection_service,
                               clock, ensure_agents, localization, language)
     await fan_out() -> Dict[str, int]
 """
@@ -75,7 +73,6 @@ from ..domain.language import LanguageCode
 from ..domain.notification_kind import NotificationKind
 from ..domain.notify_result import empty_answer_alert, is_empty_answer
 from ..domain.integration import Integration
-from ..domain.provider_account import ProviderAccount
 from ..domain.reconnect_policy import R1_NOTICES
 from ..domain.ui_messages import UIMessage
 from ..domain.drive_usage import closed_initial, new_initial_build
@@ -101,8 +98,6 @@ RECONNECT_NOTICE = (
     "them, and that the fix is Cabinet → Drive → Reconnect."
 )
 _CONTINUATION_FRESH = timedelta(seconds=TICK_DEADLINE_S)
-# The provider account of a connection's grant (realm, subject): the initial build's key (MULTI_DRIVE_RFC §10)
-AccountOf = Callable[[str, str], Awaitable[Optional[ProviderAccount]]]
 
 
 def _tag(scope: ConnectionScope) -> str:
@@ -118,7 +113,6 @@ class DriveSyncSchedulerService:
     def __init__(self, repo: DriveIndexRepository, queue: TaskQueue, connections: DriveConnectionRepository,
                  notifier: Optional["UserNotificationService"], alert_sink: Optional[AlertSinkPort], *,
                  connection_service: Optional["DriveConnectionService"] = None,
-                 account_of: Optional[AccountOf] = None,
                  clock: Callable[[], datetime] = _utcnow,
                  ensure_agents: Optional[Callable[[str], Awaitable[Any]]] = None,
                  localization: Optional["LocalizationService"] = None,
@@ -127,7 +121,6 @@ class DriveSyncSchedulerService:
         self._queue = queue
         self._connections = connections
         self._connection_service = connection_service
-        self._account_of = account_of
         self._notifier = notifier
         self._alert_sink = alert_sink
         self._clock = clock
@@ -204,16 +197,12 @@ class DriveSyncSchedulerService:
         return (connection, state) if state is not None else None
 
     async def _initial_build(self, connection: DriveConnection) -> InitialBuild:
-        """The initial build of the connection's provider account (D8); a closed one when the account is unknown (no
-        `account_of`, or the credential is gone), so only the month's caps count."""
+        """The initial build of the connection's provider account (D8). A connection without one is a programming error
+        (activation always stores it): logged, and a closed build, so only the month's caps count."""
         account = connection.provider_account
-        if account is None and self._account_of:
-            # a connection stored before the field: one decrypt, then the account is kept on the connection
-            account = await self._account_of(connection.user_id, connection.credential_id)
-            if account is not None:
-                await self._connections.update(connection.user_id, connection.connection_id,
-                                               provider_account=ProviderAccount(account.realm, account.subject, ""))
         if account is None:
+            logger.error(f"[DriveSync] connection {connection.connection_id[:8]} of {connection.user_id[:8]} has no "
+                         f"provider account: no initial build counted")
             return closed_initial(new_initial_build(), self._clock())
         return await self._repo.get_initial_build(connection.user_id, account.realm, account.subject)
 

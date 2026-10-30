@@ -693,7 +693,6 @@ class DriveIndexingService:
                  notes: Optional[DriveNoteRepository] = None,
                  note_lifecycle: Optional["DriveNoteLifecycle"] = None,
                  connections: Optional["DriveConnectionService"] = None,
-                 account_of: Optional[Callable[[str, str], Awaitable[Optional[ProviderAccount]]]] = None,
                  clock: Callable[[], datetime] = _utcnow, monotonic: Callable[[], float] = time.monotonic) -> None:
         if connections is None:
             raise ValueError("the tick needs the drive connection service: it loads each tick's connection")
@@ -744,9 +743,8 @@ class DriveIndexingService:
         # hold ends (process memory only; a restart tries it once more), keyed (user, note id, version)
         self._note_embed_holds: Dict[Tuple[str, str, int], datetime] = {}
         # the drive connections (MULTI_DRIVE_RFC §8): each tick's connection, its switches, and the reconnect flag;
-        # `account_of(user_id, credential_id)` gives the grant's provider account, the initial build's key (§10, D8)
+        # the connection's `provider_account` is the initial build's key (§10, D8)
         self._connections: "DriveConnectionService" = connections
-        self._account_of = account_of
         self._clock = clock
         self._monotonic = monotonic
         self._gate_checked: Dict[str, float] = {}   # by connection id
@@ -4701,22 +4699,20 @@ class DriveIndexingService:
 
     async def _initial_build(self, handle: DriveHandle, account: Optional[ProviderAccount]) -> InitialBuild:
         """The initial build of the connection's provider account (MULTI_DRIVE_RFC §10, D8); a closed one when the
-        account is unknown (no `account_of`, or the credential is gone), so only the month's caps count."""
+        account is unknown (a connection without one is a programming error, logged), so only the month's caps count."""
         if account is None:
             return closed_initial(new_initial_build(), self._clock())
         return await self._repo.get_initial_build(handle.user_id, account.realm, account.subject)
 
     async def _account(self, handle: DriveHandle, connection: Optional[DriveConnection] = None) -> Optional[ProviderAccount]:
-        """The connection's provider account, from the connection when it holds one (no decrypt); otherwise (a
-        connection stored before the field, or no connection at hand) from the credential through `account_of`."""
-        if connection is not None and connection.provider_account is not None:
-            return connection.provider_account
-        if self._account_of is None:
-            return None
-        account = await self._account_of(handle.user_id, handle.credential_id)
+        """The provider account the connection was activated with. None only for a connection that lacks it, a
+        programming error: logged at ERROR and no initial build is counted this tick."""
+        if connection is None:
+            connection = await self._connections.get(handle.user_id, handle.connection_id)
+        account = connection.provider_account if connection is not None else None
         if account is None:
-            logger.warning(f"[DriveIndex] no credential for connection {handle.connection_id[:8]} of "
-                           f"{handle.user_id[:8]}: no initial build counted")
+            logger.error(f"[DriveIndex] connection {handle.connection_id[:8]} of {handle.user_id[:8]} has no provider "
+                         f"account: no initial build counted")
         return account
 
     @staticmethod

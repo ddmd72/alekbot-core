@@ -8,7 +8,6 @@ def test_fits_follows_the_given_limit():
     parts = ["x" * 90]
     assert fits("", "", parts, 90 + MIRROR_PATH_MARGIN)
     assert not fits("", "", parts, 90 + MIRROR_PATH_MARGIN - 1)
-    assert fits("", "", parts)                              # the default limit is larger
 
 
 def test_place_goes_to_long_paths_under_a_short_limit_only():

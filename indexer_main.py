@@ -76,7 +76,7 @@ from src.composition.connector_registry import MICROSOFT_ONEDRIVE, ConnectorRegi
 from src.composition.drive_connection_setup import build_drive_connection_service
 from src.composition.drive_provider_router import DriveProviderRouter
 from src.composition.drive_indexing_setup import (
-    account_reader, build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue,
+    build_drive_index_repository, build_drive_mirror_repository, build_drive_task_queue,
     build_place_lookup,
 )
 from src.composition.drive_model_setup import build_drive_mirror, build_drive_models, build_drive_transcription
@@ -203,7 +203,6 @@ def build_app() -> Quart:
         notes=note_repo,
         note_lifecycle=note_lifecycle,
         connections=connections,
-        account_of=account_reader(oauth_credentials),
     )
 
     app.register_blueprint(create_indexer_worker_blueprint(indexing, gate))

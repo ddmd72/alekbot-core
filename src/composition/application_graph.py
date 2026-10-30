@@ -716,7 +716,6 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
             queue=container.drive_task_queue,
             connections=container.drive_connection_repo,
             connection_service=container.drive_connection_service,
-            oauth_credentials=oauth_credentials_port,
             notifier=notification_service,
             alert_sink=_alert_webhook,
             ensure_agents=agent_factory.ensure_agents_for_user,
