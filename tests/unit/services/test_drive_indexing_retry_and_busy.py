@@ -64,7 +64,7 @@ class TestBusyTickComesBack:
         assert (await w.tick()).status == "busy"          # a redelivery of the same task
         requeued = w.queue.tasks[before:]
         assert len(requeued) == 1 and requeued[0]["delay"] == NUDGE_RETRY_DELAY_S
-        assert requeued[0]["payload"] == {"user_id": "u"}
+        assert requeued[0]["payload"] == {"user_id": "u", "connection_id": "u"}
 
     async def test_a_continuation_racing_its_parent_is_not_lost(self):
         """With more than one dispatch slot a continuation runs at once. It is enqueued only after its tick released
