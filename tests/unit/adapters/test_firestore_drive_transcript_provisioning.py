@@ -51,8 +51,8 @@ async def test_documents_and_subcollections_live_under_the_prefixed_names(run):
     from src.domain.drive_transcript import Segment, StitchedTranscript, WindowTranscript
     db, repo = run
     await repo.save_transcript_job(TranscriptJob(user_id="u", connection_id="u", item_id="i", content_key="k"))
-    await repo.save_window_result("u", "i", 3, WindowTranscript((), 1, True, ()))
-    await repo.create_batch(TranscriptBatch(name="batches/x", user_id="u"))
+    await repo.save_window_result(U_SCOPE, "i", 3, WindowTranscript((), 1, True, ()))
+    await repo.create_batch(TranscriptBatch(name="batches/x", user_id="u", connection_id="u"))
     await repo.put_transcript("u", StoredTranscript("k", StitchedTranscript((Segment(0.0, None, "a"),), (), 1, 1.0)))
     assert set(db.collection("t_jobs").docs) == {"u:i"} and set(db.collection("t_batches").docs) == {"u:batches%2Fx"}
     assert set(db.collection("t_jobs/u:i/t_windows").docs) == {"3"} and set(db.collection("t_store").docs) == {"u:k"}
