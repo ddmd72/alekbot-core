@@ -33,6 +33,7 @@ from src.ports.file_storage_port import FileStoragePort
 from src.services.drive_search_service import DriveSearchService
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
+from tests.support.drive_service_connections import ConnectionReads
 
 CTX = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
 FILE = DriveItem(item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", is_folder=False, size_bytes=2048,
@@ -40,9 +41,16 @@ FILE = DriveItem(item_id="f1", name="lease.pdf", path="Inbox/lease.pdf", is_fold
 FOLDER = DriveItem(item_id="d1", name="Inbox", path="Inbox", is_folder=True)
 
 
+class _Reads(ConnectionReads):
+    pass
+
+
 @pytest.fixture
 def drive():
     d = AsyncMock(spec=UserDriveService)
+    reads = _Reads()
+    d.primary.side_effect = reads.primary
+    d.resolve_ref.side_effect = reads.resolve_ref
     d.get_item.return_value = FILE
     return d
 
@@ -140,7 +148,7 @@ def _card(**kw):
     (DriveSearchResult(status=STATUS_OK, awaiting_rebuild=True), OutcomeClass.REBUILDING),
     (DriveSearchResult(status=STATUS_FOLDER_NOT_FOUND), OutcomeClass.NOT_FOUND),
     (DriveSearchResult(status=STATUS_OK), OutcomeClass.NOT_FOUND),
-    (DriveSearchResult(status=STATUS_OK, cards=(_card(),)), OutcomeClass.OK),
+    (DriveSearchResult(status=STATUS_OK, cards=(_card(),), ref_tag="a1"), OutcomeClass.OK),
 ])
 async def test_search_class_comes_from_the_typed_result(ops, search, result, cls):
     search.search.return_value = result
@@ -159,7 +167,7 @@ async def test_read_facts_come_from_the_cards(ops, search):
         status=STATUS_OK,
         cards=(_card(passage="…deposit…", card_accuracy=80), _card(kind="image", capture="scan", inaccessible=True)),
         envelope=DriveSearchEnvelope(building=True),
-        tiered=TieredResult(concepts=("lease",), coverage=CoverageFacts(not_read_yet=2)))
+        tiered=TieredResult(concepts=("lease",), coverage=CoverageFacts(not_read_yet=2)), ref_tag="a1")
     out = await ops.search(CTX, "u1", query="lease")
     # Reviewer (USER_DRIVE_INDEXING_RFC §28.3 A13, OQ-A2): the first card scores 80% with no capture recorded, so its
     # text is not known to be born-digital and low_accuracy_image is set
@@ -169,13 +177,13 @@ async def test_read_facts_come_from_the_cards(ops, search):
 
 async def test_plain_cards_carry_no_triggers(ops, search):
     search.search.return_value = DriveSearchResult(status=STATUS_OK, cards=(_card(),),
-                                                   tiered=TieredResult(concepts=("lease",)))
+                                                   tiered=TieredResult(concepts=("lease",)), ref_tag="a1")
     out = await ops.search(CTX, "u1", query="lease")
     assert out.facts == ReadFacts(cards=1)
 
 
 async def test_the_deleted_search_is_ok_with_hits_and_not_found_without(ops, search):
-    search.search_deleted.return_value = DeletedSearchResult("hits", [FILE])
+    search.search_deleted.return_value = DeletedSearchResult("hits", [FILE], ref_tag="a1")
     hit = await ops.search_deleted(CTX, "u1", "garden")
     search.search_deleted.return_value = DeletedSearchResult("none", [])
     miss = await ops.search_deleted(CTX, "u1", "garden")
@@ -248,7 +256,7 @@ async def test_one_user_one_lock_across_two_holders(ops, drive):
     """Two agents holding one DriveOperations serialize one user's mutations (§5.5)."""
     order = []
 
-    async def move(user_id, item_id, folder, new_name):
+    async def move(handle, item_id, folder, new_name):
         order.append(("start", folder))
         await asyncio.sleep(0.05)
         order.append(("end", folder))
