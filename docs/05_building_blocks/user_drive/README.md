@@ -58,7 +58,7 @@ Open bound and paging (RFC §29; built, not deployed): why a long file was not o
 | A recording shows "transcript: none" or sits in "waiting": which state it is in and why | §4.23 (states) |
 | What `_Transcripts` is, why a file appears, moves or vanishes there, what the archive is, how to find a deleted recording's transcript; why the bot refuses to write into the folder | §4.23 (the mirror folder) |
 | The mirror looks stuck: which counters, the status script, the errors and what each does | §4.23 (errors), §7 (mirror operations) |
-| How Smart reaches the drive: the drive specialist, its model and fallback, statuses, receipts, logs, evals | §6.7; `src/agents/CLAUDE.md` → Drive; [DRIVE_SPECIALIST_RFC.md](../../10_rfcs/DRIVE_SPECIALIST_RFC.md) |
+| How Smart reaches the drive: the drive specialist, its model and fallback, statuses, receipts, logs, evals | §6.7; `src/agents/CLAUDE.md` → Drive — Logs; [DRIVE_SPECIALIST_RFC.md](../../10_rfcs/DRIVE_SPECIALIST_RFC.md) |
 | Deploy order, owner steps, and why there is no rollback to Slice 1; the Search v2 rollout (D30 gate, rebuild); the transcripts switches and rollback | §7.2 |
 | The drive specialist's rollout and rollback | `docs/07_deployment/README.md` → "The drive specialist" and "Standing levers"; RFC §13 (the order) |
 | What the owner's note on a file is; which tool writes what; why a note was refused or not written on a reminder run | §4.24 |
