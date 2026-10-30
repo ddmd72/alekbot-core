@@ -261,8 +261,9 @@ class TestUpgradePassDoesNotSpin:
         await w.settle()
         monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 1, "geo_table": 2})
         st = await w.repo.get_sync_state(U_SCOPE)
-        assert await w.svc._has_more("u", replace(st, upgrade_cursor="i00003"), w.clock.now)
-        assert not await w.svc._has_more("u", replace(st, upgrade_cursor=None), w.clock.now)
+        handle = (await w.svc._connections.get("u", "u")).handle
+        assert await w.svc._has_more(handle, replace(st, upgrade_cursor="i00003"), w.clock.now)
+        assert not await w.svc._has_more(handle, replace(st, upgrade_cursor=None), w.clock.now)
 
     async def test_a_pass_that_wrote_continues_to_verify_in_chain(self, monkeypatch):
         """A pass that ended this tick having written (re-stamped or scheduled) continues the
@@ -273,8 +274,9 @@ class TestUpgradePassDoesNotSpin:
         await w.settle()
         monkeypatch.setattr(svc_mod, "CURRENT_VERSIONS", {"policy": 1, "card": 1, "geo_table": 2})
         st = replace(await w.repo.get_sync_state(U_SCOPE), upgrade_cursor=None)
-        assert await w.svc._has_more("u", st, w.clock.now, upgrade_wrote=True)
-        assert not await w.svc._has_more("u", st, w.clock.now, upgrade_wrote=False)
+        handle = (await w.svc._connections.get("u", "u")).handle
+        assert await w.svc._has_more(handle, st, w.clock.now, upgrade_wrote=True)
+        assert not await w.svc._has_more(handle, st, w.clock.now, upgrade_wrote=False)
 
 
 class TestRfcBehaviourPinned:
@@ -289,14 +291,14 @@ class TestRfcBehaviourPinned:
         orig = w.drive.get_changes
 
         async def other_drive(user_id, cursor):
-            return replace(await orig(user_id, cursor), drive_id="d2")
+            return replace(await orig(user_id, cursor), drive_identity="fake:d2")
 
         w.drive.get_changes = other_drive
         res = await w.tick()
         assert res.status == "purged" and w.repo.records == {}
         await w.settle()
         st = await w.repo.get_sync_state(U_SCOPE)
-        assert st.drive_id == "d2" and w.rec(a) is not None
+        assert st.drive_identity == "fake:d2" and w.rec(a) is not None
 
     @pytest.mark.slow
     async def test_probe_budget_spent_children_held_unresolved_then_resolved(self, monkeypatch):
