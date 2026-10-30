@@ -139,7 +139,8 @@ class OAuthConnectService:
     async def _store(self, flow: OAuthFlow, spec: ConnectorSpec, grant: GrantResult,
                      account_id: str) -> OAuthCredential:
         user_id = flow.user_id
-        held = await self._credentials.list_for_user(user_id, spec.kind)
+        keys = await self._credentials.list_keys(user_id, spec.kind)
+        held = [c for c in [await self._credentials.get(user_id, k.credential_id) for k in keys] if c is not None]
         target: Optional[OAuthCredential] = None
         if flow.intent is FlowIntent.RECONNECT:
             target = next((c for c in held if c.credential_id == flow.target_id), None)
@@ -156,13 +157,11 @@ class OAuthConnectService:
                                 integration=spec.integration, account=grant.account,
                                 access_token=grant.access_token, refresh_token=grant.refresh_token,
                                 token_expiry=grant.token_expiry, scopes=list(grant.scopes))
-        await self._credentials.save(fresh)
-        now_held = await self._credentials.list_for_user(user_id, spec.kind)
-        saved = next((c for c in now_held if c.account.realm == grant.account.realm
-                      and c.account.subject == grant.account.subject), fresh)
+        saved_id = await self._credentials.save(fresh)
+        saved = replace(fresh, credential_id=saved_id)
         if not spec.multiple:
-            for old in now_held:
-                if old.credential_id != saved.credential_id:
+            for old in keys:
+                if old.credential_id != saved_id:
                     await self._remove_credential(user_id, old.credential_id)
         return saved
 
