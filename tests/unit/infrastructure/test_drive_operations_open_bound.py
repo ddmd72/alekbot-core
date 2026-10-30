@@ -17,15 +17,17 @@ from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_search import REFERENCE_REMINDER
 from src.domain.drive_text_extent import ExtentState, ExtentWhy, TextExtent
 from src.domain import drive_open_texts as T
-from src.domain.user_drive import DriveConnection, DriveItem
+from src.domain.user_drive import DriveItem
 from src.infrastructure.drive_operations import DriveOperations
 from src.services.user_drive_service import UserDriveService
+
+from tests.support.drive_service_connections import ConnectionReads
 
 from .test_drive_operations_uncovered_paths import CTX, FakeConversion
 
 PATH = "Docs/Oak Street parking rules.md"
 RULES = DriveItem(item_id="r1", name="Oak Street parking rules.md", path=PATH, is_folder=False, size_bytes=300_000,
-                  mime_type="text/markdown")
+                  mime_type="text/markdown", identity="fake_a:drive-1:r1")
 SCAN = DriveItem(item_id="p1", name="Garage plan.pdf", path="Docs/Garage plan.pdf", is_folder=False, size_bytes=5000,
                  mime_type="application/pdf")
 PHOTO = DriveItem(item_id="i1", name="Space 14.jpg", path="Docs/Space 14.jpg", is_folder=False, size_bytes=5000,
@@ -58,13 +60,13 @@ class FakeExtentSearch:
         self.extent_asks: list[str] = []
         self.transcript_asks: list[str] = []
 
-    async def text_extent(self, user_id, item_id):
+    async def text_extent(self, conn, item_id):
         self.extent_asks.append(item_id)
         if self.raises is not None:
             raise self.raises
         return self.extents.get(item_id, TextExtent(ExtentState.NOT_INDEXED, ExtentWhy.NOT_READ))
 
-    async def transcript_text(self, user_id, item_id, *, path="", label=""):
+    async def transcript_text(self, conn, item_id, *, path="", label=""):
         self.transcript_asks.append(item_id)
         return self.transcripts.get(item_id)
 
@@ -72,9 +74,17 @@ class FakeExtentSearch:
         return None
 
 
+class _Reads(ConnectionReads):
+    pass
+
+
 def _ops(conversion, search, *, note=None):
     drive = AsyncMock(spec=UserDriveService)
-    drive.connection.return_value = DriveConnection(connected=True, drive_id="d1")
+    reads = _Reads()
+    drive.primary.side_effect = reads.primary
+    drive.resolve_ref.side_effect = reads.resolve_ref
+    items = {item.item_id: item for item in conversion.items.values()}
+    drive.get_item.side_effect = lambda handle, item_id: items[item_id]
     kw = {}
     if note is not None:
         kw.update(drive_notes=note)
@@ -222,10 +232,7 @@ async def test_a_search_without_text_extent_is_unknown(caplog):
 # -- the note block, the wrapper and the logs ----------------------------------------------------------------------
 
 class _Notes:
-    async def drive_id_for_connection(self, user_id, connection):
-        return "d1"
-
-    async def note_for_item(self, user_id, drive_id, item_id):
+    async def note_for_item(self, user_id, identity):
         from types import SimpleNamespace
         return SimpleNamespace(text="the garage rules", doc_type=None, life_areas=())
 
