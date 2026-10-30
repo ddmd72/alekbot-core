@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.domain.connect_outcome import ConnectOutcome
 from src.domain.connector_spec import ConnectorSpec
 from src.domain.credential_key import CredentialKey
 from src.domain.flow_intent import FlowIntent
@@ -100,3 +101,13 @@ def test_the_provider_port_shape():
         "code", "flow", "spec", "redirect_uri"]
     assert inspect.iscoroutinefunction(OAuthProviderPort.exchange)
     assert inspect.iscoroutinefunction(OAuthProviderPort.revoke)
+
+
+def test_the_connect_outcome_is_a_frozen_value_with_the_cabinet_as_its_default_return():
+    """What `OAuthConnectService.complete` returns and the callback route maps to `?connected=` / `?connect_error=`
+    (MULTI_DRIVE_RFC §5.2): the flow's kind (None for an unknown flow), the status, the return path."""
+    assert _fields(ConnectOutcome) == ["kind", "status", "return_path"]
+    outcome = ConnectOutcome(kind=None, status="state")
+    assert outcome.return_path == "/cabinet"
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        outcome.status = "connected"
