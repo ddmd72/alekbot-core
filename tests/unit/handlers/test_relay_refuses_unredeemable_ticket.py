@@ -20,6 +20,7 @@ from src.services.voice_session_service import VoiceSessionService
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
 from tests.support.firestore_eval import EvalDb, eval_transactions
 from tests.unit.web.gate_fakes import Tripwire
+from tests.support.voice_tickets import ticket_key
 
 MAIN = "https://main.example.test"
 RELAY_TOKEN = "relay-oidc-token"
@@ -64,7 +65,7 @@ class World:
             ephemeral_store=self.store, quota_service=Tripwire("quota_service", self.touched),
             prompt_content_store=Tripwire("prompt_content_store", self.touched),
             summary_consumer=Tripwire("summary_consumer", self.touched).consume,
-            oidc_verifier=relay_only, alert_sink=Tripwire("alert_sink", self.touched),
+            oidc_verifier=relay_only, alert_sink=Tripwire("alert_sink", self.touched), digest_key=b"k" * 32
         ))
         self.http = httpx.AsyncClient(transport=httpx.ASGITransport(app=main), base_url=MAIN)
         control_plane = HttpCallControlPlaneAdapter(MAIN, id_token_provider=lambda: RELAY_TOKEN, http_client=self.http)
@@ -96,7 +97,7 @@ async def test_unknown_ticket_ends_the_call_before_a_session_opens():
 async def test_redeemed_ticket_cannot_start_a_second_call():
     w = World()
     with eval_transactions():
-        await w.store.set("voice_ticket:t1", {"user_id": "u1", "account_id": "a1", "instructions": "x"}, ttl_s=300)
+        await w.store.set(ticket_key("t1"), {"user_id": "u1", "account_id": "a1", "instructions": "x"}, ttl_s=300)
         first = await w.http.post("/voice/session-config", json={"ticket": "t1"},
                                   headers={"Authorization": f"Bearer {RELAY_TOKEN}"})
         assert first.status_code == 200              # the legitimate relay redeemed it

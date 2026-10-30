@@ -7,7 +7,11 @@ import pytest
 import src.services.voice_session_service as voice_module
 from src.domain.voice_playback_tracker import PlaybackTracker
 from src.ports.realtime_session_port import RealtimeSessionEvent as E
+from src.domain.secret_digest import fingerprint
 from src.services.voice_session_service import VoiceSessionService
+
+# Log lines name the call by its ticket's fingerprint, never the ticket itself.
+_CALL_T1 = f"voice call {fingerprint('t1')}:"
 
 _TOOLS = [{"name": "delegate_to_specialist", "description": "d", "parameters": {"type": "object"}}]
 
@@ -448,7 +452,7 @@ async def test_dispatch_arrival_and_injection_are_logged_without_the_answer_text
 
     await _call(events, AsyncMock(return_value="secret answer text"))
     lines = _info_lines(fake_logger)
-    assert any(line.startswith("voice call t1:") and "c7" in line and "search_web" in line and "dispatched" in line
+    assert any(line.startswith(_CALL_T1) and "c7" in line and "search_web" in line and "dispatched" in line
                for line in lines)
     assert any("c7" in line and "arrived" in line and " ms" in line for line in lines)
     assert any("c7" in line and "function_call_output" in line for line in lines)
@@ -472,10 +476,10 @@ async def test_empty_response_and_barge_in_are_logged(monkeypatch):
 
     await _call(events, AsyncMock())
     lines = _info_lines(fake_logger)
-    assert any(line.startswith("voice call t1:") and "empty transcript" in line for line in lines)
-    assert any(line.startswith("voice call t1:") and "barge-in" in line and "cancelled=True" in line
+    assert any(line.startswith(_CALL_T1) and "empty transcript" in line for line in lines)
+    assert any(line.startswith(_CALL_T1) and "barge-in" in line and "cancelled=True" in line
                for line in lines)
-    assert any(line.startswith("voice call t1:") and "starting response (pickup)" in line for line in lines)
+    assert any(line.startswith(_CALL_T1) and "starting response (pickup)" in line for line in lines)
 
 
 # =============================================================================

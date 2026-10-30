@@ -7,7 +7,9 @@ from quart import Quart
 
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
+from src.domain.secret_digest import fingerprint
 from tests.support.firestore_eval import EvalDb, eval_transactions
+from tests.support.voice_tickets import amd_key, result_key
 
 RELAY = {"Authorization": "Bearer relay-token"}
 CALL = {"call_id": "c1", "user_id": "u1", "account_id": "a1", "transcript_text": "caller: book a table",
@@ -49,7 +51,7 @@ class World:
         app = Quart("voice_control_plane_c1")
         app.register_blueprint(create_voice_control_plane_blueprint(
             ephemeral_store=self.store, quota_service=Recorder(), prompt_content_store=Recorder(),
-            summary_consumer=self.summaries.summary, oidc_verifier=_relay_only, alert_sink=self.alerts,
+            summary_consumer=self.summaries.summary, oidc_verifier=_relay_only, alert_sink=self.alerts, digest_key=b"k" * 32
         ))                                   # no late_answer_sink: this deployment cannot post late answers
         self.client = app.test_client()
 
@@ -60,18 +62,18 @@ class World:
 async def test_an_abandoned_answer_with_no_chat_sink_is_consumed_and_dropped():
     w = World()
     with eval_transactions():
-        await w.store.set("voice_delegation_result:t1:c9", {"output": "the answer", "request": "q",
+        await w.store.set(result_key("t1", "c9"), {"output": "the answer", "request": "q",
                                                             "user_id": "u1", "account_id": "a1"}, ttl_s=600)
         resp = await w.client.post("/voice/delegate/abandon", json={"ticket": "t1", "call_id": "c9"}, headers=RELAY)
     assert resp.status_code == 200
-    assert "voice_delegation_result:t1:c9" not in w.keys()     # claimed once, so it can never be posted twice
+    assert result_key("t1", "c9") not in w.keys()     # claimed once, so it can never be posted twice
     assert w.alerts.calls == []
 
 
 async def test_an_unreadable_amd_verdict_counts_as_a_live_call_and_the_summary_is_written():
     w = World()
     await w.store.set("voice_one_call:u1", {"in_flight": True}, ttl_s=600)
-    await w.db.collection("voice").document("voice_amd:c1").set({"value": {"answered_by": "machine_start"}})  # no expiry
+    await w.db.collection("voice").document(amd_key("c1")).set({"value": {"answered_by": "machine_start"}})  # no expiry
     resp = await w.client.post("/voice/submit-transcript", json=CALL, headers=RELAY)
     assert resp.status_code == 200
     assert w.summaries.calls == ["c1"]
@@ -83,5 +85,5 @@ async def test_a_summary_failure_whose_alert_also_fails_still_closes_the_call():
     await w.store.set("voice_one_call:u1", {"in_flight": True}, ttl_s=600)
     resp = await w.client.post("/voice/submit-transcript", json=CALL, headers=RELAY)
     assert resp.status_code == 200
-    assert len(w.alerts.calls) == 1 and "summary failed for call c1" in w.alerts.calls[0]
+    assert len(w.alerts.calls) == 1 and f"summary failed for call {fingerprint('c1')}" in w.alerts.calls[0]
     assert "voice_one_call:u1" not in w.keys()                 # the marker is released all the same

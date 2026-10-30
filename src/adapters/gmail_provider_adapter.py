@@ -16,6 +16,7 @@ Gmail API endpoints used:
 import asyncio
 import base64
 import html as _html_lib
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -30,7 +31,7 @@ from ..domain.email import (
     EmailMetadata,
     OAuthCredentials,
 )
-from ..domain.exceptions import OAuthGrantRevokedError
+from ..domain.exceptions import OAuthGrantRevokedError, OAuthScopeInsufficientError
 from ..ports.email_provider_port import EmailProviderPort
 from ..utils.logger import logger
 
@@ -39,6 +40,35 @@ _TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 # Parallel fetch semaphore: Gmail recommends ≤10 concurrent requests per user
 _FETCH_SEMAPHORE_LIMIT = 10
+_SCOPE_REASONS = {"insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"}
+
+
+async def _raise_for_gmail_status(resp) -> None:
+    """`raise_for_status` that first logs the reason of a non-2xx answer and maps a 403 for a missing scope.
+
+    Logs status + `error.status` + `reason` values only (no token, message text or address). A 403 whose reason
+    names an insufficient scope raises OAuthScopeInsufficientError, handled like a revoked grant.
+    """
+    try:
+        resp.raise_for_status()
+    except aiohttp.ClientResponseError as exc:
+        status, reasons = "", []
+        try:
+            error = json.loads(await resp.text()).get("error")
+            if isinstance(error, dict):
+                status = str(error.get("status") or "")
+                reasons += [str(e.get("reason")) for e in error.get("errors") or [] if isinstance(e, dict)]
+                reasons += [str(d.get("reason")) for d in error.get("details") or [] if isinstance(d, dict)]
+                if status:
+                    reasons.append(status)
+        except Exception:
+            logger.debug("Gmail API error body unreadable: the status alone is logged", exc_info=True)
+        logger.warning(f"⚠️ Gmail API {exc.status}: error.status={status or '-'} reasons={sorted(set(reasons)) or '-'}")
+        if exc.status == 403 and _SCOPE_REASONS & set(reasons):
+            raise OAuthScopeInsufficientError(
+                "Gmail auth failed: the token lacks the Gmail scope (403 insufficient scope); reconnect required"
+            ) from exc
+        raise
 
 
 class GmailProviderAdapter(EmailProviderPort):
@@ -102,7 +132,7 @@ class GmailProviderAdapter(EmailProviderPort):
             async with session.get(
                 f"{_GMAIL_BASE}/messages", headers=headers, params=params
             ) as resp:
-                resp.raise_for_status()
+                await _raise_for_gmail_status(resp)
                 list_data = await resp.json()
 
             message_ids = [m["id"] for m in list_data.get("messages", [])]
@@ -123,7 +153,7 @@ class GmailProviderAdapter(EmailProviderPort):
                                 "metadataHeaders": ["Subject", "From", "Date"],
                             },
                         ) as resp:
-                            resp.raise_for_status()
+                            await _raise_for_gmail_status(resp)
                             return await resp.json()
                     except Exception as exc:
                         logger.warning(
@@ -178,7 +208,7 @@ class GmailProviderAdapter(EmailProviderPort):
                             headers=headers,
                             params={"format": "full"},
                         ) as resp:
-                            resp.raise_for_status()
+                            await _raise_for_gmail_status(resp)
                             return await resp.json()
                 except Exception as exc:
                     logger.warning(
@@ -376,7 +406,7 @@ class GmailProviderAdapter(EmailProviderPort):
                             f"{_GMAIL_BASE}/messages/{email_id}/attachments/{attachment_id}",
                             headers=headers,
                         ) as resp:
-                            resp.raise_for_status()
+                            await _raise_for_gmail_status(resp)
                             data = await resp.json()
                     raw = base64.urlsafe_b64decode(data["data"] + "==")
                     binaries[filename] = raw

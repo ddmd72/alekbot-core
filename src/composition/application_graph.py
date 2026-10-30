@@ -211,7 +211,7 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
 
     logger.info("💌 Initializing Invite Code Service...")
 
-    invite_repo = FirestoreInviteCodeRepository(db_client, env_config)
+    invite_repo = FirestoreInviteCodeRepository(db_client, env_config, digest_key=secret_digest_key)
 
     # IAM-Centric Architecture (2026-02-05)
     logger.info("📋 Initializing Whitelist Repository...")

@@ -8,7 +8,7 @@
 import pytest
 
 from src.ports.iam_port import Role
-from tests.unit.adapters.test_invite_code_store_kit import OWNER, OWNER_ACC, InviteStore, invite
+from tests.unit.adapters.test_invite_code_store_kit import OWNER, OWNER_ACC, InviteStore, invite, key
 from tests.unit.adapters.test_whitelist_store_kit import WhitelistStore, seed
 
 
@@ -24,8 +24,8 @@ async def test_a_consumed_invite_writes_the_role_value_the_checks_compare(stored
     assert account.iam_policy["usr-new"] == expected.value
     assert Role(account.iam_policy["usr-new"]) is expected          # a stored value readers resolve as a Role
     assert account.iam_policy[OWNER] == "OWNER"                       # the existing entries are not rewritten
-    assert store.docs["ABC-DEF-123"]["role"] == stored                # the invite keeps its own role as created
-    assert store.docs["ABC-DEF-123"]["used_by_user_id"] == "usr-new"
+    assert store.docs[key()]["role"] == stored                # the invite keeps its own role as created
+    assert store.docs[key()]["used_by_user_id"] == "usr-new"
 
 
 async def test_an_invited_owner_is_resolved_as_an_owner_by_the_role_checks():
@@ -45,7 +45,7 @@ async def test_an_invite_with_an_unknown_role_is_refused_before_anything_is_writ
         await store.service.consume_team_invite("ABC-DEF-123", "usr-new")
     assert await store.account_of("usr-new") == "acc-usr-new"
     assert "usr-new" not in (await store.accounts.get_account(OWNER_ACC)).iam_policy
-    assert store.docs["ABC-DEF-123"].get("used_by_user_id") is None
+    assert store.docs[key()].get("used_by_user_id") is None
 
 
 # -------------------------------------------------------------------------------------------------- whitelist

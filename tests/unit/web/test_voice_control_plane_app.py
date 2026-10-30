@@ -3,7 +3,9 @@ from unittest.mock import AsyncMock
 
 from quart import Quart
 
+from src.domain.secret_digest import fingerprint
 from src.web.voice_control_plane_app import create_voice_control_plane_blueprint
+from tests.support.voice_tickets import ticket_key
 
 
 @pytest.fixture
@@ -25,7 +27,7 @@ def app_and_deps():
         prompt_content_store=prompt_content_store,
         summary_consumer=summary_consumer,
         oidc_verifier=oidc_verifier,
-        alert_sink=alert_sink,
+        alert_sink=alert_sink, digest_key=b"k" * 32
     ))
     return app, ephemeral_store, quota_service, prompt_content_store, summary_consumer, oidc_verifier, alert_sink
 
@@ -48,7 +50,7 @@ async def test_session_config_resolves_ticket(app_and_deps):
     assert response.status_code == 200
     body = await response.get_json()
     assert body == {"instructions": "you are Lelik", "user_id": "u1", "account_id": "a1"}
-    ephemeral_store.get_and_delete.assert_awaited_once_with("voice_ticket:ticket-1")
+    ephemeral_store.get_and_delete.assert_awaited_once_with(ticket_key("ticket-1"))
 
 
 @pytest.mark.asyncio
@@ -334,7 +336,7 @@ async def test_session_config_consumes_the_ticket_so_it_cannot_be_replayed(app_a
     )
 
     assert response.status_code == 200
-    ephemeral_store.get_and_delete.assert_awaited_once_with("voice_ticket:t1")
+    ephemeral_store.get_and_delete.assert_awaited_once_with(ticket_key("t1"))
     # Not a separate delete — that pair is the race this replaced.
     ephemeral_store.delete.assert_not_called()
 
@@ -357,7 +359,7 @@ async def test_session_config_does_not_consume_a_ticket_it_could_not_resolve(app
     )
 
     assert response.status_code == 404
-    ephemeral_store.get_and_delete.assert_awaited_once_with("voice_ticket:unknown")
+    ephemeral_store.get_and_delete.assert_awaited_once_with(ticket_key("unknown"))
     ephemeral_store.delete.assert_not_called()
 
 
@@ -389,7 +391,8 @@ async def test_summary_consumer_failure_posts_an_ops_alert(app_and_deps):
     assert response.status_code == 200
     alert_sink.post.assert_awaited_once()
     alert_text = alert_sink.post.await_args.args[0]
-    assert "c1" in alert_text
+    # The transcript's call_id is the call's ticket, so the alert names the call by its fingerprint.
+    assert fingerprint("c1") in alert_text
 
 
 @pytest.mark.asyncio

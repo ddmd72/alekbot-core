@@ -2592,8 +2592,12 @@
             showToast(t("toast.team_joined"), "success");
           if (qs.get("gmail_connected") === "1")
             showToast(t("toast.gmail_connected"), "success");
-          if (qs.get("gmail_error"))
+          if (qs.get("gmail_error") === "scope")
+            showToast("Google did not grant access to your mail — reconnect and tick the Gmail checkbox", "error");
+          else if (qs.get("gmail_error"))
             showToast("Gmail connection error", "error");
+          if (qs.get("tasks_error") === "scope")
+            showToast("Google did not grant access to your tasks — reconnect and tick the Tasks checkbox", "error");
           if (qs.get("microsoft_todo_connected") === "1")
             showToast(t("toast.todo_connected"), "success");
           if (qs.get("microsoft_todo_error"))
@@ -3989,6 +3993,7 @@
         <div class="invite-code-box reveal">
           <p style="margin-bottom:8px; font-weight:600; color:var(--text-main);">Share this code</p>
           <div class="code-display">${escapeHtml(data.code)}</div>
+          <p style="font-size: 14px; margin-bottom: 8px; color:var(--text-muted);">Copy it now, it will not be shown again.</p>
           <p style="font-size: 14px; margin-bottom: 24px;">Valid until ${expiry}</p>
           
           <div class="invite-link-wrapper">
@@ -4025,7 +4030,7 @@
             .map(
               (c) => `
             <tr>
-              <td><span style="font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 600;">${escapeHtml(c.code)}</span></td>
+              <td><span style="font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 600;">${escapeHtml(c.hint ? "\u2026" + c.hint : "\u2014")}</span></td>
               <td><span class="status-badge ${c.is_valid ? "active" : "used"}">${c.is_valid ? "Active" : "Used"}</span></td>
               <td>${new Date(c.created_at).toLocaleDateString()}</td>
               <td>${c.used_at ? new Date(c.used_at).toLocaleDateString() : "—"}</td>

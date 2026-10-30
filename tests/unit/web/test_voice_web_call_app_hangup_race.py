@@ -1,6 +1,7 @@
 """Web-call hangup vs connect (final-review finding 3): hangup deletes the call record, and a
 connect whose record disappears while the relay is being attached closes the adapters it just
 created and answers 404 instead of writing the record back."""
+from tests.support.aes_gcm_cipher import AesGcmTestCipher
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -36,11 +37,11 @@ def _app(store, media_room):
     session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1"})
     agent = MagicMock()
     agent.session_config = AsyncMock(return_value={"instructions": "you are Lelik", "tools": []})
-    setup = VoiceCallSetupService(store, AsyncMock(), AsyncMock(return_value=agent))
+    setup = VoiceCallSetupService(store, AsyncMock(), AsyncMock(return_value=agent), digest_key=b"k" * 32)
     app = Quart(__name__)
     app.register_blueprint(create_voice_web_call_blueprint(
         session_service=session_service, call_setup=setup, media_room=media_room,
-        ephemeral_store=store, relay_base_url="wss://relay.example.com"))
+        ephemeral_store=store, relay_base_url="wss://relay.example.com", cipher=AesGcmTestCipher(), digest_key=b"k" * 32))
     return app
 
 

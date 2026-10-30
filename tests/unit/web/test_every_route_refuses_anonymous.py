@@ -143,7 +143,7 @@ def _voice_control_plane(p: Probe):
         prompt_content_store=w("prompt_content_store"), summary_consumer=w("summary").consume,
         oidc_verifier=build_oidc_gate(SA, on_cloud_run=True, label="P7 probe"), alert_sink=w("alert_sink"),
         lelik_agent_provider=w("agent_factory").get_lelik, late_answer_sink=w("notifications").post,
-        relay_warmup=w("relay").warm,
+        relay_warmup=w("relay").warm, digest_key=b"k" * 32
     ), {}
 
 
@@ -156,7 +156,7 @@ def _voice_webhook(p: Probe):
         user_repository=w("user_repository"), ephemeral_store=w("ephemeral_store"), alert_sink=w("alert_sink"),
         notification_service=w("notification_service"), lelik_agent_provider=w("agent_factory").get_lelik,
         answer_url="https://app.example/voice/answer", signature_verifier=twilio,
-        relay_stream_url="wss://relay.example/stream",
+        relay_stream_url="wss://relay.example/stream", cipher=AesGcmTestCipher(), digest_key=b"k" * 32
     ), {}
 
 
@@ -164,7 +164,7 @@ def _voice_web_call(p: Probe):
     w = p.wire
     return create_voice_web_call_blueprint(session_service=session_service(), call_setup=w("call_setup"),
                                            media_room=w("media_room"), ephemeral_store=w("ephemeral_store"),
-                                           relay_base_url="wss://relay.example"), {}
+                                           relay_base_url="wss://relay.example", cipher=AesGcmTestCipher(), digest_key=b"k" * 32), {}
 
 
 def _landing(p: Probe):

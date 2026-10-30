@@ -31,7 +31,7 @@ def world(monkeypatch):
     # an expired marker of an earlier call, not yet removed by the TTL policy
     db.collection(TICKETS).docs[MARKER_KEY] = {"value": {"in_flight": True, "call_id": "c0"},
                                                "expires_at": T0 - timedelta(minutes=1)}
-    setup = VoiceCallSetupService(FirestoreEphemeralStore(db, TICKETS), None, None)
+    setup = VoiceCallSetupService(FirestoreEphemeralStore(db, TICKETS), None, None, digest_key=b"k" * 32)
     return db, setup
 
 

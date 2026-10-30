@@ -23,7 +23,7 @@ under a second) and the user got a missed-call SMS instead of Lelik.
 2. Enforce the RFC §3 one-call-per-user limit via the shared `EphemeralStore`
    marker at `voice_one_call:{user_id}`. A caller with a call already in
    flight or pending is rejected.
-3. Mint a short-TTL ticket (`voice_ticket:{uuid}`) carrying the resolved
+3. Mint a short-TTL ticket (its keyed digest is the store key) carrying the resolved
    identity, take the marker at the ticket's short TTL, and park the callback
    under the inbound `CallSid` (`voice_pending_callback:{CallSid}`). Answer
    with "Calling you back" + hangup.
@@ -42,7 +42,9 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 from quart import Blueprint, Response, request
 from twilio.twiml.voice_response import VoiceResponse
 
+from src.domain.secret_digest import fingerprint
 from src.domain.voice_auth_decision import AuthDecision
+from src.domain.voice_ticket_keys import amd_key, ticket_key
 from src.services.voice_call_setup_service import VoiceCallSetupError, VoiceCallSetupService
 from src.utils.logger import logger
 
@@ -72,6 +74,9 @@ def create_voice_webhook_blueprint(
     signature_verifier,
     one_call_ttl_s: int = 3600,
     relay_stream_url: str = "",
+    *,
+    cipher,
+    digest_key: bytes,
 ) -> Blueprint:
     """Build the Twilio-facing voice webhook blueprint.
 
@@ -85,7 +90,7 @@ def create_voice_webhook_blueprint(
     CLAUDE.md's `config.get()` note warns about.
     """
     bp = Blueprint("voice_webhook", __name__)
-    call_setup = VoiceCallSetupService(ephemeral_store, alert_sink, lelik_agent_provider,
+    call_setup = VoiceCallSetupService(ephemeral_store, alert_sink, lelik_agent_provider, digest_key=digest_key,
                                        ticket_ttl_s=_TICKET_TTL_S, one_call_ttl_s=one_call_ttl_s)
 
     async def _reject_if_unsigned(form) -> Optional[Response]:
@@ -128,17 +133,19 @@ def create_voice_webhook_blueprint(
         decision = AuthDecision(user_id=profile.user_id, account_id=profile.account_id)
         ticket = str(uuid.uuid4())
         await ephemeral_store.set(
-            f"voice_ticket:{ticket}",
+            ticket_key(digest_key, ticket),
             {"user_id": decision.user_id, "account_id": decision.account_id},
             ttl_s=_TICKET_TTL_S,
         )
         # Short TTL while the callback is only parked: if Twilio never reports the
         # inbound dial as ended, the caller is locked out for minutes, not an hour.
         await ephemeral_store.set(marker_key, {"in_flight": True}, ttl_s=_TICKET_TTL_S)
+        pending_key = _pending_key(inbound_call_sid)
         await ephemeral_store.set(
-            _pending_key(inbound_call_sid),
+            pending_key,
             {
-                "ticket": ticket,
+                # The callback needs the ticket back to build its URL: ciphertext bound to this record.
+                "ticket_ct": await cipher.encrypt(ticket, aad=f"voice/{pending_key}"),
                 "user_id": decision.user_id,
                 "account_id": decision.account_id,
                 # The callback always returns to the exact number that dialed in (RFC §4.6).
@@ -166,15 +173,17 @@ def create_voice_webhook_blueprint(
 
         # Atomic claim: Twilio retries status callbacks, and a second delivery must
         # not place a second call.
-        pending = await ephemeral_store.get_and_delete(_pending_key((form.get("CallSid") or "").strip()))
+        pending_key = _pending_key((form.get("CallSid") or "").strip())
+        pending = await ephemeral_store.get_and_delete(pending_key)
         if pending is None:
             return Response("", status=200)
 
-        ticket_key = f"voice_ticket:{pending['ticket']}"
+        pending_ticket = await cipher.decrypt(pending["ticket_ct"], aad=f"voice/{pending_key}")
+        redeem_key = ticket_key(digest_key, pending_ticket)
         marker_key = f"voice_one_call:{pending['user_id']}"
         if call_status != "completed":
             logger.info(f"voice inbound-status: dial ended '{call_status}' before the answer, releasing")
-            await ephemeral_store.delete(ticket_key)
+            await ephemeral_store.delete(redeem_key)
             await ephemeral_store.delete(marker_key)
             return Response("", status=200)
 
@@ -184,7 +193,7 @@ def create_voice_webhook_blueprint(
             if agent is None:
                 raise RuntimeError("voice companion is not configured on this deployment")
             await agent.execute(
-                purpose="user asked to talk", ticket=pending["ticket"],
+                purpose="user asked to talk", ticket=pending_ticket,
                 answer_url=answer_url, to_number=pending["to_number"],
             )
         except Exception as exc:
@@ -195,7 +204,7 @@ def create_voice_webhook_blueprint(
                 f"voice inbound-status: callback origination failed for {pending['user_id']}: {exc}",
                 exc_info=True,
             )
-            await ephemeral_store.delete(ticket_key)
+            await ephemeral_store.delete(redeem_key)
             await ephemeral_store.delete(marker_key)
             await alert_sink.post(f"Voice: callback origination failed for user {pending['user_id']}: {exc}")
             return Response("", status=200)
@@ -260,20 +269,20 @@ def create_voice_webhook_blueprint(
         answered_by = form.get("AnsweredBy", "")
         ticket = request.args.get("ticket", "")
 
-        ticket_key = f"voice_ticket:{ticket}"
-        identity = await ephemeral_store.get(ticket_key)
+        redeem_key = ticket_key(digest_key, ticket)
+        identity = await ephemeral_store.get(redeem_key)
         if identity is None:
-            logger.warning(f"voice answer: no identity found for ticket {ticket}, rejecting")
+            logger.warning(f"voice answer: no identity found for ticket {fingerprint(ticket)}, rejecting")
             return _twiml_reject()
 
         # Sync-AMD path only: with async AMD (the adapter's mode) Twilio sends no AnsweredBy
         # here, and the verdict lands on /voice/status instead.
         if answered_by.startswith("machine"):
             logger.info(
-                f"voice answer: machine detected ({answered_by}) for ticket {ticket}, "
+                f"voice answer: machine detected ({answered_by}) for ticket {fingerprint(ticket)}, "
                 "hanging up without opening a session"
             )
-            await ephemeral_store.delete(ticket_key)
+            await ephemeral_store.delete(redeem_key)
             await ephemeral_store.delete(f"voice_one_call:{identity['user_id']}")
             vr = VoiceResponse()
             vr.hangup()
@@ -332,28 +341,28 @@ def create_voice_webhook_blueprint(
         if answered_by and not call_status:
             # Async AMD verdict (TwilioTelephonyAdapter points it here). The call is already
             # live, so it is only recorded; /voice/submit-transcript weighs it at call end.
-            logger.info(f"voice status: AMD verdict '{answered_by}' for ticket {ticket}")
-            await ephemeral_store.set(f"voice_amd:{ticket}", {"answered_by": answered_by}, ttl_s=one_call_ttl_s)
+            logger.info(f"voice status: AMD verdict '{answered_by}' for ticket {fingerprint(ticket)}")
+            await ephemeral_store.set(amd_key(digest_key, ticket), {"answered_by": answered_by}, ttl_s=one_call_ttl_s)
             return Response("", status=200)
 
         if call_status not in _TERMINAL_CALL_STATUSES:
-            logger.info(f"voice status: non-terminal status '{call_status}' for ticket {ticket}, ignoring")
+            logger.info(f"voice status: non-terminal status '{call_status}' for ticket {fingerprint(ticket)}, ignoring")
             return Response("", status=200)
 
-        ticket_key = f"voice_ticket:{ticket}"
-        identity = await ephemeral_store.get(ticket_key)
+        redeem_key = ticket_key(digest_key, ticket)
+        identity = await ephemeral_store.get(redeem_key)
         if identity is None:
             # Already released by /voice/answer's AMD branch, the persona-failure
             # handler, /voice/session-config's single-use consumption, or a
             # duplicate delivery of this same callback. Nothing left to do.
             logger.info(
-                f"voice status: terminal status '{call_status}' for ticket {ticket}, "
+                f"voice status: terminal status '{call_status}' for ticket {fingerprint(ticket)}, "
                 "already released"
             )
             return Response("", status=200)
 
-        logger.info(f"voice status: terminal status '{call_status}' for ticket {ticket}, releasing")
-        await ephemeral_store.delete(ticket_key)
+        logger.info(f"voice status: terminal status '{call_status}' for ticket {fingerprint(ticket)}, releasing")
+        await ephemeral_store.delete(redeem_key)
         await ephemeral_store.delete(f"voice_one_call:{identity['user_id']}")
         return Response("", status=200)
 
