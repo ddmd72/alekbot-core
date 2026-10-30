@@ -9,6 +9,7 @@ from src.domain.drive_outcome_class import OutcomeClass
 from src.domain.drive_search import STATUS_AMBIGUOUS_FOLDER, DriveSearchResult
 from src.domain.user_drive import DriveItem, ListOutcome
 from src.infrastructure.drive_operations import MAX_VIDEO_ATTACH_BYTES, DriveOperations
+from tests.support.drive_service_connections import ConnectionReads
 
 CTX = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
 SHED = DriveItem(item_id="d1", name="Garden shed", path="Garden shed", is_folder=True)
@@ -18,15 +19,19 @@ CLIP = DriveItem(item_id="v1", name="shed-tour.mp4", path="Garden shed/shed-tour
                  size_bytes=5, mime_type="video/mp4")
 
 
-class FakeDrive:
-    def __init__(self, listing: ListOutcome | None = None) -> None:
+class FakeDrive(ConnectionReads):
+    def __init__(self, listing: ListOutcome | None = None, items=None) -> None:
         self.listing = listing
+        self.items = items or {}
         self.appends: list[tuple] = []
 
-    async def list_folder(self, user_id, folder):
+    async def list_folder(self, handle, folder):
         return self.listing
 
-    async def append_text(self, user_id, item_id, text):  # pragma: no cover - must not be reached
+    async def get_item(self, handle, item_id):
+        return self.items[item_id]
+
+    async def append_text(self, handle, item_id, text):  # pragma: no cover - must not be reached
         self.appends.append((item_id, text))
         raise AssertionError("an empty append reached the drive")
 
@@ -150,7 +155,7 @@ async def test_a_workspace_file_of_an_other_kind_is_read_as_text():
 
 async def test_opening_a_drive_video_with_no_notification_fails_after_reading_the_bytes():
     conv = FakeConversion(items={"drive:v1": CLIP})
-    ops = _ops(conversion_service=conv, drive_service=FakeDrive())
+    ops = _ops(conversion_service=conv, drive_service=FakeDrive(items={"v1": CLIP}))
     out = await ops.open(CTX, "u1", "drive:v1")
     assert (out.op, out.cls, out.success) == (DriveOp.OPEN, OutcomeClass.FAILED, False)
     assert out.text == "File delivery is not configured — cannot send the video."
@@ -159,7 +164,7 @@ async def test_opening_a_drive_video_with_no_notification_fails_after_reading_th
 
 async def test_opening_a_drive_video_with_a_notification_sends_it():
     conv, note = FakeConversion(items={"drive:v1": CLIP}, data=b"frames"), FakeNotification()
-    ops = _ops(conversion_service=conv, notification=note, drive_service=FakeDrive())
+    ops = _ops(conversion_service=conv, notification=note, drive_service=FakeDrive(items={"v1": CLIP}))
     out = await ops.open(CTX, "u1", "drive:v1")
     assert out.cls is OutcomeClass.OK and "has been sent to the user as a file" in out.text
     assert [(f["filename"], f["file_bytes"]) for f in note.files] == [("shed-tour.mp4", b"frames")]
