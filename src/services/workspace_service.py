@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping, Optional
 
+from ..domain import drive_ref
 from ..domain.exceptions import WorkspaceConflict, WorkspaceRefused
 from ..domain.workspace import (
     COMMANDS,
@@ -446,7 +447,7 @@ class WorkspaceService:
             raise WorkspaceRefused(
                 "copy needs a source: a chat file name, a delivered-document key or a workspace path", reason="source",
             )
-        if "drive:" in source:
+        if drive_ref.is_drive_ref(source):   # tagged or not (MULTI_DRIVE_RFC §9)
             raise WorkspaceRefused(
                 f"'{source}' is on the user's drive; drive files are not copied into the workspace — open it through "
                 "work_with_drive_files",

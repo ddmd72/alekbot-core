@@ -13,7 +13,7 @@ from src.domain.drive_note import DriveNote, NoteState, item_ref
 @dataclass(frozen=True)
 class NoteView:
     note_id: str
-    ref: str                  # `drive:<item id>` of the bound item ("" for a stub)
+    ref: str                  # `drive:<tag>:<item id>` of the bound item ("" for a stub)
     note_ref: str             # `drive_note:<note id>`
     path: str                 # from the snapshot ("" for a stub)
     version: int

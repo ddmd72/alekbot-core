@@ -13,15 +13,15 @@ One note store per process: the container (or the indexer) builds the repository
 Public interface:
     DRIVE_NOTES_ENABLED_ENV, drive_notes_switch_on(raw) -> bool
     build_drive_note_repository(db_client, env_config) -> DriveNoteRepository
-    build_drive_note_service(db_client, env_config, *, notes, drive, index, embeddings, users, security_port, nudge_queue)
-        -> DriveNoteService
+    build_drive_note_service(db_client, env_config, *, notes, drive, index, embeddings, connections, security_port,
+                             nudge_queue) -> DriveNoteService
     build_drive_note_lifecycle(*, enabled, notes, index, drive) -> Optional[DriveNoteLifecycle]
     add_drive_note_deleted_source(search, notes, embeddings, *, embedding_space) -> DriveNoteDeletedSearch
     command_drive_note_service(service, enabled) -> Optional[DriveNoteService]
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..adapters.firestore_drive_note_repo import FirestoreDriveNoteRepository
 from ..adapters.firestore_ephemeral_store import FirestoreEphemeralStore
@@ -33,12 +33,14 @@ from ..ports.embedding_service import EmbeddingService
 from ..ports.security_port import SecurityPort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
-from ..ports.user_repository import UserRepository
 from ..services.drive_note_deleted_search import DriveNoteDeletedSearch
 from ..services.drive_note_lifecycle import DriveNoteLifecycle
 from ..services.drive_note_service import DriveNoteService
 from ..services.drive_search_service import DriveSearchService
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    from ..services.drive_connection_service import DriveConnectionService
 
 DRIVE_NOTES_ENABLED_ENV = "DRIVE_NOTES_ENABLED"
 _OFF = frozenset({"0", "off", "false", "no"})
@@ -56,15 +58,15 @@ def build_drive_note_repository(db_client: Any, env_config: EnvironmentConfig) -
 
 def build_drive_note_service(db_client: Any, env_config: EnvironmentConfig, *, notes: DriveNoteRepository,
                              drive: UserDrivePort, index: DriveIndexRepository, embeddings: EmbeddingService,
-                             users: UserRepository, security_port: SecurityPort, nudge_queue: Optional[TaskQueue]) -> DriveNoteService:
+                             connections: "DriveConnectionService", security_port: SecurityPort,
+                             nudge_queue: Optional[TaskQueue]) -> DriveNoteService:
     """The note service over the process's note store (`notes`, from `build_drive_note_repository`) and the erase
-    requests' ephemeral store (`{prefix}drive_note_erase_requests`, TTL policy on `expires_at`: an owner step). The
-    provider key stays the domain's ONEDRIVE_PROVIDER_KEY (the service default), the one the indexer uses too. `users`
-    must be uncached: it gives the owner's indexing switch for the receipt's status. `security_port` is the
-    container's one stateless port."""
+    requests' ephemeral store (`{prefix}drive_note_erase_requests`, TTL policy on `expires_at`: an owner step).
+    `drive` is the drive router; `connections` the process's DriveConnectionService (refs, each connection's indexing
+    switch for the receipt's status, read fresh). `security_port` is the container's one stateless port."""
     return DriveNoteService(
         notes, drive, index, embeddings,
-        security_port, users,
+        security_port, connections,
         embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE,
         nudge_queue=nudge_queue,
         erase_requests=FirestoreEphemeralStore(db_client, env_config.drive_note_erase_requests_collection),

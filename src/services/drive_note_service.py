@@ -6,8 +6,14 @@ Each note tool of the drive specialist calls one method: `get` reads a note from
 write a note through the shared `_write` loop (`set` is the whole-triple write both are built beside); `delete_note` →
 `clear`; `undo_note` → `undo`; `erase_note` → `request_erase`. `$drive-notes erase-all` → `request_erase_all`; pasting a
 code → `erase`. **Only `set`, `create` and `update` (through `_write`) touch the drive**: get, clear, undo and the erase
-methods resolve the note from the store alone (a `drive_note:<id>` ref, or a `drive:<id>` ref through the provider-free
-ref key `r:{id}`), so they work on archived and dormant notes and while the drive is disconnected (D3, D17).
+methods resolve the note from the store alone (a `drive_note:<id>` ref, or a `drive:<tag>:<id>` ref through the ref key
+`r:{tag}:{id}`), so they work on archived and dormant notes and while the drive is disconnected (D3, D17).
+
+Connections (MULTI_DRIVE_RFC §7.2, §9, §11.6): the live path resolves a `drive:<tag>:<id>` ref to its connection
+through the injected DriveConnectionService (an untagged ref, or one of a connection that is gone, is refused with the
+code-built line, D13), reads the item through the connection's handle and binds the note by the item's identity
+(`i:{identity}`) and the connection's tag (`r:{tag}:{id}`). A note belongs to the connection whose tag it carries: the
+indexing switch, the index record and the nudge are that connection's.
 
 Guards (§4.5) that live here: the security check before any drive I/O (layer 4) and the per-user lineage cap. The owner-
 turn gate (layer 1), the per-turn write cap and the per-execution lock are the tool handlers'.
@@ -28,7 +34,7 @@ Public interface:
     request_erase(user_id, ref) -> EraseRequestReceipt
     request_erase_all(user_id) -> EraseRequestReceipt
     erase(user_id, code) -> int
-    note_for_item(user_id, drive_id, item_id) -> Optional[DriveNote]
+    note_for_item(user_id, identity) -> Optional[DriveNote]
 Refusals raise DriveNoteRefused (a NoteRefusal reason and its detail); nothing is stored when one is raised.
 DriveIndexStoreUnavailable from the note store passes through every method unchanged (the caller reports "try again";
 an index-store failure on the record read is absorbed, see `_record`).
@@ -38,28 +44,29 @@ from __future__ import annotations
 import secrets
 import uuid
 from datetime import datetime, timezone
-from typing import Callable, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence, Set, Tuple
 
+from ..domain import drive_ref
+from ..domain.drive_connection import DriveConnection
 from ..domain.drive_index import DriveChange, DriveIndexRecord, Nudge, inaccessible
 from ..domain.drive_index_params import ITEM_CALLS_PER_TICK, TICK_DEADLINE_S
 from ..domain.drive_note import (
-    ERASE_CODE_TTL, ERASE_SCOPE_ALL, ERASE_SCOPE_ONE, NOTES_PER_USER_MAX, ONEDRIVE_PROVIDER_KEY, STATUS_ARCHIVED,
+    ERASE_CODE_TTL, ERASE_SCOPE_ALL, ERASE_SCOPE_ONE, NOTES_PER_USER_MAX, STATUS_ARCHIVED,
     STATUS_OTHER_DRIVE, DriveNote,
     DriveNoteConflict, DriveNoteVersion,
     DriveNoteRefused, EraseRequestReceipt, NoteAction, NoteBinding, NoteContent, NoteProvenance, NoteReceipt,
-    NoteRefusal, NoteSnapshot, NoteState, NoteTarget, binding_key, content_of, deterministic_note_id, item_ref,
-    next_version, note_after_write, note_content, note_embedding_text, note_word_count, parse_note_target, ref_key,
-    searchability, snapshot_of, state_after, undo_source,
+    NoteRefusal, NoteSnapshot, NoteState, NoteTarget, content_of, deterministic_note_id, item_binding_key, item_ref,
+    next_version, note_after_write, note_content, note_embedding_text, note_ref_tag, note_word_count,
+    parse_note_target, searchability, snapshot_of, state_after, tagged_ref_key, undo_source,
 )
+from ..domain.drive_ref_refusal import DriveRefRefusal, stale_ref_line
 from ..domain.drive_note_change import NoteChange, apply_change
 from ..domain.drive_note_change_kind import NoteChangeKind
 from ..domain.drive_note_merge import note_store_keys
 from ..domain.drive_note_view import NoteView
-from ..domain.drive_task_keys import DRIVE_SYNC_TASK, nudge_key, tick_payload
+from ..domain.drive_task_keys import DRIVE_SYNC_TASK, nudge_task_key, scope_payload
 from ..domain.prompt_v3.security import TrustZone
-from ..domain.user_drive import (
-    DriveConnection, DriveItem, DriveItemNotFoundError, DriveNotConnectedError, make_drive_ref,
-)
+from ..domain.user_drive import DriveItem, DriveItemNotFoundError, DriveNotConnectedError
 from ..ports.drive_index_repository import DriveIndexRepository
 from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.embedding_service import EmbeddingService
@@ -67,8 +74,10 @@ from ..ports.ephemeral_store import EphemeralStore
 from ..ports.security_port import SecurityPort
 from ..ports.task_queue import TaskQueue
 from ..ports.user_drive_port import UserDrivePort
-from ..ports.user_repository import UserRepository
 from ..utils.logger import logger
+
+if TYPE_CHECKING:
+    from .drive_connection_service import DriveConnectionService
 
 _ERASE_CODE_ATTEMPTS = 5
 
@@ -86,33 +95,39 @@ def _new_code() -> str:
 
 
 class _LiveItem(NamedTuple):
-    """A `drive:` ref resolved on the connected drive (§4.4 step 2): what the live write path binds the note to."""
-    drive_id: str
+    """A `drive:<tag>:<id>` ref resolved on its connection (§4.4 step 2): what the live write path binds the note to.
+    `key` is the binding key `i:{identity}`."""
+    connection: DriveConnection
     item_id: str
+    identity: str
     record: Optional[DriveIndexRecord]
     snapshot: NoteSnapshot
     key: str
 
+    @property
+    def ref(self) -> str:
+        return drive_ref.format(self.connection.ref_tag, self.item_id)
+
 
 class DriveNoteService:
     def __init__(self, notes: DriveNoteRepository, drive: UserDrivePort, index: DriveIndexRepository,
-                 embeddings: EmbeddingService, security: SecurityPort, users: UserRepository, *,
-                 embedding_space: str, provider_key: str = ONEDRIVE_PROVIDER_KEY,
+                 embeddings: EmbeddingService, security: SecurityPort, connections: "DriveConnectionService", *,
+                 embedding_space: str,
                  nudge_queue: Optional[TaskQueue] = None, erase_requests: Optional[EphemeralStore] = None,
                  clock: Callable[[], datetime] = _utcnow,
                  new_note_id: Callable[[], str] = _new_note_id, new_code: Callable[[], str] = _new_code) -> None:
-        """`provider_key` names the drive provider in the binding key; it defaults to the domain's one constant
-        ONEDRIVE_PROVIDER_KEY, which the indexer must use too (one `i:` key from both services). `embedding_space` is the space `embeddings` writes (the adapter's EMBEDDING_SPACE). `index` is read
-        only: the inaccessible check (D20) and the searchability status. `users` gives the owner's indexing switch.
-        `nudge_queue` is the drive queue (optional, as in UserDriveService); `erase_requests` the ephemeral store of
-        `{prefix}drive_note_erase_requests` (without it the erase methods refuse)."""
+        """`drive` is the router over every drive kind, addressed by a connection's handle; `connections` resolves refs
+        and gives each connection's indexing switch (MULTI_DRIVE_RFC §6, §9). `embedding_space` is the space
+        `embeddings` writes (the adapter's EMBEDDING_SPACE). `index` is read only, per connection: the inaccessible
+        check (D20) and the searchability status. `nudge_queue` is the drive queue (optional, as in UserDriveService);
+        `erase_requests` the ephemeral store of `{prefix}drive_note_erase_requests` (without it the erase methods
+        refuse)."""
         self._notes = notes
         self._drive = drive
         self._index = index
         self._embeddings = embeddings
         self._security = security
-        self._users = users
-        self._provider = provider_key
+        self._connections = connections
         self._space = embedding_space
         self._nudge_queue = nudge_queue
         self._erase_requests = erase_requests
@@ -128,8 +143,8 @@ class DriveNoteService:
                   life_areas: Sequence[str] = (), provenance: NoteProvenance = NoteProvenance()) -> NoteReceipt:
         """Replace the note `ref` names with the triple (an empty triple is `clear`).
 
-        A `drive:<id>` ref resolves the live item on the connected drive (refused when the drive is not connected,
-        the item is not on it or the bot cannot open it) and creates the item's note or replaces it. A
+        A `drive:<tag>:<id>` ref resolves the live item on its connection (refused when the ref names no live
+        connection, the drive is not reachable, the item is not on it or the bot cannot open it) and creates the item's note or replaces it. A
         `drive_note:<id>` ref edits that existing note from the store alone, with no drive call (I5, owner ruling
         2026-10-21): an archived note stays archived, a note bound to another drive stays bound there; the only thing
         never done without the live file is creating a NEW note. An identical triple writes nothing (a failover re-run
@@ -235,7 +250,7 @@ class DriveNoteService:
         triple equal to the current one, in the same state, is a no-op receipt; content differing from the content
         last embedded is embedded again. `rerun(note, its current version)` true is a re-run of a write already made:
         a no-op receipt, checked on each attempt before the composition."""
-        place = await self._live_item(user_id, target.item_id) if not target.note_id else None
+        place = await self._live_item(user_id, target) if not target.note_id else None
         embedded: Optional[Tuple[NoteContent, str]] = None
         vector: Optional[List[float]] = None
         pending = False
@@ -282,11 +297,12 @@ class DriveNoteService:
             binding: Optional[NoteBinding] = None
             if place is not None:
                 same = (current is not None and current.binding is not None
-                        and current.binding.drive_id == place.drive_id and current.binding.item_id == place.item_id
-                        and current.binding.provider_key == self._provider)
+                        and current.binding.identity == place.identity and current.binding.item_id == place.item_id
+                        and current.binding.ref_tag == place.connection.ref_tag)
                 binding = (current.binding if same and current is not None and current.binding is not None
-                           else NoteBinding(provider_key=self._provider, drive_id=place.drive_id,
-                                            item_id=place.item_id, bound_at=now, bound_by=provenance.origin))
+                           else NoteBinding(identity=place.identity, item_id=place.item_id,
+                                            ref_tag=place.connection.ref_tag, bound_at=now,
+                                            bound_by=provenance.origin))
             version = next_version(expected, content, NoteAction.SET, provenance, now,
                                    not_before=await self._valid_from_of(user_id, existing))
             keys, keys_version = note_store_keys(content, name)            # §3.1: the deleted-files search's keys
@@ -307,20 +323,26 @@ class DriveNoteService:
             return receipt
         raise AssertionError("unreachable")   # pragma: no cover
 
-    async def _live_item(self, user_id: str, item_id: str) -> _LiveItem:
-        """§4.4 step 2 for a `drive:` ref: the connected drive, the index's inaccessible mark first (D20), then the
-        item on the drive and its snapshot."""
-        drive_id = await self._connected_drive(user_id)
-        record = await self._record(user_id, item_id)
+    async def _live_item(self, user_id: str, target: NoteTarget) -> _LiveItem:
+        """§4.4 step 2 for a `drive:` ref: its connection (MULTI_DRIVE_RFC §9), the index's inaccessible mark first
+        (D20), then the item on the drive, its identity and its snapshot."""
+        connection = await self._connection_of_ref(user_id, target)
+        item_id = target.item_id
+        record = await self._record(connection, item_id)
         if record is not None and inaccessible(record):                     # step 2.1: the index first (D20)
             raise DriveNoteRefused(NoteRefusal.CANNOT_OPEN,
                                    "The bot cannot open this file, so it cannot hold a note: ask the owner to copy it "
                                    "into a new folder they create inside the bot's folder, and note the copy.", item_id=item_id)
-        change, item = await self._resolve_item(user_id, item_id)          # step 2.2-2.3
+        change, item = await self._resolve_item(connection, item_id)       # step 2.2-2.3
+        identity = item.identity or change.identity
+        if not identity:
+            logger.error(f"[DriveNote] item without an identity user={user_id[:8]} item={item_id}: the adapter "
+                         "built none")
+            raise DriveNoteRefused(NoteRefusal.DRIVE_UNAVAILABLE, "The drive could not be reached: try again later.")
         snapshot = snapshot_of(change, item, kind=record.kind if record else "",
                                effective_date=record.effective_date if record else None, now=self._clock())
-        return _LiveItem(drive_id=drive_id, item_id=item_id, record=record, snapshot=snapshot,
-                         key=binding_key(self._provider, drive_id, item_id))
+        return _LiveItem(connection=connection, item_id=item_id, identity=identity, record=record, snapshot=snapshot,
+                         key=item_binding_key(identity))
 
     @staticmethod
     def _state_after_write(note: Optional[DriveNote], content: NoteContent, *, live: bool) -> NoteState:
@@ -345,9 +367,8 @@ class DriveNoteService:
 
     async def _noop_receipt(self, user_id: str, note: DriveNote, place: Optional[_LiveItem]) -> NoteReceipt:
         if place is not None:
-            enabled = await self._indexing_enabled(user_id)
-            return self._receipt("set", note, path=place.snapshot.path, ref=make_drive_ref(place.item_id),
-                                 previous=note, status=searchability(enabled is not False, place.record), noop=True)
+            return self._receipt("set", note, path=place.snapshot.path, ref=place.ref, previous=note,
+                                 status=searchability(place.connection.indexing_enabled, place.record), noop=True)
         return self._receipt("set", note, path=self._path(note), ref=item_ref(note), previous=note,
                              status=await self._status_of(user_id, note), noop=True)
 
@@ -356,12 +377,13 @@ class DriveNoteService:
         """Nudge the indexer (step 6: a live item always; a note-ref edit only when the note is active on the connected
         drive) and build the receipt of the stored note (step 7)."""
         if place is not None:
-            await self._nudge(user_id, [place.item_id])
-            enabled = await self._indexing_enabled(user_id)
-            return self._receipt("set", written, path=place.snapshot.path, ref=make_drive_ref(place.item_id),
-                                 previous=previous, status=searchability(enabled is not False, place.record))
-        if await self._on_connected_drive(user_id, written) and written.state == NoteState.ACTIVE.value:
-            await self._nudge(user_id, [written.binding.item_id] if written.binding is not None else [])
+            await self._nudge(place.connection, [place.item_id])
+            return self._receipt("set", written, path=place.snapshot.path, ref=place.ref,
+                                 previous=previous, status=searchability(place.connection.indexing_enabled,
+                                                                         place.record))
+        connection = await self._note_connection(user_id, written)
+        if connection is not None and written.state == NoteState.ACTIVE.value:
+            await self._nudge(connection, [written.binding.item_id] if written.binding is not None else [])
         return self._receipt("set", written, path=self._path(written), ref=item_ref(written), previous=previous,
                              status=await self._status_of(user_id, written))
 
@@ -394,7 +416,7 @@ class DriveNoteService:
                     raise DriveNoteRefused(NoteRefusal.CONFLICT, "The note was changed at the same time: try again.")
                 note = await self._notes.get(user_id, note.note_id)
                 continue
-            await self._nudge(user_id, [note.binding.item_id] if note.binding is not None else [])
+            await self._nudge_note(user_id, note)
             receipt = self._receipt("clear", written, path=self._path(note), ref=item_ref(note), previous=note)
             self._log("clear", user_id, receipt)
             return receipt
@@ -448,7 +470,7 @@ class DriveNoteService:
                     raise DriveNoteRefused(NoteRefusal.CONFLICT, "The note was changed at the same time: try again.")
                 note = await self._notes.get(user_id, note.note_id)
                 continue
-            await self._nudge(user_id, [note.binding.item_id] if note.binding is not None else [])
+            await self._nudge_note(user_id, note)
             receipt = self._receipt("restore", written, path=self._path(note), ref=item_ref(note), previous=note,
                                     redo=redo)
             self._log("undo", user_id, receipt)
@@ -502,18 +524,26 @@ class DriveNoteService:
         left = set(result.left)
         done = [i for i in ids if i not in left]
         scope = str(value.get("scope", ""))
-        if await self._indexing_enabled(user_id) is False:
-            # with indexing off no tick clears a record copy: a stub is deleted now only when no record holds that
-            # note's copy (a copy left from before indexing went off waits for the indexer, which clears it first)
-            held = await self._copies_held(user_id, {i: n for i, n in notes.items() if i in done})
-            for note_id in done:
+        live = await self._live_connections(user_id)
+        if live is not None:
+            by_tag = {c.ref_tag: c for c in live}
+            erased = {i: n for i, n in notes.items() if i in done}
+            # with indexing off on the note's connection (or no live connection: no index at all) no tick clears a
+            # record copy: a stub is deleted now only when no record holds that note's copy (a copy left from before
+            # indexing went off waits for the indexer, which clears it first)
+            idle = {i: n for i, n in erased.items()
+                    if (c := by_tag.get(note_ref_tag(n))) is None or not c.indexing_enabled}
+            held = await self._copies_held(user_id, idle, by_tag)
+            for note_id in idle:
                 if note_id not in held:
                     await self._notes.delete_stub(user_id, note_id)
-        elif scope != ERASE_SCOPE_ALL:
-            # one note: its item is nudged; an erase-all nudges nothing (its merges come from the watermark, and a
-            # nudge of every item would cost the next tick one item call each)
-            await self._nudge(user_id, [n.binding.item_id for i, n in notes.items()
-                                        if i not in left and n.binding is not None])
+            if scope != ERASE_SCOPE_ALL:
+                # one note: its item is nudged; an erase-all nudges nothing (its merges come from the watermark, and
+                # a nudge of every item would cost the next tick one item call each)
+                for note_id, note in erased.items():
+                    connection = by_tag.get(note_ref_tag(note))
+                    if note_id not in idle and connection is not None and note.binding is not None:
+                        await self._nudge(connection, [note.binding.item_id])
         logger.info(f"[DriveNote] erased user={user_id[:8]} scope={value.get('scope', '')} notes={result.erased} "
                     f"left={len(left)}")
         if left:
@@ -527,10 +557,13 @@ class DriveNoteService:
     # reads (S2: the open-file header, §6.2)
     # ------------------------------------------------------------------------------------------------------------------
 
-    async def note_for_item(self, user_id: str, drive_id: str, item_id: str) -> Optional[DriveNote]:
-        """The note bound to this item on this drive, when it says anything: an `active` or `archived` note (a
-        cleared note and an erase stub are None). One `array-contains` read; the caller needs no provider key."""
-        note = await self._notes.find_bound(user_id, binding_key(self._provider, drive_id, item_id))
+    async def note_for_item(self, user_id: str, identity: str) -> Optional[DriveNote]:
+        """The note bound to the item of this identity (`DriveItem.identity`, MULTI_DRIVE_RFC §7.2), when it says
+        anything: an `active` or `archived` note (a cleared note and an erase stub are None). One `array-contains`
+        read; None for an empty identity."""
+        if not identity:
+            return None
+        note = await self._notes.find_bound(user_id, item_binding_key(identity))
         if note is None or note.erase_pending or note.state == NoteState.CLEARED.value:
             return None
         return note
@@ -544,7 +577,7 @@ class DriveNoteService:
         target = parse_note_target(ref)
         if target is None:
             raise DriveNoteRefused(NoteRefusal.INVALID_REF,
-                                   "file_ref must be a drive:<id> ref from a search result, a listing or a [Drive: …] "
+                                   "file_ref must be a drive: ref from a search result, a listing or a [Drive: …] "
                                    "label, or a drive_note:<id> ref from a deleted-files result.")
         return target
 
@@ -561,51 +594,34 @@ class DriveNoteService:
             logger.warning(f"🛡️ [DriveNote] note rejected user={user_id[:8]}: flagged {result.patterns_detected}")
             raise DriveNoteRefused(NoteRefusal.SECURITY_REJECTED, "The note was flagged by the security check.")
 
-    async def _connected_drive(self, user_id: str) -> str:
+    async def _connection_of_ref(self, user_id: str, target: NoteTarget) -> DriveConnection:
+        """The live connection a `drive:` target names (§9): refused with the code-built line for an untagged ref or a
+        tag of no live connection (D13), NOT_CONNECTED when it is not reachable, DRIVE_UNAVAILABLE when the
+        connections cannot be read."""
+        ref = (drive_ref.format(target.tag, target.item_id) if target.tag
+               else f"{drive_ref.REF_PREFIX}{target.item_id}")
         try:
-            connection = await self._drive.connection(user_id)
-        except DriveNotConnectedError:
-            connection = None
+            found = await self._connections.resolve_ref(user_id, ref)
         except Exception as exc:
             logger.error(f"[DriveNote] connection read failed user={user_id[:8]}: {type(exc).__name__}: {exc}")
             raise DriveNoteRefused(NoteRefusal.DRIVE_UNAVAILABLE, "The drive could not be reached: try again later.")
-        drive_id = await self._drive_id_of(user_id, connection) if connection is not None else ""
-        if not drive_id:
-            raise DriveNoteRefused(NoteRefusal.NOT_CONNECTED,
-                                   "The drive is not connected: connect it first (a note needs the file verified).")
-        return drive_id
+        if found is None or isinstance(found, DriveRefRefusal):
+            line = found.line if isinstance(found, DriveRefRefusal) else stale_ref_line(ref)
+            raise DriveNoteRefused(NoteRefusal.INVALID_REF, line, ref=ref)
+        return found.connection
 
-    async def drive_id_for_connection(self, user_id: str, connection: DriveConnection) -> str:
-        """The connected drive's id with the sync-state fallback (D-I3), for a reader that holds the connection
-        already (the open header's note line). "" when not connected or neither is known."""
-        return await self._drive_id_of(user_id, connection)
-
-    async def _drive_id_of(self, user_id: str, connection: DriveConnection) -> str:
-        """The connected drive's id: the credential's, else — a credential stored before the drive id was read, or
-        whose read failed (it is best-effort) — the sync state's, as the indexer falls back to it. "" when not
-        connected or neither is known."""
-        if not connection.connected:
-            return ""
-        if connection.drive_id:
-            return connection.drive_id
+    async def _record(self, connection: DriveConnection, item_id: str) -> Optional[DriveIndexRecord]:
         try:
-            state = await self._index.get_sync_state(user_id)
-        except Exception as exc:
-            logger.warning(f"[DriveNote] sync state read failed user={user_id[:8]}: {type(exc).__name__}")
-            return ""
-        return state.drive_id if state is not None else ""
-
-    async def _record(self, user_id: str, item_id: str) -> Optional[DriveIndexRecord]:
-        try:
-            return (await self._index.get_records(user_id, [item_id])).get(item_id)
+            return (await self._index.get_records(connection.scope, [item_id])).get(item_id)
         except Exception as exc:   # the guard falls back to Graph's own 404 for a file the bot cannot open
-            logger.warning(f"[DriveNote] index read failed user={user_id[:8]}: {type(exc).__name__}: {exc}")
+            logger.warning(f"[DriveNote] index read failed user={connection.user_id[:8]}: {type(exc).__name__}: {exc}")
             return None
 
-    async def _resolve_item(self, user_id: str, item_id: str) -> Tuple[DriveChange, DriveItem]:
+    async def _resolve_item(self, connection: DriveConnection, item_id: str) -> Tuple[DriveChange, DriveItem]:
+        user_id = connection.user_id
         try:
-            change = await self._drive.get_change(user_id, item_id)
-            item = await self._drive.get_item(user_id, item_id)
+            change = await self._drive.get_change(connection.handle, item_id)
+            item = await self._drive.get_item(connection.handle, item_id)
         except DriveItemNotFoundError:
             raise DriveNoteRefused(NoteRefusal.NOT_ON_DRIVE,
                                    "The file is not on the drive. If it had a note, that note is archived: a "
@@ -636,63 +652,63 @@ class DriveNoteService:
         return self._new_note_id()
 
     async def _resolve_note(self, user_id: str, target: NoteTarget) -> Optional[DriveNote]:
-        """The note a ref names, from the store alone. `drive_note:<id>` → that note (refused when it does not
-        exist). `drive:<id>` → the note whose ref key is `r:{id}` (None when there is none); several (one item id on
-        two drives) → the one on the connected drive, else refused with each one's `drive_note:` ref."""
+        """The note a ref names, from the store alone (no connection read: it works while the drive is disconnected,
+        D3, D17). `drive_note:<id>` → that note (refused when it does not exist). `drive:<tag>:<id>` → the note whose
+        ref key is `r:{tag}:{id}` (None when there is none; several live ones are refused with each one's `drive_note:`
+        ref). An untagged `drive:<id>` is refused with the "search again" line (MULTI_DRIVE_RFC §9, D13)."""
         if target.note_id:
             note = await self._notes.get(user_id, target.note_id)
             if note is None:
                 raise DriveNoteRefused(NoteRefusal.NO_NOTE, f"There is no note {target.note_id}.")
             return note
-        found = await self._notes.find_by_match_keys(user_id, [ref_key(target.item_id)])
+        if not target.tag:
+            ref = f"{drive_ref.REF_PREFIX}{target.item_id}"
+            raise DriveNoteRefused(NoteRefusal.INVALID_REF, stale_ref_line(ref), ref=ref)
+        found = await self._notes.find_by_match_keys(user_id, [tagged_ref_key(target.tag, target.item_id)])
         live = [n for n in found if not n.erase_pending]
         if not live:
             return found[0] if found else None
-        drive_id = await self._drive_id_or_empty(user_id)
         if len(live) == 1:
-            one = live[0]
-            if drive_id and one.binding is not None and one.binding.drive_id != drive_id:
-                # the item id names a note on another drive while a different one is connected: never acted on by a
-                # drive: ref (the ref names a file on the connected drive); its own ref still works (D21)
-                raise DriveNoteRefused(NoteRefusal.NOT_ON_DRIVE,
-                                       f"This file's note is on a drive that is not connected: use {one.ref} to "
-                                       "change it.", refs=[one.ref])
-            return one
-        here = [n for n in live if drive_id and n.binding is not None and n.binding.drive_id == drive_id]
-        if len(here) == 1:
-            return here[0]
+            return live[0]
         refs = [n.ref for n in live]
         raise DriveNoteRefused(NoteRefusal.AMBIGUOUS_NOTE,
-                               f"Several notes match this file (on different drives): use one of {', '.join(refs)}.",
-                               refs=refs)
+                               f"Several notes match this file: use one of {', '.join(refs)}.", refs=refs)
 
-    async def _drive_id_or_empty(self, user_id: str) -> str:
-        return await self._drive_id_or_none(user_id) or ""
-
-    async def _drive_id_or_none(self, user_id: str) -> Optional[str]:
-        """The connected drive's id ("" when not connected); None when the connection could not be read (unknown)."""
+    async def _live_connections(self, user_id: str) -> Optional[List[DriveConnection]]:
+        """The user's live connections (ACTIVE or NEEDS_RECONNECT); None when they could not be read (unknown)."""
         try:
-            connection = await self._drive.connection(user_id)
-        except DriveNotConnectedError:
-            return ""
+            return await self._connections.list_for_user(user_id)
         except Exception as exc:
             logger.warning(f"[DriveNote] connection read failed user={user_id[:8]}: {type(exc).__name__}")
             return None
-        return await self._drive_id_of(user_id, connection)
 
-    async def _copies_held(self, user_id: str, notes: Mapping[str, DriveNote]) -> Set[str]:
-        """The note ids whose bound item's index record still carries that note's copy. An index read that fails
-        counts every one as held (the stub then waits for the indexer, which is the safe side)."""
-        items = {n.binding.item_id: i for i, n in notes.items() if n.binding is not None}
-        if not items:
-            return set()
-        try:
-            records = await self._index.get_records(user_id, list(items))
-        except Exception as exc:
-            logger.warning(f"[DriveNote] index read failed user={user_id[:8]}: {type(exc).__name__}")
-            return set(notes)
-        return {note_id for item_id, note_id in items.items()
-                if item_id in records and records[item_id].owner_note_id == note_id}
+    async def _note_connection(self, user_id: str, note: DriveNote) -> Optional[DriveConnection]:
+        """The live connection the note is bound on (by its ref tag); None when there is none or it is unknown."""
+        tag = note_ref_tag(note)
+        live = await self._live_connections(user_id) if tag else None
+        return next((c for c in live or () if c.ref_tag == tag), None)
+
+    async def _copies_held(self, user_id: str, notes: Mapping[str, DriveNote],
+                           by_tag: Mapping[str, DriveConnection]) -> Set[str]:
+        """The note ids whose bound item's index record (in the index of the note's connection) still carries that
+        note's copy. A note with no live connection has no index, so nothing holds it. An index read that fails counts
+        every note of that connection as held (the stub then waits for the indexer, which is the safe side)."""
+        groups: Dict[str, Dict[str, str]] = {}
+        for note_id, note in notes.items():
+            tag = note_ref_tag(note)
+            if note.binding is not None and tag in by_tag:
+                groups.setdefault(tag, {})[note.binding.item_id] = note_id
+        held: Set[str] = set()
+        for tag, items in groups.items():
+            try:
+                records = await self._index.get_records(by_tag[tag].scope, list(items))
+            except Exception as exc:
+                logger.warning(f"[DriveNote] index read failed user={user_id[:8]}: {type(exc).__name__}")
+                held.update(items.values())
+                continue
+            held.update(note_id for item_id, note_id in items.items()
+                        if item_id in records and records[item_id].owner_note_id == note_id)
+        return held
 
     async def _embed(self, user_id: str, content: NoteContent, name: str) -> Tuple[Optional[List[float]], bool]:
         """One embedding call (§4.4 step 4); a failure stores the note with `embedding_pending` (the indexer repairs)."""
@@ -706,17 +722,16 @@ class DriveNoteService:
             return None, True
         return [float(x) for x in vector], False
 
-    async def _indexing_enabled(self, user_id: str) -> Optional[bool]:
-        """The owner's indexing switch; None when it could not be read."""
-        try:
-            profile = await self._users.get_user(user_id)
-        except Exception as exc:
-            logger.warning(f"[DriveNote] user read failed user={user_id[:8]}: {type(exc).__name__}: {exc}")
-            return None
-        return bool(profile is not None and profile.config.drive_indexing_enabled)
+    async def _nudge_note(self, user_id: str, note: DriveNote) -> None:
+        """Nudge the item of a note edited from the store, on its connection; nothing when it has none live."""
+        if note.binding is None:
+            return
+        connection = await self._note_connection(user_id, note)
+        if connection is not None:
+            await self._nudge(connection, [note.binding.item_id])
 
-    async def _nudge(self, user_id: str, item_ids: Sequence[str]) -> None:
-        """Tell the indexer which items changed (UserDriveService's nudge, RFC Δ3). Never raises."""
+    async def _nudge(self, connection: DriveConnection, item_ids: Sequence[str]) -> None:
+        """Tell the connection's indexer which items changed (UserDriveService's nudge, RFC Δ3). Never raises."""
         # at most ITEM_CALLS_PER_TICK: the tick reads every nudged item by id, serially; the rest merge from the
         # notes step's watermark anyway
         ids = tuple(dict.fromkeys(i for i in item_ids if i))[:ITEM_CALLS_PER_TICK]
@@ -725,10 +740,10 @@ class DriveNoteService:
         nudge = Nudge(mutation_id=uuid.uuid4().hex, item_ids=ids)
         try:
             await self._nudge_queue.enqueue_worker_task(
-                DRIVE_SYNC_TASK, tick_payload(user_id, nudge), deadline_seconds=TICK_DEADLINE_S,
-                dedup_key=nudge_key(user_id, nudge.mutation_id, 0))
+                DRIVE_SYNC_TASK, scope_payload(connection.scope, nudge), deadline_seconds=TICK_DEADLINE_S,
+                dedup_key=nudge_task_key(connection.scope, nudge.mutation_id, 0))
         except Exception as exc:
-            logger.warning(f"[DriveNote] nudge failed user={user_id[:8]} items={len(ids)}: {exc}")
+            logger.warning(f"[DriveNote] nudge failed user={connection.user_id[:8]} items={len(ids)}: {exc}")
 
     def _erase_store(self) -> EphemeralStore:
         if self._erase_requests is None:
@@ -746,20 +761,23 @@ class DriveNoteService:
         logger.error(f"❌ [DriveNote] no unique erase code user={user_id[:8]} after {_ERASE_CODE_ATTEMPTS} attempts")
         raise RuntimeError(f"could not allocate an erase code after {_ERASE_CODE_ATTEMPTS} attempts")
 
-    async def _on_connected_drive(self, user_id: str, note: DriveNote) -> bool:
-        drive_id = await self._drive_id_or_empty(user_id)
-        return bool(drive_id) and note.binding is not None and note.binding.drive_id == drive_id
-
     async def _status_of(self, user_id: str, note: DriveNote) -> str:
         """The searchability of an existing note edited by its `drive_note:` ref: archived → found only by a
-        deleted-files search; bound to a drive that is not connected → not searchable now; else as for `set`."""
+        deleted-files search; bound on a connection that is not live → not searchable now; else as for `set`, by its
+        connection's switch and index. Connections that cannot be read are not "another drive": status as for `set`
+        with the switch on and no record."""
         if note.state == NoteState.ARCHIVED.value:
             return STATUS_ARCHIVED
-        drive_id = await self._drive_id_or_none(user_id)
-        if note.binding is None or (drive_id is not None and note.binding.drive_id != drive_id):
-            return STATUS_OTHER_DRIVE   # an unreadable connection (None) is not "another drive": status as for `set`
-        enabled = await self._indexing_enabled(user_id)
-        return searchability(enabled is not False, await self._record(user_id, note.binding.item_id))
+        if note.binding is None:
+            return STATUS_OTHER_DRIVE
+        live = await self._live_connections(user_id)
+        if live is None:
+            return searchability(True, None)
+        tag = note_ref_tag(note)
+        connection = next((c for c in live if tag and c.ref_tag == tag), None)
+        if connection is None:
+            return STATUS_OTHER_DRIVE
+        return searchability(connection.indexing_enabled, await self._record(connection, note.binding.item_id))
 
     async def _valid_from_of(self, user_id: str, note: Optional[DriveNote]) -> Optional[datetime]:
         """The current version's `valid_from` (the next one never opens before it); None for no note or a stub."""
@@ -799,7 +817,7 @@ class DriveNoteService:
 
     def _noop_clear(self, note: Optional[DriveNote], target: NoteTarget) -> NoteReceipt:
         if note is None:
-            ref = make_drive_ref(target.item_id) if target.item_id else ""
+            ref = drive_ref.format(target.tag, target.item_id) if target.item_id and target.tag else ""
             return NoteReceipt(action="clear", note_id="", ref=ref, path="", version=0, state="", noop=True)
         stub = note.erase_pending
         return NoteReceipt(action="clear", note_id=note.note_id, ref=item_ref(note), path=self._path(note),

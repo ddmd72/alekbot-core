@@ -9,13 +9,10 @@ from src.domain.user_drive import (
     drive_context_entry,
     drive_filename,
     drive_label,
-    is_drive_ref,
     is_text_file,
     join_drive_path,
-    make_drive_ref,
     match_child_folder,
     name_key,
-    parse_drive_ref,
     sanitize_drive_filename,
     split_folder_path,
 )
@@ -23,21 +20,6 @@ from src.domain.user_drive import (
 
 def _folder(name: str, item_id: str = "f1", path: str = "") -> DriveItem:
     return DriveItem(item_id=item_id, name=name, path=path or name, is_folder=True)
-
-
-class TestRefs:
-    def test_round_trip(self):
-        assert parse_drive_ref(make_drive_ref("ABC!123")) == "ABC!123"
-
-    def test_non_drive_refs(self):
-        for ref in ("report.docx", "docs/u1/x.pdf", "skill:a/b.md", "", "drive:"):
-            assert parse_drive_ref(ref) is None
-            assert is_drive_ref(ref) is False
-
-    def test_parse_tolerates_label_punctuation(self):
-        assert parse_drive_ref('"drive:abc"') == "abc"
-        assert parse_drive_ref("drive:abc]") == "abc"
-        assert parse_drive_ref(" ref=drive:abc ") == "abc"
 
 
 class TestSplitFolderPath:
