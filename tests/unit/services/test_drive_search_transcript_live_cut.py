@@ -40,7 +40,7 @@ async def _world(*, chunks=CHUNKS, parent=None, **fields):
 
 
 async def _text(w, item):
-    return await w.service.transcript_text("u", item)
+    return await w.service.transcript_text(await w.connection(), item)
 
 
 def _line(text):
