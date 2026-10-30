@@ -117,7 +117,7 @@ class FakeContentDrive(FakeDrive):
                                       size_bytes=len(data), **kw)
         self.log.append(self.items[item_id])
 
-    async def download_to_file(self, user_id: str, item_id: str, dest_path: str, max_bytes: int) -> int:
+    async def download_to_file(self, handle: Any, item_id: str, dest_path: str, max_bytes: int) -> int:
         self.downloads.append(item_id)
         if item_id in self.download_errors:
             raise self.download_errors.pop(item_id)
@@ -130,8 +130,8 @@ class FakeContentDrive(FakeDrive):
             raise DriveFileTooLarge(max_bytes)
         return len(data)
 
-    async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
-        self.thumbnail_calls.append((item_id, size))
+    async def get_thumbnail(self, handle: Any, item_id: str, max_edge_px: int) -> Optional[bytes]:
+        self.thumbnail_calls.append((item_id, max_edge_px))
         if item_id not in self.items:
             raise DriveItemNotFoundError(item_id)
         return self.thumbnails.get(item_id)
