@@ -102,16 +102,6 @@ async def test_the_record_has_the_final_shape_and_no_secret_in_a_plaintext_field
                       "account_label": "user@example.com"}
 
 
-async def test_only_a_onedrive_record_carries_drive_id_in_plaintext(store):
-    await store.repo.save(creds(kind="microsoft_onedrive", realm="microsoft", drive_id="d1"))
-    await store.repo.save(creds(kind="microsoft_todo", realm="microsoft", drive_id="ignored"))
-    by_kind = {d["kind"]: d for d in store.docs.values()}
-    assert by_kind["microsoft_onedrive"]["drive_id"] == "d1"
-    assert "drive_id" not in by_kind["microsoft_todo"]
-    assert (await one(store.repo, "user-a", "microsoft_onedrive")).drive_id == "d1"
-    assert (await one(store.repo, "user-a", "microsoft_todo")).drive_id == ""
-
-
 async def test_the_argument_credential_id_is_never_used(store):
     await store.repo.save(creds(credential_id="chosen-by-caller"))
     (doc,) = store.docs.values()
@@ -186,13 +176,6 @@ async def test_an_update_never_takes_identity_from_its_argument(store):
     (doc,) = store.docs.values()
     assert (doc["credential_id"], doc["account"]) == (stored.credential_id, {"realm": "google", "subject": "sub-a"})
     assert (doc["kind"], doc["account_id"]) == ("gmail", "acct-1")
-
-
-async def test_a_onedrive_refresh_carries_drive_id(store):
-    await store.repo.save(creds(kind="microsoft_onedrive", realm="microsoft", drive_id="d1"))
-    stored = await one(store.repo, "user-a", "microsoft_onedrive")
-    assert await store.repo.update(replace(stored, access_token="at-2"))
-    assert (await one(store.repo, "user-a", "microsoft_onedrive")).drive_id == "d1"
 
 
 async def test_an_update_after_revoke_returns_false_and_writes_nothing(store):
@@ -326,7 +309,7 @@ async def test_a_missing_record_is_none_and_not_connected_and_writes_nothing(sto
 
 async def test_re_saving_what_was_read_keeps_every_field(store):
     """The consent and refresh paths re-save a credential built from a read."""
-    await store.repo.save(creds(kind="microsoft_onedrive", realm="microsoft", drive_id="D1",
+    await store.repo.save(creds(kind="microsoft_onedrive", realm="microsoft",
                                             scopes=["a", "b", "c"]))
     read = await one(store.repo, "user-a", "microsoft_onedrive")
     (doc_id, before), = {k: dict(v) for k, v in store.docs.items()}.items()
@@ -371,11 +354,11 @@ async def test_revoke_keeps_the_users_other_kinds_and_other_users(store):
 
 async def test_a_new_consent_after_a_revoke_connects_again(store):
     onedrive = dict(kind="microsoft_onedrive", realm="microsoft")
-    await store.repo.save(creds(drive_id="D1", **onedrive))
+    await store.repo.save(creds(**onedrive))
     await delete_kind(store.repo, "user-a", "microsoft_onedrive")
-    await store.repo.save(creds(access_token="consent-2", drive_id="D2", **onedrive))
+    await store.repo.save(creds(access_token="consent-2", **onedrive))
     got = await one(store.repo, "user-a", "microsoft_onedrive")
-    assert (got.access_token, got.drive_id, got.needs_reconnect) == ("consent-2", "D2", False)
+    assert (got.access_token, got.needs_reconnect) == ("consent-2", False)
     assert await has_kind(store.repo, "user-a", "microsoft_onedrive") is True
     assert await store.repo.list_user_ids("microsoft_onedrive") == ["user-a"]
 

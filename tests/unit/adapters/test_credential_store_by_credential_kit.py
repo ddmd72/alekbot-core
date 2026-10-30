@@ -208,7 +208,7 @@ async def test_a_consent_without_its_identity_stores_nothing(store, over):
 
 async def test_an_update_keeps_every_stored_identity_field(store):
     """D-P2: an update never takes identity from its argument; it is found by its credential_id only."""
-    await store.repo.save(cred(kind="microsoft_onedrive", subject="sub-1", account_id="acct-1", drive_id="d1"))
+    await store.repo.save(cred(kind="microsoft_onedrive", subject="sub-1", account_id="acct-1"))
     (stored,) = await store.repo.list_for_user(ALEX)
     hostile = replace(stored, account_id="acct-2", kind="gmail", integration=Integration.MAIL,
                       account=ProviderAccount(realm="google", subject="sub-9", label="user@example.com"),
@@ -218,12 +218,12 @@ async def test_an_update_keeps_every_stored_identity_field(store):
     assert (doc["kind"], doc["integration"], doc["account_id"], doc["account"]) == (
         "microsoft_onedrive", "drive", "acct-1", {"realm": "microsoft", "subject": "sub-1"})
     got = await store.repo.get(ALEX, stored.credential_id)
-    assert (got.access_token, got.needs_reconnect, got.drive_id, got.account.label) == (
-        "at-2", True, "d1", "user@example.com")
+    assert (got.access_token, got.needs_reconnect, got.account.label) == (
+        "at-2", True, "user@example.com")
 
 
 async def test_a_refresh_rebuilt_with_replace_keeps_the_identity(store):
-    await store.repo.save(cred(kind="microsoft_onedrive", subject="sub-1", drive_id="d1"))
+    await store.repo.save(cred(kind="microsoft_onedrive", subject="sub-1"))
     (stored,) = await store.repo.list_for_user(ALEX)
     assert await store.repo.update(replace(stored, access_token="at-refreshed", needs_reconnect=False))
     got = await store.repo.get(ALEX, stored.credential_id)
