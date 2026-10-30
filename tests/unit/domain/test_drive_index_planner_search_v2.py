@@ -4,6 +4,7 @@ rules, `script_rendered` and the keys work in the schedule."""
 from dataclasses import replace
 from datetime import date, datetime, timezone
 
+from src.domain.connection_scope import ConnectionScope
 from src.domain.drive_enrichment import DriveProfile, PhotoDescription, PhotoObject, ProfileDate
 from src.domain.drive_extraction import ExtractionOutcome, ExtractionStatus, TriageResult
 from src.domain.drive_index import (
@@ -14,15 +15,16 @@ from src.domain.drive_index_planner import (
     PlanContext, indexed, plan_observation, readme_read, schedule, triaged,
 )
 from src.domain.drive_keys import name_keys_v2
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.place_lookup import Place
 
 NOW = datetime(2026, 10, 20, 8, tzinfo=timezone.utc)
 ROME = Place(name="Rome (Roma), Italy", forms=("Rome", "Roma", "Рим", "Italy", "Italia"))
-GPS = {"location": {"latitude": 41.9, "longitude": 12.5}, "image": {"width": 10, "height": 10}}
+GPS = DriveMediaFacts(latitude=41.9, longitude=12.5, image_width=10, image_height=10)
 
 
 def ctx(place_of=lambda lat, lon: ROME) -> PlanContext:
-    return PlanContext(user_id="u", root_item_id="root", epoch=1, phase=EpochPhase.ENUMERATING, now=NOW,
+    return PlanContext(scope=ConnectionScope(user_id="u", connection_id="u"), root_item_id="root", epoch=1, phase=EpochPhase.ENUMERATING, now=NOW,
                        place_of=place_of)
 
 
@@ -34,7 +36,7 @@ def change(item_id="p1", name="IMG_1.jpg", **kw) -> DriveChange:
 
 class TestPlaceForms:
     def test_a_located_photo_gets_its_place_forms_with_the_geo_v2_stamp(self):
-        rec = plan_observation(change(facets=GPS), None, None, None, ctx()).upsert
+        rec = plan_observation(change(media=GPS), None, None, None, ctx()).upsert
         assert (rec.place_name, rec.place_forms, rec.geo_table_version) == (ROME.name, ROME.forms, GEO_TABLE_VERSION)
 
     def test_a_stored_place_keeps_its_forms(self):
@@ -44,12 +46,12 @@ class TestPlaceForms:
             calls.append((lat, lon))
             return ROME
 
-        rec = plan_observation(change(facets=GPS), None, None, None, ctx(place_of)).upsert
-        again = plan_observation(change(facets=GPS, name="renamed.jpg"), rec, None, None, ctx(place_of)).upsert
+        rec = plan_observation(change(media=GPS), None, None, None, ctx(place_of)).upsert
+        again = plan_observation(change(media=GPS, name="renamed.jpg"), rec, None, None, ctx(place_of)).upsert
         assert again.place_forms == ROME.forms and len(calls) == 1
 
     def test_a_display_name_lookup_still_works(self):
-        rec = plan_observation(change(facets=GPS), None, None, None, ctx(lambda lat, lon: "Rome")).upsert
+        rec = plan_observation(change(media=GPS), None, None, None, ctx(lambda lat, lon: "Rome")).upsert
         assert (rec.place_name, rec.place_forms) == ("Rome", ("Rome",))
 
     def test_no_location_no_forms(self):

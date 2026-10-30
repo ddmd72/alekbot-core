@@ -7,6 +7,7 @@ import pytest
 from src.domain import drive_index_policy as policy
 from src.domain.drive_extraction import ExtractionStatus
 from src.domain.drive_index import DriveChange, DriveIndexRecord, Priority, Reason, RecordState
+from src.domain.drive_media_facts import DriveMediaFacts
 from src.domain.drive_index_params import MAX_CHUNKS_PER_USER
 from src.domain.drive_index_planner import content_due
 from src.domain.drive_index_policy import SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS
@@ -61,17 +62,16 @@ class TestKinds:
 
 
 class TestCameraPrior:
-    @pytest.mark.parametrize("facets,expected", [
-        ({}, False),
-        ({"photo": {}}, False),                                   # S0e: messenger JPEGs carry an empty photo
-        ({"photo": {"takenDateTime": "2026-08-01T10:00:00Z"}}, True),
-        ({"photo": {"cameraMake": "Apple"}}, True),
-        ({"photo": {"cameraModel": "iPhone"}}, False),
-        ({"photo": "odd"}, False),
-        ({"image": {"width": 10}}, False),
+    @pytest.mark.parametrize("media,expected", [
+        (DriveMediaFacts(), False),
+        (DriveMediaFacts(), False),                               # S0e: messenger JPEGs carry an empty photo
+        (DriveMediaFacts(taken_at=datetime(2026, 8, 1, 10, tzinfo=timezone.utc)), True),
+        (DriveMediaFacts(camera_make="Apple"), True),
+        (DriveMediaFacts(camera_model="iPhone"), False),
+        (DriveMediaFacts(image_width=10), False),
     ])
-    def test_prior(self, facets, expected):
-        assert camera_prior(facets) is expected
+    def test_prior(self, media, expected):
+        assert camera_prior(media) is expected
 
 
 class TestOriginalFallback:
