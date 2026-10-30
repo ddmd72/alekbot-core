@@ -30,7 +30,7 @@ DOCS = frozenset({"pdf"})
 
 
 def rec(item_id, **kw):
-    return DriveIndexRecord(**{"user_id": "u", "item_id": item_id, "kind": "pdf", "state": RecordState.PENDING, **kw})
+    return DriveIndexRecord(**{"user_id": "u", "connection_id": "u", "item_id": item_id, "kind": "pdf", "state": RecordState.PENDING, **kw})
 
 
 class TestDomain:
@@ -84,7 +84,7 @@ class TestRepositories:
         assert ("where", "card_capped", "==", False) in pending[0]
         db2 = ChunkDb()
         repo2 = make_chunk_repo(db2, mock_env_config)
-        await repo2.count_unread("u", {"pdf"}, pending=False)
+        await repo2.count_unread(U_SCOPE, {"pdf"}, pending=False)
         terminal = executed(db2, RECS)
         assert len(terminal) == 5 and not any(("where", "state", "==", "pending") in ops for ops in terminal)
 

@@ -58,8 +58,8 @@ async def test_the_in_memory_count_includes_text_images():
     mem = InMemoryDriveIndexRepository()
     await mem.upsert_records(UNREAD_TEXT_IMAGES + NEVER_UNREAD + [
         DriveIndexRecord(user_id="u", connection_id="u", item_id="doc", kind="pdf", state=RecordState.FAILED)])
-    assert await mem.count_unread("u", SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS) == 5
-    assert await mem.count_unread("u", SLICE2_CONTENT_KINDS) == 1   # no triaged kinds asked for
+    assert await mem.count_unread(U_SCOPE, SLICE2_CONTENT_KINDS, SLICE2_TRIAGED_KINDS) == 5
+    assert await mem.count_unread(U_SCOPE, SLICE2_CONTENT_KINDS) == 1   # no triaged kinds asked for
 
 
 class TestFirestore:
