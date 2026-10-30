@@ -2,6 +2,12 @@
 OneDriveAdapter — UserDrivePort over Microsoft Graph, scoped to the app's App Folder
 (docs/10_rfcs/USER_DRIVE_RFC.md §2, §4.2, §4.3).
 
+Every call takes the `DriveHandle` of the connection it acts on (MULTI_DRIVE_RFC §6, E6): the grant is found by
+`handle.credential_id`, and the root cache and the token cache are keyed by the connection / `(user_id, credential_id)`,
+never by `user_id` alone (T-3). Item and drive identities are built here (`onedrive_item_identity`,
+`onedrive_drive_identity`: `microsoft_onedrive:{driveId}:{itemId}` / `microsoft_onedrive:{driveId}`, §7.2); Graph's raw
+facets become typed `DriveMediaFacts` (`media_facts_from_graph`), a file's `quickXorHash` a `ContentIdentity("quickxor", …)`.
+
 Scope Files.ReadWrite.AppFolder: Graph itself refuses anything outside the app folder.
 Ids are Graph item ids (stable across move/rename). Paths are display only: Graph returns
 them percent-encoded, so they are decoded and made relative to the app folder here. The
@@ -31,20 +37,23 @@ import asyncio
 import json
 import re
 import time
-from dataclasses import replace
-from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
 from urllib.parse import quote, unquote
 
 import aiohttp  # module import on purpose: tests patch aiohttp.ClientSession
 
 from ...domain.connector_spec import ConnectorSpec
+from ...domain.drive_capabilities import DriveCapabilities
+from ...domain.drive_content_identity import ContentIdentity
+from ...domain.drive_handle import DriveHandle
 from ...domain.drive_image_mime import MAX_VISION_IMAGE_BYTES
 from ...domain.drive_index import DriveChange, DriveChanges, DriveChildrenPage
 from ...domain.drive_index_params import DOWNLOAD_TIMEOUT_S, TICK_DEADLINE_S
+from ...domain.drive_media_facts import DriveMediaFacts
+from ...domain.drive_media_source import MediaSource
 from ...domain.user_drive import (
     DriveAccessDenied,
-    DriveConnection,
     DriveFileTooLarge,
     DriveThumbnailTooLarge,
     DriveItem,
@@ -58,7 +67,6 @@ from ...domain.user_drive import (
     DriveThrottled,
     join_drive_path,
 )
-from ...domain.oauth_credential import OAuthCredential
 from ...ports.oauth_credentials_port import OAuthCredentialsPort
 from ...ports.user_drive_port import UserDrivePort
 from ...utils.logger import logger
@@ -83,17 +91,19 @@ GRAPH_CALL_TIMEOUT_S = 60.0
 # base64-safe (domain/drive_image_mime.py); a bigger rendition is no rendition.
 _DOWNLOAD_CHUNK = 64 * 1024
 THUMBNAIL_MAX_BYTES = MAX_VISION_IMAGE_BYTES
-# Graph's named sizes and custom `c{w}x{h}[_crop]`; anything else never reaches the URL.
-_THUMBNAIL_SIZE_RE = re.compile(
-    r"(?:small|medium|large|smallSquare|mediumSquare|largeSquare|c[1-9]\d{0,3}x[1-9]\d{0,3}(?:_crop)?)")
+# A rendition is asked for as Graph's custom `c{n}x{n}` (scaled to fit, aspect kept); n is at most four digits.
+_THUMBNAIL_MAX_EDGE_PX = 9999
+# The longest absolute path the App Folder accepts (the user drive service's path check reads it through
+# `capabilities`; spike S1, Δ216).
+MAX_PATH_CHARS = 400
+# The family of the content identity: the hash Graph reports for a file (`file.hashes.quickXorHash`).
+CONTENT_FAMILY = "quickxor"
 # The App Folder item. Its parentReference.driveId is the drive id; the connect's drive activation
 # (`read_drive_id`, below) reads the same field of the same call, so the two compare equal.
 _APPROOT = "/me/drive/special/approot"
 # Bound on the drive-id read at connect: the OAuth callback waits for it.
 DRIVE_ID_READ_TIMEOUT_S = 10.0
 _DELTA_START = f"{_APPROOT}/delta?$top=200"   # S0a: $top paginates delta
-# Facets stored raw on the record (§3.2); `hashes` comes from file.hashes.
-_FACETS = ("photo", "image", "video", "audio", "location", "remoteItem", "package", "malware")
 # Graph writes the same location two ways: '/drive/root:/…' (GET, children, PUT, PATCH, approot)
 # and '/drives/<drive-id>/root:/…' (POST create-folder responses). Strip either prefix (RFC §7).
 _ROOT_PREFIX_RE = re.compile(r"^(?:/drive|/drives/[^/]+)/root:")
@@ -175,18 +185,98 @@ def _parse_time(value: Any) -> Optional[datetime]:
         return None
 
 
-def _to_change(raw: Dict[str, Any]) -> DriveChange:
-    """A Graph driveItem as an observation (§3.1). A tombstone may carry cTag, size, the folder facet
-    and the parent (S0a), but only its id is relied on."""
+def onedrive_drive_identity(drive_id: str, id_space: str = ONEDRIVE_PROVIDER) -> str:
+    """The drive's identity, `{id_space}:{driveId}` (MULTI_DRIVE_RFC §7.2); "" when the drive id is unknown. The
+    cut-over script and the runtime build it with this one function (I6)."""
+    return f"{id_space}:{drive_id}" if drive_id else ""
+
+
+def onedrive_item_identity(drive_id: str, item_id: str, id_space: str = ONEDRIVE_PROVIDER) -> str:
+    """The item's identity, `{id_space}:{driveId}:{itemId}` (§7.2): byte-identical to the key a note was bound with
+    before the rebuild (`i:` + this). "" when the drive id or the item id is unknown."""
+    return f"{id_space}:{drive_id}:{item_id}" if drive_id and item_id else ""
+
+
+def _non_negative_int(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return 0
+    return int(value)
+
+
+def _aware(value: Optional[datetime]) -> Optional[datetime]:
+    """A timestamp Graph printed without an offset is UTC."""
+    if value is None:
+        return None
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def media_facts_from_graph(raw: Mapping[str, Any], *, drive_id: str = "",
+                           id_space: str = ONEDRIVE_PROVIDER) -> DriveMediaFacts:
+    """Graph's raw facets of one driveItem as typed `DriveMediaFacts` (§7.2): `photo` (taken date, camera), `image`,
+    `video` and `audio` (durations are milliseconds already), the `location` facet, `package`, `malware`, and
+    `remoteItem` as `alias_of` (the identity of the item it points to, "" when Graph does not say which). A value
+    of the wrong type reads as absent. `drive_id` is the item's own drive, the home of an alias whose reference
+    carries no drive."""
+    photo = raw.get("photo") if isinstance(raw.get("photo"), Mapping) else {}
+    image = raw.get("image") if isinstance(raw.get("image"), Mapping) else {}
+    video = raw.get("video") if isinstance(raw.get("video"), Mapping) else {}
+    audio = raw.get("audio") if isinstance(raw.get("audio"), Mapping) else {}
+    location = raw.get("location") if isinstance(raw.get("location"), Mapping) else {}
+    lat, lon = location.get("latitude"), location.get("longitude")
+    point: Optional[Tuple[float, float]] = None
+    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) \
+            and not isinstance(lat, bool) and not isinstance(lon, bool):
+        point = float(lat), float(lon)
+    alias_of: Optional[str] = None
+    remote = raw.get("remoteItem")
+    if remote is not None:
+        remote = remote if isinstance(remote, Mapping) else {}
+        remote_drive = str((remote.get("parentReference") or {}).get("driveId") or drive_id)
+        alias_of = onedrive_item_identity(remote_drive, str(remote.get("id") or ""), id_space)
+    return DriveMediaFacts(
+        taken_at=_aware(_parse_time(photo.get("takenDateTime"))),
+        camera_make=str(photo.get("cameraMake") or ""),
+        camera_model=str(photo.get("cameraModel") or ""),
+        latitude=point[0] if point else None,
+        longitude=point[1] if point else None,
+        image_width=_non_negative_int(image.get("width")),
+        image_height=_non_negative_int(image.get("height")),
+        video_duration_ms=_non_negative_int(video.get("duration")),
+        video_width=_non_negative_int(video.get("width")),
+        video_height=_non_negative_int(video.get("height")),
+        audio_duration_ms=_non_negative_int(audio.get("duration")),
+        package="package" in raw,
+        malware="malware" in raw,
+        alias_of=alias_of,
+    )
+
+
+def content_identity_from_graph(raw: Mapping[str, Any]) -> Optional[ContentIdentity]:
+    """`ContentIdentity("quickxor", quickXorHash, size)` of a file driveItem; None for a folder or a file Graph gave no
+    hash for (no family is implied by absence, D12)."""
+    file = raw.get("file") if isinstance(raw.get("file"), Mapping) else {}
+    hashes = file.get("hashes") if isinstance(file.get("hashes"), Mapping) else {}
+    digest = hashes.get("quickXorHash")
+    if not digest or "folder" in raw:
+        return None
+    return ContentIdentity(CONTENT_FAMILY, str(digest), _non_negative_int(raw.get("size")))
+
+
+def _item_drive_id(raw: Mapping[str, Any], fallback: str = "") -> str:
+    return str((raw.get("parentReference") or {}).get("driveId") or fallback)
+
+
+def _to_change(raw: Dict[str, Any], drive_id: str = "", id_space: str = ONEDRIVE_PROVIDER) -> DriveChange:
+    """A Graph driveItem as an observation (§3.1). `drive_id` is the drive the item lives in when the item does not
+    name it. A tombstone may carry cTag, size, the folder facet and the parent (S0a), but only its id is relied on."""
     item_id = str(raw.get("id", ""))
+    own_drive = _item_drive_id(raw, drive_id)
+    identity = onedrive_item_identity(own_drive, item_id, id_space)
     if "deleted" in raw:
         # is_folder=False on purpose: the planner decides file vs folder from the existing record.
-        return DriveChange(item_id=item_id, deleted=True)
+        return DriveChange(item_id=item_id, deleted=True, identity=identity)
     file = raw.get("file") or {}
     folder = raw.get("folder")
-    facets: Dict[str, Any] = {key: raw[key] for key in _FACETS if key in raw}
-    if file.get("hashes"):
-        facets["hashes"] = dict(file["hashes"])
     return DriveChange(
         item_id=item_id,
         parent_id=str((raw.get("parentReference") or {}).get("id", "")),
@@ -199,8 +289,10 @@ def _to_change(raw: Dict[str, Any]) -> DriveChange:
         fs_modified_at=_parse_time((raw.get("fileSystemInfo") or {}).get("lastModifiedDateTime")),
         web_url=str(raw.get("webUrl", "")),
         child_count=int((folder or {}).get("childCount") or 0),
-        facets=facets,
         created_at=_parse_time(raw.get("createdDateTime")),
+        identity=identity,
+        content_identity=content_identity_from_graph(raw),
+        media=media_facts_from_graph(raw, drive_id=own_drive, id_space=id_space),
     )
 
 
@@ -233,26 +325,25 @@ class _CursorGone(ValueError):
 class OneDriveAdapter(UserDrivePort):
     def __init__(self, oauth_credentials: OAuthCredentialsPort, client_id: str, client_secret: str, *,
                  connector: ConnectorSpec) -> None:
-        """`connector` is the drive kind's spec: the user's credential is the one of `connector.kind` (slice 1b passes
-        it by handle)."""
-        self._oauth = oauth_credentials
-        self._kind = connector.kind
+        """`connector` is the drive kind's spec: its `kind` names the credential family the token provider refreshes
+        and its `id_space` prefixes every identity this adapter builds. The grant of a call is the handle's own."""
+        self._id_space = connector.id_space or ONEDRIVE_PROVIDER
         self._tokens = MicrosoftGraphTokenProvider(oauth_credentials, client_id, client_secret,
                                                    connector.kind, _SCOPE)
-        # user_id → (fetched_at, root json); the owner may rename/move the folder, hence a TTL.
+        # connection_id → (fetched_at, root json); the owner may rename/move the folder, hence a TTL.
         self._root_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
         logger.info("✅ OneDriveAdapter initialized")
 
-    # -- connection ---------------------------------------------------------
+    # -- per connection -----------------------------------------------------
 
-    @property
-    def display_name(self) -> str:
-        return "OneDrive"
+    async def capabilities(self, handle: DriveHandle) -> DriveCapabilities:
+        """The App Folder's path limit (§7.1)."""
+        return DriveCapabilities(max_path_chars=MAX_PATH_CHARS)
 
-    async def _credential(self, user_id: str) -> Optional[OAuthCredential]:
-        """The user's credential of the drive kind (the oldest when several), or None."""
-        keys = await self._oauth.list_keys(user_id, self._kind)
-        return await self._oauth.get(user_id, keys[0].credential_id) if keys else None
+    async def forget(self, handle: DriveHandle) -> None:
+        """Drop the connection's root cache and its credential's cached token (after a disconnect)."""
+        self._root_cache.pop(handle.connection_id, None)
+        self._tokens.invalidate(handle.user_id, handle.credential_id)
 
     async def read_drive_id(self, access_token: str) -> str:
         """The drive id of a just-granted token, for the index's drive-switch check (USER_DRIVE_INDEXING_RFC §10.1
@@ -260,8 +351,8 @@ class OneDriveAdapter(UserDrivePort):
         item: it answers under Files.ReadWrite.AppFolder (spike A6 saw other calls refused with 401), and
         `parentReference.driveId` is the field `get_changes` binds its cursor to, so both sides compare the same
         string. Best effort: "" (any failure, a non-2xx, a body without the field, past DRIVE_ID_READ_TIMEOUT_S)
-        only skips the check, so it never fails the connect. Not on UserDrivePort: slice 1b's `get_root(handle)`
-        replaces it (MULTI_DRIVE_RFC §5.1)."""
+        only skips the check, so it never fails the connect. Not on UserDrivePort: it runs before a connection
+        exists, so there is no handle yet (MULTI_DRIVE_RFC §5.1)."""
         try:
             async with aiohttp.ClientSession() as s:
                 async with s.get(f"{_GRAPH}{_APPROOT}", headers={"Authorization": f"Bearer {access_token}"},
@@ -276,47 +367,39 @@ class OneDriveAdapter(UserDrivePort):
             logger.warning(f"⚠️ Drive id not read at connect: {type(exc).__name__}")
             return ""
 
-    async def is_connected(self, user_id: str) -> bool:
-        return bool(await self._oauth.list_keys(user_id, self._kind))
-
-    async def disconnect(self, user_id: str) -> None:
-        for key in await self._oauth.list_keys(user_id, self._kind):
-            await self._oauth.delete(user_id, key.credential_id)
-        self._tokens.forget(user_id)
-        self._root_cache.pop(user_id, None)
-
     # -- reads --------------------------------------------------------------
 
-    async def get_root(self, user_id: str) -> DriveItem:
+    async def get_root(self, handle: DriveHandle) -> DriveItem:
         async with aiohttp.ClientSession() as s:
-            return self._to_item(await self._root_raw(s, user_id), "", is_root=True)
+            root = await self._root_raw(s, handle)
+            return self._to_item(root, "", is_root=True, drive_id=_item_drive_id(root))
 
-    async def get_item(self, user_id: str, item_id: str) -> DriveItem:
+    async def get_item(self, handle: DriveHandle, item_id: str) -> DriveItem:
         async with aiohttp.ClientSession() as s:
-            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
-            return await self._item(s, user_id, raw)
+            raw = await self._call(s, handle, "GET", f"/me/drive/items/{_q(item_id)}")
+            return await self._item(s, handle, raw)
 
-    async def list_children(self, user_id: str, folder_id: str) -> List[DriveItem]:
+    async def list_children(self, handle: DriveHandle, folder_id: str) -> List[DriveItem]:
         async with aiohttp.ClientSession() as s:
             url: Optional[str] = f"/me/drive/items/{_q(folder_id)}/children?$top=200"
             items: List[DriveItem] = []
             while url:
-                page = await self._call(s, user_id, "GET", url)
+                page = await self._call(s, handle, "GET", url)
                 for raw in page.get("value", []):
-                    items.append(await self._item(s, user_id, raw))
+                    items.append(await self._item(s, handle, raw))
                 url = page.get("@odata.nextLink")
             return items
 
-    async def search(self, user_id: str, query: str, limit: int) -> List[DriveItem]:
+    async def search(self, handle: DriveHandle, query: str, limit: int) -> List[DriveItem]:
         async with aiohttp.ClientSession() as s:
             escaped = query.replace("'", "''")
-            page = await self._call(s, user_id, "GET",
+            page = await self._call(s, handle, "GET",
                                     f"/me/drive/special/approot/search(q='{_q(escaped)}')?$top={limit}")
-            return [await self._item(s, user_id, raw) for raw in page.get("value", [])[:limit]]
+            return [await self._item(s, handle, raw) for raw in page.get("value", [])[:limit]]
 
-    async def download(self, user_id: str, item_id: str) -> bytes:
+    async def download(self, handle: DriveHandle, item_id: str) -> bytes:
         async with aiohttp.ClientSession() as s:
-            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
+            raw = await self._call(s, handle, "GET", f"/me/drive/items/{_q(item_id)}")
             url = raw.get("@microsoft.graph.downloadUrl")
             if not url:
                 raise DriveItemNotFoundError(f"No downloadable content for item {item_id}")
@@ -327,42 +410,43 @@ class OneDriveAdapter(UserDrivePort):
                     raise ValueError(f"Drive download failed ({resp.status})")
                 return bytes(await resp.read())
 
-    async def download_url(self, user_id: str, item_id: str) -> str:
-        """The item's pre-authenticated download URL (§27.4), read by the same GET as `download`. It is never
-        logged and never put in an error, and it is not fetched here, so no bearer token goes to its host."""
+    async def media_source(self, handle: DriveHandle, item_id: str) -> MediaSource:
+        """Where the item's bytes can be streamed from: Graph's pre-authenticated download URL (§27.4), read by the
+        same GET as `download`. It carries no headers, so the parser sandbox may receive it (E24). The URL is a secret:
+        never logged and never put in an error; it is not fetched here, so no bearer token goes to its host."""
         async with aiohttp.ClientSession() as s:
-            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
+            raw = await self._call(s, handle, "GET", f"/me/drive/items/{_q(item_id)}")
             url = raw.get("@microsoft.graph.downloadUrl")
             if not url:
                 raise DriveItemNotFoundError(f"No downloadable content for item {item_id}")
-            return str(url)
+            return MediaSource(url=str(url), headers={})
 
     # -- writes -------------------------------------------------------------
 
-    async def upload(self, user_id: str, parent_id: str, filename: str, data: bytes, content_type: str,
+    async def upload(self, handle: DriveHandle, parent_id: str, filename: str, data: bytes, content_type: str,
                      conflict: Literal["rename", "replace", "fail"] = "rename") -> DriveItem:
         async with aiohttp.ClientSession() as s:
             target = f"/me/drive/items/{_q(parent_id)}:/{_q(filename)}:"
             if len(data) <= _SIMPLE_UPLOAD_MAX:
-                raw = await self._call(s, user_id, "PUT",
+                raw = await self._call(s, handle, "PUT",
                                        f"{target}/content?@microsoft.graph.conflictBehavior={conflict}",
                                        data=data, content_type=content_type)
             else:
-                raw = await self._session_upload(s, user_id, f"{target}/createUploadSession",
+                raw = await self._session_upload(s, handle, f"{target}/createUploadSession",
                                                  {"item": {"@microsoft.graph.conflictBehavior": conflict}}, data)
-            return await self._item(s, user_id, raw)
+            return await self._item(s, handle, raw)
 
-    async def replace_content(self, user_id: str, item_id: str, data: bytes, content_type: str) -> DriveItem:
+    async def replace_content(self, handle: DriveHandle, item_id: str, data: bytes, content_type: str) -> DriveItem:
         async with aiohttp.ClientSession() as s:
             base = f"/me/drive/items/{_q(item_id)}"
             if len(data) <= _SIMPLE_UPLOAD_MAX:
-                raw = await self._call(s, user_id, "PUT", f"{base}/content", data=data, content_type=content_type)
+                raw = await self._call(s, handle, "PUT", f"{base}/content", data=data, content_type=content_type)
             else:
-                raw = await self._session_upload(s, user_id, f"{base}/createUploadSession",
+                raw = await self._session_upload(s, handle, f"{base}/createUploadSession",
                                                  {"item": {"@microsoft.graph.conflictBehavior": "replace"}}, data)
-            return await self._item(s, user_id, raw)
+            return await self._item(s, handle, raw)
 
-    async def move(self, user_id: str, item_id: str, new_parent_id: Optional[str] = None,
+    async def move(self, handle: DriveHandle, item_id: str, new_parent_id: Optional[str] = None,
                    new_name: Optional[str] = None) -> DriveItem:
         body: Dict[str, Any] = {}
         if new_parent_id:
@@ -370,13 +454,13 @@ class OneDriveAdapter(UserDrivePort):
         if new_name:
             body["name"] = new_name
         async with aiohttp.ClientSession() as s:
-            raw = await self._call(s, user_id, "PATCH", f"/me/drive/items/{_q(item_id)}", json=body)
-            return await self._item(s, user_id, raw)
+            raw = await self._call(s, handle, "PATCH", f"/me/drive/items/{_q(item_id)}", json=body)
+            return await self._item(s, handle, raw)
 
-    async def create_folder(self, user_id: str, parent_id: str, name: str) -> DriveItem:
+    async def create_folder(self, handle: DriveHandle, parent_id: str, name: str) -> DriveItem:
         async with aiohttp.ClientSession() as s:
             try:
-                raw = await self._call(s, user_id, "POST", f"/me/drive/items/{_q(parent_id)}/children",
+                raw = await self._call(s, handle, "POST", f"/me/drive/items/{_q(parent_id)}/children",
                                        json={"name": name, "folder": {},
                                              "@microsoft.graph.conflictBehavior": "fail"})
             except _BadRequest as exc:
@@ -384,34 +468,34 @@ class OneDriveAdapter(UserDrivePort):
                     # S1 (Δ216): a folder created near the path limit answered a plain 400 invalidRequest.
                     raise DrivePathTooLong("Drive folder path is too long") from exc
                 raise
-            return await self._item(s, user_id, raw)
+            return await self._item(s, handle, raw)
 
-    async def child_by_name(self, user_id: str, parent_id: str, name: str) -> Optional[DriveChange]:
+    async def child_by_name(self, handle: DriveHandle, parent_id: str, name: str) -> Optional[DriveChange]:
         """The child with exactly that name: one path-relative GET (S1: works inside the App Folder), no search."""
         async with aiohttp.ClientSession() as s:
             try:
-                raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(parent_id)}:/{_q(name)}:")
+                raw = await self._call(s, handle, "GET", f"/me/drive/items/{_q(parent_id)}:/{_q(name)}:")
             except DriveItemNotFoundError:
                 return None
-        return _to_change(raw)
+            return self._change(handle, raw)
 
-    async def area_path(self, user_id: str) -> str:
+    async def area_path(self, handle: DriveHandle) -> str:
         """Decoded absolute path of the area root from the drive root (e.g. '/Apps/Alek-bot'). Log its length only."""
         async with aiohttp.ClientSession() as s:
-            return await self._root_abs(s, user_id)
+            return await self._root_abs(s, handle)
 
-    async def delete(self, user_id: str, item_id: str) -> None:
+    async def delete(self, handle: DriveHandle, item_id: str) -> None:
         async with aiohttp.ClientSession() as s:
-            await self._call(s, user_id, "DELETE", f"/me/drive/items/{_q(item_id)}")
+            await self._call(s, handle, "DELETE", f"/me/drive/items/{_q(item_id)}")
 
     # -- content for the index (USER_DRIVE_INDEXING_RFC §8.1, §24.5) -------------------------
 
-    async def download_to_file(self, user_id: str, item_id: str, dest_path: str, max_bytes: int) -> int:
+    async def download_to_file(self, handle: DriveHandle, item_id: str, dest_path: str, max_bytes: int) -> int:
         """Stream the content to `dest_path`, chunk by chunk, never whole in memory. The stream is cut as soon
         as it passes `max_bytes` (metadata can understate a size, §5.4); the partial file is the caller's. No
         download URL, or one answering 404/410: DriveItemNotFoundError."""
         async with aiohttp.ClientSession() as s:
-            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
+            raw = await self._call(s, handle, "GET", f"/me/drive/items/{_q(item_id)}")
             url = raw.get("@microsoft.graph.downloadUrl")
             if not url:
                 raise DriveItemNotFoundError(f"No downloadable content for item {item_id}")
@@ -441,15 +525,17 @@ class OneDriveAdapter(UserDrivePort):
                 raise OSError(f"Drive download transport failure ({type(exc).__name__})") from exc
             return written
 
-    async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
-        """One provider rendition: a standard size (`medium` = 176 px, `large` = 800 px) or a custom `c{w}x{h}`
-        (Graph scales it, HEIC included; we never decode). The set comes from `/thumbnails?select=<size>`, the
-        bytes from its pre-authenticated URL. None: no rendition or its URL gone; DriveThumbnailTooLarge: bigger than
-        the vision cap."""
-        if not _THUMBNAIL_SIZE_RE.fullmatch(size):
-            raise ValueError(f"Unknown thumbnail size {size!r}")
+    async def get_thumbnail(self, handle: DriveHandle, item_id: str, max_edge_px: int) -> Optional[bytes]:
+        """One provider rendition whose longer edge is at most `max_edge_px`: Graph's custom `c{n}x{n}` (scaled to fit,
+        HEIC included; we never decode). The set comes from `/thumbnails?select=<size>`, the bytes from its
+        pre-authenticated URL. None: no rendition or its URL gone; DriveThumbnailTooLarge: bigger than the vision
+        cap; ValueError: an edge outside 1..9999."""
+        if isinstance(max_edge_px, bool) or not isinstance(max_edge_px, int) \
+                or not 1 <= max_edge_px <= _THUMBNAIL_MAX_EDGE_PX:
+            raise ValueError(f"A thumbnail edge is 1..{_THUMBNAIL_MAX_EDGE_PX} px: {max_edge_px!r}")
+        size = f"c{max_edge_px}x{max_edge_px}"
         async with aiohttp.ClientSession() as s:
-            page = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}/thumbnails?select={size}")
+            page = await self._call(s, handle, "GET", f"/me/drive/items/{_q(item_id)}/thumbnails?select={size}")
             sets = page.get("value") or []
             rendition = sets[0].get(size) if sets and isinstance(sets[0], dict) else None
             url = str(rendition.get("url") or "") if isinstance(rendition, dict) else ""
@@ -481,16 +567,16 @@ class OneDriveAdapter(UserDrivePort):
 
     # -- change capture for the index (USER_DRIVE_INDEXING_RFC §4, §7.2) -------
 
-    async def get_changes(self, user_id: str, cursor: Optional[str]) -> DriveChanges:
+    async def get_changes(self, handle: DriveHandle, cursor: Optional[str]) -> DriveChanges:
         """One delta page. None starts a full enumeration of the App Folder; every page of an
         enumeration (onboarding or after a 410) reports full_enumeration, a deltaLink round does not."""
         url, full, bound_drive, bound_root = self._decode_cursor(cursor)
         async with aiohttp.ClientSession() as s:
             # Read fresh, never from the 5-minute cache, so the root and the page always come from
             # the same token: a cached root with a new grant's page would give a wrong root_item_id.
-            # A reconnect itself is noticed by connection() (it drops both caches). One GET per page.
-            self._root_cache.pop(user_id, None)
-            root = await self._root_raw(s, user_id)
+            # A reconnect is a new credential, hence a new token cache key. One GET per page.
+            self._root_cache.pop(handle.connection_id, None)
+            root = await self._root_raw(s, handle)
             drive_id = str((root.get("parentReference") or {}).get("driveId", ""))
             root_id = str(root.get("id", ""))
             if (bound_drive and drive_id and bound_drive != drive_id) or \
@@ -498,11 +584,11 @@ class OneDriveAdapter(UserDrivePort):
                 # Never follow it: Graph may refuse it with something other than 410, which would fail
                 # every tick before the per-page drive check runs. The restart page carries
                 # the fresh drive id, so the tick sees the switch.
-                logger.warning(f"Drive change cursor belongs to another drive or App Folder for user "
-                               f"{user_id[:8]}; restarting enumeration")
+                logger.warning(f"Drive change cursor belongs to another drive or App Folder for connection "
+                               f"{handle.connection_id[:8]}; restarting enumeration")
                 raise DriveResyncRequired(_encode_cursor(_DELTA_START, True))
             try:
-                page = await self._call(s, user_id, "GET", url)
+                page = await self._call(s, handle, "GET", url)
             except _CursorGone as exc:
                 if _is_approot_delta(exc.location):
                     restart = str(exc.location)
@@ -517,7 +603,8 @@ class OneDriveAdapter(UserDrivePort):
                 # itself: restarting would ask for the same URL again, every tick.
                 if cursor is None or url == _DELTA_START:
                     raise
-                logger.warning(f"Drive change cursor not found (404) for user {user_id[:8]}; restarting enumeration")
+                logger.warning(f"Drive change cursor not found (404) for connection {handle.connection_id[:8]}; "
+                               f"restarting enumeration")
                 raise DriveResyncRequired(_encode_cursor(_DELTA_START, True)) from exc
         next_link, delta_link = page.get("@odata.nextLink"), page.get("@odata.deltaLink")
         if next_link:
@@ -528,24 +615,25 @@ class OneDriveAdapter(UserDrivePort):
             logger.error("Drive delta page carried neither a nextLink nor a deltaLink")
             raise ValueError("Drive delta page without a continuation link")
         return DriveChanges(
-            changes=tuple(_to_change(raw) for raw in page.get("value", [])),
+            changes=tuple(_to_change(raw, drive_id, self._id_space) for raw in page.get("value", [])),
             cursor=new_cursor,
             complete=complete,
             full_enumeration=full,
             drive_id=drive_id,
             root_item_id=root_id,
+            drive_identity=onedrive_drive_identity(drive_id, self._id_space),
         )
 
-    async def get_change(self, user_id: str, item_id: str) -> DriveChange:
+    async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
         """One item by id. A 404 raises DriveItemNotFoundError and is never turned into a deletion
         (USER_DRIVE_INDEXING_RFC §26.2, Δ48): Graph answers 404 both for an item that is gone (deleted, or
         moved out of the App Folder, S0a) and for one whose own permission list lacks the app's entry, which
         `approot/delta` still lists. Existence is decided by delta; the caller decides what its 404 means."""
         async with aiohttp.ClientSession() as s:
-            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(item_id)}")
-        return _to_change(raw)
+            raw = await self._call(s, handle, "GET", f"/me/drive/items/{_q(item_id)}")
+            return self._change(handle, raw)
 
-    async def list_children_changes(self, user_id: str, folder_id: str, limit: int,
+    async def list_children_changes(self, handle: DriveHandle, folder_id: str, limit: int,
                                     cursor: Optional[str] = None) -> DriveChildrenPage:
         """One page of a folder's children: `$top=limit`; `next_cursor` is Graph's nextLink, None on the
         last page. A cursor that does not point at Graph is never followed: the listing restarts."""
@@ -556,35 +644,10 @@ class OneDriveAdapter(UserDrivePort):
             else:
                 logger.warning("Drive listing cursor points outside Graph; restarting the listing")
         async with aiohttp.ClientSession() as s:
-            page = await self._call(s, user_id, "GET", url)
+            page = await self._call(s, handle, "GET", url)
+            changes = tuple(self._change(handle, raw) for raw in page.get("value", []))
         next_link = page.get("@odata.nextLink")
-        return DriveChildrenPage(changes=tuple(_to_change(raw) for raw in page.get("value", [])),
-                                 next_cursor=str(next_link) if next_link else None)
-
-    async def connection(self, user_id: str) -> DriveConnection:
-        """Read on every tick (the gate). When the stored access token is not the one cached here, the
-        grant changed under this process (a reconnect, maybe to another account, or a refresh by the
-        other service): drop the token and root caches, so the next call reads the new grant at once."""
-        creds = await self._credential(user_id)
-        cached = None if creds is None else self._tokens.cached_token(user_id, creds.credential_id)
-        if creds is None or (cached is not None and cached != creds.access_token) \
-                or self._tokens.held_credential_id(user_id) not in (None, creds.credential_id):
-            self._tokens.forget(user_id)
-            self._root_cache.pop(user_id, None)
-        if creds is None:
-            return DriveConnection(connected=False)
-        return DriveConnection(connected=True, needs_reconnect=creds.needs_reconnect, drive_id=creds.drive_id)
-
-    async def flag_reconnect(self, user_id: str) -> bool:
-        """Get, then update with the flag set (Gmail precedent, decisions/gmail_grant_revoked_reconnect.md:
-        no port change for an atomic set). A reconnect saves fresh credentials, which clears it."""
-        creds = await self._credential(user_id)
-        if creds is None or creds.needs_reconnect:
-            return False
-        if not await self._oauth.update(replace(creds, needs_reconnect=True)):
-            return False                     # disconnected meanwhile: nothing to flag, and none is brought back
-        logger.warning(f"Drive marked needs_reconnect for user {user_id[:8]}")
-        return True
+        return DriveChildrenPage(changes=changes, next_cursor=str(next_link) if next_link else None)
 
     @staticmethod
     def _decode_cursor(cursor: Optional[str]) -> Tuple[str, bool, Optional[str], Optional[str]]:
@@ -607,29 +670,31 @@ class OneDriveAdapter(UserDrivePort):
 
     # -- transport ----------------------------------------------------------
 
-    async def _headers(self, user_id: str, *, force_refresh: bool = False) -> Dict[str, str]:
+    async def _headers(self, handle: DriveHandle, *, force_refresh: bool = False) -> Dict[str, str]:
+        """The bearer header of the handle's own credential, never another connection's."""
         try:
-            headers = await self._tokens.user_headers(user_id, force_refresh=force_refresh)
+            headers = await self._tokens.headers(handle.user_id, handle.credential_id, force_refresh=force_refresh)
         except GraphReauthRequired as exc:
-            logger.warning(f"Drive token refresh rejected for user {user_id[:8]}; reconnect needed")
+            logger.warning(f"Drive token refresh rejected for connection {handle.connection_id[:8]}; reconnect needed")
             raise DriveReauthRequired("Drive access expired; reconnect needed") from exc
         except (ValueError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
             # The token endpoint failed (5xx, network, timeout) but did not reject the grant: systemic,
             # so the tick ends and retries later (§8.2), never charged to the item being read.
-            logger.warning(f"Drive token refresh failed for user {user_id[:8]}: {type(exc).__name__} {exc}")
+            logger.warning(f"Drive token refresh failed for connection {handle.connection_id[:8]}: "
+                           f"{type(exc).__name__} {exc}")
             raise DriveThrottled(_THROTTLE_HINT_S) from exc
         if headers is None:
-            raise DriveNotConnectedError(f"No drive credentials for user {user_id[:8]}")
+            raise DriveNotConnectedError(f"No drive credentials for connection {handle.connection_id[:8]}")
         return headers
 
-    async def _call(self, s: aiohttp.ClientSession, user_id: str, method: str, path: str, *,
+    async def _call(self, s: aiohttp.ClientSession, handle: DriveHandle, method: str, path: str, *,
                     json: Any = None, data: Optional[bytes] = None,
                     content_type: Optional[str] = None) -> Dict[str, Any]:
         url = path if path.startswith("http") else f"{_GRAPH}{path}"
         throttled = 0          # 429/503 retries — separate from the 401 refresh,
         refreshed = False      # so throttling never consumes the forced refresh (§4.2)
         while True:
-            headers = await self._headers(user_id)
+            headers = await self._headers(handle)
             if content_type:
                 headers = {**headers, "Content-Type": content_type}
             kwargs: Dict[str, Any] = {"headers": headers,
@@ -649,7 +714,7 @@ class OneDriveAdapter(UserDrivePort):
                             raise DriveAccessDenied(f"Drive {method} refused after a token refresh")
                         refreshed = True
                         # The token provider dedupes forced refreshes itself; no invalidate here.
-                        await self._headers(user_id, force_refresh=True)  # next attempt uses the fresh token
+                        await self._headers(handle, force_refresh=True)  # next attempt uses the fresh token
                         continue
                     if status in (429, 503):
                         if throttled < _RETRIES:
@@ -699,9 +764,9 @@ class OneDriveAdapter(UserDrivePort):
                 logger.warning(f"Drive {method} {_where(path)} transport failure: {type(exc).__name__}")
                 raise OSError(f"Drive {method} transport failure ({type(exc).__name__})") from exc
 
-    async def _session_upload(self, s: aiohttp.ClientSession, user_id: str, path: str,
+    async def _session_upload(self, s: aiohttp.ClientSession, handle: DriveHandle, path: str,
                               body: Dict[str, Any], data: bytes) -> Dict[str, Any]:
-        upload_url = (await self._call(s, user_id, "POST", path, json=body))["uploadUrl"]
+        upload_url = (await self._call(s, handle, "POST", path, json=body))["uploadUrl"]
         total = len(data)
         result: Dict[str, Any] = {}
         for start in range(0, total, _CHUNK):
@@ -720,18 +785,18 @@ class OneDriveAdapter(UserDrivePort):
 
     # -- paths --------------------------------------------------------------
 
-    async def _root_raw(self, s: aiohttp.ClientSession, user_id: str) -> Dict[str, Any]:
-        cached = self._root_cache.get(user_id)
+    async def _root_raw(self, s: aiohttp.ClientSession, handle: DriveHandle) -> Dict[str, Any]:
+        cached = self._root_cache.get(handle.connection_id)
         if cached and time.monotonic() - cached[0] < _ROOT_TTL_S:
             return cached[1]
-        raw = await self._call(s, user_id, "GET", _APPROOT)
-        self._root_cache[user_id] = (time.monotonic(), raw)
+        raw = await self._call(s, handle, "GET", _APPROOT)
+        self._root_cache[handle.connection_id] = (time.monotonic(), raw)
         return raw
 
-    async def _root_abs(self, s: aiohttp.ClientSession, user_id: str) -> str:
+    async def _root_abs(self, s: aiohttp.ClientSession, handle: DriveHandle) -> str:
         """Normalised absolute path of the app folder, taken from special/approot (it is
         localised and the owner may have moved it), e.g. '/Apps/Alek-bot'."""
-        raw = await self._root_raw(s, user_id)
+        raw = await self._root_raw(s, handle)
         parent = _normalize_path((raw.get("parentReference") or {}).get("path", "") or "")
         return f"{parent}/{raw.get('name', '')}"
 
@@ -748,32 +813,47 @@ class OneDriveAdapter(UserDrivePort):
             return parent[len(root_abs) + 1:]
         return None
 
-    async def _item(self, s: aiohttp.ClientSession, user_id: str, raw: Dict[str, Any]) -> DriveItem:
-        root_abs = await self._root_abs(s, user_id)
+    def _known_drive_id(self, handle: DriveHandle) -> str:
+        """The connection's drive id from the cached App Folder item (stale or not: a drive id never changes under a
+        grant), "" when the root was not read yet. An item names its own drive, so this is only the fallback."""
+        cached = self._root_cache.get(handle.connection_id)
+        return _item_drive_id(cached[1]) if cached else ""
+
+    def _change(self, handle: DriveHandle, raw: Dict[str, Any]) -> DriveChange:
+        """An observation; an item that does not name its drive takes the connection's."""
+        return _to_change(raw, self._known_drive_id(handle), self._id_space)
+
+    async def _item(self, s: aiohttp.ClientSession, handle: DriveHandle, raw: Dict[str, Any]) -> DriveItem:
+        root_abs = await self._root_abs(s, handle)
         rel = self._rel_parent(raw, root_abs)
         if rel is None and raw.get("id"):
             if (raw.get("parentReference") or {}).get("path"):
                 logger.warning(f"Drive path outside the app folder for item {raw['id']}; re-reading")
-            raw = await self._call(s, user_id, "GET", f"/me/drive/items/{_q(str(raw['id']))}")
+            raw = await self._call(s, handle, "GET", f"/me/drive/items/{_q(str(raw['id']))}")
             rel = self._rel_parent(raw, root_abs)
             if rel is None:
                 logger.warning(f"Drive path still unresolved for item {raw.get('id')}")
                 rel = _UNKNOWN_PARENT
-        return self._to_item(raw, rel or "")
+        return self._to_item(raw, rel or "", drive_id=self._known_drive_id(handle))
 
-    @staticmethod
-    def _to_item(raw: Dict[str, Any], parent_rel: str, *, is_root: bool = False) -> DriveItem:
+    def _to_item(self, raw: Dict[str, Any], parent_rel: str, *, is_root: bool = False, drive_id: str = "") -> DriveItem:
         name = str(raw.get("name", ""))
         modified = raw.get("lastModifiedDateTime")
+        own_drive = _item_drive_id(raw, drive_id)
+        is_folder = "folder" in raw
         return DriveItem(
             item_id=str(raw.get("id", "")),
             name=name,
             path="" if is_root else join_drive_path(parent_rel, name),
-            is_folder="folder" in raw,
+            is_folder=is_folder,
             size_bytes=int(raw.get("size") or 0),
             mime_type=str((raw.get("file") or {}).get("mimeType", "")),
             modified_at=datetime.fromisoformat(modified.replace("Z", "+00:00")) if modified else None,
             web_url=str(raw.get("webUrl", "")),
             child_count=int((raw.get("folder") or {}).get("childCount") or 0),
-            ctag=str(raw.get("cTag") or ""),
+            identity=onedrive_item_identity(own_drive, str(raw.get("id", "")), self._id_space),
+            drive_identity=onedrive_drive_identity(own_drive, self._id_space),
+            content_version="" if is_folder else str(raw.get("cTag") or ""),
+            content_identity=content_identity_from_graph(raw),
+            media=media_facts_from_graph(raw, drive_id=own_drive, id_space=self._id_space),
         )
