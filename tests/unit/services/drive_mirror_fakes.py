@@ -24,7 +24,7 @@ from src.domain.drive_media_source import MediaSource
 from src.domain.drive_index import (
     DriveChange, DriveChanges, DriveChildrenPage, DriveIndexRecord, DriveSyncState, Reason, RecordState,
 )
-from src.domain.drive_mirror import GONE, KIND_FILE, KIND_FOLDER, DeletionNotice, MirrorDoc, doc_key
+from src.domain.drive_mirror import GONE, KIND_FILE, KIND_FOLDER, DeletionNotice, MirrorDoc, ledger_key
 from src.domain.drive_mirror_plan import mirror_plan
 from src.domain.drive_mirror_render import MirrorStrings
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
@@ -36,6 +36,11 @@ from src.services.drive_transcript_mirror import DriveTranscriptMirror
 
 USER = "user-1"
 DRIVE = "drive-1"
+# the connection the mirror step runs for (MULTI_DRIVE_RFC §8): its id IS the user id, so every record key reads as
+# before; the drive's adapter-built identity is the mirror's key (§10)
+HANDLE = DriveHandle(user_id=USER, connection_id=USER, credential_id="cred-1", kind="microsoft_onedrive")
+SCOPE = HANDLE.scope
+DRIVE_IDENTITY = onedrive_drive_identity(DRIVE)
 AREA = "area-root"
 AREA_PATH = "Apps/Alek"
 START = datetime(2026, 10, 21, 10, 0, tzinfo=timezone.utc)
@@ -55,6 +60,22 @@ EN = MirrorStrings(
 UK = replace(EN, open_recording="відкрити запис",
              readme="# Розшифровки\n\nКерується ботом: файли тут можуть бути переписані; не редагуйте їх. "
                     "Розшифровки видалених записів лежать в Archive/.")
+
+
+def identity(item_id: str) -> str:
+    """The item's adapter-built identity on the scripted drive (the ledger's source identity, MULTI_DRIVE_RFC §10)."""
+    return onedrive_item_identity(DRIVE, item_id)
+
+
+def mirror_key(kind: str, item_id: str, user_id: str = USER) -> str:
+    """The ledger key of a source item's file or folder document on the scripted drive (the old `doc_key`)."""
+    return ledger_key(user_id, kind, DRIVE_IDENTITY, identity(item_id))
+
+
+def with_connection(rec: DriveIndexRecord) -> DriveIndexRecord:
+    """A test record as the tick writes it: the connection id and the item identity filled when the test left them
+    empty."""
+    return replace(rec, connection_id=rec.connection_id or USER, identity=rec.identity or identity(rec.item_id))
 
 
 class Crash(BaseException):
@@ -374,7 +395,7 @@ class ScriptedDrive(UserDrivePort):
 class FakeMirrorHost:
     repo: InMemoryDriveIndexRepository
     clock: datetime = START
-    drive_id: str = DRIVE
+    drive_identity: str = DRIVE_IDENTITY
     tz_name: str = "UTC"
     language: str = "en"
     round_complete: bool = True
@@ -464,7 +485,8 @@ class MirrorWorld:
         self.drive = ScriptedDrive(area_path)
         self.drive.events = self.events
         self.clock = START
-        self.repo.states[USER] = DriveSyncState(USER, drive_id=DRIVE, root_item_id=AREA)
+        self.repo.states[USER] = DriveSyncState(USER, connection_id=USER, drive_identity=DRIVE_IDENTITY,
+                                                root_item_id=AREA)
         self.service = DriveTranscriptMirror(self.repo, self.mirror, self.drive)
         self.last_host: Optional[FakeMirrorHost] = None
 
@@ -475,7 +497,7 @@ class MirrorWorld:
     async def run(self, **kw: Any) -> Dict[str, int]:
         host = self.host(**kw)
         self.last_host = host
-        return await self.service.run(USER, host)
+        return await self.service.run(HANDLE, host)
 
     def advance(self, delta: timedelta) -> None:
         self.clock += delta
@@ -484,6 +506,8 @@ class MirrorWorld:
     # -- records -------------------------------------------------------------------------------------------------
 
     async def put(self, rec: DriveIndexRecord) -> DriveIndexRecord:
+        """Written as the tick writes it: under the connection, with the item's adapter-built identity."""
+        rec = with_connection(rec)
         planned = mirror_plan(rec)
         await self.repo.upsert_records([planned])
         return planned
@@ -523,8 +547,9 @@ class MirrorWorld:
 
     async def delete_source(self, item_id: str, why: str = GONE, on_drive: bool = True) -> None:
         """What `_commit` does for a deleted mirrored record: the mark first, then the record delete."""
-        await self.mirror.mark_gone(USER, [DeletionNotice(item_id, why, self.clock)], drive_id=DRIVE)
-        await self.repo.delete_records(USER, [item_id])
+        await self.mirror.mark_gone(USER, [DeletionNotice(item_id, why, self.clock, source_identity=identity(item_id))],
+                                    drive_identity=DRIVE_IDENTITY)
+        await self.repo.delete_records(SCOPE, [item_id])
         if on_drive and why == GONE:
             self.drive.remove(item_id)
 
@@ -538,10 +563,10 @@ class MirrorWorld:
 
     @property
     def root(self):  # type: ignore[no-untyped-def]
-        return self.mirror.root_docs.get((USER, DRIVE))
+        return self.mirror.root_docs.get((USER, DRIVE_IDENTITY))
 
     def doc(self, item_id: str, kind: str = KIND_FILE) -> Optional[MirrorDoc]:
-        return self.mirror.docs.get(doc_key(USER, kind, item_id))
+        return self.mirror.docs.get(mirror_key(kind, item_id))
 
     def folder_doc(self, item_id: str) -> Optional[MirrorDoc]:
         return self.doc(item_id, KIND_FOLDER)
