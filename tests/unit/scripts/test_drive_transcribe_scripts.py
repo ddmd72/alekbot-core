@@ -364,8 +364,8 @@ async def test_requeue_prints_the_headroom_and_warns_when_the_estimate_exceeds_i
     assert "headroom $0.01" in message and "estimate exceeds" in message
 
 
-async def test_requeue_warns_when_the_users_flag_is_off(requeue, monkeypatch):
+async def test_requeue_warns_when_the_connections_flag_is_off(requeue, monkeypatch):
     repo = await _seeded(requeue, monkeypatch, [_done("a", "k1")])
     _, off = await requeue.requeue(repo, SCOPE, apply=False, now=T0, owner="r", transcribe_enabled=False)
     _, unknown = await requeue.requeue(repo, SCOPE, apply=False, now=T0, owner="r")
-    assert "drive_transcribe_enabled is OFF" in off and "OFF" not in unknown and "headroom $20.00" in unknown
+    assert "transcription (transcribe_enabled) is OFF for this connection" in off and "OFF" not in unknown and "headroom $20.00" in unknown
