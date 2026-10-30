@@ -11,7 +11,10 @@ from datetime import datetime
 from enum import Enum, IntEnum
 from typing import Any, Mapping, Optional, Tuple
 
+from .connection_scope import ConnectionScope
+from .drive_content_identity import ContentIdentity
 from .drive_enrichment import DriveProfile, PhotoObject
+from .drive_media_facts import DriveMediaFacts
 from .drive_note_check import NoteCheck
 
 POLICY_VERSION = 4                            # 2: the Slice 2+4 kinds admitted (§24.1); 3: audio and video admitted
@@ -156,6 +159,21 @@ def record_key(user_id: str, item_id: str) -> str:
     return f"{user_id}:{item_id}"
 
 
+def record_doc_id(scope: ConnectionScope, item_id: str) -> str:
+    """`{connection_id}:{item_id}`: an index record's document id (MULTI_DRIVE_RFC §8, E8)."""
+    return f"{scope.connection_id}:{item_id}"
+
+
+def chunk_doc_id(scope: ConnectionScope, item_id: str, generation: int, index: int) -> str:
+    """`{connection_id}:{item_id}:{generation}:{index}`: a chunk's and a hint's document id (§8)."""
+    return f"{scope.connection_id}:{item_id}:{generation}:{index}"
+
+
+def sync_state_doc_id(scope: ConnectionScope) -> str:
+    """`{connection_id}`: the sync state's (and its lease's) document id (§8)."""
+    return scope.connection_id
+
+
 @dataclass(frozen=True)
 class DriveChange:
     """One observation from the provider (§3.1). For a deletion only `item_id` and `deleted` are relied on."""
@@ -173,6 +191,11 @@ class DriveChange:
     child_count: int = 0                      # folder.childCount
     facets: Mapping[str, Any] = field(default_factory=dict)  # photo, image, video, location, hashes, remoteItem, package, malware
     created_at: Optional[datetime] = None     # Graph createdDateTime
+    # neutral shapes (MULTI_DRIVE_RFC §7.2), adapter-built; `facets` stays until its readers move to `media` and
+    # `content_identity` (slice 1b)
+    identity: str = ""                        # `{id_space}:{…}`, unique across providers
+    content_identity: Optional[ContentIdentity] = None   # None: the provider gave no hash
+    media: DriveMediaFacts = DriveMediaFacts()
 
 
 @dataclass(frozen=True)
@@ -184,6 +207,7 @@ class DriveChanges:
     full_enumeration: bool   # this page belongs to an enumeration from scratch (onboarding, 410)
     drive_id: str
     root_item_id: str
+    drive_identity: str = ""  # the drive's adapter-built identity (MULTI_DRIVE_RFC §7.2); replaces drive_id (slice 1b)
 
 
 @dataclass(frozen=True)

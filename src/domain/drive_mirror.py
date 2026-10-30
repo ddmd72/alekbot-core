@@ -17,6 +17,14 @@ Public interface:
     KIND_FILE / KIND_FOLDER / KIND_ARCHIVE                 (MirrorDoc.kind)
     ROOT_NAME, README_NAME, ARCHIVE_NAME, LONG_PATHS_NAME  (fixed names, D49)
     doc_key(user_id, kind, source_item_id), archive_folder_key(user_id, drive_id, day, path)
+    ledger_key(user_id, kind, mirror_drive_identity, source_identity)    by drive identity (MULTI_DRIVE_RFC §10)
+    mirror_root_doc_id(user_id, drive_identity)                           by drive identity (§10)
+
+Multi-drive keys (MULTI_DRIVE_RFC §10, user-scoped by design): a ledger document is keyed by the mirror's drive and the
+source item's identity, so two connections that see one source item each keep their own mirror; a root is keyed by
+its drive identity, so a reconnect (a new connection of the same drive) finds the same `_Transcripts` folder. An
+archive folder's key is `archive_folder_key` called with the drive identity in place of the drive id. `doc_key` is the
+single-drive ledger key, kept until its callers move (slice 1b).
 """
 from __future__ import annotations
 
@@ -152,3 +160,21 @@ def archive_folder_key(user_id: str, drive_id: str, day: str, path: str) -> str:
     """`{user_id}:archive:{sha256(drive_id + "/" + day + "/" + path)[:32]}` — an archive folder's ledger key (§27.9.3)."""
     digest = hashlib.sha256(f"{drive_id}/{day}/{path}".encode("utf-8")).hexdigest()[:32]
     return f"{user_id}:{KIND_ARCHIVE}:{digest}"
+
+
+def ledger_key(user_id: str, kind: str, mirror_drive_identity: str, source_identity: str) -> str:
+    """`{user_id}:{kind}:{sha256(mirror_drive_identity + "/" + source_identity)[:32]}` (MULTI_DRIVE_RFC §10). Both
+    identities are adapter-built and must not be empty (ValueError)."""
+    if not mirror_drive_identity or not source_identity:
+        raise ValueError("a ledger key needs the mirror's drive identity and the source identity")
+    digest = hashlib.sha256(f"{mirror_drive_identity}/{source_identity}".encode("utf-8")).hexdigest()[:32]
+    return f"{user_id}:{kind}:{digest}"
+
+
+def mirror_root_doc_id(user_id: str, drive_identity: str) -> str:
+    """`{user_id}:{drive_identity}`: a mirror root's document id (§10). Keyed by the drive, not the connection: the
+    folder outlives a connection. ValueError for an empty identity."""
+    if not drive_identity:
+        raise ValueError("a mirror root key needs the drive identity")
+    return f"{user_id}:{drive_identity}"
+

@@ -10,6 +10,8 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional, Tuple
 
+from .connection_scope import ConnectionScope
+
 WINDOW_STATES: Tuple[str, ...] = ("extracted", "uploaded", "submitted", "done", "failed")   # JobWindow.state (§27.5)
 BATCH_KIND_TRANSCRIBE = "transcribe"      # TranscriptBatch.kind; "summary" joins it with T3
 
@@ -251,6 +253,17 @@ def transcript_doc_id(user_id: str, content_key: str) -> str:
     """The content key is `quickXorHash:size` (base64, which has `/`) or the fallback `item:{id}:{cTag}`; the raw key
     stays a field of the document."""
     return safe_doc_id(f"{user_id}:{content_key}")
+
+
+def transcript_job_doc_id(scope: ConnectionScope, item_id: str) -> str:
+    """A transcript job's document id, per connection (MULTI_DRIVE_RFC §8): `{connection_id}:{item_id}`, escaped."""
+    return safe_doc_id(f"{scope.connection_id}:{item_id}")
+
+
+def transcript_batch_doc_id(scope: ConnectionScope, name: str) -> str:
+    """A transcript batch's document id, per connection (§8): `{connection_id}:{name}`, escaped (the provider's batch
+    name is a path)."""
+    return safe_doc_id(f"{scope.connection_id}:{name}")
 
 
 BATCH_CLOSED_STATES: Tuple[str, ...] = ("done", "failed")

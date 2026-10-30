@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Sequence
 
+from .drive_content_identity import ContentIdentity
+from .drive_media_facts import DriveMediaFacts
+
 DRIVE_REF_PREFIX = "drive:"
 DEFAULT_INBOX_FOLDER = "Inbox"
 
@@ -92,7 +95,12 @@ class DrivePathTooLong(Exception):
 
 @dataclass(frozen=True)
 class DriveItem:
-    """One file or folder in the area. `path` is relative to the area root ('' for the root)."""
+    """One file or folder in the area. `path` is relative to the area root ('' for the root).
+
+    Neutral shapes (MULTI_DRIVE_RFC §7.2), all built by the adapter: `identity` (`{id_space}:{…}`, unique across
+    providers, opaque to domain) and `drive_identity` (the drive's, same form); `content_version` (changes whenever
+    the content does; "" for a folder); `content_identity` (None when the provider gave no hash); `media` (typed
+    facts). `ctag` is the single-drive name of `content_version`, kept until its readers move (slice 1b)."""
     item_id: str
     name: str
     path: str
@@ -103,6 +111,11 @@ class DriveItem:
     web_url: str = ""
     child_count: int = 0
     ctag: str = ""
+    identity: str = ""
+    drive_identity: str = ""
+    content_version: str = ""
+    content_identity: Optional[ContentIdentity] = None
+    media: DriveMediaFacts = DriveMediaFacts()
 
     @property
     def ref(self) -> str:

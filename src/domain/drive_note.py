@@ -20,6 +20,7 @@ Public interface:
     note_content(text, doc_type, life_areas) -> NoteContent
     ONEDRIVE_PROVIDER_KEY (the one provider key of the binding key)
     binding_key(provider_key, drive_id, item_id), ref_key(item_id), note_match_keys(binding)
+    item_binding_key(identity), tagged_ref_key(tag, item_id)      the multi-drive keys (MULTI_DRIVE_RFC §7.2, §9)
     BindingKeyParts; parse_binding_key(key) -> Optional[BindingKeyParts]; binding_parts_of(note)
     deterministic_note_id(binding_key) -> str;  note_doc_id(user_id, note_id);  note_ref(note_id)
     parse_note_ref(ref), parse_note_target(ref) -> Optional[NoteTarget]
@@ -50,6 +51,7 @@ from .drive_index_policy import kind_of
 from .drive_keys import phrase_keys, token_spans
 from .drive_labels import DOC_TYPE_NAMES, DOC_TYPES, LIFE_DOMAIN_NAMES, LIFE_DOMAINS
 from .drive_profile import LIFE_DOMAINS_MAX
+from .drive_ref import DriveRef
 from .user_drive import DriveItem, make_drive_ref, parse_drive_ref
 
 # -- parameters (§15) ---------------------------------------------------------------------------------------------
@@ -466,6 +468,21 @@ def binding_key(provider_key: str, drive_id: str, item_id: str) -> str:
 def ref_key(item_id: str) -> str:
     """`r:{item_id}`: resolves a `drive:<id>` ref with no connection and no drive id (I8)."""
     return f"{REF_KEY_PREFIX}{item_id}"
+
+
+def item_binding_key(identity: str) -> str:
+    """`i:{identity}` (MULTI_DRIVE_RFC §7.2): the binding by the adapter-built item identity. For today's drive it is
+    byte-identical to `binding_key(...)` (identity `{id_space}:{drive_id}:{item_id}`), so no note re-binds. ValueError
+    for an empty identity."""
+    if not identity:
+        raise ValueError("a binding key needs the item identity")
+    return f"{BINDING_KEY_PREFIX}{identity}"
+
+
+def tagged_ref_key(tag: str, item_id: str) -> str:
+    """`r:{tag}:{item_id}` (MULTI_DRIVE_RFC §9): resolves a tagged `drive:<tag>:<item_id>` ref. ValueError for a tag
+    that is not one or an empty item id."""
+    return f"{REF_KEY_PREFIX}{DriveRef(tag=tag, item_id=item_id).tag}:{item_id}"
 
 
 @dataclass(frozen=True)
