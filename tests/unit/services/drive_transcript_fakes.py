@@ -45,11 +45,24 @@ class Clock:
         self.mono += seconds
 
 
+CONTENT_SIZE = 1_000_000   # the size of every `record`'s content identity
+
+
+def cid(digest: str) -> ContentIdentity:
+    """The content identity `record` gives a recording of `digest` (MULTI_DRIVE_RFC §7.2)."""
+    return ContentIdentity("fam", digest, CONTENT_SIZE)
+
+
+def ckey(digest: str) -> str:
+    """The stored transcript's content key of that recording: `{family}:{digest}:{size}` (MULTI_DRIVE_RFC §10)."""
+    return cid(digest).render()
+
+
 def record(item_id: str, *, kind: str = "audio", content_hash: Optional[str] = None, day: str = "2026-10-01",
            **kw: Any) -> DriveIndexRecord:
     base: Dict[str, Any] = dict(user_id=USER, connection_id=USER, item_id=item_id, identity=f"fake:d1:{item_id}",
                                 kind=kind, scope=Scope.NORMAL, state=RecordState.PENDING, content_version="c1",
-                                content_identity=ContentIdentity("fam", content_hash or f"hash-{item_id}", 1_000_000),
+                                content_identity=cid(content_hash or f"hash-{item_id}"),
                                 name=f"{item_id}.webm", mime_type="audio/webm", size_bytes=1_000_000,
                                 modified_at=OLD, effective_day=day, parent_id="p")
     base.update(kw)
