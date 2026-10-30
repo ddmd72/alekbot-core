@@ -28,8 +28,11 @@ The sandbox render service has its own image (`Dockerfile.sandbox`) and is built
 | `alek-bot-indexer-dev` | Cloud Run service (gen2, 2 GiB, concurrency 1, ingress internal) | us-central1 | 1800s | min=0, max=1 | `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `MICROSOFT_TODO_CLIENT_ID`, `MICROSOFT_TODO_CLIENT_SECRET`, `SERVICE_ACCOUNT_EMAIL`, `BILLING_SLACK_WEBHOOK_URL`, `DRIVE_INVOKER_SA_EMAIL`, `OIDC_TRANSITION_SA_EMAILS`, `KMS_CRYPTO_KEY` | `logs-indexer`, `fetch-logs-indexer` |
 | `alek-bot-sandbox-render-dev` | Cloud Run service (gen2, 2 GiB, 2 CPU, concurrency 1, HTTP/2, no public invoker) | us-central1 | 300s | min=0, max=3 | **none** (zero-role identity, no secret) | (see Sandbox render service) |
 
-`cloudbuild-dev.yaml` deploys the queue and the indexer after the main service, and the sandbox steps after the indexer, so a
-failing drive or sandbox step never blocks a fix of the bot.
+`cloudbuild-dev.yaml` deploys the main service first (pull, build, push, deploy, public-invoker binding; it depends on
+nothing drive- or relay-related). Only after that do the independent rest run in parallel (`id` + `waitFor`): the drive
+queue then the indexer and its binding, the research job, the relay and its binding, and the scheduler script (after the
+queue it feeds). The sandbox steps stay serial and wait for all of them. A failing drive, relay or sandbox step therefore
+never blocks a fix of the bot, and the parallel tail costs the longest branch (the indexer deploy), not the sum.
 
 **Voice relay** (`relay_main.py`, a plain `websockets` server; [`../10_rfcs/VOICE_COMPANION_RFC.md`](../10_rfcs/VOICE_COMPANION_RFC.md)
 §4.14). Its own service because an open WebSocket is one long billed request and needs the 3600 s timeout, which must not
@@ -568,7 +571,8 @@ python3 scripts/infra/cleanup_gcr_images.py             # delete untagged images
 `set-cleanup-policies`; the script is the working implementation.
 
 **Node.js in the image.** `docx_generator/` (`docx`) and `pdf_generator/` (`puppeteer`, downloads Chromium, ~170 MB) are
-installed in the Docker build with `npm install --omit=dev`; `pdf_generator/node_modules/` is excluded by `.dockerignore`.
+installed in the Docker build with `npm install --omit=dev`, in layers placed before `pip install` so a `requirements.txt`
+change does not rebuild them; `pdf_generator/node_modules/` is excluded by `.dockerignore`.
 The first build after a Puppeteer version change takes a few minutes longer; later builds use the layer cache while
 `pdf_generator/package.json` is unchanged.
 
