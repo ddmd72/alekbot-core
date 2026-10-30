@@ -24,7 +24,9 @@ import aiohttp
 import pytest
 
 from src.domain.drive_card import effective_date
+from src.domain.drive_connection import DriveConnection
 from src.domain.drive_index_params import TICK_DEADLINE_S
+from src.domain.drive_user_settings import DriveUserSettings
 from src.domain.integration import Integration
 from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
@@ -34,10 +36,12 @@ from src.infrastructure.drive_operations import DriveOperations
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.services.drive_indexing_service import _PER_ITEM_ERRORS
 from src.services.file_conversion_service import FileConversionService
+from src.services.drive_connection_service import DriveConnectionService
 from src.services.user_drive_service import UserDriveService
 from src.adapters.microsoft.onedrive_adapter import ONEDRIVE_PROVIDER, OneDriveAdapter
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 from tests.support.drive_handles import drive_handle
 
 HANDLE = drive_handle("u1")
@@ -101,6 +105,17 @@ def _adapter():
     return OneDriveAdapter(oauth, "cid", "csecret", connector=ConnectorRegistry().get("microsoft_onedrive"))
 
 
+async def _connection_service_of(handle) -> DriveConnectionService:
+    """The real connection service over the in-memory repository, with `handle`'s connection as the primary (tag a1)."""
+    repo = FakeDriveConnectionRepository()
+    await repo.create(DriveConnection(
+        connection_id=handle.connection_id, user_id=handle.user_id, account_id="a1",
+        credential_id=handle.credential_id, kind=handle.kind, drive_identity="microsoft_onedrive:DRIVE-A",
+        ref_tag="a1", created_at=datetime(2026, 10, 1, tzinfo=timezone.utc)))
+    await repo.save_settings(DriveUserSettings(user_id=handle.user_id, primary_connection_id=handle.connection_id))
+    return DriveConnectionService(repo, AsyncMock(spec=OAuthCredentialsPort))
+
+
 async def _page(adapter, approot, page, cursor=None):
     session = _session([_resp(approot), _resp(page)])
     with patch("aiohttp.ClientSession", return_value=session):
@@ -124,7 +139,7 @@ class TestCursorBoundToDriveAndRoot:
         # The restart page names drive B, so the tick's per-page drive check can purge drive A.
         again, session = await _page(adapter, APPROOT_OTHER_DRIVE, pages[0], exc.value.restart_cursor)
         assert session.get.call_args_list[-1].args[0] == f"{_GRAPH}{_DELTA_START}"
-        assert again.drive_id == "DRIVE-B" and again.full_enumeration is True
+        assert again.drive_identity == "microsoft_onedrive:DRIVE-B" and again.full_enumeration is True
 
     async def test_cursor_from_a_recreated_app_folder_restarts(self):
         pages = _load("initial_enumeration.json")["pages"]
@@ -156,7 +171,7 @@ class TestCursorBoundToDriveAndRoot:
         legacy = json.dumps({"url": f"{_GRAPH}/me/drive/special/approot/delta?token=prev", "full": False})
         result, session = await _page(adapter, APPROOT_OTHER_DRIVE, pages[0], legacy)   # unknown: no mismatch
         assert session.get.call_args_list[-1].args[0] == f"{_GRAPH}/me/drive/special/approot/delta?token=prev"
-        assert result.drive_id == "DRIVE-B"
+        assert result.drive_identity == "microsoft_onedrive:DRIVE-B"
         assert json.loads(result.cursor)["drive_id"] == "DRIVE-B"       # bound from now on
 
     @pytest.mark.parametrize("binding", [{"drive_id": 1, "root_id": ROOT_ID}, {"drive_id": DRIVE_ID, "root_id": []}])
@@ -250,7 +265,7 @@ class TestTransportErrors:
 
     @pytest.mark.parametrize("method,args,kwargs", [
         ("list_folder", ("",), {}),
-        ("delete", ("drive:X!1",), {"wait_s": 100.0}),   # a shielded mutation: never "still running"
+        ("delete", ("drive:a1:X!1",), {"wait_s": 100.0}),   # a shielded mutation: never "still running"
     ], ids=["read", "mutation"])
     @pytest.mark.parametrize("error,answer", [
         (aiohttp.ServerDisconnectedError(), "Drive operation failed: OSError."),
@@ -261,9 +276,11 @@ class TestTransportErrors:
         adapter = _adapter()
         localization = MagicMock()
         language = AsyncMock()
+        connections = await _connection_service_of(HANDLE)
         ops = DriveOperations(
             conversion_service=AsyncMock(spec=FileConversionService), notification=AsyncMock(),
-            drive_service=UserDriveService(adapter), localization=localization, language_service=language,
+            drive_service=UserDriveService(adapter, connections), localization=localization,
+            language_service=language,
         )
         context = {"user_id": "u1", "account_id": "a1", "origin_channel_id": "C1", "origin_platform": "slack"}
         with patch("aiohttp.ClientSession", return_value=_session([error])):

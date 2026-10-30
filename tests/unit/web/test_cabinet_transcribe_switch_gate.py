@@ -1,41 +1,35 @@
-"""The Cabinet's transcription disclosure needs the kill switch too (final review F3): the user's flag alone is not
-enough while the indexer's switch is off."""
+"""The Cabinet's transcription disclosure needs the kill switch too (final review F3): the transcription flag alone is
+not enough while the indexer's switch is off. The flag is the drive connection's (MULTI_DRIVE_RFC §3 Removed, §4.4)."""
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from quart import Quart
 
 from src.domain.drive_indexing_status import DriveIndexingStatus
-from src.domain.user import UserBotConfig
-from src.domain.user_drive import DriveConnection
-from src.ports.user_drive_port import UserDrivePort
 from src.services.drive_search_service import DriveSearchService
 from src.web.user_cabinet_app import create_user_cabinet_blueprint
+from tests.support.cabinet_drive import cabinet_drive
 
 
-def _app(flag, switch):
-    drive = MagicMock(spec=UserDrivePort)
-    drive.connection = AsyncMock(return_value=DriveConnection(connected=True))
-    drive.display_name = "OneDrive"
+async def _app(flag, switch):
+    drive = await cabinet_drive(transcribe=flag)
     search = AsyncMock(spec=DriveSearchService)
     search.indexing_status.return_value = DriveIndexingStatus(enabled=True, counters={})
-    user = MagicMock()
-    user.config = UserBotConfig(drive_transcribe_enabled=flag)
     user_repo = MagicMock()
-    user_repo.get_user = AsyncMock(return_value=user)
     session_service = MagicMock()
     session_service.verify_access_token = MagicMock(return_value={"sub": "u1", "account_id": "a1", "role": "owner"})
     app = Quart("test_switch_gate")
     kwargs = {} if switch is None else {"drive_transcribe_switch_on": switch}
     app.register_blueprint(create_user_cabinet_blueprint(
         invite_service=MagicMock(), session_service=session_service, user_repo=user_repo,
-        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=drive,
-        drive_search_service=search, drive_task_queue=AsyncMock(), **kwargs))
+        fact_repo=MagicMock(), embedding_service=MagicMock(), user_drive=None,
+        drive_search_service=search, drive_task_queue=AsyncMock(), drive_connections=drive.connections,
+        oauth_credentials_port=drive.credentials, **kwargs))
     return app
 
 
 async def _shown(flag, switch):
-    async with _app(flag, switch).test_client() as client:
+    async with (await _app(flag, switch)).test_client() as client:
         body = await (await client.get("/api/drive/status", headers={"Authorization": "Bearer token"})).get_json()
     return body["indexing"]["transcribe_enabled"]
 

@@ -6,11 +6,9 @@ import pytest
 
 from src.adapters.firestore_drive_note_repo import FirestoreDriveNoteRepository
 from src.adapters.firestore_ephemeral_store import FirestoreEphemeralStore
-from src.adapters.firestore_user_repo import FirestoreUserRepository
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
 from src.composition.drive_note_setup import drive_notes_switch_on
 from src.config.environment import EnvironmentConfig
-from src.domain.drive_note import ONEDRIVE_PROVIDER_KEY
 from src.services.drive_note_service import DriveNoteService
 from tests.unit.composition.test_drive_wiring import _container
 
@@ -40,8 +38,9 @@ def test_the_service_on_the_drive_pair(monkeypatch):
     assert service._drive is c.user_drive and service._index is c.drive_index_repo
     assert service._nudge_queue is c.drive_task_queue
     assert service._embeddings is c.embedding_service
-    assert service._space == GeminiEmbeddingAdapter.EMBEDDING_SPACE and service._provider == ONEDRIVE_PROVIDER_KEY
-    assert isinstance(service._users, FirestoreUserRepository)
+    assert service._space == GeminiEmbeddingAdapter.EMBEDDING_SPACE
+    # MULTI_DRIVE_RFC §6, §9: refs and each connection's indexing switch come from the connection service
+    assert service._connections is c.drive_connection_service and service._connections is not None
     assert isinstance(service._erase_requests, FirestoreEphemeralStore)
     assert service._erase_requests._collection == EnvironmentConfig().drive_note_erase_requests_collection
     assert c.agent_services()["drive_note_service"] is service

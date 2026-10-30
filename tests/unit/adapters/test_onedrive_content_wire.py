@@ -126,13 +126,14 @@ def _thumbs(size, url="https://thumbs.example/t1"):
 
 
 class TestGetThumbnail:
-    async def test_standard_size_through_the_thumbnail_set(self):
-        session = _session([_resp(_thumbs("medium")), _resp(chunks=[b"\xff\xd8\xff", b"jpeg"])])
+    async def test_an_edge_through_the_thumbnail_set(self):
+        # MULTI_DRIVE_RFC §6: a thumbnail is asked by its longest edge in px; Graph's named sizes left the port
+        session = _session([_resp(_thumbs("c176x176")), _resp(chunks=[b"\xff\xd8\xff", b"jpeg"])])
         with patch("aiohttp.ClientSession", return_value=session):
-            data = await _adapter().get_thumbnail(HANDLE, "f1", "medium")
+            data = await _adapter().get_thumbnail(HANDLE, "f1", 176)
         assert data == b"\xff\xd8\xffjpeg"
         first, last = session.get.call_args_list
-        assert first.args[0].endswith("/me/drive/items/f1/thumbnails?select=medium")
+        assert first.args[0].endswith("/me/drive/items/f1/thumbnails?select=c176x176")
         assert last.args[0] == "https://thumbs.example/t1" and "headers" not in last.kwargs
 
     async def test_custom_size(self):
@@ -144,12 +145,12 @@ class TestGetThumbnail:
     @pytest.mark.parametrize("page", [{"value": []}, {"value": [{"id": "0"}]}, {}])
     async def test_no_rendition_is_none(self, page):
         with patch("aiohttp.ClientSession", return_value=_session([_resp(page)])):
-            assert await _adapter().get_thumbnail(HANDLE, "f1", "medium") is None
+            assert await _adapter().get_thumbnail(HANDLE, "f1", 176) is None
 
     async def test_rendition_url_gone_is_none(self):
-        session = _session([_resp(_thumbs("medium")), _resp(status=404)])
+        session = _session([_resp(_thumbs("c176x176")), _resp(status=404)])
         with patch("aiohttp.ClientSession", return_value=session):
-            assert await _adapter().get_thumbnail(HANDLE, "f1", "medium") is None
+            assert await _adapter().get_thumbnail(HANDLE, "f1", 176) is None
 
     async def test_rendition_over_the_vision_cap_raises_too_large(self):
         big = [b"x" * (1024 * 1024)] * 6
@@ -160,17 +161,17 @@ class TestGetThumbnail:
     async def test_missing_item_is_not_found(self):
         with patch("aiohttp.ClientSession", return_value=_session([_resp({}, status=404)])), \
                 pytest.raises(DriveItemNotFoundError):
-            await _adapter().get_thumbnail(HANDLE, "gone", "medium")
+            await _adapter().get_thumbnail(HANDLE, "gone", 176)
 
     async def test_failed_rendition_fetch_is_a_value_error(self):
-        session = _session([_resp(_thumbs("medium")), _resp(status=500)])
+        session = _session([_resp(_thumbs("c176x176")), _resp(status=500)])
         with patch("aiohttp.ClientSession", return_value=session), pytest.raises(ValueError):
-            await _adapter().get_thumbnail(HANDLE, "f1", "medium")
+            await _adapter().get_thumbnail(HANDLE, "f1", 176)
 
     async def test_a_url_outside_https_is_never_fetched(self):
-        session = _session([_resp(_thumbs("medium", url="http://thumbs.example/t1"))])
+        session = _session([_resp(_thumbs("c176x176", url="http://thumbs.example/t1"))])
         with patch("aiohttp.ClientSession", return_value=session):
-            assert await _adapter().get_thumbnail(HANDLE, "f1", "medium") is None
+            assert await _adapter().get_thumbnail(HANDLE, "f1", 176) is None
         assert session.get.call_count == 1
 
     @pytest.mark.parametrize("size", ["", "huge", "c2048x2048&select=x", "c0x", "../content"])

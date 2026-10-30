@@ -10,6 +10,7 @@ from src.composition.user_agent_factory import UserAgentFactory, _UserContext
 from src.domain.drive_search_line import SearchLine
 from src.domain.language import LanguageCode
 from src.infrastructure.drive_operations import DriveOperations
+from tests.support.drive_handles import drive_handle
 
 
 def _ctx() -> _UserContext:
@@ -38,7 +39,9 @@ def test_the_drive_operations_are_built_once_per_user_context():
 async def test_every_shared_service_reaches_the_instance():
     """DriveOperations keeps its services private: each one is observed through the call it makes."""
     fake, ctx = _factory(), _ctx()
-    fake.user_drive_service.connection = AsyncMock(side_effect=RuntimeError("offline"))
+    fake.user_drive_service.status = AsyncMock(side_effect=RuntimeError("offline"))
+    fake.user_drive_service.resolve_ref = AsyncMock(return_value=SimpleNamespace(handle=drive_handle(),
+                                                                                 item_id="item-1"))
     fake.user_drive_service.delete = AsyncMock(return_value=SimpleNamespace(
         item=SimpleNamespace(is_folder=False, path="Inbox/a.txt")))
     fake.drive_search_service.search_state = AsyncMock(return_value=SearchLine.REBUILDING)
@@ -50,10 +53,10 @@ async def test_every_shared_service_reaches_the_instance():
 
     preflight = await ops.preflight("user-1")                       # the drive service and the drive search
     assert preflight.search is SearchLine.REBUILDING
-    fake.user_drive_service.connection.assert_awaited_once_with("user-1")
+    fake.user_drive_service.status.assert_awaited_once_with("user-1")
     opened = await ops.fetch_stored({}, "user-1", "notes.txt")      # the conversion service
     assert opened.text == "chat file text"
-    await ops.delete({"account_id": "acc"}, "user-1", "drive:item-1", wait_s=5)   # notification, localization, language
+    await ops.delete({"account_id": "acc"}, "user-1", "drive:a1:item-1", wait_s=5)   # notification, localization, language
     fake.language_service.resolve_ui_language.assert_awaited_once_with("user-1")
     assert fake.notification_service.notify_raw.await_args.args[:3] == ("user-1", "acc", "Deleted Inbox/a.txt")
 
