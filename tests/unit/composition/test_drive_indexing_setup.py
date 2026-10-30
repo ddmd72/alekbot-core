@@ -1,18 +1,19 @@
 """Drive indexing wiring (USER_DRIVE_INDEXING_RFC §4, §12.5, §13; RFC Δ1)."""
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.adapters.gemini_embedding_adapter import GeminiEmbeddingAdapter
-from src.adapters.microsoft import ONEDRIVE_PROVIDER
 from src.composition import drive_indexing_setup as setup
 from src.composition.service_container import ServiceContainer
 from src.config.environment import EnvironmentConfig
+from src.domain.drive_connection import DriveConnection
 from src.domain.place_lookup import PlaceRow
 from src.domain.settings import ConsolidationSettings
 from src.ports.account_repository import AccountRepository
-from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from tests.support.aes_gcm_cipher import AesGcmTestCipher
+from tests.support.drive_connection_repo import FakeDriveConnectionRepository
 
 
 class _RecordingQueue:
@@ -79,17 +80,20 @@ def test_place_lookup_uses_the_bundled_table(monkeypatch):
     assert place_of(0.0, 0.0) is None
 
 
-async def test_scheduler_lists_users_by_the_drive_provider():
-    oauth = AsyncMock(spec=OAuthCredentialsPort)
-    oauth.list_user_ids.return_value = ["u1"]
+async def test_scheduler_lists_connections_from_the_connection_repository():
+    """MULTI_DRIVE_RFC §8: the fan-out lists ACTIVE connections with indexing on from the connection repository (it
+    no longer lists users by the drive provider's credentials)."""
+    connections = FakeDriveConnectionRepository()
+    await connections.create(DriveConnection(
+        connection_id="conn-1", user_id="usr-1", account_id="acc-1", credential_id="cred-1",
+        kind="microsoft_onedrive", drive_identity="microsoft_onedrive:drv-1", ref_tag="a1",
+        indexing_enabled=True, created_at=datetime(2026, 10, 30, tzinfo=timezone.utc)))
     repo = AsyncMock()
-    repo.list_sync_user_ids.return_value = []
-    users = AsyncMock()
-    users.get_user.return_value = None
-    scheduler = setup.build_drive_sync_scheduler(repo=repo, queue=AsyncMock(), drive=AsyncMock(), users=users,
-                                                 notifier=None, alert_sink=None)
+    repo.list_sync_scopes.return_value = []
+    repo.get_sync_state.return_value = None
+    scheduler = setup.build_drive_sync_scheduler(repo=repo, queue=AsyncMock(), connections=connections,
+                                                 connection_service=None, notifier=None, alert_sink=None)
     summary = await scheduler.fan_out()
-    oauth.list_user_ids.assert_awaited_once_with(ONEDRIVE_PROVIDER)
     assert summary["candidates"] == 1
 
 
