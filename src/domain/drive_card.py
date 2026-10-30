@@ -11,14 +11,16 @@ card text and hash. `note_line(rec)` is the same note as the search card renders
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
-from typing import Any, List, Mapping, Optional, Tuple
+from datetime import datetime
+from typing import List, Optional, Tuple
 
 from .drive_capture import CAPTURE_LABELS, Capture
 from .drive_index import (
     CARD_VERSION, DocumentBrief, DriveChange, DriveIndexRecord, Reason, RecordState, Scope, TriageVerdict,
 )
+from .drive_content_identity import ContentIdentity
 from .drive_labels import scene_label_text
+from .drive_media_facts import DriveMediaFacts
 from .drive_index_policy import TRANSCRIBED_KINDS, is_generated_dir, searchable
 from .drive_transcript_render import card_segment
 
@@ -34,72 +36,57 @@ _KIND_LABEL = {
 }
 
 
-def _parse_dt(value: Any) -> Optional[datetime]:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    # an offset-less timestamp is read as UTC, so it compares with the aware datetimes stored
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+def photo_location(media: DriveMediaFacts) -> Optional[Tuple[float, float]]:
+    """Where a photo was taken, from the typed media facts (MULTI_DRIVE_RFC §7.2); None when the provider gave none."""
+    return media.location
 
 
-def photo_location(facets: Mapping[str, Any]) -> Optional[Tuple[float, float]]:
-    loc = facets.get("location") or {}
-    lat, lon = loc.get("latitude"), loc.get("longitude")
-    if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-        return float(lat), float(lon)
-    return None
-
-
-def coarse_location(facets: Mapping[str, Any]) -> Optional[Tuple[float, float]]:
+def coarse_location(media: DriveMediaFacts) -> Optional[Tuple[float, float]]:
     """A photo's location rounded to 3 decimals (~110 m): the only precision a model is ever sent (D39)."""
-    loc = photo_location(facets)
+    loc = photo_location(media)
     return None if loc is None else (round(loc[0], 3), round(loc[1], 3))
 
 
-def taken_at(facets: Mapping[str, Any]) -> Optional[datetime]:
-    """A photo's taken date, from its `photo` facet."""
-    return _parse_dt((facets.get("photo") or {}).get("takenDateTime"))
+def taken_at(media: DriveMediaFacts) -> Optional[datetime]:
+    """A photo's taken date (an aware datetime the adapter parsed), None when unknown."""
+    return media.taken_at
+
+
+def content_key_of(identity: Optional[ContentIdentity]) -> Optional[str]:
+    """The rendered content identity `{family}:{digest}:{size}` (MULTI_DRIVE_RFC §7.2): two copies of one file share
+    it, on any connection (the duplicate collapse, the transcript store); None when the provider gave no hash."""
+    return identity.render() if identity is not None else None
 
 
 def effective_date(change: DriveChange, fallback: datetime) -> datetime:
     """The date a user means (§3.1): taken, else filesystem-modified, else server time."""
-    taken = _parse_dt((change.facets.get("photo") or {}).get("takenDateTime"))
-    return taken or change.fs_modified_at or change.modified_at or fallback
+    return change.media.taken_at or change.fs_modified_at or change.modified_at or fallback
 
 
-def content_hash_of(change: DriveChange) -> Optional[str]:
-    qx = (change.facets.get("hashes") or {}).get("quickXorHash")
-    return f"{qx}:{change.size_bytes}" if qx else None
-
-
-def _duration(ms: Any) -> Optional[str]:
-    if not isinstance(ms, (int, float)) or ms <= 0:
+def _duration(ms: int) -> Optional[str]:
+    if ms <= 0:
         return None
     total = int(ms // 1000)
     return f"{total // 60}:{total % 60:02d}"
 
 
 def _key_facets(rec: DriveIndexRecord) -> List[str]:
+    """The typed media facts a card shows (MULTI_DRIVE_RFC §7.2): taken date, camera, place, image size, video length
+    and frame size."""
     out: List[str] = []
-    photo = rec.facets.get("photo") or {}
-    taken = _parse_dt(photo.get("takenDateTime"))
-    if taken:
-        out.append(f"taken {taken.date().isoformat()}")
-    camera = " ".join(p for p in (photo.get("cameraMake"), photo.get("cameraModel")) if p)
+    media = rec.media
+    if media.taken_at:
+        out.append(f"taken {media.taken_at.date().isoformat()}")
+    camera = " ".join(p for p in (media.camera_make, media.camera_model) if p)
     if camera:
         out.append(f"camera {camera}")
     if rec.place_name:
         out.append(f"place {rec.place_name}")
-    image = rec.facets.get("image") or {}
-    if image.get("width") and image.get("height"):
-        out.append(f"{image['width']}x{image['height']}")
-    video = rec.facets.get("video") or {}
-    duration = _duration(video.get("duration"))
+    if media.image_width and media.image_height:
+        out.append(f"{media.image_width}x{media.image_height}")
+    duration = _duration(media.video_duration_ms)
     if duration:
-        dims = f" {video['width']}x{video['height']}" if video.get("width") and video.get("height") else ""
+        dims = f" {media.video_width}x{media.video_height}" if media.video_width and media.video_height else ""
         out.append(f"video {duration}{dims}")
     return out
 

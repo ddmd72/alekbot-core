@@ -164,11 +164,11 @@ def item_rule(change: DriveChange) -> Optional[Reason]:
     if _matches(change.name, _SECRET_PATTERNS) or (change.name.lower().endswith(".key")
                                                    and change.mime_type != "application/vnd.apple.keynote"):
         return Reason.SECRET_NAME
-    if "remoteItem" in change.facets:
+    if change.media.is_alias:   # a pointer to another item (MULTI_DRIVE_RFC §7.2, `alias_of`)
         return Reason.REMOTE_ITEM
-    if "package" in change.facets:
+    if change.media.package:
         return Reason.PACKAGE
-    if "malware" in change.facets:
+    if change.media.malware:
         return Reason.MALWARE
     return None
 

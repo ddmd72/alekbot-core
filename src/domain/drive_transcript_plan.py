@@ -81,7 +81,7 @@ from src.domain.drive_index_planner import backoff, content_due_at, demoted, mon
 from src.domain.drive_index_policy import Admission, admission
 from src.domain.drive_transcript import JobWindow, MediaProbe, TranscriptJob, TranscriptStub
 from src.domain.drive_transcript_render import TRANSCRIPT_BODY_VERSION
-from src.domain.drive_transcript_windows import content_key, plan_windows
+from src.domain.drive_transcript_windows import plan_windows, record_content_key
 
 NONE, READY, WORKING, WAITING = "none", "ready", "working", "waiting"
 TRANSCRIBER_AGENT = "drive_transcriber"   # the model backoff key of this class (§25.4.6): the stage's and the tick's
@@ -244,14 +244,14 @@ def queue_blocked(now: datetime, backoff_until: Optional[datetime]) -> bool:
 def hold_key(rec: DriveIndexRecord) -> str:
     """The tag of everything that belongs to this content version of the file: its content key. Deliberately not the
     TRANSCRIBE_VERSION: a bump re-queues nothing (Δ122)."""
-    return content_key(rec)[0]
+    return record_content_key(rec)[0]
 
 
 def reset_on_new_version(rec: DriveIndexRecord) -> DriveIndexRecord:
     """D42: a new content version clears attempts, holds, the wake-up and a stale stub, and
     re-keys: the file re-transcribes, or hits the cache through its content key. A job in a state made for another key
     goes back to `ready` (the stage drops the job document whose key no longer matches)."""
-    key = content_key(rec)[0]
+    key = record_content_key(rec)[0]
     tag_stale = rec.transcript_hold_version not in ("", hold_key(rec))
     key_stale = rec.transcript_state in (WORKING, WAITING, CURRENT) and rec.transcript_key != key
     if not (tag_stale or key_stale):
@@ -320,7 +320,7 @@ def transcript_plan(rec: DriveIndexRecord, ctx: TranscriptContext) -> DriveIndex
     if not _eligible(rec):
         return replace(rec, transcript_state=NONE, transcript_hold=None, transcript_wake_at=None)
     rec = reset_on_new_version(rec)
-    key = content_key(rec)[0]
+    key = record_content_key(rec)[0]
     if _is_current(rec, key):
         return _settle(rec, CURRENT)
     if ctx.enabled and rec.size_bytes > TRANSCRIBE_MAX_BYTES:
@@ -367,7 +367,7 @@ def stub_record(rec: DriveIndexRecord, stub: TranscriptStub, now: datetime, seco
     `demoted` so the content outcome stands (`extraction_version`), the quiet period ends and the card is scheduled: a
     rename, rescope or upgrade re-observes it as the same outcome, never as `pending` again."""
     done = demoted(rec, _STUB_RECORD_REASON[stub], now)
-    return replace(done, transcript_state=CURRENT, transcript_key=content_key(rec)[0],
+    return replace(done, transcript_state=CURRENT, transcript_key=record_content_key(rec)[0],
                    transcript_version=TRANSCRIBE_VERSION, transcript_body_version=TRANSCRIPT_BODY_VERSION,
                    transcript_stub=stub.value, transcript_seconds=seconds, transcript_hold=None,
                    transcript_wake_at=None, transcript_hold_version=hold_key(rec) if rec.transcript_attempts > 0 else "")
@@ -409,7 +409,7 @@ def _reserve_start(rec: DriveIndexRecord, ctx: TranscriptContext, planned_s: flo
     reservation, held = reserve_if_fits(file_estimate_usd(planned_s), ctx)
     if reservation is None:
         return FileStart(park(rec, ctx), StartOutcome.PARKED, None, ctx)
-    working = replace(_settle(rec, WORKING), transcript_key=content_key(rec)[0],
+    working = replace(_settle(rec, WORKING), transcript_key=record_content_key(rec)[0],
                       transcript_seconds=seconds, model_read_at=ctx.now)   # the purchase time (T-R9)
     return FileStart(working, StartOutcome.STARTED, reservation, held)
 
@@ -417,7 +417,7 @@ def _reserve_start(rec: DriveIndexRecord, ctx: TranscriptContext, planned_s: flo
 def wait_for_copy(rec: DriveIndexRecord) -> DriveIndexRecord:
     """G12: another file with the same shared content key is being transcribed; this one waits for its stored result
     (`waiting` at this key, with no job of its own, nothing reserved). Kept by the plan while the key stands."""
-    return replace(_settle(rec, WAITING), transcript_key=content_key(rec)[0])
+    return replace(_settle(rec, WAITING), transcript_key=record_content_key(rec)[0])
 
 
 def park(rec: DriveIndexRecord, ctx: TranscriptContext, *, resubmit: bool = False) -> DriveIndexRecord:
@@ -436,7 +436,7 @@ def mark_current(rec: DriveIndexRecord, now: datetime, *, seconds: int, speakers
                  stub: str = "", truncated: bool = False) -> DriveIndexRecord:
     """The job finished: a transcript (or the model's `no_speech` stub) is stored at this content key. Attempts and holds
     are spent. `model_read_at` anchors the edit cooldown."""
-    out = replace(rec, transcript_state=CURRENT, transcript_key=content_key(rec)[0],
+    out = replace(rec, transcript_state=CURRENT, transcript_key=record_content_key(rec)[0],
                   transcript_version=TRANSCRIBE_VERSION, transcript_body_version=TRANSCRIPT_BODY_VERSION,
                   transcript_stub=stub, transcript_seconds=seconds, transcript_speakers=speakers,
                   transcript_languages=languages, transcript_truncated=truncated, model_read_at=now, transcript_attempts=0,

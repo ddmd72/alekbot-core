@@ -12,7 +12,8 @@ The indexer service (`indexer_main.py`) serves exactly two routes:
   execution counts: `decisions/worker_task_dedup.md`).
   Every handled tick outcome answers 200, `busy` and `throttled` included: the tick schedules its
   own continuation, and a Cloud Tasks retry on top would only duplicate it. An unknown task type is
-  a 400 (a bug in the sender, never retried into success); an exception the tick did not handle is
+  a 400 (a bug in the sender, never retried into success), and so is a payload without `user_id` and
+  `connection_id` (MULTI_DRIVE_RFC §8: a tick is per connection); an exception the tick did not handle is
   a 500, so the queue's retry config applies. Without a tick service (the first pass of the two-pass
   first deploy: `DRIVE_INDEXER_URL` not known yet) the service still starts, so the deploy step
   succeeds, and `/worker` answers 503; nothing enqueues to it until the second pass. The indexer
@@ -28,7 +29,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Collection, Optional
 from quart import Blueprint, jsonify, request
 
 from ..domain.cloud_task_delivery import CloudTaskDelivery
-from ..domain.drive_task_keys import DRIVE_SYNC_TASK, parse_nudge
+from ..domain.drive_task_keys import DRIVE_SYNC_TASK, parse_nudge, payload_scope
 from ..utils.logger import logger
 from .worker_oidc_verifier import verify_worker_oidc
 
@@ -97,14 +98,15 @@ def create_indexer_worker_blueprint(indexing: "Optional[DriveIndexingService]",
         if indexing is None:
             logger.error("[Indexer] drive_sync received but the indexer is not configured (DRIVE_INDEXER_URL)")
             return jsonify({"error": "indexer not configured"}), 503
-        user_id = payload.get("user_id")
-        if not isinstance(user_id, str) or not user_id:
-            logger.warning("[Indexer] drive_sync without user_id")
-            return jsonify({"error": "missing user_id"}), 400
+        scope = payload_scope(payload)
+        if scope is None:   # MULTI_DRIVE_RFC §8: a tick is per connection; a payload without one is refused
+            logger.warning("[Indexer] drive_sync without a valid user_id and connection_id: refused")
+            return jsonify({"error": "missing user_id or connection_id"}), 400
         try:
-            result = await indexing.tick(user_id, parse_nudge(payload))
+            result = await indexing.tick(scope, parse_nudge(payload))
         except Exception as exc:
-            logger.error(f"[Indexer] drive_sync failed for {user_id[:8]}: {exc}", exc_info=True)
+            logger.error(f"[Indexer] drive_sync failed for {scope.user_id[:8]} connection "
+                         f"{scope.connection_id[:8]}: {exc}", exc_info=True)
             return jsonify({"error": "tick_failed"}), 500
         return jsonify({"status": result.status, **result.summary}), 200
 

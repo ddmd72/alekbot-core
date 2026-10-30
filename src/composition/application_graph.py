@@ -710,12 +710,12 @@ def build_application_graph(config: dict, db_client: Any) -> ApplicationGraph:
     # Drive index fan-out (USER_DRIVE_INDEXING_RFC §7.1, §12.1; RFC Δ5, Δ6). Built only when the
     # drive queue exists (DRIVE_INDEXER_URL set): its ticks run on the indexer service.
     _drive_sync_scheduler = None
-    if container.drive_task_queue and container.drive_index_repo and container.user_drive:
+    if container.drive_task_queue and container.drive_index_repo and container.drive_connection_repo:
         _drive_sync_scheduler = build_drive_sync_scheduler(
             repo=container.drive_index_repo,
             queue=container.drive_task_queue,
-            drive=container.user_drive,
-            users=user_repo,
+            connections=container.drive_connection_repo,
+            connection_service=container.drive_connection_service,
             oauth_credentials=oauth_credentials_port,
             notifier=notification_service,
             alert_sink=_alert_webhook,
