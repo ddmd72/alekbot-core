@@ -27,8 +27,8 @@ from tests.unit.domain.drive_excerpt_builders import chunk, excerpt_file, result
 
 LAB = DriveItem(item_id="abc123", name="lab-report.pdf", path="Health/lab-report.pdf", is_folder=False)
 LEASE = DriveItem(item_id="def456", name="Lisbon lease.pdf", path="Home/Lisbon lease.pdf", is_folder=False)
-LAB_LINE = '[Drive: Health/lab-report.pdf ref=drive:abc123 — searched for "lab report" (2 files); read passages 3–4]'
-LEASE_LINE = '[Drive: Home/Lisbon lease.pdf ref=drive:def456 — searched for "lab report" (2 files)]'
+LAB_LINE = '[Drive: Health/lab-report.pdf ref=drive:a1:abc123 — searched for "lab report" (2 files); read passages 3–4]'
+LEASE_LINE = '[Drive: Home/Lisbon lease.pdf ref=drive:a1:def456 — searched for "lab report" (2 files)]'
 
 
 def _drive_context():
