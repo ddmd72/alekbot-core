@@ -83,6 +83,8 @@ What the fact fields mean (versions, `lineage_id`, `state`, expiry) is explained
 | `{p}user_primary_channel` | the user's primary channel | `user_id` | `src/adapters/firestore_notification_state_adapter.py` |
 | `{p}short_links` | short code to URL mappings (TTL on `expires_at`, re-checked on read) | the code | `src/adapters/firestore_short_link_repository.py` |
 
+**Sessions per channel.** `session_id = f"{user_id}:{channel_id}"` is deterministic: each channel (Slack `C…`/`D…`, Telegram `chat_id`; a DM is just a channel `D…`) has its own session, history and consolidation stream. Adapters resolve the session id synchronously. Async delivery uses the `origin_channel_id` carried in the message context (propagated through the delegation engine's passthrough, see `BOUND_THREAD_AGENTS_RFC.md`); system notifications go to the primary channel. `GcpTaskQueue` serialises Cloud Task payloads with `_DomainEncoder`, which handles Pydantic models, datetimes and enums transparently.
+
 ### 3.4 Prompts
 
 | Collection | Holds | Doc id | Model / code |

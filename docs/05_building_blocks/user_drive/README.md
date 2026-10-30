@@ -176,6 +176,8 @@ seconds (live: 2–5 s per user), billed per request. Push stays an extension: o
 Deploy units, queue, scheduler job and the two-pass first deploy: [docs/07_deployment/README.md](../../07_deployment/README.md)
 → Deploy units and Indexer URL, and [SCHEDULERS.md](../../07_deployment/SCHEDULERS.md).
 
+The indexer's URL is read through the chain `INDEXER_URL_DEV` → `_INDEXER_URL` → `DRIVE_INDEXER_URL` (`os.getenv`); the deploy refuses it empty unless `DRIVE_FIRST_PASS=1` (a command-line flag for the first pass only, never in `.env`). Indexer logs: `make fetch-logs-indexer` (no Logfire).
+
 ### 2.1 Ports and adapters
 
 | Port | Adapter(s) | Role |
@@ -191,6 +193,8 @@ Deploy units, queue, scheduler job and the two-pass first deploy: [docs/07_deplo
 | `AlertSinkPort` | `SlackWebhookAdapter` (the ops sink) | the fan-out's ops alerts (staleness, cap, Search v2) |
 | `MediaAudioPort` (§27) | `SubprocessMediaExtractor` (`drive_parser/media*.py`) | `probe(url)` and `extract_windows(url, windows)`: audio-only Opus windows of a recording, in the parser sandbox (§4.23) |
 | `BatchTranscriptionPort` (§27) | `GeminiBatchAdapter` | upload a window, submit/poll/collect a batch, delete the provider file; the only batch boundary |
+
+**Graph modules and paths.** The Graph code lives in `src/adapters/microsoft/` (`graph_auth.py`, `todo_adapter.py`, `onedrive_adapter.py`). Graph returns paths raw-encoded and writes the same location two ways, `/drive/root:/…` and `/drives/<id>/root:/…` (create-folder responses), so `OneDriveAdapter` unquotes the path (a no-op on a raw one) and strips either prefix before anything reaches the model or the history. Token refresh is shared with To Do: concurrent forced refreshes are deduped, and the cache lives at most 5 minutes per provider key, so a disconnect reaches every instance within 5 minutes. The provider's own search does not work inside the App Folder (spike A6), so finding files goes through our own index.
 
 No port for the policy, the planner, the card builder, the run rules, the text gate, the chunker, the keyer, the
 enrichment plan, the grounding, the tiers or the place lookup: they are pure domain code (`src/domain/drive_*.py`,
@@ -1296,6 +1300,8 @@ length. With transcription on, the bot listens to them in the background and wri
 (`[12:40] Speaker 2: …`). That text is indexed like any document, so a search for a sentence from a meeting finds the recording, and Smart can
 open the transcript and answer from it. Nothing is read aloud or sent to a chat on its own.
 
+**Where it runs.** The job states (`transcript_state`: `none ready working waiting current held parked failed`) are advanced across ticks by `DriveTranscriptStage` (`src/services/drive_transcript_stage.py`) on the indexer; the mirror folder is reconciled by `DriveTranscriptMirror` (`src/services/drive_transcript_mirror.py`, ports only). **Live deploy values:** the kill switch's deploy key `DRIVE_TRANSCRIBE_ENABLED_DEV` is `on` (the substitution `_DRIVE_TRANSCRIBE_ENABLED`; the Makefile default is off) and `DRIVE_TRANSCRIBE_USD_CAP_DEV` lowers the cap to $10 under the code's $20; the user flag is on for the owner only, until the zero-credential parser service exists.
+
 **Who gets it.** Two switches, both off by default. (1) The **kill switch** `DRIVE_TRANSCRIBE_ENABLED` on the indexer: off means the
 transcription stage is not even built. (2) The user's own flag `drive_transcribe_enabled`, separate from "index my drive": indexing alone
 never sends a recording anywhere. It is set by the owner's script; there is no Cabinet toggle yet, and only the owner has it on (the
@@ -1492,6 +1498,8 @@ conflict retry (a concurrent write is merged, never overwritten), an identical r
 embedded again, a new version is written in one transaction, and the indexer is nudged. Limits: 80 words and 600
 characters per note, 3 life areas, 10 successful writes per specialist run, 5 000 notes per user. A provider-rotation
 re-run of the same turn does not write an append or an undo twice.
+
+**Write ordering and refusals.** `replace_note_text` is refused (`CHANGED_SINCE_READ`) when the note changed after the version `get_note` read in the same run; that read version is the write's precondition. The other refusals are `NOTE_EXISTS` and `EMPTY_CHANGE`. Each write runs in a task held by the per-user `DriveOperations.keep_alive` and awaited under `asyncio.shield`, so a run cut mid-write records the call as still running and the write goes on. **Account deletion:** no account-deletion flow exists in the repo; when one is built it must delete `{prefix}drive_notes` (stated in the `DriveNoteRepository` port docstring, `src/ports/drive_note_repository.py`).
 
 **What the owner sees.** A **receipt** with the stored note word for word, a localized header and a line saying when
 search will show it, sent literally (the words are the owner's, not the bot's). On a chat turn `ConversationHandler`
@@ -1917,7 +1925,7 @@ turns within 150 s (less under the caller's budget) through local tools, each on
 `delete_drive_item`, then `report_to_orchestrator`. An identical search is not run twice in one commission. There
 is no search cap in production (the owner dropped a 3-search cap): one re-search after "Without X", and a subject is
 searched once in the user's words (a list of alternatives is not a list of searches, RFC rev 4.5 #7). G3's 3 search
-calls per case run (`SEARCH_CALL_CEILING`, §7) is an eval check, not a production cap. With the notes switch on,
+calls per case run (`SEARCH_CALL_CEILING`, §7) is an eval check, not a production cap. The `execute_as_given` rule of `COGNITIVE_PROCESS_DRIVE` splits the two: changes the commission names on refs it gives run as given, all together, without re-deriving them; a read method in the commission is a hint, never an order. With the notes switch on,
 `get_note` joins them, and on an owner turn the ten note writers (§4.24), before `report_to_orchestrator`.
 
 **Division of labour (A′).** The specialist owns the search mechanics — the key words from the user's words in one
@@ -1944,6 +1952,8 @@ the path is text the bot did not write, so it is never formatted, linked or read
 move, copy, save or append gets no later message; a later change in the same commission is `not started: an earlier
 change in this request is still running`.
 
+**Stale intents and prefetch.** The 8 drive intents `work_with_drive_files` replaced are gone from the manifest; a stale text that still names one gets the coordinator's unknown-intent refusal. Both FileManagement and the specialist set `prefetch_file_ref=False` on their descriptors (the coordinator does not pre-download their `file_ref`), so a `DriveNotConnectedError` during another specialist's pre-fetch logs a WARNING.
+
 **Who else touches the drive.** FileManagement's `open_file` on a `drive:` ref (the lenient read, the same
 `DriveOperations`); the deep-research copy (`UserDriveService.save` directly); the coordinator's `file_ref` prefetch
 for DocPlanner, PdfGenerator and HtmlPageGenerator (`FileConversionService`). Lelik and the Alek gateway reach the
@@ -1951,7 +1961,7 @@ drive through Smart.
 
 **Evals.** G3 (`smart_dry_run`) and the specialist eval (`specialist_ab`, `--replay-commissions` for the specialist
 alone) run the production specialist on the fixture drive; every drive write is stubbed at the `DriveOperations`
-class before any agent is built (`dry_run_drive.py`), and the metrics read the drive operation log. G3 can run the
+class before any agent is built (`dry_run_drive.py`, the class-level `DryRunDriveOperations`), and the metrics read the drive operation log. G3 can run the
 branch's prompt files before any upload and pick the specialist's provider and tier (`--prompts-from-snapshot`,
 `--specialist-provider`, `--specialist-tier`); its `--record` writes no bars while today's Smart fails a hard check, so
 a before/after comparison is read from two reports: **before** = G3 on `main` (Firestore prompts), **after** = G3 on

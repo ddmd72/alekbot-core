@@ -125,7 +125,7 @@ Steps (the three fact channels arrive already split by `UserPromptBuilder`, §6)
 5. Append the skills catalog (Smart), then `standing_directives {}`, the last static block
 6. Append `<!-- CACHE_BOUNDARY -->`
 7. Append `active_reminders {}` (only when the orchestrator has reminders)
-8. Append `current_date_time {}` (only with `include_datetime=True`; by default the time is stamped into user messages)
+8. Append `current_date_time {}` (only with `include_datetime=True`; by default the time is stamped into user messages: `BaseAgent._inject_timestamps()` prefixes each user message with a stamp in the user's timezone, `UserBotConfig.timezone`, UTC when unset or invalid, and `AgentCoordinator` prefixes a delegation query with a UTC stamp)
 9. Append `query_specific_context` block (only if Q-S facts present)
 
 ---

@@ -1043,7 +1043,7 @@ whenever the noted item itself is observed (named residual).
 | Note written on a call with Lelik | As in chat (§4.9); `origin = voice`. | The receipt is posted to chat; the card merges as usual. |
 | `KEYS_VERSION` / `CARD_VERSION` bump, embedding switch | Untouched (note vectors re-embedded on a switch). | Noted records re-keyed / re-embedded with the rest. |
 | Erase one note or all (D13, behind a confirmation code, §4.8) | Text, classifiers, keys, vector, snapshot and versions deleted at once; contentless stubs until the next tick. | The next tick clears the record copies, then deletes the stubs. |
-| Account deletion | No account-deletion flow exists in the repo today. When one is built it must delete `{prefix}drive_notes` (stated in the repository's docstring and in CLAUDE.md). | — |
+| Account deletion | No account-deletion flow exists in the repo today. When one is built it must delete `{prefix}drive_notes` (stated in the `DriveNoteRepository` port docstring and in `docs/05_building_blocks/user_drive/README.md` §4.24). | — |
 
 ---
 
@@ -1237,7 +1237,7 @@ stops every write (§3.6); merged copies on records are harmless to old code (pl
 `card_text` ignores them, so noted cards re-embed once on the old code); on the roll-forward the `notes_merge_version`
 mismatch re-merges every note (§5.5).
 
-Docs at build time (rev 3.3): `docs/05_building_blocks/user_drive/README.md` §4.24, root `CLAUDE.md` (one paragraph),
+Docs at build time (rev 3.3): `docs/05_building_blocks/user_drive/README.md` §4.24,
 `decisions/drive_file_notes.md`, `docs/07_deployment/README.md` (the standing lever only).
 
 **Rev 3.3:** the S1 files `src/skills/smart/drive-file-notes/SKILL.md`, the Smart wiring and the shared `LoadedSkills`

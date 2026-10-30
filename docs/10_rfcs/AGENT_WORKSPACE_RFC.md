@@ -771,8 +771,8 @@ from uploads and `workspace:` refs are unavailable (local only).
 Not touched (rev 1 had them): `utils/workspace_text.py`, `google-re2`, `SkillPresence`, `prompt_builder.py`,
 `ports/prompt_builder_port.py`, `delegation_engine.py`. Injection hardening is not in this table (§11.6).
 
-**Docs kept in sync on the implementation branch:** root `CLAUDE.md` (Key Mechanisms: a Workspace paragraph; agent
-table Notes row), `src/agents/CLAUDE.md` (local tools list; Notes/Self-Reminders field), `docs/10_rfcs/README.md`
+**Docs kept in sync on the implementation branch:** the root `CLAUDE.md` Workspace paragraph (since moved into this RFC and
+`decisions/agent_workspace_storage.md`; agent table Notes row), `src/agents/CLAUDE.md` (local tools list; Notes/Self-Reminders field), `docs/10_rfcs/README.md`
 (status), `docs/05_building_blocks/file_storage/README.md` (`workspace:` refs), `docs/07_deployment/README.md` (§14
 steps), decision record `decisions/agent_workspace_storage.md` (GCS, pull-only, origin over interactive-only writes,
 D15–D17), and one "see also" line in `decisions/standing_directives.md`.
