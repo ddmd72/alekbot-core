@@ -316,19 +316,19 @@ class TestQueriesCompile:
         await repo.records_page(U_SCOPE, "a", 5)
         await repo.records_seen_before(U_SCOPE, 2, 5)
         await repo.count_by_state(U_SCOPE)
-        await repo.lowest_ranked_carded("u")
-        await repo.card_capped("u", 5)
-        await repo.delete_user_records("u", 5)
+        await repo.lowest_ranked_carded(U_SCOPE)
+        await repo.card_capped(U_SCOPE, 5)
+        await repo.delete_user_records(U_SCOPE, 5)
         await repo.list_sync_user_ids()
-        await repo.find_nearest_cards("u", [0.1] * 768, 50, kind="pdf")
-        await repo.find_by_name_keys("u", ["w:a", "t:abc"], 100, kind="pdf")
-        await repo.filter_records("u", "pdf", T - timedelta(days=1), T, 8)
+        await repo.find_nearest_cards(U_SCOPE, [0.1] * 768, 50, kind="pdf")
+        await repo.find_by_name_keys(U_SCOPE, ["w:a", "t:abc"], 100, kind="pdf")
+        await repo.filter_records(U_SCOPE, "pdf", T - timedelta(days=1), T, 8)
         # due_records: one per class (5); count_by_state: 6 states + carded (7); lowest_ranked_carded: 3
         assert len(protos) == 25
 
     async def test_undated_eviction_query_is_a_null_filter(self, compiled):
         repo, protos = compiled
-        await repo.lowest_ranked_carded("u")
+        await repo.lowest_ranked_carded(U_SCOPE)
         undated = protos[2].where.composite_filter.filters
         assert any(f.unary_filter.field.field_path == "modified_at" and f.unary_filter.op.name == "IS_NULL"
                    for f in undated)
