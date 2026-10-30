@@ -56,12 +56,14 @@ def test_a_toast_message_is_set_as_text_never_as_markup():
 
 # -- invite codes and linked ids ------------------------------------------------------------
 
-@pytest.mark.parametrize("raw", ["${data.code}", "${c.code}", "${linkedId}", 'value="${deepLink}"'])
+@pytest.mark.parametrize("raw", ["${data.code}", "${c.code}", "${c.hint}", "${linkedId}", 'value="${deepLink}"'])
 def test_codes_and_linked_ids_are_escaped(raw):
     assert raw not in _page()
 
 
-@pytest.mark.parametrize("escaped", ["${escapeHtml(data.code)}", "${escapeHtml(c.code)}", "${escapeHtml(linkedId)}",
+# The invite list shows only the hint since S5 (SECRETS_AT_REST_RFC §2.5); its cell goes through the same escaper.
+@pytest.mark.parametrize("escaped", ["${escapeHtml(data.code)}", '${escapeHtml(c.hint ? "\\u2026" + c.hint : "\\u2014")}',
+                                     "${escapeHtml(linkedId)}",
                                      'value="${escapeHtml(deepLink)}"'])
 def test_the_escaper_wraps_them(escaped):
     assert escaped in _page()

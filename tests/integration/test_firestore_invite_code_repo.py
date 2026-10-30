@@ -4,6 +4,10 @@ from datetime import datetime, timezone, timedelta
 from src.domain.invite_code import InviteCode, InviteType
 from src.adapters.firestore_invite_code_repo import FirestoreInviteCodeRepository
 from src.config.environment import EnvironmentConfig
+from src.domain.secret_digest import keyed_digest
+
+# Since S5 (SECRETS_AT_REST_RFC §2.5) the doc id is the keyed digest of the normalised code and only a hint is stored.
+DIGEST_KEY = b"k" * 32
 
 @pytest.fixture
 def mock_db():
@@ -37,7 +41,7 @@ def mock_env_config():
 
 @pytest.fixture
 def repo(mock_db, mock_env_config):
-    return FirestoreInviteCodeRepository(mock_db, mock_env_config, digest_key=b"k" * 32)
+    return FirestoreInviteCodeRepository(mock_db, mock_env_config, digest_key=DIGEST_KEY)
 
 @pytest.mark.asyncio
 async def test_create_invite_code(repo, mock_db):
@@ -55,12 +59,12 @@ async def test_create_invite_code(repo, mock_db):
     
     # Verify DB interactions
     mock_db.collection.assert_called_with("test_invite_codes")
-    mock_db.collection().document.assert_called_with("ABC-123")
+    mock_db.collection().document.assert_called_with(keyed_digest(DIGEST_KEY, "invite", "ABC123"))
     mock_db.collection().document().set.assert_called_once()
     
     # Verify data format
     data = mock_db.collection().document().set.call_args[0][0]
-    assert data["code"] == "ABC-123"
+    assert "code" not in data and data["hint"] == "C123"
     assert data["type"] == "self_link"
     assert data["platform"] == "slack"
 
@@ -71,7 +75,7 @@ async def test_get_by_code_found(repo, mock_db):
     mock_doc = MagicMock()
     mock_doc.exists = True
     mock_doc.to_dict.return_value = {
-        "code": "XYZ-987",
+        "hint": "Z987",
         "user_id": "user-2",
         "account_id": "acc-2",
         "type": "team_invite",
@@ -82,11 +86,12 @@ async def test_get_by_code_found(repo, mock_db):
     mock_db.collection().document().get.return_value = mock_doc
     
     # Execute
-    result = await repo.get_by_code("XYZ-987")
+    result = await repo.get_by_code("xyz-987")
     
     # Verify
+    mock_db.collection().document.assert_called_with(keyed_digest(DIGEST_KEY, "invite", "XYZ987"))
     assert result is not None
-    assert result.code == "XYZ-987"
+    assert (result.code, result.hint) == ("XYZ987", "Z987")
     assert result.type == InviteType.TEAM_INVITE
     assert result.role == "MEMBER"
 
@@ -110,7 +115,7 @@ async def test_list_by_user(repo, mock_db):
     # Setup mock stream
     mock_doc1 = MagicMock()
     mock_doc1.to_dict.return_value = {
-        "code": "C1",
+        "hint": "AC01",
         "user_id": "u1",
         "account_id": "a1",
         "type": "self_link",
@@ -128,5 +133,5 @@ async def test_list_by_user(repo, mock_db):
     
     # Verify
     assert len(results) == 1
-    assert results[0].code == "C1"
+    assert (results[0].code, results[0].hint) == (None, "AC01")
     mock_db.collection().where.assert_called_with(filter=ANY)
