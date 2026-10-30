@@ -22,6 +22,10 @@ USER_SCOPED = {
     "record_binding_key": "the single-drive record binding key (part D removes it)",
 }
 
+# TRANSITIONAL (slice 1b): the single-drive keys part C keeps only for the frozen core's versions of parts A and D in its
+# branch (their branches no longer call them). Deleted at assembly, and this set emptied with them.
+TRANSITIONAL = {"doc_key", "tick_key", "continuation_key", "nudge_key", "toggle_key"}
+
 # Not a stored document key: a value, a query key or an ordering key that no document is addressed by.
 NOT_A_DOCUMENT_KEY = {
     "month_key": "the YYYY-MM string a usage document id is built from",
@@ -58,7 +62,7 @@ def _takes_scope(node: ast.FunctionDef) -> bool:
 
 def test_every_domain_key_function_is_connection_scoped_or_listed_with_a_reason():
     unlisted = [f"{module}:{node.name}" for module, node in _key_functions()
-                if not _takes_scope(node) and node.name not in USER_SCOPED and node.name not in NOT_A_DOCUMENT_KEY]
+                if not _takes_scope(node) and node.name not in set(USER_SCOPED) | set(NOT_A_DOCUMENT_KEY) | TRANSITIONAL]
     assert unlisted == []
 
 
@@ -76,5 +80,5 @@ def test_no_listed_name_takes_a_scope_as_well():
 
 def test_the_single_drive_index_keys_are_gone():
     names = {node.name for _, node in _key_functions()}
-    assert not names & {"record_key", "chunk_key", "job_doc_id", "batch_doc_id", "initial_doc_id", "doc_key",
-                        "tick_key", "continuation_key", "nudge_key", "toggle_key"}
+    assert not (names - TRANSITIONAL) & {"record_key", "chunk_key", "job_doc_id", "batch_doc_id", "initial_doc_id",
+                                         "doc_key", "tick_key", "continuation_key", "nudge_key", "toggle_key"}
