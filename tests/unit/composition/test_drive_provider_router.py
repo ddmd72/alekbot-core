@@ -125,7 +125,7 @@ class _MemDrive(UserDrivePort):
         changes = tuple(DriveChange(item_id=i.item_id, name=i.name) for (c, _), i in self._items.items()
                         if c == handle.connection_id)
         return DriveChanges(changes=changes, cursor="end", complete=True, full_enumeration=cursor is None,
-                            drive_id=handle.connection_id, root_item_id="root",
+                            root_item_id="root",
                             drive_identity=f"{self.kind}:{handle.connection_id}")
 
     async def get_change(self, handle, item_id):
@@ -266,7 +266,7 @@ class _Echo(UserDrivePort):
     # the abstract members, never reached (served by __getattribute__)
     get_root = get_item = list_children = search = download = upload = replace_content = move = None
     create_folder = delete = child_by_name = area_path = get_changes = get_change = None
-    list_children_changes = download_to_file = get_thumbnail = None
+    list_children_changes = download_to_file = get_thumbnail = media_source = capabilities = forget = None
 
 
 _ROUTED = sorted(name for name, member in vars(UserDrivePort).items()
