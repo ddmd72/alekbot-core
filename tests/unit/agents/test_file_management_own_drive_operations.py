@@ -18,7 +18,7 @@ CTX = {"user_id": "u1", "account_id": "a1"}
 
 async def test_its_own_drive_operations_holds_every_service_it_was_given():
     drive = AsyncMock(spec=UserDriveService)
-    drive.connection.side_effect = RuntimeError("offline")
+    drive.status.side_effect = RuntimeError("offline")
     drive.delete.return_value = SimpleNamespace(item=SimpleNamespace(is_folder=False, path="Inbox/a.txt"))
     search = AsyncMock(spec=DriveSearchService)
     search.search_state.return_value = SearchLine.REBUILDING
@@ -35,7 +35,7 @@ async def test_its_own_drive_operations_holds_every_service_it_was_given():
         drive_search=search)
     ops = agent.drive_operations
     assert (await ops.preflight("u1")).search is SearchLine.REBUILDING            # drive service + drive search
-    drive.connection.assert_awaited_once_with("u1")
+    drive.status.assert_awaited_once_with("u1")
     await ops.delete(CTX, "u1", "drive:x", wait_s=5)                              # notifier, localization, language
     language.resolve_ui_language.assert_awaited_once_with("u1")
     assert notifier.notify_raw.await_args.args[:3] == ("u1", "a1", "Deleted Inbox/a.txt")
