@@ -87,6 +87,7 @@ src.adapters.unsplash_adapter.UnsplashAdapter 1  # by-design single instance
 src.adapters.xml_prompt_assembler.XmlPromptAssembler 1  # by-design single instance
 src.composition.application_graph.ApplicationGraph 1  # by-design the root of the graph, built once by build_application_graph
 src.composition.companion_extractor_runner.CompanionExtractorRunner 1  # by-design single instance shared by both extractor agents
+src.composition.connector_registry.ConnectorRegistry 1  # by-design one registry, held by the ServiceContainer as connectors; services take their specs from it (MULTI_DRIVE_RFC 4.2)
 src.composition.service_container.ServiceContainer 1  # by-design one container owns every shared adapter; a second would be a second set of repositories
 src.composition.user_agent_factory.UserAgentFactory 1  # by-design one factory owns the per-user agent cache; a second would split it
 src.composition.user_agent_factory._UserContext 1  # by-design one per cached user; the test seeds one user
