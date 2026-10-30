@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from src.domain.drive_connection import DriveConnection
 from src.domain.drive_connection_state import ConnectionState, can_transition
 from src.domain.drive_user_settings import DriveUserSettings
+from src.domain.provider_account import ProviderAccount
 from src.ports.drive_connection_repository import DriveConnectionRepository
 
 
@@ -48,9 +49,11 @@ class FakeDriveConnectionRepository(DriveConnectionRepository):
     async def update(self, user_id: str, connection_id: str, *, credential_id: Optional[str] = None,
                      drive_identity: Optional[str] = None, mount_name: Optional[str] = None,
                      indexing_enabled: Optional[bool] = None,
-                     transcribe_enabled: Optional[bool] = None) -> Optional[DriveConnection]:
+                     transcribe_enabled: Optional[bool] = None,
+                     provider_account: Optional[ProviderAccount] = None) -> Optional[DriveConnection]:
         given = {"credential_id": credential_id, "drive_identity": drive_identity, "mount_name": mount_name,
-                 "indexing_enabled": indexing_enabled, "transcribe_enabled": transcribe_enabled}
+                 "indexing_enabled": indexing_enabled, "transcribe_enabled": transcribe_enabled,
+                 "provider_account": provider_account}
         async with self._lock:
             current = self.connections.get((user_id, connection_id))
             if current is None:
