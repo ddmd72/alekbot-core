@@ -8,8 +8,10 @@ is "not given"; a required one empty is refused, never guessed.
 Public interface:
     ExcerptRequest(question, folder, file_refs)
     parse_file_refs(value) -> (ref, ...)         a list or a comma string of drive: refs, at most EXCERPT_FILE_REFS_MAX
-                                                 (a passages head line's id `drive:<id>:<i>-<j>` or `:<i>` is a ref:
-                                                 the passage numbers are dropped, here and in range_request)
+                                                 (a passages head line's id `drive:<tag>:<id>:<i>-<j>` or `:<i>` is a
+                                                 ref: the passage numbers are dropped, here and in range_request). An
+                                                 untagged ref is kept as given: the search answers it "search again"
+                                                 (MULTI_DRIVE_RFC §9, D13)
     parse_page(value) -> Optional[int]           "from 11", "from passage 11", "start": a page's first display number
     parse_range(value) -> (first, last)          "3", "3-5", "3–5": display numbers, at most EXCERPT_RANGE_MAX of them
     excerpt_request(question, folder, file_refs) -> ExcerptRequest
@@ -23,7 +25,8 @@ from typing import Any, List, Optional, Tuple
 
 from .drive_excerpt_range_request import ExcerptRangeRequest
 from .drive_index_params import EXCERPT_FILE_REFS_MAX, EXCERPT_RANGE_MAX
-from .user_drive import make_drive_ref, parse_drive_ref
+from . import drive_ref
+from .drive_ref import DriveRef
 
 QUESTION_REQUIRED = "question is required: the full question the passages should answer, in the user's words."
 FILE_REF_REQUIRED = "file_ref is required: the drive: ref of the file, from a passages head line or a card."
@@ -53,13 +56,18 @@ class ExcerptRequest:
 
 def _ref(raw: Any) -> str:
     text = str(raw).strip()
-    item_id = parse_drive_ref(text)
-    if item_id is None:
+    parsed = drive_ref.parse(text)
+    if parsed is None:
         raise ValueError(NOT_A_REF.format(value=text))
-    item_id = _HEAD_NUMBERS.sub("", item_id)
-    if not item_id:
+    if isinstance(parsed, DriveRef):
+        item_id = _HEAD_NUMBERS.sub("", parsed.item_id)
+        if not item_id:
+            raise ValueError(NOT_A_REF.format(value=text))
+        return drive_ref.format(parsed.tag, item_id)
+    untagged = _HEAD_NUMBERS.sub("", parsed.raw)
+    if untagged == drive_ref.REF_PREFIX:
         raise ValueError(NOT_A_REF.format(value=text))
-    return make_drive_ref(item_id)
+    return untagged
 
 
 def parse_file_refs(value: Any) -> Tuple[str, ...]:

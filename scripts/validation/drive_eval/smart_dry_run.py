@@ -69,6 +69,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, FrozenSet, List, Mapping, Optional, Sequence
 
+from scripts.validation.drive_eval.eval_connection import EvalDriveConnections, eval_connection
 from src.domain.agent import AgentIntent, AgentMessage
 from src.domain.drive_content_terms import query_terms
 from src.domain.drive_search_texts import (
@@ -77,7 +78,7 @@ from src.domain.llm import MessagePart
 from src.domain.memory_fact import PROPOSE_MEMORY_FACTS_TOOL
 from src.domain.skill import DRAFT_SKILL_TOOL
 from src.domain.turn_clock import CURRENT_TURN_CLOCK, TurnClock
-from src.domain.user_drive import is_drive_ref
+from src.domain.drive_ref import is_drive_ref
 from src.infrastructure.agent_manifest import ALL_DESCRIPTORS, Intent
 from src.infrastructure.agent_registry import AgentRegistry
 from src.infrastructure.delegation_engine import DelegationEngine, ToolResult
@@ -637,7 +638,7 @@ async def _run(args: argparse.Namespace) -> int:
     from src.services.drive_search_service import DriveSearchService
 
     from .cost_meter import Meter, stop_reason
-    from .runner import EvalClock, _EnabledUsers, gold_sha256, load_gold
+    from .runner import EVAL_USER, EvalClock, gold_sha256, load_gold
 
     from scripts.validation.ab_agent_models import _READ_ONLY_INTENTS   # the A/B dry run's read-only set
 
@@ -669,7 +670,7 @@ async def _run(args: argparse.Namespace) -> int:
                                       rebuild=args.rebuild_index)
     if facts["misses"]:
         raise G3Error(f"the enrichment snapshot misses {facts['misses']}: re-record it (dump_enrichment.py)")
-    search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock,
+    search = DriveSearchService(repo, embeddings, drive, EvalDriveConnections(eval_connection(EVAL_USER)), clock=clock,
                                 embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE)
 
     # Harness safety first (DRIVE_SPECIALIST_RFC §12): every DriveOperations write is stubbed before any agent exists.

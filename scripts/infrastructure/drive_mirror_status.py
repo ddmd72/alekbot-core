@@ -9,7 +9,7 @@ For each user it reports:
   - the deletion marks waiting (`gone_pending`), how many are ripe and how many are not ripe yet (`mark_ready_at` in the future: a grace hour, or a hold or charge back-off);
   - the parked documents (`failed_at` set: tried again only after MIRROR_FAILED_RETRY) and the ones backing off (`retry_at`);
   - the detached documents due for the weekly recheck;
-  - per root document (one per drive): the root's item id, the cursors (seed, scan, audit folder and page), the clocks
+  - per root document (one per drive, keyed by its drive identity since MULTI_DRIVE_RFC §10): the root's item id, the cursors (seed, scan, audit folder and page), the clocks
     (`created_at`, `audited_at`, whether the audit is due), the holds (`quota_hold_until`, `readme_blocked_at`,
     `readme_pending_at`), the loss marks (`root_gone_at`, a reset under way = the root id among `previous_root_ids`) and
     `orphans_reported`.
@@ -17,7 +17,8 @@ For each user it reports:
 Usage (project and credentials from the environment / ADC, collections from APP_ENV, default development):
     python scripts/infrastructure/drive_mirror_status.py --user <user_id> [--user <user_id> ...]
     python scripts/infrastructure/drive_mirror_status.py --all-users
-`--all-users` lists only users that still have a sync state. An indexing opt-out deletes the sync state and keeps the mirror
+`--all-users` lists only users that still have a sync state on some connection. After the slice-1b cut-over the owner
+reads it for I5/I6 (RFC §12 step 6): no new `_Transcripts` root (one root per drive identity), no archive moves. An indexing opt-out deletes the sync state and keeps the mirror
 (OQ-T10), so such a user's leftover mirror is seen only when named with `--user`.
 Exit code: 0 when written, 1 when a store read failed (a missing composite index is named in the output).
 """
@@ -48,12 +49,12 @@ def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value is not None else None
 
 
-async def _all_docs(mirror_repo: DriveMirrorRepository, user_id: str, drive_id: str) -> List[MirrorDoc]:
+async def _all_docs(mirror_repo: DriveMirrorRepository, user_id: str, drive_identity: str) -> List[MirrorDoc]:
     docs: List[MirrorDoc] = []
     for reader in (mirror_repo.folder_docs, mirror_repo.scan_page):
         after: Optional[str] = None
         while True:
-            page = await reader(user_id, drive_id, after, _PAGE)
+            page = await reader(user_id, drive_identity, after, _PAGE)
             docs.extend(page)
             if len(page) < _PAGE:
                 break
@@ -64,7 +65,7 @@ async def _all_docs(mirror_repo: DriveMirrorRepository, user_id: str, drive_id: 
 def root_report(root: MirrorRoot, now: datetime) -> Dict[str, Any]:
     """One root document's cursors, clocks, holds and loss marks (no names)."""
     return {
-        "drive_id": root.drive_id,
+        "drive_identity": root.drive_identity,
         "root_item_id": root.root_item_id,
         "previous_roots": len(root.previous_root_ids),
         "ledger_reset_under_way": root.root_item_id in root.previous_root_ids,
@@ -103,7 +104,7 @@ async def user_status(mirror_repo: DriveMirrorRepository, user_id: str, now: dat
     out: Dict[str, Any] = {"user_id": user_id, "roots": [], "pinned_keys": sorted(await mirror_repo.pinned_keys(user_id))}
     out["pinned_key_count"] = len(out["pinned_keys"])
     for root in roots:
-        docs = await _all_docs(mirror_repo, user_id, root.drive_id)
+        docs = await _all_docs(mirror_repo, user_id, root.drive_identity)
         entry = root_report(root, now)
         entry["ledger"] = docs_report(docs, now)
         out["roots"].append(entry)
@@ -138,7 +139,9 @@ async def _main(users: List[str], all_users: bool) -> int:
     env = EnvironmentConfig()
     db = firestore.AsyncClient(project=os.getenv("GOOGLE_CLOUD_PROJECT") or None, database=env.firestore_database_id)
     mirror_repo = FirestoreDriveMirrorRepository(db, env)
-    names = sorted(set(users) | (set(await FirestoreDriveIndexRepository(db, env).list_sync_user_ids()) if all_users else set()))
+    synced = {scope.user_id for scope in await FirestoreDriveIndexRepository(db, env).list_sync_scopes()} \
+        if all_users else set()
+    names = sorted(set(users) | synced)
     code, path = await run(mirror_repo, names, datetime.now(timezone.utc))
     print(f"wrote {path} ({len(names)} users)")
     return code

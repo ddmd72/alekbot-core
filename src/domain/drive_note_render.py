@@ -27,7 +27,7 @@ from .drive_card import owner_note_line
 from .drive_deleted_search import DeletedHit
 from .drive_keys import name_keys_v2
 from .drive_match import Concept
-from .drive_note import DriveNote, NoteContent, binding_parts_of, note_ref
+from .drive_note import DriveNote, NoteContent, binding_identity, note_ref
 from .drive_note_merge import NOTE_STORE_KEYS_VERSION, note_store_keys
 
 # part B's `drive_note_merge.note_store_keys`: (content, name) -> (the note document's keys, their version)
@@ -82,16 +82,16 @@ def note_hit(note: DriveNote, *, dormant: bool, nonce: str, matched: str, day: s
     """One note entry: the item's last known name and path head it (`gone from the drive …` or, `dormant`, `on a drive
     that is not connected`), then the ref line and the note line with how it matched (`matched` is the matched line,
     or MEANING_LINE for the meaning fallback). The wrapper's ref is the note's `drive_note:` ref; there is no drive
-    file to open (`item` None). `item_key` (`<drive id>:<item id>`) lets an archived transcript of the same item
-    share the entry."""
+    file to open (`item` None). `item_key` (the item's identity, MULTI_DRIVE_RFC §7.2) lets an archived transcript of
+    the same item (its ledger document's `source_identity`) share the entry."""
     snapshot = note.snapshot
     name = snapshot.name if snapshot is not None else ""
     path = (snapshot.path or name) if snapshot is not None else ""
-    parts = binding_parts_of(note)
+    identity = binding_identity(note)
     line = owner_note_line(note.text, note.doc_type, tuple(note.life_areas))
     return DeletedHit(
         name=name or note.ref, path=path, day=day,
         refs=(note_ref_line(note.note_id, dormant=dormant),),
         note_line="\n".join(x for x in (line, matched) if x),
         on_connected_drive=not dormant, nonce=nonce, ref=note.ref,
-        item_key=f"{parts.drive_id}:{parts.item_id}" if parts is not None else "")
+        item_key=identity)

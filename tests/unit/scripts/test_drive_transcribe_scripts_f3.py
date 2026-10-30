@@ -5,8 +5,11 @@ from pathlib import Path
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_transcript import TranscriptBatch
 
+from src.domain.connection_scope import ConnectionScope
+
 from tests.unit.services.drive_index_fakes import T0
 
+SCOPE = ConnectionScope("u", "u-c")   # the connection the fixtures belong to (MULTI_DRIVE_RFC §8)
 _DIR = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure"
 
 
@@ -38,9 +41,9 @@ def test_the_local_cap_key_is_not_read():
 async def test_sweep_counts_documents_holding_money_with_no_month():
     sweep = _load("drive_transcript_sweep")
     repo = InMemoryDriveIndexRepository()
-    await repo.create_batch(TranscriptBatch(name="batches/b", user_id="u", request_keys=("i:0",), reserved_usd=0.5,
+    await repo.create_batch(TranscriptBatch(name="batches/b", user_id="u", connection_id="u-c", request_keys=("i:0",), reserved_usd=0.5,
                                             reserved_month="", next_poll_at=T0))
-    out = await sweep.settle_reservations(repo, "u", ["2026-10"], apply=False, now=T0)
+    out = await sweep.settle_reservations(repo, "u", ["2026-10"], scopes=[SCOPE], apply=False, now=T0)
     assert out.no_month == 1
     assert "1 documents hold reserved money with no reserved_month" in sweep._no_month_note(out)
     assert sweep._no_month_note(sweep.Settlement()) == ""

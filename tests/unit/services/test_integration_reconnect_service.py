@@ -95,7 +95,7 @@ class World:
 
         self.svc = IntegrationReconnectService(
             credentials=self.creds, users=Users("user-a", "user-b"), notifier=self.notifier,
-            email_states=self.email, task_config=self.tasks, drive_states=self.drive_states, drive=self.drive,
+            email_states=self.email, task_config=self.tasks,
             alert_sink=self.alerts, ensure_agents=ensure, clock=lambda: NOW, mail_connector=ConnectorRegistry().get("gmail"), todo_connector=ConnectorRegistry().get("microsoft_todo"))
 
     async def connect(self, user_id: str, provider: str) -> None:
@@ -291,16 +291,6 @@ async def test_status_reads_reconnect_per_integration(world):
     assert await world.svc.status("user-a") == {"mail": False, "drive": False, "tasks": True}
     # nothing stored: never connected, nothing to reconnect
     assert await world.svc.status("user-b") == {"mail": False, "drive": False, "tasks": False}
-
-
-async def test_a_drive_disconnect_marks_the_sync_state_and_a_consent_clears_it(world):
-    await world.drive_states.save_sync_state(DriveSyncState(user_id="user-a"))
-    await world.svc.mark_disconnected("user-a", Integration.DRIVE)
-    assert (await world.drive_states.get_sync_state("user-a")).disconnected_by_user_at == NOW
-    assert await world.svc.status("user-a", (Integration.DRIVE,)) == {"drive": False}
-    await world.svc.consented("user-a", Integration.DRIVE)
-    assert (await world.drive_states.get_sync_state("user-a")).disconnected_by_user_at is None
-    assert await world.svc.status("user-a", (Integration.DRIVE,)) == {"drive": True}
 
 
 async def test_the_sweep_never_notifies_for_the_drive(world):

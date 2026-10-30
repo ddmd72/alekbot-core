@@ -61,7 +61,7 @@ from src.domain.drive_tool_texts import (
     REPLACE_FILE_CONTENT, SAVE_TEXT_FILE)
 from src.domain.llm import Message, MessagePart
 from src.domain.session import Session
-from src.domain.user_drive import parse_drive_ref
+from scripts.validation.drive_eval.eval_connection import ref_item_id
 from src.infrastructure.agent_manifest import Intent
 from src.infrastructure.drive_operations import DriveOperations
 from src.ports.session_store import SessionStore
@@ -255,7 +255,7 @@ def drive_opens(ops: Sequence[Mapping[str, Any]]) -> List[str]:
     out: List[str] = []
     for o in ops:
         if o["op"] == "open" and not _truthy((o.get("args") or {}).get("original")):
-            item = parse_drive_ref(str((o.get("args") or {}).get("ref", "")))   # DriveOperations.open(…, ref)
+            item = ref_item_id(str((o.get("args") or {}).get("ref", "")))   # DriveOperations.open(…, ref)
             if item:
                 out.append(item)
     return out
@@ -820,7 +820,7 @@ async def build_world(args: argparse.Namespace, gold: Sequence[Mapping[str, Any]
     from .index_cache import load_or_build
     from .owner_notes_overlay import apply_owner_notes, load_owner_notes
     from .parse_cache import ParseCache
-    from .runner import EvalClock, _EnabledUsers
+    from .runner import EvalClock
     from .search_v2_eval import index_v2
     from .smart_dry_run import DryRunSkills, RecordingMemoryFacts, annotate_drive_read, g3_drive
     from .specialist_fixture import build_drive_fixture
@@ -857,7 +857,9 @@ async def build_world(args: argparse.Namespace, gold: Sequence[Mapping[str, Any]
         raise AbError(f"the enrichment snapshot misses {facts['misses']}: re-record it (dump_enrichment.py)")
     if owner_notes_path is not None:   # after the cache: a note change never costs a rebuild (plan CTX.5)
         print(f"owner notes: {apply_owner_notes(repo, load_owner_notes(owner_notes_path))} record(s) noted")
-    search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock,
+    from .eval_connection import EvalDriveConnections, eval_connection
+    from .runner import EVAL_USER
+    search = DriveSearchService(repo, embeddings, drive, EvalDriveConnections(eval_connection(EVAL_USER)), clock=clock,
                                 embedding_space=GeminiEmbeddingAdapter.EMBEDDING_SPACE)
     db = firestore.AsyncClient(database=os.getenv("FIRESTORE_DATABASE", "us-production"))
     settings = load_settings()

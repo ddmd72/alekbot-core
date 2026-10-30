@@ -126,6 +126,7 @@ async def main():
             localization=app.localization,
             reconnect=app.reconnect_service,
             connectors=app.container.connectors,
+            drive_connections=app.container.drive_connection_service,
         )
 
         deep_research_webhooks_bp = create_deep_research_webhooks_blueprint(

@@ -3,7 +3,9 @@ User drive — the user's long-term file area (docs/10_rfcs/USER_DRIVE_RFC.md).
 
 A domain concept, not a provider: nothing here (refs, labels, names, errors) names the
 storage provider. The adapter behind UserDrivePort owns the provider's ids and paths;
-the model and session history only ever see `drive:<opaque id>` refs (§4.3).
+the model and session history only ever see `drive:<tag>:<opaque id>` refs (§4.3; the codec and the tag are
+`drive_ref`, MULTI_DRIVE_RFC §9). An item does not know its connection's tag, so every label and history entry takes
+the tag of the connection the item was read from.
 """
 from __future__ import annotations
 
@@ -15,10 +17,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional, Sequence
 
+from . import drive_ref
 from .drive_content_identity import ContentIdentity
 from .drive_media_facts import DriveMediaFacts
 
-DRIVE_REF_PREFIX = "drive:"
 DEFAULT_INBOX_FOLDER = "Inbox"
 
 # Size caps, all checked on metadata before any download (§4.6, §4.9).
@@ -45,8 +47,6 @@ CREATABLE_TEXT_MIME_TYPES: Dict[str, str] = {
 # Image formats every LLM provider accepts as vision input (§4.6). HEIC (iPhone default) is not one.
 VISION_IMAGE_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
 
-# A ref copied out of a label may carry the label's punctuation: `ref=drive:x]`, `"drive:x"`.
-_REF_RE = re.compile(r"drive:([^\s\"'\]\[)(,]+)")
 # Delivered documents are keyed {prefix}/{user_id}/{uuid4}-{filename} (DocumentDeliveryService).
 _UUID_PREFIX_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-", re.I)
 # Characters OneDrive and most drives forbid in a name, plus control characters.
@@ -66,6 +66,16 @@ class DriveNotConnectedError(Exception):
 
 class DriveItemNotFoundError(FileNotFoundError):
     """The item does not exist (deleted, or outside the app area)."""
+
+
+class DriveRefRefused(Exception):
+    """A drive ref that resolves to no live connection of the user (MULTI_DRIVE_RFC §9, D13): an untagged ref, a tag the
+    user never had, or a DISCONNECTED connection's tag. `line` is the code-built answer (`drive_ref_refusal`), the whole
+    reply to the model; no legacy resolver runs."""
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+        self.line = line
 
 
 class DriveRootProtectedError(Exception):
@@ -116,10 +126,6 @@ class DriveItem:
     content_version: str = ""
     content_identity: Optional[ContentIdentity] = None
     media: DriveMediaFacts = DriveMediaFacts()
-
-    @property
-    def ref(self) -> str:
-        return make_drive_ref(self.item_id)
 
 
 class DriveFileTooLargeError(Exception):
@@ -191,22 +197,6 @@ class UpdateOutcome:
     mode: str  # "append" | "replace"
 
 
-def make_drive_ref(item_id: str) -> str:
-    return f"{DRIVE_REF_PREFIX}{item_id}"
-
-
-def parse_drive_ref(ref: str) -> Optional[str]:
-    """Item id from a `drive:` ref, tolerating label punctuation; None for any other ref."""
-    if not ref or DRIVE_REF_PREFIX not in ref:
-        return None
-    match = _REF_RE.search(ref)
-    return match.group(1) if match else None
-
-
-def is_drive_ref(ref: str) -> bool:
-    return parse_drive_ref(ref) is not None
-
-
 def split_folder_path(path: str) -> List[str]:
     """Normalise a user-typed folder path into segments (§4.8)."""
     if "\\" in path:
@@ -248,12 +238,19 @@ def format_size(size_bytes: int) -> str:
     return f"{size_bytes}B"
 
 
-def drive_label(item: DriveItem) -> str:
+def item_ref(item: DriveItem, tag: str) -> str:
+    """The item's `drive:<tag>:<item_id>` ref; `tag` is the ref tag of the connection it was read from. ValueError for
+    a tag that is not one (a caller that lost its connection is a bug, not a ref to print)."""
+    return drive_ref.format(tag, item.item_id)
+
+
+def drive_label(item: DriveItem, tag: str) -> str:
     """The label the model sees (§4.3). Never names a provider."""
+    ref = item_ref(item, tag)
     if item.is_folder:
         shown = f"{item.path}/" if item.path else "/"
-        return f"[Drive folder: {shown} ref={item.ref}]"
-    return f"[Drive: {item.path} ({format_size(item.size_bytes)}) ref={item.ref}]"
+        return f"[Drive folder: {shown} ref={ref}]"
+    return f"[Drive: {item.path} ({format_size(item.size_bytes)}) ref={ref}]"
 
 
 # The one sentence a move with neither a folder nor a new name is refused with: UserDriveService raises it, and the
@@ -261,9 +258,9 @@ def drive_label(item: DriveItem) -> str:
 MOVE_NEEDS_TARGET = "Give a destination folder, a new name, or both"
 
 
-def drive_context_entry(item: DriveItem) -> Dict[str, str]:
-    """One entry of the `drive_context` history block (§4.3)."""
-    return {"path": item.path or "/", "ref": item.ref}
+def drive_context_entry(item: DriveItem, tag: str) -> Dict[str, str]:
+    """One entry of the `drive_context` history block (§4.3), with the tagged ref of the item's connection."""
+    return {"path": item.path or "/", "ref": item_ref(item, tag)}
 
 # The chat store's Finder-style dedup suffix (GcsFileStorageAdapter._deduplicate): "<stem> (N)<ext>".
 _CHAT_DEDUP_SUFFIX_RE = re.compile(r"^(?P<stem>.+) \(\d+\)$")

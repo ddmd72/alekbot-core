@@ -1,4 +1,4 @@
-"""Operator scripts of the transcript build (USER_DRIVE_INDEXING_RFC §27.13, §27.15): the per-user flag, the backlog
+"""Operator scripts of the transcript build (USER_DRIVE_INDEXING_RFC §27.13, §27.15): the backlog
 estimate, the requeue (Δ122) and the orphan sweep. In-memory repositories only: no network, no cloud write."""
 import importlib.util
 from dataclasses import replace
@@ -11,10 +11,12 @@ from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.domain.drive_enrichment import ModelUsageMonth
 from src.domain.drive_index import DriveIndexRecord, DriveIndexStoreUnavailable, DriveSyncState
 from src.domain.drive_transcript import JobWindow, StoredTranscript, TranscriptBatch, TranscriptJob, WindowSpec
-from src.domain.user import UserBotConfig, UserProfile
+
+from src.domain.connection_scope import ConnectionScope
 
 from tests.unit.services.drive_index_fakes import T0
 
+SCOPE = ConnectionScope("u", "u-c")   # the connection the fixtures belong to (MULTI_DRIVE_RFC §8)
 _DIR = Path(__file__).resolve().parents[3] / "scripts" / "infrastructure"
 
 
@@ -23,11 +25,6 @@ def _load(name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-@pytest.fixture
-def flag():
-    return _load("drive_transcribe_flag")
 
 
 @pytest.fixture
@@ -45,64 +42,10 @@ def sweep():
     return _load("drive_transcript_sweep")
 
 
-# -- the per-user flag -----------------------------------------------------------------------------------------------
-
-class FakeUsers:
-    def __init__(self, enabled=False, exists=True, sticky=True):
-        self.user = UserProfile(user_id="u", account_id="a", config=UserBotConfig(drive_transcribe_enabled=enabled)) if exists else None
-        self.updates = 0
-        self.sticky = sticky
-
-    async def get_user(self, user_id):
-        return self.user.model_copy(deep=True) if self.user is not None else None
-
-    async def update_user(self, user):
-        self.updates += 1
-        if self.sticky:
-            self.user = user
-        return user
-
-
-async def test_flag_dry_run_writes_nothing_and_says_before_and_after(flag):
-    users = FakeUsers()
-    code, message = await flag.set_flag(users, "u", enabled=True, apply=False)
-    assert code == 0 and users.updates == 0 and users.user.config.drive_transcribe_enabled is False
-    assert "False" in message and "True" in message and "--apply" in message
-
-
-async def test_flag_apply_sets_it_and_prints_before_and_after(flag):
-    users = FakeUsers()
-    code, message = await flag.set_flag(users, "u", enabled=True, apply=True)
-    assert code == 0 and users.updates == 1 and users.user.config.drive_transcribe_enabled is True
-    assert "before False" in message and "after True" in message
-
-
-async def test_flag_off_clears_it(flag):
-    users = FakeUsers(enabled=True)
-    code, _ = await flag.set_flag(users, "u", enabled=False, apply=True)
-    assert code == 0 and users.user.config.drive_transcribe_enabled is False
-
-
-async def test_flag_already_in_place_writes_nothing(flag):
-    users = FakeUsers(enabled=True)
-    code, message = await flag.set_flag(users, "u", enabled=True, apply=True)
-    assert code == 0 and users.updates == 0 and "already" in message
-
-
-async def test_flag_unknown_user_is_an_error(flag):
-    code, _ = await flag.set_flag(FakeUsers(exists=False), "u", enabled=True, apply=True)
-    assert code == 1
-
-
-async def test_flag_write_that_does_not_stick_fails_loudly(flag):
-    code, message = await flag.set_flag(FakeUsers(sticky=False), "u", enabled=True, apply=True)
-    assert code == 1 and "did not stick" in message
-
-
 # -- the backlog -----------------------------------------------------------------------------------------------------
 
 def _rec(item_id, kind, size=1_000_000, **kw):
-    return DriveIndexRecord(user_id="u", item_id=item_id, kind=kind, size_bytes=size, **kw)
+    return DriveIndexRecord(user_id="u", connection_id="u-c", item_id=item_id, kind=kind, size_bytes=size, **kw)
 
 
 def test_backlog_sums_video_duration_and_counts_audio_by_bytes(backlog):
@@ -161,7 +104,7 @@ async def _seeded(requeue, monkeypatch, records, bump=True):
     if bump:
         monkeypatch.setattr(requeue, "TRANSCRIBE_VERSION", 2)
     repo = InMemoryDriveIndexRepository()
-    await repo.save_sync_state(DriveSyncState(user_id="u", epoch=1, root_item_id="root", created_at=T0))
+    await repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u-c", epoch=1, root_item_id="root", created_at=T0))
     await repo.upsert_records(records)
     for rec in records:
         if rec.transcript_key:
@@ -171,46 +114,46 @@ async def _seeded(requeue, monkeypatch, records, bump=True):
 
 async def test_a_version_bump_by_itself_requeues_nothing(requeue, monkeypatch):
     repo = await _seeded(requeue, monkeypatch, [_done("a", "k1")], bump=False)
-    code, message = await requeue.requeue(repo, "u", apply=True, now=T0, owner="r")
+    code, message = await requeue.requeue(repo, SCOPE, apply=True, now=T0, owner="r")
     assert code == 0 and "nothing to redo" in message
-    assert (await repo.get_records("u", ["a"]))["a"].transcript_state == "current"
+    assert (await repo.get_records(SCOPE, ["a"]))["a"].transcript_state == "current"
 
 
 async def test_dry_run_shows_the_estimate_and_writes_nothing(requeue, monkeypatch):
     repo = await _seeded(requeue, monkeypatch, [_done("a", "k1"), _done("b", "k2", seconds=1800)])
-    code, message = await requeue.requeue(repo, "u", apply=False, now=T0, owner="r")
+    code, message = await requeue.requeue(repo, SCOPE, apply=False, now=T0, owner="r")
     assert code == 0 and "2 files in 2 transcripts" in message and "$" in message and "--apply" in message
-    assert all(r.transcript_state == "current" for r in (await repo.get_records("u", ["a", "b"])).values())
+    assert all(r.transcript_state == "current" for r in (await repo.get_records(SCOPE, ["a", "b"])).values())
     assert ("u", "k1") in repo.transcripts
 
 
 async def test_estimate_is_the_stage_reservation(requeue, monkeypatch):
     from src.domain.drive_transcript_plan import file_estimate_usd
     repo = await _seeded(requeue, monkeypatch, [_done("a", "k1")])
-    plan = await requeue.load_plan(repo, "u")
+    plan = await requeue.load_plan(repo, SCOPE)
     assert plan.estimate_usd == pytest.approx(file_estimate_usd(3600))
 
 
 async def test_apply_resets_the_record_then_deletes_the_store(requeue, monkeypatch):
     repo = await _seeded(requeue, monkeypatch, [_done("a", "k1", transcript_attempts=2, transcript_hold="retry")])
-    code, message = await requeue.requeue(repo, "u", apply=True, now=T0, owner="r")
-    rec = (await repo.get_records("u", ["a"]))["a"]
+    code, message = await requeue.requeue(repo, SCOPE, apply=True, now=T0, owner="r")
+    rec = (await repo.get_records(SCOPE, ["a"]))["a"]
     assert code == 0 and "requeued" in message
     assert rec.transcript_state == "ready" and rec.transcript_attempts == 0 and rec.transcript_hold is None
     assert ("u", "k1") not in repo.transcripts
-    assert (await repo.get_sync_state("u")).lease_owner is None
+    assert (await repo.get_sync_state(SCOPE)).lease_owner is None
 
 
 async def test_copies_share_one_purchase(requeue, monkeypatch):
     from src.domain.drive_transcript_plan import file_estimate_usd
     repo = await _seeded(requeue, monkeypatch, [_done("a", "k1"), _done("b", "k1")])
-    plan = await requeue.load_plan(repo, "u")
+    plan = await requeue.load_plan(repo, SCOPE)
     assert plan.files == 2 and len(plan.groups) == 1 and plan.estimate_usd == pytest.approx(file_estimate_usd(3600))
 
 
 async def test_a_key_shared_with_a_current_version_copy_is_skipped(requeue, monkeypatch):
     repo = await _seeded(requeue, monkeypatch, [_done("a", "k1"), _done("b", "k1", version=2)])
-    code, message = await requeue.requeue(repo, "u", apply=True, now=T0, owner="r")
+    code, message = await requeue.requeue(repo, SCOPE, apply=True, now=T0, owner="r")
     assert "nothing to redo" in message and ("u", "k1") in repo.transcripts
 
 
@@ -220,20 +163,20 @@ async def test_metadata_stubs_and_failures_are_not_redone(requeue, monkeypatch):
                                                 _done("c", "k3", transcript_stub="too_large"),
                                                 _rec("d", "audio", transcript_state="failed"),
                                                 _done("e", "k5", transcript_stub="no_speech")])
-    plan = await requeue.load_plan(repo, "u")
+    plan = await requeue.load_plan(repo, SCOPE)
     assert [r.item_id for recs in plan.groups.values() for r in recs] == ["e"]
 
 
 async def test_a_busy_lease_writes_nothing(requeue, monkeypatch):
     repo = await _seeded(requeue, monkeypatch, [_done("a", "k1")])
-    await repo.acquire_lease("u", "tick", T0, T0 + timedelta(minutes=30), create=False)
-    code, message = await requeue.requeue(repo, "u", apply=True, now=T0, owner="r")
+    await repo.acquire_lease(SCOPE, "tick", T0, T0 + timedelta(minutes=30), create=False)
+    code, message = await requeue.requeue(repo, SCOPE, apply=True, now=T0, owner="r")
     assert code == 1 and "retry" in message
-    assert (await repo.get_records("u", ["a"]))["a"].transcript_state == "current" and ("u", "k1") in repo.transcripts
+    assert (await repo.get_records(SCOPE, ["a"]))["a"].transcript_state == "current" and ("u", "k1") in repo.transcripts
 
 
 async def test_nothing_indexed_is_an_error(requeue):
-    code, _ = await requeue.requeue(InMemoryDriveIndexRepository(), "u", apply=True, now=T0, owner="r")
+    code, _ = await requeue.requeue(InMemoryDriveIndexRepository(), SCOPE, apply=True, now=T0, owner="r")
     assert code == 1
 
 
@@ -242,13 +185,13 @@ async def test_nothing_indexed_is_an_error(requeue):
 async def _orphaned(sweep, with_state=False):
     repo = InMemoryDriveIndexRepository()
     if with_state:
-        await repo.save_sync_state(DriveSyncState(user_id="u", epoch=1, root_item_id="root", created_at=T0))
+        await repo.save_sync_state(DriveSyncState(user_id="u", connection_id="u-c", epoch=1, root_item_id="root", created_at=T0))
     month = T0.strftime("%Y-%m")
     window = JobWindow(spec=WindowSpec(index=0, start_s=0.0, duration_s=60.0), state="submitted")
-    await repo.save_transcript_job(TranscriptJob(user_id="u", item_id="i", content_key="k", windows=(window,),
+    await repo.save_transcript_job(TranscriptJob(user_id="u", connection_id="u-c", item_id="i", content_key="k", windows=(window,),
                                                  reserved_usd=0.5, reserved_month=month))
     await repo.upsert_records([_rec("i", "audio", transcript_state="working")])
-    await repo.create_batch(TranscriptBatch(name="batches/b", user_id="u", request_keys=("i:0",), reserved_usd=1.0,
+    await repo.create_batch(TranscriptBatch(name="batches/b", user_id="u", connection_id="u-c", request_keys=("i:0",), reserved_usd=1.0,
                                             reserved_month=month, next_poll_at=T0))
     await _store(repo, "k")
     repo.usage[("u", month)] = ModelUsageMonth(transcribe_reserved_usd=1.5, transcribe_usd=2.0)
@@ -257,7 +200,7 @@ async def _orphaned(sweep, with_state=False):
 
 async def test_sweep_dry_run_reports_reservations_and_writes_nothing(sweep):
     repo = await _orphaned(sweep)
-    code, message = await sweep.sweep_user(repo, "u", apply=False, now=T0, owner="s", after_rollback=True)
+    code, message = await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=False, now=T0, owner="s", after_rollback=True)
     assert code == 0 and "book $1.5000" in message and "release $0.0000" in message and "--apply" in message
     assert repo.transcript_jobs and repo.batches and repo.transcripts
     assert repo.usage[("u", T0.strftime("%Y-%m"))].transcribe_reserved_usd == 1.5
@@ -265,7 +208,7 @@ async def test_sweep_dry_run_reports_reservations_and_writes_nothing(sweep):
 
 async def test_sweep_apply_removes_documents_and_books_the_money_in_flight(sweep):
     repo = await _orphaned(sweep)
-    code, message = await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+    code, message = await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     usage = repo.usage[("u", T0.strftime("%Y-%m"))]
     assert code == 0 and not repo.transcript_jobs and not repo.batches and not repo.transcripts
     assert usage.transcribe_reserved_usd == pytest.approx(0.0) and usage.transcribe_usd == pytest.approx(3.5)
@@ -275,7 +218,7 @@ async def test_sweep_apply_removes_documents_and_books_the_money_in_flight(sweep
 async def test_sweep_zeroes_the_months_a_reservation_was_made_in(sweep):
     repo = await _orphaned(sweep)
     repo.usage[("u", "2026-09")] = ModelUsageMonth(transcribe_reserved_usd=0.25, transcribe_usd=1.0)
-    await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+    await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     older = repo.usage[("u", "2026-09")]
     assert older.transcribe_reserved_usd == pytest.approx(0.0) and older.transcribe_usd == 1.0   # released, not booked
 
@@ -283,7 +226,7 @@ async def test_sweep_zeroes_the_months_a_reservation_was_made_in(sweep):
 async def test_sweep_leaves_months_outside_the_scan_alone(sweep):
     repo = await _orphaned(sweep)
     repo.usage[("u", "2025-01")] = ModelUsageMonth(transcribe_reserved_usd=0.25)
-    await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", months=3)
+    await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", months=3)
     assert repo.usage[("u", "2025-01")].transcribe_reserved_usd == 0.25
 
 
@@ -304,7 +247,7 @@ async def test_sweep_runs_the_window_sweep_only_after_the_helpers_returned_zero(
         order.append(("orphans", keep_transcripts))
         return await original_orphans(user_id, limit, keep_transcripts=keep_transcripts)
     repo.delete_user_transcript_orphans = orphans
-    await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+    await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     first_orphan = order.index(("orphans", False))
     helpers = [(n, r) for n, r in order[:first_orphan]]
     assert {n for n, _ in helpers} == {"delete_user_transcript_jobs", "delete_user_batches", "delete_user_transcripts"}
@@ -315,14 +258,14 @@ async def test_sweep_runs_the_window_sweep_only_after_the_helpers_returned_zero(
 
 async def test_sweep_takes_and_releases_the_lease_when_a_state_exists(sweep):
     repo = await _orphaned(sweep, with_state=True)
-    code, _ = await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
-    assert code == 0 and (await repo.get_sync_state("u")).lease_owner is None
+    code, _ = await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
+    assert code == 0 and (await repo.get_sync_state(SCOPE)).lease_owner is None
 
 
 async def test_sweep_refuses_while_a_tick_holds_the_lease(sweep):
     repo = await _orphaned(sweep, with_state=True)
-    await repo.acquire_lease("u", "tick", T0, T0 + timedelta(minutes=30), create=False)
-    code, message = await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+    await repo.acquire_lease(SCOPE, "tick", T0, T0 + timedelta(minutes=30), create=False)
+    code, message = await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     assert code == 1 and "retry" in message and repo.transcript_jobs and repo.transcripts
 
 
@@ -332,7 +275,7 @@ async def test_sweep_missing_index_is_reported_after_the_reservations_are_settle
     async def unavailable(user_id, limit, *, keep_transcripts):
         raise DriveIndexStoreUnavailable("index not ready")
     repo.delete_user_transcript_orphans = unavailable
-    code, message = await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+    code, message = await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     usage = repo.usage[("u", T0.strftime("%Y-%m"))]
     assert code == 1 and "indexes" in message
     assert usage.transcribe_reserved_usd == pytest.approx(0.0) and usage.transcribe_usd == pytest.approx(3.5)   # settled first
@@ -350,21 +293,21 @@ def test_months_back_crosses_a_year(sweep):
 
 async def test_a_batch_is_booked_in_its_own_month_not_the_current_one(sweep):
     repo = await _orphaned(sweep)
-    repo.batches[("u", "batches/b")] = replace(repo.batches[("u", "batches/b")], reserved_month="2026-09")
+    repo.batches[("u-c", "batches/b")] = replace(repo.batches[("u-c", "batches/b")], reserved_month="2026-09")
     repo.usage[("u", "2026-09")] = ModelUsageMonth(transcribe_reserved_usd=1.0, transcribe_usd=0.0)
     repo.usage[("u", "2026-10")] = ModelUsageMonth(transcribe_reserved_usd=0.5, transcribe_usd=2.0)
-    await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+    await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     assert repo.usage[("u", "2026-09")].transcribe_usd == pytest.approx(1.0)
     assert repo.usage[("u", "2026-10")].transcribe_usd == pytest.approx(2.5)
 
 
 async def test_a_job_with_nothing_in_flight_is_released_not_booked(sweep):
     repo = await _orphaned(sweep)
-    await repo.delete_batch("u", "batches/b")
-    job = repo.transcript_jobs[("u", "i")]
-    repo.transcript_jobs[("u", "i")] = replace(job, windows=(replace(job.windows[0], state="uploaded"),))
+    await repo.delete_batch(SCOPE, "batches/b")
+    job = repo.transcript_jobs[("u-c", "i")]
+    repo.transcript_jobs[("u-c", "i")] = replace(job, windows=(replace(job.windows[0], state="uploaded"),))
     repo.usage[("u", T0.strftime("%Y-%m"))] = ModelUsageMonth(transcribe_reserved_usd=0.5, transcribe_usd=2.0)
-    await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+    await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     usage = repo.usage[("u", T0.strftime("%Y-%m"))]
     assert usage.transcribe_usd == 2.0 and usage.transcribe_reserved_usd == pytest.approx(0.0)
 
@@ -382,15 +325,15 @@ async def test_settlement_happens_before_the_first_delete(sweep):
         events.append("delete")
         return await real_del(*a, **k)
     repo.add_model_usage, repo.delete_user_transcript_jobs = add, delete
-    await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+    await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     assert events.index("book") < events.index("delete")
 
 
 async def test_a_rerun_settles_nothing_twice(sweep):
     repo = await _orphaned(sweep)
-    await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+    await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     before = repo.usage[("u", T0.strftime("%Y-%m"))]
-    _, message = await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+    _, message = await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     assert repo.usage[("u", T0.strftime("%Y-%m"))] == before and "booked $0.0000" in message
 
 
@@ -402,27 +345,27 @@ async def test_a_crash_after_the_zeroed_save_does_not_book_twice(sweep):
         raise RuntimeError("store down")
     repo.add_model_usage = boom
     with pytest.raises(RuntimeError):
-        await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+        await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     repo.add_model_usage = real_add
-    await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s", after_rollback=True)
+    await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s", after_rollback=True)
     assert repo.usage[("u", T0.strftime("%Y-%m"))].transcribe_usd <= 3.5 + 1e-9    # never more than the reservation
 
 
 async def test_sweep_refuses_while_records_are_in_a_live_transcript_state(sweep):
     repo = await _orphaned(sweep)
-    code, message = await sweep.sweep_user(repo, "u", apply=True, now=T0, owner="s")
+    code, message = await sweep.sweep_user(repo, "u", scopes=[SCOPE], apply=True, now=T0, owner="s")
     assert code == 1 and "--after-rollback" in message and repo.transcript_jobs and repo.transcripts
 
 
 async def test_requeue_prints_the_headroom_and_warns_when_the_estimate_exceeds_it(requeue, monkeypatch):
     repo = await _seeded(requeue, monkeypatch, [_done("a", "k1")])
     repo.usage[("u", T0.strftime("%Y-%m"))] = ModelUsageMonth(transcribe_usd=19.99, transcribe_reserved_usd=0.0)
-    _, message = await requeue.requeue(repo, "u", apply=False, now=T0, owner="r")
+    _, message = await requeue.requeue(repo, SCOPE, apply=False, now=T0, owner="r")
     assert "headroom $0.01" in message and "estimate exceeds" in message
 
 
 async def test_requeue_warns_when_the_users_flag_is_off(requeue, monkeypatch):
     repo = await _seeded(requeue, monkeypatch, [_done("a", "k1")])
-    _, off = await requeue.requeue(repo, "u", apply=False, now=T0, owner="r", user_enabled=False)
-    _, unknown = await requeue.requeue(repo, "u", apply=False, now=T0, owner="r")
+    _, off = await requeue.requeue(repo, SCOPE, apply=False, now=T0, owner="r", transcribe_enabled=False)
+    _, unknown = await requeue.requeue(repo, SCOPE, apply=False, now=T0, owner="r")
     assert "drive_transcribe_enabled is OFF" in off and "OFF" not in unknown and "headroom $20.00" in unknown

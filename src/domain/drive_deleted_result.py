@@ -13,3 +13,4 @@ class DeletedSearchResult:
     text: str
     items: List[DriveItem]
     has_passage: bool = False
+    ref_tag: str = ""      # the connection `items` open on (MULTI_DRIVE_RFC §9); "" when there is no item

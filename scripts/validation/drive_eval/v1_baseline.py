@@ -132,7 +132,7 @@ async def run(tree: Path, overlay: Path, gold_v2: Path, gold_v1: Sequence[Path],
 
     from .fixture_drive import FixtureDrive
     from .lexical_embeddings import EMBEDDING_SPACE, LexicalEmbeddings
-    from .runner import EVAL_USER, EvalClock, _card_paths, _EnabledUsers, index_fixture, load_gold, request_for, run_cases
+    from .runner import EVAL_USER, EvalClock, _card_paths, index_fixture, load_gold, request_for, run_cases
 
     manifest = json.loads(tree.read_text(encoding="utf-8"))
     extra = json.loads(overlay.read_text(encoding="utf-8"))
@@ -147,7 +147,8 @@ async def run(tree: Path, overlay: Path, gold_v2: Path, gold_v1: Sequence[Path],
     indexed = await index_fixture(drive, repo, embeddings, build_place_lookup(), EMBEDDING_SPACE, clock,
                                   throttle_pause_s=0, extractors={PARSER: ports["parser"], READER: ports["reader"]},
                                   triage=ports["triage"])
-    search = DriveSearchService(repo, embeddings, _EnabledUsers(), drive, clock=clock,
+    from .eval_connection import EvalDriveConnections, eval_connection
+    search = DriveSearchService(repo, embeddings, drive, EvalDriveConnections(eval_connection(EVAL_USER)), clock=clock,
                                 embedding_space=EMBEDDING_SPACE)
     rows: Dict[str, Any] = {}
     for case in json.loads(gold_v2.read_text(encoding="utf-8")):

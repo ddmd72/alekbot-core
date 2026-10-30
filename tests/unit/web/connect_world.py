@@ -16,7 +16,6 @@ from quart import Quart
 from src.adapters.firestore_credential_store import FirestoreCredentialStore
 from src.adapters.google.google_oauth_provider import GoogleOAuthProvider
 from src.adapters.microsoft.microsoft_oauth_provider import MicrosoftOAuthProvider
-from src.adapters.microsoft.onedrive_adapter import OneDriveAdapter
 from src.composition.connector_registry import ConnectorRegistry
 from src.composition.oauth_connect_setup import build_connect_activations, build_oauth_connect_service
 from src.domain.billing import BillingAccount
@@ -70,15 +69,14 @@ class ConnectWorld:
 
         self.reconnect.consented.side_effect = consented
         self.queue, self.tasks_client = make_task_queue()
-        drive = OneDriveAdapter(self.store, "ms-cid", "ms-csecret", connector=self.registry.get("microsoft_onedrive"))
         self.revocation = CredentialRevocationService(self.store, self.registry.edges())
         self.connect_service = build_oauth_connect_service(
             self.db, SimpleNamespace(oauth_flows_collection=FLOWS), connectors=self.registry, credentials=self.store,
             cipher=AesGcmTestCipher(), digest_key=b"k" * 32, revocation=self.revocation,
             activations=build_connect_activations(
-                credentials=self.store, reconnect=self.reconnect,
+                reconnect=self.reconnect,
                 todo_connector=self.registry.get("microsoft_todo"), task_queue=self.queue,
-                read_drive_id=drive.read_drive_id),
+                drive_activation=None),
             redirect_uri=REDIRECT)
         self.app = Quart("connect_world")
         self.app.register_blueprint(create_oauth_blueprint(

@@ -4,8 +4,9 @@ Drive note merge — the owner's note copied into the index record of its item (
 
 The note store (`{prefix}drive_notes`) is the record; the index record carries a denormalized copy (`owner_*` fields),
 rebuilt from the store by the indexer's tick through ONE function, `with_owner_note(rec, view)`. A view exists only for
-an `active` note bound to this very item on the current drive of the current provider (D15: identity is the provider's
-item id); anything else (cleared, archived, an erase stub, another drive) clears the copy. The record then goes through
+an `active` note bound on the index's connection (D15; MULTI_DRIVE_RFC §7.2, §9: a record finds its note by the item
+identity's `i:` key, and the note's `r:` key names the connection); anything else (cleared, archived, an erase stub,
+another connection) clears the copy. The record then goes through
 `drive_enrich_plan.planned` (its about keys carry the note's keys) and `schedule` (a changed card hash makes card work
 due in class 0); this module decides nothing about scheduling.
 
@@ -15,11 +16,10 @@ noted records.
 
 Public interface:
     NoteView                                     (note_id, version, text, doc_type, life_areas) of a merged note
-    note_view(note, *, drive_id, provider_key) -> Optional[NoteView]
+    note_view(note, *, ref_tag) -> Optional[NoteView]
     with_owner_note(rec, view) -> DriveIndexRecord        idempotent; None clears the copy
     merged(rec, view) -> bool                    the record already carries exactly this view (no write needed)
     effective_doc_type(rec), effective_life_areas(rec)    the owner's classifiers over the profile's (re-exported)
-    record_binding_key(drive_id, item_id) -> str  the `i:` key of an index record's item (ONEDRIVE_PROVIDER_KEY)
     note_store_keys(content, name) -> (keys, keys_version)   the note document's `keys` (§3.1) and their version
     NOTE_STORE_KEYS_VERSION                       that version ("{KEYS_VERSION}.{NOTE_KEYS_VERSION}")
     notes_query_start(state) -> (after, after_note_id)       where the notes step's next `changed_since` starts
@@ -35,9 +35,7 @@ from typing import List, Optional, Tuple
 from .drive_index import KEYS_VERSION, DriveIndexRecord, DriveSyncState
 from .drive_key_sources import effective_doc_type, effective_life_areas
 from .drive_keys import name_keys_v2, note_keys
-from .drive_note import (
-    NOTE_KEYS_VERSION, ONEDRIVE_PROVIDER_KEY, DriveNote, NoteContent, NoteState, binding_key, binding_parts_of,
-)
+from .drive_note import NOTE_KEYS_VERSION, DriveNote, NoteContent, NoteState, on_connection
 
 # -- parameters (§15) -------------------------------------------------------------------------------------------------
 
@@ -72,20 +70,14 @@ class NoteView:
     life_areas: Tuple[str, ...]
 
 
-def record_binding_key(drive_id: str, item_id: str) -> str:
-    """The `i:` key of an index record's item on the current drive: the one provider key (never a literal), so the
-    indexer and the main service build the same key (core contract §5)."""
-    return binding_key(ONEDRIVE_PROVIDER_KEY, drive_id, item_id)
-
-
-def note_view(note: Optional[DriveNote], *, drive_id: str, provider_key: str = ONEDRIVE_PROVIDER_KEY) -> Optional[NoteView]:
-    """The view to merge for `note`, or None to clear the copy: only an `active` note (not an erase stub) whose binding
-    is on `drive_id` of `provider_key` gives one (D9: an archived note is never merged; D15, D16: a note bound to
-    another drive is dormant). A note whose triple is empty is never `active`, but is cleared all the same."""
-    if note is None or note.erase_pending or note.state != NoteState.ACTIVE.value or not drive_id:
+def note_view(note: Optional[DriveNote], *, ref_tag: str) -> Optional[NoteView]:
+    """The view to merge for `note`, or None to clear the copy: only an `active` note (not an erase stub) bound on the
+    connection whose ref tag is `ref_tag` gives one (D9: an archived note is never merged; D15, D16: a note bound on
+    another connection is dormant here). A note whose triple is empty is never `active`, but is cleared all the same.
+    The record's note is found by `item_binding_key(record.identity)` (drive_note)."""
+    if note is None or note.erase_pending or note.state != NoteState.ACTIVE.value:
         return None
-    parts = binding_parts_of(note)
-    if parts is None or parts.provider_key != provider_key or parts.drive_id != drive_id:
+    if not on_connection(note, ref_tag):
         return None
     content = note.content
     if content.is_empty:
@@ -142,5 +134,5 @@ __all__ = [
     "NOTE_AUDIT_EVERY", "NOTE_AUDIT_SKIP_DAYS", "NOTE_CHECKS_MAX", "NOTE_EMBED_PER_TICK", "NOTE_LOOKUP_BATCH",
     "NOTE_MERGE_VERSION", "NOTE_PAGE", "NOTE_STEP_S", "NOTE_STORE_KEYS_VERSION", "NOTE_STUB_HOLD_MAX",
     "NOTE_WATERMARK_SKEW_S", "NoteView", "effective_doc_type", "effective_life_areas", "merged", "note_store_keys",
-    "note_view", "notes_query_start", "record_binding_key", "with_owner_note",
+    "note_view", "notes_query_start", "with_owner_note",
 ]

@@ -5,8 +5,9 @@ search of the drive specialist, one section, one result list with the archived t
 store only, never the index, so it needs neither the opt-in flag nor a connection (it runs before the index gate).
 
 - Archived notes: `archived(user_id, ARCHIVE_SCAN_MAX)`, newest first.
-- Dormant notes (D16): active notes bound to a drive that is not the connected one, labelled. While disconnected there
-  is nothing to compare with: none is shown, and the result says so.
+- Dormant notes (D16): active notes bound on a connection that is not the searched one (MULTI_DRIVE_RFC §9: by the ref
+  tag of their `r:` key), labelled. With no connection there is nothing to compare with: none is shown, and the result
+  says so.
 - Strict AND over the note's keys and its last known name's keys (`drive_note_render.note_matches`), no allowances.
 - Nothing exact: the meaning fallback — one `find_nearest` on `note_vector`, prefiltered on `state = archived` and the
   current embedding space (a vector of another space is never compared), at most MEANING_MAX lines labelled "closest
@@ -16,28 +17,28 @@ store only, never the index, so it needs neither the opt-in flag nor a connectio
   remove the note of a gone file); the note is data inside the wrapper (§6.3). Logs carry counts, never text.
 
 Public interface:
-    DriveNoteDeletedSearch(notes, embeddings, *, embedding_space, store_keys, provider_key, nonce)
-    await (user_id, concepts, connection) -> (hits, coverage lines)       # the DeletedSource signature
+    DriveNoteDeletedSearch(notes, embeddings, *, embedding_space, store_keys, nonce)
+    await (user_id, concepts, connection) -> (hits, coverage lines)       # the DeletedSource signature (connection: the
+                                                                          # searched one, or None)
 """
 from __future__ import annotations
 
 import secrets
-from typing import Callable, List, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from ..domain.drive_deleted_search import DeletedHit
 from ..domain.drive_index import DriveIndexStoreUnavailable
 from ..domain.drive_index_params import DELETED_SHOW_MAX
 from ..domain.drive_keys import name_keys_v2
 from ..domain.drive_match import Concept
-from ..domain.drive_note import (
-    ARCHIVE_SCAN_MAX, NOTES_PER_USER_MAX, ONEDRIVE_PROVIDER_KEY, DriveNote, NoteState, binding_parts_of,
-)
+from ..domain.drive_connection import DriveConnection
+from ..domain.drive_connection_status import DriveConnectionStatus
+from ..domain.drive_note import ARCHIVE_SCAN_MAX, NOTES_PER_USER_MAX, DriveNote, NoteState, on_connection
 from ..domain.drive_note_merge import note_store_keys
 from ..domain.drive_note_render import (
     ARCHIVE_SCAN_CUT_LINE, DORMANT_HIDDEN_LINE, MEANING_LINE, MORE_NOTES_LINE, StoreKeys, matched_line, note_hit,
     note_matches, search_keys,
 )
-from ..domain.user_drive import DriveConnection
 from ..ports.drive_note_repository import DriveNoteRepository
 from ..ports.embedding_service import EmbeddingService
 from ..utils.logger import exc_brief, logger
@@ -53,8 +54,7 @@ def _nonce() -> str:
 
 class DriveNoteDeletedSearch:
     def __init__(self, notes: DriveNoteRepository, embeddings: EmbeddingService, *, embedding_space: str,
-                 store_keys: StoreKeys = note_store_keys, provider_key: str = ONEDRIVE_PROVIDER_KEY,
-                 nonce: Callable[[], str] = _nonce) -> None:
+                 store_keys: StoreKeys = note_store_keys, nonce: Callable[[], str] = _nonce) -> None:
         """`embedding_space` is the space query vectors are embedded in (the adapter's EMBEDDING_SPACE): the meaning
         fallback compares only note vectors in it. `store_keys` is part B's `drive_note_merge.note_store_keys`, used when
         a note's stored keys are of another layout; injectable for tests only."""
@@ -62,12 +62,11 @@ class DriveNoteDeletedSearch:
         self._embeddings = embeddings
         self._space = embedding_space
         self._store_keys = store_keys
-        self._provider = provider_key
         self._nonce = nonce
 
     async def __call__(self, user_id: str, concepts: Sequence[Concept],
-                       connection: DriveConnection) -> Tuple[List[DeletedHit], List[str]]:
-        drive_id = connection.drive_id if connection.connected else ""
+                       connection: Optional[DriveConnection]) -> Tuple[List[DeletedHit], List[str]]:
+        tag = connection.ref_tag if connection is not None and DriveConnectionStatus.of(connection).connected else ""
         try:
             archived = await self._notes.archived(user_id, ARCHIVE_SCAN_MAX)
             active = await self._notes.active(user_id, NOTES_PER_USER_MAX)
@@ -76,8 +75,8 @@ class DriveNoteDeletedSearch:
                            f"{exc_brief(exc)}")
             return [], [UNAVAILABLE_LINE]
         coverage: List[str] = []
-        dormant = [n for n in active if self._elsewhere(n, drive_id)] if drive_id else []
-        if not drive_id and active:
+        dormant = [n for n in active if self._elsewhere(n, tag)] if tag else []
+        if not tag and active:
             coverage.append(DORMANT_HIDDEN_LINE)
         if len(archived) >= ARCHIVE_SCAN_MAX:
             coverage.append(ARCHIVE_SCAN_CUT_LINE.format(limit=ARCHIVE_SCAN_MAX))
@@ -104,15 +103,15 @@ class DriveNoteDeletedSearch:
                 for n, d, m in shown]
         logger.info(f"[DriveNote] deleted-files search user={user_id[:8]} archived={len(archived)} "
                     f"dormant={len(dormant)} matched={len(found)} meaning={meaning} shown={len(hits)} "
-                    f"connected={bool(drive_id)}")
+                    f"connected={bool(tag)}")
         return hits, coverage
 
-    def _elsewhere(self, note: DriveNote, drive_id: str) -> bool:
-        """An active note bound to a drive that is not the connected one (D16), erase stubs excepted."""
+    @staticmethod
+    def _elsewhere(note: DriveNote, tag: str) -> bool:
+        """An active note bound on a connection that is not the searched one (D16), erase stubs excepted."""
         if note.erase_pending or note.state != NoteState.ACTIVE.value:
             return False
-        parts = binding_parts_of(note)
-        return parts is not None and (parts.provider_key != self._provider or parts.drive_id != drive_id)
+        return note.binding is not None and not on_connection(note, tag)
 
     async def _nearest(self, user_id: str, concepts: Sequence[Concept]) -> List[DriveNote]:
         """The meaning fallback (§6.4 step 3): archived notes only, in the current space; a failure costs only this

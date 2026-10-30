@@ -122,6 +122,8 @@ KITS: Dict[str, Tuple[str, ...]] = {
     _STORE + "firestore_drive_mirror_repo.FirestoreDriveMirrorRepository": (_A + "test_drive_mirror_repo_contract.py",),
     _STORE + "firestore_drive_index_repo.FirestoreDriveIndexRepository": (_A + "test_drive_index_v2_parity.py",),
     _STORE + "firestore_drive_note_repo.FirestoreDriveNoteRepository": (_A + "test_drive_note_repo_contract.py",),
+    _STORE + "firestore_drive_connection_repo.FirestoreDriveConnectionRepository": (
+        _A + "test_drive_connection_store_kit.py",),
 }
 
 ALLOWLIST_FILE = REPO / "tests" / "unit" / "adapters" / "stateful_store_allowlist.txt"

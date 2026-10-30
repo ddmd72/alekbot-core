@@ -76,7 +76,7 @@ STUBS: Dict[str, Callable[[Dict[str, Any]], Any]] = {
     "request_erase": _request_erase, "request_erase_all": _request_erase_all, "erase": _erase,
 }
 WRITE_METHODS: FrozenSet[str] = frozenset(STUBS)
-READ_METHODS: FrozenSet[str] = frozenset({"get", "note_for_item", "drive_id_for_connection"})
+READ_METHODS: FrozenSet[str] = frozenset({"get", "note_for_item"})
 _NOT_LOGGED_ARGS = frozenset({"provenance"})
 _LOGGED_ARGS = ("ref", "doc_type", "life_areas", "code", "expected_version")
 

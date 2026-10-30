@@ -9,7 +9,7 @@ from typing import Optional
 
 from .drive_index import MIGRATION_GATE_KEY, DriveSyncState, EpochPhase
 from .drive_search import STATUS_DISABLED, STATUS_DISCONNECTED, search_gate
-from .user_drive import DriveConnection
+from .drive_connection import DriveConnection
 
 
 class SearchLine(str, Enum):
@@ -19,9 +19,10 @@ class SearchLine(str, Enum):
     BUILDING = "still building"
 
 
-def search_line(enabled: bool, state: Optional[DriveSyncState], connection: DriveConnection,
+def search_line(enabled: bool, state: Optional[DriveSyncState], connection: Optional[DriveConnection],
                 now: datetime) -> SearchLine:
-    """The search line from the gate's facts. A drive that is not connected keeps `on`: the drive line says it."""
+    """The search line from the gate's facts over the connection searched (stage 1: the primary; None: none). A drive
+    that is not connected keeps `on`: the drive line says it."""
     gate = search_gate(enabled, state, connection, now)
     if gate.status == STATUS_DISABLED:
         return SearchLine.OFF

@@ -24,6 +24,9 @@ from src.domain.user_drive import DriveAccessDenied, DriveNotConnectedError, Dri
 from src.ports.oauth_credentials_port import OAuthCredentialsPort
 from src.composition.connector_registry import ConnectorRegistry
 from tests.support.oauth_credentials_store import mirror_get
+from tests.support.drive_handles import drive_handle
+
+HANDLE = drive_handle("u1")
 
 
 def _resp(json_data=None, status=200, headers=None):
@@ -67,7 +70,7 @@ async def test_rejected_refresh_is_reauth_required():
     adapter = _adapter()
     adapter._tokens.headers = AsyncMock(side_effect=GraphReauthRequired("invalid_grant"))
     with patch("aiohttp.ClientSession", return_value=_session([])), pytest.raises(DriveReauthRequired) as exc:
-        await adapter.get_changes("u1", None)
+        await adapter.get_changes(HANDLE, None)
     assert isinstance(exc.value, DriveNotConnectedError)    # Step 1 callers keep their mapping
 
 
@@ -76,7 +79,7 @@ async def test_401_after_successful_refresh_is_access_denied():
     adapter._tokens.headers = AsyncMock(return_value={"Authorization": "Bearer t"})
     session = _session([_resp({}, status=401), _resp({}, status=401)])
     with patch("aiohttp.ClientSession", return_value=session), pytest.raises(DriveAccessDenied) as exc:
-        await adapter.get_change("u1", "X!1")
+        await adapter.get_change(HANDLE, "X!1")
     assert not isinstance(exc.value, DriveNotConnectedError)   # never read as a lost grant
     forced = [c for c in adapter._tokens.headers.await_args_list if c.kwargs == {"force_refresh": True}]
     assert len(forced) == 1
@@ -88,7 +91,7 @@ async def test_throttling_after_retries_is_drive_throttled_with_retry_after():
     with patch("aiohttp.ClientSession", return_value=session), \
             patch("src.adapters.microsoft.onedrive_adapter.asyncio.sleep", new=AsyncMock()) as sleep, \
             pytest.raises(DriveThrottled) as exc:
-        await adapter.get_change("u1", "X!1")
+        await adapter.get_change(HANDLE, "X!1")
     assert exc.value.retry_after_s == 120.0                 # the provider's value, not the 30 s cap
     assert [c.args[0] for c in sleep.await_args_list] == [30.0, 30.0, 30.0]
     assert session.get.call_count == 4                      # first try + 3 retries
@@ -100,7 +103,7 @@ async def test_throttled_without_retry_after_uses_the_default_hint():
     with patch("aiohttp.ClientSession", return_value=session), \
             patch("src.adapters.microsoft.onedrive_adapter.asyncio.sleep", new=AsyncMock()), \
             pytest.raises(DriveThrottled) as exc:
-        await adapter.get_change("u1", "X!1")
+        await adapter.get_change(HANDLE, "X!1")
     assert exc.value.retry_after_s == 60.0
 
 
@@ -111,7 +114,7 @@ async def test_unparseable_retry_after_uses_the_default_hint():
     with patch("aiohttp.ClientSession", return_value=session), \
             patch("src.adapters.microsoft.onedrive_adapter.asyncio.sleep", new=AsyncMock()), \
             pytest.raises(DriveThrottled) as exc:
-        await adapter.get_change("u1", "X!1")
+        await adapter.get_change(HANDLE, "X!1")
     assert exc.value.retry_after_s == 60.0
 
 
@@ -121,7 +124,7 @@ async def test_huge_retry_after_is_capped_at_the_tick_deadline():
     with patch("aiohttp.ClientSession", return_value=session), \
             patch("src.adapters.microsoft.onedrive_adapter.asyncio.sleep", new=AsyncMock()), \
             pytest.raises(DriveThrottled) as exc:
-        await adapter.get_change("u1", "X!1")
+        await adapter.get_change(HANDLE, "X!1")
     assert exc.value.retry_after_s == float(TICK_DEADLINE_S)    # the fan-out re-ticks after that anyway
 
 
@@ -132,5 +135,5 @@ async def test_failed_token_refresh_is_systemic_not_per_item(failure):
     adapter = _adapter()
     adapter._tokens.headers = AsyncMock(side_effect=failure)
     with patch("aiohttp.ClientSession", return_value=_session([])), pytest.raises(DriveThrottled) as exc:
-        await adapter.get_change("u1", "X!1")
+        await adapter.get_change(HANDLE, "X!1")
     assert exc.value.retry_after_s == 60.0

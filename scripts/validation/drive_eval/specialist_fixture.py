@@ -14,13 +14,14 @@ caller installs before building anything.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 from src.agents.drive_agent import DriveAgent
 from src.agents.file_management_agent import FileManagementAgent
 from src.composition.drive_specialist_build import build_drive_specialist
 from src.domain.agent import AgentConfig
+from src.domain.drive_connection import DriveConnection
 from src.domain.drive_search import DriveSearchRequest, DriveSearchResult
 from src.domain.drive_search_line import SearchLine
 from src.infrastructure.agent_coordinator import AgentCoordinator
@@ -31,6 +32,7 @@ from src.infrastructure.drive_operations import DriveOperations
 from src.services.file_conversion_service import FileConversionService
 from src.services.user_drive_service import UserDriveService
 
+from .eval_connection import EvalDriveConnections, eval_connection
 from .runner import EVAL_USER
 
 
@@ -85,7 +87,11 @@ class EvalUserSearch:
         if not callable(target):
             return target
 
-        async def as_eval_user(user_id: str, *args: Any, **kwargs: Any) -> Any:
+        async def as_eval_user(first: Any, *args: Any, **kwargs: Any) -> Any:
+            # a connection-first read (access_note, text_extent, transcript_text, archived_text) gets the eval user's
+            # copy of the connection; a user-first one the eval user
+            if isinstance(first, DriveConnection):
+                return await target(replace(first, user_id=EVAL_USER), *args, **kwargs)
             return await target(EVAL_USER, *args, **kwargs)
         return as_eval_user
 
@@ -129,8 +135,9 @@ def build_drive_fixture(user_id: str, drive: Any, search: Any, *, user_config: A
     coordinator = AgentCoordinator(registry=registry)
     storage = _NoChatFiles()
     as_user = EvalUserSearch(search)
-    conversion = FileConversionService(storage=storage, drive=drive)
-    service = UserDriveService(drive)
+    connections = EvalDriveConnections(eval_connection(user_id))   # the case user's one connection (tag `ev`)
+    conversion = FileConversionService(storage=storage, drive=drive, connections=connections)
+    service = UserDriveService(drive, connections)
     operations = DriveOperations(conversion_service=conversion, drive_service=service, drive_search=as_user)
     files = FileManagementAgent(
         config=AgentConfig(agent_id=f"{FILE_MANAGEMENT.agent_id}_{user_id}", agent_type="file_management",

@@ -41,7 +41,7 @@ from .drive_search import (
 )
 from .drive_search_texts import REBUILDING_LINE
 from .drive_tool_texts import READ_PASSAGES
-from .user_drive import make_drive_ref
+from . import drive_ref
 
 OPENING_FIND = "Passages nearest to the question: excerpts of the indexed text, not whole files."
 OPENING_RANGE = "Passages read by number: excerpts of the indexed text, not whole files."
@@ -172,7 +172,8 @@ def _gate_text(result: ExcerptResult) -> Optional[str]:
 
 
 def _ids(result: ExcerptResult) -> str:
-    return ", ".join(f"{make_drive_ref(item_id)}:{display_number(index)}" for item_id, _, index in result.repeated)
+    return ", ".join(f"{drive_ref.format(result.ref_tag, item_id)}:{display_number(index)}"
+                     for item_id, _, index in result.repeated)
 
 
 def render_excerpts(result: ExcerptResult, *, nonce: Callable[[], str], shown_folders: FrozenSet[str] = frozenset(),

@@ -15,8 +15,12 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type
 
+from src.adapters.microsoft.onedrive_adapter import onedrive_drive_identity, onedrive_item_identity
 from src.adapters.in_memory_drive_index_repo import InMemoryDriveIndexRepository
 from src.adapters.in_memory_drive_mirror_repo import InMemoryDriveMirrorRepository
+from src.domain.drive_capabilities import DriveCapabilities
+from src.domain.drive_handle import DriveHandle
+from src.domain.drive_media_source import MediaSource
 from src.domain.drive_index import (
     DriveChange, DriveChanges, DriveChildrenPage, DriveIndexRecord, DriveSyncState, Reason, RecordState,
 )
@@ -25,7 +29,7 @@ from src.domain.drive_mirror_plan import mirror_plan
 from src.domain.drive_mirror_render import MirrorStrings
 from src.domain.drive_transcript import Segment, StitchedTranscript, StoredTranscript
 from src.domain.user_drive import (
-    DriveConnection, DriveItem, DriveItemNotFoundError, DriveNameConflictError, name_key,
+    DriveItem, DriveItemNotFoundError, DriveNameConflictError, name_key,
 )
 from src.ports.user_drive_port import UserDrivePort
 from src.services.drive_transcript_mirror import DriveTranscriptMirror
@@ -207,11 +211,14 @@ class ScriptedDrive(UserDrivePort):
 
     def _item(self, node: Node) -> DriveItem:
         return DriveItem(node.item_id, node.name, self.path_of(node.item_id), node.is_folder, len(node.data),
-                         ctag=node.ctag)
+                         identity=onedrive_item_identity(DRIVE, node.item_id),
+                         drive_identity=onedrive_drive_identity(DRIVE),
+                         content_version="" if node.is_folder else node.ctag)
 
     def _change(self, node: Node) -> DriveChange:
         return DriveChange(node.item_id, parent_id=node.parent_id, name=node.name, is_folder=node.is_folder,
-                           size_bytes=len(node.data), content_version=node.ctag, created_at=node.created_at)
+                           size_bytes=len(node.data), content_version=node.ctag, created_at=node.created_at,
+                           identity=onedrive_item_identity(DRIVE, node.item_id))
 
     def _folder(self, folder_id: str) -> Node:
         node = self.nodes.get(folder_id)
@@ -221,7 +228,7 @@ class ScriptedDrive(UserDrivePort):
 
     # -- writes --------------------------------------------------------------------------------------------------
 
-    async def create_folder(self, user_id: str, parent_id: str, name: str) -> DriveItem:
+    async def create_folder(self, handle: DriveHandle, parent_id: str, name: str) -> DriveItem:
         self._call("create_folder", parent_id=parent_id, name=name)
         self._touch("create_folder", parent_id)
         self._folder(parent_id)
@@ -232,7 +239,7 @@ class ScriptedDrive(UserDrivePort):
         self._fault("create_folder", {"parent_id": parent_id, "name": name}, "after")
         return self._item(self.nodes[item_id])
 
-    async def upload(self, user_id: str, parent_id: str, filename: str, data: bytes, content_type: str,
+    async def upload(self, handle: DriveHandle, parent_id: str, filename: str, data: bytes, content_type: str,
                      conflict: str = "rename") -> DriveItem:
         self._call("upload", parent_id=parent_id, name=filename, conflict=conflict, size=len(data))
         self._touch("upload", parent_id)
@@ -251,7 +258,7 @@ class ScriptedDrive(UserDrivePort):
         self._fault("upload", {"parent_id": parent_id, "name": filename}, "after")
         return self._item(self.nodes[item_id])
 
-    async def replace_content(self, user_id: str, item_id: str, data: bytes, content_type: str) -> DriveItem:
+    async def replace_content(self, handle: DriveHandle, item_id: str, data: bytes, content_type: str) -> DriveItem:
         node = self.nodes.get(item_id)
         self._call("replace_content", item_id=item_id, size=len(data))
         self._touch("replace_content", node.parent_id if node else None)
@@ -261,7 +268,7 @@ class ScriptedDrive(UserDrivePort):
         self._fault("replace_content", {"item_id": item_id}, "after")
         return self._item(node)
 
-    async def move(self, user_id: str, item_id: str, new_parent_id: Optional[str] = None,
+    async def move(self, handle: DriveHandle, item_id: str, new_parent_id: Optional[str] = None,
                    new_name: Optional[str] = None) -> DriveItem:
         node = self.nodes.get(item_id)
         self._call("move", item_id=item_id, new_parent_id=new_parent_id, name=new_name)
@@ -278,7 +285,7 @@ class ScriptedDrive(UserDrivePort):
         self._fault("move", {"item_id": item_id}, "after")
         return self._item(node)
 
-    async def delete(self, user_id: str, item_id: str) -> None:
+    async def delete(self, handle: DriveHandle, item_id: str) -> None:
         node = self.nodes.get(item_id)
         self._call("delete", item_id=item_id)
         self._touch("delete", node.parent_id if node else None)
@@ -293,25 +300,25 @@ class ScriptedDrive(UserDrivePort):
 
     # -- reads ---------------------------------------------------------------------------------------------------
 
-    async def child_by_name(self, user_id: str, parent_id: str, name: str) -> Optional[DriveChange]:
+    async def child_by_name(self, handle: DriveHandle, parent_id: str, name: str) -> Optional[DriveChange]:
         self._call("child_by_name", parent_id=parent_id, name=name)
         if parent_id not in self.nodes:
             return None
         node = self.child(parent_id, name)
         return self._change(node) if node is not None else None
 
-    async def area_path(self, user_id: str) -> str:
+    async def area_path(self, handle: DriveHandle) -> str:
         self._call("area_path")
         return self.area_path_value
 
-    async def get_change(self, user_id: str, item_id: str) -> DriveChange:
+    async def get_change(self, handle: DriveHandle, item_id: str) -> DriveChange:
         self._call("get_change", item_id=item_id)
         node = self.nodes.get(item_id)
         if node is None or item_id == AREA:
             raise DriveItemNotFoundError(item_id)
         return self._change(node)
 
-    async def list_children_changes(self, user_id: str, folder_id: str, limit: int,
+    async def list_children_changes(self, handle: DriveHandle, folder_id: str, limit: int,
                                     cursor: Optional[str] = None) -> DriveChildrenPage:
         self._call("list_children_changes", item_id=folder_id, limit=limit)
         self._folder(folder_id)
@@ -321,11 +328,12 @@ class ScriptedDrive(UserDrivePort):
         nxt = str(start + limit) if start + limit < len(kids) else None
         return DriveChildrenPage(tuple(self._change(n) for n in page), nxt)
 
-    async def get_root(self, user_id: str) -> DriveItem:
+    async def get_root(self, handle: DriveHandle) -> DriveItem:
         self._call("get_root")
-        return DriveItem(AREA, "", "", True)
+        return DriveItem(AREA, "", "", True, identity=onedrive_item_identity(DRIVE, AREA),
+                         drive_identity=onedrive_drive_identity(DRIVE))
 
-    async def get_item(self, user_id: str, item_id: str) -> DriveItem:
+    async def get_item(self, handle: DriveHandle, item_id: str) -> DriveItem:
         self._call("get_item", item_id=item_id)
         node = self.nodes.get(item_id)
         if node is None:
@@ -334,42 +342,32 @@ class ScriptedDrive(UserDrivePort):
 
     # -- unused by the mirror ------------------------------------------------------------------------------------
 
-    @property
-    def display_name(self) -> str:
-        return "Scripted"
-
-    async def is_connected(self, user_id: str) -> bool:
-        return True
-
-    async def disconnect(self, user_id: str) -> None:
+    async def list_children(self, handle: DriveHandle, folder_id: str) -> List[DriveItem]:
         raise NotImplementedError
 
-    async def list_children(self, user_id: str, folder_id: str) -> List[DriveItem]:
+    async def search(self, handle: DriveHandle, query: str, limit: int) -> List[DriveItem]:
         raise NotImplementedError
 
-    async def search(self, user_id: str, query: str, limit: int) -> List[DriveItem]:
+    async def download(self, handle: DriveHandle, item_id: str) -> bytes:
         raise NotImplementedError
 
-    async def download(self, user_id: str, item_id: str) -> bytes:
+    async def get_changes(self, handle: DriveHandle, cursor: Optional[str]) -> DriveChanges:
         raise NotImplementedError
 
-    async def get_changes(self, user_id: str, cursor: Optional[str]) -> DriveChanges:
+    async def download_to_file(self, handle: DriveHandle, item_id: str, dest_path: str, max_bytes: int) -> int:
         raise NotImplementedError
 
-    async def connection(self, user_id: str) -> DriveConnection:
-        return DriveConnection(True, drive_id=DRIVE)
-
-    async def flag_reconnect(self, user_id: str) -> bool:
-        return False
-
-    async def download_to_file(self, user_id: str, item_id: str, dest_path: str, max_bytes: int) -> int:
+    async def get_thumbnail(self, handle: DriveHandle, item_id: str, max_edge_px: int) -> Optional[bytes]:
         raise NotImplementedError
 
-    async def download_url(self, user_id: str, item_id: str) -> str:
+    async def media_source(self, handle: DriveHandle, item_id: str) -> MediaSource:
         raise NotImplementedError
 
-    async def get_thumbnail(self, user_id: str, item_id: str, size: str) -> Optional[bytes]:
-        raise NotImplementedError
+    async def capabilities(self, handle: DriveHandle) -> DriveCapabilities:
+        return DriveCapabilities(max_path_chars=400)
+
+    async def forget(self, handle: DriveHandle) -> None:
+        self._call("forget")
 
 
 @dataclass

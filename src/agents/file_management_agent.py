@@ -26,7 +26,7 @@ from ..domain.drive_history import DRIVE_CONTEXT_KEY, history_entries
 from ..domain.drive_open_texts import ROUTE_ORCHESTRATOR
 from ..domain.drive_outcome import DriveOutcome
 from ..domain.skill import SKILL_REF_PREFIX
-from ..domain.user_drive import is_drive_ref
+from ..domain.drive_ref import is_drive_ref
 from ..domain.workspace import WORKSPACE_REF_PREFIX
 from ..infrastructure.agent_manifest import Intent
 from ..infrastructure.drive_operations import MAX_VIDEO_ATTACH_BYTES, DriveOperations

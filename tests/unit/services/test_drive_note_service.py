@@ -649,16 +649,6 @@ async def test_note_for_item_reads_the_bound_note_without_a_provider_key(env):
     assert env.graph_calls() == 2   # only the set's get_change + get_item
 
 
-async def test_the_provider_key_defaults_to_the_domain_constant(env):
-    from src.domain.drive_note import ONEDRIVE_PROVIDER_KEY
-    await env.service.set(U, ACC, "drive:a", TEXT, provenance=CHAT)
-    bare = DriveNoteService(env.notes, env.drive, env.index, env.embeddings, env.security, env.users,
-                            embedding_space="space-a")
-    assert await bare.note_for_item(U, D1, "a") is None     # Env's service passes "onedrive": another key
-    await bare.set(U, ACC, "drive:b", TEXT, provenance=CHAT)
-    assert (await env.notes.find_by_match_keys(U, ["r:b"]))[0].match_keys[0] == f"i:{ONEDRIVE_PROVIDER_KEY}:{D1}:b"
-
-
 # -- I5 (owner ruling 2026-10-21): archived and other-drive notes are edited through their drive_note: ref ----------
 
 async def _archived(env):
