@@ -126,7 +126,8 @@ class TestCacheIsolationAndInvalidation:
         # the port is keyed by credential (MULTI_DRIVE_RFC §4.2): each provider lists its own kind's key, then reads
         # that credential; one user holds one credential of each kind
         oauth = AsyncMock(spec=OAuthCredentialsPort)
-        oauth.list_keys.side_effect = lambda user_id, kind: [CredentialKey(user_id=user_id, credential_id=f"cred-{kind}")]
+        oauth.list_keys.side_effect = lambda user_id, kind: [
+            CredentialKey(user_id=user_id, credential_id=f"cred-{kind}")]
         oauth.get.side_effect = lambda user_id, credential_id: _creds(
             timedelta(hours=1), token=credential_id.removeprefix("cred-"))
         todo = MicrosoftGraphTokenProvider(oauth, "cid", "csecret", "microsoft_todo", "Tasks.ReadWrite offline_access")

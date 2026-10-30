@@ -24,7 +24,8 @@ def store():
 async def test_update_of_a_deleted_record_writes_nothing_and_returns_false(store):
     cid = await store.repo.save(creds(U1, "microsoft_onedrive"))
     await delete_kind(store.repo, U1, "microsoft_onedrive")
-    assert await store.repo.update(creds(U1, "microsoft_onedrive", credential_id=cid, access_token="refreshed")) is False
+    refreshed = creds(U1, "microsoft_onedrive", credential_id=cid, access_token="refreshed")
+    assert await store.repo.update(refreshed) is False
     assert store.docs == {}
     assert await one(store.repo, U1, "microsoft_onedrive") is None
     assert await has_kind(store.repo, U1, "microsoft_onedrive") is False

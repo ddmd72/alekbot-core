@@ -2,8 +2,6 @@
 import inspect
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
 from src.agents.file_management_agent import FileManagementAgent
 from src.composition import user_agent_factory
 from src.composition.service_container import ServiceContainer

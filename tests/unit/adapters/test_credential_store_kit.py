@@ -409,7 +409,7 @@ async def test_list_users_returns_every_user_of_a_kind_once(store):
 async def test_a_backend_error_propagates_never_connected_or_not(store, call):
     cid = await store.repo.save(creds())
     store.db.collection(CREDS).fail = RuntimeError("backend down")
-    # an update reads its one document by id (MULTI_DRIVE_RFC §4.2), which the collection's query switch does not reach
+    # an update reads its one document by id (MULTI_DRIVE_RFC §4.2): the collection's query switch does not reach it
     store.db.raise_on_txn_read(CREDS, f"user-a:{cid}", RuntimeError("backend down"))
     with pytest.raises(RuntimeError, match="backend down"):
         await call(store.repo, cid)
