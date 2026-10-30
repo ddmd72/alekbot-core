@@ -4,7 +4,7 @@
 # Purpose: Create the two vector indexes of the folder-scoped kNN (docs/10_rfcs/USER_DRIVE_INDEXING_RFC.md Δ246):
 #          the chunk `vector` and the hint `hint_vector` under connection_id + item_id, which `find_nearest_chunks_in` and
 #          `find_nearest_hints_in` pre-filter with `connection_id ==` and `item_id in [...]` (at most 30 ids).
-#          Per connection since MULTI_DRIVE_RFC §8 (slice 1b); the user_id forms stay live until acceptance.
+#          Per connection since MULTI_DRIVE_RFC §8 (slice 1b); the user_id forms are dropped at the 1b deploy.
 #          `make deploy-indexes` skips vector indexes, so they are created here; they are also declared in
 #          config/firestore.indexes.json. Both must be READY before the code that queries them is deployed.
 # Owner-run, once, before the deploy; wait for READY (the status commands are printed at the end). A dry run by default:
