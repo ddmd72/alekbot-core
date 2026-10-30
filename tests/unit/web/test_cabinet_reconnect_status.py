@@ -25,6 +25,7 @@ from src.domain.oauth_credential import OAuthCredential
 from src.domain.provider_account import ProviderAccount
 from src.domain.task import TaskUserConfig
 from src.domain.user_drive import DriveConnection
+from src.services.credential_revocation_service import CredentialRevocationService
 from src.services.integration_reconnect_service import IntegrationReconnectService
 from src.services.task_setup_service import TaskSetupService
 from src.web.oauth_app import create_oauth_blueprint
@@ -87,7 +88,8 @@ class World:
         bp = create_user_cabinet_blueprint(
             invite_service=MagicMock(), session_service=session_service, user_repo=Users(), fact_repo=MagicMock(),
             embedding_service=MagicMock(), oauth_credentials_port=self.creds, indexed_email_repo=self.email,
-            task_setup=self.task_setup, user_drive=self.drive, reconnect=self.reconnect, connectors=ConnectorRegistry())
+            task_setup=self.task_setup, user_drive=self.drive, reconnect=self.reconnect, connectors=ConnectorRegistry(),
+            credential_revocation=CredentialRevocationService(self.creds, {}))
         app = Quart("test_cabinet_reconnect")
         app.register_blueprint(bp)
         return app
