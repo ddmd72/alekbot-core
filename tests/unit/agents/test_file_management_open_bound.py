@@ -43,20 +43,20 @@ def _agent(conversion, search):
 
 
 async def test_a_refused_drive_open_is_a_success_with_the_route_and_a_history_entry():
-    conv = FakeConversion({"drive:r1": RULES}, text=long_text(200_000))
+    conv = FakeConversion({"drive:a1:r1": RULES}, text=long_text(200_000))
     agent = _agent(conv, FakeExtentSearch({"r1": EXTENT}))
-    resp = await agent.execute(_msg("drive:r1"))
+    resp = await agent.execute(_msg("drive:a1:r1"))
     assert resp.status == AgentStatus.SUCCESS
     assert resp.result == refusal_text(PATH, EXTENT) + "\n" + ROUTE_ORCHESTRATOR
     assert conv.text_reads == [] and conv.byte_reads == []
     lines = drive_history_lines([resp.history_context["drive_context"]])
-    assert lines == [f"[Drive: {PATH} ref=drive:r1 — too long to open whole (200,000 characters, 130 passages)]"]
+    assert lines == [f"[Drive: {PATH} ref=drive:a1:r1 — too long to open whole (200,000 characters, 130 passages)]"]
 
 
 async def test_a_cut_open_is_still_a_success_with_its_body():
-    conv = FakeConversion({"drive:r1": RULES}, text=long_text(80_000))
+    conv = FakeConversion({"drive:a1:r1": RULES}, text=long_text(80_000))
     agent = _agent(conv, FakeExtentSearch())
-    resp = await agent.execute(_msg("drive:r1"))
+    resp = await agent.execute(_msg("drive:a1:r1"))
     assert resp.status == AgentStatus.SUCCESS and "[Cut by the system" in resp.result
     assert ROUTE_ORCHESTRATOR not in resp.result
 
